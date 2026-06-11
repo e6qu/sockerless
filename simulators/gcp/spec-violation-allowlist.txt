@@ -7,44 +7,6 @@
 # never the other way around. New violations fail CI until fixed or
 # filed + listed here.
 
-# BUG-1666 — Cloud Build triggers carry an invented location member
-GET /v1/projects/{projectId}/triggers	unknown-field	$.triggers[].location	# BUG-1666
-GET /v1/projects/{projectId}/triggers/{triggerId}	unknown-field	$.location	# BUG-1666
-GET /v1/projects/{projectsId}/locations/{locationsId}/triggers	unknown-field	$.triggers[].location	# BUG-1666
-PATCH /v1/projects/{projectId}/triggers/{triggerId}	unknown-field	$.location	# BUG-1666
-POST /v1/projects/{projectId}/triggers	unknown-field	$.location	# BUG-1666
-POST /v1/projects/{projectsId}/locations/{locationsId}/triggers	unknown-field	$.location	# BUG-1666
-
-# BUG-1667 — BigQuery Job leaks query/result; GetQueryResults leaks totalBytesBilled
-GET /bigquery/v2/projects/{projectsId}/jobs/{jobsId}	unknown-field	$.query	# BUG-1667
-GET /bigquery/v2/projects/{projectsId}/jobs/{jobsId}	unknown-field	$.result	# BUG-1667
-GET /bigquery/v2/projects/{projectsId}/queries/{queriesId}	unknown-field	$.totalBytesBilled	# BUG-1667
-POST /bigquery/v2/projects/{projectsId}/jobs	unknown-field	$.query	# BUG-1667
-POST /bigquery/v2/projects/{projectsId}/jobs	unknown-field	$.result	# BUG-1667
-
-# BUG-1668 — compute InstanceGroup list items embed instances
-GET /compute/v1/projects/{project}/zones/{zone}/instanceGroups	unknown-field	$.items[].instances	# BUG-1668
-
-# BUG-1669 — Cloud DNS ManagedZone carries an invented dockerNetworkName member (sockerless wiring leaking onto the wire)
-GET /dns/v1/projects/{project}/managedZones/{managedZone}	unknown-field	$.dockerNetworkName	# BUG-1669
-POST /dns/v1/projects/{project}/managedZones	unknown-field	$.dockerNetworkName	# BUG-1669
-
-# BUG-1670 — Cloud Functions v2 ServiceConfig carries invented simImage/simCommand members (sockerless wiring leaking onto the wire)
-GET /v2/projects/{projectsId}/locations/{locationsId}/functions	unknown-field	$.functions[].serviceConfig.simCommand	# BUG-1670
-GET /v2/projects/{projectsId}/locations/{locationsId}/functions	unknown-field	$.functions[].serviceConfig.simImage	# BUG-1670
-
-# BUG-1671 — Artifact Registry remoteRepositoryConfig carries enableIngestionAttestation, not a member of the Discovery schema
-GET /v1/projects/{projectsId}/locations/{locationsId}/repositories/{repositoriesId}	unknown-field	$.remoteRepositoryConfig.enableIngestionAttestation	# BUG-1671
-
-# BUG-1672 — Cloud Run knative surface served at /v1/namespaces/... instead of /apis/serving.knative.dev/v1/...; its responses key to the
-# closest Discovery templates (serviceusage services / sqladmin backups) and their knative envelope members read as unknown there
-DELETE /v1/projects/{projectsId}/backups/{backupsId}	unknown-field	$.apiVersion	# BUG-1672
-GET /v1/{v1Id}/{v1Id1}/services/{servicesId}	unknown-field	$.apiVersion	# BUG-1672
-GET /v1/{v1Id}/{v1Id1}/services/{servicesId}	unknown-field	$.kind	# BUG-1672
-GET /v1/{v1Id}/{v1Id1}/services/{servicesId}	unknown-field	$.metadata	# BUG-1672
-GET /v1/{v1Id}/{v1Id1}/services/{servicesId}	unknown-field	$.spec	# BUG-1672
-GET /v1/{v1Id}/{v1Id1}/services/{servicesId}	unknown-field	$.status	# BUG-1672
-
 # Permanent modeling exemption (not a sim bug): Firestore REST server-streaming
 # methods (runQuery / batchGet) return a JSON array of stream elements on the
 # wire — real GCP responds identically; the Discovery document describes the

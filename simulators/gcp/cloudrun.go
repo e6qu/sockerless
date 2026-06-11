@@ -14,7 +14,9 @@ import (
 // offers on the runner path. Sockerless uses v2 Cloud Run Jobs today;
 // services v1 (Knative-style) is here so `gcloud run services *` and
 // `google_cloud_run_v2_service` terraform resources round-trip against
-// the simulator. Real API:
+// the simulator. Real API (namespaces methods ride the
+// /apis/serving.knative.dev/v1/... path, per the cloudrun-v1 Discovery
+// document's flatPaths):
 //   https://cloud.google.com/run/docs/reference/rest/v1/namespaces.services
 
 // CRService represents a Cloud Run v1 service (Knative shape).
@@ -126,8 +128,8 @@ func registerCloudRun(srv *sim.Server) {
 		return namespace + "/" + name
 	}
 
-	// CreateService: POST /v1/namespaces/{namespace}/services
-	srv.HandleFunc("POST /v1/namespaces/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
+	// CreateService: POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services
+	srv.HandleFunc("POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
 		namespace := sim.PathParam(r, "namespace")
 
 		var svc CRService
@@ -178,8 +180,8 @@ func registerCloudRun(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, svc)
 	})
 
-	// GetService: GET /v1/namespaces/{namespace}/services/{name}
-	srv.HandleFunc("GET /v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+	// GetService: GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
 		namespace := sim.PathParam(r, "namespace")
 		name := sim.PathParam(r, "name")
 		svc, ok := services.Get(svcKey(namespace, name))
@@ -191,8 +193,8 @@ func registerCloudRun(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, svc)
 	})
 
-	// ListServices: GET /v1/namespaces/{namespace}/services
-	srv.HandleFunc("GET /v1/namespaces/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
+	// ListServices: GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
 		namespace := sim.PathParam(r, "namespace")
 		prefix := namespace + "/"
 		all := services.List()
@@ -209,8 +211,8 @@ func registerCloudRun(srv *sim.Server) {
 		})
 	})
 
-	// ReplaceService: PUT /v1/namespaces/{namespace}/services/{name}
-	srv.HandleFunc("PUT /v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+	// ReplaceService: PUT /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}
+	srv.HandleFunc("PUT /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
 		namespace := sim.PathParam(r, "namespace")
 		name := sim.PathParam(r, "name")
 		key := svcKey(namespace, name)
@@ -258,8 +260,8 @@ func registerCloudRun(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, update)
 	})
 
-	// DeleteService: DELETE /v1/namespaces/{namespace}/services/{name}
-	srv.HandleFunc("DELETE /v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+	// DeleteService: DELETE /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}
+	srv.HandleFunc("DELETE /apis/serving.knative.dev/v1/namespaces/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
 		namespace := sim.PathParam(r, "namespace")
 		name := sim.PathParam(r, "name")
 		if !services.Delete(svcKey(namespace, name)) {
@@ -267,12 +269,11 @@ func registerCloudRun(srv *sim.Server) {
 				"service %q not found in namespace %q", name, namespace)
 			return
 		}
-		// Knative DELETE returns a Status object; the Go client
-		// tolerates an empty 200.
+		// Knative DELETE returns a Status object. The cloudrun-v1
+		// Discovery Status schema declares no apiVersion/kind members —
+		// only code/details/message/metadata/reason/status.
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"apiVersion": "v1",
-			"kind":       "Status",
-			"status":     "Success",
+			"status": "Success",
 		})
 	})
 }

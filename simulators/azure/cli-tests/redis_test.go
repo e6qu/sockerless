@@ -13,8 +13,7 @@ func TestRedisCLI_ARMResources(t *testing.T) {
 	cacheURL := armURL("Microsoft.Cache", "Redis/"+name, "2024-11-01")
 	out := runCLI(t, azRest("PUT", cacheURL, `{
 		"location":"eastus",
-		"sku":{"name":"Basic","family":"C","capacity":1},
-		"properties":{"minimumTlsVersion":"1.2","redisVersion":"6"},
+		"properties":{"sku":{"name":"Basic","family":"C","capacity":1},"minimumTlsVersion":"1.2","redisVersion":"6"},
 		"tags":{"env":"cli"}
 	}`))
 	t.Cleanup(func() {
@@ -22,18 +21,18 @@ func TestRedisCLI_ARMResources(t *testing.T) {
 	})
 
 	var cache struct {
-		Name       string         `json:"name"`
-		SKU        map[string]any `json:"sku"`
+		Name       string `json:"name"`
 		Properties struct {
-			ProvisioningState string `json:"provisioningState"`
-			HostName          string `json:"hostName"`
-			SSLPort           int    `json:"sslPort"`
+			SKU               map[string]any `json:"sku"`
+			ProvisioningState string         `json:"provisioningState"`
+			HostName          string         `json:"hostName"`
+			SSLPort           int            `json:"sslPort"`
 		} `json:"properties"`
 		Tags map[string]string `json:"tags"`
 	}
 	parseJSON(t, out, &cache)
 	require.Equal(t, name, cache.Name)
-	require.Equal(t, "Basic", cache.SKU["name"])
+	require.Equal(t, "Basic", cache.Properties.SKU["name"])
 	require.Equal(t, "Creating", cache.Properties.ProvisioningState)
 	require.Contains(t, cache.Properties.HostName, name+".redis.cache.")
 	require.Equal(t, 6380, cache.Properties.SSLPort)

@@ -398,7 +398,28 @@ func handleGlueGetJob(w http.ResponseWriter, r *http.Request) {
 		glueWriteError(w, "EntityNotFoundException", "Job not found: "+req.JobName)
 		return
 	}
-	glueWriteJSON(w, http.StatusOK, map[string]any{"Job": job})
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Job": glueJobWire{job}})
+}
+
+// glueJobWire wraps GlueJob for response emission. The real Job shape
+// has no Tags member — tags ride GetTags. The struct keeps its Tags
+// JSON tag so tag state survives Store persistence; the wrapper strips
+// it from GetJob/GetJobs responses.
+type glueJobWire struct {
+	GlueJob
+}
+
+func (j glueJobWire) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(j.GlueJob)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "Tags")
+	return json.Marshal(m)
 }
 
 func handleGlueGetJobs(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +435,11 @@ func handleGlueGetJobs(w http.ResponseWriter, r *http.Request) {
 		maxR = *req.MaxResults
 	}
 	page, nextTok := awsPage(all, req.NextToken, maxR, 25)
-	resp := map[string]any{"Jobs": page}
+	jobs := make([]glueJobWire, 0, len(page))
+	for _, job := range page {
+		jobs = append(jobs, glueJobWire{job})
+	}
+	resp := map[string]any{"Jobs": jobs}
 	if nextTok != "" {
 		resp["NextToken"] = nextTok
 	}

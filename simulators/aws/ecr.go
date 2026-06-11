@@ -248,10 +248,11 @@ func handleECRDeletePullThroughCacheRule(w http.ResponseWriter, r *http.Request)
 	}
 	ecrPullThroughCacheRules.Delete(req.EcrRepositoryPrefix)
 
+	// Unlike the create/describe shapes, DeletePullThroughCacheRuleResponse
+	// has no upstreamRegistry member.
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ecrRepositoryPrefix": rule.EcrRepositoryPrefix,
 		"upstreamRegistryUrl": rule.UpstreamRegistryUrl,
-		"upstreamRegistry":    rule.UpstreamRegistry,
 		"registryId":          rule.RegistryId,
 		"createdAt":           rule.CreatedAt,
 	})
@@ -634,14 +635,13 @@ func handleECRBatchDeleteImage(w http.ResponseWriter, r *http.Request) {
 				ecrImages.Delete(req.RepositoryName + ":" + tag)
 			}
 			ecrImages.Delete(key)
-			imgId := map[string]string{}
+			// Deleted entries are bare ImageIdentifier objects. Real ECR
+			// resolves the digest even when the request deleted by tag.
+			imgId := map[string]any{"imageDigest": img.ImageDigest}
 			if imageId.ImageTag != "" {
 				imgId["imageTag"] = imageId.ImageTag
 			}
-			if imageId.ImageDigest != "" {
-				imgId["imageDigest"] = imageId.ImageDigest
-			}
-			deleted = append(deleted, map[string]any{"imageId": imgId})
+			deleted = append(deleted, imgId)
 		} else {
 			imgId := map[string]string{}
 			if imageId.ImageTag != "" {

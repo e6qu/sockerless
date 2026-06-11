@@ -175,6 +175,13 @@ func TestGlue_JobCRUD_SDK(t *testing.T) {
 	assert.Equal(t, "glue-sdk-job", aws.ToString(get.Job.Name))
 	assert.Equal(t, "sdk test job", aws.ToString(get.Job.Description))
 
+	// The Job shape has no Tags member — create-time tags ride GetTags.
+	jobTags, err := c.GetTags(ctx, &glue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:job/glue-sdk-job"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sdk", jobTags.Tags["env"])
+
 	list, err := c.GetJobs(ctx, &glue.GetJobsInput{})
 	require.NoError(t, err)
 	found := false

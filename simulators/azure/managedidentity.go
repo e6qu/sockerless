@@ -113,14 +113,13 @@ func registerManagedIdentity(srv *sim.Server) {
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"access_token":  "sim-msi-" + generateUUID(),
-			"refresh_token": "",
-			"expires_in":    "3600",
-			"expires_on":    fmt.Sprintf("%d", timeNowUnix()+3600),
-			"not_before":    fmt.Sprintf("%d", timeNowUnix()),
-			"resource":      resource,
-			"token_type":    "Bearer",
-			"client_id":     r.URL.Query().Get("client_id"),
+			"access_token": "sim-msi-" + generateUUID(),
+			"expires_in":   "3600",
+			"expires_on":   fmt.Sprintf("%d", timeNowUnix()+3600),
+			"not_before":   fmt.Sprintf("%d", timeNowUnix()),
+			"resource":     resource,
+			"token_type":   "Bearer",
+			"client_id":    r.URL.Query().Get("client_id"),
 		})
 	}
 	srv.HandleFunc("GET /metadata/identity/oauth2/token", tokenHandler)

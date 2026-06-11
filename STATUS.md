@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-sweep` |
-| In-flight | **bleephub deep sweep** (one fat PR): OpenAPI response-shape validator + ratchet inside `go test ./bleephub` (723 emitter violations -> 0); deployment approvals modeled (BUG-1590); webhook org block (BUG-1618); persistence overhaul — 14 reload gaps incl. a P1 token-resurrection security fix + fail-loud git-storage mismatch + delete cascade (BUG-1692..1695); GraphQL/gh-CLI drift — pr/release/clone command set unbroken, /api/v3/meta, push-run workflow_id, NOT_FOUND fidelity (BUG-1696..1699); UI fixes + 49 vitest cases (BUG-1690/1691). gh docker harness 92/0. |
+| Active branch | `feat/sim-shape-burndown` |
+| In-flight | **Simulator shape-drift burn-down** (one fat PR): all 28 allowlisted runtime spec-shape bugs fixed (BUG-1658..1685) — aws/azure allowlists DELETED, gcp holds only the two permanent firestore server-streaming exemptions. Includes the two structural items: gcp knative surface moved to the real `/apis/serving.knative.dev/v1/...` paths (BUG-1672, canonical run/v1 client test) and azure postgres-flexible real 202+Azure-AsyncOperation LRO (BUG-1679). Wire/store splits preserve sim persistence + workload wiring (persisted-DTO embeds / MarshalJSON wire views). |
 | Last merged | #540 docs: per-component READMEs + docs/specs indexes; broken smoke-test targets + stale UI dev proxies fixed (BUG-1647/1648). #539 simulators: conformance hardening Stages 2 G4-6. |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1699 filed - 1627 fixed - 33 open - 6 false positives (see [BUGS.md](BUGS.md)). 28 of the open bugs are the sim runtime spec-shape burn-down (BUG-1658..1685). |
+| Bugs | 1699 filed - 1655 fixed - 5 open - 6 false positives (see [BUGS.md](BUGS.md)). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
 | Live infra | None up. |
 

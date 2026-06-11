@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -40,7 +41,19 @@ func TestAzureCosmosDB_ARMAndDataPlaneLifecycle(t *testing.T) {
 	collPath := dbPath + "/containers/users"
 	resp = armReq(t, "PUT", collPath, `{"properties":{"resource":{"id":"users","partitionKey":{"paths":["/id"],"kind":"Hash"}}}}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	collBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	var coll struct {
+		Properties struct {
+			PartitionKey map[string]any `json:"partitionKey"`
+			Resource     struct {
+				PartitionKey map[string]any `json:"partitionKey"`
+			} `json:"resource"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(collBody, &coll))
+	assert.Nil(t, coll.Properties.PartitionKey, "partitionKey must nest under properties.resource, not properties")
+	assert.Equal(t, "Hash", coll.Properties.Resource.PartitionKey["kind"])
 
 	req, err := http.NewRequest("POST", baseURL+"/dbs/appdb/colls/users/docs", strings.NewReader(`{"id":"alice","team":"platform"}`))
 	require.NoError(t, err)

@@ -19,11 +19,13 @@ import (
 // webhook event subscriptions.
 
 type EventGridTopic struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location,omitempty"`
-	Tags       map[string]string `json:"tags"`
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Location string `json:"location,omitempty"`
+	// Tags is omitted when empty: proxy resources (domains/topics,
+	// partner topics before tagging) have no tags member at all.
+	Tags       map[string]string `json:"tags,omitempty"`
 	Properties map[string]any    `json:"properties,omitempty"`
 }
 
@@ -379,11 +381,12 @@ func handleEventGridCreateDomainTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := eventGridDomainTopicID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "domainName"), sim.PathParam(r, "domainTopicName"))
+	// DomainTopic is a proxy resource (allOf Resource): no location, no
+	// tags members.
 	topic := EventGridTopic{
 		ID:   id,
 		Name: sim.PathParam(r, "domainTopicName"),
 		Type: "Microsoft.EventGrid/domains/topics",
-		Tags: map[string]string{},
 		Properties: map[string]any{
 			"provisioningState": "Succeeded",
 		},
@@ -455,9 +458,6 @@ func handleEventGridCreatePartnerTopic(w http.ResponseWriter, r *http.Request) {
 		if _, ok := props["activationState"]; !ok {
 			props["activationState"] = "NeverActivated"
 		}
-		if _, ok := props["readinessState"]; !ok {
-			props["readinessState"] = "NotActivatedByUserYet"
-		}
 	})
 }
 
@@ -503,7 +503,6 @@ func handleEventGridActivatePartnerTopic(w http.ResponseWriter, r *http.Request)
 		topic.Properties = map[string]any{}
 	}
 	topic.Properties["activationState"] = "Activated"
-	topic.Properties["readinessState"] = "ActivatedByUser"
 	topic.Properties["provisioningState"] = "Succeeded"
 	eventGridPartnerTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusOK, topic)
@@ -520,7 +519,6 @@ func handleEventGridDeactivatePartnerTopic(w http.ResponseWriter, r *http.Reques
 		topic.Properties = map[string]any{}
 	}
 	topic.Properties["activationState"] = "Deactivated"
-	topic.Properties["readinessState"] = "DeactivatedByUser"
 	topic.Properties["provisioningState"] = "Succeeded"
 	eventGridPartnerTopics.Put(id, topic)
 	sim.WriteJSON(w, http.StatusOK, topic)

@@ -491,8 +491,30 @@ type ComputeInstanceGroup struct {
 	Zone              string                          `json:"zone,omitempty"`
 	Network           string                          `json:"network,omitempty"`
 	NamedPorts        []ComputeInstanceGroupNamedPort `json:"namedPorts,omitempty"`
-	Instances         []ComputeInstanceGroupInstance  `json:"instances,omitempty"`
+	Size              int64                           `json:"size"`
 	Fingerprint       string                          `json:"fingerprint,omitempty"`
+}
+
+// storedComputeInstanceGroup is the persisted row backing an instance
+// group: the wire-shape InstanceGroup (which has no instances member —
+// membership rides the listInstances method and is summarized by the
+// output-only size member) plus the membership the addInstances /
+// removeInstances / listInstances handlers maintain. The embedding
+// flattens on json.Marshal, so sim.Store persistence keeps the same row
+// shape the membership has always been recovered from.
+type storedComputeInstanceGroup struct {
+	ComputeInstanceGroup
+	// Instances is the group membership. Store-only: never emitted as
+	// an InstanceGroup member.
+	Instances []ComputeInstanceGroupInstance `json:"instances,omitempty"`
+}
+
+// wireInstanceGroup is the InstanceGroup resource emitted on the wire,
+// with the output-only size member computed from the stored membership.
+func wireInstanceGroup(g storedComputeInstanceGroup) ComputeInstanceGroup {
+	out := g.ComputeInstanceGroup
+	out.Size = int64(len(g.Instances))
+	return out
 }
 
 type ComputeInstanceGroupNamedPort struct {
@@ -576,7 +598,7 @@ var (
 	gcpAddresses         sim.Store[ComputeAddress]
 	gcpFirewalls         sim.Store[ComputeFirewall]
 	gcpInstances         sim.Store[ComputeInstance]
-	gcpInstanceGroups    sim.Store[ComputeInstanceGroup]
+	gcpInstanceGroups    sim.Store[storedComputeInstanceGroup]
 	gcpHealthChecks      sim.Store[ComputeHealthCheck]
 	gcpBackendServices   sim.Store[ComputeBackendService]
 	gcpURLMaps           sim.Store[ComputeURLMap]
@@ -1522,7 +1544,7 @@ func computeRegionalAddressLink(project, region, name string) string {
 }
 
 func registerComputeInstanceGroups(srv *sim.Server) {
-	groups := sim.MakeStore[ComputeInstanceGroup](srv.DB(), "compute_instance_groups")
+	groups := sim.MakeStore[storedComputeInstanceGroup](srv.DB(), "compute_instance_groups")
 	gcpInstanceGroups = groups
 
 	instanceGroupSelfLink := func(project, zone, name string) string {
@@ -1547,7 +1569,7 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 		group.Zone = fmt.Sprintf("projects/%s/zones/%s", project, zone)
 		group.CreationTimestamp = time.Now().UTC().Format(time.RFC3339)
 		group.Fingerprint = computeFingerprint()
-		groups.Put(group.SelfLink, group)
+		groups.Put(group.SelfLink, storedComputeInstanceGroup{ComputeInstanceGroup: group})
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, group.SelfLink, "insert"))
 	})
 
@@ -1560,16 +1582,17 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, group)
+		sim.WriteJSON(w, http.StatusOK, wireInstanceGroup(group))
 	})
 
 	srv.HandleFunc("GET /compute/v1/projects/{project}/zones/{zone}/instanceGroups", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		zone := sim.PathParam(r, "zone")
 		prefix := fmt.Sprintf("projects/%s/zones/%s/instanceGroups/", project, zone)
-		items := groups.Filter(func(group ComputeInstanceGroup) bool { return strings.HasPrefix(group.SelfLink, prefix) })
-		if items == nil {
-			items = []ComputeInstanceGroup{}
+		stored := groups.Filter(func(group storedComputeInstanceGroup) bool { return strings.HasPrefix(group.SelfLink, prefix) })
+		items := make([]ComputeInstanceGroup, 0, len(stored))
+		for _, group := range stored {
+			items = append(items, wireInstanceGroup(group))
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceGroupList", "items": items})
 	})
@@ -1595,7 +1618,7 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+		if !groups.Update(selfLink, func(group *storedComputeInstanceGroup) {
 			for _, inst := range req.Instances {
 				if !gcpInstanceGroupHasInstance(*group, inst.Instance) {
 					group.Instances = append(group.Instances, inst)
@@ -1625,7 +1648,7 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 		for _, inst := range req.Instances {
 			remove[inst.Instance] = true
 		}
-		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+		if !groups.Update(selfLink, func(group *storedComputeInstanceGroup) {
 			filtered := group.Instances[:0]
 			for _, inst := range group.Instances {
 				if !remove[inst.Instance] {
@@ -1677,7 +1700,7 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		if !groups.Update(selfLink, func(group *ComputeInstanceGroup) {
+		if !groups.Update(selfLink, func(group *storedComputeInstanceGroup) {
 			group.NamedPorts = req.NamedPorts
 			group.Fingerprint = computeFingerprint()
 		}) {
@@ -1688,7 +1711,7 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 	})
 }
 
-func gcpInstanceGroupHasInstance(group ComputeInstanceGroup, instance string) bool {
+func gcpInstanceGroupHasInstance(group storedComputeInstanceGroup, instance string) bool {
 	for _, got := range group.Instances {
 		if got.Instance == instance {
 			return true

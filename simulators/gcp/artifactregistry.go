@@ -50,6 +50,42 @@ type DockerImage struct {
 // Package-level store for dashboard access.
 var arRepos sim.Store[Repository]
 
+// remoteRepositoryConfigMembers is the RemoteRepositoryConfig member set
+// from the artifactregistry-v1 Discovery document. The sim stores the
+// config as a raw map for verbatim round-trips, so request fields the
+// schema doesn't define (real GCP's proto-JSON parsing discards them and
+// never echoes them back) are dropped at intake.
+var remoteRepositoryConfigMembers = map[string]bool{
+	"aptRepository":             true,
+	"commonRepository":          true,
+	"description":               true,
+	"disableUpstreamValidation": true,
+	"dockerRepository":          true,
+	"mavenRepository":           true,
+	"npmRepository":             true,
+	"pythonRepository":          true,
+	"upstreamCredentials":       true,
+	"yumRepository":             true,
+}
+
+// sanitizeRemoteRepositoryConfig keeps only schema-defined members,
+// mirroring real GCP's treatment of unknown request fields.
+func sanitizeRemoteRepositoryConfig(cfg map[string]any) map[string]any {
+	if cfg == nil {
+		return nil
+	}
+	out := make(map[string]any, len(cfg))
+	for k, v := range cfg {
+		if remoteRepositoryConfigMembers[k] {
+			out[k] = v
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 func registerArtifactRegistry(srv *sim.Server) {
 	repos := sim.MakeStore[Repository](srv.DB(), "ar_repos")
 	arRepos = repos
@@ -113,6 +149,7 @@ func registerArtifactRegistry(srv *sim.Server) {
 			repo.Mode = "STANDARD_REPOSITORY"
 		}
 		repo.RegistryURI = fmt.Sprintf("%s-docker.pkg.dev/%s/%s", location, project, repoID)
+		repo.RemoteRepositoryConfig = sanitizeRemoteRepositoryConfig(repo.RemoteRepositoryConfig)
 		repo.CreateTime = now
 		repo.UpdateTime = now
 

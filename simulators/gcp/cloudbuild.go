@@ -94,7 +94,6 @@ type BuildTrigger struct {
 	ResourceName          string            `json:"resourceName,omitempty"`
 	Description           string            `json:"description,omitempty"`
 	Filename              string            `json:"filename,omitempty"`
-	Location              string            `json:"location,omitempty"`
 	Disabled              bool              `json:"disabled,omitempty"`
 	IgnoredFiles          []string          `json:"ignoredFiles,omitempty"`
 	IncludedFiles         []string          `json:"includedFiles,omitempty"`
@@ -261,7 +260,9 @@ func normalizeBuildTrigger(project, location string, trigger BuildTrigger) Build
 	if trigger.Name == "" {
 		trigger.Name = trigger.ID
 	}
-	trigger.Location = location
+	// BuildTrigger has no location member; the trigger's location is
+	// derived from the request URL per call (buildTriggerLocation) and
+	// is encoded in resourceName.
 	trigger.ResourceName = buildTriggerKey(project, location, trigger.ID)
 	if trigger.CreateTime == "" {
 		trigger.CreateTime = nowTimestamp()

@@ -170,7 +170,7 @@ func TestKVDataPlane_Certificates_CLI(t *testing.T) {
 	vault := "cli-dp-certs"
 	createKVVaultCLI(t, vault)
 
-	policy := `{"issuerParameters":{"name":"Self"},"x509CertificateProperties":{"subject":"CN=cli-test","validityInMonths":12}}`
+	policy := `{"issuer":{"name":"Self"},"x509_props":{"subject":"CN=cli-test","validity_months":12}}`
 
 	// CreateCertificate — sim returns 202 + CertificateOperation (status: completed)
 	out := runCLI(t, kvDataRest("POST", vault, "/certificates/cli-cert/create", `{"policy":`+policy+`}`))
@@ -189,6 +189,12 @@ func TestKVDataPlane_Certificates_CLI(t *testing.T) {
 	}
 	parseJSON(t, out, &getResp)
 	assert.NotEmpty(t, getResp.ID, "GetCertificate must return a certificate id")
+	// CertificatePolicy uses the snake_case wire member names, not the
+	// SDK client names.
+	assert.Contains(t, out, `"x509_props"`)
+	assert.Contains(t, out, `"issuer"`)
+	assert.NotContains(t, out, `"issuerParameters"`)
+	assert.NotContains(t, out, `"x509CertificateProperties"`)
 
 	// ListCertificates — created cert must appear
 	out = runCLI(t, kvDataRest("GET", vault, "/certificates", ""))

@@ -32,24 +32,38 @@ type CBProject struct {
 }
 
 type CBBuild struct {
-	ID                           string           `json:"id"`
-	Arn                          string           `json:"arn"`
-	ProjectName                  string           `json:"projectName"`
-	BuildStatus                  string           `json:"buildStatus"`
-	StartTime                    float64          `json:"startTime"`
-	EndTime                      float64          `json:"endTime"`
-	Phases                       []CBPhase        `json:"phases"`
-	Logs                         map[string]any   `json:"logs"`
-	Environment                  map[string]any   `json:"environment,omitempty"`
-	EnvironmentVariablesOverride []map[string]any `json:"environmentVariablesOverride,omitempty"`
+	ID          string         `json:"id"`
+	Arn         string         `json:"arn"`
+	ProjectName string         `json:"projectName"`
+	BuildStatus string         `json:"buildStatus"`
+	StartTime   float64        `json:"startTime"`
+	EndTime     float64        `json:"endTime"`
+	Phases      []CBPhase      `json:"phases"`
+	Logs        map[string]any `json:"logs"`
+	Environment map[string]any `json:"environment,omitempty"`
 }
 
 type CBPhase struct {
-	PhaseType         string  `json:"phaseType"`
-	PhaseStatus       string  `json:"phaseStatus"`
-	StartTime         float64 `json:"startTime"`
-	EndTime           float64 `json:"endTime"`
-	DurationInSeconds float64 `json:"durationInSeconds"`
+	PhaseType         string           `json:"phaseType"`
+	PhaseStatus       string           `json:"phaseStatus"`
+	StartTime         float64          `json:"startTime"`
+	EndTime           float64          `json:"endTime"`
+	DurationInSeconds float64          `json:"durationInSeconds"`
+	Contexts          []CBPhaseContext `json:"contexts,omitempty"`
+}
+
+type CBPhaseContext struct {
+	StatusCode string `json:"statusCode"`
+	Message    string `json:"message"`
+}
+
+// cbLogsLocation is the LogsLocation the sim reports: builds run as local
+// processes without a CloudWatch log sink, so log enablement is the real
+// member cloudWatchLogs.status (not an invented boolean).
+func cbLogsLocation() map[string]any {
+	return map[string]any{
+		"cloudWatchLogs": map[string]any{"status": "DISABLED"},
+	}
 }
 
 type CBTag struct {
@@ -307,8 +321,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
 			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
 		},
-		Logs:                         map[string]any{"enabled": false},
-		EnvironmentVariablesOverride: req.EnvironmentVariablesOverride,
+		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
 	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
@@ -389,13 +402,21 @@ func cbCompleteBuild(buildID string, exitCode int, reason string) {
 	}
 	build.BuildStatus = status
 	build.EndTime = now
+	buildPhase := CBPhase{PhaseType: "BUILD", PhaseStatus: status, StartTime: build.StartTime, EndTime: now, DurationInSeconds: now - build.StartTime}
+	if reason != "" {
+		// Failure detail rides the phase's contexts (the real Build
+		// shape's per-phase PhaseContext), not the LogsLocation.
+		// COMMAND_EXECUTION_ERROR is real CodeBuild's status code for a
+		// failed buildspec command.
+		buildPhase.Contexts = []CBPhaseContext{{
+			StatusCode: "COMMAND_EXECUTION_ERROR",
+			Message:    reason,
+		}}
+	}
 	build.Phases = []CBPhase{
 		{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: build.StartTime, EndTime: build.StartTime, DurationInSeconds: 0},
-		{PhaseType: "BUILD", PhaseStatus: status, StartTime: build.StartTime, EndTime: now, DurationInSeconds: now - build.StartTime},
+		buildPhase,
 		{PhaseType: "COMPLETED", PhaseStatus: status, StartTime: now, EndTime: now, DurationInSeconds: 0},
-	}
-	if reason != "" {
-		build.Logs["reason"] = reason
 	}
 	cbBuilds.Put(buildID, build)
 }

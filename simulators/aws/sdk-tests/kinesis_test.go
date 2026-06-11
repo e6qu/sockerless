@@ -54,6 +54,20 @@ func TestKinesisSDK_StreamLifecycleAndRecords(t *testing.T) {
 	list, err := client.ListStreams(ctx, &kinesis.ListStreamsInput{})
 	require.NoError(t, err)
 	assert.Contains(t, list.StreamNames, streamName)
+	// StreamSummaries entries are the StreamSummary shape — identity +
+	// status + mode only (retention/shards/monitoring ride the describes).
+	var streamSummary *ktypes.StreamSummary
+	for i := range list.StreamSummaries {
+		if aws.ToString(list.StreamSummaries[i].StreamName) == streamName {
+			streamSummary = &list.StreamSummaries[i]
+		}
+	}
+	require.NotNil(t, streamSummary, "ListStreams must include a StreamSummary for %s", streamName)
+	assert.Contains(t, aws.ToString(streamSummary.StreamARN), ":stream/"+streamName)
+	assert.Equal(t, ktypes.StreamStatusActive, streamSummary.StreamStatus)
+	require.NotNil(t, streamSummary.StreamModeDetails)
+	assert.Equal(t, ktypes.StreamModeProvisioned, streamSummary.StreamModeDetails.StreamMode)
+	assert.NotNil(t, streamSummary.StreamCreationTimestamp)
 
 	_, err = client.AddTagsToStream(ctx, &kinesis.AddTagsToStreamInput{
 		StreamName: aws.String(streamName),

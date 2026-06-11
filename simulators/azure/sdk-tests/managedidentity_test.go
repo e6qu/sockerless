@@ -32,6 +32,8 @@ func TestMSI_TokenEndpoint_VMShape(t *testing.T) {
 	assert.Equal(t, "Bearer", payload["token_type"])
 	assert.Equal(t, "https://management.azure.com/", payload["resource"])
 	assert.NotEmpty(t, payload["expires_on"])
+	_, hasRefresh := payload["refresh_token"]
+	assert.False(t, hasRefresh, "IdentityTokenResponse has no refresh_token member")
 }
 
 func TestMSI_TokenEndpoint_AppServiceShape(t *testing.T) {

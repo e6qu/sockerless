@@ -934,11 +934,38 @@ func handleEBListArchives(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(archives, func(i, j int) bool { return archives[i].ArchiveName < archives[j].ArchiveName })
 	page, next := awsPageExplicit(archives, req.NextToken, req.Limit)
-	out := map[string]any{"Archives": page}
+	summaries := make([]map[string]any, 0, len(page))
+	for _, archive := range page {
+		summaries = append(summaries, ebArchiveSummary(archive))
+	}
+	out := map[string]any{"Archives": summaries}
 	if next != "" {
 		out["NextToken"] = next
 	}
 	writeEBJSON(w, http.StatusOK, out)
+}
+
+// ebArchiveSummary projects an archive onto the list-shape Archive
+// members; ArchiveArn / Description / EventPattern / KmsKeyIdentifier
+// are describe-only and must not appear in ListArchives entries.
+func ebArchiveSummary(a EBArchive) map[string]any {
+	out := map[string]any{
+		"ArchiveName":    a.ArchiveName,
+		"EventSourceArn": a.EventSourceArn,
+		"State":          a.State,
+		"EventCount":     a.EventCount,
+		"SizeBytes":      a.SizeBytes,
+	}
+	if a.StateReason != "" {
+		out["StateReason"] = a.StateReason
+	}
+	if a.RetentionDays != nil {
+		out["RetentionDays"] = *a.RetentionDays
+	}
+	if a.CreationTime != 0 {
+		out["CreationTime"] = a.CreationTime
+	}
+	return out
 }
 
 func handleEBDeleteArchive(w http.ResponseWriter, r *http.Request) {
@@ -1049,11 +1076,41 @@ func handleEBListReplays(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(replays, func(i, j int) bool { return replays[i].ReplayName < replays[j].ReplayName })
 	page, next := awsPageExplicit(replays, req.NextToken, req.Limit)
-	out := map[string]any{"Replays": page}
+	summaries := make([]map[string]any, 0, len(page))
+	for _, replay := range page {
+		summaries = append(summaries, ebReplaySummary(replay))
+	}
+	out := map[string]any{"Replays": summaries}
 	if next != "" {
 		out["NextToken"] = next
 	}
 	writeEBJSON(w, http.StatusOK, out)
+}
+
+// ebReplaySummary projects a replay onto the list-shape Replay members;
+// ReplayArn / Description are describe-only and must not appear in
+// ListReplays entries.
+func ebReplaySummary(rp EBReplay) map[string]any {
+	out := map[string]any{
+		"ReplayName":     rp.ReplayName,
+		"EventSourceArn": rp.EventSourceArn,
+		"State":          rp.State,
+	}
+	if rp.StateReason != "" {
+		out["StateReason"] = rp.StateReason
+	}
+	for k, v := range map[string]int64{
+		"EventStartTime":        rp.EventStartTime,
+		"EventEndTime":          rp.EventEndTime,
+		"EventLastReplayedTime": rp.EventLastReplayedTime,
+		"ReplayStartTime":       rp.ReplayStartTime,
+		"ReplayEndTime":         rp.ReplayEndTime,
+	} {
+		if v != 0 {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 func ebParseJSONTime(raw json.RawMessage) (int64, error) {

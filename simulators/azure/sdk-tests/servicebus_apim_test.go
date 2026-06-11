@@ -93,9 +93,14 @@ func TestAzureAPIM_ARMLifecycle(t *testing.T) {
 	assert.Contains(t, string(body), "lifecycle-apim.azure-api."+hostPort)
 
 	apiPath := svcPath + "/apis/myapi"
-	resp = armReq(t, "PUT", apiPath, `{"properties":{"displayName":"My API","path":"v1"}}`)
+	resp = armReq(t, "PUT", apiPath, `{"properties":{"displayName":"My API","path":"v1","apiType":"http"}}`)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
+	apiBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
+	// The create request names the kind apiType; read shapes expose it
+	// as type (ApiEntityBaseContract) and never echo apiType.
+	assert.Contains(t, string(apiBody), `"type":"http"`)
+	assert.NotContains(t, string(apiBody), `"apiType"`)
 
 	prodPath := svcPath + "/products/myproduct"
 	resp = armReq(t, "PUT", prodPath, `{"properties":{"displayName":"My Product","state":"published"}}`)

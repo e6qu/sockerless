@@ -113,16 +113,17 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 	armBase := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.DBforPostgreSQL/flexibleServers/%s",
 		sub, rg, name)
 
+	// Servers_Create declares 202-only (no success body): the caller
+	// polls Azure-AsyncOperation, then reads the server back via GET.
 	resp := armReq(t, "PUT", armBase, `{"location":"eastus","properties":{"version":"15","administratorLogin":"psqladmin"}}`)
-	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
 	opURL := resp.Header.Get("Azure-AsyncOperation")
 	require.NotEmpty(t, opURL)
+	require.NotEmpty(t, resp.Header.Get("Location"))
 	assert.Equal(t, "0", resp.Header.Get("Retry-After"))
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	assert.Contains(t, string(body), `"state":"Starting"`)
-	host, _ := simHostParts(t)
-	assert.Contains(t, string(body), `"fullyQualifiedDomainName":"lifecycle-pg.postgres.database.`+host+`"`)
+	assert.Empty(t, string(body), "PUT flexibleServers must not return a success body")
 
 	waitAzureAsyncOperation(t, opURL)
 
@@ -131,12 +132,19 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(body), `"state":"Ready"`)
+	host, _ := simHostParts(t)
+	assert.Contains(t, string(body), `"fullyQualifiedDomainName":"lifecycle-pg.postgres.database.`+host+`"`)
 
-	// Create a database.
+	// Create a database — same 202 + poll choreography.
 	dbPath := armBase + "/databases/appdb"
 	resp = armReq(t, "PUT", dbPath, `{"properties":{"charset":"UTF8"}}`)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	dbOpURL := resp.Header.Get("Azure-AsyncOperation")
+	require.NotEmpty(t, dbOpURL)
+	body, _ = io.ReadAll(resp.Body)
 	resp.Body.Close()
+	assert.Empty(t, string(body), "PUT databases must not return a success body")
+	waitAzureAsyncOperation(t, dbOpURL)
 
 	resp = armReq(t, "GET", armBase+"/databases", "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -144,17 +152,27 @@ func TestAzurePGFlexibleServer_ARMLifecycle(t *testing.T) {
 	resp.Body.Close()
 	assert.Contains(t, string(listBody), "appdb")
 
-	// Create a firewall rule.
+	// Create a firewall rule — same 202 + poll choreography.
 	frPath := armBase + "/firewallRules/AllowAzureServices"
 	resp = armReq(t, "PUT", frPath, `{"properties":{"startIpAddress":"0.0.0.0","endIpAddress":"0.0.0.0"}}`)
+	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	frOpURL := resp.Header.Get("Azure-AsyncOperation")
+	require.NotEmpty(t, frOpURL)
+	body, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Empty(t, string(body), "PUT firewallRules must not return a success body")
+	waitAzureAsyncOperation(t, frOpURL)
+
+	resp = armReq(t, "GET", frPath, "")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	frBody, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	assert.Contains(t, string(frBody), "AllowAzureServices")
 
-	// Delete server (cascade).
+	// Delete server (cascade) — 202 with the same poll headers.
 	resp = armReq(t, "DELETE", armBase, "")
 	require.Equal(t, http.StatusAccepted, resp.StatusCode)
+	require.NotEmpty(t, resp.Header.Get("Azure-AsyncOperation"))
 	resp.Body.Close()
 
 	// Confirm database + firewall rule were cascaded.

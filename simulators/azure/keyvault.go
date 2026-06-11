@@ -816,14 +816,27 @@ func handleKeyVaultDataPlane(w http.ResponseWriter, r *http.Request, vault strin
 	}
 }
 
-// KeyVaultKey is a key stored at /keys/{name}. The wire shape returns
-// the public JSON Web Key material only; private material used for
-// local cryptographic operations stays on kvKeyStored.
+// KeyVaultKey is a key stored at /keys/{name}. This is the persistence
+// shape; responses go through keyBundle, which emits the KeyBundle wire
+// shape where the key id lives only inside $.key (JsonWebKey.kid).
 type KeyVaultKey struct {
 	ID         string            `json:"kid"`
 	JsonWebKey map[string]any    `json:"key,omitempty"`
 	Attributes KeyVaultAttrs     `json:"attributes,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
+}
+
+// keyBundle is the KeyBundle wire shape: key + attributes + tags, with
+// no top-level kid member.
+func keyBundle(k KeyVaultKey) map[string]any {
+	out := map[string]any{
+		"key":        k.JsonWebKey,
+		"attributes": k.Attributes,
+	}
+	if len(k.Tags) > 0 {
+		out["tags"] = k.Tags
+	}
+	return out
 }
 
 type kvKeyVersion struct {
@@ -880,9 +893,71 @@ type KeyVaultCertificate struct {
 	ContentType       string            `json:"contentType,omitempty"`
 	PreserveCertOrder *bool             `json:"preserveCertOrder,omitempty"`
 	X509Thumbprint    string            `json:"x5t,omitempty"`
-	Policy            map[string]any    `json:"policy,omitempty"`
+	Policy            *kvCertPolicy     `json:"policy,omitempty"`
 	Attributes        KeyVaultAttrs     `json:"attributes,omitempty"`
 	Tags              map[string]string `json:"tags,omitempty"`
+}
+
+// kvCertPolicy is the CertificatePolicy wire shape from the Key Vault
+// certificates data plane: member names are the snake_case wire names
+// (issuer, x509_props, ...), not the SDK client names the swagger maps
+// them to via x-ms-client-name.
+type kvCertPolicy struct {
+	ID              string                 `json:"id,omitempty"`
+	KeyProps        *kvCertKeyProps        `json:"key_props,omitempty"`
+	SecretProps     *kvCertSecretProps     `json:"secret_props,omitempty"`
+	X509Props       *kvCertX509Props       `json:"x509_props,omitempty"`
+	LifetimeActions []kvCertLifetimeAction `json:"lifetime_actions,omitempty"`
+	Issuer          *kvCertIssuer          `json:"issuer,omitempty"`
+	Attributes      *KeyVaultAttrs         `json:"attributes,omitempty"`
+}
+
+type kvCertKeyProps struct {
+	Exportable *bool  `json:"exportable,omitempty"`
+	KeyType    string `json:"kty,omitempty"`
+	KeySize    int    `json:"key_size,omitempty"`
+	ReuseKey   *bool  `json:"reuse_key,omitempty"`
+	Curve      string `json:"crv,omitempty"`
+}
+
+type kvCertSecretProps struct {
+	ContentType string `json:"contentType,omitempty"`
+}
+
+type kvCertX509Props struct {
+	Subject          string      `json:"subject,omitempty"`
+	EKUs             []string    `json:"ekus,omitempty"`
+	SANs             *kvCertSANs `json:"sans,omitempty"`
+	KeyUsage         []string    `json:"key_usage,omitempty"`
+	ValidityInMonths int         `json:"validity_months,omitempty"`
+}
+
+type kvCertSANs struct {
+	Emails      []string `json:"emails,omitempty"`
+	DNSNames    []string `json:"dns_names,omitempty"`
+	UPNs        []string `json:"upns,omitempty"`
+	URIs        []string `json:"uris,omitempty"`
+	IPAddresses []string `json:"ipAddresses,omitempty"`
+}
+
+type kvCertLifetimeAction struct {
+	Trigger *kvCertTrigger `json:"trigger,omitempty"`
+	Action  *kvCertAction  `json:"action,omitempty"`
+}
+
+type kvCertTrigger struct {
+	LifetimePercentage int `json:"lifetime_percentage,omitempty"`
+	DaysBeforeExpiry   int `json:"days_before_expiry,omitempty"`
+}
+
+type kvCertAction struct {
+	ActionType string `json:"action_type,omitempty"`
+}
+
+type kvCertIssuer struct {
+	Name             string `json:"name,omitempty"`
+	CertificateType  string `json:"cty,omitempty"`
+	CertTransparency *bool  `json:"cert_transparency,omitempty"`
 }
 
 type kvCertVersion struct {
@@ -891,14 +966,14 @@ type kvCertVersion struct {
 }
 
 type kvCertOperation struct {
-	ID                    string         `json:"id"`
-	Issuer                map[string]any `json:"issuer,omitempty"`
-	CSR                   []byte         `json:"csr,omitempty"`
-	CancellationRequested bool           `json:"cancellation_requested"`
-	Status                string         `json:"status"`
-	StatusDetails         string         `json:"status_details,omitempty"`
-	Target                string         `json:"target,omitempty"`
-	RequestID             string         `json:"request_id,omitempty"`
+	ID                    string        `json:"id"`
+	Issuer                *kvCertIssuer `json:"issuer,omitempty"`
+	CSR                   []byte        `json:"csr,omitempty"`
+	CancellationRequested bool          `json:"cancellation_requested"`
+	Status                string        `json:"status"`
+	StatusDetails         string        `json:"status_details,omitempty"`
+	Target                string        `json:"target,omitempty"`
+	RequestID             string        `json:"request_id,omitempty"`
 }
 
 type kvCertStored struct {
@@ -1116,7 +1191,7 @@ func handleKVCreateKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		PrivateKeyPEM: privateKeyPEM,
 		KeyVaultKey:   key,
 	})
-	sim.WriteJSON(w, http.StatusOK, key)
+	sim.WriteJSON(w, http.StatusOK, keyBundle(key))
 }
 
 func handleKVImportKey(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1159,7 +1234,7 @@ func handleKVImportKey(w http.ResponseWriter, r *http.Request, vault, name strin
 		PrivateKeyPEM: privateKeyPEM,
 		KeyVaultKey:   key,
 	})
-	sim.WriteJSON(w, http.StatusOK, key)
+	sim.WriteJSON(w, http.StatusOK, keyBundle(key))
 }
 
 func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name, version string) {
@@ -1175,7 +1250,7 @@ func handleKVGetKey(w http.ResponseWriter, r *http.Request, vault, name, version
 			"Version %q of key %q was not found.", version, name)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, v.KeyVaultKey)
+	sim.WriteJSON(w, http.StatusOK, keyBundle(v.KeyVaultKey))
 }
 
 func handleKVListKeys(w http.ResponseWriter, r *http.Request, vault string) {
@@ -1281,7 +1356,7 @@ func handleKVUpdateKey(w http.ResponseWriter, r *http.Request, vault, name, vers
 	}
 	keyVaultKeys.Put(keyVaultKeyKey(vault, name), rec)
 	latest, _ := rec.findVersion(version)
-	sim.WriteJSON(w, http.StatusOK, latest.KeyVaultKey)
+	sim.WriteJSON(w, http.StatusOK, keyBundle(latest.KeyVaultKey))
 }
 
 func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1296,7 +1371,7 @@ func handleKVDeleteKey(w http.ResponseWriter, r *http.Request, vault, name strin
 	rec.ScheduledPurgeAt = now + 90*24*60*60
 	rec.RecoveryID = buildKVURL(r, vault, "deletedkeys", name, "")
 	keyVaultKeys.Put(keyVaultKeyKey(vault, name), rec)
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultKey)
+	sim.WriteJSON(w, http.StatusOK, deletedKeyBundle(rec))
 }
 
 func handleKVGetDeletedKey(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -1387,7 +1462,7 @@ func handleKVRestoreKey(w http.ResponseWriter, r *http.Request, vault string) {
 	rec.Vault = vault
 	keyVaultKeys.Put(keyVaultKeyKey(vault, rec.Name), rec)
 	if latest, ok := rec.latest(); ok {
-		sim.WriteJSON(w, http.StatusOK, latest.KeyVaultKey)
+		sim.WriteJSON(w, http.StatusOK, keyBundle(latest.KeyVaultKey))
 		return
 	}
 	sim.AzureError(w, "BadParameter", "key backup blob does not contain any key versions", http.StatusBadRequest)
@@ -1613,7 +1688,7 @@ func keyVaultCertKey(vault, name string) string { return vault + "/" + name }
 
 func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
 	var body struct {
-		Policy            map[string]any    `json:"policy,omitempty"`
+		Policy            *kvCertPolicy     `json:"policy,omitempty"`
 		Attributes        *KeyVaultAttrs    `json:"attributes,omitempty"`
 		PreserveCertOrder *bool             `json:"preserveCertOrder,omitempty"`
 		Tags              map[string]string `json:"tags,omitempty"`
@@ -1668,7 +1743,7 @@ func handleKVCreateCertificate(w http.ResponseWriter, r *http.Request, vault, na
 func handleKVImportCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
 	var body struct {
 		Base64EncodedCertificate string            `json:"value"`
-		Policy                   map[string]any    `json:"policy,omitempty"`
+		Policy                   *kvCertPolicy     `json:"policy,omitempty"`
 		Attributes               *KeyVaultAttrs    `json:"attributes,omitempty"`
 		PreserveCertOrder        *bool             `json:"preserveCertOrder,omitempty"`
 		Tags                     map[string]string `json:"tags,omitempty"`
@@ -1717,7 +1792,7 @@ func handleKVMergeCertificate(w http.ResponseWriter, r *http.Request, vault, nam
 		sim.AzureError(w, "BadParameter", "invalid x5c certificate: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	policy := map[string]any{"issuer": map[string]any{"name": "Unknown"}}
+	policy := &kvCertPolicy{Issuer: &kvCertIssuer{Name: "Unknown"}}
 	if rec, ok := keyVaultCertificates.Get(keyVaultCertKey(vault, name)); ok {
 		if v, ok := rec.latest(); ok && v.Policy != nil {
 			policy = v.Policy
@@ -1903,7 +1978,7 @@ func handleKVDeleteCertificate(w http.ResponseWriter, r *http.Request, vault, na
 	rec.ScheduledPurgeAt = now + 90*24*60*60
 	rec.RecoveryID = buildKVURL(r, vault, "deletedcertificates", name, "")
 	keyVaultCertificates.Put(keyVaultCertKey(vault, name), rec)
-	sim.WriteJSON(w, http.StatusOK, rec.KeyVaultCertificate)
+	sim.WriteJSON(w, http.StatusOK, deletedCertificateBundle(rec))
 }
 
 func handleKVGetDeletedCertificate(w http.ResponseWriter, r *http.Request, vault, name string) {
@@ -2213,31 +2288,20 @@ func makeSelfSignedCertificateDER(name string) ([]byte, string, error) {
 	return der, base64.RawURLEncoding.EncodeToString(sum[:]), nil
 }
 
-func certificateContentType(policy map[string]any) string {
-	if policy == nil {
-		return "application/x-pkcs12"
-	}
-	secretProps, _ := policy["secret_props"].(map[string]any)
-	if secretProps == nil {
-		secretProps, _ = policy["secretProperties"].(map[string]any)
-	}
-	if secretProps != nil {
-		if v, ok := secretProps["contentType"].(string); ok && v != "" {
-			return v
-		}
+func certificateContentType(policy *kvCertPolicy) string {
+	if policy != nil && policy.SecretProps != nil && policy.SecretProps.ContentType != "" {
+		return policy.SecretProps.ContentType
 	}
 	return "application/x-pkcs12"
 }
 
-func certificateOperation(r *http.Request, vault, name, target string, policy map[string]any, status string) kvCertOperation {
+func certificateOperation(r *http.Request, vault, name, target string, policy *kvCertPolicy, status string) kvCertOperation {
 	if status == "" {
 		status = "completed"
 	}
-	issuer := map[string]any{"name": "Self"}
-	if policy != nil {
-		if v, ok := policy["issuer"].(map[string]any); ok && v != nil {
-			issuer = v
-		}
+	issuer := &kvCertIssuer{Name: "Self"}
+	if policy != nil && policy.Issuer != nil {
+		issuer = policy.Issuer
 	}
 	return kvCertOperation{
 		ID:                    buildKVURL(r, vault, "certificates", name, "pending"),
@@ -2251,7 +2315,7 @@ func certificateOperation(r *http.Request, vault, name, target string, policy ma
 	}
 }
 
-func newKVCertificate(r *http.Request, vault, name string, certDER []byte, policy map[string]any, attrs *KeyVaultAttrs, tags map[string]string, preserve *bool) KeyVaultCertificate {
+func newKVCertificate(r *http.Request, vault, name string, certDER []byte, policy *kvCertPolicy, attrs *KeyVaultAttrs, tags map[string]string, preserve *bool) KeyVaultCertificate {
 	version := generateUUID()
 	sum := sha1.Sum(certDER)
 	now := time.Now().Unix()

@@ -255,6 +255,33 @@ func handleSSMPutParameter(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ssmParameterWire projects a stored parameter onto the wire Parameter
+// shape (GetParameter / GetParameters / GetParametersByPath). Tier,
+// Description, KeyId, and AllowedPattern are ParameterMetadata members
+// (DescribeParameters) kept in the store but absent from Parameter.
+func ssmParameterWire(p SSMParameter) map[string]any {
+	out := map[string]any{
+		"Name":             p.Name,
+		"Type":             p.Type,
+		"Value":            p.Value,
+		"Version":          p.Version,
+		"LastModifiedDate": p.LastModifiedDate,
+		"ARN":              p.ARN,
+	}
+	if p.DataType != "" {
+		out["DataType"] = p.DataType
+	}
+	return out
+}
+
+func ssmParametersWire(params []SSMParameter) []map[string]any {
+	out := make([]map[string]any, 0, len(params))
+	for _, p := range params {
+		out = append(out, ssmParameterWire(p))
+	}
+	return out
+}
+
 func handleSSMGetParameter(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name           string `json:"Name"`
@@ -271,7 +298,7 @@ func handleSSMGetParameter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Parameter": param,
+		"Parameter": ssmParameterWire(param),
 	})
 }
 
@@ -300,7 +327,7 @@ func handleSSMGetParameters(w http.ResponseWriter, r *http.Request) {
 		invalid = []string{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"Parameters":        found,
+		"Parameters":        ssmParametersWire(found),
 		"InvalidParameters": invalid,
 	})
 }
@@ -333,10 +360,7 @@ func handleSSMGetParametersByPath(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	})
-	if all == nil {
-		all = []SSMParameter{}
-	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Parameters": all})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"Parameters": ssmParametersWire(all)})
 }
 
 func handleSSMDescribeParameters(w http.ResponseWriter, r *http.Request) {

@@ -1,6 +1,7 @@
 package gcp_sdk_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -9,15 +10,58 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"google.golang.org/api/option"
+	run "google.golang.org/api/run/v1"
 )
 
-// Cloud Run v1 services SDK tests (Knative-style API). Closes the GCP
-// parity gap per plan item B.1a — sockerless doesn't use this API on
-// the runner path today, but the simulator ships the slice so the
-// parity doc has zero ✖ rows. Uses direct REST rather than the
-// google.golang.org/api/run/v1 client because the v1 client wraps the
-// service resource in unwieldy proto types; REST is cleaner for
-// verifying wire-level behavior.
+// Cloud Run v1 services SDK tests (Knative-style API). Sockerless
+// doesn't use this API on the runner path today, but the simulator
+// ships the slice so `gcloud run services *` and the run/v1 client
+// round-trip. The direct-REST tests assert wire-level member shapes;
+// TestCloudRunServices_RunV1ClientRoundTrip drives the canonical
+// google.golang.org/api/run/v1 client, which builds the real
+// /apis/serving.knative.dev/v1/... method paths and so pins the
+// simulator's path shape to the Discovery document's.
+
+// TestCloudRunServices_RunV1ClientRoundTrip exercises the knative
+// namespaces.services surface through the official run/v1 client.
+func TestCloudRunServices_RunV1ClientRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc, err := run.NewService(ctx,
+		option.WithEndpoint(baseURL+"/"),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	const namespace = "test-project-runv1"
+	created, err := svc.Namespaces.Services.Create("namespaces/"+namespace, &run.Service{
+		ApiVersion: "serving.knative.dev/v1",
+		Kind:       "Service",
+		Metadata:   &run.ObjectMeta{Name: "svc-runv1"},
+		Spec: &run.ServiceSpec{Template: &run.RevisionTemplate{
+			Spec: &run.RevisionSpec{Containers: []*run.Container{{Image: "gcr.io/x/hello"}}},
+		}},
+	}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "svc-runv1", created.Metadata.Name)
+
+	got, err := svc.Namespaces.Services.Get("namespaces/" + namespace + "/services/svc-runv1").Do()
+	require.NoError(t, err)
+	assert.Equal(t, namespace, got.Metadata.Namespace)
+	require.NotNil(t, got.Status)
+	assert.NotEmpty(t, got.Status.Url)
+
+	list, err := svc.Namespaces.Services.List("namespaces/" + namespace).Do()
+	require.NoError(t, err)
+	require.Len(t, list.Items, 1)
+	assert.Equal(t, "svc-runv1", list.Items[0].Metadata.Name)
+
+	_, err = svc.Namespaces.Services.Delete("namespaces/" + namespace + "/services/svc-runv1").Do()
+	require.NoError(t, err)
+
+	_, err = svc.Namespaces.Services.Get("namespaces/" + namespace + "/services/svc-runv1").Do()
+	require.Error(t, err, "service must be gone after delete")
+}
 
 func TestCloudRunServices_CreateGetListDelete(t *testing.T) {
 	namespace := "test-project"
@@ -29,7 +73,7 @@ func TestCloudRunServices_CreateGetListDelete(t *testing.T) {
 		"metadata":{"name":"svc-roundtrip","labels":{"env":"test"}},
 		"spec":{"template":{"spec":{"containers":[{"image":"gcr.io/x/hello","env":[{"name":"FOO","value":"bar"}]}]}}}
 	}`
-	createResp := doKnativePOST(t, "/v1/namespaces/"+namespace+"/services", createBody)
+	createResp := doKnativePOST(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services", createBody)
 
 	var created struct {
 		Metadata CRServiceMetaResp `json:"metadata"`
@@ -48,13 +92,13 @@ func TestCloudRunServices_CreateGetListDelete(t *testing.T) {
 	assert.Equal(t, "True", created.Status.Conditions[0].Status)
 
 	// Get.
-	getResp := doKnativeGET(t, "/v1/namespaces/"+namespace+"/services/svc-roundtrip")
+	getResp := doKnativeGET(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services/svc-roundtrip")
 	var got struct{ Metadata CRServiceMetaResp }
 	require.NoError(t, json.Unmarshal([]byte(getResp), &got))
 	assert.Equal(t, "svc-roundtrip", got.Metadata.Name)
 
 	// List — should contain the service we created.
-	listResp := doKnativeGET(t, "/v1/namespaces/"+namespace+"/services")
+	listResp := doKnativeGET(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services")
 	var list struct {
 		Items []struct{ Metadata CRServiceMetaResp } `json:"items"`
 	}
@@ -66,10 +110,10 @@ func TestCloudRunServices_CreateGetListDelete(t *testing.T) {
 	assert.Contains(t, names, "svc-roundtrip")
 
 	// Delete.
-	doKnativeDELETE(t, "/v1/namespaces/"+namespace+"/services/svc-roundtrip")
+	doKnativeDELETE(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services/svc-roundtrip")
 
 	// Verify gone.
-	req, _ := http.NewRequest("GET", baseURL+"/v1/namespaces/"+namespace+"/services/svc-roundtrip", nil)
+	req, _ := http.NewRequest("GET", baseURL+"/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services/svc-roundtrip", nil)
 	resp, err := http.DefaultClient.Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
@@ -83,13 +127,13 @@ func TestCloudRunServices_ReplaceBumpsGeneration(t *testing.T) {
 		"metadata":{"name":"svc-rev"},
 		"spec":{"template":{"spec":{"containers":[{"image":"gcr.io/x/v1"}]}}}
 	}`
-	doKnativePOST(t, "/v1/namespaces/"+namespace+"/services", createBody)
+	doKnativePOST(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services", createBody)
 
 	replaceBody := `{
 		"metadata":{"name":"svc-rev","labels":{"version":"v2"}},
 		"spec":{"template":{"spec":{"containers":[{"image":"gcr.io/x/v2"}]}}}
 	}`
-	updResp := doKnativePUT(t, "/v1/namespaces/"+namespace+"/services/svc-rev", replaceBody)
+	updResp := doKnativePUT(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services/svc-rev", replaceBody)
 
 	var updated struct {
 		Metadata CRServiceMetaResp `json:"metadata"`
@@ -104,7 +148,7 @@ func TestCloudRunServices_ReplaceBumpsGeneration(t *testing.T) {
 	assert.Equal(t, "v2", updated.Metadata.Labels["version"])
 
 	// Cleanup.
-	doKnativeDELETE(t, "/v1/namespaces/"+namespace+"/services/svc-rev")
+	doKnativeDELETE(t, "/apis/serving.knative.dev/v1/namespaces/"+namespace+"/services/svc-rev")
 }
 
 // ---- helpers ----

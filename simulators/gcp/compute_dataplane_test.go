@@ -86,7 +86,7 @@ func TestGCPComputeLoadBalancerDataPlaneProxiesHealthyInstanceGroupMember(t *tes
 	gcpURLMaps = sim.MakeStore[ComputeURLMap](nil, "test_um")
 	gcpTargetHTTPProxies = sim.MakeStore[ComputeTargetHTTPProxy](nil, "test_proxy")
 	gcpForwardingRules = sim.MakeStore[ComputeForwardingRule](nil, "test_fr")
-	gcpInstanceGroups = sim.MakeStore[ComputeInstanceGroup](nil, "test_ig")
+	gcpInstanceGroups = sim.MakeStore[storedComputeInstanceGroup](nil, "test_ig")
 	gcpInstances = sim.MakeStore[ComputeInstance](nil, "test_instances")
 	defer func() {
 		gcpHealthChecks = nil
@@ -128,11 +128,13 @@ func TestGCPComputeLoadBalancerDataPlaneProxiesHealthyInstanceGroupMember(t *tes
 			NetworkIP: host,
 		}},
 	}
-	group := ComputeInstanceGroup{
-		Name:       "ig",
-		SelfLink:   "projects/test-project/zones/us-central1-a/instanceGroups/ig",
-		NamedPorts: []ComputeInstanceGroupNamedPort{{Name: "http", Port: int64(port)}},
-		Instances:  []ComputeInstanceGroupInstance{{Instance: instance.SelfLink}},
+	group := storedComputeInstanceGroup{
+		ComputeInstanceGroup: ComputeInstanceGroup{
+			Name:       "ig",
+			SelfLink:   "projects/test-project/zones/us-central1-a/instanceGroups/ig",
+			NamedPorts: []ComputeInstanceGroupNamedPort{{Name: "http", Port: int64(port)}},
+		},
+		Instances: []ComputeInstanceGroupInstance{{Instance: instance.SelfLink}},
 	}
 	hc := ComputeHealthCheck{
 		Name:       "hc",

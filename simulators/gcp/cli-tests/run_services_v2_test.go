@@ -8,10 +8,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// CLI-level smoke for the v2 Cloud Run Services routes. The sim
-// previously only handled v1 Knative service paths
-// (`/v1/namespaces/{ns}/services`); this exercises the v2 REST
-// surface used by run.NewServicesRESTClient.
+// CLI-level smoke for the v2 Cloud Run Services routes — the v2 REST
+// surface used by run.NewServicesRESTClient. The v1 Knative service
+// surface (`/apis/serving.knative.dev/v1/namespaces/{ns}/services`) is
+// covered by the sdk-tests.
 
 func servicesBaseURL() string {
 	return fmt.Sprintf("%s/v2/projects/%s/locations/%s/services", baseURL, project, location)

@@ -20,7 +20,33 @@ type ContainerAppEnvironment struct {
 	// connected to the network with the job short name as DNS alias,
 	// so cross-job DNS works via Docker's embedded resolver. Empty
 	// until the env's PUT handler creates the network.
+	//
+	// Sockerless-internal wiring: it persists through the store's JSON
+	// marshal but must never appear on the ARM wire — responses go
+	// through wire(), which excludes it.
 	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
+}
+
+// containerAppEnvironmentWire is the ARM response shape for a managed
+// environment: the stored record minus sockerless-internal wiring.
+type containerAppEnvironmentWire struct {
+	ID         string            `json:"id"`
+	Name       string            `json:"name"`
+	Type       string            `json:"type"`
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties EnvProperties     `json:"properties"`
+}
+
+func (e ContainerAppEnvironment) wire() containerAppEnvironmentWire {
+	return containerAppEnvironmentWire{
+		ID:         e.ID,
+		Name:       e.Name,
+		Type:       e.Type,
+		Location:   e.Location,
+		Tags:       e.Tags,
+		Properties: e.Properties,
+	}
 }
 
 // acaEnvironments is the package-level store for Container Apps
@@ -132,7 +158,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		environments.Put(resourceID, env)
 
 		// go-azure-sdk expects 200 for sync creates
-		sim.WriteJSON(w, http.StatusOK, env)
+		sim.WriteJSON(w, http.StatusOK, env.wire())
 	})
 
 	// GET - Get container app environment
@@ -149,7 +175,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 				"Managed environment '%s' not found.", envName)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, env)
+		sim.WriteJSON(w, http.StatusOK, env.wire())
 	})
 
 	// DELETE - Delete container app environment

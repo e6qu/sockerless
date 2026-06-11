@@ -32,11 +32,22 @@ type ManagedZone struct {
 	ForwardingConfig   json.RawMessage `json:"forwardingConfig,omitempty"`
 	PeeringConfig      json.RawMessage `json:"peeringConfig,omitempty"`
 	CloudLoggingConfig json.RawMessage `json:"cloudLoggingConfig,omitempty"`
+}
+
+// storedManagedZone is the persisted row backing a managed zone: the
+// wire-shape ManagedZone (what handlers emit — real Cloud DNS's
+// ManagedZone has no dockerNetworkName member) plus sockerless wiring
+// that must survive a simulator restart. The embedding flattens on
+// json.Marshal, so sim.Store persistence keeps the same row shape the
+// wiring has always been recovered from.
+type storedManagedZone struct {
+	ManagedZone
 	// DockerNetworkName is the real Docker user-defined network backing
 	// this private zone. Containers referenced by A records inside the
 	// zone are connected to this network with the record's short name
 	// as DNS alias, so cross-container DNS resolves via Docker's
-	// embedded DNS. Empty for public zones.
+	// embedded DNS. Empty for public zones. Store-only: never emitted
+	// on the wire.
 	DockerNetworkName string `json:"dockerNetworkName,omitempty"`
 }
 
@@ -92,7 +103,7 @@ type storedDNSChange struct {
 }
 
 func registerCloudDNS(srv *sim.Server) {
-	zones := sim.MakeStore[ManagedZone](srv.DB(), "dns_zones")
+	zones := sim.MakeStore[storedManagedZone](srv.DB(), "dns_zones")
 	recordSets := sim.MakeStore[storedResourceRecordSet](srv.DB(), "dns_record_sets")
 	changes := sim.MakeStore[storedDNSChange](srv.DB(), "dns_changes")
 
@@ -141,17 +152,18 @@ func registerCloudDNS(srv *sim.Server) {
 		// Containers registered in the zone via A records (sockerless's
 		// service-register step) get connected to this network with
 		// their record short-name as DNS alias, so cross-container DNS
-		// works via Docker's embedded resolver. Public zones keep
-		// today's behavior (no Docker network).
+		// works via Docker's embedded resolver. Public zones get no
+		// Docker network.
+		stored := storedManagedZone{ManagedZone: zone}
 		if zone.Visibility == "private" {
 			netName := "sim-" + zone.ID
 			if _, err := sim.EnsureDockerNetwork(netName); err == nil {
-				zone.DockerNetworkName = netName
+				stored.DockerNetworkName = netName
 			}
 		}
 
-		zones.Put(key, zone)
-		sim.WriteJSON(w, http.StatusOK, zone)
+		zones.Put(key, stored)
+		sim.WriteJSON(w, http.StatusOK, stored.ManagedZone)
 	})
 
 	// List managed zones
@@ -159,12 +171,13 @@ func registerCloudDNS(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		prefix := project + "/"
 
-		items := zones.Filter(func(z ManagedZone) bool {
+		stored := zones.Filter(func(z storedManagedZone) bool {
 			key := project + "/" + z.Name
 			return strings.HasPrefix(key, prefix)
 		})
-		if items == nil {
-			items = []ManagedZone{}
+		items := make([]ManagedZone, 0, len(stored))
+		for _, z := range stored {
+			items = append(items, z.ManagedZone)
 		}
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
@@ -183,7 +196,7 @@ func registerCloudDNS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed zone %q not found", zoneName)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, zone)
+		sim.WriteJSON(w, http.StatusOK, zone.ManagedZone)
 	})
 
 	// Delete managed zone
@@ -546,7 +559,7 @@ func dnsRecordSetsEqual(a, b ResourceRecordSet) bool {
 		reflect.DeepEqual(a.Rrdatas, b.Rrdatas)
 }
 
-func connectDNSRecordToZone(zone ManagedZone, rs ResourceRecordSet) {
+func connectDNSRecordToZone(zone storedManagedZone, rs ResourceRecordSet) {
 	if zone.DockerNetworkName == "" || rs.Type != "A" || len(rs.Rrdatas) == 0 {
 		return
 	}
@@ -556,7 +569,7 @@ func connectDNSRecordToZone(zone ManagedZone, rs ResourceRecordSet) {
 	}
 }
 
-func disconnectDNSRecordFromZone(zone ManagedZone, rs ResourceRecordSet) {
+func disconnectDNSRecordFromZone(zone storedManagedZone, rs ResourceRecordSet) {
 	if zone.DockerNetworkName == "" || rs.Type != "A" || len(rs.Rrdatas) == 0 {
 		return
 	}

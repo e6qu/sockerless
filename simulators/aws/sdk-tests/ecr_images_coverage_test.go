@@ -35,11 +35,18 @@ func TestECR_ListAndDescribeAndDeleteImages(t *testing.T) {
 	require.Len(t, desc.ImageDetails, 1)
 	assert.Contains(t, desc.ImageDetails[0].ImageTags, "v1")
 
-	_, err = c.BatchDeleteImage(ctx, &ecr.BatchDeleteImageInput{
+	del, err := c.BatchDeleteImage(ctx, &ecr.BatchDeleteImageInput{
 		RepositoryName: aws.String("cov-images"),
 		ImageIds:       []ecrtypes.ImageIdentifier{{ImageTag: aws.String("v1")}},
 	})
 	require.NoError(t, err)
+	// Deleted entries are bare ImageIdentifier objects (imageDigest /
+	// imageTag) the SDK reads back directly — the digest is resolved even
+	// though the delete was by tag.
+	require.Len(t, del.ImageIds, 1)
+	assert.Equal(t, "v1", aws.ToString(del.ImageIds[0].ImageTag))
+	assert.NotEmpty(t, aws.ToString(del.ImageIds[0].ImageDigest))
+	assert.Empty(t, del.Failures)
 
 	// The image (and its digest alias) is gone from both reads.
 	descAfter, err := c.DescribeImages(ctx, &ecr.DescribeImagesInput{RepositoryName: aws.String("cov-images")})

@@ -195,9 +195,30 @@ func handlePGCreateServer(w http.ResponseWriter, r *http.Request) {
 			stored.Properties["state"] = "Ready"
 		})
 	})
-	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.DBforPostgreSQL", s.Location, "operationStatuses", opID, r.URL.Query().Get("api-version"))
+	// Servers_Create declares 202-only (no success body): the caller
+	// polls Azure-AsyncOperation until Succeeded, then GETs the
+	// resource URL (Location) for the created server.
+	pgWriteAsyncAccepted(w, r, sub, s.Location, opID)
+}
+
+// pgWriteAsyncAccepted answers a PostgreSQL flexible-server mutation
+// with the LRO contract the 2025-08-01 spec declares for PUT and
+// DELETE: 202 Accepted, no body, Azure-AsyncOperation pointing at the
+// operation-status poll URL and Location at the resource URL.
+func pgWriteAsyncAccepted(w http.ResponseWriter, r *http.Request, sub, location, opID string) {
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.DBforPostgreSQL", location, "operationStatuses", opID, r.URL.Query().Get("api-version"))
 	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
-	sim.WriteJSON(w, http.StatusCreated, s)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// pgServerLocation resolves the owning server's location for the
+// sub-resource LRO poll URL; the spec's operationStatuses path is
+// location-scoped.
+func pgServerLocation(serverID string) string {
+	if s, ok := pgServers.Get(serverID); ok && s.Location != "" {
+		return s.Location
+	}
+	return "global"
 }
 
 func handlePGGetServer(w http.ResponseWriter, r *http.Request) {
@@ -211,7 +232,9 @@ func handlePGGetServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePGDeleteServer(w http.ResponseWriter, r *http.Request) {
-	id := pgServerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	sub := sim.PathParam(r, "subscriptionId")
+	id := pgServerID(sub, sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	location := pgServerLocation(id)
 	if !pgServers.Delete(id) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "server not found: %s", id)
 		return
@@ -228,7 +251,7 @@ func handlePGDeleteServer(w http.ResponseWriter, r *http.Request) {
 			pgFirewallRules.Delete(fr.ID)
 		}
 	}
-	w.WriteHeader(http.StatusAccepted)
+	pgWriteAsyncAccepted(w, r, sub, location, issueAzureAsyncOperation(nil))
 }
 
 func handlePGListServersByRG(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +298,7 @@ func handlePGCreateDatabase(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	pgDatabases.Put(id, d)
-	sim.WriteJSON(w, http.StatusOK, d)
+	pgWriteAsyncAccepted(w, r, sim.PathParam(r, "subscriptionId"), pgServerLocation(parent), issueAzureAsyncOperation(nil))
 }
 
 func handlePGGetDatabase(w http.ResponseWriter, r *http.Request) {
@@ -290,13 +313,14 @@ func handlePGGetDatabase(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePGDeleteDatabase(w http.ResponseWriter, r *http.Request) {
-	id := pgServerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
-		"/databases/" + sim.PathParam(r, "db")
+	sub := sim.PathParam(r, "subscriptionId")
+	parent := pgServerID(sub, sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	id := parent + "/databases/" + sim.PathParam(r, "db")
 	if !pgDatabases.Delete(id) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "database not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	pgWriteAsyncAccepted(w, r, sub, pgServerLocation(parent), issueAzureAsyncOperation(nil))
 }
 
 func handlePGListDatabases(w http.ResponseWriter, r *http.Request) {
@@ -333,7 +357,7 @@ func handlePGCreateFirewallRule(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 	}
 	pgFirewallRules.Put(id, fr)
-	sim.WriteJSON(w, http.StatusOK, fr)
+	pgWriteAsyncAccepted(w, r, sim.PathParam(r, "subscriptionId"), pgServerLocation(parent), issueAzureAsyncOperation(nil))
 }
 
 func handlePGGetFirewallRule(w http.ResponseWriter, r *http.Request) {
@@ -348,13 +372,14 @@ func handlePGGetFirewallRule(w http.ResponseWriter, r *http.Request) {
 }
 
 func handlePGDeleteFirewallRule(w http.ResponseWriter, r *http.Request) {
-	id := pgServerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
-		"/firewallRules/" + sim.PathParam(r, "rule")
+	sub := sim.PathParam(r, "subscriptionId")
+	parent := pgServerID(sub, sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	id := parent + "/firewallRules/" + sim.PathParam(r, "rule")
 	if !pgFirewallRules.Delete(id) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "firewall rule not found")
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	pgWriteAsyncAccepted(w, r, sub, pgServerLocation(parent), issueAzureAsyncOperation(nil))
 }
 
 func handlePGListFirewallRules(w http.ResponseWriter, r *http.Request) {

@@ -34,8 +34,12 @@ func TestContainerApps_CrossJobDNS(t *testing.T) {
 
 	// 2. Managed environment — simulator auto-backs it with a Docker network.
 	envBody := `{"location":"eastus","properties":{"zoneRedundant":false}}`
-	doPUT(t, fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s?api-version=2024-03-01",
+	envEcho := doPUT(t, fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s?api-version=2024-03-01",
 		baseURL, subscriptionID, rg, env), envBody)
+	// The Docker network that backs the env is sim-internal wiring; it
+	// must never leak onto the ARM wire (ManagedEnvironment has no such
+	// member).
+	require.NotContains(t, envEcho, "dockerNetworkName")
 	defer doDELETE(t, fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s?api-version=2024-03-01",
 		baseURL, subscriptionID, rg, env))
 

@@ -93,6 +93,12 @@ func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	archives, err := eb.ListArchives(ctx, &eventbridge.ListArchivesInput{EventSourceArn: createBus.EventBusArn})
 	require.NoError(t, err)
 	require.Len(t, archives.Archives, 1)
+	// List entries are the summary Archive shape — identity + state only
+	// (ArchiveArn / Description / EventPattern ride DescribeArchive).
+	assert.Equal(t, "eb-sdk-archive", aws.ToString(archives.Archives[0].ArchiveName))
+	assert.Equal(t, aws.ToString(createBus.EventBusArn), aws.ToString(archives.Archives[0].EventSourceArn))
+	assert.Equal(t, ebtypes.ArchiveStateEnabled, archives.Archives[0].State)
+	assert.NotNil(t, archives.Archives[0].CreationTime)
 
 	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("eb-sdk-replay-q")})
 	require.NoError(t, err)
@@ -174,6 +180,12 @@ func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	replays, err := eb.ListReplays(ctx, &eventbridge.ListReplaysInput{EventSourceArn: createArchive.ArchiveArn})
 	require.NoError(t, err)
 	require.Len(t, replays.Replays, 1)
+	// List entries are the summary Replay shape — identity + state +
+	// timestamps only (ReplayArn / Description ride DescribeReplay).
+	assert.Equal(t, "eb-sdk-replay", aws.ToString(replays.Replays[0].ReplayName))
+	assert.Equal(t, aws.ToString(createArchive.ArchiveArn), aws.ToString(replays.Replays[0].EventSourceArn))
+	assert.Equal(t, ebtypes.ReplayStateCompleted, replays.Replays[0].State)
+	assert.NotNil(t, replays.Replays[0].ReplayStartTime)
 
 	received, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
 		QueueUrl:            q.QueueUrl,

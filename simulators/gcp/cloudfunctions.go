@@ -57,16 +57,45 @@ type ServiceConfig struct {
 	AllTrafficOnLatestRevision *bool             `json:"allTrafficOnLatestRevision,omitempty"`
 	IngressSettings            string            `json:"ingressSettings,omitempty"`
 	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
-	SimCommand                 []string          `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
-	SimImage                   string            `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
-	SimArchitecture            string            `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
+}
+
+// storedServiceConfig is the persisted/request-side ServiceConfig: the
+// wire shape plus the simulator-only workload wiring. The sim* members
+// are accepted on requests (test-convenience inputs) and persisted so
+// invocations survive a simulator restart, but real ServiceConfig has
+// no such members, so responses emit only the embedded wire shape.
+type storedServiceConfig struct {
+	ServiceConfig
+	SimCommand      []string `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
+	SimImage        string   `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
+	SimArchitecture string   `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
+}
+
+// storedFunction is the persisted row backing a function. Its
+// serviceConfig field shadows the embedded wire Function's, so request
+// decoding captures the sim* wiring and sim.Store persistence keeps the
+// same nested row shape the wiring has always been recovered from.
+type storedFunction struct {
+	Function
+	ServiceConfig *storedServiceConfig `json:"serviceConfig,omitempty"`
+}
+
+// wire is the Function resource emitted on the wire: the stored
+// function with its serviceConfig narrowed to the schema's member set.
+func (f storedFunction) wire() Function {
+	fn := f.Function
+	if f.ServiceConfig != nil {
+		sc := f.ServiceConfig.ServiceConfig
+		fn.ServiceConfig = &sc
+	}
+	return fn
 }
 
 // functionCPUResources returns the ResourceRequirements that should be
 // stamped onto the underlying Cloud Run service's container so the
 // regional quota check sees the real CPU load. ServiceConfig.AvailableCpu
 // is the explicit field; default is "1" (Cloud Functions Gen2 minimum).
-func functionCPUResources(fn Function) *ResourceRequirements {
+func functionCPUResources(fn storedFunction) *ResourceRequirements {
 	cpu := "1"
 	if fn.ServiceConfig != nil && fn.ServiceConfig.AvailableCpu != "" {
 		cpu = fn.ServiceConfig.AvailableCpu
@@ -75,10 +104,10 @@ func functionCPUResources(fn Function) *ResourceRequirements {
 }
 
 // Package-level store for dashboard access.
-var gcfFunctions sim.Store[Function]
+var gcfFunctions sim.Store[storedFunction]
 
 func registerCloudFunctions(srv *sim.Server) {
-	functions := sim.MakeStore[Function](srv.DB(), "gcf_functions")
+	functions := sim.MakeStore[storedFunction](srv.DB(), "gcf_functions")
 	gcfFunctions = functions
 
 	// Create function
@@ -91,7 +120,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			return
 		}
 
-		var fn Function
+		var fn storedFunction
 		if err := sim.ReadJSON(r, &fn); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
@@ -112,7 +141,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			fn.Environment = "GEN_2"
 		}
 		if fn.ServiceConfig == nil {
-			fn.ServiceConfig = &ServiceConfig{}
+			fn.ServiceConfig = &storedServiceConfig{}
 		}
 		if fn.ServiceConfig.AllTrafficOnLatestRevision == nil {
 			allTraffic := true
@@ -159,7 +188,7 @@ func registerCloudFunctions(srv *sim.Server) {
 
 		functions.Put(name, fn)
 
-		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
+		lro := newLRO(project, location, fn.wire(), "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 
@@ -202,7 +231,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "function %q not found", name)
 			return
 		}
-		sim.WriteJSON(w, http.StatusOK, fn)
+		sim.WriteJSON(w, http.StatusOK, fn.wire())
 	})
 
 	// Update function: PATCH .../functions/{function}?updateMask=...
@@ -220,7 +249,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "function %q not found", name)
 			return
 		}
-		var patch Function
+		var patch storedFunction
 		if err := sim.ReadJSON(r, &patch); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
@@ -231,7 +260,7 @@ func registerCloudFunctions(srv *sim.Server) {
 		fn.UpdateTime = nowTimestamp()
 		functions.Put(name, fn)
 
-		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
+		lro := newLRO(project, location, fn.wire(), "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 
@@ -242,14 +271,15 @@ func registerCloudFunctions(srv *sim.Server) {
 		prefix := fmt.Sprintf("projects/%s/locations/%s/functions/", project, location)
 		filter := r.URL.Query().Get("filter")
 
-		result := functions.Filter(func(fn Function) bool {
+		stored := functions.Filter(func(fn storedFunction) bool {
 			if !strings.HasPrefix(fn.Name, prefix) {
 				return false
 			}
 			return matchesFunctionFilter(&fn, filter)
 		})
-		if result == nil {
-			result = []Function{}
+		result := make([]Function, 0, len(stored))
+		for _, fn := range stored {
+			result = append(result, fn.wire())
 		}
 		sortCloudFunctions(result)
 		page, next, ok := paginateList(w, r, result)
@@ -269,7 +299,7 @@ func registerCloudFunctions(srv *sim.Server) {
 		functionID := sim.PathParam(r, "functionID")
 
 		// Find the function by scanning for a matching functionID suffix
-		var fn *Function
+		var fn *storedFunction
 		for _, f := range functions.List() {
 			if strings.HasSuffix(f.Name, "/functions/"+functionID) {
 				f := f // copy
@@ -328,7 +358,7 @@ func registerCloudFunctions(srv *sim.Server) {
 
 		functions.Delete(name)
 
-		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
+		lro := newLRO(project, location, fn.wire(), "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 }
@@ -351,7 +381,7 @@ func registerCloudFunctions(srv *sim.Server) {
 //     the command as a host process. Used by SDK tests that want to
 //     verify Cloud Functions invocation semantics without staging an
 //     overlay image.
-func invokeCloudFunctionProcess(fn *Function, project, functionID string) ([]byte, int) {
+func invokeCloudFunctionProcess(fn *storedFunction, project, functionID string) ([]byte, int) {
 	// Container image lives on the underlying Cloud Run service —
 	// Cloud Functions Gen2 are backed by a Run service, and the gcf
 	// backend's overlay-and-swap path lands the real image there via
@@ -519,7 +549,7 @@ func (s *cfLogSink) WriteLog(line sim.LogLine) {
 // buildConfig.*, serviceConfig.*); for the nested config objects a named
 // path replaces the whole sub-object when present, which matches how the
 // provider sends grouped service_config / build_config updates.
-func applyFunctionPatch(fn, patch *Function, mask string) {
+func applyFunctionPatch(fn, patch *storedFunction, mask string) {
 	fields := strings.Split(mask, ",")
 	if mask == "" {
 		fields = nil
@@ -562,7 +592,7 @@ func applyFunctionPatch(fn, patch *Function, mask string) {
 // Empty filter matches every Function. Real Cloud Functions supports
 // the full Cloud Logging filter syntax; this is the operator subset
 // the backend exercises today.
-func matchesFunctionFilter(fn *Function, filter string) bool {
+func matchesFunctionFilter(fn *storedFunction, filter string) bool {
 	filter = strings.TrimSpace(filter)
 	if filter == "" {
 		return true
@@ -619,7 +649,7 @@ func matchesFunctionFilter(fn *Function, filter string) bool {
 // lookupFunctionField resolves a dot-notation field path on a Function.
 // Currently supports `labels.<key>` and `name`; extend as the backend
 // surfaces new filter shapes.
-func lookupFunctionField(fn *Function, field string) string {
+func lookupFunctionField(fn *storedFunction, field string) string {
 	if strings.HasPrefix(field, "labels.") {
 		key := field[len("labels."):]
 		if fn.Labels != nil {
