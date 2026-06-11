@@ -62,7 +62,9 @@ type httpLogsClient struct {
 
 func (c *httpLogsClient) QueryWorkspace(ctx context.Context, workspaceID string, body azquery.Body, _ *azquery.LogsClientQueryWorkspaceOptions) (azquery.LogsClientQueryWorkspaceResponse, error) {
 	reqBody, _ := json.Marshal(body)
-	url := fmt.Sprintf("%s/workspaces/%s/query", c.endpoint, workspaceID)
+	// Same path the azquery SDK builds: the Log Analytics query endpoint
+	// is {host}/v1/workspaces/{id}/query (api.loganalytics.io/v1).
+	url := fmt.Sprintf("%s/v1/workspaces/%s/query", c.endpoint, workspaceID)
 	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(reqBody))
 	if err != nil {
 		return azquery.LogsClientQueryWorkspaceResponse{}, err

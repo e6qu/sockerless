@@ -53,9 +53,24 @@ func main() {
 	defer func() { _ = obs.Shutdown(context.Background()) }()
 	cfg.LogWriter = obs.LogWriter
 
-	srv, err := sim.NewServer(cfg)
+	srv, _, _, err := buildSimulator(cfg)
 	if err != nil {
 		log.Fatalf("simulator startup: %v", err)
+	}
+
+	if err := srv.ListenAndServe(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// buildSimulator constructs the simulator server and registers every
+// simulated AWS service on it. Split from main so the spec-conformance
+// tests can build the full route / operation table in-process and
+// validate it against the vendored Smithy models (specs/cloud-api/aws/).
+func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryRouter, error) {
+	srv, err := sim.NewServer(cfg)
+	if err != nil {
+		return nil, nil, nil, err
 	}
 
 	// Register AWS JSON services (X-Amz-Target header routing)
@@ -146,7 +161,11 @@ func main() {
 	// Embedded UI (no-op with -tags noui)
 	registerUI(srv)
 
-	if err := srv.ListenAndServe(); err != nil {
-		log.Fatal(err)
+	// Runtime wire-shape validation (armed only when
+	// SOCKERLESS_SPEC_VALIDATE is set; see spec_validator.go).
+	if err := armSpecValidator(srv); err != nil {
+		return nil, nil, nil, err
 	}
+
+	return srv, awsRouter, queryRouter, nil
 }

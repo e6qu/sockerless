@@ -99,7 +99,7 @@ func registerCloudFrontKeys(srv *sim.Server) {
 	cfPublicKeys = sim.MakeStore[cfStoredPublicKey](srv.DB(), "cloudfront_public_keys")
 	cfKeyGroups = sim.MakeStore[cfStoredKeyGroup](srv.DB(), "cloudfront_key_groups")
 
-	mux := srv.Mux()
+	mux := srv
 
 	publicKeyResource := cloudTrailRESTResource("AWS::CloudFront::PublicKey", "id")
 	keyGroupResource := cloudTrailRESTResource("AWS::CloudFront::KeyGroup", "id")
@@ -108,7 +108,7 @@ func registerCloudFrontKeys(srv *sim.Server) {
 	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key", cloudTrailRecordedREST("ListPublicKeys", "cloudfront.amazonaws.com", nil, handleCFListPublicKeys))
 	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("GetPublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFGetPublicKey))
 	mux.HandleFunc("GET /"+cfAPIVersion+"/public-key/{id}/config", cloudTrailRecordedREST("GetPublicKeyConfig", "cloudfront.amazonaws.com", publicKeyResource, handleCFGetPublicKeyConfig))
-	mux.HandleFunc("PUT /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("UpdatePublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFUpdatePublicKey))
+	mux.HandleFunc("PUT /"+cfAPIVersion+"/public-key/{id}/config", cloudTrailRecordedREST("UpdatePublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFUpdatePublicKey))
 	mux.HandleFunc("DELETE /"+cfAPIVersion+"/public-key/{id}", cloudTrailRecordedREST("DeletePublicKey", "cloudfront.amazonaws.com", publicKeyResource, handleCFDeletePublicKey))
 
 	// KeyGroup

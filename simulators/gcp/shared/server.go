@@ -31,6 +31,13 @@ type Server struct {
 	handler http.Handler
 	db      *sql.DB         // nil when persistence disabled
 	tracker *ProcessTracker // nil when persistence disabled
+
+	// routePatterns records every mux pattern registered through
+	// Handle/HandleFunc, in registration order. The spec-conformance
+	// tests validate this table against the vendored cloud API specs
+	// (specs/cloud-api/), so all service registration must go through
+	// those two methods rather than the raw mux.
+	routePatterns []string
 }
 
 // NewServer creates a new simulator server with the given configuration.
@@ -122,12 +129,32 @@ func NewServer(cfg Config) (*Server, error) {
 
 // Handle registers a pattern on the server's mux.
 func (s *Server) Handle(pattern string, handler http.Handler) {
+	s.routePatterns = append(s.routePatterns, pattern)
 	s.mux.Handle(pattern, handler)
 }
 
 // HandleFunc registers a handler function on the server's mux.
 func (s *Server) HandleFunc(pattern string, handler http.HandlerFunc) {
+	s.routePatterns = append(s.routePatterns, pattern)
 	s.mux.HandleFunc(pattern, handler)
+}
+
+// RoutePatterns returns every pattern registered through Handle /
+// HandleFunc, in registration order.
+func (s *Server) RoutePatterns() []string {
+	return s.routePatterns
+}
+
+// WrapHandler wraps the server's final handler chain. Host-addressed cloud
+// data planes and the spec-validation capture use this to observe or route
+// requests before generic path handlers.
+func (s *Server) WrapHandler(middleware func(http.Handler) http.Handler) {
+	s.handler = middleware(s.handler)
+}
+
+// ServeHTTP serves through the same final handler chain as ListenAndServe.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.handler.ServeHTTP(w, r)
 }
 
 // Mux returns the underlying ServeMux for direct registration.

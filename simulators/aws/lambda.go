@@ -170,7 +170,7 @@ func lambdaArn(name string) string {
 func registerLambda(srv *sim.Server) {
 	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
 
-	mux := srv.Mux()
+	mux := srv
 
 	lambdaResource := cloudTrailRESTResource("AWS::Lambda::Function", "name", "arn")
 	mux.HandleFunc("POST /2015-03-31/functions", cloudTrailRecordedREST("CreateFunction", "lambda.amazonaws.com", nil, handleLambdaCreateFunction))

@@ -283,7 +283,7 @@ func registerCloudFrontPolicies(srv *sim.Server) {
 	cfOriginRequestPolicies = sim.MakeStore[cfStoredOriginRequestPolicy](srv.DB(), "cloudfront_origin_request_policies")
 	cfResponseHeadersPolicies = sim.MakeStore[cfStoredResponseHeadersPolicy](srv.DB(), "cloudfront_response_headers_policies")
 
-	mux := srv.Mux()
+	mux := srv
 
 	cachePolicyResource := cloudTrailRESTResource("AWS::CloudFront::CachePolicy", "id")
 	originRequestPolicyResource := cloudTrailRESTResource("AWS::CloudFront::OriginRequestPolicy", "id")

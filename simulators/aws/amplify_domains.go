@@ -85,7 +85,7 @@ func registerAmplifyDomains(srv *sim.Server) {
 	amplifyDomains = sim.MakeStore[amplifyStoredDomain](srv.DB(), "amplify_domains")
 	amplifyBackends = sim.MakeStore[amplifyStoredBackend](srv.DB(), "amplify_backends")
 
-	mux := srv.Mux()
+	mux := srv
 	domainResource := cloudTrailRESTResource("AWS::Amplify::Domain", "domainName")
 	backendResource := cloudTrailRESTResource("AWS::Amplify::BackendEnvironment", "environmentName")
 	// Domains

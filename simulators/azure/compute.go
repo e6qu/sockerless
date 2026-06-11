@@ -492,19 +492,24 @@ func registerLoadBalancers(srv *sim.Server) {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	registerLoadBalancerChild(srv, "backendAddressPools", "backendAddressPoolName", "Microsoft.Network/loadBalancers/backendAddressPools",
+	// backendAddressPools is the only load-balancer child collection
+	// with standalone write operations in ARM
+	// (LoadBalancerBackendAddressPools_CreateOrUpdate/Delete); probes
+	// and loadBalancingRules are read-only sub-resources mutated via
+	// the parent loadBalancers PUT.
+	registerLoadBalancerChild(srv, "backendAddressPools", "backendAddressPoolName", "Microsoft.Network/loadBalancers/backendAddressPools", true,
 		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.BackendAddressPools })
-	registerLoadBalancerChild(srv, "probes", "probeName", "Microsoft.Network/loadBalancers/probes",
+	registerLoadBalancerChild(srv, "probes", "probeName", "Microsoft.Network/loadBalancers/probes", false,
 		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.Probes })
-	registerLoadBalancerChild(srv, "loadBalancingRules", "loadBalancingRuleName", "Microsoft.Network/loadBalancers/loadBalancingRules",
+	registerLoadBalancerChild(srv, "loadBalancingRules", "loadBalancingRuleName", "Microsoft.Network/loadBalancers/loadBalancingRules", false,
 		func(lb *LoadBalancer) *[]LoadBalancerChild { return &lb.Properties.LoadBalancingRules })
 }
 
-func registerLoadBalancerChild(srv *sim.Server, collection, paramName, resourceType string, children func(*LoadBalancer) *[]LoadBalancerChild) {
+func registerLoadBalancerChild(srv *sim.Server, collection, paramName, resourceType string, writable bool, children func(*LoadBalancer) *[]LoadBalancerChild) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network"
 	pattern := armBase + "/loadBalancers/{loadBalancerName}/" + collection + "/{" + paramName + "}"
 
-	srv.HandleFunc("PUT "+pattern, func(w http.ResponseWriter, r *http.Request) {
+	putHandler := func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		lbName := sim.PathParam(r, "loadBalancerName")
@@ -523,7 +528,19 @@ func registerLoadBalancerChild(srv *sim.Server, collection, paramName, resourceT
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, child)
-	})
+	}
+	deleteHandler := func(w http.ResponseWriter, r *http.Request) {
+		lbID := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
+		childName := sim.PathParam(r, paramName)
+		azureLBs.Update(lbID, func(lb *LoadBalancer) {
+			removeLoadBalancerChild(children(lb), childName)
+		})
+		w.WriteHeader(http.StatusOK)
+	}
+	if writable {
+		srv.HandleFunc("PUT "+pattern, putHandler)
+		srv.HandleFunc("DELETE "+pattern, deleteHandler)
+	}
 
 	srv.HandleFunc("GET "+pattern, func(w http.ResponseWriter, r *http.Request) {
 		lbID := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
@@ -542,14 +559,6 @@ func registerLoadBalancerChild(srv *sim.Server, collection, paramName, resourceT
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "The Resource %q was not found.", lbID+"/"+collection+"/"+childName)
 	})
 
-	srv.HandleFunc("DELETE "+pattern, func(w http.ResponseWriter, r *http.Request) {
-		lbID := azureLoadBalancerID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "loadBalancerName"))
-		childName := sim.PathParam(r, paramName)
-		azureLBs.Update(lbID, func(lb *LoadBalancer) {
-			removeLoadBalancerChild(children(lb), childName)
-		})
-		w.WriteHeader(http.StatusOK)
-	})
 }
 
 func azureLoadBalancerID(sub, rg, name string) string {

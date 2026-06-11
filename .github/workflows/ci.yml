@@ -262,17 +262,25 @@ jobs:
       - name: Run SDK tests
         run: |
           cd simulators/${{ matrix.cloud }} && go mod download
-          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+            SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
+            SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
+            make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
       - name: Run CLI tests
         run: |
           cd simulators/${{ matrix.cloud }} && go mod download
-          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+            SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
+            SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
+            make cli-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
+      - name: Spec-shape ratchet
+        run: bash scripts/check-spec-violations.sh ${{ matrix.cloud }} "$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl"
 
   sim-aws-sdk:
     name: sim (aws sdk)
@@ -301,10 +309,15 @@ jobs:
       - name: Run AWS SDK tests
         run: |
           cd simulators/aws && go mod download
-          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make sdk-test
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+            SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
+            SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
+            make sdk-test
         timeout-minutes: 5
         env:
           GOWORK: "off"
+      - name: Spec-shape ratchet (aws sdk)
+        run: bash scripts/check-spec-violations.sh aws "$RUNNER_TEMP/aws-spec-violations.jsonl"
 
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
@@ -349,10 +362,15 @@ jobs:
       - name: Run AWS CLI tests
         run: |
           cd simulators/aws && go mod download
-          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make cli-test CLI_TEST_TIMEOUT=${{ matrix.timeout }} CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
+          sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+            SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-cli-spec-violations.jsonl" \
+            SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
+            make cli-test CLI_TEST_TIMEOUT=${{ matrix.timeout }} CLI_TEST_ARGS="-run '${{ matrix.run }}' ./..."
         timeout-minutes: ${{ matrix.timeout_minutes }}
         env:
           GOWORK: "off"
+      - name: Spec-shape ratchet (aws cli ${{ matrix.suite }})
+        run: bash scripts/check-spec-violations.sh aws "$RUNNER_TEMP/aws-cli-spec-violations.jsonl"
 
   tf:
     # Stock hashicorp/aws / hashicorp/google / hashicorp/azurerm

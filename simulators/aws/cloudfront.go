@@ -571,7 +571,7 @@ func registerCloudFront(srv *sim.Server) {
 	cfDistributions = sim.MakeStore[cfStoredDistribution](srv.DB(), "cloudfront_distributions")
 	cfOriginAccessControls = sim.MakeStore[cfStoredOAC](srv.DB(), "cloudfront_oacs")
 
-	mux := srv.Mux()
+	mux := srv
 
 	cfDistributionResource := cloudTrailRESTResource("AWS::CloudFront::Distribution", "id", "Resource")
 	cfOACResource := cloudTrailRESTResource("AWS::CloudFront::OriginAccessControl", "id")

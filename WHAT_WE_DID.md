@@ -4,6 +4,44 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-11 - Spec-based simulator validation (specs/cloud-api + two gates)
+
+The simulators are now validated against the official machine-readable cloud
+API specs, so fidelity cannot silently diverge from what real clients are
+generated from. Vendored under `specs/cloud-api/` (gzipped, never edited,
+pinned, provenance in per-cloud `SOURCES.md`, fetch + freshness scripts):
+37 AWS Smithy models (aws-sdk-go-v2 aws-models @ one SHA), 27 GCP Discovery
+documents (pinned by revision), 112 Azure Swagger files (azure-rest-api-specs
+@ one SHA; api-versions follow the pinned canonical clients).
+
+Two enforcement layers, both hermetic:
+
+- **Static surface conformance** — the shared sim lib records every
+  registered pattern (`Server.Handle/HandleFunc` + AWS router accessors);
+  `buildSimulator()` extracted from each cloud's `main()` lets
+  `spec_conformance_test.go` build the full operation table in-process and
+  assert every operation exists in the vendored spec (justified in-test
+  allowlists for IMDS / OCI data planes / LRO polling URLs / `/sim/v1`).
+  Runs in `make unit-test`; hard CI gate. Found nine real bugs on first
+  run: invented CodeBuild tag ops, CloudFront UpdatePublicKey at the wrong
+  URI, Azure wrong-method/invented routes (BUG-1649..1657) — all fixed.
+- **Runtime wire-shape validation (ratcheted)** — `SOCKERLESS_SPEC_VALIDATE`
+  arms a capture middleware; per-cloud validators check each response
+  member-by-member against the spec output shapes (Smithy / Discovery /
+  Swagger with cross-file $ref + allOf + discriminators). CI runs the
+  SDK/CLI suites armed and gates the report with
+  `scripts/check-spec-violations.sh` against per-cloud allowlists where
+  every entry carries a BUG ID. First armed runs filed BUG-1658..1685
+  (28 shape-drift bugs: invented members like `Task.networkConfiguration`,
+  sockerless wiring leaking onto the wire (`dockerNetworkName`, `simImage`),
+  list summaries leaking describe-only fields, wire-name drift like
+  `minimumTtl` vs `minimumTTL`) as the open burn-down list.
+
+The runtime layer also exposed a static-gate blind spot: gcp vpcaccess was
+never vendored, yet its routes "matched" other docs' trailing-greedy
+`v1/{+name}` templates — the misattributed runtime violations led straight
+to the missing vendor.
+
 ## 2026-06-11 - Simulator conformance + hardening (AWS/GCP/Azure)
 
 A multi-stage effort raising the AWS/GCP/Azure simulators to deep behavioural

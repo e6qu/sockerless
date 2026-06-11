@@ -176,7 +176,7 @@ func TestEventGridCLI_DomainAndSystemTopic(t *testing.T) {
 
 func TestEventGridCLI_PartnerTopicLifecycle(t *testing.T) {
 	partnerTopicURL := baseURL + "/subscriptions/" + subscriptionID + "/resourceGroups/" + resourceGroup +
-		"/providers/Microsoft.EventGrid/partnerTopics/cli-partner-topic?api-version=2021-12-01"
+		"/providers/Microsoft.EventGrid/partnerTopics/cli-partner-topic?api-version=2022-06-15"
 	out := runCLI(t, azRest("PUT", partnerTopicURL, `{"location":"eastus","properties":{"partnerRegistrationImmutableId":"registration-id","source":"partner-source"}}`))
 	var partnerTopic struct {
 		ID         string `json:"id"`
@@ -194,7 +194,7 @@ func TestEventGridCLI_PartnerTopicLifecycle(t *testing.T) {
 		runCLI(t, azRest("DELETE", partnerTopicURL, ""))
 	})
 
-	out = runCLI(t, azRest("GET", baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.EventGrid/partnerTopics?api-version=2021-12-01", ""))
+	out = runCLI(t, azRest("GET", baseURL+"/subscriptions/"+subscriptionID+"/providers/Microsoft.EventGrid/partnerTopics?api-version=2022-06-15", ""))
 	var partnerTopicList struct {
 		Value []struct {
 			Name string `json:"name"`
@@ -211,15 +211,15 @@ func TestEventGridCLI_PartnerTopicLifecycle(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &patchedPartnerTopic))
 	assert.Equal(t, "test", patchedPartnerTopic.Tags["env"])
 
-	out = runCLI(t, azRest("POST", baseURL+partnerTopic.ID+"/activate?api-version=2021-12-01", ""))
+	out = runCLI(t, azRest("POST", baseURL+partnerTopic.ID+"/activate?api-version=2022-06-15", ""))
 	require.NoError(t, json.Unmarshal([]byte(out), &partnerTopic))
 	assert.Equal(t, "Activated", partnerTopic.Properties.ActivationState)
 	assert.Equal(t, "ActivatedByUser", partnerTopic.Properties.ReadinessState)
 
-	subURL := baseURL + partnerTopic.ID + "/providers/Microsoft.EventGrid/eventSubscriptions/cli-partner-sub?api-version=2021-12-01"
+	subURL := baseURL + partnerTopic.ID + "/providers/Microsoft.EventGrid/eventSubscriptions/cli-partner-sub?api-version=2022-06-15"
 	body := `{"properties":{"destination":{"endpointType":"WebHook","properties":{"endpointUrl":"http://127.0.0.1:1"}},"eventDeliverySchema":"EventGridSchema"}}`
 	runCLI(t, azRest("PUT", subURL, body))
-	out = runCLI(t, azRest("GET", baseURL+partnerTopic.ID+"/providers/Microsoft.EventGrid/eventSubscriptions?api-version=2021-12-01", ""))
+	out = runCLI(t, azRest("GET", baseURL+partnerTopic.ID+"/providers/Microsoft.EventGrid/eventSubscriptions?api-version=2022-06-15", ""))
 	var subList struct {
 		Value []struct {
 			Name string `json:"name"`
@@ -229,7 +229,7 @@ func TestEventGridCLI_PartnerTopicLifecycle(t *testing.T) {
 	require.Len(t, subList.Value, 1)
 	assert.Equal(t, "cli-partner-sub", subList.Value[0].Name)
 
-	out = runCLI(t, azRest("POST", baseURL+partnerTopic.ID+"/deactivate?api-version=2021-12-01", ""))
+	out = runCLI(t, azRest("POST", baseURL+partnerTopic.ID+"/deactivate?api-version=2022-06-15", ""))
 	require.NoError(t, json.Unmarshal([]byte(out), &partnerTopic))
 	assert.Equal(t, "Deactivated", partnerTopic.Properties.ActivationState)
 	assert.Equal(t, "DeactivatedByUser", partnerTopic.Properties.ReadinessState)

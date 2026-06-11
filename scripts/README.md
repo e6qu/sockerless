@@ -48,6 +48,12 @@ All eight run in pre-commit when the matching files are touched, and uncondition
 |---|---|---|
 | `seed-surface-tables.sh` | Regenerates [`specs/SIM_SURFACE_TABLES/`](../specs/SIM_SURFACE_TABLES/README.md) stubs from registered sim `HandleFunc` patterns; hand-written sections inside `<!-- HAND-WRITTEN BEGIN/END -->` are preserved. | manual, after adding sim routes |
 | `update-github-openapi.sh` | Refreshes the vendored GitHub OpenAPI description (`bleephub/testdata/github-openapi.json.gz`) used by bleephub's hermetic API-definition fidelity test. | manual |
+| `fetch-aws-spec.sh` | Vendors/refreshes one AWS Smithy model into [`specs/cloud-api/aws/`](../specs/cloud-api/README.md), pinned to an `aws/aws-sdk-go-v2` commit; rewrites the `SOURCES.md` row. | manual, when adding a service / refreshing pins |
+| `fetch-gcp-discovery.sh` | Vendors/refreshes one Google API Discovery document into `specs/cloud-api/gcp/`, pinned by the document's `revision`. | manual |
+| `fetch-azure-spec.sh` | Vendors/refreshes one Azure Swagger 2.0 spec into `specs/cloud-api/azure/`, pinned to an `Azure/azure-rest-api-specs` commit. | manual |
+| `spec-sources-row.sh` | Shared helper: idempotently upserts one provenance row in a `specs/cloud-api/<cloud>/SOURCES.md` table. Invoked by the three fetch scripts, not directly. | helper |
+| `check-spec-violations.sh` | Ratchet gate for runtime spec-shape validation: dedupes a `SOCKERLESS_SPEC_VALIDATE` report and fails on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt` (every entry carries a BUG ID; the list only shrinks). | CI sim jobs, after sdk/cli suites |
+| `check-spec-freshness.sh` | Reports (never gates) drift between the vendored cloud API spec pins and their upstreams. | manual |
 
 ## Setup / CI infrastructure
 

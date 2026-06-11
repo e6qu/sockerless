@@ -144,7 +144,7 @@ func registerCloudFrontFunctions(srv *sim.Server) {
 	cfFunctions = sim.MakeStore[cfStoredFunction](srv.DB(), "cloudfront_functions")
 	cfInvalidations = sim.MakeStore[cfStoredInvalidation](srv.DB(), "cloudfront_invalidations")
 
-	mux := srv.Mux()
+	mux := srv
 
 	functionResource := cloudTrailRESTResource("AWS::CloudFront::Function", "name")
 	distributionResource := cloudTrailRESTResource("AWS::CloudFront::Distribution", "distId")
