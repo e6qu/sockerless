@@ -93,5 +93,19 @@ Each stage ends with: `go test ./...` (affected modules) green, golangci-lint v2
 ### Stage 5 — Simulator UI hardening — DONE
 - Cross-checked all 3 sim UIs' `api.ts` against the Go dashboard wire shapes; fixed BUG-1645 (gcp `severity` should be optional — server omits for DEFAULT; azure `MonitorLogRow` values are `string` not `unknown`). Narrowed stringly enums to unions matching the values the server actually emits (aws ECSTask.status to the real 5, LambdaFunction.state; gcp CloudFunction.state, LogEntry.severity LogSeverity) — accuracy over breadth (a too-wide union is worse than `string`). typecheck + build green for all 3.
 
-### Stage 6 — Wrap
-- Not started. Reconcile `specs/SIM_TEST_COVERAGE_MATRIX.md` + surface tables; final continuity pass.
+### Stage 6 — Wrap — DONE
+- **CI gap fixed (BUG-1644):** added a `unit-test` target to each sim Makefile (`go test -tags noui ./...` on the module — fast, no Docker/real-exec) and wired a "Run module unit tests" step into the `sim (gcp/azure)` + `sim (aws sdk)` CI jobs, so package-internal guard/unit tests (e.g. `gcs_internal_test.go`) now run in CI. This is the gap that let BUG-1643 ship green.
+- **Coverage matrix:** `scripts/check-simulator-coverage-matrix.sh` verified green. Surface tables (`specs/SIM_SURFACE_TABLES/`) intentionally NOT bulk-regenerated — the seed script over-generates per-sub-file tables (spurious `azure-arm_lro` etc.) and churns ~1000 lines; per their own policy (✗ rows added when an audit/issue surfaces them) leaving them as-is is fine and keeps the gate green.
+- **All stages complete.**
+
+## Summary (all stages)
+| Stage | Bugs | Status |
+|---|---|---|
+| 1 AWS conformance | 1621-1636 (round-trip, error, pagination) | done (#537/#538) |
+| 2 GCP conformance | 1637-1640 (round-trip, error, pagination, missing-ops) | done (#538 + here) |
+| 3 Azure conformance | 1641-1642 (round-trip, error/ops/pagination) | done |
+| 4 Go type hardening | linters + 3 typed enums; +1643 (regression) | done |
+| 5 Simulator UI hardening | 1645 (wire drift + unions) | done |
+| 6 Wrap | 1644 (CI gap) fixed; matrix green | done |
+
+Every fix carries an SDK regression test driving the real client (`simulators/{aws,gcp,azure}/sdk-tests/conformance_roundtrip_test.go`). Two deferrals documented-not-faked (GCP synthetic compute op store; cloudbuild/dataflow server-assigned ids); false positives reverted (DNS record-set provisioningState; Pub/Sub scalars).

@@ -254,6 +254,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
+      - name: Run module unit tests
+        run: cd simulators/${{ matrix.cloud }} && GOWORK=off make unit-test
+        timeout-minutes: 3
+        env:
+          GOWORK: "off"
       - name: Run SDK tests
         run: |
           cd simulators/${{ matrix.cloud }} && go mod download
@@ -288,6 +293,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
+      - name: Run AWS module unit tests
+        run: cd simulators/aws && GOWORK=off make unit-test
+        timeout-minutes: 3
+        env:
+          GOWORK: "off"
       - name: Run AWS SDK tests
         run: |
           cd simulators/aws && go mod download

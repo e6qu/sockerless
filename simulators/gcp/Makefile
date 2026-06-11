@@ -22,7 +22,10 @@ include $(REPO_ROOT_REL)/make/go-app.mk
 # Each sub-tree (sdk-tests, cli-tests, terraform-tests, shared) is a
 # separate Go module; the CI calls these directly.
 
-.PHONY: shared-test sdk-test cli-test terraform-test terraform-https-test terraform-https-test-docker
+.PHONY: unit-test shared-test sdk-test cli-test terraform-test terraform-https-test terraform-https-test-docker
+
+unit-test: ## go test the simulator module's own package-internal tests (fast; no Docker/real-exec)
+	$(GO_ENV) go test -tags noui -count=1 ./...
 
 shared-test: ## go test the shared/ helper module
 	cd shared && $(GO_ENV) go test -v -count=1 ./...
@@ -46,7 +49,7 @@ terraform-https-test: ## go test terraform via the optional Caddy HTTPS gateway
 
 # Aggregate that runs all four legacy test categories.
 .PHONY: test-all
-test-all: shared-test sdk-test cli-test terraform-test ## run every test category
+test-all: unit-test shared-test sdk-test cli-test terraform-test ## run every test category
 
 # ── Docker targets ──────────────────────────────────────────────────
 .PHONY: docker-build docker-run docker-test docker-test-build
