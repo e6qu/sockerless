@@ -396,3 +396,110 @@ func TestBuildJobMessageNoServices(t *testing.T) {
 func jsonUnmarshal(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
+
+// A job targeting a reviewer-protected environment must wait for a
+// deployment review; approval releases it, rejection fails the run.
+func TestWorkflowEnvironmentApprovalGate(t *testing.T) {
+	mkServer := func(t *testing.T) (*Server, *Repo, *Workflow, *Environment) {
+		t.Helper()
+		s := newTestServer()
+		admin := s.store.Users[1]
+		repo := s.store.CreateRepo(admin, "envgate", "", false)
+		if repo == nil {
+			t.Fatal("create repo failed")
+		}
+		env := s.store.Deployments.UpsertEnvironment(repo.ID, "production")
+		s.store.Deployments.SetEnvironmentProtection(repo.ID, "production", nil,
+			[]map[string]interface{}{{"type": "User", "id": admin.ID}})
+
+		wf := &WorkflowDef{
+			Name: "deploy",
+			// The HTTP submit path stashes the dispatch wiring in Env;
+			// direct submitWorkflow callers carry the same contract.
+			Env: map[string]string{"__serverURL": "http://localhost", "__defaultImage": "alpine:latest"},
+			Jobs: map[string]*JobDef{
+				"release": {
+					Environment: "production",
+					Steps:       []StepDef{{Run: "echo deploy"}},
+				},
+			},
+		}
+		workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest",
+			&WorkflowEventMeta{EventName: "push", Repo: repo.FullName, Ref: "refs/heads/main"})
+		if err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+		if workflow.Status != WorkflowStatusWaiting {
+			t.Fatalf("workflow status = %q, want waiting", workflow.Status)
+		}
+		if got := workflow.Jobs["release"].Status; got != JobStatusWaiting {
+			t.Fatalf("job status = %q, want waiting", got)
+		}
+		if len(workflow.PendingDeployments) != 1 || workflow.PendingDeployments[0].EnvName != "production" {
+			t.Fatalf("pending deployments = %+v", workflow.PendingDeployments)
+		}
+		return s, repo, workflow, env
+	}
+
+	t.Run("approve releases the job", func(t *testing.T) {
+		s, _, workflow, env := mkServer(t)
+		admin := s.store.Users[1]
+		s.applyDeploymentReview(context.Background(), workflow, []int{env.ID}, "approved", "ship it", admin)
+
+		if workflow.Status != WorkflowStatusRunning && workflow.Status != WorkflowStatusCompleted {
+			t.Errorf("workflow status = %q, want running", workflow.Status)
+		}
+		if got := workflow.Jobs["release"].Status; got != JobStatusQueued {
+			t.Errorf("job status = %q, want queued after approval", got)
+		}
+		if len(workflow.PendingDeployments) != 0 {
+			t.Errorf("pending deployments not cleared: %+v", workflow.PendingDeployments)
+		}
+		if len(workflow.EnvApprovals) != 1 || workflow.EnvApprovals[0].State != "approved" {
+			t.Errorf("approvals = %+v", workflow.EnvApprovals)
+		}
+	})
+
+	t.Run("reject fails the run", func(t *testing.T) {
+		s, _, workflow, env := mkServer(t)
+		admin := s.store.Users[1]
+		s.applyDeploymentReview(context.Background(), workflow, []int{env.ID}, "rejected", "not today", admin)
+
+		if workflow.Status != WorkflowStatusCompleted {
+			t.Errorf("workflow status = %q, want completed", workflow.Status)
+		}
+		if workflow.Result != ResultFailure {
+			t.Errorf("workflow result = %q, want failure", workflow.Result)
+		}
+		if got := workflow.Jobs["release"].Result; got != ResultFailure {
+			t.Errorf("job result = %q, want failure", got)
+		}
+	})
+
+	t.Run("environment without reviewers does not gate", func(t *testing.T) {
+		s := newTestServer()
+		admin := s.store.Users[1]
+		repo := s.store.CreateRepo(admin, "envfree", "", false)
+		if repo == nil {
+			t.Fatal("create repo failed")
+		}
+		wf := &WorkflowDef{
+			Name: "deploy",
+			Jobs: map[string]*JobDef{
+				"release": {Environment: "staging", Steps: []StepDef{{Run: "echo x"}}},
+			},
+		}
+		workflow, err := s.submitWorkflow(context.Background(), "http://localhost", wf, "alpine:latest",
+			&WorkflowEventMeta{EventName: "push", Repo: repo.FullName, Ref: "refs/heads/main"})
+		if err != nil {
+			t.Fatalf("submit: %v", err)
+		}
+		if got := workflow.Jobs["release"].Status; got != JobStatusQueued {
+			t.Errorf("job status = %q, want queued (no reviewers)", got)
+		}
+		// Referencing the environment auto-created it, like real GitHub.
+		if env := s.store.Deployments.GetEnvironment(repo.ID, "staging"); env == nil {
+			t.Errorf("environment was not auto-created")
+		}
+	})
+}

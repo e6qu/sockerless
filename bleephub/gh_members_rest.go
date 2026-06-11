@@ -61,7 +61,7 @@ func (s *Server) handleGetOrgMembership(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, membershipToJSON(m, target, org))
+	writeJSON(w, http.StatusOK, membershipToJSON(m, target, org, s.baseURL(r)))
 }
 
 func (s *Server) handleSetOrgMembership(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +103,7 @@ func (s *Server) handleSetOrgMembership(w http.ResponseWriter, r *http.Request) 
 	s.store.SetMembership(orgLogin, target.ID, req.Role)
 	m := s.store.GetMembership(orgLogin, target.ID)
 
-	writeJSON(w, http.StatusOK, membershipToJSON(m, target, org))
+	writeJSON(w, http.StatusOK, membershipToJSON(m, target, org, s.baseURL(r)))
 }
 
 func (s *Server) handleRemoveOrgMembership(w http.ResponseWriter, r *http.Request) {
@@ -310,16 +310,16 @@ func (s *Server) handleRemoveTeamRepo(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// membershipToJSON converts a Membership to a JSON-compatible map.
-func membershipToJSON(m *Membership, user *User, org *Org) map[string]interface{} {
+// membershipToJSON converts a Membership to the GitHub
+// `org-membership` shape: organization is the organization-simple
+// object and user the simple-user object.
+func membershipToJSON(m *Membership, user *User, org *Org, baseURL string) map[string]interface{} {
 	return map[string]interface{}{
-		"url":   "/api/v3/orgs/" + org.Login + "/memberships/" + user.Login,
-		"state": m.State,
-		"role":  m.Role,
-		"user":  userToJSON(user),
-		"organization": map[string]interface{}{
-			"login": org.Login,
-			"id":    org.ID,
-		},
+		"url":              baseURL + "/api/v3/orgs/" + org.Login + "/memberships/" + user.Login,
+		"organization_url": baseURL + "/api/v3/orgs/" + org.Login,
+		"state":            m.State,
+		"role":             m.Role,
+		"user":             userToJSON(user),
+		"organization":     orgSimpleJSON(org, baseURL),
 	}
 }

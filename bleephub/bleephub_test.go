@@ -79,6 +79,18 @@ func TestMain(m *testing.M) {
 
 	srv := NewServer(addr, logger)
 	testServer = srv
+
+	// Response-shape validation against the vendored GitHub OpenAPI
+	// description rides the shared server; the ratchet runs after m.Run()
+	// (see openapi_shape_validator_test.go).
+	validator, err := newShapeValidator()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "openapi shape validator: %v\n", err)
+		os.Exit(1)
+	}
+	apiShapeValidator = validator
+	srv.responseObserver = validator.Observe
+
 	go srv.ListenAndServe()
 
 	// Wait for server to be ready
@@ -91,7 +103,20 @@ func TestMain(m *testing.M) {
 		time.Sleep(50 * time.Millisecond)
 	}
 
-	os.Exit(m.Run())
+	code := m.Run()
+
+	if newKeys, total := apiShapeValidator.ratchet(); len(newKeys) > 0 {
+		fmt.Fprintf(os.Stderr, "\nopenapi-shape ratchet: %d NEW response-shape violation(s) vs testdata/github-openapi.json.gz (total observed: %d):\n", len(newKeys), total)
+		for _, key := range newKeys {
+			fmt.Fprintf(os.Stderr, "  %s\n", key)
+		}
+		fmt.Fprintf(os.Stderr, "Fix the response shape, or file a BUG and add the key to bleephub/openapi-violation-allowlist.txt with its BUG ID.\n")
+		if code == 0 {
+			code = 1
+		}
+	}
+
+	os.Exit(code)
 }
 
 func TestHealth(t *testing.T) {

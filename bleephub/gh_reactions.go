@@ -24,12 +24,17 @@ import (
 // Plus the user-level: DELETE /users/{username}/reactions/{id} (rarely used; skip).
 
 // Reaction represents a single user reaction on some parent entity.
+//
+// ParentType/ParentID/UserID carry real json names so persistence
+// round-trips the linkage (the reload path re-indexes byParent from them).
+// Client responses never marshal this struct — reactionToJSON emits an
+// explicit map.
 type Reaction struct {
 	ID         int       `json:"id"`
-	ParentType string    `json:"-"`
-	ParentID   int       `json:"-"`
+	ParentType string    `json:"parent_type"`
+	ParentID   int       `json:"parent_id"`
 	Content    string    `json:"content"`
-	UserID     int       `json:"-"`
+	UserID     int       `json:"user_id"`
 	CreatedAt  time.Time `json:"created_at"`
 }
 

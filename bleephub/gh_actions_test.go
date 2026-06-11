@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -630,5 +631,157 @@ func TestStableJobID_DeterministicAndPositive(t *testing.T) {
 	}
 	if a == c {
 		t.Errorf("collision on distinct UUIDs")
+	}
+}
+
+// ghDo issues an arbitrary-method request against the shared test server.
+func ghDo(t *testing.T, method, path, token string, body interface{}) *http.Response {
+	t.Helper()
+	var bodyReader io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		bodyReader = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, testBaseURL+path, bodyReader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "token "+token)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+// Full deployment-review flow over REST: configure a reviewer-protected
+// environment, run a workflow targeting it, observe the waiting run +
+// pending deployment, approve, and read back the recorded approval.
+func TestActionsPendingDeploymentReviewFlow(t *testing.T) {
+	repo := "admin/envflow"
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": "envflow"})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("create repo: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Configure the environment with a required reviewer (admin = id 1).
+	resp = ghDo(t, "PUT", "/api/v3/repos/"+repo+"/environments/production", defaultToken,
+		map[string]interface{}{"reviewers": []map[string]interface{}{{"type": "User", "id": 1}}})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("put environment: %d", resp.StatusCode)
+	}
+	envData := decodeJSON(t, resp)
+	envID := int(envData["id"].(float64))
+	rules, _ := envData["protection_rules"].([]interface{})
+	if len(rules) != 1 {
+		t.Fatalf("protection_rules = %v, want the required_reviewers rule", envData["protection_rules"])
+	}
+
+	// Run a workflow with a job targeting the environment.
+	resp = ghPost(t, "/internal/exec/workflow", defaultToken, map[string]interface{}{
+		"repo": repo,
+		"workflow": `
+name: deploy
+on: push
+jobs:
+  release:
+    environment: production
+    steps:
+      - run: echo deploy
+`,
+	})
+	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("submit workflow: %d %s", resp.StatusCode, body)
+	}
+	submitData := decodeJSON(t, resp)
+	if submitData["status"] != "waiting" {
+		t.Fatalf("submit status = %v, want waiting", submitData["status"])
+	}
+
+	// Resolve the run's numeric id from the runs list.
+	resp = ghGet(t, "/api/v3/repos/"+repo+"/actions/runs", defaultToken)
+	runsData := decodeJSON(t, resp)
+	runsList, _ := runsData["workflow_runs"].([]interface{})
+	if len(runsList) == 0 {
+		t.Fatalf("no workflow runs listed")
+	}
+	runID := int(runsList[0].(map[string]interface{})["id"].(float64))
+	runPath := fmt.Sprintf("/api/v3/repos/%s/actions/runs/%d", repo, runID)
+
+	// The run waits for review.
+	resp = ghGet(t, runPath, defaultToken)
+	runData := decodeJSON(t, resp)
+	if runData["status"] != "waiting" {
+		t.Fatalf("run status = %v, want waiting", runData["status"])
+	}
+
+	// Pending deployments lists the protected environment.
+	resp = ghGet(t, runPath+"/pending_deployments", defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("pending_deployments: %d", resp.StatusCode)
+	}
+	var pending []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&pending); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(pending) != 1 {
+		t.Fatalf("pending = %v, want 1 entry", pending)
+	}
+	pendingEnv := pending[0]["environment"].(map[string]interface{})
+	if int(pendingEnv["id"].(float64)) != envID || pendingEnv["name"] != "production" {
+		t.Fatalf("pending environment = %v", pendingEnv)
+	}
+
+	// Approve.
+	resp = ghPost(t, runPath+"/pending_deployments", defaultToken, map[string]interface{}{
+		"environment_ids": []int{envID},
+		"state":           "approved",
+		"comment":         "ship it",
+	})
+	if resp.StatusCode != 200 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("approve: %d %s", resp.StatusCode, body)
+	}
+	var deployments []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&deployments); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(deployments) != 1 || deployments[0]["environment"] != "production" {
+		t.Fatalf("approval deployments = %v", deployments)
+	}
+
+	// The run resumed (no longer waiting) and the approval is recorded.
+	resp = ghGet(t, runPath, defaultToken)
+	runData = decodeJSON(t, resp)
+	if runData["status"] == "waiting" {
+		t.Fatalf("run still waiting after approval")
+	}
+
+	resp = ghGet(t, runPath+"/approvals", defaultToken)
+	var approvals []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&approvals); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if len(approvals) != 1 || approvals[0]["state"] != "approved" || approvals[0]["comment"] != "ship it" {
+		t.Fatalf("approvals = %v", approvals)
+	}
+	user, _ := approvals[0]["user"].(map[string]interface{})
+	if user == nil || user["login"] != "admin" {
+		t.Fatalf("approval user = %v", approvals[0]["user"])
 	}
 }

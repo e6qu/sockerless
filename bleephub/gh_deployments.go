@@ -27,6 +27,12 @@ import (
 // octokit / probot / GitOps controllers reacting to `deployment` and
 // `deployment_status` webhook events.
 
+// Deployment / DeploymentStatus / Environment carry real json names on
+// their linkage + protection fields so persistence (which marshals the
+// structs as-is) round-trips them. Client responses never marshal these
+// structs — deploymentToJSON / deploymentStatusToJSON / environmentToJSON
+// emit explicit maps. Deployment.Statuses stays json:"-": statuses persist
+// in their own bucket and the loader relinks them via DeploymentID.
 type Deployment struct {
 	ID            int                    `json:"id"`
 	NodeID        string                 `json:"node_id"`
@@ -38,8 +44,8 @@ type Deployment struct {
 	OriginalEnv   string                 `json:"original_environment"`
 	Environment   string                 `json:"environment"`
 	Description   string                 `json:"description"`
-	CreatorID     int                    `json:"-"`
-	RepoID        int                    `json:"-"`
+	CreatorID     int                    `json:"creator_id"`
+	RepoID        int                    `json:"repo_id"`
 	AutoMerge     bool                   `json:"auto_merge"`
 	ProductionEnv bool                   `json:"production_environment"`
 	TransientEnv  bool                   `json:"transient_environment"`
@@ -52,8 +58,8 @@ type DeploymentStatus struct {
 	ID             int       `json:"id"`
 	NodeID         string    `json:"node_id"`
 	State          string    `json:"state"` // error | failure | inactive | in_progress | queued | pending | success
-	CreatorID      int       `json:"-"`
-	DeploymentID   int       `json:"-"`
+	CreatorID      int       `json:"creator_id"`
+	DeploymentID   int       `json:"deployment_id"`
 	Description    string    `json:"description"`
 	Environment    string    `json:"environment"`
 	TargetURL      string    `json:"target_url"`
@@ -71,13 +77,13 @@ type Environment struct {
 	Name                   string                   `json:"name"`
 	URL                    string                   `json:"url"`
 	HTMLURL                string                   `json:"html_url"`
-	RepoID                 int                      `json:"-"`
-	WaitTimer              int                      `json:"-"`
-	Reviewers              []map[string]interface{} `json:"-"`
-	DeploymentBranchPolicy *DeploymentBranchPolicy  `json:"-"`
+	RepoID                 int                      `json:"repo_id"`
+	WaitTimer              int                      `json:"wait_timer"`
+	Reviewers              []map[string]interface{} `json:"reviewers"`
+	DeploymentBranchPolicy *DeploymentBranchPolicy  `json:"deployment_branch_policy"`
 	CreatedAt              time.Time                `json:"created_at"`
 	UpdatedAt              time.Time                `json:"updated_at"`
-	ProtectionRules        []map[string]interface{} `json:"-"`
+	ProtectionRules        []map[string]interface{} `json:"protection_rules"`
 }
 
 type DeploymentBranchPolicy struct {
@@ -259,10 +265,44 @@ func (ds *DeploymentStore) UpsertEnvironment(repoID int, name string) *Environme
 	return env
 }
 
+// SetEnvironmentProtection updates an environment's reviewer/wait-timer
+// protection config (the PUT environment body).
+func (ds *DeploymentStore) SetEnvironmentProtection(repoID int, name string, waitTimer *int, reviewers []map[string]interface{}) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	key := fmt.Sprintf("%d:%s", repoID, name)
+	env := ds.environments[key]
+	if env == nil {
+		return
+	}
+	if waitTimer != nil {
+		env.WaitTimer = *waitTimer
+	}
+	if reviewers != nil {
+		env.Reviewers = reviewers
+	}
+	env.UpdatedAt = time.Now().UTC()
+	if ds.persist != nil {
+		ds.persist.MustPut("environments", key, env)
+	}
+}
+
 func (ds *DeploymentStore) GetEnvironment(repoID int, name string) *Environment {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
 	return ds.environments[fmt.Sprintf("%d:%s", repoID, name)]
+}
+
+// GetEnvironmentByID returns an environment by its numeric id, or nil.
+func (ds *DeploymentStore) GetEnvironmentByID(id int) *Environment {
+	ds.mu.RLock()
+	defer ds.mu.RUnlock()
+	for _, env := range ds.environments {
+		if env.ID == id {
+			return env
+		}
+	}
+	return nil
 }
 
 func (ds *DeploymentStore) ListEnvironments(repoID int) []*Environment {
@@ -499,7 +539,7 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 	envs := s.store.Deployments.ListEnvironments(repo.ID)
 	out := make([]map[string]interface{}, 0, len(envs))
 	for _, e := range envs {
-		out = append(out, environmentToJSON(e, s.baseURL(r), repo))
+		out = append(out, environmentToJSON(e, s.store, s.baseURL(r), repo))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"total_count":  len(envs),
@@ -518,7 +558,7 @@ func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, environmentToJSON(env, s.baseURL(r), repo))
+	writeJSON(w, http.StatusOK, environmentToJSON(env, s.store, s.baseURL(r), repo))
 }
 
 func (s *Server) handleUpsertEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -527,8 +567,29 @@ func (s *Server) handleUpsertEnvironment(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	var body struct {
+		WaitTimer *int `json:"wait_timer"`
+		Reviewers []struct {
+			Type string `json:"type"`
+			ID   int    `json:"id"`
+		} `json:"reviewers"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = no protection config
+
 	env := s.store.Deployments.UpsertEnvironment(repo.ID, r.PathValue("env_name"))
-	writeJSON(w, http.StatusOK, environmentToJSON(env, s.baseURL(r), repo))
+
+	if body.WaitTimer != nil || body.Reviewers != nil {
+		var reviewers []map[string]interface{}
+		for _, rev := range body.Reviewers {
+			revType := rev.Type
+			if revType == "" {
+				revType = "User"
+			}
+			reviewers = append(reviewers, map[string]interface{}{"type": revType, "id": rev.ID})
+		}
+		s.store.Deployments.SetEnvironmentProtection(repo.ID, env.Name, body.WaitTimer, reviewers)
+	}
+	writeJSON(w, http.StatusOK, environmentToJSON(env, s.store, s.baseURL(r), repo))
 }
 
 func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -604,19 +665,64 @@ func deploymentStatusToJSON(st *DeploymentStatus, store *Store, baseURL string, 
 	}
 }
 
-func environmentToJSON(e *Environment, baseURL string, repo *Repo) map[string]interface{} {
+func environmentToJSON(e *Environment, st *Store, baseURL string, repo *Repo) map[string]interface{} {
 	if e == nil {
 		return nil
 	}
-	return map[string]interface{}{
-		"id":         e.ID,
-		"node_id":    e.NodeID,
-		"name":       e.Name,
-		"url":        fmt.Sprintf("%s/api/v3/repos/%s/environments/%s", baseURL, repo.FullName, e.Name),
-		"html_url":   fmt.Sprintf("%s/%s/deployments/activity_log?environments_filter=%s", baseURL, repo.FullName, e.Name),
-		"created_at": e.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at": e.UpdatedAt.UTC().Format(time.RFC3339),
+	out := map[string]interface{}{
+		"id":                       e.ID,
+		"node_id":                  e.NodeID,
+		"name":                     e.Name,
+		"url":                      fmt.Sprintf("%s/api/v3/repos/%s/environments/%s", baseURL, repo.FullName, e.Name),
+		"html_url":                 fmt.Sprintf("%s/%s/deployments/activity_log?environments_filter=%s", baseURL, repo.FullName, e.Name),
+		"created_at":               e.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":               e.UpdatedAt.UTC().Format(time.RFC3339),
+		"deployment_branch_policy": nil,
 	}
+	rules := []map[string]interface{}{}
+	if e.WaitTimer > 0 {
+		rules = append(rules, map[string]interface{}{
+			"id":         e.ID*10 + 1,
+			"node_id":    fmt.Sprintf("GA_kwDO%08d", e.ID*10+1),
+			"type":       "wait_timer",
+			"wait_timer": e.WaitTimer,
+		})
+	}
+	if len(e.Reviewers) > 0 {
+		rules = append(rules, map[string]interface{}{
+			"id":        e.ID*10 + 2,
+			"node_id":   fmt.Sprintf("GA_kwDO%08d", e.ID*10+2),
+			"type":      "required_reviewers",
+			"reviewers": environmentReviewersJSON(e, st),
+		})
+	}
+	out["protection_rules"] = rules
+	return out
+}
+
+// environmentReviewersJSON renders the configured reviewers with their
+// resolved user objects, the shape protection rules and pending
+// deployments share.
+func environmentReviewersJSON(e *Environment, st *Store) []map[string]interface{} {
+	out := []map[string]interface{}{}
+	for _, rev := range e.Reviewers {
+		revType, _ := rev["type"].(string)
+		var id int
+		switch v := rev["id"].(type) {
+		case int:
+			id = v
+		case float64:
+			id = int(v)
+		}
+		entry := map[string]interface{}{"type": revType}
+		st.mu.RLock()
+		if u := st.Users[id]; u != nil {
+			entry["reviewer"] = userToJSON(u)
+		}
+		st.mu.RUnlock()
+		out = append(out, entry)
+	}
+	return out
 }
 
 func buildDeploymentEventPayload(repo *Repo, d *Deployment, sender *User, action string) map[string]interface{} {

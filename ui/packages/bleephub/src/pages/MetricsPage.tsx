@@ -1,11 +1,12 @@
-import { Spinner } from "@sockerless/ui-core/components";
+import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { useMetricsData } from "../hooks/useMetricsData.js";
 import { formatUptime } from "../utils/format.js";
 import { PageTitle, StatCard, SectionLabel } from "../components/ui.js";
 
 export function MetricsPage() {
-  const { metrics, status, isLoading } = useMetricsData();
+  const { metrics, status, isLoading, isError } = useMetricsData();
 
+  if (isError) return <InlineError title="Failed to load metrics" />;
   if (isLoading && !metrics) return <Spinner label="loading metrics" />;
 
   return (

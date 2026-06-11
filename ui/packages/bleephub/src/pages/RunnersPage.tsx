@@ -99,18 +99,18 @@ export function RunnersPage() {
   if (isLoading || !data) return <Spinner label="loading runners" />;
 
   const totalPending = data.reduce((sum, s) => sum + s.pendingMessages, 0);
-  const onlineCount = data.filter((s) => s.agent?.status === "online").length;
 
+  // No separate "online" stat: the server marks every agent with an active
+  // session "online", so the figure would always mirror the session count.
   return (
     <div>
       <PageTitle
         title="Connected runners"
-        meta={`${data.length} session${data.length === 1 ? "" : "s"} · ${onlineCount} online · ${totalPending} pending message${totalPending === 1 ? "" : "s"}`}
+        meta={`${data.length} session${data.length === 1 ? "" : "s"} · ${totalPending} pending message${totalPending === 1 ? "" : "s"}`}
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <div className="mb-6 grid grid-cols-2 gap-3">
         <StatCard title="Connected sessions" value={data.length} emphasized={data.length > 0} />
-        <StatCard title="Online" value={onlineCount} />
         <StatCard title="Pending messages" value={totalPending} emphasized={totalPending > 0} />
       </div>
 

@@ -145,19 +145,22 @@ func deliveryFullJSON(d *WebhookDelivery) map[string]interface{} {
 	out := deliveryToJSON(d)
 	// The full delivery object (unlike the list summary) carries the target url.
 	out["url"] = d.TargetURL
+	// request and response are required members of hook-delivery; GitHub
+	// emits them with null members when nothing was captured. The HTTP
+	// status lives only in the top-level status_code — the response
+	// object carries exactly headers + payload.
+	request := map[string]interface{}{"headers": nil, "payload": nil}
 	if d.Request != nil {
-		out["request"] = map[string]interface{}{
-			"headers": d.Request.Headers,
-			"payload": d.Request.Payload,
-		}
+		request["headers"] = d.Request.Headers
+		request["payload"] = d.Request.Payload
 	}
+	out["request"] = request
+	response := map[string]interface{}{"headers": nil, "payload": nil}
 	if d.Response != nil {
-		out["response"] = map[string]interface{}{
-			"status_code": d.Response.StatusCode,
-			"headers":     d.Response.Headers,
-			"payload":     d.Response.Body,
-		}
+		response["headers"] = d.Response.Headers
+		response["payload"] = d.Response.Body
 	}
+	out["response"] = response
 	return out
 }
 

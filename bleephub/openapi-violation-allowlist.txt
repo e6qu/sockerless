@@ -1,0 +1,11 @@
+# Allowlisted response-shape deviations from the vendored DOTCOM OpenAPI
+# description (testdata/github-openapi.json.gz). Format per line:
+#   op<TAB>kind<TAB>field   (see openapi_shape_validator_test.go)
+# Entries must cite why the member is real despite the dotcom spec.
+#
+# installed_version is a GHES-only /meta member (documented in GitHub's GHES
+# OpenAPI description, e.g. ghes-3.21). bleephub presents as GHES, and gh
+# CLI's feature detection (internal/featuredetection) requires the member to
+# resolve the host version — without it `gh issue list --label`, `gh pr
+# status`, and `gh workflow run` fail. Permanent documented divergence (GHES vs dotcom description); see BUG-1698 for the endpoint addition.
+GET /meta -> 200	unknown-field	$.installed_version

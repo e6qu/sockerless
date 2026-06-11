@@ -54,7 +54,7 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.recordAuditEvent("team.create", user.Login, orgLogin, map[string]interface{}{"team_id": team.ID, "team_slug": team.Slug})
-	writeJSON(w, http.StatusCreated, teamToJSON(team, org, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, teamToJSON(team, org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleListTeams(w http.ResponseWriter, r *http.Request) {
@@ -75,7 +75,7 @@ func (s *Server) handleListTeams(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]interface{}, 0, len(teams))
 	base := s.baseURL(r)
 	for _, team := range teams {
-		result = append(result, teamToJSON(team, org, base))
+		result = append(result, teamSimpleJSON(team, org, base))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -101,7 +101,7 @@ func (s *Server) handleGetTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, teamToJSON(team, org, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, teamToJSON(team, org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
@@ -157,7 +157,7 @@ func (s *Server) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, teamToJSON(updated, org, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, teamToJSON(updated, org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleDeleteTeam(w http.ResponseWriter, r *http.Request) {
@@ -207,27 +207,44 @@ func (s *Server) handleListAuthUserTeams(w http.ResponseWriter, r *http.Request)
 		if org == nil {
 			continue
 		}
-		result = append(result, teamToJSON(team, org, base))
+		result = append(result, teamToJSON(team, org, s.store, base))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
-// teamToJSON converts a Team to a JSON-compatible map with snake_case keys.
-func teamToJSON(team *Team, org *Org, baseURL string) map[string]interface{} {
+// teamSimpleJSON converts a Team to the GitHub `team` shape used in
+// org team list responses. Bleephub has no nested teams, so parent is
+// null; all bleephub teams are organization-owned, so type is
+// "organization" (the other enum value is "enterprise").
+func teamSimpleJSON(team *Team, org *Org, baseURL string) map[string]interface{} {
+	api := baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug
 	return map[string]interface{}{
 		"id":               team.ID,
 		"node_id":          team.NodeID,
-		"url":              baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug,
+		"url":              api,
 		"html_url":         baseURL + "/orgs/" + org.Login + "/teams/" + team.Slug,
 		"name":             team.Name,
 		"slug":             team.Slug,
 		"description":      team.Description,
 		"privacy":          team.Privacy,
 		"permission":       team.Permission,
-		"members_url":      baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug + "/members{/member}",
-		"repositories_url": baseURL + "/api/v3/orgs/" + org.Login + "/teams/" + team.Slug + "/repos",
-		"organization":     orgToJSON(org, baseURL),
-		"created_at":       team.CreatedAt.Format(time.RFC3339),
-		"updated_at":       team.UpdatedAt.Format(time.RFC3339),
+		"members_url":      api + "/members{/member}",
+		"repositories_url": api + "/repos",
+		"parent":           nil,
+		"type":             "organization",
 	}
+}
+
+// teamToJSON converts a Team to the GitHub `team-full` shape served by
+// single-team operations. Member and repository counts come straight
+// from the team's stored membership and repo links. Must not be called
+// with st.mu held (the embedded organization-full derives counts).
+func teamToJSON(team *Team, org *Org, st *Store, baseURL string) map[string]interface{} {
+	out := teamSimpleJSON(team, org, baseURL)
+	out["organization"] = orgToJSON(org, st, baseURL)
+	out["members_count"] = len(team.MemberIDs)
+	out["repos_count"] = len(team.RepoNames)
+	out["created_at"] = team.CreatedAt.Format(time.RFC3339)
+	out["updated_at"] = team.UpdatedAt.Format(time.RFC3339)
+	return out
 }

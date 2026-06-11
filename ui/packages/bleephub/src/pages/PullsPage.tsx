@@ -1,8 +1,15 @@
 import { useParams, Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
-import { fetchRepoIssues, fetchRepoPRs, fetchIssueComments, mergePR } from "../api.js";
+import {
+  fetchRepoPRsPage,
+  fetchPRDetail,
+  fetchIssueComments,
+  mergePR,
+  isNotFound,
+} from "../api.js";
 import { useRepoItemList } from "../hooks/useRepoItemList.js";
+import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type { GithubPR } from "../types.js";
 import { CommentCard, CommentList } from "../components/CommentCard.js";
 import { StateToggle } from "../components/StateToggle.js";
@@ -23,20 +30,6 @@ export function PullsPage() {
   return <PRList owner={owner} repo={repo} />;
 }
 
-function useOpenCounts(owner: string, repo: string) {
-  const { data: openIssues = [] } = useQuery({
-    queryKey: ["issues", owner, repo, "open"],
-    queryFn: () => fetchRepoIssues(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
-  const { data: openPRs = [] } = useQuery({
-    queryKey: ["prs", owner, repo, "open"],
-    queryFn: () => fetchRepoPRs(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
-  return { issueCount: openIssues.length, prCount: openPRs.length };
-}
-
 function prState(pr: GithubPR): "open" | "merged" | "closed" | "draft" {
   if (pr.merged) return "merged";
   if (pr.state === "open") return pr.draft ? "draft" : "open";
@@ -52,12 +45,17 @@ function PRStateIcon({ pr, size }: { pr: GithubPR; size?: number }) {
 }
 
 function PRList({ owner, repo }: { owner: string; repo: string }) {
-  const { state, setState, items: prs, isLoading, isError, error } = useRepoItemList(
-    "prs",
-    owner,
-    repo,
-    fetchRepoPRs,
-  );
+  const {
+    state,
+    setState,
+    items: prs,
+    isLoading,
+    isError,
+    error,
+    hasMore,
+    loadMore,
+    isLoadingMore,
+  } = useRepoItemList("prs", owner, repo, fetchRepoPRsPage);
   const counts = useOpenCounts(owner, repo);
 
   if (isLoading) return <Spinner label="loading pull requests" />;
@@ -80,6 +78,7 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
       {prs.length === 0 ? (
         <Blankslate icon={<PullRequestIcon size={26} />} title={`No ${state} pull requests`} />
       ) : (
+        <>
         <Box>
           {prs.map((pr, i) => (
             <Link
@@ -118,6 +117,14 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
             </Link>
           ))}
         </Box>
+        {hasMore && (
+          <div className="mt-3 flex justify-center">
+            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+              {isLoadingMore ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        )}
+        </>
       )}
     </div>
   );
@@ -125,11 +132,10 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
 
 function PRDetail({ owner, repo, number }: { owner: string; repo: string; number: number }) {
   const counts = useOpenCounts(owner, repo);
-  const { data: prs = [] } = useQuery({
-    queryKey: ["prs", owner, repo, "all"],
-    queryFn: () => fetchRepoPRs(owner, repo, "all"),
+  const { data: pr, isLoading, isError, error } = useQuery({
+    queryKey: ["pr", owner, repo, number],
+    queryFn: () => fetchPRDetail(owner, repo, number),
   });
-  const pr: GithubPR | undefined = prs.find((p) => p.number === number);
   const { data: comments = [] } = useQuery({
     queryKey: ["pr-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
@@ -146,7 +152,23 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
     },
   });
 
-  if (!pr) return <Spinner label={`loading PR #${number}`} />;
+  if (isError) {
+    if (isNotFound(error)) {
+      return (
+        <div>
+          <RepoHeader owner={owner} repo={repo} active="pulls" {...counts} />
+          <Blankslate
+            icon={<PullRequestIcon size={26} />}
+            title={`Pull request #${number} not found`}
+          >
+            It may have been deleted, or the number may be wrong.
+          </Blankslate>
+        </div>
+      );
+    }
+    return <InlineError title={`Failed to load PR #${number}`} detail={String(error)} />;
+  }
+  if (isLoading || !pr) return <Spinner label={`loading PR #${number}`} />;
 
   const s = prState(pr);
   const stateLabel = s === "merged" ? "Merged" : s === "closed" ? "Closed" : s === "draft" ? "Draft" : "Open";

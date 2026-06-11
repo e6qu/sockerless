@@ -88,6 +88,29 @@ func (s *Server) registerGHMiscEndpoints() {
 	// Marketplace
 	s.route("GET /api/v3/marketplace_listing/plans", s.handleMarketplacePlans)
 	s.route("GET /api/v3/marketplace_listing/accounts/{account_id}", s.handleMarketplaceAccount)
+
+	// Meta — gh CLI's GHES feature detection resolves the host version from
+	// GET /meta installed_version before search-backed listing commands
+	// (gh issue list --label, gh pr status) and gh workflow run.
+	s.route("GET /api/v3/meta", s.handleMeta)
+}
+
+// handleMeta serves GET /api/v3/meta in GHES shape. bleephub presents as
+// GHES 3.21.0: gh gates the advanced-issue-search syntax at >= 3.18 (sent
+// with the plain ISSUE search type when the SearchType enum has no
+// ISSUE_ADVANCED member, which is bleephub's case), drops classic-projects
+// fields at >= 3.17, and sends `return_run_details` on workflow dispatches
+// at >= 3.21 (the dispatch handler ignores the extra member and answers 204,
+// which gh handles). installed_version is a GHES-only member — it is
+// documented in the GHES OpenAPI description, not the dotcom one this repo
+// vendors for shape validation (see openapi-violation-allowlist.txt).
+// verifiable_password_authentication is genuinely false: bleephub's API is
+// token-only.
+func (s *Server) handleMeta(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"verifiable_password_authentication": false,
+		"installed_version":                  "3.21.0",
+	})
 }
 
 // --- Store ---

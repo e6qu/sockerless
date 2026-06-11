@@ -2,33 +2,42 @@
 // workflows.go / store_workflow_files.go). Empty result = still in flight.
 // Keeping these as unions makes a typo'd comparison (e.g. "failed" vs the
 // real "failure") a compile error rather than a silently-dead branch.
+// Only values the server actually ASSIGNS belong here — a workflow is never
+// "queued"/"skipped", a workflow file is never anything but "active".
+// "waiting" = held on a reviewer-protected environment approval.
 export type WorkflowStatus =
   | "running"
+  | "completed"
+  | "pending_concurrency"
+  | "waiting";
+export type JobStatus =
+  | "pending"
   | "queued"
+  | "running"
   | "completed"
   | "skipped"
-  | "pending_concurrency";
-export type JobStatus = "pending" | "queued" | "running" | "completed" | "skipped";
+  | "waiting";
 export type JobResult = "success" | "failure" | "cancelled" | "skipped";
 export type WorkflowResult = "" | JobResult;
-export type WorkflowFileState = "active" | "deleted_file" | "disabled_fork";
+export type WorkflowFileState = "active";
 export type WorkflowFileSource = "submitted" | "discovered";
 
-/** Workflow represents a running multi-job workflow. */
+/**
+ * Workflow represents a running multi-job workflow, as projected by the
+ * management API's workflowView (handle_mgmt.go) — NOT the full Go
+ * Workflow struct. Fields the view never emits (runNumber, ref, sha,
+ * concurrencyGroup, …) are deliberately absent.
+ */
 export interface BleephubWorkflow {
   id: string;
   name: string;
   runId: number;
-  runNumber: number;
   jobs: Record<string, BleephubWorkflowJob>;
   status: WorkflowStatus;
   result: WorkflowResult;
   createdAt: string;
   eventName?: string;
-  ref?: string;
-  sha?: string;
   repoFullName?: string;
-  concurrencyGroup?: string;
 }
 
 /** WorkflowJob represents a single job within a workflow. */
@@ -39,9 +48,16 @@ export interface BleephubWorkflowJob {
   needs?: string[];
   status: JobStatus;
   result: WorkflowResult;
+  outputs?: Record<string, string>;
   matrix?: Record<string, unknown>;
   continueOnError?: boolean;
-  startedAt?: string;
+  /**
+   * startedAt / completedAt are Go time.Time fields, always serialized —
+   * a job that hasn't started/finished carries the zero-time sentinel
+   * "0001-01-01T00:00:00Z" rather than omitting the field.
+   */
+  startedAt: string;
+  completedAt: string;
   matrixGroup?: string;
 }
 
@@ -62,8 +78,18 @@ export interface BleephubAgent {
   status: string;
   osDescription: string;
   labels: BleephubLabel[];
+  authorization?: BleephubAgentAuthorization;
   ephemeral?: boolean;
+  maxParallelism?: number;
+  provisioningState?: string;
   createdOn: string;
+}
+
+/** AgentAuthorization holds the agent's RSA public key and auth URL. */
+export interface BleephubAgentAuthorization {
+  authorizationUrl?: string;
+  clientId?: string;
+  publicKey?: { exponent: string; modulus: string };
 }
 
 /** Label is an agent label. */
@@ -130,7 +156,7 @@ export interface BleephubDispatchRequest {
   inputs?: Record<string, string>;
 }
 
-/** App row from /internal/apps. */
+/** App row from /internal/apps (appView — id/slug/name/description/owner only). */
 export interface BleephubApp {
   id: number;
   slug: string;
@@ -138,9 +164,6 @@ export interface BleephubApp {
   description: string;
   ownerId: number;
   createdAt: string;
-  clientId?: string;
-  permissions?: Record<string, string>;
-  events?: string[];
 }
 
 /** Installation row from /internal/installations. */
@@ -152,7 +175,8 @@ export interface BleephubInstallation {
   targetLogin: string;
   repositorySelection: string;
   createdAt: string;
-  suspendedAt?: string | null;
+  /** Always present on the wire; null when the installation is active. */
+  suspendedAt: string | null;
 }
 
 /** OAuth App row from /internal/oauth-apps, distinct from GitHub App. */
@@ -178,6 +202,7 @@ export interface WireOAuthApp {
   callback_url: string;
   owner_id: number;
   created_at: string;
+  updated_at: string;
 }
 
 /** The secret-bearing fields the GitHub-App create endpoint returns once. */
@@ -224,7 +249,8 @@ export interface GithubIssue {
   title: string;
   body: string;
   state: GithubState;
-  user: { login: string; avatar_url: string };
+  /** null when the authoring user no longer resolves (GitHub parity). */
+  user: { login: string; avatar_url: string } | null;
   labels: { name: string; color: string }[];
   assignees: { login: string }[];
   comments: number;
@@ -241,7 +267,8 @@ export interface GithubPR {
   body: string;
   state: GithubState;
   draft: boolean;
-  user: { login: string; avatar_url: string };
+  /** null when the authoring user no longer resolves (GitHub parity). */
+  user: { login: string; avatar_url: string } | null;
   head: { ref: string; sha: string };
   base: { ref: string; sha: string };
   labels: { name: string; color: string }[];
@@ -254,7 +281,8 @@ export interface GithubPR {
 /** GitHub comment. */
 export interface GithubComment {
   id: number;
-  user: { login: string; avatar_url: string };
+  /** null when the authoring user no longer resolves (GitHub parity). */
+  user: { login: string; avatar_url: string } | null;
   body: string;
   created_at: string;
   updated_at: string;
@@ -316,6 +344,7 @@ export interface GithubRelease {
   draft: boolean;
   prerelease: boolean;
   created_at: string;
-  published_at: string;
+  /** null until the release is published (drafts). */
+  published_at: string | null;
   html_url: string;
 }

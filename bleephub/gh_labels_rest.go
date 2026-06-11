@@ -233,7 +233,7 @@ func (s *Server) handleCreateMilestone(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	ms := s.store.CreateMilestone(repo.ID, req.Title, req.Description, req.State, dueOn)
+	ms := s.store.CreateMilestone(repo.ID, user.ID, req.Title, req.Description, req.State, dueOn)
 	if ms == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return
@@ -241,7 +241,7 @@ func (s *Server) handleCreateMilestone(w http.ResponseWriter, r *http.Request) {
 
 	repoKey := owner + "/" + name
 	s.recordAuditEvent("milestone.create", user.Login, "", map[string]interface{}{"repo": repoKey, "milestone_id": ms.ID, "title": ms.Title})
-	writeJSON(w, http.StatusCreated, milestoneToJSON(ms, s.baseURL(r), repo.FullName))
+	writeJSON(w, http.StatusCreated, milestoneToJSON(ms, s.store, s.baseURL(r), repo.FullName))
 }
 
 func (s *Server) handleListMilestones(w http.ResponseWriter, r *http.Request) {
@@ -262,7 +262,7 @@ func (s *Server) handleListMilestones(w http.ResponseWriter, r *http.Request) {
 	base := s.baseURL(r)
 	result := make([]map[string]interface{}, 0, len(milestones))
 	for _, ms := range milestones {
-		result = append(result, milestoneToJSON(ms, base, repo.FullName))
+		result = append(result, milestoneToJSON(ms, s.store, base, repo.FullName))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -289,7 +289,7 @@ func (s *Server) handleGetMilestone(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, milestoneToJSON(ms, s.baseURL(r), repo.FullName))
+	writeJSON(w, http.StatusOK, milestoneToJSON(ms, s.store, s.baseURL(r), repo.FullName))
 }
 
 func (s *Server) handleUpdateMilestone(w http.ResponseWriter, r *http.Request) {
@@ -333,12 +333,18 @@ func (s *Server) handleUpdateMilestone(w http.ResponseWriter, r *http.Request) {
 			m.Description = v
 		}
 		if v, ok := req["state"].(string); ok {
+			if v == "closed" && m.State != "closed" {
+				now := time.Now().UTC()
+				m.ClosedAt = &now
+			} else if v == "open" {
+				m.ClosedAt = nil
+			}
 			m.State = v
 		}
 	})
 
 	updated := s.store.GetMilestone(ms.ID)
-	writeJSON(w, http.StatusOK, milestoneToJSON(updated, s.baseURL(r), repo.FullName))
+	writeJSON(w, http.StatusOK, milestoneToJSON(updated, s.store, s.baseURL(r), repo.FullName))
 }
 
 func (s *Server) handleDeleteMilestone(w http.ResponseWriter, r *http.Request) {
@@ -389,23 +395,64 @@ func issueLabelToJSON(l *IssueLabel, baseURL, repoFullName string) map[string]in
 	}
 }
 
-func milestoneToJSON(ms *Milestone, baseURL, repoFullName string) map[string]interface{} {
+// milestoneToJSON converts a Milestone to the GitHub `milestone` shape.
+// Open/closed issue counts are derived live from the issues and pull
+// requests attached to the milestone (PRs count because they are issues
+// internally on GitHub). Must not be called with st.mu held.
+func milestoneToJSON(ms *Milestone, st *Store, baseURL, repoFullName string) map[string]interface{} {
 	var dueOn interface{}
 	if ms.DueOn != nil {
 		dueOn = ms.DueOn.Format(time.RFC3339)
 	}
+	var closedAt interface{}
+	if ms.ClosedAt != nil {
+		closedAt = ms.ClosedAt.Format(time.RFC3339)
+	}
+
+	st.mu.RLock()
+	var creatorJSON interface{}
+	if u, ok := st.Users[ms.CreatorID]; ok {
+		creatorJSON = userToJSON(u)
+	}
+	openIssues, closedIssues := 0, 0
+	for _, issue := range st.Issues {
+		if issue.MilestoneID != ms.ID {
+			continue
+		}
+		if issue.State == "OPEN" {
+			openIssues++
+		} else {
+			closedIssues++
+		}
+	}
+	for _, pr := range st.PullRequests {
+		if pr.MilestoneID != ms.ID {
+			continue
+		}
+		if pr.State == "OPEN" {
+			openIssues++
+		} else {
+			closedIssues++
+		}
+	}
+	st.mu.RUnlock()
 
 	return map[string]interface{}{
-		"id":          ms.ID,
-		"node_id":     ms.NodeID,
-		"url":         baseURL + "/api/v3/repos/" + repoFullName + "/milestones/" + strconv.Itoa(ms.Number),
-		"html_url":    baseURL + "/" + repoFullName + "/milestone/" + strconv.Itoa(ms.Number),
-		"number":      ms.Number,
-		"title":       ms.Title,
-		"description": ms.Description,
-		"state":       ms.State,
-		"due_on":      dueOn,
-		"created_at":  ms.CreatedAt.Format(time.RFC3339),
-		"updated_at":  ms.UpdatedAt.Format(time.RFC3339),
+		"id":            ms.ID,
+		"node_id":       ms.NodeID,
+		"url":           baseURL + "/api/v3/repos/" + repoFullName + "/milestones/" + strconv.Itoa(ms.Number),
+		"html_url":      baseURL + "/" + repoFullName + "/milestone/" + strconv.Itoa(ms.Number),
+		"labels_url":    baseURL + "/api/v3/repos/" + repoFullName + "/milestones/" + strconv.Itoa(ms.Number) + "/labels",
+		"number":        ms.Number,
+		"title":         ms.Title,
+		"description":   ms.Description,
+		"state":         ms.State,
+		"creator":       creatorJSON,
+		"open_issues":   openIssues,
+		"closed_issues": closedIssues,
+		"due_on":        dueOn,
+		"closed_at":     closedAt,
+		"created_at":    ms.CreatedAt.Format(time.RFC3339),
+		"updated_at":    ms.UpdatedAt.Format(time.RFC3339),
 	}
 }

@@ -14,22 +14,28 @@ import (
 )
 
 // App represents a registered GitHub App.
+//
+// The credential / webhook-config fields carry real json names so the
+// persistence layer (which marshals the struct as-is) round-trips them:
+// JWT auth, OAuth client-secret auth and app webhooks must survive a
+// restart. Client-facing responses never marshal this struct directly —
+// they go through appToJSON / appHookConfigJSON, which emit explicit maps.
 type App struct {
 	ID                 int               `json:"id"`
 	NodeID             string            `json:"node_id"`
 	Slug               string            `json:"slug"`
 	Name               string            `json:"name"`
 	ClientID           string            `json:"client_id"`
-	ClientSecret       string            `json:"-"`
+	ClientSecret       string            `json:"client_secret"`
 	Description        string            `json:"description"`
 	ExternalURL        string            `json:"external_url"`
-	WebhookURL         string            `json:"-"`
-	WebhookSecret      string            `json:"-"`
-	WebhookActive      bool              `json:"-"`
-	WebhookEvents      []string          `json:"-"`
-	WebhookContentType string            `json:"-"` // "json" | "form" (default "form")
-	WebhookInsecureSSL string            `json:"-"` // "0" | "1" (default "0")
-	PEMPrivateKey      string            `json:"-"`
+	WebhookURL         string            `json:"webhook_url"`
+	WebhookSecret      string            `json:"webhook_secret"`
+	WebhookActive      bool              `json:"webhook_active"`
+	WebhookEvents      []string          `json:"webhook_events"`
+	WebhookContentType string            `json:"webhook_content_type"` // "json" | "form" (default "form")
+	WebhookInsecureSSL string            `json:"webhook_insecure_ssl"` // "0" | "1" (default "0")
+	PEMPrivateKey      string            `json:"pem_private_key"`
 	Permissions        map[string]string `json:"permissions"`
 	Events             []string          `json:"events"`
 	OwnerID            int               `json:"owner_id"`
@@ -45,10 +51,12 @@ type Installation struct {
 	TargetType          string            `json:"target_type"`
 	TargetID            int               `json:"target_id"`
 	TargetLogin         string            `json:"target_login"`
+	TargetNodeID        string            `json:"target_node_id"`    // snapshotted from the target account at install time
+	TargetAvatarURL     string            `json:"target_avatar_url"` // snapshotted from the target account at install time
 	Permissions         map[string]string `json:"permissions"`
 	Events              []string          `json:"events"`
 	RepositorySelection string            `json:"repository_selection"`
-	SelectedRepoIDs     []int             `json:"-"`
+	SelectedRepoIDs     []int             `json:"selected_repo_ids"` // persisted; rendered only via the bespoke installation emitters
 	SuspendedAt         *time.Time        `json:"suspended_at"`
 	SuspendedBy         *User             `json:"suspended_by"`
 	SingleFileName      string            `json:"single_file_name"`
@@ -61,7 +69,7 @@ type InstallationToken struct {
 	Token          string            `json:"token"`
 	ExpiresAt      time.Time         `json:"expires_at"`
 	Permissions    map[string]string `json:"permissions"`
-	RepositoryIDs  []int             `json:"-"`
+	RepositoryIDs  []int             `json:"repository_ids"` // persisted; rendered only via installationTokenToJSON
 	InstallationID int               `json:"installation_id"`
 	AppID          int               `json:"app_id"`
 }
@@ -181,6 +189,16 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 	st.NextInstallationID++
 	now := time.Now().UTC()
 
+	// Snapshot the target account's node ID and avatar so the
+	// installation's `account` object can be served without a live
+	// lookup (both are immutable in bleephub).
+	var targetNodeID, targetAvatarURL string
+	if u := st.UsersByLogin[targetLogin]; u != nil {
+		targetNodeID, targetAvatarURL = u.NodeID, u.AvatarURL
+	} else if o := st.OrgsByLogin[targetLogin]; o != nil {
+		targetNodeID, targetAvatarURL = o.NodeID, o.AvatarURL
+	}
+
 	inst := &Installation{
 		ID:                  id,
 		AppID:               appID,
@@ -188,6 +206,8 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 		TargetType:          targetType,
 		TargetID:            targetID,
 		TargetLogin:         targetLogin,
+		TargetNodeID:        targetNodeID,
+		TargetAvatarURL:     targetAvatarURL,
 		Permissions:         perms,
 		Events:              events,
 		RepositorySelection: "all",
@@ -349,6 +369,7 @@ func (st *Store) AddInstallationRepo(id, repoID int) (bool, bool) {
 		inst.RepositorySelection = "selected"
 	}
 	inst.UpdatedAt = time.Now().UTC()
+	st.persistInstallation(inst)
 	return true, true
 }
 
@@ -365,6 +386,7 @@ func (st *Store) RemoveInstallationRepo(id, repoID int) (bool, bool) {
 		if r == repoID {
 			inst.SelectedRepoIDs = append(inst.SelectedRepoIDs[:i], inst.SelectedRepoIDs[i+1:]...)
 			inst.UpdatedAt = time.Now().UTC()
+			st.persistInstallation(inst)
 			return true, true
 		}
 	}

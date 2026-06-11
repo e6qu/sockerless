@@ -286,7 +286,7 @@ func TestUnitDeleteMilestone(t *testing.T) {
 	s := issueTestServer(t)
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "testrepo", "", false)
-	ms := s.store.CreateMilestone(repo.ID, "v1.0", "", "open", nil)
+	ms := s.store.CreateMilestone(repo.ID, admin.ID, "v1.0", "", "open", nil)
 
 	w := doMiscReq(s, "DELETE", "/api/v3/repos/"+repo.FullName+"/milestones/"+strconv.Itoa(ms.Number), "")
 	if w.Code != http.StatusNoContent {

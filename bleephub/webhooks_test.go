@@ -755,3 +755,96 @@ func pushTestCommit(t *testing.T, owner, repoName string) {
 		t.Fatalf("push: %v", err)
 	}
 }
+
+// Org-owned repos carry a top-level `organization` object on event
+// payloads; user-owned repos must not.
+func TestWebhookOrganizationBlock(t *testing.T) {
+	var mu sync.Mutex
+	var payloads []map[string]interface{}
+
+	url, cleanup := startWebhookReceiver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var p map[string]interface{}
+		json.Unmarshal(body, &p)
+		mu.Lock()
+		payloads = append(payloads, p)
+		mu.Unlock()
+		w.WriteHeader(200)
+	}))
+	defer cleanup()
+
+	// Org-owned repo: create the org, a repo in it, a hook, and an issue.
+	resp := ghPost(t, "/api/v3/admin/organizations", defaultToken, map[string]interface{}{
+		"login": "wh-org", "admin": "admin",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("create org: expected 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = ghPost(t, "/api/v3/orgs/wh-org/repos", defaultToken, map[string]interface{}{"name": "wh-orgrepo"})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("create org repo: expected 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = ghPost(t, "/api/v3/repos/wh-org/wh-orgrepo/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": url},
+		"events": []string{"issues"},
+		"active": true,
+	})
+	resp.Body.Close()
+
+	resp = ghPost(t, "/api/v3/repos/wh-org/wh-orgrepo/issues", defaultToken, map[string]interface{}{"title": "org evt"})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("create issue: expected 201, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// User-owned repo control: same flow under admin/.
+	createWebhookTestRepo(t, "wh-userrepo")
+	resp = ghPost(t, "/api/v3/repos/admin/wh-userrepo/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": url},
+		"events": []string{"issues"},
+		"active": true,
+	})
+	resp.Body.Close()
+	resp = ghPost(t, "/api/v3/repos/admin/wh-userrepo/issues", defaultToken, map[string]interface{}{"title": "user evt"})
+	resp.Body.Close()
+
+	time.Sleep(300 * time.Millisecond)
+
+	mu.Lock()
+	defer mu.Unlock()
+	var orgSeen, userSeen bool
+	for _, p := range payloads {
+		repo, _ := p["repository"].(map[string]interface{})
+		fullName, _ := repo["full_name"].(string)
+		switch fullName {
+		case "wh-org/wh-orgrepo":
+			orgSeen = true
+			orgBlock, ok := p["organization"].(map[string]interface{})
+			if !ok {
+				t.Errorf("org repo event lacks organization block: %v", p)
+				continue
+			}
+			if orgBlock["login"] != "wh-org" {
+				t.Errorf("organization.login = %v, want wh-org", orgBlock["login"])
+			}
+			if _, ok := orgBlock["node_id"].(string); !ok {
+				t.Errorf("organization.node_id missing")
+			}
+		case "admin/wh-userrepo":
+			userSeen = true
+			if _, has := p["organization"]; has {
+				t.Errorf("user repo event must not carry organization block")
+			}
+		}
+	}
+	if !orgSeen || !userSeen {
+		t.Fatalf("missing deliveries: orgSeen=%v userSeen=%v (got %d payloads)", orgSeen, userSeen, len(payloads))
+	}
+}

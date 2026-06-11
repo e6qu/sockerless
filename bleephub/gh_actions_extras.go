@@ -47,6 +47,10 @@ func (s *Server) registerGHActionsExtrasRoutes() {
 		s.handleDownloadArtifactArchive)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/approvals",
 		s.handleRunApprovals)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments",
+		s.handleGetPendingDeployments)
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/pending_deployments",
+		s.requirePerm(scopeActions, permWrite, s.handleReviewPendingDeployments))
 }
 
 // handleRepositoryDispatch — POST /repos/{o}/{r}/dispatches.
@@ -391,9 +395,158 @@ func (s *Server) repoIDByFullName(fullName string) int {
 	return 0
 }
 
-// handleRunApprovals reports environment approvals once Environments are modeled.
+// handleRunApprovals lists the deployment reviews submitted for a run
+// (the review history; pending reviews live on /pending_deployments).
 func (s *Server) handleRunApprovals(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []interface{}{})
+	repo, wf := s.lookupRunFromPath(r)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	base := s.baseURL(r)
+	out := []map[string]interface{}{}
+	s.store.mu.RLock()
+	approvals := append([]*EnvApproval(nil), wf.EnvApprovals...)
+	s.store.mu.RUnlock()
+	for _, a := range approvals {
+		envs := []map[string]interface{}{}
+		for _, id := range a.EnvIDs {
+			// The approvals schema nests the slim environment shape —
+			// no protection_rules / deployment_branch_policy members.
+			if env := s.store.Deployments.GetEnvironmentByID(id); env != nil {
+				envs = append(envs, map[string]interface{}{
+					"id":         env.ID,
+					"node_id":    env.NodeID,
+					"name":       env.Name,
+					"url":        fmt.Sprintf("%s/api/v3/repos/%s/environments/%s", base, repo.FullName, env.Name),
+					"html_url":   fmt.Sprintf("%s/%s/deployments/activity_log?environments_filter=%s", base, repo.FullName, env.Name),
+					"created_at": env.CreatedAt.UTC().Format(time.RFC3339),
+					"updated_at": env.UpdatedAt.UTC().Format(time.RFC3339),
+				})
+			}
+		}
+		var user map[string]interface{}
+		s.store.mu.RLock()
+		if u := s.store.Users[a.UserID]; u != nil {
+			user = userToJSON(u)
+		}
+		s.store.mu.RUnlock()
+		out = append(out, map[string]interface{}{
+			"environments": envs,
+			"state":        a.State,
+			"comment":      a.Comment,
+			"user":         user,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleGetPendingDeployments lists the reviewer-protected environments a
+// run is currently waiting on.
+func (s *Server) handleGetPendingDeployments(w http.ResponseWriter, r *http.Request) {
+	repo, wf := s.lookupRunFromPath(r)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	base := s.baseURL(r)
+	out := []map[string]interface{}{}
+	s.store.mu.RLock()
+	pending := append([]*PendingDeployment(nil), wf.PendingDeployments...)
+	s.store.mu.RUnlock()
+	for _, p := range pending {
+		env := s.store.Deployments.GetEnvironmentByID(p.EnvID)
+		if env == nil {
+			continue
+		}
+		out = append(out, map[string]interface{}{
+			"environment": map[string]interface{}{
+				"id":       env.ID,
+				"node_id":  env.NodeID,
+				"name":     env.Name,
+				"url":      fmt.Sprintf("%s/api/v3/repos/%s/environments/%s", base, repo.FullName, env.Name),
+				"html_url": fmt.Sprintf("%s/%s/deployments/activity_log?environments_filter=%s", base, repo.FullName, env.Name),
+			},
+			"wait_timer":               env.WaitTimer,
+			"wait_timer_started_at":    p.WaitTimerStartedAt.UTC().Format(time.RFC3339),
+			"current_user_can_approve": true,
+			"reviewers":                environmentReviewersJSON(env, s.store),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleReviewPendingDeployments approves or rejects a run's pending
+// deployments. Approval releases the waiting jobs (and creates the
+// deployments, which the response returns, matching real GitHub);
+// rejection fails them.
+func (s *Server) handleReviewPendingDeployments(w http.ResponseWriter, r *http.Request) {
+	repo, wf := s.lookupRunFromPath(r)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var body struct {
+		EnvironmentIDs []int  `json:"environment_ids"`
+		State          string `json:"state"`
+		Comment        string `json:"comment"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Invalid request body")
+		return
+	}
+	if body.State != "approved" && body.State != "rejected" {
+		writeGHError(w, http.StatusUnprocessableEntity, "state must be approved or rejected")
+		return
+	}
+	if len(body.EnvironmentIDs) == 0 {
+		writeGHError(w, http.StatusUnprocessableEntity, "environment_ids is required")
+		return
+	}
+	s.store.mu.RLock()
+	pendingByID := map[int]bool{}
+	for _, p := range wf.PendingDeployments {
+		pendingByID[p.EnvID] = true
+	}
+	s.store.mu.RUnlock()
+	for _, id := range body.EnvironmentIDs {
+		if !pendingByID[id] {
+			writeGHError(w, http.StatusUnprocessableEntity,
+				fmt.Sprintf("environment %d has no pending deployment for this run", id))
+			return
+		}
+	}
+
+	reviewer := ghUserFromContext(r.Context())
+	names := s.applyDeploymentReview(r.Context(), wf, body.EnvironmentIDs, body.State, body.Comment, reviewer)
+
+	deployments := []map[string]interface{}{}
+	if body.State == "approved" {
+		creatorID := 0
+		if reviewer != nil {
+			creatorID = reviewer.ID
+		}
+		base := s.baseURL(r)
+		for _, name := range names {
+			d := s.store.Deployments.CreateDeployment(repo.ID, creatorID, wf.Ref, wf.Sha, "deploy", name, "", nil, false, false)
+			deployments = append(deployments, deploymentToJSON(d, s.store, base, repo))
+		}
+	}
+	writeJSON(w, http.StatusOK, deployments)
+}
+
+// lookupRunFromPath resolves the {owner}/{repo} + {run_id} path params to
+// the repo and workflow run.
+func (s *Server) lookupRunFromPath(r *http.Request) (*Repo, *Workflow) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		return nil, nil
+	}
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		return repo, nil
+	}
+	return repo, s.findWorkflowByRunID(runID)
 }
 
 // findWorkflowByRunID lives in gh_actions_rest.go alongside the rest of

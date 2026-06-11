@@ -58,7 +58,37 @@ const workflowRunsData = [
     eventName: "push",
     repoFullName: "admin/test",
     jobs: {
-      build: { key: "build", jobId: "j1", displayName: "Build", status: "running", result: "" },
+      build: {
+        key: "build",
+        jobId: "j1",
+        displayName: "Build",
+        status: "running",
+        result: "",
+        startedAt: "2026-01-01T00:00:01Z",
+        completedAt: "0001-01-01T00:00:00Z",
+      },
+    },
+  },
+  // A run held on an environment-approval gate — server status "waiting".
+  {
+    id: "wf-2",
+    name: "Deploy",
+    runId: 2,
+    status: "waiting",
+    result: "",
+    createdAt: "2026-01-01T01:00:00Z",
+    eventName: "workflow_dispatch",
+    repoFullName: "admin/test",
+    jobs: {
+      deploy: {
+        key: "deploy",
+        jobId: "j2",
+        displayName: "Deploy",
+        status: "waiting",
+        result: "",
+        startedAt: "0001-01-01T00:00:00Z",
+        completedAt: "0001-01-01T00:00:00Z",
+      },
     },
   },
 ];
@@ -102,6 +132,18 @@ describe("WorkflowsPage", () => {
     await waitFor(() => {
       expect(screen.getByText("running")).toBeInTheDocument();
       expect(screen.getByText("push")).toBeInTheDocument();
+    });
+  });
+
+  it("Runs tab renders a waiting (environment-approval) run with its badge", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
+    renderPage();
+    await waitFor(() => {
+      fireEvent.click(screen.getByText("Runs"));
+    });
+    await waitFor(() => {
+      expect(screen.getByText("waiting")).toBeInTheDocument();
+      expect(screen.getByText("Deploy")).toBeInTheDocument();
     });
   });
 

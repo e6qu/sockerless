@@ -18,10 +18,11 @@ type WorkflowStatus string
 
 const (
 	WorkflowStatusRunning            WorkflowStatus = "running"
-	WorkflowStatusQueued             WorkflowStatus = "queued"
 	WorkflowStatusCompleted          WorkflowStatus = "completed"
-	WorkflowStatusSkipped            WorkflowStatus = "skipped"
 	WorkflowStatusPendingConcurrency WorkflowStatus = "pending_concurrency"
+	// WorkflowStatusWaiting holds runs whose environment-targeting jobs
+	// await a deployment review (required reviewers on the environment).
+	WorkflowStatusWaiting WorkflowStatus = "waiting"
 )
 
 // JobStatus is the lifecycle state of a [WorkflowJob].
@@ -33,6 +34,9 @@ const (
 	JobStatusRunning   JobStatus = "running"
 	JobStatusCompleted JobStatus = "completed"
 	JobStatusSkipped   JobStatus = "skipped"
+	// JobStatusWaiting holds jobs targeting a reviewer-protected
+	// environment until the run's pending deployment is approved.
+	JobStatusWaiting JobStatus = "waiting"
 )
 
 // Result is the terminal outcome of a workflow or job. The empty value
@@ -49,24 +53,29 @@ const (
 
 // Workflow represents a running multi-job workflow.
 type Workflow struct {
-	ID               string                  `json:"id"`
-	Name             string                  `json:"name"`
-	RunID            int                     `json:"runId"`
-	RunNumber        int                     `json:"runNumber"`
-	Jobs             map[string]*WorkflowJob `json:"jobs"`
-	Env              map[string]string       `json:"env,omitempty"`
-	Status           WorkflowStatus          `json:"status"` // "running", "completed", "pending_concurrency"
-	Result           Result                  `json:"result"` // "success", "failure", "cancelled"
-	CreatedAt        time.Time               `json:"createdAt"`
-	MaxParallel      int                     `json:"-"` // per-matrix-group limit
-	cancelTimeout    func()                  // stops the timeout watcher goroutine
-	EventName        string                  `json:"eventName,omitempty"`
-	Ref              string                  `json:"ref,omitempty"`
-	Sha              string                  `json:"sha,omitempty"`
-	RepoFullName     string                  `json:"repoFullName,omitempty"`
-	Inputs           map[string]string       `json:"inputs,omitempty"`
-	ConcurrencyGroup string                  `json:"concurrencyGroup,omitempty"`
-	CancelInProgress bool                    `json:"-"`
+	ID        string                  `json:"id"`
+	Name      string                  `json:"name"`
+	RunID     int                     `json:"runId"`
+	RunNumber int                     `json:"runNumber"`
+	Jobs      map[string]*WorkflowJob `json:"jobs"`
+	Env       map[string]string       `json:"env,omitempty"`
+	Status    WorkflowStatus          `json:"status"` // "running", "completed", "pending_concurrency"
+	// PendingDeployments holds one record per reviewer-protected
+	// environment the run is waiting on; EnvApprovals records every
+	// approve/reject review submitted for the run.
+	PendingDeployments []*PendingDeployment `json:"pendingDeployments,omitempty"`
+	EnvApprovals       []*EnvApproval       `json:"envApprovals,omitempty"`
+	Result             Result               `json:"result"` // "success", "failure", "cancelled"
+	CreatedAt          time.Time            `json:"createdAt"`
+	MaxParallel        int                  `json:"-"` // per-matrix-group limit
+	cancelTimeout      func()               // stops the timeout watcher goroutine
+	EventName          string               `json:"eventName,omitempty"`
+	Ref                string               `json:"ref,omitempty"`
+	Sha                string               `json:"sha,omitempty"`
+	RepoFullName       string               `json:"repoFullName,omitempty"`
+	Inputs             map[string]string    `json:"inputs,omitempty"`
+	ConcurrencyGroup   string               `json:"concurrencyGroup,omitempty"`
+	CancelInProgress   bool                 `json:"-"`
 
 	// WorkflowFileID / WorkflowFilePath identify the originating workflow
 	// FILE (the YAML on disk), which is stable across every run produced
@@ -106,6 +115,24 @@ type WorkflowEventMeta struct {
 }
 
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
+
+// PendingDeployment is one reviewer-protected environment a run waits on.
+type PendingDeployment struct {
+	EnvID              int       `json:"envId"`
+	EnvName            string    `json:"envName"`
+	WaitTimerStartedAt time.Time `json:"waitTimerStartedAt"`
+}
+
+// EnvApproval is one submitted deployment review (approve or reject).
+type EnvApproval struct {
+	State     string    `json:"state"` // approved | rejected
+	Comment   string    `json:"comment"`
+	UserID    int       `json:"userId"`
+	EnvIDs    []int     `json:"envIds"`
+	EnvNames  []string  `json:"envNames"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
 func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *WorkflowDef, defaultImage string, eventMeta ...*WorkflowEventMeta) (*Workflow, error) {
 	ctx, span := otel.Tracer("bleephub").Start(ctx, "submitWorkflow",
 		trace.WithAttributes(attribute.String("workflow.name", wf.Name)))
@@ -366,6 +393,23 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				}
 			}
 
+			// Environment protection: a job targeting an environment
+			// with required reviewers waits for a deployment review
+			// (approve via POST .../runs/{id}/pending_deployments).
+			if envName := jobEnvironmentName(wfJob); envName != "" && !envApproved(wf, envName) {
+				if env := s.protectedEnvironment(wf, envName); env != nil {
+					wfJob.Status = JobStatusWaiting
+					addPendingDeployment(wf, env)
+					if wf.Status == WorkflowStatusRunning {
+						wf.Status = WorkflowStatusWaiting
+					}
+					s.logger.Info().Str("job", wfJob.Key).Str("environment", envName).
+						Msg("job waiting for deployment review")
+					changed = true
+					continue
+				}
+			}
+
 			// Mark as queued now so max-parallel checks in this iteration see it
 			wfJob.Status = JobStatusQueued
 			wfJob.StartedAt = time.Now()
@@ -559,6 +603,179 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			Msg("workflow completed")
 
 		// Check for pending-concurrency workflows in the same group
+		if concurrencyGroup != "" {
+			s.startPendingConcurrencyWorkflow(concurrencyGroup)
+		}
+	}
+}
+
+// jobEnvironmentName resolves a job's target environment, tolerating a
+// nil Def (directly-seeded test jobs).
+func jobEnvironmentName(wfJob *WorkflowJob) string {
+	if wfJob.Def == nil {
+		return ""
+	}
+	return wfJob.Def.EnvironmentName()
+}
+
+// envApproved reports whether an approved review covering the
+// environment has been submitted for this run.
+func envApproved(wf *Workflow, envName string) bool {
+	for _, a := range wf.EnvApprovals {
+		if a.State != "approved" {
+			continue
+		}
+		for _, name := range a.EnvNames {
+			if name == envName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// protectedEnvironment returns the run repo's environment when it exists
+// and carries required reviewers; environments without reviewers (or
+// runs without a repo) don't gate dispatch. Referencing an environment
+// auto-creates it, matching real GitHub.
+func (s *Server) protectedEnvironment(wf *Workflow, envName string) *Environment {
+	if wf.RepoFullName == "" {
+		return nil
+	}
+	repo := s.store.ReposByName[wf.RepoFullName]
+	if repo == nil {
+		return nil
+	}
+	env := s.store.Deployments.GetEnvironment(repo.ID, envName)
+	if env == nil {
+		env = s.store.Deployments.UpsertEnvironment(repo.ID, envName)
+	}
+	if len(env.Reviewers) == 0 {
+		return nil
+	}
+	return env
+}
+
+// addPendingDeployment records the run's wait on an environment exactly once.
+func addPendingDeployment(wf *Workflow, env *Environment) {
+	for _, p := range wf.PendingDeployments {
+		if p.EnvID == env.ID {
+			return
+		}
+	}
+	wf.PendingDeployments = append(wf.PendingDeployments, &PendingDeployment{
+		EnvID:              env.ID,
+		EnvName:            env.Name,
+		WaitTimerStartedAt: time.Now().UTC(),
+	})
+}
+
+// applyDeploymentReview resolves a submitted review against the run's
+// pending deployments: approved environments release their waiting jobs
+// back to pending and dispatch resumes; rejected environments fail their
+// waiting jobs and the run finalizes when nothing else is in flight.
+// Returns the environment names the review covered.
+func (s *Server) applyDeploymentReview(ctx context.Context, wf *Workflow, envIDs []int, state, comment string, reviewer *User) []string {
+	s.store.mu.Lock()
+	covered := map[string]bool{}
+	var names []string
+	remaining := wf.PendingDeployments[:0]
+	for _, p := range wf.PendingDeployments {
+		matched := false
+		for _, id := range envIDs {
+			if p.EnvID == id {
+				matched = true
+				break
+			}
+		}
+		if matched {
+			covered[p.EnvName] = true
+			names = append(names, p.EnvName)
+		} else {
+			remaining = append(remaining, p)
+		}
+	}
+	wf.PendingDeployments = remaining
+
+	reviewerID := 0
+	if reviewer != nil {
+		reviewerID = reviewer.ID
+	}
+	wf.EnvApprovals = append(wf.EnvApprovals, &EnvApproval{
+		State:     state,
+		Comment:   comment,
+		UserID:    reviewerID,
+		EnvIDs:    append([]int(nil), envIDs...),
+		EnvNames:  append([]string(nil), names...),
+		CreatedAt: time.Now().UTC(),
+	})
+
+	for _, wfJob := range wf.Jobs {
+		if wfJob.Status != JobStatusWaiting || !covered[jobEnvironmentName(wfJob)] {
+			continue
+		}
+		if state == "approved" {
+			wfJob.Status = JobStatusPending
+		} else {
+			wfJob.Status = JobStatusCompleted
+			wfJob.Result = ResultFailure
+			wfJob.CompletedAt = time.Now()
+		}
+	}
+	if len(wf.PendingDeployments) == 0 && wf.Status == WorkflowStatusWaiting {
+		wf.Status = WorkflowStatusRunning
+	}
+	serverURL := ""
+	defaultImage := ""
+	if wf.Env != nil {
+		serverURL = wf.Env["__serverURL"]
+		defaultImage = wf.Env["__defaultImage"]
+	}
+	s.store.mu.Unlock()
+
+	if state == "approved" && serverURL != "" {
+		s.dispatchReadyJobs(ctx, wf, serverURL, defaultImage)
+	}
+	s.finalizeWorkflowIfDone(wf)
+	return names
+}
+
+// finalizeWorkflowIfDone completes the run when every job has reached a
+// terminal state — the same check onJobCompleted performs after each
+// job, needed independently when a rejection fails jobs without any job
+// completion event.
+func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
+	s.store.mu.Lock()
+	allDone := true
+	anyFailed := false
+	for _, wfJob := range wf.Jobs {
+		if wfJob.Status != JobStatusCompleted && wfJob.Status != JobStatusSkipped {
+			allDone = false
+		}
+		if wfJob.Result == ResultFailure || wfJob.Result == ResultCancelled {
+			anyFailed = true
+		}
+	}
+	if allDone && wf.Status != WorkflowStatusCompleted {
+		wf.Status = WorkflowStatusCompleted
+		if anyFailed {
+			wf.Result = ResultFailure
+		} else {
+			wf.Result = ResultSuccess
+		}
+	} else {
+		allDone = false
+	}
+	concurrencyGroup := wf.ConcurrencyGroup
+	s.store.mu.Unlock()
+
+	if allDone {
+		if s.metrics != nil {
+			s.metrics.RecordWorkflowComplete()
+		}
+		if wf.cancelTimeout != nil {
+			wf.cancelTimeout()
+		}
 		if concurrencyGroup != "" {
 			s.startPendingConcurrencyWorkflow(concurrencyGroup)
 		}

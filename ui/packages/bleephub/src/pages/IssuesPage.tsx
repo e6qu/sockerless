@@ -3,13 +3,14 @@ import { useParams, Link, useNavigate } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import {
-  fetchRepoIssues,
-  fetchRepoPRs,
+  fetchRepoIssuesPage,
   fetchIssueDetail,
   fetchIssueComments,
   createIssue,
+  isNotFound,
 } from "../api.js";
 import { useRepoItemList } from "../hooks/useRepoItemList.js";
+import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type { GithubIssue } from "../types.js";
 import { CommentCard, CommentList } from "../components/CommentCard.js";
 import { LabelPills } from "../components/LabelPills.js";
@@ -22,6 +23,7 @@ import {
   StateLabel,
   Modal,
   FormLabel,
+  ErrorBanner,
   DialogActions,
 } from "../components/ui.js";
 import { IssueOpenedIcon, IssueClosedIcon, CommentIcon } from "../components/octicons.js";
@@ -39,27 +41,18 @@ export function IssuesPage() {
   return <IssueList owner={owner} repo={repo} />;
 }
 
-function useOpenCounts(owner: string, repo: string) {
-  const { data: openIssues = [] } = useQuery({
-    queryKey: ["issues", owner, repo, "open"],
-    queryFn: () => fetchRepoIssues(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
-  const { data: openPRs = [] } = useQuery({
-    queryKey: ["prs", owner, repo, "open"],
-    queryFn: () => fetchRepoPRs(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
-  return { issueCount: openIssues.length, prCount: openPRs.length };
-}
-
 function IssueList({ owner, repo }: { owner: string; repo: string }) {
-  const { state, setState, items: issues, isLoading, isError, error } = useRepoItemList(
-    "issues",
-    owner,
-    repo,
-    fetchRepoIssues,
-  );
+  const {
+    state,
+    setState,
+    items: issues,
+    isLoading,
+    isError,
+    error,
+    hasMore,
+    loadMore,
+    isLoadingMore,
+  } = useRepoItemList("issues", owner, repo, fetchRepoIssuesPage);
   const counts = useOpenCounts(owner, repo);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -67,6 +60,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
   const qc = useQueryClient();
   const navigate = useNavigate();
 
+  const [createError, setCreateError] = useState<string | null>(null);
   const mutation = useMutation({
     mutationFn: () => createIssue(owner, repo, { title: newTitle, body: newBody }),
     onSuccess: (issue: GithubIssue) => {
@@ -74,8 +68,10 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
       setCreating(false);
       setNewTitle("");
       setNewBody("");
+      setCreateError(null);
       navigate(`/ui/repos/${owner}/${repo}/issues/${issue.number}`);
     },
+    onError: (err: Error) => setCreateError(err.message),
   });
 
   if (isLoading) return <Spinner label="loading issues" />;
@@ -119,6 +115,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
             className="mb-4 w-full"
             style={{ resize: "vertical" }}
           />
+          {createError && <ErrorBanner>{createError}</ErrorBanner>}
           <DialogActions>
             <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>
               Cancel
@@ -127,7 +124,10 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
               variant="primary"
               size="sm"
               disabled={!newTitle.trim() || mutation.isPending}
-              onClick={() => mutation.mutate()}
+              onClick={() => {
+                setCreateError(null);
+                mutation.mutate();
+              }}
             >
               {mutation.isPending ? "Creating…" : "Create issue"}
             </Button>
@@ -138,6 +138,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
       {issues.length === 0 ? (
         <Blankslate icon={<CommentIcon size={26} />} title={`No ${state} issues`} />
       ) : (
+        <>
         <Box>
           {issues.map((issue, i) => (
             <Link
@@ -169,6 +170,14 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
             </Link>
           ))}
         </Box>
+        {hasMore && (
+          <div className="mt-3 flex justify-center">
+            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+              {isLoadingMore ? "Loading…" : "Load more"}
+            </Button>
+          </div>
+        )}
+        </>
       )}
     </div>
   );
@@ -176,15 +185,32 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
 
 function IssueDetail({ owner, repo, number }: { owner: string; repo: string; number: number }) {
   const counts = useOpenCounts(owner, repo);
-  const { data: issue, isLoading } = useQuery({
+  const { data: issue, isLoading, isError, error } = useQuery({
     queryKey: ["issue", owner, repo, number],
     queryFn: () => fetchIssueDetail(owner, repo, number),
   });
   const { data: comments = [] } = useQuery({
     queryKey: ["issue-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
+    enabled: !!issue,
   });
 
+  if (isError) {
+    if (isNotFound(error)) {
+      return (
+        <div>
+          <RepoHeader owner={owner} repo={repo} active="issues" {...counts} />
+          <Blankslate
+            icon={<IssueOpenedIcon size={26} />}
+            title={`Issue #${number} not found`}
+          >
+            It may have been deleted, or the number may be wrong.
+          </Blankslate>
+        </div>
+      );
+    }
+    return <InlineError title={`Failed to load issue #${number}`} detail={String(error)} />;
+  }
   if (isLoading || !issue) return <Spinner label={`loading issue #${number}`} />;
 
   const open = issue.state === "open";

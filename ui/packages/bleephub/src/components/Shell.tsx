@@ -164,8 +164,9 @@ export function RepoHeader({
   owner: string;
   repo: string;
   active: RepoTab;
-  issueCount?: number;
-  prCount?: number;
+  /** number when exact; "N+" when the server reports further pages. */
+  issueCount?: number | string;
+  prCount?: number | string;
 }) {
   const base = `/ui/repos/${owner}/${repo}`;
   return (
@@ -215,7 +216,7 @@ function RepoTabLink({
   to: string;
   icon: ReactNode;
   label: string;
-  count?: number;
+  count?: number | string;
   active: boolean;
 }) {
   return (

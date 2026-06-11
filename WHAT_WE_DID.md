@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-11 - bleephub deep sweep (shape ratchet, approvals, persistence, gh-CLI parity)
+
+One fat PR sweeping bleephub's API, implementation, storage, and UI, anchored
+by a new regression gate: every 2xx `/api/v3` JSON response flowing through
+the shared test server is validated member-by-member against the vendored
+GitHub OpenAPI description, ratcheted via `openapi-violation-allowlist.txt`
+(one cited GHES-divergence entry; everything else fixed). First armed run
+found 723 violations across 14 entity emitters — all fixed (simple/full
+user/org/team splits, full repository shape, pull-request simple/full,
+hypermedia templates, real counters).
+
+- **Deployment approvals** (BUG-1590): environments parse reviewers/wait_timer
+  and emit protection_rules; jobs targeting reviewer-protected environments
+  hold in `waiting`; `GET/POST .../pending_deployments` + real `approvals`.
+- **Webhook org block** (BUG-1618): central attach in `emitWebhookEvent`.
+- **Persistence** (BUG-1692..1695): the `json:"-"`-stripping class destroyed
+  app credentials/webhook secrets/secret values/linkage on reload; revoked
+  tokens resurrected (P1); mutations skipping persistence; fail-loud on
+  persistence-with-memory-git; DeleteRepo cascade; a reload test per gap.
+- **gh-CLI parity** (BUG-1696..1699): GraphQL drift had silently broken
+  `repo clone`, the whole `pr` chain, `release list/view/delete`; plus
+  missing `/api/v3/meta` and push-run workflow_id derivation from an empty
+  repo name. Fixed against verbatim gh v2.92 queries; the Docker harness now
+  drives every previously-broken command natively: 92 PASS / 0 FAIL.
+- **UI** (BUG-1690/1691): spinner dead-ends, login loop, Link-aware
+  pagination with honest "N+" badges, draft-release rendering, type truthing;
+  49 new vitest cases.
+
 ## 2026-06-11 - Spec-based simulator validation (specs/cloud-api + two gates)
 
 The simulators are now validated against the official machine-readable cloud

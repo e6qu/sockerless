@@ -123,7 +123,7 @@ func (s *Server) handleListPullRequests(w http.ResponseWriter, r *http.Request) 
 	base := s.baseURL(r)
 	result := make([]map[string]interface{}, 0, len(prs))
 	for _, pr := range prs {
-		result = append(result, pullRequestToJSON(pr, s.store, base, repo.FullName))
+		result = append(result, pullRequestSimpleJSON(pr, s.store, base, repo.FullName))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -410,7 +410,18 @@ func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) 
 
 // --- JSON converters ---
 
-func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
+// prHeadSHA returns the deterministic synthetic head commit SHA for a
+// pull request; reviews reference the same value as commit_id.
+func prHeadSHA(prID int) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", prID))))[:40]
+}
+
+// pullRequestSimpleJSON converts a PullRequest to the GitHub
+// `pull-request-simple` shape used by list responses — the full shape
+// minus the merge/diff-stat members that exist only on `pull-request`.
+// Bleephub PRs are same-repository, so head and base both carry the
+// repository and its owner. Must not be called with st.mu held.
+func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
 	st.mu.RLock()
 
 	// Resolve author
@@ -435,36 +446,47 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 		}
 	}
 
-	// Resolve milestone
-	var milestoneJSON interface{}
+	// Milestone and repo conversion happens after unlock: both derive
+	// counts under their own locks.
+	var milestone *Milestone
 	if pr.MilestoneID > 0 {
-		if ms, ok := st.Milestones[pr.MilestoneID]; ok {
-			milestoneJSON = milestoneToJSON(ms, baseURL, repoFullName)
-		}
+		milestone = st.Milestones[pr.MilestoneID]
 	}
-
-	// Resolve merged_by
-	var mergedByJSON interface{}
-	if pr.MergedByID > 0 {
-		if u, ok := st.Users[pr.MergedByID]; ok {
-			mergedByJSON = userToJSON(u)
-		}
-	}
-
-	// Count reviews inline to avoid deadlock
-	reviewCount := 0
-	for _, r := range st.PRReviews {
-		if r.PRID == pr.ID {
-			reviewCount++
-		}
-	}
+	repo := st.ReposByName[repoFullName]
 
 	st.mu.RUnlock()
 
+	var milestoneJSON interface{}
+	if milestone != nil {
+		milestoneJSON = milestoneToJSON(milestone, st, baseURL, repoFullName)
+	}
+
+	var repoJSON interface{}
+	var repoOwnerJSON interface{}
+	if repo != nil {
+		repoJSON = repoToJSON(repo, st, baseURL)
+		if repo.Owner != nil {
+			repoOwnerJSON = userToJSON(repo.Owner)
+		}
+	}
+
+	// GitHub's assignee is the first assignee, null when unassigned.
+	var assignee interface{}
+	if len(assignees) > 0 {
+		assignee = assignees[0]
+	}
+
+	// author_association relative to the repository: its owner authored
+	// it or someone else did. Bleephub does not model commit-derived
+	// CONTRIBUTOR status.
+	authorAssociation := "NONE"
+	if repo != nil && repo.Owner != nil && repo.Owner.ID == pr.AuthorID {
+		authorAssociation = "OWNER"
+	}
+
 	// REST state: "MERGED" → state:"closed", merged:true
 	state := strings.ToLower(pr.State)
-	merged := pr.State == "MERGED"
-	if merged {
+	if pr.State == "MERGED" {
 		state = "closed"
 	}
 
@@ -477,50 +499,123 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 		mergedAt = pr.MergedAt.Format(time.RFC3339)
 	}
 
-	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", pr.ID))))[:40]
-
 	numStr := strconv.Itoa(pr.Number)
+	api := baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + numStr
+	issueAPI := baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr
+	htmlURL := baseURL + "/" + repoFullName + "/pull/" + numStr
 	return map[string]interface{}{
-		"id":        pr.ID,
-		"node_id":   pr.NodeID,
-		"url":       baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + numStr,
-		"html_url":  baseURL + "/" + repoFullName + "/pull/" + numStr,
-		"diff_url":  baseURL + "/" + repoFullName + "/pull/" + numStr + ".diff",
-		"patch_url": baseURL + "/" + repoFullName + "/pull/" + numStr + ".patch",
-		"number":    pr.Number,
-		"title":     pr.Title,
-		"body":      pr.Body,
-		"state":     state,
-		"draft":     pr.IsDraft,
-		"user":      authorJSON,
+		"id":                  pr.ID,
+		"node_id":             pr.NodeID,
+		"url":                 api,
+		"html_url":            htmlURL,
+		"diff_url":            htmlURL + ".diff",
+		"patch_url":           htmlURL + ".patch",
+		"issue_url":           issueAPI,
+		"commits_url":         api + "/commits",
+		"review_comments_url": api + "/comments",
+		"review_comment_url":  baseURL + "/api/v3/repos/" + repoFullName + "/pulls/comments{/number}",
+		"comments_url":        issueAPI + "/comments",
+		"statuses_url":        baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + prHeadSHA(pr.ID),
+		"number":              pr.Number,
+		"title":               pr.Title,
+		"body":                pr.Body,
+		"state":               state,
+		"locked":              pr.Locked,
+		"draft":               pr.IsDraft,
+		"user":                authorJSON,
 		"head": map[string]interface{}{
 			"ref":   pr.HeadRefName,
-			"sha":   sha,
+			"sha":   prHeadSHA(pr.ID),
 			"label": repoFullName + ":" + pr.HeadRefName,
+			"repo":  repoJSON,
+			"user":  repoOwnerJSON,
 		},
 		"base": map[string]interface{}{
 			"ref":   pr.BaseRefName,
 			"sha":   fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40],
 			"label": repoFullName + ":" + pr.BaseRefName,
+			"repo":  repoJSON,
+			"user":  repoOwnerJSON,
+		},
+		"_links": map[string]interface{}{
+			"self":            map[string]interface{}{"href": api},
+			"html":            map[string]interface{}{"href": htmlURL},
+			"issue":           map[string]interface{}{"href": issueAPI},
+			"comments":        map[string]interface{}{"href": issueAPI + "/comments"},
+			"review_comments": map[string]interface{}{"href": api + "/comments"},
+			"review_comment":  map[string]interface{}{"href": baseURL + "/api/v3/repos/" + repoFullName + "/pulls/comments{/number}"},
+			"commits":         map[string]interface{}{"href": api + "/commits"},
+			"statuses":        map[string]interface{}{"href": baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + prHeadSHA(pr.ID)},
 		},
 		"labels":              labels,
+		"assignee":            assignee,
 		"assignees":           assignees,
 		"milestone":           milestoneJSON,
 		"requested_reviewers": []interface{}{},
-		"merged":              merged,
-		"mergeable":           pr.Mergeable == "MERGEABLE",
+		"author_association":  authorAssociation,
+		"auto_merge":          nil,
 		"merged_at":           mergedAt,
-		"merged_by":           mergedByJSON,
-		"additions":           pr.Additions,
-		"deletions":           pr.Deletions,
-		"changed_files":       pr.ChangedFiles,
-		"comments":            0,
-		"review_comments":     reviewCount,
-		"commits":             1,
+		"merge_commit_sha":    nil,
 		"created_at":          pr.CreatedAt.Format(time.RFC3339),
 		"updated_at":          pr.UpdatedAt.Format(time.RFC3339),
 		"closed_at":           closedAt,
 	}
+}
+
+// pullRequestToJSON converts a PullRequest to the full GitHub
+// `pull-request` shape served by single-PR operations: the simple shape
+// plus merge state, diff stats, and conversation counters. Bleephub
+// does not materialise merges, so merge_commit_sha stays null (as on
+// real GitHub before mergeability is computed). Must not be called with
+// st.mu held.
+func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	out := pullRequestSimpleJSON(pr, st, baseURL, repoFullName)
+
+	st.mu.RLock()
+	reviewCount := 0
+	for _, r := range st.PRReviews {
+		if r.PRID == pr.ID {
+			reviewCount++
+		}
+	}
+	commentCount := 0
+	for _, c := range st.Comments {
+		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
+			commentCount++
+		}
+	}
+	st.mu.RUnlock()
+
+	merged := pr.State == "MERGED"
+	mergeableState := "unknown"
+	switch pr.Mergeable {
+	case "MERGEABLE":
+		mergeableState = "clean"
+	case "CONFLICTING":
+		mergeableState = "dirty"
+	}
+
+	var mergedByJSON interface{}
+	if pr.MergedByID > 0 {
+		st.mu.RLock()
+		if u, ok := st.Users[pr.MergedByID]; ok {
+			mergedByJSON = userToJSON(u)
+		}
+		st.mu.RUnlock()
+	}
+
+	out["merged"] = merged
+	out["mergeable"] = pr.Mergeable == "MERGEABLE"
+	out["mergeable_state"] = mergeableState
+	out["maintainer_can_modify"] = false
+	out["merged_by"] = mergedByJSON
+	out["additions"] = pr.Additions
+	out["deletions"] = pr.Deletions
+	out["changed_files"] = pr.ChangedFiles
+	out["comments"] = commentCount
+	out["review_comments"] = reviewCount
+	out["commits"] = 1
+	return out
 }
 
 func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName string, prNumber int) map[string]interface{} {
@@ -531,14 +626,23 @@ func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName st
 	}
 	st.mu.RUnlock()
 
+	htmlURL := baseURL + "/" + repoFullName + "/pull/" + strconv.Itoa(prNumber) + "#pullrequestreview-" + strconv.Itoa(review.ID)
+	pullURL := baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + strconv.Itoa(prNumber)
 	return map[string]interface{}{
-		"id":                 review.ID,
-		"node_id":            review.NodeID,
-		"user":               authorJSON,
-		"body":               review.Body,
-		"state":              review.State,
-		"html_url":           baseURL + "/" + repoFullName + "/pull/" + strconv.Itoa(prNumber) + "#pullrequestreview-" + strconv.Itoa(review.ID),
-		"pull_request_url":   baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + strconv.Itoa(prNumber),
+		"id":      review.ID,
+		"node_id": review.NodeID,
+		"user":    authorJSON,
+		"body":    review.Body,
+		"state":   review.State,
+		// commit_id is the PR head the review was submitted against —
+		// bleephub's deterministic synthetic head SHA for the PR.
+		"commit_id":        prHeadSHA(review.PRID),
+		"html_url":         htmlURL,
+		"pull_request_url": pullURL,
+		"_links": map[string]interface{}{
+			"html":         map[string]interface{}{"href": htmlURL},
+			"pull_request": map[string]interface{}{"href": pullURL},
+		},
 		"author_association": "OWNER",
 		"submitted_at":       review.CreatedAt.Format(time.RFC3339),
 	}

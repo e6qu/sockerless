@@ -35,6 +35,24 @@ type JobDef struct {
 	If              string                 `yaml:"if"`
 	ContinueOnError bool                   `yaml:"continue-on-error"`
 	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
+	Environment     interface{}            `yaml:"environment"` // string or {name, url}
+}
+
+// EnvironmentName resolves the job's target environment name from either
+// the string or the {name, url} object form; empty when the job declares
+// no environment.
+func (jd *JobDef) EnvironmentName() string {
+	switch env := jd.Environment.(type) {
+	case string:
+		return env
+	case map[string]interface{}:
+		name, _ := env["name"].(string)
+		return name
+	case map[interface{}]interface{}:
+		name, _ := env["name"].(string)
+		return name
+	}
+	return ""
 }
 
 // StrategyDef represents a job's strategy configuration.
@@ -117,6 +135,7 @@ type rawJobDef struct {
 	If              string                 `yaml:"if"`
 	ContinueOnError bool                   `yaml:"continue-on-error"`
 	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
+	Environment     interface{}            `yaml:"environment"` // string or {name, url}
 }
 
 type rawStrategyDef struct {
@@ -182,6 +201,7 @@ func normalizeJob(rj *rawJobDef) (*JobDef, error) {
 		If:              rj.If,
 		ContinueOnError: rj.ContinueOnError,
 		TimeoutMinutes:  rj.TimeoutMinutes,
+		Environment:     rj.Environment,
 	}
 
 	// Normalize needs: string → []string

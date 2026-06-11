@@ -491,12 +491,11 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 		}
 	}
 
-	// Resolve milestone
-	var milestoneJSON interface{}
+	// Grab the milestone pointer; conversion happens after unlock because
+	// milestoneToJSON derives issue counts under its own lock.
+	var milestone *Milestone
 	if issue.MilestoneID > 0 {
-		if ms, ok := st.Milestones[issue.MilestoneID]; ok {
-			milestoneJSON = milestoneToJSON(ms, baseURL, repoFullName)
-		}
+		milestone = st.Milestones[issue.MilestoneID]
 	}
 
 	// Count comments while holding the lock
@@ -508,6 +507,17 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 	}
 	st.mu.RUnlock()
 
+	var milestoneJSON interface{}
+	if milestone != nil {
+		milestoneJSON = milestoneToJSON(milestone, st, baseURL, repoFullName)
+	}
+
+	// GitHub's assignee is the first assignee, null when unassigned.
+	var assignee interface{}
+	if len(assignees) > 0 {
+		assignee = assignees[0]
+	}
+
 	// REST uses lowercase state
 	state := strings.ToLower(issue.State)
 
@@ -517,12 +527,16 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 	}
 
 	numStr := strconv.Itoa(issue.Number)
+	api := baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr
 	return map[string]interface{}{
 		"id":             issue.ID,
 		"node_id":        issue.NodeID,
-		"url":            baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr,
+		"url":            api,
 		"html_url":       baseURL + "/" + repoFullName + "/issues/" + numStr,
 		"repository_url": baseURL + "/api/v3/repos/" + repoFullName,
+		"comments_url":   api + "/comments",
+		"events_url":     api + "/events",
+		"labels_url":     api + "/labels{/name}",
 		"number":         issue.Number,
 		"title":          issue.Title,
 		"body":           issue.Body,
@@ -530,6 +544,7 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 		"state_reason":   issue.StateReason,
 		"user":           authorJSON,
 		"labels":         labels,
+		"assignee":       assignee,
 		"assignees":      assignees,
 		"milestone":      milestoneJSON,
 		"locked":         issue.Locked,

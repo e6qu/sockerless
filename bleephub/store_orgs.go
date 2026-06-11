@@ -219,11 +219,15 @@ func (st *Store) SetMembership(orgLogin string, userID int, role string) bool {
 	}
 
 	key := membershipKey(orgLogin, userID)
-	st.Memberships[key] = &Membership{
+	m := &Membership{
 		OrgID:  org.ID,
 		UserID: userID,
 		Role:   role,
 		State:  "active",
+	}
+	st.Memberships[key] = m
+	if st.persist != nil {
+		st.persist.MustPut("memberships", key, m)
 	}
 	return true
 }
@@ -245,8 +249,12 @@ func (st *Store) RemoveMembership(orgLogin string, userID int) bool {
 		return false
 	}
 	delete(st.Memberships, key)
+	if st.persist != nil {
+		st.persist.MustDelete("memberships", key)
+	}
 
-	// Also remove from all teams in this org
+	// Also remove from all teams in this org; re-persist every team whose
+	// member list changed so the removal sticks across restarts.
 	org := st.OrgsByLogin[orgLogin]
 	if org != nil {
 		for _, t := range st.TeamsBySlug {
@@ -254,6 +262,9 @@ func (st *Store) RemoveMembership(orgLogin string, userID int) bool {
 				for i, mid := range t.MemberIDs {
 					if mid == userID {
 						t.MemberIDs = append(t.MemberIDs[:i], t.MemberIDs[i+1:]...)
+						if st.persist != nil {
+							st.persist.MustPut("teams", strconv.Itoa(t.ID), t)
+						}
 						break
 					}
 				}
@@ -414,6 +425,9 @@ func (st *Store) AddTeamMember(orgLogin, slug string, userID int) bool {
 
 	team.MemberIDs = append(team.MemberIDs, userID)
 	team.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+	}
 	return true
 }
 
@@ -431,6 +445,9 @@ func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
 		if mid == userID {
 			team.MemberIDs = append(team.MemberIDs[:i], team.MemberIDs[i+1:]...)
 			team.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+			}
 			return true
 		}
 	}
@@ -455,6 +472,9 @@ func (st *Store) AddTeamRepo(orgLogin, slug, repoFullName string) bool {
 
 	team.RepoNames = append(team.RepoNames, repoFullName)
 	team.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+	}
 	return true
 }
 
@@ -472,6 +492,9 @@ func (st *Store) RemoveTeamRepo(orgLogin, slug, repoFullName string) bool {
 		if rn == repoFullName {
 			team.RepoNames = append(team.RepoNames[:i], team.RepoNames[i+1:]...)
 			team.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+			}
 			return true
 		}
 	}
