@@ -395,7 +395,7 @@ Unmodified runner binaries tested against Sockerless + simulators via Docker-bas
 | `gitlab-runner` (docker executor) | ACA (sim) | PASS |
 
 ```bash
-make smoke-test-act-all        # act against all 3 simulator backends
+make upstream-test-act-all     # act against all simulator backends
 make smoke-test-gitlab-all     # gitlab-runner against all 3 simulator backends
 ```
 

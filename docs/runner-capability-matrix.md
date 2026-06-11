@@ -21,7 +21,7 @@ The runner-integration milestone closed: every cell-pair (GitHub × {ECS, Lambda
 | azf | ✅ image-mode container | reverse-agent | ✅ architecturally; live cells not yet exercised |
 | cloudrun Jobs / aca Jobs | ❌ execution-scoped | — | ❌ use Services/Apps for runner workloads |
 
-This file tracks the **empirical** results of running the `make e2e-*` targets (per-pipeline) against each backend. Cells stay `TBD` until a Docker-in-Docker CI job cycles through the combinations (scripts under `scripts/phase86/*.sh` + `.github/workflows/phase86-aws-live.yml` for live-AWS; `smoke-test-act-*` / `smoke-test-gitlab-*` make targets for sim mode).
+This file tracks the **empirical** results of running the `make e2e-*` targets (per-pipeline) against each backend. Cells stay `TBD` until a Docker-in-Docker CI job cycles through the combinations (`.github/workflows/live-tests-*.yml` for live-cloud; `upstream-test-act-*` / `smoke-test-gitlab-*` make targets for sim mode).
 
 ## How to populate this matrix
 
