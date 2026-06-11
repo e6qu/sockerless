@@ -33,12 +33,24 @@ type ACIContainerGroup struct {
 	Zones      []string          `json:"zones,omitempty"`
 }
 
+// ACIContainerState is the instance-view state of an Azure Container Instances
+// container/group. Using a named type makes a mistyped state literal a compile
+// error.
+type ACIContainerState string
+
+const (
+	ACIStatePending    ACIContainerState = "Pending"
+	ACIStateRunning    ACIContainerState = "Running"
+	ACIStateTerminated ACIContainerState = "Terminated"
+	ACIStateStopped    ACIContainerState = "Stopped"
+)
+
 type aciRuntimeRecord struct {
-	ContainerID string `json:"containerId"`
-	State       string `json:"state"`
-	ExitCode    int    `json:"exitCode,omitempty"`
-	StartTime   string `json:"startTime,omitempty"`
-	FinishTime  string `json:"finishTime,omitempty"`
+	ContainerID string            `json:"containerId"`
+	State       ACIContainerState `json:"state"`
+	ExitCode    int               `json:"exitCode,omitempty"`
+	StartTime   string            `json:"startTime,omitempty"`
+	FinishTime  string            `json:"finishTime,omitempty"`
 }
 
 type aciExecSession struct {
@@ -113,6 +125,11 @@ func handleACIContainerGroupPut(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ContainerGroupDeploymentFailed", http.StatusBadRequest, "%v", err)
 		return
 	}
+	// Real Azure never echoes osProfile/env secureValue back; strip it from
+	// the stored group once the runtime has consumed it.
+	aciContainerGroups.Update(id, func(stored *ACIContainerGroup) {
+		aciStripSecureValues(stored)
+	})
 	group, _ = aciContainerGroups.Get(id)
 	opID := issueAzureAsyncOperation(func() {
 		aciContainerGroups.Update(id, func(stored *ACIContainerGroup) {
@@ -196,7 +213,7 @@ func handleACIContainerGroupStop(w http.ResponseWriter, r *http.Request) {
 	}
 	aciStopGroupContainers(group)
 	aciContainerGroups.Update(id, func(stored *ACIContainerGroup) {
-		aciSetGroupState(stored, "Stopped")
+		aciSetGroupState(stored, ACIStateStopped)
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -264,7 +281,7 @@ func handleACIContainerExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, ok := aciRuntimeRecords.Get(aciRuntimeKey(id, containerName))
-	if !ok || rec.ContainerID == "" || rec.State != "Running" {
+	if !ok || rec.ContainerID == "" || rec.State != ACIStateRunning {
 		sim.AzureErrorf(w, "ContainerNotRunning", http.StatusBadRequest, "Container %q is not running.", containerName)
 		return
 	}
@@ -390,7 +407,7 @@ func aciApplyGroupDefaults(r *http.Request, group *ACIContainerGroup) {
 		props["osType"] = "Linux"
 	}
 	if _, ok := props["instanceView"]; !ok {
-		props["instanceView"] = map[string]any{"state": "Pending"}
+		props["instanceView"] = map[string]any{"state": ACIStatePending}
 	}
 	if ip, ok := props["ipAddress"].(map[string]any); ok {
 		if ip["fqdn"] == nil {
@@ -418,7 +435,7 @@ func aciSetGroupProvisioning(group *ACIContainerGroup, state string) {
 	group.Properties["provisioningState"] = state
 }
 
-func aciSetGroupState(group *ACIContainerGroup, state string) {
+func aciSetGroupState(group *ACIContainerGroup, state ACIContainerState) {
 	if group.Properties == nil {
 		group.Properties = map[string]any{}
 	}
@@ -449,7 +466,7 @@ func aciSetGroupState(group *ACIContainerGroup, state string) {
 func aciStartGroupContainers(group ACIContainerGroup) error {
 	if DockerRuntimeDisabled() {
 		aciContainerGroups.Update(group.ID, func(stored *ACIContainerGroup) {
-			aciSetGroupState(stored, "Running")
+			aciSetGroupState(stored, ACIStateRunning)
 			aciSetGroupProvisioning(stored, "Succeeded")
 		})
 		return nil
@@ -463,7 +480,7 @@ func aciStartGroupContainers(group ACIContainerGroup) error {
 			return fmt.Errorf("container name and image are required")
 		}
 		key := aciRuntimeKey(group.ID, name)
-		if rec, ok := aciRuntimeRecords.Get(key); ok && rec.ContainerID != "" && rec.State == "Running" {
+		if rec, ok := aciRuntimeRecords.Get(key); ok && rec.ContainerID != "" && rec.State == ACIStateRunning {
 			continue
 		}
 		command := stringSlice(props["command"])
@@ -473,6 +490,11 @@ func aciStartGroupContainers(group ACIContainerGroup) error {
 				m, _ := item.(map[string]any)
 				n, _ := m["name"].(string)
 				v, _ := m["value"].(string)
+				if v == "" {
+					if sv, ok := m["secureValue"].(string); ok {
+						v = sv
+					}
+				}
 				if n != "" {
 					env[n] = v
 				}
@@ -507,21 +529,21 @@ func aciStartGroupContainers(group ACIContainerGroup) error {
 			return err
 		}
 		start := time.Now().UTC().Format(time.RFC3339Nano)
-		aciRuntimeRecords.Put(key, aciRuntimeRecord{ContainerID: handle.ContainerID, State: "Running", StartTime: start})
+		aciRuntimeRecords.Put(key, aciRuntimeRecord{ContainerID: handle.ContainerID, State: ACIStateRunning, StartTime: start})
 		go func(groupID, containerName, key string, h *sim.ContainerHandle) {
 			res := h.Wait()
 			aciRuntimeRecords.Update(key, func(rec *aciRuntimeRecord) {
-				rec.State = "Terminated"
+				rec.State = ACIStateTerminated
 				rec.ExitCode = res.ExitCode
 				rec.FinishTime = time.Now().UTC().Format(time.RFC3339Nano)
 			})
 			aciContainerGroups.Update(groupID, func(stored *ACIContainerGroup) {
-				aciSetGroupState(stored, "Terminated")
+				aciSetGroupState(stored, ACIStateTerminated)
 			})
 		}(group.ID, name, key, handle)
 	}
 	aciContainerGroups.Update(group.ID, func(stored *ACIContainerGroup) {
-		aciSetGroupState(stored, "Running")
+		aciSetGroupState(stored, ACIStateRunning)
 		aciSetGroupProvisioning(stored, "Succeeded")
 	})
 	return nil
@@ -533,13 +555,13 @@ func aciStopGroupContainers(group ACIContainerGroup) {
 		key := aciRuntimeKey(group.ID, name)
 		if rec, ok := aciRuntimeRecords.Get(key); ok && rec.ContainerID != "" {
 			sim.StopAndRemoveContainer(rec.ContainerID)
-			rec.State = "Stopped"
+			rec.State = ACIStateStopped
 			rec.FinishTime = time.Now().UTC().Format(time.RFC3339Nano)
 			aciRuntimeRecords.Put(key, rec)
 		}
 	}
 	aciContainerGroups.Update(group.ID, func(stored *ACIContainerGroup) {
-		aciSetGroupState(stored, "Stopped")
+		aciSetGroupState(stored, ACIStateStopped)
 		aciSetGroupProvisioning(stored, "Succeeded")
 	})
 }
@@ -563,6 +585,27 @@ func aciContainers(group *ACIContainerGroup) []map[string]any {
 		}
 	}
 	return out
+}
+
+// aciStripSecureValues removes write-only env secureValue from every
+// container in the group. Real Azure accepts secureValue on PUT but never
+// returns it on GET.
+func aciStripSecureValues(group *ACIContainerGroup) {
+	for _, c := range aciContainers(group) {
+		props, _ := c["properties"].(map[string]any)
+		if props == nil {
+			continue
+		}
+		vals, ok := props["environmentVariables"].([]any)
+		if !ok {
+			continue
+		}
+		for _, item := range vals {
+			if m, ok := item.(map[string]any); ok {
+				delete(m, "secureValue")
+			}
+		}
+	}
 }
 
 func aciNormalizeContainer(c map[string]any) map[string]any {

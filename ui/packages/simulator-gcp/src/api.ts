@@ -11,9 +11,17 @@ export interface CloudRunJob {
   launchStage: string;
 }
 
+// Cloud Functions (Gen2) lifecycle states.
+export type CloudFunctionState =
+  | "ACTIVE"
+  | "FAILED"
+  | "DEPLOYING"
+  | "DELETING"
+  | "UNKNOWN";
+
 export interface CloudFunction {
   name: string;
-  state: string;
+  state: CloudFunctionState;
   environment: string;
   createTime: string;
 }
@@ -29,10 +37,23 @@ export interface GCSBucket {
   data: Record<string, unknown>;
 }
 
+// Cloud Logging LogSeverity enum (proto .String()).
+export type LogSeverity =
+  | "DEFAULT"
+  | "DEBUG"
+  | "INFO"
+  | "NOTICE"
+  | "WARNING"
+  | "ERROR"
+  | "CRITICAL"
+  | "ALERT"
+  | "EMERGENCY";
+
 export interface LogEntry {
   logName: string;
   timestamp: string;
-  severity: string;
+  // Omitted by the server (json:"severity,omitempty") when unset (DEFAULT).
+  severity?: LogSeverity;
   textPayload?: string;
 }
 

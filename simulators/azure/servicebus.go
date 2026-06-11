@@ -264,16 +264,30 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 func handleSBListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
 	prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ServiceBus/namespaces/",
 		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
-	var out []SBNamespace
-	for _, n := range sbNamespaces.List() {
+	all := sbNamespaces.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBNamespace, 0, len(all))
+	for _, n := range all {
 		if strings.HasPrefix(n.ID, prefix) {
 			out = append(out, n)
 		}
 	}
-	if out == nil {
-		out = []SBNamespace{}
+	writeSBPagedList(w, r, out)
+}
+
+// writeSBPagedList emits a {value, nextLink} ARM list envelope, paginating only
+// when the client supplies an explicit $top (armPage returns the full list
+// otherwise).
+func writeSBPagedList[T any](w http.ResponseWriter, r *http.Request, items []T) {
+	page, next := armPage(r, items)
+	if page == nil {
+		page = []T{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleSBGetNamespaceNetworkRuleSet(w http.ResponseWriter, r *http.Request) {
@@ -401,10 +415,7 @@ func handleSBCreateQueue(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/queues/" + qName
 	q := SBQueue{
 		ID: id, Name: qName, Type: "Microsoft.ServiceBus/namespaces/queues",
-		Properties: map[string]any{
-			"maxSizeInMegabytes": 1024,
-			"status":             "Active",
-		},
+		Properties: sbDefaultQueueProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -446,12 +457,7 @@ func handleSBListQueues(w http.ResponseWriter, r *http.Request) {
 			filtered = append(filtered, q)
 		}
 	}
-	page, next := armPage(r, filtered)
-	out := map[string]any{"value": page}
-	if next != "" {
-		out["nextLink"] = armNextLink(r, next)
-	}
-	sim.WriteJSON(w, http.StatusOK, out)
+	writeSBPagedList(w, r, filtered)
 }
 
 func handleSBCreateTopic(w http.ResponseWriter, r *http.Request) {
@@ -469,10 +475,7 @@ func handleSBCreateTopic(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/topics/" + tName
 	t := SBTopic{
 		ID: id, Name: tName, Type: "Microsoft.ServiceBus/namespaces/topics",
-		Properties: map[string]any{
-			"maxSizeInMegabytes": 1024,
-			"status":             "Active",
-		},
+		Properties: sbDefaultTopicProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -518,16 +521,15 @@ func handleSBDeleteTopic(w http.ResponseWriter, r *http.Request) {
 
 func handleSBListTopics(w http.ResponseWriter, r *http.Request) {
 	prefix := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/topics/"
-	var out []SBTopic
-	for _, t := range sbTopics.List() {
+	all := sbTopics.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBTopic, 0, len(all))
+	for _, t := range all {
 		if strings.HasPrefix(t.ID, prefix) && !strings.Contains(strings.TrimPrefix(t.ID, prefix), "/") {
 			out = append(out, t)
 		}
 	}
-	if out == nil {
-		out = []SBTopic{}
-	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	writeSBPagedList(w, r, out)
 }
 
 func handleSBCreateSubscription(w http.ResponseWriter, r *http.Request) {
@@ -546,9 +548,7 @@ func handleSBCreateSubscription(w http.ResponseWriter, r *http.Request) {
 	id := parent + "/subscriptions/" + sName
 	s := SBSubscription{
 		ID: id, Name: sName, Type: "Microsoft.ServiceBus/namespaces/topics/subscriptions",
-		Properties: map[string]any{
-			"status": "Active",
-		},
+		Properties: sbDefaultSubscriptionProperties(),
 	}
 	if req.Properties != nil {
 		for k, v := range req.Properties {
@@ -740,14 +740,13 @@ func sbAuthRuleRegenerateKeys(scope string) http.HandlerFunc {
 func handleSBListSubscriptions(w http.ResponseWriter, r *http.Request) {
 	prefix := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
 		"/topics/" + sim.PathParam(r, "topic") + "/subscriptions/"
-	var out []SBSubscription
-	for _, s := range sbSubscriptions.List() {
+	all := sbSubscriptions.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBSubscription, 0, len(all))
+	for _, s := range all {
 		if strings.HasPrefix(s.ID, prefix) {
 			out = append(out, s)
 		}
 	}
-	if out == nil {
-		out = []SBSubscription{}
-	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	writeSBPagedList(w, r, out)
 }

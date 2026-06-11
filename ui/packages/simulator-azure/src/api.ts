@@ -31,8 +31,10 @@ export interface StorageAccount {
   kind: string;
 }
 
+// KQL result rows have arbitrary column names; the simulator stores every
+// value as a string (simulators/azure/kql.go monitorLogRow = map[string]string).
 export interface MonitorLogRow {
-  [key: string]: unknown;
+  [key: string]: string;
 }
 
 export const fetchContainerAppJobs = () => fetchJSON<ContainerAppJob[]>("/sim/v1/container-apps/jobs");

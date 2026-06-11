@@ -300,7 +300,7 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 		writeWaitBody(w, -1)
 		return
 	}
-	writeWaitBody(w, int(resp.StatusCode))
+	writeWaitBody(w, resp.StatusCode)
 }
 
 // flushWaitHeaders sends 200 OK + JSON content-type headers to the

@@ -699,7 +699,7 @@ func ec2ConfigureRealNATRoute(ctx context.Context, routeTableID, destinationCIDR
 	if !ok {
 		return fmt.Errorf("route table %s not found", routeTableID)
 	}
-	network := (*realexec.Network)(nil)
+	var network *realexec.Network
 	ec2RealMu.Lock()
 	network = ec2RealVPCs[rt.VpcId]
 	ec2RealMu.Unlock()

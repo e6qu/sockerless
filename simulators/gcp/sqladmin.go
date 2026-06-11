@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -430,12 +431,45 @@ func handleSQLPatchInstance(w http.ResponseWriter, r *http.Request) {
 		if req.DatabaseVersion != "" {
 			i.DatabaseVersion = req.DatabaseVersion
 		}
+		// instances.patch merges settings.* sub-fields: keys present in the
+		// patch body replace, keys it omits are preserved (a wholesale
+		// replace would drop tier/backupConfiguration on a flags-only
+		// patch). settingsVersion bumps on every successful update, as
+		// the Cloud SQL Admin API requires for optimistic concurrency.
 		if req.Settings != nil {
-			i.Settings = req.Settings
+			if i.Settings == nil {
+				i.Settings = map[string]any{}
+			}
+			for k, v := range req.Settings {
+				i.Settings[k] = v
+			}
+		}
+		if i.Settings != nil {
+			i.Settings["settingsVersion"] = sqlNextSettingsVersion(i.Settings)
 		}
 	})
 	op := newSQLOperation(project, "UPDATE", name)
 	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+// sqlNextSettingsVersion returns the next settingsVersion (current + 1, or 1
+// when unset). The Cloud SQL Admin API encodes settingsVersion as a
+// string-quoted int64, so emit a string.
+func sqlNextSettingsVersion(settings map[string]any) string {
+	cur := int64(0)
+	switch v := settings["settingsVersion"].(type) {
+	case string:
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+			cur = n
+		}
+	case float64:
+		cur = int64(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			cur = n
+		}
+	}
+	return strconv.FormatInt(cur+1, 10)
 }
 
 func handleSQLDeleteInstance(w http.ResponseWriter, r *http.Request) {

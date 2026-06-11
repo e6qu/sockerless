@@ -296,7 +296,7 @@ func (c *sbAMQPConn) handleAttach(frame amqpFrame) error {
 	clientRole := asBool(field(frame.fields, 2))
 	sourceAddress := describedAddress(field(frame.fields, 5))
 	targetAddress := describedAddress(field(frame.fields, 6))
-	address := ""
+	var address string
 	if !clientRole {
 		address = targetAddress
 	} else {
@@ -819,7 +819,7 @@ func (r *amqpValueReader) readValue() (any, error) {
 		return uint64(0), nil
 	case 0x50:
 		b, err := r.byte()
-		return uint8(b), err
+		return b, err
 	case 0x52:
 		b, err := r.byte()
 		return uint32(b), err

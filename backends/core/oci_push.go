@@ -88,7 +88,7 @@ func imageConfigFromAPI(c api.ContainerConfig) *imageConfigBlob {
 	if len(c.ExposedPorts) > 0 {
 		out.ExposedPorts = make(map[string]struct{}, len(c.ExposedPorts))
 		for p := range c.ExposedPorts {
-			out.ExposedPorts[string(p)] = struct{}{}
+			out.ExposedPorts[p] = struct{}{}
 		}
 	}
 	return out

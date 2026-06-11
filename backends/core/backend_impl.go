@@ -231,7 +231,7 @@ func (s *BaseServer) ContainerSummaries(containers []api.Container, opts api.Con
 		}
 		created, _ := time.Parse(time.RFC3339Nano, c.Created)
 
-		imageID := ""
+		var imageID string
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imageID = img.ID
 		} else {
@@ -2239,7 +2239,7 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 		if len(c.Args) > 0 {
 			command += " " + strings.Join(c.Args, " ")
 		}
-		imageID := ""
+		var imageID string
 		if img, ok := s.Store.ResolveImage(c.Config.Image); ok {
 			imageID = img.ID
 		} else {

@@ -22,7 +22,10 @@ include $(REPO_ROOT_REL)/make/go-app.mk
 # Each sub-tree (sdk-tests, cli-tests, terraform-tests, shared) is a
 # separate Go module; the CI calls these directly.
 
-.PHONY: shared-test sdk-test sdk-test-local docker-sdk-test cli-test terraform-test
+.PHONY: unit-test shared-test sdk-test sdk-test-local docker-sdk-test cli-test terraform-test
+
+unit-test: ## go test the simulator module's own package-internal tests (fast; no Docker/real-exec)
+	$(GO_ENV) go test -tags noui -count=1 ./...
 
 shared-test: ## go test the shared/ helper module
 	cd shared && $(GO_ENV) go test -v -count=1 ./...
@@ -39,12 +42,19 @@ sdk-test-local: build ## go test the SDK-driven sim tests on a Linux host with r
 cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout 120s ./...
 
-terraform-test: build ## go test the terraform-driven sim tests
-	cd terraform-tests && $(GO_ENV) go test -v -count=1 -timeout 300s ./...
+# The azure terraform stack is Docker-only: this outer `go test` wraps a
+# `docker run go test` (terraform-tests/helpers_test.go) that does the real
+# apply+destroy bounded by TERRAFORM_TEST_TIMEOUT. The outer timeout just has
+# to outlast the inner run + docker startup, so it's deliberately generous;
+# the apply/destroy deadline the tests honour is TERRAFORM_TEST_TIMEOUT.
+TERRAFORM_TEST_TIMEOUT ?= 600s
+
+terraform-test: build ## go test the terraform-driven sim tests (apply+destroy deadline = TERRAFORM_TEST_TIMEOUT)
+	cd terraform-tests && TERRAFORM_TEST_TIMEOUT=$(TERRAFORM_TEST_TIMEOUT) $(GO_ENV) go test -v -count=1 -timeout 20m ./...
 
 # Aggregate that runs all four legacy test categories.
 .PHONY: test-all
-test-all: shared-test sdk-test cli-test terraform-test ## run every test category
+test-all: unit-test shared-test sdk-test cli-test terraform-test ## run every test category
 
 # ── Docker targets ──────────────────────────────────────────────────
 .PHONY: docker-build docker-run docker-test docker-test-build

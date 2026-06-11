@@ -883,7 +883,7 @@ func elbv2DefaultProtocolVersion(protocol, requested string) string {
 }
 
 func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
-	matcher := ""
+	var matcher string
 	if tg.MatcherGrpcCode != "" {
 		matcher = fmt.Sprintf("<Matcher><GrpcCode>%s</GrpcCode></Matcher>", xmlEscape(tg.MatcherGrpcCode))
 	} else {

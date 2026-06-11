@@ -367,7 +367,7 @@ func (s *Server) postBootstrap(client *http.Client, url string, stdin []byte) (*
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	exitCode := 0
+	var exitCode int
 	if exitHeader := resp.Header.Get("X-Sockerless-Exit-Code"); exitHeader != "" {
 		if code, perr := strconv.Atoi(exitHeader); perr == nil {
 			exitCode = code

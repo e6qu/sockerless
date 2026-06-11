@@ -211,6 +211,56 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
+	// --- Issue-type and sub-issue support types ---
+	// gh CLI's `gh issue view` selects GitHub's issue-types and sub-issues
+	// features. bleephub does not model those, so an issue always reports no
+	// type, no parent, no sub-issues, and a zeroed summary.
+	issueTypeMetaType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "IssueType",
+		Fields: graphql.Fields{
+			"id":          &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"name":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description": &graphql.Field{Type: graphql.String},
+			"color":       &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	relatedIssueRepoType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "RelatedIssueRepository",
+		Fields: graphql.Fields{
+			"nameWithOwner": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		},
+	})
+
+	relatedIssueType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "RelatedIssue",
+		Fields: graphql.Fields{
+			"id":         &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"number":     &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"url":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"state":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"repository": &graphql.Field{Type: relatedIssueRepoType},
+		},
+	})
+
+	subIssueConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "SubIssueConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(relatedIssueType)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+
+	subIssuesSummaryType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "SubIssuesSummary",
+		Fields: graphql.Fields{
+			"total":            &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"completed":        &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"percentCompleted": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+
 	// --- Issue type ---
 	issueType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Issue",
@@ -307,6 +357,44 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
 					return i["reactionGroups"], nil
+				},
+			},
+			// Issue-types and sub-issues: bleephub does not model these GitHub
+			// features, so they resolve to the empty/null shape real GitHub
+			// returns for an issue with none.
+			"issueType": &graphql.Field{
+				Type: issueTypeMetaType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			"parent": &graphql.Field{
+				Type: relatedIssueType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			"subIssues": &graphql.Field{
+				Type: subIssueConnectionType,
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{
+						"nodes":      []interface{}{},
+						"totalCount": 0,
+					}, nil
+				},
+			},
+			"subIssuesSummary": &graphql.Field{
+				Type: subIssuesSummaryType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{
+						"total":            0,
+						"completed":        0,
+						"percentCompleted": 0,
+					}, nil
 				},
 			},
 		},

@@ -209,6 +209,15 @@ func registerPrivateDNS(srv *sim.Server) {
 					Properties: RecordSetProperties{
 						TTL:  3600,
 						Fqdn: zoneName + ".",
+						SOARecord: &SOARecord{
+							Host:         "azureprivatedns.net",
+							Email:        "azureprivatedns-host.microsoft.com",
+							SerialNumber: 1,
+							RefreshTime:  3600,
+							RetryTime:    300,
+							ExpireTime:   2419200,
+							MinimumTTL:   300,
+						},
 					},
 				})
 				zone.Properties.NumberOfRecordSets = 1

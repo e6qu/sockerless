@@ -254,6 +254,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
+      - name: Run module unit tests
+        run: cd simulators/${{ matrix.cloud }} && GOWORK=off make unit-test
+        timeout-minutes: 3
+        env:
+          GOWORK: "off"
       - name: Run SDK tests
         run: |
           cd simulators/${{ matrix.cloud }} && go mod download
@@ -288,6 +293,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
+      - name: Run AWS module unit tests
+        run: cd simulators/aws && GOWORK=off make unit-test
+        timeout-minutes: 3
+        env:
+          GOWORK: "off"
       - name: Run AWS SDK tests
         run: |
           cd simulators/aws && go mod download
@@ -391,11 +401,13 @@ jobs:
           if [ "${{ matrix.cloud }}" = "aws" ]; then
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test TERRAFORM_TEST_TIMEOUT=600s
           elif [ "${{ matrix.cloud }}" = "azure" ]; then
-            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-test
+            sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-test TERRAFORM_TEST_TIMEOUT=600s
           else
             sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off make terraform-https-test
           fi
-        timeout-minutes: 10
+        # Must exceed the inner go-test deadline (TERRAFORM_TEST_TIMEOUT, 600s)
+        # plus docker startup so the step never beats the test's own watchdog.
+        timeout-minutes: 12
         env:
           GOWORK: "off"
 

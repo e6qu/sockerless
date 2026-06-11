@@ -79,7 +79,7 @@ func (s *Server) handleListPullRequests(w http.ResponseWriter, r *http.Request) 
 		state = "open"
 	}
 
-	stateFilter := ""
+	var stateFilter string
 	switch state {
 	case "open":
 		stateFilter = "OPEN"

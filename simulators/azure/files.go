@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -114,6 +115,14 @@ type StorageAccountProperties struct {
 	PrimaryLocation          string                   `json:"primaryLocation,omitempty"`
 	SupportsHttpsTrafficOnly *bool                    `json:"supportsHttpsTrafficOnly,omitempty"`
 	MinimumTLSVersion        string                   `json:"minimumTlsVersion,omitempty"`
+	AccessTier               string                   `json:"accessTier,omitempty"`
+	AllowBlobPublicAccess    *bool                    `json:"allowBlobPublicAccess,omitempty"`
+	AllowSharedKeyAccess     *bool                    `json:"allowSharedKeyAccess,omitempty"`
+	PublicNetworkAccess      string                   `json:"publicNetworkAccess,omitempty"`
+	IsHnsEnabled             *bool                    `json:"isHnsEnabled,omitempty"`
+	LargeFileSharesState     string                   `json:"largeFileSharesState,omitempty"`
+	Encryption               json.RawMessage          `json:"encryption,omitempty"`
+	NetworkAcls              json.RawMessage          `json:"networkAcls,omitempty"`
 	PrimaryEndpoints         *StoragePrimaryEndpoints `json:"primaryEndpoints,omitempty"`
 	CreationTime             string                   `json:"creationTime,omitempty"`
 }
@@ -271,6 +280,14 @@ func registerAzureFiles(srv *sim.Server) {
 				PrimaryLocation:          req.Location,
 				SupportsHttpsTrafficOnly: httpsOnly,
 				MinimumTLSVersion:        minTLS,
+				AccessTier:               req.Properties.AccessTier,
+				AllowBlobPublicAccess:    req.Properties.AllowBlobPublicAccess,
+				AllowSharedKeyAccess:     req.Properties.AllowSharedKeyAccess,
+				PublicNetworkAccess:      req.Properties.PublicNetworkAccess,
+				IsHnsEnabled:             req.Properties.IsHnsEnabled,
+				LargeFileSharesState:     req.Properties.LargeFileSharesState,
+				Encryption:               req.Properties.Encryption,
+				NetworkAcls:              req.Properties.NetworkAcls,
 				CreationTime:             time.Now().UTC().Format(time.RFC3339),
 			},
 		}
@@ -544,12 +561,58 @@ func registerAzureFiles(srv *sim.Server) {
 
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/fileServices/default",
 		storageServiceHandler("fileServices", "Microsoft.Storage/storageAccounts/fileServices"))
-	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/blobServices/default",
-		storageServiceHandler("blobServices", "Microsoft.Storage/storageAccounts/blobServices"))
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/queueServices/default",
 		storageServiceHandler("queueServices", "Microsoft.Storage/storageAccounts/queueServices"))
 	srv.HandleFunc("GET "+armBase+"/storageAccounts/{accountName}/tableServices/default",
 		storageServiceHandler("tableServices", "Microsoft.Storage/storageAccounts/tableServices"))
+
+	// blobServices/default carries writable properties (deleteRetentionPolicy,
+	// isVersioningEnabled, changeFeed, cors, restorePolicy) that
+	// terraform's azurerm_storage_account.blob_properties round-trips. PUT
+	// stores the supplied properties keyed by account; GET returns them.
+	blobServiceProps := sim.MakeStore[map[string]any](srv.DB(), "blob_service_properties")
+	blobServicePath := armBase + "/storageAccounts/{accountName}/blobServices/default"
+	blobServiceResourceID := func(r *http.Request) (acctID, resourceID, account, rg string) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg = sim.PathParam(r, "resourceGroupName")
+		account = sim.PathParam(r, "accountName")
+		acctID = fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Storage/storageAccounts/%s", sub, rg, account)
+		return acctID, acctID + "/blobServices/default", account, rg
+	}
+	srv.HandleFunc("PUT "+blobServicePath, func(w http.ResponseWriter, r *http.Request) {
+		acctID, resourceID, account, rg := blobServiceResourceID(r)
+		if _, ok := storageAccounts.Get(acctID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", account, rg)
+			return
+		}
+		var req struct {
+			Properties map[string]any `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		props := req.Properties
+		if props == nil {
+			props = map[string]any{}
+		}
+		blobServiceProps.Put(acctID, props)
+		sim.WriteJSON(w, http.StatusOK, blobServiceResponse(resourceID, props))
+	})
+	srv.HandleFunc("GET "+blobServicePath, func(w http.ResponseWriter, r *http.Request) {
+		acctID, resourceID, account, rg := blobServiceResourceID(r)
+		if _, ok := storageAccounts.Get(acctID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", account, rg)
+			return
+		}
+		props, ok := blobServiceProps.Get(acctID)
+		if !ok {
+			props = map[string]any{}
+		}
+		sim.WriteJSON(w, http.StatusOK, blobServiceResponse(resourceID, props))
+	})
 
 	// --- Tables (ARM control plane) ---
 	tableBasePath := armBase + "/storageAccounts/{accountName}/tableServices/default/tables"
@@ -776,6 +839,22 @@ func registerAzureFiles(srv *sim.Server) {
 
 	// Keep fileData available for potential future file data-plane operations
 	_ = fileData
+}
+
+// blobServiceResponse builds the ARM blobServices/default resource envelope,
+// merging the stored writable properties over a default cors block (real Azure
+// always surfaces a cors element).
+func blobServiceResponse(resourceID string, props map[string]any) map[string]any {
+	merged := map[string]any{"cors": map[string]any{"corsRules": []any{}}}
+	for k, v := range props {
+		merged[k] = v
+	}
+	return map[string]any{
+		"id":         resourceID,
+		"name":       "default",
+		"type":       "Microsoft.Storage/storageAccounts/blobServices",
+		"properties": merged,
+	}
 }
 
 func isStorageDataPlaneService(serviceType string) bool {

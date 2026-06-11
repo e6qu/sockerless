@@ -593,7 +593,7 @@ func azureConfigureRealNATGatewayForSubnet(ctx context.Context, subnet Subnet) e
 	if !ok {
 		return fmt.Errorf("NAT gateway %s not found", subnet.Properties.NatGateway.ID)
 	}
-	publicIP := net.IP(nil)
+	var publicIP net.IP
 	if len(gw.Properties.PublicIPAddresses) > 0 {
 		pip, ok := azurePublicIPs.Get(gw.Properties.PublicIPAddresses[0].ID)
 		if !ok {

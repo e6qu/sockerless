@@ -993,6 +993,15 @@ func registerNetworkInterfaces(srv *sim.Server) {
 	})
 }
 
+// stripVMAdminPassword removes the write-only osProfile.adminPassword from a
+// VM before it is stored or returned. Real Azure never echoes the admin
+// password back on create or GET.
+func stripVMAdminPassword(vm *VirtualMachine) {
+	if vm.Properties.OSProfile != nil {
+		delete(vm.Properties.OSProfile, "adminPassword")
+	}
+}
+
 func registerVirtualMachines(srv *sim.Server) {
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Compute"
 
@@ -1017,6 +1026,7 @@ func registerVirtualMachines(srv *sim.Server) {
 			Properties: req.Properties,
 		}
 		vm.Properties.ProvisioningState = "Succeeded"
+		stripVMAdminPassword(&vm)
 		if vm.Properties.VMID == "" {
 			vm.Properties.VMID = generateUUID()
 		}

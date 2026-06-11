@@ -164,6 +164,22 @@ func registerCloudBuild(srv *sim.Server) {
 	srv.HandleFunc("PATCH /v1/projects/{project}/triggers/{trigger}", handleUpdateBuildTrigger)
 	srv.HandleFunc("DELETE /v1/projects/{project}/triggers/{trigger}", handleDeleteBuildTrigger)
 
+	// ListBuilds: GET /v1/projects/{project}/builds
+	srv.HandleFunc("GET /v1/projects/{project}/builds", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		builds := cbBuilds.Filter(func(b Build) bool { return b.ProjectID == project })
+		sort.Slice(builds, func(i, j int) bool { return builds[i].CreateTime > builds[j].CreateTime })
+		page, next, ok := paginateList(w, r, builds)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"builds": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
 	// GetBuild: GET /v1/projects/{project}/builds/{id}
 	srv.HandleFunc("GET /v1/projects/{project}/builds/{id}", func(w http.ResponseWriter, r *http.Request) {
 		id := sim.PathParam(r, "id")

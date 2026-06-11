@@ -670,7 +670,7 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.CheckSuites[s.ID] = &s
-			if s.ID >= int64(st.NextCheckSuiteID) {
+			if s.ID >= st.NextCheckSuiteID {
 				st.NextCheckSuiteID = s.ID + 1
 			}
 			return nil
@@ -681,7 +681,7 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.CheckRuns[cr.ID] = &cr
-			if cr.ID >= int64(st.NextCheckRunID) {
+			if cr.ID >= st.NextCheckRunID {
 				st.NextCheckRunID = cr.ID + 1
 			}
 			return nil

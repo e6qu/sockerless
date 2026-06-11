@@ -94,7 +94,7 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Map REST state to internal state
-	stateFilter := ""
+	var stateFilter string
 	switch state {
 	case "open":
 		stateFilter = "OPEN"

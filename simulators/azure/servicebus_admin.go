@@ -574,6 +574,58 @@ func handleSBAdminListRules(w http.ResponseWriter, r *http.Request, namespace, t
 	})
 }
 
+// sbDefaultQueueProperties returns the server-assigned property defaults
+// real Azure stamps on a queue when the client omits them. The ARM create
+// handler applies these first, then overlays the client's explicit values.
+func sbDefaultQueueProperties() map[string]any {
+	return map[string]any{
+		"status":                              "Active",
+		"maxSizeInMegabytes":                  1024,
+		"lockDuration":                        "PT1M",
+		"defaultMessageTimeToLive":            "P10675199DT2H48M5.4775807S",
+		"maxDeliveryCount":                    10,
+		"requiresDuplicateDetection":          false,
+		"requiresSession":                     false,
+		"deadLetteringOnMessageExpiration":    false,
+		"enableBatchedOperations":             true,
+		"enablePartitioning":                  false,
+		"autoDeleteOnIdle":                    "P10675199DT2H48M5.4775807S",
+		"duplicateDetectionHistoryTimeWindow": "PT10M",
+	}
+}
+
+// sbDefaultTopicProperties returns the server-assigned property defaults
+// real Azure stamps on a topic when the client omits them.
+func sbDefaultTopicProperties() map[string]any {
+	return map[string]any{
+		"status":                              "Active",
+		"maxSizeInMegabytes":                  1024,
+		"defaultMessageTimeToLive":            "P10675199DT2H48M5.4775807S",
+		"requiresDuplicateDetection":          false,
+		"enableBatchedOperations":             true,
+		"enablePartitioning":                  false,
+		"supportOrdering":                     true,
+		"autoDeleteOnIdle":                    "P10675199DT2H48M5.4775807S",
+		"duplicateDetectionHistoryTimeWindow": "PT10M",
+	}
+}
+
+// sbDefaultSubscriptionProperties returns the server-assigned property
+// defaults real Azure stamps on a subscription when the client omits them.
+func sbDefaultSubscriptionProperties() map[string]any {
+	return map[string]any{
+		"status":                                    "Active",
+		"lockDuration":                              "PT1M",
+		"defaultMessageTimeToLive":                  "P10675199DT2H48M5.4775807S",
+		"maxDeliveryCount":                          10,
+		"requiresSession":                           false,
+		"deadLetteringOnMessageExpiration":          false,
+		"deadLetteringOnFilterEvaluationExceptions": true,
+		"enableBatchedOperations":                   true,
+		"autoDeleteOnIdle":                          "P10675199DT2H48M5.4775807S",
+	}
+}
+
 func sbQueueFromAdminDescription(id, name string, desc *sbAdminQueueDescription) SBQueue {
 	props := map[string]any{
 		"status":             ptrString(desc.Status, "Active"),

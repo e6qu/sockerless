@@ -4,21 +4,18 @@ import { fetchMonitorLogs, type MonitorLogRow } from "../api.js";
 
 const columns: ColumnDef<MonitorLogRow, unknown>[] = [
   {
-    accessorFn: (row) => row["TimeGenerated"] as string,
+    accessorFn: (row) => row["TimeGenerated"] ?? "",
     id: "time",
     header: "Time",
   },
   {
     accessorFn: (row) =>
-      (row["ContainerGroupName_s"] as string) ??
-      (row["AppRoleName"] as string) ??
-      "",
+      row["ContainerGroupName_s"] ?? row["AppRoleName"] ?? "",
     id: "source",
     header: "Source",
   },
   {
-    accessorFn: (row) =>
-      (row["Log_s"] as string) ?? (row["Message"] as string) ?? "",
+    accessorFn: (row) => row["Log_s"] ?? row["Message"] ?? "",
     id: "message",
     header: "Message",
   },

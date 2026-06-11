@@ -1,9 +1,30 @@
 package main
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"net/http"
 )
+
+// writeTableODataError writes an Azure Tables data-plane error in the OData
+// envelope real Azure Tables uses: {"odata.error":{"code":...,"message":
+// {"lang":"en-US","value":...}}}. The aztables SDK (via azcore) reads the code
+// from odata.error.code, so the ARM {"error":{...}} envelope yields the wrong
+// ErrorCode. The x-ms-error-code header is also set; azcore prefers it.
+func writeTableODataError(w http.ResponseWriter, code, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("x-ms-error-code", code)
+	w.WriteHeader(statusCode)
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"odata.error": map[string]any{
+			"code": code,
+			"message": map[string]string{
+				"lang":  "en-US",
+				"value": message,
+			},
+		},
+	})
+}
 
 type storageErrorResponse struct {
 	XMLName xml.Name `xml:"Error"`

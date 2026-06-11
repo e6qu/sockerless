@@ -163,7 +163,7 @@ func (s *Server) waitForOperation(operationID string) (string, error) {
 		}
 		var nsTarget string
 		for k, v := range result.Operation.Targets {
-			if string(k) == string(sdtypes.OperationTargetTypeNamespace) {
+			if k == string(sdtypes.OperationTargetTypeNamespace) {
 				nsTarget = v
 			}
 		}

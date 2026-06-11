@@ -126,7 +126,7 @@ func MatchContainerFilters(c api.Container, filters map[string][]string) bool {
 			matched := false
 			for _, v := range values {
 				for port := range c.HostConfig.PortBindings {
-					if string(port) == v || strings.HasPrefix(string(port), v+"/") {
+					if port == v || strings.HasPrefix(port, v+"/") {
 						matched = true
 						break
 					}

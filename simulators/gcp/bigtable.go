@@ -47,16 +47,21 @@ func registerBigtable(srv *sim.Server) {
 	srv.HandleFunc("POST /v2/projects/{project}/instances", handleBigtableCreateInstance)
 	srv.HandleFunc("GET /v2/projects/{project}/instances", handleBigtableListInstances)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}", handleBigtableGetInstance)
+	srv.HandleFunc("PATCH /v2/projects/{project}/instances/{instance}", handleBigtablePartialUpdateInstance)
 	srv.HandleFunc("DELETE /v2/projects/{project}/instances/{instance}", handleBigtableDeleteInstance)
 
 	srv.HandleFunc("POST /v2/projects/{project}/instances/{instance}/clusters", handleBigtableCreateCluster)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/clusters", handleBigtableListClusters)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}", handleBigtableGetCluster)
+	srv.HandleFunc("PUT /v2/projects/{project}/instances/{instance}/clusters/{cluster}", handleBigtableUpdateCluster)
 	srv.HandleFunc("DELETE /v2/projects/{project}/instances/{instance}/clusters/{cluster}", handleBigtableDeleteCluster)
 
 	srv.HandleFunc("POST /v2/projects/{project}/instances/{instance}/tables", handleBigtableCreateTable)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/tables", handleBigtableListTables)
 	srv.HandleFunc("GET /v2/projects/{project}/instances/{instance}/tables/{table}", handleBigtableGetTable)
+	// {table}:modifyColumnFamilies rides the colon on the table segment;
+	// capture it in a single wildcard and split in the handler.
+	srv.HandleFunc("POST /v2/projects/{project}/instances/{instance}/tables/{tableAction}", handleBigtableTableAction)
 	srv.HandleFunc("DELETE /v2/projects/{project}/instances/{instance}/tables/{table}", handleBigtableDeleteTable)
 }
 
@@ -137,6 +142,33 @@ func handleBigtableGetInstance(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, inst)
 }
 
+func handleBigtablePartialUpdateInstance(w http.ResponseWriter, r *http.Request) {
+	name := bigtableInstanceName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"))
+	inst, ok := bigtableInstances.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found", name)
+		return
+	}
+	var req bigtableInstance
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	for _, field := range strings.Split(r.URL.Query().Get("updateMask"), ",") {
+		switch strings.TrimSpace(field) {
+		case "displayName", "display_name":
+			inst.DisplayName = req.DisplayName
+		case "labels":
+			inst.Labels = req.Labels
+		case "type":
+			inst.Type = req.Type
+		}
+	}
+	bigtableInstances.Put(name, inst)
+	op := newBigtableAdminLRO(sim.PathParam(r, "project"), inst, "type.googleapis.com/google.bigtable.admin.v2.Instance")
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
 func handleBigtableDeleteInstance(w http.ResponseWriter, r *http.Request) {
 	name := bigtableInstanceName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"))
 	if !bigtableInstances.Delete(name) {
@@ -199,6 +231,27 @@ func handleBigtableGetCluster(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, cluster)
 }
 
+func handleBigtableUpdateCluster(w http.ResponseWriter, r *http.Request) {
+	name := bigtableClusterName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"), sim.PathParam(r, "cluster"))
+	cluster, ok := bigtableClusters.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "cluster %q not found", name)
+		return
+	}
+	var req bigtableCluster
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	if req.ServeNodes != 0 {
+		cluster.ServeNodes = req.ServeNodes
+	}
+	cluster.State = "READY"
+	bigtableClusters.Put(name, cluster)
+	op := newBigtableAdminLRO(sim.PathParam(r, "project"), cluster, "type.googleapis.com/google.bigtable.admin.v2.Cluster")
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
 func handleBigtableDeleteCluster(w http.ResponseWriter, r *http.Request) {
 	name := bigtableClusterName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"), sim.PathParam(r, "cluster"))
 	if !bigtableClusters.Delete(name) {
@@ -252,6 +305,47 @@ func handleBigtableListTables(w http.ResponseWriter, r *http.Request) {
 	out := bigtableTables.Filter(func(table bigtableTable) bool { return strings.HasPrefix(table.Name, prefix) })
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"tables": out})
+}
+
+func handleBigtableTableAction(w http.ResponseWriter, r *http.Request) {
+	tableID, action, found := strings.Cut(sim.PathParam(r, "tableAction"), ":")
+	if !found || action != "modifyColumnFamilies" {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown table action %q", sim.PathParam(r, "tableAction"))
+		return
+	}
+	name := bigtableTableName(sim.PathParam(r, "project"), sim.PathParam(r, "instance"), tableID)
+	table, ok := bigtableTables.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "table %q not found", name)
+		return
+	}
+	var req struct {
+		Modifications []struct {
+			ID     string         `json:"id"`
+			Create map[string]any `json:"create"`
+			Update map[string]any `json:"update"`
+			Drop   bool           `json:"drop"`
+		} `json:"modifications"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	if table.ColumnFamilies == nil {
+		table.ColumnFamilies = map[string]map[string]any{}
+	}
+	for _, mod := range req.Modifications {
+		switch {
+		case mod.Drop:
+			delete(table.ColumnFamilies, mod.ID)
+		case mod.Create != nil:
+			table.ColumnFamilies[mod.ID] = mod.Create
+		case mod.Update != nil:
+			table.ColumnFamilies[mod.ID] = mod.Update
+		}
+	}
+	bigtableTables.Put(name, table)
+	sim.WriteJSON(w, http.StatusOK, table)
 }
 
 func handleBigtableGetTable(w http.ResponseWriter, r *http.Request) {

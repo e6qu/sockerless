@@ -4,166 +4,83 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-Branch: `bleephub-parity-storage`.
+Branch: `feat/sim-conformance-stage2-6` (PR #539).
 
-This branch is the single working branch for the Bleephub parity, durability,
-storage, UI, and docs PR. Keep one PR open for this branch. Make one natural
-commit per subtask, with tests and continuity docs included in the same commit.
+This is the single working branch for the simulator conformance + hardening
+continuation. Keep one PR open. See [PLAN.md](PLAN.md) § Current Work for the
+stage structure and [BUGS.md](BUGS.md) (1640-1646) for per-bug detail.
 
-## Last Completed Subtask
+## Last Completed
 
-Subtasks 1, 2, 3, 4, 5, 6, 7, 8, and 9 completed:
+Simulator conformance + hardening, Stages 2 G4 through 6 (all complete on this
+branch; Stage 1 and Stage 2 G1-G3 already merged in #537/#538):
 
-- Subtask 1: Unknown GitHub API paths return GitHub-shaped 404s; cache handlers
-  replaced with real reserve/upload/finalize/lookup/download behavior.
-- Subtask 2: GitHub REST artifact list/get/delete/download endpoints return
-  real stored artifacts with pagination, name filtering, digest, and repo/run
-  isolation.
-- Subtask 3: PostgreSQL persistence support via pgx.
-- Subtask 4: Broadened durable state to cover all remaining public API objects.
-  Write-through persistence added for hooks, hook_deliveries,
-  app_hook_deliveries, check_runs, check_suites, check_suite_prefs,
-  repo_secrets, workflow_files, pr_reviews, releases, deployments,
-  deployment_statuses, environments, pr_review_comments, reactions,
-  projects_v2, project_v2_items, and project_v2_fields. All new buckets
-  load correctly from disk on restart.
-- Subtask 5: Git storage hardening and permission enforcement.
-  - `CreateRepo` returns nil when `openOrInitGitStorage` fails (no more silent
-    discard). `loadFromPersistence` returns an error if git storage can't be
-    reopened for a persisted repo.
-  - `DeleteRepo` removes filesystem git data when `BLEEPHUB_GIT_DIR` is set.
-  - Git HTTP handlers (`info/refs`, `git-upload-pack`, `git-receive-pack`) now
-    authenticate requests and enforce permissions: read access for fetch, push
-    access for push. Supports `token`, `Bearer`, and `Basic` auth headers.
-  - New `canPushRepo` function in rbac.go checks ownership or org team push.
-  - Extracted `authenticateRequest` from `ghHeadersMiddleware` for reuse by git
-    HTTP handlers.
-  - 7 new tests: storage init failure, delete cleanup, unauthenticated push
-    rejection, public/private repo fetch auth, authenticated push, authenticated
-    private repo fetch.
-- Subtask 6: S3/MinIO-compatible git content storage.
-  - Added `s3fs.go` implementing `billy.Filesystem` and `billy.File` over S3
-    using `aws-sdk-go-v2/service/s3`. Key layout: `prefix/{owner}/{repo}/` for
-    each repo's git data. Temp files use UUID-prefixed keys. Renames use
-    CopyObject+DeleteObject. Directories are emulated via prefix listing.
-  - `git_storage.go` now supports three backends: memory (default), filesystem
-    (`BLEEPHUB_GIT_DIR`), and S3 (`BLEEPHUB_S3_ENDPOINT` + `BLEEPHUB_S3_BUCKET`
-    + optional `BLEEPHUB_S3_PREFIX`). S3 takes priority when configured.
-  - `DeleteRepo` cleans up S3 objects by listing and deleting all objects under
-    the repo prefix.
-  - The S3 filesystem is lazily initialized and cached (singleton connection per
-    process). Uses path-style addressing for MinIO compatibility.
-- Subtask 7: UI auth and operator storage/status views.
-  - Removed hard-coded admin token from `api.ts`. All API calls now use
-    `authHeaders()` which reads the token from `localStorage`.
-  - Added `LoginPage` with password input that verifies the token against
-    `/api/v3/user` before storing it.
-  - Added auth guard: unauthenticated users are redirected to `/ui/login`.
-    All UI routes require a valid token.
-  - Added sign-out button in the AppShell nav.
-  - Added `/internal/storage` endpoint reporting persistence backend
-    (none/sqlite/postgres), dialect, git storage backend
-    (memory/filesystem/s3), and git storage details (dir/bucket/endpoint/prefix).
-  - OverviewPage shows storage backend info section with persistence and
-    git storage status.
-  - Added `BleephubStorageInfo` type to `types.ts`.
-- Subtask 8: UI/API coverage for webhooks, secrets, environments, releases.
-  - Added TypeScript types: `GithubWebhook`, `GithubSecret`,
-    `GithubEnvironment`, `GithubRelease` to `types.ts`.
-  - Added API functions: `fetchWebhooks`, `fetchSecrets`,
-    `fetchEnvironments`, `fetchReleases` to `api.ts`.
-  - RepoDetailPage now has 8 tabs: Code, Issues, PRs, Commits, Webhooks,
-    Secrets, Environments, Releases. Webhooks tab shows hook name, URL,
-    events, and active status. Secrets tab shows names with lock icon.
-    Environments tab shows environment names. Releases tab shows tag,
-    name, and publish date.
-  - `BLEEPHUB_DATABASE_URL` activates PostgreSQL (pgx v5, `database/sql`
-    interface). `BLEEPHUB_PERSIST=true` continues to activate SQLite.
-  - A `dbDialect` struct holds dialect-specific SQL (placeholders, types, DDL)
-    so both backends share the same `Persistence` methods.
-  - The PostgreSQL test skips unless `BLEEPHUB_TEST_POSTGRES_URL` is set
-    (requires a real PostgreSQL instance).
-  - All existing SQLite persistence tests pass unchanged.
-- Subtask 9: Shape-only endpoints replaced with real implementations.
-  - GPG keys: full CRUD (create, list, get, delete, list-by-login) backed
-    by `MiscStore` with write-through persistence. Ownership enforced on
-    delete.
-  - Pages builds: `POST` trigger creates real `PagesBuild` records;
-    list/latest/get-by-id read from store with persistence.
-  - Audit log: `recordAuditEvent` method records events with GitHub-shaped
-    fields (`@timestamp`, `action`, `actor`, `org`, `data`, `version`).
-    Wired into 16 mutation handlers. Endpoint supports `phrase` and
-    `actor_id` filtering.
-  - Marketplace: plans seeded from store; account reads from persisted
-    purchases.
-  - OIDC claim keys: fixed missing `oidcClaimKeys` field on `MiscStore`;
-    loaded from `misc` persistence bucket.
-  - Added `persist` field to `MiscStore`, wired in `SetPersistence`. Six
-    new persistence buckets: `misc`, `gpg_keys`, `pages_builds`,
-    `audit_log`, `marketplace_plans`, `marketplace_purchases`.
-  - 7 new tests covering all new surface areas.
+- Stage 2 G4 — GCP missing ops (BUG-1640): GCS bucket/object PATCH, Spanner
+  Instances.Patch, KMS CreateCryptoKeyVersion/UpdateCryptoKeyVersion/:restore,
+  CloudFunctions v2 UpdateFunction/:generateUploadUrl, CloudBuild ListBuilds,
+  Bigtable :modifyColumnFamilies + instance/cluster update, memorystore/Cloud
+  SQL updateMask merge. Stage 2 complete.
+- Stage 3 — Azure conformance (BUG-1641 round-trip drift, BUG-1642 missing
+  ops/error fidelity/pagination). Stage 3 complete.
+- Stage 4 — Go type hardening: `unconvert` + `wastedassign` linters added to
+  `.golangci.yml`; one typed enum per sim (AWS `ECSTaskStatus`, GCP
+  `ComputeInstanceStatus`, Azure `ACIContainerState`), wire bytes unchanged.
+  Caught and fixed BUG-1643 (a Stage-2-G4 GCS metadata-PATCH regression that
+  bypassed the persistence helper).
+- Stage 5 — simulator UI hardening (BUG-1645): TS types aligned to the Go
+  dashboard wire shapes; stringly enums narrowed to the values each server
+  actually emits.
+- Stage 6 — CI gap fixed (BUG-1644): a `unit-test` Makefile target plus a
+  "Run module unit tests" step in the `sim` CI jobs, so in-module guard/unit
+  tests now run in CI (the gap that let BUG-1643 ship green). Coverage-matrix
+  gate verified green.
+- Plus BUG-1646 (bleephub gh-CLI sub-issue GraphQL drift — the newer `gh issue
+  view` selects fields the Issue type lacked; added them returning null/empty,
+  not faked) and an azure tf-test timeout flake fix.
 
-Verified:
+## Next
 
-```bash
-cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test -run 'TestGit' ./... -v
-cd bleephub && GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...
-gofmt -l bleephub/git_storage.go bleephub/git_http.go bleephub/store_repos.go bleephub/rbac.go bleephub/gh_middleware.go
-```
-
-## Current Subtask
-
-Subtask 10: Final verification, rebase, push.
-
-## Ordered Subtasks For This PR
-
-1. Baseline audit tests and error handling.
-2. Real Actions cache behavior and artifact indexing.
-3. SQLite/PostgreSQL persistence abstraction and configuration.
-4. Broaden durable state for public Bleephub API objects.
-5. Git storage hardening and git HTTP permission enforcement.
-6. S3/MinIO-compatible git content storage.
-7. UI auth and operator storage/status views.
-8. UI/API coverage for cache, artifacts, webhooks, orgs/teams, branch protection,
-   audit events, and repo git refs.
-9. Remove or implement long-tail shape-only endpoints, then refresh all Bleephub
-   docs and parity specs.
-10. Final verification, rebase, push, PR creation, and local `main` sync after
-    the user merges.
+1. Review and merge PR #539 (user merges). Then sync local `main`.
+2. Documented follow-ups (deferred, tracked in [BUGS.md](BUGS.md) / noted in the
+   conformance work):
+   - GCP cloudbuild/dataflow name-collision 409 (server-assigned ids — a
+     different create contract).
+   - GCP synthetic compute operation store (so a bogus operation name can 404
+     instead of reporting DONE).
+   - Azure long-tail list `nextLink` for the remaining small fixed collections
+     (EventHub/EventGrid/LogicApps/storage-ARM/RG).
+   - Surface-table regeneration (`specs/SIM_SURFACE_TABLES/`) — the seed script
+     over-generates; revisit the generator before any bulk regen.
+3. Re-audit per BUG-1104 cadence after this stage, and re-check GitHub issues.
 
 ## Handoff Protocol
 
-Before starting a subtask:
+Before starting work:
 
 1. Read [STATUS.md](STATUS.md) and this file.
-2. Confirm the active branch is `bleephub-parity-storage`.
+2. Confirm the active branch is `feat/sim-conformance-stage2-6`.
 3. Check `git status --short --branch`.
-4. If the previous session stopped mid-subtask, inspect the modified files before
+4. If the previous session stopped mid-stage, inspect the modified files before
    editing anything.
-5. Update this file if the next command list is no longer accurate.
 
-After finishing a subtask:
+After finishing a chunk of work:
 
-1. Run focused tests for the touched area.
-2. Run broader Bleephub tests when public API behavior changed:
+1. Run the narrowest meaningful tests for the touched area. Simulator SDK probes:
 
 ```bash
-cd bleephub && GOWORK=off go test ./...
-cd ui/packages/bleephub && bun test
+cd simulators/<cloud>/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -tags noui -run '<pat>' -timeout 15m .
 ```
 
-3. Update [STATUS.md](STATUS.md) with what changed, what was verified, and any
-   remaining risk.
-4. Update this file so the next session has an exact next subtask, likely files,
-   and first verification command.
-5. Add a short [WHAT_WE_DID.md](WHAT_WE_DID.md) entry for meaningful completed
-   chunks.
-6. Commit the code, tests, and continuity docs together.
+2. Run the sim-module unit tests (the Stage 6 gap) and golangci-lint:
 
-## Verification State
+```bash
+cd simulators/<cloud> && make unit-test
+```
 
-PR #534 is open and was green after subtask 1. Subtask 2 and 3 are committed
-locally with all tests passing; push is pending.
+3. Update [STATUS.md](STATUS.md), this file, and add a short
+   [WHAT_WE_DID.md](WHAT_WE_DID.md) entry for meaningful completed chunks.
+4. File any new defect in [BUGS.md](BUGS.md) before fixing it.
+5. Commit code, tests, and continuity docs together.
 
 ## Branch And PR Hygiene
 

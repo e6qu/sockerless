@@ -893,7 +893,7 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodDelete:
 			handleEntityDelete(w, r, account, table, pk, rk)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeTableODataError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
@@ -906,11 +906,11 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		case http.MethodGet:
 			handleEntityQuery(w, r, account, path)
 		default:
-			sim.AzureError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
+			writeTableODataError(w, "MethodNotAllowed", "Method not supported", http.StatusMethodNotAllowed)
 		}
 		return
 	}
-	sim.AzureError(w, "InvalidUri", "Unrecognized Tables data-plane path", http.StatusBadRequest)
+	writeTableODataError(w, "InvalidUri", "Unrecognized Tables data-plane path", http.StatusBadRequest)
 }
 
 func parsePKRK(s string) (pk, rk string) {
@@ -936,12 +936,12 @@ func handleTableCreate(w http.ResponseWriter, r *http.Request, account string) {
 		TableName string `json:"TableName"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		sim.AzureError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
+		writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
 		return
 	}
 	key := tableKey(account, body.TableName)
 	if _, ok := tableData.Get(key); ok {
-		sim.AzureError(w, "TableAlreadyExists", "The specified table already exists.", http.StatusConflict)
+		writeTableODataError(w, "TableAlreadyExists", "The table specified already exists.", http.StatusConflict)
 		return
 	}
 	upsertTableDataPlaneProjection(account, body.TableName)
@@ -955,7 +955,7 @@ func handleTableCreate(w http.ResponseWriter, r *http.Request, account string) {
 
 func handleTableDelete(w http.ResponseWriter, r *http.Request, account, table string) {
 	if _, ok := tableData.Get(tableKey(account, table)); !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
 	}
 	deleteTableDataPlaneProjection(account, table)
@@ -966,7 +966,7 @@ func handleTableDelete(w http.ResponseWriter, r *http.Request, account, table st
 func handleTableGet(w http.ResponseWriter, r *http.Request, account, table string) {
 	t, ok := tableData.Get(tableKey(account, table))
 	if !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]string{"TableName": t.Name})
@@ -1012,18 +1012,18 @@ func handleTableACL(w http.ResponseWriter, r *http.Request, account, table strin
 
 func handleEntityInsert(w http.ResponseWriter, r *http.Request, account, table string) {
 	if _, ok := tableData.Get(tableKey(account, table)); !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
 	}
 	var props map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&props); err != nil {
-		sim.AzureError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
+		writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
 		return
 	}
 	pk := jsonString(props["PartitionKey"])
 	rk := jsonString(props["RowKey"])
 	if pk == "" || rk == "" {
-		sim.AzureError(w, "InvalidInput", "PartitionKey and RowKey are required", http.StatusBadRequest)
+		writeTableODataError(w, "InvalidInput", "PartitionKey and RowKey are required", http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -1046,9 +1046,13 @@ func handleEntityInsert(w http.ResponseWriter, r *http.Request, account, table s
 }
 
 func handleEntityGet(w http.ResponseWriter, r *http.Request, account, table, pk, rk string) {
+	if _, ok := tableData.Get(tableKey(account, table)); !ok {
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
+		return
+	}
 	e, ok := tableEntities.Get(tableEntityKey(account, table, pk, rk))
 	if !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified entity does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "EntityNotFound", "The specified entity does not exist.", http.StatusNotFound)
 		return
 	}
 	out := map[string]json.RawMessage{}
@@ -1062,12 +1066,12 @@ func handleEntityGet(w http.ResponseWriter, r *http.Request, account, table, pk,
 
 func handleEntityUpsert(w http.ResponseWriter, r *http.Request, account, table, pk, rk string) {
 	if _, ok := tableData.Get(tableKey(account, table)); !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
 	}
 	var props map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&props); err != nil {
-		sim.AzureError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
+		writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
 		return
 	}
 	props["PartitionKey"], _ = json.Marshal(pk)
@@ -1086,8 +1090,12 @@ func handleEntityUpsert(w http.ResponseWriter, r *http.Request, account, table, 
 }
 
 func handleEntityDelete(w http.ResponseWriter, r *http.Request, account, table, pk, rk string) {
+	if _, ok := tableData.Get(tableKey(account, table)); !ok {
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
+		return
+	}
 	if !tableEntities.Delete(tableEntityKey(account, table, pk, rk)) {
-		sim.AzureError(w, "ResourceNotFound", "The specified entity does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "EntityNotFound", "The specified entity does not exist.", http.StatusNotFound)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -1095,7 +1103,7 @@ func handleEntityDelete(w http.ResponseWriter, r *http.Request, account, table, 
 
 func handleEntityQuery(w http.ResponseWriter, r *http.Request, account, table string) {
 	if _, ok := tableData.Get(tableKey(account, table)); !ok {
-		sim.AzureError(w, "ResourceNotFound", "The specified table does not exist.", http.StatusNotFound)
+		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
 	}
 	prefix := account + "/" + table + "/"

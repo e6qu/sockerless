@@ -405,7 +405,7 @@ func cmNamespaceHasHostEntryTargets(namespaceID string) bool {
 	}
 	vpcID, _ := cmNamespaceVPCs.Get(namespaceID)
 	for _, task := range ecsTasks.List() {
-		if task.LastStatus != "RUNNING" || !taskHasENI(task) {
+		if task.LastStatus != ECSTaskStatusRunning || !taskHasENI(task) {
 			continue
 		}
 		if vpcID == "" || taskVPCID(task) == vpcID {
@@ -474,7 +474,7 @@ func syncCMNamespaceHosts(namespaceID string) error {
 
 	marker := "sockerless-cloudmap-" + namespaceID
 	for _, task := range ecsTasks.List() {
-		if task.LastStatus != "RUNNING" || !taskHasENI(task) {
+		if task.LastStatus != ECSTaskStatusRunning || !taskHasENI(task) {
 			continue
 		}
 		if vpcID != "" && taskVPCID(task) != vpcID {

@@ -163,6 +163,33 @@ func registerCloudFunctions(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 
+	// GenerateUploadUrl: POST .../functions:generateUploadUrl. The verb
+	// rides on the collection segment (no function ID), so capture
+	// `functions:generateUploadUrl` in a single wildcard and split on the
+	// colon. terraform's google_cloudfunctions2_function calls this before
+	// CreateFunction to obtain the source-upload target.
+	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/{functionsVerb}", func(w http.ResponseWriter, r *http.Request) {
+		collection, verb, found := strings.Cut(sim.PathParam(r, "functionsVerb"), ":")
+		if !found || collection != "functions" || verb != "generateUploadUrl" {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown functions verb %q", sim.PathParam(r, "functionsVerb"))
+			return
+		}
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		object := "uploads/" + generateUUID() + ".zip"
+		bucket := fmt.Sprintf("gcf-sources-%s-%s", project, location)
+		uploadURL := fmt.Sprintf("http://%s/upload/storage/v1/b/%s/o?uploadType=resumable&name=%s",
+			r.Host, bucket, url.QueryEscape(object))
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"uploadUrl": uploadURL,
+			"storageSource": map[string]any{
+				"bucket":     bucket,
+				"object":     object,
+				"generation": "1",
+			},
+		})
+	})
+
 	// Get function
 	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/functions/{function}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
@@ -176,6 +203,36 @@ func registerCloudFunctions(srv *sim.Server) {
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, fn)
+	})
+
+	// Update function: PATCH .../functions/{function}?updateMask=...
+	// terraform's google_cloudfunctions2_function PATCHes on every in-place
+	// change. Merge the updateMask fields onto the stored function and
+	// return an LRO (the client polls GetOperation, which resolves done).
+	srv.HandleFunc("PATCH /v2/projects/{project}/locations/{location}/functions/{function}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		functionID := sim.PathParam(r, "function")
+		name := fmt.Sprintf("projects/%s/locations/%s/functions/%s", project, location, functionID)
+
+		fn, ok := functions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "function %q not found", name)
+			return
+		}
+		var patch Function
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		mask := r.URL.Query().Get("updateMask")
+		applyFunctionPatch(&fn, &patch, mask)
+		fn.Name = name
+		fn.UpdateTime = nowTimestamp()
+		functions.Put(name, fn)
+
+		lro := newLRO(project, location, fn, "type.googleapis.com/google.cloud.functions.v2.Function")
+		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 
 	// List functions
@@ -457,6 +514,39 @@ func (s *cfLogSink) WriteLog(line sim.LogLine) {
 	injectCloudFunctionLog(s.project, s.functionName, line.Text)
 }
 
+// applyFunctionPatch merges the updateMask fields of a PATCH body onto the
+// stored function. The mask carries dot-notation paths (description, labels,
+// buildConfig.*, serviceConfig.*); for the nested config objects a named
+// path replaces the whole sub-object when present, which matches how the
+// provider sends grouped service_config / build_config updates.
+func applyFunctionPatch(fn, patch *Function, mask string) {
+	fields := strings.Split(mask, ",")
+	if mask == "" {
+		fields = nil
+	}
+	has := func(prefix string) bool {
+		for _, f := range fields {
+			f = strings.TrimSpace(f)
+			if f == prefix || strings.HasPrefix(f, prefix+".") {
+				return true
+			}
+		}
+		return false
+	}
+	if len(fields) == 0 || has("description") {
+		fn.Description = patch.Description
+	}
+	if len(fields) == 0 || has("labels") {
+		fn.Labels = patch.Labels
+	}
+	if (len(fields) == 0 || has("buildConfig")) && patch.BuildConfig != nil {
+		fn.BuildConfig = patch.BuildConfig
+	}
+	if (len(fields) == 0 || has("serviceConfig")) && patch.ServiceConfig != nil {
+		fn.ServiceConfig = patch.ServiceConfig
+	}
+}
+
 // matchesFunctionFilter evaluates a Cloud Functions ListFunctions
 // `filter` query against a Function. Supports the subset the gcf
 // backend uses for pool-claim and allocation lookup:
@@ -505,7 +595,7 @@ func matchesFunctionFilter(fn *Function, filter string) bool {
 		}
 		c := parseClause(clause)
 		val := lookupFunctionField(fn, c.field)
-		matched := false
+		var matched bool
 		switch c.op {
 		case opEq:
 			matched = val == c.value
@@ -541,7 +631,7 @@ func lookupFunctionField(fn *Function, field string) string {
 	case "name":
 		return fn.Name
 	case "state":
-		return string(fn.State)
+		return fn.State
 	}
 	return ""
 }

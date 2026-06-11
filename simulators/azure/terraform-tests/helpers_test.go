@@ -221,7 +221,16 @@ func runTerraformTestsInDocker() int {
 	if v := os.Getenv("TF_LOG_PATH"); v != "" {
 		args = append(args, "-e", "TF_LOG_PATH="+v)
 	}
-	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", "300s", "./...")
+	// Apply+destroy of the full ~54-resource stack runs right at the edge of a
+	// 5-minute budget on a loaded CI runner; honour the operator-configured
+	// TERRAFORM_TEST_TIMEOUT (CI passes 600s) instead of a hardcoded 300s so
+	// the destroy phase isn't killed near the deadline (apply_test.go runTimed).
+	innerTimeout := os.Getenv("TERRAFORM_TEST_TIMEOUT")
+	if innerTimeout == "" {
+		innerTimeout = "600s"
+	}
+	args = append(args, "-e", "TERRAFORM_TEST_TIMEOUT="+innerTimeout)
+	args = append(args, image, "go", "test", "-v", "-count=1", "-timeout", innerTimeout, "./...")
 
 	run := exec.Command("docker", args...)
 	run.Stdout = os.Stdout

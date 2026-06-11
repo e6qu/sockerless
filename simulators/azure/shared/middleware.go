@@ -217,6 +217,7 @@ func AzurePathNormalizationMiddleware(next http.Handler) http.Handler {
 		"/connectionstrings":                  "/connectionstrings",
 		"/slotconfignames":                    "/slotconfignames",
 		"/listsecrets":                        "/listsecrets",
+		"/listcredentials":                    "/listcredentials",
 		"/checknameavailability":              "/checknameavailability",
 		"/authsettings":                       "/authsettings",
 		"/authsettingsv2":                     "/authsettingsv2",
