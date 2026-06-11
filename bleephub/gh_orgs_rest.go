@@ -68,7 +68,7 @@ func (s *Server) handleAdminCreateOrg(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, orgToJSON(org, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, orgToJSON(org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +98,7 @@ func (s *Server) handleCreateOrg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.recordAuditEvent("org.create", user.Login, org.Login, map[string]interface{}{"org_id": org.ID})
-	writeJSON(w, http.StatusCreated, orgToJSON(org, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, orgToJSON(org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +108,7 @@ func (s *Server) handleGetOrg(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, orgToJSON(org, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, orgToJSON(org, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleUpdateOrg(w http.ResponseWriter, r *http.Request) {
@@ -148,7 +148,7 @@ func (s *Server) handleUpdateOrg(w http.ResponseWriter, r *http.Request) {
 	})
 
 	updated := s.store.GetOrg(login)
-	writeJSON(w, http.StatusOK, orgToJSON(updated, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, orgToJSON(updated, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleDeleteOrg(w http.ResponseWriter, r *http.Request) {
@@ -186,7 +186,7 @@ func (s *Server) handleListAuthUserOrgs(w http.ResponseWriter, r *http.Request) 
 	result := make([]map[string]interface{}, 0, len(orgs))
 	base := s.baseURL(r)
 	for _, org := range orgs {
-		result = append(result, orgToJSON(org, base))
+		result = append(result, orgSimpleJSON(org, base))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -203,7 +203,7 @@ func (s *Server) handleListUserOrgs(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]interface{}, 0, len(orgs))
 	base := s.baseURL(r)
 	for _, org := range orgs {
-		result = append(result, orgToJSON(org, base))
+		result = append(result, orgSimpleJSON(org, base))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -247,29 +247,51 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, repoToJSON(repo, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
 }
 
-// orgToJSON converts an Org to a JSON-compatible map with snake_case keys.
-func orgToJSON(org *Org, baseURL string) map[string]interface{} {
+// orgSimpleJSON converts an Org to the GitHub `organization-simple`
+// shape — the org object used in org list responses. The schema
+// enumerates exactly these twelve members; profile fields belong to
+// organization-full (orgToJSON).
+func orgSimpleJSON(org *Org, baseURL string) map[string]interface{} {
+	api := baseURL + "/api/v3/orgs/" + org.Login
 	return map[string]interface{}{
 		"login":              org.Login,
 		"id":                 org.ID,
 		"node_id":            org.NodeID,
-		"url":                baseURL + "/api/v3/orgs/" + org.Login,
-		"repos_url":          baseURL + "/api/v3/orgs/" + org.Login + "/repos",
-		"events_url":         baseURL + "/api/v3/orgs/" + org.Login + "/events",
-		"hooks_url":          baseURL + "/api/v3/orgs/" + org.Login + "/hooks",
-		"issues_url":         baseURL + "/api/v3/orgs/" + org.Login + "/issues",
-		"members_url":        baseURL + "/api/v3/orgs/" + org.Login + "/members{/member}",
-		"public_members_url": baseURL + "/api/v3/orgs/" + org.Login + "/public_members{/member}",
+		"url":                api,
+		"repos_url":          api + "/repos",
+		"events_url":         api + "/events",
+		"hooks_url":          api + "/hooks",
+		"issues_url":         api + "/issues",
+		"members_url":        api + "/members{/member}",
+		"public_members_url": api + "/public_members{/member}",
 		"avatar_url":         org.AvatarURL,
 		"description":        org.Description,
-		"name":               org.Name,
-		"email":              org.Email,
-		"type":               org.Type,
-		"html_url":           baseURL + "/" + org.Login,
-		"created_at":         org.CreatedAt.Format(time.RFC3339),
-		"updated_at":         org.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+// orgToJSON converts an Org to the GitHub `organization-full` shape
+// served by single-org operations. public_repos is derived live from
+// the store; bleephub has no org archiving, gists, or org-level
+// follower graph, so archived_at is null and those counters are 0. The
+// has_*_projects toggles are false because bleephub serves no classic
+// projects surface. Must not be called with st.mu held.
+func orgToJSON(org *Org, st *Store, baseURL string) map[string]interface{} {
+	out := orgSimpleJSON(org, baseURL)
+	out["name"] = org.Name
+	out["email"] = org.Email
+	out["type"] = org.Type
+	out["html_url"] = baseURL + "/" + org.Login
+	out["created_at"] = org.CreatedAt.Format(time.RFC3339)
+	out["updated_at"] = org.UpdatedAt.Format(time.RFC3339)
+	out["archived_at"] = nil
+	out["public_repos"] = st.CountPublicRepos(org.Login)
+	out["public_gists"] = 0
+	out["followers"] = 0
+	out["following"] = 0
+	out["has_organization_projects"] = false
+	out["has_repository_projects"] = false
+	return out
 }

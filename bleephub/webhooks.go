@@ -39,6 +39,21 @@ func computeHMACSignatureSHA1(secret string, payload []byte) string {
 func (s *Server) emitWebhookEvent(repoKey, eventType, action string, payload interface{}) {
 	hooks := s.store.ListHooks(repoKey)
 
+	// Org-owned repos carry a top-level `organization` object on event
+	// payloads (real GitHub adds it for every event on an org repo).
+	// Attached centrally: every repo event funnels through here, and the
+	// store lookup needs server access the payload builders don't have.
+	if m, ok := payload.(map[string]interface{}); ok {
+		if _, has := m["organization"]; !has {
+			ownerLogin, _, found := strings.Cut(repoKey, "/")
+			if found {
+				if org := s.store.GetOrg(ownerLogin); org != nil {
+					m["organization"] = orgWebhookPayload(org)
+				}
+			}
+		}
+	}
+
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		s.logger.Error().Err(err).Str("repo", repoKey).Msg("failed to marshal webhook payload")

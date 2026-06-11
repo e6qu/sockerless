@@ -1032,6 +1032,61 @@ func (st *Store) LookupUserByLogin(login string) *User {
 	return st.UsersByLogin[login]
 }
 
+// CountFollowers returns how many users follow the given login.
+func (st *Store) CountFollowers(login string) int {
+	st.Misc.mu.RLock()
+	defer st.Misc.mu.RUnlock()
+	n := 0
+	for _, follows := range st.Misc.follows {
+		if follows[login] {
+			n++
+		}
+	}
+	return n
+}
+
+// CountFollowing returns how many users the given login follows.
+func (st *Store) CountFollowing(login string) int {
+	st.Misc.mu.RLock()
+	defer st.Misc.mu.RUnlock()
+	return len(st.Misc.follows[login])
+}
+
+// CountPublicRepos returns the number of non-private repositories owned
+// by the given account login (user or organization).
+func (st *Store) CountPublicRepos(login string) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	prefix := login + "/"
+	n := 0
+	for name, r := range st.ReposByName {
+		if strings.HasPrefix(name, prefix) && !r.Private {
+			n++
+		}
+	}
+	return n
+}
+
+// CountOpenIssues returns the number of open issues plus open pull
+// requests in a repository — GitHub's open_issues_count counts both
+// because PRs are issues internally.
+func (st *Store) CountOpenIssues(repoID int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	n := 0
+	for _, issue := range st.Issues {
+		if issue.RepoID == repoID && issue.State == "OPEN" {
+			n++
+		}
+	}
+	for _, pr := range st.PullRequests {
+		if pr.RepoID == repoID && pr.State == "OPEN" {
+			n++
+		}
+	}
+	return n
+}
+
 // CreateToken generates a new token for the given user.
 func (st *Store) CreateToken(userID int, scopes string) *Token {
 	st.mu.Lock()

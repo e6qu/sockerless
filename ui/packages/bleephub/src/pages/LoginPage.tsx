@@ -17,7 +17,9 @@ export function LoginPage() {
       setToken(token);
       window.location.href = "/ui/";
     } else {
-      setError("Invalid token");
+      setError(
+        "Token rejected. The dashboard needs a personal access token (PAT) or the admin token — gho_/ghu_/ghs_ OAuth and installation tokens are not accepted.",
+      );
       setVerifying(false);
     }
   }
@@ -65,7 +67,7 @@ export function LoginPage() {
             }}
           />
           <p className="mb-3" style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
-            Use the token the server was started with.
+            Use the admin token the server was started with, or a personal access token.
           </p>
           {error && (
             <p className="mb-3" style={{ fontSize: "0.82rem", color: "var(--color-status-error)" }}>

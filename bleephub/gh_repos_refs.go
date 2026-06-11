@@ -37,26 +37,24 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The list response is the short-branch shape: commit carries
+	// exactly {sha, url} (the full commit object belongs to the
+	// single-branch endpoint).
+	base := s.baseURL(r)
 	var branches []map[string]interface{}
 	_ = refs.ForEach(func(ref *plumbing.Reference) error {
 		if !ref.Name().IsBranch() {
 			return nil
 		}
 		branchName := ref.Name().Short()
-		entry := map[string]interface{}{
+		branches = append(branches, map[string]interface{}{
 			"name":      branchName,
 			"protected": false,
 			"commit": map[string]interface{}{
 				"sha": ref.Hash().String(),
+				"url": base + "/api/v3/repos/" + repo.FullName + "/commits/" + ref.Hash().String(),
 			},
-		}
-
-		// Resolve commit details
-		if commit := resolveCommit(stor, ref.Hash()); commit != nil {
-			entry["commit"] = commitSummary(commit)
-		}
-
-		branches = append(branches, entry)
+		})
 		return nil
 	})
 

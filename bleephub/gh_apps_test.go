@@ -425,8 +425,10 @@ func TestGetAuthenticatedApp(t *testing.T) {
 	if owner["login"] != "admin" {
 		t.Errorf("owner.login = %v, want admin", owner["login"])
 	}
-	if owner["html_url"] != "https://github.com/admin" {
-		t.Errorf("owner.html_url = %v, want https://github.com/admin", owner["html_url"])
+	// owner is the simple-user shape with bleephub's own html_url, not a
+	// hardcoded github.com link.
+	if owner["html_url"] != "/admin" {
+		t.Errorf("owner.html_url = %v, want /admin", owner["html_url"])
 	}
 	if _, present := owner["node_id"]; !present {
 		t.Error("owner missing node_id")

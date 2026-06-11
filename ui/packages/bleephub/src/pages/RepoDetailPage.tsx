@@ -6,13 +6,12 @@ import {
   fetchRepoDetail,
   fetchRepoBranches,
   fetchRepoCommits,
-  fetchRepoIssues,
-  fetchRepoPRs,
   fetchWebhooks,
   fetchSecrets,
   fetchEnvironments,
   fetchReleases,
 } from "../api.js";
+import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type {
   GithubCommit,
   GithubWebhook,
@@ -54,16 +53,7 @@ export function RepoDetailPage() {
     queryFn: () => fetchRepoCommits(owner, repo),
     enabled: tab === "commits" || tab === "code",
   });
-  const { data: issues = [] } = useQuery({
-    queryKey: ["issues", owner, repo, "open"],
-    queryFn: () => fetchRepoIssues(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
-  const { data: prs = [] } = useQuery({
-    queryKey: ["prs", owner, repo, "open"],
-    queryFn: () => fetchRepoPRs(owner, repo, "open"),
-    enabled: !!owner && !!repo,
-  });
+  const counts = useOpenCounts(owner, repo);
   const { data: webhooks = [] } = useQuery({
     queryKey: ["webhooks", owner, repo],
     queryFn: () => fetchWebhooks(owner, repo),
@@ -91,7 +81,7 @@ export function RepoDetailPage() {
 
   return (
     <div>
-      <RepoHeader owner={owner} repo={repo} active="code" issueCount={issues.length} prCount={prs.length} />
+      <RepoHeader owner={owner} repo={repo} active="code" {...counts} />
 
       {/* About line */}
       <div
@@ -349,7 +339,9 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
               {r.name || r.tag_name}
             </div>
             <div style={{ fontSize: "0.76rem", color: "var(--color-fg-muted)" }}>
-              published {new Date(r.published_at).toLocaleDateString()}
+              {r.published_at === null
+                ? "draft"
+                : `published ${new Date(r.published_at).toLocaleDateString()}`}
             </div>
           </div>
         </div>

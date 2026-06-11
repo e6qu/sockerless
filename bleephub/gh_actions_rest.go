@@ -74,6 +74,8 @@ func runStatus(internal string) string {
 		return "in_progress"
 	case "pending_concurrency":
 		return "queued"
+	case "waiting":
+		return "waiting"
 	default:
 		return "queued"
 	}
@@ -120,7 +122,21 @@ func jobConclusion(status, result string) any {
 // Fields cover what `gh run list` + `gh run view` + the
 // runner-dispatcher's poll handler read; per-job + step detail comes
 // from the .../jobs endpoints.
-func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
+
+// runRepoJSON resolves the repository object embedded in workflow-run
+// responses (required `repository` / `head_repository` members). Runs
+// reference repos by full name; a run whose repo is gone renders null.
+func (s *Server) runRepoJSON(fullName, baseURL string) map[string]interface{} {
+	s.store.mu.RLock()
+	repo := s.store.ReposByName[fullName]
+	s.store.mu.RUnlock()
+	if repo == nil {
+		return nil
+	}
+	return repoToJSON(repo, s.store, baseURL)
+}
+
+func workflowRunJSON(wf *Workflow, baseURL, repoName string, repoJSON map[string]interface{}) map[string]any {
 	repoPath := repoName
 	if wf.RepoFullName != "" {
 		repoPath = wf.RepoFullName
@@ -143,6 +159,8 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string) map[string]any {
 	}
 	created := wf.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
 	return map[string]any{
+		"repository":           repoJSON,
+		"head_repository":      repoJSON,
 		"id":                   int64(wf.RunID),
 		"name":                 wf.Name,
 		"node_id":              "WFR_" + wf.ID,
@@ -454,9 +472,10 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 	sortRunsNewestFirst(matching)
 	page := paginateAndLink(w, r, matching)
 	base := s.baseURL(r)
+	runRepoJSON := s.runRepoJSON(repo, base)
 	runs := make([]map[string]any, 0, len(page))
 	for _, wf := range page {
-		runs = append(runs, workflowRunJSON(wf, base, repo))
+		runs = append(runs, workflowRunJSON(wf, base, repo, runRepoJSON))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_count":   len(matching),
@@ -476,7 +495,8 @@ func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, workflowRunJSON(wf, s.baseURL(r), repoFullName(r)))
+	base := s.baseURL(r)
+	writeJSON(w, http.StatusOK, workflowRunJSON(wf, base, repoFullName(r), s.runRepoJSON(repoFullName(r), base)))
 }
 
 // handleListWorkflowRunJobs — GET .../actions/runs/{run_id}/jobs

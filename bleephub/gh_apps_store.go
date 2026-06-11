@@ -45,6 +45,8 @@ type Installation struct {
 	TargetType          string            `json:"target_type"`
 	TargetID            int               `json:"target_id"`
 	TargetLogin         string            `json:"target_login"`
+	TargetNodeID        string            `json:"target_node_id"`    // snapshotted from the target account at install time
+	TargetAvatarURL     string            `json:"target_avatar_url"` // snapshotted from the target account at install time
 	Permissions         map[string]string `json:"permissions"`
 	Events              []string          `json:"events"`
 	RepositorySelection string            `json:"repository_selection"`
@@ -181,6 +183,16 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 	st.NextInstallationID++
 	now := time.Now().UTC()
 
+	// Snapshot the target account's node ID and avatar so the
+	// installation's `account` object can be served without a live
+	// lookup (both are immutable in bleephub).
+	var targetNodeID, targetAvatarURL string
+	if u := st.UsersByLogin[targetLogin]; u != nil {
+		targetNodeID, targetAvatarURL = u.NodeID, u.AvatarURL
+	} else if o := st.OrgsByLogin[targetLogin]; o != nil {
+		targetNodeID, targetAvatarURL = o.NodeID, o.AvatarURL
+	}
+
 	inst := &Installation{
 		ID:                  id,
 		AppID:               appID,
@@ -188,6 +200,8 @@ func (st *Store) CreateInstallation(appID int, targetType string, targetID int, 
 		TargetType:          targetType,
 		TargetID:            targetID,
 		TargetLogin:         targetLogin,
+		TargetNodeID:        targetNodeID,
+		TargetAvatarURL:     targetAvatarURL,
 		Permissions:         perms,
 		Events:              events,
 		RepositorySelection: "all",

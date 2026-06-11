@@ -149,9 +149,10 @@ func (s *Server) handleListWorkflowFileRuns(w http.ResponseWriter, r *http.Reque
 	sortRunsNewestFirst(matching)
 	page := paginateAndLink(w, r, matching)
 	base := s.baseURL(r)
+	runRepoJSON := s.runRepoJSON(repo, base)
 	runs := make([]map[string]any, 0, len(page))
 	for _, run := range page {
-		runs = append(runs, workflowRunJSON(run, base, repo))
+		runs = append(runs, workflowRunJSON(run, base, repo, runRepoJSON))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_count":   len(matching),

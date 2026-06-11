@@ -232,19 +232,40 @@ func (s *Server) handleGetReadme(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":     name,
-			"path":     name,
-			"sha":      entry.Hash.String(),
-			"size":     blob.Size,
-			"type":     "file",
-			"encoding": "base64",
-			"content":  base64.StdEncoding.EncodeToString(content),
-		})
+		out := contentFileJSON(s.baseURL(r), repo, repo.DefaultBranch, name, entry.Hash.String(), blob.Size)
+		out["encoding"] = "base64"
+		out["content"] = base64.StdEncoding.EncodeToString(content)
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 
 	writeGHError(w, http.StatusNotFound, "Not Found")
+}
+
+// contentFileJSON builds the common members of the GitHub content-file
+// shape (name/path/sha/size plus the hypermedia URLs and _links the
+// schema requires) for a blob at the given path on the given ref.
+func contentFileJSON(baseURL string, repo *Repo, ref, path, sha string, size int64) map[string]interface{} {
+	selfURL := baseURL + "/api/v3/repos/" + repo.FullName + "/contents/" + path + "?ref=" + ref
+	gitURL := baseURL + "/api/v3/repos/" + repo.FullName + "/git/blobs/" + sha
+	htmlURL := baseURL + "/" + repo.FullName + "/blob/" + ref + "/" + path
+	downloadURL := baseURL + "/" + repo.FullName + "/raw/" + ref + "/" + path
+	return map[string]interface{}{
+		"name":         path[strings.LastIndex(path, "/")+1:],
+		"path":         path,
+		"sha":          sha,
+		"size":         size,
+		"type":         "file",
+		"url":          selfURL,
+		"git_url":      gitURL,
+		"html_url":     htmlURL,
+		"download_url": downloadURL,
+		"_links": map[string]interface{}{
+			"self": selfURL,
+			"git":  gitURL,
+			"html": htmlURL,
+		},
+	}
 }
 
 func (s *Server) handleGetContents(w http.ResponseWriter, r *http.Request) {
@@ -315,15 +336,10 @@ func (s *Server) handleGetContents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"name":     entry.Name,
-			"path":     path,
-			"sha":      entry.Hash.String(),
-			"size":     blob.Size,
-			"type":     "file",
-			"encoding": "base64",
-			"content":  base64.StdEncoding.EncodeToString(content),
-		})
+		out := contentFileJSON(s.baseURL(r), repo, refName, path, entry.Hash.String(), blob.Size)
+		out["encoding"] = "base64"
+		out["content"] = base64.StdEncoding.EncodeToString(content)
+		writeJSON(w, http.StatusOK, out)
 		return
 	}
 

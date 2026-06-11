@@ -29,6 +29,11 @@ type Server struct {
 	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
 	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
+	// responseObserver, when set before ListenAndServe, sees every
+	// request/response pair in the handler chain. The test harness
+	// assigns it (same package) to validate /api/v3 response shapes
+	// against the vendored GitHub OpenAPI description; nil costs nothing.
+	responseObserver func(req *http.Request, status int, header http.Header, body []byte)
 }
 
 // route registers a handler AND records its "METHOD /path" pattern so the
@@ -283,7 +288,11 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 func (s *Server) ListenAndServe() error {
 	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
-	handler := otelhttp.NewHandler(s.loggingMiddleware(ghWrapped), "bleephub")
+	observed := ghWrapped
+	if s.responseObserver != nil {
+		observed = s.observeMiddleware(ghWrapped)
+	}
+	handler := otelhttp.NewHandler(s.loggingMiddleware(observed), "bleephub")
 
 	srv := &http.Server{
 		Addr:         s.addr,

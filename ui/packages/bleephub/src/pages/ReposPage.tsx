@@ -1,14 +1,14 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
-import { Spinner } from "@sockerless/ui-core/components";
+import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepos } from "../api.js";
 import type { BleephubRepo } from "../types.js";
 import { PageTitle, Blankslate } from "../components/ui.js";
 import { RepoIcon, BranchIcon } from "../components/octicons.js";
 
 export function ReposPage() {
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error } = useQuery({
     queryKey: ["repos"],
     queryFn: fetchRepos,
     refetchInterval: 10000,
@@ -24,6 +24,7 @@ export function ReposPage() {
     );
   }, [data, filter]);
 
+  if (isError) return <InlineError title="Failed to load repositories" detail={String(error)} />;
   if (isLoading || !data) return <Spinner label="loading repos" />;
 
   return (

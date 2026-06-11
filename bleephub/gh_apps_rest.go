@@ -254,7 +254,7 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 			}
 		}
 	}
-	writeJSON(w, http.StatusCreated, installationTokenToJSON(token, inst, scopedRepos, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, installationTokenToJSON(token, inst, scopedRepos, s.store, s.baseURL(r)))
 }
 
 func (s *Server) handleDeleteAppInstallation(w http.ResponseWriter, r *http.Request) {
@@ -397,32 +397,42 @@ func appOwnerJSON(st *Store, app *App) map[string]interface{} {
 	owner := st.Users[app.OwnerID]
 	st.mu.RUnlock()
 	if owner == nil {
-		// Owner record missing: still return a well-formed object keyed on
-		// the recorded OwnerID so the shape is never empty.
-		return map[string]interface{}{
-			"login":      "",
-			"id":         app.OwnerID,
-			"node_id":    "",
-			"avatar_url": "",
-			"html_url":   "https://github.com/",
-			"type":       "User",
-			"site_admin": false,
-		}
+		// Owner record missing: still return a well-formed simple-user
+		// keyed on the recorded OwnerID so the shape is never empty.
+		return userToJSON(&User{ID: app.OwnerID, Type: "User"})
 	}
-	return map[string]interface{}{
-		"login":      owner.Login,
-		"id":         owner.ID,
-		"node_id":    owner.NodeID,
-		"avatar_url": owner.AvatarURL,
-		"html_url":   "https://github.com/" + owner.Login,
-		"type":       "User",
-		"site_admin": owner.SiteAdmin,
-	}
+	return userToJSON(owner)
 }
 
 func installationToJSON(inst *Installation) map[string]interface{} {
 	if inst == nil {
 		return nil
+	}
+	// The account rides as a simple-user regardless of target type —
+	// real GitHub serializes Organization targets in the same shape with
+	// type "Organization". Node ID and avatar were snapshotted from the
+	// target account at installation time.
+	accountAPI := "/api/v3/users/" + inst.TargetLogin
+	account := map[string]interface{}{
+		"login":               inst.TargetLogin,
+		"id":                  inst.TargetID,
+		"node_id":             inst.TargetNodeID,
+		"avatar_url":          inst.TargetAvatarURL,
+		"gravatar_id":         "",
+		"url":                 accountAPI,
+		"html_url":            "/" + inst.TargetLogin,
+		"followers_url":       accountAPI + "/followers",
+		"following_url":       accountAPI + "/following{/other_user}",
+		"gists_url":           accountAPI + "/gists{/gist_id}",
+		"starred_url":         accountAPI + "/starred{/owner}{/repo}",
+		"subscriptions_url":   accountAPI + "/subscriptions",
+		"organizations_url":   accountAPI + "/orgs",
+		"repos_url":           accountAPI + "/repos",
+		"events_url":          accountAPI + "/events{/privacy}",
+		"received_events_url": accountAPI + "/received_events",
+		"type":                inst.TargetType,
+		"site_admin":          false,
+		"user_view_type":      "public",
 	}
 	out := map[string]interface{}{
 		"id":                        inst.ID,
@@ -438,34 +448,23 @@ func installationToJSON(inst *Installation) map[string]interface{} {
 		"single_file_paths":         []string{},
 		"created_at":                inst.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":                inst.UpdatedAt.UTC().Format(time.RFC3339),
-		"account": map[string]interface{}{
-			"login":      inst.TargetLogin,
-			"id":         inst.TargetID,
-			"type":       inst.TargetType,
-			"html_url":   "/" + inst.TargetLogin,
-			"avatar_url": "",
-		},
-		"html_url":          "/apps/" + inst.AppSlug + "/installations/" + strconv.Itoa(inst.ID),
-		"access_tokens_url": "/api/v3/app/installations/" + strconv.Itoa(inst.ID) + "/access_tokens",
-		"repositories_url":  "/api/v3/installation/repositories",
-		"events_url":        "/api/v3/apps/" + inst.AppSlug + "/installations/" + strconv.Itoa(inst.ID) + "/events",
-		"suspended_at":      nil,
-		"suspended_by":      nil,
+		"account":                   account,
+		"html_url":                  "/apps/" + inst.AppSlug + "/installations/" + strconv.Itoa(inst.ID),
+		"access_tokens_url":         "/api/v3/app/installations/" + strconv.Itoa(inst.ID) + "/access_tokens",
+		"repositories_url":          "/api/v3/installation/repositories",
+		"suspended_at":              nil,
+		"suspended_by":              nil,
 	}
 	if inst.SuspendedAt != nil {
 		out["suspended_at"] = inst.SuspendedAt.UTC().Format(time.RFC3339)
 		if inst.SuspendedBy != nil {
-			out["suspended_by"] = map[string]interface{}{
-				"login": inst.SuspendedBy.Login,
-				"id":    inst.SuspendedBy.ID,
-				"type":  inst.SuspendedBy.Type,
-			}
+			out["suspended_by"] = userToJSON(inst.SuspendedBy)
 		}
 	}
 	return out
 }
 
-func installationTokenToJSON(token *InstallationToken, inst *Installation, scopedRepos []*Repo, baseURL string) map[string]interface{} {
+func installationTokenToJSON(token *InstallationToken, inst *Installation, scopedRepos []*Repo, st *Store, baseURL string) map[string]interface{} {
 	// repository_selection reflects the token's effective scope: "selected"
 	// when minted with a repository subset, otherwise the installation's.
 	selection := ""
@@ -484,7 +483,7 @@ func installationTokenToJSON(token *InstallationToken, inst *Installation, scope
 	if len(token.RepositoryIDs) > 0 {
 		repoJSON := make([]map[string]interface{}, 0, len(scopedRepos))
 		for _, repo := range scopedRepos {
-			repoJSON = append(repoJSON, repoToJSON(repo, baseURL))
+			repoJSON = append(repoJSON, repoToJSON(repo, st, baseURL))
 		}
 		out["repositories"] = repoJSON
 	}
@@ -547,7 +546,7 @@ func (s *Server) handleListUserInstallationRepos(w http.ResponseWriter, r *http.
 	base := s.baseURL(r)
 	repoJSON := make([]map[string]interface{}, 0, len(page))
 	for _, repo := range page {
-		repoJSON = append(repoJSON, repoToJSON(repo, base))
+		repoJSON = append(repoJSON, repoToJSON(repo, s.store, base))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"total_count":          len(repos),
@@ -740,7 +739,7 @@ func (s *Server) handleListInstallationRepositories(w http.ResponseWriter, r *ht
 	base := s.baseURL(r)
 	repoJSON := make([]map[string]interface{}, 0, len(page))
 	for _, repo := range page {
-		repoJSON = append(repoJSON, repoToJSON(repo, base))
+		repoJSON = append(repoJSON, repoToJSON(repo, s.store, base))
 	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"total_count":          len(filtered),

@@ -3,6 +3,10 @@ import {
   fetchOAuthApps,
   fetchSecrets,
   fetchEnvironments,
+  fetchRepoIssuesPage,
+  fetchPRDetail,
+  createIssue,
+  parseLinkNext,
   dispatchWorkflow,
   setToken,
   clearToken,
@@ -62,6 +66,61 @@ describe("api wire-shape normalization", () => {
     );
     const envs = await fetchEnvironments("admin", "repo");
     expect(envs[0].name).toBe("prod");
+  });
+});
+
+describe("Link-header pagination", () => {
+  it("parseLinkNext extracts the rel=next URL", () => {
+    expect(
+      parseLinkNext(
+        `</api/v3/repos/a/b/issues?page=2&per_page=50>; rel="next", </api/v3/repos/a/b/issues?page=3&per_page=50>; rel="last"`,
+      ),
+    ).toBe("/api/v3/repos/a/b/issues?page=2&per_page=50");
+  });
+
+  it("parseLinkNext returns null without a next page", () => {
+    expect(parseLinkNext(null)).toBeNull();
+    expect(parseLinkNext(`</api/v3/x?page=1>; rel="prev"`)).toBeNull();
+  });
+
+  it("fetchRepoIssuesPage surfaces items plus the next-page URL", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify([{ id: 1 }]), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          Link: `</api/v3/repos/a/b/issues?page=2&per_page=50&state=open>; rel="next"`,
+        },
+      }),
+    );
+    const page = await fetchRepoIssuesPage("a", "b", "open");
+    expect(page.items).toHaveLength(1);
+    expect(page.nextUrl).toBe("/api/v3/repos/a/b/issues?page=2&per_page=50&state=open");
+  });
+
+  it("fetchRepoIssuesPage follows an explicit page URL when given", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([]));
+    await fetchRepoIssuesPage("a", "b", "open", "/api/v3/repos/a/b/issues?page=2");
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/a/b/issues?page=2");
+  });
+});
+
+describe("single-resource fetches", () => {
+  it("fetchPRDetail hits the single-PR endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ id: 1, number: 7 }));
+    await fetchPRDetail("a", "b", 7);
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/a/b/pulls/7");
+  });
+});
+
+describe("mutation error surfaces", () => {
+  it("createIssue includes the response body in its thrown error", async () => {
+    mockFetch.mockResolvedValue(
+      new Response(JSON.stringify({ message: "Validation Failed" }), { status: 422 }),
+    );
+    await expect(createIssue("a", "b", { title: "t" })).rejects.toThrow(
+      /createIssue 422: .*Validation Failed/,
+    );
   });
 });
 

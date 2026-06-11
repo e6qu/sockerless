@@ -28,7 +28,9 @@ type Milestone struct {
 	Title       string
 	Description string
 	State       string // "open", "closed"
+	CreatorID   int    // user who created the milestone
 	DueOn       *time.Time
+	ClosedAt    *time.Time // set when state transitions to "closed"
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
 }
@@ -182,8 +184,9 @@ func (st *Store) DeleteLabel(id int) bool {
 
 // --- Milestone CRUD ---
 
-// CreateMilestone creates a new milestone in the given repository.
-func (st *Store) CreateMilestone(repoID int, title, description, state string, dueOn *time.Time) *Milestone {
+// CreateMilestone creates a new milestone in the given repository on
+// behalf of the given creator.
+func (st *Store) CreateMilestone(repoID, creatorID int, title, description, state string, dueOn *time.Time) *Milestone {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -205,6 +208,7 @@ func (st *Store) CreateMilestone(repoID int, title, description, state string, d
 		Title:       title,
 		Description: description,
 		State:       state,
+		CreatorID:   creatorID,
 		DueOn:       dueOn,
 		CreatedAt:   now,
 		UpdatedAt:   now,

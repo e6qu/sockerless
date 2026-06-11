@@ -198,6 +198,20 @@ func repoPayload(repo *Repo) map[string]interface{} {
 	return result
 }
 
+// orgWebhookPayload is the `organization` block on event payloads for
+// org-owned repos. Like repoPayload/senderPayload, it carries the
+// non-URL members — webhook delivery has no request context to derive
+// absolute URLs from.
+func orgWebhookPayload(org *Org) map[string]interface{} {
+	return map[string]interface{}{
+		"login":       org.Login,
+		"id":          org.ID,
+		"node_id":     org.NodeID,
+		"avatar_url":  org.AvatarURL,
+		"description": org.Description,
+	}
+}
+
 func senderPayload(user *User) map[string]interface{} {
 	if user == nil {
 		// GitHub guarantees `sender` is always a populated user object. Events

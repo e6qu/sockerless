@@ -59,11 +59,25 @@ function handleUnauthorized(res: Response): void {
   }
 }
 
+/** Error carrying the HTTP status so callers can branch on 404 vs failure. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
+export function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
 async function fetchJSON<T>(url: string): Promise<T> {
   const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     handleUnauthorized(res);
-    throw new Error(`${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;
 }
@@ -104,8 +118,14 @@ export const fetchOAuthState = () =>
 export const fetchStorageInfo = () =>
   fetchJSON<BleephubStorageInfo>("/internal/storage");
 
+// Verify against an /internal endpoint, not /api/v3/user: the dashboard's
+// data all lives under /internal/*, which only accepts PATs (incl. the
+// admin token). /api/v3/user also accepts gho_/ghu_/ghs_ tokens, which
+// would let login "succeed" and then bounce straight back on the first
+// dashboard fetch. No handleUnauthorized here — a 401 during login is the
+// verdict, not a stale-session redirect.
 export async function verifyToken(token: string): Promise<boolean> {
-  const res = await fetch("/api/v3/user", {
+  const res = await fetch("/internal/status", {
     headers: { Authorization: `Bearer ${token}` },
   });
   return res.ok;
@@ -241,17 +261,52 @@ async function ghFetch<T>(path: string): Promise<T> {
   const res = await fetch(path, { headers: authHeaders() });
   if (!res.ok) {
     handleUnauthorized(res);
-    throw new Error(`${res.status} ${res.statusText}`);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
   }
   return res.json() as Promise<T>;
+}
+
+/** One page of a Link-paginated list plus the rel="next" URL (null = last page). */
+export interface Page<T> {
+  items: T[];
+  nextUrl: string | null;
+}
+
+/** Extract the rel="next" target from a GitHub-style Link header. */
+export function parseLinkNext(link: string | null): string | null {
+  if (!link) return null;
+  for (const part of link.split(",")) {
+    const m = part.match(/<([^>]+)>\s*;\s*rel="next"/);
+    if (m) return m[1];
+  }
+  return null;
+}
+
+// The server paginates list endpoints (per_page max 100) and advertises the
+// follow-up page via the Link header — honor it instead of silently showing
+// only the first 50 items.
+async function ghFetchPage<T>(url: string): Promise<Page<T>> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  const items = (await res.json()) as T[];
+  return { items, nextUrl: parseLinkNext(res.headers.get("Link")) };
 }
 
 export const fetchRepoDetail = (owner: string, repo: string) =>
   ghFetch<BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
 
-export const fetchRepoIssues = (owner: string, repo: string, state = "open") =>
-  ghFetch<GithubIssue[]>(
-    `/api/v3/repos/${owner}/${repo}/issues?state=${state}&per_page=50`
+/** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
+export const fetchRepoIssuesPage = (
+  owner: string,
+  repo: string,
+  state = "open",
+  pageUrl?: string,
+) =>
+  ghFetchPage<GithubIssue>(
+    pageUrl ?? `/api/v3/repos/${owner}/${repo}/issues?state=${state}&per_page=50`
   );
 
 export const fetchIssueDetail = (owner: string, repo: string, number: number) =>
@@ -262,10 +317,19 @@ export const fetchIssueComments = (owner: string, repo: string, number: number) 
     `/api/v3/repos/${owner}/${repo}/issues/${number}/comments`
   );
 
-export const fetchRepoPRs = (owner: string, repo: string, state = "open") =>
-  ghFetch<GithubPR[]>(
-    `/api/v3/repos/${owner}/${repo}/pulls?state=${state}&per_page=50`
+/** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
+export const fetchRepoPRsPage = (
+  owner: string,
+  repo: string,
+  state = "open",
+  pageUrl?: string,
+) =>
+  ghFetchPage<GithubPR>(
+    pageUrl ?? `/api/v3/repos/${owner}/${repo}/pulls?state=${state}&per_page=50`
   );
+
+export const fetchPRDetail = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubPR>(`/api/v3/repos/${owner}/${repo}/pulls/${number}`);
 
 export const fetchRepoBranches = (owner: string, repo: string) =>
   ghFetch<GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
@@ -283,7 +347,10 @@ export async function createIssue(
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(payload),
   });
-  if (!res.ok) throw new Error(`createIssue ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`createIssue ${res.status}: ${text || res.statusText}`);
+  }
   return res.json();
 }
 
