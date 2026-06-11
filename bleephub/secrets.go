@@ -7,11 +7,16 @@ import (
 )
 
 // Secret represents a repository secret for GitHub Actions.
+//
+// Value carries a real json name so persistence round-trips it (workflow
+// runs need the plaintext after a restart). Client responses never marshal
+// this struct — the secrets handlers emit name/created_at/updated_at maps,
+// matching real GitHub's never-return-the-value contract.
 type Secret struct {
 	Name      string    `json:"name"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
-	Value     string    `json:"-"`
+	Value     string    `json:"value"`
 }
 
 func (s *Server) registerSecretsRoutes() {

@@ -169,6 +169,17 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return c["reactionGroups"], nil
 				},
 			},
+			// gh's shared comments fragment (issue view + pr view) selects
+			// viewerDidAuthor; mirrors PRComment's resolver.
+			"viewerDidAuthor": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					viewer := ghUserFromContext(p.Context)
+					authorID, _ := c["authorID"].(int)
+					return viewer != nil && authorID == viewer.ID, nil
+				},
+			},
 		},
 	})
 
@@ -272,12 +283,21 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return i["nodeID"], nil
 				},
 			},
-			"databaseId":       &graphql.Field{Type: graphql.Int},
-			"number":           &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-			"title":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"body":             &graphql.Field{Type: graphql.String},
-			"state":            &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"stateReason":      &graphql.Field{Type: graphql.String},
+			"databaseId":  &graphql.Field{Type: graphql.Int},
+			"number":      &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"title":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"body":        &graphql.Field{Type: graphql.String},
+			"state":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"stateReason": &graphql.Field{Type: graphql.String},
+			// gh's shared issue/PR field set selects `closed`.
+			"closed": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.Boolean),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					i := p.Source.(map[string]interface{})
+					state, _ := i["state"].(string)
+					return state == "CLOSED", nil
+				},
+			},
 			"url":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"createdAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"updatedAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
@@ -620,7 +640,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 
 			issue := s.store.GetIssueByNumber(repoID, number)
 			if issue == nil {
-				return nil, nil
+				// Real GitHub returns a typed NOT_FOUND error, not bare null.
+				return nil, &ghNotFoundError{
+					message: fmt.Sprintf("Could not resolve to an Issue with the number of %d.", number),
+				}
 			}
 			return issueToGQL(issue, s.store), nil
 		},
@@ -637,11 +660,27 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"first": &graphql.ArgumentConfig{Type: graphql.Int},
 			"after": &graphql.ArgumentConfig{Type: graphql.String},
 			"query": &graphql.ArgumentConfig{Type: graphql.String},
+			// gh sends literal enum names (gh label list/create issue
+			// `labels(orderBy: {field: NAME, direction: ASC})`), so
+			// field/direction must be enums — string-typed inputs reject
+			// the literals.
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "LabelOrder",
 				Fields: graphql.InputObjectConfigFieldMap{
-					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},
-					"direction": &graphql.InputObjectFieldConfig{Type: graphql.String},
+					"field": &graphql.InputObjectFieldConfig{Type: graphql.NewEnum(graphql.EnumConfig{
+						Name: "LabelOrderField",
+						Values: graphql.EnumValueConfigMap{
+							"NAME":       &graphql.EnumValueConfig{Value: "NAME"},
+							"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+						},
+					})},
+					"direction": &graphql.InputObjectFieldConfig{Type: graphql.NewEnum(graphql.EnumConfig{
+						Name: "LabelOrderDirection",
+						Values: graphql.EnumValueConfigMap{
+							"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
+							"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+						},
+					})},
 				},
 			})},
 		},
@@ -793,6 +832,14 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"labelIds":     &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
 			"milestoneId":  &graphql.InputObjectFieldConfig{Type: graphql.ID},
 			"assigneeIds":  &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
+			// gh's IssueCreate mutation always serializes projectIds (null
+			// unless --project) and issueTemplate when a template applies —
+			// the input must declare them or variable coercion rejects the
+			// whole mutation. Classic (v1) projects aren't modeled, and gh
+			// resolves --project against the repo's (empty) project lists
+			// before mutating, so non-null projectIds never arrive.
+			"projectIds":    &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
+			"issueTemplate": &graphql.InputObjectFieldConfig{Type: graphql.String},
 		},
 	})
 
@@ -1249,6 +1296,7 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		"nodeID":              c.NodeID,
 		"body":                c.Body,
 		"url":                 "",
+		"authorID":            c.AuthorID,
 		"createdAt":           c.CreatedAt.Format(time.RFC3339),
 		"updatedAt":           c.UpdatedAt.Format(time.RFC3339),
 		"author":              author,

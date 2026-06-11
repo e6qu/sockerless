@@ -160,14 +160,22 @@ func (st *Store) RotateUserToServerToken(refreshTokenStr string) (*UserToServerT
 	if rt == nil || time.Now().After(rt.ExpiresAt) {
 		return nil, nil
 	}
-	// Revoke the matching user token (find by RefreshTokenValue).
+	// Revoke the matching user token (find by RefreshTokenValue). The deletes
+	// write through to disk so the rotated-out credentials stay dead after a
+	// restart instead of resurrecting from the persisted buckets.
 	for k, v := range st.UserToServerTokens {
 		if v.RefreshTokenValue == refreshTokenStr {
 			delete(st.UserToServerTokens, k)
+			if st.persist != nil {
+				st.persist.MustDelete("user_to_server_tokens", k)
+			}
 			break
 		}
 	}
 	delete(st.RefreshTokens, refreshTokenStr)
+	if st.persist != nil {
+		st.persist.MustDelete("refresh_tokens", refreshTokenStr)
+	}
 	return st.createUserToServerTokenLocked(rt.UserID, rt.AppID, rt.OAuthAppClientID, rt.Scopes, 8*time.Hour, true)
 }
 
@@ -190,8 +198,14 @@ func (st *Store) RevokeUserGrant(clientID string, userID int) int {
 		}
 		if hit {
 			delete(st.UserToServerTokens, k)
+			if st.persist != nil {
+				st.persist.MustDelete("user_to_server_tokens", k)
+			}
 			if v.RefreshTokenValue != "" {
 				delete(st.RefreshTokens, v.RefreshTokenValue)
+				if st.persist != nil {
+					st.persist.MustDelete("refresh_tokens", v.RefreshTokenValue)
+				}
 			}
 			n++
 		}

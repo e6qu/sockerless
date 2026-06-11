@@ -22,7 +22,10 @@ type CheckRun struct {
 	DetailsURL  string          `json:"details_url"`
 	AppID       int             `json:"app_id"`
 	SuiteID     int64           `json:"check_suite_id"`
-	RepoKey     string          `json:"-"`
+	// RepoKey carries a real json name so persistence round-trips it
+	// (post-reload commit lookups match on it). Client responses never
+	// marshal this struct — checkRunToJSON emits an explicit map.
+	RepoKey string `json:"repo_key"`
 }
 
 // CheckRunOutput is the title/summary/text/annotations bundle attached to a CheckRun.
@@ -31,7 +34,7 @@ type CheckRunOutput struct {
 	Summary          string             `json:"summary,omitempty"`
 	Text             string             `json:"text,omitempty"`
 	AnnotationsCount int                `json:"annotations_count"`
-	Annotations      []*CheckAnnotation `json:"-"`
+	Annotations      []*CheckAnnotation `json:"annotations"` // persisted with the run; rendered only via the annotations list endpoint
 	Images           []*CheckImage      `json:"images,omitempty"`
 }
 
@@ -57,16 +60,18 @@ type CheckImage struct {
 
 // CheckSuite groups CheckRuns by (repo, head_sha, app).
 type CheckSuite struct {
-	ID         int64     `json:"id"`
-	NodeID     string    `json:"node_id"`
-	HeadBranch string    `json:"head_branch"`
-	HeadSHA    string    `json:"head_sha"`
-	Status     string    `json:"status"`
-	Conclusion string    `json:"conclusion"`
-	AppID      int       `json:"app_id"`
-	RepoKey    string    `json:"-"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID         int64  `json:"id"`
+	NodeID     string `json:"node_id"`
+	HeadBranch string `json:"head_branch"`
+	HeadSHA    string `json:"head_sha"`
+	Status     string `json:"status"`
+	Conclusion string `json:"conclusion"`
+	AppID      int    `json:"app_id"`
+	// RepoKey carries a real json name so persistence round-trips it;
+	// client responses go through checkSuiteToJSON (explicit map).
+	RepoKey   string    `json:"repo_key"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // CheckSuitePref controls auto-trigger of CheckSuites for a (repo, app) pair.

@@ -24,6 +24,10 @@ import (
 // `gh release create` uses POST and PATCH; `gh release list/view` uses GET.
 
 // Release is a tagged release on a repo.
+//
+// AuthorID/RepoID carry real json names so persistence round-trips the
+// linkage (the reload path re-indexes byRepo from RepoID). Client responses
+// never marshal this struct — releaseToJSON emits an explicit map.
 type Release struct {
 	ID              int             `json:"id"`
 	NodeID          string          `json:"node_id"`
@@ -33,8 +37,8 @@ type Release struct {
 	Body            string          `json:"body"`
 	Draft           bool            `json:"draft"`
 	Prerelease      bool            `json:"prerelease"`
-	AuthorID        int             `json:"-"`
-	RepoID          int             `json:"-"`
+	AuthorID        int             `json:"author_id"`
+	RepoID          int             `json:"repo_id"`
 	Assets          []*ReleaseAsset `json:"-"`
 	CreatedAt       time.Time       `json:"created_at"`
 	PublishedAt     *time.Time      `json:"published_at"`
@@ -170,6 +174,21 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 		rs.persist.MustPut("releases", strconv.Itoa(id), r)
 	}
 	return true
+}
+
+// DeleteAllForRepo purges every release for a repository, in memory and on
+// disk. Used by the delete-repo cascade so a recreated same-name repo can't
+// inherit the old repo's releases after a restart.
+func (rs *ReleaseStore) DeleteAllForRepo(repoID int) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for _, r := range rs.byRepo[repoID] {
+		delete(rs.byID, r.ID)
+		if rs.persist != nil {
+			rs.persist.MustDelete("releases", strconv.Itoa(r.ID))
+		}
+	}
+	delete(rs.byRepo, repoID)
 }
 
 func (rs *ReleaseStore) Delete(id int) bool {

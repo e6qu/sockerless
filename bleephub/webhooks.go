@@ -226,6 +226,8 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 		return
 	}
 
+	sha := resolveRefSha(stor, ref)
+
 	for name, content := range workflowFiles {
 		wfDef, err := ParseWorkflow(content)
 		if err != nil {
@@ -247,15 +249,22 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 		serverURL := fmt.Sprintf("http://%s", s.addr)
 		expandedDef.Env["__serverURL"] = serverURL
 
-		workflow, err := s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest")
+		// Event metadata must travel INTO submitWorkflow: it resolves the
+		// originating workflow file from RepoFullName at submit time (the
+		// run's workflow_id), and the workflow becomes visible to other
+		// goroutines the moment it is stored — patching fields afterwards
+		// would both mis-derive the file id and race those readers.
+		meta := &WorkflowEventMeta{
+			EventName: eventType,
+			Ref:       ref,
+			Sha:       sha,
+			Repo:      repoKey,
+		}
+		workflow, err := s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
 		if err != nil {
 			s.logger.Error().Err(err).Str("file", name).Msg("failed to trigger workflow")
 			continue
 		}
-
-		workflow.EventName = eventType
-		workflow.Ref = ref
-		workflow.RepoFullName = repoKey
 
 		s.logger.Info().
 			Str("workflow_id", workflow.ID).
@@ -263,6 +272,38 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 			Str("file", name).
 			Msg("workflow triggered by event")
 	}
+}
+
+// resolveRefSha resolves the commit sha the triggering ref points at in git
+// storage, falling back to HEAD's commit when the ref isn't stored (e.g. a
+// pull_request event for a PR created via REST without a pushed branch).
+// Returns the all-zero placeholder sha when nothing resolves — the same
+// convention the workflow_dispatch path uses for runs without a git commit.
+func resolveRefSha(stor gitStorage.Storer, ref string) string {
+	const zeroSha = "0000000000000000000000000000000000000000"
+	resolve := func(name plumbing.ReferenceName) (plumbing.Hash, bool) {
+		r, err := stor.Reference(name)
+		if err != nil {
+			return plumbing.Hash{}, false
+		}
+		if r.Type() == plumbing.SymbolicReference {
+			target, err := stor.Reference(r.Target())
+			if err != nil {
+				return plumbing.Hash{}, false
+			}
+			return target.Hash(), true
+		}
+		return r.Hash(), true
+	}
+	if ref != "" {
+		if h, ok := resolve(plumbing.ReferenceName(ref)); ok && !h.IsZero() {
+			return h.String()
+		}
+	}
+	if h, ok := resolve(plumbing.HEAD); ok && !h.IsZero() {
+		return h.String()
+	}
+	return zeroSha
 }
 
 func splitRepoKeyParts(repoKey string) [2]string {

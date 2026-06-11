@@ -18,9 +18,7 @@ type WorkflowStatus string
 
 const (
 	WorkflowStatusRunning            WorkflowStatus = "running"
-	WorkflowStatusQueued             WorkflowStatus = "queued"
 	WorkflowStatusCompleted          WorkflowStatus = "completed"
-	WorkflowStatusSkipped            WorkflowStatus = "skipped"
 	WorkflowStatusPendingConcurrency WorkflowStatus = "pending_concurrency"
 	// WorkflowStatusWaiting holds runs whose environment-targeting jobs
 	// await a deployment review (required reviewers on the environment).

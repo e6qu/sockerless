@@ -58,24 +58,26 @@ These work natively (no `gh api` workaround needed):
 | `gh repo create <name>` | `POST /user/repos` |
 | `gh repo view <owner/name>` | `GET /repos/{o}/{r}` + GraphQL `repository` |
 | `gh repo list <owner>` | GraphQL `repositoryOwner(login).repositories` |
-| `gh repo clone <owner/name>` | smart-HTTP git protocol |
+| `gh repo clone <owner/name>` | GraphQL `RepositoryInfo` (`hasWikiEnabled`, `parent`) + smart-HTTP git protocol |
 | `gh repo delete <owner/name>` | `DELETE /repos/{o}/{r}` |
-| `gh issue create --title --body` | `POST /repos/{o}/{r}/issues` |
+| `gh issue create --title --body` | GraphQL `createIssue` mutation |
 | `gh issue view <N>` | GraphQL `repository.issueOrPullRequest` (Issue\|PullRequest union) |
-| `gh issue list` | GraphQL `repository.issues` connection |
-| `gh issue comment <N> --body` | `POST /repos/{o}/{r}/issues/{n}/comments` |
-| `gh issue close / reopen <N>` | `PATCH /repos/{o}/{r}/issues/{n}` |
-| `gh pr create` (in a git working dir) | `POST /repos/{o}/{r}/pulls` |
-| `gh pr view <N>` | GraphQL `repository.pullRequest` |
-| `gh pr list` | GraphQL `repository.pullRequests` connection |
-| `gh pr merge <N>` | `PUT /repos/{o}/{r}/pulls/{n}/merge` |
-| `gh pr review --approve` / `--request-changes` / `--comment` | `POST /repos/{o}/{r}/pulls/{n}/reviews` |
-| `gh pr comment <N>` | issue-comment on PR via `POST /repos/{o}/{r}/issues/{n}/comments` |
+| `gh issue list` | GraphQL `repository.issues` connection; `--label`/`--author`/`--search` route through GraphQL `search(type: ISSUE)` gated on `GET /meta` feature detection |
+| `gh issue comment <N> --body` | GraphQL `addComment` mutation |
+| `gh issue close / reopen <N>` | GraphQL `closeIssue` / `reopenIssue` mutations |
+| `gh pr create` (in a git working dir) | GraphQL `RepositoryInfo` + `createPullRequest` mutation |
+| `gh pr view <N>` | GraphQL `repository.pullRequest` (incl. `statusCheckRollup` via `commits(last:1)`, backed by the checks store) |
+| `gh pr list` | GraphQL `repository.pullRequests` connection (enum `orderBy`) |
+| `gh pr status` | GraphQL `search(type: ISSUE)` + `repository.pullRequests`; needs `GET /meta` |
+| `gh pr merge <N>` | GraphQL `mergePullRequest` mutation (finder reads `mergeStateStatus` + `commits(last:1)`) |
+| `gh pr review --approve` / `--request-changes` / `--comment` | GraphQL `addPullRequestReview` mutation |
+| `gh pr comment <N>` | GraphQL `addComment` mutation |
 | `gh release create <tag>` | `POST /repos/{o}/{r}/releases` |
-| `gh release list / view / delete` | GET / PATCH / DELETE on releases |
+| `gh release list` | GraphQL `repository.releases` connection |
+| `gh release view / delete` | `GET`/`DELETE /repos/{o}/{r}/releases*` + GraphQL `repository.release(tagName:)` draft lookup |
 | `gh release download` | `assets_url` redirect (sim returns empty assets) |
-| `gh run list / view / cancel / rerun` | `GET/POST /repos/{o}/{r}/actions/runs*` |
-| `gh workflow run <wf> --ref <branch>` | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches` |
+| `gh run list / view / cancel / rerun` | `GET/POST /repos/{o}/{r}/actions/runs*` (push-triggered runs resolve their `workflow_id`) |
+| `gh workflow run <wf> --ref <branch>` | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches`; version-gated on `GET /meta` |
 | `gh workflow list / view` | `GET /actions/workflows[/{id}]` (`enable` / `disable` not implemented — see [bleephub/README.md](../bleephub/README.md#what-it-does-not-implement-deferred)) |
 | `gh api /repos/{o}/{r}/...` | direct REST passthrough |
 

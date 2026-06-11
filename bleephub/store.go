@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -338,7 +339,14 @@ func (st *Store) SetPersistence(p *Persistence) error {
 // Loads buckets:
 //
 //	users, tokens, apps, oauth_apps, installations, installation_tokens,
-//	user_to_server_tokens, refresh_tokens, repos.
+//	user_to_server_tokens, refresh_tokens, repos, orgs, teams, memberships,
+//	labels, milestones, issues, comments, pull_requests, pr_reviews,
+//	hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
+//	check_suites, check_runs, check_suite_prefs, workflow_files,
+//	releases, deployments, deployment_statuses, environments,
+//	pr_review_comments, reactions, projects_v2, project_v2_items,
+//	project_v2_fields, misc, user_keys, gpg_keys, pages_sites,
+//	pages_builds, branch_protection, audit_log, marketplace_plans.
 //
 // Other state (workflows, sessions, agents, ephemeral codes) deliberately
 // stays in-memory only — operator restart implies abandoning in-flight runs.
@@ -611,37 +619,44 @@ func (st *Store) loadFromPersistence() error {
 			if err := loadJSON(raw, &hooks); err != nil {
 				return err
 			}
-			st.Hooks[key] = hooks
+			// RepoKey is json:"-" (it duplicates the bucket key), so
+			// backfill it — deliveries and hook lookups key on it.
 			for _, h := range hooks {
+				h.RepoKey = key
 				if h.ID >= st.NextHookID {
 					st.NextHookID = h.ID + 1
 				}
 			}
+			st.Hooks[key] = hooks
 			return nil
 		}},
-		{"hook_deliveries", func(key string, raw []byte) error {
+		{"hook_deliveries", func(_ string, raw []byte) error {
 			var deliveries []*WebhookDelivery
 			if err := loadJSON(raw, &deliveries); err != nil {
 				return err
 			}
-			hookID := 0
 			for _, d := range deliveries {
 				st.HookDeliveries[d.HookID] = append(st.HookDeliveries[d.HookID], d)
 				if d.ID >= st.NextDeliveryID {
 					st.NextDeliveryID = d.ID + 1
 				}
-				hookID = d.HookID
 			}
-			_ = hookID
 			return nil
 		}},
 		{"app_hook_deliveries", func(key string, raw []byte) error {
+			// App deliveries are bucketed by app ID; a delivery's HookID is
+			// NOT the app ID (app-level deliveries use a synthetic hook id),
+			// so file the slice under the bucket key.
+			appID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("app_hook_deliveries key %q: %w", key, err)
+			}
 			var deliveries []*WebhookDelivery
 			if err := loadJSON(raw, &deliveries); err != nil {
 				return err
 			}
 			for _, d := range deliveries {
-				st.AppHookDeliveries[d.HookID] = append(st.AppHookDeliveries[d.HookID], d)
+				st.AppHookDeliveries[appID] = append(st.AppHookDeliveries[appID], d)
 				if d.ID >= st.NextDeliveryID {
 					st.NextDeliveryID = d.ID + 1
 				}
@@ -738,17 +753,23 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Deployments.statuses[s.ID] = &s
+			// Relink onto the owning deployment (Deployment.Statuses is
+			// json:"-"; deployments load before statuses). Insertion order
+			// is map-random here — a post-pass below sorts by ID.
+			if d := st.Deployments.deployments[s.DeploymentID]; d != nil {
+				d.Statuses = append(d.Statuses, &s)
+			}
 			if s.ID >= st.Deployments.nextStatusID {
 				st.Deployments.nextStatusID = s.ID + 1
 			}
 			return nil
 		}},
-		{"environments", func(_ string, raw []byte) error {
+		{"environments", func(key string, raw []byte) error {
 			var e Environment
 			if err := loadJSON(raw, &e); err != nil {
 				return err
 			}
-			key := fmt.Sprintf("%d:%s", e.RepoID, e.Name)
+			// The bucket key IS the "repoID:name" map key — use it directly.
 			st.Deployments.environments[key] = &e
 			st.Deployments.envsByRepo[e.RepoID] = append(st.Deployments.envsByRepo[e.RepoID], &e)
 			if e.ID >= st.Deployments.nextEnvID {
@@ -757,18 +778,20 @@ func (st *Store) loadFromPersistence() error {
 			return nil
 		}},
 		{"pr_review_comments", func(_ string, raw []byte) error {
-			var c PRReviewComment
-			if err := loadJSON(raw, &c); err != nil {
+			rec := prReviewCommentRecord{PRReviewComment: &PRReviewComment{}}
+			if err := loadJSON(raw, &rec); err != nil {
 				return err
 			}
-			st.PRReviewComments.byID[c.ID] = &c
-			st.PRReviewComments.byPR[c.PullRequestID] = append(st.PRReviewComments.byPR[c.PullRequestID], &c)
-			if c.InReplyToID > 0 {
-				if tr, ok := st.PRReviewComments.threadRoots[c.InReplyToID]; ok {
-					st.PRReviewComments.threadRoots[c.ID] = tr
-				}
-			} else {
-				st.PRReviewComments.threadRoots[c.ID] = c.ID
+			c := rec.restore()
+			if c.ThreadID == 0 && c.InReplyToID == 0 {
+				// Row predates the thread-id record field: a root comment is
+				// its own thread.
+				c.ThreadID = c.ID
+			}
+			st.PRReviewComments.byID[c.ID] = c
+			st.PRReviewComments.byPR[c.PullRequestID] = append(st.PRReviewComments.byPR[c.PullRequestID], c)
+			if c.ThreadID != 0 {
+				st.PRReviewComments.threadRoots[c.ID] = c.ThreadID
 			}
 			if c.ID >= st.PRReviewComments.nextID {
 				st.PRReviewComments.nextID = c.ID + 1
@@ -822,6 +845,13 @@ func (st *Store) loadFromPersistence() error {
 			if f.ID >= st.ProjectsV2.nextFieldID {
 				st.ProjectsV2.nextFieldID = f.ID + 1
 			}
+			// Option IDs are hex renderings of nextOptionSeed; resume the
+			// seed past every loaded option so new options can't collide.
+			for _, opt := range f.Options {
+				if n, err := strconv.ParseInt(opt.ID, 16, 64); err == nil && int(n) >= st.ProjectsV2.nextOptionSeed {
+					st.ProjectsV2.nextOptionSeed = int(n) + 1
+				}
+			}
 			return nil
 		}},
 	} {
@@ -834,6 +864,12 @@ func (st *Store) loadFromPersistence() error {
 				return fmt.Errorf("decode %s row: %w", loadFn.name, err)
 			}
 		}
+	}
+
+	// Deployment statuses were relinked in map-iteration order; restore
+	// creation (ID) order, which is what AddStatus produces.
+	for _, d := range st.Deployments.deployments {
+		sort.Slice(d.Statuses, func(i, j int) bool { return d.Statuses[i].ID < d.Statuses[j].ID })
 	}
 
 	for _, loadFn := range []struct {
@@ -907,9 +943,11 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Misc.pagesBuilds[key] = builds
+			// nextAuditID is pre-incremented before use, so resume it AT the
+			// highest seen ID (the next allocation bumps past it).
 			for _, b := range builds {
-				if b.ID >= st.Misc.nextAuditID {
-					st.Misc.nextAuditID = b.ID + 1
+				if b.ID > st.Misc.nextAuditID {
+					st.Misc.nextAuditID = b.ID
 				}
 			}
 			return nil
@@ -919,9 +957,10 @@ func (st *Store) loadFromPersistence() error {
 			if err := loadJSON(raw, &e); err != nil {
 				return err
 			}
-			st.Misc.auditLog = append([]*AuditEntry{&e}, st.Misc.auditLog...)
-			if e.ID >= st.Misc.nextAuditID {
-				st.Misc.nextAuditID = e.ID + 1
+			st.Misc.auditLog = append(st.Misc.auditLog, &e)
+			// nextAuditID is pre-incremented before use; resume AT the max.
+			if e.ID > st.Misc.nextAuditID {
+				st.Misc.nextAuditID = e.ID
 			}
 			return nil
 		}},
@@ -931,14 +970,6 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Misc.marketplacePlans[p.ID] = &p
-			return nil
-		}},
-		{"marketplace_purchases", func(_ string, raw []byte) error {
-			var pur MarketplacePurchase
-			if err := loadJSON(raw, &pur); err != nil {
-				return err
-			}
-			st.Misc.marketplacePurchases[pur.AccountID] = &pur
 			return nil
 		}},
 	} {
@@ -952,6 +983,10 @@ func (st *Store) loadFromPersistence() error {
 			}
 		}
 	}
+
+	// Audit entries arrive in map-iteration order; the in-memory log is
+	// newest-first (recordAuditEvent prepends), so sort by ID descending.
+	sort.Slice(st.Misc.auditLog, func(i, j int) bool { return st.Misc.auditLog[i].ID > st.Misc.auditLog[j].ID })
 
 	if v, err := st.persist.GetCounter("next_run_id"); err != nil {
 		return fmt.Errorf("load counter next_run_id: %w", err)

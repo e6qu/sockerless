@@ -17,8 +17,10 @@ import (
 // shared server routes most of the package's test traffic; an observer
 // validates every 2xx /api/v3 JSON response member-by-member against
 // the documented response schema. Violations are deduped after m.Run()
-// and gated against openapi-violation-allowlist.txt — every entry
-// carries a BUG ID, and the list only shrinks. The companion route
+// and gated against openapi-violation-allowlist.txt — an entry is
+// either a real-but-undescribed member (GHES-only surface, with a
+// citation) or a filed BUG on its way to being fixed; the list only
+// shrinks. The companion route
 // check (gh_api_definition_test.go) keeps paths honest; this keeps the
 // bodies honest.
 

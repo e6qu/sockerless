@@ -6,10 +6,16 @@ import (
 )
 
 // Webhook represents a GitHub repository webhook.
+//
+// Secret carries a real json name so persistence round-trips it (deliveries
+// must keep signing X-Hub-Signature-256 after a restart). Client responses
+// never marshal this struct — hookToJSON emits an explicit map that omits
+// the secret. RepoKey stays json:"-": it equals the persistence bucket key
+// ("owner/name"), so the loader backfills it from the key on reload.
 type Webhook struct {
 	ID          int      `json:"id"`
 	URL         string   `json:"config_url"`
-	Secret      string   `json:"-"`
+	Secret      string   `json:"secret"`
 	ContentType string   `json:"content_type"`
 	InsecureSSL string   `json:"insecure_ssl"`
 	Events      []string `json:"events"`

@@ -34,6 +34,23 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 
 	_ = mergeableStateEnum // used as field type below
 
+	// MergeStateStatus carries real GitHub's full value set; bleephub derives
+	// CLEAN/DIRTY/UNKNOWN from the PR's stored mergeability (the only merge
+	// gates it models).
+	mergeStateStatusEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "MergeStateStatus",
+		Values: graphql.EnumValueConfigMap{
+			"BEHIND":    &graphql.EnumValueConfig{Value: "BEHIND"},
+			"BLOCKED":   &graphql.EnumValueConfig{Value: "BLOCKED"},
+			"CLEAN":     &graphql.EnumValueConfig{Value: "CLEAN"},
+			"DIRTY":     &graphql.EnumValueConfig{Value: "DIRTY"},
+			"DRAFT":     &graphql.EnumValueConfig{Value: "DRAFT"},
+			"HAS_HOOKS": &graphql.EnumValueConfig{Value: "HAS_HOOKS"},
+			"UNKNOWN":   &graphql.EnumValueConfig{Value: "UNKNOWN"},
+			"UNSTABLE":  &graphql.EnumValueConfig{Value: "UNSTABLE"},
+		},
+	})
+
 	pullRequestMergeMethodEnum := graphql.NewEnum(graphql.EnumConfig{
 		Name: "PullRequestMergeMethod",
 		Values: graphql.EnumValueConfigMap{
@@ -110,6 +127,202 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
+	// --- Reaction group type for PRs ---
+	prReactionGroupType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PRReactionGroup",
+		Fields: graphql.Fields{
+			"content": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"users": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "PRReactingUserConnection",
+					Fields: graphql.Fields{
+						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+					},
+				}),
+			},
+		},
+	})
+
+	// --- Commit + status-check rollup types ---
+	// gh selects PR check state through the commits connection:
+	//   statusCheckRollup: commits(last:1){nodes{commit{statusCheckRollup{
+	//     contexts(first:100){nodes{...on StatusContext, ...on CheckRun}}}}}}
+	// and the merge path's lastCommit pseudo-field as commits(last:1){nodes
+	// {commit{oid}}}. CheckRun nodes are backed by the real checks store;
+	// StatusContext exists so gh's fragment type-checks, but bleephub has no
+	// commit-status (REST /statuses) feature, so no StatusContext node is
+	// ever emitted. StatusCheckRollupContextConnection deliberately does NOT
+	// declare checkRunCount/...CountsByState: gh introspects for them and
+	// falls back to the plain contexts query when absent.
+	statusContextType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "StatusContext",
+		Fields: graphql.Fields{
+			"context":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"state":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"targetUrl":   &graphql.Field{Type: graphql.String},
+			"createdAt":   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	checkRunType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "CheckRun",
+		Fields: graphql.Fields{
+			"name":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"status":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"conclusion": &graphql.Field{Type: graphql.String},
+			"startedAt":  &graphql.Field{Type: graphql.String},
+			"completedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					cr := p.Source.(map[string]interface{})
+					return cr["completedAt"], nil
+				},
+			},
+			"detailsUrl": &graphql.Field{Type: graphql.String},
+			// Check suites aren't linked to workflow runs in bleephub's
+			// checks store, so workflowRun resolves to null.
+			"checkSuite": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "CheckSuiteRef",
+					Fields: graphql.Fields{
+						"workflowRun": &graphql.Field{
+							Type: graphql.NewObject(graphql.ObjectConfig{
+								Name: "CheckWorkflowRun",
+								Fields: graphql.Fields{
+									"workflow": &graphql.Field{
+										Type: graphql.NewObject(graphql.ObjectConfig{
+											Name: "CheckWorkflow",
+											Fields: graphql.Fields{
+												"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+											},
+										}),
+									},
+								},
+							}),
+							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+								return nil, nil
+							},
+						},
+					},
+				}),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{}, nil
+				},
+			},
+		},
+	})
+
+	statusCheckRollupContextUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "StatusCheckRollupContext",
+		Types: []*graphql.Object{statusContextType, checkRunType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			if m, ok := p.Value.(map[string]interface{}); ok {
+				if tn, _ := m["__typename"].(string); tn == "StatusContext" {
+					return statusContextType
+				}
+			}
+			return checkRunType
+		},
+	})
+
+	statusCheckRollupContextConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "StatusCheckRollupContextConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(statusCheckRollupContextUnion)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"pageInfo": &graphql.Field{Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
+				Name: "StatusCheckRollupContextPageInfo",
+				Fields: graphql.Fields{
+					"hasNextPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+					"endCursor":   &graphql.Field{Type: graphql.String},
+				},
+			}))},
+		},
+	})
+
+	statusCheckRollupType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "StatusCheckRollup",
+		Fields: graphql.Fields{
+			"state": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"contexts": &graphql.Field{
+				Type: graphql.NewNonNull(statusCheckRollupContextConnectionType),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					r := p.Source.(map[string]interface{})
+					return r["contexts"], nil
+				},
+			},
+		},
+	})
+
+	gitActorConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "GitActorConnection",
+		Fields: graphql.Fields{
+			"nodes": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+				Name: "GitActor",
+				Fields: graphql.Fields{
+					"name":  &graphql.Field{Type: graphql.String},
+					"email": &graphql.Field{Type: graphql.String},
+					"user": &graphql.Field{
+						Type: userType,
+						Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+							a := p.Source.(map[string]interface{})
+							return a["user"], nil
+						},
+					},
+				},
+			}))},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+
+	commitType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Commit",
+		Fields: graphql.Fields{
+			"oid":             &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"messageHeadline": &graphql.Field{Type: graphql.String},
+			"messageBody":     &graphql.Field{Type: graphql.String},
+			"committedDate":   &graphql.Field{Type: graphql.String},
+			"authoredDate":    &graphql.Field{Type: graphql.String},
+			"authors": &graphql.Field{
+				Type: gitActorConnectionType,
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["authors"], nil
+				},
+			},
+			"statusCheckRollup": &graphql.Field{
+				// Null when no checks exist for the commit — matches real
+				// GitHub for a commit with no statuses or check runs.
+				Type: statusCheckRollupType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["statusCheckRollup"], nil
+				},
+			},
+		},
+	})
+
+	pullRequestCommitType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "PullRequestCommit",
+		Fields: graphql.Fields{
+			"commit": &graphql.Field{
+				Type: graphql.NewNonNull(commitType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					n := p.Source.(map[string]interface{})
+					return n["commit"], nil
+				},
+			},
+		},
+	})
+
 	// --- Review types ---
 	prReviewType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "PullRequestReview",
@@ -133,6 +346,31 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"authorAssociation": &graphql.Field{Type: graphql.String},
 			"createdAt":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"updatedAt":         &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			// gh's reviews fragment selects submittedAt, commit{oid}, and
+			// reactionGroups. Bleephub reviews are submitted on creation, so
+			// submittedAt == createdAt; commit is the PR head the review was
+			// recorded against (same derivation as REST's commit_id).
+			"submittedAt": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					r := p.Source.(map[string]interface{})
+					return r["submittedAt"], nil
+				},
+			},
+			"commit": &graphql.Field{
+				Type: commitType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					r := p.Source.(map[string]interface{})
+					return r["commit"], nil
+				},
+			},
+			"reactionGroups": &graphql.Field{
+				Type: graphql.NewList(prReactionGroupType),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					r := p.Source.(map[string]interface{})
+					return r["reactionGroups"], nil
+				},
+			},
 		},
 	})
 
@@ -156,11 +394,50 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	})
 
 	// --- Review request types ---
+	// gh's reviewRequests fragment unions `...on User`, `...on Bot` (Copilot
+	// as reviewer), and `...on Team`. Bot and Team exist so the fragments
+	// type-check; bleephub stores no review requests, so the connection is
+	// always empty and the union never has to resolve a Bot/Team value.
+	botType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Bot",
+		Fields: graphql.Fields{
+			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"login": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		},
+	})
+	teamType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Team",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			// Nullable (real GitHub: String!) — graphql-go enforces the
+			// strict SameResponseShape merge rule, so Team.name must match
+			// User.name's nullability for gh's `...on User{name}` +
+			// `...on Team{name}` requestedReviewer selection to validate.
+			// GitHub's validator is laxer; the value is never null here.
+			"name": &graphql.Field{Type: graphql.String},
+			"slug": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"organization": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
+					Name: "TeamOrganization",
+					Fields: graphql.Fields{
+						"login": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+					},
+				})),
+			},
+		},
+	})
+	requestedReviewerUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "RequestedReviewer",
+		Types: []*graphql.Object{userType, botType, teamType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			return userType
+		},
+	})
 	reviewRequestType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "ReviewRequest",
 		Fields: graphql.Fields{
 			"requestedReviewer": &graphql.Field{
-				Type: userType,
+				Type: requestedReviewerUnion,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					r := p.Source.(map[string]interface{})
 					return r["requestedReviewer"], nil
@@ -174,22 +451,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		Fields: graphql.Fields{
 			"nodes":      &graphql.Field{Type: graphql.NewList(reviewRequestType)},
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-		},
-	})
-
-	// --- Reaction group type for PRs ---
-	prReactionGroupType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "PRReactionGroup",
-		Fields: graphql.Fields{
-			"content": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"users": &graphql.Field{
-				Type: graphql.NewObject(graphql.ObjectConfig{
-					Name: "PRReactingUserConnection",
-					Fields: graphql.Fields{
-						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-					},
-				}),
-			},
 		},
 	})
 
@@ -377,24 +638,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		Name: "PullRequestCommitConnection",
 		Fields: graphql.Fields{
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-		},
-	})
-
-	// --- StatusCheckRollup (stub for gh pr view) ---
-	statusCheckRollupType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "StatusCheckRollup",
-		Fields: graphql.Fields{
-			"contexts": &graphql.Field{
-				Type: graphql.NewObject(graphql.ObjectConfig{
-					Name: "StatusCheckRollupContextConnection",
-					Fields: graphql.Fields{
-						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
-					},
-				}),
-				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{"totalCount": 0}, nil
-				},
-			},
+			"nodes":      &graphql.Field{Type: graphql.NewList(pullRequestCommitType)},
 		},
 	})
 
@@ -508,6 +752,34 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return pr["reviewThreads"], nil
 				},
 			},
+			// ProjectV2 items — gh pr view fetches PullRequest.projectItems
+			// as a second round-trip (api.ProjectsV2ItemsForPullRequest).
+			// Returns the real items the PR was added to via
+			// addProjectV2ItemById.
+			"projectItems": &graphql.Field{
+				Type: projectV2ItemConnectionType(),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					prID, _ := pr["databaseId"].(int)
+					items := s.store.ProjectsV2.ListItemsForPR(prID)
+					nodes := make([]map[string]interface{}, 0, len(items))
+					for _, it := range items {
+						nodes = append(nodes, projectV2ItemToGQL(it, s.store))
+					}
+					return map[string]interface{}{
+						"totalCount": len(nodes),
+						"nodes":      nodes,
+						"pageInfo": map[string]interface{}{
+							"hasNextPage": false,
+							"endCursor":   nil,
+						},
+					}, nil
+				},
+			},
 			// PR.milestone — real GH PRs are issues internally so they
 			// share the Milestone table. pullRequestToGQL embeds the
 			// resolved milestone map in pr["milestone"] (or nil when the
@@ -531,20 +803,20 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return m, nil
 				},
 			},
+			// gh reads check state and the lastCommit pseudo-field through
+			// commits(last:1){nodes{commit{...}}} — GitHub's PullRequest has
+			// no top-level statusCheckRollup field; gh aliases the commits
+			// connection instead. The single node carries the PR's synthetic
+			// head commit (same oid the REST surface reports).
 			"commits": &graphql.Field{
 				Type: prCommitConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
 					return pr["commits"], nil
-				},
-			},
-			"statusCheckRollup": &graphql.Field{
-				Type: statusCheckRollupType,
-				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{}, nil
 				},
 			},
 			"reactionGroups": &graphql.Field{
@@ -552,6 +824,191 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
 					return pr["reactionGroups"], nil
+				},
+			},
+			"closed": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.Boolean),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					state, _ := pr["state"].(string)
+					return state == "CLOSED" || state == "MERGED", nil
+				},
+			},
+			// Bleephub PRs always live in the base repository (no forks
+			// feature): headRepository is the PR's own repo, its owner the
+			// repo owner, and isCrossRepository is genuinely false.
+			"headRepository": &graphql.Field{
+				Type: repoType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					return pr["headRepository"], nil
+				},
+			},
+			"headRepositoryOwner": &graphql.Field{
+				Type: userType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					return pr["headRepositoryOwner"], nil
+				},
+			},
+			"isCrossRepository": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.Boolean),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return false, nil
+				},
+			},
+			"maintainerCanModify": &graphql.Field{
+				// Meaningful only for fork PRs on real GitHub; same-repo PRs
+				// report false.
+				Type: graphql.NewNonNull(graphql.Boolean),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return false, nil
+				},
+			},
+			"autoMergeRequest": &graphql.Field{
+				// No auto-merge feature: null, the value real GitHub returns
+				// when auto-merge isn't enabled on the PR.
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "AutoMergeRequest",
+					Fields: graphql.Fields{
+						"authorEmail":    &graphql.Field{Type: graphql.String},
+						"commitBody":     &graphql.Field{Type: graphql.String},
+						"commitHeadline": &graphql.Field{Type: graphql.String},
+						"mergeMethod":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+						"enabledAt":      &graphql.Field{Type: graphql.String},
+						"enabledBy":      &graphql.Field{Type: userType},
+					},
+				}),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			"baseRefOid": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"fullDatabaseId": &graphql.Field{
+				// BigInt scalar on real GitHub — serializes as a string.
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					id, _ := pr["databaseId"].(int)
+					return strconv.Itoa(id), nil
+				},
+			},
+			"files": &graphql.Field{
+				// PR diffs aren't materialised file-by-file; empty connection.
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "PullRequestChangedFileConnection",
+					Fields: graphql.Fields{
+						"nodes": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+							Name: "PullRequestChangedFile",
+							Fields: graphql.Fields{
+								"additions":  &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+								"deletions":  &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+								"path":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+								"changeType": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+							},
+						}))},
+						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+					},
+				}),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{"nodes": []interface{}{}, "totalCount": 0}, nil
+				},
+			},
+			"closingIssuesReferences": &graphql.Field{
+				// Closing-keyword links aren't parsed; empty connection.
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "ClosingIssuesReferencesConnection",
+					Fields: graphql.Fields{
+						"nodes": &graphql.Field{Type: graphql.NewList(issueType)},
+						"pageInfo": &graphql.Field{Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
+							Name: "ClosingIssuesReferencesPageInfo",
+							Fields: graphql.Fields{
+								"hasNextPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+								"endCursor":   &graphql.Field{Type: graphql.String},
+							},
+						}))},
+						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+					},
+				}),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return map[string]interface{}{
+						"nodes":      []interface{}{},
+						"totalCount": 0,
+						"pageInfo":   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
+					}, nil
+				},
+			},
+			"mergeCommit": &graphql.Field{
+				// Merges aren't materialised as git commits; null matches
+				// REST's merge_commit_sha staying null.
+				Type: commitType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			"potentialMergeCommit": &graphql.Field{
+				Type: commitType,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					return nil, nil
+				},
+			},
+			// latestReviews — the newest review per author, derived from the
+			// same review store as `reviews`.
+			"latestReviews": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "LatestReviewConnection",
+					Fields: graphql.Fields{
+						"nodes":      &graphql.Field{Type: graphql.NewList(prReviewType)},
+						"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+					},
+				}),
+				Args: graphql.FieldConfigArgument{
+					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					return pr["latestReviews"], nil
+				},
+			},
+			"mergeStateStatus": &graphql.Field{
+				Type: graphql.NewNonNull(mergeStateStatusEnum),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					return pr["mergeStateStatus"], nil
+				},
+			},
+			// gh pr status selects baseRef{branchProtectionRule{...}}; no
+			// GraphQL-modeled protection rules → null rule on a real ref.
+			"baseRef": &graphql.Field{
+				Type: graphql.NewObject(graphql.ObjectConfig{
+					Name: "PRBaseRef",
+					Fields: graphql.Fields{
+						"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+						"branchProtectionRule": &graphql.Field{
+							Type: graphql.NewObject(graphql.ObjectConfig{
+								Name: "BranchProtectionRule",
+								Fields: graphql.Fields{
+									"requiresStrictStatusChecks":   &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+									"requiredApprovingReviewCount": &graphql.Field{Type: graphql.Int},
+								},
+							}),
+							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+								return nil, nil
+							},
+						},
+					},
+				}),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					pr := p.Source.(map[string]interface{})
+					base, _ := pr["baseRefName"].(string)
+					return map[string]interface{}{"name": base}, nil
 				},
 			},
 		},
@@ -597,11 +1054,27 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"labels":      &graphql.ArgumentConfig{Type: graphql.NewList(graphql.String)},
 			"headRefName": &graphql.ArgumentConfig{Type: graphql.String},
 			"baseRefName": &graphql.ArgumentConfig{Type: graphql.String},
+			// gh sends orderBy as literal enum names — `orderBy: {field:
+			// CREATED_AT, direction: DESC}` — so field/direction must be
+			// enums (string-typed inputs fail validation), exactly like the
+			// issues connection's IssueOrder.
 			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
 				Name: "IssueOrder2",
 				Fields: graphql.InputObjectConfigFieldMap{
-					"field":     &graphql.InputObjectFieldConfig{Type: graphql.String},
-					"direction": &graphql.InputObjectFieldConfig{Type: graphql.String},
+					"field": &graphql.InputObjectFieldConfig{Type: graphql.NewEnum(graphql.EnumConfig{
+						Name: "PullRequestOrderField",
+						Values: graphql.EnumValueConfigMap{
+							"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+							"UPDATED_AT": &graphql.EnumValueConfig{Value: "UPDATED_AT"},
+						},
+					})},
+					"direction": &graphql.InputObjectFieldConfig{Type: graphql.NewEnum(graphql.EnumConfig{
+						Name: "PullRequestOrderDirection",
+						Values: graphql.EnumValueConfigMap{
+							"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
+							"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+						},
+					})},
 				},
 			})},
 		},
@@ -690,7 +1163,10 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 
 			pr := s.store.GetPullRequestByNumber(repoID, number)
 			if pr == nil {
-				return nil, nil
+				// Real GitHub returns a typed NOT_FOUND error, not bare null.
+				return nil, &ghNotFoundError{
+					message: fmt.Sprintf("Could not resolve to a PullRequest with the number of %d.", number),
+				}
 			}
 			return pullRequestToGQL(pr, s.store), nil
 		},
@@ -733,7 +1209,93 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				result["__typename"] = "PullRequest"
 				return result, nil
 			}
-			return nil, nil
+			// Real GitHub returns a typed NOT_FOUND error, not bare null.
+			return nil, &ghNotFoundError{
+				message: fmt.Sprintf("Could not resolve to an issue or pull request with the number of %d.", number),
+			}
+		},
+	})
+
+	// --- Query.search (ISSUE type) ---
+	// gh pr status sends search(query:$q, type:ISSUE, first:$limit) with
+	// `repo: state:open is:pr author:/review-requested:` qualifiers, and
+	// gh issue/pr list filters send search(type:$type, last:$limit,
+	// after:$after, query:$query). SearchType deliberately declares ONLY
+	// ISSUE: gh introspects the enum and opts into ISSUE_ADVANCED only when
+	// present, so omitting it keeps gh on the plain ISSUE backend.
+	searchTypeEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "SearchType",
+		Values: graphql.EnumValueConfigMap{
+			"ISSUE": &graphql.EnumValueConfig{Value: "ISSUE"},
+		},
+	})
+	searchResultItemUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "SearchResultItem",
+		Types: []*graphql.Object{issueType, pullRequestType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			if m, ok := p.Value.(map[string]interface{}); ok {
+				if tn, _ := m["__typename"].(string); tn == "PullRequest" {
+					return pullRequestType
+				}
+			}
+			return issueType
+		},
+	})
+	searchResultEdgeType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "SearchResultItemEdge",
+		Fields: graphql.Fields{
+			"node":   &graphql.Field{Type: searchResultItemUnion},
+			"cursor": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		},
+	})
+	searchResultConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "SearchResultItemConnection",
+		Fields: graphql.Fields{
+			"issueCount": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.Int),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c := p.Source.(map[string]interface{})
+					return c["totalCount"], nil
+				},
+			},
+			"nodes": &graphql.Field{Type: graphql.NewList(searchResultItemUnion)},
+			"edges": &graphql.Field{Type: graphql.NewList(searchResultEdgeType)},
+			"pageInfo": &graphql.Field{Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
+				Name: "SearchPageInfo",
+				Fields: graphql.Fields{
+					"hasNextPage":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+					"hasPreviousPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+					"startCursor":     &graphql.Field{Type: graphql.String},
+					"endCursor":       &graphql.Field{Type: graphql.String},
+				},
+			}))},
+		},
+	})
+	queryType.AddFieldConfig("search", &graphql.Field{
+		Type: searchResultConnectionType,
+		Args: graphql.FieldConfigArgument{
+			"query": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+			"type":  &graphql.ArgumentConfig{Type: graphql.NewNonNull(searchTypeEnum)},
+			"first": &graphql.ArgumentConfig{Type: graphql.Int},
+			"last":  &graphql.ArgumentConfig{Type: graphql.Int},
+			"after": &graphql.ArgumentConfig{Type: graphql.String},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			q, _ := p.Args["query"].(string)
+
+			limit := 30
+			if f, ok := p.Args["first"].(int); ok && f > 0 {
+				limit = f
+			} else if l, ok := p.Args["last"].(int); ok && l > 0 {
+				// gh's issue-search query passes the page size as `last`.
+				limit = l
+			}
+			after, _ := p.Args["after"].(string)
+
+			nodes := s.searchIssuesAndPRs(q)
+			return paginateGQL(nodes, limit, after, func(n map[string]interface{}) map[string]interface{} {
+				return n
+			}), nil
 		},
 	})
 
@@ -748,6 +1310,9 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"headRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
 			"baseRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
 			"draft":        &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
+			// gh sends maintainerCanModify when creating fork PRs; accepted
+			// and ignored (bleephub PRs are single-repo).
+			"maintainerCanModify": &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
 		},
 	})
 
@@ -895,6 +1460,11 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"mergeMethod":    &graphql.InputObjectFieldConfig{Type: pullRequestMergeMethodEnum},
 			"commitHeadline": &graphql.InputObjectFieldConfig{Type: graphql.String},
 			"commitBody":     &graphql.InputObjectFieldConfig{Type: graphql.String},
+			// gh sets authorEmail (--author-email) and expectedHeadOid
+			// (--match-head-commit); accepted so input coercion succeeds.
+			"authorEmail":      &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"expectedHeadOid":  &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
 		},
 	})
 
@@ -902,6 +1472,14 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		Name: "MergePullRequestPayload",
 		Fields: graphql.Fields{
 			"pullRequest": &graphql.Field{Type: pullRequestType},
+			// gh's PullRequestMerge mutation selects only clientMutationId.
+			"clientMutationId": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					m := p.Source.(map[string]interface{})
+					return m["clientMutationId"], nil
+				},
+			},
 		},
 	})
 
@@ -937,8 +1515,102 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			})
 
 			updated := s.store.GetPullRequest(pr.ID)
+			var clientMutationID interface{}
+			if v, ok := input["clientMutationId"].(string); ok && v != "" {
+				clientMutationID = v
+			}
 			return map[string]interface{}{
-				"pullRequest": pullRequestToGQL(updated, s.store),
+				"pullRequest":      pullRequestToGQL(updated, s.store),
+				"clientMutationId": clientMutationID,
+			}, nil
+		},
+	})
+
+	// --- addPullRequestReview (gh pr review) ---
+	// gh submits reviews via mutation PullRequestReviewAdd($input:
+	// AddPullRequestReviewInput!){addPullRequestReview(input:$input)
+	// {clientMutationId}} with pullRequestId + event + body. Mapped onto the
+	// same review store as REST POST .../pulls/{n}/reviews.
+	pullRequestReviewEventEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "PullRequestReviewEvent",
+		Values: graphql.EnumValueConfigMap{
+			"APPROVE":         &graphql.EnumValueConfig{Value: "APPROVE"},
+			"COMMENT":         &graphql.EnumValueConfig{Value: "COMMENT"},
+			"DISMISS":         &graphql.EnumValueConfig{Value: "DISMISS"},
+			"REQUEST_CHANGES": &graphql.EnumValueConfig{Value: "REQUEST_CHANGES"},
+		},
+	})
+
+	addPRReviewInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "AddPullRequestReviewInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"pullRequestId":    &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"event":            &graphql.InputObjectFieldConfig{Type: pullRequestReviewEventEnum},
+			"body":             &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"commitOID":        &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
+		},
+	})
+
+	addPRReviewPayloadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "AddPullRequestReviewPayload",
+		Fields: graphql.Fields{
+			"pullRequestReview": &graphql.Field{Type: prReviewType},
+			"clientMutationId": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					m := p.Source.(map[string]interface{})
+					return m["clientMutationId"], nil
+				},
+			},
+		},
+	})
+
+	mutationType.AddFieldConfig("addPullRequestReview", &graphql.Field{
+		Type: addPRReviewPayloadType,
+		Args: graphql.FieldConfigArgument{
+			"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(addPRReviewInputType)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			user := ghUserFromContext(p.Context)
+			if user == nil {
+				return nil, fmt.Errorf("authentication required")
+			}
+
+			input, _ := p.Args["input"].(map[string]interface{})
+			prNodeID, _ := input["pullRequestId"].(string)
+			event, _ := input["event"].(string)
+			body, _ := input["body"].(string)
+
+			pr := findPullRequestByNodeID(s.store, prNodeID)
+			if pr == nil {
+				return nil, &ghNotFoundError{
+					message: fmt.Sprintf("Could not resolve to a node with the global id of '%s'", prNodeID),
+				}
+			}
+
+			state := "COMMENTED"
+			switch event {
+			case "APPROVE":
+				state = "APPROVED"
+			case "REQUEST_CHANGES":
+				state = "CHANGES_REQUESTED"
+			case "DISMISS":
+				state = "DISMISSED"
+			}
+
+			review := s.store.CreatePRReview(pr.ID, user.ID, state, body)
+			if review == nil {
+				return nil, fmt.Errorf("review creation failed")
+			}
+
+			var clientMutationID interface{}
+			if v, ok := input["clientMutationId"].(string); ok && v != "" {
+				clientMutationID = v
+			}
+			return map[string]interface{}{
+				"pullRequestReview": prReviewToGQL(review, s.store),
+				"clientMutationId":  clientMutationID,
 			}, nil
 		},
 	})
@@ -1075,21 +1747,34 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	reviewNodes := make([]map[string]interface{}, 0)
 	for _, r := range st.PRReviews {
 		if r.PRID == pr.ID {
-			var reviewAuthor map[string]interface{}
-			if u, ok := st.Users[r.AuthorID]; ok {
-				reviewAuthor = userToGraphQL(u)
-			}
-			reviewNodes = append(reviewNodes, map[string]interface{}{
-				"nodeID":            r.NodeID,
-				"body":              r.Body,
-				"state":             r.State,
-				"author":            reviewAuthor,
-				"authorAssociation": "OWNER",
-				"createdAt":         r.CreatedAt.Format(time.RFC3339),
-				"updatedAt":         r.UpdatedAt.Format(time.RFC3339),
-			})
+			reviewNodes = append(reviewNodes, prReviewSourceLocked(r, st))
 		}
 	}
+	sort.Slice(reviewNodes, func(a, b int) bool {
+		ca, _ := reviewNodes[a]["createdAt"].(string)
+		cb, _ := reviewNodes[b]["createdAt"].(string)
+		return ca < cb
+	})
+
+	// latestReviews — the newest review per author.
+	latestByAuthor := map[int]*PullRequestReview{}
+	for _, r := range st.PRReviews {
+		if r.PRID != pr.ID {
+			continue
+		}
+		if cur, ok := latestByAuthor[r.AuthorID]; !ok || r.CreatedAt.After(cur.CreatedAt) {
+			latestByAuthor[r.AuthorID] = r
+		}
+	}
+	latestReviewNodes := make([]map[string]interface{}, 0, len(latestByAuthor))
+	for _, r := range latestByAuthor {
+		latestReviewNodes = append(latestReviewNodes, prReviewSourceLocked(r, st))
+	}
+	sort.Slice(latestReviewNodes, func(a, b int) bool {
+		ca, _ := latestReviewNodes[a]["createdAt"].(string)
+		cb, _ := latestReviewNodes[b]["createdAt"].(string)
+		return ca < cb
+	})
 
 	// Derive review decision
 	var reviewDecision interface{}
@@ -1117,6 +1802,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	}
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", pr.ID))))[:40]
+	// Same derivation the REST surface uses for base.sha.
+	baseSha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40]
 
 	var closedAt interface{}
 	if pr.ClosedAt != nil {
@@ -1125,6 +1812,49 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	var mergedAt interface{}
 	if pr.MergedAt != nil {
 		mergedAt = pr.MergedAt.Format(time.RFC3339)
+	}
+
+	// mergeStateStatus from the stored mergeability — the only merge gate
+	// bleephub models (no protected branches / required checks in GraphQL).
+	mergeStateStatus := "UNKNOWN"
+	switch pr.Mergeable {
+	case "MERGEABLE":
+		mergeStateStatus = "CLEAN"
+	case "CONFLICTING":
+		mergeStateStatus = "DIRTY"
+	}
+
+	// Single-repo PRs: head repo/owner are the PR's own repo and its owner.
+	var headRepository, headRepositoryOwner map[string]interface{}
+	if repo != nil {
+		headRepository = repoToGraphQL(repo)
+		if repo.Owner != nil {
+			headRepositoryOwner = userToGraphQL(repo.Owner)
+		}
+	}
+
+	// The PR's single synthetic head commit, carrying the real check-run
+	// rollup recorded against its sha.
+	var commitAuthors []interface{}
+	if u, ok := st.Users[pr.AuthorID]; ok {
+		commitAuthors = append(commitAuthors, map[string]interface{}{
+			"name":  u.Name,
+			"email": u.Email,
+			"user":  userToGraphQL(u),
+		})
+	}
+	repoFullName := ""
+	if repo != nil {
+		repoFullName = repo.FullName
+	}
+	headCommit := map[string]interface{}{
+		"oid":               sha,
+		"messageHeadline":   pr.Title,
+		"messageBody":       nil,
+		"committedDate":     pr.CreatedAt.Format(time.RFC3339),
+		"authoredDate":      pr.CreatedAt.Format(time.RFC3339),
+		"authors":           map[string]interface{}{"nodes": commitAuthors, "totalCount": len(commitAuthors)},
+		"statusCheckRollup": statusCheckRollupSourceLocked(st, repoFullName, sha),
 	}
 
 	return map[string]interface{}{
@@ -1140,7 +1870,9 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"headRefName":      pr.HeadRefName,
 		"baseRefName":      pr.BaseRefName,
 		"headRefOid":       sha,
+		"baseRefOid":       baseSha,
 		"mergeable":        pr.Mergeable,
+		"mergeStateStatus": mergeStateStatus,
 		"merged":           pr.State == "MERGED",
 		"mergedAt":         mergedAt,
 		"mergedBy":         mergedBy,
@@ -1185,6 +1917,12 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 				"endCursor":       nil,
 			},
 		},
+		"latestReviews": map[string]interface{}{
+			"nodes":      latestReviewNodes,
+			"totalCount": len(latestReviewNodes),
+		},
+		"headRepository":      headRepository,
+		"headRepositoryOwner": headRepositoryOwner,
 		"reviewRequests": map[string]interface{}{
 			"nodes":      []interface{}{},
 			"totalCount": 0,
@@ -1201,6 +1939,9 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		},
 		"commits": map[string]interface{}{
 			"totalCount": 1,
+			"nodes": []interface{}{
+				map[string]interface{}{"commit": headCommit},
+			},
 		},
 		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "pull_request", pr.ID),
 		"reviewThreads": map[string]interface{}{
@@ -1384,4 +2125,358 @@ func paginatePullRequestsGQL(prs []*PullRequest, st *Store, first int, after str
 	return paginateGQL(prs, first, after, func(pr *PullRequest) map[string]interface{} {
 		return pullRequestToGQL(pr, st)
 	})
+}
+
+// prReviewSourceLocked builds the GraphQL source map for a single PR review.
+// Caller must hold st.mu.RLock. submittedAt mirrors createdAt (bleephub
+// reviews are submitted on creation) and commit carries the PR head the
+// review was recorded against — the same oid REST's commit_id reports.
+func prReviewSourceLocked(r *PullRequestReview, st *Store) map[string]interface{} {
+	var reviewAuthor map[string]interface{}
+	if u, ok := st.Users[r.AuthorID]; ok {
+		reviewAuthor = userToGraphQL(u)
+	}
+	return map[string]interface{}{
+		"nodeID":            r.NodeID,
+		"body":              r.Body,
+		"state":             r.State,
+		"author":            reviewAuthor,
+		"authorAssociation": "OWNER",
+		"createdAt":         r.CreatedAt.Format(time.RFC3339),
+		"updatedAt":         r.UpdatedAt.Format(time.RFC3339),
+		"submittedAt":       r.CreatedAt.Format(time.RFC3339),
+		"commit":            map[string]interface{}{"oid": prHeadSHA(r.PRID)},
+		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "pull_request_review", r.ID),
+	}
+}
+
+// prReviewToGQL is the unlocked wrapper around prReviewSourceLocked.
+func prReviewToGQL(r *PullRequestReview, st *Store) map[string]interface{} {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return prReviewSourceLocked(r, st)
+}
+
+// statusCheckRollupSourceLocked builds Commit.statusCheckRollup from the real
+// checks store for (repoKey, sha): one CheckRun union node per stored check
+// run. Returns nil when no check runs exist — the value real GitHub reports
+// for a commit with no checks. StatusContext nodes are never emitted because
+// bleephub has no commit-status (REST /statuses) feature. Caller must hold
+// st.mu.RLock.
+func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
+	if repoKey == "" {
+		return nil
+	}
+	var runs []*CheckRun
+	for _, cr := range st.CheckRuns {
+		if cr.RepoKey == repoKey && cr.HeadSHA == sha {
+			runs = append(runs, cr)
+		}
+	}
+	if len(runs) == 0 {
+		return nil
+	}
+	sort.Slice(runs, func(a, b int) bool { return runs[a].ID < runs[b].ID })
+
+	allCompleted := true
+	anyFailed := false
+	nodes := make([]interface{}, 0, len(runs))
+	for _, cr := range runs {
+		var conclusion interface{}
+		if cr.Conclusion != "" {
+			conclusion = strings.ToUpper(cr.Conclusion)
+		}
+		var completedAt interface{}
+		if cr.CompletedAt != nil {
+			completedAt = cr.CompletedAt.Format(time.RFC3339)
+		}
+		if cr.Status != "completed" {
+			allCompleted = false
+		}
+		switch cr.Conclusion {
+		case "failure", "timed_out", "cancelled", "startup_failure":
+			anyFailed = true
+		}
+		nodes = append(nodes, map[string]interface{}{
+			"__typename":  "CheckRun",
+			"name":        cr.Name,
+			"status":      strings.ToUpper(cr.Status),
+			"conclusion":  conclusion,
+			"startedAt":   cr.StartedAt.Format(time.RFC3339),
+			"completedAt": completedAt,
+			"detailsUrl":  nilStr(cr.DetailsURL),
+		})
+	}
+
+	state := "SUCCESS"
+	switch {
+	case anyFailed:
+		state = "FAILURE"
+	case !allCompleted:
+		state = "PENDING"
+	}
+
+	return map[string]interface{}{
+		"state": state,
+		"contexts": map[string]interface{}{
+			"nodes":      nodes,
+			"totalCount": len(nodes),
+			"pageInfo":   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
+		},
+	}
+}
+
+// searchIssuesAndPRs evaluates the issue-search query string gh sends to
+// Query.search (type: ISSUE) against the real issue/PR stores. Supported
+// qualifiers are evaluated for real: repo:, state:/is:/type:, author:,
+// assignee:, label:, mentions:, involves: (author OR assignee OR commenter).
+// review-requested: matches nothing — bleephub stores no review requests, so
+// zero results IS the true answer. A qualifier bleephub cannot evaluate at
+// all yields honest empty results (never an over-matching ignore). Bare
+// keywords match title/body substrings. Results are newest-first.
+func (s *Server) searchIssuesAndPRs(query string) []map[string]interface{} {
+	type searchSpec struct {
+		repos      []string // repo full names; empty = all
+		states     []string // OPEN / CLOSED / MERGED; empty = all
+		entity     string   // "issue", "pr", or "" for both
+		author     string
+		assignee   string
+		mentions   string
+		involves   string
+		labels     []string
+		keywords   []string
+		draft      *bool
+		impossible bool
+	}
+	spec := searchSpec{}
+	boolPtr := func(b bool) *bool { return &b }
+
+	for _, tok := range strings.Fields(query) {
+		// The advanced-search syntax gh builds may group qualifiers with
+		// parentheses and OR; strip the punctuation and treat the qualifier
+		// tokens individually (single-valued groups, which is what gh emits
+		// for these commands, evaluate identically).
+		tok = strings.Trim(tok, "()")
+		if tok == "" || strings.EqualFold(tok, "OR") || strings.EqualFold(tok, "AND") {
+			continue
+		}
+		key, val, isQualifier := strings.Cut(tok, ":")
+		if isQualifier {
+			val = strings.Trim(val, `"`)
+		}
+		if !isQualifier {
+			spec.keywords = append(spec.keywords, strings.Trim(tok, `"`))
+			continue
+		}
+		switch strings.ToLower(key) {
+		case "repo":
+			spec.repos = append(spec.repos, val)
+		case "state":
+			spec.states = append(spec.states, strings.ToUpper(val))
+		case "is":
+			switch strings.ToLower(val) {
+			case "open", "closed", "merged":
+				spec.states = append(spec.states, strings.ToUpper(val))
+			case "pr", "issue":
+				spec.entity = strings.ToLower(val)
+			case "draft":
+				spec.entity = "pr"
+				spec.draft = boolPtr(true)
+			default:
+				spec.impossible = true
+			}
+		case "type":
+			spec.entity = strings.ToLower(val)
+		case "draft":
+			switch strings.ToLower(val) {
+			case "true":
+				spec.draft = boolPtr(true)
+			case "false":
+				spec.draft = boolPtr(false)
+			default:
+				spec.impossible = true
+			}
+		case "author":
+			spec.author = val
+		case "assignee":
+			spec.assignee = val
+		case "mentions":
+			spec.mentions = val
+		case "involves":
+			spec.involves = val
+		case "label":
+			spec.labels = append(spec.labels, val)
+		case "review-requested", "user-review-requested":
+			// No review-request store: nothing can match.
+			spec.impossible = true
+		case "sort":
+			// Default newest-first ordering is the only one modeled.
+		default:
+			spec.impossible = true
+		}
+	}
+	if spec.impossible {
+		return nil
+	}
+
+	s.store.mu.RLock()
+	// Candidate repos.
+	var repoIDs []int
+	if len(spec.repos) > 0 {
+		for _, full := range spec.repos {
+			if r, ok := s.store.ReposByName[full]; ok {
+				repoIDs = append(repoIDs, r.ID)
+			}
+		}
+	} else {
+		for id := range s.store.Repos {
+			repoIDs = append(repoIDs, id)
+		}
+	}
+	repoSet := make(map[int]bool, len(repoIDs))
+	for _, id := range repoIDs {
+		repoSet[id] = true
+	}
+
+	loginOf := func(userID int) string {
+		if u, ok := s.store.Users[userID]; ok {
+			return u.Login
+		}
+		return ""
+	}
+	stateMatches := func(state string) bool {
+		if len(spec.states) == 0 {
+			return true
+		}
+		for _, want := range spec.states {
+			if state == want {
+				return true
+			}
+		}
+		return false
+	}
+	keywordsMatch := func(title, body string) bool {
+		haystack := strings.ToLower(title + "\n" + body)
+		for _, kw := range spec.keywords {
+			if !strings.Contains(haystack, strings.ToLower(kw)) {
+				return false
+			}
+		}
+		return true
+	}
+	commenterMatch := func(parentType string, parentID int, login string) bool {
+		for _, c := range s.store.Comments {
+			if c.ParentType == parentType && c.IssueID == parentID && loginOf(c.AuthorID) == login {
+				return true
+			}
+		}
+		return false
+	}
+	assigneeMatch := func(assigneeIDs []int, login string) bool {
+		for _, id := range assigneeIDs {
+			if loginOf(id) == login {
+				return true
+			}
+		}
+		return false
+	}
+	labelsMatch := func(labelIDs []int) bool {
+		for _, want := range spec.labels {
+			found := false
+			for _, lid := range labelIDs {
+				if l, ok := s.store.Labels[lid]; ok && l.Name == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return false
+			}
+		}
+		return true
+	}
+
+	var matchedIssues []*Issue
+	var matchedPRs []*PullRequest
+
+	if (spec.entity == "" || spec.entity == "issue") && spec.draft == nil {
+		for _, issue := range s.store.Issues {
+			if !repoSet[issue.RepoID] || !stateMatches(issue.State) {
+				continue
+			}
+			if spec.author != "" && loginOf(issue.AuthorID) != spec.author {
+				continue
+			}
+			if spec.assignee != "" && !assigneeMatch(issue.AssigneeIDs, spec.assignee) {
+				continue
+			}
+			if spec.mentions != "" && !strings.Contains(issue.Body, "@"+spec.mentions) {
+				continue
+			}
+			if spec.involves != "" &&
+				loginOf(issue.AuthorID) != spec.involves &&
+				!assigneeMatch(issue.AssigneeIDs, spec.involves) &&
+				!commenterMatch("issue", issue.ID, spec.involves) {
+				continue
+			}
+			if !labelsMatch(issue.LabelIDs) || !keywordsMatch(issue.Title, issue.Body) {
+				continue
+			}
+			matchedIssues = append(matchedIssues, issue)
+		}
+	}
+	if spec.entity == "" || spec.entity == "pr" {
+		for _, pr := range s.store.PullRequests {
+			if !repoSet[pr.RepoID] || !stateMatches(pr.State) {
+				continue
+			}
+			if spec.draft != nil && pr.IsDraft != *spec.draft {
+				continue
+			}
+			if spec.author != "" && loginOf(pr.AuthorID) != spec.author {
+				continue
+			}
+			if spec.assignee != "" && !assigneeMatch(pr.AssigneeIDs, spec.assignee) {
+				continue
+			}
+			if spec.mentions != "" && !strings.Contains(pr.Body, "@"+spec.mentions) {
+				continue
+			}
+			if spec.involves != "" &&
+				loginOf(pr.AuthorID) != spec.involves &&
+				!assigneeMatch(pr.AssigneeIDs, spec.involves) &&
+				!commenterMatch("pull_request", pr.ID, spec.involves) {
+				continue
+			}
+			if !labelsMatch(pr.LabelIDs) || !keywordsMatch(pr.Title, pr.Body) {
+				continue
+			}
+			matchedPRs = append(matchedPRs, pr)
+		}
+	}
+	s.store.mu.RUnlock()
+
+	// Render outside the lock (the toGQL converters take it themselves),
+	// newest-first across both entity kinds.
+	type dated struct {
+		created time.Time
+		node    map[string]interface{}
+	}
+	out := make([]dated, 0, len(matchedIssues)+len(matchedPRs))
+	for _, issue := range matchedIssues {
+		node := issueToGQL(issue, s.store)
+		node["__typename"] = "Issue"
+		out = append(out, dated{issue.CreatedAt, node})
+	}
+	for _, pr := range matchedPRs {
+		node := pullRequestToGQL(pr, s.store)
+		out = append(out, dated{pr.CreatedAt, node})
+	}
+	sort.Slice(out, func(a, b int) bool { return out[a].created.After(out[b].created) })
+
+	nodes := make([]map[string]interface{}, 0, len(out))
+	for _, d := range out {
+		nodes = append(nodes, d.node)
+	}
+	return nodes
 }

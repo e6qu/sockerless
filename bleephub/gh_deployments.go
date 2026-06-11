@@ -27,6 +27,12 @@ import (
 // octokit / probot / GitOps controllers reacting to `deployment` and
 // `deployment_status` webhook events.
 
+// Deployment / DeploymentStatus / Environment carry real json names on
+// their linkage + protection fields so persistence (which marshals the
+// structs as-is) round-trips them. Client responses never marshal these
+// structs — deploymentToJSON / deploymentStatusToJSON / environmentToJSON
+// emit explicit maps. Deployment.Statuses stays json:"-": statuses persist
+// in their own bucket and the loader relinks them via DeploymentID.
 type Deployment struct {
 	ID            int                    `json:"id"`
 	NodeID        string                 `json:"node_id"`
@@ -38,8 +44,8 @@ type Deployment struct {
 	OriginalEnv   string                 `json:"original_environment"`
 	Environment   string                 `json:"environment"`
 	Description   string                 `json:"description"`
-	CreatorID     int                    `json:"-"`
-	RepoID        int                    `json:"-"`
+	CreatorID     int                    `json:"creator_id"`
+	RepoID        int                    `json:"repo_id"`
 	AutoMerge     bool                   `json:"auto_merge"`
 	ProductionEnv bool                   `json:"production_environment"`
 	TransientEnv  bool                   `json:"transient_environment"`
@@ -52,8 +58,8 @@ type DeploymentStatus struct {
 	ID             int       `json:"id"`
 	NodeID         string    `json:"node_id"`
 	State          string    `json:"state"` // error | failure | inactive | in_progress | queued | pending | success
-	CreatorID      int       `json:"-"`
-	DeploymentID   int       `json:"-"`
+	CreatorID      int       `json:"creator_id"`
+	DeploymentID   int       `json:"deployment_id"`
 	Description    string    `json:"description"`
 	Environment    string    `json:"environment"`
 	TargetURL      string    `json:"target_url"`
@@ -71,13 +77,13 @@ type Environment struct {
 	Name                   string                   `json:"name"`
 	URL                    string                   `json:"url"`
 	HTMLURL                string                   `json:"html_url"`
-	RepoID                 int                      `json:"-"`
-	WaitTimer              int                      `json:"-"`
-	Reviewers              []map[string]interface{} `json:"-"`
-	DeploymentBranchPolicy *DeploymentBranchPolicy  `json:"-"`
+	RepoID                 int                      `json:"repo_id"`
+	WaitTimer              int                      `json:"wait_timer"`
+	Reviewers              []map[string]interface{} `json:"reviewers"`
+	DeploymentBranchPolicy *DeploymentBranchPolicy  `json:"deployment_branch_policy"`
 	CreatedAt              time.Time                `json:"created_at"`
 	UpdatedAt              time.Time                `json:"updated_at"`
-	ProtectionRules        []map[string]interface{} `json:"-"`
+	ProtectionRules        []map[string]interface{} `json:"protection_rules"`
 }
 
 type DeploymentBranchPolicy struct {

@@ -108,6 +108,9 @@ export GH_HOST="$HOST"
 # Login the host so gh's host config has bleephub as a known GHES.
 echo "$TOKEN" | gh auth login --hostname "$HOST" --with-token >/dev/null 2>&1 || true
 gh config set -h "$HOST" git_protocol https >/dev/null 2>&1 || true
+# Wire git pushes/pulls through gh's credential helper so native verbs that
+# shell out to git (gh repo clone, gh pr create from a working dir) authenticate.
+gh auth setup-git --hostname "$HOST" >/dev/null 2>&1 || true
 
 # `api` for endpoints `gh` doesn't expose as a high-level command
 # (apps/{slug}, /applications/{cid}/token, suspend, etc.). For the
@@ -608,6 +611,178 @@ if [ -n "$ADMIN_NODE_ID" ] && [ "$ADMIN_NODE_ID" != "null" ]; then
 fi
 
 log "PR-conversation parity probes complete"
+
+# ============================================================
+# Native gh verb coverage — repo clone, the pr
+# create→view→list→review→merge chain, the release lifecycle,
+# issue label/close/reopen verbs, run view of a push-triggered
+# run, and workflow run. All real gh verbs, no `gh api`.
+# NOTE on jq: container jq is 1.6 which float-rounds int64 ids —
+# always extract ids with gh's built-in --jq (gojq, int64-safe).
+# ============================================================
+log "Native gh verb coverage…"
+
+ORIG_DIR=$(pwd)
+NV_REPO="admin/gh-native-repo"
+
+if gh repo create gh-native-repo --public >/dev/null 2>&1; then
+    pass "gh repo create (native coverage repo)"
+else
+    fail "gh repo create gh-native-repo"
+fi
+
+# --- gh repo clone — sends the GraphQL RepositoryInfo query
+# (hasWikiEnabled + parent) before the git clone ---
+cd /tmp
+rm -rf gh-native-clone
+if gh repo clone "$NV_REPO" gh-native-clone >/dev/null 2>&1; then
+    pass "gh repo clone"
+else
+    fail "gh repo clone"
+fi
+cd gh-native-clone
+
+# Seed main with a push-triggered workflow (drives `gh run view` +
+# `gh workflow run` below).
+git checkout -q -b main 2>/dev/null || git checkout -q main
+mkdir -p .github/workflows
+cat > .github/workflows/ci.yml <<'YAML'
+name: ci
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+YAML
+echo "native coverage" > README.md
+git add .
+git commit -q -m "init with workflow"
+if git push -q origin main >/dev/null 2>&1; then
+    pass "git push main (smart HTTP via gh credential helper)"
+else
+    fail "git push main"
+fi
+
+# --- gh run view of the push-triggered run ---
+# The push above triggers the ci workflow; the run's workflow_id must
+# resolve to the real workflow file or gh run view 404s.
+sleep 2
+RUN_ID=$(gh run list -R "$NV_REPO" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || echo "")
+assert_not_empty "gh run list returns the push-triggered run" "$RUN_ID"
+if [ -n "$RUN_ID" ]; then
+    if gh run view "$RUN_ID" -R "$NV_REPO" >/dev/null 2>&1; then
+        pass "gh run view of push-triggered run"
+    else
+        fail "gh run view $RUN_ID (workflow_id unresolvable?)"
+    fi
+fi
+
+# --- gh workflow run (feature-detects via GET /meta first) ---
+if gh workflow run ci.yml --ref main -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh workflow run"
+else
+    fail "gh workflow run ci.yml"
+fi
+
+# --- pr create→view→list→review→merge chain ---
+git checkout -q -b feature
+echo "feature work" >> README.md
+git add README.md
+git commit -q -m "feature commit"
+git push -q origin feature >/dev/null 2>&1 || true
+
+if gh pr create -R "$NV_REPO" --title "native pr" --body "native chain" --head feature --base main >/dev/null 2>&1; then
+    pass "gh pr create"
+else
+    fail "gh pr create"
+fi
+
+NATIVE_PR=$(gh pr list -R "$NV_REPO" --json number --jq '.[0].number' 2>/dev/null || echo "")
+assert_not_empty "gh pr list returns the new PR" "$NATIVE_PR"
+
+if [ -n "$NATIVE_PR" ]; then
+    if gh pr view "$NATIVE_PR" -R "$NV_REPO" >/dev/null 2>&1; then
+        pass "gh pr view"
+    else
+        fail "gh pr view $NATIVE_PR"
+    fi
+    PR_TITLE=$(gh pr view "$NATIVE_PR" -R "$NV_REPO" --json title --jq .title 2>/dev/null || echo "")
+    assert_eq "gh pr view --json title" "native pr" "$PR_TITLE"
+
+    if gh pr review "$NATIVE_PR" -R "$NV_REPO" --approve --body "native lgtm" >/dev/null 2>&1; then
+        pass "gh pr review --approve"
+    else
+        fail "gh pr review --approve"
+    fi
+    REVIEW_DECISION=$(gh pr view "$NATIVE_PR" -R "$NV_REPO" --json reviewDecision --jq .reviewDecision 2>/dev/null || echo "")
+    assert_eq "reviewDecision after approve" "APPROVED" "$REVIEW_DECISION"
+
+    if gh pr merge "$NATIVE_PR" -R "$NV_REPO" --merge >/dev/null 2>&1; then
+        pass "gh pr merge"
+    else
+        fail "gh pr merge"
+    fi
+    PR_STATE=$(gh pr view "$NATIVE_PR" -R "$NV_REPO" --json state --jq .state 2>/dev/null || echo "")
+    assert_eq "PR state after merge" "MERGED" "$PR_STATE"
+fi
+
+# --- release create→list→view→delete lifecycle ---
+if gh release create v1.0.0 --notes "native release" -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh release create"
+else
+    fail "gh release create"
+fi
+REL_TAGS=$(gh release list -R "$NV_REPO" --json tagName --jq '.[].tagName' 2>/dev/null || echo "")
+assert_contains "gh release list shows v1.0.0" "$REL_TAGS" "v1.0.0"
+if gh release view v1.0.0 -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh release view"
+else
+    fail "gh release view v1.0.0"
+fi
+if gh release delete v1.0.0 -R "$NV_REPO" --yes >/dev/null 2>&1; then
+    pass "gh release delete"
+else
+    fail "gh release delete v1.0.0"
+fi
+REL_COUNT=$(gh release list -R "$NV_REPO" --json tagName --jq 'length' 2>/dev/null || echo "-1")
+assert_eq "release gone after delete" "0" "$REL_COUNT"
+
+# --- issue verbs: create with label, list --label, close, reopen ---
+gh label create bug --color d73a4a -R "$NV_REPO" >/dev/null 2>&1 || true
+if gh issue create -R "$NV_REPO" --title "native labeled issue" --body "native" --label bug >/dev/null 2>&1; then
+    pass "gh issue create --label"
+else
+    fail "gh issue create --label"
+fi
+gh issue create -R "$NV_REPO" --title "native plain issue" --body "native" >/dev/null 2>&1 || true
+
+# --label routes through GraphQL search(type: ISSUE), gated on GET /meta.
+LABELED_COUNT=$(gh issue list -R "$NV_REPO" --label bug --json number --jq 'length' 2>/dev/null || echo "-1")
+assert_eq "gh issue list --label bug count" "1" "$LABELED_COUNT"
+LABELED_NUM=$(gh issue list -R "$NV_REPO" --label bug --json number --jq '.[0].number' 2>/dev/null || echo "")
+assert_not_empty "labeled issue number" "$LABELED_NUM"
+
+if [ -n "$LABELED_NUM" ]; then
+    if gh issue close "$LABELED_NUM" -R "$NV_REPO" >/dev/null 2>&1; then
+        pass "gh issue close"
+    else
+        fail "gh issue close"
+    fi
+    ISSUE_STATE=$(gh issue view "$LABELED_NUM" -R "$NV_REPO" --json state --jq .state 2>/dev/null || echo "")
+    assert_eq "issue state after gh issue close" "CLOSED" "$ISSUE_STATE"
+
+    if gh issue reopen "$LABELED_NUM" -R "$NV_REPO" >/dev/null 2>&1; then
+        pass "gh issue reopen"
+    else
+        fail "gh issue reopen"
+    fi
+    ISSUE_STATE=$(gh issue view "$LABELED_NUM" -R "$NV_REPO" --json state --jq .state 2>/dev/null || echo "")
+    assert_eq "issue state after gh issue reopen" "OPEN" "$ISSUE_STATE"
+fi
+
+cd "$ORIG_DIR"
+log "Native gh verb coverage complete"
 
 # ============================================================
 # Summary

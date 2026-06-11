@@ -49,15 +49,34 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 
 // NewServer creates a bleephub server with all routes registered.
 //
-// Honors two persistence-related env vars:
-//   - BLEEPHUB_DATA_DIR  — directory for SQLite DB + artifact store.
-//   - BLEEPHUB_PERSIST   — when "true", enables SQLite-backed state.
-//     Operator-requested persistence that fails to open will log.Fatalf
+// Honors the persistence-related env vars:
+//   - BLEEPHUB_DATA_DIR     — directory for SQLite DB + artifact store.
+//   - BLEEPHUB_PERSIST      — when "true", enables SQLite-backed state.
+//   - BLEEPHUB_DATABASE_URL — PostgreSQL DSN (takes priority over SQLite).
 //
-// . State buckets persisted: users, tokens, apps,
+// Operator-requested persistence that fails to open will log.Fatalf.
 //
-//	oauth_apps, installations, installation_tokens, user_to_server_tokens,
-//	refresh_tokens, repos. Git storage stays in-memory.
+// When persistence is enabled, the full metadata surface persists: users,
+// tokens, apps (incl. credentials + webhook config), OAuth apps,
+// installations (incl. selected repos), installation / user-to-server /
+// refresh tokens, repos, orgs, teams, memberships, issues, labels,
+// milestones, comments, pull requests, PR reviews + review comments,
+// hooks (incl. secrets) + deliveries, app hook deliveries, repo secrets
+// (incl. values), check suites/runs/prefs, workflow files, releases,
+// deployments + statuses + environments (incl. reviewers/wait timer),
+// reactions, Projects v2, user SSH/GPG keys, Pages, branch protection,
+// the audit log, and marketplace plans.
+//
+// Persistence requires durable git storage (BLEEPHUB_GIT_DIR or
+// BLEEPHUB_S3_BUCKET): reloading repo metadata against in-memory git
+// storage would resurrect every repo empty, so that combination is a
+// startup error rather than a silent degraded mode.
+//
+// Intentionally NOT persisted: in-flight workflow/session/agent state
+// (a restart abandons in-flight runs) and the OIDC signing key
+// (gh_misc_endpoints.go oidcKey), which rotates on restart — consumers
+// must re-fetch the JWKS, exactly as they must against real GitHub key
+// rotation.
 func NewServer(addr string, logger zerolog.Logger) *Server {
 	maxWF := 10
 	if v := os.Getenv("BLEEPHUB_MAX_WORKFLOWS"); v != "" {
@@ -88,6 +107,14 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	// otherwise BLEEPHUB_PERSIST=true enables SQLite. Both fail-loud on open failure.
 	persist := MustNewPersistence()
 	if persist != nil {
+		// Metadata persistence with in-memory git storage is a silent
+		// degraded mode: every repo would reload with an empty git side.
+		// Refuse to start rather than serve hollow repos.
+		if GitDataDir() == "" && !IsS3GitStorage() {
+			logger.Fatal().Msg("persistence is enabled (BLEEPHUB_PERSIST/BLEEPHUB_DATABASE_URL) but git storage is in-memory: " +
+				"repo metadata would survive a restart while every git repo reloads empty. " +
+				"Configure durable git storage (BLEEPHUB_GIT_DIR=<dir> or BLEEPHUB_S3_BUCKET=<bucket>) or disable persistence.")
+		}
 		if err := s.store.SetPersistence(persist); err != nil {
 			logger.Fatal().Err(err).Msg("failed to load persisted state")
 		}

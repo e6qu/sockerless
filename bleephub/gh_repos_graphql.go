@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/graphql-go/graphql"
 )
 
@@ -67,6 +68,195 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					}, nil
 				},
 			},
+		},
+	})
+
+	// --- Repository fields gh CLI selects (clone/create/view --json) ---
+	// gh's `GitHubRepo` query (repo clone, pr create) selects hasWikiEnabled
+	// and parent{...repo}; `gh repo view --json` exposes the wider static set
+	// below. Fields bleephub has no feature for resolve to the honest
+	// empty/false/null value real GitHub returns for a repo without that
+	// feature — they are not faked.
+
+	repoType.AddFieldConfig("hasWikiEnabled", &graphql.Field{
+		// No wiki feature: real value is false.
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return false, nil
+		},
+	})
+	repoType.AddFieldConfig("parent", &graphql.Field{
+		// No forks feature: a non-fork repo's parent is null.
+		Type: repoType,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return nil, nil
+		},
+	})
+	repoType.AddFieldConfig("templateRepository", &graphql.Field{
+		// No template-repo feature: null (gh selects {id,name,owner{id,login}}).
+		Type: repoType,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return nil, nil
+		},
+	})
+	repoType.AddFieldConfig("homepageUrl", &graphql.Field{
+		Type: graphql.String,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return nil, nil
+		},
+	})
+	repoType.AddFieldConfig("hasProjectsEnabled", &graphql.Field{
+		// Classic (v1) projects are not modeled; ProjectsV2 is separate.
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return false, nil
+		},
+	})
+	repoType.AddFieldConfig("hasDiscussionsEnabled", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return false, nil
+		},
+	})
+	repoType.AddFieldConfig("forkCount", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Int),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return 0, nil
+		},
+	})
+	repoType.AddFieldConfig("watchers", &graphql.Field{
+		// gh selects watchers{totalCount}; no watch/subscribe feature → 0.
+		Type: graphql.NewObject(graphql.ObjectConfig{
+			Name: "RepoWatcherConnection",
+			Fields: graphql.Fields{
+				"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			},
+		}),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return map[string]interface{}{"totalCount": 0}, nil
+		},
+	})
+	repoType.AddFieldConfig("licenseInfo", &graphql.Field{
+		// gh selects licenseInfo{key,name,nickname}; no license detection → null.
+		Type: graphql.NewObject(graphql.ObjectConfig{
+			Name: "RepositoryLicense",
+			Fields: graphql.Fields{
+				"key":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+				"name":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+				"nickname": &graphql.Field{Type: graphql.String},
+			},
+		}),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return nil, nil
+		},
+	})
+	languageType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Language",
+		Fields: graphql.Fields{
+			"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		},
+	})
+	repoType.AddFieldConfig("primaryLanguage", &graphql.Field{
+		// Backed by Repo.Language (settable via the REST repo surface);
+		// null when unset, exactly like a language-less repo on GitHub.
+		Type: languageType,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			r := p.Source.(map[string]interface{})
+			lang, _ := r["language"].(string)
+			if lang == "" {
+				return nil, nil
+			}
+			return map[string]interface{}{"name": lang}, nil
+		},
+	})
+	repoType.AddFieldConfig("languages", &graphql.Field{
+		// gh selects languages(first:100){edges{size,node{name}}}; bleephub
+		// performs no byte-size language analysis → empty connection.
+		Type: graphql.NewObject(graphql.ObjectConfig{
+			Name: "LanguageConnection",
+			Fields: graphql.Fields{
+				"edges": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+					Name: "LanguageEdge",
+					Fields: graphql.Fields{
+						"size": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+						"node": &graphql.Field{Type: graphql.NewNonNull(languageType)},
+					},
+				}))},
+				"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			},
+		}),
+		Args: graphql.FieldConfigArgument{
+			"first": &graphql.ArgumentConfig{Type: graphql.Int},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return map[string]interface{}{"edges": []interface{}{}, "totalCount": 0}, nil
+		},
+	})
+	repoType.AddFieldConfig("repositoryTopics", &graphql.Field{
+		// Backed by Repo.Topics (REST PUT /repos/{o}/{r}/topics).
+		Type: graphql.NewObject(graphql.ObjectConfig{
+			Name: "RepositoryTopicConnection",
+			Fields: graphql.Fields{
+				"nodes": &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{
+					Name: "RepositoryTopic",
+					Fields: graphql.Fields{
+						"topic": &graphql.Field{Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
+							Name: "Topic",
+							Fields: graphql.Fields{
+								"name": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+							},
+						}))},
+					},
+				}))},
+				"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			},
+		}),
+		Args: graphql.FieldConfigArgument{
+			"first": &graphql.ArgumentConfig{Type: graphql.Int},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			r := p.Source.(map[string]interface{})
+			topics, _ := r["topics"].([]string)
+			nodes := make([]interface{}, 0, len(topics))
+			for _, tp := range topics {
+				nodes = append(nodes, map[string]interface{}{
+					"topic": map[string]interface{}{"name": tp},
+				})
+			}
+			return map[string]interface{}{"nodes": nodes, "totalCount": len(nodes)}, nil
+		},
+	})
+	repoType.AddFieldConfig("deleteBranchOnMerge", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return false, nil
+		},
+	})
+	repoType.AddFieldConfig("isTemplate", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return false, nil
+		},
+	})
+	repoType.AddFieldConfig("isEmpty", &graphql.Field{
+		// Real value: true until the repo's git storage has a resolvable
+		// HEAD commit (matches GitHub's "repository is empty" semantics).
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			r := p.Source.(map[string]interface{})
+			nameWithOwner, _ := r["nameWithOwner"].(string)
+			owner, name, ok := strings.Cut(nameWithOwner, "/")
+			if !ok {
+				return true, nil
+			}
+			return s.repoHasNoCommits(owner, name), nil
+		},
+	})
+	repoType.AddFieldConfig("archivedAt", &graphql.Field{
+		// Archive timestamps aren't recorded; null matches an unarchived repo.
+		Type: graphql.String,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return nil, nil
 		},
 	})
 
@@ -132,6 +322,165 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		Values: graphql.EnumValueConfigMap{
 			"ASC":  &graphql.EnumValueConfig{Value: "ASC"},
 			"DESC": &graphql.EnumValueConfig{Value: "DESC"},
+		},
+	})
+
+	// --- Releases (gh release list / view / download / delete) ---
+	// `gh release list` queries releases(first:$perPage, orderBy:{field:
+	// CREATED_AT, direction:$direction}, after:$endCursor) with $direction
+	// typed OrderDirection — the enum above must keep that exact name.
+	// `gh release view/download/delete` additionally resolve draft releases
+	// via release(tagName:){databaseId,isDraft}. Both are backed by the real
+	// release store. Release deliberately does NOT declare `immutable`: gh
+	// introspects Release's fields and cleanly falls back to the
+	// pre-immutable-releases query when the field is absent.
+	releaseType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "Release",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					rel := p.Source.(map[string]interface{})
+					return rel["nodeID"], nil
+				},
+			},
+			"databaseId":   &graphql.Field{Type: graphql.Int},
+			"name":         &graphql.Field{Type: graphql.String},
+			"tagName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"isDraft":      &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"isLatest":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"isPrerelease": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"createdAt":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"publishedAt":  &graphql.Field{Type: graphql.String},
+			"url":          &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description":  &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	releasePageInfoType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ReleasePageInfo",
+		Fields: graphql.Fields{
+			"hasNextPage":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"hasPreviousPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"startCursor":     &graphql.Field{Type: graphql.String},
+			"endCursor":       &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	releaseConnectionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ReleaseConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(releaseType)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(releasePageInfoType)},
+		},
+	})
+
+	releaseOrderFieldEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "ReleaseOrderField",
+		Values: graphql.EnumValueConfigMap{
+			"CREATED_AT": &graphql.EnumValueConfig{Value: "CREATED_AT"},
+			"NAME":       &graphql.EnumValueConfig{Value: "NAME"},
+		},
+	})
+
+	repoType.AddFieldConfig("releases", &graphql.Field{
+		Type: releaseConnectionType,
+		Args: graphql.FieldConfigArgument{
+			"first": &graphql.ArgumentConfig{Type: graphql.Int},
+			"after": &graphql.ArgumentConfig{Type: graphql.String},
+			"orderBy": &graphql.ArgumentConfig{Type: graphql.NewInputObject(graphql.InputObjectConfig{
+				Name: "ReleaseOrder",
+				Fields: graphql.InputObjectConfigFieldMap{
+					"field":     &graphql.InputObjectFieldConfig{Type: releaseOrderFieldEnum},
+					"direction": &graphql.InputObjectFieldConfig{Type: orderDirectionEnum},
+				},
+			})},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			repo := p.Source.(map[string]interface{})
+			repoID, _ := repo["databaseId"].(int)
+			repoFullName, _ := repo["nameWithOwner"].(string)
+
+			releases := s.store.Releases.List(repoID)
+
+			orderField, direction := "CREATED_AT", "DESC"
+			if orderBy, ok := p.Args["orderBy"].(map[string]interface{}); ok {
+				if f, ok := orderBy["field"].(string); ok && f != "" {
+					orderField = f
+				}
+				if d, ok := orderBy["direction"].(string); ok && d != "" {
+					direction = d
+				}
+			}
+			sort.SliceStable(releases, func(a, b int) bool {
+				var less bool
+				if orderField == "NAME" {
+					less = releases[a].Name < releases[b].Name
+				} else {
+					less = releases[a].CreatedAt.Before(releases[b].CreatedAt)
+				}
+				if direction == "DESC" {
+					return !less
+				}
+				return less
+			})
+
+			latestID := 0
+			if latest := s.store.Releases.Latest(repoID); latest != nil {
+				latestID = latest.ID
+			}
+
+			first := 30
+			if f, ok := p.Args["first"].(int); ok && f > 0 {
+				first = f
+			}
+			after, _ := p.Args["after"].(string)
+
+			return paginateGQL(releases, first, after, func(rel *Release) map[string]interface{} {
+				return releaseToGQL(rel, latestID, repoFullName)
+			}), nil
+		},
+	})
+
+	repoType.AddFieldConfig("release", &graphql.Field{
+		Type: releaseType,
+		Args: graphql.FieldConfigArgument{
+			"tagName": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			repo := p.Source.(map[string]interface{})
+			repoID, _ := repo["databaseId"].(int)
+			repoFullName, _ := repo["nameWithOwner"].(string)
+			tagName, _ := p.Args["tagName"].(string)
+
+			rel := s.store.Releases.GetByTag(repoID, tagName)
+			if rel == nil {
+				// Real GitHub resolves a missing release(tagName:) to plain
+				// null — gh's draft-release lookup keys on the null, not on
+				// a NOT_FOUND error.
+				return nil, nil
+			}
+			latestID := 0
+			if latest := s.store.Releases.Latest(repoID); latest != nil {
+				latestID = latest.ID
+			}
+			return releaseToGQL(rel, latestID, repoFullName), nil
+		},
+	})
+
+	repoType.AddFieldConfig("latestRelease", &graphql.Field{
+		// gh repo view --json latestRelease selects {publishedAt,tagName,name,url}.
+		Type: releaseType,
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			repo := p.Source.(map[string]interface{})
+			repoID, _ := repo["databaseId"].(int)
+			repoFullName, _ := repo["nameWithOwner"].(string)
+			latest := s.store.Releases.Latest(repoID)
+			if latest == nil {
+				return nil, nil
+			}
+			return releaseToGQL(latest, latest.ID, repoFullName), nil
 		},
 	})
 
@@ -213,7 +562,12 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			name, _ := p.Args["name"].(string)
 			repo := s.store.GetRepo(owner, name)
 			if repo == nil {
-				return nil, nil
+				// Real GitHub pairs the null with a typed NOT_FOUND error —
+				// gh CLI keys on errors[].type to report "repository not
+				// found" instead of decoding an empty object.
+				return nil, &ghNotFoundError{
+					message: fmt.Sprintf("Could not resolve to a Repository with the name '%s/%s'.", owner, name),
+				}
 			}
 			return repoToGraphQL(repo), nil
 		},
@@ -378,11 +732,61 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"visibility":     strings.ToUpper(repo.Visibility),
 		"defaultBranch":  repo.DefaultBranch,
 		"stargazerCount": repo.StargazersCount,
+		"language":       repo.Language,
+		"topics":         repo.Topics,
 		"owner":          ownerMap,
 		"createdAt":      repo.CreatedAt.Format(time.RFC3339),
 		"updatedAt":      repo.UpdatedAt.Format(time.RFC3339),
 		"pushedAt":       repo.PushedAt.Format(time.RFC3339),
 	}
+}
+
+// releaseToGQL renders a stored Release as the GraphQL source map for the
+// Release type. latestID is the id of the repo's latest published release
+// (0 when none) so isLatest reflects the same derivation REST uses.
+func releaseToGQL(rel *Release, latestID int, repoFullName string) map[string]interface{} {
+	var publishedAt interface{}
+	if rel.PublishedAt != nil {
+		publishedAt = rel.PublishedAt.Format(time.RFC3339)
+	}
+	var name interface{}
+	if rel.Name != "" {
+		name = rel.Name
+	}
+	return map[string]interface{}{
+		"nodeID":       rel.NodeID,
+		"databaseId":   rel.ID,
+		"name":         name,
+		"tagName":      rel.TagName,
+		"isDraft":      rel.Draft,
+		"isLatest":     latestID != 0 && rel.ID == latestID,
+		"isPrerelease": rel.Prerelease,
+		"createdAt":    rel.CreatedAt.Format(time.RFC3339),
+		"publishedAt":  publishedAt,
+		"url":          "/" + repoFullName + "/releases/tag/" + rel.TagName,
+		"description":  nilStr(rel.Body),
+	}
+}
+
+// repoHasNoCommits reports whether the repo's git storage lacks a resolvable
+// HEAD commit — GitHub's "empty repository" condition.
+func (s *Server) repoHasNoCommits(owner, name string) bool {
+	stor := s.store.GetGitStorage(owner, name)
+	if stor == nil {
+		return true
+	}
+	headRef, err := stor.Reference(plumbing.HEAD)
+	if err != nil {
+		return true
+	}
+	if headRef.Type() == plumbing.SymbolicReference {
+		targetRef, err := stor.Reference(headRef.Target())
+		if err != nil {
+			return true
+		}
+		return targetRef.Hash().IsZero()
+	}
+	return headRef.Hash().IsZero()
 }
 
 // paginateRepos implements Relay-style cursor pagination.
