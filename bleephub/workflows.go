@@ -114,6 +114,9 @@ type WorkflowJob struct {
 	CompletedAt     time.Time              `json:"completedAt,omitempty"`
 	MatrixGroup     string                 `json:"matrixGroup,omitempty"`
 	Def             *JobDef                `json:"-"`
+	// Hidden marks synthetic reusable-workflow gate/collector nodes the
+	// jobs API never lists (real GitHub shows only the called jobs).
+	Hidden bool `json:"hidden,omitempty"`
 }
 
 // WorkflowEventMeta carries event metadata to be set on the workflow before dispatch.
@@ -160,6 +163,17 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
+	// Expand reusable-workflow calls (jobs.<id>.uses) into their called
+	// jobs; the repository context resolves "./" references.
+	repoForCalls := ""
+	if len(eventMeta) > 0 && eventMeta[0] != nil {
+		repoForCalls = eventMeta[0].Repo
+	}
+	wf, err := s.expandReusableWorkflows(wf, repoForCalls, 1)
+	if err != nil {
+		return nil, err
+	}
+
 	runID := s.store.ReserveRunID()
 
 	workflow := &Workflow{
@@ -194,6 +208,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 			Outputs:         make(map[string]string),
 			ContinueOnError: jd.ContinueOnError,
 			Def:             jd,
+			Hidden:          jd.ServerCompleted,
 		}
 		if jd.Name != "" {
 			wfJob.DisplayName = jd.Name
@@ -412,6 +427,15 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				continue
 			}
 
+			// Synthetic reusable-workflow nodes complete in the engine —
+			// gates resolve call inputs, collectors map call outputs —
+			// and never dispatch to a runner.
+			if wfJob.Def != nil && wfJob.Def.ServerCompleted {
+				s.completeServerJobLocked(wf, wfJob)
+				changed = true
+				continue
+			}
+
 			// Enforce max-parallel: count running/queued jobs in same matrix group
 			if wf.MaxParallel > 0 {
 				active := 0
@@ -462,6 +486,11 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			break
 		}
 	}
+
+	// A workflow can reach the all-done state here without any runner
+	// completion event (server-completed collector as the final node);
+	// finalize is idempotent.
+	s.finalizeWorkflowIfDone(wf)
 }
 
 // dispatchWorkflowJob builds and sends a job message to the runner.
@@ -609,6 +638,12 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		if wfJob.Result == ResultFailure || wfJob.Result == ResultCancelled {
 			anyFailed = true
 		}
+	}
+
+	// dispatchReadyJobs may already have finalized the run (a server-
+	// completed collector can be the last node); don't double-complete.
+	if foundWf.Status == WorkflowStatusCompleted {
+		allDone = false
 	}
 
 	if allDone {
@@ -970,6 +1005,14 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 // `if:` with the contexts real GitHub makes available there: github,
 // needs, vars, and inputs. Callers hold the store write lock.
 func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
+	// Jobs inside a reusable-workflow call see their workflow's own view:
+	// sibling needs under unprefixed keys, the synthetic gate invisible,
+	// and the call's resolved inputs as the inputs context.
+	var binding *WorkflowCallBinding
+	if wfJob.Def != nil && wfJob.Def.Call != nil && wfJob.Def.CallRole == "" {
+		binding = wfJob.Def.Call
+	}
+
 	deps := make(map[string]string, len(wfJob.Needs))
 	needsCtx := make(map[string]interface{}, len(wfJob.Needs))
 	for _, dep := range wfJob.Needs {
@@ -977,23 +1020,36 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 		if !ok {
 			continue
 		}
-		deps[dep] = string(depJob.Result)
+		ctxKey := dep
+		if binding != nil {
+			if dep == binding.CallerKey+"/__call" {
+				continue
+			}
+			ctxKey = strings.TrimPrefix(dep, binding.CallerKey+"/")
+		}
+		deps[ctxKey] = string(depJob.Result)
 		outputs := make(map[string]interface{}, len(depJob.Outputs))
 		for k, v := range depJob.Outputs {
 			outputs[k] = v
 		}
-		needsCtx[dep] = map[string]interface{}{
+		needsCtx[ctxKey] = map[string]interface{}{
 			"result":  string(depJob.Result),
 			"outputs": outputs,
 		}
 	}
 
 	inputsCtx := make(map[string]interface{}, len(wf.Inputs))
-	for k, v := range wf.Inputs {
-		inputsCtx[k] = v
-	}
-	for k, v := range wf.TypedInputs {
-		inputsCtx[k] = v
+	if binding != nil {
+		if ri := binding.ResolvedInputs(); ri != nil {
+			inputsCtx = ri
+		}
+	} else {
+		for k, v := range wf.Inputs {
+			inputsCtx[k] = v
+		}
+		for k, v := range wf.TypedInputs {
+			inputsCtx[k] = v
+		}
 	}
 
 	varsCtx := make(map[string]interface{})

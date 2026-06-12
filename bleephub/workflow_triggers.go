@@ -26,6 +26,23 @@ type TriggerDef struct {
 	Inputs map[string]*WorkflowInputDef
 	// Crons carries the cron lines of `on: schedule:`.
 	Crons []string
+	// Outputs carries workflow_call output declarations: name → the
+	// `${{ jobs.<id>.outputs.<o> }}` value template.
+	Outputs map[string]string
+	// Secrets carries workflow_call secret declarations.
+	Secrets map[string]*WorkflowCallSecretDef
+}
+
+// WorkflowCallSecretDef is a declared workflow_call secret.
+type WorkflowCallSecretDef struct {
+	Description string `yaml:"description"`
+	Required    bool   `yaml:"required"`
+}
+
+// workflowCallOutputDef is the YAML shape of one workflow_call output.
+type workflowCallOutputDef struct {
+	Description string `yaml:"description"`
+	Value       string `yaml:"value"`
 }
 
 // WorkflowInputDef is a declared workflow_dispatch / workflow_call input.
@@ -130,14 +147,16 @@ func parseTriggerDef(event string, node *yaml.Node) (*TriggerDef, error) {
 		return td, nil
 	}
 	var raw struct {
-		Branches       []string                     `yaml:"branches"`
-		BranchesIgnore []string                     `yaml:"branches-ignore"`
-		Tags           []string                     `yaml:"tags"`
-		TagsIgnore     []string                     `yaml:"tags-ignore"`
-		Paths          []string                     `yaml:"paths"`
-		PathsIgnore    []string                     `yaml:"paths-ignore"`
-		Types          []string                     `yaml:"types"`
-		Inputs         map[string]*WorkflowInputDef `yaml:"inputs"`
+		Branches       []string                          `yaml:"branches"`
+		BranchesIgnore []string                          `yaml:"branches-ignore"`
+		Tags           []string                          `yaml:"tags"`
+		TagsIgnore     []string                          `yaml:"tags-ignore"`
+		Paths          []string                          `yaml:"paths"`
+		PathsIgnore    []string                          `yaml:"paths-ignore"`
+		Types          []string                          `yaml:"types"`
+		Inputs         map[string]*WorkflowInputDef      `yaml:"inputs"`
+		Outputs        map[string]*workflowCallOutputDef `yaml:"outputs"`
+		Secrets        map[string]*WorkflowCallSecretDef `yaml:"secrets"`
 	}
 	if err := node.Decode(&raw); err != nil {
 		return nil, fmt.Errorf("invalid trigger filters: %w", err)
@@ -151,6 +170,15 @@ func parseTriggerDef(event string, node *yaml.Node) (*TriggerDef, error) {
 		PathsIgnore:    raw.PathsIgnore,
 		Types:          raw.Types,
 		Inputs:         raw.Inputs,
+		Secrets:        raw.Secrets,
+	}
+	if len(raw.Outputs) > 0 {
+		td.Outputs = make(map[string]string, len(raw.Outputs))
+		for name, o := range raw.Outputs {
+			if o != nil {
+				td.Outputs[name] = o.Value
+			}
+		}
 	}
 	if len(td.Branches) > 0 && len(td.BranchesIgnore) > 0 {
 		return nil, fmt.Errorf("branches and branches-ignore cannot be used together")

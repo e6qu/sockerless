@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1738 filed - 1689 fixed - 9 open - 7 false positives.**
+**1738 filed - 1690 fixed - 8 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -22,7 +22,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ~~1729~~ | P2 | bleephub actions — secrets exist only at repo level | missing scopes | No org secrets (visibility all/private/selected + selected-repos endpoints), no environment secrets, no org→repo→environment precedence merge into job messages. |
 | ~~1728~~ | P2 | bleephub actions — variables don't exist | missing feature | No `/actions/variables` at repo/org/environment level; the runner's `vars` context is sent empty; `gh variable set` 404s. |
 | ~~1727~~ | P2 | bleephub actions — expression engine far below GitHub's grammar | expression gaps | Only status functions + `&&`/`||`/`!`/`==`/`!=` over a two-key context; no numbers/relational ops, no `contains`/`startsWith`/`endsWith`/`format`/`join`/`toJSON`/`fromJSON`, no `github.event.*`, `needs.*.outputs.*`, `matrix.*`, `inputs.*`, `vars.*` in job-level `if` — real-world conditions mis-evaluate to the bare-identifier truthiness path. |
-| 1726 | P2 | bleephub actions — reusable workflows (workflow_call) unsupported | missing feature | A job with `uses: ./.github/workflows/x.yml` is treated as an empty job (no steps built); no called-workflow expansion, inputs/secrets binding, or output mapping. |
+| ~~1726~~ | P2 | bleephub actions — reusable workflows (workflow_call) unsupported | missing feature | A job with `uses: ./.github/workflows/x.yml` is treated as an empty job (no steps built); no called-workflow expansion, inputs/secrets binding, or output mapping. |
 | ~~1725~~ | P2 | bleephub actions — `on: schedule` never fires | missing trigger | No cron parsing or time-based dispatcher; schedule-only workflows are dead. |
 | ~~1724~~ | P2 | bleephub actions — `on:` trigger filters ignored | trigger over-fire | Only the event NAME is matched: `branches`/`branches-ignore`/`paths`/`paths-ignore`/`tags` filters and `pull_request.types` are never parsed, so every push fires every push workflow on every branch; `pull_request` fires only at PR creation (no `synchronize` on head-branch push, no `reopened`/`closed`); `workflow_dispatch` input declarations (defaults/required) aren't applied. |
 | ~~1723~~ | P3 | aws sim amplify — control-plane extras batch | assorted fidelity | Found during the gap pass: `ListBackendEnvironments` ignored the modeled `?environmentName=` filter; `UpdateDomainAssociation` ignored `certificateSettings`; `UpdateWebhook` had the no-clear `!= ""` class; `CreateDeployment` returned NotFoundException for unknown apps (op models no such error — now BadRequest); dead `amplifyAppID` wrapper + unused `Repository_` field pruned. |

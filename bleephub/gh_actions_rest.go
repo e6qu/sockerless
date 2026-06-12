@@ -551,6 +551,11 @@ func (s *Server) handleListWorkflowRunJobs(w http.ResponseWriter, r *http.Reques
 	s.store.mu.RLock()
 	allJobs := make([]*WorkflowJob, 0, len(wf.Jobs))
 	for _, j := range wf.Jobs {
+		// Synthetic reusable-workflow gate/collector nodes are engine
+		// bookkeeping; real GitHub lists only the called jobs.
+		if j.Hidden {
+			continue
+		}
 		allJobs = append(allJobs, j)
 	}
 	s.store.mu.RUnlock()

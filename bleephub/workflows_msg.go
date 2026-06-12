@@ -142,7 +142,6 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	}
 
 	runID := strconv.Itoa(wf.RunID)
-	runNumber := strconv.Itoa(wf.RunNumber)
 
 	// Use event metadata from workflow, with defaults
 	eventName := wf.EventName
@@ -176,10 +175,14 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 
 	// Org → repo → environment secrets and variables merge (highest
 	// scope wins); every secret value rides the mask list so the runner
-	// scrubs it from logs.
+	// scrubs it from logs. Jobs inside a reusable-workflow call with an
+	// explicit `secrets:` map receive ONLY the mapped names.
 	varsPairs := make([]string, 0)
 	if s != nil && s.store != nil {
 		secretsMap, varsMap := s.CollectJobSecretsAndVars(repoFullName, jd.EnvironmentName())
+		if jd.Call != nil && jd.CallRole == "" && !jd.Call.SecretsInherit {
+			secretsMap = remapCallSecrets(s, wf, jd.Call, secretsMap)
+		}
 		for _, name := range sortedKeys(secretsMap) {
 			secretsPairs = append(secretsPairs, name, secretsMap[name])
 			maskArray = append(maskArray, map[string]interface{}{"type": "regex", "value": secretsMap[name]})
@@ -189,9 +192,15 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		}
 	}
 
-	// Build inputs context
+	// Build inputs context: called jobs get the call's resolved (typed)
+	// inputs; workflow_dispatch runs their typed inputs; else strings.
 	var inputsCtx interface{}
-	if len(wf.Inputs) > 0 {
+	switch {
+	case jd.Call != nil && jd.CallRole == "" && jd.Call.ResolvedInputs() != nil:
+		inputsCtx = toPipelineContextData(anyMap(jd.Call.ResolvedInputs()))
+	case len(wf.TypedInputs) > 0:
+		inputsCtx = toPipelineContextData(anyMap(wf.TypedInputs))
+	case len(wf.Inputs) > 0:
 		inputsPairs := make([]string, 0, len(wf.Inputs)*2)
 		for k, v := range wf.Inputs {
 			inputsPairs = append(inputsPairs, k, v)
@@ -248,22 +257,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 			"containers":   []interface{}{},
 		},
 		"contextData": map[string]interface{}{
-			"github": dictContextData(
-				"server_url", serverURL,
-				"api_url", serverURL,
-				"repository", repoFullName,
-				"repository_owner", repoOwner,
-				"run_id", runID,
-				"run_number", runNumber,
-				"workflow", wf.Name,
-				"job", wfJob.Key,
-				"event_name", eventName,
-				"sha", sha,
-				"ref", ref,
-				"action", "__run",
-				"workspace", "/github/workspace",
-				"token", jobToken,
-			),
+			"github": toPipelineContextData(githubRunnerContext(s, wf, wfJob, serverURL, jobToken)),
 			"runner": dictContextData(
 				"os", "Linux",
 				"arch", "ARM64",
@@ -310,6 +304,86 @@ func sortedKeys(m map[string]string) []string {
 	return keys
 }
 
+// anyMap widens a typed-inputs map for toPipelineContextData.
+func anyMap(m map[string]interface{}) map[string]interface{} { return m }
+
+// githubRunnerContext assembles the full `github` context the runner
+// receives: the server-side context map (including the triggering event
+// payload) plus the runner-session keys.
+func githubRunnerContext(s *Server, wf *Workflow, wfJob *WorkflowJob, serverURL, jobToken string) map[string]interface{} {
+	m := s.githubContextMap(wf)
+	m["server_url"] = serverURL
+	m["api_url"] = serverURL
+	m["job"] = wfJob.Key
+	m["action"] = "__run"
+	m["workspace"] = "/github/workspace"
+	m["token"] = jobToken
+	return m
+}
+
+// remapCallSecrets applies a reusable-workflow call's explicit `secrets:`
+// map: the called job receives ONLY the mapped names, with each value
+// template (`${{ secrets.X }}`) evaluated against the caller's secrets.
+func remapCallSecrets(s *Server, wf *Workflow, binding *WorkflowCallBinding, callerSecrets map[string]string) map[string]string {
+	secretsCtx := make(map[string]interface{}, len(callerSecrets))
+	for k, v := range callerSecrets {
+		secretsCtx[k] = v
+	}
+	ctx := &ExprContext{Contexts: map[string]interface{}{
+		"secrets": secretsCtx,
+		"github":  s.githubContextMap(wf),
+	}}
+	mapped := make(map[string]string, len(binding.SecretsMap))
+	for name, tmpl := range binding.SecretsMap {
+		val, err := EvalTemplate(tmpl, ctx)
+		if err != nil {
+			s.logger.Warn().Err(err).Str("secret", name).Str("workflow", binding.CalledPath).
+				Msg("workflow_call secret template failed — omitting")
+			continue
+		}
+		mapped[name] = val
+	}
+	return mapped
+}
+
+// toPipelineContextData converts a Go value into the runner's
+// PipelineContextData JSON encoding: bare strings, {"t":3,"d":bool},
+// {"t":4,"d":number}, {"t":1,"a":[...]} arrays, and
+// {"t":2,"d":[{"k":...,"v":...}]} dictionaries.
+func toPipelineContextData(v interface{}) interface{} {
+	switch t := v.(type) {
+	case nil:
+		return nil
+	case string:
+		return t
+	case bool:
+		return map[string]interface{}{"t": 3, "d": t}
+	case float64:
+		return map[string]interface{}{"t": 4, "d": t}
+	case int:
+		return map[string]interface{}{"t": 4, "d": float64(t)}
+	case []interface{}:
+		arr := make([]interface{}, 0, len(t))
+		for _, item := range t {
+			arr = append(arr, toPipelineContextData(item))
+		}
+		return map[string]interface{}{"t": 1, "a": arr}
+	case map[string]interface{}:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		entries := make([]map[string]interface{}, 0, len(t))
+		for _, k := range keys {
+			entries = append(entries, map[string]interface{}{"k": k, "v": toPipelineContextData(t[k])})
+		}
+		return map[string]interface{}{"t": 2, "d": entries}
+	default:
+		return fmt.Sprintf("%v", t)
+	}
+}
+
 // buildServiceContainers converts parsed ServiceDefs to the runner's expected
 // jobServiceContainers format: map of alias → container spec.
 func buildServiceContainers(services map[string]*ServiceDef) interface{} {
@@ -339,10 +413,15 @@ func buildServiceContainers(services map[string]*ServiceDef) interface{} {
 }
 
 // buildNeedsContext builds the "needs" PipelineContextData from completed
-// dependency outputs.
+// dependency outputs. Jobs inside a reusable-workflow call see sibling
+// needs under their unprefixed keys; the synthetic gate never appears.
 func buildNeedsContext(wf *Workflow, wfJob *WorkflowJob) interface{} {
 	if len(wfJob.Needs) == 0 {
 		return dictContextData()
+	}
+	var binding *WorkflowCallBinding
+	if wfJob.Def != nil && wfJob.Def.Call != nil && wfJob.Def.CallRole == "" {
+		binding = wfJob.Def.Call
 	}
 
 	// Build a nested dict: needs.<job>.outputs.<name> = value, needs.<job>.result = "success"
@@ -351,6 +430,12 @@ func buildNeedsContext(wf *Workflow, wfJob *WorkflowJob) interface{} {
 		depJob, ok := wf.Jobs[depKey]
 		if !ok {
 			continue
+		}
+		if binding != nil {
+			if depKey == binding.CallerKey+"/__call" {
+				continue
+			}
+			depKey = strings.TrimPrefix(depKey, binding.CallerKey+"/")
 		}
 
 		// Build outputs sub-dict
