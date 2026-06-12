@@ -263,27 +263,6 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string
 			continue
 		}
 
-		wfDef, err := ParseWorkflow(content)
-		if err != nil {
-			s.logger.Debug().Err(err).Str("file", name).Msg("skip unparseable workflow")
-			continue
-		}
-
-		expandedDef := expandMatrixJobs(wfDef)
-
-		if expandedDef.Env == nil {
-			expandedDef.Env = make(map[string]string)
-		}
-		expandedDef.Env["__defaultImage"] = "alpine:latest"
-
-		serverURL := fmt.Sprintf("http://%s", s.addr)
-		expandedDef.Env["__serverURL"] = serverURL
-
-		// Event metadata must travel INTO submitWorkflow: it resolves the
-		// originating workflow file from RepoFullName at submit time (the
-		// run's workflow_id), and the workflow becomes visible to other
-		// goroutines the moment it is stored — patching fields afterwards
-		// would both mis-derive the file id and race those readers.
 		meta := &WorkflowEventMeta{
 			EventName: eventType,
 			Ref:       ref,
@@ -291,7 +270,7 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string
 			Repo:      repoKey,
 			Payload:   payload,
 		}
-		workflow, err := s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
+		workflow, err := s.submitTriggeredWorkflow(name, content, meta)
 		if err != nil {
 			s.logger.Error().Err(err).Str("file", name).Msg("failed to trigger workflow")
 			continue
@@ -304,6 +283,31 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string
 			Str("file", name).
 			Msg("workflow triggered by event")
 	}
+}
+
+// submitTriggeredWorkflow parses, expands, and submits one workflow file
+// for an event. Event metadata must travel INTO submitWorkflow: it
+// resolves the originating workflow file from RepoFullName at submit
+// time (the run's workflow_id), and the workflow becomes visible to
+// other goroutines the moment it is stored — patching fields afterwards
+// would both mis-derive the file id and race those readers.
+func (s *Server) submitTriggeredWorkflow(fileName string, content []byte, meta *WorkflowEventMeta) (*Workflow, error) {
+	wfDef, err := ParseWorkflow(content)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", fileName, err)
+	}
+
+	expandedDef := expandMatrixJobs(wfDef)
+
+	if expandedDef.Env == nil {
+		expandedDef.Env = make(map[string]string)
+	}
+	expandedDef.Env["__defaultImage"] = "alpine:latest"
+
+	serverURL := fmt.Sprintf("http://%s", s.addr)
+	expandedDef.Env["__serverURL"] = serverURL
+
+	return s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
 }
 
 // buildTriggerEvent assembles the filterable description of an event

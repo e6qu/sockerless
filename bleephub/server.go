@@ -28,6 +28,7 @@ type Server struct {
 	metrics                *Metrics
 	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
+	scheduleFired          scheduleFiredKeys // cron-firing dedup (on: schedule)
 	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
@@ -313,6 +314,7 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
+	s.startScheduleDispatcher()
 	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
 	observed := ghWrapped
