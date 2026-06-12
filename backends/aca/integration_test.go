@@ -186,7 +186,9 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 		if err := bootstrapBuild.Run(); err != nil {
 			failClean("ERROR: build ACA app bootstrap: %v\n", err)
 		}
-		cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+		if os.Getenv(acaAppsE2EEnv) != "1" {
+			cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+		}
 
 		overlayCtx, err := os.MkdirTemp("", "sockerless-aca-overlay-")
 		if err != nil {
@@ -244,7 +246,9 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		if err := build.Run(); err != nil {
 			failClean("ERROR: build simulator-azure failed: %v\n", err)
 		}
-		cleanups = append(cleanups, func() { os.Remove(simBinary) })
+		if os.Getenv(acaAppsE2EEnv) != "1" {
+			cleanups = append(cleanups, func() { os.Remove(simBinary) })
+		}
 
 		simPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
@@ -325,7 +329,15 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	if err := buildBackend.Run(); err != nil {
 		failClean("ERROR: build sockerless-backend-aca: %v\n", err)
 	}
-	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+	// The gitlab-attach test re-execs this binary with the apps-E2E env
+	// set, which runs TestMain AGAIN as a subprocess. That nested run
+	// must not delete repo-path artifacts the PARENT suite still uses
+	// (it deleted the backend binary out from under later parent tests
+	// that spawn it).
+	nestedRun := os.Getenv(acaAppsE2EEnv) == "1"
+	if !nestedRun {
+		cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+	}
 
 	runtimeClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {

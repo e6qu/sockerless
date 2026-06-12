@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1750 filed - 1708 fixed - 2 open - 7 false positives.**
+**1751 filed - 1709 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1751~~ | P2 | backend-aca harness — nested TestMain deleted the parent suite's binaries | re-exec cleanup stomp | TestACAGitLabRunnerAttachStdin re-execs the test binary (apps-E2E mode), running TestMain AGAIN as a subprocess; the nested run's cleanup os.Remove'd the shared backend/sim binaries from under the parent, so any LATER parent test exec'ing the backend hit fork/exec ENOENT — exactly what the new shared-volumes test exposed in CI (and reproduced locally only in full-suite order). Nested runs now skip repo-path artifact removal. Also: the ACA shared-volumes test used the FROM-scratch eval image whose lack of a shell made `sh -c` scripts exit 1 with empty logs — switched to alpine like its passing ECS twin, and nonzero-exit failures now include container logs. |
 | ~~1750~~ | P2 | backends — bind-mount→shared-volume translation parity incomplete (the runner-on-cloud gate) | partial mechanism | ECS/Cloud Run/GCF translated runner host binds to shared cloud volumes (`SOCKERLESS_*_SHARED_VOLUMES`), but lambda had the config UNWIRED into its bind path, and ACA/AZF had no mechanism at all (rejection message didn't even name a config). Parity completed across all six container backends with consistent sub-path-drop semantics; per-backend unit tests + ECS/ACA sim-backed integration tests prove the actual contract (container A writes via named volume, container B reads via translated host bind). What remains for runner-as-cloud-task is topology (runner images mounting the shared volume), not translation. |
 | ~~1749~~ | P3 | bleephub — runner's "Canceled" result spelling leaked through unmapped | result normalization | The official runner's TaskResult uses the US spelling; normalizeResult only mapped "Cancelled"/"cancelled", so runner-cancelled jobs carried Result "canceled" — invisible to every ResultCancelled comparison (fail-fast, rollups, conclusions). Found by the harness's new cancellation e2e asserting the strict value. |
 | ~~1748~~ | P3 | bleephub — actions hosted on bleephub itself can't resolve (`uses: owner/repo@ref` 502s) | action-source fidelity | The action tarball proxy serves the in-memory cache or fetches from real api.github.com; a repo ON bleephub holding an action (composite or otherwise) is never consulted, so self-hosted actions — GHES's bread and butter — fail with 502. Serve tarballs from bleephub's own git storage first (GitHub tarball layout: top-level `<owner>-<repo>-<sha>/` prefix), falling back to github.com for external actions. |

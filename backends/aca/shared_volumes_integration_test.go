@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
 )
@@ -23,6 +25,16 @@ import (
 func startBackendWithEnv(t *testing.T, extraEnv ...string) *client.Client {
 	t.Helper()
 	port := findFreePort()
+	if _, statErr := os.Stat(backendBinaryPath); statErr != nil {
+		// The harness built this binary in TestMain; capture directory
+		// state if it has gone missing (observed once in CI).
+		entries, _ := os.ReadDir(filepath.Dir(backendBinaryPath))
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("backend binary %s missing before spawn: %v (dir: %v)", backendBinaryPath, statErr, names)
+	}
 	cmd := exec.Command(backendBinaryPath, "--addr", fmt.Sprintf(":%d", port), "--log-level", "debug")
 	cmd.Env = append(append(os.Environ(), backendBaseEnv...), extraEnv...)
 	cmd.Stdout = os.Stderr
@@ -47,14 +59,31 @@ func startBackendWithEnv(t *testing.T, extraEnv ...string) *client.Client {
 	return cli
 }
 
-// sharedVolRun creates + runs a container off the eval image (already
-// staged by TestMain — same pattern as the arithmetic tests) with an
-// `sh -c` entrypoint override, waits for exit 0, and returns its logs.
+// pullAlpine stages alpine through the backend's image path — the
+// harness eval image is FROM scratch (no shell), and these scripts
+// need `sh`.
+func pullAlpine(t *testing.T, cli *client.Client) {
+	t.Helper()
+	rc, err := cli.ImagePull(context.Background(), "alpine:latest", image.PullOptions{})
+	if err != nil {
+		t.Fatalf("image pull failed: %v", err)
+	}
+	defer rc.Close()
+	buf := make([]byte, 4096)
+	for {
+		if _, err := rc.Read(buf); err != nil {
+			break
+		}
+	}
+}
+
+// sharedVolRun creates + runs an alpine container with an `sh -c`
+// entrypoint, waits for exit 0, and returns its logs.
 func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds []string) string {
 	t.Helper()
 	ctx := context.Background()
 	resp, err := cli.ContainerCreate(ctx, &container.Config{
-		Image:      evalImageName,
+		Image:      "alpine:latest",
 		Entrypoint: []string{"sh", "-c", script},
 	}, &container.HostConfig{Binds: binds}, nil, nil, name)
 	if err != nil {
@@ -70,7 +99,14 @@ func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds [
 	select {
 	case result := <-waitCh:
 		if result.StatusCode != 0 {
-			t.Fatalf("container %s exited with %d, want 0", name, result.StatusCode)
+			out := ""
+			if logRC, lerr := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true}); lerr == nil {
+				buf := make([]byte, 8192)
+				n, _ := logRC.Read(buf)
+				logRC.Close()
+				out = string(buf[:n])
+			}
+			t.Fatalf("container %s exited with %d, want 0; logs:\n%s", name, result.StatusCode, out)
 		}
 	case err := <-errCh:
 		t.Fatalf("container wait (%s) error: %v", name, err)
@@ -120,6 +156,8 @@ func TestACASharedVolumeWorkspaceSharing(t *testing.T) {
 	// shared volume's Azure Files share with an explicit backing.
 	sharedSpec := fmt.Sprintf("%s=%s=%s=azure-files-ephemeral", volName, runnerWork, shareName)
 	cli := startBackendWithEnv(t, "SOCKERLESS_ACA_SHARED_VOLUMES="+sharedSpec)
+
+	pullAlpine(t, cli)
 
 	// Writer (the "runner" side): named-volume bind, writes the
 	// workspace marker file.
