@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1738 filed - 1696 fixed - 2 open - 7 false positives.**
+**1739 filed - 1697 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1739~~ | P2 | bleephub — official-runner integration harness bitrotted: launches retired binaries | harness drift | `bleephub/test/run-integration.sh` started `sockerless-backend-memory` + `sockerless-frontend-docker`, binaries that no longer exist anywhere in the repo (the memory backend was retired; backends serve the Docker API in-process) — the harness died at startup, so the official actions/runner path was only covered hermetically. Rewired to what its own Dockerfile builds: simulator-aws + sockerless-backend-ecs (process-mode reverse agent, same recipe as tests/e2e-live-tests), agent binary added to the image. |
 | ~~1738~~ | P2 | bleephub actions — runner console-line feeds rejected: wrapper shape not decoded | wrong wire decode | The official runner POSTs console lines as `TimelineRecordFeedLinesWrapper` `{count, value, stepId}` (TaskHttpClient.cs), but `handleWebConsoleLog` decoded a bare `[]string` — real-runner live console feeds silently dropped (same class as the BUG-1736 timeline-records wrapper, found while fixing it). Tolerant decode (wrapper first, bare-array fallback) + tests. |
 | ~~1737~~ | P3 | bleephub UI — Actions experience incomplete | UI gaps | No per-step display, no live log tail, no re-run/cancel/dispatch buttons, no artifact downloads, no pending-deployment approval actions, no secrets/variables management, PR pages show no check results. |
 | ~~1736~~ | P2 | bleephub actions — timeline records discarded; jobs API serves synthesized steps | synthetic steps (fake data) | `handleUpdateRecords` logs and drops runner timeline records; `jobStepsJSON` then fabricates every step with the JOB's status/timing — invented per-step data instead of the real records the runner already uploads. Console log capture also caps at 500 lines/job, silently truncating real logs. |

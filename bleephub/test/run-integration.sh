@@ -50,19 +50,34 @@ wait_for_url() {
     fail "Timeout waiting for $url"
 }
 
-# --- 1. Start Sockerless backend (quiet) ---
-log "Starting Sockerless backend on $BACKEND_ADDR"
-sockerless-backend-memory --addr "$BACKEND_ADDR" --log-level warn &
+# --- 1. Start the AWS simulator (the ECS control plane) ---
+log "Starting AWS simulator on 127.0.0.1:4566"
+SIM_LISTEN_ADDR=":4566" simulator-aws &
 PIDS+=($!)
-wait_for_url "http://$BACKEND_ADDR/internal/v1/info"
-log "Backend ready"
+wait_for_url "http://127.0.0.1:4566/health"
+log "Simulator ready"
 
-# --- 2. Start Docker frontend (quiet) ---
-log "Starting Docker frontend on $FRONTEND_ADDR"
-sockerless-frontend-docker --addr "$FRONTEND_ADDR" --backend "http://$BACKEND_ADDR" --log-level warn &
+curl -s -X POST http://127.0.0.1:4566/ \
+    -H "Content-Type: application/x-amz-json-1.1" \
+    -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster" \
+    -d '{"clusterName":"sim-cluster"}' >/dev/null
+log "ECS cluster bootstrapped"
+
+# --- 2. Start the ECS backend (serves the Docker API directly).
+# Sim-mode workloads run as reverse-agent PROCESSES (no Docker engine
+# in this container) — the same recipe tests/e2e-live-tests uses.
+log "Starting Sockerless ECS backend on $BACKEND_ADDR"
+export AWS_ACCESS_KEY_ID="sim" AWS_SECRET_ACCESS_KEY="sim" AWS_REGION="us-east-1"
+export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
+export SOCKERLESS_ECS_CLUSTER="sim-cluster"
+export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"
+export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="arn:aws:iam::000000000000:role/sim"
+export SOCKERLESS_CALLBACK_URL="http://$BACKEND_ADDR"
+export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
+sockerless-backend-ecs --addr "$BACKEND_ADDR" --log-level warn &
 PIDS+=($!)
 wait_for_url "http://$FRONTEND_ADDR/_ping"
-log "Docker frontend ready"
+log "Docker API (ECS backend) ready"
 
 # --- 3. Start bleephub ---
 log "Starting bleephub on $BLEEPHUB_ADDR"

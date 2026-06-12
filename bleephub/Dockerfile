@@ -15,6 +15,10 @@ COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
 
+# --- Build the reverse agent (sim-mode workloads run as agent processes) ---
+RUN cd agent && GOWORK=off go mod download && \
+    GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
+
 # --- Build AWS simulator ---
 COPY simulators/realexec/ /realexec/
 COPY simulators/aws/ /sim-aws/

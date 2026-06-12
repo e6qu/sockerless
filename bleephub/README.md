@@ -164,7 +164,13 @@ To rebuild the embedded copy (production-style) re-run `bun run build` then `mak
 
 **Deployments + Environments.** Full deployment + status + environment surface, including environment protection rules with required reviewers and wait timers. Workflow runs targeting a protected environment park as `waiting` — `GET`/`POST /actions/runs/{run_id}/pending_deployments` lists and approves/rejects them (approval releases the waiting jobs), and `GET /actions/runs/{run_id}/approvals` returns the review history. `deployment` and `deployment_status` webhook events with `attachInstallationBlock`. Environments lazy-created on first deployment to that env.
 
-**Actions API (workflow runs / jobs / steps).** `GET /actions/runs`, `runs/{id}`, `runs/{id}/jobs`, `runs/{id}/logs` (zip), `runs/{id}/timing`, `runs/{id}/rerun`, `runs/{id}/rerun-failed-jobs`, `runs/{id}/cancel`. `POST /repos/{o}/{r}/dispatches` for `repository_dispatch`. `workflow_dispatch` via `POST /actions/workflows/{id}/dispatches`.
+**Workflow engine (server-side).** Full `on:` trigger semantics: branch/tag/path filter patterns (`*`, `**`, `?`, `+`, `[...]`, ordered `!` negation; path filters diff real git commits), activity types with per-event defaults (`pull_request` fires opened/synchronize/reopened by default — including `synchronize` on pushes to an open PR's head branch), `repository_dispatch` types matching the custom event_type, and `on: schedule` crons fired by a minute-aligned dispatcher (POSIX 5-field parser with names/ranges/steps and the dom/dow OR rule). Reusable workflows (`jobs.<id>.uses`, local `./` and same-server `owner/repo/...@ref`): called jobs join the caller's run as "caller / called", inputs are validated/typed/defaulted against the `workflow_call` declarations, `secrets: inherit` or explicit mapping, outputs map back onto `needs.<caller>`, nesting bounded at 4 levels. A real expression engine evaluates job-level `if:` and `${{ }}` templates (concurrency groups, `with:`, `workflow_call` outputs): GitHub's grammar and loose-equality/coercion semantics, `github` (incl. the full `event` payload), `needs`, `vars`, `inputs`, `matrix` contexts, and `contains`/`startsWith`/`endsWith`/`format`/`join`/`toJSON`/`fromJSON` plus the status functions; invalid expressions fail the job like real GitHub. The runner receives typed `PipelineContextData` (github.event, typed inputs) and the merged secrets/vars with masks.
+
+**Secrets & configuration variables.** Repo / organization / environment scopes for both, with the real sealed-box wire contract (`GET .../secrets/public-key`, libsodium `crypto_box_seal`, `PUT {encrypted_value, key_id}` — plaintext PUTs are rejected), org visibility (`all`/`private`/`selected` + selected-repositories endpoints), name rules (422 on `GITHUB_`-prefixed or invalid), and org→repo→environment precedence merged into runner job messages (every secret value masked in runner logs).
+
+**Checks integration.** Workflow jobs mirror to check runs under a check suite owned by the github-actions app: created at run submission, `in_progress` at runner pickup, completed with the job's conclusion; the suite rolls up at run completion. `workflow_run`, `workflow_job`, `check_run`, and `check_suite` webhook events fire at the same points real GitHub fires them. PR `mergeable_state` reflects the head commit's checks (`blocked` on unmet required status checks from base-branch protection, `unstable` on failing/pending non-required ones), and the merge API rejects with 405 while required checks aren't green.
+
+**Actions API (workflow runs / jobs / steps).** `GET /actions/runs` (status/branch/event filters), `runs/{id}`, `runs/{id}/jobs` (real per-step status/timing from runner timeline records), `runs/{id}/attempts/{n}[/jobs]` (archived attempts), `runs/{id}/logs` (GitHub-layout zip), `runs/{id}/timing`, `runs/{id}/rerun` + `rerun-failed-jobs` (same run id, run_attempt increments; failed-only rerun carries successful jobs' results over), `runs/{id}/cancel`. Workflow files: list/get, `PUT .../workflows/{id}/{enable,disable}` (disabled workflows don't trigger and dispatch 403s), `POST .../dispatches` with input validation/defaults/typing against the `workflow_dispatch` declarations. `POST /repos/{o}/{r}/dispatches` for `repository_dispatch`. Runners: repo + org scope (list/get/delete/registration-token, honest `busy` from running-job association); the broker routes jobs only to runners whose labels cover `runs-on` (GitHub-hosted aliases like `ubuntu-latest` run on any connected runner — bleephub has no hosted pool).
 
 **Checks API.** `check-runs` create/get/update/list-by-commit/list-by-suite/annotations. `check-suites` get/list-by-commit/preferences. App-owned: writes require `checks:write` on an installation token.
 
@@ -245,10 +251,11 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 
 - Runner auto-update (`AgentRefreshMessage`).
 - V2 broker flow (uses legacy V1 pipelines paths).
-- Reusable workflows (`uses: ./.github/workflows/`).
-- Composite actions.
+- Composite actions server-side (the runner resolves and executes them from the action tarball service; bleephub doesn't introspect them).
+- Failed-run shells for invalid reusable-workflow references: real GitHub creates a run with `startup_failure` when a `uses:` target is missing/invalid; bleephub rejects the submission (logged at trigger time, 422 on dispatch).
+- Runner groups beyond the single default pool (org/repo runner listings serve the global pool; org-scoped runner routes exist).
+- Job cancellation signals to a RUNNING runner job: cancel marks pending/queued jobs cancelled, but a job already executing on a runner finishes its course (no `JobCancellation` broker message yet); `if: always()`/`cancelled()` jobs likewise don't dispatch after a cancel.
 - Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
-- Workflow enable/disable (`PUT/POST /actions/workflows/{id}/{enable,disable}`) — `gh workflow enable / disable` has no route to hit.
 - SAML SSO + SCIM provisioning.
 - Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
 - Org people-management extras: `outside_collaborators`, `blocks`, `security-managers`, member codespaces/copilot endpoints.
@@ -259,6 +266,7 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.
 - gh CLI commands that require deep workflow-run state bleephub doesn't synthesise (`gh run watch` long-poll, log tail).
+- `on: schedule` crons fire from real server time (minute-aligned); there is no time-warp hook for tests beyond calling the dispatcher directly.
 
 ## How it works
 
