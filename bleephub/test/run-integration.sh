@@ -75,6 +75,14 @@ export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
 export SOCKERLESS_ECS_CLUSTER="sim-cluster"
 export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"
 export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="arn:aws:iam::000000000000:role/sim"
+# Workload arch is explicit by design (the backend reports the cloud
+# workload's architecture, never its own). Here workloads run as
+# containers on the host engine, so the host arch IS the workload arch.
+case "$(uname -m)" in
+    x86_64)        export SOCKERLESS_ECS_CPU_ARCHITECTURE="X86_64" ;;
+    aarch64|arm64) export SOCKERLESS_ECS_CPU_ARCHITECTURE="ARM64" ;;
+    *) fail "unsupported host arch $(uname -m)" ;;
+esac
 # Reverse agents run inside workload containers on the HOST engine;
 # they must dial the backend through a host-reachable address
 # (host.docker.internal + the published 3375), not this container's
