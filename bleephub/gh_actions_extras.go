@@ -94,9 +94,13 @@ func repositoryDispatchPayload(repo *Repo, user *User, eventType string, clientP
 	}
 }
 
-// handleRunLogs — returns a zip with one txt file per job. Real GH redirects
-// to a signed-URL download; for bleephub we return the zip directly with
-// Content-Type: application/zip (curl + gh both handle the response body).
+// handleRunLogs — returns the run's log archive shaped like real GitHub's:
+// per job a top-level "0_<jobname>.txt" (full job log) plus a
+// "<jobname>/" folder with "<number>_<step name>.txt" per step that has
+// uploaded log content. Jobs whose runner never reported timeline records
+// keep the flat "<jobKey>_<jobUUID>.txt" console-capture entry. Real GH
+// redirects to a signed-URL download; bleephub returns the zip directly
+// with Content-Type: application/zip (curl + gh both handle the body).
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
@@ -110,21 +114,54 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	s.store.mu.RLock()
 	for jobKey, job := range wf.Jobs {
-		lines := s.store.LogLines[job.JobID]
-		f, err := zw.Create(fmt.Sprintf("%s_%s.txt", jobKey, job.JobID))
-		if err != nil {
+		tasks := s.taskRecordsForJobLocked(job.JobID)
+		if len(tasks) == 0 {
+			f, err := zw.Create(fmt.Sprintf("%s_%s.txt", jobKey, job.JobID))
+			if err != nil {
+				continue
+			}
+			for _, line := range s.store.LogLines[job.JobID] {
+				_, _ = f.Write([]byte(line + "\n"))
+			}
 			continue
 		}
-		for _, line := range lines {
-			_, _ = f.Write([]byte(line + "\n"))
+		jobName := job.DisplayName
+		if jobName == "" {
+			jobName = jobKey
+		}
+		jobName = zipSafeName(jobName)
+		if f, err := zw.Create(fmt.Sprintf("0_%s.txt", jobName)); err == nil {
+			_, _ = f.Write(s.jobLogContentLocked(job.JobID))
+		}
+		for i, rec := range tasks {
+			if rec.Log == nil {
+				continue
+			}
+			content := s.store.LogFiles[rec.Log.ID]
+			if len(content) == 0 {
+				continue
+			}
+			f, err := zw.Create(fmt.Sprintf("%s/%d_%s.txt", jobName, i+1, zipSafeName(rec.Name)))
+			if err != nil {
+				continue
+			}
+			_, _ = f.Write(content)
 		}
 	}
+	s.store.mu.RUnlock()
 	_ = zw.Close()
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="logs_%d.zip"`, runID))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(buf.Bytes())
+}
+
+// zipSafeName keeps job/step names usable as zip entry path segments —
+// '/' in a name would otherwise change the archive layout.
+func zipSafeName(name string) string {
+	return strings.ReplaceAll(name, "/", "_")
 }
 
 // handleRerunFailedJobs reuses the rerun path; bleephub doesn't distinguish

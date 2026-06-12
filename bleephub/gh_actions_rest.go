@@ -13,12 +13,14 @@ package bleephub
 // land in.
 
 import (
+	"bytes"
 	"fmt"
 	"hash/fnv"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func (s *Server) registerGHActionsRoutes() {
@@ -218,9 +220,9 @@ func eventOf(wf *Workflow) string {
 }
 
 // workflowJobJSON converts a WorkflowJob to GitHub's `Job` shape. Step
-// detail is synthesized from the job's status (real GitHub records
-// per-step start/finish; bleephub tracks only job-level timing today).
-func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string) map[string]any {
+// detail comes from the timeline records the runner reported for the
+// job's plan.
+func (s *Server) workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string) map[string]any {
 	repoPath := repoName
 	if wf.RepoFullName != "" {
 		repoPath = wf.RepoFullName
@@ -258,7 +260,7 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 		"started_at":        startedAt,
 		"completed_at":      completedAt,
 		"name":              wfJob.DisplayName,
-		"steps":             jobStepsJSON(wfJob, status, startedAt, completedAt),
+		"steps":             s.jobStepsJSON(wfJob),
 		"check_run_url":     fmt.Sprintf("%s/check-runs/%d", apiBase, id),
 		"labels":            labelsForJob(wfJob),
 		"runner_id":         nil,
@@ -268,59 +270,91 @@ func workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string)
 	}
 }
 
-// jobStepsJSON synthesizes the GitHub-shape `steps` array from the job's
-// step definitions. Each step object carries name/status/conclusion/
-// number/started_at/completed_at. Bleephub tracks job-level timing only,
-// so every step inherits the job's status, conclusion, and timestamps;
-// the per-step `number` is 1-based in definition order, matching how
-// GitHub numbers a job's steps.
-func jobStepsJSON(wfJob *WorkflowJob, jobStatus, startedAt string, completedAt any) []map[string]any {
-	var defs []StepDef
-	if wfJob.Def != nil {
-		defs = wfJob.Def.Steps
-	}
-	steps := make([]map[string]any, 0, len(defs))
-	for i, sd := range defs {
-		name := sd.Name
-		if name == "" {
-			if sd.Uses != "" {
-				name = sd.Uses
-			} else {
-				name = "Run " + truncateStepName(sd.Run)
-			}
-		}
-		var started any
-		var completed any
-		if jobStatus != "queued" {
-			started = startedAt
-		}
-		if jobStatus == "completed" {
-			completed = completedAt
-		}
+// jobStepsJSON renders the GitHub-shape `steps` array from the timeline
+// records the runner uploaded for the job's plan (Type "Task", in Order).
+// A job whose runner hasn't reported records yet has no step truth to
+// serve, so the array is empty — step state is never fabricated.
+func (s *Server) jobStepsJSON(wfJob *WorkflowJob) []map[string]any {
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	tasks := s.taskRecordsForJobLocked(wfJob.JobID)
+	steps := make([]map[string]any, 0, len(tasks))
+	for i, rec := range tasks {
 		steps = append(steps, map[string]any{
-			"name":         name,
-			"status":       jobStatus,
-			"conclusion":   jobConclusion(jobStatus, string(wfJob.Result)),
+			"name":         rec.Name,
+			"status":       stepStatus(rec.State),
+			"conclusion":   stepConclusion(rec.State, rec.Result),
 			"number":       i + 1,
-			"started_at":   started,
-			"completed_at": completed,
+			"started_at":   stepTimestamp(rec.StartTime),
+			"completed_at": stepTimestamp(rec.FinishTime),
 		})
 	}
 	return steps
 }
 
-func truncateStepName(run string) string {
-	run = strings.TrimSpace(run)
-	if i := strings.IndexByte(run, '\n'); i >= 0 {
-		run = run[:i]
+// taskRecordsForJobLocked returns the job's "Task" (step) timeline records
+// sorted by Order. Caller must hold store.mu.
+func (s *Server) taskRecordsForJobLocked(jobUUID string) []*TimelineRecord {
+	job := s.store.Jobs[jobUUID]
+	if job == nil {
+		return nil
 	}
-	if len(run) > 40 {
-		run = run[:40]
+	var tasks []*TimelineRecord
+	for _, rec := range s.store.TimelineRecords[job.PlanID] {
+		if rec.Type == "Task" {
+			tasks = append(tasks, rec)
+		}
 	}
-	if run == "" {
-		return "step"
+	sort.SliceStable(tasks, func(i, j int) bool { return tasks[i].Order < tasks[j].Order })
+	return tasks
+}
+
+// stepStatus maps the runner's timeline record state (pending |
+// inProgress | completed) to GitHub's step status enum (queued |
+// in_progress | completed).
+func stepStatus(state string) string {
+	switch state {
+	case "inProgress":
+		return "in_progress"
+	case "completed":
+		return "completed"
+	default:
+		return "queued"
 	}
-	return run
+}
+
+// stepConclusion maps the runner's timeline record result to GitHub's
+// step conclusion; null until the step completes.
+func stepConclusion(state, result string) any {
+	if state != "completed" {
+		return nil
+	}
+	switch result {
+	case "succeeded", "succeededWithIssues":
+		return "success"
+	case "failed":
+		return "failure"
+	case "canceled", "abandoned":
+		return "cancelled"
+	case "skipped":
+		return "skipped"
+	default:
+		return nil
+	}
+}
+
+// stepTimestamp normalizes the runner's ISO-8601 timestamps (which carry
+// fractional seconds) to GitHub's second-resolution RFC3339; null when
+// the runner hasn't reported the time. A value that doesn't parse is
+// passed through verbatim rather than dropped.
+func stepTimestamp(ts string) any {
+	if ts == "" {
+		return nil
+	}
+	if t, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+		return t.UTC().Format("2006-01-02T15:04:05Z")
+	}
+	return ts
 }
 
 func labelsForJob(wfJob *WorkflowJob) []string {
@@ -526,7 +560,7 @@ func (s *Server) handleListWorkflowRunJobs(w http.ResponseWriter, r *http.Reques
 	repo := repoFullName(r)
 	jobs := make([]map[string]any, 0, len(page))
 	for _, j := range page {
-		jobs = append(jobs, workflowJobJSON(wf, j, base, repo))
+		jobs = append(jobs, s.workflowJobJSON(wf, j, base, repo))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_count": len(allJobs),
@@ -546,13 +580,14 @@ func (s *Server) handleGetWorkflowJob(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, workflowJobJSON(wf, j, s.baseURL(r), repoFullName(r)))
+	writeJSON(w, http.StatusOK, s.workflowJobJSON(wf, j, s.baseURL(r), repoFullName(r)))
 }
 
 // handleGetWorkflowJobLogs — GET .../actions/jobs/{job_id}/logs
 // Real GitHub returns text/plain logs (sometimes 302 to a pre-signed
-// URL). Bleephub captures per-job log lines in `store.LogLines` keyed
-// by the internal UUID.
+// URL). Bleephub serves the complete log the runner uploaded when the
+// job's timeline records reference log files, falling back to the live
+// console capture in `store.LogLines`.
 func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request) {
 	jobID, err := strconv.ParseInt(r.PathValue("job_id"), 10, 64)
 	if err != nil {
@@ -565,16 +600,42 @@ func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	s.store.mu.RLock()
-	lines := s.store.LogLines[j.JobID]
+	content := s.jobLogContentLocked(j.JobID)
 	s.store.mu.RUnlock()
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
-	for _, line := range lines {
-		_, _ = w.Write([]byte(line))
-		if !strings.HasSuffix(line, "\n") {
-			_, _ = w.Write([]byte{'\n'})
+	_, _ = w.Write(content)
+}
+
+// jobLogContentLocked assembles the job's complete log: the runner-
+// uploaded log files referenced by the job's Task records, concatenated
+// in step Order; when none were uploaded, the captured console lines.
+// Caller must hold store.mu.
+func (s *Server) jobLogContentLocked(jobUUID string) []byte {
+	var buf bytes.Buffer
+	for _, rec := range s.taskRecordsForJobLocked(jobUUID) {
+		if rec.Log == nil {
+			continue
+		}
+		content := s.store.LogFiles[rec.Log.ID]
+		if len(content) == 0 {
+			continue
+		}
+		buf.Write(content)
+		if content[len(content)-1] != '\n' {
+			buf.WriteByte('\n')
 		}
 	}
+	if buf.Len() > 0 {
+		return buf.Bytes()
+	}
+	for _, line := range s.store.LogLines[jobUUID] {
+		buf.WriteString(line)
+		if !strings.HasSuffix(line, "\n") {
+			buf.WriteByte('\n')
+		}
+	}
+	return buf.Bytes()
 }
 
 // handleCancelWorkflowRun — POST .../actions/runs/{run_id}/cancel
