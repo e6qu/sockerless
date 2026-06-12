@@ -127,6 +127,7 @@ type Store struct {
 	EnvSecrets         map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
 	EnvVariables       map[string]map[string]*ActionsVariable // envScopeKey(repo, env) → NAME → variable
 	TimelineRecords    map[string][]*TimelineRecord           // planID → runner-uploaded timeline records
+	LogFiles           map[int][]byte                         // logID → uploaded runner log content
 	WorkflowAttempts   map[int][]*Workflow                    // runID → prior attempts (oldest first)
 	Hooks              map[string][]*Webhook                  // "owner/repo" → hooks
 	OrgHooks           map[string][]*Webhook                  // org login → org-level hooks
@@ -277,6 +278,7 @@ func NewStore() *Store {
 		EnvSecrets:         make(map[string]map[string]*Secret),
 		EnvVariables:       make(map[string]map[string]*ActionsVariable),
 		TimelineRecords:    make(map[string][]*TimelineRecord),
+		LogFiles:           make(map[int][]byte),
 		WorkflowAttempts:   make(map[int][]*Workflow),
 		Hooks:              make(map[string][]*Webhook),
 		OrgHooks:           make(map[string][]*Webhook),
