@@ -54,6 +54,7 @@ func run() error {
 	configPath := flag.String("config", "", "path to dispatcher config.toml; default ~/.sockerless/dispatcher-gcp/config.toml")
 	once := flag.Bool("once", false, "run a single poll cycle and exit (smoke / debug)")
 	cleanupOnly := flag.Bool("cleanup-only", false, "run a single GC sweep (Cloud Run Jobs + GitHub runners) and exit; no polling")
+	apiBase := flag.String("api-base", scopes.DefaultAPIBase, "GitHub REST API base; GHES shape is https://<host>/api/v3")
 	flag.Parse()
 
 	// Cloud Run / serverless deployment: --repo and --token can come
@@ -114,7 +115,7 @@ func run() error {
 	// window WORSE — sleeping wins.
 	verifyBackoff := 30 * time.Second
 	for {
-		err := scopes.Verify(ctx, http.DefaultClient, *token)
+		err := scopes.Verify(ctx, http.DefaultClient, *apiBase, *repo, *token)
 		if err == nil {
 			break
 		}
@@ -139,6 +140,7 @@ func run() error {
 		*repo, len(cfg.Labels), *once, *cleanupOnly)
 
 	gh := poller.New(http.DefaultClient, *token, *repo)
+	gh.APIBase = strings.TrimRight(*apiBase, "/")
 	loop := newDispatchLoop(gh, cfg)
 
 	loop.RecoverState(ctx)

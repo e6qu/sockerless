@@ -41,11 +41,7 @@ func (s *Server) handleRunnerRegistration(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	serverURL := scheme + "://" + r.Host
+	serverURL := s.baseURL(r)
 
 	// The runner extracts org/repo from the tenant URL for display purposes.
 	// If the original --url had a path (e.g. /owner/repo), preserve it.

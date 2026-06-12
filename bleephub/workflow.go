@@ -419,6 +419,40 @@ func (jd *JobDef) ContainerImage() string {
 	return ""
 }
 
+// ContainerObject returns the parsed ContainerDef when `container:`
+// was declared in object form (image + env/ports/volumes/options),
+// nil for the bare-string and absent forms.
+func (jd *JobDef) ContainerObject() *ContainerDef {
+	m, ok := jd.Container.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	cd := &ContainerDef{}
+	if img, ok := m["image"].(string); ok {
+		cd.Image = img
+	}
+	if env, ok := m["env"].(map[string]interface{}); ok {
+		cd.Env = make(map[string]string, len(env))
+		for k, v := range env {
+			cd.Env[k] = fmt.Sprintf("%v", v)
+		}
+	}
+	if ports, ok := m["ports"].([]interface{}); ok {
+		cd.Ports = ports
+	}
+	if vols, ok := m["volumes"].([]interface{}); ok {
+		for _, v := range vols {
+			if s, ok := v.(string); ok {
+				cd.Volumes = append(cd.Volumes, s)
+			}
+		}
+	}
+	if opts, ok := m["options"].(string); ok {
+		cd.Options = opts
+	}
+	return cd
+}
+
 // ParseActionRef splits a "uses" reference like "actions/checkout@v4" into
 // owner/repo, path (if any), and ref.
 // Supported formats:

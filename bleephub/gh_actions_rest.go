@@ -87,15 +87,23 @@ func stableJobID(uuid string) int64 {
 	return int64(h.Sum64() & 0x7fffffffffffffff)
 }
 
-// runStatus maps internal Workflow.Status → GitHub's three statuses
-// (`queued`, `in_progress`, `completed`). Bleephub uses
-// "running"/"completed"/"pending_concurrency" internally.
-func runStatus(internal string) string {
-	switch internal {
+// runStatus maps a Workflow → GitHub's run statuses (`queued`,
+// `in_progress`, `completed`, `waiting`). Bleephub's internal
+// "running" begins at submission, but real GitHub keeps the run
+// `queued` until a job actually STARTS executing — pollers that gate
+// on `?status=queued` (the github-runner dispatcher, ARC-style
+// autoscalers) depend on that distinction to see label-stranded runs.
+func runStatus(wf *Workflow) string {
+	switch string(wf.Status) {
 	case "completed":
 		return "completed"
 	case "running":
-		return "in_progress"
+		for _, j := range wf.Jobs {
+			if j.Status == JobStatusRunning || j.Status == JobStatusCompleted {
+				return "in_progress"
+			}
+		}
+		return "queued"
 	case "pending_concurrency":
 		return "queued"
 	case "waiting":
@@ -167,7 +175,7 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string, repoJSON map[string
 	}
 	apiBase := fmt.Sprintf("%s/api/v3/repos/%s", baseURL, repoPath)
 	htmlBase := fmt.Sprintf("%s/%s", baseURL, repoPath)
-	status := runStatus(string(wf.Status))
+	status := runStatus(wf)
 	// workflow_id / workflow_url / path reference the originating workflow
 	// FILE, which is stable across every run produced from it — never the
 	// per-run RunID. Use the values resolved at submit/dispatch time; fall
@@ -538,7 +546,7 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 		if wf.RepoFullName != "" && wf.RepoFullName != repo {
 			continue
 		}
-		if statusFilter != "" && runStatus(string(wf.Status)) != statusFilter {
+		if statusFilter != "" && runStatus(wf) != statusFilter {
 			continue
 		}
 		if branchFilter != "" && headBranchOf(wf) != branchFilter {

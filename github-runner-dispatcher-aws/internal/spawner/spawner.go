@@ -76,16 +76,19 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		"run", "--rm", "-d",
 		"--pull", "never",
 		"--name", req.RunnerName,
-		"--label", LabelManagedBy + "=" + LabelManagedVal,
+	}
+	args = append(args, hostGatewayArgs(ctx, req.DockerHost)...)
+	args = append(args,
+		"--label", LabelManagedBy+"="+LabelManagedVal,
 		"--label", fmt.Sprintf("%s=%d", LabelJobID, req.JobID),
-		"--label", LabelRunnerName + "=" + req.RunnerName,
-		"-e", "RUNNER_REG_TOKEN=" + req.RegToken,
-		"-e", "RUNNER_REPO=" + req.Repo,
-		"-e", "RUNNER_NAME=" + req.RunnerName,
-		"-e", "RUNNER_LABELS=" + strings.Join(req.Labels, ","),
+		"--label", LabelRunnerName+"="+req.RunnerName,
+		"-e", "RUNNER_REG_TOKEN="+req.RegToken,
+		"-e", "RUNNER_REPO="+req.Repo,
+		"-e", "RUNNER_NAME="+req.RunnerName,
+		"-e", "RUNNER_LABELS="+strings.Join(req.Labels, ","),
 		"-e", fmt.Sprintf("RUNNER_IDLE_SECONDS=%d", idle),
 		req.Image,
-	}
+	)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = append(os.Environ(), "DOCKER_HOST="+req.DockerHost)
 	out, err := cmd.CombinedOutput()
@@ -97,6 +100,28 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		return "", fmt.Errorf("docker run returned empty container ID")
 	}
 	return id, nil
+}
+
+// hostGatewayArgs returns the --add-host flag that makes
+// host.docker.internal resolve inside spawned runner containers on
+// Linux Docker (runner images dial back to host-published services —
+// bleephub, sockerless — through it). Docker Desktop and Podman 4+
+// provide the alias natively, and Podman REJECTS the host-gateway
+// magic value, so the flag is engine-conditional — the same runtime
+// detection the simulators use for their workload containers.
+func hostGatewayArgs(ctx context.Context, dockerHost string) []string {
+	cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{range .Server.Components}}{{.Name}} {{end}}")
+	cmd.Env = append(os.Environ(), "DOCKER_HOST="+dockerHost)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Engine unknown — don't guess a flag that can break the spawn;
+		// the next Liveness check will surface a daemon problem.
+		return nil
+	}
+	if strings.Contains(strings.ToLower(string(out)), "podman") {
+		return nil
+	}
+	return []string{"--add-host", "host.docker.internal:host-gateway"}
 }
 
 // Liveness reports whether the docker daemon at DockerHost answers

@@ -163,8 +163,15 @@ func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
 
-// baseURL computes the external base URL from the request.
+// baseURL computes the external base URL. BLEEPHUB_EXTERNAL_URL wins
+// when configured (the GHES "external URL" knob — job messages and
+// links must carry an address RUNNERS can reach, not whichever
+// interface a triggering API call happened to arrive on); otherwise
+// the request's Host.
 func (s *Server) baseURL(r *http.Request) string {
+	if s.externalURL != "" {
+		return s.externalURL
+	}
 	scheme := "http"
 	if r.TLS != nil {
 		scheme = "https"

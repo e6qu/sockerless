@@ -16,12 +16,21 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	scopeID := uuid.New().String()
 	jobToken := makeJWT(scopeID, "actions")
 
-	// Determine container image; empty means host mode (the run was
+	// Determine the job container; empty means host mode (the run was
 	// submitted with hostMode and the YAML declares no container) — the
-	// runner then executes the job directly, like real GitHub.
+	// runner then executes the job directly, like real GitHub. A bare
+	// image string rides as-is; the object form (`container:` with
+	// env/ports/volumes/options) becomes a full mapping token so none
+	// of those fields drop.
 	image := defaultImage
+	var jobContainer interface{}
 	if img := jd.ContainerImage(); img != "" {
 		image = img
+	}
+	if cd := jd.ContainerObject(); cd != nil {
+		jobContainer = containerSpecToken(cd.Image, cd.Env, cd.Ports, cd.Volumes, cd.Options)
+	} else {
+		jobContainer = jobContainerValue(image)
 	}
 
 	// Build steps
@@ -233,7 +242,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"jobName":              wfJob.Key,
 		"requestId":            requestID,
 		"lockedUntil":          "0001-01-01T00:00:00",
-		"jobContainer":         jobContainerValue(image),
+		"jobContainer":         jobContainer,
 		"jobServiceContainers": buildServiceContainers(jd.Services),
 		"jobOutputs":           nil,
 		"resources": map[string]interface{}{
@@ -426,32 +435,96 @@ func toPipelineContextData(v interface{}) interface{} {
 	}
 }
 
-// buildServiceContainers converts parsed ServiceDefs to the runner's expected
-// jobServiceContainers format: map of alias → container spec.
+// buildServiceContainers converts parsed ServiceDefs to the runner's
+// jobServiceContainers wire shape: a mapping TemplateToken of alias →
+// container-spec mapping token. The official runner DESERIALIZES this
+// field as a TemplateToken (mapping = {"type":2,"map":[{Key,Value}]}),
+// not plain JSON — a raw map fails its template validation at job
+// start ("The template is not valid. Unexpected value ”").
 func buildServiceContainers(services map[string]*ServiceDef) interface{} {
 	if len(services) == 0 {
 		return nil
 	}
-	result := make(map[string]interface{}, len(services))
-	for name, svc := range services {
-		spec := map[string]interface{}{
-			"image": svc.Image,
-		}
-		if len(svc.Env) > 0 {
-			spec["environment"] = svc.Env
-		}
-		if len(svc.Ports) > 0 {
-			spec["ports"] = svc.Ports
-		}
-		if len(svc.Volumes) > 0 {
-			spec["volumes"] = svc.Volumes
-		}
-		if svc.Options != "" {
-			spec["options"] = svc.Options
-		}
-		result[name] = spec
+	entries := make([]interface{}, 0, len(services))
+	for _, name := range sortedServiceNames(services) {
+		entries = append(entries, mappingEntry(name, containerSpecToken(
+			services[name].Image, services[name].Env, services[name].Ports,
+			services[name].Volumes, services[name].Options,
+		)))
 	}
-	return result
+	return mappingToken(entries)
+}
+
+// containerSpecToken builds the container-spec mapping token shared by
+// object-form `container:` and each `services:` entry. Keys follow the
+// runner's ContainerInfo reader: image / env / ports / volumes /
+// options. Strings route through templateToken so ${{ }} expressions
+// inside them still evaluate runner-side.
+func containerSpecToken(image string, env map[string]string, ports []interface{}, volumes []string, options string) map[string]interface{} {
+	entries := []interface{}{mappingEntry("image", templateToken(image))}
+	if len(env) > 0 {
+		envEntries := make([]interface{}, 0, len(env))
+		for _, k := range sortedKeys(env) {
+			envEntries = append(envEntries, mappingEntry(k, templateToken(env[k])))
+		}
+		entries = append(entries, mappingEntry("env", mappingToken(envEntries)))
+	}
+	if len(ports) > 0 {
+		seq := make([]interface{}, 0, len(ports))
+		for _, p := range ports {
+			seq = append(seq, scalarToken(p))
+		}
+		entries = append(entries, mappingEntry("ports", map[string]interface{}{"type": 1, "seq": seq}))
+	}
+	if len(volumes) > 0 {
+		seq := make([]interface{}, 0, len(volumes))
+		for _, v := range volumes {
+			seq = append(seq, templateToken(v))
+		}
+		entries = append(entries, mappingEntry("volumes", map[string]interface{}{"type": 1, "seq": seq}))
+	}
+	if options != "" {
+		entries = append(entries, mappingEntry("options", templateToken(options)))
+	}
+	return mappingToken(entries)
+}
+
+// mappingToken wraps key/value entries as a mapping TemplateToken.
+func mappingToken(entries []interface{}) map[string]interface{} {
+	return map[string]interface{}{"type": 2, "map": entries}
+}
+
+// mappingEntry is one {Key, Value} pair of a mapping token.
+func mappingEntry(key string, value interface{}) map[string]interface{} {
+	return map[string]interface{}{
+		"Key":   map[string]interface{}{"type": 0, "lit": key},
+		"Value": value,
+	}
+}
+
+// scalarToken encodes a YAML scalar (string / number / bool) as the
+// matching literal TemplateToken — `ports:` entries in particular
+// parse as numbers (`- 80`) or strings (`- "8080:80"`).
+func scalarToken(v interface{}) map[string]interface{} {
+	switch t := v.(type) {
+	case string:
+		return templateToken(t)
+	case bool:
+		return map[string]interface{}{"type": 5, "lit": t}
+	case int, int64, float64:
+		return map[string]interface{}{"type": 6, "lit": t}
+	default:
+		return templateToken(fmt.Sprintf("%v", t))
+	}
+}
+
+func sortedServiceNames(m map[string]*ServiceDef) []string {
+	names := make([]string, 0, len(m))
+	for k := range m {
+		names = append(names, k)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // buildNeedsContext builds the "needs" PipelineContextData from completed

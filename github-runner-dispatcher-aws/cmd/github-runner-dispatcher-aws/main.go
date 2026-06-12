@@ -49,6 +49,7 @@ func run() error {
 	configPath := flag.String("config", "", "path to dispatcher config.toml; default ~/.sockerless/dispatcher/config.toml")
 	once := flag.Bool("once", false, "run a single poll cycle and exit (smoke / debug)")
 	cleanupOnly := flag.Bool("cleanup-only", false, "run a single GC sweep (containers + GitHub runners) and exit; no polling")
+	apiBase := flag.String("api-base", scopes.DefaultAPIBase, "GitHub REST API base; GHES shape is https://<host>/api/v3")
 	flag.Parse()
 
 	if *repo == "" || !strings.Contains(*repo, "/") {
@@ -77,13 +78,14 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := scopes.Verify(ctx, http.DefaultClient, *token); err != nil {
+	if err := scopes.Verify(ctx, http.DefaultClient, *apiBase, *repo, *token); err != nil {
 		return err
 	}
 	log.Printf("dispatcher ready: repo=%s labels=%d once=%v cleanup-only=%v",
 		*repo, len(cfg.Labels), *once, *cleanupOnly)
 
 	gh := poller.New(http.DefaultClient, *token, *repo)
+	gh.APIBase = strings.TrimRight(*apiBase, "/")
 	loop := newDispatchLoop(gh, cfg)
 
 	// State recovery: rebuild the seen-set from running containers

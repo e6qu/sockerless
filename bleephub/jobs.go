@@ -55,11 +55,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		req.Image = "alpine:latest"
 	}
 
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	serverURL := scheme + "://" + r.Host
+	serverURL := s.baseURL(r)
 
 	jobID := uuid.New().String()
 	planID := uuid.New().String()
@@ -172,11 +168,7 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		req.Image = "alpine:latest"
 	}
 
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	serverURL := scheme + "://" + r.Host
+	serverURL := s.baseURL(r)
 
 	// Apply defaults for event metadata
 	eventName := req.EventName

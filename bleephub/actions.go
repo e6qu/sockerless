@@ -55,11 +55,7 @@ func (s *Server) registerActionRoutes() {
 
 // handleActionDownloadInfo returns tarball URLs for requested actions.
 func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request) {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	serverURL := scheme + "://" + r.Host
+	serverURL := s.baseURL(r)
 
 	var body struct {
 		Actions []struct {
