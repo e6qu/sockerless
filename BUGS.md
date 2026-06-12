@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1744 filed - 1702 fixed - 2 open - 7 false positives.**
+**1747 filed - 1702 fixed - 5 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 1747 | P3 | bleephub actions — invalid workflows refuse the run instead of a startup_failure shell | trigger-failure fidelity | Real GitHub creates a run with conclusion `startup_failure` (no jobs) when a triggered workflow has an invalid reusable-workflow ref or unparseable expansion; bleephub logs and creates nothing, so the failure is invisible to the runs API/UI. |
+| 1746 | P3 | bleephub actions — runner groups unmodeled | missing ops | Single hardcoded pool; no `/orgs/{org}/actions/runner-groups` family (CRUD + group runners membership), `runner_group_id` always 1. |
+| 1745 | P2 | bleephub actions — cancellation never reaches running jobs; always()/cancelled() jobs don't run after cancel | cancellation semantics | Cancel marks pending/queued jobs cancelled but a job executing on a runner runs to completion (no `JobCancellation` broker message — the runner's open mid-job poll exists exactly for this), and pending jobs gated on `always()`/`cancelled()` are force-cancelled instead of dispatched (real GitHub runs them with cancelled()==true). |
 | ~~1744~~ | P2 | sims (all 3) — image-pull failures silently swallowed; transient registry errors surface as opaque "No such image" at create | swallowed error stream | The docker daemon reports pull failures as JSON events INSIDE the 200 pull-response body; `createAndStartContainer` drained that stream to io.Discard, so a registry hiccup (e.g. 503 from public.ecr.aws — hit by `sim (aws sdk)` on PR #549's Amplify SSR test) silently no-opped and the subsequent create failed with "No such image", hiding the real cause. All three shared/container.go copies now parse the stream (`drainImagePull`) and propagate the failure; unit-tested per cloud. |
 | ~~1743~~ | P3 | azure sim entra — authorization-code flow not bound to a user; login_hint ignored (issue #547) | identity binding | /authorize records tenant/client/redirect/PKCE/nonce but no user; the code grant mints the id_token for the process-global active user, so Graph-provisioned users can't drive the interactive OIDC flow. Fix per issue: resolve login_hint by UPN (like ROPC), store the OID in the auth-code record, mint for that user; fall back to the active user. |
 | ~~1742~~ | P3 | azure sim entra — token endpoint rejects client_secret_basic (issue #548) | RFC 6749 §2.3.1 | Real AAD v2.0 accepts HTTP Basic client auth and advertises client_secret_basic; the sim reads client creds from the form only (Auth.js v5 default fails the code exchange). Accept Basic + advertise it in discovery. |
