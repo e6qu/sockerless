@@ -78,7 +78,10 @@ These work natively (no `gh api` workaround needed):
 | `gh release download` | `assets_url` redirect (sim returns empty assets) |
 | `gh run list / view / cancel / rerun` | `GET/POST /repos/{o}/{r}/actions/runs*` (push-triggered runs resolve their `workflow_id`) |
 | `gh workflow run <wf> --ref <branch>` | `POST /repos/{o}/{r}/actions/workflows/{id}/dispatches`; version-gated on `GET /meta` |
-| `gh workflow list / view` | `GET /actions/workflows[/{id}]` (`enable` / `disable` not implemented — see [bleephub/README.md](../bleephub/README.md#what-it-does-not-implement-deferred)) |
+| `gh workflow list / view` | `GET /actions/workflows[/{id}]` |
+| `gh workflow enable / disable` | `PUT /actions/workflows/{id}/{enable,disable}`; disabled workflows don't trigger and dispatch returns 403 |
+| `gh secret set / list / delete` | `GET /actions/secrets/public-key` + libsodium sealed-box `PUT {encrypted_value, key_id}` / `GET /actions/secrets` / `DELETE /actions/secrets/{name}`; org + environment scopes too |
+| `gh variable set / get / list / delete` | `POST`/`PATCH`/`GET`/`DELETE /actions/variables[/{name}]` (gh's POST→409→PATCH update fallback works); org + environment scopes too |
 | `gh org list` | GraphQL `user(login:).organizations` connection |
 | `gh api /repos/{o}/{r}/...` | direct REST passthrough |
 

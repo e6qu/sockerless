@@ -4,6 +4,60 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-12 - Complete GitHub Actions support in bleephub
+
+**The workflow engine now implements GitHub's server-side semantics.**
+`on:` triggers parse fully (branch/tag/path filter patterns with ordered
+`!` negation, real git diffs for path filters, activity types with
+per-event defaults — pushes to an open PR's head branch fire
+`pull_request synchronize`); `on: schedule` crons fire from a
+minute-aligned dispatcher (POSIX 5-field parser, dom/dow OR rule);
+reusable workflows expand server-side (synthetic gate/collector nodes,
+typed+defaulted inputs, secrets inherit/mapping, outputs onto
+`needs.<caller>`, 4-level nesting bound); and a real expression engine
+(GitHub grammar, loose equality, full `github`/`needs`/`vars`/`inputs`/
+`matrix` contexts, contains/startsWith/format/join/toJSON/fromJSON)
+evaluates job `if:` and `${{ }}` templates — invalid expressions fail the
+job like real GitHub.
+
+**Secrets and variables exist at all three scopes** (repo/org/environment)
+with the REAL wire contract — `gh secret set` fetches the public key,
+seals with libsodium, and the server decrypts; plaintext PUTs are
+rejected (the old shape no real client could ever have used). Org
+visibility (all/private/selected), name rules, and org→repo→env
+precedence merge into runner job messages with masks.
+
+**Workflow runs are now first-class GitHub citizens**: every job mirrors
+to a check run under a github-actions check suite; workflow_run /
+workflow_job / check_run / check_suite webhook events fire at the real
+emission points; PR `mergeable_state` reflects the head commit's checks
+and the merge API 405s while required status checks (branch protection)
+aren't green. The jobs API serves REAL per-step status/timing — the
+runner's timeline records were being silently dropped because the
+official runner wraps them in `VssJsonCollectionWrapper` (found against
+actions/runner source; same wrapper bug fixed for console-line feeds).
+Job logs persist (4MiB cap with explicit markers), run-log zips match
+GitHub's layout, runs-on labels route jobs only to matching runners
+(hosted aliases run anywhere), org-scoped runner endpoints exist with an
+honest `busy`, reruns keep the run id and bump `run_attempt` (archived
+attempts retrievable; rerun-failed-jobs carries successful results over),
+and workflows enable/disable (disabled = no triggers, dispatch 403).
+
+**The UI got the full GitHub-style Actions experience**: per-repo Actions
+tab (runs list, filters, dispatch form built from parsed workflow inputs,
+enable/disable), run detail (job sidebar, per-step status, live-tail
+logs, rerun/cancel, artifacts, deployment approvals), secrets+variables
+management with real in-browser sealed-box encryption, PR merge-box
+checks section, runners page with labels/busy. Playwright 21/21, vitest
+green, knip/jscpd clean.
+
+Validation: gh Docker harness 115 PASS / 0 FAIL (now covering secrets/
+variables/enable-disable/checks); the official-runner integration
+harness was found bitrotted (launched binaries retired long ago —
+BUG-1739), rewired to the sim+ECS-backend topology its own Dockerfile
+builds, and added to CI as `sim (bleephub actions/runner)`. BUG-1724..1739
+filed and fixed; ledger at 1739 filed / 1697 fixed / 2 open.
+
 ## 2026-06-12 - Amplify full support + bleephub GitHub Apps/orgs hardening
 
 **Amplify is now a complete service slice**: beyond the control-plane gap

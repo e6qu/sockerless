@@ -18,7 +18,22 @@ Replace Docker Engine with Sockerless for Docker API clients such as `docker`, D
 
 ## Current Work
 
-The active arc is **spec-based simulator validation** — the simulators are
+The active arc is **complete GitHub Actions support in bleephub**
+(`feat/bleephub-actions-complete`, one fat PR, BUG-1724..1739): the
+server-side workflow engine (trigger filters + activity types, schedule
+crons, reusable workflows, a real expression engine), secrets/variables at
+repo/org/environment with the sealed-box wire contract, checks integration
+(check runs/suites, workflow_run/workflow_job/check_run/check_suite events,
+mergeable_state + required-status-check merge gating), real per-step
+timeline records (runner wrapper-decode root cause), runs-on label routing,
+org runners, run attempts, workflow enable/disable, the full GitHub-style
+Actions UI, gh-harness coverage (115/0), and the de-bitrotted
+official-runner harness promoted to CI. Engine limitations that remain are
+listed in `bleephub/README.md` § deferred (composite actions are
+runner-side; startup_failure run shells; runner groups; cancellation
+signals to in-flight runner jobs).
+
+The previous arc was **spec-based simulator validation** — the simulators are
 now validated against the official machine-readable cloud API specs vendored
 under [`specs/cloud-api/`](specs/cloud-api/README.md) (AWS Smithy models, GCP
 Discovery documents, Azure Swagger; pinned + provenance-tracked):
