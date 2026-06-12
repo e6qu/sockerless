@@ -23,15 +23,6 @@ type ExprContext struct {
 	Contexts map[string]interface{}
 }
 
-// EvalExpr evaluates a GitHub Actions expression to a final truthiness,
-// swallowing evaluation errors as false. Prefer EvalExprErr where the
-// caller can surface the error (real GitHub fails the run on a bad
-// expression instead of silently skipping the job).
-func EvalExpr(expr string, ctx *ExprContext) bool {
-	ok, err := EvalExprErr(expr, ctx)
-	return err == nil && ok
-}
-
 // EvalExprErr evaluates a GitHub Actions expression to a boolean.
 // The empty expression is true (an absent `if:` always runs).
 func EvalExprErr(expr string, ctx *ExprContext) (bool, error) {

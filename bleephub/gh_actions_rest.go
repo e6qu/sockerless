@@ -33,11 +33,33 @@ func (s *Server) registerGHActionsRoutes() {
 		s.requirePerm(scopeActions, permWrite, s.handleCancelWorkflowRun))
 	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/rerun",
 		s.requirePerm(scopeActions, permWrite, s.handleRerunWorkflowRun))
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}", s.handleGetRunAttempt)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", s.handleListRunAttemptJobs)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}", s.handleGetRunner)
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
+
+	// Org-scoped runner surface: bleephub's pool is global, so the org
+	// scope serves the same agents (404 only for unknown orgs).
+	s.route("GET /api/v3/orgs/{org}/actions/runners", s.handleListRunners)
+	s.route("GET /api/v3/orgs/{org}/actions/runners/{runner_id}", s.handleGetRunner)
+	s.route("DELETE /api/v3/orgs/{org}/actions/runners/{runner_id}",
+		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
+	s.route("POST /api/v3/orgs/{org}/actions/runners/registration-token",
+		s.requirePerm(scopeAdministration, permWrite, s.handleOrgRegistrationToken))
+}
+
+// handleOrgRegistrationToken mirrors the repo-scoped registration token
+// at org scope (single global pool).
+func (s *Server) handleOrgRegistrationToken(w http.ResponseWriter, r *http.Request) {
+	if s.store.GetOrg(r.PathValue("org")) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.handleRegistrationToken(w, r)
 }
 
 // repoFullName returns "owner/repo" for the request's path params,
@@ -182,11 +204,11 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string, repoJSON map[string
 		"pull_requests":        []any{},
 		"created_at":           created,
 		"updated_at":           created,
-		"actor":                nil,
-		"run_attempt":          1,
+		"actor":                runActorJSON(wf),
+		"run_attempt":          wf.AttemptNumber(),
 		"referenced_workflows": []any{},
 		"run_started_at":       created,
-		"triggering_actor":     nil,
+		"triggering_actor":     runActorJSON(wf),
 		"jobs_url":             fmt.Sprintf("%s/actions/runs/%d/jobs", apiBase, wf.RunID),
 		"logs_url":             fmt.Sprintf("%s/actions/runs/%d/logs", apiBase, wf.RunID),
 		"check_suite_url":      fmt.Sprintf("%s/check-suites/%d", apiBase, wf.RunID),
@@ -203,6 +225,19 @@ func workflowRunJSON(wf *Workflow, baseURL, repoName string, repoJSON map[string
 			"committer": map[string]any{"name": "bleephub", "email": "actions@bleephub"},
 		},
 	}
+}
+
+// runActorJSON resolves the run's actor from the triggering event's
+// sender payload (already user-shaped); nil when the run has no
+// originating user (directly seeded runs).
+func runActorJSON(wf *Workflow) any {
+	if wf.EventPayload == nil {
+		return nil
+	}
+	if sender, ok := wf.EventPayload["sender"].(map[string]interface{}); ok && sender != nil {
+		return sender
+	}
+	return nil
 }
 
 func headBranchOf(wf *Workflow) string {
@@ -388,7 +423,7 @@ func labelsForJob(wfJob *WorkflowJob) []string {
 // runnerJSON converts a registered Agent to GitHub's `Runner` shape
 // (`/repos/{o}/{r}/actions/runners`). GitHub's Runner.id is int64;
 // bleephub Agent.ID is int — direct cast is safe.
-func runnerJSON(a *Agent) map[string]any {
+func runnerJSON(a *Agent, busy bool) map[string]any {
 	labels := make([]map[string]any, 0, len(a.Labels))
 	for _, l := range a.Labels {
 		labelType := "custom"
@@ -407,11 +442,23 @@ func runnerJSON(a *Agent) map[string]any {
 		"name":            a.Name,
 		"os":              osFromDescription(a.OSDescription),
 		"status":          agentStatusForRunner(a.Status),
-		"busy":            false,
+		"busy":            busy,
 		"ephemeral":       false,
 		"version":         versionForRunner(a),
 		"labels":          labels,
 	}
+}
+
+// busyAgentIDsLocked returns the agents currently associated with a
+// running job. Callers hold the store lock.
+func (s *Server) busyAgentIDsLocked() map[int]bool {
+	busy := map[int]bool{}
+	for _, j := range s.store.Jobs {
+		if j.Status == "running" && j.AgentID != 0 {
+			busy[j.AgentID] = true
+		}
+	}
+	return busy
 }
 
 // versionForRunner reports the agent's reported version, or nil when the
@@ -707,18 +754,130 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
 	def.Env["__defaultImage"] = "alpine:latest"
-	meta := WorkflowEventMeta{
-		EventName: eventOf(wf),
-		Ref:       wf.Ref,
-		Sha:       wf.Sha,
-		Repo:      repo,
-		Inputs:    wf.Inputs,
-	}
-	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, nil); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+// rerunWorkflowAsNewAttempt archives the current run as a prior attempt
+// and re-submits the parsed definition under the SAME run id with
+// run_attempt+1 (real GitHub never mints a new run id for a re-run).
+// carryOver pre-completes the listed job keys with the previous
+// attempt's results (rerun-failed-jobs).
+func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, def *WorkflowDef, serverURL string, carryOver map[string]*WorkflowJob) error {
+	// Archive + remove the old attempt first; restore on submit failure.
+	s.store.mu.Lock()
+	s.store.WorkflowAttempts[old.RunID] = append(s.store.WorkflowAttempts[old.RunID], old)
+	delete(s.store.Workflows, old.ID)
+	s.store.mu.Unlock()
+	if old.cancelTimeout != nil {
+		old.cancelTimeout()
+	}
+
+	meta := WorkflowEventMeta{
+		EventName:     eventOf(old),
+		Ref:           old.Ref,
+		Sha:           old.Sha,
+		Repo:          old.RepoFullName,
+		Inputs:        old.Inputs,
+		TypedInputs:   old.TypedInputs,
+		Payload:       old.EventPayload,
+		ReuseRunID:    old.RunID,
+		Attempt:       old.AttemptNumber() + 1,
+		CarryOverJobs: carryOver,
+	}
+	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
+		// Put the old attempt back so the run doesn't vanish.
+		s.store.mu.Lock()
+		attempts := s.store.WorkflowAttempts[old.RunID]
+		if n := len(attempts); n > 0 && attempts[n-1] == old {
+			s.store.WorkflowAttempts[old.RunID] = attempts[:n-1]
+		}
+		s.store.Workflows[old.ID] = old
+		s.store.mu.Unlock()
+		return err
+	}
+	return nil
+}
+
+// findRunAttempt resolves a run's specific attempt: the live run when
+// attempt matches its number, else the archived attempt.
+func (s *Server) findRunAttempt(runID, attempt int) *Workflow {
+	current := s.findWorkflowByRunID(runID)
+	if current != nil && current.AttemptNumber() == attempt {
+		return current
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for _, archived := range s.store.WorkflowAttempts[runID] {
+		if archived.AttemptNumber() == attempt {
+			return archived
+		}
+	}
+	return nil
+}
+
+// handleGetRunAttempt — GET .../actions/runs/{run_id}/attempts/{attempt_number}
+func (s *Server) handleGetRunAttempt(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid run_id")
+		return
+	}
+	attempt, err := strconv.Atoi(r.PathValue("attempt_number"))
+	if err != nil || attempt < 1 {
+		writeGHError(w, http.StatusBadRequest, "invalid attempt_number")
+		return
+	}
+	wf := s.findRunAttempt(runID, attempt)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	base := s.baseURL(r)
+	repo := repoFullName(r)
+	writeJSON(w, http.StatusOK, workflowRunJSON(wf, base, repo, s.runRepoJSON(repo, base)))
+}
+
+// handleListRunAttemptJobs — GET .../runs/{run_id}/attempts/{attempt_number}/jobs
+func (s *Server) handleListRunAttemptJobs(w http.ResponseWriter, r *http.Request) {
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid run_id")
+		return
+	}
+	attempt, err := strconv.Atoi(r.PathValue("attempt_number"))
+	if err != nil || attempt < 1 {
+		writeGHError(w, http.StatusBadRequest, "invalid attempt_number")
+		return
+	}
+	wf := s.findRunAttempt(runID, attempt)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.mu.RLock()
+	allJobs := make([]*WorkflowJob, 0, len(wf.Jobs))
+	for _, j := range wf.Jobs {
+		if j.Hidden {
+			continue
+		}
+		allJobs = append(allJobs, j)
+	}
+	s.store.mu.RUnlock()
+	page := paginateAndLink(w, r, allJobs)
+	base := s.baseURL(r)
+	repo := repoFullName(r)
+	jobs := make([]map[string]any, 0, len(page))
+	for _, j := range page {
+		jobs = append(jobs, s.workflowJobJSON(wf, j, base, repo))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_count": len(allJobs),
+		"jobs":        jobs,
+	})
 }
 
 // handleDeleteWorkflowRun — DELETE .../actions/runs/{run_id}
@@ -754,17 +913,24 @@ func (s *Server) handleDeleteWorkflowRun(w http.ResponseWriter, r *http.Request)
 // returned regardless of repo path. The path scoping is preserved for
 // future per-repo runner pools.
 func (s *Server) handleListRunners(w http.ResponseWriter, r *http.Request) {
+	// Org-scoped listings 404 for unknown orgs; the pool itself is
+	// global (bleephub has a single runner pool).
+	if org := r.PathValue("org"); org != "" && s.store.GetOrg(org) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	s.store.mu.RLock()
 	all := make([]*Agent, 0, len(s.store.Agents))
 	for _, a := range s.store.Agents {
 		all = append(all, a)
 	}
+	busy := s.busyAgentIDsLocked()
 	s.store.mu.RUnlock()
 
 	page := paginateAndLink(w, r, all)
 	runners := make([]map[string]any, 0, len(page))
 	for _, a := range page {
-		runners = append(runners, runnerJSON(a))
+		runners = append(runners, runnerJSON(a, busy[a.ID]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"total_count": len(all),
@@ -772,10 +938,36 @@ func (s *Server) handleListRunners(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// handleGetRunner — GET .../actions/runners/{runner_id} (repo + org scope).
+func (s *Server) handleGetRunner(w http.ResponseWriter, r *http.Request) {
+	if org := r.PathValue("org"); org != "" && s.store.GetOrg(org) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("runner_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.mu.RLock()
+	a := s.store.Agents[id]
+	busy := s.busyAgentIDsLocked()
+	s.store.mu.RUnlock()
+	if a == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, runnerJSON(a, busy[a.ID]))
+}
+
 // handleDeleteRunner — DELETE .../actions/runners/{runner_id}
 // Real GitHub returns 204 No Content. Symmetric with the existing
 // agent-CRUD path on `_apis/v1/Agent/{poolId}/{agentId}`.
 func (s *Server) handleDeleteRunner(w http.ResponseWriter, r *http.Request) {
+	if org := r.PathValue("org"); org != "" && s.store.GetOrg(org) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	runnerID, err := strconv.Atoi(r.PathValue("runner_id"))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid runner_id")

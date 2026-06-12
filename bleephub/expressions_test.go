@@ -4,6 +4,12 @@ import (
 	"testing"
 )
 
+// evalBool is the test-side convenience: expression errors count as false.
+func evalBool(expr string, ctx *ExprContext) bool {
+	ok, err := EvalExprErr(expr, ctx)
+	return err == nil && ok
+}
+
 func exprTestCtx() *ExprContext {
 	return &ExprContext{
 		DepResults: map[string]string{"build": "success"},
@@ -155,30 +161,30 @@ func TestExprErrors(t *testing.T) {
 
 func TestExprStatusFunctions(t *testing.T) {
 	failedDep := &ExprContext{DepResults: map[string]string{"build": "failure"}}
-	if EvalExpr("success()", failedDep) {
+	if evalBool("success()", failedDep) {
 		t.Error("success() should be false when a dep failed")
 	}
-	if !EvalExpr("failure()", failedDep) {
+	if !evalBool("failure()", failedDep) {
 		t.Error("failure() should be true when a dep failed")
 	}
 	skippedDep := &ExprContext{DepResults: map[string]string{"build": "skipped"}}
-	if !EvalExpr("success()", skippedDep) {
+	if !evalBool("success()", skippedDep) {
 		t.Error("success() should treat skipped deps as non-failures")
 	}
 	cancelled := &ExprContext{WorkflowCancelled: true}
-	if !EvalExpr("cancelled()", cancelled) {
+	if !evalBool("cancelled()", cancelled) {
 		t.Error("cancelled() should be true when the workflow is cancelled")
 	}
-	if EvalExpr("success()", cancelled) {
+	if evalBool("success()", cancelled) {
 		t.Error("success() should be false when the workflow is cancelled")
 	}
-	if !EvalExpr("always()", cancelled) {
+	if !evalBool("always()", cancelled) {
 		t.Error("always() must be true even when cancelled")
 	}
 }
 
 func TestExprEmptyIsTrue(t *testing.T) {
-	if !EvalExpr("", nil) {
+	if !evalBool("", nil) {
 		t.Error("empty if: must evaluate true")
 	}
 }

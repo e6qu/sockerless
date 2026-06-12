@@ -164,11 +164,65 @@ func zipSafeName(name string) string {
 	return strings.ReplaceAll(name, "/", "_")
 }
 
-// handleRerunFailedJobs reuses the rerun path; bleephub doesn't distinguish
-// failed-only re-run from full re-run today. Real GH does — record the
-// shape but no behaviour difference until we model per-attempt state.
+// handleRerunFailedJobs — POST .../runs/{run_id}/rerun-failed-jobs.
+// Real behavior: the new attempt re-runs ONLY the failed/cancelled
+// jobs; jobs that succeeded (or were skipped) in the previous attempt
+// carry their results over as already-completed.
 func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
-	s.handleRerunWorkflowRun(w, r)
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid run_id")
+		return
+	}
+	wf := s.findWorkflowByRunID(runID)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repo := wf.RepoFullName
+	if repo == "" {
+		repo = repoFullName(r)
+	}
+	s.store.DiscoverWorkflowFilesFromGit(repo)
+	var match *WorkflowFile
+	for _, f := range s.store.ListWorkflowFiles(repo) {
+		if f.Name == wf.Name && f.YAML != "" {
+			match = f
+			break
+		}
+	}
+	if match == nil {
+		writeGHError(w, http.StatusUnprocessableEntity,
+			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+		return
+	}
+	def, perr := ParseWorkflow([]byte(match.YAML))
+	if perr != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "parse cached YAML: "+perr.Error())
+		return
+	}
+	def = expandMatrixJobs(def)
+	if def.Env == nil {
+		def.Env = map[string]string{}
+	}
+	serverURL := s.baseURL(r)
+	def.Env["__serverURL"] = serverURL
+	def.Env["__defaultImage"] = "alpine:latest"
+
+	carryOver := map[string]*WorkflowJob{}
+	s.store.mu.RLock()
+	for key, j := range wf.Jobs {
+		if j.Result == ResultSuccess || j.Result == ResultSkipped {
+			carryOver[key] = j
+		}
+	}
+	s.store.mu.RUnlock()
+
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, carryOver); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }
 
 // handleRunTiming returns the per-job billing-style timing summary.

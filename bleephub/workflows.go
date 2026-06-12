@@ -131,6 +131,12 @@ type WorkflowEventMeta struct {
 	// Attempt sets the run's 1-based run_attempt (0 = first attempt);
 	// reruns pass the incremented value.
 	Attempt int
+	// ReuseRunID keeps the original run id/number across rerun attempts
+	// (real GitHub never mints a new run id for a re-run).
+	ReuseRunID int
+	// CarryOverJobs pre-completes jobs by key with results carried from
+	// the previous attempt (rerun-failed-jobs keeps successful jobs).
+	CarryOverJobs map[string]*WorkflowJob
 	// TypedInputs carries workflow_dispatch inputs with their declared
 	// types (boolean/number) for the `inputs` expression context;
 	// Inputs keeps the string forms (github.event.inputs).
@@ -179,7 +185,12 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
-	runID := s.store.ReserveRunID()
+	runID := 0
+	if len(eventMeta) > 0 && eventMeta[0] != nil && eventMeta[0].ReuseRunID > 0 {
+		runID = eventMeta[0].ReuseRunID
+	} else {
+		runID = s.store.ReserveRunID()
+	}
 
 	workflow := &Workflow{
 		ID:        uuid.New().String(),
@@ -259,6 +270,24 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.TypedInputs = m.TypedInputs
 		workflow.EventPayload = m.Payload
 		workflow.Attempt = m.Attempt
+
+		// Carry results forward from the previous attempt
+		// (rerun-failed-jobs re-runs only the failed jobs); applied
+		// before the workflow is stored, so dispatch never sees the
+		// carried jobs as pending.
+		for key, prev := range m.CarryOverJobs {
+			wfJob, ok := workflow.Jobs[key]
+			if !ok {
+				continue
+			}
+			wfJob.Status = prev.Status
+			wfJob.Result = prev.Result
+			wfJob.StartedAt = prev.StartedAt
+			wfJob.CompletedAt = prev.CompletedAt
+			for k, v := range prev.Outputs {
+				wfJob.Outputs[k] = v
+			}
+		}
 	}
 
 	// Concurrency groups are template strings on real GitHub
@@ -542,6 +571,7 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 		MessageType: "PipelineAgentJobRequest",
 		Body:        string(msgJSON),
 		Labels:      wfJob.Def.RunsOnLabels(),
+		JobID:       wfJob.JobID,
 	}
 
 	if !s.sendMessageToAgent(envelope) {

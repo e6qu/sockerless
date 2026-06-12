@@ -116,6 +116,7 @@ jobs:
 
 func TestWorkflowCallEndToEnd(t *testing.T) {
 	repoKey := "callowner/call-repo"
+	cancelRepoRunsCleanup(t, repoKey)
 	commitFilesToStorage(t, testServer, repoKey, map[string]string{
 		".github/workflows/caller.yml": callerWorkflowYAML,
 		".github/workflows/called.yml": calledWorkflowYAML,

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1738 filed - 1691 fixed - 7 open - 7 false positives.**
+**1738 filed - 1696 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -11,12 +11,12 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
 | ~~1738~~ | P2 | bleephub actions — runner console-line feeds rejected: wrapper shape not decoded | wrong wire decode | The official runner POSTs console lines as `TimelineRecordFeedLinesWrapper` `{count, value, stepId}` (TaskHttpClient.cs), but `handleWebConsoleLog` decoded a bare `[]string` — real-runner live console feeds silently dropped (same class as the BUG-1736 timeline-records wrapper, found while fixing it). Tolerant decode (wrapper first, bare-array fallback) + tests. |
-| 1737 | P3 | bleephub UI — Actions experience incomplete | UI gaps | No per-step display, no live log tail, no re-run/cancel/dispatch buttons, no artifact downloads, no pending-deployment approval actions, no secrets/variables management, PR pages show no check results. |
+| ~~1737~~ | P3 | bleephub UI — Actions experience incomplete | UI gaps | No per-step display, no live log tail, no re-run/cancel/dispatch buttons, no artifact downloads, no pending-deployment approval actions, no secrets/variables management, PR pages show no check results. |
 | ~~1736~~ | P2 | bleephub actions — timeline records discarded; jobs API serves synthesized steps | synthetic steps (fake data) | `handleUpdateRecords` logs and drops runner timeline records; `jobStepsJSON` then fabricates every step with the JOB's status/timing — invented per-step data instead of the real records the runner already uploads. Console log capture also caps at 500 lines/job, silently truncating real logs. |
-| 1735 | P3 | bleephub actions — workflow enable/disable missing | missing ops | No `PUT .../workflows/{id}/{enable,disable}`; `state` always `active`; disabled workflows can't exist so triggers can't honor them (`gh workflow enable/disable` 404s). |
-| 1734 | P3 | bleephub actions — run_attempt hardcoded 1; rerun-failed-jobs reruns everything | attempts unmodeled | Rerun replaces the run in place (no attempt history, `/attempts/{n}` absent); `rerun-failed-jobs` delegates to full rerun, re-executing successful jobs. |
-| 1733 | P3 | bleephub actions — org-level runner surface missing | missing ops | No `/orgs/{org}/actions/runners` family (list/get/delete/registration-token); repo listing serves the single global pool unfiltered. |
-| 1732 | P2 | bleephub actions — runs-on labels ignored when routing jobs | label routing absent | `sendMessageToAgent` round-robins to ANY connected session; a job declaring `runs-on: [self-hosted, gpu]` dispatches to a runner without those labels (real broker only delivers to label-matching runners; job stays queued otherwise). |
+| ~~1735~~ | P3 | bleephub actions — workflow enable/disable missing | missing ops | No `PUT .../workflows/{id}/{enable,disable}`; `state` always `active`; disabled workflows can't exist so triggers can't honor them (`gh workflow enable/disable` 404s). |
+| ~~1734~~ | P3 | bleephub actions — run_attempt hardcoded 1; rerun-failed-jobs reruns everything | attempts unmodeled | Rerun replaces the run in place (no attempt history, `/attempts/{n}` absent); `rerun-failed-jobs` delegates to full rerun, re-executing successful jobs. |
+| ~~1733~~ | P3 | bleephub actions — org-level runner surface missing | missing ops | No `/orgs/{org}/actions/runners` family (list/get/delete/registration-token); repo listing serves the single global pool unfiltered. |
+| ~~1732~~ | P2 | bleephub actions — runs-on labels ignored when routing jobs | label routing absent | `sendMessageToAgent` round-robins to ANY connected session; a job declaring `runs-on: [self-hosted, gpu]` dispatches to a runner without those labels (real broker only delivers to label-matching runners; job stays queued otherwise). |
 | ~~1731~~ | P1 | bleephub — workflow runs invisible to the checks/PR layer | missing integration loop | Jobs never create check runs/suites; no `workflow_run`/`workflow_job`/`check_run`/`check_suite` webhook events; PR `mergeable_state` ignores Actions results; branch-protection `required_status_checks` never consulted by the merge endpoint — a red CI run blocks nothing. |
 | ~~1730~~ | P2 | bleephub actions — secrets API shape diverges from real GitHub: no public-key endpoint, plaintext PUT body | wrong wire contract | Real clients (`gh secret set`, go-github, terraform) GET `/actions/secrets/public-key`, libsodium-seal the value, and PUT `{encrypted_value, key_id}`; bleephub serves no public-key route and decodes `{"value": ...}` — every real client fails. |
 | ~~1729~~ | P2 | bleephub actions — secrets exist only at repo level | missing scopes | No org secrets (visibility all/private/selected + selected-repos endpoints), no environment secrets, no org→repo→environment precedence merge into job messages. |

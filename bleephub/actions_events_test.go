@@ -55,6 +55,7 @@ func waitUntil(t *testing.T, what string, cond func() bool) {
 
 func TestActionsChecksLifecycle(t *testing.T) {
 	repoKey := "checksowner/checks-repo"
+	cancelRepoRunsCleanup(t, repoKey)
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/ci.yml", `name: ci
 on: [push]
 jobs:
@@ -148,6 +149,7 @@ jobs:
 
 func TestActionsSkippedJobCheckRun(t *testing.T) {
 	repoKey := "checkskip/skip-repo"
+	cancelRepoRunsCleanup(t, repoKey)
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/ci.yml", `name: skip-ci
 on: [push]
 jobs:

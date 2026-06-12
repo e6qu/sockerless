@@ -72,6 +72,7 @@ func TestParseCron(t *testing.T) {
 
 func TestFireDueSchedules(t *testing.T) {
 	repoKey := "cronowner/cron-repo"
+	cancelRepoRunsCleanup(t, repoKey)
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/nightly.yml", `name: nightly
 on:
   schedule:

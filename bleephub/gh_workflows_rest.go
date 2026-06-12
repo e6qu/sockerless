@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
 )
 
 func (s *Server) registerGHWorkflowsRoutes() {
@@ -18,6 +20,34 @@ func (s *Server) registerGHWorkflowsRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/runs", s.handleListWorkflowFileRuns)
 	s.route("POST /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches",
 		s.requirePerm(scopeActions, permWrite, s.handleDispatchWorkflow))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/enable",
+		s.requirePerm(scopeActions, permWrite, s.handleSetWorkflowState("active")))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/disable",
+		s.requirePerm(scopeActions, permWrite, s.handleSetWorkflowState("disabled_manually")))
+}
+
+// handleSetWorkflowState backs PUT .../workflows/{id}/{enable,disable}:
+// flips the workflow FILE's state (persisted) and 204s. Disabled
+// workflows neither trigger (webhooks.go workflowFileDisabled) nor
+// dispatch (403 below).
+func (s *Server) handleSetWorkflowState(state string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		repo := repoFullName(r)
+		s.store.DiscoverWorkflowFilesFromGit(repo)
+		wf := s.resolveWorkflowFile(repo, r.PathValue("workflow_id"))
+		if wf == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		s.store.mu.Lock()
+		wf.State = state
+		wf.UpdatedAt = time.Now().UTC()
+		if s.store.persist != nil {
+			s.store.persist.MustPut("workflow_files", strconv.FormatInt(wf.ID, 10), wf)
+		}
+		s.store.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // workflowFileJSON converts a WorkflowFile to GitHub's `Workflow`
@@ -175,6 +205,12 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 	wf := s.resolveWorkflowFile(repo, r.PathValue("workflow_id"))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if strings.HasPrefix(wf.State, "disabled") {
+		// Real GitHub: 403 "Workflow does not have 'workflow_dispatch'
+		// trigger" variant for disabled workflows is "Workflow is disabled".
+		writeGHError(w, http.StatusForbidden, "Workflow is disabled")
 		return
 	}
 	if wf.YAML == "" {

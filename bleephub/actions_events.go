@@ -114,9 +114,20 @@ func (s *Server) onActionsRunRequested(wf *Workflow) {
 
 	for _, j := range jobs {
 		cr := s.store.CreateCheckRun(repoKey, wf.Sha, j.DisplayName, githubActionsAppID, suite.ID)
+		s.store.mu.RLock()
+		jobStatus, jobResult := j.Status, j.Result
+		s.store.mu.RUnlock()
+		now := time.Now().UTC()
 		s.store.UpdateCheckRun(cr.ID, func(c *CheckRun) {
 			c.ExternalID = j.JobID
 			c.DetailsURL = fmt.Sprintf("http://%s/%s/actions/runs/%d", s.addr, repoKey, wf.RunID)
+			// Jobs carried over from a previous attempt arrive already
+			// terminal; their check runs reflect that immediately.
+			if jobStatus == JobStatusCompleted || jobStatus == JobStatusSkipped {
+				c.Status = "completed"
+				c.Conclusion = resultToConclusion(jobResult)
+				c.CompletedAt = &now
+			}
 		})
 		s.store.mu.Lock()
 		j.CheckRunID = cr.ID

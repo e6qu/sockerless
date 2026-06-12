@@ -27,7 +27,8 @@ func (s *Server) registerAgentRoutes() {
 
 func (s *Server) handleRegistrationToken(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info().Msg("registration token requested")
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	// Real GitHub: 201 Created.
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"token":      "BLEEPHUB_REG_TOKEN",
 		"expires_at": "2099-01-01T00:00:00Z",
 	})

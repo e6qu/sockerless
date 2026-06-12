@@ -293,6 +293,7 @@ jobs: {}
 
 func TestTriggerFiltersEndToEnd(t *testing.T) {
 	repoKey := "trigowner/trig-repo"
+	cancelRepoRunsCleanup(t, repoKey)
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/main-only.yml", `name: main-only
 on:
   push:
@@ -348,6 +349,7 @@ func TestPullRequestSynchronizeOnPush(t *testing.T) {
 	owner := "syncowner"
 	repoName := "sync-repo"
 	repoKey := owner + "/" + repoName
+	cancelRepoRunsCleanup(t, repoKey)
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/pr-ci.yml", `name: pr-ci
 on: [pull_request]
 jobs:

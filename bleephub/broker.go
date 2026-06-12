@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -34,18 +35,28 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	var agent *Agent
 	if agentRaw, ok := raw["agent"].(map[string]interface{}); ok {
-		agent = &Agent{
-			Enabled: true,
-			Status:  "online",
-		}
+		// The session request carries a slim agent reference; the
+		// REGISTERED agent is the routing source of truth because it
+		// holds the labels from config-time registration.
 		if id, ok := agentRaw["id"].(float64); ok {
-			agent.ID = int(id)
+			s.store.mu.RLock()
+			agent = s.store.Agents[int(id)]
+			s.store.mu.RUnlock()
 		}
-		if name, ok := agentRaw["name"].(string); ok {
-			agent.Name = name
-		}
-		if version, ok := agentRaw["version"].(string); ok {
-			agent.Version = version
+		if agent == nil {
+			agent = &Agent{
+				Enabled: true,
+				Status:  "online",
+			}
+			if id, ok := agentRaw["id"].(float64); ok {
+				agent.ID = int(id)
+			}
+			if name, ok := agentRaw["name"].(string); ok {
+				agent.Name = name
+			}
+			if version, ok := agentRaw["version"].(string); ok {
+				agent.Version = version
+			}
 		}
 	}
 
@@ -131,7 +142,9 @@ func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// sendMessageToAgent sends a message to the next available session (round-robin).
+// sendMessageToAgent sends a message to the next eligible session
+// (round-robin among sessions whose agent labels satisfy the job's
+// runs-on requirements).
 func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
@@ -150,18 +163,64 @@ func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
 	for i := 0; i < n; i++ {
 		idx := (s.lastSessionIdx + i) % n
 		session := s.store.Sessions[ids[idx]]
+		if !agentSatisfiesLabels(session.Agent, msg.Labels) {
+			continue
+		}
 		select {
 		case session.MsgCh <- msg:
 			s.lastSessionIdx = (idx + 1) % n
+			// Record which agent took the job: the runners API reports
+			// `busy` from running jobs' agent association.
+			if msg.JobID != "" && session.Agent != nil {
+				if job := s.store.Jobs[msg.JobID]; job != nil {
+					job.AgentID = session.Agent.ID
+				}
+			}
 			s.logger.Info().
 				Int64("messageId", msg.MessageID).
 				Str("sessionId", session.SessionID).
+				Strs("labels", msg.Labels).
 				Msg("message queued for runner")
 			return true
 		default:
 		}
 	}
 	return false
+}
+
+// agentSatisfiesLabels reports whether an agent's registered labels
+// cover every runs-on requirement (case-insensitive). GitHub-hosted
+// pool aliases (ubuntu-*, macos-*, windows-*) are satisfiable by ANY
+// agent: bleephub has no hosted pool, so a hosted-alias job runs on
+// whatever runner connects — the same accommodation act/nektos makes.
+// All other labels (self-hosted, custom) match strictly.
+func agentSatisfiesLabels(agent *Agent, required []string) bool {
+	if len(required) == 0 {
+		return true
+	}
+	var have map[string]bool
+	if agent != nil {
+		have = make(map[string]bool, len(agent.Labels))
+		for _, l := range agent.Labels {
+			have[strings.ToLower(l.Name)] = true
+		}
+	}
+	for _, req := range required {
+		lower := strings.ToLower(req)
+		if isHostedPoolAlias(lower) {
+			continue
+		}
+		if !have[lower] {
+			return false
+		}
+	}
+	return true
+}
+
+func isHostedPoolAlias(lower string) bool {
+	return strings.HasPrefix(lower, "ubuntu-") ||
+		strings.HasPrefix(lower, "macos-") ||
+		strings.HasPrefix(lower, "windows-")
 }
 
 func (s *Server) requeuePendingMessage(msg *TaskAgentMessage) {
