@@ -257,7 +257,7 @@ When extending this list, anchor each entry to the right rule in [`specs/CLOUD_R
 
 ### GitHub Actions Runner (cells 1 + 2)
 
-Architectural shape: the runner *is* the workspace. For `container:` jobs it does `docker create -v /home/runner/_work:/__w …` — host bind mounts that assume a shared filesystem with the spawned container. Cells 1 + 2 require both a topology change (runner-as-ECS-task / runner-as-Lambda) and sockerless-side bind-mount → EFS translation.
+Architectural shape: the runner *is* the workspace. For `container:` jobs it does `docker create -v /home/runner/_work:/__w …` — host bind mounts that assume a shared filesystem with the spawned container. **The sockerless-side bind-mount → shared-volume translation has landed across all six container backends** (`SOCKERLESS_{ECS,LAMBDA,GCP,ACA,AZF}_SHARED_VOLUMES`: binds whose source matches a configured path translate to the shared cloud volume — EFS access points / GCS buckets / Azure Files — with sub-path binds dropped because the parent mount already exposes them; unmapped binds still reject loudly). The sharing contract is integration-proven on ECS and ACA (writer container via named volume, reader via translated host bind). What remains for cells 1 + 2 is the TOPOLOGY: runner images that run as cloud tasks with the shared volume mounted at the workspace path.
 
 | # | Hurdle | Resolution | Bug |
 |---|---|---|---|

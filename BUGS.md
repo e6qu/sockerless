@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1749 filed - 1707 fixed - 2 open - 7 false positives.**
+**1750 filed - 1708 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1750~~ | P2 | backends — bind-mount→shared-volume translation parity incomplete (the runner-on-cloud gate) | partial mechanism | ECS/Cloud Run/GCF translated runner host binds to shared cloud volumes (`SOCKERLESS_*_SHARED_VOLUMES`), but lambda had the config UNWIRED into its bind path, and ACA/AZF had no mechanism at all (rejection message didn't even name a config). Parity completed across all six container backends with consistent sub-path-drop semantics; per-backend unit tests + ECS/ACA sim-backed integration tests prove the actual contract (container A writes via named volume, container B reads via translated host bind). What remains for runner-as-cloud-task is topology (runner images mounting the shared volume), not translation. |
 | ~~1749~~ | P3 | bleephub — runner's "Canceled" result spelling leaked through unmapped | result normalization | The official runner's TaskResult uses the US spelling; normalizeResult only mapped "Cancelled"/"cancelled", so runner-cancelled jobs carried Result "canceled" — invisible to every ResultCancelled comparison (fail-fast, rollups, conclusions). Found by the harness's new cancellation e2e asserting the strict value. |
 | ~~1748~~ | P3 | bleephub — actions hosted on bleephub itself can't resolve (`uses: owner/repo@ref` 502s) | action-source fidelity | The action tarball proxy serves the in-memory cache or fetches from real api.github.com; a repo ON bleephub holding an action (composite or otherwise) is never consulted, so self-hosted actions — GHES's bread and butter — fail with 502. Serve tarballs from bleephub's own git storage first (GitHub tarball layout: top-level `<owner>-<repo>-<sha>/` prefix), falling back to github.com for external actions. |
 | ~~1747~~ | P3 | bleephub actions — invalid workflows refuse the run instead of a startup_failure shell | trigger-failure fidelity | Real GitHub creates a run with conclusion `startup_failure` (no jobs) when a triggered workflow has an invalid reusable-workflow ref or unparseable expansion; bleephub logs and creates nothing, so the failure is invisible to the runs API/UI. |
