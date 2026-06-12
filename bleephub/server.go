@@ -26,9 +26,10 @@ type Server struct {
 	actionCache            *ActionCache
 	artifactStore          *ArtifactStore
 	metrics                *Metrics
-	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
-	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
+	scheduleFired          scheduleFiredKeys // cron-firing dedup (on: schedule)
+	actionsEvents          actionsEventLoop  // checks/webhook fan-out for run+job transitions
+	routePatterns          []string          // every pattern registered via route(), for fidelity enumeration
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
 	// assigns it (same package) to validate /api/v3 response shapes
@@ -313,6 +314,7 @@ func (s *Server) handleInternalStorage(w http.ResponseWriter, r *http.Request) {
 
 // ListenAndServe starts the HTTP server (crash-only, no graceful shutdown).
 func (s *Server) ListenAndServe() error {
+	s.startScheduleDispatcher()
 	inner := s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux))
 	ghWrapped := s.ghHeadersMiddleware(inner)
 	observed := ghWrapped

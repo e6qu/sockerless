@@ -854,7 +854,7 @@ func TestWebhookTrigger_WorkflowFileResolvable(t *testing.T) {
 	repoKey := "sweeppushowner/sweep-push-repo"
 	commitWorkflowYAMLToStorage(t, testServer, repoKey, ".github/workflows/ci.yml", sampleWorkflowYAML)
 
-	testServer.triggerWorkflowsForEvent(repoKey, "push", "refs/heads/main")
+	testServer.triggerWorkflowsForEvent(repoKey, "push", "", "refs/heads/main", nil)
 
 	// The workflow was submitted synchronously above; find it.
 	var wf *Workflow

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,16 @@ type Workflow struct {
 	Inputs             map[string]string    `json:"inputs,omitempty"`
 	ConcurrencyGroup   string               `json:"concurrencyGroup,omitempty"`
 	CancelInProgress   bool                 `json:"-"`
+	// Attempt is the 1-based run_attempt; zero means first attempt
+	// (reruns bump it and archive the prior attempt in
+	// Store.WorkflowAttempts).
+	Attempt int `json:"attempt,omitempty"`
+	// EventPayload is the triggering webhook payload (github.event).
+	// In-flight runs aren't persisted, so neither is this.
+	EventPayload map[string]interface{} `json:"-"`
+	// TypedInputs is the typed `inputs` expression context (boolean /
+	// number inputs carry real types); Inputs keeps the string forms.
+	TypedInputs map[string]interface{} `json:"-"`
 
 	// WorkflowFileID / WorkflowFilePath identify the originating workflow
 	// FILE (the YAML on disk), which is stable across every run produced
@@ -103,6 +114,11 @@ type WorkflowJob struct {
 	CompletedAt     time.Time              `json:"completedAt,omitempty"`
 	MatrixGroup     string                 `json:"matrixGroup,omitempty"`
 	Def             *JobDef                `json:"-"`
+	// Hidden marks synthetic reusable-workflow gate/collector nodes the
+	// jobs API never lists (real GitHub shows only the called jobs).
+	Hidden bool `json:"hidden,omitempty"`
+	// CheckRunID links the job to the check run mirroring it.
+	CheckRunID int64 `json:"checkRunId,omitempty"`
 }
 
 // WorkflowEventMeta carries event metadata to be set on the workflow before dispatch.
@@ -112,6 +128,22 @@ type WorkflowEventMeta struct {
 	Sha       string
 	Repo      string
 	Inputs    map[string]string
+	// Attempt sets the run's 1-based run_attempt (0 = first attempt);
+	// reruns pass the incremented value.
+	Attempt int
+	// ReuseRunID keeps the original run id/number across rerun attempts
+	// (real GitHub never mints a new run id for a re-run).
+	ReuseRunID int
+	// CarryOverJobs pre-completes jobs by key with results carried from
+	// the previous attempt (rerun-failed-jobs keeps successful jobs).
+	CarryOverJobs map[string]*WorkflowJob
+	// TypedInputs carries workflow_dispatch inputs with their declared
+	// types (boolean/number) for the `inputs` expression context;
+	// Inputs keeps the string forms (github.event.inputs).
+	TypedInputs map[string]interface{}
+	// Payload is the webhook event payload that triggered the run; it
+	// becomes the github.event expression/runner context.
+	Payload map[string]interface{}
 }
 
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
@@ -142,7 +174,23 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
-	runID := s.store.ReserveRunID()
+	// Expand reusable-workflow calls (jobs.<id>.uses) into their called
+	// jobs; the repository context resolves "./" references.
+	repoForCalls := ""
+	if len(eventMeta) > 0 && eventMeta[0] != nil {
+		repoForCalls = eventMeta[0].Repo
+	}
+	wf, err := s.expandReusableWorkflows(wf, repoForCalls, 1)
+	if err != nil {
+		return nil, err
+	}
+
+	runID := 0
+	if len(eventMeta) > 0 && eventMeta[0] != nil && eventMeta[0].ReuseRunID > 0 {
+		runID = eventMeta[0].ReuseRunID
+	} else {
+		runID = s.store.ReserveRunID()
+	}
 
 	workflow := &Workflow{
 		ID:        uuid.New().String(),
@@ -176,6 +224,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 			Outputs:         make(map[string]string),
 			ContinueOnError: jd.ContinueOnError,
 			Def:             jd,
+			Hidden:          jd.ServerCompleted,
 		}
 		if jd.Name != "" {
 			wfJob.DisplayName = jd.Name
@@ -218,6 +267,44 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Sha = m.Sha
 		workflow.RepoFullName = m.Repo
 		workflow.Inputs = m.Inputs
+		workflow.TypedInputs = m.TypedInputs
+		workflow.EventPayload = m.Payload
+		workflow.Attempt = m.Attempt
+
+		// Carry results forward from the previous attempt
+		// (rerun-failed-jobs re-runs only the failed jobs); applied
+		// before the workflow is stored, so dispatch never sees the
+		// carried jobs as pending.
+		for key, prev := range m.CarryOverJobs {
+			wfJob, ok := workflow.Jobs[key]
+			if !ok {
+				continue
+			}
+			wfJob.Status = prev.Status
+			wfJob.Result = prev.Result
+			wfJob.StartedAt = prev.StartedAt
+			wfJob.CompletedAt = prev.CompletedAt
+			for k, v := range prev.Outputs {
+				wfJob.Outputs[k] = v
+			}
+		}
+	}
+
+	// Concurrency groups are template strings on real GitHub
+	// (`group: ci-${{ github.ref }}`); resolve them before grouping.
+	if workflow.ConcurrencyGroup != "" && strings.Contains(workflow.ConcurrencyGroup, "${{") {
+		inputsCtx := make(map[string]interface{}, len(workflow.Inputs))
+		for k, v := range workflow.Inputs {
+			inputsCtx[k] = v
+		}
+		group, err := EvalTemplate(workflow.ConcurrencyGroup, &ExprContext{Contexts: map[string]interface{}{
+			"github": s.githubContextMap(workflow),
+			"inputs": inputsCtx,
+		}})
+		if err != nil {
+			return nil, fmt.Errorf("concurrency.group: %w", err)
+		}
+		workflow.ConcurrencyGroup = group
 	}
 
 	// Resolve the originating workflow FILE so the GitHub-shape run object
@@ -251,6 +338,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 				s.store.mu.Lock()
 				s.store.Workflows[workflow.ID] = workflow
 				s.store.mu.Unlock()
+				s.queueActionsEvent(evRunRequested, workflow, nil)
 				return workflow, nil
 			}
 		}
@@ -260,6 +348,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	s.store.mu.Lock()
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
+	s.queueActionsEvent(evRunRequested, workflow, nil)
 
 	if s.metrics != nil {
 		s.metrics.RecordWorkflowSubmit()
@@ -338,26 +427,25 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			// Evaluate job-level if: condition
 			if wfJob.Def != nil && wfJob.Def.If != "" {
 				hasAlways, hasFailure := ExprContainsStatusFunction(wfJob.Def.If)
-				exprCtx := &ExprContext{
-					DepResults: make(map[string]string, len(wfJob.Needs)),
-					Values:     make(map[string]string),
-				}
-				for _, dep := range wfJob.Needs {
-					if depJob, ok := wf.Jobs[dep]; ok {
-						exprCtx.DepResults[dep] = string(depJob.Result)
-					}
-				}
-				if wf.EventName != "" {
-					exprCtx.Values["github.event_name"] = wf.EventName
-				}
-				if wf.Ref != "" {
-					exprCtx.Values["github.ref"] = wf.Ref
-				}
+				exprCtx := s.jobExprContext(wf, wfJob)
 
-				if !EvalExpr(wfJob.Def.If, exprCtx) {
+				ok, err := EvalExprErr(wfJob.Def.If, exprCtx)
+				if err != nil {
+					// Real GitHub fails the job (and run) on an invalid
+					// expression rather than silently skipping it.
+					wfJob.Status = JobStatusCompleted
+					wfJob.Result = ResultFailure
+					wfJob.CompletedAt = time.Now()
+					s.logger.Warn().Err(err).Str("job", wfJob.Key).Str("if", wfJob.Def.If).
+						Msg("job if: expression error — failing job")
+					changed = true
+					continue
+				}
+				if !ok {
 					wfJob.Status = JobStatusSkipped
 					wfJob.Result = ResultSkipped
 					s.logger.Info().Str("job", wfJob.Key).Str("if", wfJob.Def.If).Msg("skipping job (if: false)")
+					s.queueActionsEvent(evJobCompleted, wf, wfJob)
 					changed = true
 					continue
 				}
@@ -373,6 +461,16 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 				wfJob.Status = JobStatusSkipped
 				wfJob.Result = ResultSkipped
 				s.logger.Info().Str("job", wfJob.Key).Msg("skipping job (dependency failed)")
+				s.queueActionsEvent(evJobCompleted, wf, wfJob)
+				changed = true
+				continue
+			}
+
+			// Synthetic reusable-workflow nodes complete in the engine —
+			// gates resolve call inputs, collectors map call outputs —
+			// and never dispatch to a runner. (Hidden: no checks events.)
+			if wfJob.Def != nil && wfJob.Def.ServerCompleted {
+				s.completeServerJobLocked(wf, wfJob)
 				changed = true
 				continue
 			}
@@ -405,6 +503,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 					}
 					s.logger.Info().Str("job", wfJob.Key).Str("environment", envName).
 						Msg("job waiting for deployment review")
+					s.queueActionsEvent(evJobWaiting, wf, wfJob)
 					changed = true
 					continue
 				}
@@ -414,6 +513,7 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			wfJob.Status = JobStatusQueued
 			wfJob.StartedAt = time.Now()
 			toDispatch = append(toDispatch, wfJob)
+			s.queueActionsEvent(evJobQueued, wf, wfJob)
 			changed = true
 		}
 		s.store.mu.Unlock()
@@ -427,6 +527,11 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			break
 		}
 	}
+
+	// A workflow can reach the all-done state here without any runner
+	// completion event (server-completed collector as the final node);
+	// finalize is idempotent.
+	s.finalizeWorkflowIfDone(wf)
 }
 
 // dispatchWorkflowJob builds and sends a job message to the runner.
@@ -465,12 +570,11 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 		MessageID:   s.nextMessageID(),
 		MessageType: "PipelineAgentJobRequest",
 		Body:        string(msgJSON),
+		Labels:      wfJob.Def.RunsOnLabels(),
+		JobID:       wfJob.JobID,
 	}
 
-	if !s.sendMessageToAgent(envelope) {
-		s.requeuePendingMessage(envelope)
-		s.logger.Warn().Str("jobId", wfJob.JobID).Msg("no runner available, workflow job queued (pending)")
-	}
+	s.queueJobMessage(envelope)
 
 	if s.metrics != nil {
 		s.metrics.RecordJobDispatch()
@@ -517,6 +621,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 	foundJob.Status = JobStatusCompleted
 	foundJob.Result = Result(normalizeResult(result))
 	foundJob.CompletedAt = time.Now()
+	s.queueActionsEvent(evJobCompleted, foundWf, foundJob)
 
 	// Matrix fail-fast: if this job failed and it's in a matrix group, cancel siblings
 	if foundJob.Result == ResultFailure && foundJob.MatrixGroup != "" {
@@ -532,6 +637,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 					sibling.Status = JobStatusCompleted
 					sibling.Result = ResultCancelled
 					sibling.CompletedAt = time.Now()
+					s.queueActionsEvent(evJobCompleted, foundWf, sibling)
 					s.logger.Info().
 						Str("job", sibling.Key).
 						Str("reason", "fail-fast").
@@ -576,6 +682,12 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		}
 	}
 
+	// dispatchReadyJobs may already have finalized the run (a server-
+	// completed collector can be the last node); don't double-complete.
+	if foundWf.Status == WorkflowStatusCompleted {
+		allDone = false
+	}
+
 	if allDone {
 		foundWf.Status = WorkflowStatusCompleted
 		if anyFailed {
@@ -594,6 +706,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		if foundWf.cancelTimeout != nil {
 			foundWf.cancelTimeout()
 		}
+		s.queueActionsEvent(evRunCompleted, foundWf, nil)
 		duration := time.Since(foundWf.CreatedAt)
 		s.logger.Info().
 			Str("workflow_id", foundWf.ID).
@@ -607,6 +720,15 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			s.startPendingConcurrencyWorkflow(concurrencyGroup)
 		}
 	}
+}
+
+// AttemptNumber returns the 1-based run_attempt (the zero value is the
+// first attempt).
+func (wf *Workflow) AttemptNumber() int {
+	if wf.Attempt < 1 {
+		return 1
+	}
+	return wf.Attempt
 }
 
 // jobEnvironmentName resolves a job's target environment, tolerating a
@@ -720,6 +842,7 @@ func (s *Server) applyDeploymentReview(ctx context.Context, wf *Workflow, envIDs
 			wfJob.Status = JobStatusCompleted
 			wfJob.Result = ResultFailure
 			wfJob.CompletedAt = time.Now()
+			s.queueActionsEvent(evJobCompleted, wf, wfJob)
 		}
 	}
 	if len(wf.PendingDeployments) == 0 && wf.Status == WorkflowStatusWaiting {
@@ -776,6 +899,7 @@ func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
 		if wf.cancelTimeout != nil {
 			wf.cancelTimeout()
 		}
+		s.queueActionsEvent(evRunCompleted, wf, nil)
 		if concurrencyGroup != "" {
 			s.startPendingConcurrencyWorkflow(concurrencyGroup)
 		}
@@ -790,11 +914,13 @@ func (s *Server) cancelWorkflow(wf *Workflow) {
 			wfJob.Status = JobStatusCompleted
 			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = time.Now()
+			s.queueActionsEvent(evJobCompleted, wf, wfJob)
 		}
 	}
 	wf.Status = WorkflowStatusCompleted
 	wf.Result = ResultCancelled
 	s.store.mu.Unlock()
+	s.queueActionsEvent(evRunCompleted, wf, nil)
 
 	if wf.cancelTimeout != nil {
 		wf.cancelTimeout()
@@ -907,6 +1033,7 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 			wfJob.Status = JobStatusCompleted
 			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = now
+			s.queueActionsEvent(evJobCompleted, wf, wfJob)
 			timedOut = true
 		}
 	}
@@ -920,6 +1047,147 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 			}
 		}
 	}
+}
+
+// jobExprContext builds the expression-evaluation context for a job-level
+// `if:` with the contexts real GitHub makes available there: github,
+// needs, vars, and inputs. Callers hold the store write lock.
+func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
+	// Jobs inside a reusable-workflow call see their workflow's own view:
+	// sibling needs under unprefixed keys, the synthetic gate invisible,
+	// and the call's resolved inputs as the inputs context.
+	var binding *WorkflowCallBinding
+	if wfJob.Def != nil && wfJob.Def.Call != nil && wfJob.Def.CallRole == "" {
+		binding = wfJob.Def.Call
+	}
+
+	deps := make(map[string]string, len(wfJob.Needs))
+	needsCtx := make(map[string]interface{}, len(wfJob.Needs))
+	for _, dep := range wfJob.Needs {
+		depJob, ok := wf.Jobs[dep]
+		if !ok {
+			continue
+		}
+		ctxKey := dep
+		if binding != nil {
+			if dep == binding.CallerKey+"/__call" {
+				continue
+			}
+			ctxKey = strings.TrimPrefix(dep, binding.CallerKey+"/")
+		}
+		deps[ctxKey] = string(depJob.Result)
+		outputs := make(map[string]interface{}, len(depJob.Outputs))
+		for k, v := range depJob.Outputs {
+			outputs[k] = v
+		}
+		needsCtx[ctxKey] = map[string]interface{}{
+			"result":  string(depJob.Result),
+			"outputs": outputs,
+		}
+	}
+
+	inputsCtx := make(map[string]interface{}, len(wf.Inputs))
+	if binding != nil {
+		if ri := binding.ResolvedInputs(); ri != nil {
+			inputsCtx = ri
+		}
+	} else {
+		for k, v := range wf.Inputs {
+			inputsCtx[k] = v
+		}
+		for k, v := range wf.TypedInputs {
+			inputsCtx[k] = v
+		}
+	}
+
+	varsCtx := make(map[string]interface{})
+	if wf.RepoFullName != "" {
+		_, vars := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		for name, v := range vars {
+			varsCtx[name] = v
+		}
+	}
+
+	return &ExprContext{
+		DepResults:        deps,
+		WorkflowCancelled: wf.Result == ResultCancelled,
+		Contexts: map[string]interface{}{
+			"github": s.githubContextMap(wf),
+			"needs":  needsCtx,
+			"inputs": inputsCtx,
+			"vars":   varsCtx,
+		},
+	}
+}
+
+// githubContextMap assembles the server-side `github` context for
+// expression evaluation, mirroring the fields the runner receives in the
+// job message's contextData (same defaults as buildJobMessageFromDef).
+func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
+	eventName := wf.EventName
+	if eventName == "" {
+		eventName = "push"
+	}
+	ref := wf.Ref
+	if ref == "" {
+		ref = "refs/heads/main"
+	}
+	sha := wf.Sha
+	if sha == "" {
+		sha = "0000000000000000000000000000000000000000"
+	}
+	repoFullName := wf.RepoFullName
+	if repoFullName == "" {
+		repoFullName = "bleephub/test"
+	}
+	repoOwner := repoFullName
+	if idx := strings.Index(repoOwner, "/"); idx >= 0 {
+		repoOwner = repoOwner[:idx]
+	}
+	refName := ref
+	refType := "branch"
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		refName = strings.TrimPrefix(ref, "refs/heads/")
+	case strings.HasPrefix(ref, "refs/tags/"):
+		refName = strings.TrimPrefix(ref, "refs/tags/")
+		refType = "tag"
+	}
+	m := map[string]interface{}{
+		"event_name":       eventName,
+		"ref":              ref,
+		"ref_name":         refName,
+		"ref_type":         refType,
+		"sha":              sha,
+		"repository":       repoFullName,
+		"repository_owner": repoOwner,
+		"run_id":           strconv.Itoa(wf.RunID),
+		"run_number":       strconv.Itoa(wf.RunNumber),
+		"run_attempt":      strconv.Itoa(wf.AttemptNumber()),
+		"workflow":         wf.Name,
+	}
+	if wf.EventPayload != nil {
+		m["event"] = wf.EventPayload
+		if sender, _ := wf.EventPayload["sender"].(map[string]interface{}); sender != nil {
+			if login, _ := sender["login"].(string); login != "" {
+				m["actor"] = login
+			}
+		}
+		// PR-triggered runs carry head_ref/base_ref, like real GitHub.
+		if pr, _ := wf.EventPayload["pull_request"].(map[string]interface{}); pr != nil {
+			if head, _ := pr["head"].(map[string]interface{}); head != nil {
+				if r, _ := head["ref"].(string); r != "" {
+					m["head_ref"] = r
+				}
+			}
+			if base, _ := pr["base"].(map[string]interface{}); base != nil {
+				if r, _ := base["ref"].(string); r != "" {
+					m["base_ref"] = r
+				}
+			}
+		}
+	}
+	return m
 }
 
 // validateJobGraph checks for cycles in the job dependency graph.

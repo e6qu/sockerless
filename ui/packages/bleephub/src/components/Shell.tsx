@@ -9,6 +9,8 @@ import {
   RepoIcon,
   CommentIcon,
   PullRequestIcon,
+  PlayIcon,
+  GearIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -147,7 +149,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
 
 // ─── Repo context header + tabs ────────────────────────────────────────
 
-export type RepoTab = "code" | "issues" | "pulls";
+export type RepoTab = "code" | "issues" | "pulls" | "actions" | "settings";
 
 /**
  * Repo context bar: "owner / repo" breadcrumb above the GitHub-style tab
@@ -200,6 +202,18 @@ export function RepoHeader({
           label="Pull requests"
           count={prCount}
           active={active === "pulls"}
+        />
+        <RepoTabLink
+          to={`${base}/actions`}
+          icon={<PlayIcon size={15} />}
+          label="Actions"
+          active={active === "actions"}
+        />
+        <RepoTabLink
+          to={`${base}/settings/secrets`}
+          icon={<GearIcon size={15} />}
+          label="Settings"
+          active={active === "settings"}
         />
       </nav>
     </div>

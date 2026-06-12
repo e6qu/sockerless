@@ -58,8 +58,9 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	repoKey := owner + "/" + name
-	s.emitWebhookEvent(repoKey, "pull_request", "opened", buildPullRequestPayload(repo, pr, user, "opened"))
-	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "refs/heads/"+pr.HeadRefName)
+	openedPayload := buildPullRequestPayload(repo, pr, user, "opened")
+	s.emitWebhookEvent(repoKey, "pull_request", "opened", openedPayload)
+	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "opened", "refs/heads/"+pr.HeadRefName, openedPayload)
 
 	s.recordAuditEvent("pull_request.create", user.Login, "", map[string]interface{}{"repo": repoKey, "pr_id": pr.ID})
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
@@ -150,7 +151,30 @@ func (s *Server) handleGetPullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
+	out := pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName)
+	s.applyChecksToMergeability(out, repo, pr)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// applyChecksToMergeability folds the head commit's check runs into
+// mergeable_state the way real GitHub does: unmet REQUIRED status
+// checks (branch protection on the base branch) block the merge;
+// failing or still-running non-required checks mark it unstable.
+func (s *Server) applyChecksToMergeability(out map[string]interface{}, repo *Repo, pr *PullRequest) {
+	if pr.State != "OPEN" || out["mergeable_state"] != "clean" {
+		return
+	}
+	headSha := s.prHeadSha(repo, pr)
+	if headSha == "" {
+		return
+	}
+	st := s.evaluateChecksForMerge(repo, pr.BaseRefName, headSha)
+	switch {
+	case len(st.MissingRequired) > 0:
+		out["mergeable_state"] = "blocked"
+	case st.AnyFailing, st.AnyPending:
+		out["mergeable_state"] = "unstable"
+	}
 }
 
 func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +247,9 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 			action = "reopened"
 		}
 		repoKey := owner + "/" + repoName
-		s.emitWebhookEvent(repoKey, "pull_request", action, buildPullRequestPayload(repo, updated, user, action))
+		payload := buildPullRequestPayload(repo, updated, user, action)
+		s.emitWebhookEvent(repoKey, "pull_request", action, payload)
+		go s.triggerWorkflowsForEvent(repoKey, "pull_request", action, "refs/heads/"+updated.HeadRefName, payload)
 	}
 
 	writeJSON(w, http.StatusOK, pullRequestToJSON(updated, s.store, s.baseURL(r), repo.FullName))
@@ -266,6 +292,16 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Branch protection: required status checks must be green on the
+	// head commit before the merge API succeeds (405, real GitHub).
+	if headSha := s.prHeadSha(repo, pr); headSha != "" {
+		if st := s.evaluateChecksForMerge(repo, pr.BaseRefName, headSha); len(st.MissingRequired) > 0 {
+			writeGHError(w, http.StatusMethodNotAllowed,
+				fmt.Sprintf("Required status check %q is expected.", st.MissingRequired[0]))
+			return
+		}
+	}
+
 	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 		now := time.Now()
 		p.State = "MERGED"
@@ -276,7 +312,9 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 
 	merged := s.store.GetPullRequest(pr.ID)
 	repoKey := owner + "/" + repoName
-	s.emitWebhookEvent(repoKey, "pull_request", "closed", buildPullRequestPayload(repo, merged, user, "closed"))
+	mergedPayload := buildPullRequestPayload(repo, merged, user, "closed")
+	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
+	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
 	writeJSON(w, http.StatusOK, map[string]interface{}{

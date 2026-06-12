@@ -531,16 +531,30 @@ func TestActionsRun_WorkflowFileReferences(t *testing.T) {
 func TestActionsJob_StepsAndCompletedAt(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
+	s.registerTimelineRoutes()
 	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
-	// Give the job real step definitions + a completion time so the
-	// synthesized step array and completed_at have something to reflect.
 	s.store.mu.Lock()
-	wfJob.Def = &JobDef{Steps: []StepDef{
-		{Name: "Checkout", Uses: "actions/checkout@v4"},
-		{Run: "go test ./..."},
-	}}
 	wfJob.CompletedAt = wfJob.StartedAt.Add(30 * time.Second)
 	s.store.mu.Unlock()
+	planID, timelineID := linkJobToPlan(t, s, wfJob)
+
+	// Report the job + step records the way the runner does (job record
+	// plus one Task record per step, PATCHed through the timeline route).
+	jobRec := uuid.New().String()
+	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
+		{"id": jobRec, "type": "Job", "name": "Build", "order": 1,
+			"state": "completed", "result": "succeeded"},
+		{"id": uuid.New().String(), "parentId": jobRec, "type": "Task",
+			"name": "Checkout", "refName": "step1", "order": 1,
+			"state": "completed", "result": "succeeded",
+			"startTime":  "2026-06-12T10:00:00.1234567Z",
+			"finishTime": "2026-06-12T10:00:05.7654321Z"},
+		{"id": uuid.New().String(), "parentId": jobRec, "type": "Task",
+			"name": "Run go test ./...", "refName": "step2", "order": 2,
+			"state": "completed", "result": "succeeded",
+			"startTime":  "2026-06-12T10:00:06Z",
+			"finishTime": "2026-06-12T10:00:30Z"},
+	})
 
 	id := stableJobID(wfJob.JobID)
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d", id))
@@ -583,6 +597,11 @@ func TestActionsJob_StepsAndCompletedAt(t *testing.T) {
 		if st.StartedAt == nil || st.CompletedAt == nil {
 			t.Errorf("step %d timestamps not set: %+v", i, st)
 		}
+	}
+	// The runner's fractional-second timestamps come back normalized to
+	// GitHub's second-resolution RFC3339.
+	if got.Steps[0].StartedAt != nil && *got.Steps[0].StartedAt != "2026-06-12T10:00:00Z" {
+		t.Errorf("step 0 started_at = %q, want 2026-06-12T10:00:00Z", *got.Steps[0].StartedAt)
 	}
 }
 

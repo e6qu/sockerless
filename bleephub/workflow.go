@@ -36,6 +36,25 @@ type JobDef struct {
 	ContinueOnError bool                   `yaml:"continue-on-error"`
 	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
 	Environment     interface{}            `yaml:"environment"` // string or {name, url}
+
+	// Uses marks the job as a reusable-workflow call
+	// ("./.github/workflows/x.yml" or "owner/repo/.github/workflows/x.yml@ref");
+	// With carries its inputs (values kept as raw template strings) and
+	// SecretsInherit / SecretsMap its `secrets:` configuration.
+	Uses           string
+	With           map[string]string
+	SecretsInherit bool
+	SecretsMap     map[string]string
+
+	// Call links jobs produced by reusable-workflow expansion to their
+	// call binding; ServerCompleted marks synthetic gate/collector nodes
+	// the engine completes itself instead of dispatching to a runner.
+	Call            *WorkflowCallBinding
+	ServerCompleted bool
+	// CallRole distinguishes the synthetic nodes: "gate" (resolves
+	// inputs once dependencies finish) or "collector" (maps called-
+	// workflow outputs onto the public caller job key).
+	CallRole string
 }
 
 // EnvironmentName resolves the job's target environment name from either
@@ -136,6 +155,9 @@ type rawJobDef struct {
 	ContinueOnError bool                   `yaml:"continue-on-error"`
 	TimeoutMinutes  int                    `yaml:"timeout-minutes"`
 	Environment     interface{}            `yaml:"environment"` // string or {name, url}
+	Uses            string                 `yaml:"uses"`
+	With            map[string]interface{} `yaml:"with"`
+	Secrets         interface{}            `yaml:"secrets"` // "inherit" or map
 }
 
 type rawStrategyDef struct {
@@ -202,6 +224,34 @@ func normalizeJob(rj *rawJobDef) (*JobDef, error) {
 		ContinueOnError: rj.ContinueOnError,
 		TimeoutMinutes:  rj.TimeoutMinutes,
 		Environment:     rj.Environment,
+		Uses:            rj.Uses,
+	}
+
+	// Reusable-workflow call inputs/secrets (jobs.<id>.uses).
+	if len(rj.With) > 0 {
+		jd.With = make(map[string]string, len(rj.With))
+		for k, v := range rj.With {
+			jd.With[k] = exprToString(normalizeYAMLValue(v))
+		}
+	}
+	switch sec := rj.Secrets.(type) {
+	case nil:
+	case string:
+		if sec != "inherit" {
+			return nil, fmt.Errorf("secrets must be a map or the string 'inherit', got %q", sec)
+		}
+		jd.SecretsInherit = true
+	case map[string]interface{}:
+		jd.SecretsMap = make(map[string]string, len(sec))
+		for k, v := range sec {
+			s, ok := v.(string)
+			if !ok {
+				return nil, fmt.Errorf("secrets.%s must be a string", k)
+			}
+			jd.SecretsMap[k] = s
+		}
+	default:
+		return nil, fmt.Errorf("secrets must be a map or 'inherit', got %T", sec)
 	}
 
 	// Normalize needs: string → []string
@@ -329,6 +379,30 @@ func parseMatrixNode(node *yaml.Node) (MatrixDef, error) {
 	}
 
 	return md, nil
+}
+
+// RunsOnLabels returns the job's runs-on labels (string or list form);
+// nil when unset.
+func (jd *JobDef) RunsOnLabels() []string {
+	if jd == nil {
+		return nil
+	}
+	switch v := jd.RunsOn.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // ContainerImage returns the container image string from a JobDef.Container,

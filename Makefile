@@ -379,3 +379,16 @@ bleephub-gh-docker-test:
 	@docker build -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .
 	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
 	@docker run --rm bleephub-gh-test:local
+
+# Official actions/runner against bleephub end-to-end: the runner
+# registers, polls the broker, executes host-mode jobs (jobContainer
+# null — real GitHub's shape for jobs without `container:`), uploads
+# timeline records + logs, and completes. Self-contained image, no
+# docker socket needed. Container-mode jobs against cloud backends are
+# gated on the bind-mount→EFS translation (docs/GITHUB_RUNNER.md).
+.PHONY: bleephub-runner-docker-test
+bleephub-runner-docker-test:
+	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
+	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
+	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness…$(COLOR_RESET)\n"
+	@docker run --rm bleephub-runner-int:local

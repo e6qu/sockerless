@@ -3,6 +3,7 @@ package simulator
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -287,6 +288,34 @@ func runContainer(ctx context.Context, cli *client.Client, cfg ContainerConfig, 
 	return waitAndCaptureLogs(ctx, cli, containerID, cfg, sink)
 }
 
+// drainImagePull consumes a docker image-pull response stream and
+// surfaces the failure it may carry: the daemon reports pull errors as
+// JSON events INSIDE a 200 response body, so discarding the stream
+// turns a transient registry failure into an opaque "No such image" at
+// container create.
+func drainImagePull(reader io.Reader, imageName string) error {
+	dec := json.NewDecoder(reader)
+	for {
+		var ev struct {
+			Error       string `json:"error"`
+			ErrorDetail struct {
+				Message string `json:"message"`
+			} `json:"errorDetail"`
+		}
+		if err := dec.Decode(&ev); err == io.EOF {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("image pull %s: malformed pull stream: %w", imageName, err)
+		}
+		if ev.Error != "" {
+			return fmt.Errorf("image pull %s: %s", imageName, ev.Error)
+		}
+		if ev.ErrorDetail.Message != "" {
+			return fmt.Errorf("image pull %s: %s", imageName, ev.ErrorDetail.Message)
+		}
+	}
+}
+
 func createAndStartContainer(ctx context.Context, cli *client.Client, cfg ContainerConfig) (string, error) {
 	// Pull image
 	pullPolicy := os.Getenv("SIM_PULL_POLICY")
@@ -307,9 +336,11 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 		if err != nil {
 			return "", fmt.Errorf("image pull %s: %w", cfg.Image, err)
 		}
-		// Drain pull output
-		_, _ = io.Copy(io.Discard, reader)
+		pullErr := drainImagePull(reader, cfg.Image)
 		_ = reader.Close()
+		if pullErr != nil {
+			return "", pullErr
+		}
 	}
 
 	// Resolve the image to its ID for ContainerCreate. Podman's docker-compat

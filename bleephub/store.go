@@ -104,46 +104,54 @@ type Store struct {
 	AuthCodes          map[string]*authCode     // OAuth web-flow codes
 	LoginSessions      map[string]*LoginSession // _gh_sess cookie value → session
 	Repos              map[int]*Repo
-	ReposByName        map[string]*Repo              // "owner/name" → repo
-	GitStorages        map[string]gitStorage.Storer  // "owner/name" → go-git storage (memory or filesystem)
-	Orgs               map[int]*Org                  // id → org
-	OrgsByLogin        map[string]*Org               // login → org
-	Teams              map[int]*Team                 // id → team
-	TeamsBySlug        map[string]*Team              // "org/slug" → team
-	Memberships        map[string]*Membership        // "org/user" → membership
-	Issues             map[int]*Issue                // id → issue
-	Labels             map[int]*IssueLabel           // id → label
-	Milestones         map[int]*Milestone            // id → milestone
-	Comments           map[int]*Comment              // id → comment
-	PullRequests       map[int]*PullRequest          // id → PR
-	PRReviews          map[int]*PullRequestReview    // id → review
-	Workflows          map[string]*Workflow          // id → workflow (run-level)
-	WorkflowFiles      map[int64]*WorkflowFile       // id → workflow file (file-level)
-	PendingMessages    []*TaskAgentMessage           // messages awaiting delivery
-	RepoSecrets        map[string]map[string]*Secret // "owner/repo" → name → secret
-	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
-	OrgHooks           map[string][]*Webhook         // org login → org-level hooks
-	HookDeliveries     map[int][]*WebhookDelivery    // hookID → deliveries
-	Apps               map[int]*App                  // id → app
-	AppsBySlug         map[string]*App               // slug → app
-	AppsByClientID     map[string]*App               // OAuth client_id → app
-	OAuthApps          map[string]*OAuthApp          // OAuth client_id → OAuth app (distinct from GitHub App)
-	Installations      map[int]*Installation         // id → installation
-	InstallationTokens map[string]*InstallationToken // token value → token
-	UserToServerTokens map[string]*UserToServerToken // gho_/ghu_ token value → token
-	RefreshTokens      map[string]*RefreshToken      // ghr_ token value → refresh token
-	AppHookDeliveries  map[int][]*WebhookDelivery    // appID → app-level webhook deliveries
-	ManifestCodes      map[string]int                // code → appID (one-time-use)
-	CheckRuns          map[int64]*CheckRun           // id → check run
-	CheckSuites        map[int64]*CheckSuite         // id → check suite
-	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
-	Reactions          *ReactionStore                // reactions across all parent types
-	Releases           *ReleaseStore                 // release CRUD
-	Deployments        *DeploymentStore              // deployments + statuses + environments
-	PRReviewComments   *PRReviewCommentStore         // PR review comments (inline / threads)
-	Misc               *MiscStore                    // long-tail surfaces
-	ProjectsV2         *ProjectV2Store               // GitHub Projects v2
-	LogLines           map[string][]string           // jobID → captured console log lines
+	ReposByName        map[string]*Repo                       // "owner/name" → repo
+	GitStorages        map[string]gitStorage.Storer           // "owner/name" → go-git storage (memory or filesystem)
+	Orgs               map[int]*Org                           // id → org
+	OrgsByLogin        map[string]*Org                        // login → org
+	Teams              map[int]*Team                          // id → team
+	TeamsBySlug        map[string]*Team                       // "org/slug" → team
+	Memberships        map[string]*Membership                 // "org/user" → membership
+	Issues             map[int]*Issue                         // id → issue
+	Labels             map[int]*IssueLabel                    // id → label
+	Milestones         map[int]*Milestone                     // id → milestone
+	Comments           map[int]*Comment                       // id → comment
+	PullRequests       map[int]*PullRequest                   // id → PR
+	PRReviews          map[int]*PullRequestReview             // id → review
+	Workflows          map[string]*Workflow                   // id → workflow (run-level)
+	WorkflowFiles      map[int64]*WorkflowFile                // id → workflow file (file-level)
+	PendingMessages    []*TaskAgentMessage                    // messages awaiting delivery
+	RepoSecrets        map[string]map[string]*Secret          // "owner/repo" → name → secret
+	RepoVariables      map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
+	OrgSecrets         map[string]map[string]*OrgSecret       // org login → NAME → org secret
+	OrgVariables       map[string]map[string]*ActionsVariable // org login → NAME → org variable
+	EnvSecrets         map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
+	EnvVariables       map[string]map[string]*ActionsVariable // envScopeKey(repo, env) → NAME → variable
+	TimelineRecords    map[string][]*TimelineRecord           // planID → runner-uploaded timeline records
+	LogFiles           map[int][]byte                         // logID → uploaded runner log content
+	WorkflowAttempts   map[int][]*Workflow                    // runID → prior attempts (oldest first)
+	Hooks              map[string][]*Webhook                  // "owner/repo" → hooks
+	OrgHooks           map[string][]*Webhook                  // org login → org-level hooks
+	HookDeliveries     map[int][]*WebhookDelivery             // hookID → deliveries
+	Apps               map[int]*App                           // id → app
+	AppsBySlug         map[string]*App                        // slug → app
+	AppsByClientID     map[string]*App                        // OAuth client_id → app
+	OAuthApps          map[string]*OAuthApp                   // OAuth client_id → OAuth app (distinct from GitHub App)
+	Installations      map[int]*Installation                  // id → installation
+	InstallationTokens map[string]*InstallationToken          // token value → token
+	UserToServerTokens map[string]*UserToServerToken          // gho_/ghu_ token value → token
+	RefreshTokens      map[string]*RefreshToken               // ghr_ token value → refresh token
+	AppHookDeliveries  map[int][]*WebhookDelivery             // appID → app-level webhook deliveries
+	ManifestCodes      map[string]int                         // code → appID (one-time-use)
+	CheckRuns          map[int64]*CheckRun                    // id → check run
+	CheckSuites        map[int64]*CheckSuite                  // id → check suite
+	CheckSuitePrefs    map[string][]*CheckSuitePref           // repoKey → autoTrigger prefs
+	Reactions          *ReactionStore                         // reactions across all parent types
+	Releases           *ReleaseStore                          // release CRUD
+	Deployments        *DeploymentStore                       // deployments + statuses + environments
+	PRReviewComments   *PRReviewCommentStore                  // PR review comments (inline / threads)
+	Misc               *MiscStore                             // long-tail surfaces
+	ProjectsV2         *ProjectV2Store                        // GitHub Projects v2
+	LogLines           map[string][]string                    // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
 	NextLog            int
@@ -165,6 +173,7 @@ type Store struct {
 	NextInstallationID int
 	NextCheckRunID     int64
 	NextCheckSuiteID   int64
+	actionsKeyPair     *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist            *Persistence
 	mu                 sync.RWMutex
 }
@@ -219,6 +228,11 @@ type TaskAgentMessage struct {
 	MessageType string `json:"messageType"`
 	IV          string `json:"iv,omitempty"`
 	Body        string `json:"body"`
+	// Labels carries the job's runs-on requirements for broker routing;
+	// JobID links the envelope to its engine job so delivery can record
+	// which agent took it. Neither is serialized to the runner.
+	Labels []string `json:"-"`
+	JobID  string   `json:"-"`
 }
 
 // Job represents a queued/running/completed job.
@@ -263,6 +277,14 @@ func NewStore() *Store {
 		Workflows:          make(map[string]*Workflow),
 		WorkflowFiles:      make(map[int64]*WorkflowFile),
 		RepoSecrets:        make(map[string]map[string]*Secret),
+		RepoVariables:      make(map[string]map[string]*ActionsVariable),
+		OrgSecrets:         make(map[string]map[string]*OrgSecret),
+		OrgVariables:       make(map[string]map[string]*ActionsVariable),
+		EnvSecrets:         make(map[string]map[string]*Secret),
+		EnvVariables:       make(map[string]map[string]*ActionsVariable),
+		TimelineRecords:    make(map[string][]*TimelineRecord),
+		LogFiles:           make(map[int][]byte),
+		WorkflowAttempts:   make(map[int][]*Workflow),
 		Hooks:              make(map[string][]*Webhook),
 		OrgHooks:           make(map[string][]*Webhook),
 		HookDeliveries:     make(map[int][]*WebhookDelivery),
@@ -695,6 +717,57 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.RepoSecrets[key] = secrets
+			return nil
+		}},
+		{"repo_variables", func(key string, raw []byte) error {
+			var vars map[string]*ActionsVariable
+			if err := loadJSON(raw, &vars); err != nil {
+				return err
+			}
+			st.RepoVariables[key] = vars
+			return nil
+		}},
+		{"org_secrets", func(key string, raw []byte) error {
+			var secrets map[string]*OrgSecret
+			if err := loadJSON(raw, &secrets); err != nil {
+				return err
+			}
+			st.OrgSecrets[key] = secrets
+			return nil
+		}},
+		{"org_variables", func(key string, raw []byte) error {
+			var vars map[string]*ActionsVariable
+			if err := loadJSON(raw, &vars); err != nil {
+				return err
+			}
+			st.OrgVariables[key] = vars
+			return nil
+		}},
+		{"env_secrets", func(key string, raw []byte) error {
+			var secrets map[string]*Secret
+			if err := loadJSON(raw, &secrets); err != nil {
+				return err
+			}
+			st.EnvSecrets[key] = secrets
+			return nil
+		}},
+		{"env_variables", func(key string, raw []byte) error {
+			var vars map[string]*ActionsVariable
+			if err := loadJSON(raw, &vars); err != nil {
+				return err
+			}
+			st.EnvVariables[key] = vars
+			return nil
+		}},
+		{"actions_crypto", func(key string, raw []byte) error {
+			if key != "keypair" {
+				return nil
+			}
+			var kp SecretsKeyPair
+			if err := loadJSON(raw, &kp); err != nil {
+				return err
+			}
+			st.actionsKeyPair = &kp
 			return nil
 		}},
 		{"check_suites", func(_ string, raw []byte) error {

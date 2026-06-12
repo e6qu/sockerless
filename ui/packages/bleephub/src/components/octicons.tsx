@@ -197,3 +197,133 @@ export function RefreshIcon(p: IconProps) {
     </Svg>
   );
 }
+
+/* Actions status vocabulary — run / job / step / check states. */
+
+export function CheckCircleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M5.6 8.3l1.7 1.7 3.1-3.6" />
+    </Svg>
+  );
+}
+
+export function XCircleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M6 6l4 4M10 6l-4 4" />
+    </Svg>
+  );
+}
+
+/** Cancelled: circle with a horizontal stop bar. */
+export function StopCircleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M5.5 8h5" />
+    </Svg>
+  );
+}
+
+/** Skipped: circle with a diagonal slash. */
+export function SkipCircleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M5 11l6-6" />
+    </Svg>
+  );
+}
+
+/** Queued: solid dot. */
+export function DotFillIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="4.5" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** In-progress: 3/4 arc — callers spin it with the animate-spin class. */
+export function ProgressArcIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 2.5a5.5 5.5 0 1 1-5.5 5.5" />
+    </Svg>
+  );
+}
+
+/** Waiting on approval / wait timer: clock face. */
+export function ClockIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M8 5v3.2l2.2 1.3" />
+    </Svg>
+  );
+}
+
+export function PlayIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M6.7 5.8v4.4L10.3 8z" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function GearIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="2" />
+      <path d="M8 1.8v2M8 12.2v2M1.8 8h2M12.2 8h2M3.6 3.6l1.4 1.4M11 11l1.4 1.4M12.4 3.6L11 5M5 11l-1.4 1.4" />
+    </Svg>
+  );
+}
+
+export function KebabIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="3.5" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none" />
+      <circle cx="8" cy="12.5" r="1.1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function ChevronRightIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M6 3.5L10.5 8 6 12.5" />
+    </Svg>
+  );
+}
+
+export function ChevronDownIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3.5 6L8 10.5 12.5 6" />
+    </Svg>
+  );
+}
+
+export function DownloadIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 2.5v7M5 6.8L8 9.8l3-3" />
+      <path d="M2.5 11v1.5a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1V11" />
+    </Svg>
+  );
+}
+
+export function KeyIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="10.5" cy="5.5" r="2.8" />
+      <path d="M8.4 7.6L3 13M5 11l1.5 1.5M3.5 12.5L5 14" />
+    </Svg>
+  );
+}

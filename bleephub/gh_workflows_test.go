@@ -204,7 +204,22 @@ func TestWorkflows_ListRunsForFile(t *testing.T) {
 func TestWorkflows_Dispatch(t *testing.T) {
 	s := newTestServer()
 	s.registerGHWorkflowsRoutes()
-	wf := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", sampleWorkflowYAML, "submitted")
+	// The workflow must declare workflow_dispatch (and the provided
+	// inputs) or real GitHub 422s the dispatch.
+	const dispatchableYAML = `name: ci
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: why
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`
+	wf := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", dispatchableYAML, "submitted")
 
 	body := []byte(`{"ref":"refs/heads/main","inputs":{"reason":"manual"}}`)
 	req := httptest.NewRequest("POST",

@@ -220,38 +220,48 @@ func TestJobTimeoutCancelsJob(t *testing.T) {
 
 // --- P57-002: Concurrency tests ---
 
-func TestRoundRobinDistribution(t *testing.T) {
+func TestQueuedJobsSpreadAcrossPollingRunners(t *testing.T) {
 	s := newTestServer()
 
-	// Create two sessions
-	s.store.mu.Lock()
-	s.store.Sessions["s1"] = &Session{SessionID: "s1", MsgCh: make(chan *TaskAgentMessage, 10)}
-	s.store.Sessions["s2"] = &Session{SessionID: "s2", MsgCh: make(chan *TaskAgentMessage, 10)}
-	s.store.mu.Unlock()
-
-	// Send 4 messages
-	for i := 0; i < 4; i++ {
-		msg := &TaskAgentMessage{MessageID: int64(i + 1)}
-		s.sendMessageToAgent(msg)
+	mk := func(id string, agentID int) *Session {
+		sess := &Session{SessionID: id, Agent: &Agent{ID: agentID}, MsgCh: make(chan *TaskAgentMessage, 10)}
+		s.store.mu.Lock()
+		s.store.Sessions[id] = sess
+		s.store.mu.Unlock()
+		return sess
 	}
+	s1 := mk("s1", 11)
+	s2 := mk("s2", 12)
 
-	s.store.mu.RLock()
-	count1 := len(s.store.Sessions["s1"].MsgCh)
-	count2 := len(s.store.Sessions["s2"].MsgCh)
-	s.store.mu.RUnlock()
+	// Queue two jobs; each runner's poll pulls one, and the pulled job's
+	// agent association marks the runner busy so it can't take the second.
+	s.store.mu.Lock()
+	s.store.Jobs["j1"] = &Job{ID: "j1", Status: "queued"}
+	s.store.Jobs["j2"] = &Job{ID: "j2", Status: "queued"}
+	s.store.mu.Unlock()
+	s.queueJobMessage(&TaskAgentMessage{MessageID: 1, JobID: "j1"})
+	s.queueJobMessage(&TaskAgentMessage{MessageID: 2, JobID: "j2"})
 
-	if count1 != 2 || count2 != 2 {
-		t.Errorf("distribution: s1=%d s2=%d, want 2/2", count1, count2)
+	first := s.pullPendingMessage(s1)
+	if first == nil || first.MessageID != 1 {
+		t.Fatalf("first poll pulled %v, want message 1", first)
+	}
+	// s1 is now busy with j1 — its next poll gets nothing.
+	if again := s.pullPendingMessage(s1); again != nil {
+		t.Fatalf("busy runner pulled a second job: %v", again)
+	}
+	second := s.pullPendingMessage(s2)
+	if second == nil || second.MessageID != 2 {
+		t.Fatalf("second runner pulled %v, want message 2", second)
 	}
 }
 
-func TestPendingMessageDrainOnSessionCreate(t *testing.T) {
+func TestQueuedMessagePulledByFirstPollAfterConnect(t *testing.T) {
 	s := newTestServer()
 	s.metrics = NewMetrics()
 
-	// Queue a message with no sessions
-	msg := &TaskAgentMessage{MessageID: 42}
-	s.requeuePendingMessage(msg)
+	// Queue a job with no sessions connected.
+	s.queueJobMessage(&TaskAgentMessage{MessageID: 42})
 
 	s.store.mu.RLock()
 	pendingCount := len(s.store.PendingMessages)
@@ -260,22 +270,21 @@ func TestPendingMessageDrainOnSessionCreate(t *testing.T) {
 		t.Fatalf("pending = %d, want 1", pendingCount)
 	}
 
-	// Simulate session creation — add session then drain
+	// A session connects; its first poll pulls the queued message.
+	sess := &Session{SessionID: "new-sess", Agent: &Agent{ID: 31}, MsgCh: make(chan *TaskAgentMessage, 10)}
 	s.store.mu.Lock()
-	s.store.Sessions["new-sess"] = &Session{SessionID: "new-sess", MsgCh: make(chan *TaskAgentMessage, 10)}
+	s.store.Sessions["new-sess"] = sess
 	s.store.mu.Unlock()
-	s.drainPendingMessages()
 
+	got := s.pullPendingMessage(sess)
+	if got == nil || got.MessageID != 42 {
+		t.Fatalf("first poll pulled %v, want message 42", got)
+	}
 	s.store.mu.RLock()
 	pendingCount = len(s.store.PendingMessages)
-	msgCount := len(s.store.Sessions["new-sess"].MsgCh)
 	s.store.mu.RUnlock()
-
 	if pendingCount != 0 {
-		t.Errorf("pending after drain = %d, want 0", pendingCount)
-	}
-	if msgCount != 1 {
-		t.Errorf("session messages = %d, want 1", msgCount)
+		t.Errorf("pending after pull = %d, want 0", pendingCount)
 	}
 }
 

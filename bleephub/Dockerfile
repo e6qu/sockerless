@@ -4,32 +4,18 @@ WORKDIR /src
 
 # --- Build bleephub ---
 COPY bleephub/ bleephub/
-RUN cd bleephub && GOWORK=off go build -o /out/bleephub ./cmd
-
-# --- Build ECS backend (for integration testing) ---
-COPY api/ api/
-COPY agent/ agent/
-COPY backends/core/ backends/core/
-COPY backends/aws-common/ backends/aws-common/
-COPY backends/ecs/ backends/ecs/
-RUN cd backends/ecs && GOWORK=off go mod download && \
-    GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
-
-# --- Build AWS simulator ---
-COPY simulators/realexec/ /realexec/
-COPY simulators/aws/ /sim-aws/
-RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
+# noui: the runner harness exercises the protocol surface; the UI dist
+# is a gitignored build artifact that doesn't exist in CI checkouts.
+RUN cd bleephub && GOWORK=off go build -tags noui -o /out/bleephub ./cmd
 
 # --- Runtime stage ---
 FROM ubuntu:22.04
 
+# python3-nacl: the harness seals secrets with the real libsodium
+# sealed-box contract before PUTting them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq libicu70 libssl3 && \
+    curl ca-certificates jq libicu70 libssl3 python3 python3-nacl && \
     rm -rf /var/lib/apt/lists/*
-
-# Install Docker CLI (static binary) — the runner needs it to manage containers via DOCKER_HOST
-RUN curl -fsSL "https://download.docker.com/linux/static/stable/$(uname -m)/docker-27.5.1.tgz" \
-    | tar xz --strip-components=1 -C /usr/local/bin docker/docker
 
 # Download official GitHub Actions runner (auto-detect architecture)
 ARG RUNNER_VERSION=2.321.0

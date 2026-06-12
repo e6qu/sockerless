@@ -64,10 +64,25 @@ func (s *Server) handleRenewRequest(w http.ResponseWriter, r *http.Request) {
 	_, _ = io.Copy(io.Discard, r.Body)
 
 	s.store.mu.Lock()
+	startedRunning := false
 	if job.Status == "queued" {
 		job.Status = "running"
+		startedRunning = true
 	}
 	job.LockedUntil = time.Now().Add(1 * time.Hour)
+	// Mirror the runner pickup onto the workflow job: the jobs API and
+	// the checks layer report in_progress from this moment.
+	if startedRunning {
+		for _, wf := range s.store.Workflows {
+			if wfJob, ok := findWorkflowJobByID(wf, job.ID); ok {
+				if wfJob.Status == JobStatusQueued {
+					wfJob.Status = JobStatusRunning
+					s.queueActionsEvent(evJobInProgress, wf, wfJob)
+				}
+				break
+			}
+		}
+	}
 	s.store.mu.Unlock()
 
 	s.logger.Info().
@@ -208,6 +223,17 @@ func (s *Server) captureJobOutputs(jobID string, body map[string]interface{}) {
 			Interface("outputs", resolved).
 			Msg("job outputs captured")
 	}
+}
+
+// findWorkflowJobByID scans a workflow's jobs for the given engine job
+// UUID. Callers hold the store lock.
+func findWorkflowJobByID(wf *Workflow, jobID string) (*WorkflowJob, bool) {
+	for _, wfJob := range wf.Jobs {
+		if wfJob.JobID == jobID {
+			return wfJob, true
+		}
+	}
+	return nil, false
 }
 
 func (s *Server) handleJobEvents(w http.ResponseWriter, r *http.Request) {

@@ -74,9 +74,9 @@ func (s *Server) handleRepositoryDispatch(w http.ResponseWriter, r *http.Request
 	}
 	payload := repositoryDispatchPayload(repo, user, req.EventType, req.ClientPayload)
 	s.emitWebhookEvent(repo.FullName, "repository_dispatch", req.EventType, attachInstallationBlock(payload, nil))
-	// Trigger any workflow_dispatch-style triggers; for now, real GH also
-	// invokes `repository_dispatch` workflows — wire by event name.
-	go s.triggerWorkflowsForEvent(repo.FullName, "repository_dispatch", "refs/heads/"+repo.DefaultBranch)
+	// The custom event_type is the activity type: `on.repository_dispatch.
+	// types` filters against it on real GitHub.
+	go s.triggerWorkflowsForEvent(repo.FullName, "repository_dispatch", req.EventType, "refs/heads/"+repo.DefaultBranch, payload)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -94,9 +94,13 @@ func repositoryDispatchPayload(repo *Repo, user *User, eventType string, clientP
 	}
 }
 
-// handleRunLogs — returns a zip with one txt file per job. Real GH redirects
-// to a signed-URL download; for bleephub we return the zip directly with
-// Content-Type: application/zip (curl + gh both handle the response body).
+// handleRunLogs — returns the run's log archive shaped like real GitHub's:
+// per job a top-level "0_<jobname>.txt" (full job log) plus a
+// "<jobname>/" folder with "<number>_<step name>.txt" per step that has
+// uploaded log content. Jobs whose runner never reported timeline records
+// keep the flat "<jobKey>_<jobUUID>.txt" console-capture entry. Real GH
+// redirects to a signed-URL download; bleephub returns the zip directly
+// with Content-Type: application/zip (curl + gh both handle the body).
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
@@ -110,16 +114,43 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+	s.store.mu.RLock()
 	for jobKey, job := range wf.Jobs {
-		lines := s.store.LogLines[job.JobID]
-		f, err := zw.Create(fmt.Sprintf("%s_%s.txt", jobKey, job.JobID))
-		if err != nil {
+		tasks := s.taskRecordsForJobLocked(job.JobID)
+		if len(tasks) == 0 {
+			f, err := zw.Create(fmt.Sprintf("%s_%s.txt", jobKey, job.JobID))
+			if err != nil {
+				continue
+			}
+			for _, line := range s.store.LogLines[job.JobID] {
+				_, _ = f.Write([]byte(line + "\n"))
+			}
 			continue
 		}
-		for _, line := range lines {
-			_, _ = f.Write([]byte(line + "\n"))
+		jobName := job.DisplayName
+		if jobName == "" {
+			jobName = jobKey
+		}
+		jobName = zipSafeName(jobName)
+		if f, err := zw.Create(fmt.Sprintf("0_%s.txt", jobName)); err == nil {
+			_, _ = f.Write(s.jobLogContentLocked(job.JobID))
+		}
+		for i, rec := range tasks {
+			if rec.Log == nil {
+				continue
+			}
+			content := s.store.LogFiles[rec.Log.ID]
+			if len(content) == 0 {
+				continue
+			}
+			f, err := zw.Create(fmt.Sprintf("%s/%d_%s.txt", jobName, i+1, zipSafeName(rec.Name)))
+			if err != nil {
+				continue
+			}
+			_, _ = f.Write(content)
 		}
 	}
+	s.store.mu.RUnlock()
 	_ = zw.Close()
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="logs_%d.zip"`, runID))
@@ -127,11 +158,71 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(buf.Bytes())
 }
 
-// handleRerunFailedJobs reuses the rerun path; bleephub doesn't distinguish
-// failed-only re-run from full re-run today. Real GH does — record the
-// shape but no behaviour difference until we model per-attempt state.
+// zipSafeName keeps job/step names usable as zip entry path segments —
+// '/' in a name would otherwise change the archive layout.
+func zipSafeName(name string) string {
+	return strings.ReplaceAll(name, "/", "_")
+}
+
+// handleRerunFailedJobs — POST .../runs/{run_id}/rerun-failed-jobs.
+// Real behavior: the new attempt re-runs ONLY the failed/cancelled
+// jobs; jobs that succeeded (or were skipped) in the previous attempt
+// carry their results over as already-completed.
 func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
-	s.handleRerunWorkflowRun(w, r)
+	runID, err := strconv.Atoi(r.PathValue("run_id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid run_id")
+		return
+	}
+	wf := s.findWorkflowByRunID(runID)
+	if wf == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repo := wf.RepoFullName
+	if repo == "" {
+		repo = repoFullName(r)
+	}
+	s.store.DiscoverWorkflowFilesFromGit(repo)
+	var match *WorkflowFile
+	for _, f := range s.store.ListWorkflowFiles(repo) {
+		if f.Name == wf.Name && f.YAML != "" {
+			match = f
+			break
+		}
+	}
+	if match == nil {
+		writeGHError(w, http.StatusUnprocessableEntity,
+			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+		return
+	}
+	def, perr := ParseWorkflow([]byte(match.YAML))
+	if perr != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "parse cached YAML: "+perr.Error())
+		return
+	}
+	def = expandMatrixJobs(def)
+	if def.Env == nil {
+		def.Env = map[string]string{}
+	}
+	serverURL := s.baseURL(r)
+	def.Env["__serverURL"] = serverURL
+	def.Env["__defaultImage"] = "alpine:latest"
+
+	carryOver := map[string]*WorkflowJob{}
+	s.store.mu.RLock()
+	for key, j := range wf.Jobs {
+		if j.Result == ResultSuccess || j.Result == ResultSkipped {
+			carryOver[key] = j
+		}
+	}
+	s.store.mu.RUnlock()
+
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, carryOver); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
 }
 
 // handleRunTiming returns the per-job billing-style timing summary.

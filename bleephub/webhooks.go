@@ -20,7 +20,6 @@ import (
 	gitStorage "github.com/go-git/go-git/v5/storage"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"gopkg.in/yaml.v3"
 )
 
 func computeHMACSignature(secret string, payload []byte) string {
@@ -225,8 +224,13 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 	return delivery
 }
 
-// triggerWorkflowsForEvent triggers matching workflows from git storage on push/PR events.
-func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
+// triggerWorkflowsForEvent triggers matching workflows from git storage
+// for a concrete event occurrence. action carries the activity type
+// ("opened", "synchronize", repository_dispatch's event_type, ...);
+// payload is the webhook payload the event emitted — it becomes the
+// run's github.event context and feeds the trigger filters (push
+// before/after shas, PR base branch).
+func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string, payload map[string]interface{}) {
 	parts := splitRepoKeyParts(repoKey)
 	if parts[0] == "" {
 		return
@@ -243,40 +247,30 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 	}
 
 	sha := resolveRefSha(stor, ref)
+	ev := s.buildTriggerEvent(stor, eventType, action, ref, payload)
 
 	for name, content := range workflowFiles {
-		wfDef, err := ParseWorkflow(content)
+		on, err := ParseWorkflowOn(content)
 		if err != nil {
-			s.logger.Debug().Err(err).Str("file", name).Msg("skip unparseable workflow")
+			s.logger.Warn().Err(err).Str("file", name).Msg("skip workflow with invalid on: definition")
+			continue
+		}
+		if !workflowTriggersOn(on, ev) {
+			continue
+		}
+		if s.workflowFileDisabled(repoKey, name) {
+			s.logger.Info().Str("file", name).Str("trigger", eventType).Msg("workflow disabled — not triggered")
 			continue
 		}
 
-		if !workflowMatchesEvent(content, eventType) {
-			continue
-		}
-
-		expandedDef := expandMatrixJobs(wfDef)
-
-		if expandedDef.Env == nil {
-			expandedDef.Env = make(map[string]string)
-		}
-		expandedDef.Env["__defaultImage"] = "alpine:latest"
-
-		serverURL := fmt.Sprintf("http://%s", s.addr)
-		expandedDef.Env["__serverURL"] = serverURL
-
-		// Event metadata must travel INTO submitWorkflow: it resolves the
-		// originating workflow file from RepoFullName at submit time (the
-		// run's workflow_id), and the workflow becomes visible to other
-		// goroutines the moment it is stored — patching fields afterwards
-		// would both mis-derive the file id and race those readers.
 		meta := &WorkflowEventMeta{
 			EventName: eventType,
 			Ref:       ref,
 			Sha:       sha,
 			Repo:      repoKey,
+			Payload:   payload,
 		}
-		workflow, err := s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
+		workflow, err := s.submitTriggeredWorkflow(name, content, meta)
 		if err != nil {
 			s.logger.Error().Err(err).Str("file", name).Msg("failed to trigger workflow")
 			continue
@@ -285,9 +279,86 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, ref string) {
 		s.logger.Info().
 			Str("workflow_id", workflow.ID).
 			Str("trigger", eventType).
+			Str("action", action).
 			Str("file", name).
 			Msg("workflow triggered by event")
 	}
+}
+
+// submitTriggeredWorkflow parses, expands, and submits one workflow file
+// for an event. Event metadata must travel INTO submitWorkflow: it
+// resolves the originating workflow file from RepoFullName at submit
+// time (the run's workflow_id), and the workflow becomes visible to
+// other goroutines the moment it is stored — patching fields afterwards
+// would both mis-derive the file id and race those readers.
+func (s *Server) submitTriggeredWorkflow(fileName string, content []byte, meta *WorkflowEventMeta) (*Workflow, error) {
+	wfDef, err := ParseWorkflow(content)
+	if err != nil {
+		return nil, fmt.Errorf("parse %s: %w", fileName, err)
+	}
+
+	expandedDef := expandMatrixJobs(wfDef)
+
+	if expandedDef.Env == nil {
+		expandedDef.Env = make(map[string]string)
+	}
+	expandedDef.Env["__defaultImage"] = "alpine:latest"
+
+	serverURL := fmt.Sprintf("http://%s", s.addr)
+	expandedDef.Env["__serverURL"] = serverURL
+
+	return s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
+}
+
+// buildTriggerEvent assembles the filterable description of an event
+// occurrence. For pushes the changed files come from the payload's
+// before/after shas; for pull_request events the filterable ref is the
+// BASE branch and the diff spans base...head.
+func (s *Server) buildTriggerEvent(stor gitStorage.Storer, eventType, action, ref string, payload map[string]interface{}) triggerEvent {
+	ev := triggerEvent{Type: eventType, Action: action, Ref: ref}
+	switch eventType {
+	case "push":
+		before, _ := payload["before"].(string)
+		after, _ := payload["after"].(string)
+		ev.ChangedFiles, ev.ChangedFilesKnown = changedFilesBetween(stor, before, after)
+	case "pull_request", "pull_request_target":
+		pr, _ := payload["pull_request"].(map[string]interface{})
+		if pr != nil {
+			if base, _ := pr["base"].(map[string]interface{}); base != nil {
+				if baseRef, _ := base["ref"].(string); baseRef != "" {
+					ev.Ref = "refs/heads/" + baseRef
+					baseSha, _ := base["sha"].(string)
+					if baseSha == "" {
+						baseSha = resolveBranchSha(stor, baseRef)
+					}
+					var headSha string
+					if head, _ := pr["head"].(map[string]interface{}); head != nil {
+						headSha, _ = head["sha"].(string)
+						if headSha == "" {
+							if headRef, _ := head["ref"].(string); headRef != "" {
+								headSha = resolveBranchSha(stor, headRef)
+							}
+						}
+					}
+					ev.ChangedFiles, ev.ChangedFilesKnown = changedFilesBetween(stor, baseSha, headSha)
+				}
+			}
+		}
+	}
+	return ev
+}
+
+// workflowFileDisabled reports whether the registered workflow file for
+// (repo, filename) was manually disabled — disabled workflows never
+// trigger, matching real GitHub.
+func (s *Server) workflowFileDisabled(repoKey, filename string) bool {
+	path := ".github/workflows/" + filename
+	for _, f := range s.store.ListWorkflowFiles(repoKey) {
+		if f.Path == path {
+			return strings.HasPrefix(f.State, "disabled")
+		}
+	}
+	return false
 }
 
 // resolveRefSha resolves the commit sha the triggering ref points at in git
@@ -399,32 +470,4 @@ func listWorkflowFiles(stor gitStorage.Storer) map[string][]byte {
 		result[entry.Name] = content
 	}
 	return result
-}
-
-func workflowMatchesEvent(yamlContent []byte, eventType string) bool {
-	var raw struct {
-		On interface{} `yaml:"on"`
-	}
-	if err := yaml.Unmarshal(yamlContent, &raw); err != nil {
-		return false
-	}
-	if raw.On == nil {
-		// "true" key from YAML — `on:` without value maps to boolean true
-		return false
-	}
-
-	switch v := raw.On.(type) {
-	case string:
-		return v == eventType
-	case []interface{}:
-		for _, item := range v {
-			if s, ok := item.(string); ok && s == eventType {
-				return true
-			}
-		}
-	case map[string]interface{}:
-		_, ok := v[eventType]
-		return ok
-	}
-	return false
 }

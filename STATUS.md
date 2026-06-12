@@ -6,12 +6,12 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/amplify-ghapps-orgs` |
-| In-flight | **Amplify full support + bleephub apps/orgs** (one fat PR): Amplify control-plane gaps fixed (BUG-1717..1723) AND the full execution layer — real container builds (buildSpec phases, go-git clone, step logs at resolvable logUrls), Host-routed hosting data plane (static + CustomRules + basic auth + cloudfront-shaped hosts + verified custom domains), SSR/WEB_COMPUTE per the deploy-manifest spec (lazy long-lived containers, reverse proxy), REAL Route 53 domain verification; plus a pre-existing P1 (UI-embed startup panic, BUG-1715). bleephub GitHub Apps/installation-tokens/orgs gap pass (BUG-1706..1714): 2 P1 security fixes (token downscoping unenforced; suspension bypass), JWT window fidelity, 7 new endpoint families, typed enums, full pyramid (gh harness 99/0). |
-| Last merged | #540 docs: per-component READMEs + docs/specs indexes; broken smoke-test targets + stale UI dev proxies fixed (BUG-1647/1648). #539 simulators: conformance hardening Stages 2 G4-6. |
+| Active branch | `feat/bleephub-actions-complete` |
+| In-flight | **Complete GitHub Actions support in bleephub** (one fat PR): server-side workflow engine (on: filters/activity types incl. PR synchronize, schedule crons, reusable workflows with gate/collector expansion, real expression engine with full contexts), secrets+variables at repo/org/environment with the real sealed-box contract, checks integration (jobs→check runs/suites, workflow_run/workflow_job/check_run/check_suite events, mergeable_state + required-status-check merge gating), real per-step timeline records + log storage (runner wrapper-decode root cause), runs-on label routing, org runners + honest busy, run attempts (same run id, archived attempts, rerun-failed carry-over), workflow enable/disable, full GitHub-style Actions UI (runs/steps/live logs/dispatch/approvals/secrets-vars management/PR checks), gh harness 115/0; official-runner harness de-bitrotted + ALL 9 e2e tests green in CI (`sim (bleephub actions/runner)`) — surfaced+fixed BUG-1740 (broker assigned busy runners) and BUG-1741 (step templates sent as literal tokens); azure-sim Entra OIDC fixes for issues #548/#547 (client_secret_basic, login_hint-bound auth codes — BUG-1742/1743). BUG-1724..1743 filed+fixed. |
+| Last merged | #546 Amplify full support + bleephub apps/orgs hardening (BUG-1706..1723). #545 launch-hygiene batch (spec-validate armed on tf jobs, XML validation). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1723 filed - 1681 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
-| Open BUGs | BUG-1075 live-cloud validation; BUG-1104 audit cadence; BUG-1345 azuread Terraform upstream; BUG-1584 AzureStack provider deprecation warning despite `metadata_host`; BUG-1590 bleephub run-approvals empty-success gap; BUG-1618 bleephub webhook `organization` block for org-owned repos. |
+| Bugs | 1743 filed - 1701 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 
 ## Simulator conformance + hardening

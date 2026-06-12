@@ -276,6 +276,8 @@ export interface GithubPR {
   updated_at: string;
   merged_at: string | null;
   merged: boolean;
+  /** Only present on the single-PR detail response, not list items. */
+  mergeable_state?: "clean" | "dirty" | "blocked" | "unstable" | "unknown";
 }
 
 /** GitHub comment. */
@@ -328,12 +330,160 @@ export interface GithubSecret {
   name: string;
   created_at: string;
   updated_at: string;
+  /** Org-scope secrets only (all | private | selected). */
+  visibility?: GithubOrgVisibility;
 }
 
 export interface GithubEnvironment {
+  id: number;
   name: string;
   node_id: string;
   url: string;
+}
+
+// ─── GitHub Actions REST shapes (/api/v3/repos/{o}/{r}/actions/*) ───────
+
+/** GitHub workflow-run status. */
+export type GHRunStatus = "queued" | "in_progress" | "completed" | "waiting";
+/** GitHub run/job/step conclusion (null while in flight). */
+export type GHConclusion =
+  | "success"
+  | "failure"
+  | "cancelled"
+  | "skipped"
+  | "neutral"
+  | "timed_out"
+  | "action_required";
+
+/** Workflow run — GET .../actions/runs (items) + .../actions/runs/{id}. */
+export interface GithubWorkflowRun {
+  id: number;
+  name: string;
+  run_number: number;
+  run_attempt: number;
+  event: string;
+  status: GHRunStatus;
+  conclusion: GHConclusion | null;
+  head_branch: string;
+  head_sha: string;
+  path: string;
+  workflow_id: number;
+  created_at: string;
+  updated_at: string;
+  /** null when the server can't attribute the run to a user. */
+  actor: { login: string } | null;
+}
+
+/** Workflow file — GET .../actions/workflows (items). */
+export interface GithubWorkflow {
+  id: number;
+  name: string;
+  path: string;
+  state: "active" | "disabled_manually" | "disabled_inactivity";
+  badge_url: string;
+}
+
+/** Per-step entry inside a job. */
+export interface GithubJobStep {
+  name: string;
+  status: GHRunStatus;
+  conclusion: GHConclusion | null;
+  number: number;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+/** Job — GET .../actions/runs/{run_id}/jobs (items). */
+export interface GithubJob {
+  id: number;
+  run_id: number;
+  name: string;
+  status: GHRunStatus;
+  conclusion: GHConclusion | null;
+  started_at: string | null;
+  completed_at: string | null;
+  steps: GithubJobStep[];
+  labels: string[];
+  run_attempt: number;
+}
+
+/** Artifact — GET .../actions/runs/{run_id}/artifacts (items). */
+export interface GithubArtifact {
+  id: number;
+  name: string;
+  size_in_bytes: number;
+  expired: boolean;
+  created_at: string;
+}
+
+/** Pending deployment — GET .../actions/runs/{run_id}/pending_deployments. */
+export interface GithubPendingDeployment {
+  environment: { id: number; name: string };
+  wait_timer: number;
+  wait_timer_started_at: string | null;
+  current_user_can_approve: boolean;
+  reviewers: { type: string; reviewer?: { login?: string; name?: string } }[];
+}
+
+/** Check run — GET .../commits/{sha}/check-runs (items). */
+export interface GithubCheckRun {
+  id: number;
+  name: string;
+  status: GHRunStatus;
+  conclusion: GHConclusion | null;
+  started_at: string | null;
+  completed_at: string | null;
+  details_url: string;
+  html_url?: string;
+  app: { id: number } | null;
+}
+
+/** Actions secrets public key — GET {scope}/secrets/public-key. */
+export interface GithubPublicKey {
+  key_id: string;
+  /** base64-encoded 32-byte X25519 public key for sealed-box encryption. */
+  key: string;
+}
+
+export type GithubOrgVisibility = "all" | "private" | "selected";
+
+/** Actions variable — GET {scope}/variables (items). */
+export interface GithubVariable {
+  name: string;
+  value: string;
+  created_at: string;
+  updated_at: string;
+  /** Org-scope variables only. */
+  visibility?: GithubOrgVisibility;
+}
+
+/** Self-hosted runner — GET .../actions/runners (items). */
+export interface GithubRunner {
+  id: number;
+  name: string;
+  os: string;
+  status: "online" | "offline";
+  busy: boolean;
+  labels: { id: number; name: string; type: string }[];
+}
+
+/** Content-file response — GET .../contents/{path} (file variant). */
+export interface GithubContentFile {
+  name: string;
+  path: string;
+  sha: string;
+  type: string;
+  encoding: string;
+  content: string;
+}
+
+/** `on.workflow_dispatch.inputs.<name>` entry parsed from workflow YAML. */
+export interface WorkflowDispatchInput {
+  description?: string;
+  required?: boolean;
+  default?: string | boolean;
+  type?: "string" | "choice" | "boolean" | "environment" | "number";
+  options?: string[];
 }
 
 export interface GithubRelease {
