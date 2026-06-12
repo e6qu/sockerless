@@ -4,7 +4,9 @@ WORKDIR /src
 
 # --- Build bleephub ---
 COPY bleephub/ bleephub/
-RUN cd bleephub && GOWORK=off go build -o /out/bleephub ./cmd
+# noui: the runner harness exercises the protocol surface; the UI dist
+# is a gitignored build artifact that doesn't exist in CI checkouts.
+RUN cd bleephub && GOWORK=off go build -tags noui -o /out/bleephub ./cmd
 
 # --- Build ECS backend (for integration testing) ---
 COPY api/ api/
