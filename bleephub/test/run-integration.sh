@@ -29,7 +29,10 @@ show_diag() {
 # The official runner strips non-standard ports from URLs (uses uri.Host not uri.Authority).
 # So bleephub MUST run on port 80 (the default HTTP port).
 BLEEPHUB_ADDR="127.0.0.1:80"
-BACKEND_ADDR="127.0.0.1:3375"
+# The backend binds all interfaces: job workloads run as containers on
+# the HOST engine (mounted docker.sock), and their reverse agents dial
+# back through the published port (see bleephub-runner-docker-test).
+BACKEND_ADDR="0.0.0.0:3375"
 FRONTEND_ADDR="127.0.0.1:3375"
 PIDS=()
 
@@ -72,7 +75,11 @@ export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
 export SOCKERLESS_ECS_CLUSTER="sim-cluster"
 export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"
 export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="arn:aws:iam::000000000000:role/sim"
-export SOCKERLESS_CALLBACK_URL="http://$BACKEND_ADDR"
+# Reverse agents run inside workload containers on the HOST engine;
+# they must dial the backend through a host-reachable address
+# (host.docker.internal + the published 3375), not this container's
+# loopback. Overridable for other topologies.
+export SOCKERLESS_CALLBACK_URL="${BLEEPHUB_TEST_CALLBACK_URL:-http://host.docker.internal:3375}"
 export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
 sockerless-backend-ecs --addr "$BACKEND_ADDR" --log-level warn &
 PIDS+=($!)

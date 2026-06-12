@@ -322,16 +322,26 @@ Env vars:
 # Go unit tests
 make bleephub/test                  # go test ./bleephub/...
 
-# Official actions/runner harness (Docker)
-make bleephub/test-integration
+# Official actions/runner end-to-end (Docker; needs a real docker-engine
+# socket — Linux or Docker Desktop, not rootless podman)
+make bleephub-runner-docker-test
 
 # Real gh CLI inside Docker (real bleephub + real gh binary + self-signed TLS)
 make bleephub-gh-docker-test
 ```
 
-The Docker harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/run-gh-test.sh`. It exercises:
+`bleephub-runner-docker-test` builds `bleephub/Dockerfile` (bleephub + AWS
+simulator + ECS backend + the official `actions/runner` binary) and runs
+`bleephub/test/run-integration.sh`: the runner registers against bleephub,
+picks up dispatched jobs over the broker, and the job workloads execute as
+real containers on the host engine through the mounted `docker.sock`
+(reverse agents dial back through the published port). Runs in CI as the
+`sim (bleephub actions/runner)` job.
+
+The gh harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/run-gh-test.sh`. It exercises:
 - `gh auth login` against bleephub as a GHES host
 - Native `gh repo create / view / list`, `gh issue create / view / list` (REST + GraphQL paths)
+- `gh secret set` (real sealed-box encryption), `gh variable set/get/list/delete`, `gh workflow run / enable / disable`, check-runs on pushed commits
 - The parity probes for endpoints with no native `gh` verb (apps/{slug}, /applications/{cid}/token, suspend, OAuth Apps mgmt)
 
 Runs in CI as the `sim (bleephub gh CLI)` job (must be green to merge).

@@ -569,6 +569,18 @@ jobs:
       - name: gh CLI parity harness (Docker)
         run: make bleephub-gh-docker-test
 
+  # The official actions/runner registering against bleephub and running
+  # real jobs end-to-end (bleephub + AWS sim + ECS backend in one image;
+  # workloads run on the host engine via the mounted docker.sock).
+  sim-bleephub-runner:
+    name: sim (bleephub actions/runner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: Official runner integration harness (Docker)
+        run: make bleephub-runner-docker-test
+
   build-gates:
     runs-on: ubuntu-latest
     timeout-minutes: 5
