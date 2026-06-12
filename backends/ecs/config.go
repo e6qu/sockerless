@@ -51,6 +51,11 @@ type Config struct {
 	// The trailing efsFilesystemID is optional — defaults to AgentEFSID.
 	SharedVolumes []SharedVolume
 
+	// sharedVolumesErr carries a SOCKERLESS_ECS_SHARED_VOLUMES parse
+	// failure from ConfigFromEnv to Validate so misconfiguration fails
+	// startup loudly instead of silently dropping entries.
+	sharedVolumesErr error
+
 	// NetworkDiscovery selects the per-backend driver wired into
 	// s.NetworkDiscovery. ECS's native is service-mesh (AWS Cloud
 	// Map). Operators may override to host-aliases (in-process
@@ -74,6 +79,7 @@ type SharedVolume struct {
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
+	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"))
 	return Config{
 		Region:           envOrDefault("AWS_REGION", "us-east-1"),
 		Cluster:          envOrDefault("SOCKERLESS_ECS_CLUSTER", "sockerless"),
@@ -89,7 +95,8 @@ func ConfigFromEnv() Config {
 		EndpointURL:      os.Getenv("SOCKERLESS_ENDPOINT_URL"),
 		CpuArchitecture:  os.Getenv("SOCKERLESS_ECS_CPU_ARCHITECTURE"),
 		PollInterval:     parseDuration(os.Getenv("SOCKERLESS_POLL_INTERVAL"), 2*time.Second),
-		SharedVolumes:    parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES")),
+		SharedVolumes:    sharedVolumes,
+		sharedVolumesErr: sharedVolumesErr,
 		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh),
 	}
 }
@@ -107,10 +114,13 @@ func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.Ne
 
 // parseSharedVolumes parses the SOCKERLESS_ECS_SHARED_VOLUMES env-var
 // shape (`name=containerPath=fsap-XXXX[=fs-YYYY],name2=...`) into a
-// slice of SharedVolume entries. Returns nil for empty input.
-func parseSharedVolumes(s string) []SharedVolume {
-	if s == "" {
-		return nil
+// slice of SharedVolume entries. Returns (nil, nil) for empty input.
+// Malformed entries are a hard error — the caller surfaces it via
+// Config.Validate so the operator's misconfiguration fails the backend
+// startup instead of silently dropping the volume mapping.
+func parseSharedVolumes(s string) ([]SharedVolume, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
 	}
 	var out []SharedVolume
 	for _, entry := range strings.Split(s, ",") {
@@ -120,7 +130,7 @@ func parseSharedVolumes(s string) []SharedVolume {
 		}
 		parts := strings.Split(entry, "=")
 		if len(parts) < 3 || len(parts) > 4 {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=fsap-XXXX[=fs-YYYY]", entry)
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
@@ -131,11 +141,11 @@ func parseSharedVolumes(s string) []SharedVolume {
 			sv.FileSystemID = strings.TrimSpace(parts[3])
 		}
 		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: name, containerPath and access-point ID must all be non-empty", entry)
 		}
 		out = append(out, sv)
 	}
-	return out
+	return out, nil
 }
 
 // LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
@@ -213,11 +223,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_ECS_NETWORK_DISCOVERY", api.NetworkDiscoveryServiceMesh)
+	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_ECS_SHARED_VOLUMES"))
 	return c
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
+	if c.sharedVolumesErr != nil {
+		return fmt.Errorf("SOCKERLESS_ECS_SHARED_VOLUMES: %w", c.sharedVolumesErr)
+	}
 	if c.Cluster == "" {
 		return fmt.Errorf("ECS cluster name is required")
 	}

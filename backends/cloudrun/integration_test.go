@@ -42,6 +42,12 @@ var dockerClient *client.Client
 var backendPort int
 var evalImageName string
 
+// backendBinaryPath + backendBaseEnv are set in TestMain so tests can
+// spawn additional backend instances with extra process-level config
+// (e.g. SOCKERLESS_GCP_SHARED_VOLUMES, which can't be set per-request).
+var backendBinaryPath string
+var backendBaseEnv []string
+
 const cloudRunExecE2EEnv = "SOCKERLESS_CLOUDRUN_EXEC_E2E"
 
 // requireEnv reads a required env var or dies loud.
@@ -279,32 +285,33 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
 	storageHost := strings.TrimPrefix(endpointURL, "http://")
 	storageHost = strings.TrimPrefix(storageHost, "https://")
-	backendEnv := append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
-		"SOCKERLESS_GCP_LOGADMIN_ENDPOINT="+logAdminEndpoint,
+	backendBinaryPath = backendBinary
+	backendBaseEnv = []string{
+		"SOCKERLESS_ENDPOINT_URL=" + endpointURL,
+		"SOCKERLESS_GCP_LOGADMIN_ENDPOINT=" + logAdminEndpoint,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
 		"SOCKERLESS_LOG_TIMEOUT=2s",
-		"SOCKERLESS_GCR_PROJECT="+project,
-		"SOCKERLESS_CLOUDRUN_BOOTSTRAP="+bootstrapPath,
-		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
-		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
+		"SOCKERLESS_GCR_PROJECT=" + project,
+		"SOCKERLESS_CLOUDRUN_BOOTSTRAP=" + bootstrapPath,
+		"SOCKERLESS_GCP_BUILD_BUCKET=" + buildBucket,
+		"SOCKERLESS_GCP_BUILD_PLATFORM=" + overlayPlatform,
 		// Required at NewServer (no Path B fallback).
 		// Bootstrap dials back over WebSocket from inside the workload
 		// container — host.docker.internal resolves the test host.
-		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://host.docker.internal:%d/v1/cloudrun/reverse", backendPort),
+		"SOCKERLESS_CALLBACK_URL=" + fmt.Sprintf("ws://host.docker.internal:%d/v1/cloudrun/reverse", backendPort),
 		// STORAGE_EMULATOR_HOST routes the backend's GCS client to the
 		// sim's storage endpoint instead of storage.googleapis.com.
-		"STORAGE_EMULATOR_HOST="+storageHost,
+		"STORAGE_EMULATOR_HOST=" + storageHost,
 		// ADC source for storage.NewClient + cloudbuild.NewRESTClient.
-		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
-	)
+		"GOOGLE_APPLICATION_CREDENTIALS=" + saJSONPath,
+	}
 	if target == "sim" && os.Getenv(cloudRunExecE2EEnv) == "1" {
-		backendEnv = append(backendEnv,
+		backendBaseEnv = append(backendBaseEnv,
 			"SOCKERLESS_GCR_USE_SERVICE=1",
 			"SOCKERLESS_GCR_VPC_CONNECTOR=projects/sim-project/locations/us-central1/connectors/sim-connector",
 		)
 	}
-	backendCmd.Env = backendEnv
+	backendCmd.Env = append(os.Environ(), backendBaseEnv...)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {

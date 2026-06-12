@@ -18,11 +18,16 @@ import (
 
 // resolveStorageInfoForVolume materialises a single bind entry through
 // the storage-backing registry. Returns the AzureStorageInfoValue to
-// add to the WebApps.UpdateAzureStorageAccounts dictionary. Empty
-// Backing on the volume defaults to `azure-files-ephemeral` since
-// that's the only backing AZF wires today.
-func (s *Server) resolveStorageInfoForVolume(volName, mountPath, shareName, accessKey string) (*armappservice.AzureStorageInfoValue, error) {
+// add to the WebApps.UpdateAzureStorageAccounts dictionary. Ad-hoc
+// named volumes use `azure-files-ephemeral` (the only backing AZF
+// wires for site storage today); operator-declared SharedVolumes carry
+// an explicit Backing that resolves through the registry — empty or
+// unknown values fail loudly per the no-fallbacks directive.
+func (s *Server) resolveStorageInfoForVolume(volName, mountPath, shareName, account, accessKey string) (*armappservice.AzureStorageInfoValue, error) {
 	backing := core.BackingAzureFilesEphemeral
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		backing = core.StorageBacking(sv.Backing)
+	}
 	driver, err := s.storageBackings.Resolve(backing)
 	if err != nil {
 		return nil, fmt.Errorf("resolve storage backing for volume %q: %w", volName, err)
@@ -30,8 +35,8 @@ func (s *Server) resolveStorageInfoForVolume(volName, mountPath, shareName, acce
 	spec, err := driver.CloudSpec(core.SharedVolumeRef{
 		Name:                volName,
 		ContainerPath:       mountPath,
-		Backing:             backing,
-		AzureStorageAccount: s.config.StorageAccount,
+		Backing:             driver.Backing(),
+		AzureStorageAccount: account,
 		AzureShareName:      shareName,
 	})
 	if err != nil {

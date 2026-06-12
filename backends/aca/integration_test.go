@@ -32,6 +32,12 @@ var evalImageName string
 var commandImageName string
 var acaOverlayImageName string
 
+// backendBinaryPath + backendBaseEnv are set in TestMain so tests can
+// spawn additional backend instances with extra process-level config
+// (e.g. SOCKERLESS_ACA_SHARED_VOLUMES, which can't be set per-request).
+var backendBinaryPath string
+var backendBaseEnv []string
+
 const (
 	acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
 )
@@ -333,19 +339,21 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-aca on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
-	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+	backendBinaryPath = backendBinary
+	backendBaseEnv = []string{
+		"SOCKERLESS_ENDPOINT_URL=" + endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_ACA_SUBSCRIPTION_ID="+subscriptionID,
-		"SOCKERLESS_ACA_RESOURCE_GROUP="+resourceGroup,
-		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
-		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
+		"SOCKERLESS_ACA_SUBSCRIPTION_ID=" + subscriptionID,
+		"SOCKERLESS_ACA_RESOURCE_GROUP=" + resourceGroup,
+		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=" + logAnalyticsWS,
+		"SOCKERLESS_ACA_STORAGE_ACCOUNT=" + storageAccount,
 		// Required at NewServer (no fallback).
-		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
-	)
-	if os.Getenv(acaAppsE2EEnv) == "1" {
-		backendCmd.Env = append(backendCmd.Env, "SOCKERLESS_ACA_USE_APP=1")
+		"SOCKERLESS_CALLBACK_URL=" + fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
 	}
+	if os.Getenv(acaAppsE2EEnv) == "1" {
+		backendBaseEnv = append(backendBaseEnv, "SOCKERLESS_ACA_USE_APP=1")
+	}
+	backendCmd.Env = append(os.Environ(), backendBaseEnv...)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {

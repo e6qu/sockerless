@@ -24,6 +24,12 @@ import (
 var dockerClient *client.Client
 var evalImageName string
 
+// backendBinaryPath + backendBaseEnv are set in TestMain so tests can
+// spawn additional backend instances with extra process-level config
+// (e.g. SOCKERLESS_ECS_SHARED_VOLUMES, which can't be set per-request).
+var backendBinaryPath string
+var backendBaseEnv []string
+
 // requireEnv reads a required env var or dies loud.
 func requireEnv(name string) string {
 	v := os.Getenv(name)
@@ -185,15 +191,17 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	backendPort := findFreePort()
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-ecs on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
-	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
-	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+	backendBinaryPath = backendBinary
+	backendBaseEnv = []string{
+		"SOCKERLESS_ENDPOINT_URL=" + endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_ECS_CLUSTER="+cluster,
-		"SOCKERLESS_ECS_SUBNETS="+subnets,
-		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN="+executionRoleARN,
-		"SOCKERLESS_ECS_CPU_ARCHITECTURE="+cpuArch,
-	)
+		"SOCKERLESS_ECS_CLUSTER=" + cluster,
+		"SOCKERLESS_ECS_SUBNETS=" + subnets,
+		"SOCKERLESS_ECS_EXECUTION_ROLE_ARN=" + executionRoleARN,
+		"SOCKERLESS_ECS_CPU_ARCHITECTURE=" + cpuArch,
+	}
+	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
+	backendCmd.Env = append(os.Environ(), backendBaseEnv...)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {

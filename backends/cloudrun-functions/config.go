@@ -85,8 +85,13 @@ type Config struct {
 	// inside the function does `docker create -v /tmp/runner-work:/__w`;
 	// sockerless translates the host bind to a named-volume reference
 	// whose GCS bucket is shared with the runner-task. Format:
-	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2".
+	// SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket=backing,name2=path2=bucket2=backing2".
 	SharedVolumes []SharedVolume
+
+	// sharedVolumesErr carries a SOCKERLESS_GCP_SHARED_VOLUMES parse
+	// failure from ConfigFromEnv to Validate so misconfiguration fails
+	// startup loudly instead of silently dropping entries.
+	sharedVolumesErr error
 
 	// VPCConnector is the Serverless VPC Connector resource path used
 	// for cross-Cloud-Run service communication. Required for the
@@ -150,6 +155,7 @@ type PrewarmOverlay struct {
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
+	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
 	return Config{
 		Project:          os.Getenv("SOCKERLESS_GCF_PROJECT"),
 		Region:           envOrDefault("SOCKERLESS_GCF_REGION", "us-central1"),
@@ -171,7 +177,8 @@ func ConfigFromEnv() Config {
 		),
 		PoolMax:          envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
 		PrewarmOverlays:  parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
-		SharedVolumes:    parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		SharedVolumes:    sharedVolumes,
+		sharedVolumesErr: sharedVolumesErr,
 		VPCConnector:     os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
 		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases),
 	}
@@ -230,17 +237,17 @@ func parsePrewarmOverlays(s string) []PrewarmOverlay {
 //
 // Format: `name=path=bucket=backing,name=path=bucket=backing,...`
 // where `backing` is one of `gcs-sync`, `gcs-fuse`, or `emptyDir` (REQUIRED
-// per the no-fallbacks directive). Returns nil for empty input. Malformed
-// entries (wrong arity, empty fields) are skipped — operators see them
-// missing at materialize time and the failure-loud Resolve() call surfaces
-// the misconfiguration with a clear error.
+// per the no-fallbacks directive). Returns (nil, nil) for empty input.
+// Malformed entries are a hard error — the caller surfaces it via
+// Config.Validate so the operator's misconfiguration fails the backend
+// startup instead of silently dropping the volume mapping.
 //
 // Backwards-compat for the legacy 3-tuple format (`name=path=bucket`,
 // no backing) is INTENTIONALLY removed: every consumer must explicitly
 // declare its storage strategy.
-func parseSharedVolumes(s string) []SharedVolume {
-	if s == "" {
-		return nil
+func parseSharedVolumes(s string) ([]SharedVolume, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
 	}
 	var out []SharedVolume
 	for _, entry := range strings.Split(s, ",") {
@@ -250,10 +257,7 @@ func parseSharedVolumes(s string) []SharedVolume {
 		}
 		parts := strings.Split(entry, "=")
 		if len(parts) != 4 {
-			// Entry malformed — skip silently here; the volume's
-			// absence at materialize time surfaces as a clearer error
-			// than a parse error here would.
-			continue
+			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=bucket=backing", entry)
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
@@ -262,11 +266,11 @@ func parseSharedVolumes(s string) []SharedVolume {
 			Backing:       strings.TrimSpace(parts[3]),
 		}
 		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" || sv.Backing == "" {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: name, containerPath, bucket and backing must all be non-empty", entry)
 		}
 		out = append(out, sv)
 	}
-	return out
+	return out, nil
 }
 
 // LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
@@ -354,11 +358,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases)
+	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
 	return c
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
+	if c.sharedVolumesErr != nil {
+		return fmt.Errorf("SOCKERLESS_GCP_SHARED_VOLUMES: %w", c.sharedVolumesErr)
+	}
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCF_PROJECT is required")
 	}
