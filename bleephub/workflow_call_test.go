@@ -47,9 +47,10 @@ func commitFilesToStorage(t *testing.T, s *Server, repoFullName string, files ma
 		t.Fatalf("worktree: %v", err)
 	}
 	for path, body := range files {
-		dir := path[:strings.LastIndex(path, "/")]
-		if err := fs.MkdirAll(dir, 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", dir, err)
+		if idx := strings.LastIndex(path, "/"); idx > 0 {
+			if err := fs.MkdirAll(path[:idx], 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", path[:idx], err)
+			}
 		}
 		f, err := fs.Create(path)
 		if err != nil {

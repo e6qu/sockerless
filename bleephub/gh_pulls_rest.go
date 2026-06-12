@@ -151,7 +151,30 @@ func (s *Server) handleGetPullRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
+	out := pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName)
+	s.applyChecksToMergeability(out, repo, pr)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// applyChecksToMergeability folds the head commit's check runs into
+// mergeable_state the way real GitHub does: unmet REQUIRED status
+// checks (branch protection on the base branch) block the merge;
+// failing or still-running non-required checks mark it unstable.
+func (s *Server) applyChecksToMergeability(out map[string]interface{}, repo *Repo, pr *PullRequest) {
+	if pr.State != "OPEN" || out["mergeable_state"] != "clean" {
+		return
+	}
+	headSha := s.prHeadSha(repo, pr)
+	if headSha == "" {
+		return
+	}
+	st := s.evaluateChecksForMerge(repo, pr.BaseRefName, headSha)
+	switch {
+	case len(st.MissingRequired) > 0:
+		out["mergeable_state"] = "blocked"
+	case st.AnyFailing, st.AnyPending:
+		out["mergeable_state"] = "unstable"
+	}
 }
 
 func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +290,16 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 	if pr.State == "CLOSED" {
 		writeGHError(w, http.StatusUnprocessableEntity, "Pull Request is closed")
 		return
+	}
+
+	// Branch protection: required status checks must be green on the
+	// head commit before the merge API succeeds (405, real GitHub).
+	if headSha := s.prHeadSha(repo, pr); headSha != "" {
+		if st := s.evaluateChecksForMerge(repo, pr.BaseRefName, headSha); len(st.MissingRequired) > 0 {
+			writeGHError(w, http.StatusMethodNotAllowed,
+				fmt.Sprintf("Required status check %q is expected.", st.MissingRequired[0]))
+			return
+		}
 	}
 
 	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
