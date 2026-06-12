@@ -1,166 +1,228 @@
 package bleephub
 
-import "testing"
+import (
+	"testing"
+)
 
-func TestExprSuccess(t *testing.T) {
-	ctx := &ExprContext{
+func exprTestCtx() *ExprContext {
+	return &ExprContext{
 		DepResults: map[string]string{"build": "success"},
-	}
-	if !EvalExpr("success()", ctx) {
-		t.Error("success() should be true when all deps succeed")
-	}
-}
-
-func TestExprSuccessWithFailedDep(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "failure"},
-	}
-	if EvalExpr("success()", ctx) {
-		t.Error("success() should be false when a dep failed")
-	}
-}
-
-func TestExprFailure(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "failure"},
-	}
-	if !EvalExpr("failure()", ctx) {
-		t.Error("failure() should be true when a dep failed")
-	}
-}
-
-func TestExprFailureNone(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "success"},
-	}
-	if EvalExpr("failure()", ctx) {
-		t.Error("failure() should be false when no dep failed")
-	}
-}
-
-func TestExprAlways(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "failure"},
-	}
-	if !EvalExpr("always()", ctx) {
-		t.Error("always() should always be true")
-	}
-}
-
-func TestExprCancelled(t *testing.T) {
-	ctx := &ExprContext{WorkflowCancelled: true}
-	if !EvalExpr("cancelled()", ctx) {
-		t.Error("cancelled() should be true when workflow is cancelled")
-	}
-
-	ctx2 := &ExprContext{WorkflowCancelled: false}
-	if EvalExpr("cancelled()", ctx2) {
-		t.Error("cancelled() should be false when workflow is not cancelled")
-	}
-}
-
-func TestExprStringComparison(t *testing.T) {
-	ctx := &ExprContext{
-		Values: map[string]string{"github.event_name": "push"},
-	}
-	if !EvalExpr("github.event_name == 'push'", ctx) {
-		t.Error("should match push")
-	}
-	if EvalExpr("github.event_name == 'pull_request'", ctx) {
-		t.Error("should not match pull_request")
-	}
-	if !EvalExpr("github.event_name != 'pull_request'", ctx) {
-		t.Error("!= should be true for non-matching")
-	}
-}
-
-func TestExprBooleanOps(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "success"},
-		Values:     map[string]string{"github.ref": "refs/heads/main"},
-	}
-
-	if !EvalExpr("success() && github.ref == 'refs/heads/main'", ctx) {
-		t.Error("AND of two trues should be true")
-	}
-	if EvalExpr("failure() && github.ref == 'refs/heads/main'", ctx) {
-		t.Error("AND with failure should be false")
-	}
-	if !EvalExpr("failure() || success()", ctx) {
-		t.Error("OR with one true should be true")
-	}
-}
-
-func TestExprNegation(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "success"},
-	}
-	if EvalExpr("!success()", ctx) {
-		t.Error("!success() should be false when deps succeed")
-	}
-	if !EvalExpr("!failure()", ctx) {
-		t.Error("!failure() should be true when no deps failed")
-	}
-}
-
-func TestExprContextAccess(t *testing.T) {
-	ctx := &ExprContext{
-		Values: map[string]string{
-			"github.event_name": "workflow_dispatch",
-			"github.ref":        "refs/tags/v1.0",
+		Contexts: map[string]interface{}{
+			"github": map[string]interface{}{
+				"event_name": "push",
+				"ref":        "refs/heads/main",
+				"ref_name":   "main",
+				"repository": "octo/hello",
+				"event": map[string]interface{}{
+					"action": "opened",
+					"pull_request": map[string]interface{}{
+						"number": float64(7),
+						"draft":  false,
+						"base":   map[string]interface{}{"ref": "main"},
+						"labels": []interface{}{
+							map[string]interface{}{"name": "bug"},
+							map[string]interface{}{"name": "urgent"},
+						},
+					},
+					"commits": []interface{}{
+						map[string]interface{}{"message": "fix: thing"},
+					},
+				},
+			},
+			"needs": map[string]interface{}{
+				"build": map[string]interface{}{
+					"result":  "success",
+					"outputs": map[string]interface{}{"version": "1.2.3"},
+				},
+			},
+			"inputs": map[string]interface{}{"deploy-env": "staging", "dry_run": "true"},
+			"vars":   map[string]interface{}{"REGION": "eu-west-1"},
 		},
 	}
-	if !EvalExpr("github.event_name == 'workflow_dispatch'", ctx) {
-		t.Error("should match workflow_dispatch")
+}
+
+func TestExprTruthTable(t *testing.T) {
+	ctx := exprTestCtx()
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		// Status functions
+		{"success()", true},
+		{"failure()", false},
+		{"always()", true},
+		{"cancelled()", false},
+		// Literals + truthiness
+		{"true", true},
+		{"false", false},
+		{"null", false},
+		{"0", false},
+		{"1", true},
+		{"''", false},
+		{"'x'", true},
+		// Boolean operators
+		{"true && false", false},
+		{"true || false", true},
+		{"!true", false},
+		{"!(false || false)", true},
+		// Equality: case-insensitive strings, numeric coercion
+		{"'Main' == 'main'", true},
+		{"'main' != 'dev'", true},
+		{"1 == '1'", true},
+		{"true == 1", true},
+		{"null == 0", true},
+		{"null == ''", true},
+		{"'abc' == 0", false}, // NaN never equals
+		// Relational (numeric coercion)
+		{"2 < 10", true},
+		{"'2' < '10'", true},
+		{"5 >= 5", true},
+		{"'abc' < 1", false}, // NaN comparison is false
+		// Context access (dot, case-insensitive, bracket)
+		{"github.event_name == 'push'", true},
+		{"GitHub.Event_Name == 'PUSH'", true},
+		{"github.ref == 'refs/heads/main'", true},
+		{"github['ref_name'] == 'main'", true},
+		{"github.event.action == 'opened'", true},
+		{"github.event.pull_request.number == 7", true},
+		{"github.event.pull_request.draft", false},
+		{"github.event.pull_request.base.ref == 'main'", true},
+		{"github.event.pull_request.labels[1].name == 'urgent'", true},
+		{"github.event.commits[0].message == 'fix: thing'", true},
+		// Missing properties are null, not errors
+		{"github.event.no_such_thing == null", true},
+		{"github.event.no.such.thing == null", true},
+		// needs / inputs / vars
+		{"needs.build.result == 'success'", true},
+		{"needs.build.outputs.version == '1.2.3'", true},
+		{"inputs.deploy-env == 'staging'", true},
+		{"inputs.dry_run == 'true'", true},
+		{"vars.REGION == 'eu-west-1'", true},
+		// Functions
+		{"contains('Hello World', 'world')", true},
+		{"contains('Hello', 'xyz')", false},
+		{"contains(fromJSON('[\"a\",\"b\"]'), 'b')", true},
+		{"contains(fromJSON('[1,2,3]'), 2)", true},
+		{"startsWith('refs/heads/main', 'refs/heads/')", true},
+		{"startsWith('REFS/heads/x', 'refs/')", true},
+		{"endsWith('file.yml', '.YML')", true},
+		{"format('{0}-{1}', 'a', 'b') == 'a-b'", true},
+		{"format('{{literal}}') == '{literal}'", true},
+		{"join(fromJSON('[\"x\",\"y\"]'), '+') == 'x+y'", true},
+		{"join(fromJSON('[\"x\",\"y\"]')) == 'x,y'", true},
+		{"fromJSON('{\"a\":{\"b\":2}}').a.b == 2", true},
+		{"fromJSON('true')", true},
+		{"toJSON(github.event.action) == '\"opened\"'", true},
+		// Value-preserving && / ||
+		{"github.event_name == 'push' && github.ref_name || 'fallback'", true},
+		{"false || ''", false},
+		// ${{ }} wrapper accepted
+		{"${{ github.event_name == 'push' }}", true},
+		// Whole-expression with mixed precedence
+		{"github.event_name == 'pull_request' || github.event_name == 'push' && contains(github.ref, 'main')", true},
+		{"!startsWith(github.ref, 'refs/tags/') && success()", true},
 	}
-	if !EvalExpr("github.ref == 'refs/tags/v1.0'", ctx) {
-		t.Error("should match ref")
+	for _, tc := range cases {
+		got, err := EvalExprErr(tc.expr, ctx)
+		if err != nil {
+			t.Errorf("EvalExprErr(%q) error: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("EvalExprErr(%q) = %v, want %v", tc.expr, got, tc.want)
+		}
 	}
 }
 
-func TestExprParentheses(t *testing.T) {
-	ctx := &ExprContext{
-		DepResults: map[string]string{"build": "failure"},
-		Values:     map[string]string{"github.ref": "refs/heads/main"},
+func TestExprErrors(t *testing.T) {
+	ctx := exprTestCtx()
+	for _, expr := range []string{
+		"github.event_name =",     // single =
+		"'unterminated",           // bad string
+		"no_such_context.x",       // unknown root
+		"contains('a')",           // arity
+		"format('{9}', 'x')",      // bad placeholder
+		"fromJSON('not json')",    // parse failure
+		"hashFiles('**/*.lock')",  // runner-only function
+		"github.event_name == ()", // empty parens
+		"foo bar",                 // trailing garbage
+	} {
+		if _, err := EvalExprErr(expr, ctx); err == nil {
+			t.Errorf("EvalExprErr(%q) expected error, got none", expr)
+		}
 	}
-	// (failure() || success()) && github.ref == 'refs/heads/main'
-	if !EvalExpr("(failure() || success()) && github.ref == 'refs/heads/main'", ctx) {
-		t.Error("grouped OR with AND should be true")
+}
+
+func TestExprStatusFunctions(t *testing.T) {
+	failedDep := &ExprContext{DepResults: map[string]string{"build": "failure"}}
+	if EvalExpr("success()", failedDep) {
+		t.Error("success() should be false when a dep failed")
+	}
+	if !EvalExpr("failure()", failedDep) {
+		t.Error("failure() should be true when a dep failed")
+	}
+	skippedDep := &ExprContext{DepResults: map[string]string{"build": "skipped"}}
+	if !EvalExpr("success()", skippedDep) {
+		t.Error("success() should treat skipped deps as non-failures")
+	}
+	cancelled := &ExprContext{WorkflowCancelled: true}
+	if !EvalExpr("cancelled()", cancelled) {
+		t.Error("cancelled() should be true when the workflow is cancelled")
+	}
+	if EvalExpr("success()", cancelled) {
+		t.Error("success() should be false when the workflow is cancelled")
+	}
+	if !EvalExpr("always()", cancelled) {
+		t.Error("always() must be true even when cancelled")
+	}
+}
+
+func TestExprEmptyIsTrue(t *testing.T) {
+	if !EvalExpr("", nil) {
+		t.Error("empty if: must evaluate true")
+	}
+}
+
+func TestEvalTemplate(t *testing.T) {
+	ctx := exprTestCtx()
+	got, err := EvalTemplate("ci-${{ github.ref_name }}-${{ inputs.deploy-env }}", ctx)
+	if err != nil {
+		t.Fatalf("EvalTemplate error: %v", err)
+	}
+	if got != "ci-main-staging" {
+		t.Errorf("EvalTemplate = %q, want %q", got, "ci-main-staging")
+	}
+
+	// No templates → unchanged
+	got, err = EvalTemplate("plain string", ctx)
+	if err != nil || got != "plain string" {
+		t.Errorf("EvalTemplate(plain) = %q, %v", got, err)
+	}
+
+	// Numbers render in shortest form, null renders empty
+	got, err = EvalTemplate("n=${{ github.event.pull_request.number }} x=${{ github.event.missing }}", ctx)
+	if err != nil || got != "n=7 x=" {
+		t.Errorf("EvalTemplate = %q, %v", got, err)
+	}
+
+	// Unterminated template is an error
+	if _, err := EvalTemplate("${{ github.ref", ctx); err == nil {
+		t.Error("unterminated template should error")
+	}
+
+	// Expression errors propagate
+	if _, err := EvalTemplate("${{ nope.x }}", ctx); err == nil {
+		t.Error("unknown context in template should error")
 	}
 }
 
 func TestExprContainsStatusFunction(t *testing.T) {
-	hasAlways, hasFailure := ExprContainsStatusFunction("always()")
-	if !hasAlways {
-		t.Error("should detect always()")
-	}
-	if hasFailure {
-		t.Error("should not detect failure() in always()")
-	}
-
-	hasAlways, hasFailure = ExprContainsStatusFunction("failure() || always()")
+	hasAlways, hasFailure := ExprContainsStatusFunction("always() && failure()")
 	if !hasAlways || !hasFailure {
-		t.Error("should detect both")
+		t.Error("expected both status functions detected")
 	}
-
 	hasAlways, hasFailure = ExprContainsStatusFunction("success()")
 	if hasAlways || hasFailure {
-		t.Error("should not detect either")
-	}
-}
-
-func TestExprDollarBracketWrapper(t *testing.T) {
-	ctx := &ExprContext{
-		Values: map[string]string{"github.event_name": "push"},
-	}
-	if !EvalExpr("${{ github.event_name == 'push' }}", ctx) {
-		t.Error("should strip ${{ }} wrapper")
-	}
-}
-
-func TestExprEmpty(t *testing.T) {
-	ctx := &ExprContext{}
-	if !EvalExpr("", ctx) {
-		t.Error("empty expression should be true (default)")
+		t.Error("expected neither status function detected")
 	}
 }

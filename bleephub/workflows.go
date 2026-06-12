@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -76,6 +77,10 @@ type Workflow struct {
 	Inputs             map[string]string    `json:"inputs,omitempty"`
 	ConcurrencyGroup   string               `json:"concurrencyGroup,omitempty"`
 	CancelInProgress   bool                 `json:"-"`
+	// Attempt is the 1-based run_attempt; zero means first attempt
+	// (reruns bump it and archive the prior attempt in
+	// Store.WorkflowAttempts).
+	Attempt int `json:"attempt,omitempty"`
 
 	// WorkflowFileID / WorkflowFilePath identify the originating workflow
 	// FILE (the YAML on disk), which is stable across every run produced
@@ -338,23 +343,21 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			// Evaluate job-level if: condition
 			if wfJob.Def != nil && wfJob.Def.If != "" {
 				hasAlways, hasFailure := ExprContainsStatusFunction(wfJob.Def.If)
-				exprCtx := &ExprContext{
-					DepResults: make(map[string]string, len(wfJob.Needs)),
-					Values:     make(map[string]string),
-				}
-				for _, dep := range wfJob.Needs {
-					if depJob, ok := wf.Jobs[dep]; ok {
-						exprCtx.DepResults[dep] = string(depJob.Result)
-					}
-				}
-				if wf.EventName != "" {
-					exprCtx.Values["github.event_name"] = wf.EventName
-				}
-				if wf.Ref != "" {
-					exprCtx.Values["github.ref"] = wf.Ref
-				}
+				exprCtx := s.jobExprContext(wf, wfJob)
 
-				if !EvalExpr(wfJob.Def.If, exprCtx) {
+				ok, err := EvalExprErr(wfJob.Def.If, exprCtx)
+				if err != nil {
+					// Real GitHub fails the job (and run) on an invalid
+					// expression rather than silently skipping it.
+					wfJob.Status = JobStatusCompleted
+					wfJob.Result = ResultFailure
+					wfJob.CompletedAt = time.Now()
+					s.logger.Warn().Err(err).Str("job", wfJob.Key).Str("if", wfJob.Def.If).
+						Msg("job if: expression error — failing job")
+					changed = true
+					continue
+				}
+				if !ok {
 					wfJob.Status = JobStatusSkipped
 					wfJob.Result = ResultSkipped
 					s.logger.Info().Str("job", wfJob.Key).Str("if", wfJob.Def.If).Msg("skipping job (if: false)")
@@ -607,6 +610,15 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			s.startPendingConcurrencyWorkflow(concurrencyGroup)
 		}
 	}
+}
+
+// AttemptNumber returns the 1-based run_attempt (the zero value is the
+// first attempt).
+func (wf *Workflow) AttemptNumber() int {
+	if wf.Attempt < 1 {
+		return 1
+	}
+	return wf.Attempt
 }
 
 // jobEnvironmentName resolves a job's target environment, tolerating a
@@ -919,6 +931,100 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 				s.dispatchReadyJobs(context.Background(), wf, serverURL, wf.Env["__defaultImage"])
 			}
 		}
+	}
+}
+
+// jobExprContext builds the expression-evaluation context for a job-level
+// `if:` with the contexts real GitHub makes available there: github,
+// needs, vars, and inputs. Callers hold the store write lock.
+func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
+	deps := make(map[string]string, len(wfJob.Needs))
+	needsCtx := make(map[string]interface{}, len(wfJob.Needs))
+	for _, dep := range wfJob.Needs {
+		depJob, ok := wf.Jobs[dep]
+		if !ok {
+			continue
+		}
+		deps[dep] = string(depJob.Result)
+		outputs := make(map[string]interface{}, len(depJob.Outputs))
+		for k, v := range depJob.Outputs {
+			outputs[k] = v
+		}
+		needsCtx[dep] = map[string]interface{}{
+			"result":  string(depJob.Result),
+			"outputs": outputs,
+		}
+	}
+
+	inputsCtx := make(map[string]interface{}, len(wf.Inputs))
+	for k, v := range wf.Inputs {
+		inputsCtx[k] = v
+	}
+
+	varsCtx := make(map[string]interface{})
+	if wf.RepoFullName != "" {
+		for name, v := range s.store.RepoVariables[wf.RepoFullName] {
+			varsCtx[name] = v.Value
+		}
+	}
+
+	return &ExprContext{
+		DepResults:        deps,
+		WorkflowCancelled: wf.Result == ResultCancelled,
+		Contexts: map[string]interface{}{
+			"github": s.githubContextMap(wf),
+			"needs":  needsCtx,
+			"inputs": inputsCtx,
+			"vars":   varsCtx,
+		},
+	}
+}
+
+// githubContextMap assembles the server-side `github` context for
+// expression evaluation, mirroring the fields the runner receives in the
+// job message's contextData (same defaults as buildJobMessageFromDef).
+func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
+	eventName := wf.EventName
+	if eventName == "" {
+		eventName = "push"
+	}
+	ref := wf.Ref
+	if ref == "" {
+		ref = "refs/heads/main"
+	}
+	sha := wf.Sha
+	if sha == "" {
+		sha = "0000000000000000000000000000000000000000"
+	}
+	repoFullName := wf.RepoFullName
+	if repoFullName == "" {
+		repoFullName = "bleephub/test"
+	}
+	repoOwner := repoFullName
+	if idx := strings.Index(repoOwner, "/"); idx >= 0 {
+		repoOwner = repoOwner[:idx]
+	}
+	refName := ref
+	refType := "branch"
+	switch {
+	case strings.HasPrefix(ref, "refs/heads/"):
+		refName = strings.TrimPrefix(ref, "refs/heads/")
+	case strings.HasPrefix(ref, "refs/tags/"):
+		refName = strings.TrimPrefix(ref, "refs/tags/")
+		refType = "tag"
+	}
+	return map[string]interface{}{
+		"event_name":       eventName,
+		"ref":              ref,
+		"ref_name":         refName,
+		"ref_type":         refType,
+		"sha":              sha,
+		"repository":       repoFullName,
+		"repository_owner": repoOwner,
+		"run_id":           strconv.Itoa(wf.RunID),
+		"run_number":       strconv.Itoa(wf.RunNumber),
+		"run_attempt":      strconv.Itoa(wf.AttemptNumber()),
+		"workflow":         wf.Name,
 	}
 }
 
