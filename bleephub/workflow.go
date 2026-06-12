@@ -381,6 +381,30 @@ func parseMatrixNode(node *yaml.Node) (MatrixDef, error) {
 	return md, nil
 }
 
+// RunsOnLabels returns the job's runs-on labels (string or list form);
+// nil when unset.
+func (jd *JobDef) RunsOnLabels() []string {
+	if jd == nil {
+		return nil
+	}
+	switch v := jd.RunsOn.(type) {
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []string{v}
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok && s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // ContainerImage returns the container image string from a JobDef.Container,
 // which may be a plain string or a ContainerDef object.
 func (jd *JobDef) ContainerImage() string {

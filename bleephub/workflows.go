@@ -126,6 +126,9 @@ type WorkflowEventMeta struct {
 	Sha       string
 	Repo      string
 	Inputs    map[string]string
+	// Attempt sets the run's 1-based run_attempt (0 = first attempt);
+	// reruns pass the incremented value.
+	Attempt int
 	// TypedInputs carries workflow_dispatch inputs with their declared
 	// types (boolean/number) for the `inputs` expression context;
 	// Inputs keeps the string forms (github.event.inputs).
@@ -253,6 +256,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Inputs = m.Inputs
 		workflow.TypedInputs = m.TypedInputs
 		workflow.EventPayload = m.Payload
+		workflow.Attempt = m.Attempt
 	}
 
 	// Concurrency groups are template strings on real GitHub
@@ -529,6 +533,7 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 		MessageID:   s.nextMessageID(),
 		MessageType: "PipelineAgentJobRequest",
 		Body:        string(msgJSON),
+		Labels:      wfJob.Def.RunsOnLabels(),
 	}
 
 	if !s.sendMessageToAgent(envelope) {

@@ -228,6 +228,9 @@ type TaskAgentMessage struct {
 	MessageType string `json:"messageType"`
 	IV          string `json:"iv,omitempty"`
 	Body        string `json:"body"`
+	// Labels carries the job's runs-on requirements for broker routing;
+	// never serialized to the runner.
+	Labels []string `json:"-"`
 }
 
 // Job represents a queued/running/completed job.
