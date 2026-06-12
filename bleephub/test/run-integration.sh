@@ -28,12 +28,15 @@ show_diag() {
 
 # The official runner strips non-standard ports from URLs (uses uri.Host not uri.Authority).
 # So bleephub MUST run on port 80 (the default HTTP port).
+#
+# Jobs run in HOST MODE (jobContainer null — what real GitHub sends for
+# jobs without `container:`): the runner executes steps directly in this
+# container, which exercises the full protocol surface (registration,
+# broker, job acquire, step execution, timeline records, log upload,
+# completion) without a container engine. Container-mode jobs against
+# the cloud backends are gated on the bind-mount→EFS translation
+# documented in docs/GITHUB_RUNNER.md.
 BLEEPHUB_ADDR="127.0.0.1:80"
-# The backend binds all interfaces: job workloads run as containers on
-# the HOST engine (mounted docker.sock), and their reverse agents dial
-# back through the published port (see bleephub-runner-docker-test).
-BACKEND_ADDR="0.0.0.0:3375"
-FRONTEND_ADDR="127.0.0.1:3375"
 PIDS=()
 
 cleanup() {
@@ -53,48 +56,7 @@ wait_for_url() {
     fail "Timeout waiting for $url"
 }
 
-# --- 1. Start the AWS simulator (the ECS control plane) ---
-log "Starting AWS simulator on 127.0.0.1:4566"
-SIM_LISTEN_ADDR=":4566" simulator-aws &
-PIDS+=($!)
-wait_for_url "http://127.0.0.1:4566/health"
-log "Simulator ready"
-
-curl -s -X POST http://127.0.0.1:4566/ \
-    -H "Content-Type: application/x-amz-json-1.1" \
-    -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster" \
-    -d '{"clusterName":"sim-cluster"}' >/dev/null
-log "ECS cluster bootstrapped"
-
-# --- 2. Start the ECS backend (serves the Docker API directly).
-# Sim-mode workloads run as reverse-agent PROCESSES (no Docker engine
-# in this container) — the same recipe tests/e2e-live-tests uses.
-log "Starting Sockerless ECS backend on $BACKEND_ADDR"
-export AWS_ACCESS_KEY_ID="sim" AWS_SECRET_ACCESS_KEY="sim" AWS_REGION="us-east-1"
-export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
-export SOCKERLESS_ECS_CLUSTER="sim-cluster"
-export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"
-export SOCKERLESS_ECS_EXECUTION_ROLE_ARN="arn:aws:iam::000000000000:role/sim"
-# Workload arch is explicit by design (the backend reports the cloud
-# workload's architecture, never its own). Here workloads run as
-# containers on the host engine, so the host arch IS the workload arch.
-case "$(uname -m)" in
-    x86_64)        export SOCKERLESS_ECS_CPU_ARCHITECTURE="X86_64" ;;
-    aarch64|arm64) export SOCKERLESS_ECS_CPU_ARCHITECTURE="ARM64" ;;
-    *) fail "unsupported host arch $(uname -m)" ;;
-esac
-# Reverse agents run inside workload containers on the HOST engine;
-# they must dial the backend through a host-reachable address
-# (host.docker.internal + the published 3375), not this container's
-# loopback. Overridable for other topologies.
-export SOCKERLESS_CALLBACK_URL="${BLEEPHUB_TEST_CALLBACK_URL:-http://host.docker.internal:3375}"
-export SOCKERLESS_AUTO_AGENT_BIN="/usr/local/bin/sockerless-agent"
-sockerless-backend-ecs --addr "$BACKEND_ADDR" --log-level warn &
-PIDS+=($!)
-wait_for_url "http://$FRONTEND_ADDR/_ping"
-log "Docker API (ECS backend) ready"
-
-# --- 3. Start bleephub ---
+# --- 1. Start bleephub ---
 log "Starting bleephub on $BLEEPHUB_ADDR"
 # The admin token has no default — the binary fails loudly if this is unset.
 export BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000"
@@ -102,8 +64,6 @@ bleephub --addr "$BLEEPHUB_ADDR" --log-level info &
 PIDS+=($!)
 wait_for_url "http://$BLEEPHUB_ADDR/health"
 log "bleephub ready"
-
-export DOCKER_HOST="tcp://$FRONTEND_ADDR"
 
 # --- 4. Configure the runner ---
 log "Configuring runner..."
@@ -179,7 +139,7 @@ wait_for_job() {
 log "===== TEST 1: Single-job submission ====="
 SUBMIT_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/submit" \
     -H "Content-Type: application/json" \
-    -d '{"image":"alpine:latest","steps":[{"run":"echo Hello from bleephub via Sockerless"},{"run":"uname -a"}]}')
+    -d '{"hostMode":true,"steps":[{"run":"echo Hello from bleephub host mode"},{"run":"uname -a"}]}')
 
 JOB_ID=$(echo "$SUBMIT_RESP" | jq -r '.jobId')
 if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
@@ -205,7 +165,7 @@ submit_and_wait_workflow() {
     local wf_resp
     wf_resp=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
         -H "Content-Type: application/json" \
-        -d "$(jq -n --arg wf "$yaml" '{workflow: $wf, image: "alpine:latest"}')")
+        -d "$(jq -n --arg wf "$yaml" '{workflow: $wf, hostMode: true}')")
 
     local wf_id
     wf_id=$(echo "$wf_resp" | jq -r '.workflowId')
@@ -327,44 +287,41 @@ jobs:
 
 sleep 3
 
-# ===== TEST 6: Service containers =====
-submit_and_wait_workflow 6 "Service containers" '
-name: service-test
-jobs:
-  test:
-    runs-on: self-hosted
-    services:
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-    steps:
-      - run: echo "Service containers configured"
-      - run: echo "Running with redis sidecar"
-'
-
-sleep 3
+# (Service containers are real containers — like container-mode jobs
+# they need an engine and are gated on the bind-mount→EFS work in
+# docs/GITHUB_RUNNER.md; this host-mode harness skips them.)
 
 # ===== TEST 7: Secrets injection =====
 log "===== TEST 7: Secrets injection ====="
 
-# PUT a secret via API
+# PUT a secret with the REAL wire contract: fetch the public key and
+# libsodium-seal the value, exactly like gh / the API docs require.
 TOKEN="bleephub-admin-token-00000000000000000000"
+PUBKEY_JSON=$(curl -sf -H "Authorization: token $TOKEN" \
+    "http://$BLEEPHUB_ADDR/api/v3/repos/bleephub/test/actions/secrets/public-key") || fail "public-key fetch failed"
+KEY_ID=$(echo "$PUBKEY_JSON" | jq -r .key_id)
+SEALED=$(echo "$PUBKEY_JSON" | jq -r .key | python3 -c '
+import sys, base64
+from nacl.public import PublicKey, SealedBox
+pub = PublicKey(base64.b64decode(sys.stdin.read().strip()))
+print(base64.b64encode(SealedBox(pub).encrypt(b"s3cret_value_123")).decode())
+') || fail "sealing failed"
 curl -sf -X PUT "http://$BLEEPHUB_ADDR/api/v3/repos/bleephub/test/actions/secrets/TEST_SECRET" \
     -H "Authorization: token $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"value":"s3cret_value_123"}' || fail "Failed to create secret"
-log "Secret created"
+    -d "$(jq -n --arg ev "$SEALED" --arg kid "$KEY_ID" '{encrypted_value: $ev, key_id: $kid}')" \
+    || fail "Failed to create secret"
+log "Secret created (sealed box)"
 
-# Submit workflow that references the secret
+# The job asserts the decrypted secret VALUE reaches the secrets context.
 submit_and_wait_workflow 7 "Secrets injection" '
 name: secrets-test
 jobs:
   test:
     runs-on: self-hosted
     steps:
-      - run: echo "Secret is available (masked in logs)"
-      - run: echo "Test passed"
+      - run: test "${{ secrets.TEST_SECRET }}" = "s3cret_value_123"
+      - run: echo "Secret value verified"
 '
 
 sleep 3
@@ -377,12 +334,12 @@ jobs:
   test:
     runs-on: self-hosted
     steps:
-      - run: echo "Version from input"
-      - run: echo "Test passed"'
+      - run: test "${{ inputs.version }}" = "1.2.3"
+      - run: echo "Input value verified"'
 
 WF8_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg wf "$WF8_YAML" '{workflow: $wf, image: "alpine:latest", event_name: "workflow_dispatch", inputs: {version: "1.2.3"}}')")
+    -d "$(jq -n --arg wf "$WF8_YAML" '{workflow: $wf, hostMode: true, event_name: "workflow_dispatch", inputs: {version: "1.2.3"}}')")
 
 WF8_ID=$(echo "$WF8_RESP" | jq -r '.workflowId')
 if [ -z "$WF8_ID" ] || [ "$WF8_ID" = "null" ]; then
@@ -431,7 +388,7 @@ jobs:
 
 WF9_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
     -H "Content-Type: application/json" \
-    -d "$(jq -n --arg wf "$WF9_YAML" '{workflow: $wf, image: "alpine:latest"}')")
+    -d "$(jq -n --arg wf "$WF9_YAML" '{workflow: $wf, hostMode: true}')")
 
 WF9_ID=$(echo "$WF9_RESP" | jq -r '.workflowId')
 if [ -z "$WF9_ID" ] || [ "$WF9_ID" = "null" ]; then

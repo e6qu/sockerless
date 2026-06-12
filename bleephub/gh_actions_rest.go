@@ -449,12 +449,13 @@ func runnerJSON(a *Agent, busy bool) map[string]any {
 	}
 }
 
-// busyAgentIDsLocked returns the agents currently associated with a
-// running job. Callers hold the store lock.
+// busyAgentIDsLocked returns the agents with an assigned, unfinished
+// job (same predicate the broker uses to keep jobs away from busy
+// runners). Callers hold the store lock.
 func (s *Server) busyAgentIDsLocked() map[int]bool {
 	busy := map[int]bool{}
 	for _, j := range s.store.Jobs {
-		if j.Status == "running" && j.AgentID != 0 {
+		if j.AgentID != 0 && j.Status != "completed" {
 			busy[j.AgentID] = true
 		}
 	}

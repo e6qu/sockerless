@@ -16,13 +16,12 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	scopeID := uuid.New().String()
 	jobToken := makeJWT(scopeID, "actions")
 
-	// Determine container image
+	// Determine container image; empty means host mode (the run was
+	// submitted with hostMode and the YAML declares no container) — the
+	// runner then executes the job directly, like real GitHub.
 	image := defaultImage
 	if img := jd.ContainerImage(); img != "" {
 		image = img
-	}
-	if image == "" {
-		image = "alpine:latest"
 	}
 
 	// Build steps
@@ -55,7 +54,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 					"map": []interface{}{
 						map[string]interface{}{
 							"Key":   map[string]interface{}{"type": 0, "lit": "script"},
-							"Value": map[string]interface{}{"type": 0, "lit": step.Run},
+							"Value": templateToken(step.Run),
 						},
 					},
 				},
@@ -95,7 +94,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 			for k, v := range step.With {
 				inputEntries = append(inputEntries, map[string]interface{}{
 					"Key":   map[string]interface{}{"type": 0, "lit": k},
-					"Value": map[string]interface{}{"type": 0, "lit": v},
+					"Value": templateToken(v),
 				})
 			}
 
@@ -163,6 +162,22 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	// scope wins); every secret value rides the mask list so the runner
 	// scrubs it from logs. Jobs inside a reusable-workflow call with an
 	// explicit `secrets:` map receive ONLY the mapped names.
+	//
+	// The official runner builds its `secrets` expression context from
+	// message.Variables entries flagged isSecret (Variables.
+	// ToSecretsContext) — NOT from contextData — so every secret also
+	// rides the variables map under its own name.
+	variables := map[string]interface{}{
+		"system.github.job":                      varVal(wfJob.Key),
+		"system.github.runid":                    varVal(runID),
+		"system.github.token":                    varSecret(jobToken),
+		"github_token":                           varSecret(jobToken),
+		"GITHUB_TOKEN":                           varSecret(jobToken),
+		"system.phaseDisplayName":                varVal(wfJob.DisplayName),
+		"system.runnerGroupName":                 varVal("Default"),
+		"DistributedTask.NewActionMetadata":      varVal("true"),
+		"DistributedTask.EnableCompositeActions": varVal("true"),
+	}
 	varsPairs := make([]string, 0)
 	if s != nil && s.store != nil {
 		secretsMap, varsMap := s.CollectJobSecretsAndVars(repoFullName, jd.EnvironmentName())
@@ -171,6 +186,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		}
 		for _, name := range sortedKeys(secretsMap) {
 			secretsPairs = append(secretsPairs, name, secretsMap[name])
+			variables[name] = varSecret(secretsMap[name])
 			maskArray = append(maskArray, map[string]interface{}{"type": "regex", "value": secretsMap[name]})
 		}
 		for _, name := range sortedKeys(varsMap) {
@@ -217,7 +233,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"jobName":              wfJob.Key,
 		"requestId":            requestID,
 		"lockedUntil":          "0001-01-01T00:00:00",
-		"jobContainer":         image,
+		"jobContainer":         jobContainerValue(image),
 		"jobServiceContainers": buildServiceContainers(jd.Services),
 		"jobOutputs":           nil,
 		"resources": map[string]interface{}{
@@ -259,16 +275,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 			"matrix":   matrixCtx,
 			"strategy": nil,
 		},
-		"variables": map[string]interface{}{
-			"system.github.job":                      varVal(wfJob.Key),
-			"system.github.runid":                    varVal(runID),
-			"system.github.token":                    varSecret(jobToken),
-			"github_token":                           varSecret(jobToken),
-			"system.phaseDisplayName":                varVal(wfJob.DisplayName),
-			"system.runnerGroupName":                 varVal("Default"),
-			"DistributedTask.NewActionMetadata":      varVal("true"),
-			"DistributedTask.EnableCompositeActions": varVal("true"),
-		},
+		"variables":            variables,
 		"mask":                 maskArray,
 		"steps":                steps,
 		"workspace":            map[string]interface{}{},
@@ -277,6 +284,55 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"actionsEnvironment":   nil,
 		"fileTable":            []string{".github/workflows/ci.yml"},
 	}
+}
+
+// templateToken converts a workflow string into the runner's template
+// token: a plain literal when it carries no ${{ }}, else a
+// BasicExpression token — `format('...', expr...)` with {N}
+// placeholders — which is the shape real GitHub sends so the RUNNER
+// evaluates the expressions against its contexts (matrix, env, steps,
+// ...). Literal-only emission left scripts with raw `${{ matrix.os }}`
+// text reaching the shell.
+func templateToken(s string) map[string]interface{} {
+	if !strings.Contains(s, "${{") {
+		return map[string]interface{}{"type": 0, "lit": s}
+	}
+	return map[string]interface{}{"type": 3, "expr": templateToFormatExpr(s)}
+}
+
+// templateToFormatExpr rewrites "a ${{ x }} b" into
+// "format('a {0} b', x)"; a string that is exactly one template becomes
+// the bare inner expression.
+func templateToFormatExpr(s string) string {
+	escape := func(part string) string {
+		part = strings.ReplaceAll(part, "'", "''")
+		part = strings.ReplaceAll(part, "{", "{{")
+		part = strings.ReplaceAll(part, "}", "}}")
+		return part
+	}
+	var fmtStr strings.Builder
+	var exprs []string
+	rest := s
+	for {
+		i := strings.Index(rest, "${{")
+		if i < 0 {
+			fmtStr.WriteString(escape(rest))
+			break
+		}
+		j := strings.Index(rest[i:], "}}")
+		if j < 0 {
+			fmtStr.WriteString(escape(rest))
+			break
+		}
+		fmtStr.WriteString(escape(rest[:i]))
+		exprs = append(exprs, strings.TrimSpace(rest[i+3:i+j]))
+		fmt.Fprintf(&fmtStr, "{%d}", len(exprs)-1)
+		rest = rest[i+j+2:]
+	}
+	if len(exprs) == 1 && fmtStr.String() == "{0}" {
+		return exprs[0]
+	}
+	return fmt.Sprintf("format('%s', %s)", fmtStr.String(), strings.Join(exprs, ", "))
 }
 
 // sortedKeys returns a map's keys in sorted order so context payloads

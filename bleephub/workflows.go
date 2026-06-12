@@ -574,10 +574,7 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 		JobID:       wfJob.JobID,
 	}
 
-	if !s.sendMessageToAgent(envelope) {
-		s.requeuePendingMessage(envelope)
-		s.logger.Warn().Str("jobId", wfJob.JobID).Msg("no runner available, workflow job queued (pending)")
-	}
+	s.queueJobMessage(envelope)
 
 	if s.metrics != nil {
 		s.metrics.RecordJobDispatch()

@@ -26,7 +26,6 @@ type Server struct {
 	actionCache            *ActionCache
 	artifactStore          *ArtifactStore
 	metrics                *Metrics
-	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
 	scheduleFired          scheduleFiredKeys // cron-firing dedup (on: schedule)
 	actionsEvents          actionsEventLoop  // checks/webhook fan-out for run+job transitions

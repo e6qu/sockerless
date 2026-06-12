@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -76,8 +75,6 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 		s.metrics.SetActiveSessions(int64(s.sessionCount()))
 	}
 
-	s.drainPendingMessages()
-
 	s.logger.Info().Str("sessionId", sessionID).Msg("session created")
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -107,7 +104,11 @@ func (s *Server) handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-// handleGetMessage long-polls for a job message (30s timeout).
+// handleGetMessage long-polls for a job message (30s timeout). Queued
+// pending messages are PULLED here rather than pushed: a runner polls
+// continuously even while running a job (cancellation channel), and the
+// official runner drops job messages that land during worker teardown —
+// so job delivery only happens on a poll from a free agent.
 func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	sessionID := r.URL.Query().Get("sessionId")
 
@@ -117,6 +118,12 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+
+	if msg := s.pullPendingMessage(session); msg != nil {
+		s.logger.Info().Int64("messageId", msg.MessageID).Msg("delivering pending message to runner")
+		writeJSON(w, http.StatusOK, msg)
 		return
 	}
 
@@ -136,56 +143,69 @@ func (s *Server) handleGetMessage(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// pullPendingMessage hands the polling session the first queued message
+// its agent can take (labels covered, agent free); nil when none.
+func (s *Server) pullPendingMessage(session *Session) *TaskAgentMessage {
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	if session.Agent != nil && s.agentBusyLocked(session.Agent.ID) {
+		return nil
+	}
+	for i, msg := range s.store.PendingMessages {
+		if !agentSatisfiesLabels(session.Agent, msg.Labels) {
+			continue
+		}
+		s.store.PendingMessages = append(s.store.PendingMessages[:i], s.store.PendingMessages[i+1:]...)
+		s.recordJobAgentLocked(msg, session)
+		return msg
+	}
+	return nil
+}
+
+// agentBusyLocked reports whether the agent has an assigned job that
+// hasn't finished — real GitHub never assigns a busy runner, and the
+// official runner DROPS job messages received mid-job. Callers hold the
+// store lock.
+func (s *Server) agentBusyLocked(agentID int) bool {
+	if agentID == 0 {
+		return false
+	}
+	for _, j := range s.store.Jobs {
+		if j.AgentID == agentID && j.Status != "completed" {
+			return true
+		}
+	}
+	return false
+}
+
+// recordJobAgentLocked associates a delivered job with the agent that
+// took it (busy tracking + the runners API's `busy`).
+func (s *Server) recordJobAgentLocked(msg *TaskAgentMessage, session *Session) {
+	if msg.JobID == "" || session.Agent == nil {
+		return
+	}
+	if job := s.store.Jobs[msg.JobID]; job != nil {
+		job.AgentID = session.Agent.ID
+	}
+}
+
 func (s *Server) handleDeleteMessage(w http.ResponseWriter, r *http.Request) {
 	msgID := r.PathValue("messageId")
 	s.logger.Debug().Str("messageId", msgID).Msg("message acknowledged")
 	w.WriteHeader(http.StatusOK)
 }
 
-// sendMessageToAgent sends a message to the next eligible session
-// (round-robin among sessions whose agent labels satisfy the job's
-// runs-on requirements).
-func (s *Server) sendMessageToAgent(msg *TaskAgentMessage) bool {
+// queueJobMessage queues a job message for delivery. Job messages are
+// NEVER pushed into an open long-poll: the official runner keeps a poll
+// open even mid-job (its cancellation channel) and silently DROPS job
+// messages that arrive while the worker is running or tearing down.
+// Delivery happens exclusively in handleGetMessage — a fresh poll from a
+// free, label-matching runner pulls the next queued message, exactly the
+// hold-until-poll semantics real GitHub's broker has.
+func (s *Server) queueJobMessage(msg *TaskAgentMessage) {
 	s.store.mu.Lock()
-	defer s.store.mu.Unlock()
-
-	if len(s.store.Sessions) == 0 {
-		return false
-	}
-
-	ids := make([]string, 0, len(s.store.Sessions))
-	for id := range s.store.Sessions {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-
-	n := len(ids)
-	for i := 0; i < n; i++ {
-		idx := (s.lastSessionIdx + i) % n
-		session := s.store.Sessions[ids[idx]]
-		if !agentSatisfiesLabels(session.Agent, msg.Labels) {
-			continue
-		}
-		select {
-		case session.MsgCh <- msg:
-			s.lastSessionIdx = (idx + 1) % n
-			// Record which agent took the job: the runners API reports
-			// `busy` from running jobs' agent association.
-			if msg.JobID != "" && session.Agent != nil {
-				if job := s.store.Jobs[msg.JobID]; job != nil {
-					job.AgentID = session.Agent.ID
-				}
-			}
-			s.logger.Info().
-				Int64("messageId", msg.MessageID).
-				Str("sessionId", session.SessionID).
-				Strs("labels", msg.Labels).
-				Msg("message queued for runner")
-			return true
-		default:
-		}
-	}
-	return false
+	s.store.PendingMessages = append(s.store.PendingMessages, msg)
+	s.store.mu.Unlock()
 }
 
 // agentSatisfiesLabels reports whether an agent's registered labels
@@ -221,32 +241,6 @@ func isHostedPoolAlias(lower string) bool {
 	return strings.HasPrefix(lower, "ubuntu-") ||
 		strings.HasPrefix(lower, "macos-") ||
 		strings.HasPrefix(lower, "windows-")
-}
-
-func (s *Server) requeuePendingMessage(msg *TaskAgentMessage) {
-	s.store.mu.Lock()
-	s.store.PendingMessages = append(s.store.PendingMessages, msg)
-	s.store.mu.Unlock()
-}
-
-func (s *Server) drainPendingMessages() {
-	s.store.mu.Lock()
-	pending := s.store.PendingMessages
-	s.store.PendingMessages = nil
-	s.store.mu.Unlock()
-
-	var remaining []*TaskAgentMessage
-	for _, msg := range pending {
-		if !s.sendMessageToAgent(msg) {
-			remaining = append(remaining, msg)
-		}
-	}
-
-	if len(remaining) > 0 {
-		s.store.mu.Lock()
-		s.store.PendingMessages = append(remaining, s.store.PendingMessages...)
-		s.store.mu.Unlock()
-	}
 }
 
 func (s *Server) nextMessageID() int64 {

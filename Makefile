@@ -380,19 +380,15 @@ bleephub-gh-docker-test:
 	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
 	@docker run --rm bleephub-gh-test:local
 
-# Official actions/runner against bleephub end-to-end: bleephub + AWS
-# simulator + ECS backend in one image; the runner registers, picks up
-# jobs, and workloads run as containers on the HOST engine via the
-# mounted docker.sock (reverse agents dial back through the published
-# port). Needs a real docker-engine socket — Linux or Docker Desktop;
-# rootless-podman sockets don't survive the mount.
+# Official actions/runner against bleephub end-to-end: the runner
+# registers, polls the broker, executes host-mode jobs (jobContainer
+# null — real GitHub's shape for jobs without `container:`), uploads
+# timeline records + logs, and completes. Self-contained image, no
+# docker socket needed. Container-mode jobs against cloud backends are
+# gated on the bind-mount→EFS translation (docs/GITHUB_RUNNER.md).
 .PHONY: bleephub-runner-docker-test
 bleephub-runner-docker-test:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
 	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
 	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness…$(COLOR_RESET)\n"
-	@docker run --rm \
-	  -v /var/run/docker.sock:/var/run/docker.sock \
-	  --add-host=host.docker.internal:host-gateway \
-	  -p 127.0.0.1:3375:3375 \
-	  bleephub-runner-int:local
+	@docker run --rm bleephub-runner-int:local

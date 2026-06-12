@@ -31,10 +31,13 @@ func (s *Server) registerJobRoutes() {
 	s.route("GET /_apis/v1/tasks/{taskId}/{versionString}", s.handleGetTask)
 }
 
-// SubmitRequest is the simplified job submission format.
+// SubmitRequest is the simplified job submission format. HostMode runs
+// the job directly on the runner (jobContainer null) — what real GitHub
+// does for jobs without `container:`.
 type SubmitRequest struct {
-	Image string       `json:"image"`
-	Steps []SubmitStep `json:"steps"`
+	Image    string       `json:"image"`
+	HostMode bool         `json:"hostMode"`
+	Steps    []SubmitStep `json:"steps"`
 }
 
 // SubmitStep is a simplified step.
@@ -48,7 +51,7 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Image == "" {
+	if req.Image == "" && !req.HostMode {
 		req.Image = "alpine:latest"
 	}
 
@@ -89,11 +92,10 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 		MessageID:   s.nextMessageID(),
 		MessageType: "PipelineAgentJobRequest",
 		Body:        string(msgJSON),
+		JobID:       jobID,
 	}
 
-	if !s.sendMessageToAgent(envelope) {
-		s.logger.Warn().Str("jobId", jobID).Msg("no runner available, job queued")
-	}
+	s.queueJobMessage(envelope)
 
 	s.logger.Info().Str("jobId", jobID).Int64("requestId", requestID).Msg("job submitted")
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -125,6 +127,7 @@ func (s *Server) handleGetJobStatus(w http.ResponseWriter, r *http.Request) {
 type WorkflowSubmitRequest struct {
 	Workflow  string            `json:"workflow"`   // raw YAML
 	Image     string            `json:"image"`      // default container image
+	HostMode  bool              `json:"hostMode"`   // run jobs on the runner (no container) unless the YAML declares one
 	EventName string            `json:"event_name"` // default "push"
 	Ref       string            `json:"ref"`        // default "refs/heads/main"
 	Sha       string            `json:"sha"`        // default "0000..."
@@ -165,7 +168,7 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Image == "" {
+	if req.Image == "" && !req.HostMode {
 		req.Image = "alpine:latest"
 	}
 
@@ -376,6 +379,16 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "task not found", http.StatusNotFound)
 }
 
+// jobContainerValue maps an image reference onto the job message's
+// jobContainer: a bare string for container jobs, null for host-mode
+// jobs (what real GitHub sends when the YAML has no `container:`).
+func jobContainerValue(image string) interface{} {
+	if image == "" {
+		return nil
+	}
+	return image
+}
+
 // buildJobMessage builds the AgentJobRequestMessage in the internal format
 // that the official GitHub Actions runner expects.
 // Format matches ChristopherHX/runner.server's PipelineContextData + TemplateToken serialization.
@@ -406,7 +419,7 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 				"map": []interface{}{
 					map[string]interface{}{
 						"Key":   map[string]interface{}{"type": 0, "lit": "script"},
-						"Value": map[string]interface{}{"type": 0, "lit": step.Run},
+						"Value": templateToken(step.Run),
 					},
 				},
 			},
@@ -440,8 +453,9 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 		"jobName":        "test",
 		"requestId":      requestID,
 		"lockedUntil":    "0001-01-01T00:00:00",
-		// jobContainer: bare string for simple image reference
-		"jobContainer":         req.Image,
+		// jobContainer: bare string for simple image reference; null
+		// runs the job on the runner host (no `container:`).
+		"jobContainer":         jobContainerValue(req.Image),
 		"jobServiceContainers": nil,
 		"jobOutputs":           nil,
 		"resources": map[string]interface{}{

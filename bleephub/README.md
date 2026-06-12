@@ -322,21 +322,22 @@ Env vars:
 # Go unit tests
 make bleephub/test                  # go test ./bleephub/...
 
-# Official actions/runner end-to-end (Docker; needs a real docker-engine
-# socket — Linux or Docker Desktop, not rootless podman)
+# Official actions/runner end-to-end (Docker; self-contained)
 make bleephub-runner-docker-test
 
 # Real gh CLI inside Docker (real bleephub + real gh binary + self-signed TLS)
 make bleephub-gh-docker-test
 ```
 
-`bleephub-runner-docker-test` builds `bleephub/Dockerfile` (bleephub + AWS
-simulator + ECS backend + the official `actions/runner` binary) and runs
+`bleephub-runner-docker-test` builds `bleephub/Dockerfile` (bleephub + the
+official `actions/runner` binary) and runs
 `bleephub/test/run-integration.sh`: the runner registers against bleephub,
-picks up dispatched jobs over the broker, and the job workloads execute as
-real containers on the host engine through the mounted `docker.sock`
-(reverse agents dial back through the published port). Runs in CI as the
-`sim (bleephub actions/runner)` job.
+polls the broker, executes HOST-MODE jobs (`jobContainer` null — real
+GitHub's shape for jobs without `container:`), uploads timeline records and
+logs, and completes. Runs in CI as the `sim (bleephub actions/runner)` job.
+Container-mode jobs against the cloud backends are gated on the
+bind-mount→EFS translation tracked in
+[`docs/GITHUB_RUNNER.md`](../docs/GITHUB_RUNNER.md).
 
 The gh harness builds `bleephub/Dockerfile.gh-test` and runs `bleephub/test/run-gh-test.sh`. It exercises:
 - `gh auth login` against bleephub as a GHES host

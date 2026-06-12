@@ -392,3 +392,27 @@ jobs:
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+func TestTemplateToFormatExpr(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"echo hi", ""}, // no template → literal token (covered below)
+		{"${{ matrix.os }}", "matrix.os"},
+		{"echo \"os=${{ matrix.os }} v=${{ matrix.version }}\"",
+			"format('echo \"os={0} v={1}\"', matrix.os, matrix.version)"},
+		{"it's ${{ env.X }}", "format('it''s {0}', env.X)"},
+		{"a {brace} ${{ github.ref }}", "format('a {{brace}} {0}', github.ref)"},
+	}
+	for _, tc := range cases[1:] {
+		if got := templateToFormatExpr(tc.in); got != tc.want {
+			t.Errorf("templateToFormatExpr(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+	tok := templateToken("echo hi")
+	if tok["type"] != 0 || tok["lit"] != "echo hi" {
+		t.Errorf("plain string should stay literal: %v", tok)
+	}
+	tok = templateToken("echo ${{ matrix.os }}")
+	if tok["type"] != 3 {
+		t.Errorf("templated string should be a BasicExpression token: %v", tok)
+	}
+}

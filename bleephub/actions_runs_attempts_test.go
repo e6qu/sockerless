@@ -39,10 +39,50 @@ func TestAgentSatisfiesLabels(t *testing.T) {
 	}
 }
 
+func TestBusyRunnerNeverReceivesJobs(t *testing.T) {
+	s := newTestServer()
+	sess := &Session{
+		SessionID: "busy-sess",
+		Agent:     &Agent{ID: 901, Labels: []Label{{Name: "self-hosted"}}},
+		MsgCh:     make(chan *TaskAgentMessage, 10),
+	}
+	s.store.mu.Lock()
+	s.store.Sessions["busy-sess"] = sess
+	// An assigned, unfinished job marks the agent busy.
+	s.store.Jobs["job-1"] = &Job{ID: "job-1", AgentID: 901, Status: "running"}
+	s.store.Jobs["job-2"] = &Job{ID: "job-2", Status: "queued"}
+	s.store.mu.Unlock()
+
+	s.queueJobMessage(&TaskAgentMessage{MessageID: 7, JobID: "job-2", Labels: []string{"self-hosted"}})
+
+	// While busy, polls must not pull the queued job.
+	if got := s.pullPendingMessage(sess); got != nil {
+		t.Fatal("busy runner's poll pulled a job message")
+	}
+
+	// Job finishes → the next poll pulls the pending message.
+	s.store.mu.Lock()
+	s.store.Jobs["job-1"].Status = "completed"
+	s.store.mu.Unlock()
+	got := s.pullPendingMessage(sess)
+	if got == nil || got.MessageID != 7 {
+		t.Fatalf("free runner's poll did not pull the pending job: %v", got)
+	}
+	s.store.mu.RLock()
+	agentID := s.store.Jobs["job-2"].AgentID
+	pending := len(s.store.PendingMessages)
+	s.store.mu.RUnlock()
+	if agentID != 901 {
+		t.Errorf("pulled job not associated with the agent: AgentID=%d", agentID)
+	}
+	if pending != 0 {
+		t.Errorf("pending queue not drained: %d left", pending)
+	}
+}
+
 func TestLabelRoutingQueuesUntilMatch(t *testing.T) {
 	s := newTestServer()
 
-	// One session whose agent lacks the required label.
 	mkSession := func(id string, labels ...string) *Session {
 		ls := make([]Label, 0, len(labels))
 		for _, l := range labels {
@@ -60,28 +100,21 @@ func TestLabelRoutingQueuesUntilMatch(t *testing.T) {
 	}
 	plain := mkSession("a-plain", "self-hosted", "linux")
 
-	msg := &TaskAgentMessage{MessageID: 1, Labels: []string{"self-hosted", "gpu"}}
-	if s.sendMessageToAgent(msg) {
-		t.Fatal("message must not deliver to a non-matching agent")
-	}
-	s.requeuePendingMessage(msg)
+	s.queueJobMessage(&TaskAgentMessage{MessageID: 1, Labels: []string{"self-hosted", "gpu"}})
 
-	// A matching session connects; the pending message flushes to it.
+	// A poll from a non-matching runner must not pull the job.
+	if got := s.pullPendingMessage(plain); got != nil {
+		t.Fatal("job pulled by a runner without the required labels")
+	}
+
+	// A matching runner's poll pulls it.
 	gpu := mkSession("b-gpu", "self-hosted", "linux", "gpu")
-	s.drainPendingMessages()
-
-	select {
-	case got := <-gpu.MsgCh:
-		if got.MessageID != 1 {
-			t.Errorf("delivered message id = %d", got.MessageID)
-		}
-	default:
-		t.Fatal("pending message not flushed to the matching runner")
+	got := s.pullPendingMessage(gpu)
+	if got == nil || got.MessageID != 1 {
+		t.Fatalf("matching runner's poll did not pull the job: %v", got)
 	}
-	select {
-	case <-plain.MsgCh:
-		t.Fatal("message delivered to non-matching runner")
-	default:
+	if again := s.pullPendingMessage(gpu); again != nil {
+		t.Fatal("message pulled twice")
 	}
 }
 
