@@ -647,4 +647,3 @@ function ArtifactsSection({ owner, repo, runId }: { owner: string; repo: string;
     </div>
   );
 }
-
