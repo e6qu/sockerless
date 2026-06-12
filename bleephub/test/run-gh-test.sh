@@ -823,6 +823,93 @@ assert_eq "team membership role" "maintainer" "$TEAM_ROLE"
 log "Org surface complete"
 
 # ============================================================
+# Actions: secrets, variables, workflow enable/disable, checks.
+# gh secret set exercises the REAL sealed-box contract (public-key
+# fetch + libsodium crypto_box_seal client-side); gh variable set
+# exercises the POST→409→PATCH fallback.
+# ============================================================
+log "Actions secrets/variables/workflow-state…"
+
+if gh secret set DEPLOY_TOKEN -R "$NV_REPO" --body "s3cret-value" >/dev/null 2>&1; then
+    pass "gh secret set (sealed box round-trip)"
+else
+    fail "gh secret set DEPLOY_TOKEN"
+fi
+SECRET_LIST=$(gh secret list -R "$NV_REPO" 2>/dev/null || echo "")
+assert_contains "gh secret list shows the secret" "$SECRET_LIST" "DEPLOY_TOKEN"
+# Updating re-encrypts with the same public key (204 path).
+if gh secret set DEPLOY_TOKEN -R "$NV_REPO" --body "rotated-value" >/dev/null 2>&1; then
+    pass "gh secret set update"
+else
+    fail "gh secret set update"
+fi
+if gh secret delete DEPLOY_TOKEN -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh secret delete"
+else
+    fail "gh secret delete"
+fi
+
+if gh variable set REGION -R "$NV_REPO" --body "eu-west-1" >/dev/null 2>&1; then
+    pass "gh variable set"
+else
+    fail "gh variable set REGION"
+fi
+VAR_VALUE=$(gh variable get REGION -R "$NV_REPO" 2>/dev/null || echo "")
+assert_eq "gh variable get" "eu-west-1" "$VAR_VALUE"
+# Second set hits the POST→409→PATCH update path in gh.
+if gh variable set REGION -R "$NV_REPO" --body "us-east-1" >/dev/null 2>&1; then
+    pass "gh variable set (update via 409→PATCH)"
+else
+    fail "gh variable set update"
+fi
+VAR_VALUE=$(gh variable get REGION -R "$NV_REPO" 2>/dev/null || echo "")
+assert_eq "gh variable get after update" "us-east-1" "$VAR_VALUE"
+VAR_LIST=$(gh variable list -R "$NV_REPO" 2>/dev/null || echo "")
+assert_contains "gh variable list" "$VAR_LIST" "REGION"
+if gh variable delete REGION -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh variable delete"
+else
+    fail "gh variable delete"
+fi
+
+# Workflow enable/disable: disabled workflows reject dispatch.
+if gh workflow disable ci.yml -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh workflow disable"
+else
+    fail "gh workflow disable ci.yml"
+fi
+WF_STATE=$(api "$BASE/api/v3/repos/$NV_REPO/actions/workflows/ci.yml" --jq .state 2>/dev/null || echo "")
+assert_eq "workflow state after disable" "disabled_manually" "$WF_STATE"
+if gh workflow run ci.yml --ref main -R "$NV_REPO" >/dev/null 2>&1; then
+    fail "dispatch of a disabled workflow must be rejected"
+else
+    pass "dispatch rejected while disabled"
+fi
+if gh workflow enable ci.yml -R "$NV_REPO" >/dev/null 2>&1; then
+    pass "gh workflow enable"
+else
+    fail "gh workflow enable ci.yml"
+fi
+WF_STATE=$(api "$BASE/api/v3/repos/$NV_REPO/actions/workflows/ci.yml" --jq .state 2>/dev/null || echo "")
+assert_eq "workflow state after enable" "active" "$WF_STATE"
+
+# Checks layer: the earlier pushes triggered ci runs, which mirror to
+# check runs on the pushed commit (github-actions app).
+cd gh-native-clone
+HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+cd "$ORIG_DIR"
+if [ -n "$HEAD_SHA" ]; then
+    CHECKS_COUNT=$(api "$BASE/api/v3/repos/$NV_REPO/commits/$HEAD_SHA/check-runs" --jq .total_count 2>/dev/null || echo "0")
+    if [ "$CHECKS_COUNT" -ge 1 ] 2>/dev/null; then
+        pass "check runs mirror workflow jobs ($CHECKS_COUNT on $HEAD_SHA)"
+    else
+        fail "no check runs on pushed commit $HEAD_SHA"
+    fi
+fi
+
+log "Actions secrets/variables/workflow-state complete"
+
+# ============================================================
 # Summary
 # ============================================================
 echo ""
