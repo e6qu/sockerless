@@ -128,19 +128,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Named-volume binds are allowed (`-v volName:/mnt[:ro]`)
-	// and attached to the function site via WebApps.UpdateAzureStorageAccounts
-	// after BeginCreateOrUpdate returns. Host-path binds (`/h:/c`) are
-	// rejected — AZF containers have no host filesystem.
-	for _, b := range hostConfig.Binds {
-		parts := strings.SplitN(b, ":", 3)
-		if len(parts) < 2 {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind %q: expected src:dst[:mode]", b)}
-		}
-		if strings.HasPrefix(parts[0], "/") || strings.HasPrefix(parts[0], ".") {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Azure Functions; use a named volume (docker volume create + -v name:%s)", parts[1])}
-		}
+	// Validate + rewrite mount specs up-front via the shared-volume
+	// translator (see shared_volumes.go for the full Azure Functions
+	// bind-mount model: named volumes pass through, mapped host binds
+	// rewrite to named-volume references, sub-paths + docker.sock drop,
+	// anything else rejects loudly). Named-volume binds attach to the
+	// function site via WebApps.UpdateAzureStorageAccounts after
+	// BeginCreateOrUpdate returns.
+	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	if err != nil {
+		return nil, err
 	}
+	for _, bind := range droppedBinds {
+		s.Logger.Debug().Str("bind", bind).
+			Msg("dropping bind mount; docker.sock has no Azure Functions analogue / parent shared volume already exposes the sub-path")
+	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string

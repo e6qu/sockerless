@@ -16,37 +16,46 @@ import (
 )
 
 // resolveVolumeForName returns the cloud-native Volume entry to attach
-// to the JobTemplate. Honors the storage-backing registry's default
-// (BackingMemory for ACA, materialising as StorageTypeEmptyDir / tmpfs).
-// Operators wanting persistence pick it up by overriding the registry default
-// at NewServer.
+// to the JobTemplate. Operator-declared SharedVolumes
+// (SOCKERLESS_ACA_SHARED_VOLUMES) carry an explicit Backing + a
+// pre-provisioned Azure Files share; ad-hoc named volumes honor the
+// storage-backing registry's default (BackingMemory for ACA,
+// materialising as StorageTypeEmptyDir / tmpfs). Operators wanting
+// persistence for ad-hoc volumes pick it up by overriding the registry
+// default at NewServer.
 //
-// Azure Files share provisioning only happens when the resolved
-// backing actually needs it (BackingAzureFilesEphemeral). Memory-
-// backed volumes don't need a share.
+// Azure Files share provisioning / env-storage linkage only happens
+// when the resolved backing actually needs it
+// (BackingAzureFilesEphemeral). Memory-backed volumes don't need a share.
 func (s *Server) resolveVolumeForName(ctx context.Context, volName string) (*armappcontainers.Volume, error) {
-	driver, err := s.storageBackings.Resolve("")
-	if err != nil {
-		return nil, fmt.Errorf("resolve default storage backing for volume %q: %w", volName, err)
+	requested := core.StorageBacking("")
+	ref := core.SharedVolumeRef{
+		Name:                volName,
+		AzureStorageAccount: s.config.StorageAccount,
 	}
-	backing := driver.Backing()
-	share := ""
-	if backing == core.BackingAzureFilesEphemeral {
-		share, err = s.shareForVolume(ctx, volName)
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		// Explicit Backing, no default — empty/unknown fails loudly in
+		// Resolve per the no-fallbacks directive.
+		ref = sv.AsRef(s.config.StorageAccount)
+		requested = ref.Backing
+	}
+	driver, err := s.storageBackings.Resolve(requested)
+	if err != nil {
+		return nil, fmt.Errorf("resolve storage backing for volume %q: %w", volName, err)
+	}
+	ref.Backing = driver.Backing()
+	if ref.Backing == core.BackingAzureFilesEphemeral {
+		share, err := s.shareForVolume(ctx, volName)
 		if err != nil {
 			return nil, fmt.Errorf("provision Azure Files share for volume %q: %w", volName, err)
 		}
+		ref.AzureShareName = share
 	}
-	spec, err := driver.CloudSpec(core.SharedVolumeRef{
-		Name:                volName,
-		Backing:             backing,
-		AzureStorageAccount: s.config.StorageAccount,
-		AzureShareName:      share,
-	})
+	spec, err := driver.CloudSpec(ref)
 	if err != nil {
 		return nil, fmt.Errorf("CloudSpec for volume %q: %w", volName, err)
 	}
-	return translateBackingSpecToACAVolume(volName, share, spec)
+	return translateBackingSpecToACAVolume(volName, ref.AzureShareName, spec)
 }
 
 func translateBackingSpecToACAVolume(name, share string, spec core.BackingSpec) (*armappcontainers.Volume, error) {

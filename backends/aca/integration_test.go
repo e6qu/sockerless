@@ -32,6 +32,12 @@ var evalImageName string
 var commandImageName string
 var acaOverlayImageName string
 
+// backendBinaryPath + backendBaseEnv are set in TestMain so tests can
+// spawn additional backend instances with extra process-level config
+// (e.g. SOCKERLESS_ACA_SHARED_VOLUMES, which can't be set per-request).
+var backendBinaryPath string
+var backendBaseEnv []string
+
 const (
 	acaAppsE2EEnv = "SOCKERLESS_ACA_APPS_E2E"
 )
@@ -180,7 +186,9 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 		if err := bootstrapBuild.Run(); err != nil {
 			failClean("ERROR: build ACA app bootstrap: %v\n", err)
 		}
-		cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+		if os.Getenv(acaAppsE2EEnv) != "1" {
+			cleanups = append(cleanups, func() { os.Remove(bootstrapPath) })
+		}
 
 		overlayCtx, err := os.MkdirTemp("", "sockerless-aca-overlay-")
 		if err != nil {
@@ -238,7 +246,9 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 		if err := build.Run(); err != nil {
 			failClean("ERROR: build simulator-azure failed: %v\n", err)
 		}
-		cleanups = append(cleanups, func() { os.Remove(simBinary) })
+		if os.Getenv(acaAppsE2EEnv) != "1" {
+			cleanups = append(cleanups, func() { os.Remove(simBinary) })
+		}
 
 		simPort := findFreePort()
 		simAddr := fmt.Sprintf(":%d", simPort)
@@ -319,7 +329,15 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	if err := buildBackend.Run(); err != nil {
 		failClean("ERROR: build sockerless-backend-aca: %v\n", err)
 	}
-	cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+	// The gitlab-attach test re-execs this binary with the apps-E2E env
+	// set, which runs TestMain AGAIN as a subprocess. That nested run
+	// must not delete repo-path artifacts the PARENT suite still uses
+	// (it deleted the backend binary out from under later parent tests
+	// that spawn it).
+	nestedRun := os.Getenv(acaAppsE2EEnv) == "1"
+	if !nestedRun {
+		cleanups = append(cleanups, func() { os.Remove(backendBinary) })
+	}
 
 	runtimeClient, err := client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
 	if err != nil {
@@ -333,19 +351,21 @@ ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 	backendAddr := fmt.Sprintf(":%d", backendPort)
 	fmt.Printf("[backend] Starting sockerless-backend-aca on %s (target=%s endpoint=%s)\n", backendAddr, target, endpointURL)
 	backendCmd := exec.Command(backendBinary, "--addr", backendAddr, "--log-level", "debug")
-	backendCmd.Env = append(os.Environ(),
-		"SOCKERLESS_ENDPOINT_URL="+endpointURL,
+	backendBinaryPath = backendBinary
+	backendBaseEnv = []string{
+		"SOCKERLESS_ENDPOINT_URL=" + endpointURL,
 		"SOCKERLESS_POLL_INTERVAL=500ms",
-		"SOCKERLESS_ACA_SUBSCRIPTION_ID="+subscriptionID,
-		"SOCKERLESS_ACA_RESOURCE_GROUP="+resourceGroup,
-		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="+logAnalyticsWS,
-		"SOCKERLESS_ACA_STORAGE_ACCOUNT="+storageAccount,
+		"SOCKERLESS_ACA_SUBSCRIPTION_ID=" + subscriptionID,
+		"SOCKERLESS_ACA_RESOURCE_GROUP=" + resourceGroup,
+		"SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE=" + logAnalyticsWS,
+		"SOCKERLESS_ACA_STORAGE_ACCOUNT=" + storageAccount,
 		// Required at NewServer (no fallback).
-		"SOCKERLESS_CALLBACK_URL="+fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
-	)
-	if os.Getenv(acaAppsE2EEnv) == "1" {
-		backendCmd.Env = append(backendCmd.Env, "SOCKERLESS_ACA_USE_APP=1")
+		"SOCKERLESS_CALLBACK_URL=" + fmt.Sprintf("ws://%s:%d/v1/aca/reverse", callbackHost, backendPort),
 	}
+	if os.Getenv(acaAppsE2EEnv) == "1" {
+		backendBaseEnv = append(backendBaseEnv, "SOCKERLESS_ACA_USE_APP=1")
+	}
+	backendCmd.Env = append(os.Environ(), backendBaseEnv...)
 	backendCmd.Stdout = os.Stderr
 	backendCmd.Stderr = os.Stderr
 	if err := backendCmd.Start(); err != nil {

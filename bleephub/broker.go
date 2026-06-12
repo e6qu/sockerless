@@ -243,6 +243,50 @@ func isHostedPoolAlias(lower string) bool {
 		strings.HasPrefix(lower, "windows-")
 }
 
+// sendJobCancellation pushes a JobCancellation message at the runner
+// executing the job. Unlike job requests (pull-only), cancellations go
+// through the session channel: the runner's listener keeps a poll open
+// during a job precisely to receive these (actions/runner
+// JobCancelMessage — body {jobId, timeout}).
+func (s *Server) sendJobCancellation(jobID string) {
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	job := s.store.Jobs[jobID]
+	if job == nil || job.AgentID == 0 {
+		return
+	}
+	var target *Session
+	for _, sess := range s.store.Sessions {
+		if sess.Agent != nil && sess.Agent.ID == job.AgentID {
+			target = sess
+			break
+		}
+	}
+	if target == nil {
+		s.logger.Warn().Str("jobId", jobID).Int("agentId", job.AgentID).
+			Msg("job cancellation: runner session gone")
+		return
+	}
+	body, _ := json.Marshal(map[string]interface{}{
+		"jobId":   jobID,
+		"timeout": "00:05:00",
+	})
+	msg := &TaskAgentMessage{
+		MessageID:   s.store.NextMsg,
+		MessageType: "JobCancellation",
+		Body:        string(body),
+	}
+	s.store.NextMsg++
+	select {
+	case target.MsgCh <- msg:
+		s.logger.Info().Str("jobId", jobID).Int("agentId", job.AgentID).
+			Msg("job cancellation sent to runner")
+	default:
+		s.logger.Error().Str("jobId", jobID).Int("agentId", job.AgentID).
+			Msg("job cancellation channel full — runner will finish the job")
+	}
+}
+
 func (s *Server) nextMessageID() int64 {
 	s.store.mu.Lock()
 	id := s.store.NextMsg

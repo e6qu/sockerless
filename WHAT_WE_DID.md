@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-12 - Actions follow-ups + the bind-translation gate's mechanism
+
+Same-day follow-up PR to #549 (BUG-1745..1750). **Cancellation is real
+now**: cancelling a run sends `JobCancellation` over the runner's open
+mid-job poll (the channel the pull-only broker kept exactly for this),
+purges undelivered job messages, leaves `always()`/`cancelled()` jobs
+runnable (they dispatch with cancelled()==true), and the run concludes
+`cancelled` — proven live by the harness cancelling a `sleep 300` on the
+official runner and watching the always() cleanup execute. That e2e also
+caught the runner's US-spelled `Canceled` result leaking through
+normalization unmapped. **Self-hosted actions work**: `uses:` resolves
+from bleephub-hosted repos first (GitHub-layout tarballs built from git
+storage), proven by a composite-action harness test — 11/11 official-
+runner integration tests. Org **runner groups** (CRUD/membership/repo
+visibility, undeletable Default) and **startup_failure run shells** for
+matched-but-unstartable workflows round out the bleephub side.
+
+On the backends, the **bind-mount→shared-volume translation** — the
+documented gate for running GitHub runners as cloud tasks — reached
+parity across all six container backends: lambda's config got actually
+wired into its bind path, ACA/AZF gained the whole mechanism, and the
+sharing contract (writer via named volume, reader via translated host
+bind) is integration-proven on ECS and ACA. What remains for the
+runner-on-cloud cells is topology (runner images mounting the shared
+volume), not translation. Ledger: 1750 filed / 1708 fixed / 2 open.
+
 ## 2026-06-12 - Complete GitHub Actions support in bleephub
 
 **The workflow engine now implements GitHub's server-side semantics.**

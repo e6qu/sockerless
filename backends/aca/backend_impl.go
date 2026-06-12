@@ -103,21 +103,20 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Named-volume binds (`volName:/mnt`) map to Azure Files shares
-	// provisioned by VolumeCreate; see volumes.go. Host-path binds
-	// (`/h:/c`) stay rejected — ACA containers have no host filesystem.
-	for _, bind := range hostConfig.Binds {
-		parts := strings.SplitN(bind, ":", 3)
-		if len(parts) < 2 {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind mount spec %q", bind)}
-		}
-		if strings.HasPrefix(parts[0], "/") {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf(
-				"host bind mounts are not supported on ACA backend (%q); use a named volume (`docker volume create <name> && docker run -v <name>:/path`) — volumes are backed by sockerless-managed Azure Files shares",
-				bind,
-			)}
-		}
+	// Validate + rewrite mount specs up-front via the shared-volume
+	// translator (see shared_volumes.go for the full ACA bind-mount
+	// model: named volumes pass through, mapped host binds rewrite to
+	// named-volume references, sub-paths + docker.sock drop, anything
+	// else rejects loudly).
+	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	if err != nil {
+		return nil, err
 	}
+	for _, bind := range droppedBinds {
+		s.Logger.Debug().Str("bind", bind).
+			Msg("dropping bind mount; docker.sock has no ACA analogue / parent shared volume already exposes the sub-path")
+	}
+	hostConfig.Binds = translatedBinds
 
 	path := ""
 	var args []string

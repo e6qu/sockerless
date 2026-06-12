@@ -33,11 +33,26 @@ type azfVolumeState struct {
 	shares *azurecommon.FileShareManager
 }
 
+// shareForVolume returns the share name bound to a Docker volume,
+// provisioning the share on first call. Operator-declared
+// SharedVolumes (SOCKERLESS_AZF_SHARED_VOLUMES) pin the Azure Files
+// share directly — that's how the runner app and the spawned sub-task
+// land on the SAME pre-provisioned share without sockerless creating a
+// fresh one per docker run.
 func (s *Server) shareForVolume(ctx context.Context, volName string) (string, error) {
+	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+		return sv.ShareName, nil
+	}
 	return s.shares.EnsureShare(ctx, volName)
 }
 
+// deleteShareForVolume removes the underlying Azure Files share.
+// Operator-declared SharedVolumes are operator-owned — sockerless
+// never deletes their shares.
 func (s *Server) deleteShareForVolume(ctx context.Context, volName string) error {
+	if s.config.LookupSharedVolumeByName(volName) != nil {
+		return nil
+	}
 	return s.shares.DeleteShare(ctx, volName)
 }
 
@@ -58,16 +73,25 @@ func (s *Server) attachVolumesToFunctionSite(ctx context.Context, siteName strin
 		return fmt.Errorf("SOCKERLESS_AZF_STORAGE_ACCOUNT must be set to attach file-share volumes")
 	}
 
-	// Fetch the freshest storage-account key so rotated keys take effect
+	// Fetch the freshest storage-account keys (lazily, per distinct
+	// account — SharedVolumes may pin shares on a different account
+	// than the sockerless-managed one) so rotated keys take effect
 	// without a backend restart.
-	keys, err := s.azure.StorageAccounts.ListKeys(ctx, s.config.ResourceGroup, s.config.StorageAccount, nil)
-	if err != nil {
-		return fmt.Errorf("list storage account keys: %w", err)
+	keyByAccount := map[string]string{}
+	keyForAccount := func(account string) (string, error) {
+		if key, ok := keyByAccount[account]; ok {
+			return key, nil
+		}
+		keys, err := s.azure.StorageAccounts.ListKeys(ctx, s.config.ResourceGroup, account, nil)
+		if err != nil {
+			return "", fmt.Errorf("list storage account keys for %q: %w", account, err)
+		}
+		if len(keys.Keys) == 0 || keys.Keys[0] == nil || keys.Keys[0].Value == nil {
+			return "", fmt.Errorf("storage account %q has no access keys", account)
+		}
+		keyByAccount[account] = *keys.Keys[0].Value
+		return keyByAccount[account], nil
 	}
-	if len(keys.Keys) == 0 || keys.Keys[0] == nil || keys.Keys[0].Value == nil {
-		return fmt.Errorf("storage account %q has no access keys", s.config.StorageAccount)
-	}
-	accessKey := *keys.Keys[0].Value
 
 	dict := map[string]*armappservice.AzureStorageInfoValue{}
 	for _, b := range binds {
@@ -80,14 +104,22 @@ func (s *Server) attachVolumesToFunctionSite(ctx context.Context, siteName strin
 		if err != nil {
 			return fmt.Errorf("provision share for %q: %w", volName, err)
 		}
-		info, err := s.resolveStorageInfoForVolume(volName, mountPath, shareName, accessKey)
+		account := s.config.StorageAccount
+		if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
+			account = sv.AccountOrDefault(s.config.StorageAccount)
+		}
+		accessKey, err := keyForAccount(account)
+		if err != nil {
+			return err
+		}
+		info, err := s.resolveStorageInfoForVolume(volName, mountPath, shareName, account, accessKey)
 		if err != nil {
 			return err
 		}
 		dict[volName] = info
 	}
 
-	_, err = s.azure.WebApps.UpdateAzureStorageAccounts(ctx, s.config.ResourceGroup, siteName,
+	_, err := s.azure.WebApps.UpdateAzureStorageAccounts(ctx, s.config.ResourceGroup, siteName,
 		armappservice.AzureStoragePropertyDictionaryResource{Properties: dict}, nil)
 	if err != nil {
 		return fmt.Errorf("update azurestorageaccounts on site %q: %w", siteName, err)

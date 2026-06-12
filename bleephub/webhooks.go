@@ -20,6 +20,7 @@ import (
 	gitStorage "github.com/go-git/go-git/v5/storage"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"gopkg.in/yaml.v3"
 )
 
 func computeHMACSignature(secret string, payload []byte) string {
@@ -272,7 +273,11 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string
 		}
 		workflow, err := s.submitTriggeredWorkflow(name, content, meta)
 		if err != nil {
-			s.logger.Error().Err(err).Str("file", name).Msg("failed to trigger workflow")
+			// Real GitHub creates a run with conclusion startup_failure
+			// (no jobs) when a matched workflow can't start — the
+			// failure must be visible on the runs API, not just a log.
+			s.logger.Error().Err(err).Str("file", name).Msg("workflow failed at startup")
+			s.createStartupFailureRun(name, content, meta)
 			continue
 		}
 
@@ -470,4 +475,45 @@ func listWorkflowFiles(stor gitStorage.Storer) map[string][]byte {
 		result[entry.Name] = content
 	}
 	return result
+}
+
+// createStartupFailureRun records a terminal, job-less run for a
+// workflow that matched its trigger but could not start.
+func (s *Server) createStartupFailureRun(fileName string, content []byte, meta *WorkflowEventMeta) {
+	name := workflowNameFromYAML(content)
+	if name == "" {
+		name = strings.TrimSuffix(strings.TrimSuffix(fileName, ".yml"), ".yaml")
+	}
+	wf := &Workflow{
+		ID:           uuid.New().String(),
+		Name:         name,
+		RunID:        s.store.ReserveRunID(),
+		Jobs:         map[string]*WorkflowJob{},
+		Status:       WorkflowStatusCompleted,
+		Result:       ResultStartupFailure,
+		CreatedAt:    time.Now(),
+		EventName:    meta.EventName,
+		Ref:          meta.Ref,
+		Sha:          meta.Sha,
+		RepoFullName: meta.Repo,
+		EventPayload: meta.Payload,
+	}
+	wf.RunNumber = wf.RunID
+	wf.WorkflowFileID, wf.WorkflowFilePath = s.resolveWorkflowFileForRun(wf)
+	s.store.mu.Lock()
+	s.store.Workflows[wf.ID] = wf
+	s.store.mu.Unlock()
+	s.queueActionsEvent(evRunCompleted, wf, nil)
+}
+
+// workflowNameFromYAML extracts just the workflow's name, tolerating
+// definitions too broken for ParseWorkflow.
+func workflowNameFromYAML(content []byte) string {
+	var raw struct {
+		Name string `yaml:"name"`
+	}
+	if err := yaml.Unmarshal(content, &raw); err != nil {
+		return ""
+	}
+	return raw.Name
 }

@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-actions-complete` |
-| In-flight | **Complete GitHub Actions support in bleephub** (one fat PR): server-side workflow engine (on: filters/activity types incl. PR synchronize, schedule crons, reusable workflows with gate/collector expansion, real expression engine with full contexts), secrets+variables at repo/org/environment with the real sealed-box contract, checks integration (jobs→check runs/suites, workflow_run/workflow_job/check_run/check_suite events, mergeable_state + required-status-check merge gating), real per-step timeline records + log storage (runner wrapper-decode root cause), runs-on label routing, org runners + honest busy, run attempts (same run id, archived attempts, rerun-failed carry-over), workflow enable/disable, full GitHub-style Actions UI (runs/steps/live logs/dispatch/approvals/secrets-vars management/PR checks), gh harness 115/0; official-runner harness de-bitrotted + ALL 9 e2e tests green in CI (`sim (bleephub actions/runner)`) — surfaced+fixed BUG-1740 (broker assigned busy runners) and BUG-1741 (step templates sent as literal tokens); azure-sim Entra OIDC fixes for issues #548/#547 (client_secret_basic, login_hint-bound auth codes — BUG-1742/1743). BUG-1724..1743 filed+fixed. |
-| Last merged | #546 Amplify full support + bleephub apps/orgs hardening (BUG-1706..1723). #545 launch-hygiene batch (spec-validate armed on tf jobs, XML validation). |
+| Active branch | `feat/bleephub-actions-followups` |
+| In-flight | **Actions follow-ups + bind-translation parity** (one PR, BUG-1745..1750): real cancellation (JobCancellation to running runners, always()/cancelled() jobs dispatch, pending purge), org runner groups, startup_failure run shells, self-hosted/composite actions served from bleephub git storage (harness now 11/11 incl. live-cancel + composite e2e), runner Canceled-spelling fix, and bind-mount→shared-volume translation parity across all six container backends (lambda wiring, ACA/AZF mechanism, ECS/ACA integration proof) — the runner-on-cloud gate's mechanism is done; topology remains. |
+| Last merged | #549 complete GitHub Actions support in bleephub (BUG-1724..1744, closes #548/#547). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1743 filed - 1701 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1750 filed - 1708 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 

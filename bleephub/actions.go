@@ -1,6 +1,9 @@
 package bleephub
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9,6 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/filemode"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
@@ -132,6 +138,22 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Actions hosted ON bleephub serve from their own git storage —
+	// GHES's primary action source; github.com is only the fallback for
+	// external actions.
+	if entry, err := s.localActionTarball(owner, repo, ref); err == nil && entry != nil {
+		s.actionCache.Put(key, entry)
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", len(entry.Data)))
+		w.WriteHeader(http.StatusOK)
+		w.Write(entry.Data)
+		return
+	} else if err != nil {
+		s.logger.Error().Err(err).Str("key", key).Msg("local action tarball failed")
+		http.Error(w, "failed to build action tarball: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+
 	s.logger.Info().Str("key", key).Msg("fetching action tarball from GitHub")
 	entry, err := fetchActionTarball(nameWithOwner, ref)
 	if err != nil {
@@ -197,4 +219,74 @@ func fetchActionTarball(nameWithOwner, ref string) (*ActionCacheEntry, error) {
 		ResolvedSha: resolvedSha,
 		FetchedAt:   time.Now(),
 	}, nil
+}
+
+// localActionTarball builds a GitHub-layout tarball (single top-level
+// "<owner>-<repo>-<sha>/" directory, like codeload's) from a repo hosted
+// on this server. (nil, nil) when the repo isn't local — the caller
+// falls back to github.com.
+func (s *Server) localActionTarball(owner, repo, ref string) (*ActionCacheEntry, error) {
+	stor := s.store.GetGitStorage(owner, repo)
+	if stor == nil {
+		return nil, nil
+	}
+	sha := resolveRefSha(stor, ref)
+	if sha == "0000000000000000000000000000000000000000" {
+		// Try branch/tag forms the way reusable-workflow resolution does.
+		for _, name := range []string{"refs/heads/" + ref, "refs/tags/" + ref} {
+			if got := resolveRefSha(stor, name); got != "0000000000000000000000000000000000000000" {
+				sha = got
+				break
+			}
+		}
+	}
+	if sha == "0000000000000000000000000000000000000000" && len(ref) == 40 {
+		sha = ref
+	}
+	if sha == "0000000000000000000000000000000000000000" {
+		return nil, fmt.Errorf("ref %q not found in %s/%s", ref, owner, repo)
+	}
+
+	commit, err := object.GetCommit(stor, plumbing.NewHash(sha))
+	if err != nil {
+		return nil, fmt.Errorf("resolve commit %s: %w", sha, err)
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return nil, err
+	}
+
+	prefix := fmt.Sprintf("%s-%s-%s/", owner, repo, sha[:7])
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	err = tree.Files().ForEach(func(f *object.File) error {
+		content, err := f.Contents()
+		if err != nil {
+			return err
+		}
+		mode := int64(0o644)
+		if f.Mode == filemode.Executable {
+			mode = 0o755
+		}
+		if err := tw.WriteHeader(&tar.Header{
+			Name: prefix + f.Name,
+			Mode: mode,
+			Size: int64(len(content)),
+		}); err != nil {
+			return err
+		}
+		_, err = tw.Write([]byte(content))
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("build tarball: %w", err)
+	}
+	if err := tw.Close(); err != nil {
+		return nil, err
+	}
+	if err := gz.Close(); err != nil {
+		return nil, err
+	}
+	return &ActionCacheEntry{Data: buf.Bytes(), ResolvedSha: sha}, nil
 }

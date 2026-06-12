@@ -86,40 +86,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		hostConfig.NetworkMode = "default"
 	}
 
-	// Named-volume binds (`-v volName:/mnt[:ro]`) land on sockerless-
-	// managed GCS buckets via the underlying Cloud Run Service's
-	// ServiceV2.Template.Volumes. Host-path binds translate via
-	// SharedVolumes (config-driven). Mirror of `cloudrun.ContainerCreate`
-	// translator + `lambda.fileSystemConfigsForBinds` shape.
-	translatedBinds := make([]string, 0, len(hostConfig.Binds))
-	for _, b := range hostConfig.Binds {
-		parts := strings.SplitN(b, ":", 3)
-		if len(parts) < 2 {
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("invalid bind %q: expected src:dst[:mode]", b)}
-		}
-		src, dst := parts[0], parts[1]
-		mode := ""
-		if len(parts) == 3 {
-			mode = parts[2]
-		}
-		if src == "/var/run/docker.sock" {
-			continue
-		}
-		if strings.HasPrefix(src, "/") || strings.HasPrefix(src, ".") {
-			if sv := s.config.LookupSharedVolumeBySourcePath(src); sv != nil {
-				translated := sv.Name + ":" + dst
-				if mode != "" {
-					translated += ":" + mode
-				}
-				translatedBinds = append(translatedBinds, translated)
-				continue
-			}
-			if isSubPathOfSharedVolume(src, s.config.SharedVolumes) {
-				continue
-			}
-			return nil, &api.InvalidParameterError{Message: fmt.Sprintf("host-path binds are not supported on Cloud Functions (%q); use a named volume (docker volume create + -v name:%s) — volumes are backed by sockerless-managed GCS buckets. Configure SOCKERLESS_GCP_SHARED_VOLUMES to translate runner-task bind mounts.", b, dst)}
-		}
-		translatedBinds = append(translatedBinds, b)
+	// Validate + rewrite mount specs up-front via the shared-volume
+	// translator (see shared_volumes.go for the full Cloud Functions
+	// bind-mount model: named volumes pass through, mapped host binds
+	// rewrite to named-volume references, sub-paths + docker.sock drop,
+	// anything else rejects loudly).
+	translatedBinds, droppedBinds, err := translateSharedVolumeBinds(s.config, hostConfig.Binds)
+	if err != nil {
+		return nil, err
+	}
+	for _, bind := range droppedBinds {
+		s.Logger.Debug().Str("bind", bind).
+			Msg("dropping bind mount; docker.sock has no Cloud Functions analogue / parent shared volume already exposes the sub-path")
 	}
 	hostConfig.Binds = translatedBinds
 

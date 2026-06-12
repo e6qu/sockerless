@@ -88,6 +88,11 @@ type Config struct {
 	// Format identical to ECS: SOCKERLESS_LAMBDA_SHARED_VOLUMES=name=path=fsap-XXX[=fs-YYY],...
 	SharedVolumes []SharedVolume
 
+	// sharedVolumesErr carries a SOCKERLESS_LAMBDA_SHARED_VOLUMES parse
+	// failure from ConfigFromEnv to Validate so misconfiguration fails
+	// startup loudly instead of silently dropping entries.
+	sharedVolumesErr error
+
 	// PoolMax caps the number of free Lambda functions kept warm per
 	// overlay-content-hash. On `docker rm`, if free count >= PoolMax the
 	// function is deleted; otherwise its `sockerless-allocation` tag is
@@ -135,6 +140,7 @@ type SharedVolume struct {
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
+	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"))
 	return Config{
 		Region:               envOrDefault("AWS_REGION", "us-east-1"),
 		RoleARN:              os.Getenv("SOCKERLESS_LAMBDA_ROLE_ARN"),
@@ -155,7 +161,8 @@ func ConfigFromEnv() Config {
 		OverlayECRRepo:       os.Getenv("SOCKERLESS_LAMBDA_OVERLAY_ECR_REPO"),
 		EnableCommit:         os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		Architecture:         os.Getenv("SOCKERLESS_LAMBDA_ARCHITECTURE"),
-		SharedVolumes:        parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES")),
+		SharedVolumes:        sharedVolumes,
+		sharedVolumesErr:     sharedVolumesErr,
 		PoolMax:              envOrDefaultInt("SOCKERLESS_LAMBDA_POOL_MAX", 10),
 		NetworkDiscovery:     networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly),
 	}
@@ -183,9 +190,12 @@ func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.Ne
 // `subpath` is the directory under the AP root where the volume's
 // content lives. Required when multiple SharedVolumes share an
 // AccessPointID; otherwise optional. Mirror of `ecs.parseSharedVolumes`.
-func parseSharedVolumes(s string) []SharedVolume {
-	if s == "" {
-		return nil
+// Malformed entries are a hard error — the caller surfaces it via
+// Config.Validate so the operator's misconfiguration fails the backend
+// startup instead of silently dropping the volume mapping.
+func parseSharedVolumes(s string) ([]SharedVolume, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
 	}
 	var out []SharedVolume
 	for _, entry := range strings.Split(s, ",") {
@@ -195,7 +205,7 @@ func parseSharedVolumes(s string) []SharedVolume {
 		}
 		parts := strings.Split(entry, "=")
 		if len(parts) < 3 || len(parts) > 5 {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=fsap-XXXX[=fs-YYYY[=subpath]]", entry)
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
@@ -209,11 +219,11 @@ func parseSharedVolumes(s string) []SharedVolume {
 			sv.EFSSubpath = strings.Trim(strings.TrimSpace(parts[4]), "/")
 		}
 		if sv.Name == "" || sv.ContainerPath == "" || sv.AccessPointID == "" {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: name, containerPath and access-point ID must all be non-empty", entry)
 		}
 		out = append(out, sv)
 	}
-	return out
+	return out, nil
 }
 
 // LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
@@ -291,11 +301,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		c.EndpointURL = fmt.Sprintf("http://localhost:%d", sim.Port)
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_LAMBDA_NETWORK_DISCOVERY", api.NetworkDiscoveryNATGatewayOnly)
+	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_LAMBDA_SHARED_VOLUMES"))
 	return c
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
+	if c.sharedVolumesErr != nil {
+		return fmt.Errorf("SOCKERLESS_LAMBDA_SHARED_VOLUMES: %w", c.sharedVolumesErr)
+	}
 	if c.RoleARN == "" {
 		return fmt.Errorf("SOCKERLESS_LAMBDA_ROLE_ARN is required")
 	}

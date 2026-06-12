@@ -60,8 +60,13 @@ type Config struct {
 	// translates the host bind mount into a named-volume reference
 	// whose GCS bucket is shared with the runner-task. Sub-tasks
 	// (spawned as further Cloud Run Jobs) mount the same bucket.
-	// Format: SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket,name2=path2=bucket2"
+	// Format: SOCKERLESS_GCP_SHARED_VOLUMES="name=path=bucket=backing,name2=path2=bucket2=backing2"
 	SharedVolumes []SharedVolume
+
+	// sharedVolumesErr carries a SOCKERLESS_GCP_SHARED_VOLUMES parse
+	// failure from ConfigFromEnv to Validate so misconfiguration fails
+	// startup loudly instead of silently dropping entries.
+	sharedVolumesErr error
 
 	// BootstrapBinaryPath is the on-disk path of the
 	// sockerless-cloudrun-bootstrap binary. Required for the overlay
@@ -132,6 +137,7 @@ func (v SharedVolume) AsRef() core.SharedVolumeRef {
 
 // ConfigFromEnv loads configuration from environment variables.
 func ConfigFromEnv() Config {
+	sharedVolumes, sharedVolumesErr := parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
 	return Config{
 		Project:             os.Getenv("SOCKERLESS_GCR_PROJECT"),
 		Region:              envOrDefault("SOCKERLESS_GCR_REGION", "us-central1"),
@@ -146,7 +152,8 @@ func ConfigFromEnv() Config {
 		UseService:          os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
 		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
 		EnableCommit:        os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
-		SharedVolumes:       parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES")),
+		SharedVolumes:       sharedVolumes,
+		sharedVolumesErr:    sharedVolumesErr,
 		BootstrapBinaryPath: os.Getenv("SOCKERLESS_CLOUDRUN_BOOTSTRAP"),
 		ServiceAccount:      os.Getenv("SOCKERLESS_CLOUDRUN_SERVICE_ACCOUNT"),
 		NetworkDiscovery:    networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS),
@@ -169,10 +176,13 @@ func networkDiscoveryFromEnv(envVar string, def api.NetworkDiscoveryKind) api.Ne
 // Format: `name=path=bucket=backing,...` 4-tuples.
 // `backing` is REQUIRED — operators MUST explicitly choose
 // `gcs-sync` / `gcs-fuse` / `emptyDir` per the no-fallbacks directive.
-// Legacy 3-tuple format is no longer accepted.
-func parseSharedVolumes(s string) []SharedVolume {
-	if s == "" {
-		return nil
+// Legacy 3-tuple format is no longer accepted. Malformed entries are a
+// hard error — the caller surfaces it via Config.Validate so the
+// operator's misconfiguration fails the backend startup instead of
+// silently dropping the volume mapping.
+func parseSharedVolumes(s string) ([]SharedVolume, error) {
+	if strings.TrimSpace(s) == "" {
+		return nil, nil
 	}
 	var out []SharedVolume
 	for _, entry := range strings.Split(s, ",") {
@@ -182,7 +192,7 @@ func parseSharedVolumes(s string) []SharedVolume {
 		}
 		parts := strings.Split(entry, "=")
 		if len(parts) != 4 {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: want name=containerPath=bucket=backing", entry)
 		}
 		sv := SharedVolume{
 			Name:          strings.TrimSpace(parts[0]),
@@ -191,11 +201,11 @@ func parseSharedVolumes(s string) []SharedVolume {
 			Backing:       strings.TrimSpace(parts[3]),
 		}
 		if sv.Name == "" || sv.ContainerPath == "" || sv.Bucket == "" || sv.Backing == "" {
-			continue
+			return nil, fmt.Errorf("entry %q malformed: name, containerPath, bucket and backing must all be non-empty", entry)
 		}
 		out = append(out, sv)
 	}
-	return out
+	return out, nil
 }
 
 // LookupSharedVolumeBySourcePath returns the SharedVolume entry whose
@@ -275,11 +285,15 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 		}
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCR_NETWORK_DISCOVERY", api.NetworkDiscoveryCloudDNS)
+	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
 	return c
 }
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
+	if c.sharedVolumesErr != nil {
+		return fmt.Errorf("SOCKERLESS_GCP_SHARED_VOLUMES: %w", c.sharedVolumesErr)
+	}
 	if c.Project == "" {
 		return fmt.Errorf("SOCKERLESS_GCR_PROJECT is required")
 	}

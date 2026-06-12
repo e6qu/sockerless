@@ -14,7 +14,7 @@ FROM ubuntu:22.04
 # python3-nacl: the harness seals secrets with the real libsodium
 # sealed-box contract before PUTting them.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq libicu70 libssl3 python3 python3-nacl && \
+    curl ca-certificates jq git libicu70 libssl3 python3 python3-nacl && \
     rm -rf /var/lib/apt/lists/*
 
 # Download official GitHub Actions runner (auto-detect architecture)

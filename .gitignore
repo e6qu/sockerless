@@ -157,3 +157,4 @@ backends/*/dist/
 simulators/*/dist/
 .stack-pids/
 temp/
+agent/sockerless-cloudrun-bootstrap-aca-test-*
