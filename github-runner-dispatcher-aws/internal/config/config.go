@@ -30,7 +30,23 @@ type Label struct {
 	Name       string `toml:"name"`
 	DockerHost string `toml:"docker_host"`
 	Image      string `toml:"image"`
+	// RunnerJobTimeout bounds the runner-task (seconds; default
+	// 3600 per the dispatcher timeout-knob contract in
+	// specs/CLOUD_RESOURCE_MAPPING.md). The docker primitive has no
+	// native task-timeout field, so the dispatcher's GC sweep enforces
+	// it: running dispatcher containers older than the bound are
+	// stopped and removed.
+	RunnerJobTimeout int `toml:"runner_job_timeout"`
+	// MaxConcurrent caps live (running/created) runner containers on
+	// this label's docker_host. 0 = unbounded. Queued jobs beyond the
+	// cap stay queued and are retried on the next poll. The
+	// ARC-equivalent knob is `maxRunners`.
+	MaxConcurrent int `toml:"max_concurrent"`
 }
+
+// DefaultRunnerJobTimeout is the spec'd default bound (seconds) for a
+// runner-task when the label doesn't set `runner_job_timeout`.
+const DefaultRunnerJobTimeout = 3600
 
 // Config is the on-disk dispatcher config.
 type Config struct {
@@ -68,6 +84,15 @@ func Load(path string) (Config, error) {
 		}
 		if l.Image == "" {
 			return Config{}, fmt.Errorf("label %q: image is required", l.Name)
+		}
+		if l.RunnerJobTimeout < 0 {
+			return Config{}, fmt.Errorf("label %q: runner_job_timeout must be positive", l.Name)
+		}
+		if l.RunnerJobTimeout == 0 {
+			cfg.Labels[i].RunnerJobTimeout = DefaultRunnerJobTimeout
+		}
+		if l.MaxConcurrent < 0 {
+			return Config{}, fmt.Errorf("label %q: max_concurrent must be >= 0 (0 = unbounded)", l.Name)
 		}
 	}
 	return cfg, nil

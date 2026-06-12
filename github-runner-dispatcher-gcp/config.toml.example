@@ -5,10 +5,15 @@ gcp_region                 = "us-central1"
 image                      = "us-central1-docker.pkg.dev/sockerless-live-46x3zg4imo/sockerless-live/runner:cloudrun-amd64"
 service_account            = "sockerless-runner@sockerless-live-46x3zg4imo.iam.gserviceaccount.com"
 runner_workspace_bucket    = "sockerless-live-46x3zg4imo-runner-workspace"
-# Phase 123: "gcs-sync" leaves the runner-task tmpfs and propagates
-# workspace via GCS SDK at exec boundaries. Required when bucket is set.
-# "gcs-fuse" is the legacy direct-mount mode (cells 7+8 tar-pack persist).
+# "gcs-sync" leaves the runner-task tmpfs and propagates the workspace
+# via the GCS SDK at exec boundaries. Required when bucket is set.
+# "gcs-fuse" is the legacy direct-mount mode (tar-pack persist).
 runner_workspace_backing   = "gcs-sync"
+# Cloud Run task timeout on the runner-task (seconds). Default 3600;
+# GitHub allows jobs up to 6h — raise for long pipelines.
+runner_job_timeout         = 3600
+# Cap on live runner Jobs in this (project, region). 0 = unbounded.
+max_concurrent             = 10
 
 [[label]]
 name                       = "sockerless-gcf"

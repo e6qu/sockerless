@@ -9,8 +9,10 @@
 //  1. `docker run -d --pull never <image> …`  (returns container ID)
 //  2. The runner image's entrypoint registers the runner with GitHub
 //     using `RUNNER_REG_TOKEN`, runs the job, exits.
-//  3. The 60-s idle timeout inside the entrypoint kills the container
-//     if no job arrives — duplicate-spawn races become benign.
+//  3. The entrypoint's idle gate (RUNNER_IDLE_SECONDS) bounds only the
+//     pre-pickup window: a runner that never gets a job exits cleanly
+//     — duplicate-spawn races become benign — while a picked-up job
+//     runs unbounded by the gate.
 //
 // `--rm` is preferred so successful runs auto-clean; `--pull never`
 // avoids surprise registry traffic on every spawn (operator pre-pulls).
@@ -22,6 +24,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 // Labels stamped on every spawned container so a restarted dispatcher
@@ -118,17 +121,23 @@ type Managed struct {
 	RunnerName  string
 	State       string // "running", "exited", "created", …
 	DockerHost  string
+	CreatedAt   time.Time // zero when the daemon's timestamp didn't parse
 }
+
+// dockerCreatedAtLayout matches `docker ps --format {{.CreatedAt}}`
+// output (e.g. "2026-06-12 10:30:00 +0000 UTC").
+const dockerCreatedAtLayout = "2006-01-02 15:04:05 -0700 MST"
 
 // ListManaged returns every container on the daemon at DockerHost that
 // carries the dispatcher's managed-by label, regardless of state. The
 // dispatcher uses this on startup to rebuild the seen-set without
-// on-disk state, and on graceful shutdown to clean up.
+// on-disk state, and on the cleanup sweep (including the
+// runner_job_timeout age bound) and graceful shutdown.
 func ListManaged(ctx context.Context, dockerHost string) ([]Managed, error) {
 	args := []string{
 		"ps", "-a",
 		"--filter", "label=" + LabelManagedBy + "=" + LabelManagedVal,
-		"--format", "{{.ID}}|{{.State}}|{{.Label \"" + LabelJobID + "\"}}|{{.Label \"" + LabelRunnerName + "\"}}",
+		"--format", "{{.ID}}|{{.State}}|{{.CreatedAt}}|{{.Label \"" + LabelJobID + "\"}}|{{.Label \"" + LabelRunnerName + "\"}}",
 	}
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env = append(os.Environ(), "DOCKER_HOST="+dockerHost)
@@ -141,19 +150,24 @@ func ListManaged(ctx context.Context, dockerHost string) ([]Managed, error) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 4)
-		if len(parts) < 4 {
+		parts := strings.SplitN(line, "|", 5)
+		if len(parts) < 5 {
 			continue
 		}
 		var jobID int64
-		if v := strings.TrimSpace(parts[2]); v != "" {
+		if v := strings.TrimSpace(parts[3]); v != "" {
 			fmt.Sscanf(v, "%d", &jobID)
+		}
+		createdAt, parseErr := time.Parse(dockerCreatedAtLayout, strings.TrimSpace(parts[2]))
+		if parseErr != nil {
+			createdAt = time.Time{} // age-based reap skips unknown ages
 		}
 		managed = append(managed, Managed{
 			ContainerID: parts[0],
 			State:       parts[1],
+			CreatedAt:   createdAt,
 			JobID:       jobID,
-			RunnerName:  parts[3],
+			RunnerName:  parts[4],
 			DockerHost:  dockerHost,
 		})
 	}

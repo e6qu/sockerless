@@ -27,7 +27,10 @@ import (
 
 	run "cloud.google.com/go/run/apiv2"
 	runpb "cloud.google.com/go/run/apiv2/runpb"
+	secretmanager "cloud.google.com/go/secretmanager/apiv1"
+	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 // Labels stamped on every Cloud Run Job so a restarted dispatcher can
@@ -50,6 +53,15 @@ const (
 // listed Service and compares against ListManaged's known live Cloud
 // Run Jobs.
 const OwnerRunnerTaskLabel = "sockerless_owner_runner_task"
+
+// Execution-derived job states. Same vocabulary as the Azure spawner
+// so the two dispatch loops classify identically.
+const (
+	StateNoExecution        = "NO_EXECUTION"
+	StateExecutionRunning   = "EXECUTION_RUNNING"
+	StateExecutionSucceeded = "EXECUTION_SUCCEEDED"
+	StateExecutionFailed    = "EXECUTION_FAILED"
+)
 
 // Request is one spawn directive. Every field required (no fallbacks
 // per project rule) — caller validates before invoking Spawn.
@@ -76,6 +88,81 @@ type Request struct {
 	// GCSFuse stale-handle on per-step event.json rewrites. Validated
 	// by config.Load when bucket is set.
 	RunnerWorkspaceBacking string
+	// JobTimeoutSeconds bounds the runner-task via the Cloud Run
+	// Job's task timeout (the cloud-native field, per the
+	// dispatcher-generic rule — never via env). Comes from the
+	// config's `runner_job_timeout`.
+	JobTimeoutSeconds int
+}
+
+// regTokenSecretID returns the Secret Manager secret ID holding the
+// runner registration token for a given Cloud Run Job ID. Pairing the
+// names lets Delete reap the secret with its Job.
+func regTokenSecretID(jobID string) string {
+	return jobID + "-regtoken"
+}
+
+// regTokenTTL bounds the registration-token secret's lifetime in
+// Secret Manager. The token itself expires after 1h on GitHub's side;
+// the TTL is GCP-native defense-in-depth for crash paths where Delete
+// never ran.
+const regTokenTTL = 2 * time.Hour
+
+// createRegTokenSecret stores the registration token in Secret
+// Manager (TTL-bounded) and returns the secret ID the Job's env
+// references. The runner-task reads it via the Cloud Run secret env
+// binding — the token never appears in the Job resource's plain env,
+// which any `run.jobs.get` reader can see. The Job's service account
+// needs `roles/secretmanager.secretAccessor` (see README IAM table).
+func createRegTokenSecret(ctx context.Context, project, jobID, token string) (string, error) {
+	cli, err := secretmanager.NewClient(ctx)
+	if err != nil {
+		return "", fmt.Errorf("new secretmanager client: %w", err)
+	}
+	defer func() { _ = cli.Close() }()
+	secretID := regTokenSecretID(jobID)
+	secret, err := cli.CreateSecret(ctx, &secretmanagerpb.CreateSecretRequest{
+		Parent:   "projects/" + project,
+		SecretId: secretID,
+		Secret: &secretmanagerpb.Secret{
+			Replication: &secretmanagerpb.Replication{
+				Replication: &secretmanagerpb.Replication_Automatic_{Automatic: &secretmanagerpb.Replication_Automatic{}},
+			},
+			Expiration: &secretmanagerpb.Secret_ExpireTime{
+				ExpireTime: timestamppb.New(time.Now().Add(regTokenTTL)),
+			},
+			Labels: map[string]string{LabelManagedBy: LabelManagedVal},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("CreateSecret %s: %w", secretID, err)
+	}
+	if _, err := cli.AddSecretVersion(ctx, &secretmanagerpb.AddSecretVersionRequest{
+		Parent:  secret.Name,
+		Payload: &secretmanagerpb.SecretPayload{Data: []byte(token)},
+	}); err != nil {
+		return "", fmt.Errorf("AddSecretVersion %s: %w", secretID, err)
+	}
+	return secretID, nil
+}
+
+// deleteRegTokenSecret removes the Job's companion token secret.
+// Tolerates already-deleted (TTL expiry beats the sweep) — NOT_FOUND
+// is success.
+func deleteRegTokenSecret(ctx context.Context, project, jobID string) error {
+	cli, err := secretmanager.NewClient(ctx)
+	if err != nil {
+		return fmt.Errorf("new secretmanager client: %w", err)
+	}
+	defer func() { _ = cli.Close() }()
+	name := fmt.Sprintf("projects/%s/secrets/%s", project, regTokenSecretID(jobID))
+	if err := cli.DeleteSecret(ctx, &secretmanagerpb.DeleteSecretRequest{Name: name}); err != nil {
+		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
+			return nil
+		}
+		return fmt.Errorf("DeleteSecret %s: %w", name, err)
+	}
+	return nil
 }
 
 // Spawn calls Cloud Run Jobs CreateJob then RunJob. Returns the Job
@@ -100,6 +187,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	if req.RunnerName == "" {
 		return "", fmt.Errorf("runner name required")
 	}
+	if req.JobTimeoutSeconds <= 0 {
+		return "", fmt.Errorf("job timeout required (config runner_job_timeout)")
+	}
 	cli, err := run.NewJobsRESTClient(ctx)
 	if err != nil {
 		return "", fmt.Errorf("new jobs REST client: %w", err)
@@ -110,11 +200,21 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	jobID := jobIDFromRunnerName(req.RunnerName, req.JobID)
 	fullName := fmt.Sprintf("%s/jobs/%s", parent, jobID)
 
+	// Registration token rides as a Secret Manager secret referenced by
+	// the Job env, never as a plain env value (readable by any
+	// run.jobs.get reader). Created before the Job so the reference is
+	// valid at CreateJob validation time; reaped with the Job by
+	// Delete, with the secret TTL as the crash-path backstop.
+	tokenSecretID, err := createRegTokenSecret(ctx, req.Project, jobID, req.RegToken)
+	if err != nil {
+		return "", err
+	}
+
 	// Dispatcher scope (per CLOUD_RESOURCE_MAPPING.md § "Adjustment to
 	// dispatcher scope"): only the runner-side env (GitHub PAT-derived
 	// token, repo, name, labels). NO sockerless-shaped env or volumes
 	// — the runner image owns its own backend config + workspace
-	// mounting internally. The TaskTemplate.Timeout=3600s below stays
+	// mounting internally. The TaskTemplate.Timeout below stays
 	// because it's a Cloud Run resource concern, not runner-internal.
 	// Cloud Run Job default is 512Mi/1cpu — too small for a runner that
 	// compiles real workloads. 4Gi/2cpu fits a Go compile + sidecar
@@ -122,7 +222,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	containerCfg := &runpb.Container{
 		Image: req.Image,
 		Env: []*runpb.EnvVar{
-			{Name: "RUNNER_REG_TOKEN", Values: &runpb.EnvVar_Value{Value: req.RegToken}},
+			{Name: "RUNNER_REG_TOKEN", Values: &runpb.EnvVar_ValueSource{ValueSource: &runpb.EnvVarSource{
+				SecretKeyRef: &runpb.SecretKeySelector{Secret: tokenSecretID, Version: "1"},
+			}}},
 			{Name: "RUNNER_REPO", Values: &runpb.EnvVar_Value{Value: req.Repo}},
 			{Name: "RUNNER_NAME", Values: &runpb.EnvVar_Value{Value: req.RunnerName}},
 			{Name: "RUNNER_LABELS", Values: &runpb.EnvVar_Value{Value: strings.Join(req.Labels, ",")}},
@@ -176,10 +278,11 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			Volumes:    taskVolumes,
 			// One-shot: failed job → failed execution, no retries.
 			Retries: &runpb.TaskTemplate_MaxRetries{MaxRetries: 0},
-			// Cloud Run Job task_timeout default 10 min; bump to 1h to
-			// fit a real CI pipeline. This is a Cloud Run resource
-			// limit, not a sockerless-shaped concern.
-			Timeout: durationpb.New(3600 * time.Second),
+			// Cloud Run Job task_timeout default 10 min; the config's
+			// `runner_job_timeout` (default 3600) bounds the
+			// runner-task. This is a Cloud Run resource limit, not a
+			// sockerless-shaped concern.
+			Timeout: durationpb.New(time.Duration(req.JobTimeoutSeconds) * time.Second),
 		},
 	}
 	if req.ServiceAccount != "" {
@@ -261,7 +364,8 @@ type Managed struct {
 	JobName    string // full resource name `projects/.../jobs/<id>`
 	JobID      int64  // GitHub workflow_job ID from labels
 	RunnerName string
-	State      string // "active", "deleted", … (Cloud Run Job state)
+	State      string    // execution-derived: EXECUTION_* / NO_EXECUTION
+	CreateTime time.Time // Job resource creation time (orphan-grace input)
 }
 
 // ListManaged returns every Cloud Run Job under (project, region)
@@ -286,11 +390,16 @@ func ListManaged(ctx context.Context, project, region string) ([]Managed, error)
 		}
 		var jobID int64
 		fmt.Sscanf(j.Labels[LabelJobID], "%d", &jobID)
+		createTime := time.Time{}
+		if j.CreateTime != nil {
+			createTime = j.CreateTime.AsTime()
+		}
 		managed = append(managed, Managed{
 			JobName:    j.Name,
 			JobID:      jobID,
 			RunnerName: j.Labels[LabelRunnerName],
 			State:      executionStateForJob(ctx, j),
+			CreateTime: createTime,
 		})
 	}
 	return managed, nil
@@ -322,15 +431,15 @@ func executionStateForJob(ctx context.Context, j *runpb.Job) string {
 		}
 	}
 	if latest == nil {
-		return "NO_EXECUTION"
+		return StateNoExecution
 	}
 	if latest.CompletionTime != nil {
 		if latest.SucceededCount > 0 {
-			return "EXECUTION_SUCCEEDED"
+			return StateExecutionSucceeded
 		}
-		return "EXECUTION_FAILED"
+		return StateExecutionFailed
 	}
-	return "EXECUTION_RUNNING"
+	return StateExecutionRunning
 }
 
 // ManagedService describes a sockerless-managed pod-Service the
@@ -419,8 +528,9 @@ func JobIDFromName(jobResourceName string) string {
 	return jobResourceName
 }
 
-// Delete removes a Cloud Run Job. Tolerates already-deleted (the
-// underlying API returns NOT_FOUND which we treat as success).
+// Delete removes a Cloud Run Job and its companion registration-token
+// secret. Tolerates already-deleted (the underlying APIs return
+// NOT_FOUND which we treat as success).
 func Delete(ctx context.Context, jobName string) error {
 	cli, err := run.NewJobsRESTClient(ctx)
 	if err != nil {
@@ -429,16 +539,31 @@ func Delete(ctx context.Context, jobName string) error {
 	defer func() { _ = cli.Close() }()
 	op, err := cli.DeleteJob(ctx, &runpb.DeleteJobRequest{Name: jobName})
 	if err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
-			return nil
+		if !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("DeleteJob %s: %w", jobName, err)
 		}
-		return fmt.Errorf("DeleteJob %s: %w", jobName, err)
+	} else if _, err := op.Wait(ctx); err != nil {
+		if !strings.Contains(err.Error(), "NotFound") && !strings.Contains(err.Error(), "not found") {
+			return fmt.Errorf("DeleteJob %s wait: %w", jobName, err)
+		}
 	}
-	if _, err := op.Wait(ctx); err != nil {
-		if strings.Contains(err.Error(), "NotFound") || strings.Contains(err.Error(), "not found") {
-			return nil
+	if project := projectFromName(jobName); project != "" {
+		if err := deleteRegTokenSecret(ctx, project, JobIDFromName(jobName)); err != nil {
+			return fmt.Errorf("job %s deleted but token secret remains (TTL will reap): %w", jobName, err)
 		}
-		return fmt.Errorf("DeleteJob %s wait: %w", jobName, err)
 	}
 	return nil
+}
+
+// projectFromName extracts the project segment from a full Cloud Run
+// resource name (`projects/<p>/locations/...`).
+func projectFromName(resourceName string) string {
+	rest, ok := strings.CutPrefix(resourceName, "projects/")
+	if !ok {
+		return ""
+	}
+	if i := strings.Index(rest, "/"); i > 0 {
+		return rest[:i]
+	}
+	return ""
 }

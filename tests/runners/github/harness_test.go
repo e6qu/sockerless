@@ -268,7 +268,7 @@ func runCell(t *testing.T, c cellConfig) {
 
 // runEcsRunnerTask dispatches the runner-task to ECS Fargate via
 // `aws ecs run-task` with container overrides for the per-cell env
-// vars (REG_TOKEN / RUNNER_NAME / RUNNER_LABELS / RUNNER_REPO_URL).
+// vars (RUNNER_REG_TOKEN / RUNNER_NAME / RUNNER_LABELS / RUNNER_REPO).
 // Returns the task ARN. Caller is responsible for cleanup via
 // stopEcsRunnerTask.
 func runEcsRunnerTask(t *testing.T, c cellConfig, runnerName, repo, regToken string) string {
@@ -281,8 +281,8 @@ func runEcsRunnerTask(t *testing.T, c cellConfig, runnerName, repo, regToken str
 			{
 				"name":"runner",
 				"environment":[
-					{"name":"RUNNER_REPO_URL","value":"https://github.com/%s"},
-					{"name":"RUNNER_TOKEN","value":"%s"},
+					{"name":"RUNNER_REPO","value":"%s"},
+					{"name":"RUNNER_REG_TOKEN","value":"%s"},
 					{"name":"RUNNER_NAME","value":"%s"},
 					{"name":"RUNNER_LABELS","value":"%s,sockerless"}
 				]
@@ -411,8 +411,8 @@ func invokeLambdaRunner(t *testing.T, c cellConfig, runnerName, repo, regToken s
 	if _, err := exec.LookPath("aws"); err != nil {
 		t.Fatalf("aws CLI required for Lambda dispatch: %v", err)
 	}
-	payload := fmt.Sprintf(`{"runner_repo_url":"https://github.com/%s","runner_token":"%s","runner_name":"%s","runner_labels":"%s,sockerless"}`,
-		repo, regToken, runnerName, c.Label)
+	payload := fmt.Sprintf(`{"runner_reg_token":"%s","runner_repo":"%s","runner_name":"%s","runner_labels":"%s,sockerless"}`,
+		regToken, repo, runnerName, c.Label)
 
 	tmp, err := os.CreateTemp("", "lambda-out-*.json")
 	if err != nil {
@@ -516,8 +516,8 @@ func startRunnerContainer(t *testing.T, name, repo, regToken, label, dockerHost 
 
 	args := []string{"run", "-d", "--rm",
 		"--name", name,
-		"-e", "RUNNER_REPO_URL=https://github.com/" + repo,
-		"-e", "RUNNER_TOKEN=" + regToken,
+		"-e", "RUNNER_REPO=" + repo,
+		"-e", "RUNNER_REG_TOKEN=" + regToken,
 		"-e", "RUNNER_NAME=" + name,
 		"-e", "RUNNER_LABELS=" + label + ",sockerless",
 		"-e", "DOCKER_HOST=" + innerHost,

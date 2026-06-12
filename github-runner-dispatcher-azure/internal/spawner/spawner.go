@@ -8,6 +8,16 @@
 // Mirror of `github-runner-dispatcher-gcp/internal/spawner` adapted
 // to ACA's two-step shape (Job is the template; JobExecution is the
 // running instance). State recovery uses the Job's resource tags.
+//
+// State strings use the same vocabulary as the GCP spawner
+// (EXECUTION_SUCCEEDED / EXECUTION_FAILED / EXECUTION_RUNNING /
+// NO_EXECUTION) and come from the Job's latest EXECUTION, not the ARM
+// resource's `ProvisioningState`. ProvisioningState tracks the
+// resource template's provisioning — it reads `Succeeded` the moment
+// BeginCreateOrUpdate completes, while the execution is still
+// running; keying cleanup off it deletes runner Jobs mid-CI-job (the
+// ACA mirror of the Cloud Run TerminalCondition pitfall the GCP
+// spawner documents on its executionStateForJob).
 package spawner
 
 import (
@@ -16,6 +26,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -34,6 +45,23 @@ const (
 	TagManagedVal = "github-runner-dispatcher-azure"
 )
 
+// Execution-derived job states. Same vocabulary as the GCP spawner so
+// the two dispatch loops classify identically.
+const (
+	StateNoExecution        = "NO_EXECUTION"
+	StateExecutionRunning   = "EXECUTION_RUNNING"
+	StateExecutionSucceeded = "EXECUTION_SUCCEEDED"
+	StateExecutionFailed    = "EXECUTION_FAILED"
+)
+
+// regTokenSecretName is the ACA Job secret holding the GitHub runner
+// registration token. The token rides as a Job-level secret with a
+// `secretRef` env binding instead of a plain env value — plain env is
+// readable by any ARM reader on the resource, while secret values are
+// write-only on GET (reading them back needs the separately-RBAC'd
+// listSecrets action).
+const regTokenSecretName = "runner-reg-token"
+
 // Request is one spawn directive.
 type Request struct {
 	SubscriptionID string // Azure subscription
@@ -50,6 +78,11 @@ type Request struct {
 	// identity the Job execution runs as. Required for the Job to
 	// pull from a private ACR or write to other ARM resources.
 	ManagedIdentity string
+	// JobTimeoutSeconds bounds the runner-task itself via the ACA
+	// Job's ReplicaTimeout (the cloud-native field, per the
+	// dispatcher-generic rule — never via env). Comes from the
+	// config's `runner_job_timeout`.
+	JobTimeoutSeconds int32
 }
 
 // Spawn creates an ACA Job (idempotent on the deterministic name) and
@@ -80,6 +113,9 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 	if req.RunnerName == "" {
 		return "", fmt.Errorf("runner name required")
 	}
+	if req.JobTimeoutSeconds <= 0 {
+		return "", fmt.Errorf("job timeout required (config runner_job_timeout)")
+	}
 
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
@@ -103,19 +139,30 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 			EnvironmentID: to.Ptr(req.Environment),
 			Configuration: &armappcontainers.JobConfiguration{
 				TriggerType:         to.Ptr(armappcontainers.TriggerTypeManual),
-				ReplicaTimeout:      to.Ptr[int32](21600), // 6h ceiling matches GitHub Actions max job duration
-				ReplicaRetryLimit:   to.Ptr[int32](0),     // one shot
+				ReplicaTimeout:      to.Ptr(req.JobTimeoutSeconds),
+				ReplicaRetryLimit:   to.Ptr[int32](0), // one shot
 				ManualTriggerConfig: &armappcontainers.JobConfigurationManualTriggerConfig{Parallelism: to.Ptr[int32](1), ReplicaCompletionCount: to.Ptr[int32](1)},
+				Secrets: []*armappcontainers.Secret{
+					{Name: to.Ptr(regTokenSecretName), Value: to.Ptr(req.RegToken)},
+				},
 			},
 			Template: &armappcontainers.JobTemplate{
 				Containers: []*armappcontainers.Container{{
 					Name:  to.Ptr("runner"),
 					Image: to.Ptr(req.Image),
 					Env: []*armappcontainers.EnvironmentVar{
-						{Name: to.Ptr("RUNNER_REG_TOKEN"), Value: to.Ptr(req.RegToken)},
+						{Name: to.Ptr("RUNNER_REG_TOKEN"), SecretRef: to.Ptr(regTokenSecretName)},
 						{Name: to.Ptr("RUNNER_REPO"), Value: to.Ptr(req.Repo)},
 						{Name: to.Ptr("RUNNER_NAME"), Value: to.Ptr(req.RunnerName)},
 						{Name: to.Ptr("RUNNER_LABELS"), Value: to.Ptr(strings.Join(req.Labels, ","))},
+					},
+					// ACA default (0.5 vCPU / 1 Gi) is too small for a
+					// runner that compiles real workloads — same
+					// reasoning as the GCP spawner's 2 cpu / 4 Gi. The
+					// 2.0/4Gi pair is a valid Consumption-plan combo.
+					Resources: &armappcontainers.ContainerResources{
+						CPU:    to.Ptr(2.0),
+						Memory: to.Ptr("4Gi"),
 					},
 				}},
 			},
@@ -176,11 +223,14 @@ type Managed struct {
 	JobName    string
 	JobID      int64
 	RunnerName string
-	State      string // ACA provisioning state
+	State      string // execution-derived: EXECUTION_* / NO_EXECUTION
+	CreatedAt  time.Time
 }
 
 // ListManaged returns every ACA Job under (subscription, resource
-// group) carrying the dispatcher's managed-by tag.
+// group) carrying the dispatcher's managed-by tag. State comes from
+// the Job's latest execution (see package doc on why ProvisioningState
+// is the wrong dimension).
 func ListManaged(ctx context.Context, subscriptionID, resourceGroup string) ([]Managed, error) {
 	cred, err := azidentity.NewDefaultAzureCredential(nil)
 	if err != nil {
@@ -189,6 +239,10 @@ func ListManaged(ctx context.Context, subscriptionID, resourceGroup string) ([]M
 	jobsClient, err := armappcontainers.NewJobsClient(subscriptionID, cred, nil)
 	if err != nil {
 		return nil, fmt.Errorf("jobs client: %w", err)
+	}
+	execClient, err := armappcontainers.NewJobsExecutionsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, fmt.Errorf("jobs executions client: %w", err)
 	}
 	pager := jobsClient.NewListByResourceGroupPager(resourceGroup, nil)
 	var managed []Managed
@@ -209,20 +263,82 @@ func ListManaged(ctx context.Context, subscriptionID, resourceGroup string) ([]M
 			if j.Tags[TagRunnerName] != nil {
 				runnerName = *j.Tags[TagRunnerName]
 			}
-			state := ""
-			if j.Properties != nil && j.Properties.ProvisioningState != nil {
-				state = string(*j.Properties.ProvisioningState)
+			createdAt := time.Time{}
+			if j.SystemData != nil && j.SystemData.CreatedAt != nil {
+				createdAt = *j.SystemData.CreatedAt
 			}
 			managed = append(managed, Managed{
 				JobARMID:   ptrStr(j.ID),
 				JobName:    ptrStr(j.Name),
 				JobID:      jobID,
 				RunnerName: runnerName,
-				State:      state,
+				State:      executionStateForJob(ctx, execClient, resourceGroup, ptrStr(j.Name)),
+				CreatedAt:  createdAt,
 			})
 		}
 	}
 	return managed, nil
+}
+
+// executionStateForJob returns the state of the Job's most-recent
+// execution. On an API error it returns UNKNOWN, which no caller
+// treats as terminal — never delete on partial information.
+func executionStateForJob(ctx context.Context, execClient *armappcontainers.JobsExecutionsClient, resourceGroup, jobName string) string {
+	if jobName == "" {
+		return "UNKNOWN"
+	}
+	pager := execClient.NewListPager(resourceGroup, jobName, nil)
+	var execs []*armappcontainers.JobExecution
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "UNKNOWN"
+		}
+		execs = append(execs, page.Value...)
+	}
+	return ClassifyExecutions(execs)
+}
+
+// ClassifyExecutions maps a Job's execution list to the dispatcher's
+// state vocabulary, keyed off the LATEST execution (by StartTime).
+// Exported for the dispatch loop's tests — this classification is
+// exactly what decides whether cleanup may delete a runner Job, and
+// getting it wrong kills in-flight CI jobs.
+func ClassifyExecutions(execs []*armappcontainers.JobExecution) string {
+	var latest *armappcontainers.JobExecution
+	for _, ex := range execs {
+		if ex == nil || ex.Properties == nil {
+			continue
+		}
+		if latest == nil {
+			latest = ex
+			continue
+		}
+		lt := latest.Properties.StartTime
+		et := ex.Properties.StartTime
+		if lt == nil || (et != nil && et.After(*lt)) {
+			latest = ex
+		}
+	}
+	if latest == nil {
+		return StateNoExecution
+	}
+	if latest.Properties.Status == nil {
+		// Status not yet populated — treat as running; the next sweep
+		// re-checks.
+		return StateExecutionRunning
+	}
+	switch *latest.Properties.Status {
+	case armappcontainers.JobExecutionRunningStateSucceeded:
+		return StateExecutionSucceeded
+	case armappcontainers.JobExecutionRunningStateFailed,
+		armappcontainers.JobExecutionRunningStateStopped,
+		armappcontainers.JobExecutionRunningStateDegraded:
+		return StateExecutionFailed
+	default:
+		// Running / Processing / Unknown — not terminal.
+		return StateExecutionRunning
+	}
 }
 
 // Delete removes an ACA Job. Tolerates NOT_FOUND.

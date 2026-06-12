@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sockerless/github-runner-dispatcher-aws/internal/config"
+	"github.com/sockerless/github-runner-dispatcher-aws/internal/spawner"
 	"github.com/sockerless/github-runner-dispatcher-aws/pkg/poller"
 )
 
@@ -124,5 +126,33 @@ func TestSmokeDispatchLoopMatchesLabelButLivenessFails(t *testing.T) {
 		// expected: not seen yet
 	} else {
 		t.Fatalf("liveness-fail path must not mark job 8001 as seen")
+	}
+}
+
+// TestOverJobTimeout pins the docker-shape enforcement of
+// runner_job_timeout: only live containers with a known age past the
+// bound qualify; exited containers and unparsed timestamps never do.
+func TestOverJobTimeout(t *testing.T) {
+	now := time.Date(2026, 6, 12, 12, 0, 0, 0, time.UTC)
+	old := now.Add(-2 * time.Hour)
+	fresh := now.Add(-time.Minute)
+
+	cases := []struct {
+		name    string
+		m       spawner.Managed
+		timeout int
+		want    bool
+	}{
+		{"running past bound", spawner.Managed{State: "running", CreatedAt: old}, 3600, true},
+		{"created past bound", spawner.Managed{State: "created", CreatedAt: old}, 3600, true},
+		{"running within bound", spawner.Managed{State: "running", CreatedAt: fresh}, 3600, false},
+		{"exited past bound", spawner.Managed{State: "exited", CreatedAt: old}, 3600, false},
+		{"unknown age", spawner.Managed{State: "running"}, 3600, false},
+		{"timeout disabled", spawner.Managed{State: "running", CreatedAt: old}, 0, false},
+	}
+	for _, tc := range cases {
+		if got := overJobTimeout(tc.m, tc.timeout, now); got != tc.want {
+			t.Errorf("%s: overJobTimeout = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
