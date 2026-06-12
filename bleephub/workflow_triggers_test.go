@@ -256,9 +256,9 @@ jobs: {}
 	td := on["workflow_dispatch"]
 
 	// Happy path with defaults applied
-	inputs, typed, err := resolveDispatchInputs(td, map[string]string{"env": "staging"})
-	if err != nil {
-		t.Fatalf("resolveDispatchInputs: %v", err)
+	inputs, typed, errMsg := resolveDispatchInputs(td, map[string]string{"env": "staging"})
+	if errMsg != "" {
+		t.Fatalf("resolveDispatchInputs: %v", errMsg)
 	}
 	if inputs["dry-run"] != "true" || inputs["count"] != "3" {
 		t.Errorf("defaults not applied: %v", inputs)
@@ -274,19 +274,19 @@ jobs: {}
 	}
 
 	// Required missing
-	if _, _, err := resolveDispatchInputs(td, nil); err == nil {
+	if _, _, msg := resolveDispatchInputs(td, nil); msg == "" {
 		t.Error("missing required input should error")
 	}
 	// Unknown input
-	if _, _, err := resolveDispatchInputs(td, map[string]string{"env": "staging", "bogus": "x"}); err == nil {
+	if _, _, msg := resolveDispatchInputs(td, map[string]string{"env": "staging", "bogus": "x"}); msg == "" {
 		t.Error("unknown input should error")
 	}
 	// Bad choice
-	if _, _, err := resolveDispatchInputs(td, map[string]string{"env": "qa"}); err == nil {
+	if _, _, msg := resolveDispatchInputs(td, map[string]string{"env": "qa"}); msg == "" {
 		t.Error("out-of-options choice should error")
 	}
 	// Bad boolean
-	if _, _, err := resolveDispatchInputs(td, map[string]string{"env": "prod", "dry-run": "yes"}); err == nil {
+	if _, _, msg := resolveDispatchInputs(td, map[string]string{"env": "prod", "dry-run": "yes"}); msg == "" {
 		t.Error("non-true/false boolean should error")
 	}
 }

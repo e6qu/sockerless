@@ -143,26 +143,12 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 
 	runID := strconv.Itoa(wf.RunID)
 
-	// Use event metadata from workflow, with defaults
-	eventName := wf.EventName
-	if eventName == "" {
-		eventName = "push"
-	}
-	ref := wf.Ref
-	if ref == "" {
-		ref = "refs/heads/main"
-	}
-	sha := wf.Sha
-	if sha == "" {
-		sha = "0000000000000000000000000000000000000000"
-	}
+	// The github context (event metadata + defaults) is assembled by
+	// githubRunnerContext below; the secrets/vars lookup needs only the
+	// repo, with the same fallback the context map uses.
 	repoFullName := wf.RepoFullName
 	if repoFullName == "" {
 		repoFullName = "bleephub/test"
-	}
-	repoOwner := repoFullName
-	if idx := strings.Index(repoOwner, "/"); idx >= 0 {
-		repoOwner = repoOwner[:idx]
 	}
 
 	// Build secrets context and mask array

@@ -244,9 +244,9 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusUnprocessableEntity, "Workflow does not have 'workflow_dispatch' trigger")
 		return
 	}
-	inputs, typedInputs, err := resolveDispatchInputs(dispatchDef, req.Inputs)
-	if err != nil {
-		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+	inputs, typedInputs, errMsg := resolveDispatchInputs(dispatchDef, req.Inputs)
+	if errMsg != "" {
+		writeGHError(w, http.StatusUnprocessableEntity, errMsg)
 		return
 	}
 	req.Inputs = inputs
@@ -300,9 +300,10 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 
 // resolveDispatchInputs validates caller inputs against the workflow's
 // workflow_dispatch declarations and applies defaults. It returns the
-// string form (github.event.inputs) and the typed form (the `inputs`
-// expression context, where boolean/number inputs carry real types).
-func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]string, map[string]interface{}, error) {
+// string form (github.event.inputs), the typed form (the `inputs`
+// expression context, where boolean/number inputs carry real types),
+// and a GitHub-cased wire error message ("" when valid).
+func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]string, map[string]interface{}, string) {
 	inputs := make(map[string]string, len(given))
 	var declared map[string]*WorkflowInputDef
 	if td != nil {
@@ -310,7 +311,7 @@ func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]
 	}
 	for name, val := range given {
 		if _, ok := declared[name]; !ok {
-			return nil, nil, fmt.Errorf("Unexpected inputs provided: [%q]", name)
+			return nil, nil, fmt.Sprintf("Unexpected inputs provided: [%q]", name)
 		}
 		inputs[name] = val
 	}
@@ -322,7 +323,7 @@ func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]
 				val = exprToString(normalizeYAMLValue(def.Default))
 				inputs[name] = val
 			} else if def.Required {
-				return nil, nil, fmt.Errorf("Required input %q not provided", name)
+				return nil, nil, fmt.Sprintf("Required input %q not provided", name)
 			} else {
 				if def.Type == "boolean" {
 					// Undefaulted booleans are false on real GitHub.
@@ -342,12 +343,12 @@ func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]
 			case "false":
 				typed[name] = false
 			default:
-				return nil, nil, fmt.Errorf("Input %q must be 'true' or 'false'", name)
+				return nil, nil, fmt.Sprintf("Input %q must be 'true' or 'false'", name)
 			}
 		case "number":
 			f, err := strconv.ParseFloat(val, 64)
 			if err != nil {
-				return nil, nil, fmt.Errorf("Input %q must be a number", name)
+				return nil, nil, fmt.Sprintf("Input %q must be a number", name)
 			}
 			typed[name] = f
 		case "choice":
@@ -359,12 +360,12 @@ func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]
 				}
 			}
 			if !ok {
-				return nil, nil, fmt.Errorf("Input %q does not match any of the allowed options", name)
+				return nil, nil, fmt.Sprintf("Input %q does not match any of the allowed options", name)
 			}
 			typed[name] = val
 		default:
 			typed[name] = val
 		}
 	}
-	return inputs, typed, nil
+	return inputs, typed, ""
 }
