@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-actions-followups` |
-| In-flight | **Actions follow-ups + bind-translation parity** (one PR, BUG-1745..1750): real cancellation (JobCancellation to running runners, always()/cancelled() jobs dispatch, pending purge), org runner groups, startup_failure run shells, self-hosted/composite actions served from bleephub git storage (harness now 11/11 incl. live-cancel + composite e2e), runner Canceled-spelling fix, and bind-mount→shared-volume translation parity across all six container backends (lambda wiring, ACA/AZF mechanism, ECS/ACA integration proof) — the runner-on-cloud gate's mechanism is done; topology remains. |
-| Last merged | #549 complete GitHub Actions support in bleephub (BUG-1724..1744, closes #548/#547). |
+| Active branch | `feat/dispatcher-arc-parity-1752` |
+| In-flight | **GitHub-runner dispatcher hardening** (one PR, BUG-1752..1762): execution-state cleanup keying (the Azure ProvisioningState sweep was deleting runner Jobs mid-CI-job), GitHub-side offline-runner reap on GCP/Azure + ListRunners pagination, pre-pickup idle gate in every runner image (replacing the job-killing whole-process timeout / absent timeout), one canonical RUNNER_* env contract dispatcher↔images, NO_EXECUTION orphan grace, ACA runner resources 2cpu/4Gi, Azure deployable hardening (healthz/$REPO/verify-retry/rate-limit loop) + first tests, `runner_job_timeout` + `max_concurrent` knobs on all three dispatchers, secret-bound registration tokens (Secret Manager / ACA secretRef), spec + README drift fixes. |
+| Last merged | #550 bleephub Actions follow-ups + bind-translation parity (BUG-1745..1751). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1750 filed - 1708 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1762 filed - 1720 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 

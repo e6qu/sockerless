@@ -23,22 +23,28 @@ type Runner struct {
 }
 
 // ListRunners hits `GET /repos/{repo}/actions/runners` and returns
-// every registered runner. Paginates implicitly via per_page=100; if
-// the dispatcher's runner pool grows past 100 GitHub will silently
-// truncate (in which case the caller should add cursor pagination).
+// every registered runner, walking page-numbered pagination until a
+// short page. Without this, a pool past 100 runners silently
+// truncates and the GC sweep never reaps the tail.
 func (c *Client) ListRunners(ctx context.Context) ([]Runner, error) {
-	url := fmt.Sprintf("%s/repos/%s/actions/runners?per_page=100", c.APIBase, c.Repo)
-	body, err := c.get(ctx, url)
-	if err != nil {
-		return nil, err
+	var all []Runner
+	for page := 1; ; page++ {
+		url := fmt.Sprintf("%s/repos/%s/actions/runners?per_page=100&page=%d", c.APIBase, c.Repo, page)
+		body, err := c.get(ctx, url)
+		if err != nil {
+			return nil, err
+		}
+		var resp struct {
+			Runners []Runner `json:"runners"`
+		}
+		if err := json.Unmarshal(body, &resp); err != nil {
+			return nil, fmt.Errorf("decode runners: %w", err)
+		}
+		all = append(all, resp.Runners...)
+		if len(resp.Runners) < 100 {
+			return all, nil
+		}
 	}
-	var resp struct {
-		Runners []Runner `json:"runners"`
-	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return nil, fmt.Errorf("decode runners: %w", err)
-	}
-	return resp.Runners, nil
 }
 
 // DeleteRunner removes a registered runner from the repo. Used by the

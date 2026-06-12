@@ -4,6 +4,7 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/run v1.21.0
+	cloud.google.com/go/secretmanager v1.20.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/sockerless/github-runner-dispatcher-aws v0.0.0
 	google.golang.org/protobuf v1.36.11

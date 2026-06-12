@@ -183,7 +183,7 @@ func (c *Client) Mark(jobID int64) {
 }
 
 // PollInterval is the cadence the dispatcher's main loop should call
-// PollOnce at. Mirrors the spec (15 s).
+// PollOnce at (60 s; see the pollWait rationale in New).
 func (c *Client) PollInterval() time.Duration { return c.pollWait }
 
 // listQueuedRuns fetches `/actions/runs?status=queued` and returns the

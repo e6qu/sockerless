@@ -53,10 +53,10 @@ Flags:
 
 | Concern              | Behaviour |
 |----------------------|-----------|
-| Polling              | `GET /repos/{repo}/actions/runs?status=queued` + per-run `GET .../jobs` every 15 s. |
+| Polling              | `GET /repos/{repo}/actions/runs?status=queued` + per-run `GET .../jobs` every 60 s (paced for GitHub's 5000/h quota; proactive back-off on rate-limit headers). |
 | Dedup                | Per-job seen-set with 5-min TTL. Stateless: each spawned container is stamped with `sockerless.dispatcher.job_id=<jobID>` so a restart can rebuild the set from `docker ps --filter label=…`. No on-disk dispatcher state. |
 | Spawner              | `docker run --rm -d --pull never --label sockerless.dispatcher.* <image> -e RUNNER_REG_TOKEN=… …`. |
-| Idle cleanup         | The runner image's entrypoint enforces a 60-s "no job arrived" timeout. Cleans up duplicate-spawn races without dispatcher state. |
+| Idle cleanup         | The runner image's entrypoint bounds only the PRE-PICKUP window (`RUNNER_IDLE_SECONDS`, dispatcher passes 60 s): a runner that never gets a job exits cleanly; a picked-up job runs to `runner_job_timeout`. Cleans up duplicate-spawn races without dispatcher state. |
 | State recovery       | On startup: list dispatcher-labelled containers across every configured `docker_host`; rehydrate the seen-set from their `job_id` labels. Daemon-down at startup is non-fatal — the container's still running, the next Liveness check will reconcile. |
 | GC sweep             | Every 2 min and at startup: `docker rm` exited / dead dispatcher containers; `DELETE /actions/runners/{id}` for offline `dispatcher-*` runners on GitHub. Keeps the GitHub UI clean even when `--rm` couldn't fire (kernel OOM, daemon restart). |
 | Graceful shutdown    | SIGINT / SIGTERM → drain every dispatcher-managed container + delete every dispatcher-prefixed GitHub runner. Bounded to 30 s. |

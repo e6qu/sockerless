@@ -58,8 +58,11 @@ WORKDIR /opt/runner
 ENV DOCKER_HOST=tcp://localhost:3375
 
 # The dispatcher's per-execution env override sets RUNNER_REG_TOKEN,
-# RUNNER_NAME, RUNNER_LABELS, RUNNER_REPO and overrides nothing else.
-# This entrypoint is the standard configure+run flow that the upstream
-# actions/runner README documents — no sockerless logic. Stays as a
-# small shell wrapper, NOT a custom binary.
-ENTRYPOINT ["/bin/bash", "-c", "./config.sh --unattended --replace --ephemeral --url \"https://github.com/${RUNNER_REPO}\" --token \"${RUNNER_REG_TOKEN}\" --name \"${RUNNER_NAME}\" --labels \"${RUNNER_LABELS}\" && ./run.sh --once"]
+# RUNNER_NAME, RUNNER_LABELS, RUNNER_REPO (+ optional
+# RUNNER_IDLE_SECONDS) and overrides nothing else. The entrypoint is
+# the standard configure+run flow that the upstream actions/runner
+# README documents — no sockerless logic, just a small shell wrapper
+# with the idle gate (a never-assigned ephemeral runner exits instead
+# of waiting forever; an in-flight job is never killed by it).
+COPY --chown=runner:runner entrypoint.sh /opt/runner/entrypoint.sh
+ENTRYPOINT ["/opt/runner/entrypoint.sh"]

@@ -241,7 +241,7 @@ resource "aws_iam_role_policy" "runner_task" {
 }
 
 # Single-container task definition. Operator overrides per-task env
-# vars (RUNNER_TOKEN, RUNNER_NAME, RUNNER_LABELS, RUNNER_REPO_URL) at
+# vars (RUNNER_REG_TOKEN, RUNNER_NAME, RUNNER_LABELS, RUNNER_REPO) at
 # RunTask time via container overrides — keeps the registered
 # definition reusable across runs.
 resource "aws_ecs_task_definition" "sockerless_runner" {

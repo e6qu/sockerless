@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-12 - GitHub-runner dispatcher hardening (ARC-without-k8s parity)
+
+Source audit of `github-runner-dispatcher-{aws,gcp,azure}` against their
+contract (poll → mint token → spawn ephemeral runner → GC from cloud
+state) filed and fixed BUG-1752..1762 in one PR. The P1: the Azure
+sweep keyed "done" off ACA Job `ProvisioningState`, which reads
+`Succeeded` the moment the resource is created — every runner Job
+became reap-eligible on the next 2-min tick and `BeginDelete` kills the
+in-flight execution. It now classifies the latest JobExecution's
+status, the same fix the GCP spawner already carried for Cloud Run's
+`TerminalCondition` (whose stale spec rows also got corrected). Both
+cloud loops gained the GitHub-side offline-runner reap they claimed in
+their flag help but never did, plus a 15-min orphan grace for Jobs
+whose start call failed. The runner images' "60-s idle timeout" was
+fiction — absent in vanilla/ecs/lambda, and a job-killing
+whole-process `timeout` in cloudrun/gcf; all six entrypoints now share
+a pre-pickup idle gate (watch /proc for `Runner.Worker`, exit 0 on
+idle, never bound a running job). The dispatcher↔image env contract
+unified on `RUNNER_REG_TOKEN`/`RUNNER_REPO` (the ECS/Lambda images
+required `RUNNER_TOKEN`/`RUNNER_REPO_URL` and could not be spawned by
+the dispatcher at all). New per-label knobs on all three:
+`runner_job_timeout` (Cloud Run task timeout / ACA ReplicaTimeout /
+docker-shape sweep enforcement) and `max_concurrent` (ARC's
+`maxRunners` analog). Registration tokens left plain control-plane env
+for Secret Manager (TTL-bounded, reaped with the Job) on GCP and Job
+secrets + `secretRef` on ACA. Azure also got the GCP deployable
+hardening (healthz/$PORT, $REPO, verify retry, rate-limit-aware loop),
+2cpu/4Gi runner resources, and its first tests; `ListRunners` now
+paginates. Catalog: docs/RUNNERS.md § dispatcher hurdles D-1..D-7.
+
 ## 2026-06-12 - Actions follow-ups + the bind-translation gate's mechanism
 
 Same-day follow-up PR to #549 (BUG-1745..1750). **Cancellation is real

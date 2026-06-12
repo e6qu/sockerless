@@ -70,6 +70,57 @@ until curl -sfo /dev/null http://localhost:3375/_ping; do
 done
 echo "bootstrap: sockerless-backend-cloudrun ready (pid=$SOCKERLESS_PID)"
 
+# --- idle gate (shared across runner images; edit all copies together) ---
+# The dispatcher spawns one ephemeral runner per queued job, and GitHub
+# may hand the job to a different runner (duplicate-spawn race / seen-set
+# loss). Bound only the PRE-PICKUP window: if no job starts within
+# RUNNER_IDLE_SECONDS (default 120) the runner exits cleanly; once a job
+# is picked up (a Runner.Worker child appears) it runs unbounded by this
+# gate, to the job's own timeout. A whole-process `timeout` would kill
+# in-flight jobs; an absent gate leaves never-assigned runners waiting
+# forever.
+job_started() {
+  local d
+  for d in /proc/[0-9]*; do
+    if tr '\0' ' ' < "$d/cmdline" 2>/dev/null | grep -q 'Runner\.Worker'; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+run_with_idle_gate() {
+  local idle="${RUNNER_IDLE_SECONDS:-120}"
+  local marker
+  marker=$(mktemp)
+  rm -f "$marker"
+  "$@" &
+  local run_pid=$!
+  (
+    deadline=$((SECONDS + idle))
+    while [ "$SECONDS" -lt "$deadline" ]; do
+      kill -0 "$run_pid" 2>/dev/null || exit 0
+      job_started && exit 0
+      sleep 2
+    done
+    job_started && exit 0
+    echo "idle-gate: no job picked up within ${idle}s; stopping runner" >&2
+    touch "$marker"
+    kill "$run_pid" 2>/dev/null || true
+  ) &
+  local gate_pid=$!
+  local rc=0
+  wait "$run_pid" || rc=$?
+  kill "$gate_pid" 2>/dev/null || true
+  wait "$gate_pid" 2>/dev/null || true
+  if [ -e "$marker" ]; then
+    rm -f "$marker"
+    return 0 # idle exit is the expected no-job outcome, not a failure
+  fi
+  return "$rc"
+}
+# --- end idle gate ---
+
 cd /opt/runner
 sudo -u runner ./config.sh \
     --unattended --replace --ephemeral \
@@ -80,6 +131,6 @@ sudo -u runner ./config.sh \
     --work /tmp/runner-work
 
 # --once: runner exits after one job, matching the github-runner-
-# dispatcher's per-job model. Idle timeout via the runner's natural
-# polling loop — no job picked up within RUNNER_IDLE_SECONDS = exit.
-exec sudo -u runner -E timeout "${RUNNER_IDLE_SECONDS:-3600}" ./run.sh --once
+# dispatcher's per-job model. The Cloud Run task timeout (the
+# dispatcher's runner_job_timeout) bounds the job itself.
+run_with_idle_gate sudo -u runner -E ./run.sh --once

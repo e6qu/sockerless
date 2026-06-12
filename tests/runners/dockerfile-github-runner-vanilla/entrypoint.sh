@@ -1,14 +1,8 @@
-#!/usr/bin/env bash
-# Runner-container entrypoint. Reads its registration parameters from
-# the env — the same RUNNER_REG_TOKEN / RUNNER_REPO (owner/repo) /
-# RUNNER_NAME / RUNNER_LABELS contract the github-runner-dispatcher
-# injects, so the harness and the dispatcher spawn the same image the
-# same way. The token is short-lived (~1h) and never persisted past
-# container exit.
-#
-# The runner registers ephemeral so GitHub auto-deregisters it after
-# one job. If the harness crashes mid-run, the runner side cleans
-# itself up within 24h on GitHub's end.
+#!/bin/bash
+# Vanilla runner entrypoint — the standard configure+run flow from the
+# upstream actions/runner README, no sockerless logic. The dispatcher's
+# per-execution env sets RUNNER_REG_TOKEN, RUNNER_REPO (owner/repo),
+# RUNNER_NAME, RUNNER_LABELS and optionally RUNNER_IDLE_SECONDS.
 set -euo pipefail
 
 : "${RUNNER_REPO:?RUNNER_REPO not set (owner/repo)}"
@@ -69,9 +63,9 @@ run_with_idle_gate() {
 
 ./config.sh \
   --url "https://github.com/${RUNNER_REPO}" \
-  --token "$RUNNER_REG_TOKEN" \
-  --name "$RUNNER_NAME" \
-  --labels "$RUNNER_LABELS" \
+  --token "${RUNNER_REG_TOKEN}" \
+  --name "${RUNNER_NAME}" \
+  --labels "${RUNNER_LABELS}" \
   --unattended --ephemeral --replace
 
 run_with_idle_gate ./run.sh --once

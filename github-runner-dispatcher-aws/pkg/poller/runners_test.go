@@ -69,3 +69,41 @@ func TestDeleteRunnerSuccess(t *testing.T) {
 		t.Fatalf("DeleteRunner: %v", err)
 	}
 }
+
+// TestListRunnersPaginates proves a pool past 100 registrations is
+// walked page by page — silent truncation at page 1 left the GC sweep
+// blind to the tail.
+func TestListRunnersPaginates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		switch page {
+		case "", "1":
+			var sb strings.Builder
+			sb.WriteString(`{"runners":[`)
+			for i := 0; i < 100; i++ {
+				if i > 0 {
+					sb.WriteString(",")
+				}
+				fmt.Fprintf(&sb, `{"id":%d,"name":"dispatcher-%d-1","status":"offline"}`, i+1, i+1)
+			}
+			sb.WriteString(`]}`)
+			fmt.Fprint(w, sb.String())
+		case "2":
+			fmt.Fprint(w, `{"runners":[{"id":101,"name":"dispatcher-101-1","status":"offline"}]}`)
+		default:
+			t.Errorf("unexpected page %q requested", page)
+			fmt.Fprint(w, `{"runners":[]}`)
+		}
+	}))
+	defer srv.Close()
+
+	c := New(srv.Client(), "tok", "owner/repo")
+	c.APIBase = srv.URL
+	rs, err := c.ListRunners(context.Background())
+	if err != nil {
+		t.Fatalf("ListRunners: %v", err)
+	}
+	if len(rs) != 101 {
+		t.Fatalf("want 101 runners across 2 pages, got %d", len(rs))
+	}
+}

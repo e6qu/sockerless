@@ -295,6 +295,20 @@ Architectural shape: GitLab Runner is a *dispatcher*. The master polls GitLab an
 | GL-10 | Token mint: PAT scope confusion — `personal_access_tokens/self` returns 401 even with valid token if the token is a project-token rather than user-PAT | Validate via `GET /user` instead of `/personal_access_tokens/self`; mint runner via `POST /api/v4/user/runners` (modern API, project_type) which requires `api` + `create_runner` scopes | (n/a — harness; verified 2026-04-29) |
 | GL-11 | Project-scoped runner creation needs `project_id` (numeric), not `path_with_namespace` | Harness pre-resolves the project: `GET /api/v4/projects/<urlencoded>` → `id` → use in `POST /user/runners` | (n/a — harness) |
 
+### GitHub runner dispatcher (`github-runner-dispatcher-{aws,gcp,azure}`)
+
+Architectural shape: the ARC analog without Kubernetes — poll queued `workflow_job`s, mint a registration token, spawn one ephemeral runner per job on a non-k8s primitive (docker daemon / Cloud Run Job / ACA Job), GC by listing cloud resources (no on-disk state). The hurdles below came out of a source audit of the three modules against that contract; all anchor to the per-cloud dispatch table in `specs/CLOUD_RESOURCE_MAPPING.md` § "Per-cloud github-runner-dispatcher".
+
+| # | Hurdle | Resolution | Bug |
+|---|---|---|---|
+| D-1 | Cloud "the resource is provisioned" state ≠ "the execution finished": ACA Job `ProvisioningState` (and Cloud Run `TerminalCondition.State`) read ready right after create, while the execution still runs — a GC sweep keyed on them deletes runner tasks mid-CI-job | Both cloud dispatchers key cleanup off the latest EXECUTION's state (`run` Executions API / `armappcontainers` JobsExecutions API); the resource-level state is never consulted | BUG-1752 (azure), GCP fixed earlier in-code |
+| D-2 | Ephemeral runners that die without completing (crash, timeout kill) leave zombie offline registrations on GitHub | Every dispatcher's GC sweep deregisters offline `dispatcher-*` runners; shared `ListRunners` paginates past 100 | BUG-1753 |
+| D-3 | One-runner-per-job + GitHub's free assignment = duplicate-spawn races; a never-assigned `run.sh --once` waits forever, and a whole-process `timeout` kills in-flight jobs | Shared idle gate in every runner image entrypoint: bound only the pre-pickup window (watch /proc for the `Runner.Worker` child), exit 0 on idle, never bound a picked-up job | BUG-1754 |
+| D-4 | Dispatcher↔runner-image env contract drift (`RUNNER_REPO`/`RUNNER_REG_TOKEN` vs `RUNNER_REPO_URL`/`RUNNER_TOKEN`) made the AWS dispatcher unable to spawn the ECS/Lambda runner images | One canonical contract everywhere: `RUNNER_REG_TOKEN`, `RUNNER_REPO` (owner/repo), `RUNNER_NAME`, `RUNNER_LABELS`, optional `RUNNER_IDLE_SECONDS`; Lambda event fields are the snake_case equivalents with event-over-env precedence | BUG-1755 |
+| D-5 | Spawn paths that "leave it for the sweep" (RunJob/BeginStart failures) leaked execution-less Jobs forever | `NO_EXECUTION` Jobs reap after a 15-min grace keyed on resource creation time; unknown age never reaps | BUG-1756 |
+| D-6 | Unbounded fan-out + unbounded runtime: no `maxRunners` analog, no runner-task timeout on the docker shape | Per-label `max_concurrent` (live-count gate before spawn, all three dispatchers) and `runner_job_timeout` (Cloud Run task timeout / ACA ReplicaTimeout / docker-shape sweep enforcement) | BUG-1759 / BUG-1760 |
+| D-7 | Registration token readable in plain control-plane env (`run.jobs.get` / ARM readers) | Cloud Run: Secret Manager secret (2-h TTL) + secret env binding; ACA: Job secret + `secretRef`; both reaped with their Job | BUG-1762 |
+
 ### Predicted next hurdles (open / staged)
 
 When the operator runs the unblock sequence in [DO_NEXT.md](../DO_NEXT.md), expect these. They are NOT bugs yet — they're called out so we recognise them quickly. Each will be filed as a real bug + real fix the moment it manifests.

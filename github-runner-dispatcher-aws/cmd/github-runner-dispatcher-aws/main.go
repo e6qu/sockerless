@@ -156,6 +156,10 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 	if len(jobs) == 0 {
 		return nil
 	}
+	// Live (running/created) container counts per docker_host, fetched
+	// lazily for labels with a max_concurrent cap and updated as this
+	// cycle spawns.
+	liveCounts := map[string]int{}
 	for _, job := range jobs {
 		label := pickKnownLabel(job.Labels, d.cfg)
 		if label == nil {
@@ -166,6 +170,27 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 		if err := spawner.Liveness(ctx, label.DockerHost); err != nil {
 			log.Printf("skip job %d (%s): docker daemon at %s unreachable: %v", job.JobID, label.Name, label.DockerHost, err)
 			continue // do NOT mark — retry next cycle once the daemon is back
+		}
+		if label.MaxConcurrent > 0 {
+			if _, ok := liveCounts[label.DockerHost]; !ok {
+				managed, err := spawner.ListManaged(ctx, label.DockerHost)
+				if err != nil {
+					log.Printf("skip job %d: live-count on %s: %v", job.JobID, label.DockerHost, err)
+					continue // do NOT mark — retry next cycle
+				}
+				n := 0
+				for _, m := range managed {
+					if m.State == "running" || m.State == "created" {
+						n++
+					}
+				}
+				liveCounts[label.DockerHost] = n
+			}
+			if liveCounts[label.DockerHost] >= label.MaxConcurrent {
+				log.Printf("defer job %d (%s): %d live runner containers >= max_concurrent %d on %s",
+					job.JobID, label.Name, liveCounts[label.DockerHost], label.MaxConcurrent, label.DockerHost)
+				continue // job stays queued; next poll retries
+			}
 		}
 		regToken, err := d.gh.MintRegistrationToken(ctx)
 		if err != nil {
@@ -186,6 +211,7 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 			log.Printf("skip job %d: spawn: %v", job.JobID, err)
 			continue
 		}
+		liveCounts[label.DockerHost]++
 		log.Printf("spawned runner for job %d (%s) on %s: container=%s name=%s url=%s",
 			job.JobID, label.Name, label.DockerHost, shortID(cid), runnerName, job.JobURL)
 		d.gh.Mark(job.JobID)
@@ -207,6 +233,22 @@ func shortID(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// overJobTimeout reports whether a still-live dispatcher container has
+// outlived the label's runner_job_timeout. Unknown creation times
+// never time out (partial information must not kill a job).
+func overJobTimeout(m spawner.Managed, timeoutSeconds int, now time.Time) bool {
+	if timeoutSeconds <= 0 {
+		return false
+	}
+	if m.State != "running" && m.State != "created" {
+		return false
+	}
+	if m.CreatedAt.IsZero() {
+		return false
+	}
+	return now.Sub(m.CreatedAt) > time.Duration(timeoutSeconds)*time.Second
 }
 
 // RecoverState re-populates the seen-set from running dispatcher
@@ -244,7 +286,14 @@ func (d *dispatchLoop) RecoverState(ctx context.Context) {
 //     this catches the edge case where the runner image's entrypoint
 //     died before `--rm` could fire (kernel OOM, daemon restart).
 //
-//  2. **GitHub-runner reap**: list registered runners, delete any
+//  2. **Job-timeout reap**: the docker primitive has no native task
+//     timeout (Cloud Run / ACA carry it as an API field), so the
+//     sweep enforces the label's `runner_job_timeout`: running
+//     dispatcher containers older than the bound are stopped and
+//     removed. Containers whose CreatedAt didn't parse are skipped —
+//     never kill on partial information.
+//
+//  3. **GitHub-runner reap**: list registered runners, delete any
 //     dispatcher-prefixed runner whose status is `offline` (the
 //     container is gone but the registration lingers in the GitHub
 //     UI). Idempotent — DELETE on an already-gone runner returns 404
@@ -253,6 +302,7 @@ func (d *dispatchLoop) RecoverState(ctx context.Context) {
 // Errors are logged and swallowed; the next sweep retries. Don't
 // crash the dispatcher because a single API call returned 5xx.
 func (d *dispatchLoop) Cleanup(ctx context.Context) error {
+	now := time.Now()
 	for _, label := range d.cfg.Labels {
 		managed, err := spawner.ListManaged(ctx, label.DockerHost)
 		if err != nil {
@@ -260,13 +310,21 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 			continue
 		}
 		for _, m := range managed {
-			if m.State == "exited" || m.State == "dead" || m.State == "removing" {
+			switch {
+			case m.State == "exited" || m.State == "dead" || m.State == "removing":
 				if err := spawner.StopAndRemove(ctx, label.DockerHost, m.ContainerID); err != nil {
 					log.Printf("cleanup: rm %s on %s: %v", shortID(m.ContainerID), label.DockerHost, err)
 					continue
 				}
 				log.Printf("cleanup: removed %s container %s (job=%d, runner=%s)",
 					m.State, shortID(m.ContainerID), m.JobID, m.RunnerName)
+			case overJobTimeout(m, label.RunnerJobTimeout, now):
+				if err := spawner.StopAndRemove(ctx, label.DockerHost, m.ContainerID); err != nil {
+					log.Printf("cleanup: timeout-stop %s on %s: %v", shortID(m.ContainerID), label.DockerHost, err)
+					continue
+				}
+				log.Printf("cleanup: stopped container %s past runner_job_timeout %ds (job=%d, runner=%s, age=%s)",
+					shortID(m.ContainerID), label.RunnerJobTimeout, m.JobID, m.RunnerName, now.Sub(m.CreatedAt).Round(time.Second))
 			}
 		}
 	}

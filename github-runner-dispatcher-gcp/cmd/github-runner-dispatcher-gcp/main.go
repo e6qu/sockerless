@@ -219,12 +219,38 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Live (non-terminal) Job counts per (project, region), fetched
+	// lazily for labels with a max_concurrent cap and updated as this
+	// cycle spawns.
+	liveCounts := map[string]int{}
 	for _, job := range jobs {
 		label := pickKnownLabel(job.Labels, d.cfg)
 		if label == nil {
 			log.Printf("skip job %d (%s): no matching dispatcher label in %v", job.JobID, job.Name, job.Labels)
 			d.gh.Mark(job.JobID)
 			continue
+		}
+		scope := label.Project + "/" + label.Region
+		if label.MaxConcurrent > 0 {
+			if _, ok := liveCounts[scope]; !ok {
+				managed, err := spawner.ListManaged(ctx, label.Project, label.Region)
+				if err != nil {
+					log.Printf("skip job %d: live-count on %s: %v", job.JobID, scope, err)
+					continue // do NOT mark — retry next cycle
+				}
+				n := 0
+				for _, m := range managed {
+					if !isTerminalJobState(m.State) {
+						n++
+					}
+				}
+				liveCounts[scope] = n
+			}
+			if liveCounts[scope] >= label.MaxConcurrent {
+				log.Printf("defer job %d (%s): %d live runner jobs >= max_concurrent %d on %s",
+					job.JobID, label.Name, liveCounts[scope], label.MaxConcurrent, scope)
+				continue // job stays queued; next poll retries
+			}
 		}
 		regToken, err := d.gh.MintRegistrationToken(ctx)
 		if err != nil {
@@ -244,11 +270,13 @@ func (d *dispatchLoop) Step(ctx context.Context) error {
 			JobID:                  job.JobID,
 			RunnerWorkspaceBucket:  label.RunnerWorkspaceBucket,
 			RunnerWorkspaceBacking: label.RunnerWorkspaceBacking,
+			JobTimeoutSeconds:      label.RunnerJobTimeout,
 		})
 		if err != nil {
 			log.Printf("skip job %d: spawn (%s/%s): %v", job.JobID, label.Project, label.Region, err)
 			continue
 		}
+		liveCounts[scope]++
 		log.Printf("spawned Cloud Run Job for job %d (%s) at %s/%s: name=%s url=%s",
 			job.JobID, label.Name, label.Project, label.Region, fullName, job.JobURL)
 		d.gh.Mark(job.JobID)
@@ -330,20 +358,20 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 		// should be reaped.
 		liveOwners := map[string]bool{}
 		for _, m := range managed {
-			if isTerminalJobState(m.State) {
+			if shouldReap(m, time.Now()) {
 				continue
 			}
 			liveOwners[spawner.JobIDFromName(m.JobName)] = true
 		}
 		for _, m := range managed {
-			if !isTerminalJobState(m.State) {
+			if !shouldReap(m, time.Now()) {
 				continue
 			}
 			if err := spawner.Delete(ctx, m.JobName); err != nil {
 				log.Printf("cleanup: delete %s failed: %v", m.JobName, err)
 				continue
 			}
-			log.Printf("cleanup: deleted terminated Cloud Run Job %s", m.JobName)
+			log.Printf("cleanup: deleted Cloud Run Job %s (state=%s)", m.JobName, m.State)
 		}
 		// Orphan pod-Service sweep. List all sockerless-managed
 		// `sockerless-svc-*` Services and delete those whose owner
@@ -371,7 +399,49 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 			log.Printf("cleanup: deleted orphan pod-Service %s (owner=%s gone/terminal)", s.Name, s.OwnerRunnerJob)
 		}
 	}
+
+	// GitHub-runner reap: ephemeral runners that died without
+	// completing (crashed runner-task, timeout kill) leave zombie
+	// `dispatcher-*` registrations behind. Same sweep as the AWS
+	// dispatcher; offline-only — online/busy runners are real jobs.
+	runners, err := d.gh.ListRunners(ctx)
+	if err != nil {
+		log.Printf("cleanup: list github runners: %v", err)
+		return nil
+	}
+	for _, r := range runners {
+		if !poller.IsDispatcherRunner(r) {
+			continue
+		}
+		if r.Status == "offline" {
+			if err := d.gh.DeleteRunner(ctx, r.ID); err != nil {
+				log.Printf("cleanup: delete runner %s (id=%d): %v", r.Name, r.ID, err)
+				continue
+			}
+			log.Printf("cleanup: deleted offline runner %s (id=%d)", r.Name, r.ID)
+		}
+	}
 	return nil
+}
+
+// orphanGrace is how long a Job may sit with NO execution before the
+// sweep reaps it. Covers the Spawn path where RunJob failed and the
+// Job was deliberately left for the sweep — without an age gate the
+// sweep could race a Job between CreateJob and RunJob.
+const orphanGrace = 15 * time.Minute
+
+// shouldReap decides whether the sweep may delete a managed Job.
+// Terminal executions always reap; execution-less Jobs reap only past
+// the orphan grace (and only when their creation time is known —
+// partial information never deletes).
+func shouldReap(m spawner.Managed, now time.Time) bool {
+	if isTerminalJobState(m.State) {
+		return true
+	}
+	if m.State == spawner.StateNoExecution {
+		return !m.CreateTime.IsZero() && now.Sub(m.CreateTime) > orphanGrace
+	}
+	return false
 }
 
 // isTerminalJobState returns true for execution states that indicate
@@ -384,7 +454,7 @@ func (d *dispatchLoop) Cleanup(ctx context.Context) error {
 // shortly after spawn while they're still bootstrapping.
 func isTerminalJobState(state string) bool {
 	switch state {
-	case "EXECUTION_SUCCEEDED", "EXECUTION_FAILED":
+	case spawner.StateExecutionSucceeded, spawner.StateExecutionFailed:
 		return true
 	}
 	return false
