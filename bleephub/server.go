@@ -29,7 +29,7 @@ type Server struct {
 	lastSessionIdx         int // round-robin index for session distribution
 	maxConcurrentWorkflows int
 	scheduleFired          scheduleFiredKeys // cron-firing dedup (on: schedule)
-	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
+	routePatterns          []string          // every pattern registered via route(), for fidelity enumeration
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
 	// assigns it (same package) to validate /api/v3 response shapes
