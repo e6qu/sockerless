@@ -998,8 +998,9 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 
 	varsCtx := make(map[string]interface{})
 	if wf.RepoFullName != "" {
-		for name, v := range s.store.RepoVariables[wf.RepoFullName] {
-			varsCtx[name] = v.Value
+		_, vars := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		for name, v := range vars {
+			varsCtx[name] = v
 		}
 	}
 

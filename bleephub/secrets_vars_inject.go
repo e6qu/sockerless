@@ -34,11 +34,17 @@ func orgItemVisibleToRepo(visibility string, selectedIDs []int, repo *Repo) bool
 // independently. The returned maps are fresh copies safe to hand to the
 // runner-message builder.
 func (s *Server) CollectJobSecretsAndVars(repoFullName, envName string) (secrets map[string]string, vars map[string]string) {
-	secrets = make(map[string]string)
-	vars = make(map[string]string)
-
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
+	return s.collectJobSecretsAndVarsLocked(repoFullName, envName)
+}
+
+// collectJobSecretsAndVarsLocked is the lock-free core of
+// CollectJobSecretsAndVars for callers already holding the store lock
+// (job dispatch evaluates `if:` expressions under it).
+func (s *Server) collectJobSecretsAndVarsLocked(repoFullName, envName string) (secrets map[string]string, vars map[string]string) {
+	secrets = make(map[string]string)
+	vars = make(map[string]string)
 
 	repo := s.store.ReposByName[repoFullName]
 

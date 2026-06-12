@@ -27,11 +27,13 @@ type Secret struct {
 }
 
 // envScopeKey keys Store.EnvSecrets / Store.EnvVariables. Environment
-// scopes are per (repository, environment name); NUL can appear in
-// neither an "owner/repo" key nor an environment name, so the pair packs
-// into one collision-free string.
+// scopes are per (repository, environment name); the unit separator can
+// appear in neither an "owner/repo" key nor an environment name, so the
+// pair packs into one collision-free string. Deliberately NOT NUL: these
+// composites are also persistence bucket keys, and PostgreSQL TEXT
+// rejects NUL bytes.
 func envScopeKey(repoKey, envName string) string {
-	return repoKey + "\x00" + envName
+	return repoKey + "\x1f" + envName
 }
 
 // actionsItemNameRe is real GitHub's name rule for Actions secrets and

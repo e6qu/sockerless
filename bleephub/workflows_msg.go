@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -173,16 +174,19 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	secretsPairs = append(secretsPairs, "GITHUB_TOKEN", jobToken)
 	maskArray = append(maskArray, map[string]interface{}{"type": "regex", "value": jobToken})
 
-	// Look up repo secrets
+	// Org → repo → environment secrets and variables merge (highest
+	// scope wins); every secret value rides the mask list so the runner
+	// scrubs it from logs.
+	varsPairs := make([]string, 0)
 	if s != nil && s.store != nil {
-		s.store.mu.RLock()
-		if secrets, ok := s.store.RepoSecrets[repoFullName]; ok {
-			for _, sec := range secrets {
-				secretsPairs = append(secretsPairs, sec.Name, sec.Value)
-				maskArray = append(maskArray, map[string]interface{}{"type": "regex", "value": sec.Value})
-			}
+		secretsMap, varsMap := s.CollectJobSecretsAndVars(repoFullName, jd.EnvironmentName())
+		for _, name := range sortedKeys(secretsMap) {
+			secretsPairs = append(secretsPairs, name, secretsMap[name])
+			maskArray = append(maskArray, map[string]interface{}{"type": "regex", "value": secretsMap[name]})
 		}
-		s.store.mu.RUnlock()
+		for _, name := range sortedKeys(varsMap) {
+			varsPairs = append(varsPairs, name, varsMap[name])
+		}
 	}
 
 	// Build inputs context
@@ -268,7 +272,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 				"temp", "/home/runner/work/_temp",
 			),
 			"env":      dictContextData(envPairs...),
-			"vars":     dictContextData(),
+			"vars":     dictContextData(varsPairs...),
 			"secrets":  dictContextData(secretsPairs...),
 			"needs":    needsCtx,
 			"inputs":   inputsCtx,
@@ -293,6 +297,17 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"actionsEnvironment":   nil,
 		"fileTable":            []string{".github/workflows/ci.yml"},
 	}
+}
+
+// sortedKeys returns a map's keys in sorted order so context payloads
+// are deterministic across runs.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // buildServiceContainers converts parsed ServiceDefs to the runner's expected
