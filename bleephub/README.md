@@ -252,9 +252,7 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - Runner auto-update (`AgentRefreshMessage`).
 - V2 broker flow (uses legacy V1 pipelines paths).
 - Composite actions server-side (the runner resolves and executes them from the action tarball service; bleephub doesn't introspect them).
-- Failed-run shells for invalid reusable-workflow references: real GitHub creates a run with `startup_failure` when a `uses:` target is missing/invalid; bleephub rejects the submission (logged at trigger time, 422 on dispatch).
-- Runner groups beyond the single default pool (org/repo runner listings serve the global pool; org-scoped runner routes exist).
-- Job cancellation signals to a RUNNING runner job: cancel marks pending/queued jobs cancelled, but a job already executing on a runner finishes its course (no `JobCancellation` broker message yet); `if: always()`/`cancelled()` jobs likewise don't dispatch after a cancel.
+- Failed-run shells exist for TRIGGERED workflows that can't start (conclusion `startup_failure`, no jobs); explicit dispatches still 422 with the parse error (more useful to the caller).
 - Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
 - SAML SSO + SCIM provisioning.
 - Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
