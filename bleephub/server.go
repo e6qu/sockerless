@@ -211,6 +211,9 @@ func (s *Server) registerRoutes() {
 	s.registerGHActionsRoutes()
 	s.registerGHWorkflowsRoutes()
 
+	// Org runner groups (gh_runner_groups.go)
+	s.registerRunnerGroupRoutes()
+
 	// Management API (metrics, status, dashboard data)
 	s.route("GET /internal/metrics", s.handleInternalMetrics)
 	s.route("GET /internal/status", s.handleInternalStatus)

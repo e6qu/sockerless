@@ -50,6 +50,10 @@ const (
 	ResultFailure   Result = "failure"
 	ResultCancelled Result = "cancelled"
 	ResultSkipped   Result = "skipped"
+	// ResultStartupFailure marks runs that never produced jobs because
+	// the workflow failed at startup (invalid reusable-workflow ref,
+	// unparseable definition) — real GitHub's conclusion for these.
+	ResultStartupFailure Result = "startup_failure"
 )
 
 // Workflow represents a running multi-job workflow.
@@ -81,6 +85,10 @@ type Workflow struct {
 	// (reruns bump it and archive the prior attempt in
 	// Store.WorkflowAttempts).
 	Attempt int `json:"attempt,omitempty"`
+	// CancelRequested marks a run whose cancellation was requested;
+	// in-flight jobs are winding down and always()/cancelled() jobs may
+	// still dispatch. The run finalizes with conclusion cancelled.
+	CancelRequested bool `json:"-"`
 	// EventPayload is the triggering webhook payload (github.event).
 	// In-flight runs aren't persisted, so neither is this.
 	EventPayload map[string]interface{} `json:"-"`
@@ -185,7 +193,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		return nil, err
 	}
 
-	runID := 0
+	var runID int
 	if len(eventMeta) > 0 && eventMeta[0] != nil && eventMeta[0].ReuseRunID > 0 {
 		runID = eventMeta[0].ReuseRunID
 	} else {
@@ -422,6 +430,24 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 
 			if !allDepsOk {
 				continue
+			}
+
+			// A cancel-requested run only dispatches jobs explicitly
+			// gated on always()/cancelled(); everything else cancels.
+			if wf.CancelRequested {
+				gated := false
+				if wfJob.Def != nil {
+					hasAlways, _ := ExprContainsStatusFunction(wfJob.Def.If)
+					gated = hasAlways || strings.Contains(strings.ToLower(wfJob.Def.If), "cancelled()")
+				}
+				if !gated {
+					wfJob.Status = JobStatusCompleted
+					wfJob.Result = ResultCancelled
+					wfJob.CompletedAt = time.Now()
+					s.queueActionsEvent(evJobCompleted, wf, wfJob)
+					changed = true
+					continue
+				}
 			}
 
 			// Evaluate job-level if: condition
@@ -690,9 +716,12 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 
 	if allDone {
 		foundWf.Status = WorkflowStatusCompleted
-		if anyFailed {
+		switch {
+		case foundWf.CancelRequested:
+			foundWf.Result = ResultCancelled
+		case anyFailed:
 			foundWf.Result = ResultFailure
-		} else {
+		default:
 			foundWf.Result = ResultSuccess
 		}
 	}
@@ -881,9 +910,12 @@ func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
 	}
 	if allDone && wf.Status != WorkflowStatusCompleted {
 		wf.Status = WorkflowStatusCompleted
-		if anyFailed {
+		switch {
+		case wf.CancelRequested:
+			wf.Result = ResultCancelled
+		case anyFailed:
 			wf.Result = ResultFailure
-		} else {
+		default:
 			wf.Result = ResultSuccess
 		}
 	} else {
@@ -906,32 +938,92 @@ func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
 	}
 }
 
-// cancelWorkflow cancels all pending/queued jobs and marks the workflow as cancelled.
+// cancelWorkflow requests cancellation of a run: pending/queued jobs
+// cancel immediately (their undelivered messages are purged), RUNNING
+// jobs get a JobCancellation broker message so the runner actually
+// aborts them, and jobs gated on always()/cancelled() still dispatch —
+// matching real GitHub's cancellation semantics. The run finalizes
+// (conclusion cancelled) once nothing remains in flight.
 func (s *Server) cancelWorkflow(wf *Workflow) {
 	s.store.mu.Lock()
+	wf.CancelRequested = true
+
+	cancelledJobIDs := map[string]bool{}
+	var runningJobIDs []string
 	for _, wfJob := range wf.Jobs {
-		if wfJob.Status == JobStatusPending || wfJob.Status == JobStatusQueued {
+		switch wfJob.Status {
+		case JobStatusPending, JobStatusWaiting:
+			// Jobs gated on always()/cancelled() still run after a
+			// cancel on real GitHub — leave them pending; dispatch
+			// evaluates their `if:` with cancelled()==true.
+			if wfJob.Def != nil {
+				if hasAlways, _ := ExprContainsStatusFunction(wfJob.Def.If); hasAlways ||
+					strings.Contains(strings.ToLower(wfJob.Def.If), "cancelled()") {
+					wfJob.Status = JobStatusPending
+					continue
+				}
+			}
 			wfJob.Status = JobStatusCompleted
 			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = time.Now()
+			cancelledJobIDs[wfJob.JobID] = true
 			s.queueActionsEvent(evJobCompleted, wf, wfJob)
+		case JobStatusQueued, JobStatusRunning:
+			// Delivered to (or executing on) a runner: signal the
+			// runner. Undelivered queued messages are purged from the
+			// pending queue below and the job cancels immediately.
+			if job := s.store.Jobs[wfJob.JobID]; job != nil && job.AgentID != 0 && job.Status != "completed" {
+				runningJobIDs = append(runningJobIDs, wfJob.JobID)
+			} else {
+				wfJob.Status = JobStatusCompleted
+				wfJob.Result = ResultCancelled
+				wfJob.CompletedAt = time.Now()
+				cancelledJobIDs[wfJob.JobID] = true
+				s.queueActionsEvent(evJobCompleted, wf, wfJob)
+			}
 		}
 	}
-	wf.Status = WorkflowStatusCompleted
-	wf.Result = ResultCancelled
-	s.store.mu.Unlock()
-	s.queueActionsEvent(evRunCompleted, wf, nil)
 
-	if wf.cancelTimeout != nil {
-		wf.cancelTimeout()
+	// Drop queued-but-undelivered job messages so a runner can't pull a
+	// cancelled job later.
+	if len(cancelledJobIDs) > 0 {
+		kept := s.store.PendingMessages[:0]
+		for _, msg := range s.store.PendingMessages {
+			if !cancelledJobIDs[msg.JobID] {
+				kept = append(kept, msg)
+			}
+		}
+		s.store.PendingMessages = kept
 	}
-	if s.metrics != nil {
-		s.metrics.RecordWorkflowComplete()
+
+	serverURL := ""
+	defaultImage := ""
+	if wf.Env != nil {
+		serverURL = wf.Env["__serverURL"]
+		defaultImage = wf.Env["__defaultImage"]
 	}
+	s.store.mu.Unlock()
+
+	// JobCancellation rides the runner's open mid-job poll (the channel
+	// push path — job REQUESTS are pull-only; cancellations are exactly
+	// what the open poll exists for).
+	for _, jobID := range runningJobIDs {
+		s.sendJobCancellation(jobID)
+	}
+
 	s.logger.Info().
 		Str("workflow_id", wf.ID).
 		Str("workflow_name", wf.Name).
-		Msg("workflow cancelled")
+		Int("signalled_running", len(runningJobIDs)).
+		Msg("workflow cancellation requested")
+
+	// Dispatch any always()/cancelled() jobs whose dependencies are
+	// already settled, then finalize if nothing remains in flight.
+	if serverURL != "" {
+		s.dispatchReadyJobs(context.Background(), wf, serverURL, defaultImage)
+	} else {
+		s.finalizeWorkflowIfDone(wf)
+	}
 }
 
 // startPendingConcurrencyWorkflow finds and starts the next pending-concurrency
@@ -1013,6 +1105,7 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 	}
 	now := time.Now()
 	var timedOut bool
+	var timedOutJobIDs []string
 	for _, wfJob := range wf.Jobs {
 		if wfJob.Status != JobStatusQueued && wfJob.Status != JobStatusRunning {
 			continue
@@ -1034,10 +1127,16 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 			wfJob.Result = ResultCancelled
 			wfJob.CompletedAt = now
 			s.queueActionsEvent(evJobCompleted, wf, wfJob)
+			timedOutJobIDs = append(timedOutJobIDs, wfJob.JobID)
 			timedOut = true
 		}
 	}
 	s.store.mu.Unlock()
+
+	// A timed-out job may still be executing on its runner — signal it.
+	for _, jobID := range timedOutJobIDs {
+		s.sendJobCancellation(jobID)
+	}
 
 	// Re-dispatch to handle dependents (outside lock since dispatchReadyJobs acquires locks)
 	if timedOut {
@@ -1110,7 +1209,7 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 
 	return &ExprContext{
 		DepResults:        deps,
-		WorkflowCancelled: wf.Result == ResultCancelled,
+		WorkflowCancelled: wf.CancelRequested || wf.Result == ResultCancelled,
 		Contexts: map[string]interface{}{
 			"github": s.githubContextMap(wf),
 			"needs":  needsCtx,

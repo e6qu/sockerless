@@ -129,29 +129,31 @@ type Store struct {
 	TimelineRecords    map[string][]*TimelineRecord           // planID → runner-uploaded timeline records
 	LogFiles           map[int][]byte                         // logID → uploaded runner log content
 	WorkflowAttempts   map[int][]*Workflow                    // runID → prior attempts (oldest first)
-	Hooks              map[string][]*Webhook                  // "owner/repo" → hooks
-	OrgHooks           map[string][]*Webhook                  // org login → org-level hooks
-	HookDeliveries     map[int][]*WebhookDelivery             // hookID → deliveries
-	Apps               map[int]*App                           // id → app
-	AppsBySlug         map[string]*App                        // slug → app
-	AppsByClientID     map[string]*App                        // OAuth client_id → app
-	OAuthApps          map[string]*OAuthApp                   // OAuth client_id → OAuth app (distinct from GitHub App)
-	Installations      map[int]*Installation                  // id → installation
-	InstallationTokens map[string]*InstallationToken          // token value → token
-	UserToServerTokens map[string]*UserToServerToken          // gho_/ghu_ token value → token
-	RefreshTokens      map[string]*RefreshToken               // ghr_ token value → refresh token
-	AppHookDeliveries  map[int][]*WebhookDelivery             // appID → app-level webhook deliveries
-	ManifestCodes      map[string]int                         // code → appID (one-time-use)
-	CheckRuns          map[int64]*CheckRun                    // id → check run
-	CheckSuites        map[int64]*CheckSuite                  // id → check suite
-	CheckSuitePrefs    map[string][]*CheckSuitePref           // repoKey → autoTrigger prefs
-	Reactions          *ReactionStore                         // reactions across all parent types
-	Releases           *ReleaseStore                          // release CRUD
-	Deployments        *DeploymentStore                       // deployments + statuses + environments
-	PRReviewComments   *PRReviewCommentStore                  // PR review comments (inline / threads)
-	Misc               *MiscStore                             // long-tail surfaces
-	ProjectsV2         *ProjectV2Store                        // GitHub Projects v2
-	LogLines           map[string][]string                    // jobID → captured console log lines
+	RunnerGroups       map[int]*RunnerGroup                   // org runner groups (global pool overlay)
+	NextRunnerGroupID  int
+	Hooks              map[string][]*Webhook         // "owner/repo" → hooks
+	OrgHooks           map[string][]*Webhook         // org login → org-level hooks
+	HookDeliveries     map[int][]*WebhookDelivery    // hookID → deliveries
+	Apps               map[int]*App                  // id → app
+	AppsBySlug         map[string]*App               // slug → app
+	AppsByClientID     map[string]*App               // OAuth client_id → app
+	OAuthApps          map[string]*OAuthApp          // OAuth client_id → OAuth app (distinct from GitHub App)
+	Installations      map[int]*Installation         // id → installation
+	InstallationTokens map[string]*InstallationToken // token value → token
+	UserToServerTokens map[string]*UserToServerToken // gho_/ghu_ token value → token
+	RefreshTokens      map[string]*RefreshToken      // ghr_ token value → refresh token
+	AppHookDeliveries  map[int][]*WebhookDelivery    // appID → app-level webhook deliveries
+	ManifestCodes      map[string]int                // code → appID (one-time-use)
+	CheckRuns          map[int64]*CheckRun           // id → check run
+	CheckSuites        map[int64]*CheckSuite         // id → check suite
+	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
+	Reactions          *ReactionStore                // reactions across all parent types
+	Releases           *ReleaseStore                 // release CRUD
+	Deployments        *DeploymentStore              // deployments + statuses + environments
+	PRReviewComments   *PRReviewCommentStore         // PR review comments (inline / threads)
+	Misc               *MiscStore                    // long-tail surfaces
+	ProjectsV2         *ProjectV2Store               // GitHub Projects v2
+	LogLines           map[string][]string           // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
 	NextLog            int
@@ -189,6 +191,7 @@ type Agent struct {
 	Labels         []Label             `json:"labels"`
 	Authorization  *AgentAuthorization `json:"authorization,omitempty"`
 	Ephemeral      bool                `json:"ephemeral,omitempty"`
+	RunnerGroupID  int                 `json:"runnerGroupId,omitempty"`
 	MaxParallelism int                 `json:"maxParallelism,omitempty"`
 	ProvisionState string              `json:"provisioningState,omitempty"`
 	CreatedOn      time.Time           `json:"createdOn"`
@@ -285,6 +288,8 @@ func NewStore() *Store {
 		TimelineRecords:    make(map[string][]*TimelineRecord),
 		LogFiles:           make(map[int][]byte),
 		WorkflowAttempts:   make(map[int][]*Workflow),
+		RunnerGroups:       make(map[int]*RunnerGroup),
+		NextRunnerGroupID:  2,
 		Hooks:              make(map[string][]*Webhook),
 		OrgHooks:           make(map[string][]*Webhook),
 		HookDeliveries:     make(map[int][]*WebhookDelivery),
@@ -757,6 +762,17 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.EnvVariables[key] = vars
+			return nil
+		}},
+		{"runner_groups", func(_ string, raw []byte) error {
+			var g RunnerGroup
+			if err := loadJSON(raw, &g); err != nil {
+				return err
+			}
+			st.RunnerGroups[g.ID] = &g
+			if g.ID >= st.NextRunnerGroupID {
+				st.NextRunnerGroupID = g.ID + 1
+			}
 			return nil
 		}},
 		{"actions_crypto", func(key string, raw []byte) error {

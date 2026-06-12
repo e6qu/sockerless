@@ -438,7 +438,7 @@ func runnerJSON(a *Agent, busy bool) map[string]any {
 	}
 	return map[string]any{
 		"id":              int64(a.ID),
-		"runner_group_id": 1,
+		"runner_group_id": agentGroupID(a),
 		"name":            a.Name,
 		"os":              osFromDescription(a.OSDescription),
 		"status":          agentStatusForRunner(a.Status),
