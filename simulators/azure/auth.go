@@ -46,7 +46,11 @@ type azureAuthCode struct {
 	Nonce               string
 	CodeChallenge       string
 	CodeChallengeMethod string
-	ExpiresAt           time.Time
+	// UserOID binds the code to a directory user when the authorize request
+	// carried a login_hint; empty means the grant mints tokens for the
+	// process-global active sim user.
+	UserOID   string
+	ExpiresAt time.Time
 }
 
 type azureRefreshToken struct {
@@ -54,6 +58,9 @@ type azureRefreshToken struct {
 	ClientID string
 	Scope    string
 	Nonce    string
+	// UserOID carries the user binding of the originating grant so refreshed
+	// tokens keep minting for the same user.
+	UserOID string
 }
 
 var azureScopeAudienceOverrides = map[string]string{
@@ -159,7 +166,7 @@ func AzureAuthMiddleware(next http.Handler) http.Handler {
 				"grant_types_supported":                 []string{"authorization_code", "client_credentials", "refresh_token", "password"},
 				"code_challenge_methods_supported":      []string{"plain", "S256"},
 				"id_token_signing_alg_values_supported": []string{"RS256"},
-				"token_endpoint_auth_methods_supported": []string{"client_secret_post"},
+				"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic"},
 				"subject_types_supported":               []string{"pairwise"},
 				"scopes_supported":                      []string{"openid", "profile", "email", "offline_access"},
 				"claims_supported":                      []string{"aud", "exp", "groups", "iat", "iss", "name", "nonce", "oid", "preferred_username", "sub", "tid", "ver"},
@@ -247,6 +254,23 @@ func handleAzureAuthorize(w http.ResponseWriter, r *http.Request, path string) {
 		return
 	}
 
+	// login_hint binds the authorization code to a directory user, resolved
+	// by userPrincipalName exactly like the ROPC (password) grant. The sim
+	// has no interactive login page, so an unresolvable hint cannot show the
+	// account picker real AAD would; it answers with AAD's
+	// interaction-required semantics (error=login_required) instead of
+	// silently minting tokens for a different user.
+	userOID := ""
+	if loginHint := strings.TrimSpace(q.Get("login_hint")); loginHint != "" {
+		u, ok := findEntraUserByUPN(loginHint)
+		if !ok {
+			redirectAzureAuthError(w, redirectURI, q.Get("response_mode"), state, "login_required",
+				fmt.Sprintf("AADSTS50058: A silent sign-in request was sent but no user is signed in. The login_hint '%s' does not match any user in the directory; provision the user first (POST /v1.0/users).", loginHint))
+			return
+		}
+		userOID = u.OID
+	}
+
 	code, err := newAzureAuthorizationCode()
 	if err != nil {
 		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
@@ -261,6 +285,7 @@ func handleAzureAuthorize(w http.ResponseWriter, r *http.Request, path string) {
 		Nonce:               q.Get("nonce"),
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
+		UserOID:             userOID,
 		ExpiresAt:           time.Now().Add(azureAuthCodeTTL),
 	}
 	azureAuthCodeMu.Unlock()
@@ -389,16 +414,21 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 		azureOAuthError(w, "invalid_request", fmt.Sprintf("parse Azure token request form: %v", err), http.StatusBadRequest)
 		return
 	}
+	clientID, err := azureTokenClientID(r)
+	if err != nil {
+		azureOAuthError(w, "invalid_request", err.Error(), http.StatusBadRequest)
+		return
+	}
 	if r.Form.Get("grant_type") == "authorization_code" {
-		handleAzureAuthorizationCodeToken(w, r, tenantId)
+		handleAzureAuthorizationCodeToken(w, r, tenantId, clientID)
 		return
 	}
 	if r.Form.Get("grant_type") == "refresh_token" {
-		handleAzureRefreshToken(w, r, tenantId)
+		handleAzureRefreshToken(w, r, tenantId, clientID)
 		return
 	}
 	if r.Form.Get("grant_type") == "password" {
-		handleAzureROPC(w, r, tenantId)
+		handleAzureROPC(w, r, tenantId, clientID)
 		return
 	}
 	if grantType := r.Form.Get("grant_type"); grantType != "" && grantType != "client_credentials" {
@@ -427,9 +457,73 @@ func handleAzureToken(w http.ResponseWriter, r *http.Request, path string) {
 	})
 }
 
-func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, tenantID string) {
+// azureTokenClientID resolves the OAuth2 client identity for a token request.
+// Real AAD v2.0 accepts client_secret_post (client_id/client_secret form
+// fields) and client_secret_basic (RFC 6749 §2.3.1: Authorization: Basic
+// base64(urlencoded(client_id) + ":" + urlencoded(client_secret))). A request
+// carrying both mechanisms with different client_ids is rejected — RFC 6749
+// §2.3 forbids using more than one client authentication method per request.
+func azureTokenClientID(r *http.Request) (string, error) {
+	formClientID := strings.TrimSpace(r.Form.Get("client_id"))
+	basicClientID, hasBasic, err := azureBasicAuthClientID(r)
+	if err != nil {
+		return "", err
+	}
+	if !hasBasic {
+		return formClientID, nil
+	}
+	if formClientID != "" && formClientID != basicClientID {
+		return "", fmt.Errorf("request must not use more than one client authentication mechanism: form client_id %q does not match Basic authorization client_id %q", formClientID, basicClientID)
+	}
+	return basicClientID, nil
+}
+
+// azureBasicAuthClientID extracts the client_id from an HTTP Basic
+// Authorization header. The components are form-urlencoded before base64
+// per RFC 6749 §2.3.1, so they are unescaped here; the raw value is kept when
+// unescaping fails because common clients (MSAL, Auth.js) send unreserved
+// characters without encoding them.
+func azureBasicAuthClientID(r *http.Request) (string, bool, error) {
+	const prefix = "Basic "
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, prefix) {
+		return "", false, nil
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(auth[len(prefix):]))
+	if err != nil {
+		return "", false, fmt.Errorf("decode Basic authorization header: %v", err)
+	}
+	clientID, _, found := strings.Cut(string(raw), ":")
+	if !found {
+		return "", false, fmt.Errorf("basic authorization header must decode to client_id:client_secret")
+	}
+	if unescaped, err := url.QueryUnescape(clientID); err == nil {
+		clientID = unescaped
+	}
+	if clientID == "" {
+		return "", false, fmt.Errorf("basic authorization header carries an empty client_id")
+	}
+	return clientID, true, nil
+}
+
+// azureGrantUser resolves the directory user a grant mints tokens for. An
+// empty oid means the grant is not bound to a user (no login_hint on the
+// authorize request) and the process-global active sim user applies.
+func azureGrantUser(oid string) (EntraUser, error) {
+	if oid == "" {
+		return getEntraSimActiveUser(), nil
+	}
+	if u, ok := entraUsersStore.Get(oid); ok {
+		return u, nil
+	}
+	if oid == entraDefaultUser.OID {
+		return entraDefaultUser, nil
+	}
+	return EntraUser{}, fmt.Errorf("the user this grant was issued for no longer exists")
+}
+
+func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, tenantID, clientID string) {
 	code := strings.TrimSpace(r.Form.Get("code"))
-	clientID := strings.TrimSpace(r.Form.Get("client_id"))
 	redirectURI := strings.TrimSpace(r.Form.Get("redirect_uri"))
 	if code == "" {
 		azureOAuthError(w, "invalid_request", "code is required", http.StatusBadRequest)
@@ -457,13 +551,18 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 		azureOAuthError(w, "invalid_grant", err.Error(), http.StatusBadRequest)
 		return
 	}
+	user, err := azureGrantUser(authCode.UserOID)
+	if err != nil {
+		azureOAuthError(w, "invalid_grant", err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	scope := strings.TrimSpace(r.Form.Get("scope"))
 	if scope == "" {
 		scope = authCode.Scope
 	}
 	now := time.Now()
-	accessToken, err := mintAzureSimJWT(tenantID, azureAudienceFromScope(scope), now, now.Add(time.Hour))
+	accessToken, err := mintAzureSimJWTForUser(user, tenantID, azureAudienceFromScope(scope), now, now.Add(time.Hour))
 	if err != nil {
 		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 		return
@@ -477,7 +576,7 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 	}
 	if azureScopeIncludes(scope, "openid") {
 		issuer := azureIssuer(azureAuthBaseURL(r), tenantID, true)
-		idToken, err := mintAzureSimIDToken(tenantID, clientID, authCode.Nonce, scope, issuer, now, now.Add(time.Hour))
+		idToken, err := mintAzureSimIDTokenForUser(user, tenantID, clientID, authCode.Nonce, scope, issuer, now, now.Add(time.Hour))
 		if err != nil {
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return
@@ -496,6 +595,7 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 			ClientID: clientID,
 			Scope:    scope,
 			Nonce:    authCode.Nonce,
+			UserOID:  authCode.UserOID,
 		}
 		azureRefreshTokenMu.Unlock()
 		body["refresh_token"] = refreshToken
@@ -503,9 +603,8 @@ func handleAzureAuthorizationCodeToken(w http.ResponseWriter, r *http.Request, t
 	sim.WriteJSON(w, http.StatusOK, body)
 }
 
-func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID string) {
+func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID, clientID string) {
 	refreshToken := strings.TrimSpace(r.Form.Get("refresh_token"))
-	clientID := strings.TrimSpace(r.Form.Get("client_id"))
 	if refreshToken == "" {
 		azureOAuthError(w, "invalid_request", "refresh_token is required", http.StatusBadRequest)
 		return
@@ -520,12 +619,17 @@ func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID st
 		azureOAuthError(w, "invalid_grant", "refresh token is invalid", http.StatusBadRequest)
 		return
 	}
+	user, err := azureGrantUser(stored.UserOID)
+	if err != nil {
+		azureOAuthError(w, "invalid_grant", err.Error(), http.StatusBadRequest)
+		return
+	}
 	scope := strings.TrimSpace(r.Form.Get("scope"))
 	if scope == "" {
 		scope = stored.Scope
 	}
 	now := time.Now()
-	accessToken, err := mintAzureSimJWT(tenantID, azureAudienceFromScope(scope), now, now.Add(time.Hour))
+	accessToken, err := mintAzureSimJWTForUser(user, tenantID, azureAudienceFromScope(scope), now, now.Add(time.Hour))
 	if err != nil {
 		sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 		return
@@ -540,7 +644,7 @@ func handleAzureRefreshToken(w http.ResponseWriter, r *http.Request, tenantID st
 	}
 	if azureScopeIncludes(scope, "openid") {
 		issuer := azureIssuer(azureAuthBaseURL(r), tenantID, true)
-		idToken, err := mintAzureSimIDToken(tenantID, clientID, stored.Nonce, scope, issuer, now, now.Add(time.Hour))
+		idToken, err := mintAzureSimIDTokenForUser(user, tenantID, clientID, stored.Nonce, scope, issuer, now, now.Add(time.Hour))
 		if err != nil {
 			sim.AzureError(w, "InternalServerError", err.Error(), http.StatusInternalServerError)
 			return
@@ -672,8 +776,7 @@ func mintAzureSimJWT(tenantId, audience string, issuedAt, expiresAt time.Time) (
 
 // mintAzureSimIDTokenForUser produces a real-shape Azure AD id_token for a
 // specific user. Groups are populated from both the inline sim-seed Groups
-// field and the standard membership store. mintAzureSimIDToken uses the
-// current sim-active user.
+// field and the standard membership store.
 func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope, issuer string, issuedAt, expiresAt time.Time) (string, error) {
 	email := u.Email
 	if email == "" {
@@ -723,18 +826,13 @@ func mintAzureSimIDTokenForUser(u EntraUser, tenantID, clientID, nonce, scope, i
 	return mintAzureSimSignedJWT(claims)
 }
 
-func mintAzureSimIDToken(tenantID, clientID, nonce, scope, issuer string, issuedAt, expiresAt time.Time) (string, error) {
-	return mintAzureSimIDTokenForUser(getEntraSimActiveUser(), tenantID, clientID, nonce, scope, issuer, issuedAt, expiresAt)
-}
-
 // handleAzureROPC implements the Resource Owner Password Credentials grant
 // (grant_type=password). Real Entra supports this for non-interactive test
 // flows where a specific user's id_token is needed without a browser.
 // The sim looks up the user by userPrincipalName (the username field) and
 // mints tokens carrying that user's identity and group memberships.
-func handleAzureROPC(w http.ResponseWriter, r *http.Request, tenantID string) {
+func handleAzureROPC(w http.ResponseWriter, r *http.Request, tenantID, clientID string) {
 	username := strings.TrimSpace(r.Form.Get("username"))
-	clientID := strings.TrimSpace(r.Form.Get("client_id"))
 	scope := strings.TrimSpace(r.Form.Get("scope"))
 	if username == "" {
 		azureOAuthError(w, "invalid_request", "username is required for grant_type=password", http.StatusBadRequest)
