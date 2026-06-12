@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1747 filed - 1702 fixed - 5 open - 7 false positives.**
+**1748 filed - 1702 fixed - 6 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 1748 | P3 | bleephub — actions hosted on bleephub itself can't resolve (`uses: owner/repo@ref` 502s) | action-source fidelity | The action tarball proxy serves the in-memory cache or fetches from real api.github.com; a repo ON bleephub holding an action (composite or otherwise) is never consulted, so self-hosted actions — GHES's bread and butter — fail with 502. Serve tarballs from bleephub's own git storage first (GitHub tarball layout: top-level `<owner>-<repo>-<sha>/` prefix), falling back to github.com for external actions. |
 | 1747 | P3 | bleephub actions — invalid workflows refuse the run instead of a startup_failure shell | trigger-failure fidelity | Real GitHub creates a run with conclusion `startup_failure` (no jobs) when a triggered workflow has an invalid reusable-workflow ref or unparseable expansion; bleephub logs and creates nothing, so the failure is invisible to the runs API/UI. |
 | 1746 | P3 | bleephub actions — runner groups unmodeled | missing ops | Single hardcoded pool; no `/orgs/{org}/actions/runner-groups` family (CRUD + group runners membership), `runner_group_id` always 1. |
 | 1745 | P2 | bleephub actions — cancellation never reaches running jobs; always()/cancelled() jobs don't run after cancel | cancellation semantics | Cancel marks pending/queued jobs cancelled but a job executing on a runner runs to completion (no `JobCancellation` broker message — the runner's open mid-job poll exists exactly for this), and pending jobs gated on `always()`/`cancelled()` are force-cancelled instead of dispatched (real GitHub runs them with cancelled()==true). |

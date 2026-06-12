@@ -1,11 +1,15 @@
 package bleephub
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -317,4 +321,84 @@ func bytesReader(b []byte) *bytes.Reader {
 		return bytes.NewReader(nil)
 	}
 	return bytes.NewReader(b)
+}
+
+// TestLocalActionTarball covers BUG-1748: actions hosted on bleephub
+// itself serve GitHub-layout tarballs from their own git storage.
+func TestLocalActionTarball(t *testing.T) {
+	commitFilesToStorage(t, testServer, "actowner/hello-action", map[string]string{
+		"action.yml": `name: hello
+runs:
+  using: composite
+  steps:
+    - run: echo "from composite"
+      shell: bash
+`,
+		"README.md": "composite test action",
+	})
+
+	resp, err := http.Get("http://" + testServer.addr + "/_apis/v1/actions/tarball/actowner/hello-action/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusBadGateway {
+		// Default branch may be master in the test storage.
+		resp2, err2 := http.Get("http://" + testServer.addr + "/_apis/v1/actions/tarball/actowner/hello-action/master")
+		if err2 != nil {
+			t.Fatal(err2)
+		}
+		defer resp2.Body.Close()
+		resp = resp2
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("tarball status = %d", resp.StatusCode)
+	}
+
+	gz, err := gzip.NewReader(resp.Body)
+	if err != nil {
+		t.Fatalf("not gzip: %v", err)
+	}
+	tr := tar.NewReader(gz)
+	found := map[string]bool{}
+	var topPrefix string
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.SplitN(hdr.Name, "/", 2)
+		if topPrefix == "" {
+			topPrefix = parts[0]
+		} else if parts[0] != topPrefix {
+			t.Errorf("multiple top-level dirs: %q vs %q", parts[0], topPrefix)
+		}
+		if len(parts) == 2 {
+			found[parts[1]] = true
+		}
+		if parts[len(parts)-1] == "action.yml" {
+			content, _ := io.ReadAll(tr)
+			if !strings.Contains(string(content), "using: composite") {
+				t.Error("action.yml content mangled")
+			}
+		}
+	}
+	if !found["action.yml"] || !found["README.md"] {
+		t.Errorf("tarball entries = %v, want action.yml + README.md under one prefix", found)
+	}
+	if !strings.HasPrefix(topPrefix, "actowner-hello-action-") {
+		t.Errorf("top-level dir = %q, want <owner>-<repo>-<sha> layout", topPrefix)
+	}
+}
+
+func TestNormalizeResultRunnerSpellings(t *testing.T) {
+	// The official runner reports the US spelling "Canceled".
+	for _, in := range []string{"Canceled", "canceled", "Cancelled", "cancelled"} {
+		if got := normalizeResult(in); got != "cancelled" {
+			t.Errorf("normalizeResult(%q) = %q, want cancelled", in, got)
+		}
+	}
 }

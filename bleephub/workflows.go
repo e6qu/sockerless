@@ -1067,7 +1067,8 @@ func normalizeResult(result string) string {
 		return "success"
 	case "Failed", "failed":
 		return "failure"
-	case "Cancelled", "cancelled":
+	// The runner's TaskResult uses the US spelling ("Canceled").
+	case "Cancelled", "cancelled", "Canceled", "canceled":
 		return "cancelled"
 	default:
 		if result == "" {

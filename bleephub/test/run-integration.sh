@@ -420,4 +420,93 @@ if [ "$STATUS" != "completed" ]; then
 fi
 
 # ===== All tests passed =====
-log "===== ALL 9 INTEGRATION TESTS PASSED ====="
+# ===== TEST 10: Composite action hosted ON bleephub =====
+log "===== TEST 10: Composite action from a bleephub-hosted repo ====="
+
+curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/user/repos" \
+    -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"hello-action"}' >/dev/null || fail "create action repo"
+
+ACT_DIR=$(mktemp -d)
+git -C "$ACT_DIR" init -q -b main
+mkdir -p "$ACT_DIR"
+cat > "$ACT_DIR/action.yml" <<'YAML'
+name: hello-composite
+runs:
+  using: composite
+  steps:
+    - run: echo "composite step one"
+      shell: bash
+    - run: test "composite" = "composite"
+      shell: bash
+YAML
+git -C "$ACT_DIR" add action.yml
+git -C "$ACT_DIR" -c user.email=t@t -c user.name=t commit -q -m "composite action"
+git -C "$ACT_DIR" push -q "http://admin:$BLEEPHUB_ADMIN_TOKEN@$BLEEPHUB_ADDR/admin/hello-action" main || fail "push action repo"
+log "Composite action repo pushed"
+
+submit_and_wait_workflow 10 "Composite action" '
+name: composite-test
+jobs:
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: admin/hello-action@main
+      - run: echo "after composite"
+'
+
+sleep 3
+
+# ===== TEST 11: Cancellation of a running job =====
+log "===== TEST 11: Cancellation reaches the running job ====="
+
+WF11_YAML='name: cancel-test
+jobs:
+  slow:
+    runs-on: self-hosted
+    steps:
+      - run: sleep 300
+  cleanup:
+    needs: [slow]
+    if: always()
+    runs-on: self-hosted
+    steps:
+      - run: echo "cleanup ran"'
+
+WF11_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg wf "$WF11_YAML" '{workflow: $wf, hostMode: true}')")
+WF11_ID=$(echo "$WF11_RESP" | jq -r '.workflowId')
+[ -n "$WF11_ID" ] && [ "$WF11_ID" != "null" ] || fail "cancel-test submission failed: $WF11_RESP"
+
+log "Waiting for the slow job to start on the runner..."
+for i in $(seq 1 60); do
+    SLOW_STATUS=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF11_ID" | jq -r '.jobs.slow.status // "unknown"')
+    [ "$SLOW_STATUS" = "running" ] && break
+    sleep 1
+done
+[ "$SLOW_STATUS" = "running" ] || fail "slow job never started (status: $SLOW_STATUS)"
+log "Slow job running — cancelling the workflow"
+
+curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" \
+    "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF11_ID/cancel" >/dev/null || fail "cancel request failed"
+
+log "Waiting for cancellation to settle (runner must abort the sleep)..."
+for i in $(seq 1 90); do
+    WF11_STATUS=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF11_ID" 2>/dev/null || echo '{}')
+    STATUS=$(echo "$WF11_STATUS" | jq -r '.status // "unknown"')
+    [ "$STATUS" = "completed" ] && break
+    sleep 1
+done
+[ "$STATUS" = "completed" ] || fail "cancelled workflow never completed (the runner kept the job)"
+
+RESULT=$(echo "$WF11_STATUS" | jq -r '.result')
+SLOW_RESULT=$(echo "$WF11_STATUS" | jq -r '.jobs.slow.result')
+CLEANUP_RESULT=$(echo "$WF11_STATUS" | jq -r '.jobs.cleanup.result')
+[ "$RESULT" = "cancelled" ] || fail "run result=$RESULT, want cancelled"
+[ "$SLOW_RESULT" = "cancelled" ] || fail "slow result=$SLOW_RESULT, want cancelled"
+[ "$CLEANUP_RESULT" = "success" ] || fail "always() cleanup result=$CLEANUP_RESULT, want success (must run after cancel)"
+log "TEST 11 PASSED: Cancellation (run cancelled, always() cleanup ran)"
+
+log "===== ALL 11 INTEGRATION TESTS PASSED ====="
