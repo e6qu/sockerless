@@ -11,6 +11,9 @@ import { ReposPage } from "./pages/ReposPage.js";
 import { RepoDetailPage } from "./pages/RepoDetailPage.js";
 import { IssuesPage } from "./pages/IssuesPage.js";
 import { PullsPage } from "./pages/PullsPage.js";
+import { ActionsPage } from "./pages/ActionsPage.js";
+import { RunDetailPage } from "./pages/RunDetailPage.js";
+import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
 import { OAuthPage } from "./pages/OAuthPage.js";
@@ -45,6 +48,9 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
+              <Route path="/ui/repos/:owner/:repo/actions" element={<ActionsPage />} />
+              <Route path="/ui/repos/:owner/:repo/actions/runs/:runId" element={<RunDetailPage />} />
+              <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />

@@ -35,7 +35,7 @@ function renderAt(path: string) {
   );
 }
 
-function pr(number: number, title: string) {
+function pr(number: number, title: string, overrides: Record<string, unknown> = {}) {
   return {
     id: number,
     number,
@@ -51,6 +51,23 @@ function pr(number: number, title: string) {
     updated_at: "2026-01-01T00:00:00Z",
     merged_at: null,
     merged: false,
+    ...overrides,
+  };
+}
+
+const noChecks = { total_count: 0, check_runs: [] };
+
+function checkRun(id: number, name: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name,
+    status: "completed",
+    conclusion: "success",
+    started_at: "2026-01-01T00:00:00Z",
+    completed_at: "2026-01-01T00:00:42Z",
+    details_url: "",
+    app: { id: 1 },
+    ...overrides,
   };
 }
 
@@ -58,6 +75,7 @@ describe("PullsPage detail", () => {
   it("loads the PR via the single-PR endpoint, not by scanning the list", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => {
       const u = url.toString();
+      if (u.includes("/check-runs")) return Promise.resolve(jsonResponse(noChecks));
       if (u.includes("/pulls/77/") || u.includes("/issues/77/comments")) {
         return Promise.resolve(jsonResponse([]));
       }
@@ -128,5 +146,82 @@ describe("PullsPage list pagination", () => {
     });
     const calls = mockFetch.mock.calls.map((c) => c[0].toString());
     expect(calls).toContain(page2Url);
+  });
+});
+
+describe("PullsPage checks section", () => {
+  function mockDetail(prData: unknown, checks: unknown) {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/commits/abc/check-runs")) return Promise.resolve(jsonResponse(checks));
+      if (u.includes("/issues/9/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/pulls/9")) return Promise.resolve(jsonResponse(prData));
+      return Promise.resolve(jsonResponse([]));
+    });
+  }
+
+  it("shows the green all-passed summary with per-check rows", async () => {
+    mockDetail(pr(9, "Checked PR"), {
+      total_count: 2,
+      check_runs: [checkRun(1, "build"), checkRun(2, "lint")],
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    expect(await screen.findByText(/all checks have passed/i)).toBeInTheDocument();
+    expect(screen.getByText("build")).toBeInTheDocument();
+    expect(screen.getByText("lint")).toBeInTheDocument();
+    // 42s duration from started/completed timestamps.
+    expect(screen.getAllByText("42s").length).toBe(2);
+  });
+
+  it("shows the pending summary while a check is in progress", async () => {
+    mockDetail(pr(9, "Checked PR"), {
+      total_count: 2,
+      check_runs: [
+        checkRun(1, "build"),
+        checkRun(2, "e2e", { status: "in_progress", conclusion: null, completed_at: null }),
+      ],
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    expect(await screen.findByText(/some checks haven't completed yet/i)).toBeInTheDocument();
+  });
+
+  it("shows the failure summary when a check concluded unsuccessfully", async () => {
+    mockDetail(pr(9, "Checked PR"), {
+      total_count: 2,
+      check_runs: [checkRun(1, "build"), checkRun(2, "test", { conclusion: "failure" })],
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    expect(await screen.findByText(/some checks were not successful/i)).toBeInTheDocument();
+  });
+
+  it("hides the checks box when the commit has no check runs", async () => {
+    mockDetail(pr(9, "Checked PR"), noChecks);
+    renderAt("/ui/repos/admin/test/pulls/9");
+    await screen.findByText("Checked PR");
+    expect(screen.queryByText(/all checks have passed/i)).not.toBeInTheDocument();
+  });
+
+  it("links a check to the run detail page when details_url points at a run", async () => {
+    mockDetail(pr(9, "Checked PR"), {
+      total_count: 1,
+      check_runs: [
+        checkRun(1, "build", {
+          details_url: "http://bleephub.localhost/admin/test/actions/runs/42",
+        }),
+      ],
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    const link = await screen.findByRole("link", { name: /build/i });
+    expect(link).toHaveAttribute("href", "/ui/repos/admin/test/actions/runs/42");
+  });
+
+  it("disables merging and explains when mergeable_state is blocked", async () => {
+    mockDetail(pr(9, "Blocked PR", { mergeable_state: "blocked" }), {
+      total_count: 1,
+      check_runs: [checkRun(1, "required-check", { status: "queued", conclusion: null })],
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    expect(await screen.findByText(/merging is blocked — required checks must pass/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /merge pull request/i })).toBeDisabled();
   });
 });

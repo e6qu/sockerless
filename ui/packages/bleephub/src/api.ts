@@ -23,6 +23,17 @@ import type {
   GithubSecret,
   GithubEnvironment,
   GithubRelease,
+  GithubWorkflow,
+  GithubWorkflowRun,
+  GithubJob,
+  GithubArtifact,
+  GithubPendingDeployment,
+  GithubCheckRun,
+  GithubPublicKey,
+  GithubVariable,
+  GithubRunner,
+  GithubContentFile,
+  GithubOrgVisibility,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -393,3 +404,218 @@ export const fetchEnvironments = (owner: string, repo: string) =>
 
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);
+
+// ─── GitHub Actions REST ────────────────────────────────────────────────
+
+/**
+ * One page of a GitHub envelope list ({total_count, <key>: [...]}) plus
+ * the Link rel="next" URL. total_count is the full filtered count, not
+ * the page size — list pages use it for "N workflow runs" headers.
+ */
+export interface EnvelopePage<T> {
+  items: T[];
+  totalCount: number;
+  nextUrl: string | null;
+}
+
+async function ghFetchEnvelope<T>(url: string, key: string): Promise<EnvelopePage<T>> {
+  const res = await fetch(url, { headers: authHeaders() });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  const body = (await res.json()) as { total_count: number } & Record<string, T[]>;
+  // No `?? []`: a missing array member is a contract break that must
+  // surface as an error, not render as an empty list.
+  const items = body[key];
+  if (!Array.isArray(items)) {
+    throw new Error(`malformed response: missing "${key}" array`);
+  }
+  return { items, totalCount: body.total_count, nextUrl: parseLinkNext(res.headers.get("Link")) };
+}
+
+/** Non-GET request that returns no JSON the caller renders. */
+async function ghSend(method: string, path: string, body?: unknown): Promise<void> {
+  const res = await fetch(path, {
+    method,
+    headers: body !== undefined
+      ? { "Content-Type": "application/json", ...authHeaders() }
+      : authHeaders(),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${method} ${res.status}: ${text || res.statusText}`);
+  }
+}
+
+export const fetchActionsWorkflows = (owner: string, repo: string) =>
+  ghFetchEnvelope<GithubWorkflow>(
+    `/api/v3/repos/${owner}/${repo}/actions/workflows?per_page=100`,
+    "workflows",
+  );
+
+/** Filters the runs-list endpoint supports server-side. */
+export interface RunFilters {
+  /** Numeric workflow-file id; scopes to .../workflows/{id}/runs. */
+  workflowId?: number;
+  status?: string;
+  branch?: string;
+  event?: string;
+}
+
+/** First page by filters; follow-up pages by the Link rel="next" URL. */
+export function fetchWorkflowRunsPage(
+  owner: string,
+  repo: string,
+  filters: RunFilters,
+  pageUrl?: string,
+): Promise<EnvelopePage<GithubWorkflowRun>> {
+  if (pageUrl) return ghFetchEnvelope<GithubWorkflowRun>(pageUrl, "workflow_runs");
+  const base = filters.workflowId
+    ? `/api/v3/repos/${owner}/${repo}/actions/workflows/${filters.workflowId}/runs`
+    : `/api/v3/repos/${owner}/${repo}/actions/runs`;
+  const params = new URLSearchParams({ per_page: "30" });
+  if (filters.status) params.set("status", filters.status);
+  if (filters.branch) params.set("branch", filters.branch);
+  if (filters.event) params.set("event", filters.event);
+  return ghFetchEnvelope<GithubWorkflowRun>(`${base}?${params}`, "workflow_runs");
+}
+
+export const fetchWorkflowRun = (owner: string, repo: string, runId: number) =>
+  ghFetch<GithubWorkflowRun>(`/api/v3/repos/${owner}/${repo}/actions/runs/${runId}`);
+
+/**
+ * Run shape for a specific attempt. 404s on servers that don't model
+ * attempts — the caller treats that as "hide the attempt selector".
+ */
+export const fetchWorkflowRunAttempt = (
+  owner: string,
+  repo: string,
+  runId: number,
+  attempt: number,
+) =>
+  ghFetch<GithubWorkflowRun>(
+    `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/attempts/${attempt}`,
+  );
+
+export const fetchRunJobs = (owner: string, repo: string, runId: number) =>
+  ghFetchEnvelope<GithubJob>(
+    `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/jobs?per_page=100`,
+    "jobs",
+  );
+
+/** Job logs are text/plain, not JSON. */
+export async function fetchJobLogs(owner: string, repo: string, jobId: number): Promise<string> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/actions/jobs/${jobId}/logs`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  return res.text();
+}
+
+export const cancelRun = (owner: string, repo: string, runId: number) =>
+  ghSend("POST", `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/cancel`);
+
+export const rerunRun = (owner: string, repo: string, runId: number) =>
+  ghSend("POST", `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/rerun`);
+
+export const rerunFailedJobs = (owner: string, repo: string, runId: number) =>
+  ghSend("POST", `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/rerun-failed-jobs`);
+
+export const fetchRunArtifacts = (owner: string, repo: string, runId: number) =>
+  ghFetchEnvelope<GithubArtifact>(
+    `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/artifacts`,
+    "artifacts",
+  );
+
+export const fetchPendingDeployments = (owner: string, repo: string, runId: number) =>
+  ghFetch<GithubPendingDeployment[]>(
+    `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/pending_deployments`,
+  );
+
+export const reviewPendingDeployments = (
+  owner: string,
+  repo: string,
+  runId: number,
+  body: { environment_ids: number[]; state: "approved" | "rejected"; comment: string },
+) =>
+  ghSend("POST", `/api/v3/repos/${owner}/${repo}/actions/runs/${runId}/pending_deployments`, body);
+
+export const enableWorkflow = (owner: string, repo: string, workflowId: number) =>
+  ghSend("PUT", `/api/v3/repos/${owner}/${repo}/actions/workflows/${workflowId}/enable`);
+
+export const disableWorkflow = (owner: string, repo: string, workflowId: number) =>
+  ghSend("PUT", `/api/v3/repos/${owner}/${repo}/actions/workflows/${workflowId}/disable`);
+
+export const fetchFileContent = (owner: string, repo: string, path: string) =>
+  ghFetch<GithubContentFile>(`/api/v3/repos/${owner}/${repo}/contents/${path}`);
+
+export const fetchCheckRuns = (owner: string, repo: string, sha: string) =>
+  ghFetchEnvelope<GithubCheckRun>(
+    `/api/v3/repos/${owner}/${repo}/commits/${sha}/check-runs`,
+    "check_runs",
+  );
+
+export const fetchActionsRunners = (owner: string, repo: string) =>
+  ghFetchEnvelope<GithubRunner>(`/api/v3/repos/${owner}/${repo}/actions/runners`, "runners");
+
+// ─── Secrets & variables (repo / environment / org scopes) ──────────────
+
+/**
+ * The three scopes GitHub stores Actions secrets + variables under. Each
+ * maps to a URL prefix that `/secrets`, `/secrets/public-key`,
+ * `/secrets/{name}`, `/variables` and `/variables/{name}` append to.
+ */
+export type SecretsScope =
+  | { kind: "repo"; owner: string; repo: string }
+  | { kind: "env"; owner: string; repo: string; env: string }
+  | { kind: "org"; org: string };
+
+function scopeBase(s: SecretsScope): string {
+  switch (s.kind) {
+    case "repo":
+      return `/api/v3/repos/${s.owner}/${s.repo}/actions`;
+    case "env":
+      return `/api/v3/repos/${s.owner}/${s.repo}/environments/${encodeURIComponent(s.env)}`;
+    case "org":
+      return `/api/v3/orgs/${s.org}/actions`;
+  }
+}
+
+export const fetchScopedSecrets = (scope: SecretsScope) =>
+  ghFetchEnvelope<GithubSecret>(`${scopeBase(scope)}/secrets?per_page=100`, "secrets");
+
+export const fetchScopedPublicKey = (scope: SecretsScope) =>
+  ghFetch<GithubPublicKey>(`${scopeBase(scope)}/secrets/public-key`);
+
+/** Body carries the sealed-box ciphertext only — plaintext never leaves the client. */
+export const putScopedSecret = (
+  scope: SecretsScope,
+  name: string,
+  body: { encrypted_value: string; key_id: string; visibility?: GithubOrgVisibility },
+) => ghSend("PUT", `${scopeBase(scope)}/secrets/${encodeURIComponent(name)}`, body);
+
+export const deleteScopedSecret = (scope: SecretsScope, name: string) =>
+  ghSend("DELETE", `${scopeBase(scope)}/secrets/${encodeURIComponent(name)}`);
+
+export const fetchScopedVariables = (scope: SecretsScope) =>
+  ghFetchEnvelope<GithubVariable>(`${scopeBase(scope)}/variables?per_page=100`, "variables");
+
+export const createScopedVariable = (
+  scope: SecretsScope,
+  body: { name: string; value: string; visibility?: GithubOrgVisibility },
+) => ghSend("POST", `${scopeBase(scope)}/variables`, body);
+
+export const updateScopedVariable = (
+  scope: SecretsScope,
+  name: string,
+  body: { name: string; value: string },
+) => ghSend("PATCH", `${scopeBase(scope)}/variables/${encodeURIComponent(name)}`, body);
+
+export const deleteScopedVariable = (scope: SecretsScope, name: string) =>
+  ghSend("DELETE", `${scopeBase(scope)}/variables/${encodeURIComponent(name)}`);
