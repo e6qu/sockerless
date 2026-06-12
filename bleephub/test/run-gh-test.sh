@@ -895,9 +895,7 @@ assert_eq "workflow state after enable" "active" "$WF_STATE"
 
 # Checks layer: the earlier pushes triggered ci runs, which mirror to
 # check runs on the pushed commit (github-actions app).
-cd gh-native-clone
-HEAD_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
-cd "$ORIG_DIR"
+HEAD_SHA=$(git -C /tmp/gh-native-clone rev-parse HEAD 2>/dev/null || echo "")
 if [ -n "$HEAD_SHA" ]; then
     CHECKS_COUNT=$(api "$BASE/api/v3/repos/$NV_REPO/commits/$HEAD_SHA/check-runs" --jq .total_count 2>/dev/null || echo "0")
     if [ "$CHECKS_COUNT" -ge 1 ] 2>/dev/null; then
