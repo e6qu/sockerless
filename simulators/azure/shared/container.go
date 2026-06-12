@@ -410,6 +410,51 @@ func drainImagePull(reader io.Reader, imageName string) error {
 	}
 }
 
+// pullImage pulls imageName (optionally platform-pinned), retrying
+// transient registry throttling: public mirrors rate-limit
+// unauthenticated pulls (toomanyrequests / 429 / 503) and a hard fail
+// turns a moment of throttle into a failed workload. Bounded
+// exponential backoff per the strict rate-limit rule; everything
+// non-transient fails immediately.
+func pullImage(ctx context.Context, cli *client.Client, imageName, platform string) error {
+	backoff := 2 * time.Second
+	const maxAttempts = 5
+	for attempt := 1; ; attempt++ {
+		reader, err := cli.ImagePull(ctx, imageName, image.PullOptions{Platform: platform})
+		var pullErr error
+		if err != nil {
+			pullErr = fmt.Errorf("image pull %s: %w", imageName, err)
+		} else {
+			pullErr = drainImagePull(reader, imageName)
+			_ = reader.Close()
+		}
+		if pullErr == nil {
+			return nil
+		}
+		if attempt >= maxAttempts || !isTransientRegistryErr(pullErr) {
+			return pullErr
+		}
+		select {
+		case <-ctx.Done():
+			return pullErr
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
+}
+
+// isTransientRegistryErr classifies pull failures worth retrying:
+// registry-side throttling and momentary unavailability.
+func isTransientRegistryErr(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "toomanyrequests") ||
+		strings.Contains(msg, "rate exceeded") ||
+		strings.Contains(msg, "too many requests") ||
+		strings.Contains(msg, "status code 429") ||
+		strings.Contains(msg, "status code 503") ||
+		strings.Contains(msg, "service unavailable")
+}
+
 func createAndStartContainer(ctx context.Context, cli *client.Client, cfg ContainerConfig) (string, error) {
 	// Pull image
 	pullPolicy := os.Getenv("SIM_PULL_POLICY")
@@ -426,14 +471,8 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	if shouldPull {
-		reader, err := cli.ImagePull(ctx, cfg.Image, image.PullOptions{Platform: cfg.Architecture})
-		if err != nil {
-			return "", fmt.Errorf("image pull %s: %w", cfg.Image, err)
-		}
-		pullErr := drainImagePull(reader, cfg.Image)
-		_ = reader.Close()
-		if pullErr != nil {
-			return "", pullErr
+		if err := pullImage(ctx, cli, cfg.Image, cfg.Architecture); err != nil {
+			return "", err
 		}
 	}
 

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1771 filed - 1729 fixed - 2 open - 7 false positives.**
+**1772 filed - 1730 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1772~~ | P2 | sims (all 3) — image pull fails hard on transient registry throttle (toomanyrequests/429/503) | missing rate-limit handling | A moment of public-mirror throttling (public.ecr.aws "Rate exceeded" on PR #552's `sim (aws sdk)` — TestAmplifyHostingSSRComputeE2E) turns into a red suite because the pull path surfaces the first failure immediately (visible thanks to BUG-1744's propagation). The strict rate-limit rule applies: bounded exponential backoff retries on explicitly-transient registry errors in all three shared pull paths; non-transient errors still fail immediately. |
 | ~~1771~~ | P3 | dispatcher-aws — spawned runner containers can't resolve host.docker.internal on Linux Docker | engine-conditional flag | Runner images spawned via the docker shape dial back to host-published services (bleephub, sockerless) via host.docker.internal — native on Docker Desktop/Podman 4+, absent on Linux Docker unless `--add-host host.docker.internal:host-gateway` is passed, which Podman 5 REJECTS (the GH-8 pair). Spawn now detects the engine (docker version components ~ "Podman") and adds the flag only where it's both needed and legal — the same runtime detection the sims use. |
 | ~~1770~~ | P2 | bleephub — job messages bake the SUBMITTER's Host as the server URL; off-host runners cannot complete jobs | wrong URL provenance | `serverURL = scheme://r.Host` at workflow submit means a run triggered via `127.0.0.1` hands the runner a job whose Worker dials `127.0.0.1/_apis/connectionData` — connection refused for any runner not sharing the server's network namespace (the listener half works because IT uses the configured registration URL). Real GHES embeds its configured external URL. Fix: `BLEEPHUB_EXTERNAL_URL` honored by baseURL/serverURL derivation; request-Host remains the default when unset. Found by TEST 14 — the dispatcher-spawned runner ran the job but could never report completion. |
 | ~~1769~~ | P2 | bleephub — agent registration drops `ephemeral`; `config.sh --ephemeral` refuses ("server does not support… 'Ephemeral' flag") | round-trip fidelity | The Agent struct has the field but handleRegisterAgent never copies it from the request, so the response omits it and the official runner aborts ephemeral configuration — the dispatcher's one-runner-per-job model registers all runners `--ephemeral`. Round-trip the flag and deregister ephemeral agents after their job completes (real GitHub auto-removes them). Found by TEST 14. |
