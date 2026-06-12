@@ -354,7 +354,12 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 		after := cmd.New.String()
 		payload := buildPushPayload(repo, nil, ref, before, after)
 		s.emitWebhookEvent(repoKey, "push", "", payload)
-		go s.triggerWorkflowsForEvent(repoKey, "push", ref)
+		go s.triggerWorkflowsForEvent(repoKey, "push", "", ref, payload)
+		// A push to an open PR's head branch is a pull_request
+		// "synchronize" event on real GitHub.
+		if branch := strings.TrimPrefix(ref, "refs/heads/"); branch != ref {
+			go s.firePullRequestSynchronize(repo, repoKey, branch)
+		}
 	}
 
 	w.Header().Set("Content-Type", "application/x-git-receive-pack-result")

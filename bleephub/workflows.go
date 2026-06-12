@@ -81,6 +81,12 @@ type Workflow struct {
 	// (reruns bump it and archive the prior attempt in
 	// Store.WorkflowAttempts).
 	Attempt int `json:"attempt,omitempty"`
+	// EventPayload is the triggering webhook payload (github.event).
+	// In-flight runs aren't persisted, so neither is this.
+	EventPayload map[string]interface{} `json:"-"`
+	// TypedInputs is the typed `inputs` expression context (boolean /
+	// number inputs carry real types); Inputs keeps the string forms.
+	TypedInputs map[string]interface{} `json:"-"`
 
 	// WorkflowFileID / WorkflowFilePath identify the originating workflow
 	// FILE (the YAML on disk), which is stable across every run produced
@@ -117,6 +123,13 @@ type WorkflowEventMeta struct {
 	Sha       string
 	Repo      string
 	Inputs    map[string]string
+	// TypedInputs carries workflow_dispatch inputs with their declared
+	// types (boolean/number) for the `inputs` expression context;
+	// Inputs keeps the string forms (github.event.inputs).
+	TypedInputs map[string]interface{}
+	// Payload is the webhook event payload that triggered the run; it
+	// becomes the github.event expression/runner context.
+	Payload map[string]interface{}
 }
 
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
@@ -223,6 +236,25 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Sha = m.Sha
 		workflow.RepoFullName = m.Repo
 		workflow.Inputs = m.Inputs
+		workflow.TypedInputs = m.TypedInputs
+		workflow.EventPayload = m.Payload
+	}
+
+	// Concurrency groups are template strings on real GitHub
+	// (`group: ci-${{ github.ref }}`); resolve them before grouping.
+	if workflow.ConcurrencyGroup != "" && strings.Contains(workflow.ConcurrencyGroup, "${{") {
+		inputsCtx := make(map[string]interface{}, len(workflow.Inputs))
+		for k, v := range workflow.Inputs {
+			inputsCtx[k] = v
+		}
+		group, err := EvalTemplate(workflow.ConcurrencyGroup, &ExprContext{Contexts: map[string]interface{}{
+			"github": s.githubContextMap(workflow),
+			"inputs": inputsCtx,
+		}})
+		if err != nil {
+			return nil, fmt.Errorf("concurrency.group: %w", err)
+		}
+		workflow.ConcurrencyGroup = group
 	}
 
 	// Resolve the originating workflow FILE so the GitHub-shape run object
@@ -960,6 +992,9 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 	for k, v := range wf.Inputs {
 		inputsCtx[k] = v
 	}
+	for k, v := range wf.TypedInputs {
+		inputsCtx[k] = v
+	}
 
 	varsCtx := make(map[string]interface{})
 	if wf.RepoFullName != "" {
@@ -1013,7 +1048,7 @@ func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
 		refName = strings.TrimPrefix(ref, "refs/tags/")
 		refType = "tag"
 	}
-	return map[string]interface{}{
+	m := map[string]interface{}{
 		"event_name":       eventName,
 		"ref":              ref,
 		"ref_name":         refName,
@@ -1026,6 +1061,28 @@ func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
 		"run_attempt":      strconv.Itoa(wf.AttemptNumber()),
 		"workflow":         wf.Name,
 	}
+	if wf.EventPayload != nil {
+		m["event"] = wf.EventPayload
+		if sender, _ := wf.EventPayload["sender"].(map[string]interface{}); sender != nil {
+			if login, _ := sender["login"].(string); login != "" {
+				m["actor"] = login
+			}
+		}
+		// PR-triggered runs carry head_ref/base_ref, like real GitHub.
+		if pr, _ := wf.EventPayload["pull_request"].(map[string]interface{}); pr != nil {
+			if head, _ := pr["head"].(map[string]interface{}); head != nil {
+				if r, _ := head["ref"].(string); r != "" {
+					m["head_ref"] = r
+				}
+			}
+			if base, _ := pr["base"].(map[string]interface{}); base != nil {
+				if r, _ := base["ref"].(string); r != "" {
+					m["base_ref"] = r
+				}
+			}
+		}
+	}
+	return m
 }
 
 // validateJobGraph checks for cycles in the job dependency graph.

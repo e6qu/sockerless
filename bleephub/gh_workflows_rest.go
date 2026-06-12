@@ -194,6 +194,27 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 		req.Ref = "refs/heads/main"
 	}
 
+	// Validate against the workflow's declared workflow_dispatch inputs:
+	// unknown inputs reject, required inputs must arrive, declared
+	// defaults apply, choice options and boolean values are enforced —
+	// matching real GitHub's 422s.
+	on, err := ParseWorkflowOn([]byte(wf.YAML))
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "parse workflow on: "+err.Error())
+		return
+	}
+	dispatchDef, hasDispatch := on["workflow_dispatch"]
+	if !hasDispatch {
+		writeGHError(w, http.StatusUnprocessableEntity, "Workflow does not have 'workflow_dispatch' trigger")
+		return
+	}
+	inputs, typedInputs, err := resolveDispatchInputs(dispatchDef, req.Inputs)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	req.Inputs = inputs
+
 	def, err := ParseWorkflow([]byte(wf.YAML))
 	if err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "parse workflow YAML: "+err.Error())
@@ -207,16 +228,107 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 	def.Env["__serverURL"] = serverURL
 	def.Env["__defaultImage"] = "alpine:latest"
 
+	// The workflow_dispatch event payload carries the string-typed
+	// inputs (github.event.inputs), the ref, and the workflow path.
+	eventInputs := make(map[string]interface{}, len(req.Inputs))
+	for k, v := range req.Inputs {
+		eventInputs[k] = v
+	}
+	payload := map[string]interface{}{
+		"inputs":   eventInputs,
+		"ref":      req.Ref,
+		"workflow": wf.Path,
+	}
+	if user := ghUserFromContext(r.Context()); user != nil {
+		payload["sender"] = senderPayload(user)
+	}
+	if repoObj := s.store.ReposByName[repo]; repoObj != nil {
+		payload["repository"] = repoPayload(repoObj)
+	}
+
 	meta := WorkflowEventMeta{
-		EventName: "workflow_dispatch",
-		Ref:       req.Ref,
-		Sha:       "0000000000000000000000000000000000000000",
-		Repo:      repo,
-		Inputs:    req.Inputs,
+		EventName:   "workflow_dispatch",
+		Ref:         req.Ref,
+		Sha:         "0000000000000000000000000000000000000000",
+		Repo:        repo,
+		Inputs:      req.Inputs,
+		TypedInputs: typedInputs,
+		Payload:     payload,
 	}
 	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "submit: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolveDispatchInputs validates caller inputs against the workflow's
+// workflow_dispatch declarations and applies defaults. It returns the
+// string form (github.event.inputs) and the typed form (the `inputs`
+// expression context, where boolean/number inputs carry real types).
+func resolveDispatchInputs(td *TriggerDef, given map[string]string) (map[string]string, map[string]interface{}, error) {
+	inputs := make(map[string]string, len(given))
+	var declared map[string]*WorkflowInputDef
+	if td != nil {
+		declared = td.Inputs
+	}
+	for name, val := range given {
+		if _, ok := declared[name]; !ok {
+			return nil, nil, fmt.Errorf("Unexpected inputs provided: [%q]", name)
+		}
+		inputs[name] = val
+	}
+	typed := make(map[string]interface{}, len(declared))
+	for name, def := range declared {
+		val, gotten := inputs[name]
+		if !gotten {
+			if def.Default != nil {
+				val = exprToString(normalizeYAMLValue(def.Default))
+				inputs[name] = val
+			} else if def.Required {
+				return nil, nil, fmt.Errorf("Required input %q not provided", name)
+			} else {
+				if def.Type == "boolean" {
+					// Undefaulted booleans are false on real GitHub.
+					val = "false"
+					inputs[name] = val
+				} else {
+					typed[name] = ""
+					continue
+				}
+			}
+		}
+		switch def.Type {
+		case "boolean":
+			switch val {
+			case "true":
+				typed[name] = true
+			case "false":
+				typed[name] = false
+			default:
+				return nil, nil, fmt.Errorf("Input %q must be 'true' or 'false'", name)
+			}
+		case "number":
+			f, err := strconv.ParseFloat(val, 64)
+			if err != nil {
+				return nil, nil, fmt.Errorf("Input %q must be a number", name)
+			}
+			typed[name] = f
+		case "choice":
+			ok := false
+			for _, opt := range def.Options {
+				if exprToString(normalizeYAMLValue(opt)) == val {
+					ok = true
+					break
+				}
+			}
+			if !ok {
+				return nil, nil, fmt.Errorf("Input %q does not match any of the allowed options", name)
+			}
+			typed[name] = val
+		default:
+			typed[name] = val
+		}
+	}
+	return inputs, typed, nil
 }

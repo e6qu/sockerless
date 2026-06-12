@@ -58,8 +58,9 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	repoKey := owner + "/" + name
-	s.emitWebhookEvent(repoKey, "pull_request", "opened", buildPullRequestPayload(repo, pr, user, "opened"))
-	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "refs/heads/"+pr.HeadRefName)
+	openedPayload := buildPullRequestPayload(repo, pr, user, "opened")
+	s.emitWebhookEvent(repoKey, "pull_request", "opened", openedPayload)
+	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "opened", "refs/heads/"+pr.HeadRefName, openedPayload)
 
 	s.recordAuditEvent("pull_request.create", user.Login, "", map[string]interface{}{"repo": repoKey, "pr_id": pr.ID})
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
@@ -223,7 +224,9 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 			action = "reopened"
 		}
 		repoKey := owner + "/" + repoName
-		s.emitWebhookEvent(repoKey, "pull_request", action, buildPullRequestPayload(repo, updated, user, action))
+		payload := buildPullRequestPayload(repo, updated, user, action)
+		s.emitWebhookEvent(repoKey, "pull_request", action, payload)
+		go s.triggerWorkflowsForEvent(repoKey, "pull_request", action, "refs/heads/"+updated.HeadRefName, payload)
 	}
 
 	writeJSON(w, http.StatusOK, pullRequestToJSON(updated, s.store, s.baseURL(r), repo.FullName))
@@ -276,7 +279,9 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 
 	merged := s.store.GetPullRequest(pr.ID)
 	repoKey := owner + "/" + repoName
-	s.emitWebhookEvent(repoKey, "pull_request", "closed", buildPullRequestPayload(repo, merged, user, "closed"))
+	mergedPayload := buildPullRequestPayload(repo, merged, user, "closed")
+	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
+	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
 	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
 	writeJSON(w, http.StatusOK, map[string]interface{}{
