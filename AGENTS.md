@@ -1,5 +1,19 @@
 # Agent Guidelines
 
+> `CLAUDE.md` is a symlink to this file. Edit `AGENTS.md`.
+
+## Continuity files — read before, update after, write timeless
+
+The continuity files are **`STATUS.md`, `PLAN.md`, `DO_NEXT.md`, `WHAT_WE_DID.md`, `BUGS.md`** (and only these — never invent new continuity docs). They are the project's memory across sessions and compactions. Treat them as a first-class deliverable of every task, not an afterthought.
+
+**Before starting a task:** read `STATUS.md` and `DO_NEXT.md` to load the current state, the active branch, and what's next. If they disagree with `git status`/the actual branch, fix them first — a stale continuity file is a bug.
+
+**After finishing a task (in the same commit as the code):** update `STATUS.md` (snapshot), `DO_NEXT.md` (what's next), the `BUGS.md` ledger (file before fixing; strike when fixed; keep the header counts exact), and add/extend the relevant `WHAT_WE_DID.md` entry. Commit code, tests, and continuity files together — never separately.
+
+**Write them in the past tense, describing the end state — not a diary.** The continuity files, PR descriptions, commit messages, and `WHAT_WE_DID.md` entries must read correctly *at the moment the branch merges*. Describe what the branch *is* and what it *did to the codebase as a whole* — the merged result — not the blow-by-blow history of how you got there within the branch. Never write "first I tried X, then it failed, so I switched to Y"; write "Y does Z." A reader six months later sees only the merged diff and the prose next to it; both must be timeless and accurate then. The same rule governs the `BUGS.md` one-liners: state the defect and the fix as facts, not as a session narrative.
+
+**Keep them streamlined.** Old, merged, irrelevant detail belongs in `git log` and PR descriptions, not accreting forever in the continuity files. When a file grows stale, compress the history to a compact summary and keep the live sections (current state, next work, open bugs, durable rules) sharp and actionable.
+
 ## No stubs. No fakes. No mocks. No synthetic behavior. Ever.
 
 This is the single most important rule. Every piece of code in this project — backends, simulators, tests, CI — must do real work or not exist. There is no middle ground.
