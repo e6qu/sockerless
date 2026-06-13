@@ -173,6 +173,12 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 
 		// Notify workflow engine of job completion
 		s.onJobCompleted(r.Context(), job.ID, job.Result)
+
+		// Ephemeral runners exist for exactly one job — real GitHub
+		// auto-deregisters them after it completes (the dispatcher's
+		// one-runner-per-job model depends on the registration not
+		// lingering as an offline zombie).
+		s.removeEphemeralAgent(job.AgentID)
 	} else {
 		s.logger.Warn().Str("planId", planID).Msg("could not find job for finish")
 	}

@@ -570,12 +570,16 @@ jobs:
         run: make bleephub-gh-docker-test
 
   # The official actions/runner registering against bleephub and running
-  # real jobs end-to-end (bleephub + AWS sim + ECS backend in one image;
-  # workloads run on the host engine via the mounted docker.sock).
+  # real jobs end-to-end: host-mode jobs, container-mode jobs +
+  # service containers dispatched through sockerless-backend-ecs to the
+  # AWS sim (workloads on the host engine via the mounted docker.sock,
+  # workspace shared via sim-EFS), and the github-runner dispatcher
+  # spawning an ephemeral runner for a queued job (runner-as-cloud-task
+  # topology, sim-proven).
   sim-bleephub-runner:
     name: sim (bleephub actions/runner)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6.0.3
       - name: Official runner integration harness (Docker)

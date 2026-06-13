@@ -1146,7 +1146,7 @@ func (st *Store) SeedDefaultUser() {
 	t := &Token{
 		Value:     AdminToken(),
 		UserID:    u.ID,
-		Scopes:    "repo, read:org, gist",
+		Scopes:    "repo, workflow, read:org, admin:org, gist",
 		CreatedAt: now,
 	}
 	st.Tokens[t.Value] = t

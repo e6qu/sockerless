@@ -381,14 +381,28 @@ bleephub-gh-docker-test:
 	@docker run --rm bleephub-gh-test:local
 
 # Official actions/runner against bleephub end-to-end: the runner
-# registers, polls the broker, executes host-mode jobs (jobContainer
-# null — real GitHub's shape for jobs without `container:`), uploads
-# timeline records + logs, and completes. Self-contained image, no
-# docker socket needed. Container-mode jobs against cloud backends are
-# gated on the bind-mount→EFS translation (docs/GITHUB_RUNNER.md).
+# registers, polls the broker, executes host-mode AND container-mode
+# jobs (jobContainer null vs image string — real GitHub's shapes),
+# service containers, uploads timeline records + logs, and completes.
+# Container/service jobs dispatch through sockerless-backend-ecs to
+# the AWS simulator; workloads run on the host engine via the mounted
+# docker.sock, sharing the runner's workspace through the sim-EFS
+# host dir mounted at an identical path inside and out (the
+# runner-as-cloud-task data plane, sim-proven). Ports: 80 (bleephub —
+# the runner strips non-standard ports from URLs) and 3375 (backend —
+# workload agents dial back via host.docker.internal).
 .PHONY: bleephub-runner-docker-test
 bleephub-runner-docker-test:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
 	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
 	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness…$(COLOR_RESET)\n"
-	@docker run --rm bleephub-runner-int:local
+	@rm -rf /tmp/sockerless-bleephub-efs && mkdir -p /tmp/sockerless-bleephub-efs
+	@docker run --rm \
+	  --security-opt label=disable \
+	  -v $(CURDIR)/bleephub/test:/test:ro \
+	  -v /var/run/docker.sock:/var/run/docker.sock \
+	  -v /tmp/sockerless-bleephub-efs:/tmp/sockerless-bleephub-efs \
+	  -e SIM_EFS_DATA_DIR=/tmp/sockerless-bleephub-efs \
+	  -e BLEEPHUB_TEST_FROM \
+	  -p 80:80 -p 3375:3375 \
+	  bleephub-runner-int:local

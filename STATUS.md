@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/dispatcher-arc-parity-1752` |
-| In-flight | **GitHub-runner dispatcher hardening** (one PR, BUG-1752..1762): execution-state cleanup keying (the Azure ProvisioningState sweep was deleting runner Jobs mid-CI-job), GitHub-side offline-runner reap on GCP/Azure + ListRunners pagination, pre-pickup idle gate in every runner image (replacing the job-killing whole-process timeout / absent timeout), one canonical RUNNER_* env contract dispatcher↔images, NO_EXECUTION orphan grace, ACA runner resources 2cpu/4Gi, Azure deployable hardening (healthz/$REPO/verify-retry/rate-limit loop) + first tests, `runner_job_timeout` + `max_concurrent` knobs on all three dispatchers, secret-bound registration tokens (Secret Manager / ACA secretRef), spec + README drift fixes. |
-| Last merged | #550 bleephub Actions follow-ups + bind-translation parity (BUG-1745..1751). |
+| Active branch | `feat/runner-cloud-task-topology` |
+| In-flight | **Runner-as-cloud-task topology, sim-proven** (one PR, BUG-1763..1771): the bleephub official-runner harness now runs container-mode jobs + service containers through sockerless-backend-ecs → AWS sim (workspace shared via sim-EFS access points, host-side sharing asserted) and closes the control plane with the github-runner dispatcher (--api-base + capability-based token verification) spawning an ephemeral runner for a queued bleephub job — 14/14 integration tests green locally. Real bugs fixed on the way: jobServiceContainers/object-container TemplateToken wire shape, ephemeral flag round-trip + post-job deregistration, run-status queued-until-a-job-starts, BLEEPHUB_EXTERNAL_URL (GHES external-URL knob), admin-token scope header, engine-conditional host-gateway on dispatcher spawns. Cells 1+2 now need only the live pass. |
+| Last merged | #551 dispatcher ARC-parity hardening (BUG-1752..1762). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1762 filed - 1720 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1771 filed - 1729 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 

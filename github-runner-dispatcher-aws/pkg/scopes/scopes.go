@@ -23,20 +23,38 @@ import (
 //     even when the repo is public.
 var Required = []string{"repo", "workflow"}
 
-// Verify hits `GET /user` with the supplied token; reads the
-// `X-OAuth-Scopes` response header and asserts every entry in Required
-// is present. Returns a guidance error otherwise.
+// DefaultAPIBase is github.com's REST root. GHES instances use
+// `https://<host>/api/v3` (the dispatchers' `--api-base` flag).
+const DefaultAPIBase = "https://api.github.com"
+
+// Verify checks the token against `apiBase` (empty → github.com).
+// `GET /user` must authenticate; then one of two paths proves the
+// token can do the dispatcher's job:
+//
+//   - Classic PATs return the `X-OAuth-Scopes` header — assert every
+//     entry in Required is granted.
+//   - Fine-grained PATs, GitHub App installation tokens, and GHES
+//     deployments may not send that header at all. Requiring it
+//     rejected tokens that work; instead, verify by CAPABILITY — mint
+//     a runner registration token for `repo`, the exact permission
+//     the dispatcher needs (the mint is discarded; registration
+//     tokens are short-lived and single-purpose).
 //
 // The HTTP client is taken as a parameter so smoke tests can swap it
-// out with a roundtripper that returns a deterministic header.
-func Verify(ctx context.Context, client *http.Client, token string) error {
+// out with a roundtripper that returns deterministic responses.
+func Verify(ctx context.Context, client *http.Client, apiBase, repo, token string) error {
 	if client == nil {
 		client = http.DefaultClient
 	}
+	if apiBase == "" {
+		apiBase = DefaultAPIBase
+	}
+	apiBase = strings.TrimRight(apiBase, "/")
 	if token == "" {
 		return fmt.Errorf("github token is empty — set $GITHUB_TOKEN, run `gh auth token | …`, or pass --token=…")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
+	userURL := apiBase + "/user"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, userURL, nil)
 	if err != nil {
 		return fmt.Errorf("build /user request: %w", err)
 	}
@@ -44,7 +62,7 @@ func Verify(ctx context.Context, client *http.Client, token string) error {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("GET https://api.github.com/user: %w", err)
+		return fmt.Errorf("GET %s: %w", userURL, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusUnauthorized {
@@ -63,12 +81,44 @@ func Verify(ctx context.Context, client *http.Client, token string) error {
 			Retry:     resp.Header.Get("Retry-After"),
 		}
 	}
-	scopes := parseScopesHeader(resp.Header.Get("X-OAuth-Scopes"))
-	missing := missingScopes(Required, scopes)
-	if len(missing) > 0 {
+	if header := resp.Header.Get("X-OAuth-Scopes"); header != "" {
+		scopes := parseScopesHeader(header)
+		missing := missingScopes(Required, scopes)
+		if len(missing) > 0 {
+			return fmt.Errorf(
+				"github token is missing required scopes: %v. Granted: %v. Reissue via `gh auth refresh -s %s`",
+				missing, scopes, strings.Join(missing, " -s "),
+			)
+		}
+		return nil
+	}
+	return verifyByCapability(ctx, client, apiBase, repo, token)
+}
+
+// verifyByCapability proves the token can mint runner registration
+// tokens — the dispatcher's one load-bearing permission — for tokens
+// that don't advertise scopes via X-OAuth-Scopes.
+func verifyByCapability(ctx context.Context, client *http.Client, apiBase, repo, token string) error {
+	if repo == "" {
+		return fmt.Errorf("token sends no X-OAuth-Scopes header (fine-grained PAT / app token / GHES) and no repo is configured to capability-probe against")
+	}
+	mintURL := fmt.Sprintf("%s/repos/%s/actions/runners/registration-token", apiBase, repo)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, mintURL, nil)
+	if err != nil {
+		return fmt.Errorf("build registration-token probe: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("POST %s: %w", mintURL, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf(
-			"github token is missing required scopes: %v. Granted: %v. Reissue via `gh auth refresh -s %s` or a new fine-grained PAT including: %s",
-			missing, scopes, strings.Join(missing, " -s "), strings.Join(Required, ", "),
+			"token authenticates but cannot mint runner registration tokens for %s (%d %s) — grant the fine-grained `administration: write` repo permission (classic: %v). Body: %s",
+			repo, resp.StatusCode, http.StatusText(resp.StatusCode), Required, strings.TrimSpace(string(body)),
 		)
 	}
 	return nil

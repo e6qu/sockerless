@@ -5,10 +5,20 @@ log() { echo "=== [bleephub-test] $*"; }
 fail() {
     echo "!!! [bleephub-test] FAIL: $*" >&2
     show_diag
+    if [ "${BLEEPHUB_HOLD:-}" = "1" ]; then
+        echo "!!! [bleephub-test] BLEEPHUB_HOLD=1 — stack held for inspection (sim :4566, backend :3375); ctrl-c / docker rm -f to release" >&2
+        sleep infinity
+    fi
     exit 1
 }
 
 show_diag() {
+    for lf in "${LOG_DIR:-/tmp}"/simulator-aws.log "${LOG_DIR:-/tmp}"/sockerless-backend-ecs.log; do
+        if [ -f "$lf" ]; then
+            echo "=== tail $lf ==="
+            tail -40 "$lf"
+        fi
+    done
     if [ -d /runner/_diag ]; then
         echo "=== Docker exec commands ==="
         for f in /runner/_diag/Worker_*.log; do
@@ -29,13 +39,17 @@ show_diag() {
 # The official runner strips non-standard ports from URLs (uses uri.Host not uri.Authority).
 # So bleephub MUST run on port 80 (the default HTTP port).
 #
-# Jobs run in HOST MODE (jobContainer null — what real GitHub sends for
-# jobs without `container:`): the runner executes steps directly in this
-# container, which exercises the full protocol surface (registration,
-# broker, job acquire, step execution, timeline records, log upload,
-# completion) without a container engine. Container-mode jobs against
-# the cloud backends are gated on the bind-mount→EFS translation
-# documented in docs/GITHUB_RUNNER.md.
+# Tests 1-11 run in HOST MODE (jobContainer null — what real GitHub
+# sends for jobs without `container:`): the runner executes steps
+# directly in this container, exercising the full protocol surface.
+# Tests 12+ are CONTAINER-MODE: jobs declaring `container:` (and
+# `services:`) dispatch through sockerless-backend-ecs to the AWS
+# simulator; the workload containers run on the host engine (mounted
+# docker.sock) and share the runner's workspace through the sim-EFS
+# host dir, exactly the runner-as-cloud-task data plane the live cells
+# use. TEST 14 closes the control-plane loop: the github-runner
+# dispatcher polls bleephub for the queued job and spawns the runner
+# itself.
 BLEEPHUB_ADDR="127.0.0.1:80"
 PIDS=()
 
@@ -44,6 +58,16 @@ cleanup() {
     for pid in "${PIDS[@]}"; do
         kill "$pid" 2>/dev/null || true
     done
+    # Reap sim-spawned workload containers on the HOST engine — they
+    # outlive the sim when a run dies mid-test (the sim exits with this
+    # container; its workloads don't).
+    if [ -S /var/run/docker.sock ]; then
+        for _ in 1 2 3; do
+            ids=$(docker ps -aq --filter label=sockerless-sim 2>/dev/null || true)
+            [ -z "$ids" ] && break
+            echo "$ids" | xargs docker rm -f >/dev/null 2>&1 || true
+        done
+    fi
 }
 trap cleanup EXIT
 
@@ -60,10 +84,88 @@ wait_for_url() {
 log "Starting bleephub on $BLEEPHUB_ADDR"
 # The admin token has no default — the binary fails loudly if this is unset.
 export BLEEPHUB_ADMIN_TOKEN="bleephub-admin-token-00000000000000000000"
-bleephub --addr "$BLEEPHUB_ADDR" --log-level info &
+# Job messages must carry a server URL every runner can reach — the
+# dispatcher-spawned runner lives on the HOST engine and dials
+# host.docker.internal:80 (published), while the resident runner lives
+# in THIS container; the hosts entry points the name back at ourselves
+# so one URL serves both (the GHES external-URL model).
+export BLEEPHUB_EXTERNAL_URL="http://host.docker.internal"
+echo "127.0.0.1 host.docker.internal" >> /etc/hosts
+bleephub --addr ":80" --log-level info &
 PIDS+=($!)
 wait_for_url "http://$BLEEPHUB_ADDR/health"
 log "bleephub ready"
+
+# --- 2. Start the AWS simulator + sockerless-backend-ecs ---
+# SIM_EFS_DATA_DIR must be a host directory mounted into this container
+# at the SAME path (see the Makefile target): the sim resolves EFS
+# access points to host dirs and the HOST engine bind-mounts them into
+# workload containers, so the paths must be valid on both sides.
+: "${SIM_EFS_DATA_DIR:?SIM_EFS_DATA_DIR must be set to the identical-path EFS host mount (see Makefile bleephub-runner-docker-test)}"
+# Local podman-machine note: the VM enforces SELinux, and sim-spawned
+# workloads run confined (container_t) while this harness runs
+# label-disabled — relabel the EFS root once per machine so both sides
+# can write it: podman machine ssh "sudo chcon -R -t container_file_t -l s0 $SIM_EFS_DATA_DIR"
+# CI (Docker, no SELinux) needs nothing.
+export AWS_ACCESS_KEY_ID=sim AWS_SECRET_ACCESS_KEY=sim AWS_REGION=us-east-1
+SIM_ADDR="127.0.0.1:4566"
+
+log "Starting simulator-aws on $SIM_ADDR"
+LOG_DIR="$SIM_EFS_DATA_DIR/logs"
+mkdir -p "$LOG_DIR"
+simulator-aws --addr "$SIM_ADDR" >"$LOG_DIR/simulator-aws.log" 2>&1 &
+PIDS+=($!)
+wait_for_url "http://$SIM_ADDR/health"
+
+log "Bootstrapping sim: ECS cluster + EFS workspace"
+curl -sf -X POST "http://$SIM_ADDR/"     -H "Content-Type: application/x-amz-json-1.1"     -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster"     -d '{"clusterName":"sim-cluster"}' >/dev/null || fail "create ECS cluster"
+
+# EFS filesystem + two access points: the runner workspace and the
+# runner externals — the same shape the live cell terraform provisions.
+FS_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/file-systems"     -H 'Content-Type: application/json'     -d '{"CreationToken":"bleephub-runner"}' | jq -r '.FileSystemId // empty')
+[ -n "$FS_ID" ] || fail "create EFS filesystem"
+WS_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ws\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-ws\"}}" | jq -r '.AccessPointId // empty')
+[ -n "$WS_AP_ID" ] || fail "create workspace access point"
+EXT_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ext\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-externals\"}}" | jq -r '.AccessPointId // empty')
+[ -n "$EXT_AP_ID" ] || fail "create externals access point"
+
+# The runner's workspace lives ON the workspace access point (the
+# runner-as-cloud-task shape: the cell runner-task mounts EFS at its
+# work dir). Externals are staged onto their access point so job
+# containers see the same node toolchain the runner uses.
+WORK_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-ws"
+EXT_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-externals"
+mkdir -p "$WORK_DIR" "$EXT_DIR"
+log "Staging runner externals onto EFS ($EXT_DIR)…"
+cp -a /runner/externals/. "$EXT_DIR/"
+
+case "$(uname -m)" in
+    x86_64)        ECS_ARCH=X86_64 ;;
+    aarch64|arm64) ECS_ARCH=ARM64 ;;
+    *) fail "unsupported arch $(uname -m)" ;;
+esac
+
+export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
+export SOCKERLESS_ECS_CLUSTER=sim-cluster
+export SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0
+export SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim
+export SOCKERLESS_ECS_CPU_ARCHITECTURE="$ECS_ARCH"
+# Workload containers run on the HOST engine and dial back through the
+# published backend port (the sim adds host.docker.internal:host-gateway
+# to task containers).
+export SOCKERLESS_CALLBACK_URL=http://host.docker.internal:3375
+export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+# The runner's container-job binds translate onto the shared volumes:
+# workspace-root and externals map to their access points; sub-paths
+# under the workspace drop (the parent mount covers them);
+# /var/run/docker.sock drops.
+export SOCKERLESS_ECS_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${WS_AP_ID}=${FS_ID},runner-externals=/runner/externals=${EXT_AP_ID}=${FS_ID}"
+
+log "Starting sockerless-backend-ecs on :3375"
+sockerless-backend-ecs --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-ecs.log" 2>&1 &
+PIDS+=($!)
+wait_for_url "http://127.0.0.1:3375/_ping"
+log "sockerless-backend-ecs ready (shared volumes: workspace + externals)"
 
 # --- 4. Configure the runner ---
 log "Configuring runner..."
@@ -75,10 +177,10 @@ export GITHUB_ACTIONS_RUNNER_TLS_NO_VERIFY=1
 # export GITHUB_ACTIONS_RUNNER_TRACE=1  # Uncomment for debug logging
 
 ./config.sh \
-    --url "http://$BLEEPHUB_ADDR/bleephub/test" \
+    --url "$BLEEPHUB_EXTERNAL_URL/bleephub/test" \
     --token BLEEPHUB_REG_TOKEN \
     --name test-runner \
-    --work _work \
+    --work "$WORK_DIR" \
     --unattended \
     --replace \
     --labels self-hosted,linux,arm64 \
@@ -88,8 +190,8 @@ export GITHUB_ACTIONS_RUNNER_TLS_NO_VERIFY=1
 log "Runner configured"
 
 # --- 5. Start runner ---
-log "Starting runner..."
-./run.sh 2>&1 &
+log "Starting runner (DOCKER_HOST → sockerless-backend-ecs)..."
+DOCKER_HOST=tcp://127.0.0.1:3375 ./run.sh 2>&1 &
 RUNNER_PID=$!
 PIDS+=($RUNNER_PID)
 
@@ -134,27 +236,6 @@ wait_for_job() {
     log "Timeout waiting for $label (last status: $STATUS)"
     return 1
 }
-
-# ===== TEST 1: Single-job submission =====
-log "===== TEST 1: Single-job submission ====="
-SUBMIT_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/submit" \
-    -H "Content-Type: application/json" \
-    -d '{"hostMode":true,"steps":[{"run":"echo Hello from bleephub host mode"},{"run":"uname -a"}]}')
-
-JOB_ID=$(echo "$SUBMIT_RESP" | jq -r '.jobId')
-if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
-    fail "Job submission failed: $SUBMIT_RESP"
-fi
-log "Job submitted: $JOB_ID"
-
-if ! wait_for_job "$JOB_ID" "single-job"; then
-    show_diag
-    fail "Single-job test failed"
-fi
-log "TEST 1 PASSED: Single-job submission"
-
-# Give runner a moment to reset between tests
-sleep 3
 
 # Helper: submit workflow YAML and wait for completion
 submit_and_wait_workflow() {
@@ -206,6 +287,34 @@ submit_and_wait_workflow() {
     show_diag
     fail "Timeout waiting for $label (last status: $status)"
 }
+
+# Iteration aid: BLEEPHUB_TEST_FROM=12 skips the host-mode suite and
+# goes straight to the container-mode tests. CI runs everything.
+TEST_FROM="${BLEEPHUB_TEST_FROM:-1}"
+
+if [ "$TEST_FROM" -le 11 ]; then
+
+# ===== TEST 1: Single-job submission =====
+log "===== TEST 1: Single-job submission ====="
+SUBMIT_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/submit" \
+    -H "Content-Type: application/json" \
+    -d '{"hostMode":true,"steps":[{"run":"echo Hello from bleephub host mode"},{"run":"uname -a"}]}')
+
+JOB_ID=$(echo "$SUBMIT_RESP" | jq -r '.jobId')
+if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "null" ]; then
+    fail "Job submission failed: $SUBMIT_RESP"
+fi
+log "Job submitted: $JOB_ID"
+
+if ! wait_for_job "$JOB_ID" "single-job"; then
+    show_diag
+    fail "Single-job test failed"
+fi
+log "TEST 1 PASSED: Single-job submission"
+
+# Give runner a moment to reset between tests
+sleep 3
+
 
 # ===== TEST 2: Multi-job workflow (needs:) =====
 submit_and_wait_workflow 2 "Multi-job workflow" '
@@ -509,4 +618,112 @@ CLEANUP_RESULT=$(echo "$WF11_STATUS" | jq -r '.jobs.cleanup.result')
 [ "$CLEANUP_RESULT" = "success" ] || fail "always() cleanup result=$CLEANUP_RESULT, want success (must run after cancel)"
 log "TEST 11 PASSED: Cancellation (run cancelled, always() cleanup ran)"
 
-log "===== ALL 11 INTEGRATION TESTS PASSED ====="
+sleep 3
+
+fi  # TEST_FROM <= 11
+
+# ===== TEST 12: Container-mode job through sockerless-backend-ecs =====
+# The job declares `container:` — the runner creates the job container
+# via its DOCKER_HOST (sockerless-backend-ecs), which dispatches it as
+# a sim-ECS task on the host engine. The runner's workspace bind
+# translates to the shared EFS volume; steps run via docker exec.
+log "===== TEST 12: Container-mode job (sim-ECS task) ====="
+
+submit_and_wait_workflow 12 "Container-mode job" '
+name: container-test
+jobs:
+  ctr:
+    runs-on: self-hosted
+    container: alpine:3.20
+    steps:
+      - run: grep -qi alpine /etc/os-release
+      - run: echo "container-proof-payload" > "$GITHUB_WORKSPACE/proof.txt"
+      - run: test "$(cat "$GITHUB_WORKSPACE/proof.txt")" = "container-proof-payload"
+' 300
+
+# Data-plane assertion: the file written INSIDE the job container (a
+# sim-ECS task on the host engine) must be visible in the runner
+# workspace on the shared EFS volume — the exact sharing contract the
+# runner-as-cloud-task topology depends on.
+PROOF=$(find "$WORK_DIR" -name proof.txt -exec cat {} \; 2>/dev/null | head -1)
+[ "$PROOF" = "container-proof-payload" ] || fail "workspace not shared: proof.txt not found under $WORK_DIR (got: '$PROOF')"
+log "Workspace sharing verified: container-written file visible on the runner EFS workspace"
+
+sleep 3
+
+# ===== TEST 13: Service container reachable from the job container =====
+log "===== TEST 13: Service container (nginx) reachable by alias ====="
+
+submit_and_wait_workflow 13 "Service container" '
+name: services-test
+jobs:
+  svc:
+    runs-on: self-hosted
+    container: alpine:3.20
+    services:
+      web:
+        image: nginx:alpine
+    steps:
+      - run: for i in $(seq 1 30); do wget -qO- http://web/ >/tmp/idx.html 2>/dev/null && break; sleep 1; done
+      - run: grep -qi nginx /tmp/idx.html
+' 300
+
+sleep 3
+
+# ===== TEST 14: Dispatcher-in-the-loop runner spawn (runner-as-task) =====
+# The control-plane half of the topology: a job is queued whose labels
+# no resident runner satisfies; github-runner-dispatcher-aws polls
+# bleephub (--api-base), mints a registration token, and spawns an
+# ephemeral runner container on the host engine; that runner registers,
+# takes the job, and completes.
+log "===== TEST 14: Dispatcher spawns the runner for a queued job ====="
+
+# Spawn image: one thin layer over the harness image (already on the
+# host from the make target's build) with the spawn entrypoint.
+docker build -q -t bleephub-spawn-runner:local -f /test/Dockerfile.spawn-runner /test >/dev/null \
+    || fail "build spawn-runner image"
+
+cat > /tmp/dispatcher.toml <<EOF
+[[label]]
+name        = "dispatched"
+docker_host = "unix:///var/run/docker.sock"
+image       = "bleephub-spawn-runner:local"
+EOF
+
+WF14_YAML='name: dispatched-test
+jobs:
+  hello:
+    runs-on: [self-hosted, dispatched]
+    steps:
+      - run: echo "ran on a dispatcher-spawned runner"
+      - run: test -n "$RUNNER_NAME"'
+
+WF14_RESP=$(curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflow" \
+    -H "Content-Type: application/json" \
+    -d "$(jq -n --arg wf "$WF14_YAML" '{workflow: $wf, hostMode: true}')")
+WF14_ID=$(echo "$WF14_RESP" | jq -r '.workflowId')
+[ -n "$WF14_ID" ] && [ "$WF14_ID" != "null" ] || fail "dispatched-test submission failed: $WF14_RESP"
+log "Workflow queued (no resident runner carries the 'dispatched' label)"
+
+log "Running dispatcher --once against bleephub..."
+github-runner-dispatcher-aws \
+    --repo bleephub/test \
+    --token "$BLEEPHUB_ADMIN_TOKEN" \
+    --api-base "http://$BLEEPHUB_ADDR/api/v3" \
+    --config /tmp/dispatcher.toml \
+    --once 2>&1 | sed 's/^/[dispatcher] /' || fail "dispatcher --once failed"
+
+log "Waiting for the dispatcher-spawned runner to complete the job (max 300s)..."
+for i in $(seq 1 300); do
+    WF14_STATUS=$(curl -sf -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" "http://$BLEEPHUB_ADDR/internal/exec/workflows/$WF14_ID" 2>/dev/null || echo '{}')
+    STATUS=$(echo "$WF14_STATUS" | jq -r '.status // "unknown"')
+    RESULT=$(echo "$WF14_STATUS" | jq -r '.result // ""')
+    if [ "$STATUS" = "completed" ]; then break; fi
+    if [ "$i" -eq 120 ]; then log "Still waiting... status=$STATUS (${i}s)"; fi
+    sleep 1
+done
+[ "$STATUS" = "completed" ] || fail "dispatched job never completed (status: $STATUS)"
+[ "$RESULT" = "success" ] || fail "dispatched job result=$RESULT, want success"
+log "TEST 14 PASSED: dispatcher-spawned runner executed the queued job"
+
+log "===== ALL 14 INTEGRATION TESTS PASSED ====="

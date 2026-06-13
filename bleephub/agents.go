@@ -63,6 +63,13 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	if desc, ok := raw["osDescription"].(string); ok {
 		agent.OSDescription = desc
 	}
+	// Round-trip the ephemeral flag — config.sh --ephemeral checks the
+	// REGISTRATION RESPONSE for it and aborts with "The GitHub server
+	// does not support configuring a self-hosted runner with
+	// 'Ephemeral' flag" when the server drops it.
+	if eph, ok := raw["ephemeral"].(bool); ok {
+		agent.Ephemeral = eph
+	}
 	if labelsRaw, ok := raw["labels"].([]interface{}); ok {
 		for _, l := range labelsRaw {
 			if lm, ok := l.(map[string]interface{}); ok {
@@ -98,14 +105,10 @@ func (s *Server) handleRegisterAgent(w http.ResponseWriter, r *http.Request) {
 	agent.Status = "online"
 	agent.CreatedOn = time.Now()
 
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
 	if agent.Authorization == nil {
 		agent.Authorization = &AgentAuthorization{}
 	}
-	agent.Authorization.AuthorizationURL = scheme + "://" + r.Host + "/_apis/v1/auth/"
+	agent.Authorization.AuthorizationURL = s.baseURL(r) + "/_apis/v1/auth/"
 	agent.Authorization.ClientID = uuid.New().String()
 
 	s.store.Agents[agent.ID] = &agent
@@ -219,4 +222,23 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	s.logger.Info().Int("id", agentID).Msg("agent unregistered")
 	w.WriteHeader(http.StatusOK)
+}
+
+// removeEphemeralAgent deregisters an agent that registered with the
+// ephemeral flag once its single job has finished — mirroring real
+// GitHub, which auto-removes ephemeral runners after one job so the
+// registration doesn't linger as an offline zombie.
+func (s *Server) removeEphemeralAgent(agentID int) {
+	if agentID == 0 {
+		return
+	}
+	s.store.mu.Lock()
+	agent, ok := s.store.Agents[agentID]
+	if !ok || !agent.Ephemeral {
+		s.store.mu.Unlock()
+		return
+	}
+	delete(s.store.Agents, agentID)
+	s.store.mu.Unlock()
+	s.logger.Info().Int("id", agentID).Str("name", agent.Name).Msg("ephemeral agent deregistered after job completion")
 }

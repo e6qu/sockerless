@@ -166,7 +166,7 @@ func (s *Server) handleListWorkflowFileRuns(w http.ResponseWriter, r *http.Reque
 		if run.Name != wf.Name {
 			continue
 		}
-		if statusFilter != "" && runStatus(string(run.Status)) != statusFilter {
+		if statusFilter != "" && runStatus(run) != statusFilter {
 			continue
 		}
 		if branchFilter != "" && headBranchOf(run) != branchFilter {

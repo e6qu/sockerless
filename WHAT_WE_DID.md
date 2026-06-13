@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-12 - Runner-as-cloud-task topology, sim-proven (cells 1+2 minus the live pass)
+
+The bleephub official-runner harness became the topology proof. Its
+image now bundles simulator-aws + sockerless-backend-ecs + the
+dispatcher next to bleephub and the runner; the make target mounts the
+host docker.sock and a sim-EFS host dir at an identical path inside
+and out, so the runner's workspace IS an EFS access point and
+`container:` jobs dispatched through the backend land as sim-ECS tasks
+on the host engine sharing it. TEST 12 asserts the contract from the
+outside: a file written inside the job container shows up on the
+runner's EFS workspace. TEST 13 runs a `services:` nginx reachable by
+alias from the job container. TEST 14 closes the control plane: the
+github-runner dispatcher (new `--api-base`; capability-probe token
+verification for header-less tokens) polls bleephub for a queued job
+no resident runner can take, spawns an ephemeral runner on the host
+engine, and the job completes on it — 14/14 green locally
+(BLEEPHUB_TEST_FROM + BLEEPHUB_HOLD knobs make single-test iteration
+cheap). Every wall on the way was a real bug, filed + fixed
+(BUG-1763..1771): the runner deserializes jobServiceContainers /
+object-form `container:` as TemplateTokens (plain JSON maps fail job
+start; `env` not `environment`); registration must round-trip
+`ephemeral` or config.sh aborts, and completed ephemeral agents now
+deregister; runs with no started job reported `in_progress`, hiding
+them from `?status=queued` pollers; job messages baked the submitter's
+request-Host as the server URL so off-host runners could run but never
+complete jobs — `BLEEPHUB_EXTERNAL_URL` is the GHES-shaped fix; the
+admin token advertised a scope header without `workflow`; and
+dispatcher spawns add `host-gateway` only on engines that need and
+accept it. Catalog: docs/RUNNERS.md D-8..D-12.
+
 ## 2026-06-12 - GitHub-runner dispatcher hardening (ARC-without-k8s parity)
 
 Source audit of `github-runner-dispatcher-{aws,gcp,azure}` against their

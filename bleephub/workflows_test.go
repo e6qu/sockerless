@@ -330,36 +330,86 @@ func TestBuildJobMessageWithServices(t *testing.T) {
 		t.Fatalf("parse message: %v", err)
 	}
 
+	// The official runner deserializes jobServiceContainers as a
+	// mapping TemplateToken ({"type":2,"map":[{Key,Value}]}); a plain
+	// JSON map fails its template validation at job start.
 	svcContainers, ok := msg["jobServiceContainers"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("jobServiceContainers is %T, want map", msg["jobServiceContainers"])
+		t.Fatalf("jobServiceContainers is %T, want mapping token", msg["jobServiceContainers"])
 	}
-	if len(svcContainers) != 2 {
-		t.Fatalf("service containers = %d, want 2", len(svcContainers))
+	if got := svcContainers["type"]; got != float64(2) {
+		t.Fatalf("jobServiceContainers token type = %v, want 2 (mapping)", got)
 	}
-
-	redis, ok := svcContainers["redis"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("redis is %T", svcContainers["redis"])
-	}
-	if redis["image"] != "redis:7" {
-		t.Errorf("redis.image = %v", redis["image"])
+	entries := tokenMapEntries(t, svcContainers)
+	if len(entries) != 2 {
+		t.Fatalf("service containers = %d, want 2", len(entries))
 	}
 
-	pg, ok := svcContainers["postgres"].(map[string]interface{})
+	redis := entries["redis"]
+	if redis == nil {
+		t.Fatalf("redis service missing from mapping token")
+	}
+	redisSpec := tokenMapEntries(t, redis)
+	if got := tokenLit(redisSpec["image"]); got != "redis:7" {
+		t.Errorf("redis.image = %v", got)
+	}
+	ports, ok := redisSpec["ports"].(map[string]interface{})
+	if !ok || ports["type"] != float64(1) {
+		t.Fatalf("redis.ports = %v, want sequence token", redisSpec["ports"])
+	}
+	seq := ports["seq"].([]interface{})
+	if len(seq) != 1 || tokenLit(seq[0]) != "6379:6379" {
+		t.Errorf("redis.ports seq = %v", seq)
+	}
+
+	pg := entries["postgres"]
+	if pg == nil {
+		t.Fatalf("postgres service missing from mapping token")
+	}
+	pgSpec := tokenMapEntries(t, pg)
+	if got := tokenLit(pgSpec["image"]); got != "postgres:15" {
+		t.Errorf("postgres.image = %v", got)
+	}
+	// Env key is `env` (the runner's ContainerInfo reader), not
+	// `environment`.
+	envTok, ok := pgSpec["env"].(map[string]interface{})
 	if !ok {
-		t.Fatalf("postgres is %T", svcContainers["postgres"])
+		t.Fatalf("postgres.env is %T, want mapping token", pgSpec["env"])
 	}
-	if pg["image"] != "postgres:15" {
-		t.Errorf("postgres.image = %v", pg["image"])
+	envEntries := tokenMapEntries(t, envTok)
+	if got := tokenLit(envEntries["POSTGRES_PASSWORD"]); got != "test" {
+		t.Errorf("postgres.env = %v", envEntries)
 	}
-	env, ok := pg["environment"].(map[string]interface{})
+}
+
+// tokenMapEntries flattens a mapping TemplateToken's {Key,Value} pairs
+// into a name → value-token map.
+func tokenMapEntries(t *testing.T, tok interface{}) map[string]interface{} {
+	t.Helper()
+	m, ok := tok.(map[string]interface{})
 	if !ok {
-		t.Fatalf("postgres.environment is %T", pg["environment"])
+		t.Fatalf("token is %T, want map", tok)
 	}
-	if env["POSTGRES_PASSWORD"] != "test" {
-		t.Errorf("postgres.env = %v", env)
+	pairs, ok := m["map"].([]interface{})
+	if !ok {
+		t.Fatalf("mapping token has no map array: %v", m)
 	}
+	out := make(map[string]interface{}, len(pairs))
+	for _, p := range pairs {
+		entry := p.(map[string]interface{})
+		key, _ := tokenLit(entry["Key"]).(string)
+		out[key] = entry["Value"]
+	}
+	return out
+}
+
+// tokenLit extracts the literal value of a string/number/bool token.
+func tokenLit(tok interface{}) interface{} {
+	m, ok := tok.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return m["lit"]
 }
 
 func TestBuildJobMessageNoServices(t *testing.T) {
