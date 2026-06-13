@@ -4,13 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/acr-build-service-endpoint-1782` (PR pending) — **ACA GitHub container-job topology, TEST 12 GREEN.** Fixes BUG-1782 (build-service endpoint override) + BUG-1783 (static bootstrap/agent build in the bleephub Dockerfile) and wires `provision_aca` for the App-overlay path. The full chain works: sim ACR Tasks builds the overlay → ACA App runs it → the static bootstrap dials back → `docker exec` runs the job steps. TEST 12 passes on ACA.
+`fix/faithful-registry-roundtrip-1785` (PR pending) — **BUG-1785 azure half: faithful build→push→pull for ACR Tasks.** The sim's ACR Tasks now does a real `docker push` to the registry + `docker rmi`; the ACA App run does a real `docker pull` — registry and compute agnostic (only `/v2/`). Backend honors `SOCKERLESS_AZURE_ACR_ENDPOINT`; harness publishes the sim `/v2/` at `127.0.0.1:5000` + a podman-machine insecure drop-in. Validated by ACA harness TEST 12 + the ACR Tasks SDK test.
 
-### Remaining steps to a fully green ACA topology cell (continuing Arc 2)
+### Remaining work
 
-1. **TEST 13 — service container (BUG-1784).** The job container's `curl http://<service-alias>` exits 1: the service (nginx) runs as a sibling ACA App on the per-job `github_network_*` (NSG + Private DNS zone provisioned) but its alias doesn't resolve from inside the job App. Wire the ACA cloud-DNS / per-job-network service discovery so a sibling service name resolves — the container-backend analog of the BUG-1781 FaaS pod work.
-2. **TEST 14 — dispatcher-spawned runner.** The spawned runner hits `Connection refused (host.docker.internal:80)` reaching bleephub — a published-port / external-URL wiring detail in the ACA harness (bleephub is on :80; the spawned runner must reach it).
-3. **Cloud Run + GCF cells** — same `cloudrun-bootstrap` overlay model (Cloud Build slice already exists in the GCP sim); repeat the topology sweep.
+1. **BUG-1785 gcp half.** Carry the same faithful push/pull through the gcp Cloud Build slice (`simulators/gcp/cloudbuild.go`'s confirmed-local push → real `docker push` + `rmi`) AND the cloudrun/gcf overlay flows: add a GCP AR registry-endpoint override (parallel to `SOCKERLESS_AZURE_ACR_ENDPOINT`) and update the `cloudrun`/`cloudrun-functions` integration tests + the gcp `build_test.go` (which today rely on the local-daemon shortcut and would break on a real push to an unreachable AR). Larger + higher-risk than the azure half — do it carefully with a reachable registry stand-in.
+2. **TEST 13 — ACA service container (BUG-1784).** The job container's `curl http://<service-alias>` exits 1: the sibling service App's alias doesn't resolve from inside the job App. Wire ACA cloud-DNS / per-job-network service discovery.
+3. **TEST 14 — dispatcher-spawned runner.** `Connection refused (host.docker.internal:80)` — a published-port / external-URL wiring detail.
+4. **Cloud Run + GCF topology cells** — same `cloudrun-bootstrap` overlay model.
+
+### Reusable finding (registry round-trip)
+A real `docker push`/`pull` to the sim registry needs the host engine to trust it. **Docker auto-trusts loopback registries; Podman does not** — so the harness publishes the sim `/v2/` at `127.0.0.1:5000` and the ACA Make target drops a scoped insecure entry on the podman machine. On Docker / Linux CI it's a no-op. The backend points the image ref at that reachable endpoint via `SOCKERLESS_AZURE_ACR_ENDPOINT` (a legit custom-cloud override), keeping the sim's registry and compute services agnostic.
 
 ### Reusable findings (this branch)
 - ACA container-job exec needs the **App overlay** (`SOCKERLESS_ACA_USE_APP=1`) + an ACR-Tasks-built bootstrap image; the sim builds it on the host engine and runs it by local tag.

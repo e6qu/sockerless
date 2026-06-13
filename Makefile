@@ -411,7 +411,7 @@ define run_bleephub_harness
 	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleephub-data \
 	  -e BLEEPHUB_BACKEND=$(1) \
 	  -e BLEEPHUB_TEST_FROM \
-	  -p 80:80 -p 3375:3375 \
+	  -p 80:80 -p 3375:3375 -p 5000:4568 \
 	  bleephub-runner-int:local
 endef
 
@@ -420,5 +420,18 @@ bleephub-runner-docker-test: bleephub-runner-docker-build
 	$(call run_bleephub_harness,ecs)
 
 .PHONY: bleephub-runner-docker-test-aca
-bleephub-runner-docker-test-aca: bleephub-runner-docker-build
+bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-aca-registry-trust
 	$(call run_bleephub_harness,aca)
+
+# The ACA App-overlay path does a real docker push (ACR Tasks) + pull (the
+# App run) of the bootstrap overlay through the sim's registry, published at
+# 127.0.0.1:5000. Docker auto-trusts loopback registries; Podman does not,
+# so on a podman-machine host add a scoped, idempotent insecure drop-in
+# (loopback:5000 only). On Docker, and on Linux CI, this is a no-op.
+.PHONY: bleephub-aca-registry-trust
+bleephub-aca-registry-trust:
+	@if docker version 2>/dev/null | grep -qi podman && command -v podman >/dev/null 2>&1; then \
+	  printf "$(COLOR_CYAN)▸ Trusting the sim registry (127.0.0.1:5000) on the podman machine…$(COLOR_RESET)\n"; \
+	  podman machine ssh "printf '[[registry]]\nlocation = \"127.0.0.1:5000\"\ninsecure = true\n' | sudo tee /etc/containers/registries.conf.d/sockerless-sim-insecure.conf >/dev/null" 2>/dev/null || \
+	    printf "  (could not auto-configure; add 127.0.0.1:5000 to the engine's insecure registries)\n"; \
+	fi

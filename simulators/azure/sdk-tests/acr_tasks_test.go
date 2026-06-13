@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"compress/gzip"
 	"fmt"
+	"net/http"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,22 +23,27 @@ import (
 // overlay: upload a build context to blob storage, then
 // RegistriesClient.BeginScheduleRun with a DockerBuildRequest pointing at
 // that blob. The simulator fetches the context, runs `docker build` on the
-// host engine, tags the image into the local daemon, and reports the Run
-// as Succeeded. We then assert the image is really present locally — the
-// proof that StartContainerSync can run the overlay without a registry
-// pull.
+// host engine, and — faithful to real ACR Tasks with IsPushEnabled —
+// `docker push`es the result to the registry and removes the local copy.
+// We point the image at a throwaway registry the engine can reach (a
+// stand-in for the ACR `/v2/` endpoint a workload would pull from) and
+// assert the image landed there and is gone from the local daemon.
 func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Fatalf("docker CLI required for ACR Tasks build test (no fallback): %v", err)
 	}
 
 	const (
-		rg       = "acr-tasks-rg"
-		account  = "acrbuildacct"
-		registry = "acrbuildreg"
-		ctr      = "build-context"
+		rg      = "acr-tasks-rg"
+		account = "acrbuildacct"
+		regName = "acrbuildreg"
+		ctr     = "build-context"
+		regPort = "5099"
 	)
-	imageName := fmt.Sprintf("%s.azurecr.io/sockerless-overlay/aca:test-%d", registry, time.Now().UnixNano())
+	// A real registry the build host can push to / the test can read.
+	// 127.0.0.1:<port> is auto-insecure, so no daemon config is needed.
+	startThrowawayRegistry(t, regPort)
+	imageName := fmt.Sprintf("127.0.0.1:%s/sockerless-overlay/aca:test-%d", regPort, time.Now().UnixNano())
 
 	// 1. Upload a build context (Dockerfile + a file COPY'd in, mirroring
 	// the bootstrap overlay shape) to the sim's blob storage.
@@ -61,7 +68,7 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 	regClient, err := armcontainerregistry.NewRegistriesClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)
 
-	poller, err := regClient.BeginScheduleRun(ctx, rg, registry, &armcontainerregistry.DockerBuildRequest{
+	poller, err := regClient.BeginScheduleRun(ctx, rg, regName, &armcontainerregistry.DockerBuildRequest{
 		Type:           to.Ptr("DockerBuildRequest"),
 		DockerFilePath: to.Ptr("Dockerfile"),
 		ImageNames:     []*string{to.Ptr(imageName)},
@@ -81,19 +88,52 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 	require.NotNil(t, result.Properties.RunID)
 	assert.NotEmpty(t, *result.Properties.RunID)
 
-	// 3. The built image must really exist in the local daemon — the
-	// whole point of the slice (StartContainerSync runs it by tag).
+	// 3. Faithful build→push: the image must live in the registry (pullable
+	// via /v2/), NOT on the build host's local daemon.
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "-f", imageName).Run() })
-	require.NoError(t, exec.Command("docker", "image", "inspect", imageName).Run(),
-		"built overlay image %s must be present in the local daemon", imageName)
+	tagOnly := imageName[strings.LastIndex(imageName, ":")+1:]
+	manifestURL := fmt.Sprintf("http://127.0.0.1:%s/v2/sockerless-overlay/aca/manifests/%s", regPort, tagOnly)
+	mreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
+	mreq.Header.Set("Accept", "application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json")
+	mresp, err := http.DefaultClient.Do(mreq)
+	require.NoError(t, err)
+	defer mresp.Body.Close()
+	require.Equal(t, http.StatusOK, mresp.StatusCode, "built image must be present in the registry (/v2/ manifest)")
+	assert.Error(t, exec.Command("docker", "image", "inspect", imageName).Run(),
+		"built overlay image %s must NOT remain on the local daemon after push", imageName)
 
 	// 4. GetRun round-trips the run record.
 	runsClient, err := armcontainerregistry.NewRunsClient(subscriptionID, &fakeCredential{}, clientOpts())
 	require.NoError(t, err)
-	got, err := runsClient.Get(ctx, rg, registry, *result.Properties.RunID, nil)
+	got, err := runsClient.Get(ctx, rg, regName, *result.Properties.RunID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got.Properties)
 	assert.Equal(t, armcontainerregistry.RunStatusSucceeded, *got.Properties.Status)
+}
+
+// startThrowawayRegistry runs a real registry:2 on 127.0.0.1:<port> for the
+// duration of the test — a reachable, auto-insecure stand-in for the ACR
+// `/v2/` endpoint the sim's ACR Tasks pushes to.
+func startThrowawayRegistry(t *testing.T, port string) {
+	t.Helper()
+	name := "acr-tasks-sdktest-reg-" + port
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
+		"-p", port+":5000", "public.ecr.aws/docker/library/registry:2").CombinedOutput()
+	require.NoError(t, err, "start throwaway registry: %s", out)
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		resp, derr := http.Get(fmt.Sprintf("http://127.0.0.1:%s/v2/", port))
+		if derr == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				return
+			}
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("throwaway registry on :%s did not become ready", port)
 }
 
 // TestACRTasks_ScheduleRunMissingContextFails asserts the build fails
