@@ -4,6 +4,46 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - All-backend metadata network driver + experiential-parity principles (Arc 2 groundwork)
+
+Stand-up of the ACA cell of the bleephub GitHub topology harness (Arc 2)
+surfaced and fixed a cross-backend defect, and the work crystallized the
+principles that govern the rest of the pod + runner sweep. The harness
+plumbing itself (multi-backend image, `BLEEPHUB_BACKEND` parameterization)
+lands with the ACA cell in the following arc, once container-job exec is
+assembled through faithful cloud APIs.
+
+- **BUG-1780:** only the ecs backend overrode `Drivers.Network` to the
+  metadata-only `SyntheticNetworkDriver`; lambda/cloudrun/gcf/aca/azf fell
+  through to `BaseServer.InitDrivers`' real-Linux-netns driver (`ip netns
+  add` + veth). That 400s a `docker network create github_network_<hex>`
+  on a host without iproute2 and leaks a meaningless kernel netns where it
+  succeeds. Docker networks on these backends map to *cloud* primitives
+  (Lambda VPC ENIs, Cloud Run/GCF VPC-connector + Cloud DNS, ACA + AZF NSG
+  / Private DNS), never a local netns — so all five now mirror ecs. All
+  six cloud backends' test suites pass; a harness run confirmed ACA's
+  `docker network create`/`delete` now provisions + tears down the NSG +
+  Private DNS zone cleanly.
+
+Codified the **experiential-parity principle** the user articulated:
+sockerless backends are providers of the Docker+Podman REST API assembled
+out of cloud primitives, and the goal is that a user's experience with
+containers, pods, networks, and volumes inside any backend is the same as
+local Docker/Podman. Every Docker abstraction is *composed* from cloud
+primitives on every backend, FaaS included — including localhost /
+shared-loopback networking between pod members — and a FaaS platform that
+can't run multiple containers per function is our job to assemble (native
+sidecars where offered, else a pod from multiple functions wired by cloud
+DNS + a shared volume, with the agent proxying localhost to siblings), not
+to reject. And the **sims stay faithful cloud slices** — no special / fake
+functionality layered on to support sockerless backends or runners; a
+backend's need is met by implementing the real cloud API, never a sim-side
+hook. Written into AGENTS.md (new "Assemble Docker abstractions" section +
+the cloud-API-fidelity rules-out list), CLOUD_RESOURCE_MAPPING.md
+(universal rule 8), and the AZF README; filed **BUG-1781** and staged the
+FaaS multi-container assembly as PLAN § Next #1 (replacing the interim
+fail-fast rejections).
+
 ## 2026-06-13 - Pod-model correctness across backends (Arc 1 of the pod + runner focus)
 
 Opened a sustained focus on the pod model and GitHub/GitLab runner
