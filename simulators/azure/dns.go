@@ -487,6 +487,14 @@ func registerPrivateDNS(srv *sim.Server) {
 					})
 					z.Properties.NumberOfRecordSets = len(records)
 				})
+				// Realize a CNAME alias the same way the sim realizes every
+				// other name: as a Docker embedded-DNS alias on the target
+				// App container. A CNAME → an App's LatestRevisionFqdn means
+				// recordName should resolve to that App; add it as an alias on
+				// the App's env-network connection so peers resolve it.
+				if recordType == "CNAME" && rs.Properties.CNAMERecord != nil {
+					realizeCNAMEAsDockerAlias(rs.Properties.CNAMERecord.CName)
+				}
 				sim.WriteJSON(w, http.StatusOK, rs)
 			})
 
@@ -633,4 +641,75 @@ func registerPrivateDNS(srv *sim.Server) {
 		vnetLinks.Delete(resourceID)
 		w.WriteHeader(http.StatusAccepted)
 	})
+}
+
+// realizeCNAMEAsDockerAlias makes recordName resolve to the App targeted by a
+// CNAME (whose value is the App's LatestRevisionFqdn) by adding it as a
+// Docker embedded-DNS alias on the App's container — the same mechanism the
+// sim uses to make the App name and FQDN resolve. This is how the sim
+// realizes Private DNS records locally; it is not sockerless-specific (any
+// CNAME → an App FQDN resolves this way). No-op when no App matches (e.g. a
+// CNAME to an external target).
+func realizeCNAMEAsDockerAlias(cname string) {
+	target := strings.TrimSuffix(cname, ".")
+	if target == "" {
+		return
+	}
+	for _, app := range acaApps.List() {
+		if strings.TrimSuffix(app.Properties.LatestRevisionFqdn, ".") != target {
+			continue
+		}
+		envID := app.Properties.EnvironmentID
+		if envID == "" {
+			envID = app.Properties.ManagedEnvironmentID
+		}
+		env, ok := acaEnvironments.Get(envID)
+		if !ok || env.DockerNetworkName == "" {
+			return
+		}
+		handlesV, ok := acaAppReplicaHandles.Load(app.ID)
+		if !ok {
+			return
+		}
+		// Docker can't add an alias to a live network endpoint, so re-attach
+		// the container with the full set: App name + FQDN + every CNAME that
+		// points at this App.
+		aliases := dedupeStrings(append([]string{
+			app.Name,
+			strings.TrimSuffix(app.Properties.LatestRevisionFqdn, "."),
+		}, cnameAliasesForTarget(target)...))
+		for _, h := range handlesV.([]*sim.ContainerHandle) {
+			if h == nil || h.ContainerID == "" {
+				continue
+			}
+			_ = sim.DisconnectContainerFromNetwork(h.ContainerID, env.DockerNetworkName)
+			_ = sim.ConnectContainerToNetwork(h.ContainerID, env.DockerNetworkName, aliases)
+		}
+		return
+	}
+}
+
+// cnameAliasesForTarget returns every CNAME record-set name pointing at the
+// given target FQDN, so re-attaching a container restores all of them.
+func cnameAliasesForTarget(target string) []string {
+	var names []string
+	for _, rs := range azurePrivateDNSRecordSets.List() {
+		if rs.Properties.CNAMERecord != nil && strings.TrimSuffix(rs.Properties.CNAMERecord.CName, ".") == target {
+			names = append(names, rs.Name)
+		}
+	}
+	return names
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	var out []string
+	for _, s := range in {
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	return out
 }

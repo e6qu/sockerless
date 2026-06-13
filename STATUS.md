@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `main` (clean; the continuation plan below is up as a docs PR). |
-| In-flight | Nothing in code. The ACA GitHub container-job cell is green end-to-end (TEST 12) and the ACR Tasks overlay round-trips through the registry faithfully (BUG-1785 azure half, #560). The continuation is planned — see "What's next" + [PLAN.md](PLAN.md) § Next. |
+| In-flight | PR #564 (single open PR) bundles: bleephub pre-registered-App seeding (#559), AWS-sim ECS-Exec OpenDataChannel handshake (#562, merged via #563), one-PR + rebased-on-main + badge-freshness CI/hook enforcement, the ACR-Tasks flaky-test hardening (BUG-1788), and the **partial** ACA TEST 13 service-discovery mechanism (BUG-1784 — realize lands the alias but the job still can't resolve `web`; not green yet). |
 | Last merged | #560 faithful build→push→pull for ACR Tasks (BUG-1785 azure half; registry & compute agnostic). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
 | Bugs | See [BUGS.md](BUGS.md) header for exact counts. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1784 (ACA service-container discovery), BUG-1785 (gcp Cloud Build push→pull half remains). |
