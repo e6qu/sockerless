@@ -18,6 +18,17 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 		return nil, &api.NotFoundError{Resource: "pod", ID: name}
 	}
 
+	// Azure Functions is single-invocation: a pod can hold at most one
+	// container. Reject a multi-container pod up front with one clear error
+	// rather than looping and surfacing a buried per-container ContainerStart
+	// rejection (the ContainerStart guard remains the backstop for the
+	// per-container `docker start` path).
+	if len(pod.ContainerIDs) > 1 {
+		return nil, &api.InvalidParameterError{
+			Message: "multi-container pods are not supported by the azure-functions backend (single-invocation model); run each container as its own single-container workload",
+		}
+	}
+
 	var errs []string
 	for _, cid := range pod.ContainerIDs {
 		c, ok := s.ResolveContainerAuto(context.Background(), cid)

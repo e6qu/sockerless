@@ -6,10 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `docs/streamline-continuity-files` (continuity-file streamline + CLAUDE/AGENTS) |
-| In-flight | Continuity-file streamline only (this branch): compressed PLAN/STATUS/DO_NEXT/BUGS/WHAT_WE_DID to the live state, made CLAUDE.md a symlink to AGENTS.md, and added the continuity-file workflow to AGENTS.md. No code changes. |
+| Active branch | `feat/pod-model-correctness` (PR pending) |
+| In-flight | Pod-model correctness across backends (Arc 1 of the pod-model + runner-integration focus; BUG-1778..1779). Lambda + GCF delegated their Pod lifecycle methods to BaseServer (local-only, no cloud work) so `docker pod stop/kill/rm` leaked the function/Service — now overridden to drive the cloud-aware Container* methods like ECS/Cloud Run/ACA; the isolation lint gained the missing `BaseServer.Pod{Start,Stop,Kill,Remove}` patterns so the class can't recur. AZF's multi-container rejection now fails fast at PodStart with a clear error + a README note (single-invocation). Verified: a gap matrix exists for GitHub × backend and GitLab × backend — only Lambda is live-proven (BUG-1075); the GitHub container-job topology is sim-proven for ECS only; the remaining backends have per-backend stdin-attach unit tests but no full-topology proof — that's Arcs 2-3. |
 
-| Last merged | #553 sim fidelity audit + pod-model review fixes (BUG-1773..1777). |
+
+| Last merged | #554 continuity-doc streamline + CLAUDE/AGENTS. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
 | Bugs | See [BUGS.md](BUGS.md) header for exact counts. 2 open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Live infra | None up. |

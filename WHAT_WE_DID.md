@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Pod-model correctness across backends (Arc 1 of the pod + runner focus)
+
+Opened a sustained focus on the pod model and GitHub/GitLab runner
+integration across all backends. Built a verified gap matrix first
+(correcting the recon agents' over-claims): only Lambda is live-proven
+(BUG-1075); the GitHub container-job topology is sim-proven for ECS only
+(the bleephub harness); the other backends have per-backend GitLab
+stdin-attach unit tests but no full-topology proof; AZF can't run
+multi-container pods. Arc 1 fixed the verified pod-model bugs:
+
+- BUG-1778: Lambda delegated all four Pod lifecycle methods, and GCF
+  delegated Stop/Kill/Remove, to BaseServer.Pod* — which read
+  Store.Containers and call Store.ForceStopContainer (local in-memory,
+  no cloud call), so `docker pod stop/kill/rm` (and lambda `pod start`)
+  left the underlying Lambda function / Cloud Run Service running.
+  ECS/Cloud Run/ACA already override these to loop their cloud-aware
+  Container* methods; lambda+gcf now mirror that. The isolation lint
+  forbade BaseServer.Container* but not BaseServer.Pod{Start,Stop,Kill,
+  Remove} — that gap is closed so the leak class can't recur.
+- BUG-1779: AZF's single-invocation multi-container rejection fired
+  late (only at the 2nd ContainerStart, after create succeeded);
+  PodStart now rejects up front with one clear error, and the
+  constraint is documented in the azf README (rules out `services:` and
+  sidecar `container:` jobs on AZF).
+
+Verified non-issue (left as-is): GCF injects pod host-aliases on the
+main container only — correct, because sidecars are raw user images
+that don't run the sockerless bootstrap, so only main can write
+/etc/hosts; main→sidecar (the services-contract direction) works and
+sidecar→sidecar-by-name isn't achievable or needed.
+
 ## 2026-06-13 - Pod-model / lifecycle review fixes (bundled into the audit PR)
 
 Reviewed the pod + container lifecycle across all 7 backends for needless
