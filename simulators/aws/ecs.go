@@ -2223,6 +2223,7 @@ type ecsExecSession struct {
 	taskID            string
 	command           string
 	dockerContainerID string
+	tokenValue        string
 }
 
 // ssmStreamWriter wraps chunks in an SSM output_stream_data AgentMessage
@@ -2416,10 +2417,12 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 			return
 		}
 
+		tokenValue := "token-" + sessionID[:8]
 		ecsExecSessions.Store(sessionID, ecsExecSession{
 			taskID:            taskID,
 			command:           req.Command,
 			dockerContainerID: dockerContainerID,
+			tokenValue:        tokenValue,
 		})
 
 		// Determine host from the incoming request
@@ -2439,7 +2442,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 			"session": map[string]any{
 				"sessionId":  sessionID,
 				"streamUrl":  streamURL,
-				"tokenValue": "token-" + sessionID[:8],
+				"tokenValue": tokenValue,
 			},
 			"taskArn": task.TaskArn,
 		})
@@ -2477,6 +2480,22 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 			return
 		}
 		defer conn.Close() //nolint:errcheck
+
+		// SSM Session Manager data-channel handshake. A real client
+		// (session-manager-plugin, or any faithful client like the ECS
+		// backend's exec_cloud.go) sends an OpenDataChannel message as the
+		// FIRST WebSocket frame — a JSON document carrying the TokenValue
+		// returned by ECS.ExecuteCommand. The service validates the token
+		// before any AgentMessage streaming begins. Consume and validate it
+		// here so a coordinate-only consumer drives the sim exactly as it
+		// drives real AWS; without this the token is never checked and the
+		// first frame would be mis-read as input_stream_data.
+		if !validateSSMOpenDataChannel(conn, sess.tokenValue) {
+			_ = conn.WriteMessage(websocket.CloseMessage,
+				websocket.FormatCloseMessage(websocket.ClosePolicyViolation,
+					"OpenDataChannel handshake failed: invalid or missing TokenValue"))
+			return
+		}
 
 		// Execute command inside the real Docker container
 		if sess.dockerContainerID != "" {
@@ -2592,6 +2611,39 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 			websocket.FormatCloseMessage(websocket.CloseInternalServerErr,
 				"ECS ExecuteCommand requires a running Docker container for the task"))
 	}
+}
+
+// ssmOpenDataChannelInput is the JSON body a client sends as the first
+// WebSocket frame to open an SSM Session Manager data channel. Mirrors
+// the session-manager-plugin's service.OpenDataChannelInput; only
+// TokenValue is load-bearing for the sim (it validates the token issued
+// by ECS.ExecuteCommand). Extra fields are tolerated.
+type ssmOpenDataChannelInput struct {
+	MessageSchemaVersion string `json:"MessageSchemaVersion"`
+	RequestId            string `json:"RequestId"`
+	TokenValue           string `json:"TokenValue"`
+	ClientId             string `json:"ClientId"`
+}
+
+// validateSSMOpenDataChannel reads the first WebSocket frame, parses it as
+// an OpenDataChannel message, and reports whether its TokenValue matches
+// the token issued for this session. A short read deadline bounds a client
+// that connects but never sends the handshake (real AWS times such
+// connections out rather than streaming).
+func validateSSMOpenDataChannel(conn *websocket.Conn, expectedToken string) bool {
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		return false
+	}
+	// Clear the deadline so subsequent stdin frames aren't bounded.
+	_ = conn.SetReadDeadline(time.Time{})
+
+	var in ssmOpenDataChannelInput
+	if err := json.Unmarshal(msg, &in); err != nil {
+		return false
+	}
+	return in.TokenValue != "" && in.TokenValue == expectedToken
 }
 
 // extractTDKey extracts "family:revision" from a task definition ARN.
