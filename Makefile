@@ -411,6 +411,7 @@ define run_bleephub_harness
 	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleephub-data \
 	  -e BLEEPHUB_BACKEND=$(1) \
 	  -e BLEEPHUB_TEST_FROM \
+	  -e BLEEPHUB_HOLD \
 	  -p 80:80 -p 3375:3375 -p 5000:4568 \
 	  bleephub-runner-int:local
 endef
