@@ -4,286 +4,47 @@ State [STATUS.md](STATUS.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](
 
 ## Goal
 
-Replace Docker Engine with Sockerless for Docker API clients such as `docker`, Docker Compose, Testcontainers, and CI runners, backed by real cloud infrastructure or high-fidelity local cloud simulators.
+Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker Compose, Testcontainers, CI runners), backed by real cloud infrastructure or high-fidelity local cloud simulators.
 
-## Guiding Principles
+## Guiding principles
 
 1. Match public APIs exactly: Docker API, GitHub API (bleephub), and public cloud APIs (simulators).
 2. No stubs, fakes, mocks, synthetic behavior, silent fallbacks, or degraded modes.
-3. Simulators are real local cloud slices — one binary per cloud, not per product.
-4. Every new simulator public API slice ships with official SDK + vendor CLI + Terraform-provider coverage.
-5. Components remain decoupled. Admin UI and local gateway infrastructure must not become required dependencies of simulator public APIs.
-6. User merges PRs. Agents create branches, commits, and PRs only.
-7. Continuity docs are updated in every PR and written so they remain correct after the PR merges.
+3. Simulators are real local cloud slices — one binary per cloud, not per product. Every new public-API slice ships with official SDK + vendor CLI + Terraform coverage where the surface exists.
+4. Backend ↔ host primitive must match: each cloud's native model serves sub-task dispatch on that cloud (ECS-in-ECS, Lambda-in-Lambda, …), never one cloud's backend baked into another's host.
+5. Components stay decoupled. The admin UI and local gateway must not become required dependencies of the simulator public APIs.
+6. The user merges PRs. Agents create branches, commits, and PRs only.
+7. Continuity docs are updated in every PR and written to stay correct after the PR merges (see [AGENTS.md](AGENTS.md)).
 
-## Current Work
+## Next
 
-The active arc is **complete GitHub Actions support in bleephub**
-(`feat/bleephub-actions-complete`, one fat PR, BUG-1724..1739): the
-server-side workflow engine (trigger filters + activity types, schedule
-crons, reusable workflows, a real expression engine), secrets/variables at
-repo/org/environment with the sealed-box wire contract, checks integration
-(check runs/suites, workflow_run/workflow_job/check_run/check_suite events,
-mergeable_state + required-status-check merge gating), real per-step
-timeline records (runner wrapper-decode root cause), runs-on label routing,
-org runners, run attempts, workflow enable/disable, the full GitHub-style
-Actions UI, gh-harness coverage (115/0), and the de-bitrotted
-official-runner harness promoted to CI. Engine limitations that remain are
-listed in `bleephub/README.md` § deferred (composite actions are
-runner-side; startup_failure run shells; runner groups; cancellation
-signals to in-flight runner jobs).
+No committed timeline; pick per session and confirm with the user before live spend:
 
-The previous arc was **spec-based simulator validation** — the simulators are
-now validated against the official machine-readable cloud API specs vendored
-under [`specs/cloud-api/`](specs/cloud-api/README.md) (AWS Smithy models, GCP
-Discovery documents, Azure Swagger; pinned + provenance-tracked):
+1. **Runner-as-cloud-task live pass (BUG-1075).** Cells 1+2 (GitHub runner → ECS/Lambda) are sim-proven end-to-end by the bleephub official-runner harness; cells 3+4 (GitLab) run sim-backed. The remaining work is the *live* run against real cloud infra. Do not mark any live cell green without real authenticated runs.
+2. **Versioned releases + GHCR images (issue #363).** Tagging, a release workflow, and image publishing — the launch-gating step for external users. Deferred while the project was early; now a reasonable consolidation milestone.
+3. **Further sim fidelity audits.** The repeatable method (below) keeps finding real bugs.
 
-1. **Static surface conformance** (merged with this arc's PR): every
-   registered sim operation/route must exist in the vendored spec —
-   `simulators/<cloud>/spec_conformance_test.go`, hard CI gate via
-   `make unit-test`. Found + fixed BUG-1649..1657.
-2. **Runtime wire-shape validation (ratcheted)**: SDK/CLI suites run with
-   `SOCKERLESS_SPEC_VALIDATE` armed; responses are validated member-by-member
-   against the spec output shapes; `scripts/check-spec-violations.sh` fails CI
-   on violations missing from `simulators/<cloud>/spec-violation-allowlist.txt`.
-   First armed runs filed BUG-1658..1685 as the open burn-down list.
-3. **Burn-down (done — `feat/sim-shape-burndown`)**: all 28 allowlisted
-   shape-drift bugs fixed (BUG-1658..1685); aws/azure allowlists deleted,
-   gcp holds only the two permanent firestore server-streaming exemptions.
-   The knative surface now lives at the real
-   `/apis/serving.knative.dev/v1/...` paths and postgres-flexible speaks
-   the real 202+Azure-AsyncOperation LRO.
-4. **Armed everywhere (done — `feat/launch-hygiene`)**: the terraform CI
-   jobs run with `SOCKERLESS_SPEC_VALIDATE` + ratchet steps, and the AWS
-   validator covers the XML protocols (awsQuery/ec2Query/restXml). Every
-   test surface that drives a simulator now shape-validates its traffic.
-5. **Next candidates**: versioned releases + GHCR images (issue #363,
-   launch-gating for external users) and the live-cloud cells (BUG-1075 —
-   only Lambda is live-proven; decide launch labeling vs validation).
+## Sim fidelity audit method (repeatable)
 
-Branch `feat/sim-spec-conformance`; see [STATUS.md](STATUS.md) for the
-snapshot and [BUGS.md](BUGS.md) for per-bug detail.
+Op-presence is already CI-enforced (coverage matrix + surface tables, with SDK + CLI + Terraform coverage per surface). Deeper audits target the recurring bug class — dropped writable fields, wrong list envelopes, missing idempotency/error codes — by **narrowing then probing**:
 
-Bleephub parity, durable storage, the GitHub-style UI restyle, and the
-GitHub-API fidelity sweep are merged (#534-#536); see [WHAT_WE_DID.md](WHAT_WE_DID.md).
+1. Sweep registered ops vs test coverage per sim. The broad "X% untested" map is noisy: most untested ops are out-of-slice (no backend/terraform calls them) or already covered by dedicated fidelity tests an op-name grep misses.
+2. Narrow to ops that are **load-bearing** (a backend or terraform actually calls them, by grepping `backends/` + `terraform/`) **and** complex enough to harbor a bug (round-trip fields, filters, pagination, idempotency/error codes).
+3. **Probe with the real client**, mirroring the exact backend call pattern. "Untested ≠ working." Confirm the bug before filing (avoid false positives).
+4. File in [BUGS.md](BUGS.md) before fixing; fix for real; ship a permanent regression test driving the real client.
 
-### Conformance methodology (per surface)
+## Deferred / blocked
 
-Op-presence is already CI-enforced ([specs/SIM_TEST_COVERAGE_MATRIX.md](specs/SIM_TEST_COVERAGE_MATRIX.md)
-plus [specs/SIM_SURFACE_TABLES](specs/SIM_SURFACE_TABLES), with SDK + vendor CLI +
-Terraform coverage per surface). The conformance work goes deeper, targeting the
-recurring bug class (dropped writable fields, wrong list envelopes, missing ops):
+- **BUG-1075** — live-cloud validation. No timeline; no live cell marked green without real runs.
+- **BUG-1345 / issue #394** — `terraform-provider-azuread` has no Microsoft Graph endpoint override ([upstream issue 1837](https://github.com/hashicorp/terraform-provider-azuread/issues/1837)). When it ships `microsoft_graph_endpoint`, add `azuread_group`/`azuread_user`/`azuread_group_member` to the azure terraform tests and flip the `azure-entra` matrix Terraform cell to `direct`.
+- **Issue #363** — versioned releases + GHCR (see Next #2).
 
-1. Round-trip drift — set every writable field via the real client, read it back, assert identical.
-2. Error fidelity — NotFound/Conflict/Validation return the exact wire code + exception/envelope the client classifies on.
-3. Pagination/list — envelope keys, continuation tokens (nextToken/pageToken/Marker/nextLink), ordering.
-4. Missing ops — implement the real client/Terraform operations the sim lacked.
+## Built so far (summary)
 
-Every gap is filed in [BUGS.md](BUGS.md) before the fix, fixed for real, and
-covered by a regression test driving the real client
-(`simulators/<cloud>/sdk-tests/conformance_roundtrip_test.go`). False positives
-are reverted; hard cases are deferred with a documented reason, never faked.
+Detailed history is in `git log`, PR descriptions, and [WHAT_WE_DID.md](WHAT_WE_DID.md). By area:
 
-### Stages
-
-| Stage | Scope | Where |
-|---|---|---|
-| 1 | AWS conformance (round-trip, error, pagination) | merged #537/#538 |
-| 2 | GCP conformance (round-trip, error, pagination, missing ops) | #538 + PR #539 (G4) |
-| 3 | Azure conformance (round-trip, error, missing ops, pagination) | PR #539 |
-| 4 | Go type hardening (unconvert + wastedassign linters; typed status enums) | PR #539 |
-| 5 | Simulator UI hardening (wire-shape drift + accurate enum unions) | PR #539 |
-| 6 | CI runs the simulator module unit tests; coverage matrix reconciled | PR #539 |
-
-Open follow-ups are tracked in [BUGS.md](BUGS.md) and [DO_NEXT.md](DO_NEXT.md).
-
-## Previous Completed Work
-
-**Terraform idempotency drift sweep** (started in PR #491). The new second-plan
-`terraform plan -detailed-exitcode` drift assertions on the gcp + azure apply
-stacks (BUG-1532) surfaced ~13 pre-existing read-back fidelity bugs that cause a
-non-empty second plan. PR #491 landed the green pieces (scheduler `cron(...)`
-evaluation BUG-1531, the drift assertions themselves, and the
-Docker-Hub→ECR-gallery harness fix BUG-1533), followed by the drift fixes below
-to make `tf (gcp)` / `tf (azure)` green.
-
-### Terraform drift fixes (BUG-1534, closing BUG-1532)
-
-Root causes are the `# forces replacement` / `-> null` lines in the second plan;
-the `(known after apply)` diffs are downstream cascades that clear once their
-parent resource stops being replaced.
-
-**GCP** (`simulators/gcp/`) — DONE (gcp drift reproduced + fixed locally; DNS
-runs on Mac, compute verified blind via `tf (gcp)`):
-1. **logging sink/metric** (`logging.go`) — `name` is the **short** identifier (verified vs logging/v2 `LogSink.name` doc); added the separate output-only `resourceName` full-path field for sinks. The SDK test asserted the full path against a false "Real GCP returns the full resource name" comment → corrected.
-2. **memorystore redis** (`memorystore_redis.go`) — `connectMode`/`transitEncryptionMode` defaults.
-3. **gcs bucket** (`gcs.go`) — `location` upper-cased.
-4. **api gateway api-config** (`apigateway.go`) — `openapiDocuments` round-trip.
-5. **compute router NAT** (`compute.go`) — the `type=PUBLIC` forces-replacement was **Cloud NAT**, not the network; default `type=PUBLIC`. Also network `networkFirewallPolicyEnforcementOrder=AFTER_CLASSIC_FIREWALL`.
-6. **cloudfunctions2** (`cloudfunctions.go`) — `allTrafficOnLatestRevision=true` + `ingressSettings=ALLOW_ALL`.
-7. **dns managed zone** (`dns.go`) — terraform sends `privateVisibilityConfig{networks:[]}` even for public zones; the provider flatten materialises a phantom block. Drop an empty `privateVisibilityConfig` from the read-back.
-
-**AZURE** (`simulators/azure/`) — DONE (11 resources; verified blind via
-`tf (azure)`, Docker-only so can't run on Mac):
-8. **public IP / prefix / LB** (`compute.go`, `network.go`) — `sku_tier=Regional` (SkuName.Tier), `tags={}`, `zones=[]`, public-IP `ip_tags=[]` + `idle_timeout=4`.
-9. **storage account** (`files.go`) — `sku.tier` from sku name (`account_tier`), `supportsHttpsTrafficOnly=true`, `minimumTlsVersion=TLS1_2`, `primaryLocation`.
-10. **application_insights** (`insights.go`) — `application_type=web`, retention=90, sampling=100, public-network ingestion/query=Enabled, `tags={}`.
-11. **cosmosdb_account** (`cosmos.go`) — round-trip `properties.locations` (`isZoneRedundant` was dropped) + write/readLocations.
-12. **key_vault / key_vault_key** (`keyvault.go`) — round-trip `softDeleteRetentionInDays`; echo `key_ops` in request order.
-13. **container_app** (`containerapps_apps.go`) — scale `cooldownPeriod=300`/`pollingInterval=30`.
-14. **linux_function_app** (`functions.go`) — `clientCertMode=Optional` + siteConfig `loadBalancing`/`managedPipelineMode`/`ipSecurityRestrictionsDefaultAction` defaults.
-15. **apim api** (`apim.go`) — `apiRevision=1` + `isCurrent`.
-16. **container_registry** (`acr.go`) — `networkRuleBypassOptions=AzureServices`.
-17. **virtual_network** (`network.go`) — `privateEndpointVNetPolicies=Disabled`.
-18. **eventgrid_system_topic** (`eventgrid.go`) — `tags={}`.
-
-**Second-pass residuals (after the cosmos provider-panic fix unblocked the azure
-apply), all fixed:**
-- cosmosdb_account — the geo_location fix had added read/writeLocations without
-  `provisioningState`; the provider's create poll dereferences it → nil panic
-  that aborted the whole apply. Rebuilt the shape with `failoverPolicies` (what
-  geo_location actually reads) + a shared id + `provisioningState=Succeeded`.
-- application_insights — round-trip `properties.WorkspaceResourceId` (workspace_id).
-- container_app_environment — `log_analytics_workspace_id` is resolved by the
-  provider via a subscription-scope workspace LIST matched by customerId; added
-  that LIST handler (monitor.go) so the read recovers it.
-- linux_function_app — mirror site-PUT siteConfig.appSettings into the
-  /config/appsettings store (functions_extension_version / storage_account_name
-  / builtin_logging_enabled); siteConfig minTlsVersion/scmMinTlsVersion/
-  scmIpSecurityRestrictionsDefaultAction defaults; backup config (POST
-  /config/backup/list) now 404s when unconfigured so the provider's
-  FlattenBackupConfig doesn't materialise a phantom backup{enabled=false} block.
-
-**DONE — `tf (gcp)` and `tf (azure)` both green; full PR #491 CI passes.**
-Approach used: fix one cloud fully, push, read the next CI plan, repeat. Azure
-verified blind via CI + per-resource curl wire-shape checks (azure terraform is
-Docker-only, can't run on Mac).
-
-## Completed Phases
-
-- **Phase C** (PRs #402, #403): Token-based pagination on AWS/GCP/Azure list endpoints.
-- **Phase D** (PR #404): Error envelope fidelity + negative-path SDK error classification tests.
-- **Phase E** (PR #405): Azure KV data-plane CLI tests via `az rest` + Host header routing.
-- **Phase F** (PR #405): 12 bleephub surface table files + coverage matrix rows.
-
-### Completed Cloud Service Slice Expansion
-
-The merged service-slice branch combined Azure and GCP service slices plus AWS
-coverage-audit cleanup in one PR. Each new slice shipped with SDK + CLI +
-Terraform coverage where the provider exposed the surface. Surface tables and
-coverage matrix rows shipped in the same PR.
-
-#### AWS
-
-- **Step Functions**: state machine CRUD (`CreateStateMachine`, `DescribeStateMachine`,
-  `ListStateMachines`, `DeleteStateMachine`) + execution lifecycle (`StartExecution`,
-  `DescribeExecution`, `ListExecutions`, `StopExecution`). The simulator now
-  executes supported ASL states instead of reporting unconditional success.
-- **Batch**: job definitions (`RegisterJobDefinition`, `DescribeJobDefinitions`,
-  `DeregisterJobDefinition`), job queues (`CreateJobQueue`, `DescribeJobQueues`,
-  `DeleteJobQueue`), compute environments (`CreateComputeEnvironment`,
-  `DescribeComputeEnvironments`, `DeleteComputeEnvironment`), job submission
-  (`SubmitJob`, `DescribeJobs`, `CancelJob`). Submitted jobs now run real
-  workload containers and report status from exit codes.
-- **CodeBuild**: build project CRUD (`CreateProject`, `BatchGetProjects`, `ListProjects`,
-  `DeleteProject`) + start build (`StartBuild`, `BatchGetBuilds`). Builds now
-  run buildspec commands through a real process path.
-- **Glue**: database CRUD (`CreateDatabase`, `GetDatabase`, `GetDatabases`,
-  `DeleteDatabase`), table CRUD (`CreateTable`, `GetTable`, `GetTables`, `DeleteTable`),
-  job CRUD (`CreateJob`, `GetJob`, `GetJobs`, `DeleteJob`, `StartJobRun`,
-  `GetJobRun`). Python shell job runs now execute S3-backed scripts.
-
-#### GCP
-
-- **Cloud Spanner**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
-  database CRUD (`projects.instances.databases` Create/Get/List/Delete) + session
-  management (Create/Delete/List).
-- **Cloud Dataflow**: job submission (`projects.locations.jobs.create`) + status
-  (`projects.locations.jobs.get`, `projects.locations.jobs.list`).
-- **Bigtable**: instance CRUD (`projects.instances` Create/Get/List/Delete) +
-  cluster CRUD + table CRUD (`projects.instances.tables` Create/Get/List/Delete).
-  Terraform coverage was later added with `google_bigtable_instance` and
-  `google_bigtable_table`, using the provider's official Bigtable gRPC emulator
-  path for Admin calls.
-
-#### Azure
-
-- **Logic Apps**: workflow CRUD (`PUT/GET/DELETE/LIST workflows`) + enable/disable/validate + trigger run history.
-- **Azure Container Instances (ACI)**: container group CRUD
-  (`PUT/GET/DELETE/LIST containerGroups`) + container exec + logs.
-
-### Phase H — azuread Terraform provider (blocked upstream, BUG-1345)
-
-`hashicorp/terraform-provider-azuread` has no endpoint override for Microsoft Graph API
-calls. Tracked upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837.
-Sockerless issue: #394.
-
-When upstream ships `microsoft_graph_endpoint` support, add `azuread_group`,
-`azuread_user`, `azuread_group_member` to `simulators/azure/terraform-tests/main.tf`
-and update the `azure-entra` coverage matrix Terraform cell from `not applicable` to
-`direct`.
-
-## Deferred
-
-- **BUG-1075**: live-cloud validation. Do not mark any live cell green without real
-  authenticated runs. No timeline set.
-- **BUG-1104**: audit cadence. Remains open while simulator work continues; re-audit
-  after each simulator phase.
-- **Issue #363**: versioned releases and GHCR image publishing. Deferred while the
-  project is early.
-- **Issue #394 / BUG-1345**: azuread Terraform provider upstream blocker (see Phase H).
-
-## Completed Work (summary)
-
-Detailed history lives in PR descriptions and `git log`. Highlights by area:
-
-### bleephub
-
-Full GitHub Enterprise Server REST + GraphQL API simulator: orgs (including
-`POST /admin/organizations`, PR #393), repos, teams (PR #385 added `GET /user/teams`),
-members, PRs, issues, actions, apps, OAuth/OIDC (PR #393 added Graph provisioning +
-ROPC), Projects v2, checks, deployments, releases, reactions, webhooks, runners,
-packages.
-
-### AWS simulator
-
-EC2 (VMs, EBS block-level, VPC/networking, security groups, NAT), ECS (managed EBS
-named volumes), Lambda, S3 (multipart, lifecycle, presigned), RDS, ElastiCache,
-DynamoDB, KMS, SSM, Secrets Manager, SNS, SQS, CloudWatch, CloudTrail, Auto Scaling,
-ELBv2, Route 53, IAM, ECR, EFS, API Gateway v1+v2, Kinesis, EventBridge, Cloud Map,
-WAFv2, ACM, Amplify, STS. All surfaces with SDK + CLI + Terraform coverage.
-
-### GCP simulator
-
-Compute Engine (VMs, disks, networking, firewalls, NAT, load balancing, instance
-templates PR #392), Cloud Run, Cloud Functions Gen2, GCS, Pub/Sub, Cloud SQL,
-Memorystore Redis, BigQuery, Firestore, IAM (service accounts + SA keys PR #392,
-project IAM), Artifact Registry, Secret Manager, Cloud DNS, API Gateway, Cloud Build
-(triggers PR #392), Cloud Logging (sinks + metrics PR #392), Eventarc, VPC Access.
-
-### Azure simulator
-
-VMs (Firecracker-backed), Container Apps/Jobs, Azure Functions, ACR (ARM + data-plane
-+ image ops PR #388), Key Vault (ARM + data-plane), Storage (Blob/File/Queue/Table,
-ARM + data-plane), Service Bus (ARM + admin + data-plane), Event Hubs, Event Grid,
-Cosmos DB (SQL + Tables), Redis, PostgreSQL Flexible, App Insights/Monitor (PR #388),
-Private DNS (zones + A-records PR #388 + generic record types + VNet links), DNS,
-Managed Identity, Entra OIDC (Graph provisioning + ROPC PR #393), Networking
-(VNet/Subnet/NSG/NIC/LB/NAT).
-
-### Infrastructure
-
-- **Real-execution substrate**: `simulators/realexec` — Firecracker VM lifecycle,
-  Linux network namespaces, bridges/veth/TAP NICs, IPAM, nftables, active health
-  probes, load-balancer proxying.
-- **Local HTTPS gateway**: Caddy front door (`make stack-https-{up,status,ca,down}`).
-- **Admin UI**: React 19 + Vite + Tailwind 4 SPA at `/ui/`.
-- **CLI**: `cmd/sockerless/` with context config at `~/.sockerless/`.
-
-### Coverage authorities
-
-`specs/SIM_TEST_COVERAGE_MATRIX.md` and `specs/SIM_SURFACE_TABLES/` are the coverage
-authorities. All rows currently `direct | direct | direct` or `not applicable` with
-documented justification. PR #395 backfilled surface tables for all gaps from PRs
-#388/392/393 (new: `azure-entra.md`, `azure-private-dns.md`; updated: `gcp-compute.md`,
-`gcp-iam.md`, `azure-acr.md`, `azure-monitor.md`).
+- **Backends (7):** docker passthrough + 6 stateless cloud backends (ecs, lambda, cloudrun, cloudrun-functions, aca, azure-functions), each implementing the full `api.Backend` Docker-API surface with the cloud as the source of truth. Pod model (multi-container), reverse/forward agent exec, named-volume → cloud-storage translation, bind-mount → shared-volume translation for the runner workspace. Per-cloud `github-runner-dispatcher-{aws,gcp,azure}` (the ARC-without-k8s analog).
+- **Simulators (3):** real local cloud-API slices — AWS, GCP, Azure — covering every service sockerless uses, validated against the official SDK/CLI/Terraform clients and the vendored machine-readable cloud-API specs (`specs/cloud-api/`) via static surface-conformance + runtime wire-shape gates. `simulators/realexec` provides the Firecracker/netns/nftables real-execution substrate.
+- **bleephub:** a GitHub Enterprise Server REST + GraphQL + Actions simulator — orgs/repos/teams/PRs/issues/apps/OAuth-OIDC/Projects-v2/checks/releases/webhooks/runners/packages, durable storage (SQLite/PostgreSQL + filesystem/S3 git content), the GitHub-style UI, and complete GitHub Actions support (workflow engine, secrets/variables, checks integration, the official `actions/runner` protocol) proven by the in-repo runner harness.
+- **Runner integration:** GitHub `actions/runner` and GitLab Runner (docker executor) both run against sockerless as their Docker daemon; the runner-as-cloud-task topology (container jobs + services + dispatcher loop) is sim-proven for the GitHub cells.
+- **Infra:** local HTTPS Caddy gateway, React/Vite admin UI at `/ui/`, `cmd/sockerless/` CLI with `~/.sockerless/` contexts.
