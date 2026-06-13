@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/runner-cloud-task-topology` |
-| In-flight | **Runner-as-cloud-task topology, sim-proven** (one PR, BUG-1763..1771): the bleephub official-runner harness now runs container-mode jobs + service containers through sockerless-backend-ecs → AWS sim (workspace shared via sim-EFS access points, host-side sharing asserted) and closes the control plane with the github-runner dispatcher (--api-base + capability-based token verification) spawning an ephemeral runner for a queued bleephub job — 14/14 integration tests green locally. Real bugs fixed on the way: jobServiceContainers/object-container TemplateToken wire shape, ephemeral flag round-trip + post-job deregistration, run-status queued-until-a-job-starts, BLEEPHUB_EXTERNAL_URL (GHES external-URL knob), admin-token scope header, engine-conditional host-gateway on dispatcher spawns. Cells 1+2 now need only the live pass. |
-| Last merged | #551 dispatcher ARC-parity hardening (BUG-1752..1762). |
+| Active branch | `feat/sim-fidelity-audit-sg-dns` |
+| In-flight | **Sim fidelity audit pass** (one PR, BUG-1773..1775): a registered-op-vs-test-coverage sweep across the AWS/GCP/Azure sims, then real-SDK probes of the load-bearing+complex gaps. Found 3 real fidelity bugs in ops the backends actually call: AWS `CreateSecurityGroup` never rejected a duplicate name+VPC (`InvalidGroup.Duplicate`) and `AuthorizeSecurityGroup{Ingress,Egress}` never rejected a duplicate rule (`InvalidPermission.Duplicate`) — the ECS per-job-network idempotency depends on both; GCP `rrsets.list` ignored its `name`/`type` filter (the Cloud Run discovery path's `.Name().Type()`). All fixed + permanent regression tests. |
+| Last merged | #552 runner-as-cloud-task topology, sim-proven (BUG-1763..1772). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1771 filed - 1729 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1775 filed - 1733 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 

@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Sim fidelity audit pass (probe the load-bearing gaps)
+
+Ran a registered-op-vs-test-coverage sweep across all three sims, then
+applied the established discipline — "untested ≠ working; probe with
+assertions" — to the gaps that are both load-bearing (a backend or
+terraform actually calls them) AND complex enough to harbor a real
+bug. The broad coverage maps were noisy (most "untested" ops are
+out-of-slice or already had dedicated fidelity tests the op-name grep
+missed — Cloud Map, EFS, ECS are well-covered), so the value was in
+narrowing to what sockerless depends on. Three real fidelity bugs,
+each confirmed by a real-SDK probe mirroring the exact backend call
+pattern, each fixed with a permanent regression test:
+
+- BUG-1773: AWS CreateSecurityGroup never rejected a duplicate name in
+  the same VPC — the ECS per-job-network create
+  (backends/ecs/network_cloud.go) relies on InvalidGroup.Duplicate to
+  reuse an existing SG by name+VPC; against the sim a retry silently
+  minted a second SG. Now rejects same name+VPC (different VPCs still
+  reuse a name).
+- BUG-1774: AWS AuthorizeSecurityGroup{Ingress,Egress} never rejected a
+  duplicate rule — the backend re-applies its self-referencing ingress
+  rule and swallows exactly InvalidPermission.Duplicate; the sim
+  appended a second identical permission, so DescribeSecurityGroups
+  read-back accumulated duplicates. Now detects an equivalent existing
+  permission (protocol + ports + shared target) and 400s it.
+- BUG-1775: GCP rrsets.list ignored its name/type query filter — the
+  Cloud Run service-discovery path uses .Name(fqdn).Type("A"); the sim
+  returned the whole zone. The backend re-filters client-side so it
+  wasn't broken, but the sim diverged from real Cloud DNS. Now honors
+  the filter.
+
 ## 2026-06-12 - Runner-as-cloud-task topology, sim-proven (cells 1+2 minus the live pass)
 
 The bleephub official-runner harness became the topology proof. Its
