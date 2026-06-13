@@ -75,6 +75,16 @@ const (
 	// container alive (e.g. postgres). /etc/hosts injection still runs
 	// for sidecars so they can resolve sibling aliases too.
 	envSidecar = "SOCKERLESS_SIDECAR"
+	// SOCKERLESS_RUN_USER_WORKLOAD=1 marks an ingress container whose user
+	// workload must actually run (a long-running *service* — e.g. a GitHub
+	// Actions `services:` container), as opposed to an exec-driven job
+	// container whose entrypoint is a keepalive (`tail -f /dev/null`) and
+	// whose steps run via `docker exec`. When set, the bootstrap launches
+	// SOCKERLESS_USER_ENTRYPOINT + _CMD as a background subprocess at startup
+	// (so `docker start` runs the service, Docker-faithfully) while still
+	// serving the reverse-agent + HTTP for exec. Without it the bootstrap
+	// keeps the old behaviour (HTTP/exec only; the workload runs on invoke).
+	envRunUserWorkload = "SOCKERLESS_RUN_USER_WORKLOAD"
 	// SOCKERLESS_JOB_TIMEOUT_SECONDS sets the hard cap on a single
 	// workload subprocess (sidecar mode) or a single exec-envelope call
 	// (default-invoke mode). Default: 3600 (1 h). At timeout: SIGTERM
@@ -221,6 +231,13 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
 	} else {
 		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty — reverse-agent disabled (backend ExecStart will return operator-guidance)")
+	}
+
+	// Service container: launch the user workload (e.g. nginx) as a
+	// background subprocess so `docker start` actually runs the service. The
+	// reverse-agent + HTTP server below keep serving exec/invoke alongside.
+	if os.Getenv(envRunUserWorkload) == "1" {
+		go launchUserWorkloadBackground()
 	}
 
 	port := os.Getenv(envPort)
@@ -539,6 +556,34 @@ func parseUserArgv(key string) []string {
 		return nil
 	}
 	return out
+}
+
+// launchUserWorkloadBackground runs the env-baked SOCKERLESS_USER_* command
+// as a background subprocess for a long-running *service* ingress container
+// (SOCKERLESS_RUN_USER_WORKLOAD=1) — e.g. a GitHub Actions `services:`
+// container whose nginx/postgres/etc. must listen on its own port. Unlike
+// runSidecar it does NOT take over the process: the bootstrap stays PID 1 and
+// keeps serving the reverse-agent + HTTP, so exec into the service still
+// works. A workload exit is logged, not fatal (the bootstrap holds the
+// container open, as it already does for exec-driven job containers).
+func launchUserWorkloadBackground() {
+	argv := append(parseUserArgv(envUserEntrypoint), parseUserArgv(envUserCmd)...)
+	if len(argv) == 0 {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: SOCKERLESS_RUN_USER_WORKLOAD set but no user entrypoint/cmd configured")
+		return
+	}
+	cmd := exec.Command(argv[0], argv[1:]...) //nolint:gosec // operator-controlled argv
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: launching service workload argv=%v workdir=%q\n", argv, cmd.Dir)
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: service workload exited: %v\n", err)
+	} else {
+		fmt.Fprintln(os.Stderr, "sockerless-cloudrun-bootstrap: service workload exited (0)")
+	}
 }
 
 // runSidecar exec's the env-baked SOCKERLESS_USER_* command as a
