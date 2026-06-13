@@ -38,7 +38,8 @@ All eight run in pre-commit when the matching files are touched, and uncondition
 |---|---|---|
 | `lint-changed.sh` | Runs golangci-lint per Go module containing changed files (module discovery walks up to the nearest `go.mod`). | pre-commit (Go changes) |
 | `strip-ai-attribution.sh` | Strips AI attribution trailers + trailing whitespace from commit messages. | commit-msg hook |
-| `check-rebased.sh` | Fails the push if the branch is not rebased on `origin/main`; mirror-remote pushes are exempt. | pre-push |
+| `check-rebased-on-main.sh` | Fails if the branch is not rebased on `origin/main` (origin/main an ancestor of HEAD), history isn't linear, you're on `main`, or local `main` is out of sync; mirror-remote pushes are exempt. Best-effort offline, authoritative in CI. | pre-push + CI (`rebased-on-main` job) |
+| `check-single-open-pr.sh` | Fails if more than one PR is open in the project — all work goes in the single open PR. Best-effort offline, authoritative in CI. | pre-commit + CI (`single-open-pr` job) |
 | `update-readme-badges.sh` | Recomputes the badge values in the top-level `README.md` from codebase stats. | pre-push |
 | `check-latest-deps.sh` | Fails if any direct Go module require, Terraform provider constraint, or pinned GitHub Action is behind its latest published version (fix with `make upgrade-deps`). | pre-push + CI `lint` (bash and zsh passes) |
 

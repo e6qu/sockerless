@@ -102,6 +102,16 @@ If the real implementation is not feasible today, file a bug and track it. Do no
 
 If CI fails or tests fail, fix the issue — even if the failure is "pre-existing" and not caused by the current change. We do not tolerate broken CI on any branch. If adding a module to lint or expanding test coverage reveals old issues, fix them in the same PR.
 
+## Never ignore or work around a pre-commit / pre-push failure
+
+A pre-commit or pre-push hook failure — even one that looks incidental, cosmetic, or unrelated to your change — is flagging a real problem. **Fix the underlying problem the hook points at.** Never bypass it: no `--no-verify`, no commenting the hook out, no narrowing its scope, no editing the staged set to dodge it, no force-pushing past it. If a hook "fixed" something for you (formatting, a badge update, a generated file), commit what it changed — don't discard it.
+
+If you believe a hook is genuinely wrong or that something should be ignored, **stop and ask the user** — describe the failure and why you think it's a false positive, and let them decide. Deciding on your own to skip, suppress, or route around a hook failure is forbidden.
+
+## Never create more than one PR — one branch, one PR
+
+All work goes on a single branch and a single PR — even several independent concerns or consumer issues in one session. Never open a second PR while one is open. If two ever exist, **consolidate** their work into one PR (merge the branches together); never close one to "fix the count", never open another, never game the check. **Closing a PR without merging it abandons and deletes that work for good** — it is never a way to park work for later. Enforced by `scripts/check-single-open-pr.sh` (pre-commit + the `single-open-pr` CI job).
+
 ## Never dismiss a problem as "unrelated"
 
 Any problem you notice — failing/flaky test, build or lint warning, dropped field, wrong status code, suspicious log — gets one of two outcomes: **fix it on the spot** (strongly preferred), or, if you truly can't now, **file it in `BUGS.md`** (area, symptom, suspected cause, fix shape). Noticing it and moving on is forbidden. "Pre-existing", "not caused by my change", "not my job" are not exits.

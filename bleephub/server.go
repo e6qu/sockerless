@@ -128,6 +128,12 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	if s.store.LookupUserByLogin("admin") == nil {
 		s.store.SeedDefaultUser()
 	}
+	// Seed pre-registered GitHub Apps from config (BLEEPHUB_SEED_APPS /
+	// BLEEPHUB_SEED_APPS_FILE) so a coordinate-only consumer can hold a fixed
+	// app id + private key + org, exactly as it would against real GitHub.
+	if err := s.seedConfiguredApps(); err != nil {
+		logger.Fatal().Err(err).Msg("failed to seed configured GitHub Apps")
+	}
 	s.initGraphQLSchema()
 	s.registerRoutes()
 	return s

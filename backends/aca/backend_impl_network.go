@@ -49,6 +49,58 @@ func (s *Server) NetworkRemove(id string) error {
 	return s.BaseServer.NetworkRemove(id)
 }
 
+// registerContainerServiceDiscovery registers the network aliases a client
+// requested (`docker create --network X --network-alias web`) in the cloud
+// DNS for each network the container is attached to. Called at ContainerStart
+// once the App is materialized (the create-with-network path never fires
+// NetworkConnect, so the runner's `--network-alias web` would otherwise be
+// lost). Apps register CNAMEs to the App; Jobs register A-records to the
+// container IP.
+//
+// Only the explicit aliases are registered — never the container's own
+// hostname. A peer reaches a service by the alias the workflow declared
+// (`services: { web: … }` → `http://web`); registering the hostname would
+// add no reachable name anyone uses, and (in App mode) would force the sim
+// to refresh that App's env-network attachment to realize the alias — which
+// for the aliasless job container would needlessly tear down and re-establish
+// its reverse-agent channel mid-exec. Service containers have aliases and
+// start before the job, so realizing their aliases happens early and idle.
+func (s *Server) registerContainerServiceDiscovery(id string, c api.Container) {
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep == nil || ep.NetworkID == "" {
+			continue
+		}
+		if len(ep.Aliases) == 0 {
+			continue
+		}
+		names := append([]string(nil), ep.Aliases...)
+		if s.config.UseApp {
+			appState, ok := s.resolveAppACAState(s.ctx(), id)
+			if !ok || appState.AppName == "" {
+				continue
+			}
+			for _, n := range names {
+				if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), ep.NetworkID, n, id, &core.CloudEndpoint{
+					Metadata: map[string]string{"kind": "cname", "service-name": appState.AppName},
+				}); err != nil {
+					s.Logger.Warn().Err(err).Str("name", n).Msg("failed to register service name in Private DNS")
+				}
+			}
+			continue
+		}
+		if ep.IPAddress == "" {
+			continue
+		}
+		for _, n := range names {
+			if err := s.NetworkDiscovery.RegisterContainer(s.ctx(), ep.NetworkID, n, id, &core.CloudEndpoint{
+				IPAddress: ep.IPAddress,
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("name", n).Msg("failed to register service name in Private DNS")
+			}
+		}
+	}
+}
+
 // NetworkConnect connects a container to a network with service registration.
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
 	if err := s.BaseServer.NetworkConnect(id, req); err != nil {

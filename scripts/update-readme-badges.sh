@@ -116,8 +116,14 @@ for pair in \
   fi
 done
 
-# Stage if changed
+# Stage if changed, and FAIL so the update is committed rather than left
+# stranded as an uncommitted staged edit (which then trips the CI badge check).
+# When badges are already current this is a clean no-op. The `git add` makes the
+# refreshed README ready to commit; the non-zero exit forces you to.
 if ! git diff --quiet "$readme" 2>/dev/null; then
-  echo "badges: updated"
   git add "$readme"
+  echo "ERROR: README badges were stale; refreshed and staged $readme." >&2
+  echo "Commit it (amend it into your change) and run the push/commit again." >&2
+  exit 1
 fi
+echo "badges: up to date"

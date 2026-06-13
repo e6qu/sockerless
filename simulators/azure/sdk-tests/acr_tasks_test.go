@@ -41,8 +41,15 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 		regPort = "5099"
 	)
 	// A real registry the build host can push to / the test can read.
-	// 127.0.0.1:<port> is auto-insecure, so no daemon config is needed.
+	// Docker auto-trusts a 127.0.0.1:<port> registry as insecure, so no daemon
+	// config is needed (CI runs Docker). Podman does NOT — a local Podman host
+	// needs an insecure-registries drop-in for 127.0.0.1:<port> or the sim's
+	// `docker push` fails with "server gave HTTP response to HTTPS client".
 	startThrowawayRegistry(t, regPort)
+	// Pre-pull the build's base image so the sim's `docker build` uses the
+	// local cache instead of racing a fresh (throttle-prone) public-mirror
+	// pull mid-build.
+	pullImageWithRetry(t, "public.ecr.aws/docker/library/alpine:3.20")
 	imageName := fmt.Sprintf("127.0.0.1:%s/sockerless-overlay/aca:test-%d", regPort, time.Now().UnixNano())
 
 	// 1. Upload a build context (Dockerfile + a file COPY'd in, mirroring
@@ -111,16 +118,55 @@ func TestACRTasks_ScheduleRunDockerBuild(t *testing.T) {
 	assert.Equal(t, armcontainerregistry.RunStatusSucceeded, *got.Properties.Status)
 }
 
+// pullImageWithRetry pulls an image with bounded exponential backoff so a
+// transient public-mirror throttle (toomanyrequests / network blip) doesn't
+// flake docker-dependent setup — the same strict rate-limit posture the sim
+// pull paths take. Fails the test only after exhausting retries.
+func pullImageWithRetry(t *testing.T, image string) {
+	t.Helper()
+	var lastErr error
+	delay := time.Second
+	for attempt := 0; attempt < 5; attempt++ {
+		if attempt > 0 {
+			time.Sleep(delay)
+			if delay < 8*time.Second {
+				delay *= 2
+			}
+		}
+		out, err := exec.Command("docker", "pull", image).CombinedOutput()
+		if err == nil {
+			return
+		}
+		lastErr = fmt.Errorf("%v: %s", err, out)
+	}
+	t.Fatalf("pull %s after retries: %v", image, lastErr)
+}
+
 // startThrowawayRegistry runs a real registry:2 on 127.0.0.1:<port> for the
 // duration of the test — a reachable, auto-insecure stand-in for the ACR
 // `/v2/` endpoint the sim's ACR Tasks pushes to.
 func startThrowawayRegistry(t *testing.T, port string) {
 	t.Helper()
+	const regImage = "public.ecr.aws/docker/library/registry:2"
+	// Pull the registry image up front with retries so `docker run` doesn't
+	// inline-pull (and exit 125) on a transient public-mirror throttle.
+	pullImageWithRetry(t, regImage)
 	name := "acr-tasks-sdktest-reg-" + port
-	_ = exec.Command("docker", "rm", "-f", name).Run()
-	out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
-		"-p", port+":5000", "public.ecr.aws/docker/library/registry:2").CombinedOutput()
-	require.NoError(t, err, "start throwaway registry: %s", out)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		_ = exec.Command("docker", "rm", "-f", name).Run()
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
+			"-p", port+":5000", regImage).CombinedOutput()
+		if err == nil {
+			lastErr = nil
+			break
+		}
+		lastErr = fmt.Errorf("%v: %s", err, out)
+	}
+	require.NoError(t, lastErr, "start throwaway registry")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {

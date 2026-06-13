@@ -7,7 +7,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `main` (clean; the continuation plan below is up as a docs PR). |
-| In-flight | Nothing in code. The ACA GitHub container-job cell is green end-to-end (TEST 12) and the ACR Tasks overlay round-trips through the registry faithfully (BUG-1785 azure half, #560). The continuation is planned — see "What's next" + [PLAN.md](PLAN.md) § Next. |
+| In-flight | PR #564 (single open PR) bundles: bleephub pre-registered-App seeding (#559), AWS-sim ECS-Exec OpenDataChannel handshake (#562, merged via #563), one-PR + rebased-on-main + badge-freshness CI/hook enforcement, the ACR-Tasks flaky-test hardening (BUG-1788), and the **partial** ACA TEST 13 service-discovery mechanism (BUG-1784 — realize lands the alias but the job still can't resolve `web`; not green yet). |
 | Last merged | #560 faithful build→push→pull for ACR Tasks (BUG-1785 azure half; registry & compute agnostic). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
 | Bugs | See [BUGS.md](BUGS.md) header for exact counts. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1784 (ACA service-container discovery), BUG-1785 (gcp Cloud Build push→pull half remains). |
@@ -27,6 +27,7 @@ Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume ste
 ## Invariants
 
 - Never auto-merge PRs; the user handles merges.
+- **At most one PR open at a time** — put all work in the single in-progress PR; never open a new one while one exists. If two ever exist, **consolidate** their work into one (merge the branches together) — do not evade the rule. Closing a PR *without merging it* abandons and deletes that work for good; it is never a way to park work or dodge the rule. Enforced by `scripts/check-single-open-pr.sh` (pre-commit + the `single-open-pr` CI job).
 - Rebase PR branches on `origin/main` before pushing; sync local `main` after.
 - File a concrete `BUGS.md` entry before fixing a discovered defect.
 - No stubs, fakes, mocks, synthetic responses, silent fallbacks, or degraded modes (see [AGENTS.md](AGENTS.md)).

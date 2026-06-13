@@ -177,6 +177,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPPrefixLen: 16,
 		MacAddress:  "",
 	}
+	// Capture the network aliases the client requested at create time
+	// (`docker create --network X --network-alias web`) — these are the
+	// names peers resolve the container by (e.g. a GitHub Actions service
+	// container's id). They're registered in Private DNS once the App is up.
+	if req.NetworkingConfig != nil {
+		if ep, ok := req.NetworkingConfig.EndpointsConfig[netName]; ok && ep != nil {
+			container.NetworkSettings.Networks[netName].Aliases = ep.Aliases
+		}
+	}
 
 	// Inject SOCKERLESS_DNS_SEARCH_DOMAIN so the bootstrap can append a
 	// `search` line to /etc/resolv.conf and short-name lookups within the
@@ -266,6 +275,10 @@ func (s *Server) ContainerStart(ref string) error {
 		if err := s.startSingleContainerApp(id, c, acaState, exitCh); err != nil {
 			return err
 		}
+		// Register the container's resolvable names (hostname + the
+		// runner's `--network-alias` values) now that the App has an FQDN —
+		// the create-with-network path never calls NetworkConnect.
+		s.registerContainerServiceDiscovery(id, c)
 		if c.Config.OpenStdin {
 			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
 				go s.runACAInitialStdinStage(id, c)

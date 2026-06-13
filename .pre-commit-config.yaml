@@ -46,6 +46,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: single-open-pr
+        name: At most one PR open (put all work in the one open PR)
+        entry: bash scripts/check-single-open-pr.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: simulator-testing-contract
         name: Simulator testing contract (SDK + CLI + terraform per change)
         entry: bash scripts/check-simulator-tests.sh
@@ -201,9 +208,9 @@ repos:
         always_run: true
 
       # Pre-push: check rebase + update badges
-      - id: check-rebased
-        name: Check branch is rebased on origin/main
-        entry: bash scripts/check-rebased.sh
+      - id: rebased-on-main
+        name: Branch rebased on origin/main
+        entry: bash scripts/check-rebased-on-main.sh
         language: system
         always_run: true
         pass_filenames: false
