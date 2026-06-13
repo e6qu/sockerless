@@ -384,25 +384,41 @@ bleephub-gh-docker-test:
 # registers, polls the broker, executes host-mode AND container-mode
 # jobs (jobContainer null vs image string — real GitHub's shapes),
 # service containers, uploads timeline records + logs, and completes.
-# Container/service jobs dispatch through sockerless-backend-ecs to
-# the AWS simulator; workloads run on the host engine via the mounted
-# docker.sock, sharing the runner's workspace through the sim-EFS
-# host dir mounted at an identical path inside and out (the
-# runner-as-cloud-task data plane, sim-proven). Ports: 80 (bleephub —
-# the runner strips non-standard ports from URLs) and 3375 (backend —
-# workload agents dial back via host.docker.internal).
-.PHONY: bleephub-runner-docker-test
-bleephub-runner-docker-test:
+# Container/service jobs dispatch through the selected sockerless
+# backend to its cloud simulator; workloads run on the host engine via
+# the mounted docker.sock, sharing the runner's workspace through the
+# sim storage host dir mounted at an identical path inside and out (the
+# runner-as-cloud-task data plane, sim-proven). One image serves every
+# backend; the run target picks via BLEEPHUB_BACKEND. Ports: 80
+# (bleephub — the runner strips non-standard ports from URLs) and 3375
+# (backend — workload agents dial back via host.docker.internal).
+.PHONY: bleephub-runner-docker-build
+bleephub-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
 	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
-	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness…$(COLOR_RESET)\n"
-	@rm -rf /tmp/sockerless-bleephub-efs && mkdir -p /tmp/sockerless-bleephub-efs
+
+# $(1) = backend (ecs|aca). Mounts an identical-path host data dir that
+# the sim materialises cloud storage into and the host engine binds into
+# workload containers.
+define run_bleephub_harness
+	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness ($(1))…$(COLOR_RESET)\n"
+	@rm -rf /tmp/sockerless-bleephub-data && mkdir -p /tmp/sockerless-bleephub-data
 	@docker run --rm \
 	  --security-opt label=disable \
 	  -v $(CURDIR)/bleephub/test:/test:ro \
 	  -v /var/run/docker.sock:/var/run/docker.sock \
-	  -v /tmp/sockerless-bleephub-efs:/tmp/sockerless-bleephub-efs \
-	  -e SIM_EFS_DATA_DIR=/tmp/sockerless-bleephub-efs \
+	  -v /tmp/sockerless-bleephub-data:/tmp/sockerless-bleephub-data \
+	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleephub-data \
+	  -e BLEEPHUB_BACKEND=$(1) \
 	  -e BLEEPHUB_TEST_FROM \
 	  -p 80:80 -p 3375:3375 \
 	  bleephub-runner-int:local
+endef
+
+.PHONY: bleephub-runner-docker-test
+bleephub-runner-docker-test: bleephub-runner-docker-build
+	$(call run_bleephub_harness,ecs)
+
+.PHONY: bleephub-runner-docker-test-aca
+bleephub-runner-docker-test-aca: bleephub-runner-docker-build
+	$(call run_bleephub_harness,aca)
