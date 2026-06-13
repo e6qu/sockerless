@@ -6,13 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/cloud-backend-network-driver` (PR pending) |
+| Active branch | `feat/azure-sim-acr-tasks` (PR pending) |
+| In-flight (this PR) | Faithful **ACR Tasks quick-build** slice in the azure sim (`scheduleRun` + `runs/{runId}`): fetches the build context from sim blob storage, runs `docker build` on the host engine (like the GCP Cloud Build slice), tags the overlay into the local daemon. SDK tests included. This is the keystone the ACA/AZF App-overlay (reverse-agent bootstrap) path builds on. Standing it up surfaced **BUG-1782** (`NewACRBuildService` ignores `SOCKERLESS_ENDPOINT_URL`) — filed; that fix + harness wiring + reverse-agent exec is the continuing Arc-2 ACA build. The ACA harness plumbing WIP is preserved (Dockerfile/run-integration.sh/Makefile + `/tmp/aca-harness-wip/`). |
 | In-flight | Groundwork from the Arc-2 ACA cell stand-up. **BUG-1780**: only the ecs backend used the metadata-only `SyntheticNetworkDriver`; lambda/cloudrun/gcf/aca/azf fell through to the real-Linux-netns driver (`ip netns add` + veth), which 400s `docker network create` without iproute2 and leaks a meaningless kernel netns where it succeeds. All five now mirror ecs (docker networks map to *cloud* primitives, never a local netns); all six backends' tests pass and a harness run confirmed ACA network create/delete now provisions + tears down the NSG + Private DNS zone. Codified two principles across AGENTS.md + CLOUD_RESOURCE_MAPPING.md + the AZF README: (1) **experiential parity** — every Docker abstraction (networks, multi-container pods incl. localhost loopback, volumes) is *assembled* from cloud primitives on every backend, FaaS included, so the experience matches local Docker/Podman; FaaS multi-container pods are ours to assemble, not reject (filed **BUG-1781**, PLAN § Next #1); (2) **sims stay faithful cloud slices** — no special/fake functionality for sockerless backends or runners. The ACA topology harness plumbing + container-job exec (faithful ACR-Tasks bootstrap overlay) is the next arc. |
 
 
 | Last merged | #555 pod-model correctness (lambda/gcf cloud-resource leak, isolation-lint Pod* patterns, AZF fail-fast). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
-| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 3 open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pod assembly). |
+| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 4 open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pod assembly), BUG-1782 (ACR build service ignores endpoint override). |
 | Live infra | None up. |
 
 ## What's next

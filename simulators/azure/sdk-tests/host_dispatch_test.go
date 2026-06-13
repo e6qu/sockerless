@@ -14,7 +14,8 @@ import (
 // specs/SIMULATOR_REAL_EXECUTION.md and feedback_sim_host_model.md.
 func TestNoOsExecOfWorkloads(t *testing.T) {
 	allowList := map[string]string{
-		"metadata.go": "queries Podman machine routing to discover the real host callback address; workloads still dispatch through Docker/Podman containers",
+		"metadata.go":  "queries Podman machine routing to discover the real host callback address; workloads still dispatch through Docker/Podman containers",
+		"acr_tasks.go": "shells out to `docker build` for the ACR Tasks quick-build step (sim build tooling, not a workload) — mirrors the gcp cloudbuild.go allowlist; the built image still dispatches through Docker via StartContainerSync",
 	}
 
 	simDir, _ := filepath.Abs("..")
