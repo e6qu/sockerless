@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Faithful build→push→pull for ACR Tasks (BUG-1785, azure half)
+
+The ACR Tasks sim built the overlay into the host's local docker daemon and
+the ACA App ran that local copy — so the sim's registry never reflected the
+build, and the run used a non-faithful shortcut. The user flagged it: the
+sim must not rely on functionality that isn't strictly faithful to the
+cloud. A first attempt to close it went wrong — it coupled the shared
+workload runner directly to the registry's in-process store, a dependency
+that doesn't exist in the cloud (compute pulls from the registry over the
+public `/v2/` API like any client) — and was reverted.
+
+The faithful fix keeps the sim's services agnostic:
+
+- The ACR Tasks build now does a real `docker build` + `docker push` to the
+  registry + `docker rmi`, exactly as real ACR Tasks (IsPushEnabled). The
+  registry, not the build host, holds the image.
+- The ACA App run pulls it over the standard registry API (the existing
+  `StartContainerSync` pull path). Registry and compute talk only through
+  `/v2/` — no in-process coupling.
+- The backend honors a configurable ACR registry endpoint
+  (`SOCKERLESS_AZURE_ACR_ENDPOINT`, a legit sovereign/custom-cloud override)
+  so the harness can point the overlay ref at a reachable, auto-insecure
+  endpoint.
+- The harness publishes the sim `/v2/` at `127.0.0.1:5000` and (only on a
+  podman machine, which unlike Docker doesn't auto-trust loopback
+  registries) drops a scoped, idempotent insecure-registry entry. On Docker
+  and Linux CI it's a no-op.
+
+Validated end-to-end: ACA harness TEST 12 (container-mode job) passes with
+the real build→push→pull, and the ACR Tasks SDK test asserts the built
+image lands in a real registry (a throwaway `registry:2` stand-in) and is
+gone from the local daemon. The gcp Cloud Build half of BUG-1785 — same
+pattern, but it must thread the cloudrun/gcf overlay flows and their
+integration tests — remains as a separate, larger change.
+
 ## 2026-06-13 - ACA GitHub container-job topology: TEST 12 green (BUG-1782 + BUG-1783)
 
 Got the GitHub container-mode job (TEST 12) passing on the **ACA** backend

@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/acr-build-service-endpoint-1782` (PR pending) |
-| In-flight (this PR) | **ACA GitHub container-job topology — TEST 12 GREEN.** Fixes **BUG-1782** (`NewACRBuildService` now threads `SOCKERLESS_ENDPOINT_URL`: ARM clients via the cloud-config override, blob client discovered lazily from the account's advertised `primaryEndpoints.blob`) and **BUG-1783** (the bleephub Dockerfile built the bootstrap/agent glibc-dynamic → couldn't exec in musl/alpine overlays → never dialed back; now `CGO_ENABLED=0`). Wires `provision_aca` for the App-overlay path (`SOCKERLESS_ACA_USE_APP=1` + ACR + build-context container + arch-matched platform + a deterministic `<account>.blob.localhost` storage endpoint). Result: the full chain — overlay built via the sim's ACR Tasks → ACA App started → reverse-agent bootstrap dials back → `docker exec` job steps — works, and **TEST 12 (container-mode job) passes on ACA**. TEST 13 (service container) is the next hurdle: service-alias resolution between sibling Apps (filed **BUG-1784**). |
-| Last merged | #557 azure sim ACR Tasks quick-build slice (the overlay-build keystone). |
+| Active branch | `fix/faithful-registry-roundtrip-1785` (PR pending) |
+| In-flight (this PR) | **BUG-1785 azure half — faithful build→push→pull for ACR Tasks.** The sim's ACR Tasks built the overlay into the host's local docker daemon and ran it locally (registry never saw the build); an earlier attempt wrongly coupled the shared workload runner to the registry's in-process store (a dependency that doesn't exist in the cloud — user-corrected). Now the build does a real `docker push` to the registry and the run a real `docker pull`, registry and compute agnostic (connected only by `/v2/`). Backend honors `SOCKERLESS_AZURE_ACR_ENDPOINT` (custom-cloud override); the harness publishes the sim `/v2/` at `127.0.0.1:5000` + a podman-machine insecure drop-in (Docker auto-trusts loopback; Podman doesn't). Validated: ACA harness TEST 12 + the ACR Tasks SDK test (real registry:2 stand-in). The gcp Cloud Build half remains (larger — touches cloudrun/gcf overlay flows + their integration tests). |
+| Last merged | #558 ACA GitHub container-job topology (TEST 12 green; BUG-1782 + BUG-1783). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
-| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 4 open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pod assembly), BUG-1784 (ACA service-container discovery). |
+| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1784 (ACA service-container discovery), BUG-1785 (gcp Cloud Build push→pull half remains). |
 | Live infra | None up. |
 
 ## What's next
