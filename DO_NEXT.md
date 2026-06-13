@@ -4,16 +4,18 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/azure-sim-acr-tasks` (PR pending) — the faithful **ACR Tasks quick-build** slice in the azure sim (`scheduleRun` + `runs/{runId}`), the keystone the ACA/AZF App-overlay (reverse-agent bootstrap) path builds on. Fetches the build context from sim blob storage, runs `docker build` on the host engine (mirroring the GCP Cloud Build slice), tags the overlay into the local daemon; SDK tests included. Filed **BUG-1782** (`NewACRBuildService` ignores `SOCKERLESS_ENDPOINT_URL`).
+`fix/acr-build-service-endpoint-1782` (PR pending) — **ACA GitHub container-job topology, TEST 12 GREEN.** Fixes BUG-1782 (build-service endpoint override) + BUG-1783 (static bootstrap/agent build in the bleephub Dockerfile) and wires `provision_aca` for the App-overlay path. The full chain works: sim ACR Tasks builds the overlay → ACA App runs it → the static bootstrap dials back → `docker exec` runs the job steps. TEST 12 passes on ACA.
 
-### Remaining steps to a green ACA topology cell (continuing Arc 2)
+### Remaining steps to a fully green ACA topology cell (continuing Arc 2)
 
-In order; each is the next concrete blocker:
+1. **TEST 13 — service container (BUG-1784).** The job container's `curl http://<service-alias>` exits 1: the service (nginx) runs as a sibling ACA App on the per-job `github_network_*` (NSG + Private DNS zone provisioned) but its alias doesn't resolve from inside the job App. Wire the ACA cloud-DNS / per-job-network service discovery so a sibling service name resolves — the container-backend analog of the BUG-1781 FaaS pod work.
+2. **TEST 14 — dispatcher-spawned runner.** The spawned runner hits `Connection refused (host.docker.internal:80)` reaching bleephub — a published-port / external-URL wiring detail in the ACA harness (bleephub is on :80; the spawned runner must reach it).
+3. **Cloud Run + GCF cells** — same `cloudrun-bootstrap` overlay model (Cloud Build slice already exists in the GCP sim); repeat the topology sweep.
 
-1. **Fix BUG-1782** — thread `endpointURL` into `NewACRBuildService` (backends/azure-common/build.go): build the ARM `RegistriesClient`/`RunsClient` with the `cloud.Configuration` override (mirror `newAzureClientsWithEndpoint`), and build the azblob client against the storage account's advertised `primaryEndpoints.blob` (discover via `armstorage` GetProperties) with HTTP creds allowed. Pass `config.EndpointURL` at the server.go call site.
-2. **Wire `provision_aca`** (bleephub/test/run-integration.sh, restored from `/tmp/aca-harness-wip/`): set `SOCKERLESS_ACA_USE_APP=1`, `SOCKERLESS_AZURE_ACR_NAME`, `SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT=simstorage`, `SOCKERLESS_AZURE_BUILD_CONTAINER=build-context`, `SOCKERLESS_AZURE_BUILD_PLATFORM=linux/<hostarch>`; create the ACR (ARM PUT) + the build-context blob container; set `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` so the sim advertises resolvable `*.blob.localhost:<port>` endpoints (Linux `*.localhost` → loopback).
-3. **Reverse-agent exec** — the overlay container's bootstrap dials `ws://host.docker.internal:3375/v1/aca/reverse`. A sibling Podman container *can* reach a host-published port (verified), so this should connect once the overlay (with the bootstrap entrypoint) actually runs. Validate TEST 12 (container job).
-4. **TEST 13 (service container) + TEST 14 (dispatcher-spawned runner)** on ACA, then Cloud Run + GCF (same `cloudrun-bootstrap` overlay model).
+### Reusable findings (this branch)
+- ACA container-job exec needs the **App overlay** (`SOCKERLESS_ACA_USE_APP=1`) + an ACR-Tasks-built bootstrap image; the sim builds it on the host engine and runs it by local tag.
+- The bootstrap/agent **must be statically linked** (`CGO_ENABLED=0`) to exec in musl/alpine/scratch overlays.
+- Sim storage-over-HTTP needs a resolvable advertised endpoint: `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` pins `<account>.blob.localhost`, plus an `/etc/hosts` alias inside the harness container (`*.localhost` is not special-cased by the container resolver).
 
 ## Next (pod model + runner integration focus)
 

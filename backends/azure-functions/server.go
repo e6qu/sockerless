@@ -74,7 +74,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.storageBackings.Register(core.NewMemoryDriver(64))
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
-		azfACRName(config.Registry), config.BuildStorageAccount, config.BuildContainer, logger,
+		azfACRName(config.Registry), config.BuildStorageAccount, config.BuildContainer, config.EndpointURL, logger,
 	); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}

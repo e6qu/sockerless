@@ -2,12 +2,16 @@ FROM golang:1.25 AS builder
 
 WORKDIR /src
 
-# --- Build the AWS simulator (job containers run as sim-ECS tasks) ---
+# --- Build the cloud simulators (job containers run as sim cloud tasks) ---
+# One image serves multiple backends; run-integration.sh picks via
+# BLEEPHUB_BACKEND (ecs → AWS sim, aca → Azure sim, …).
 COPY simulators/realexec/ /realexec/
 COPY simulators/aws/ /sim-aws/
 RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
+COPY simulators/azure/ /sim-azure/
+RUN cd /sim-azure && GOWORK=off go build -tags noui -o /out/simulator-azure .
 
-# --- Build the ECS backend + agent (the runner's DOCKER_HOST target) ---
+# --- Build the backends + agent (the runner's DOCKER_HOST target) ---
 COPY api/ api/
 COPY agent/ agent/
 COPY backends/core/ backends/core/
@@ -15,8 +19,17 @@ COPY backends/aws-common/ backends/aws-common/
 COPY backends/ecs/ backends/ecs/
 RUN cd backends/ecs && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-ecs ./cmd/sockerless-backend-ecs
+COPY backends/azure-common/ backends/azure-common/
+COPY backends/aca/ backends/aca/
+RUN cd backends/aca && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+# CGO_ENABLED=0: the agent and the reverse-agent bootstrap are injected
+# into arbitrary workload base images (alpine/musl, distroless, scratch),
+# so they must be statically linked — a glibc-dynamic binary fails to exec
+# on musl with "No such file or directory" (the missing dynamic loader).
 RUN cd agent && GOWORK=off go mod download && \
-    GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent && \
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap
 
 # --- Build the dispatcher (runner-as-task control plane) ---
 COPY github-runner-dispatcher-aws/ github-runner-dispatcher-aws/

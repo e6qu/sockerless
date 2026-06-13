@@ -82,7 +82,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 	s.storageBackings.SetDefault(core.BackingMemory)
 	if svc, err := azurecommon.NewACRBuildService(
 		azureClients.Cred, config.SubscriptionID, config.ResourceGroup,
-		config.ACRName, config.BuildStorageAccount, config.BuildContainer, logger,
+		config.ACRName, config.BuildStorageAccount, config.BuildContainer, config.EndpointURL, logger,
 	); err == nil && svc != nil {
 		s.images.BuildService = svc
 	}

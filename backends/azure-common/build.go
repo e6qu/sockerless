@@ -9,9 +9,12 @@ import (
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerregistry/armcontainerregistry"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob"
 	"github.com/rs/zerolog"
 	core "github.com/sockerless/backend-core"
@@ -31,48 +34,113 @@ type ACRBuildService struct {
 	storageAccount string
 	containerName  string // blob container for context upload
 	cred           azcore.TokenCredential
+	endpointURL    string             // custom/simulated Azure endpoint, "" for the public cloud
+	armOpts        *arm.ClientOptions // nil for the public cloud
 	logger         zerolog.Logger
 }
 
 // NewACRBuildService creates an ACR Tasks-backed build service.
-// Returns nil if required params are empty.
-func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGroup, acrName, storageAccount, containerName string, logger zerolog.Logger) (*ACRBuildService, error) {
+// Returns nil if required params are empty. When endpointURL is set (a
+// custom/sovereign cloud or the local simulator), every Azure client is
+// pointed at it: the ARM clients via a cloud.Configuration override, and
+// the blob client at the storage account's advertised endpoint (discovered
+// lazily on first build — see ensureBlobClient). With endpointURL empty the
+// public-cloud well-known endpoints are used.
+func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGroup, acrName, storageAccount, containerName, endpointURL string, logger zerolog.Logger) (*ACRBuildService, error) {
 	if acrName == "" || storageAccount == "" {
 		return nil, nil
 	}
 
-	regClient, err := armcontainerregistry.NewRegistriesClient(subscriptionID, cred, nil)
+	var armOpts *arm.ClientOptions
+	if endpointURL != "" {
+		armOpts = &arm.ClientOptions{
+			ClientOptions: azcore.ClientOptions{
+				Cloud: cloud.Configuration{
+					Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+						cloud.ResourceManager: {
+							Endpoint: endpointURL,
+							Audience: "https://management.azure.com/",
+						},
+					},
+				},
+				InsecureAllowCredentialWithHTTP: true,
+			},
+		}
+	}
+
+	regClient, err := armcontainerregistry.NewRegistriesClient(subscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create ACR registries client: %w", err)
 	}
 
-	runsClient, err := armcontainerregistry.NewRunsClient(subscriptionID, cred, nil)
+	runsClient, err := armcontainerregistry.NewRunsClient(subscriptionID, cred, armOpts)
 	if err != nil {
 		return nil, fmt.Errorf("create ACR runs client: %w", err)
-	}
-
-	blobURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccount)
-	blobClient, err := azblob.NewClient(blobURL, cred, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create blob client: %w", err)
 	}
 
 	if containerName == "" {
 		containerName = "build-context"
 	}
 
-	return &ACRBuildService{
+	s := &ACRBuildService{
 		acr:            regClient,
 		runs:           runsClient,
-		blobClient:     blobClient,
 		subscriptionID: subscriptionID,
 		resourceGroup:  resourceGroup,
 		acrName:        acrName,
 		storageAccount: storageAccount,
 		containerName:  containerName,
 		cred:           cred,
+		endpointURL:    endpointURL,
+		armOpts:        armOpts,
 		logger:         logger,
-	}, nil
+	}
+
+	// Public cloud: the blob endpoint is the well-known account URL, so the
+	// client can be built eagerly. For a custom endpoint the blob service
+	// URL is whatever the account advertises (e.g. the simulator's
+	// host-routed endpoint), discovered on first build once the account is
+	// guaranteed to exist.
+	if endpointURL == "" {
+		blobURL := fmt.Sprintf("https://%s.blob.core.windows.net", storageAccount)
+		blobClient, err := azblob.NewClient(blobURL, cred, nil)
+		if err != nil {
+			return nil, fmt.Errorf("create blob client: %w", err)
+		}
+		s.blobClient = blobClient
+	}
+
+	return s, nil
+}
+
+// ensureBlobClient lazily resolves the blob data-plane client for a custom
+// endpoint by reading the storage account's advertised primaryEndpoints.blob
+// via ARM — the faithful way to reach storage on a sovereign/custom/simulated
+// cloud, where the public *.blob.core.windows.net suffix does not apply.
+func (s *ACRBuildService) ensureBlobClient(ctx context.Context) error {
+	if s.blobClient != nil {
+		return nil
+	}
+	acctClient, err := armstorage.NewAccountsClient(s.subscriptionID, s.cred, s.armOpts)
+	if err != nil {
+		return fmt.Errorf("create storage accounts client: %w", err)
+	}
+	props, err := acctClient.GetProperties(ctx, s.resourceGroup, s.storageAccount, nil)
+	if err != nil {
+		return fmt.Errorf("get storage account %s: %w", s.storageAccount, err)
+	}
+	if props.Properties == nil || props.Properties.PrimaryEndpoints == nil || props.Properties.PrimaryEndpoints.Blob == nil {
+		return fmt.Errorf("storage account %s advertises no blob endpoint", s.storageAccount)
+	}
+	blobEndpoint := *props.Properties.PrimaryEndpoints.Blob
+	// No-credential client: the custom/simulator endpoint does not enforce
+	// storage bearer auth, and azblob rejects bearer tokens over plain HTTP.
+	blobClient, err := azblob.NewClientWithNoCredential(blobEndpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create blob client for %s: %w", blobEndpoint, err)
+	}
+	s.blobClient = blobClient
+	return nil
 }
 
 func (s *ACRBuildService) Available() bool {
@@ -101,6 +169,10 @@ func (s *ACRBuildService) AssembleMultiArchManifest(ctx context.Context, opts co
 
 func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions) (*core.CloudBuildResult, error) {
 	start := time.Now()
+
+	if err := s.ensureBlobClient(ctx); err != nil {
+		return nil, err
+	}
 
 	// Upload context to blob storage
 	var contextBuf bytes.Buffer

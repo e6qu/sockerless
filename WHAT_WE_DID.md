@@ -4,6 +4,43 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - ACA GitHub container-job topology: TEST 12 green (BUG-1782 + BUG-1783)
+
+Got the GitHub container-mode job (TEST 12) passing on the **ACA** backend
+through the bleephub official-runner harness — the first container backend
+beyond ECS to run a container job end-to-end, and the validation that the
+whole ACA App-overlay + reverse-agent path works.
+
+Two backend/harness fixes made it work, plus the `provision_aca` wiring:
+
+- **BUG-1782:** `NewACRBuildService` (backends/azure-common) ignored
+  `SOCKERLESS_ENDPOINT_URL` — its ARM + azblob clients targeted real Azure,
+  so the App-overlay bootstrap-build path couldn't reach the sim. Now it
+  threads the endpoint: ARM `RegistriesClient`/`RunsClient` use the
+  `cloud.Configuration` override (+ `InsecureAllowCredentialWithHTTP`), and
+  the blob client is resolved lazily from the storage account's advertised
+  `primaryEndpoints.blob` (via `armstorage` GetProperties) — the faithful
+  way to reach storage on a custom/sovereign/simulated cloud. Both
+  `aca`/`azf` call sites pass `config.EndpointURL`.
+- **BUG-1783:** the bleephub `Dockerfile` built `sockerless-cloudrun-bootstrap`
+  + `sockerless-agent` glibc-dynamic (CGO on by default under `golang:1.25`).
+  Baked into an alpine overlay they failed to exec with `No such file or
+  directory` (missing dynamic loader), so the bootstrap never dialed back
+  and ACA exec timed out. The canonical agent Makefile already uses
+  `CGO_ENABLED=0`; the harness Dockerfile was the anomaly — now static too.
+
+`provision_aca` now drives the App-overlay path: `SOCKERLESS_ACA_USE_APP=1`
++ ACR + a build-context blob container + an arch-matched build platform,
+and pins a deterministic `<account>.blob.localhost` storage endpoint
+(`SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` + an `/etc/hosts` alias,
+since `*.localhost` isn't special-cased by the container resolver). The
+full chain — sim ACR Tasks builds the overlay → ACA App runs it → static
+bootstrap dials back → `docker exec` job steps — runs green.
+
+TEST 13 (service container) is the next hurdle: a sibling service App's
+alias doesn't resolve from inside the job App (filed **BUG-1784**); TEST 14
+(dispatcher) needs a published-port wiring fix. Then Cloud Run + GCF.
+
 ## 2026-06-13 - Azure sim ACR Tasks slice (overlay-build keystone for ACA/AZF)
 
 Added a faithful **ACR Tasks quick-build** slice to the azure simulator —

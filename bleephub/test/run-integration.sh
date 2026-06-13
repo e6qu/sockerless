@@ -13,7 +13,7 @@ fail() {
 }
 
 show_diag() {
-    for lf in "${LOG_DIR:-/tmp}"/simulator-aws.log "${LOG_DIR:-/tmp}"/sockerless-backend-ecs.log; do
+    for lf in "${LOG_DIR:-/tmp}"/simulator-*.log "${LOG_DIR:-/tmp}"/sockerless-backend-*.log; do
         if [ -f "$lf" ]; then
             echo "=== tail $lf ==="
             tail -40 "$lf"
@@ -96,76 +96,190 @@ PIDS+=($!)
 wait_for_url "http://$BLEEPHUB_ADDR/health"
 log "bleephub ready"
 
-# --- 2. Start the AWS simulator + sockerless-backend-ecs ---
-# SIM_EFS_DATA_DIR must be a host directory mounted into this container
-# at the SAME path (see the Makefile target): the sim resolves EFS
-# access points to host dirs and the HOST engine bind-mounts them into
-# workload containers, so the paths must be valid on both sides.
-: "${SIM_EFS_DATA_DIR:?SIM_EFS_DATA_DIR must be set to the identical-path EFS host mount (see Makefile bleephub-runner-docker-test)}"
-# Local podman-machine note: the VM enforces SELinux, and sim-spawned
-# workloads run confined (container_t) while this harness runs
-# label-disabled — relabel the EFS root once per machine so both sides
-# can write it: podman machine ssh "sudo chcon -R -t container_file_t -l s0 $SIM_EFS_DATA_DIR"
-# CI (Docker, no SELinux) needs nothing.
-export AWS_ACCESS_KEY_ID=sim AWS_SECRET_ACCESS_KEY=sim AWS_REGION=us-east-1
-SIM_ADDR="127.0.0.1:4566"
+# --- 2. Start the cloud simulator + sockerless backend (per BLEEPHUB_BACKEND) ---
+# SOCKERLESS_HARNESS_DATA_DIR is a host directory mounted into this container
+# at the SAME path: the sim resolves cloud storage (EFS access points / Azure
+# Files shares) to host dirs and the HOST engine bind-mounts them into workload
+# containers, so the paths must be valid on both sides. Each provision_<backend>
+# exports WORK_DIR + EXT_DIR (the runner workspace + externals host dirs), starts
+# its sim + backend on :3375, and stages the runner externals.
+# Local podman-machine note: relabel the data root once per machine so the
+# label-disabled harness and the confined sim-spawned workloads can both write it:
+#   podman machine ssh "sudo chcon -R -t container_file_t -l s0 $SOCKERLESS_HARNESS_DATA_DIR"
+: "${SOCKERLESS_HARNESS_DATA_DIR:?SOCKERLESS_HARNESS_DATA_DIR must be set to the identical-path host mount (see the Makefile bleephub-runner-docker-test* target)}"
 
-log "Starting simulator-aws on $SIM_ADDR"
-LOG_DIR="$SIM_EFS_DATA_DIR/logs"
-mkdir -p "$LOG_DIR"
-simulator-aws --addr "$SIM_ADDR" >"$LOG_DIR/simulator-aws.log" 2>&1 &
-PIDS+=($!)
-wait_for_url "http://$SIM_ADDR/health"
+provision_ecs() {
+    # --- 2. Start the AWS simulator + sockerless-backend-ecs ---
+    # SIM_EFS_DATA_DIR must be a host directory mounted into this container
+    # at the SAME path (see the Makefile target): the sim resolves EFS
+    # access points to host dirs and the HOST engine bind-mounts them into
+    # workload containers, so the paths must be valid on both sides.
+    SIM_EFS_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_EFS_DATA_DIR
+    # Local podman-machine note: the VM enforces SELinux, and sim-spawned
+    # workloads run confined (container_t) while this harness runs
+    # label-disabled — relabel the EFS root once per machine so both sides
+    # can write it: podman machine ssh "sudo chcon -R -t container_file_t -l s0 $SIM_EFS_DATA_DIR"
+    # CI (Docker, no SELinux) needs nothing.
+    export AWS_ACCESS_KEY_ID=sim AWS_SECRET_ACCESS_KEY=sim AWS_REGION=us-east-1
+    SIM_ADDR="127.0.0.1:4566"
 
-log "Bootstrapping sim: ECS cluster + EFS workspace"
-curl -sf -X POST "http://$SIM_ADDR/"     -H "Content-Type: application/x-amz-json-1.1"     -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster"     -d '{"clusterName":"sim-cluster"}' >/dev/null || fail "create ECS cluster"
+    log "Starting simulator-aws on $SIM_ADDR"
+    LOG_DIR="$SIM_EFS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+    simulator-aws --addr "$SIM_ADDR" >"$LOG_DIR/simulator-aws.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
 
-# EFS filesystem + two access points: the runner workspace and the
-# runner externals — the same shape the live cell terraform provisions.
-FS_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/file-systems"     -H 'Content-Type: application/json'     -d '{"CreationToken":"bleephub-runner"}' | jq -r '.FileSystemId // empty')
-[ -n "$FS_ID" ] || fail "create EFS filesystem"
-WS_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ws\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-ws\"}}" | jq -r '.AccessPointId // empty')
-[ -n "$WS_AP_ID" ] || fail "create workspace access point"
-EXT_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ext\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-externals\"}}" | jq -r '.AccessPointId // empty')
-[ -n "$EXT_AP_ID" ] || fail "create externals access point"
+    log "Bootstrapping sim: ECS cluster + EFS workspace"
+    curl -sf -X POST "http://$SIM_ADDR/"     -H "Content-Type: application/x-amz-json-1.1"     -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster"     -d '{"clusterName":"sim-cluster"}' >/dev/null || fail "create ECS cluster"
 
-# The runner's workspace lives ON the workspace access point (the
-# runner-as-cloud-task shape: the cell runner-task mounts EFS at its
-# work dir). Externals are staged onto their access point so job
-# containers see the same node toolchain the runner uses.
-WORK_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-ws"
-EXT_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-externals"
-mkdir -p "$WORK_DIR" "$EXT_DIR"
-log "Staging runner externals onto EFS ($EXT_DIR)…"
-cp -a /runner/externals/. "$EXT_DIR/"
+    # EFS filesystem + two access points: the runner workspace and the
+    # runner externals — the same shape the live cell terraform provisions.
+    FS_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/file-systems"     -H 'Content-Type: application/json'     -d '{"CreationToken":"bleephub-runner"}' | jq -r '.FileSystemId // empty')
+    [ -n "$FS_ID" ] || fail "create EFS filesystem"
+    WS_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ws\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-ws\"}}" | jq -r '.AccessPointId // empty')
+    [ -n "$WS_AP_ID" ] || fail "create workspace access point"
+    EXT_AP_ID=$(curl -sf -X POST "http://$SIM_ADDR/2015-02-01/access-points"     -H 'Content-Type: application/json'     -d "{\"ClientToken\":\"ext\",\"FileSystemId\":\"$FS_ID\",\"RootDirectory\":{\"Path\":\"/runner-externals\"}}" | jq -r '.AccessPointId // empty')
+    [ -n "$EXT_AP_ID" ] || fail "create externals access point"
 
-case "$(uname -m)" in
-    x86_64)        ECS_ARCH=X86_64 ;;
-    aarch64|arm64) ECS_ARCH=ARM64 ;;
-    *) fail "unsupported arch $(uname -m)" ;;
+    # The runner's workspace lives ON the workspace access point (the
+    # runner-as-cloud-task shape: the cell runner-task mounts EFS at its
+    # work dir). Externals are staged onto their access point so job
+    # containers see the same node toolchain the runner uses.
+    WORK_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-ws"
+    EXT_DIR="$SIM_EFS_DATA_DIR/$FS_ID/runner-externals"
+    mkdir -p "$WORK_DIR" "$EXT_DIR"
+    log "Staging runner externals onto EFS ($EXT_DIR)…"
+    cp -a /runner/externals/. "$EXT_DIR/"
+
+    case "$(uname -m)" in
+        x86_64)        ECS_ARCH=X86_64 ;;
+        aarch64|arm64) ECS_ARCH=ARM64 ;;
+        *) fail "unsupported arch $(uname -m)" ;;
+    esac
+
+    export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
+    export SOCKERLESS_ECS_CLUSTER=sim-cluster
+    export SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0
+    export SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim
+    export SOCKERLESS_ECS_CPU_ARCHITECTURE="$ECS_ARCH"
+    # Workload containers run on the HOST engine and dial back through the
+    # published backend port (the sim adds host.docker.internal:host-gateway
+    # to task containers).
+    export SOCKERLESS_CALLBACK_URL=http://host.docker.internal:3375
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    # The runner's container-job binds translate onto the shared volumes:
+    # workspace-root and externals map to their access points; sub-paths
+    # under the workspace drop (the parent mount covers them);
+    # /var/run/docker.sock drops.
+    export SOCKERLESS_ECS_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${WS_AP_ID}=${FS_ID},runner-externals=/runner/externals=${EXT_AP_ID}=${FS_ID}"
+
+    log "Starting sockerless-backend-ecs on :3375"
+    sockerless-backend-ecs --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-ecs.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-ecs ready (shared volumes: workspace + externals)"
+}
+
+provision_aca() {
+    SIM_AZURE_FILES_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_AZURE_FILES_DATA_DIR
+    SIM_ADDR="127.0.0.1:4568"
+    # The backend reaches the sim via the `localhost` hostname (not the
+    # 127.0.0.1 literal) so the storage account's advertised blob endpoint
+    # is `<account>.blob.localhost:<port>` — a name that resolves to
+    # loopback on Linux, where the azblob context upload then lands. (The IP
+    # literal would advertise an unroutable `<account>.blob.127.0.0.1`.)
+    local sim_endpoint="http://localhost:4568"
+    local sub="00000000-0000-0000-0000-000000000001"
+    local rg="sim-rg" acct="simstorage" env="sockerless" acr="simacr"
+    case "$(uname -m)" in
+        aarch64|arm64) local build_platform="linux/arm64" ;;
+        *)             local build_platform="linux/amd64" ;;
+    esac
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # The ACR-Tasks overlay build uploads its context to blob storage via
+    # the storage account's advertised endpoint. Pin that endpoint to a
+    # deterministic `<account>.blob.localhost` host (independent of which
+    # Host header reaches the sim) and make it resolve to loopback inside
+    # this container — `*.localhost` is not special-cased by the container
+    # resolver, so it needs an explicit hosts entry. This is how the harness
+    # realizes Azure storage DNS locally; the backend just uses whatever ARM
+    # advertises.
+    export SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='{"storage":{"blob":"http://{account}.blob.localhost:{port}/"}}'
+    if ! grep -q "${acct}.blob.localhost" /etc/hosts 2>/dev/null; then
+        echo "127.0.0.1 ${acct}.blob.localhost" >>/etc/hosts || fail "add storage host alias"
+    fi
+
+    log "Starting simulator-azure on $SIM_ADDR"
+    simulator-azure --addr "$SIM_ADDR" >"$LOG_DIR/simulator-azure.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: storage account + managed environment"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Storage/storageAccounts/$acct?api-version=2023-01-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}' >/dev/null || fail "create storage account"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.App/managedEnvironments/$env?api-version=2024-03-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","properties":{}}' >/dev/null || fail "create managed environment"
+    # ACR + a build-context blob container for the App-overlay bootstrap
+    # image: backend-aca builds the reverse-agent overlay via ACR Tasks
+    # (uploads the context to this container, then scheduleRun → docker
+    # build on the host engine).
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ContainerRegistry/registries/$acr?api-version=2023-07-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Basic"},"properties":{}}' >/dev/null || fail "create ACR registry"
+    curl -sf -X PUT "http://$SIM_ADDR/build-context?restype=container" \
+        -H "Host: ${acct}.blob.localhost:4568" >/dev/null || fail "create build-context container"
+
+    # The runner workspace + externals live on Azure Files shares; the sim
+    # materialises each (account, share) at $DATA_DIR/<account>/<share>.
+    WORK_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-ws"
+    EXT_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-externals"
+    mkdir -p "$WORK_DIR" "$EXT_DIR"
+    log "Staging runner externals onto Azure Files ($EXT_DIR)…"
+    cp -a /runner/externals/. "$EXT_DIR/"
+
+    export SOCKERLESS_ENDPOINT_URL="$sim_endpoint"
+    export SOCKERLESS_ACA_SUBSCRIPTION_ID="$sub"
+    export SOCKERLESS_ACA_RESOURCE_GROUP="$rg"
+    export SOCKERLESS_ACA_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="default"
+    export SOCKERLESS_ACA_ENVIRONMENT="$env"
+    # Container-mode jobs need a long-lived container with reverse-agent
+    # exec, i.e. the ACA App path: backend-aca injects the reverse-agent
+    # bootstrap by building an overlay image through ACR Tasks (App overlay,
+    # SOCKERLESS_ACA_USE_APP=1), then runs the App.
+    export SOCKERLESS_ACA_USE_APP=1
+    export SOCKERLESS_AZURE_ACR_NAME="$acr"
+    export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZURE_BUILD_CONTAINER="build-context"
+    export SOCKERLESS_AZURE_BUILD_PLATFORM="$build_platform"
+    # ACA exec/attach is via the reverse agent: the overlay bootstrap inside
+    # the App container dials back to the backend's reverse endpoint.
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/aca/reverse"
+    export SOCKERLESS_ACA_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    # Runner container-job binds translate onto the shared Azure Files volumes.
+    export SOCKERLESS_ACA_SHARED_VOLUMES="runner-ws=${WORK_DIR}=runner-ws=azure-files-ephemeral,runner-externals=/runner/externals=runner-externals=azure-files-ephemeral"
+
+    log "Starting sockerless-backend-aca on :3375"
+    sockerless-backend-aca --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-aca.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-aca ready (shared volumes: workspace + externals)"
+}
+
+case "${BLEEPHUB_BACKEND:-ecs}" in
+    ecs) provision_ecs ;;
+    aca) provision_aca ;;
+    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca)" ;;
 esac
-
-export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
-export SOCKERLESS_ECS_CLUSTER=sim-cluster
-export SOCKERLESS_ECS_SUBNETS=subnet-0123456789abcdef0
-export SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::000000000000:role/sim
-export SOCKERLESS_ECS_CPU_ARCHITECTURE="$ECS_ARCH"
-# Workload containers run on the HOST engine and dial back through the
-# published backend port (the sim adds host.docker.internal:host-gateway
-# to task containers).
-export SOCKERLESS_CALLBACK_URL=http://host.docker.internal:3375
-export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
-# The runner's container-job binds translate onto the shared volumes:
-# workspace-root and externals map to their access points; sub-paths
-# under the workspace drop (the parent mount covers them);
-# /var/run/docker.sock drops.
-export SOCKERLESS_ECS_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${WS_AP_ID}=${FS_ID},runner-externals=/runner/externals=${EXT_AP_ID}=${FS_ID}"
-
-log "Starting sockerless-backend-ecs on :3375"
-sockerless-backend-ecs --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-ecs.log" 2>&1 &
-PIDS+=($!)
-wait_for_url "http://127.0.0.1:3375/_ping"
-log "sockerless-backend-ecs ready (shared volumes: workspace + externals)"
 
 # --- 4. Configure the runner ---
 log "Configuring runner..."
