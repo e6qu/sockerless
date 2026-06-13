@@ -474,6 +474,13 @@ func (s *Server) startMultiContainerServiceTyped(_ string, podContainers []api.C
 func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) string {
 	deadline := time.Now().Add(timeout)
 	attempt := 0
+	// Exponential backoff (1s → 15s): the Uri populates only after the first
+	// revision is ready (image pull + startup probe), seconds to minutes out.
+	// A flat 2s poll fired ~150 GetService calls in the worst case; backoff
+	// stays responsive early (when the Uri usually appears) while cutting the
+	// long-tail call volume.
+	backoff := 1 * time.Second
+	const maxBackoff = 15 * time.Second
 	for time.Now().Before(deadline) {
 		attempt++
 		url, ok := s.serviceInvokeURL(s.ctx(), containerID)
@@ -483,7 +490,19 @@ func (s *Server) waitForServiceURL(containerID string, timeout time.Duration) st
 		if ok && url != "" {
 			return url
 		}
-		time.Sleep(2 * time.Second)
+		wait := backoff
+		if remaining := time.Until(deadline); remaining < wait {
+			wait = remaining
+		}
+		if wait <= 0 {
+			break
+		}
+		time.Sleep(wait)
+		if backoff < maxBackoff {
+			if backoff *= 2; backoff > maxBackoff {
+				backoff = maxBackoff
+			}
+		}
 	}
 	return ""
 }

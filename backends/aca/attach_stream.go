@@ -5,6 +5,9 @@ import (
 	"encoding/binary"
 	"io"
 	"sync"
+	"time"
+
+	core "github.com/sockerless/backend-core"
 )
 
 type attachStream struct {
@@ -17,6 +20,27 @@ type attachStream struct {
 	respDone  bool
 	respReady chan struct{}
 	closed    bool
+	deadline  time.Duration
+}
+
+// attachDeadline bounds the buffered-attach read so a reader is never
+// stranded if the ACA Job stalls or hits its replica-timeout before
+// publishing output. The read clock starts at ContainerStart, BEFORE the
+// container bootstraps, so the budget must cover the bootstrap window PLUS
+// the job-run budget — bounding it by the run budget alone would strand the
+// reader when a healthy bootstrap is slow on a contended CI runner. This is
+// the same safety net AZF carries (the BUG-1505 fix); ACA had a bare,
+// unbounded `<-respReady` until now.
+func (s *Server) attachDeadline() time.Duration {
+	bootstrap, err := core.BootstrapTimeoutFromEnv("aca")
+	if err != nil || bootstrap <= 0 {
+		bootstrap = 90 * time.Second
+	}
+	run := time.Duration(core.JobTimeoutDefault()) * time.Second
+	if run <= 0 {
+		run = 600 * time.Second
+	}
+	return bootstrap + run
 }
 
 func (s *Server) newAttachStream(containerID string, pipe *stdinPipe) *attachStream {
@@ -25,6 +49,7 @@ func (s *Server) newAttachStream(containerID string, pipe *stdinPipe) *attachStr
 		containerID: containerID,
 		pipe:        pipe,
 		respReady:   make(chan struct{}),
+		deadline:    s.attachDeadline(),
 	}
 	s.attachStreams.Store(containerID, a)
 	return a
@@ -39,7 +64,15 @@ func (a *attachStream) CloseWrite() error {
 }
 
 func (a *attachStream) Read(p []byte) (int, error) {
-	<-a.respReady
+	// Wait for the invoke to publish captured output — but never past the
+	// deadline. A healthy invoke always publishes within its own budget, so
+	// this is a pure safety net for a stalled/lifetime-capped pod that would
+	// otherwise strand an attached docker/StdCopy reader forever.
+	select {
+	case <-a.respReady:
+	case <-time.After(a.deadline):
+		return 0, io.EOF
+	}
 	a.respMu.Lock()
 	defer a.respMu.Unlock()
 	if a.respBuf.Len() == 0 {

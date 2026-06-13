@@ -109,6 +109,14 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	ticker := time.NewTicker(p.server.config.PollInterval)
 	defer ticker.Stop()
 
+	// Recovery path (the in-process exit is event-driven via pollExecutionExit
+	// + WaitChs, and the in-memory invocation result short-circuits below).
+	// Resolve the backing Job once; if found, poll that single job's state per
+	// tick (the same resolveJobState derivation ListContainers uses, for one
+	// resource) instead of re-listing every Job + App each tick. A vanished
+	// job / App-backed container falls back to the full scan.
+	jobName, _ := p.resolveJobName(ctx, containerID)
+
 	for {
 		if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 			return inv.ExitCode, nil
@@ -117,6 +125,19 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if jobName != "" {
+				resp, err := p.server.azure.Jobs.Get(ctx, p.server.config.ResourceGroup, jobName, nil)
+				if err == nil {
+					job := resp.Job
+					st := p.resolveJobState(ctx, &job, azureTagsToMap(job.Tags))
+					if !st.Running && st.Status == "exited" {
+						return st.ExitCode, nil
+					}
+					continue
+				}
+				// Job vanished — fall through to the list scan (also covers
+				// App-backed containers).
+			}
 			containers, err := p.ListContainers(ctx, true, nil)
 			if err != nil {
 				continue

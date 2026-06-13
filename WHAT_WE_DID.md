@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Pod-model / lifecycle review fixes (bundled into the audit PR)
+
+Reviewed the pod + container lifecycle across all 7 backends for needless
+delays, fixed timeouts, polling inefficiency, and constraint mismatches.
+Verified each high-severity claim against source (the review agents
+overstated several, as on the sim audit). Two genuine weaknesses fixed:
+
+- BUG-1776: ACA `attachStream.Read` did a bare `<-respReady` with no
+  deadline — the AZF twin bounds the identical buffered-attach wait with a
+  deadline (the BUG-1505 fix) but it was never ported. A stalled or
+  lifetime-capped ACA Job would strand an attached docker/StdCopy reader
+  forever. Ported the AZF pattern (bootstrap window + job-run budget).
+- BUG-1777: the recovery-path `WaitForExit` (cloudrun + aca) re-ran a full
+  ListJobs+ListServices (with per-pod GetService follow-ups) on every tick
+  to check one container's exit. Narrowed to resolve the backing Job once
+  then poll that single job's state — the identical resolveExecutionState /
+  resolveJobState derivation, one resource — with a list fallback for
+  Service/App-backed and vanished jobs. Cloud Run's `waitForServiceURL`
+  flat-2s/150-call loop got exponential backoff (1s→15s). GCF left alone
+  (its hot path is already event-driven; FaaS has no persistent exit
+  state to narrow to).
+
+Deliberately NOT changed (verified non-issues): pod deferred-start has no
+timeout but doesn't block a goroutine and mirrors docker-compose semantics;
+the 30s stdin-capture waits are warn-and-proceed generous upper bounds;
+the O(n) queryTasks/queryFunctions is the documented stateless-invariant
+cost; the ACA app-readiness "returns before replica ready" is masked by the
+reverse-agent wait in the common path and the multi-container case is
+intra-revision (no cross-app DNS) — adding an unconditional revision-ready
+poll would regress hot-path latency for an unproven race. The forced delays
+(Fargate task-start, Lambda/GCF/AZF limits, ARM LROs) are genuinely
+cloud-imposed. The hot-path exit detection (pollTaskExit/pollExecutionExit)
+is already single-resource + event-driven; pod materialization already
+builds member overlays in parallel and deploys atomically.
+
 ## 2026-06-13 - Sim fidelity audit pass (probe the load-bearing gaps)
 
 Ran a registered-op-vs-test-coverage sweep across all three sims, then

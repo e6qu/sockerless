@@ -7,10 +7,10 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | | |
 |---|---|
 | Active branch | `feat/sim-fidelity-audit-sg-dns` |
-| In-flight | **Sim fidelity audit pass** (one PR, BUG-1773..1775): a registered-op-vs-test-coverage sweep across the AWS/GCP/Azure sims, then real-SDK probes of the load-bearing+complex gaps. Found 3 real fidelity bugs in ops the backends actually call: AWS `CreateSecurityGroup` never rejected a duplicate name+VPC (`InvalidGroup.Duplicate`) and `AuthorizeSecurityGroup{Ingress,Egress}` never rejected a duplicate rule (`InvalidPermission.Duplicate`) — the ECS per-job-network idempotency depends on both; GCP `rrsets.list` ignored its `name`/`type` filter (the Cloud Run discovery path's `.Name().Type()`). All fixed + permanent regression tests. |
+| In-flight | **Sim fidelity audit + pod-model review fixes** (one PR, BUG-1773..1777): the sim audit found 3 real fidelity bugs in load-bearing ops (AWS SG duplicate-name/duplicate-rule error codes the ECS network-create idempotency depends on; GCP rrsets.list name/type filter the Cloud Run discovery path uses) — all probed with the real SDK + permanent regression tests. A pod-model/lifecycle review across all 7 backends then found 2 genuine weaknesses: ACA buffered-attach Read had no deadline (un-ported BUG-1505 fix → unbounded block on a stalled Job) and the recovery-path WaitForExit re-listed every cloud resource per poll (narrowed to single-Job polling on cloudrun+aca; Cloud Run URI poll got exponential backoff). The review also documented what's well-architected (parallel pod overlay builds, atomic deploys, event-driven hot-path exit detection) and down-graded several agent-flagged items as non-bugs. |
 | Last merged | #552 runner-as-cloud-task topology, sim-proven (BUG-1763..1772). |
 | Open GitHub issues | #394 remained upstream-blocked (BUG-1345). Re-check GitHub before doing any non-conformance issue work. |
-| Bugs | 1775 filed - 1733 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
+| Bugs | 1777 filed - 1735 fixed - 2 open - 7 false positives (see [BUGS.md](BUGS.md)). Open: BUG-1075 (live-cloud cells), BUG-1345 (azuread upstream). |
 | Open BUGs | BUG-1075 live-cloud validation; BUG-1345 azuread Terraform upstream. |
 | Live infra | None up. |
 

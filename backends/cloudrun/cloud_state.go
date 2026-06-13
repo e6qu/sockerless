@@ -110,11 +110,32 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 	ticker := time.NewTicker(p.server.config.PollInterval)
 	defer ticker.Stop()
 
+	// This is the recovery path (a wait on a container this process didn't
+	// start — the in-process exit is event-driven). Resolve the backing Job
+	// once; if found, poll that single job's execution state per tick (the
+	// exact derivation jobToContainer/ListContainers uses, just for one
+	// resource) instead of re-listing every Job + Service each tick. Service-
+	// backed (pod/runner) containers and resolve failures fall back to the
+	// full scan so behavior is unchanged for them.
+	jobName, _ := p.resolveJobName(ctx, containerID)
+
 	for {
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if jobName != "" {
+				job, err := p.server.gcp.Jobs.GetJob(ctx, &runpb.GetJobRequest{Name: jobName})
+				if err == nil {
+					st := p.resolveExecutionState(ctx, job)
+					if !st.Running && st.Status == "exited" {
+						return st.ExitCode, nil
+					}
+					continue
+				}
+				// Job vanished (deleted) — fall through to the list scan,
+				// which also covers Service-backed containers.
+			}
 			containers, err := p.ListContainers(ctx, true, nil)
 			if err != nil {
 				continue
