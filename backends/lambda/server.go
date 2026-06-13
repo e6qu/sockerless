@@ -150,6 +150,16 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 	registerUI(s.BaseServer)
 	s.registerReverseAgentRoutes(logger)
 
+	// Metadata-only network driver (same rationale as the ecs backend):
+	// BaseServer.InitDrivers installs the Linux platform driver (real `ip
+	// netns add` + veth pairs), correct for the local docker backend but
+	// wrong here — docker networks map to *cloud* primitives (Lambda VPC
+	// config; each invocation gets its own ENI), not kernel netns inside
+	// the runner-task. The synthetic driver records that the network exists
+	// so `docker network ls`/`inspect` work; the cloud-side networking is
+	// provisioned by the NetworkCreate wrapper.
+	s.Drivers.Network = &core.SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
+
 	// Route `docker exec` against Lambda via the reverse-agent WebSocket
 	// (`specs/CLOUD_RESOURCE_MAPPING.md` § "Lambda exec semantics"). The
 	// bootstrap dials back during init using SOCKERLESS_CALLBACK_URL;

@@ -200,6 +200,16 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 
 	registerUI(s.BaseServer)
 
+	// Metadata-only network driver (same rationale as the ecs backend):
+	// BaseServer.InitDrivers installs the Linux platform driver (real `ip
+	// netns add` + veth pairs), correct for the local docker backend but
+	// wrong here — docker networks map to *cloud* primitives (Cloud Run
+	// Functions VPC connectors + Cloud DNS service discovery), not kernel
+	// netns inside the runner-task. The synthetic driver records that the
+	// network exists so `docker network ls`/`inspect` work; the cloud-side
+	// networking is provisioned by the NetworkCreate wrapper.
+	s.Drivers.Network = &core.SyntheticNetworkDriver{Store: s.Store, IPAlloc: s.Store.IPAlloc}
+
 	// Reverse-agent registry + WS endpoint.
 	s.reverseAgents = core.NewReverseAgentRegistry()
 	s.Mux.HandleFunc("/v1/gcf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
