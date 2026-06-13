@@ -78,7 +78,9 @@ jobs:
       # (git ls-files + wc -l), so this is deterministic across platforms.
       - name: README badges are up to date
         run: |
-          bash scripts/update-readme-badges.sh
+          # The script exits non-zero when it refreshes badges; tolerate that
+          # here and let the diff be the authority on staleness.
+          bash scripts/update-readme-badges.sh || true
           if ! git diff --exit-code HEAD -- README.md; then
             echo "::error::README badges are stale. Run scripts/update-readme-badges.sh (or let the pre-push hook run — do not skip it) and commit README.md."
             exit 1
