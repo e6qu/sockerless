@@ -4,6 +4,38 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - Faithful build→push→pull for gcp Cloud Build (BUG-1785, gcp half — closes the bug)
+
+The gcp half mirrors the azure ACR Tasks fix below and completes BUG-1785.
+The gcp Cloud Build sim built the overlay into the host's local docker
+daemon and the Cloud Run / GCF workload ran that local copy — the sim's
+registry never reflected the build, a non-faithful shortcut.
+
+- The Cloud Build `push` step (`simulators/gcp/cloudbuild.go`) now does a
+  real `docker push <ref>` + `docker rmi`, exactly as real Cloud Build with
+  `IsPushEnabled`. The registry, not the build host, holds the image; the
+  Cloud Run / GCF workload pulls it over the standard `/v2/` API.
+- The overlay registry host is a **coordinate**: `gcpcommon.OverlayRegistryHost`
+  reads `SOCKERLESS_GCP_AR_ENDPOINT` (default = the real
+  `<region>-docker.pkg.dev`), parallel to `SOCKERLESS_AZURE_ACR_ENDPOINT`.
+  The backend builds the *real* registry ref for cloud and sim alike.
+- The cloudrun + cloudrun-functions integration harnesses set that coordinate
+  **per-target, exactly like `endpointURL`** — to the sim's published `/v2/`
+  at `127.0.0.1:<port>` (Docker auto-trusts loopback as insecure). There is
+  **no `if sim` / `if target == "sim"` branch** in backend or test code: a
+  sim run differs from a cloud run only in coordinates, so the client path
+  is identical and the test proves the real path, not a sim-special one.
+- `TestCloudBuild_FaithfulBuildPush` asserts the built image lands in `/v2/`
+  and is gone from the local daemon. The `test (gcp backends)` and gcp/gcf
+  faas-smoke CI jobs (which always build overlays) exercise the full
+  build→push→pull round-trip against the sim.
+
+This is the same lesson as the azure half, generalized into a rule: the
+coordinate-only pattern is now documented in
+[specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md)
+§ "Faithful build → push → pull" and [AGENTS.md](AGENTS.md) § "A sim test
+differs from a cloud test ONLY in coordinates", cross-linked both ways.
+
 ## 2026-06-13 - Faithful build→push→pull for ACR Tasks (BUG-1785, azure half)
 
 The ACR Tasks sim built the overlay into the host's local docker daemon and
