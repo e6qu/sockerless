@@ -1969,6 +1969,20 @@ func handleCreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	desc := r.FormValue("GroupDescription")
 	vpcId := r.FormValue("VpcId")
 	tags := parseTags(r)
+
+	// Real AWS rejects a duplicate group name within the same VPC
+	// (different VPCs may reuse a name). The ECS backend's idempotent
+	// network-create relies on InvalidGroup.Duplicate to reuse an
+	// existing SG by name+VPC instead of leaking a second one.
+	for _, existing := range ec2SecurityGroups.List() {
+		if existing.GroupName == name && existing.VpcId == vpcId {
+			ec2ErrorXML(w, "InvalidGroup.Duplicate",
+				fmt.Sprintf("The security group '%s' already exists for VPC '%s'", name, vpcId),
+				http.StatusBadRequest)
+			return
+		}
+	}
+
 	id := ec2ID("sg")
 
 	sg := EC2SecurityGroup{
@@ -2243,6 +2257,48 @@ func sgrItemXML(rule EC2SecurityGroupRule) string {
 // standalone aws_vpc_security_group_{ingress,egress}_rule resources Read each
 // back by SecurityGroupRuleId, so a missing row (the prior IPv6/prefix-list gap)
 // makes such a rule drift/recreate every plan.
+// ec2PermissionDuplicate reports whether `incoming` duplicates a rule
+// already present in `existing`. Real AWS rejects an authorize when the
+// expanded rule (protocol + port range + a single target: CIDR / IPv6 /
+// prefix-list / SG-pair) already exists, with InvalidPermission.Duplicate.
+// We match on protocol + ports + any shared target.
+func ec2PermissionDuplicate(existing []EC2IpPermission, incoming EC2IpPermission) bool {
+	for _, e := range existing {
+		if e.IpProtocol != incoming.IpProtocol || e.FromPort != incoming.FromPort || e.ToPort != incoming.ToPort {
+			continue
+		}
+		for _, in := range incoming.IpRanges {
+			for _, ex := range e.IpRanges {
+				if ex.CidrIp == in.CidrIp {
+					return true
+				}
+			}
+		}
+		for _, in := range incoming.Ipv6Ranges {
+			for _, ex := range e.Ipv6Ranges {
+				if ex.CidrIpv6 == in.CidrIpv6 {
+					return true
+				}
+			}
+		}
+		for _, in := range incoming.PrefixListIds {
+			for _, ex := range e.PrefixListIds {
+				if ex.PrefixListId == in.PrefixListId {
+					return true
+				}
+			}
+		}
+		for _, in := range incoming.UserIdGroupPairs {
+			for _, ex := range e.UserIdGroupPairs {
+				if ex.GroupId == in.GroupId {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func createSecurityGroupRules(groupId string, perm EC2IpPermission, isEgress bool) []EC2SecurityGroupRule {
 	sg, _ := ec2SecurityGroups.Get(groupId)
 	base := EC2SecurityGroupRule{
@@ -2327,6 +2383,12 @@ func handleAuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request)
 	groupId := r.FormValue("GroupId")
 	perm := parseIpPermission(r, "IpPermissions.1")
 
+	if sg, ok := ec2SecurityGroups.Get(groupId); ok && ec2PermissionDuplicate(sg.IpPermissions, perm) {
+		ec2ErrorXML(w, "InvalidPermission.Duplicate",
+			"the specified rule already exists", http.StatusBadRequest)
+		return
+	}
+
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
 		sg.IpPermissions = append(sg.IpPermissions, perm)
 	})
@@ -2351,6 +2413,12 @@ func handleAuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request)
 func handleAuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	groupId := r.FormValue("GroupId")
 	perm := parseIpPermission(r, "IpPermissions.1")
+
+	if sg, ok := ec2SecurityGroups.Get(groupId); ok && ec2PermissionDuplicate(sg.IpPermissionsEgress, perm) {
+		ec2ErrorXML(w, "InvalidPermission.Duplicate",
+			"the specified rule already exists", http.StatusBadRequest)
+		return
+	}
 
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
 		sg.IpPermissionsEgress = append(sg.IpPermissionsEgress, perm)

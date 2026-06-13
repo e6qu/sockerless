@@ -238,11 +238,23 @@ func registerCloudDNS(srv *sim.Server) {
 			return
 		}
 
+		// Real Cloud DNS rrsets.list filters on the optional name +
+		// type query params (the Go SDK's .Name()/.Type() builders);
+		// the Cloud Run service-discovery path relies on this.
+		nameFilter := r.URL.Query().Get("name")
+		typeFilter := r.URL.Query().Get("type")
 		var filtered []ResourceRecordSet
 		for _, stored := range recordSets.List() {
-			if stored.Project == project && stored.Zone == zoneName {
-				filtered = append(filtered, stored.Record)
+			if stored.Project != project || stored.Zone != zoneName {
+				continue
 			}
+			if nameFilter != "" && stored.Record.Name != nameFilter {
+				continue
+			}
+			if typeFilter != "" && stored.Record.Type != typeFilter {
+				continue
+			}
+			filtered = append(filtered, stored.Record)
 		}
 		if filtered == nil {
 			filtered = []ResourceRecordSet{}

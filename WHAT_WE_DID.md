@@ -4,6 +4,72 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Pod-model / lifecycle review fixes (bundled into the audit PR)
+
+Reviewed the pod + container lifecycle across all 7 backends for needless
+delays, fixed timeouts, polling inefficiency, and constraint mismatches.
+Verified each high-severity claim against source (the review agents
+overstated several, as on the sim audit). Two genuine weaknesses fixed:
+
+- BUG-1776: ACA `attachStream.Read` did a bare `<-respReady` with no
+  deadline — the AZF twin bounds the identical buffered-attach wait with a
+  deadline (the BUG-1505 fix) but it was never ported. A stalled or
+  lifetime-capped ACA Job would strand an attached docker/StdCopy reader
+  forever. Ported the AZF pattern (bootstrap window + job-run budget).
+- BUG-1777: the recovery-path `WaitForExit` (cloudrun + aca) re-ran a full
+  ListJobs+ListServices (with per-pod GetService follow-ups) on every tick
+  to check one container's exit. Narrowed to resolve the backing Job once
+  then poll that single job's state — the identical resolveExecutionState /
+  resolveJobState derivation, one resource — with a list fallback for
+  Service/App-backed and vanished jobs. Cloud Run's `waitForServiceURL`
+  flat-2s/150-call loop got exponential backoff (1s→15s). GCF left alone
+  (its hot path is already event-driven; FaaS has no persistent exit
+  state to narrow to).
+
+Deliberately NOT changed (verified non-issues): pod deferred-start has no
+timeout but doesn't block a goroutine and mirrors docker-compose semantics;
+the 30s stdin-capture waits are warn-and-proceed generous upper bounds;
+the O(n) queryTasks/queryFunctions is the documented stateless-invariant
+cost; the ACA app-readiness "returns before replica ready" is masked by the
+reverse-agent wait in the common path and the multi-container case is
+intra-revision (no cross-app DNS) — adding an unconditional revision-ready
+poll would regress hot-path latency for an unproven race. The forced delays
+(Fargate task-start, Lambda/GCF/AZF limits, ARM LROs) are genuinely
+cloud-imposed. The hot-path exit detection (pollTaskExit/pollExecutionExit)
+is already single-resource + event-driven; pod materialization already
+builds member overlays in parallel and deploys atomically.
+
+## 2026-06-13 - Sim fidelity audit pass (probe the load-bearing gaps)
+
+Ran a registered-op-vs-test-coverage sweep across all three sims, then
+applied the established discipline — "untested ≠ working; probe with
+assertions" — to the gaps that are both load-bearing (a backend or
+terraform actually calls them) AND complex enough to harbor a real
+bug. The broad coverage maps were noisy (most "untested" ops are
+out-of-slice or already had dedicated fidelity tests the op-name grep
+missed — Cloud Map, EFS, ECS are well-covered), so the value was in
+narrowing to what sockerless depends on. Three real fidelity bugs,
+each confirmed by a real-SDK probe mirroring the exact backend call
+pattern, each fixed with a permanent regression test:
+
+- BUG-1773: AWS CreateSecurityGroup never rejected a duplicate name in
+  the same VPC — the ECS per-job-network create
+  (backends/ecs/network_cloud.go) relies on InvalidGroup.Duplicate to
+  reuse an existing SG by name+VPC; against the sim a retry silently
+  minted a second SG. Now rejects same name+VPC (different VPCs still
+  reuse a name).
+- BUG-1774: AWS AuthorizeSecurityGroup{Ingress,Egress} never rejected a
+  duplicate rule — the backend re-applies its self-referencing ingress
+  rule and swallows exactly InvalidPermission.Duplicate; the sim
+  appended a second identical permission, so DescribeSecurityGroups
+  read-back accumulated duplicates. Now detects an equivalent existing
+  permission (protocol + ports + shared target) and 400s it.
+- BUG-1775: GCP rrsets.list ignored its name/type query filter — the
+  Cloud Run service-discovery path uses .Name(fqdn).Type("A"); the sim
+  returned the whole zone. The backend re-filters client-side so it
+  wasn't broken, but the sim diverged from real Cloud DNS. Now honors
+  the filter.
+
 ## 2026-06-12 - Runner-as-cloud-task topology, sim-proven (cells 1+2 minus the live pass)
 
 The bleephub official-runner harness became the topology proof. Its
