@@ -4,7 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/cloud-backend-network-driver` (PR pending) — groundwork from the Arc-2 ACA cell stand-up. Fixes **BUG-1780** (lambda/cloudrun/gcf/aca/azf used the real-Linux-netns network driver instead of ecs's metadata-only `SyntheticNetworkDriver` → `docker network create` 400s without iproute2 / leaks a kernel netns; all five now mirror ecs) and codifies two principles across AGENTS.md + CLOUD_RESOURCE_MAPPING.md + the AZF README: **experiential parity** (assemble every Docker abstraction — networks, multi-container pods incl. localhost loopback, volumes — from cloud primitives on every backend so the experience matches local Docker/Podman; filed **BUG-1781**) and **faithful sims** (no special/fake sim functionality for sockerless backends or runners). The ACA topology harness plumbing is preserved for the next arc.
+`feat/azure-sim-acr-tasks` (PR pending) — the faithful **ACR Tasks quick-build** slice in the azure sim (`scheduleRun` + `runs/{runId}`), the keystone the ACA/AZF App-overlay (reverse-agent bootstrap) path builds on. Fetches the build context from sim blob storage, runs `docker build` on the host engine (mirroring the GCP Cloud Build slice), tags the overlay into the local daemon; SDK tests included. Filed **BUG-1782** (`NewACRBuildService` ignores `SOCKERLESS_ENDPOINT_URL`).
+
+### Remaining steps to a green ACA topology cell (continuing Arc 2)
+
+In order; each is the next concrete blocker:
+
+1. **Fix BUG-1782** — thread `endpointURL` into `NewACRBuildService` (backends/azure-common/build.go): build the ARM `RegistriesClient`/`RunsClient` with the `cloud.Configuration` override (mirror `newAzureClientsWithEndpoint`), and build the azblob client against the storage account's advertised `primaryEndpoints.blob` (discover via `armstorage` GetProperties) with HTTP creds allowed. Pass `config.EndpointURL` at the server.go call site.
+2. **Wire `provision_aca`** (bleephub/test/run-integration.sh, restored from `/tmp/aca-harness-wip/`): set `SOCKERLESS_ACA_USE_APP=1`, `SOCKERLESS_AZURE_ACR_NAME`, `SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT=simstorage`, `SOCKERLESS_AZURE_BUILD_CONTAINER=build-context`, `SOCKERLESS_AZURE_BUILD_PLATFORM=linux/<hostarch>`; create the ACR (ARM PUT) + the build-context blob container; set `SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON` so the sim advertises resolvable `*.blob.localhost:<port>` endpoints (Linux `*.localhost` → loopback).
+3. **Reverse-agent exec** — the overlay container's bootstrap dials `ws://host.docker.internal:3375/v1/aca/reverse`. A sibling Podman container *can* reach a host-published port (verified), so this should connect once the overlay (with the bootstrap entrypoint) actually runs. Validate TEST 12 (container job).
+4. **TEST 13 (service container) + TEST 14 (dispatcher-spawned runner)** on ACA, then Cloud Run + GCF (same `cloudrun-bootstrap` overlay model).
 
 ## Next (pod model + runner integration focus)
 

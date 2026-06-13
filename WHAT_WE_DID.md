@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-13 - Azure sim ACR Tasks slice (overlay-build keystone for ACA/AZF)
+
+Added a faithful **ACR Tasks quick-build** slice to the azure simulator —
+`POST .../registries/{name}/scheduleRun` (DockerBuildRequest LRO) + `GET
+.../runs/{runId}`. This is the cloud-API the Azure backends call to build
+their reverse-agent bootstrap **overlay image**: `backends/aca` and
+`backends/azure-functions` issue `RegistriesClient.BeginScheduleRun` with a
+`DockerBuildRequest` and poll the run. The handler fetches the build
+context from the sim's blob storage (where the backend's azblob upload
+landed), runs `docker build` on the host engine — the sim's build
+infrastructure, exactly as the GCP Cloud Build slice
+(`simulators/gcp/cloudbuild.go`) does — and tags the image into the local
+daemon, where `StartContainerSync` resolves it by tag without a registry
+pull. The run completes synchronously and is returned as a 200 with a
+terminal-state `Run` body, which the azure-core LRO poller resolves via its
+NopPoller path (a 202 would be a hard error for a POST LRO). No
+sockerless-aware special-casing: any ACR Tasks client reaching `scheduleRun`
+gets the same behavior. SDK tests (`acr_tasks_test.go`) exercise the full
+path — upload context, BeginScheduleRun, assert the image is really present
+in the local daemon, GetRun round-trip, and a missing-context build that
+reports the Run as `Failed`.
+
+Standing up the ACA topology cell on this slice surfaced **BUG-1782**:
+`NewACRBuildService` (backends/azure-common) ignores `SOCKERLESS_ENDPOINT_URL`
+— it builds the ARM + azblob clients against real Azure — so the App-overlay
+path can't reach the sim (or any custom cloud) yet. Filed; the fix (thread
+the endpoint override + target the account's advertised blob endpoint) plus
+the harness wiring (UseApp, ACR, build-context container) and the
+reverse-agent exec validation are the next steps of the Arc-2 ACA build.
+
 ## 2026-06-13 - All-backend metadata network driver + experiential-parity principles (Arc 2 groundwork)
 
 Stand-up of the ACA cell of the bleephub GitHub topology harness (Arc 2)
