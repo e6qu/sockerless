@@ -73,6 +73,21 @@ jobs:
       - name: Check dependency freshness (zsh)
         run: zsh scripts/check-latest-deps.sh
 
+  # single-open-pr: enforce the one-PR rule — at most one PR open in the
+  # project at a time. Fails (on every open PR) the moment a second is opened,
+  # so all work goes into the single in-progress PR.
+  single-open-pr:
+    name: At most one PR open
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v6.0.3
+      - name: At most one PR open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/check-single-open-pr.sh
+
   # test-core: fast unit + library tests, no Docker integration.
   # Split out so flakes in per-backend integration don't restart the
   # whole 12-minute monolith. Runs ~3 minutes.

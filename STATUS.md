@@ -27,6 +27,7 @@ Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume ste
 ## Invariants
 
 - Never auto-merge PRs; the user handles merges.
+- **At most one PR open at a time** — put all work in the single in-progress PR; never open a new one while one exists. If two ever exist, **consolidate** their work into one (merge the branches together) — do not evade the rule. Closing a PR *without merging it* abandons and deletes that work for good; it is never a way to park work or dodge the rule. Enforced by `scripts/check-single-open-pr.sh` (pre-commit + the `single-open-pr` CI job).
 - Rebase PR branches on `origin/main` before pushing; sync local `main` after.
 - File a concrete `BUGS.md` entry before fixing a discovered defect.
 - No stubs, fakes, mocks, synthetic responses, silent fallbacks, or degraded modes (see [AGENTS.md](AGENTS.md)).
