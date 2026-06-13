@@ -309,24 +309,114 @@ func (s *Server) PodInspect(name string) (*api.PodInspectResponse, error) {
 	return s.BaseServer.PodInspect(name)
 }
 
-func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodKill(name, signal)
-}
-
 func (s *Server) PodList(opts api.PodListOptions) ([]*api.PodListEntry, error) {
 	return s.BaseServer.PodList(opts)
 }
 
-func (s *Server) PodRemove(name string, force bool) error {
-	return s.BaseServer.PodRemove(name, force)
-}
+// PodStart / PodStop / PodKill / PodRemove must drive the cloud through this
+// backend's own cloud-aware Container* methods. BaseServer's implementations
+// mutate local Store state only (Store.Containers / ForceStopContainer) and do
+// no cloud work — for a stateless cloud backend that silently leaks the
+// underlying Lambda function. These mirror the ECS/Cloud Run/ACA overrides.
 
 func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodStart(name)
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		if c, ok := s.PendingCreates.Get(cid); ok {
+			if c.State.Running {
+				continue
+			}
+		} else if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
+			continue
+		}
+		if err := s.ContainerStart(cid); err != nil {
+			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+		}
+	}
+	if errs == nil {
+		errs = []string{}
+	}
+	if len(errs) == 0 {
+		s.Store.Pods.SetStatus(pod.ID, "running")
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
 }
 
 func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, error) {
-	return s.BaseServer.PodStop(name, timeout)
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerStop(cid, timeout); err != nil {
+			if _, ok := err.(*api.NotModifiedError); !ok {
+				errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+			}
+		}
+	}
+	s.Store.Pods.SetStatus(pod.ID, "stopped")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, error) {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	if signal == "" {
+		signal = "SIGKILL"
+	}
+	var errs []string
+	for _, cid := range pod.ContainerIDs {
+		c, ok := s.ResolveContainerAuto(context.Background(), cid)
+		if !ok || !c.State.Running {
+			continue
+		}
+		if err := s.ContainerKill(cid, signal); err != nil {
+			errs = append(errs, fmt.Sprintf("container %s: %v", cid[:12], err))
+		}
+	}
+	s.Store.Pods.SetStatus(pod.ID, "exited")
+	if errs == nil {
+		errs = []string{}
+	}
+	return &api.PodActionResponse{ID: pod.ID, Errs: errs}, nil
+}
+
+func (s *Server) PodRemove(name string, force bool) error {
+	pod, ok := s.Store.Pods.GetPod(name)
+	if !ok {
+		return &api.NotFoundError{Resource: "pod", ID: name}
+	}
+	if !force {
+		for _, cid := range pod.ContainerIDs {
+			if c, ok := s.ResolveContainerAuto(context.Background(), cid); ok && c.State.Running {
+				return &api.ConflictError{
+					Message: fmt.Sprintf("pod %s has running containers, cannot remove without force", name),
+				}
+			}
+		}
+	}
+	for _, cid := range pod.ContainerIDs {
+		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
+			continue
+		}
+		_ = s.ContainerRemove(cid, force)
+	}
+	s.Store.Pods.DeletePod(pod.ID)
+	return nil
 }
 
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {

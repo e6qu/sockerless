@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1777 filed - 1735 fixed - 2 open - 7 false positives.**
+**1779 filed - 1737 fixed - 2 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,6 +12,13 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
+
+## Recently fixed (cont.)
+
+| ID | Sev | Area | Pattern | One-liner |
+|----|-----|------|---------|-----------|
+| ~~1779~~ | P3 | backend-azf — multi-container pod rejected late/asymmetrically (only at the 2nd ContainerStart) | late fail | `PodCreate` + both `ContainerCreate`s succeeded; the single-invocation rejection only fired when the 2nd member's `ContainerStart` ran (deferred materialize), surfacing as a buried per-container error. `PodStart` now rejects a multi-container pod up front with one clear `InvalidParameterError` (the ContainerStart guard stays as the per-container backstop); documented in the azf README's out-of-scope list. |
+| ~~1778~~ | P2 | backends lambda+gcf — `docker pod stop/kill/rm` (and lambda `pod start`) leaked the cloud resource; isolation lint didn't catch it | stateless violation | Lambda delegated all four Pod lifecycle methods, and GCF delegated Stop/Kill/Remove, to `BaseServer.Pod*` — which read `Store.Containers` + call `Store.ForceStopContainer` (local in-memory only, NO cloud call), so the Lambda function / Cloud Run Service kept running. ECS/Cloud Run/ACA already override these to loop their cloud-aware `Container*` methods; lambda+gcf now mirror that. `scripts/check-cloud-backend-isolation.sh` forbade `BaseServer.Container*` but not `BaseServer.Pod{Start,Stop,Kill,Remove}` — gap closed so the class can't recur. |
 
 ## Recently fixed
 

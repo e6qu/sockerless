@@ -4,17 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`docs/streamline-continuity-files` — continuity-file streamline + CLAUDE.md→AGENTS.md symlink + the continuity workflow in AGENTS.md. Docs only. (#553 sim fidelity audit + pod-model fixes is merged.) After this merges: pick the next arc.
+`feat/pod-model-correctness` (PR pending) — Arc 1 of a sustained **pod model + runner integration** focus across all backends. This PR: fixed the Lambda/GCF `docker pod stop/kill/rm` cloud-resource leak (Pod lifecycle methods were delegated to local-only BaseServer), closed the isolation-lint gap that allowed it, and made AZF's multi-container rejection fail fast + documented (BUG-1778..1779).
 
-## Next
+## Next (pod model + runner integration focus)
 
-See [PLAN.md](PLAN.md) § Next for the full framing. In order of readiness:
+The grounded gap matrix (verified against source, correcting agent over-claims): only **Lambda** is live-proven (BUG-1075); the GitHub container-job topology (container jobs + services + dispatcher) is **sim-proven for ECS only** via the bleephub harness; the other backends have per-backend GitLab stdin-attach unit tests but no full-topology proof; AZF cannot run multi-container pods (single-invocation).
 
-1. **Runner-as-cloud-task live pass** (BUG-1075) — cells 1+2 are sim-proven; the live run against real ECS/Lambda is the remaining piece. User-gated (real cloud spend).
-2. **Versioned releases + GHCR images** (issue #363) — tagging, release workflow, image publishing. Self-contained consolidation milestone.
-3. **Another sim fidelity audit** — narrow the coverage map to load-bearing ops, probe with the real client (method in [PLAN.md](PLAN.md)).
+- **Arc 2 — extend the sim-proven GitHub topology harness beyond ECS** to cloudrun / gcf / aca (container jobs + `services:` + the dispatcher loop), documenting AZF's container-job limits. Turns "ECS sim-proven" into "all container backends sim-proven."
+- **Arc 3 — GitLab docker-executor topology parity** — a sim-backed harness proving the full helper + build + service-container flow across backends (today only per-backend stdin-attach unit tests exist).
+- **Live pass (BUG-1075)** — once the above are sim-proven, the live run against real ECS/Lambda/etc. (user-gated spend).
 
-Re-check `gh issue list --repo e6qu/sockerless` before any consumer-issue work; only #394 (azuread, upstream-blocked) is open.
+Other standing candidate: issue #363 (versioned releases + GHCR). Re-check `gh issue list --repo e6qu/sockerless` before consumer-issue work; only #394 (azuread, upstream-blocked) is open.
 
 ## Working agreement
 

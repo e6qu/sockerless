@@ -105,6 +105,7 @@ None open. The shared Azure auth-middleware pattern (`auth.go` wraps the mux to 
 - Premium / Dedicated plan-specific features (durable functions, VNet integration triggers).
 - Native runtime modes (Node, Python, Java) — container mode only.
 - Event-triggered functions (HTTP only).
+- **Multi-container pods.** Azure Functions is single-invocation: a pod can hold at most one container. `PodStart` and `ContainerStart` reject a multi-container pod with a clear error (`multi-container pods are not supported by the azure-functions backend`). This rules out GitHub Actions `services:` (service containers) and `container:` jobs that depend on a sidecar on the AZF backend; run each container as its own single-container workload, or use a container backend (ECS / Cloud Run / ACA) for multi-container pods.
 
 ## Cloud Notes
 

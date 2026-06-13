@@ -44,6 +44,14 @@ forbidden_patterns=(
   # Cloud backends must query container state through CloudStateProvider paths.
   'BaseServer\.ContainerInspect'
   'BaseServer\.ContainerList'
+  # Pod lifecycle: BaseServer.Pod{Start,Stop,Kill,Remove} mutate local Store
+  # state and do NO cloud work — delegating them silently leaks the pod's
+  # cloud resource (a stateless violation). Cloud backends must override these
+  # to loop their own cloud-aware Container* methods.
+  'BaseServer\.PodStart'
+  'BaseServer\.PodStop'
+  'BaseServer\.PodKill'
+  'BaseServer\.PodRemove'
   # Store container state methods
   'Store\.StopContainer'
   'Store\.ForceStopContainer'
