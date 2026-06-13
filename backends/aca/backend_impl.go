@@ -39,6 +39,14 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
+	// A long-running *service* container (GitHub Actions `services:`) is
+	// created without an explicit entrypoint/cmd — it uses the image default
+	// (e.g. nginx). A *job* container overrides the entrypoint to a keepalive
+	// (`tail -f /dev/null`) and runs its steps via exec; a stdin-attached
+	// container (GitLab's piped-envelope flow) runs its workload via invoke.
+	// Only a service's own workload must run at startup, so flag just that.
+	serviceLike := len(config.Entrypoint) == 0 && len(config.Cmd) == 0 && !config.OpenStdin
+
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		config.Env = core.MergeEnvByKey(img.Config.Env, config.Env)
@@ -87,6 +95,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			return nil, fmt.Errorf("ensure aca overlay image: %w", err)
 		}
 		config.Env = append(config.Env, acaOverlayUserEnv(config.Entrypoint, config.Cmd, config.WorkingDir)...)
+		if serviceLike {
+			// Run the service's own workload (nginx, postgres, …) at startup
+			// so the container actually serves; the bootstrap still serves the
+			// reverse-agent + HTTP for exec alongside it.
+			config.Env = append(config.Env, "SOCKERLESS_RUN_USER_WORKLOAD=1")
+		}
 		if jt := core.JobTimeoutEnvIfUnset(config.Env); jt != "" {
 			config.Env = append(config.Env, jt)
 		}

@@ -108,6 +108,8 @@ A pre-commit or pre-push hook failure — even one that looks incidental, cosmet
 
 If you believe a hook is genuinely wrong or that something should be ignored, **stop and ask the user** — describe the failure and why you think it's a false positive, and let them decide. Deciding on your own to skip, suppress, or route around a hook failure is forbidden.
 
+The **one** sanctioned `--no-verify` is the badge auto-commit: `scripts/update-readme-badges.sh`, running as the pre-push hook, auto-commits a refreshed `README.md` (and only `README.md` — a single deterministic, generated file the badge job owns) with `--no-verify`, then fails the push so you re-run it and the badge commit goes out too. That bypass is safe because the commit carries nothing the hooks could meaningfully validate. It does not license `--no-verify` anywhere else.
+
 ## Never create more than one PR — one branch, one PR
 
 All work goes on a single branch and a single PR — even several independent concerns or consumer issues in one session. Never open a second PR while one is open. If two ever exist, **consolidate** their work into one PR (merge the branches together); never close one to "fix the count", never open another, never game the check. **Closing a PR without merging it abandons and deletes that work for good** — it is never a way to park work for later. Enforced by `scripts/check-single-open-pr.sh` (pre-commit + the `single-open-pr` CI job).

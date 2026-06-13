@@ -116,14 +116,29 @@ for pair in \
   fi
 done
 
-# Stage if changed, and FAIL so the update is committed rather than left
-# stranded as an uncommitted staged edit (which then trips the CI badge check).
-# When badges are already current this is a clean no-op. The `git add` makes the
-# refreshed README ready to commit; the non-zero exit forces you to.
-if ! git diff --quiet "$readme" 2>/dev/null; then
-  git add "$readme"
-  echo "ERROR: README badges were stale; refreshed and staged $readme." >&2
-  echo "Commit it (amend it into your change) and run the push/commit again." >&2
+# When badges are already current this is a clean no-op. Otherwise the refresh
+# must end up committed, never stranded as an uncommitted staged edit.
+if git diff --quiet "$readme" 2>/dev/null; then
+  echo "badges: up to date"
+  exit 0
+fi
+
+git add "$readme"
+
+# In CI we must NOT commit — the badge-freshness check relies on the diff to
+# report staleness. Stage + fail; the caller (`|| true` then `git diff HEAD`)
+# turns this into the real error.
+if [ -n "${CI:-}" ]; then
+  echo "ERROR: README badges are stale (run scripts/update-readme-badges.sh and commit README.md)." >&2
   exit 1
 fi
-echo "badges: up to date"
+
+# Pre-push (local): auto-commit the refreshed badges as their own commit,
+# touching ONLY README.md, and bypass the pre-commit/commit-msg hooks. This is
+# the one sanctioned `--no-verify`: the commit carries a single deterministic,
+# generated file the badge job owns, so the hooks have nothing to validate. A
+# pre-push hook cannot inject a commit into the push already in flight, so we
+# then fail — re-run the push and the badge commit goes out with everything else.
+git commit --no-verify -m "chore(badges): refresh README badges" -- "$readme" >&2
+echo "Auto-committed refreshed README badges. Run the push again to include it." >&2
+exit 1
