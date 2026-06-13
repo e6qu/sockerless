@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -25,18 +26,19 @@ var _ core.CloudBuildService = (*ACRBuildService)(nil)
 
 // ACRBuildService builds Docker images using Azure Container Registry Tasks.
 type ACRBuildService struct {
-	acr            *armcontainerregistry.RegistriesClient
-	runs           *armcontainerregistry.RunsClient
-	blobClient     *azblob.Client
-	subscriptionID string
-	resourceGroup  string
-	acrName        string
-	storageAccount string
-	containerName  string // blob container for context upload
-	cred           azcore.TokenCredential
-	endpointURL    string             // custom/simulated Azure endpoint, "" for the public cloud
-	armOpts        *arm.ClientOptions // nil for the public cloud
-	logger         zerolog.Logger
+	acr              *armcontainerregistry.RegistriesClient
+	runs             *armcontainerregistry.RunsClient
+	blobClient       *azblob.Client
+	subscriptionID   string
+	resourceGroup    string
+	acrName          string
+	storageAccount   string
+	containerName    string // blob container for context upload
+	cred             azcore.TokenCredential
+	endpointURL      string             // custom/simulated Azure endpoint, "" for the public cloud
+	armOpts          *arm.ClientOptions // nil for the public cloud
+	registryEndpoint string             // overrides <acrName>.azurecr.io (sovereign/custom/simulated registry)
+	logger           zerolog.Logger
 }
 
 // NewACRBuildService creates an ACR Tasks-backed build service.
@@ -83,17 +85,18 @@ func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGro
 	}
 
 	s := &ACRBuildService{
-		acr:            regClient,
-		runs:           runsClient,
-		subscriptionID: subscriptionID,
-		resourceGroup:  resourceGroup,
-		acrName:        acrName,
-		storageAccount: storageAccount,
-		containerName:  containerName,
-		cred:           cred,
-		endpointURL:    endpointURL,
-		armOpts:        armOpts,
-		logger:         logger,
+		acr:              regClient,
+		runs:             runsClient,
+		subscriptionID:   subscriptionID,
+		resourceGroup:    resourceGroup,
+		acrName:          acrName,
+		storageAccount:   storageAccount,
+		containerName:    containerName,
+		cred:             cred,
+		endpointURL:      endpointURL,
+		armOpts:          armOpts,
+		registryEndpoint: os.Getenv("SOCKERLESS_AZURE_ACR_ENDPOINT"),
+		logger:           logger,
 	}
 
 	// Public cloud: the blob endpoint is the well-known account URL, so the
@@ -200,7 +203,15 @@ func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 			repo = t
 		}
 	}
-	imageName := fmt.Sprintf("%s.azurecr.io/%s:%s", s.acrName, repo, tag)
+	// The registry endpoint is normally `<acrName>.azurecr.io`. An operator
+	// may override it (sovereign clouds with a different suffix, or a
+	// reachable local/simulated registry) via SOCKERLESS_AZURE_ACR_ENDPOINT;
+	// the image is then built, pushed, and pulled at that host.
+	registryHost := s.acrName + ".azurecr.io"
+	if s.registryEndpoint != "" {
+		registryHost = s.registryEndpoint
+	}
+	imageName := fmt.Sprintf("%s/%s:%s", registryHost, repo, tag)
 
 	// Build arguments
 	var arguments []*armcontainerregistry.Argument

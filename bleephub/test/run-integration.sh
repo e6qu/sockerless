@@ -215,8 +215,8 @@ provision_aca() {
         echo "127.0.0.1 ${acct}.blob.localhost" >>/etc/hosts || fail "add storage host alias"
     fi
 
-    log "Starting simulator-azure on $SIM_ADDR"
-    simulator-azure --addr "$SIM_ADDR" >"$LOG_DIR/simulator-azure.log" 2>&1 &
+    log "Starting simulator-azure on :4568 (all interfaces, so the published registry port reaches it)"
+    simulator-azure --addr ":4568" >"$LOG_DIR/simulator-azure.log" 2>&1 &
     PIDS+=($!)
     wait_for_url "http://$SIM_ADDR/health"
 
@@ -260,6 +260,13 @@ provision_aca() {
     export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$acct"
     export SOCKERLESS_AZURE_BUILD_CONTAINER="build-context"
     export SOCKERLESS_AZURE_BUILD_PLATFORM="$build_platform"
+    # The overlay image is built, pushed, and pulled at this registry
+    # endpoint — the sim's /v2/ published to the host engine at
+    # 127.0.0.1:5000 (a loopback host the engine treats as insecure, so no
+    # daemon registry config is needed). ACR Tasks does a real `docker push`
+    # here; the ACA App run does a real `docker pull` from here — registry
+    # and compute stay agnostic, connected only by the /v2/ API.
+    export SOCKERLESS_AZURE_ACR_ENDPOINT="127.0.0.1:5000"
     # ACA exec/attach is via the reverse agent: the overlay bootstrap inside
     # the App container dials back to the backend's reverse endpoint.
     export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/aca/reverse"

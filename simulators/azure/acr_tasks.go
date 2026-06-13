@@ -163,11 +163,12 @@ func handleACRGetRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // executeACRBuild fetches the build context the backend uploaded to sim
-// blob storage and runs `docker build` against the host engine, tagging
-// the image with each requested ACR image name. The context is a gzipped
-// tar (Dockerfile + COPY'd files), streamed to `docker build -` on stdin,
-// so no extraction is needed. The built image lands in the local daemon —
-// the sim's registry — where StartContainerSync resolves it by tag.
+// blob storage, runs `docker build` against the host engine, then — exactly
+// as real ACR Tasks with IsPushEnabled does — `docker push`es the result to
+// the registry and removes the local copy. The registry, not the build
+// host, is the source of truth; the workload later pulls the image from the
+// registry over the standard /v2/ API. The build context is a gzipped tar
+// (Dockerfile + COPY'd files) streamed to `docker build -` on stdin.
 func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 	if len(req.ImageNames) == 0 {
 		return fmt.Errorf("imageNames is required")
@@ -221,7 +222,32 @@ func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("docker build %v failed: %w: %s", req.ImageNames, err, strings.TrimSpace(string(out)))
 	}
+
+	// Push each tag to its registry and drop the local copy — the faithful
+	// build→push that leaves the image in the registry, not on the build
+	// host. The image ref's host (e.g. the configured ACR endpoint) routes
+	// to the registry's /v2/; pushing is a plain registry-client operation.
+	if !req.IsPushEnabledOrDefault() {
+		return nil
+	}
+	for _, img := range req.ImageNames {
+		push := exec.CommandContext(ctx, "docker", "push", img)
+		if out, err := push.CombinedOutput(); err != nil {
+			return fmt.Errorf("docker push %s failed: %w: %s", img, err, strings.TrimSpace(string(out)))
+		}
+		if out, err := exec.CommandContext(ctx, "docker", "rmi", "-f", img).CombinedOutput(); err != nil {
+			acrTasksLogger.Warn().Str("image", img).Str("out", strings.TrimSpace(string(out))).
+				Msg("could not remove local ACR Task build output after push")
+		}
+	}
 	return nil
+}
+
+// IsPushEnabledOrDefault reports whether the build output should be pushed.
+// Real ACR Tasks defaults IsPushEnabled to true for a DockerBuildRequest;
+// the sim honors an explicit false (build-only) but pushes otherwise.
+func (r acrDockerBuildRequest) IsPushEnabledOrDefault() bool {
+	return r.IsPushEnabled == nil || *r.IsPushEnabled
 }
 
 // parseACRBlobURL splits an Azure blob URL
