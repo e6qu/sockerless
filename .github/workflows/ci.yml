@@ -72,6 +72,17 @@ jobs:
         run: bash scripts/check-latest-deps.sh
       - name: Check dependency freshness (zsh)
         run: zsh scripts/check-latest-deps.sh
+      # README badges are refreshed by the update-readme-badges pre-push hook.
+      # Re-run it here so a push that skipped the hook (e.g. --no-verify) can't
+      # land stale badges — the line counts are computed from committed files
+      # (git ls-files + wc -l), so this is deterministic across platforms.
+      - name: README badges are up to date
+        run: |
+          bash scripts/update-readme-badges.sh
+          if ! git diff --exit-code HEAD -- README.md; then
+            echo "::error::README badges are stale. Run scripts/update-readme-badges.sh (or let the pre-push hook run — do not skip it) and commit README.md."
+            exit 1
+          fi
 
   # single-open-pr: enforce the one-PR rule — at most one PR open in the
   # project at a time. Fails (on every open PR) the moment a second is opened,
@@ -87,6 +98,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash scripts/check-single-open-pr.sh
+
+  # rebased-on-main: fail if the PR branch has fallen behind origin/main, so
+  # every PR is tested (and merges) on top of the latest base.
+  rebased-on-main:
+    name: Branch rebased on origin/main
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6.0.3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Branch must be rebased on origin/main
+        run: bash scripts/check-rebased-on-main.sh
 
   # test-core: fast unit + library tests, no Docker integration.
   # Split out so flakes in per-backend integration don't restart the
