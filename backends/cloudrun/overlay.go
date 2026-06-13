@@ -28,8 +28,8 @@ import (
 // rationale.
 func (s *Server) ensureOverlayImage(ctx context.Context, spec gcpcommon.OverlayImageSpec, contentTag string) (string, error) {
 	imageURI := fmt.Sprintf(
-		"%s-docker.pkg.dev/%s/sockerless-overlay/cloudrun:%s",
-		s.config.Region, s.config.Project, contentTag,
+		"%s/%s/sockerless-overlay/cloudrun:%s",
+		gcpcommon.OverlayRegistryHost(s.config.Region), s.config.Project, contentTag,
 	)
 	// AR tag-existence precheck: HEAD /v2/<repo>/manifests/<tag>. On
 	// cache hit we skip Cloud Build's ~25-30s tag-rebuild overhead, which

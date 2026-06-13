@@ -21,8 +21,8 @@ import (
 // a content-tag match short-circuits.
 func (s *Server) ensureOverlayImage(ctx context.Context, spec OverlayImageSpec, contentTag string) (string, error) {
 	imageURI := fmt.Sprintf(
-		"%s-docker.pkg.dev/%s/sockerless-overlay/gcf:%s",
-		s.config.Region, s.config.Project, contentTag,
+		"%s/%s/sockerless-overlay/gcf:%s",
+		gcpcommon.OverlayRegistryHost(s.config.Region), s.config.Project, contentTag,
 	)
 	// AR tag-existence precheck: HEAD /v2/<repo>/manifests/<tag>. On
 	// cache hit (the common case for prewarmed overlays + same-revision

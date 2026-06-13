@@ -205,7 +205,11 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	}
 
 	// Per-target endpoint + ARM identifiers + auth/bootstrap paths.
-	var endpointURL, logAdminEndpoint, project, buildBucket, saJSONPath, gcfBootstrapPath string
+	// arRegistryEndpoint is the Artifact Registry coordinate the backend's
+	// overlay refs target (build push + workload pull). Empty → the real
+	// <region>-docker.pkg.dev; for the sim it's the simulator's own /v2/
+	// address. A coordinate like endpointURL, not a code path.
+	var endpointURL, logAdminEndpoint, project, buildBucket, saJSONPath, gcfBootstrapPath, arRegistryEndpoint string
 	switch target {
 	case "sim":
 		// Build simulator
@@ -268,6 +272,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		fmt.Printf("[sim] simulator-gcp is ready at %s\n", simURL)
 
 		endpointURL = simURL
+		// The simulator serves its Artifact Registry /v2/ at its own address
+		// (127.0.0.1:<port>, which Docker auto-trusts as insecure), so the
+		// overlay build→push→pull round-trips against the sim.
+		arRegistryEndpoint = fmt.Sprintf("127.0.0.1:%d", simPort)
 		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sockerless-test"
 		buildBucket = "sockerless-test-build"
@@ -360,6 +368,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_LOG_TIMEOUT=2s",
 		"SOCKERLESS_GCF_PROJECT="+project,
 		"SOCKERLESS_GCP_BUILD_BUCKET="+buildBucket,
+		"SOCKERLESS_GCP_AR_ENDPOINT="+arRegistryEndpoint,
 		"SOCKERLESS_GCP_BUILD_PLATFORM="+overlayPlatform,
 		"GOOGLE_APPLICATION_CREDENTIALS="+saJSONPath,
 		"SOCKERLESS_GCF_BOOTSTRAP="+gcfBootstrapPath,

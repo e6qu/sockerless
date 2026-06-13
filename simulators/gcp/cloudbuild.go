@@ -461,25 +461,30 @@ func extractTarball(data []byte, dir string) error {
 // secretValues map env-var-name → resolved secret payload; these are
 // added to the subprocess env when the step's secretEnv references them.
 //
-// `docker push` semantics: real Cloud Build pushes the built image to
-// the target registry (Artifact Registry / Container Registry / etc.).
-// The sim's local docker daemon IS the sim's registry — the build step
-// already tagged the image with the target URL via `docker build -t
-// <URL>`, and sim.StartContainerSync uses that local tag directly when
-// the function is invoked. Push is therefore confirmed-local: verify
-// the image exists in the daemon and exit 0. No network egress to real
-// AR/GCR (which would need real GCP credentials).
+// `docker push` semantics: real Cloud Build pushes the built image to the
+// target registry (Artifact Registry / Container Registry / etc.) and the
+// cloud's compute later pulls it from there over the standard /v2/ API. The
+// sim is faithful to that: the build step's `docker build -t <URL>` tagged the
+// image with the target ref, and a `push` step does a real `docker push <URL>`
+// then drops the local copy, so the workload pulls from the registry — not a
+// local-daemon shortcut. The ref's host routes to the registry's /v2/ (the
+// configured AR endpoint / the harness's published sim registry).
 func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretValues map[string]string) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker CLI not available: %w", err)
 	}
 	if len(step.Args) >= 2 && step.Args[0] == "push" {
 		target := step.Args[1]
-		// Verify the local daemon has the tag the build step produced.
-		check := exec.CommandContext(ctx, "docker", "image", "inspect", target)
-		check.Env = os.Environ()
-		if out, err := check.CombinedOutput(); err != nil {
-			return fmt.Errorf("docker push %s (sim local-only): image not present in local daemon: %v: %s",
+		push := exec.CommandContext(ctx, "docker", "push", target)
+		push.Env = os.Environ()
+		if out, err := push.CombinedOutput(); err != nil {
+			return fmt.Errorf("docker push %s failed: %w: %s", target, err, strings.TrimSpace(string(out)))
+		}
+		// Drop the local copy so the run pulls from the registry, not the
+		// build host's daemon. Best-effort — a failure here doesn't fail the
+		// build (the push already succeeded).
+		if out, err := exec.CommandContext(ctx, "docker", "rmi", "-f", target).CombinedOutput(); err != nil {
+			fmt.Fprintf(os.Stderr, "cloudbuild: could not remove local build output %s after push: %v: %s\n",
 				target, err, strings.TrimSpace(string(out)))
 		}
 		return nil

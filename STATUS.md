@@ -6,23 +6,21 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `main` (clean; the continuation plan below is up as a docs PR). |
-| In-flight | PR #565 (single open PR): badge auto-commit at pre-push, `BLEEPHUB_HOLD` forwarding, and **the ACA GitHub-topology cell now fully green — TEST 12 (container job) + TEST 13 (service container) + TEST 14 (dispatcher) all pass** (BUG-1784 fixed: the bootstrap now launches a service's own workload at startup). #564 (App seeding #559, ECS-Exec handshake #562, PR-hygiene enforcement, flaky-test fix) merged. |
-| Last merged | #560 faithful build→push→pull for ACR Tasks (BUG-1785 azure half; registry & compute agnostic). |
+| Active branch | `feat/gcp-cloudbuild-faithful-and-cloudrun-cell` (PR #566, CI green). |
+| In-flight | PR #566 (single open PR): **BUG-1785 fully fixed** — the gcp Cloud Build half completes the faithful build→push→pull (the azure ACR Tasks half merged in #560). The sim's Cloud Build `push` step does a real `docker push`/`rmi`; cloudrun + gcf overlays resolve the registry host via the `SOCKERLESS_GCP_AR_ENDPOINT` coordinate (parallel to azure); the cloudrun/gcf integration harnesses set it per-target like `endpointURL` (no `if sim` branch). Coordinate-only pattern documented in CLOUD_RESOURCE_MAPPING.md + AGENTS.md. |
+| Last merged | #565 badge auto-commit at pre-push + `BLEEPHUB_HOLD` forwarding + **the ACA GitHub-topology cell fully green — TEST 12/13/14 all pass** (BUG-1784: the bootstrap now launches a service's own workload at startup). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
-| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1784 (ACA service-container discovery), BUG-1785 (gcp Cloud Build push→pull half remains). |
+| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
 | Live infra | None up. |
 
 ## What's next
 
 Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume steps in [DO_NEXT.md](DO_NEXT.md)):
 
-- **A. Finish the ACA cell** — TEST 13 service-container discovery (BUG-1784) + TEST 14 dispatcher port wiring.
-- **B. BUG-1785 gcp half** — faithful Cloud Build push→pull through `cloudbuild.go` + gcp-common AR-endpoint override + the cloudrun/gcf integration tests; validate via `make test-integration`.
-- **C. Cloud Run + GCF topology cells** — extend the harness (depends on B).
-- **D. Arc 3 — GitLab docker-executor parity.**
-- **E. FaaS multi-container pod assembly (BUG-1781).**
-- **F. Standing** — live pass (BUG-1075), releases (#363), sim audits.
+- **A. Cloud Run + GCF topology cells** — extend the bleephub GitHub-topology harness (ECS- and ACA-proven) to Cloud Run and GCF on the same `cloudrun-bootstrap` overlay model. The faithful overlay push→pull (BUG-1785) is now in place on both, so the harness can build → push → pull the bootstrap overlay against the gcp sim exactly as on cloud.
+- **B. Arc 3 — GitLab docker-executor parity.**
+- **C. FaaS multi-container pod assembly (BUG-1781).**
+- **D. Standing** — live pass (BUG-1075), releases (#363), sim audits.
 
 ## Invariants
 
