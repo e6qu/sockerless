@@ -208,9 +208,9 @@ repos:
         always_run: true
 
       # Pre-push: check rebase + update badges
-      - id: check-rebased
-        name: Check branch is rebased on origin/main
-        entry: bash scripts/check-rebased.sh
+      - id: rebased-on-main
+        name: Branch rebased on origin/main
+        entry: bash scripts/check-rebased-on-main.sh
         language: system
         always_run: true
         pass_filenames: false
