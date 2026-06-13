@@ -17,15 +17,30 @@ Replace Docker Engine with Sockerless for Docker API clients (`docker`, Docker C
 6. The user merges PRs. Agents create branches, commits, and PRs only.
 7. Continuity docs are updated in every PR and written to stay correct after the PR merges (see [AGENTS.md](AGENTS.md)).
 
-## Next
+## Next — continuation plan
 
-No committed timeline; pick per session and confirm with the user before live spend:
+Active focus: the **pod model + GitHub/GitLab runner integration across all backends**. ACA is the lead container cell — its GitHub container-mode job (bleephub harness TEST 12) is **green** end-to-end (overlay built via the sim's ACR Tasks → ACA App → reverse-agent exec; the overlay round-trips through the registry faithfully, BUG-1785 azure half). The plan below finishes that cell, then sweeps the rest. No committed timeline; confirm before live spend.
 
-1. **FaaS multi-container pod assembly (BUG-1781).** Lambda, GCF, and AZF currently reject (or can't run) multiple containers sharing one pod, so GitHub `services:` / sidecar `container:` jobs and GitLab service containers don't run on the FaaS backends. Assemble the container-pod execution model out of cloud primitives per backend — native sidecar containers where the platform offers them (Azure Functions sidecars), else **a pod assembled from multiple functions (one per container)** wired by cloud DNS/service-mesh (Cloud Map / Cloud DNS / Private DNS) + a shared workspace volume — so pod semantics match the container backends. Deliver the **full** pod abstraction regardless of backend, including **localhost / shared-loopback networking between members** (sibling on `localhost:<port>`): intrinsic where the primitive shares a netns, else assembled by the **agent proxying `localhost:<port>` to the sibling member** over the cloud network. Stage across phases: (a) name the per-FaaS primitive + loopback assembly in CLOUD_RESOURCE_MAPPING, (b) implement the multi-function pod + agent loopback mesh per backend, (c) extend the bleephub topology harness to prove `services:`/`container:` jobs on each. Replaces the interim fail-fast rejections.
-2. **GitHub topology harness sweep across container backends (Arc 2, in flight).** Extend the bleephub official-runner harness (currently ECS-only) to ACA → Cloud Run → GCF, proving container jobs + service containers + the dispatcher loop sim-backed on each. The metadata-only network driver fix (BUG-1780) got ACA past networking + lifecycle; container-job exec needs the reverse-agent bootstrap injected via the App overlay (`SOCKERLESS_ACA_USE_APP=1` + an ACR-Tasks build), which must be assembled through **faithful cloud APIs only** — the azure sim implements real ACR Tasks/Registry semantics and the host engine pulls the overlay as a real client would; never a sockerless-aware sim hook (see guiding principle 3 + [AGENTS.md](AGENTS.md) cloud-slice rules).
-3. **Runner-as-cloud-task live pass (BUG-1075).** Cells 1+2 (GitHub runner → ECS/Lambda) are sim-proven end-to-end by the bleephub official-runner harness; cells 3+4 (GitLab) run sim-backed. The remaining work is the *live* run against real cloud infra. Do not mark any live cell green without real authenticated runs.
-4. **Versioned releases + GHCR images (issue #363).** Tagging, a release workflow, and image publishing — the launch-gating step for external users. Deferred while the project was early; now a reasonable consolidation milestone.
-5. **Further sim fidelity audits.** The repeatable method (below) keeps finding real bugs.
+### A. Finish the ACA GitHub topology cell
+1. **TEST 13 — service containers (BUG-1784).** A `services:` sibling App's alias doesn't resolve from inside the job App. Wire ACA per-job-network service discovery (Private DNS A-records for sibling service names on the per-job `github_network_*`), the container-backend analog of the FaaS work in E.
+2. **TEST 14 — dispatcher-spawned runner.** The spawned runner can't reach bleephub (`Connection refused host.docker.internal:80`) — a published-port / external-URL wiring detail in the ACA harness.
+
+### B. BUG-1785 gcp half — faithful Cloud Build push→pull
+Carry the azure pattern (real `docker push`/`pull`, sim services agnostic, connected only by `/v2/`) through `simulators/gcp/cloudbuild.go` (confirmed-local push → real `docker push` + `rmi`) and the cloudrun/gcf overlay flows: add a GCP AR registry-endpoint override (parallel to `SOCKERLESS_AZURE_ACR_ENDPOINT`), and update `simulators/gcp/sdk-tests/build_test.go` (CI-validatable with a `registry:2` stand-in) **and** the gated `cloudrun`/`cloudrun-functions` integration tests (which rely on the local-daemon shortcut). **Validate via `make test-integration`** — the integration suite is where the full round-trip is exercised; don't land it on the sdk-test alone. (Reusable finding: Docker auto-trusts loopback registries, Podman does not — the host engine needs a scoped insecure entry for the published sim `/v2/`.)
+
+### C. Extend the topology sweep — Cloud Run + GCF cells
+Same overlay model (the GCP Cloud Build slice + the `cloudrun-bootstrap` reverse-agent). Prove container jobs + service containers + the dispatcher loop on each, as ACA did. Depends on B (faithful Cloud Build) for the overlay round-trip.
+
+### D. Arc 3 — GitLab docker-executor parity
+A sim-backed harness proving the full helper + build + service-container flow across backends (today only per-backend stdin-attach unit tests exist).
+
+### E. FaaS multi-container pod assembly (BUG-1781)
+Lambda, GCF, and AZF currently reject (or can't run) multiple containers sharing one pod, so GitHub `services:` / sidecar `container:` jobs and GitLab service containers don't run on the FaaS backends. Assemble the container-pod execution model out of cloud primitives per backend — native sidecar containers where the platform offers them (Azure Functions sidecars), else **a pod assembled from multiple functions (one per container)** wired by cloud DNS/service-mesh (Cloud Map / Cloud DNS / Private DNS) + a shared workspace volume. Deliver the **full** pod abstraction including **localhost / shared-loopback networking between members** (sibling on `localhost:<port>`): intrinsic where the primitive shares a netns, else assembled by the **agent proxying `localhost:<port>` to the sibling member** over the cloud network. Stage: (a) name the per-FaaS primitive + loopback assembly in CLOUD_RESOURCE_MAPPING, (b) implement the multi-function pod + agent loopback mesh per backend, (c) extend the harness to prove `services:`/`container:` jobs on each. Replaces the interim fail-fast rejections.
+
+### F. Standing candidates
+- **Runner-as-cloud-task live pass (BUG-1075).** Cells 1+2 (GitHub → ECS/Lambda) sim-proven; the *live* run against real cloud infra remains. No live cell green without real authenticated runs.
+- **Versioned releases + GHCR images (issue #363).**
+- **Further sim fidelity audits** (the repeatable method below keeps finding real bugs).
 
 ## Sim fidelity audit method (repeatable)
 
