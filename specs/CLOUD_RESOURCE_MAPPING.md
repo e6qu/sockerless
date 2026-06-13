@@ -137,6 +137,17 @@ One-screen view of every Docker/Podman concept and what backs it on each cloud, 
 | `ImagePush` | ECR | Artifact Registry | ACR | same |
 | Multi-arch manifest assembly | OCI distribution v2 PUT via `core.AssembleMultiArchManifest` | same | same | `core.AssembleMultiArchManifest` shared helper (Apache 2.0) — accepts a per-cloud `tokenForRepo(repo) (string, error)` callback. |
 
+#### Faithful build → push → pull (the registry is real, reached only by coordinate)
+
+A cloud build (ACR Tasks / Cloud Build, with `IsPushEnabled`) **pushes** the built image to the registry (ACR / Artifact Registry) and the cloud's compute (ACA App / Cloud Run Service / Function) later **pulls** it from there over the public OCI `/v2/` API — there is no privileged channel from compute into registry storage. The simulators are faithful to this: the build slice does a real `docker push <ref>` + `docker rmi` (it never leaves the image in the local daemon as a shortcut), and the run pulls `<ref>` over `/v2/`. The sims' `/v2/` is the same shared `OCIRegistry` (`simulators/<cloud>/shared/oci.go`) ECR/AR/ACR are built on.
+
+**How the sim registry is reached — a coordinate, never a code path.** The backend always builds the **real** registry ref for both cloud and sim — `<region>-docker.pkg.dev/<project>/sockerless-overlay/...` (GCP), `<acr>.azurecr.io/sockerless-overlay/...` (Azure). What differs between cloud and sim is **only the registry-endpoint coordinate**:
+
+- **Azure:** `SOCKERLESS_AZURE_ACR_ENDPOINT` overrides `<acr>.azurecr.io` (`azure-common/build.go`).
+- **GCP:** `SOCKERLESS_GCP_AR_ENDPOINT` overrides `<region>-docker.pkg.dev` (`gcpcommon.OverlayRegistryHost`).
+
+A harness pointed at a simulator sets this coordinate to the sim's own `/v2/` address (e.g. `127.0.0.1:<port>`, which Docker auto-trusts as insecure — a local Podman host needs an `insecure-registries` drop-in for that host); a real deployment leaves it default (the real registry). The backend code and the integration tests are **identical** against cloud and sim — they differ **only in this coordinate value**, exactly like `SOCKERLESS_ENDPOINT_URL` for the control-plane APIs. **Never** add an `if sim` / `if target == "sim"` branch or any sim-only behaviour in backend or test code to route the registry — that is a fake test (see [AGENTS.md](../AGENTS.md) § "Simulators are real implementations" and § "No stubs… no synthetic behavior").
+
 ### Lifecycle / management
 
 | Docker concept | All cloud backends | Driver |

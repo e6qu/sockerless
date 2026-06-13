@@ -159,7 +159,11 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker build alpine local tags: %v\n%s", err, out)
 	}
 
-	var endpointURL, logAdminEndpoint, project, bootstrapPath, buildBucket, saJSONPath string
+	// arRegistryEndpoint is the Artifact Registry coordinate the backend's
+	// overlay refs target (build push + workload pull). Empty → the real
+	// <region>-docker.pkg.dev; for the sim it's the simulator's own /v2/
+	// address. A coordinate like endpointURL, not a code path.
+	var endpointURL, logAdminEndpoint, project, bootstrapPath, buildBucket, saJSONPath, arRegistryEndpoint string
 	switch target {
 	case "sim":
 		simDir := repoRoot + "/simulators/gcp"
@@ -212,6 +216,10 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		fmt.Printf("[sim] simulator-gcp ready at %s\n", simURL)
 
 		endpointURL = simURL
+		// The simulator serves its Artifact Registry /v2/ at its own address
+		// (127.0.0.1:<port>, which Docker auto-trusts as insecure), so the
+		// overlay build→push→pull round-trips against the sim.
+		arRegistryEndpoint = fmt.Sprintf("127.0.0.1:%d", simPort)
 		logAdminEndpoint = fmt.Sprintf("127.0.0.1:%d", simGRPCPort)
 		project = "sim-project"
 		buildBucket = "sockerless-test-build"
@@ -294,6 +302,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		"SOCKERLESS_GCR_PROJECT=" + project,
 		"SOCKERLESS_CLOUDRUN_BOOTSTRAP=" + bootstrapPath,
 		"SOCKERLESS_GCP_BUILD_BUCKET=" + buildBucket,
+		"SOCKERLESS_GCP_AR_ENDPOINT=" + arRegistryEndpoint,
 		"SOCKERLESS_GCP_BUILD_PLATFORM=" + overlayPlatform,
 		// Required at NewServer (no Path B fallback).
 		// Bootstrap dials back over WebSocket from inside the workload

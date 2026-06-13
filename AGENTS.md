@@ -79,7 +79,13 @@ The pre-commit hook `scripts/check-simulator-tests.sh` blocks any commit that ad
 
 There is no "just land it and add tests later." If you edit a simulator, the tests ship with it.
 
-**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [agent/README.md](agent/README.md), [backends/README.md](backends/README.md)
+### A sim test differs from a cloud test ONLY in coordinates
+
+A backend (or an integration test) talking to a simulator must use the **same code and the same identifiers** it uses against the real cloud, differing **only in coordinates** — the endpoint URL(s) and credentials. **Never** add an `if sim` / `if target == "sim"` branch, a sim-only env var, or any sim-aware behaviour to backend or test code. Such a special case is a *fake test*: it proves the sim-special path works, not that the real client path does.
+
+If the sim needs to be reachable somewhere a real client reaches a cloud host (e.g. a registry at `<region>-docker.pkg.dev` / `<acr>.azurecr.io`), express that as a **coordinate** the backend already honours for both cloud and sim — for the overlay registry that's the `SOCKERLESS_GCP_AR_ENDPOINT` / `SOCKERLESS_AZURE_ACR_ENDPOINT` registry-endpoint coordinate (default = the real registry; a harness sets it to the sim's `/v2/` address). The full pattern, with the faithful build→push→pull it supports, is documented in [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md) § "Faithful build → push → pull". This is the same rule as § "Simulators are real implementations" (no sockerless-aware sim functionality) and § "No stubs… no synthetic behavior", applied to the *backend and test* code rather than the sim internals.
+
+**Related docs:** [ARCHITECTURE.md](ARCHITECTURE.md), [agent/README.md](agent/README.md), [backends/README.md](backends/README.md), [specs/CLOUD_RESOURCE_MAPPING.md](specs/CLOUD_RESOURCE_MAPPING.md).
 
 ## All synthetic behavior is a bug
 
