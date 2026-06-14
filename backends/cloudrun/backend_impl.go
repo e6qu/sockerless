@@ -1213,11 +1213,6 @@ func (s *Server) gcsSyncPreExec(execID string) (func(), error) {
 			vols = append(vols, sv)
 		}
 	}
-	dbg := s.Logger.Info().Int("configured_shared_volumes", len(s.config.SharedVolumes)).Int("gcs_sync_volumes", len(vols)).Str("exec", execID)
-	for i, sv := range s.config.SharedVolumes {
-		dbg = dbg.Str(fmt.Sprintf("vol_%d", i), sv.Name+"|"+sv.ContainerPath+"|"+sv.Bucket+"|"+sv.Backing)
-	}
-	dbg.Msg("gcsSyncPreExec: volume resolution")
 	if len(vols) == 0 {
 		return nil, nil
 	}

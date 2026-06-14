@@ -41,6 +41,14 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "echo-request":
+		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			_, _ = fmt.Fprintf(w, "%s %s", r.Method, r.URL.RequestURI())
+		})
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "probe-once":
 		message := "cloudrun-job-sidecar-ok"
 		if len(os.Args) >= 3 {

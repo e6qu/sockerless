@@ -138,6 +138,18 @@ func TestHandleInvoke_DispatchesEnvelopeVsDefault(t *testing.T) {
 	}
 }
 
+func TestHandleReady_DoesNotRunDefaultCommand(t *testing.T) {
+	t.Setenv("SOCKERLESS_USER_CMD", base64.StdEncoding.EncodeToString([]byte(`["sh","-c","exit 99"]`)))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, readyPath, nil)
+
+	handleReady(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
+	}
+}
+
 // Sanity check: ensure the binary name in /opt/sockerless matches what
 // the gcp-common renderer derives from the bootstrap binary's basename.
 // (Renderer test lives in gcp-common; this is a smoke that we agree on

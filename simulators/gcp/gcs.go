@@ -372,13 +372,20 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 		copy(grown, sess.Data)
 		sess.Data = grown
 	}
-	copy(sess.Data[start:end+1], chunk)
+	if len(chunk) > 0 {
+		copy(sess.Data[start:end+1], chunk)
+	}
 	dataLen := int64(len(sess.Data))
 	sess.mu.Unlock()
 
 	if total < 0 || dataLen < total {
 		// Resume Incomplete.
 		w.Header().Set("Range", fmt.Sprintf("bytes=0-%d", dataLen-1))
+		if strings.EqualFold(r.Header.Get("X-GUploader-No-308"), "yes") {
+			w.Header().Set("X-Http-Status-Code-Override", "308")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		w.WriteHeader(308)
 		return
 	}
@@ -409,6 +416,12 @@ func parseGCSContentRange(s string, chunkLen int64) (start, end, total int64, er
 		return 0, chunkLen - 1, chunkLen, nil
 	}
 	raw := s
+	if strings.HasPrefix(s, "bytes */") {
+		if _, e := fmt.Sscanf(strings.TrimPrefix(s, "bytes */"), "%d", &total); e != nil {
+			return 0, 0, 0, fmt.Errorf("Content-Range %q: bad total: %v", raw, e)
+		}
+		return 0, -1, total, nil
+	}
 	if !strings.HasPrefix(s, "bytes ") {
 		return 0, 0, 0, fmt.Errorf("Content-Range %q: missing `bytes ` unit", raw)
 	}
@@ -489,6 +502,16 @@ func gcsObjectMetadata(r *http.Request, obj GCSObject) map[string]any {
 		meta["metadata"] = cloneStringMap(obj.Metadata)
 	}
 	return meta
+}
+
+func requestScheme(r *http.Request) string {
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0]); forwarded != "" {
+		return forwarded
+	}
+	if r.TLS != nil {
+		return "https"
+	}
+	return "http"
 }
 
 func registerGCS(srv *sim.Server) {
@@ -729,7 +752,9 @@ func registerGCS(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
-	// Get object metadata
+	// Get object metadata or media. The JSON API uses the same object
+	// resource path for both; alt=media switches the response from the
+	// metadata resource to the stored object bytes.
 	srv.HandleFunc("GET /storage/v1/b/{bucket}/o/{object...}", func(w http.ResponseWriter, r *http.Request) {
 		bucketName := sim.PathParam(r, "bucket")
 		objectName := sim.PathParam(r, "object")
@@ -738,6 +763,13 @@ func registerGCS(srv *sim.Server) {
 		obj, ok := objects.Get(key)
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "object %q not found in bucket %q", objectName, bucketName)
+			return
+		}
+		if r.URL.Query().Get("alt") == "media" {
+			body := gcsObjectBytes(obj, bucketName, objectName)
+			setGCSObjectResponseHeaders(w.Header(), obj, len(body))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(body)
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
@@ -809,6 +841,7 @@ func registerGCS(srv *sim.Server) {
 		bucketName := sim.PathParam(r, "bucket")
 		objectName := r.URL.Query().Get("name")
 		uploadType := r.URL.Query().Get("uploadType")
+		uploadID := r.URL.Query().Get("upload_id")
 
 		if _, ok := buckets.Get(bucketName); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucketName)
@@ -825,6 +858,10 @@ func registerGCS(srv *sim.Server) {
 		}
 
 		defer r.Body.Close()
+		if uploadID != "" {
+			handleGCSResumableChunk(w, r, uploadID, buckets, objects)
+			return
+		}
 
 		// Resumable upload session initiation. Real GCS accepts the
 		// metadata (including `name`) as JSON in the body and returns
@@ -871,21 +908,10 @@ func registerGCS(srv *sim.Server) {
 				Attrs:  objAttrs,
 				Data:   nil,
 			})
-			location := fmt.Sprintf("https://%s/upload/storage/v1/b/%s/o?uploadType=resumable&upload_id=%s",
-				r.Host, bucketName, sessionID)
+			location := fmt.Sprintf("%s://%s/upload/storage/v1/b/%s/o?uploadType=resumable&upload_id=%s",
+				requestScheme(r), r.Host, bucketName, sessionID)
 			w.Header().Set("Location", location)
 			w.WriteHeader(http.StatusOK)
-			return
-		}
-
-		// Resumable chunk upload — PUT (or POST per some SDKs) at the
-		// session URL. Looks up the session by upload_id, parses the
-		// Content-Range header, appends bytes, and returns 308 if the
-		// upload isn't complete yet or the canonical object metadata
-		// when the total size is reached.
-		uploadID := r.URL.Query().Get("upload_id")
-		if uploadID != "" {
-			handleGCSResumableChunk(w, r, uploadID, buckets, objects)
 			return
 		}
 

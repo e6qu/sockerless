@@ -311,8 +311,11 @@ func stopCloudRunServiceInstance(inst *cloudRunServiceInstance) {
 	sim.StopAndRemoveContainer(inst.containerID)
 }
 
-func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInstance, body io.Reader, contentType string) ([]byte, int, error) {
-	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/", inst.hostPort)
+func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInstance, requestPath, rawQuery string, body io.Reader, contentType string) ([]byte, int, error) {
+	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d%s", inst.hostPort, requestPath)
+	if rawQuery != "" {
+		bootstrapURL += "?" + rawQuery
+	}
 	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
 		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
 	}
@@ -609,7 +612,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 	// overlay container on demand and forwards the request envelope to
 	// the bootstrap's HTTP listener — same flow as Cloud Functions Gen2
 	// (`/v2-functions-invoke/`).
-	srv.HandleFunc("POST /v2-services-invoke/{project}/{location}/{service}", func(w http.ResponseWriter, r *http.Request) {
+	invokeService := func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		location := sim.PathParam(r, "location")
 		serviceID := sim.PathParam(r, "service")
@@ -653,7 +656,11 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return
 		}
-		respBody, exitCode, err := postCloudRunServiceInstance(ctx, inst, body, ct)
+		requestPath := "/"
+		if suffix := sim.PathParam(r, "path"); suffix != "" {
+			requestPath += suffix
+		}
+		respBody, exitCode, err := postCloudRunServiceInstance(ctx, inst, requestPath, r.URL.RawQuery, body, ct)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "invoke service %q: %v", name, err)
 			return
@@ -661,5 +668,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(respBody)
-	})
+	}
+	srv.HandleFunc("POST /v2-services-invoke/{project}/{location}/{service}", invokeService)
+	srv.HandleFunc("POST /v2-services-invoke/{project}/{location}/{service}/{path...}", invokeService)
 }
