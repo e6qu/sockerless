@@ -6,10 +6,45 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 )
+
+// bootstrapReadyPath cold-starts a scale-to-zero Service instance without
+// running the user's keepalive command. The overlay bootstrap serves it
+// (HTTP 204); the gcp sim's Cloud Run Services invoke handler forwards the
+// request path to the bootstrap.
+const bootstrapReadyPath = "/_sockerless/ready"
+
+// warmBootstrap POSTs to the bootstrap's readiness route so a scale-to-zero
+// Cloud Run Service creates its first instance — starting the overlay
+// bootstrap so it dials the reverse-agent — WITHOUT running the container's
+// long-lived keepalive command as a request. Used by the GH actions/runner
+// materialize path, where the JOB container must stay alive for `docker exec`.
+func (s *Server) warmBootstrap(ctx context.Context, audienceURL string) error {
+	client, err := s.Access.AuthenticatedClient(ctx, audienceURL)
+	if err != nil {
+		return err
+	}
+	client.Timeout = 10 * time.Minute
+	readyURL := strings.TrimRight(audienceURL, "/") + bootstrapReadyPath
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, readyURL, nil)
+	if err != nil {
+		return fmt.Errorf("build warmup request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send warmup request: %w", err)
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("warmup returned HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
 
 // execEnvelope mirrors the bootstrap's expected request body for the
 // "Path B" exec route. Sending entrypoint/cmd/workdir/env in the

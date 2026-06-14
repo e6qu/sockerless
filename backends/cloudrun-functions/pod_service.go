@@ -562,6 +562,16 @@ func (s *Server) buildPodContainerSpec(c api.Container, overlayURI string, isMai
 		Name:   "SOCKERLESS_CONTAINER_ID",
 		Values: &runpb.EnvVar_Value{Value: c.ID},
 	})
+	// Workload-facing storage coordinate for the bootstrap's gcs-sync
+	// workspace restore/save (standard STORAGE_EMULATOR_HOST). Empty on
+	// real Cloud Run Functions (bootstrap uses real GCS + ADC); a sim
+	// harness sets it to a workload-reachable sim storage address.
+	if isMain && s.config.GCSWorkloadEndpoint != "" {
+		envVars = append(envVars, &runpb.EnvVar{
+			Name:   "STORAGE_EMULATOR_HOST",
+			Values: &runpb.EnvVar_Value{Value: s.config.GCSWorkloadEndpoint},
+		})
+	}
 
 	defName := "main"
 	if !isMain {
@@ -881,9 +891,21 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		// `docker exec <job> sh -c <step.sh>` for each step. Like the
 		// OpenStdin path above, we must NOT default-invoke — that would
 		// run the long-lived process as a one-shot subprocess and
-		// block invokeMu forever. The bootstrap stays listening on
-		// :8080 for the runner's /exec POSTs.
-		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: skipIfNoStdin + no captured stdin (GH actions/runner pattern) — skipping default-invoke; container stays alive for docker-exec")
+		// block invokeMu forever. But a scale-to-zero Cloud Run Service
+		// that never receives a request never creates its first instance,
+		// so the overlay bootstrap never starts and never dials the
+		// reverse-agent. Warm the revision via the bootstrap's readiness
+		// route (cold-starts the instance without running the keepalive)
+		// so the reverse-agent registers and the runner's /exec POSTs
+		// reach the bootstrap.
+		s.Logger.Info().Str("main", mainID).Str("url", url).Msg("invokePodServiceMain: skipIfNoStdin + no captured stdin (GH actions/runner pattern) — warming Service for docker-exec without running default command")
+		if url == "" {
+			s.Logger.Error().Str("main", mainID).Msg("invokePodServiceMain: no service URL to warm")
+			return
+		}
+		if err := s.warmBootstrap(ctx, url); err != nil {
+			s.Logger.Error().Err(err).Str("main", mainID).Msg("invokePodServiceMain: service warmup failed")
+		}
 		return
 	} else {
 		// Default-invoke path: POST with user's entrypoint+cmd. The

@@ -262,17 +262,17 @@ func untarInto(r io.Reader, root string) error {
 // gcsGet fetches the object via the JSON-API media download endpoint.
 // Returns the body, HTTP status, and any transport error.
 func gcsGet(ctx context.Context, bucket, object string) ([]byte, int, error) {
-	tok, err := metadataToken(ctx)
+	tok, err := gcsAuthToken(ctx)
 	if err != nil {
 		return nil, 0, err
 	}
-	u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s?alt=media",
-		url.PathEscape(bucket), url.PathEscape(object))
+	u := fmt.Sprintf("%s/storage/v1/b/%s/o/%s?alt=media",
+		gcsBase(), url.PathEscape(bucket), url.PathEscape(object))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
+	setGCSAuth(req, tok)
 	resp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, 0, err
@@ -288,17 +288,17 @@ func gcsGet(ctx context.Context, bucket, object string) ([]byte, int, error) {
 // gcsPut uploads an object via the JSON-API simple-upload endpoint.
 // Always overwrites; no precondition.
 func gcsPut(ctx context.Context, bucket, object string, data []byte) error {
-	tok, err := metadataToken(ctx)
+	tok, err := gcsAuthToken(ctx)
 	if err != nil {
 		return err
 	}
-	u := fmt.Sprintf("https://storage.googleapis.com/upload/storage/v1/b/%s/o?uploadType=media&name=%s",
-		url.PathEscape(bucket), url.QueryEscape(object))
+	u := fmt.Sprintf("%s/upload/storage/v1/b/%s/o?uploadType=media&name=%s",
+		gcsBase(), url.PathEscape(bucket), url.QueryEscape(object))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
+	setGCSAuth(req, tok)
 	req.Header.Set("Content-Type", "application/x-tar")
 	req.ContentLength = int64(len(data))
 	resp, err := httpClient.Do(req)
@@ -341,6 +341,44 @@ func metadataToken(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("metadata token: empty access_token in response")
 	}
 	return tok.AccessToken, nil
+}
+
+// gcsBase returns the base URL for the GCS JSON API. Default: the real
+// Google endpoint. STORAGE_EMULATOR_HOST (gcloud's emulator convention)
+// overrides it — a bare host:port is treated as http://, matching the
+// cloud.google.com/go/storage client. The gcf backend injects this on the
+// workload host (a coordinate) so the bootstrap reaches the simulator's
+// storage exactly as a real client reaches GCS; on real Cloud Run Functions
+// it is unset and the real endpoint + ADC token are used. Differs only in the
+// coordinate.
+func gcsBase() string {
+	if h := strings.TrimSpace(os.Getenv("STORAGE_EMULATOR_HOST")); h != "" {
+		if !strings.HasPrefix(h, "http://") && !strings.HasPrefix(h, "https://") {
+			h = "http://" + h
+		}
+		return strings.TrimRight(h, "/")
+	}
+	return "https://storage.googleapis.com"
+}
+
+// gcsAuthToken returns the ADC bearer for a real-GCS request, or "" against
+// the emulator. The gcloud storage emulator is unauthenticated (the backend's
+// storage client uses option.WithoutAuthentication()), so the bootstrap skips
+// the metadata-server token — which also avoids depending on metadata-server
+// reachability from the workload.
+func gcsAuthToken(ctx context.Context) (string, error) {
+	if strings.TrimSpace(os.Getenv("STORAGE_EMULATOR_HOST")) != "" {
+		return "", nil
+	}
+	return metadataToken(ctx)
+}
+
+// setGCSAuth sets the Authorization header when a token is present (real GCS);
+// against the emulator (empty token) it leaves the request unauthenticated.
+func setGCSAuth(req *http.Request, tok string) {
+	if tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
 }
 
 // httpClient is a single shared client. Timeout per request is generous

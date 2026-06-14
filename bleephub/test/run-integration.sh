@@ -13,7 +13,10 @@ fail() {
 }
 
 show_diag() {
-    for lf in "${LOG_DIR:-/tmp}"/simulator-*.log "${LOG_DIR:-/tmp}"/sockerless-backend-*.log; do
+    # Scope the backend log to the ACTIVE backend (not a `sockerless-backend-*`
+    # glob): a stale log from a prior run in a reused data dir would otherwise
+    # bleed into this run's failure dump and mislead debugging.
+    for lf in "${LOG_DIR:-/tmp}"/simulator-*.log "${LOG_DIR:-/tmp}"/sockerless-backend-"${BLEEPHUB_BACKEND:-*}".log; do
         if [ -f "$lf" ]; then
             echo "=== tail $lf ==="
             tail -40 "$lf"
@@ -435,11 +438,121 @@ provision_cloudrun() {
     log "sockerless-backend-cloudrun ready (gcs-sync workspace + externals)"
 }
 
+provision_gcf() {
+    # The Cloud Run Functions (GCF Gen2) backend deploys container-jobs as
+    # multi-container Cloud Run Service revisions (Functions Gen2 build on
+    # Cloud Run), so it shares the runner workspace via GCS snapshot-sync
+    # exactly like the Cloud Run cell: the workspace mount in the job
+    # container is an empty tmpfs; the bootstrap restores it from GCS before
+    # each exec and persists it back after, and the backend syncs the same
+    # GCS object to/from the runner's local --work dir. The sim materialises
+    # each GCS bucket at $SIM_GCS_DATA_DIR/<bucket> on the host engine.
+    SIM_GCS_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_GCS_DATA_DIR
+    SIM_ADDR="127.0.0.1:4567"
+    local sim_grpc_port=4577
+    local sim_grpc_addr="127.0.0.1:${sim_grpc_port}"
+    local project="sim-project"
+    local build_bucket="sockerless-build"
+    local ws_bucket="sockerless-runner-ws"
+    local ext_bucket="sockerless-runner-externals"
+    case "$(uname -m)" in
+        aarch64|arm64) local build_platform="linux/arm64" ;;
+        *)             local build_platform="linux/amd64" ;;
+    esac
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    export SIM_GCP_GRPC_PORT="$sim_grpc_port"
+    log "Starting simulator-gcp on :4567 (gRPC :$sim_grpc_port)"
+    simulator-gcp --addr ":4567" >"$LOG_DIR/simulator-gcp.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: GCS buckets (build + workspace + externals)"
+    local b
+    for b in "$build_bucket" "$ws_bucket" "$ext_bucket"; do
+        curl -sf -X POST "http://$SIM_ADDR/storage/v1/b?project=$project" \
+            -H 'Content-Type: application/json' -d "{\"name\":\"$b\"}" >/dev/null \
+            || fail "create GCS bucket $b"
+    done
+
+    # GCP auth: a fake SA JSON whose token_uri is the sim's /token.
+    local sa_json="$SOCKERLESS_HARNESS_DATA_DIR/gcf-sa.json"
+    write_fake_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
+    export GOOGLE_APPLICATION_CREDENTIALS="$sa_json"
+
+    WORK_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-ws"
+    EXT_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-externals"
+    mkdir -p "$WORK_DIR" "$EXT_DIR"
+    log "Staging runner externals ($EXT_DIR)…"
+    cp -a /runner/externals/. "$EXT_DIR/"
+
+    export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
+    export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="$sim_grpc_addr"
+    export SOCKERLESS_GCF_PROJECT="$project"
+    export SOCKERLESS_GCF_REGION="us-central1"
+    export SOCKERLESS_GCP_BUILD_BUCKET="$build_bucket"
+    export SOCKERLESS_GCP_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_POLL_INTERVAL=500ms
+    # Container-mode jobs need a long-lived container with reverse-agent
+    # exec: the GCF backend injects the reverse-agent bootstrap by building
+    # an overlay image via Cloud Build, pushing it to Artifact Registry, and
+    # pulling it on the Cloud Run Service revision the function is backed by.
+    # The overlay is built/pushed/pulled at the sim's /v2/ published to the
+    # host engine at 127.0.0.1:5000 (a loopback host the engine treats as
+    # insecure), connected to compute only by the /v2/ API coordinate. On a
+    # freshly-created podman machine the sim-registry insecure drop-in is not
+    # honored by the build path until the podman service reloads —
+    # `podman machine stop && start` once after creating the machine.
+    export SOCKERLESS_GCP_AR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_GCF_BOOTSTRAP=/usr/local/bin/sockerless-gcf-bootstrap
+    # Kept below the 300s per-job wait so a genuine reverse-agent
+    # registration failure surfaces as "did not register" rather than being
+    # masked by the job timeout (status=running).
+    export SOCKERLESS_GCF_BOOTSTRAP_TIMEOUT_SEC=180
+    # GCF exec/attach is via the reverse agent: the overlay bootstrap inside
+    # the function dials back to the backend's reverse endpoint.
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/gcf/reverse"
+    # The in-container bootstrap's gcs-sync workspace restore/save reaches the
+    # sim's storage through the published sim port on the host gateway — the
+    # same host.docker.internal path the reverse-agent callback uses (the
+    # backend's in-container SOCKERLESS_ENDPOINT_URL is not workload-reachable).
+    # Injected into the workload as STORAGE_EMULATOR_HOST.
+    export SOCKERLESS_GCS_WORKLOAD_ENDPOINT="host.docker.internal:5000"
+    # Service containers (TEST 13) run as Cloud Run Service revision sidecars
+    # sharing loopback with the job container, discovered via /etc/hosts.
+    export SOCKERLESS_GCF_VPC_CONNECTOR="projects/$project/locations/us-central1/connectors/sim-connector"
+    # Runner container-job binds translate onto the gcs-sync shared volumes.
+    export SOCKERLESS_GCP_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${ws_bucket}=gcs-sync,runner-externals=/runner/externals=${ext_bucket}=gcs-sync"
+
+    log "Staging workload base images (alpine, nginx) into the host daemon…"
+    local img src
+    for img in "alpine:3.20" "nginx:alpine"; do
+        src="public.ecr.aws/docker/library/$img"
+        local ok=""
+        for attempt in 1 2 3 4 5; do
+            if docker pull -q "$src" >/dev/null 2>&1; then ok=1; break; fi
+            sleep "$((attempt * 3))"
+        done
+        [ -n "$ok" ] || fail "pull base image $src"
+        docker tag "$src" "$img" || fail "tag base image $img"
+    done
+
+    log "Starting sockerless-backend-gcf on :3375"
+    sockerless-backend-gcf --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-gcf.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-gcf ready (gcs-sync workspace + externals)"
+}
+
 case "${BLEEPHUB_BACKEND:-ecs}" in
     ecs) provision_ecs ;;
     aca) provision_aca ;;
     cloudrun) provision_cloudrun ;;
-    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca|cloudrun)" ;;
+    gcf) provision_gcf ;;
+    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca|cloudrun|gcf)" ;;
 esac
 
 # --- 4. Configure the runner ---

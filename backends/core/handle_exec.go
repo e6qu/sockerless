@@ -169,10 +169,18 @@ func (s *BaseServer) handleExecStart(w http.ResponseWriter, r *http.Request) {
 		e.Running = true
 		e.Pid = execPid
 	})
+	s.Logger.Info().Str("exec", id).Str("container", c.ID).Strs("cmd", cmd).
+		Str("workdir", workDir).Bool("tty", tty).Str("driver", s.Typed.Exec.Describe()).
+		Msg("exec start: dispatching")
 	exitCode, err := s.Typed.Exec.Exec(dctx, opts, conn)
 	if err != nil {
-		s.Logger.Debug().Err(err).Str("exec", id).Msg("typed exec dispatch error after hijack")
+		s.Logger.Warn().Err(err).Str("exec", id).Str("container", c.ID).Msg("exec start: typed exec dispatch error after hijack")
 	}
+	ev := s.Logger.Info()
+	if exitCode != 0 || err != nil {
+		ev = s.Logger.Warn()
+	}
+	ev.Str("exec", id).Str("container", c.ID).Int("exit_code", exitCode).Msg("exec start: completed")
 	s.Store.Execs.Update(id, func(e *api.ExecInstance) {
 		e.Running = false
 		e.Pid = 0

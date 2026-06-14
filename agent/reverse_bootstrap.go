@@ -65,13 +65,16 @@ func ServeReverseAgentWithExecHooks(conn *websocket.Conn, connMu *sync.Mutex, ho
 	router.execHooks = hooks
 	defer registry.CleanupConn(conn)
 
+	logger.Info().Msg("reverse-agent serve loop started")
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
+			logger.Info().Err(err).Msg("reverse-agent WebSocket read returned — serve loop exiting (connection closed)")
 			return
 		}
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
+			logger.Warn().Err(err).Int("bytes", len(data)).Msg("reverse-agent dropping malformed inbound message")
 			continue
 		}
 		router.Handle(&msg, conn, connMu)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/storage"
@@ -216,6 +217,18 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		)}
 	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		// The container may be a network-pod member ContainerStart deferred
+		// (marked running, not yet deployed) — e.g. a GH actions/runner job
+		// container whose job declares no services, so no later sibling ever
+		// triggered materialization. The runner always `docker exec`s its job
+		// container, so this exec is the natural trigger to bring the pod-
+		// Service up.
+		if err := s.materializeDeferredNetworkPodForExec(c.ID); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf(
+				"materialize deferred container %s for exec: %v", c.ID[:12], err)}
+		}
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+
 				"Cloud Functions exec requires SOCKERLESS_CALLBACK_URL reachable from inside the function "+
@@ -223,7 +236,26 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 			c.ID[:12],
 		)}
 	}
-	return s.BaseServer.ExecStart(id, opts)
+	// gcs-sync workspace data plane: upload the runner-side workspace to GCS
+	// and inject a per-exec SOCKERLESS_SYNC_VOLUMES hint so the bootstrap
+	// restores it into the job container's tmpfs before the command runs;
+	// pull the bootstrap's modifications back on exec completion. No-op when
+	// no gcs-sync SharedVolumes are configured.
+	postExec, err := s.gcsSyncPreExec(id)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("gcs-sync pre-exec for container %s: %v", c.ID[:12], err)}
+	}
+	rwc, err := s.BaseServer.ExecStart(id, opts)
+	if err != nil {
+		if postExec != nil {
+			postExec()
+		}
+		return nil, err
+	}
+	if postExec == nil {
+		return rwc, nil
+	}
+	return &execPostHook{ReadWriteCloser: rwc, once: &sync.Once{}, hook: postExec}, nil
 }
 
 // Image methods (pass-through via ImageManager)

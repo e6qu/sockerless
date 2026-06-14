@@ -4,6 +4,46 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - GCF (Cloud Run Functions) cell GREEN + exec-via-agent observability (BUG-1795/1796)
+
+The bleephub **gcf** harness now passes **TEST 1–14** against the gcp simulator —
+all four container backends (ECS, ACA, Cloud Run, GCF) are GitHub-topology
+sim-proven. GCF Gen2 deploys container-jobs as Cloud Run Service revisions, so
+the cell reuses the cloudrun overlay + gcs-sync model and the gcp sim needed no
+change.
+
+**BUG-1795 — GCF cell bring-up.** Five gaps, each the GCF twin of a cloudrun
+fix: (1) the GCF `Typed.Exec` was wired to the bare `ReverseAgentExecDriver`, so
+the HTTP exec path (`handleExecStart → Typed.Exec`) bypassed `s.ExecStart` and
+its materialize/gcs-sync logic was dead code — rewired through `s.ExecStart` via
+`WrapLegacyExecStart`; (2) added `materializeDeferredNetworkPodForExec` (a
+no-`services:` job is deferred at ContainerStart); (3) added `warmBootstrap`
+(BUG-1794 twin — cold-start the scale-to-zero Service via `/_sockerless/ready`
+without running the keepalive); (4) the gcf bootstrap gained the readiness route
++ WS-exec gcs-sync `ExecHooks` (`ServeReverseAgentWithExecHooks`); (5) the gcf
+bootstrap's `persist.go` now honours `STORAGE_EMULATOR_HOST` (`gcsBase`/
+`gcsAuthToken`/`setGCSAuth` — the #568 prereq was never ported; the workload's
+metadata-token fetch 404'd) and the backend injects it (`SOCKERLESS_GCS_WORKLOAD_ENDPOINT`)
++ runs a `gcsSyncPreExec`/`execPostHook` data plane. Plus harness plumbing
+(`provision_gcf` + `gcf` case, `bleephub-runner-docker-test-gcf`, both GCF
+binaries in `bleephub/Dockerfile`). Coordinate-only, no `if sim` branch.
+
+**BUG-1796 — exec-via-agent observability.** The GCF bring-up exposed that a
+reverse-agent `TypeError` (e.g. a failed gcs-sync restore PreExec hook) was
+swallowed by `ReverseAgentConn.bridge` — the step failed with an opaque
+`exit 255` and the real cause (`metadata token status 404`) lived only in the
+workload's own stderr, a separate stream with no exec-ID correlation. Fixed
+across the shared core + agent (so every FaaS backend benefits): `bridge` writes
+the agent error to the caller's stderr frame and returns `AgentExecErrorExitCode`
+(255); `BridgeExec` fails fast if the initial dispatch send fails;
+`core/handle_exec.go` logs exec dispatch (with the resolved driver via
+`Describe()`) + completion; `ReverseAgentExecDriver.Exec` logs dispatch + exit
+code; `HandleReverseAgentWS` logs missing-`session_id`/upgrade/register/replace/
+drop; the bootstrap logs serve-loop start/teardown + malformed messages, checks
+its final exit-frame send, and a nil-safe `OnDroppedMessage` callback surfaces
+full-channel drops. Pure-additive logging except the `TypeError`→stderr+255
+behavior fix.
+
 ## 2026-06-14 - Cloud Run GitHub-topology cell GREEN (BUG-1794 + BUG-1792 closed)
 
 The bleephub cloudrun harness now passes **TEST 1–14** end-to-end against the

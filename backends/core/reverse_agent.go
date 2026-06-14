@@ -73,17 +73,23 @@ func (r *ReverseAgentRegistry) IsLifetimeExpired(id string) bool {
 // session under the same ID (the new dial wins — matches a reconnect
 // resume model). Wakes ALL WaitForAgent callers for this id (each
 // owns a private channel, so a timed-out waiter can't strand others).
-func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn) {
+// Register reports whether it replaced a prior live session under the
+// same id (a reconnect / double-dial), so the caller can log the takeover
+// — a silent replacement otherwise hides a bootstrap that re-dialed
+// mid-exec (e.g. after a crash-restart).
+func (r *ReverseAgentRegistry) Register(id string, conn *agent.ReverseAgentConn) (replaced bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if old, ok := r.sessions[id]; ok {
 		_ = old.Close()
+		replaced = true
 	}
 	r.sessions[id] = conn
 	for _, ch := range r.waiters[id] {
 		close(ch)
 	}
 	delete(r.waiters, id)
+	return replaced
 }
 
 // WaitForAgent blocks until a session for `id` is registered or `ctx`
@@ -185,11 +191,13 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 	return func(w http.ResponseWriter, r *http.Request) {
 		sessionID := r.URL.Query().Get("session_id")
 		if sessionID == "" {
+			logger.Warn().Str("remote", r.RemoteAddr).Msg("reverse-agent dial rejected: missing session_id query parameter")
 			http.Error(w, "session_id query parameter is required", http.StatusBadRequest)
 			return
 		}
 		ws, err := reverseAgentUpgrader.Upgrade(w, r, nil)
 		if err != nil {
+			logger.Warn().Err(err).Str("session_id", sessionID).Msg("reverse-agent WebSocket upgrade failed")
 			return
 		}
 		rc := agent.NewReverseAgentConnWithSystemHandler(ws, func(m agent.Message) {
@@ -198,12 +206,17 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 				logger.Warn().Str("container", sessionID).Msg("reverse-agent reported FaaS pod lifetime expiring; future exec will return operator-guidance error")
 			}
 		})
-		reg.Register(sessionID, rc)
-		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session registered")
+		rc.OnDroppedMessage = func(m agent.Message) {
+			logger.Warn().Str("session_id", sessionID).Str("exec", m.ID).Str("msg_type", m.Type).Msg("reverse-agent dropped an inbound session message (consumer channel full — exec stream may be truncated)")
+		}
+		if reg.Register(sessionID, rc) {
+			logger.Warn().Str("session_id", sessionID).Msg("reverse-agent session replaced a prior live session under the same container ID (re-dial / crash-restart)")
+		}
+		logger.Info().Str("session_id", sessionID).Str("remote", r.RemoteAddr).Msg("reverse-agent session registered")
 
 		<-rc.Done()
 		reg.DropSession(sessionID)
-		logger.Debug().Str("session_id", sessionID).Msg("reverse-agent session dropped")
+		logger.Info().Str("session_id", sessionID).Msg("reverse-agent session dropped (WebSocket closed)")
 	}
 }
 
@@ -288,10 +301,17 @@ func (d *ReverseAgentExecDriver) Exec(
 	}
 	rc, ok := d.Registry.Resolve(containerID)
 	if !ok {
-		d.Logger.Warn().Str("container", containerID).Msg("no reverse-agent session (container not up, or killed)")
+		d.Logger.Warn().Str("container", containerID).Str("exec", execID).Strs("cmd", cmd).Msg("no reverse-agent session (container not up, or killed)")
 		return 126
 	}
-	return rc.BridgeExec(conn, execID, cmd, env, workDir, tty)
+	d.Logger.Debug().Str("container", containerID).Str("exec", execID).Strs("cmd", cmd).Str("workdir", workDir).Bool("tty", tty).Msg("reverse-agent exec dispatching over WebSocket")
+	exitCode := rc.BridgeExec(conn, execID, cmd, env, workDir, tty)
+	ev := d.Logger.Info()
+	if exitCode != 0 {
+		ev = d.Logger.Warn()
+	}
+	ev.Str("container", containerID).Str("exec", execID).Int("exit_code", exitCode).Msg("reverse-agent exec completed")
+	return exitCode
 }
 
 // ReverseAgentStreamDriver wires `docker attach` through the reverse-

@@ -191,7 +191,12 @@ func (s *ExecSession) waitAndNotify() {
 	}
 	s.connMu.Lock()
 	defer s.connMu.Unlock()
-	s.conn.WriteJSON(msg)
+	// If the exit frame fails to send, the backend's bridge blocks until
+	// the whole WebSocket tears down and the caller sees an opaque exit
+	// rather than this code — so log it loudly on the agent side.
+	if err := s.conn.WriteJSON(msg); err != nil {
+		s.logger.Error().Err(err).Str("id", s.id).Int("code", code).Msg("failed to send exit frame to backend — exec exit code may be lost")
+	}
 }
 
 // ID returns the session identifier.

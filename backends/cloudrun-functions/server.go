@@ -3,6 +3,7 @@ package gcf
 import (
 	"context"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 
@@ -215,7 +216,20 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 	s.Mux.HandleFunc("/v1/gcf/reverse", core.HandleReverseAgentWS(s.reverseAgents, logger))
 	s.Drivers.Exec = &core.ReverseAgentExecDriver{Registry: s.reverseAgents, Logger: logger}
 	s.Drivers.Stream = &core.ReverseAgentStreamDriver{Registry: s.reverseAgents, Logger: logger}
-	s.Typed.Exec = core.WrapLegacyExec(s.Drivers.Exec, "gcf", "ReverseAgentExec")
+	// Typed.Exec wiring: route through s.ExecStart (the gcf override)
+	// rather than the reverse-agent driver directly. The override
+	// materializes a deferred network-pod on first exec (a GH actions/
+	// runner job container with no `services:` is deferred at
+	// ContainerStart) and runs the gcs-sync workspace data plane around
+	// each exec. Without this, the HTTP exec path bypasses both and a
+	// deferred container's first exec finds no reverse-agent.
+	s.Typed.Exec = core.WrapLegacyExecStart(
+		func(id string, opts api.ExecStartRequest) (io.ReadWriteCloser, error) {
+			return s.ExecStart(id, opts)
+		},
+		s.Store,
+		s.Desc.Driver, "gcf-self-dispatch",
+	)
 	s.Typed.ProcList = core.NewReverseAgentProcListDriver(s.reverseAgents, "gcf")
 	s.Typed.FSDiff = core.NewReverseAgentFSDiffDriver(s.reverseAgents, "gcf")
 	s.Typed.FSRead = core.NewReverseAgentFSReadDriver(s.reverseAgents, "gcf")

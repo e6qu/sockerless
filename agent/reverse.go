@@ -12,6 +12,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// AgentExecErrorExitCode is the exit code surfaced when the agent reports
+// a TypeError for an exec (e.g. a workspace-restore failure in a PreExec
+// hook) instead of a normal process exit. Distinct from 126 (no session
+// registered); mirrors the shell convention for "fatal, command did not
+// run to a normal exit".
+const AgentExecErrorExitCode = 255
+
 // ReverseAgentConn wraps a single persistent WebSocket connection for reverse
 // (callback) mode. Unlike AgentConn which creates one connection per exec,
 // ReverseAgentConn multiplexes concurrent exec sessions over the same connection
@@ -27,6 +34,12 @@ type ReverseAgentConn struct {
 	// belong to any session (msg.ID == ""). Currently the only such
 	// type is TypeLifetimeExpired. May be nil.
 	OnSystemMessage func(Message)
+
+	// OnDroppedMessage fires when an inbound session message is dropped
+	// because the session's buffered channel is full (the bridge consumer
+	// fell behind). A dropped stdout/stderr frame silently corrupts the
+	// exec stream, so the backend wires this to a Warn log. May be nil.
+	OnDroppedMessage func(Message)
 }
 
 // NewReverseAgentConn wraps an existing WebSocket connection and starts the
@@ -85,7 +98,11 @@ func (rc *ReverseAgentConn) readLoop() {
 			select {
 			case ch.(chan Message) <- msg:
 			default:
-				// Session channel full, drop message
+				// Session channel full — the bridge consumer fell behind.
+				// Dropping silently corrupts the exec stream, so surface it.
+				if rc.OnDroppedMessage != nil {
+					rc.OnDroppedMessage(msg)
+				}
 			}
 		}
 	}
@@ -124,15 +141,29 @@ func (rc *ReverseAgentConn) BridgeExec(conn net.Conn, sessionID string, cmd []st
 	rc.sessions.Store(sessionID, ch)
 	defer rc.sessions.Delete(sessionID)
 
-	// Send exec message
-	_ = rc.SendJSON(Message{
+	// Send exec message. If even this fails the WebSocket is gone — the
+	// bridge would otherwise block forever waiting for output that can
+	// never arrive, so fail fast with a surfaced error.
+	if err := rc.SendJSON(Message{
 		Type:    TypeExec,
 		ID:      sessionID,
 		Cmd:     cmd,
 		Env:     env,
 		WorkDir: workdir,
 		Tty:     tty,
-	})
+	}); err != nil {
+		errLine := []byte("sockerless: failed to dispatch exec to agent: " + err.Error() + "\n")
+		if tty {
+			_, _ = conn.Write(errLine)
+		} else {
+			frame := make([]byte, 8+len(errLine))
+			frame[0] = 2 // stderr
+			binary.BigEndian.PutUint32(frame[4:], uint32(len(errLine)))
+			copy(frame[8:], errLine)
+			_, _ = conn.Write(frame)
+		}
+		return AgentExecErrorExitCode
+	}
 
 	return rc.bridge(conn, sessionID, ch, tty)
 }
@@ -332,6 +363,25 @@ func (rc *ReverseAgentConn) bridge(conn net.Conn, sessionID string, ch chan Mess
 					done <- code
 					return
 				case TypeError:
+					// Surface the agent-reported error to the caller's
+					// stderr stream so `docker exec` / the runner prints it,
+					// and fail with a non-zero exit. Without this the stream
+					// just closes and the caller sees an opaque exit 255 with
+					// the real cause (e.g. a workspace-restore failure)
+					// stranded in the workload's own logs.
+					if msg.Message != "" {
+						errLine := []byte("sockerless: agent exec error: " + msg.Message + "\n")
+						if tty {
+							_, _ = conn.Write(errLine)
+						} else {
+							frame := make([]byte, 8+len(errLine))
+							frame[0] = 2 // stderr
+							binary.BigEndian.PutUint32(frame[4:], uint32(len(errLine)))
+							copy(frame[8:], errLine)
+							_, _ = conn.Write(frame)
+						}
+					}
+					done <- AgentExecErrorExitCode
 					return
 				}
 			case <-rc.done:

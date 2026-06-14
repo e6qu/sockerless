@@ -431,6 +431,10 @@ bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-sim-regis
 bleephub-runner-docker-test-cloudrun: bleephub-runner-docker-build bleephub-sim-registry-trust
 	$(call run_bleephub_harness,cloudrun,4567)
 
+.PHONY: bleephub-runner-docker-test-gcf
+bleephub-runner-docker-test-gcf: bleephub-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleephub_harness,gcf,4567)
+
 # Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
 # Build) paths do a real docker push + pull of the bootstrap overlay
 # through the sim's registry, published at 127.0.0.1:5000. Docker
