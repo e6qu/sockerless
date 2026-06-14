@@ -383,6 +383,14 @@ provision_cloudrun() {
     # bootstrap inside the task dials back to the backend's reverse
     # endpoint.
     export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/cloudrun/reverse"
+    # The in-container bootstrap's gcs-sync workspace restore/save reaches the
+    # sim's storage through the published sim port on the host gateway — the
+    # same host.docker.internal path the reverse-agent callback uses (the
+    # backend's in-container SOCKERLESS_ENDPOINT_URL is not workload-reachable).
+    # Injected into the task as STORAGE_EMULATOR_HOST. The sim's /storage/v1/
+    # API shares the mux published at 127.0.0.1:5000 → host.docker.internal:5000
+    # from inside a workload container.
+    export SOCKERLESS_GCS_WORKLOAD_ENDPOINT="host.docker.internal:5000"
     # Service containers (TEST 13) run as Cloud Run Services discovered
     # over Cloud DNS via the VPC connector.
     export SOCKERLESS_GCR_USE_SERVICE=1

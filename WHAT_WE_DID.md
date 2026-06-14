@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - Cloud Run gcs-sync prerequisites + BUGS.md count correction (BUG-1792 partial)
+
+Investigating the last cloudrun-cell TEST 12 gate (every `docker exec` aborts
+at exit 255) showed BUG-1792 is bigger than a hardcoded URL: the gcs-sync
+per-exec workspace data plane (`GCSSyncDriver.PreExec`/`PostExec`) has **no
+callers** — the cloudrun exec path never uploads the workspace to GCS or feeds
+the bootstrap a `SOCKERLESS_SYNC_VOLUMES` hint, so the workspace tmpfs stays
+empty and the exec's workdir doesn't exist. Cloud Run container-jobs were never
+proven end-to-end.
+
+Landed the prerequisites the data-plane wiring will need: the bootstrap's
+gcs-sync (`persist.go`/`persist_sync.go`) honours the standard
+`STORAGE_EMULATOR_HOST` (a `gcsBase()` helper; unauthenticated emulator mode,
+so no metadata-token dependency), and the cloudrun backend injects a
+workload-reachable storage coordinate (`SOCKERLESS_GCS_WORKLOAD_ENDPOINT` →
+`STORAGE_EMULATOR_HOST` on the task, default empty = real GCS + ADC). The
+workload reaches the sim's storage through the same host-gateway/published-port
+path the reverse-agent callback uses. Real cloud is unchanged.
+
+Also corrected the BUGS.md ledger: #567 filed BUG-1789/1790/1791 into the Open
+table but never struck them when it fixed them in the same PR — the header read
+`1745 fixed / 7 open` instead of `1748 / 4`. The remaining BUG-1792 work (wire
+`PreExec`/`PostExec` around the exec dispatch) is its own iteration.
+
 ## 2026-06-14 - Cloud Run GitHub-topology cell bring-up (partial)
 
 Extends the bleephub GitHub-topology harness (ECS- and ACA-proven) to the

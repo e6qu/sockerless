@@ -46,6 +46,17 @@ type Config struct {
 	// with the bootstrap binary is deployed. Empty ⇒ exec NotImpl.
 	CallbackURL string
 
+	// GCSWorkloadEndpoint is the storage endpoint the in-container
+	// bootstrap uses for gcs-sync workspace restore/save, injected as the
+	// standard `STORAGE_EMULATOR_HOST` on the workload. A coordinate: empty
+	// on real Cloud Run (the bootstrap uses real storage.googleapis.com +
+	// ADC), set by a sim harness to a workload-reachable sim storage
+	// address (the backend's own in-container endpoint is NOT reachable
+	// from the workload — it reaches the sim through the same
+	// host-gateway/published-port path as the reverse-agent callback).
+	// Set via `SOCKERLESS_GCS_WORKLOAD_ENDPOINT`.
+	GCSWorkloadEndpoint string
+
 	// EnableCommit opts into the agent-driven `docker commit` path.
 	// See backends/core.CommitContainerViaAgent. Off by default — the
 	// resulting image wraps the whole rootfs as a single layer.
@@ -151,6 +162,7 @@ func ConfigFromEnv() Config {
 		LogTimeout:          parseDuration(os.Getenv("SOCKERLESS_LOG_TIMEOUT"), 30*time.Second),
 		UseService:          os.Getenv("SOCKERLESS_GCR_USE_SERVICE") == "1",
 		CallbackURL:         os.Getenv("SOCKERLESS_CALLBACK_URL"),
+		GCSWorkloadEndpoint: os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT"),
 		EnableCommit:        os.Getenv("SOCKERLESS_ENABLE_COMMIT") == "1",
 		SharedVolumes:       sharedVolumes,
 		sharedVolumesErr:    sharedVolumesErr,
@@ -275,6 +287,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	c.EndpointURL = env.Common.EndpointURL
 	c.LogAdminEndpoint = os.Getenv("SOCKERLESS_GCP_LOGADMIN_ENDPOINT")
+	c.GCSWorkloadEndpoint = os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT")
 	if env.Common.PollInterval != "" {
 		c.PollInterval = parseDuration(env.Common.PollInterval, c.PollInterval)
 	}
