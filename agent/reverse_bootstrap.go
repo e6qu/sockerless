@@ -51,9 +51,18 @@ func DialReverseAgent(callbackURL, containerID string) (*websocket.Conn, error) 
 // DialReverseAgent. The session registry is bootstrap-private; one
 // registry per WS connection.
 func ServeReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
+	ServeReverseAgentWithExecHooks(conn, connMu, ExecHooks{})
+}
+
+// ServeReverseAgentWithExecHooks is ServeReverseAgent with per-exec hooks
+// (PreExec / PostExec) wired into every WS exec. The cloudrun bootstrap uses
+// it to restore the gcs-sync workspace before each step and save it after;
+// other bootstraps call ServeReverseAgent (zero hooks).
+func ServeReverseAgentWithExecHooks(conn *websocket.Conn, connMu *sync.Mutex, hooks ExecHooks) {
 	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
 	registry := NewSessionRegistry()
 	router := NewRouter(registry, nil, logger)
+	router.execHooks = hooks
 	defer registry.CleanupConn(conn)
 
 	for {

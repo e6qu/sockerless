@@ -26,10 +26,14 @@ type ExecSession struct {
 	logger   zerolog.Logger
 	done     chan struct{}
 	streamWg sync.WaitGroup // tracks readStream/readPTY goroutines
+	postExec func()         // optional per-exec teardown (e.g. gcs-sync save), run after the process exits, before the exit code is sent
 }
 
-// NewExecSession creates and starts an exec session.
-func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.Mutex, logger zerolog.Logger) (*ExecSession, error) {
+// NewExecSession creates and starts an exec session. postExec (may be nil)
+// runs after the process exits, before the exit code is sent to the backend —
+// used by the cloudrun bootstrap to save the gcs-sync workspace so the
+// backend's PostExec download sees the step's modifications.
+func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.Mutex, logger zerolog.Logger, postExec func()) (*ExecSession, error) {
 	if len(msg.Cmd) == 0 {
 		return nil, &sessionError{"exec requires cmd"}
 	}
@@ -48,12 +52,13 @@ func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
 	s := &ExecSession{
-		id:     id,
-		cmd:    cmd,
-		conn:   conn,
-		connMu: connMu,
-		logger: logger.With().Str("session", id).Logger(),
-		done:   make(chan struct{}),
+		id:       id,
+		cmd:      cmd,
+		conn:     conn,
+		connMu:   connMu,
+		logger:   logger.With().Str("session", id).Logger(),
+		done:     make(chan struct{}),
+		postExec: postExec,
 	}
 
 	if msg.Tty {
@@ -171,6 +176,13 @@ func (s *ExecSession) waitAndNotify() {
 	}
 
 	s.logger.Debug().Int("code", code).Msg("process exited")
+
+	// Per-exec teardown (e.g. gcs-sync workspace save) before the exit
+	// code is sent, so the backend's PostExec sync-back — which it runs on
+	// the exec-stream close that follows this exit — sees the saved state.
+	if s.postExec != nil {
+		s.postExec()
+	}
 
 	msg := Message{
 		Type: TypeExit,

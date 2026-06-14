@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"cloud.google.com/go/logging/logadmin"
@@ -1176,7 +1177,92 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 			c.ID[:12],
 		)}
 	}
-	return s.BaseServer.ExecStart(id, opts)
+	// gcs-sync workspace data plane: upload the runner-side workspace to GCS
+	// and inject a per-exec SOCKERLESS_SYNC_VOLUMES hint so the bootstrap
+	// restores it into the job container's tmpfs before the command runs;
+	// pull the bootstrap's modifications back on exec completion. No-op when
+	// no gcs-sync SharedVolumes are configured.
+	postExec, err := s.gcsSyncPreExec(id)
+	if err != nil {
+		return nil, &api.ServerError{Message: fmt.Sprintf("gcs-sync pre-exec for container %s: %v", c.ID[:12], err)}
+	}
+	rwc, err := s.BaseServer.ExecStart(id, opts)
+	if err != nil {
+		if postExec != nil {
+			postExec()
+		}
+		return nil, err
+	}
+	if postExec == nil {
+		return rwc, nil
+	}
+	return &execPostHook{ReadWriteCloser: rwc, once: &sync.Once{}, hook: postExec}, nil
+}
+
+// gcsSyncPreExec runs GCSSyncDriver.PreExec for every configured gcs-sync
+// SharedVolume: it tars the runner-side workspace (the volume's host source)
+// to a per-exec GCS object and injects a SOCKERLESS_SYNC_VOLUMES hint into the
+// exec instance's env so the bootstrap restores it into the job container's
+// tmpfs before running the command (the workspace mount is otherwise an empty
+// tmpfs). It returns a closure that pulls each volume's modifications back to
+// the runner-side path after the exec, or nil when no gcs-sync volume applies.
+func (s *Server) gcsSyncPreExec(execID string) (func(), error) {
+	var vols []SharedVolume
+	for _, sv := range s.config.SharedVolumes {
+		if core.StorageBacking(sv.Backing) == core.BackingGCSSync {
+			vols = append(vols, sv)
+		}
+	}
+	dbg := s.Logger.Info().Int("configured_shared_volumes", len(s.config.SharedVolumes)).Int("gcs_sync_volumes", len(vols)).Str("exec", execID)
+	for i, sv := range s.config.SharedVolumes {
+		dbg = dbg.Str(fmt.Sprintf("vol_%d", i), sv.Name+"|"+sv.ContainerPath+"|"+sv.Bucket+"|"+sv.Backing)
+	}
+	dbg.Msg("gcsSyncPreExec: volume resolution")
+	if len(vols) == 0 {
+		return nil, nil
+	}
+	driver, err := s.storageBackings.Resolve(core.BackingGCSSync)
+	if err != nil {
+		return nil, err
+	}
+	var pairs []string
+	for _, sv := range vols {
+		hints, err := driver.PreExec(s.ctx(), sv.AsRef(), execID, sv.ContainerPath, "")
+		if err != nil {
+			return nil, fmt.Errorf("volume %q: %w", sv.Name, err)
+		}
+		pairs = append(pairs, hints["SOCKERLESS_SYNC_VOLUMES"]...)
+	}
+	if len(pairs) > 0 {
+		entry := "SOCKERLESS_SYNC_VOLUMES=" + strings.Join(pairs, ",")
+		s.Store.Execs.Update(execID, func(e *api.ExecInstance) {
+			e.ProcessConfig.Env = append(e.ProcessConfig.Env, entry)
+		})
+	}
+	volsCopy := vols
+	return func() {
+		for _, sv := range volsCopy {
+			if perr := driver.PostExec(s.ctx(), sv.AsRef(), execID, sv.ContainerPath); perr != nil {
+				s.Logger.Warn().Err(perr).Str("volume", sv.Name).Str("exec", execID).
+					Msg("gcs-sync PostExec failed — runner-side workspace may be stale for this step")
+			}
+		}
+	}, nil
+}
+
+// execPostHook wraps an exec stream so the gcs-sync PostExec sync-back runs
+// exactly once when the caller closes the stream — by which point the exec has
+// finished and the bootstrap has uploaded its workspace modifications.
+type execPostHook struct {
+	io.ReadWriteCloser
+	once *sync.Once
+	hook func()
+}
+
+func (e *execPostHook) Close() error {
+	err := e.ReadWriteCloser.Close()
+	e.once.Do(e.hook)
+	return err
 }
 
 // materializeDeferredNetworkPodForExec lazily deploys a network-pod

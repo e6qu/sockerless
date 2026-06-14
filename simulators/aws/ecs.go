@@ -944,7 +944,6 @@ func ecsPrepareManagedEBSVolumes(ctx context.Context, td ECSTaskDefinition, conf
 		now := time.Now().UTC().Format(time.RFC3339)
 		vol := EC2Volume{
 			VolumeId:         volumeID,
-			DockerVolumeName: ebsECSDockerVolumeName(volumeID),
 			Size:             size,
 			SnapshotId:       snapshotID,
 			AvailabilityZone: az,
@@ -962,10 +961,26 @@ func ecsPrepareManagedEBSVolumes(ctx context.Context, td ECSTaskDefinition, conf
 				DeleteOnTermination: deleteOnTermination,
 			}},
 		}
-		// Restore snapshot data into the new Docker named volume when present.
+		// In process mode (SIM_RUNTIME=process) there is no Docker client, so
+		// back the managed-EBS volume with a host-path directory — the same
+		// in-memory model ec2:CreateVolume uses — rather than a Docker named
+		// volume. Otherwise the deleteOnTermination cleanup (ebsRemoveDockerVolume)
+		// would dereference the nil Docker client and panic the transition
+		// goroutine. Container mode keeps the Docker named volume.
+		processMode := sim.DockerClient() == nil
+		if processMode {
+			if err := ebsPrepareVolumeHostPath(&vol); err != nil {
+				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not create managed EBS volume data path: %v", err), http.StatusInternalServerError}
+			}
+		} else {
+			vol.DockerVolumeName = ebsECSDockerVolumeName(volumeID)
+		}
 		// Docker auto-creates the destination volume on first container use so no
 		// explicit VolumeCreate is needed — the copy container triggers creation.
 		if snapshotDockerVolumeName != "" {
+			if processMode {
+				return nil, nil, &ecsRequestError{"InvalidParameterException", fmt.Sprintf("managed-EBS snapshot %s is Docker-volume-backed and cannot be restored under SIM_RUNTIME=process — start the simulator in container runtime to restore it", snapshotID), http.StatusBadRequest}
+			}
 			if err := ebsCopyDockerVolumes(ctx, snapshotDockerVolumeName, vol.DockerVolumeName); err != nil {
 				return nil, nil, &ecsRequestError{"InternalError", fmt.Sprintf("could not restore managed EBS snapshot data: %v", err), http.StatusInternalServerError}
 			}
@@ -995,7 +1010,11 @@ func ecsPrepareManagedEBSVolumes(ctx context.Context, td ECSTaskDefinition, conf
 			continue
 		}
 		ec2Volumes.Put(volumeID, vol)
-		hosts[cfg.Name] = vol.DockerVolumeName
+		if processMode {
+			hosts[cfg.Name] = vol.HostPath
+		} else {
+			hosts[cfg.Name] = vol.DockerVolumeName
+		}
 		attachments = append(attachments, ECSAttachment{
 			Id:     "ebs-" + volumeID,
 			Type:   "AmazonElasticBlockStorage",

@@ -8,11 +8,22 @@ import (
 	"github.com/rs/zerolog"
 )
 
+// ExecHooks run around each WebSocket exec. PreExec runs before the command
+// starts (a non-nil error aborts the exec); PostExec runs after the command
+// exits, before the exit code is returned to the backend. Both receive the
+// exec message's Env. Used by the cloudrun bootstrap for gcs-sync workspace
+// restore (pre) and save (post); other bootstraps leave them nil.
+type ExecHooks struct {
+	PreExec  func(env []string) error
+	PostExec func(env []string)
+}
+
 // Router dispatches incoming WebSocket messages to session handlers.
 type Router struct {
-	registry *SessionRegistry
-	mp       *MainProcess // may be nil if not in keep-alive mode
-	logger   zerolog.Logger
+	registry  *SessionRegistry
+	mp        *MainProcess // may be nil if not in keep-alive mode
+	logger    zerolog.Logger
+	execHooks ExecHooks
 }
 
 // NewRouter creates a new message router.
@@ -50,7 +61,24 @@ func (rt *Router) handleExec(msg *Message, conn *websocket.Conn, connMu *sync.Mu
 		return
 	}
 
-	session, err := NewExecSession(msg.ID, msg, conn, connMu, rt.logger)
+	// Pre-exec hook (e.g. gcs-sync workspace restore) runs synchronously
+	// before the command so the workspace reflects what the backend
+	// uploaded for this exec. A failure aborts the exec (fail loud — a
+	// stale/empty workspace would silently corrupt the step).
+	if rt.execHooks.PreExec != nil {
+		if err := rt.execHooks.PreExec(msg.Env); err != nil {
+			rt.sendError(conn, connMu, msg.ID, "exec pre-hook: "+err.Error())
+			return
+		}
+	}
+
+	var postExec func()
+	if rt.execHooks.PostExec != nil {
+		env := msg.Env
+		postExec = func() { rt.execHooks.PostExec(env) }
+	}
+
+	session, err := NewExecSession(msg.ID, msg, conn, connMu, rt.logger, postExec)
 	if err != nil {
 		rt.sendError(conn, connMu, msg.ID, err.Error())
 		return
