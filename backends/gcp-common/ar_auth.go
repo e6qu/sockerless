@@ -44,13 +44,22 @@ func (a *ARAuthProvider) GetToken(registry string) (string, error) {
 	return "Bearer " + token.AccessToken, nil
 }
 
-// IsCloudRegistry returns true if the registry is a GCP Artifact Registry or GCR.
+// IsCloudRegistry returns true if the registry is a GCP Artifact Registry or
+// GCR — or the relocated AR coordinate (SOCKERLESS_GCP_AR_ENDPOINT) a sim
+// harness sets, which carries overlay/base refs on its own host rather than
+// `<region>-docker.pkg.dev`.
 func (a *ARAuthProvider) IsCloudRegistry(registry string) bool {
-	return core.IsGCPRegistry(registry)
+	return core.IsGCPRegistry(registry) || IsOverlayCoordinateRegistry(registry)
 }
 
-// RegistryEndpoint returns the operator-configured Artifact Registry endpoint
-// override, if any. The image reference remains the cloud AR/GCR reference.
+// RegistryEndpoint returns the Artifact Registry endpoint override (the
+// backend's reachable sim/cloud endpoint), if any, for a cloud-registry ref.
+// The image reference itself remains the cloud AR/GCR (or relocated-coordinate)
+// reference; only the network destination of registry HTTP changes — so a
+// metadata fetch for a coordinate ref like `127.0.0.1:5000/...` is routed to the
+// backend-reachable sim endpoint instead of dialing the published coordinate
+// host (unreachable from inside the backend's container, and over the wrong
+// scheme).
 func (a *ARAuthProvider) RegistryEndpoint(registry string) string {
 	if !a.IsCloudRegistry(registry) {
 		return ""

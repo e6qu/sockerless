@@ -382,7 +382,9 @@ func (s *Server) ContainerStart(ref string) error {
 	useSvc := s.useServicePath(&c)
 	s.Logger.Info().Str("container", id).Bool("useServicePath", useSvc).Msg("ContainerStart: single-container path")
 	if useSvc {
-		return s.startSingleContainerService(id, c, crState, exitCh)
+		// Normal `docker run` single-container start default-invokes the
+		// image CMD (skipDefaultInvoke=false).
+		return s.startSingleContainerService(id, c, crState, exitCh, false)
 	}
 
 	// Clean up any existing Cloud Run Job from a previous start
@@ -1155,6 +1157,18 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		)}
 	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
+		// The container may be a network-pod member ContainerStart
+		// deferred (marked running, not yet deployed) — e.g. a GH
+		// actions/runner job container whose job declares no services, so
+		// no later sibling ever triggered materialization. The runner
+		// always `docker exec`s its job container, so this exec is the
+		// natural trigger to bring the Cloud Run Service up.
+		if err := s.materializeDeferredNetworkPodForExec(c.ID); err != nil {
+			return nil, &api.ServerError{Message: fmt.Sprintf(
+				"materialize deferred container %s for exec: %v", c.ID[:12], err)}
+		}
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+
 				"Cloud Run exec requires SOCKERLESS_CALLBACK_URL reachable from inside the Service "+
@@ -1163,6 +1177,45 @@ func (s *Server) ExecStart(id string, opts api.ExecStartRequest) (io.ReadWriteCl
 		)}
 	}
 	return s.BaseServer.ExecStart(id, opts)
+}
+
+// materializeDeferredNetworkPodForExec lazily deploys a network-pod
+// container that ContainerStart deferred (see
+// shouldDeferOrMaterializeNetworkPod): the container was marked running
+// in PendingCreates but the Cloud Run Service was never deployed because
+// it was alone in its user-defined network and no later sibling arrived
+// to trigger materialization. A GH actions/runner job container with no
+// `services:` is exactly this case; the runner then `docker exec`s it,
+// which is the trigger. Any service containers that DID arrive (and were
+// themselves deferred + tracked) are bundled as sidecars so a job + its
+// services deploy as one revision with shared loopback. No-op when the
+// container was already materialized (not in PendingCreates).
+func (s *Server) materializeDeferredNetworkPodForExec(id string) error {
+	c, ok := s.PendingCreates.Get(id)
+	if !ok {
+		return nil // already materialized, or not a deferred container
+	}
+	netID, _ := s.userDefinedNetworkID(c)
+	// The job container is main (index 0); deferred service siblings on
+	// the same network become sidecars.
+	members := []api.Container{c}
+	for _, svc := range s.serviceMembersOfNetwork(netID) {
+		if svc.ID != id {
+			members = append(members, svc)
+		}
+	}
+	crState, _ := s.resolveCloudRunState(s.ctx(), id)
+	exitCh := make(chan struct{})
+	s.Store.WaitChs.Store(id, exitCh)
+	s.Logger.Info().Str("container", id).Int("members", len(members)).
+		Msg("ExecStart: materializing deferred network-pod on first exec")
+	if len(members) > 1 {
+		return s.startMultiContainerServiceTyped(id, members, exitCh)
+	}
+	// Exec-driven: the runner keeps this container alive for `docker exec`,
+	// so suppress the default-invoke (which would run the keepalive
+	// entrypoint as a one-shot request and get the pod SIGTERMed).
+	return s.startSingleContainerService(id, c, crState, exitCh, true)
 }
 
 // ContainerExport streams the container's rootfs as tar via the

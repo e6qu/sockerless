@@ -4,6 +4,45 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - Cloud Run GitHub-topology cell bring-up (partial)
+
+Extends the bleephub GitHub-topology harness (ECS- and ACA-proven) to the
+Cloud Run backend, run entirely against the gcp simulator. New
+`provision_cloudrun()` cell, `bleephub-runner-docker-test-cloudrun` Make
+target, and an image bundling `simulator-gcp` + `sockerless-backend-cloudrun`.
+The cell shares the runner workspace via GCS snapshot-sync (gcs-sync), builds
+the reverse-agent bootstrap overlay via Cloud Build, and pushes/pulls it
+through the sim's `/v2/` by the registry coordinate (BUG-1785).
+
+Six real bugs surfaced and fixed bringing the cell up — the whole pipeline
+now runs against the sim: overlay **build → push → pull → deploy →
+materialize → reverse-agent dial-back → step exec**.
+
+- **BUG-1789** (gcp-common, two facets): the overlay base-image rewrite and
+  the AR auth/registry-endpoint override ignored the `SOCKERLESS_GCP_AR_ENDPOINT`
+  coordinate, so the overlay `FROM` and the backend's image-metadata fetch hit
+  the real Artifact Registry host. `ResolveGCPImageURI` now builds the host via
+  `OverlayRegistryHost`, and `ARAuthProvider` recognises the coordinate host
+  (`IsOverlayCoordinateRegistry`) so registry HTTP routes through the backend's
+  reachable endpoint. Real cloud unchanged when the coordinate is unset.
+- **BUG-1790** (gcp sim): the AR docker-hub pull-through (`hydrateOCIImageFromLocalDocker`)
+  served a manifest mixing an OCI manifest type with a Docker v2s2 config type —
+  tolerated by `docker pull`, rejected by `docker build`'s `FROM`. Now full OCI.
+- **BUG-1791** (cloudrun, two facets): a GH container-job with no `services:`
+  was deferred forever (the network-pod defer waited for a sibling that never
+  arrived). Added **materialize-on-exec** — the runner always `docker exec`s its
+  job container, which lazily deploys the Cloud Run Service (bundling any
+  deferred service siblings). And `startSingleContainerService` no longer
+  default-invokes an exec-driven container's `tail -f /dev/null` keepalive
+  (which ran it as a request and hit the request-lifetime SIGTERM); the
+  `skipDefaultInvoke` flag matches the multi-container path's existing skip.
+
+The final TEST 12 gate, **BUG-1792**, is open: the bootstrap's gcs-sync
+restore/save hardcodes `https://storage.googleapis.com` and can't reach the
+sim's storage from the workload, so each exec aborts at exit 255. Staged as
+the next iteration (bootstrap `STORAGE_EMULATOR_HOST` + the workload→sim
+published-port reachability the reverse-agent already uses). TEST 13/14 follow.
+
 ## 2026-06-14 - Faithful build→push→pull for gcp Cloud Build (BUG-1785, gcp half — closes the bug)
 
 The gcp half mirrors the azure ACR Tasks fix below and completes BUG-1785.

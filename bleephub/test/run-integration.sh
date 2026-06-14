@@ -282,10 +282,146 @@ provision_aca() {
     log "sockerless-backend-aca ready (shared volumes: workspace + externals)"
 }
 
+# write_fake_sa_json writes a service-account JSON whose token_uri points
+# at the sim's /token endpoint. The backend's google-cloud Go clients
+# parse the (real, freshly generated) RSA private key, self-sign a JWT,
+# and exchange it at token_uri for an access token — exactly as against
+# real GCP, differing only in the token_uri coordinate.
+write_fake_sa_json() {
+    local out="$1" token_uri="$2" project="$3"
+    local key
+    key=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null) || fail "generate SA RSA key"
+    jq -n --arg pk "$key" --arg tu "$token_uri" --arg proj "$project" '{
+        type: "service_account",
+        project_id: $proj,
+        private_key_id: "sim-key",
+        private_key: $pk,
+        client_email: ("sockerless-runner@" + $proj + ".iam.gserviceaccount.com"),
+        client_id: "111111111111111111111",
+        auth_uri: "https://accounts.google.com/o/oauth2/auth",
+        token_uri: $tu,
+        auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+        universe_domain: "googleapis.com"
+    }' > "$out" || fail "write SA JSON"
+}
+
+provision_cloudrun() {
+    # The Cloud Run backend shares the runner workspace via GCS
+    # snapshot-sync (gcs-sync): unlike ECS/ACA's live EFS / Azure Files
+    # mount, the workspace mount inside the job container is an empty
+    # tmpfs; the bootstrap restores it from GCS before each exec and
+    # persists it back after, and the backend syncs the same GCS object
+    # to/from the runner's local --work dir. The sim materialises each
+    # GCS bucket at $SIM_GCS_DATA_DIR/<bucket> on the host engine.
+    SIM_GCS_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_GCS_DATA_DIR
+    SIM_ADDR="127.0.0.1:4567"
+    local sim_grpc_port=4577
+    local sim_grpc_addr="127.0.0.1:${sim_grpc_port}"
+    local project="sim-project"
+    local build_bucket="sockerless-build"
+    local ws_bucket="sockerless-runner-ws"
+    local ext_bucket="sockerless-runner-externals"
+    case "$(uname -m)" in
+        aarch64|arm64) local build_platform="linux/arm64" ;;
+        *)             local build_platform="linux/amd64" ;;
+    esac
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # The sim serves the Cloud Logging admin read API over gRPC on a
+    # separate port; the backend reads container logs from it.
+    export SIM_GCP_GRPC_PORT="$sim_grpc_port"
+    log "Starting simulator-gcp on :4567 (gRPC :$sim_grpc_port)"
+    simulator-gcp --addr ":4567" >"$LOG_DIR/simulator-gcp.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: GCS buckets (build + workspace + externals)"
+    local b
+    for b in "$build_bucket" "$ws_bucket" "$ext_bucket"; do
+        curl -sf -X POST "http://$SIM_ADDR/storage/v1/b?project=$project" \
+            -H 'Content-Type: application/json' -d "{\"name\":\"$b\"}" >/dev/null \
+            || fail "create GCS bucket $b"
+    done
+
+    # GCP auth: a fake SA JSON whose token_uri is the sim's /token.
+    local sa_json="$SOCKERLESS_HARNESS_DATA_DIR/cloudrun-sa.json"
+    write_fake_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
+    export GOOGLE_APPLICATION_CREDENTIALS="$sa_json"
+
+    # The runner workspace + externals are LOCAL dirs synced to/from GCS
+    # around each container-job exec (contrast ECS/ACA, where they live
+    # directly on the cloud mount).
+    WORK_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-ws"
+    EXT_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-externals"
+    mkdir -p "$WORK_DIR" "$EXT_DIR"
+    log "Staging runner externals ($EXT_DIR)…"
+    cp -a /runner/externals/. "$EXT_DIR/"
+
+    export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
+    export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="$sim_grpc_addr"
+    export SOCKERLESS_GCR_PROJECT="$project"
+    export SOCKERLESS_GCR_REGION="us-central1"
+    export SOCKERLESS_GCP_BUILD_BUCKET="$build_bucket"
+    export SOCKERLESS_GCP_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_POLL_INTERVAL=500ms
+    # Container-mode jobs need a long-lived container with reverse-agent
+    # exec: the Cloud Run backend injects the reverse-agent bootstrap by
+    # building an overlay image via Cloud Build, pushing it to Artifact
+    # Registry, and pulling it on the Cloud Run task. The overlay image
+    # is built/pushed/pulled at this registry endpoint — the sim's /v2/
+    # published to the host engine at 127.0.0.1:5000 (a loopback host the
+    # engine treats as insecure). Cloud Build does a real `docker push`
+    # here; the Cloud Run run does a real `docker pull` — registry and
+    # compute stay agnostic, connected only by the /v2/ API.
+    export SOCKERLESS_GCP_AR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    # Cloud Run exec/attach is via the reverse agent: the overlay
+    # bootstrap inside the task dials back to the backend's reverse
+    # endpoint.
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/cloudrun/reverse"
+    # Service containers (TEST 13) run as Cloud Run Services discovered
+    # over Cloud DNS via the VPC connector.
+    export SOCKERLESS_GCR_USE_SERVICE=1
+    export SOCKERLESS_GCR_VPC_CONNECTOR="projects/$project/locations/us-central1/connectors/sim-connector"
+    # Runner container-job binds translate onto the gcs-sync shared volumes.
+    export SOCKERLESS_GCP_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${ws_bucket}=gcs-sync,runner-externals=/runner/externals=${ext_bucket}=gcs-sync"
+
+    # Stage workload base images into the host daemon. The Cloud Run
+    # overlay build rewrites a Docker Hub base (e.g. alpine:3.20) to the
+    # AR docker-hub pull-through ref via the registry coordinate; the sim
+    # serves that ref by hydrating from the local daemon, so the base
+    # must be present locally. Pull from the ECR public gallery (no Docker
+    # Hub anonymous-pull throttle) and tag under the bare Docker Hub name
+    # the pull-through maps to.
+    log "Staging workload base images (alpine, nginx) into the host daemon…"
+    local img src
+    for img in "alpine:3.20" "nginx:alpine"; do
+        src="public.ecr.aws/docker/library/$img"
+        local ok=""
+        for attempt in 1 2 3 4 5; do
+            if docker pull -q "$src" >/dev/null 2>&1; then ok=1; break; fi
+            sleep "$((attempt * 3))"
+        done
+        [ -n "$ok" ] || fail "pull base image $src"
+        docker tag "$src" "$img" || fail "tag base image $img"
+    done
+
+    log "Starting sockerless-backend-cloudrun on :3375"
+    sockerless-backend-cloudrun --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-cloudrun.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-cloudrun ready (gcs-sync workspace + externals)"
+}
+
 case "${BLEEPHUB_BACKEND:-ecs}" in
     ecs) provision_ecs ;;
     aca) provision_aca ;;
-    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca)" ;;
+    cloudrun) provision_cloudrun ;;
+    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca|cloudrun)" ;;
 esac
 
 # --- 4. Configure the runner ---

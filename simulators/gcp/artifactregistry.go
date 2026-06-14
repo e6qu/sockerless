@@ -321,8 +321,14 @@ func hydrateOCIImageFromLocalDocker(reg *sim.OCIRegistry, dockerImages sim.Store
 		return fmt.Errorf("docker save config %q missing", image.Config)
 	}
 
+	// Serve a fully OCI manifest (OCI manifest + OCI config + OCI tar
+	// layers). The `docker save` config blob is byte-compatible with the
+	// OCI image-config schema, so it is labelled with the OCI config media
+	// type rather than the Docker v2s2 type — a mixed OCI-manifest /
+	// Docker-config image is rejected by docker build's FROM parsing
+	// ("invalid mixed OCI image with Docker v2s2 config").
 	configDigest := digestBytes(configData)
-	reg.PutBlob(imageName, configDigest, "application/vnd.docker.container.image.v1+json", configData)
+	reg.PutBlob(imageName, configDigest, "application/vnd.oci.image.config.v1+json", configData)
 
 	type descriptor struct {
 		MediaType string `json:"mediaType"`
@@ -348,7 +354,7 @@ func hydrateOCIImageFromLocalDocker(reg *sim.OCIRegistry, dockerImages sim.Store
 		"schemaVersion": 2,
 		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
 		"config": descriptor{
-			MediaType: "application/vnd.docker.container.image.v1+json",
+			MediaType: "application/vnd.oci.image.config.v1+json",
 			Size:      int64(len(configData)),
 			Digest:    configDigest,
 		},
