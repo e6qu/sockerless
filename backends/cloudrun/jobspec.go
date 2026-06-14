@@ -73,6 +73,15 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 			&runpb.EnvVar{Name: "SOCKERLESS_CALLBACK_URL", Values: &runpb.EnvVar_Value{Value: s.config.CallbackURL}},
 			&runpb.EnvVar{Name: "SOCKERLESS_CONTAINER_ID", Values: &runpb.EnvVar_Value{Value: ci.ID}},
 		)
+		// Workload-facing storage coordinate for the bootstrap's gcs-sync
+		// workspace restore/save (standard STORAGE_EMULATOR_HOST). Empty on
+		// real Cloud Run (bootstrap uses real GCS + ADC); a sim harness sets
+		// it to a workload-reachable sim storage address.
+		if s.config.GCSWorkloadEndpoint != "" {
+			envVars = append(envVars,
+				&runpb.EnvVar{Name: "STORAGE_EMULATOR_HOST", Values: &runpb.EnvVar_Value{Value: s.config.GCSWorkloadEndpoint}},
+			)
+		}
 	}
 
 	entrypoint := config.Entrypoint

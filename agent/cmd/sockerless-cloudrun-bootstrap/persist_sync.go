@@ -335,17 +335,17 @@ func untarGzInto(data []byte, root string) error {
 // We want "application/x-tar+gzip" for sync objects so cloud-side
 // tooling (gsutil ls -L, console preview) recognises the encoding.
 func gcsPutContentType(ctx context.Context, bucket, object string, data []byte, contentType string) error {
-	tok, err := metadataToken(ctx)
+	tok, err := gcsAuthToken(ctx)
 	if err != nil {
 		return err
 	}
-	u := fmt.Sprintf("https://storage.googleapis.com/upload/storage/v1/b/%s/o?uploadType=media&name=%s",
-		url.PathEscape(bucket), url.QueryEscape(object))
+	u := fmt.Sprintf("%s/upload/storage/v1/b/%s/o?uploadType=media&name=%s",
+		gcsBase(), url.PathEscape(bucket), url.QueryEscape(object))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
+	setGCSAuth(req, tok)
 	req.Header.Set("Content-Type", contentType)
 	req.ContentLength = int64(len(data))
 	resp, err := httpClient.Do(req)
