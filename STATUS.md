@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/gitlab-runner-api-sim` (Arc 3 — GitLab parity; PR pending). |
-| In-flight | **Arc 3 Phase 1 done: `bleeplab`, a GitLab control-plane simulator (the GitLab analog of `bleephub`), validated with a REAL `gitlab-runner` 18.11.3 end-to-end.** It implements the runner API (`POST /api/v4/jobs/request`, `PATCH/PUT /api/v4/jobs/:id`, runner verify/register) + the project/pipeline API (projects, commits, pipeline trigger, status, trace) + a minimal `.gitlab-ci.yml` parser with stage-gated job enqueue. A real gitlab-runner registers, claims a job, runs it via the docker executor (`echo`/`cat /etc/os-release` on alpine), streams the CI trace back, and the pipeline rolls up to `success`. The backend docker-executor attach-stdin path is already built (GL-1…GL-11 closed); Arc 3 was the missing control plane. Next: point the runner's `--docker-host` at a sockerless backend (Phase 3), then a `bleeplab-runner-docker-test` harness across backends (Phase 4). |
-| Last merged | #573 GCF cell GREEN (BUG-1795) + exec-via-agent observability (BUG-1796). #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). #570 #569 process-mode managed-EBS + cloudrun gcs-sync. |
+| Active branch | `feat/bleeplab-ecs-harness` (Arc 3 Phase 3; PR pending). |
+| In-flight | **Arc 3 Phase 3 in progress: the bleeplab ECS harness drives a real `gitlab-runner` 18.11 against sockerless-backend-ecs.** The runner registers with bleeplab, claims a job, uses sockerless as its `--docker-host`, and image pull + build/helper container create all work. Fixed a real core bug found en route (**BUG-1797**: image manifest selection hardcoded amd64 → arch-aware via `SOCKERLESS_WORKLOAD_ARCH`, so the arm64-only gitlab-runner-helper tag pulls on arm64). **Remaining gate — BUG-1798:** the helper container's attach-stdin script isn't delivered (the ECS deferred-RunTask runs the image-default `gitlab-runner-build` instead of baking the piped script), so the job hangs in `Preparing environment`. (Phase 1 — the bleeplab control-plane sim — merged in #574.) |
+| Last merged | #574 bleeplab GitLab control-plane sim (Arc 3 Phase 1). #573 GCF cell GREEN (BUG-1795) + exec observability (BUG-1796). #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
+| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1798 (bleeplab ECS gitlab-helper attach-stdin — the Phase-3 gate). |
 | Live infra | None up. |
 
 ## What's next

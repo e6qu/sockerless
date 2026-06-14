@@ -1333,6 +1333,11 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 			processes, err := startECSTaskContainers(id, td, taskTags, overrides, taskVolumeHosts, sink)
 			if err != nil {
+				// Surface the start failure: it's otherwise only recorded in
+				// the task's StoppedReason, so an intermittent awsvpc netns /
+				// pause-container / image-pull failure reads as an opaque
+				// container ExitCode -1 with no diagnosable cause in logs.
+				fmt.Fprintf(os.Stderr, "[sim-ecs] task %s: container start failed: %v\n", id, err)
 				stoppedAt := time.Now().Unix()
 				ecsTasks.Update(id, func(t *ECSTask) {
 					t.LastStatus = ECSTaskStatusStopped

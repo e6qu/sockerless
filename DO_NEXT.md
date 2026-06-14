@@ -4,20 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/gitlab-runner-api-sim` (Arc 3 — GitLab parity; PR pending). **Phase 1 done + real-runner-validated:** `bleeplab`, the GitLab control-plane simulator (analog of `bleephub`), runs a job with a real `gitlab-runner` 18.11.3 end-to-end. (Merged before this: #573 GCF cell + exec observability; all four container backends are GitHub-topology sim-proven.)
+`feat/bleeplab-ecs-harness` (Arc 3 Phase 3; PR pending). The bleeplab ECS harness drives a real `gitlab-runner` 18.11 against sockerless-backend-ecs: the runner registers with bleeplab, claims a job, uses sockerless as its docker host, and image pull + container create work. **Blocked on BUG-1798** (helper attach-stdin not delivered). Phase 1 (the bleeplab control-plane sim) merged in #574.
 
 ### Arc 3 remaining work
 
-The hard part — the backend docker-executor attach-stdin path — is already built (`invokeRunningRunnerStage`, `stdinPipes`, GL-1…GL-11 closed). bleeplab fills the missing control plane.
-
-1. **Phase 3 — sockerless backend integration.** Point the runner's `--docker-host` at a sockerless backend (start with cloudrun or ecs, sim-backed) instead of local docker; prove one cloud job runs end-to-end. Watch for: the helper-image pull (the runner uses `registry.gitlab.com/.../gitlab-runner-helper:<arch>-v<ver>`; locally it pulled fine, but a sockerless backend needs it reachable via the registry coordinate like the bleephub overlay base images), and `GIT_STRATEGY: none` (no repo to clone in the sim).
-2. **Phase 4 — `bleeplab-runner-docker-test` harness.** Mirror the bleephub TEST suite (single job → multi-stage → services container → artifacts) across backends; a Make target + Dockerfile bundling `bleeplab` + a real `gitlab-runner` + the sockerless backend, like `bleephub-runner-docker-test-*`.
+1. **BUG-1798 — the Phase-3 gate (ECS gitlab-helper attach-stdin).** Modern gitlab-runner 18 docker executor does `create(OpenStdin) → attach(stdin=1,stream=1) → start` (NO `docker exec`) and pipes the stage script to the helper container's stdin (its default `gitlab-runner-build` reads it). On ECS the deferred-RunTask runs the **image-default** command instead of baking the captured stdin, so the helper hangs in `Preparing environment`. Debug `backends/ecs/{stdin_pipe,attach_driver}.go` + the ContainerStart deferral: confirm whether `ecsState.OpenStdin` is seen for the helper's create and whether the deferral RunTasks on `start` before the attached stdin reaches EOF (the runner attaches BEFORE start). The ECS attach-stdin path was built/tested for `docker run -i sh`; this gitlab-runner-18 helper flow is the new shape. Repro: `make bleeplab-runner-docker-test-ecs` (hangs ~240s); freeze with `BLEEPLAB_HOLD=1`, then `docker ps` shows `sockerless-sim-aws-task-… gitlab-runner-helper … "gitlab-runner-build"` up + waiting.
+2. **Phase 4 — extend the harness** (multi-stage, services container, artifacts) once a single job is green; then other backends (cloudrun/gcf reuse `invokeRunningRunnerStage`).
 3. Then **FaaS multi-container pod assembly (BUG-1781)** and standing items.
 
-### bleeplab Phase 1 (reusable findings)
-- Module `bleeplab/` (GitLab analog of `bleephub/`); `cmd/main.go` runs it on `:8929`. Registered in `go.work` + the `core-local` CI shard.
+### bleeplab ECS harness (reusable findings)
+- `bleeplab/Dockerfile` bundles `simulator-aws` + `sockerless-backend-ecs` + `sockerless-agent` + `bleeplab` + a real upstream `gitlab-runner` binary; `bleeplab/test/run-integration.sh` provisions ECS (the bleephub `provision_ecs` shape), starts bleeplab, registers the runner with `[runners.docker] host = tcp://127.0.0.1:3375`, triggers a pipeline, asserts success.
+- **BUG-1797 (fixed):** the aws sim runs ECS tasks on the host engine, so workloads are host-arch; the harness exports `SOCKERLESS_WORKLOAD_ARCH` from `uname -m` so core image manifest selection matches (the gitlab-runner-helper tag is arch-specific). Other harnesses keep amd64.
+- The runner needs `GIT_STRATEGY: none` (no repo to clone in the sim); the helper image + alpine are pulled by the host engine directly through sockerless (no registry coordinate needed for ECS, unlike the cloudrun/gcf overlay path).
+
+### bleeplab Phase 1 (reusable findings, merged #574)
+- Module `bleeplab/` (GitLab analog of `bleephub/`); `cmd/main.go` on `:8929`. Registered in `go.work` + the `core-local` CI shard; needs a standardized `bleeplab/Makefile` (else `make bleeplab/lint` errors "No rule").
 - The runner-API job-request `features` field is **mixed-type** (`trace_sections` bool, `failure_reasons` is a `[]JobFailureReason`) — `map[string]any`, advertise only `trace_sections` or the runner fails to decode the payload.
-- Validate locally: `gitlab-runner run-single --url http://127.0.0.1:8929 --token <glrt-token> --executor docker --docker-image alpine:3.20 --docker-host unix:///var/run/docker.sock --max-builds 1`. Create the runner via `POST /api/v4/user/runners` (returns the token); enqueue a job via project → commit `.gitlab-ci.yml` → `POST /pipeline`.
 
 ### How the GCF cell was closed (reusable)
 GCF Gen2 deploys container-jobs as **Cloud Run Service revisions** (`materializePodService` → `Services.CreateService`), so a container-mode job runs the *same* sim path (`cloudrunservices.go`) the cloudrun cell uses — the sim needed **no** change. Five gaps were the GCF twins of cloudrun fixes (BUG-1795):

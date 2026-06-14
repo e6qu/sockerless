@@ -60,6 +60,14 @@ func TestMain(m *testing.M) {
 	containerCommandImage = "sockerless-container-command:test"
 	buildGoScratchImage(containerCommandImage, containerCommandDir, "container-command", workloadPlatform)
 
+	// Pre-pull busybox up front (with retry) — it backs the awsvpc netns
+	// pause container AND is the workload image for many ECS tests. Pulling
+	// it lazily at RunTask time made the ECR-gallery fetch a flaky dependency
+	// of the task lifecycle: a transient throttle there surfaced as the task
+	// container "failing to start" (ExitCode -1) rather than a clear pull
+	// error. Fetching it once here removes that race from every test.
+	pullImageWithRetry("public.ecr.aws/docker/library/busybox:latest")
+
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		log.Fatalf("Failed to find free port: %v", err)
@@ -90,6 +98,24 @@ func TestMain(m *testing.M) {
 
 func nativeDockerPlatform() string {
 	return "linux/" + runtime.GOARCH
+}
+
+// pullImageWithRetry pulls a public image up front with bounded exponential
+// backoff so a transient registry throttle doesn't flake a test that runs the
+// image. Mirrors the azure sdk-tests pattern. Fails the suite only after
+// exhausting retries — a genuinely unreachable image must fail loud.
+func pullImageWithRetry(image string) {
+	var lastErr error
+	for attempt := 1; attempt <= 5; attempt++ {
+		cmd := exec.Command("docker", "pull", image)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return
+		} else {
+			lastErr = fmt.Errorf("%w\n%s", err, out)
+		}
+		time.Sleep(time.Duration(attempt*attempt) * time.Second)
+	}
+	log.Fatalf("Failed to pull %s after retries: %v", image, lastErr)
 }
 
 func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
