@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `fix/cloudrun-gcs-sync-reachability-1792` (PR pending). |
-| In-flight | **BUG-1792 prerequisites + BUGS.md count correction.** The cloudrun cell (merged #567) reaches step-exec; the last TEST 12 blocker (BUG-1792) is bigger than first scoped: the gcs-sync per-exec workspace data plane (`GCSSyncDriver.PreExec`/`PostExec`) is **never wired into the cloudrun exec path** (no callers anywhere), so the workspace tmpfs stays empty and each step aborts exit 255. Landed the *prerequisites*: the bootstrap honours `STORAGE_EMULATOR_HOST` (unauth emulator mode) and the backend injects a workload-reachable storage coordinate (`SOCKERLESS_GCS_WORKLOAD_ENDPOINT`). Also corrected the BUGS.md header (#567's BUG-1789/1790/1791 were left in Open un-struck). |
-| Last merged | #567 Cloud Run cell bring-up (BUG-1789/1790/1791). #566 BUG-1785 gcp Cloud Build faithful build→push→pull. #565 ACA cell green. |
+| Active branch | `feat/cloudrun-gcs-sync-dataplane-1792` (PR pending). |
+| In-flight | **BUG-1792 gcs-sync exec data plane — wired, integration debug remains.** Implemented the full data plane: cloudrun `ExecStart` runs `GCSSyncDriver.PreExec` per gcs-sync volume + injects `SOCKERLESS_SYNC_VOLUMES` + `PostExec` on exec-stream close; the shared agent gained `ExecHooks` (pre/post) threaded through `ServeReverseAgentWithExecHooks` → `Router` → `ExecSession` so the **WS** exec path syncs (only the HTTP `handleInvoke` path did before); the cloudrun bootstrap passes gcs-sync restore/save hooks. Compiles + agent unit tests green. TEST 12 still exits 255: `gcsSyncPreExec` is a runtime no-op (finds no gcs-sync volumes in `s.config.SharedVolumes` at ExecStart — resolve why) + intermittent reverse-agent registration timeout under local disk pressure. |
+| Last merged | #568 BUG-1792 prerequisites + BUGS.md count fix. #567 Cloud Run cell bring-up (BUG-1789/1790/1791). #566 BUG-1785. #565 ACA cell green. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
 | Bugs | See [BUGS.md](BUGS.md) header for exact counts. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1792 (cloudrun gcs-sync exec data plane unwired — remaining: wire PreExec/PostExec around the exec dispatch). |
 | Live infra | None up. |

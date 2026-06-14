@@ -378,6 +378,11 @@ provision_cloudrun() {
     # compute stay agnostic, connected only by the /v2/ API.
     export SOCKERLESS_GCP_AR_ENDPOINT="127.0.0.1:5000"
     export SOCKERLESS_CLOUDRUN_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
+    # The overlay pull + Service start + bootstrap dial-back must complete
+    # within this window; the default 90s is marginal on a cold/disk-pressured
+    # local engine (the overlay is pulled fresh from the sim each run). Give it
+    # headroom locally — a no-op against a fast/real Cloud Run deploy.
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=240
     export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
     # Cloud Run exec/attach is via the reverse agent: the overlay
     # bootstrap inside the task dials back to the backend's reverse

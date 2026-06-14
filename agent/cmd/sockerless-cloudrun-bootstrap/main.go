@@ -225,7 +225,33 @@ func main() {
 			os.Exit(1)
 		}
 		connMu := &sync.Mutex{}
-		go agent.ServeReverseAgent(conn, connMu)
+		// Per-step `docker exec` flows through the reverse-agent WS, so the
+		// gcs-sync workspace restore/save must run around each WS exec (the
+		// HTTP handleInvoke path covers only the default-invoke / gitlab
+		// stdin-piped flow). Hints arrive in the exec message's Env as
+		// SOCKERLESS_SYNC_VOLUMES; join with the boot-time SOCKERLESS_SYNC_MOUNTS.
+		execHooks := agent.ExecHooks{
+			PreExec: func(env []string) error {
+				vols, perr := parseSyncVolumes(extractSyncVolumesEnv(env), syncMounts)
+				if perr != nil {
+					return perr
+				}
+				if len(vols) == 0 {
+					return nil
+				}
+				return restoreSyncAll(context.Background(), vols)
+			},
+			PostExec: func(env []string) {
+				vols, perr := parseSyncVolumes(extractSyncVolumesEnv(env), syncMounts)
+				if perr != nil || len(vols) == 0 {
+					return
+				}
+				if serr := saveSyncAll(context.Background(), vols); serr != nil {
+					fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: WS exec sync save failed: %v\n", serr)
+				}
+			},
+		}
+		go agent.ServeReverseAgentWithExecHooks(conn, connMu, execHooks)
 		go agent.StartHeartbeats(conn, connMu)
 		go sendLifetimeExpiredOnSIGTERM(conn, connMu)
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
