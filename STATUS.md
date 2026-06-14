@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/cloudrun-gcs-sync-dataplane-1792` (PR pending). |
-| In-flight | Fat PR bundling two concerns. **(1) issue #569 / BUG-1793 — DONE & validated:** AWS sim process-mode (`SIM_RUNTIME=process`) managed-EBS RunTask no longer panics on the nil Docker client (host-path-backed volume in process mode, fail-loud on a Docker-snapshot in process mode, no fallbacks); SDK + CLI regression tests pass and proven to catch the panic. **(2) BUG-1792 gcs-sync exec data plane — wired, integration debug blocked locally:** cloudrun `ExecStart` runs `GCSSyncDriver.PreExec`/`PostExec`; the shared agent gained `ExecHooks` threaded `ServeReverseAgentWithExecHooks` → `Router` → `ExecSession` so the **WS** exec path syncs (only HTTP `handleInvoke` did before); bootstrap passes restore/save hooks. Compiles + agent unit tests green. TEST 12 not yet green: a `gcsSyncPreExec` diagnostic was added but the **local podman is too degraded** (11+ runs) to get the Cloud Run Service past reverse-agent registration even at 600s, so the diagnostic can't be read here — needs a clean engine / CI next session. |
-| Last merged | #568 BUG-1792 prerequisites + BUGS.md count fix. #567 Cloud Run cell bring-up (BUG-1789/1790/1791). #566 BUG-1785. #565 ACA cell green. |
-| Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). Re-check GitHub before non-conformance issue work. |
-| Bugs | See [BUGS.md](BUGS.md) header for exact counts. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1792 (cloudrun gcs-sync exec data plane unwired — remaining: wire PreExec/PostExec around the exec dispatch). |
+| Active branch | `debug/cloudrun-reverse-agent-blocker-1794` (PR pending — docs + timeout only). |
+| In-flight | **BUG-1794 filed: the cloudrun Service bootstrap never registers its reverse-agent → TEST 12 blocked** (and so the merged BUG-1792 gcs-sync data plane is unvalidated). A fresh podman machine ruled out the "degraded engine" theory — it's a real bug. Established: overlay build→push→pull works (fresh machine needs `podman machine` restart so buildah honors the sim-registry insecure drop-in); the Service reaches "Ready" + skips default-invoke correctly; the callback `host.docker.internal:3375` IS reachable from a container during a live run; but the Service (overlay) container is created and **removed within ~1s**, so the bootstrap stderr is uncapturable. Bootstrap-timeout lowered to 180s so the failure surfaces as "did not register" not a job-timeout. Next: a sim debug knob to keep the stopped Service container (or persist its log sink) to see the crash. |
+| Last merged | #570 #569 process-mode managed-EBS fix + cloudrun gcs-sync data plane (WIP). #568 BUG-1792 prereqs. #567 Cloud Run cell bring-up. #566 BUG-1785. |
+| Open GitHub issues | #569 (BUG-1793) FIXED in #570. #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
+| Bugs | See [BUGS.md](BUGS.md) header. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1792 (cloudrun gcs-sync data plane — wired, awaiting validation), BUG-1794 (cloudrun reverse-agent registration — the live blocker). |
 | Live infra | None up. |
 
 ## What's next

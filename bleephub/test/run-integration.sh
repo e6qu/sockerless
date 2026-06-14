@@ -379,10 +379,16 @@ provision_cloudrun() {
     export SOCKERLESS_GCP_AR_ENDPOINT="127.0.0.1:5000"
     export SOCKERLESS_CLOUDRUN_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
     # The overlay pull + Service start + bootstrap dial-back must complete
-    # within this window; the default 90s is marginal on a cold/disk-pressured
-    # local engine (the overlay is pulled fresh from the sim each run). Give it
-    # headroom locally — a no-op against a fast/real Cloud Run deploy.
-    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=600
+    # within this window. Kept below the 300s per-job wait so a genuine
+    # reverse-agent registration failure surfaces as "did not register"
+    # rather than being masked by the job timeout (status=running). See
+    # BUG-1794: the cloudrun Service bootstrap currently never registers.
+    # NOTE: on a freshly-created podman machine the sim-registry insecure
+    # drop-in (`bleephub-sim-registry-trust`) is not honored by the build
+    # path until the podman service reloads — `podman machine stop && start`
+    # once after creating the machine, or the overlay `FROM` pull fails with
+    # "http: server gave HTTP response to HTTPS client".
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=180
     export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
     # Cloud Run exec/attach is via the reverse agent: the overlay
     # bootstrap inside the task dials back to the backend's reverse
