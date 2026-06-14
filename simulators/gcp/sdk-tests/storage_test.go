@@ -1,6 +1,9 @@
 package gcp_sdk_test
 
 import (
+	"bytes"
+	"compress/gzip"
+	"crypto/rand"
 	"io"
 	"strings"
 	"testing"
@@ -9,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/iterator"
+	"google.golang.org/api/option"
+	storageapi "google.golang.org/api/storage/v1"
 )
 
 func storageClient(t *testing.T) *storage.Client {
@@ -54,6 +59,62 @@ func TestGCS_UploadAndDownload(t *testing.T) {
 	data, err := io.ReadAll(r)
 	require.NoError(t, err)
 	assert.Equal(t, "hello world", string(data))
+}
+
+func TestGCS_ResumableWriterFollowsCustomEndpoint(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	err := client.Bucket("resumable-sdk-bucket").Create(ctx, "test-project", nil)
+	require.NoError(t, err)
+
+	var payload bytes.Buffer
+	gz := gzip.NewWriter(&payload)
+	raw := make([]byte, 512*1024)
+	_, err = rand.Read(raw)
+	require.NoError(t, err)
+	_, err = gz.Write(raw)
+	require.NoError(t, err)
+	require.NoError(t, gz.Close())
+	w := client.Bucket("resumable-sdk-bucket").Object("workspace.tar.gz").NewWriter(ctx)
+	w.ChunkSize = 256 * 1024
+	w.ContentType = "application/x-tar+gzip"
+	_, err = w.Write(payload.Bytes())
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	r, err := client.Bucket("resumable-sdk-bucket").Object("workspace.tar.gz").NewReader(ctx)
+	require.NoError(t, err)
+	defer r.Close()
+	got, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, payload.Bytes(), got)
+}
+
+func TestGCS_JSONAPIObjectGetAltMedia(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	bucket := client.Bucket("json-api-media-bucket")
+	require.NoError(t, bucket.Create(ctx, "test-project", nil))
+	payload := []byte{0x1f, 0x8b, 0x08, 0x00, 0x73, 0x6f, 0x63, 0x6b}
+	w := bucket.Object("workspace/exec.tar.gz").NewWriter(ctx)
+	w.ContentType = "application/x-tar+gzip"
+	_, err := w.Write(payload)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+
+	svc, err := storageapi.NewService(ctx,
+		option.WithEndpoint(baseURL+"/storage/v1/"),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+	resp, err := svc.Objects.Get("json-api-media-bucket", "workspace/exec.tar.gz").Download()
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	got, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, payload, got)
 }
 
 func TestGCS_ListObjects(t *testing.T) {

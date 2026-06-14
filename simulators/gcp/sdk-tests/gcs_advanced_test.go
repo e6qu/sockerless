@@ -89,18 +89,9 @@ func TestGCS_ResumableUpload(t *testing.T) {
 	require.Equal(t, http.StatusOK, initResp.StatusCode)
 	location := initResp.Header.Get("Location")
 	require.NotEmpty(t, location, "Location header must carry the session URL")
-	assert.True(t, strings.HasPrefix(location, "https://"),
-		"sim emits https:// to match real GCS fidelity")
+	assert.True(t, strings.HasPrefix(location, "http://"),
+		"resumable session must preserve the custom endpoint scheme")
 	assert.Contains(t, location, "upload_id=")
-
-	// Sim listens on plain HTTP under test (`baseURL` is `http://...`).
-	// Real GCS is HTTPS-only so the sim's Location header is https; the
-	// SDK follows it verbatim against a TLS-fronted sim in production
-	// deployments. For local HTTP testing, swap the scheme back so the
-	// chunk PUT reaches the same listener.
-	if strings.HasPrefix(baseURL, "http://") {
-		location = strings.Replace(location, "https://", "http://", 1)
-	}
 
 	payload := []byte("0123456789abcdef")
 	totalSize := len(payload)

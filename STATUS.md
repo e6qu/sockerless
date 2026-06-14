@@ -6,22 +6,21 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `debug/cloudrun-reverse-agent-blocker-1794` (PR pending — docs + timeout only). |
-| In-flight | **BUG-1794 filed: the cloudrun Service bootstrap never registers its reverse-agent → TEST 12 blocked** (and so the merged BUG-1792 gcs-sync data plane is unvalidated). A fresh podman machine ruled out the "degraded engine" theory — it's a real bug. Established: overlay build→push→pull works (fresh machine needs `podman machine` restart so buildah honors the sim-registry insecure drop-in); the Service reaches "Ready" + skips default-invoke correctly; the callback `host.docker.internal:3375` IS reachable from a container during a live run; but the Service (overlay) container is created and **removed within ~1s**, so the bootstrap stderr is uncapturable. Bootstrap-timeout lowered to 180s so the failure surfaces as "did not register" not a job-timeout. Next: a sim debug knob to keep the stopped Service container (or persist its log sink) to see the crash. |
-| Last merged | #570 #569 process-mode managed-EBS fix + cloudrun gcs-sync data plane (WIP). #568 BUG-1792 prereqs. #567 Cloud Run cell bring-up. #566 BUG-1785. |
-| Open GitHub issues | #569 (BUG-1793) FIXED in #570. #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 5 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1792 (cloudrun gcs-sync data plane — wired, awaiting validation), BUG-1794 (cloudrun reverse-agent registration — the live blocker). |
+| Active branch | `debug/cloudrun-service-log-capture-1794` (PR pending). |
+| In-flight | **The Cloud Run GitHub-topology cell is fully green — bleephub cloudrun harness TEST 1–14 all pass.** BUG-1794 fixed (the exec-driven scale-to-zero Service was deployed but never received a request, so its bootstrap never cold-started → reverse-agent never registered; fix: the overlay serves a `/_sockerless/ready` route that cold-starts the revision without running the keepalive, and the backend POSTs to it on materialize). BUG-1792 validated end-to-end (gcs-sync workspace round-trip — `proof.txt` written inside the job container is visible in the runner workspace; the last gap was the resumable-upload continuation URL hardcoding HTTPS, now scheme-derived). Cloud Run container backend is now sim-proven for the full build→push→pull→deploy→materialize→reverse-agent→exec→gcs-sync pipeline. |
+| Last merged | #571 BUG-1794 filed + surface-the-failure timeout. #570 #569 process-mode managed-EBS fix + cloudrun gcs-sync data plane. #568 BUG-1792 prereqs. #567 Cloud Run cell bring-up. #566 BUG-1785. |
+| Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
+| Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
 | Live infra | None up. |
 
 ## What's next
 
 Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume steps in [DO_NEXT.md](DO_NEXT.md)):
 
-- **A. Finish the Cloud Run cell** — BUG-1792 (gcs-sync workspace reachability) is the last TEST 12 gate; then TEST 13 (service container) + TEST 14 (dispatcher). The build→deploy→materialize→exec pipeline already works against the gcp sim.
-- **B. GCF topology cell** — same `cloudrun-bootstrap` overlay model.
-- **C. Arc 3 — GitLab docker-executor parity.**
-- **D. FaaS multi-container pod assembly (BUG-1781).**
-- **E. Standing** — live pass (BUG-1075), releases (#363), sim audits.
+- **A. GCF topology cell** — same `cloudrun-bootstrap` overlay model; the Cloud Run cell (TEST 1–14 green) is the template.
+- **B. Arc 3 — GitLab docker-executor parity.**
+- **C. FaaS multi-container pod assembly (BUG-1781).**
+- **D. Standing** — live pass (BUG-1075), releases (#363), sim audits.
 
 ## Invariants
 

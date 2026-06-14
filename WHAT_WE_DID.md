@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - Cloud Run GitHub-topology cell GREEN (BUG-1794 + BUG-1792 closed)
+
+The bleephub cloudrun harness now passes **TEST 1–14** end-to-end against the
+gcp simulator — the Cloud Run container backend is sim-proven for the full
+build→push→pull→deploy→materialize→reverse-agent→exec→gcs-sync pipeline, joining
+ECS and ACA. Two bugs closed.
+
+**BUG-1794 — the exec-driven Service never cold-started.** A GitHub container
+job is materialized as a scale-to-zero Cloud Run Service whose keepalive
+(`tail -f /dev/null`) must not run as a request. The materialize path therefore
+*skipped the default-invoke entirely* — but a scale-to-zero Service that never
+receives a request never creates its first instance, so the overlay bootstrap
+never started and never dialed the reverse-agent, and `docker exec` hung. Fix:
+the overlay bootstrap serves a `/_sockerless/ready` route (HTTP 204, runs no
+user command) and the backend POSTs to it (`warmBootstrap` in
+`start_service.go`) to cold-start the revision *without* running the keepalive.
+The gcp sim's `/v2-services-invoke/` handler forwards the request path + query
+to the bootstrap (a `{path...}` route variant + path/query params on
+`postCloudRunServiceInstance`) so the readiness route reaches the bootstrap
+instead of collapsing to `/`. Covered by `TestSDK_CloudRunV2Services_ForwardsRequestPath`
+(new `echo-request` probe mode) and `TestHandleReady_DoesNotRunDefaultCommand`.
+
+**BUG-1792 — gcs-sync validated.** With the data plane wired (#570), the last
+gap was the resumable-upload continuation URL: the sim emitted `Location:`
+hardcoded to `https://`, so the official Go storage client — pointed at the
+explicit HTTP sim coordinate — followed it and failed `server gave HTTP
+response to HTTPS client`. Fix: derive the continuation-URL scheme from the
+request (`requestScheme`: `X-Forwarded-Proto` / `r.TLS`), matching real GCS
+(HTTPS) and a custom HTTP coordinate alike. Also added the JSON-API `alt=media`
+object download, resumable-chunk-via-`POST` (`upload_id`), and `bytes */<total>`
+Content-Range parsing the storage client uses. Proven by
+`TestGCS_ResumableWriterFollowsCustomEndpoint` + `TestGCS_JSONAPIObjectGetAltMedia`
+(official Go storage SDK) and the TEST 12 workspace round-trip (`proof.txt`
+written inside the job container is visible in the runner workspace).
+
 ## 2026-06-14 - Cloud Run gcs-sync prerequisites + BUGS.md count correction (BUG-1792 partial)
 
 Investigating the last cloudrun-cell TEST 12 gate (every `docker exec` aborts

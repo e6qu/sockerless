@@ -248,6 +248,35 @@ func TestSDK_CloudRunV2Services_MultiContainerSharesLocalhost(t *testing.T) {
 	}, 20*time.Second, 500*time.Millisecond, "Cloud Run Service main must reach sidecar on localhost; last body=%q", string(body))
 }
 
+func TestSDK_CloudRunV2Services_ForwardsRequestPath(t *testing.T) {
+	client := newServicesClient(t)
+	createOp, err := client.CreateService(ctx, &runpb.CreateServiceRequest{
+		Parent:    "projects/test-project/locations/us-central1",
+		ServiceId: "v2-svc-forward-path",
+		Service: &runpb.Service{Template: &runpb.RevisionTemplate{Containers: []*runpb.Container{{
+			Image: httpProbeImageName,
+			Args:  []string{"echo-request"},
+		}}}},
+	})
+	require.NoError(t, err)
+	svc, err := createOp.Wait(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		deleteOp, err := client.DeleteService(ctx, &runpb.DeleteServiceRequest{Name: svc.Name})
+		if err == nil {
+			_, _ = deleteOp.Wait(ctx)
+		}
+	})
+
+	resp, err := http.Post(svc.Uri+"/_sockerless/ready?source=sdk", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, "POST /_sockerless/ready?source=sdk", string(body))
+}
+
 func TestSDK_CloudRunV2Services_UpdateBumpsGeneration(t *testing.T) {
 	client := newServicesClient(t)
 

@@ -48,6 +48,7 @@ import (
 )
 
 const (
+	readyPath         = "/_sockerless/ready"
 	envPort           = "PORT"
 	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
 	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
@@ -272,6 +273,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc(readyPath, handleReady)
 	mux.HandleFunc("/", handleInvoke)
 
 	srv := &http.Server{
@@ -284,6 +286,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func handleReady(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {

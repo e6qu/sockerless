@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -13,6 +15,8 @@ import (
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 )
+
+const bootstrapReadyPath = "/_sockerless/ready"
 
 // — single- and multi-container start paths for the Services
 // code path. When Config.UseService is true, ContainerStart dispatches
@@ -162,26 +166,6 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		s.Logger.Info().Str("container", id).Int("stdin_bytes", len(capturedStdin)).Msg("invokeServiceDefaultCmd: stdin pipe drained")
 	}
 
-	// GH actions/runner pattern — multi-container pod-Service with
-	// OpenStdin=false main + no captured stdin. The main has a
-	// long-lived `tail -f /dev/null`-style entrypoint kept alive for
-	// `docker exec`. Default-invoke would run that as a one-shot
-	// subprocess and block forever. Skip the POST and just close
-	// WaitCh; the bootstrap stays on :8080 listening for /exec POSTs.
-	if skipIfNoStdin && len(capturedStdin) == 0 {
-		s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: skipIfNoStdin + no captured stdin — skipping default-invoke (container stays alive for docker-exec)")
-		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
-		} else if exitCh != nil {
-			select {
-			case <-exitCh:
-			default:
-				close(exitCh)
-			}
-		}
-		return
-	}
-
 	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
 	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: waitForServiceURL returned")
 	defer func() {
@@ -226,6 +210,21 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 	client.Timeout = 10 * time.Minute
 	s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: access client ready")
 
+	// An exec-driven runner container must receive a request so a
+	// scale-to-zero Service creates its first instance, but invoking `/`
+	// would run the image's long-lived keepalive command. The overlay's
+	// readiness route cold-starts the revision without running user code;
+	// the bootstrap dials the reverse-agent before it begins serving HTTP.
+	if skipIfNoStdin && len(capturedStdin) == 0 {
+		s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: warming Service for docker-exec without running default command")
+		if err := warmBootstrap(s.ctx(), client, serviceURL); err != nil {
+			s.Logger.Error().Err(err).Str("container", id).Msg("service warmup failed")
+			return
+		}
+		s.Logger.Info().Str("container", id).Msg("invokeServiceDefaultCmd: Service warmup completed")
+		return
+	}
+
 	// Two POST shapes:
 	//   - capturedStdin nil: empty body, bootstrap runs env-baked
 	//     SOCKERLESS_USER_CMD as default invoke (`docker run` semantics)
@@ -259,6 +258,31 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
 		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
 	}
+}
+
+func warmBootstrap(ctx context.Context, client *http.Client, serviceURL string) error {
+	u, err := url.Parse(serviceURL)
+	if err != nil {
+		return fmt.Errorf("parse service URL: %w", err)
+	}
+	u.Path = strings.TrimRight(u.Path, "/") + bootstrapReadyPath
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), nil)
+	if err != nil {
+		return fmt.Errorf("build warmup request: %w", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("send warmup request: %w", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		return fmt.Errorf("read warmup response: %w", err)
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("warmup returned HTTP %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // invokeRunningRunnerStage drains a freshly-registered stdinPipe + POSTs

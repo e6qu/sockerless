@@ -381,8 +381,7 @@ provision_cloudrun() {
     # The overlay pull + Service start + bootstrap dial-back must complete
     # within this window. Kept below the 300s per-job wait so a genuine
     # reverse-agent registration failure surfaces as "did not register"
-    # rather than being masked by the job timeout (status=running). See
-    # BUG-1794: the cloudrun Service bootstrap currently never registers.
+    # rather than being masked by the job timeout (status=running).
     # NOTE: on a freshly-created podman machine the sim-registry insecure
     # drop-in (`bleephub-sim-registry-trust`) is not honored by the build
     # path until the podman service reloads — `podman machine stop && start`
@@ -898,12 +897,12 @@ sleep 3
 
 fi  # TEST_FROM <= 11
 
-# ===== TEST 12: Container-mode job through sockerless-backend-ecs =====
+# ===== TEST 12: Container-mode job through the selected backend =====
 # The job declares `container:` — the runner creates the job container
 # via its DOCKER_HOST (sockerless-backend-ecs), which dispatches it as
-# a sim-ECS task on the host engine. The runner's workspace bind
+# a cloud-native workload on the host engine. The runner's workspace bind
 # translates to the shared EFS volume; steps run via docker exec.
-log "===== TEST 12: Container-mode job (sim-ECS task) ====="
+log "===== TEST 12: Container-mode job ====="
 
 submit_and_wait_workflow 12 "Container-mode job" '
 name: container-test
@@ -918,7 +917,7 @@ jobs:
 ' 300
 
 # Data-plane assertion: the file written INSIDE the job container (a
-# sim-ECS task on the host engine) must be visible in the runner
+# cloud-native workload on the host engine) must be visible in the runner
 # workspace on the shared EFS volume — the exact sharing contract the
 # runner-as-cloud-task topology depends on.
 PROOF=$(find "$WORK_DIR" -name proof.txt -exec cat {} \; 2>/dev/null | head -1)
