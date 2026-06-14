@@ -382,7 +382,7 @@ provision_cloudrun() {
     # within this window; the default 90s is marginal on a cold/disk-pressured
     # local engine (the overlay is pulled fresh from the sim each run). Give it
     # headroom locally — a no-op against a fast/real Cloud Run deploy.
-    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=240
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=600
     export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
     # Cloud Run exec/attach is via the reverse agent: the overlay
     # bootstrap inside the task dials back to the backend's reverse
