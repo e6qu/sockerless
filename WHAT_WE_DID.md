@@ -32,6 +32,16 @@ stdin, so it waits for stdin forever. The next iteration debugs the ECS
 attach-stdin deferral for this gitlab-runner-18 helper shape (the path was built
 for `docker run -i sh`).
 
+**BUG-1799 (fixed) — proactive: a dangling `sim (aws sdk)` flake.** The PR's CI
+surfaced an intermittent `TestECS_TaskArithmetic*` failure (container `ExitCode
+-1`) that re-ran green. Root cause: the awsvpc netns-tier `busybox` **pause
+container** image was pulled lazily at RunTask time, making a transient
+ECR-gallery throttle a per-task lifecycle dependency, recorded only in the task
+`StoppedReason` and surfaced as an opaque `-1`. Fixed by pre-pulling busybox in
+`TestMain` with retry (the established pattern; busybox backs many ECS tests) +
+logging the start failure to stderr so any residual netns flake is diagnosable.
+Sim/test-side only — respects the hard sim↔backend code-isolation rule.
+
 ## 2026-06-14 - bleeplab: GitLab control-plane simulator (Arc 3 Phase 1)
 
 Started Arc 3 (GitLab docker-executor parity) with the missing piece the
