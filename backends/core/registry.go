@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,29 @@ type registryConfig struct {
 	Repository string // e.g. "library/alpine"
 	Tag        string // e.g. "latest"
 	Endpoint   string // optional endpoint override for this registry
+	// Arch is the linux/<arch> manifest to select from a multi-arch
+	// manifest list. Empty ⇒ amd64 (the default sockerless backend
+	// architecture). Set from SOCKERLESS_WORKLOAD_ARCH so a backend whose
+	// workloads run on a non-amd64 host (e.g. the local sims on Apple
+	// Silicon, or Graviton ECS) selects the matching manifest — otherwise
+	// an arch-specific image (e.g. the gitlab-runner-helper `arm64-…` tag,
+	// which is arm64-only) has no amd64 entry and the pull fails.
+	Arch string
+}
+
+// workloadArch returns the linux manifest architecture sockerless workloads
+// run as: SOCKERLESS_WORKLOAD_ARCH (normalized), default "amd64". Backends
+// whose workloads run on a non-amd64 host set this so image manifest
+// selection matches the runtime.
+func workloadArch() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("SOCKERLESS_WORKLOAD_ARCH"))) {
+	case "arm64", "aarch64":
+		return "arm64"
+	case "amd64", "x86_64", "x86-64":
+		return "amd64"
+	default:
+		return "amd64"
+	}
 }
 
 // ImageMetadataResult holds all metadata fetched from a Docker v2 / OCI registry.
@@ -164,6 +188,7 @@ func parseImageRef(ref string) registryConfig {
 		Registry:   registry,
 		Repository: repo,
 		Tag:        tag,
+		Arch:       workloadArch(),
 	}
 }
 
@@ -505,6 +530,34 @@ type manifestInfo struct {
 	layerMediaTypes []string // media types, parallel to layerSizes
 }
 
+// selectPlatformManifest picks the digest of the linux manifest matching
+// wantArch (default amd64) from a manifest list, falling back to amd64 when
+// the target arch is absent. Returns ("", available-platforms) when neither
+// is present so the caller can fail with a clear, listing error. Splitting
+// this out keeps the arch-selection policy unit-testable without a registry.
+func selectPlatformManifest(manifests []manifestListItem, wantArch string) (digest string, available []string) {
+	if wantArch == "" {
+		wantArch = "amd64"
+	}
+	pick := func(arch string) string {
+		for _, m := range manifests {
+			if m.Platform.OS == "linux" && m.Platform.Architecture == arch {
+				return m.Digest
+			}
+		}
+		return ""
+	}
+	digest = pick(wantArch)
+	if digest == "" && wantArch != "amd64" {
+		digest = pick("amd64")
+	}
+	available = make([]string, 0, len(manifests))
+	for _, m := range manifests {
+		available = append(available, fmt.Sprintf("%s/%s", m.Platform.OS, m.Platform.Architecture))
+	}
+	return digest, available
+}
+
 // getManifestInfo resolves the image manifest to get config digest, layer info,
 // and manifest digest.
 func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
@@ -528,27 +581,22 @@ func getManifestInfo(rc registryConfig, token string) (*manifestInfo, error) {
 			return nil, fmt.Errorf("decode manifest list: %w", err)
 		}
 
-		// Find amd64/linux manifest. Sockerless backends (Lambda,
-		// Fargate, Cloud Run, ACA) all run linux/amd64 — picking any
-		// other platform would silently mismatch the runtime and
-		// produce confusing exec errors at run time. The previous
-		// fallback to ml.Manifests[0] silently took whatever was
-		// first (often arm64/linux on multi-arch images), and the
-		// resulting container would crash with `exec format error`.
-		// Now we return a clear error listing what was available.
-		digest := ""
-		for _, m := range ml.Manifests {
-			if m.Platform.Architecture == "amd64" && m.Platform.OS == "linux" {
-				digest = m.Digest
-				break
-			}
-		}
+		// Select the linux manifest matching the configured workload
+		// architecture (rc.Arch; default amd64). Picking the wrong
+		// platform silently mismatches the runtime and produces confusing
+		// `exec format error` crashes — so we select deliberately and, if
+		// the target arch is absent, fall back to amd64 before failing
+		// with a clear error listing what was available. The previous
+		// hardcoded-amd64 selection rejected arch-specific images (e.g.
+		// the gitlab-runner-helper `arm64-…` tag, arm64-only) on arm64
+		// hosts where the workload actually runs arm64.
+		digest, available := selectPlatformManifest(ml.Manifests, rc.Arch)
 		if digest == "" {
-			available := make([]string, 0, len(ml.Manifests))
-			for _, m := range ml.Manifests {
-				available = append(available, fmt.Sprintf("%s/%s", m.Platform.OS, m.Platform.Architecture))
+			wantArch := rc.Arch
+			if wantArch == "" {
+				wantArch = "amd64"
 			}
-			return nil, fmt.Errorf("manifest list has no linux/amd64 entry — sockerless backends are linux/amd64; available platforms: %s", strings.Join(available, ", "))
+			return nil, fmt.Errorf("manifest list has no linux/%s (or linux/amd64) entry; available platforms: %s", wantArch, strings.Join(available, ", "))
 		}
 
 		// Fetch the platform-specific manifest

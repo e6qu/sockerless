@@ -435,6 +435,36 @@ bleephub-runner-docker-test-cloudrun: bleephub-runner-docker-build bleephub-sim-
 bleephub-runner-docker-test-gcf: bleephub-runner-docker-build bleephub-sim-registry-trust
 	$(call run_bleephub_harness,gcf,4567)
 
+# ── bleeplab GitLab docker-executor harness ─────────────────────────────
+# A real gitlab-runner registers against the bleeplab control-plane sim and
+# runs CI jobs through a docker executor whose host is sockerless. The job +
+# helper containers dispatch through sockerless to the cloud sim and run on
+# the host engine (mounted docker.sock). Ports: 8929 (bleeplab) and 3375
+# (backend — workload agents dial back via host.docker.internal).
+.PHONY: bleeplab-runner-docker-build
+bleeplab-runner-docker-build:
+	@printf "$(COLOR_CYAN)▸ Building bleeplab runner-integration image…$(COLOR_RESET)\n"
+	@docker build -f bleeplab/Dockerfile -t bleeplab-runner-int:local .
+
+define run_bleeplab_harness
+	@printf "$(COLOR_CYAN)▸ Running gitlab-runner harness ($(1))…$(COLOR_RESET)\n"
+	@rm -rf /tmp/sockerless-bleeplab-data && mkdir -p /tmp/sockerless-bleeplab-data
+	@docker run --rm \
+	  --security-opt label=disable \
+	  -v $(CURDIR)/bleeplab/test:/test:ro \
+	  -v /var/run/docker.sock:/var/run/docker.sock \
+	  -v /tmp/sockerless-bleeplab-data:/tmp/sockerless-bleeplab-data \
+	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleeplab-data \
+	  -e BLEEPLAB_BACKEND=$(1) \
+	  -e BLEEPLAB_HOLD \
+	  -p 8929:8929 -p 3375:3375 \
+	  bleeplab-runner-int:local
+endef
+
+.PHONY: bleeplab-runner-docker-test-ecs
+bleeplab-runner-docker-test-ecs: bleeplab-runner-docker-build
+	$(call run_bleeplab_harness,ecs)
+
 # Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
 # Build) paths do a real docker push + pull of the bootstrap overlay
 # through the sim's registry, published at 127.0.0.1:5000. Docker

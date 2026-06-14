@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - bleeplab ECS harness + arch-aware image pull (Arc 3 Phase 3, WIP)
+
+Phase 3 points a real `gitlab-runner` 18.11's docker executor at a sockerless
+backend. New `bleeplab/Dockerfile` + `bleeplab/test/run-integration.sh` +
+`make bleeplab-runner-docker-test-ecs`: the harness provisions a sim-backed ECS
+backend (the bleephub `provision_ecs` shape), starts bleeplab, registers the
+runner with `[runners.docker] host = tcp://…:3375`, triggers a pipeline, and
+asserts success. The runner registers, claims a job, uses sockerless as its
+docker host, and image pull + build/helper container create all work.
+
+**BUG-1797 (fixed) — arch-aware image manifest selection.** `core/registry.go`
+hardcoded `linux/amd64` when picking from a multi-arch manifest list. The local
+sims run workloads on the host engine, so on arm64 hosts the workload is arm64 —
+fine for multi-arch images (alpine), but the gitlab-runner-helper `arm64-…` tag
+is arm64-only, so the amd64-only selection failed the pull. Fix: select the
+manifest matching `SOCKERLESS_WORKLOAD_ARCH` (default amd64 — live unchanged),
+falling back to amd64 before erroring; the policy is extracted to
+`selectPlatformManifest` and unit-tested. The harness sets the env from `uname`.
+
+**BUG-1798 (open) — the Phase-3 gate.** With the arch fix, the runner reaches
+`Preparing environment` and hangs: modern gitlab-runner 18 does
+`create(OpenStdin) → attach(stdin) → start` (no `docker exec`) and pipes the
+stage script to the helper's stdin, but the ECS deferred-RunTask runs the
+helper's image-default `gitlab-runner-build` instead of baking the captured
+stdin, so it waits for stdin forever. The next iteration debugs the ECS
+attach-stdin deferral for this gitlab-runner-18 helper shape (the path was built
+for `docker run -i sh`).
+
 ## 2026-06-14 - bleeplab: GitLab control-plane simulator (Arc 3 Phase 1)
 
 Started Arc 3 (GitLab docker-executor parity) with the missing piece the
