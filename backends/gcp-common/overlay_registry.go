@@ -15,10 +15,32 @@ import (
 // identical against cloud and sim; only the coordinate value differs. The value
 // is a registry host (an http:// or https:// scheme, if present, is stripped).
 func OverlayRegistryHost(region string) string {
-	if ep := strings.TrimSpace(os.Getenv("SOCKERLESS_GCP_AR_ENDPOINT")); ep != "" {
-		ep = strings.TrimPrefix(ep, "https://")
-		ep = strings.TrimPrefix(ep, "http://")
-		return strings.TrimRight(ep, "/")
+	if ep := overlayCoordinateHost(); ep != "" {
+		return ep
 	}
 	return region + "-docker.pkg.dev"
+}
+
+// overlayCoordinateHost returns the bare host of the SOCKERLESS_GCP_AR_ENDPOINT
+// coordinate (scheme + trailing slash stripped), or "" when it is unset.
+func overlayCoordinateHost() string {
+	ep := strings.TrimSpace(os.Getenv("SOCKERLESS_GCP_AR_ENDPOINT"))
+	if ep == "" {
+		return ""
+	}
+	ep = strings.TrimPrefix(ep, "https://")
+	ep = strings.TrimPrefix(ep, "http://")
+	return strings.TrimRight(ep, "/")
+}
+
+// IsOverlayCoordinateRegistry reports whether `registry` is the relocated
+// Artifact Registry coordinate (SOCKERLESS_GCP_AR_ENDPOINT). When that
+// coordinate is set — a harness pointed at the simulator — overlay and base
+// image refs carry its host instead of the real `<region>-docker.pkg.dev`, so
+// the AR auth + registry-endpoint-override paths must treat it exactly like a
+// real AR host (cloud auth + route registry HTTP through the backend's reachable
+// endpoint). Returns false on real cloud (coordinate unset).
+func IsOverlayCoordinateRegistry(registry string) bool {
+	ep := overlayCoordinateHost()
+	return ep != "" && registry == ep
 }

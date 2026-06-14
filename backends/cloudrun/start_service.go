@@ -34,7 +34,13 @@ import (
 // closes the WaitCh so docker-wait unblocks. Without this, the
 // bootstrap stays alive as an HTTP server forever and gitlab-runner's
 // docker wait blocks indefinitely.
-func (s *Server) startSingleContainerService(id string, c api.Container, crState CloudRunState, exitCh chan struct{}) error {
+// skipDefaultInvoke=true suppresses the default-invoke POST (used by the
+// exec-driven materialize-on-exec path: a GH actions/runner job container has
+// a long-lived `tail -f /dev/null`-style entrypoint the runner keeps alive for
+// `docker exec`; default-invoking it would run that keepalive as a one-shot
+// request and block until the Cloud Run request-lifetime cap SIGTERMs the pod).
+// A true single-container `docker run` passes false so its CMD runs.
+func (s *Server) startSingleContainerService(id string, c api.Container, crState CloudRunState, exitCh chan struct{}, skipDefaultInvoke bool) error {
 	// Clean up any existing resources from a previous start.
 	if crState.ServiceName != "" {
 		s.Logger.Info().Str("container", id).Str("service", crState.ServiceName).Msg("startSingleContainerService: deleting prior service")
@@ -110,7 +116,7 @@ func (s *Server) startSingleContainerService(id string, c api.Container, crState
 	// alone; the goroutine uses serviceInvokeURL (GetService) which
 	// re-reads the live Service object with Uri populated. Trusting
 	// svc.Uri=="" here would silently skip the invoke.
-	go s.invokeServiceDefaultCmd(id, exitCh, false /* skipIfNoStdin: single-container `docker run` should default-invoke */)
+	go s.invokeServiceDefaultCmd(id, exitCh, skipDefaultInvoke)
 	return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 }
 

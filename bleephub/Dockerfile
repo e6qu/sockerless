@@ -10,6 +10,8 @@ COPY simulators/aws/ /sim-aws/
 RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
 COPY simulators/azure/ /sim-azure/
 RUN cd /sim-azure && GOWORK=off go build -tags noui -o /out/simulator-azure .
+COPY simulators/gcp/ /sim-gcp/
+RUN cd /sim-gcp && GOWORK=off go build -tags noui -o /out/simulator-gcp .
 
 # --- Build the backends + agent (the runner's DOCKER_HOST target) ---
 COPY api/ api/
@@ -23,6 +25,10 @@ COPY backends/azure-common/ backends/azure-common/
 COPY backends/aca/ backends/aca/
 RUN cd backends/aca && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+COPY backends/gcp-common/ backends/gcp-common/
+COPY backends/cloudrun/ backends/cloudrun/
+RUN cd backends/cloudrun && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 # CGO_ENABLED=0: the agent and the reverse-agent bootstrap are injected
 # into arbitrary workload base images (alpine/musl, distroless, scratch),
 # so they must be statically linked — a glibc-dynamic binary fails to exec
@@ -49,8 +55,10 @@ FROM ubuntu:22.04
 # sealed-box contract before PUTting them.
 # docker.io: client CLI for the dispatcher's `docker run` shell-outs
 # and the harness's spawn-image build via the mounted host socket.
+# openssl: the cloudrun cell generates a service-account RSA key for the
+# fake SA JSON (token_uri → sim /token) the backend's google clients sign.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl ca-certificates jq git libicu70 libssl3 python3 python3-nacl docker.io && \
+    curl ca-certificates jq git libicu70 libssl3 openssl python3 python3-nacl docker.io && \
     rm -rf /var/lib/apt/lists/*
 
 # Download official GitHub Actions runner (auto-detect architecture)

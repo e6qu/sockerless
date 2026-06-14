@@ -397,8 +397,11 @@ bleephub-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
 	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
 
-# $(1) = backend (ecs|aca). Mounts an identical-path host data dir that
-# the sim materialises cloud storage into and the host engine binds into
+# $(1) = backend (ecs|aca|cloudrun). $(2) = the sim's in-container HTTP
+# port, published to the host engine at 127.0.0.1:5000 so the overlay
+# build→push→pull (ACA ACR Tasks / Cloud Run Cloud Build) reaches the
+# sim's /v2/. Mounts an identical-path host data dir that the sim
+# materialises cloud storage into and the host engine binds into
 # workload containers.
 define run_bleephub_harness
 	@printf "$(COLOR_CYAN)▸ Running official actions/runner harness ($(1))…$(COLOR_RESET)\n"
@@ -412,25 +415,30 @@ define run_bleephub_harness
 	  -e BLEEPHUB_BACKEND=$(1) \
 	  -e BLEEPHUB_TEST_FROM \
 	  -e BLEEPHUB_HOLD \
-	  -p 80:80 -p 3375:3375 -p 5000:4568 \
+	  -p 80:80 -p 3375:3375 -p 5000:$(2) \
 	  bleephub-runner-int:local
 endef
 
 .PHONY: bleephub-runner-docker-test
 bleephub-runner-docker-test: bleephub-runner-docker-build
-	$(call run_bleephub_harness,ecs)
+	$(call run_bleephub_harness,ecs,4566)
 
 .PHONY: bleephub-runner-docker-test-aca
-bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-aca-registry-trust
-	$(call run_bleephub_harness,aca)
+bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleephub_harness,aca,4568)
 
-# The ACA App-overlay path does a real docker push (ACR Tasks) + pull (the
-# App run) of the bootstrap overlay through the sim's registry, published at
-# 127.0.0.1:5000. Docker auto-trusts loopback registries; Podman does not,
-# so on a podman-machine host add a scoped, idempotent insecure drop-in
+.PHONY: bleephub-runner-docker-test-cloudrun
+bleephub-runner-docker-test-cloudrun: bleephub-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleephub_harness,cloudrun,4567)
+
+# Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
+# Build) paths do a real docker push + pull of the bootstrap overlay
+# through the sim's registry, published at 127.0.0.1:5000. Docker
+# auto-trusts loopback registries; Podman does not, so on a
+# podman-machine host add a scoped, idempotent insecure drop-in
 # (loopback:5000 only). On Docker, and on Linux CI, this is a no-op.
-.PHONY: bleephub-aca-registry-trust
-bleephub-aca-registry-trust:
+.PHONY: bleephub-sim-registry-trust
+bleephub-sim-registry-trust:
 	@if docker version 2>/dev/null | grep -qi podman && command -v podman >/dev/null 2>&1; then \
 	  printf "$(COLOR_CYAN)▸ Trusting the sim registry (127.0.0.1:5000) on the podman machine…$(COLOR_RESET)\n"; \
 	  podman machine ssh "printf '[[registry]]\nlocation = \"127.0.0.1:5000\"\ninsecure = true\n' | sudo tee /etc/containers/registries.conf.d/sockerless-sim-insecure.conf >/dev/null" 2>/dev/null || \

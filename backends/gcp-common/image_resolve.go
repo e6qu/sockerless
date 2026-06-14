@@ -10,15 +10,20 @@ import "strings"
 // repository that proxies Docker Hub. The remote repository ("docker-hub") must
 // be pre-configured at the project level.
 //
-// `endpointURL` is accepted by older call sites but does not alter image
-// resolution. A custom cloud endpoint only changes where SDK requests go; it
-// must not change backend semantics.
+// The Artifact Registry host is a coordinate via OverlayRegistryHost
+// (SOCKERLESS_GCP_AR_ENDPOINT): by default the real `<region>-docker.pkg.dev`,
+// but a harness pointed at the simulator sets it to the sim's `/v2/` address so
+// the same rewrite routes the base image through the sim's docker-hub
+// pull-through. The backend code is identical against cloud and sim; only the
+// coordinate value differs. `endpointURL` is accepted by older call sites but
+// does not alter image resolution (the SDK endpoint and the registry host are
+// independent coordinates).
 //
-// Examples:
+// Examples (real-cloud default host shown; the sim coordinate substitutes for it):
 //
-//	"alpine:latest"        → "{region}-docker.pkg.dev/{project}/docker-hub/library/alpine:latest"
-//	"nginx:alpine"         → "{region}-docker.pkg.dev/{project}/docker-hub/library/nginx:alpine"
-//	"myorg/app:v1"         → "{region}-docker.pkg.dev/{project}/docker-hub/myorg/app:v1"
+//	"alpine:latest"        → "{host}/{project}/docker-hub/library/alpine:latest"
+//	"nginx:alpine"         → "{host}/{project}/docker-hub/library/nginx:alpine"
+//	"myorg/app:v1"         → "{host}/{project}/docker-hub/myorg/app:v1"
 //	"{region}-docker.pkg.dev/{project}/my-repo/img:tag" → used as-is
 //	"gcr.io/{project}/img:tag"                          → used as-is
 func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
@@ -72,8 +77,11 @@ func ResolveGCPImageURI(ref, project, region, endpointURL string) string {
 		return ref
 	}
 
-	// Rewrite to Artifact Registry remote repository URI
-	return region + "-docker.pkg.dev/" + project + "/" + arRepo + "/" + repo + ":" + tag
+	// Rewrite to Artifact Registry remote repository URI. The host is a
+	// coordinate (OverlayRegistryHost) so a sim harness can route the base
+	// image through the sim's docker-hub pull-through; real cloud is
+	// unchanged when SOCKERLESS_GCP_AR_ENDPOINT is unset.
+	return OverlayRegistryHost(region) + "/" + project + "/" + arRepo + "/" + repo + ":" + tag
 }
 
 // parseDockerRef splits a Docker image reference into registry, repo, and tag.
