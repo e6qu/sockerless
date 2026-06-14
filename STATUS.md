@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `debug/cloudrun-service-log-capture-1794` (PR pending). |
-| In-flight | **The Cloud Run GitHub-topology cell is fully green — bleephub cloudrun harness TEST 1–14 all pass.** BUG-1794 fixed (the exec-driven scale-to-zero Service was deployed but never received a request, so its bootstrap never cold-started → reverse-agent never registered; fix: the overlay serves a `/_sockerless/ready` route that cold-starts the revision without running the keepalive, and the backend POSTs to it on materialize). BUG-1792 validated end-to-end (gcs-sync workspace round-trip — `proof.txt` written inside the job container is visible in the runner workspace; the last gap was the resumable-upload continuation URL hardcoding HTTPS, now scheme-derived). Cloud Run container backend is now sim-proven for the full build→push→pull→deploy→materialize→reverse-agent→exec→gcs-sync pipeline. |
-| Last merged | #571 BUG-1794 filed + surface-the-failure timeout. #570 #569 process-mode managed-EBS fix + cloudrun gcs-sync data plane. #568 BUG-1792 prereqs. #567 Cloud Run cell bring-up. #566 BUG-1785. |
+| Active branch | `feat/gcf-topology-cell` (PR pending). |
+| In-flight | **The GCF (Cloud Run Functions) GitHub-topology cell is fully green — bleephub `gcf` harness TEST 1–14 all pass**, joining ECS, ACA, and Cloud Run. GCF Gen2 deploys container-jobs as Cloud Run Service revisions, so the cell reuses the cloudrun overlay + gcs-sync model; five gaps were the GCF twins of cloudrun fixes (BUG-1795): `Typed.Exec` rewired through `s.ExecStart`, materialize-on-exec, `warmBootstrap`, bootstrap readiness route + gcs-sync `ExecHooks`, and `STORAGE_EMULATOR_HOST` honored+injected. **Also instrumented the whole exec-via-agent path (BUG-1796):** the GCF bring-up exposed that a reverse-agent `TypeError` was swallowed (opaque exit 255, cause stranded in the workload's stderr) — now surfaced to the caller's stream + mapped to exit 255, with the full exec lifecycle (dispatch/driver/exit/session) logged across all FaaS backends. |
+| Last merged | #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). #571 BUG-1794 filed + timeout. #570 #569 process-mode managed-EBS + cloudrun gcs-sync. #567 Cloud Run cell bring-up. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
 | Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
 | Live infra | None up. |
@@ -17,10 +17,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume steps in [DO_NEXT.md](DO_NEXT.md)):
 
-- **A. GCF topology cell** — same `cloudrun-bootstrap` overlay model; the Cloud Run cell (TEST 1–14 green) is the template.
-- **B. Arc 3 — GitLab docker-executor parity.**
-- **C. FaaS multi-container pod assembly (BUG-1781).**
-- **D. Standing** — live pass (BUG-1075), releases (#363), sim audits.
+- **A. Arc 3 — GitLab docker-executor parity** — a sim-backed harness proving the helper + build + service-container flow across backends.
+- **B. FaaS multi-container pod assembly (BUG-1781).**
+- **C. Standing** — live pass (BUG-1075), releases (#363), sim audits.
+
+All four container backends (ECS, ACA, Cloud Run, GCF) are now sim-proven for the full GitHub container-job topology.
 
 ## Invariants
 

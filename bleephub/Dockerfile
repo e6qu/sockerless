@@ -29,13 +29,17 @@ COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+COPY backends/cloudrun-functions/ backends/cloudrun-functions/
+RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
 # CGO_ENABLED=0: the agent and the reverse-agent bootstrap are injected
 # into arbitrary workload base images (alpine/musl, distroless, scratch),
 # so they must be statically linked — a glibc-dynamic binary fails to exec
 # on musl with "No such file or directory" (the missing dynamic loader).
 RUN cd agent && GOWORK=off go mod download && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent && \
-    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap && \
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap
 
 # --- Build the dispatcher (runner-as-task control plane) ---
 COPY github-runner-dispatcher-aws/ github-runner-dispatcher-aws/

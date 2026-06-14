@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -148,5 +150,20 @@ func TestParseUserArgvDecodes(t *testing.T) {
 	got := parseUserArgv("SOCKERLESS_USER_CMD")
 	if len(got) != 2 || got[0] != "echo" || got[1] != "hello" {
 		t.Errorf("got %v want [echo hello]", got)
+	}
+}
+
+// TestHandleReady_DoesNotRunDefaultCommand verifies the readiness route
+// cold-starts the instance (HTTP 204) without running the user keepalive
+// command — the warm path the gcf backend POSTs to on materialize.
+func TestHandleReady_DoesNotRunDefaultCommand(t *testing.T) {
+	t.Setenv("SOCKERLESS_USER_CMD", base64.StdEncoding.EncodeToString([]byte(`["sh","-c","exit 99"]`)))
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodPost, readyPath, nil)
+
+	handleReady(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusNoContent)
 	}
 }

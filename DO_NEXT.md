@@ -4,20 +4,24 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`debug/cloudrun-service-log-capture-1794` (PR pending). **The Cloud Run GitHub-topology cell is fully green — the bleephub cloudrun harness passes TEST 1–14.** BUG-1794 + BUG-1792 are fixed and validated (this branch); BUG-1793 (already merged in #570) was struck from the Open table.
+`feat/gcf-topology-cell` (PR pending). **Both the Cloud Run and GCF (Cloud Run Functions) GitHub-topology cells are fully green — bleephub `cloudrun` and `gcf` harnesses pass TEST 1–14.** All four container backends (ECS, ACA, Cloud Run, GCF) are now sim-proven. This branch adds BUG-1795 (GCF cell bring-up) + BUG-1796 (exec-via-agent observability across all FaaS backends).
 
 ### Remaining work
 
-The Cloud Run cell is done. Next is to replicate it on GCF, then GitLab parity and FaaS pods:
-
-1. **GCF topology cell** — same `cloudrun-bootstrap` overlay model and harness shape. The Cloud Run `provision_cloudrun()` in `bleephub/test/run-integration.sh` plus the build→push→pull→deploy→materialize→reverse-agent→exec→gcs-sync pipeline is the template; GCF reuses the GCS-snapshot-sync workspace model (CRF has no shared filesystem either).
+1. **Arc 3 — GitLab docker-executor topology parity** — a sim-backed harness proving the helper + build + service-container flow across backends.
 2. **FaaS multi-container pod assembly (BUG-1781).**
-3. **Arc 3 — GitLab docker-executor topology parity.**
+3. **Standing** — live pass (BUG-1075), releases (#363), sim audits.
 
-### How the cloudrun cell was closed (reusable)
-- **BUG-1794 (reverse-agent never registered):** an exec-driven GH job container is materialized as a scale-to-zero Cloud Run Service whose keepalive (`tail -f /dev/null`) must NOT run as a request. The old path skipped the invoke entirely → the Service never got a request → its first instance (and the bootstrap that dials the reverse-agent) never started. Fix: the overlay bootstrap serves `/_sockerless/ready` (HTTP 204, no user command); the backend POSTs to it (`warmBootstrap`) to cold-start the revision without running the keepalive. The gcp sim's `/v2-services-invoke/` forwards the request path+query to the bootstrap so the readiness route reaches it.
-- **BUG-1792 (gcs-sync unvalidated):** the sim's resumable-upload `Location` header hardcoded `https://`, breaking the official storage client against the explicit HTTP sim coordinate. Fix: derive the continuation-URL scheme from the request. The full gcs-sync round-trip (`proof.txt`) then passes.
-- **Running the harness locally:** `make bleephub-runner-docker-test-cloudrun`. On a podman host that has just been (re)created or has been idle, an attached `docker run` can return `unable to upgrade to tcp, received 500` — `podman machine stop && start` clears it (also re-loads the sim-registry insecure drop-in for the build path).
+### How the GCF cell was closed (reusable)
+GCF Gen2 deploys container-jobs as **Cloud Run Service revisions** (`materializePodService` → `Services.CreateService`), so a container-mode job runs the *same* sim path (`cloudrunservices.go`) the cloudrun cell uses — the sim needed **no** change. Five gaps were the GCF twins of cloudrun fixes (BUG-1795):
+- **Exec wiring (the subtle one):** the Docker HTTP exec path is `handleExecStart → s.Typed.Exec.Exec`, NOT the typed `s.ExecStart` method. cloudrun wires `Typed.Exec = WrapLegacyExecStart(s.ExecStart)`; GCF wired the bare `ReverseAgentExecDriver` (`WrapLegacyExec`), so its `ExecStart` materialize/gcs-sync was dead code. Rewired through `s.ExecStart`. If a backend's `ExecStart` override "never runs," check this wiring first.
+- materialize-on-exec (`materializeDeferredNetworkPodForExec`), `warmBootstrap` (BUG-1794 twin), bootstrap `/_sockerless/ready` route + `ExecHooks` (`ServeReverseAgentWithExecHooks`), and `STORAGE_EMULATOR_HOST` honored in the bootstrap's `persist.go` (`gcsBase`/`gcsAuthToken` — the #568 prereq was never ported; metadata-token 404 from the workload) + injected by the backend.
+- **The reverse-agent restore error was invisible** until BUG-1796: a failed PreExec hook sent a `TypeError` the backend swallowed → opaque exit 255. Now surfaced to the runner's stderr + logged. This is the first tool to reach for when a FaaS exec fails opaquely.
+
+### How the cloudrun cell was closed (reusable, merged #572)
+- **BUG-1794:** exec-driven scale-to-zero Service never got a request → bootstrap never cold-started. Fix: `/_sockerless/ready` route + backend `warmBootstrap`; sim forwards request path+query.
+- **BUG-1792:** sim resumable-upload `Location` hardcoded `https://` broke the storage client on the HTTP sim coordinate. Fix: derive the scheme from the request.
+- **Running the harness locally:** `make bleephub-runner-docker-test-{cloudrun,gcf}`. On a freshly-(re)created or idle podman host, an attached `docker run` can return `unable to upgrade to tcp, received 500` — `podman machine stop && start` clears it (also re-loads the sim-registry insecure drop-in for the build path).
 
 ### Reusable findings (cloudrun cell)
 - The overlay base image is rewritten to the AR `docker-hub` pull-through repo; the gcp sim hydrates it from the local docker daemon (`hydrateOCIImageFromLocalDocker`, keyed on `/docker-hub/`), so the harness must pre-pull base images locally. Serve a **fully-OCI** manifest — a mixed OCI-manifest/Docker-config image is accepted by `docker pull` but rejected by `docker build`'s `FROM`.

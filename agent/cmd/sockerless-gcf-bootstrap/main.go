@@ -86,6 +86,11 @@ func quoteArgv(argv []string) []string {
 // for cross-cloud consistency: argv lists are base64(JSON) so every
 // byte round-trips cleanly through `ENV KEY=VALUE`.
 const (
+	// readyPath cold-starts a scale-to-zero function instance without
+	// running the user's keepalive command — the backend POSTs here on
+	// materialize so the bootstrap starts (and dials the reverse-agent)
+	// without the default-invoke running `tail -f /dev/null` as a request.
+	readyPath         = "/_sockerless/ready"
 	envPort           = "PORT"
 	envUserEntrypoint = "SOCKERLESS_USER_ENTRYPOINT" // base64(JSON-encoded argv)
 	envUserCmd        = "SOCKERLESS_USER_CMD"        // base64(JSON-encoded argv)
@@ -235,7 +240,33 @@ func main() {
 			os.Exit(1)
 		}
 		connMu := &sync.Mutex{}
-		go agent.ServeReverseAgent(conn, connMu)
+		// Per-step `docker exec` flows through the reverse-agent WS, so the
+		// gcs-sync workspace restore/save must run around each WS exec (the
+		// HTTP handleInvoke path covers only the default-invoke / gitlab
+		// stdin-piped flow). Hints arrive in the exec message's Env as
+		// SOCKERLESS_SYNC_VOLUMES; join with the boot-time SOCKERLESS_SYNC_MOUNTS.
+		execHooks := agent.ExecHooks{
+			PreExec: func(env []string) error {
+				vols, perr := parseSyncVolumes(extractSyncVolumesEnv(env), syncMounts)
+				if perr != nil {
+					return perr
+				}
+				if len(vols) == 0 {
+					return nil
+				}
+				return restoreSyncAll(context.Background(), vols)
+			},
+			PostExec: func(env []string) {
+				vols, perr := parseSyncVolumes(extractSyncVolumesEnv(env), syncMounts)
+				if perr != nil || len(vols) == 0 {
+					return
+				}
+				if serr := saveSyncAll(context.Background(), vols); serr != nil {
+					fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: WS exec sync save failed: %v\n", serr)
+				}
+			},
+		}
+		go agent.ServeReverseAgentWithExecHooks(conn, connMu, execHooks)
 		go agent.StartHeartbeats(conn, connMu)
 		go sendLifetimeExpiredOnSIGTERM(conn, connMu)
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
@@ -253,6 +284,7 @@ func main() {
 	}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc(readyPath, handleReady)
 	mux.HandleFunc("/", handleInvoke)
 
 	srv := &http.Server{
@@ -265,6 +297,10 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func handleReady(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {

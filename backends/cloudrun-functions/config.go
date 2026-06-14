@@ -112,6 +112,15 @@ type Config struct {
 	// 121b-finish-C/J).
 	// Set via SOCKERLESS_GCF_NETWORK_DISCOVERY.
 	NetworkDiscovery api.NetworkDiscoveryKind
+
+	// GCSWorkloadEndpoint is the storage endpoint the in-container
+	// bootstrap's gcs-sync workspace restore/save uses, injected as the
+	// standard `STORAGE_EMULATOR_HOST` on the workload (main container). A
+	// coordinate: empty ⇒ real GCS + ADC; a sim harness sets it to a
+	// workload-reachable sim storage address (the in-backend
+	// SOCKERLESS_ENDPOINT_URL is not reachable from inside the workload).
+	// Set via `SOCKERLESS_GCS_WORKLOAD_ENDPOINT`.
+	GCSWorkloadEndpoint string
 }
 
 // SharedVolume mirrors `cloudrun.SharedVolume`. GCS bucket backs the
@@ -175,12 +184,13 @@ func ConfigFromEnv() Config {
 			"SOCKERLESS_GCF_BOOTSTRAP",
 			"/opt/sockerless/sockerless-gcf-bootstrap",
 		),
-		PoolMax:          envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
-		PrewarmOverlays:  parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
-		SharedVolumes:    sharedVolumes,
-		sharedVolumesErr: sharedVolumesErr,
-		VPCConnector:     os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
-		NetworkDiscovery: networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases),
+		PoolMax:             envOrDefaultInt("SOCKERLESS_GCF_POOL_MAX", 10),
+		PrewarmOverlays:     parsePrewarmOverlays(os.Getenv("SOCKERLESS_GCF_PREWARM_OVERLAYS")),
+		SharedVolumes:       sharedVolumes,
+		sharedVolumesErr:    sharedVolumesErr,
+		VPCConnector:        os.Getenv("SOCKERLESS_GCF_VPC_CONNECTOR"),
+		NetworkDiscovery:    networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases),
+		GCSWorkloadEndpoint: os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT"),
 	}
 }
 
@@ -359,6 +369,7 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 	}
 	c.NetworkDiscovery = networkDiscoveryFromEnv("SOCKERLESS_GCF_NETWORK_DISCOVERY", api.NetworkDiscoveryHostAliases)
 	c.SharedVolumes, c.sharedVolumesErr = parseSharedVolumes(os.Getenv("SOCKERLESS_GCP_SHARED_VOLUMES"))
+	c.GCSWorkloadEndpoint = os.Getenv("SOCKERLESS_GCS_WORKLOAD_ENDPOINT")
 	return c
 }
 
