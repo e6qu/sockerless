@@ -6,9 +6,9 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/gcf-topology-cell` (PR pending). |
-| In-flight | **The GCF (Cloud Run Functions) GitHub-topology cell is fully green — bleephub `gcf` harness TEST 1–14 all pass**, joining ECS, ACA, and Cloud Run. GCF Gen2 deploys container-jobs as Cloud Run Service revisions, so the cell reuses the cloudrun overlay + gcs-sync model; five gaps were the GCF twins of cloudrun fixes (BUG-1795): `Typed.Exec` rewired through `s.ExecStart`, materialize-on-exec, `warmBootstrap`, bootstrap readiness route + gcs-sync `ExecHooks`, and `STORAGE_EMULATOR_HOST` honored+injected. **Also instrumented the whole exec-via-agent path (BUG-1796):** the GCF bring-up exposed that a reverse-agent `TypeError` was swallowed (opaque exit 255, cause stranded in the workload's stderr) — now surfaced to the caller's stream + mapped to exit 255, with the full exec lifecycle (dispatch/driver/exit/session) logged across all FaaS backends. |
-| Last merged | #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). #571 BUG-1794 filed + timeout. #570 #569 process-mode managed-EBS + cloudrun gcs-sync. #567 Cloud Run cell bring-up. |
+| Active branch | `feat/gitlab-runner-api-sim` (Arc 3 — GitLab parity; PR pending). |
+| In-flight | **Arc 3 Phase 1 done: `bleeplab`, a GitLab control-plane simulator (the GitLab analog of `bleephub`), validated with a REAL `gitlab-runner` 18.11.3 end-to-end.** It implements the runner API (`POST /api/v4/jobs/request`, `PATCH/PUT /api/v4/jobs/:id`, runner verify/register) + the project/pipeline API (projects, commits, pipeline trigger, status, trace) + a minimal `.gitlab-ci.yml` parser with stage-gated job enqueue. A real gitlab-runner registers, claims a job, runs it via the docker executor (`echo`/`cat /etc/os-release` on alpine), streams the CI trace back, and the pipeline rolls up to `success`. The backend docker-executor attach-stdin path is already built (GL-1…GL-11 closed); Arc 3 was the missing control plane. Next: point the runner's `--docker-host` at a sockerless backend (Phase 3), then a `bleeplab-runner-docker-test` harness across backends (Phase 4). |
+| Last merged | #573 GCF cell GREEN (BUG-1795) + exec-via-agent observability (BUG-1796). #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). #570 #569 process-mode managed-EBS + cloudrun gcs-sync. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
 | Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
 | Live infra | None up. |
@@ -17,11 +17,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume steps in [DO_NEXT.md](DO_NEXT.md)):
 
-- **A. Arc 3 — GitLab docker-executor parity** — a sim-backed harness proving the helper + build + service-container flow across backends.
+- **A. Arc 3 — GitLab docker-executor parity (in progress).** Phase 1 (the `bleeplab` control-plane sim) is done + real-runner-validated. **Phase 3:** point the runner's `--docker-host` at a sockerless backend; one cloud job end-to-end. **Phase 4:** a `bleeplab-runner-docker-test` harness mirroring the bleephub TEST suite (multi-stage, services, artifacts) across backends.
 - **B. FaaS multi-container pod assembly (BUG-1781).**
 - **C. Standing** — live pass (BUG-1075), releases (#363), sim audits.
 
-All four container backends (ECS, ACA, Cloud Run, GCF) are now sim-proven for the full GitHub container-job topology.
+All four container backends (ECS, ACA, Cloud Run, GCF) are sim-proven for the full GitHub container-job topology; GitLab control plane now exists (bleeplab) and runs jobs with a real gitlab-runner.
 
 ## Invariants
 

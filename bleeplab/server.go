@@ -1,0 +1,98 @@
+// Package bleeplab is a lightweight reimplementation of the slice of the
+// GitLab API that a real `gitlab-runner` (docker executor) and a CI
+// orchestrator exercise: the runner API (`POST /api/v4/jobs/request`,
+// `PATCH /api/v4/jobs/:id/trace`, `PUT /api/v4/jobs/:id`, runner verify)
+// and the project/pipeline API (projects, commits, pipeline trigger,
+// pipeline/job status, job trace). It is the GitLab analog of the
+// `bleephub` GitHub control-plane simulator: a real gitlab-runner registers
+// against it and runs jobs through a `--docker-host` pointed at a sockerless
+// backend, exactly as it would against gitlab.com.
+//
+// Fidelity, not fakery: the runner authenticates and polls exactly as it
+// does against real GitLab; bleeplab differs only in coordinates (base URL
+// + tokens). It implements the real wire shapes the runner consumes — it
+// does not special-case sockerless.
+package bleeplab
+
+import (
+	"net/http"
+	"sync"
+
+	"github.com/rs/zerolog"
+)
+
+// Server holds the in-memory GitLab control-plane state and the HTTP mux.
+type Server struct {
+	addr   string
+	logger zerolog.Logger
+	mux    *http.ServeMux
+
+	mu        sync.Mutex
+	nextID    int
+	runners   map[string]*Runner // by auth token
+	projects  map[int]*Project
+	pipelines map[int]*Pipeline
+	jobs      map[int]*Job
+	// queue holds pending job IDs in FIFO order, ready for a runner to
+	// claim via POST /api/v4/jobs/request. A job enters the queue when its
+	// pipeline reaches it (stage ordering) and leaves when claimed.
+	queue []int
+}
+
+// NewServer constructs an empty bleeplab control plane listening on addr.
+func NewServer(addr string, logger zerolog.Logger) *Server {
+	s := &Server{
+		addr:      addr,
+		logger:    logger,
+		mux:       http.NewServeMux(),
+		nextID:    1,
+		runners:   map[string]*Runner{},
+		projects:  map[int]*Project{},
+		pipelines: map[int]*Pipeline{},
+		jobs:      map[int]*Job{},
+	}
+	s.routes()
+	return s
+}
+
+// Handler exposes the mux for in-process tests (httptest.NewServer).
+func (s *Server) Handler() http.Handler { return s.logMiddleware(s.mux) }
+
+// ListenAndServe blocks serving the control-plane API.
+func (s *Server) ListenAndServe() error {
+	s.logger.Info().Str("addr", s.addr).Msg("bleeplab listening")
+	return http.ListenAndServe(s.addr, s.Handler())
+}
+
+func (s *Server) routes() {
+	// Runner-facing API (gitlab-runner polls these).
+	s.mux.HandleFunc("POST /api/v4/runners/verify", s.handleRunnerVerify)
+	s.mux.HandleFunc("POST /api/v4/runners", s.handleRunnerRegister)
+	s.mux.HandleFunc("DELETE /api/v4/runners", s.handleRunnerUnregister)
+	s.mux.HandleFunc("POST /api/v4/jobs/request", s.handleJobRequest)
+	s.mux.HandleFunc("PUT /api/v4/jobs/{id}", s.handleJobUpdate)
+	s.mux.HandleFunc("PATCH /api/v4/jobs/{id}/trace", s.handleJobTrace)
+
+	// Control-plane API (the orchestrator / harness drives these).
+	s.mux.HandleFunc("POST /api/v4/user/runners", s.handleUserRunnerCreate)
+	s.mux.HandleFunc("POST /api/v4/projects", s.handleProjectCreate)
+	s.mux.HandleFunc("POST /api/v4/projects/{id}/repository/commits", s.handleCommitCreate)
+	s.mux.HandleFunc("POST /api/v4/projects/{id}/pipeline", s.handlePipelineCreate)
+	s.mux.HandleFunc("GET /api/v4/projects/{id}/pipelines", s.handlePipelineList)
+	s.mux.HandleFunc("GET /api/v4/projects/{id}/pipelines/{pid}", s.handlePipelineGet)
+	s.mux.HandleFunc("GET /api/v4/projects/{id}/pipelines/{pid}/jobs", s.handlePipelineJobs)
+	s.mux.HandleFunc("GET /api/v4/projects/{id}/jobs/{jid}/trace", s.handleProjectJobTrace)
+
+	// Health + operator surface.
+	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	})
+}
+
+func (s *Server) logMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.logger.Debug().Str("method", r.Method).Str("path", r.URL.Path).Msg("request")
+		next.ServeHTTP(w, r)
+	})
+}
