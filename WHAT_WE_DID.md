@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-14 - bleeplab: GitLab control-plane simulator (Arc 3 Phase 1)
+
+Started Arc 3 (GitLab docker-executor parity) with the missing piece the
+scoping identified: a **GitLab control-plane simulator**, `bleeplab` — the
+GitLab analog of `bleephub`. The backend docker-executor attach-stdin path was
+already built and proven (GL-1…GL-11 closed); what was absent was a control
+plane a real `gitlab-runner` could poll (existing GitLab harnesses used a 4 GB
+`gitlab-ce` container, real gitlab.com, or `gitlab-ci-local` which bypasses the
+runner API).
+
+`bleeplab` (new module, `cmd/main.go` on `:8929`) implements the real GitLab
+API slices a docker-executor runner + orchestrator exercise: the **runner API**
+(`POST /api/v4/jobs/request`, `PATCH/PUT /api/v4/jobs/:id`, runner verify/
+register/unregister) and the **project/pipeline API** (projects, commits,
+pipeline trigger, pipeline/job status, job trace), plus a minimal
+`.gitlab-ci.yml` parser (stages, image, script lifecycle, services, variables)
+with a stage-gated job queue — the next stage enqueues only after the previous
+one succeeds. Fidelity, not fakery: the runner authenticates + polls exactly as
+against gitlab.com; bleeplab differs only in coordinates.
+
+Validated end-to-end with a real `gitlab-runner` 18.11.3: it registers, claims a
+job via `/jobs/request`, pulls the helper + alpine images, runs the script
+(`echo` + `cat /etc/os-release`) on the docker executor, streams the full CI
+trace back, and the pipeline rolls up to `success`. Fixed one wire-shape bug
+the real runner caught: the job-request `features` object is mixed-type
+(`trace_sections` bool vs `failure_reasons` list) so it must be `map[string]any`.
+Unit test `TestFullPipelineLifecycle` drives the whole control-plane + runner
+flow in-process. Registered in `go.work` + the `core-local` CI shard. Next:
+point the runner's `--docker-host` at a sockerless backend (Phase 3).
+
 ## 2026-06-14 - GCF (Cloud Run Functions) cell GREEN + exec-via-agent observability (BUG-1795/1796)
 
 The bleephub **gcf** harness now passes **TEST 1–14** against the gcp simulator —

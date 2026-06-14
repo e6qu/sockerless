@@ -4,13 +4,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/gcf-topology-cell` (PR pending). **Both the Cloud Run and GCF (Cloud Run Functions) GitHub-topology cells are fully green — bleephub `cloudrun` and `gcf` harnesses pass TEST 1–14.** All four container backends (ECS, ACA, Cloud Run, GCF) are now sim-proven. This branch adds BUG-1795 (GCF cell bring-up) + BUG-1796 (exec-via-agent observability across all FaaS backends).
+`feat/gitlab-runner-api-sim` (Arc 3 — GitLab parity; PR pending). **Phase 1 done + real-runner-validated:** `bleeplab`, the GitLab control-plane simulator (analog of `bleephub`), runs a job with a real `gitlab-runner` 18.11.3 end-to-end. (Merged before this: #573 GCF cell + exec observability; all four container backends are GitHub-topology sim-proven.)
 
-### Remaining work
+### Arc 3 remaining work
 
-1. **Arc 3 — GitLab docker-executor topology parity** — a sim-backed harness proving the helper + build + service-container flow across backends.
-2. **FaaS multi-container pod assembly (BUG-1781).**
-3. **Standing** — live pass (BUG-1075), releases (#363), sim audits.
+The hard part — the backend docker-executor attach-stdin path — is already built (`invokeRunningRunnerStage`, `stdinPipes`, GL-1…GL-11 closed). bleeplab fills the missing control plane.
+
+1. **Phase 3 — sockerless backend integration.** Point the runner's `--docker-host` at a sockerless backend (start with cloudrun or ecs, sim-backed) instead of local docker; prove one cloud job runs end-to-end. Watch for: the helper-image pull (the runner uses `registry.gitlab.com/.../gitlab-runner-helper:<arch>-v<ver>`; locally it pulled fine, but a sockerless backend needs it reachable via the registry coordinate like the bleephub overlay base images), and `GIT_STRATEGY: none` (no repo to clone in the sim).
+2. **Phase 4 — `bleeplab-runner-docker-test` harness.** Mirror the bleephub TEST suite (single job → multi-stage → services container → artifacts) across backends; a Make target + Dockerfile bundling `bleeplab` + a real `gitlab-runner` + the sockerless backend, like `bleephub-runner-docker-test-*`.
+3. Then **FaaS multi-container pod assembly (BUG-1781)** and standing items.
+
+### bleeplab Phase 1 (reusable findings)
+- Module `bleeplab/` (GitLab analog of `bleephub/`); `cmd/main.go` runs it on `:8929`. Registered in `go.work` + the `core-local` CI shard.
+- The runner-API job-request `features` field is **mixed-type** (`trace_sections` bool, `failure_reasons` is a `[]JobFailureReason`) — `map[string]any`, advertise only `trace_sections` or the runner fails to decode the payload.
+- Validate locally: `gitlab-runner run-single --url http://127.0.0.1:8929 --token <glrt-token> --executor docker --docker-image alpine:3.20 --docker-host unix:///var/run/docker.sock --max-builds 1`. Create the runner via `POST /api/v4/user/runners` (returns the token); enqueue a job via project → commit `.gitlab-ci.yml` → `POST /pipeline`.
 
 ### How the GCF cell was closed (reusable)
 GCF Gen2 deploys container-jobs as **Cloud Run Service revisions** (`materializePodService` → `Services.CreateService`), so a container-mode job runs the *same* sim path (`cloudrunservices.go`) the cloudrun cell uses — the sim needed **no** change. Five gaps were the GCF twins of cloudrun fixes (BUG-1795):
