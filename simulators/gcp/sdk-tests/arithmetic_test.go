@@ -2,6 +2,7 @@ package gcp_sdk_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -136,35 +137,20 @@ func TestCloudFunctions_InvokeArithmeticLogs(t *testing.T) {
 func TestCloudRun_JobArithmetic(t *testing.T) {
 	execName := createAndRunJobWithImageAndCommand(t, "arith-crj", evalImageName, []string{"(10 + 5) * 2"}, "10s")
 
-	time.Sleep(2 * time.Second)
-
-	exec := getExecution(t, execName)
+	exec := waitExecutionDone(t, execName)
 	assert.Equal(t, float64(1), exec["succeededCount"])
 	assert.Equal(t, float64(0), exec["failedCount"])
 
-	client := logadminClient(t)
-	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="arith-crj"`
-	it := client.Entries(ctx, logadmin.Filter(filter))
-	var messages []string
-	for {
-		entry, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		require.NoError(t, err)
-		if s, ok := entry.Payload.(string); ok {
-			messages = append(messages, s)
-		}
-	}
-	assert.Contains(t, strings.Join(messages, "\n"), "Result: 30", "expected arithmetic result in Cloud Logging")
+	// Poll until the arithmetic result is ingested into Cloud Logging.
+	require.Eventually(t, func() bool {
+		return strings.Contains(jobLogs(t, "arith-crj"), "Result: 30")
+	}, 60*time.Second, 200*time.Millisecond)
 }
 
 func TestCloudRun_JobArithmeticInvalid(t *testing.T) {
 	execName := createAndRunJobWithImageAndCommand(t, "arith-crj-fail", evalImageName, []string{"3 +"}, "10s")
 
-	time.Sleep(2 * time.Second)
-
-	exec := getExecution(t, execName)
+	exec := waitExecutionDone(t, execName)
 	assert.Equal(t, float64(1), exec["failedCount"])
 	assert.Equal(t, float64(0), exec["succeededCount"])
 }
@@ -172,10 +158,18 @@ func TestCloudRun_JobArithmeticInvalid(t *testing.T) {
 func TestCloudRun_JobArithmeticLogs(t *testing.T) {
 	_ = createAndRunJobWithImageAndCommand(t, "arith-crj-logs", evalImageName, []string{"10 / 3"}, "10s")
 
-	time.Sleep(2 * time.Second)
+	// Poll until both the result + parsing logs are ingested.
+	require.Eventually(t, func() bool {
+		l := jobLogs(t, "arith-crj-logs")
+		return strings.Contains(l, "3.333") && strings.Contains(l, "Parsing expression:")
+	}, 60*time.Second, 200*time.Millisecond)
+}
 
+// jobLogs returns the joined Cloud Logging messages for a Cloud Run job.
+func jobLogs(t *testing.T, jobName string) string {
+	t.Helper()
 	client := logadminClient(t)
-	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="arith-crj-logs"`
+	filter := fmt.Sprintf(`resource.type="cloud_run_job" AND resource.labels.job_name=%q`, jobName)
 	it := client.Entries(ctx, logadmin.Filter(filter))
 	var messages []string
 	for {
@@ -183,12 +177,12 @@ func TestCloudRun_JobArithmeticLogs(t *testing.T) {
 		if err == iterator.Done {
 			break
 		}
-		require.NoError(t, err)
+		if err != nil {
+			return strings.Join(messages, "\n")
+		}
 		if s, ok := entry.Payload.(string); ok {
 			messages = append(messages, s)
 		}
 	}
-	allLogs := strings.Join(messages, "\n")
-	assert.Contains(t, allLogs, "3.333", "expected result '3.333...' in Cloud Logging")
-	assert.Contains(t, allLogs, "Parsing expression:", "expected parsing log in Cloud Logging")
+	return strings.Join(messages, "\n")
 }

@@ -108,33 +108,35 @@ func TestLambdaAgentE2E_ReverseAgent(t *testing.T) {
 		t.Logf("container stop returned %v (continuing — may have already exited)", err)
 	}
 
-	// Small wait for registry drop to propagate.
-	time.Sleep(1 * time.Second)
-
-	afterExec, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
-		Cmd:          []string{"echo", "should-not-succeed"},
-		AttachStdout: true,
-	})
-	if err != nil {
-		// Acceptable post-stop responses:
-		// - "No such container" — container fully gone.
-		// - "is not running" — InvocationResult marks the container
-		//   exited, so Docker's ExecCreate correctly rejects the new
-		//   exec against a non-running container.
-		if strings.Contains(err.Error(), "No such container") ||
-			strings.Contains(err.Error(), "is not running") {
+	// Poll until the post-stop state has propagated: a new exec must FAIL —
+	// either ExecCreate rejects it ("No such container" / "is not running"),
+	// or the exec exits non-zero (reverse-agent session dropped). A fixed
+	// sleep races a loaded runner where the registry drop hasn't propagated.
+	pollDeadline := time.Now().Add(30 * time.Second)
+	for {
+		afterExec, err := dockerClient.ContainerExecCreate(ctx, resp.ID, container.ExecOptions{
+			Cmd:          []string{"echo", "should-not-succeed"},
+			AttachStdout: true,
+		})
+		if err != nil {
+			if strings.Contains(err.Error(), "No such container") ||
+				strings.Contains(err.Error(), "is not running") {
+				return // expected: the exec was rejected
+			}
+			t.Fatalf("post-stop exec create returned unexpected error: %v", err)
+		}
+		if hr2, aerr := dockerClient.ContainerExecAttach(ctx, afterExec.ID, container.ExecAttachOptions{}); aerr == nil {
+			io.Copy(io.Discard, hr2.Reader)
+			hr2.Close()
+		}
+		if inspect2, _ := dockerClient.ContainerExecInspect(ctx, afterExec.ID); inspect2.ExitCode != 0 {
+			return // expected: the exec failed (agent session gone)
+		}
+		if time.Now().After(pollDeadline) {
+			t.Error("post-stop exec still returned exit 0 after 30s; expected non-zero (reverse-agent session gone)")
 			return
 		}
-		t.Fatalf("post-stop exec create returned unexpected error: %v", err)
-	}
-	hr2, err := dockerClient.ContainerExecAttach(ctx, afterExec.ID, container.ExecAttachOptions{})
-	if err == nil {
-		io.Copy(io.Discard, hr2.Reader)
-		hr2.Close()
-	}
-	inspect2, _ := dockerClient.ContainerExecInspect(ctx, afterExec.ID)
-	if inspect2.ExitCode == 0 {
-		t.Error("post-stop exec returned exit 0; expected non-zero (reverse-agent session gone)")
+		time.Sleep(500 * time.Millisecond)
 	}
 }
 

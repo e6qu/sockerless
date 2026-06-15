@@ -714,6 +714,26 @@ func TestECS_StopCodeUserInitiated(t *testing.T) {
 
 // ecsRunTaskHelper creates a cluster, registers a task definition, and runs a task.
 // Returns the ECS client, cluster name, and task ARN.
+// waitTaskStopped polls DescribeTasks until the task reaches STOPPED and
+// returns it. The sim runs the task asynchronously (start + process + the
+// STOPPED state transition), so a fixed sleep races a loaded CI runner.
+func waitTaskStopped(t *testing.T, client *ecs.Client, cluster, taskArn string) ecstypes.Task {
+	t.Helper()
+	var task ecstypes.Task
+	require.Eventually(t, func() bool {
+		out, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster),
+			Tasks:   []string{taskArn},
+		})
+		if err != nil || len(out.Tasks) != 1 || aws.ToString(out.Tasks[0].LastStatus) != "STOPPED" {
+			return false
+		}
+		task = out.Tasks[0]
+		return true
+	}, 60*time.Second, 200*time.Millisecond)
+	return task
+}
+
 func ecsRunTaskHelper(t *testing.T, name string, containerDef ecstypes.ContainerDefinition) (*ecs.Client, string, string) {
 	t.Helper()
 	client := ecsClient()
@@ -860,18 +880,9 @@ func TestECS_TaskExecutesCommand(t *testing.T) {
 		},
 	})
 
-	// Wait for container to complete (image pull + start + command execution)
-	time.Sleep(10 * time.Second)
-
-	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(cluster),
-		Tasks:   []string{taskArn},
-	})
-	require.NoError(t, err)
-	require.Len(t, descOut.Tasks, 1)
-
-	task := descOut.Tasks[0]
-	assert.Equal(t, "STOPPED", *task.LastStatus, "stopped reason: %s", aws.ToString(task.StoppedReason))
+	// Poll until the task completes (start + command execution + STOPPED
+	// transition all run asynchronously in the sim).
+	task := waitTaskStopped(t, client, cluster, taskArn)
 	require.NotEmpty(t, task.Containers)
 	require.NotNil(t, task.Containers[0].ExitCode)
 	assert.Equal(t, int32(0), *task.Containers[0].ExitCode, "stopped reason: %s", aws.ToString(task.StoppedReason))
@@ -891,17 +902,7 @@ func TestECS_TaskExitCodeNonZero(t *testing.T) {
 		},
 	})
 
-	time.Sleep(2 * time.Second)
-
-	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(cluster),
-		Tasks:   []string{taskArn},
-	})
-	require.NoError(t, err)
-	require.Len(t, descOut.Tasks, 1)
-
-	task := descOut.Tasks[0]
-	assert.Equal(t, "STOPPED", *task.LastStatus)
+	task := waitTaskStopped(t, client, cluster, taskArn)
 	require.NotEmpty(t, task.Containers)
 	require.NotNil(t, task.Containers[0].ExitCode)
 	assert.Equal(t, int32(1), *task.Containers[0].ExitCode)

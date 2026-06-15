@@ -48,28 +48,30 @@ func TestCloudRun_CLI_RunJobAndCheckLogs(t *testing.T) {
 	parseJSON(t, out, &lro)
 	require.NotEmpty(t, lro.Response.Name)
 
-	// Wait for execution to complete
-	time.Sleep(3 * time.Second)
-
-	// Check execution status
-	out = httpDoJSON(t, "GET", baseURL+"/v2/"+lro.Response.Name, "")
+	// Poll until the execution completes (run + completion are async in the
+	// sim) — a fixed sleep races a loaded runner.
 	var exec struct {
 		SucceededCount int `json:"succeededCount"`
 		FailedCount    int `json:"failedCount"`
 		RunningCount   int `json:"runningCount"`
 	}
-	parseJSON(t, out, &exec)
+	require.Eventually(t, func() bool {
+		out = httpDoJSON(t, "GET", baseURL+"/v2/"+lro.Response.Name, "")
+		parseJSON(t, out, &exec)
+		return exec.RunningCount == 0 && exec.SucceededCount+exec.FailedCount > 0
+	}, 60*time.Second, 250*time.Millisecond)
 	assert.Equal(t, 1, exec.SucceededCount, "expected job to succeed")
 	assert.Equal(t, 0, exec.FailedCount)
 	assert.Equal(t, 0, exec.RunningCount)
 
-	// Query Cloud Logging for job output
-	out = runCLI(t, gcloudCLI("logging", "read",
-		`resource.type="cloud_run_job" AND resource.labels.job_name="cli-run-job"`,
-		"--format", "json",
-	))
-
-	// Verify logs contain the real output
+	// Poll Cloud Logging until the job's real output is ingested.
+	require.Eventually(t, func() bool {
+		out = runCLI(t, gcloudCLI("logging", "read",
+			`resource.type="cloud_run_job" AND resource.labels.job_name="cli-run-job"`,
+			"--format", "json",
+		))
+		return strings.Contains(out, "hello-from-crj")
+	}, 60*time.Second, 250*time.Millisecond)
 	assert.Contains(t, out, "hello-from-crj", "expected real process output in Cloud Logging")
 
 	// Cleanup
@@ -104,11 +106,7 @@ func TestCloudRun_CLI_RunJobFailure(t *testing.T) {
 	parseJSON(t, out, &lro)
 	require.NotEmpty(t, lro.Response.Name)
 
-	// Wait for execution to complete
-	time.Sleep(3 * time.Second)
-
-	// Check execution status — should be failed
-	out = httpDoJSON(t, "GET", baseURL+"/v2/"+lro.Response.Name, "")
+	// Poll until the execution completes (async in the sim).
 	var exec struct {
 		SucceededCount int `json:"succeededCount"`
 		FailedCount    int `json:"failedCount"`
@@ -117,7 +115,11 @@ func TestCloudRun_CLI_RunJobFailure(t *testing.T) {
 			State string `json:"state"`
 		} `json:"conditions"`
 	}
-	parseJSON(t, out, &exec)
+	require.Eventually(t, func() bool {
+		out = httpDoJSON(t, "GET", baseURL+"/v2/"+lro.Response.Name, "")
+		parseJSON(t, out, &exec)
+		return exec.RunningCount == 0 && exec.SucceededCount+exec.FailedCount > 0
+	}, 60*time.Second, 250*time.Millisecond)
 	assert.Equal(t, 0, exec.SucceededCount)
 	assert.Equal(t, 1, exec.FailedCount, "expected job to fail")
 	assert.Equal(t, 0, exec.RunningCount)

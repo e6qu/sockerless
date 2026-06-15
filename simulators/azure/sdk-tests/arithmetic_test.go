@@ -101,14 +101,28 @@ func TestContainerApps_JobArithmetic(t *testing.T) {
 	acaCreateJobWithImageAndCommand(t, rg, jobName, evalImageName, []string{"(10 + 5) * 2"})
 	execName := acaStartExecution(t, rg, jobName)
 
-	time.Sleep(2 * time.Second)
-
-	exec := acaGetExecution(t, rg, jobName, execName)
+	exec := acaWaitExecution(t, rg, jobName, execName)
 	execProps := exec["properties"].(map[string]any)
 	assert.Equal(t, "Succeeded", execProps["status"])
 
+	// Poll until the arithmetic result is ingested into Log Analytics (async
+	// in the sim) — a fixed sleep races a loaded runner.
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "arith-aca-job"`
-	result := queryWorkspace(t, "default", kql)
+	var result queryResponse
+	require.Eventually(t, func() bool {
+		result = queryWorkspace(t, "default", kql)
+		if len(result.Tables) != 1 {
+			return false
+		}
+		for _, row := range result.Tables[0].Rows {
+			for _, cell := range row {
+				if s, ok := cell.(string); ok && s == "30" {
+					return true
+				}
+			}
+		}
+		return false
+	}, 60*time.Second, 200*time.Millisecond)
 
 	require.Len(t, result.Tables, 1)
 	table := result.Tables[0]

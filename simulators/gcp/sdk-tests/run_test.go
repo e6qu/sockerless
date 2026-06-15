@@ -153,32 +153,31 @@ func TestCloudRun_RunJobInjectsLogEntries(t *testing.T) {
 	runResp.Body.Close()
 	require.Equal(t, http.StatusOK, runResp.StatusCode)
 
-	// Wait for execution to complete (1s timeout + buffer)
-	time.Sleep(2 * time.Second)
-
-	// Query log entries using logadmin with the same filter the backend uses
+	// Poll the log query (same filter the backend uses) until the execution
+	// has run and BOTH the start + completion entries are ingested — both are
+	// async in the sim, so a fixed sleep races a loaded runner.
 	client := logadminClient(t)
 	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="log-inject-job"`
-	it := client.Entries(ctx, logadmin.Filter(filter))
-
 	var messages []string
-	for {
-		entry, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		require.NoError(t, err)
-
-		// Verify resource type and label
-		assert.Equal(t, "cloud_run_job", entry.Resource.Type)
-		assert.Equal(t, "log-inject-job", entry.Resource.Labels["job_name"])
-
-		if entry.Payload != nil {
+	require.Eventually(t, func() bool {
+		it := client.Entries(ctx, logadmin.Filter(filter))
+		messages = nil
+		for {
+			entry, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return false
+			}
+			assert.Equal(t, "cloud_run_job", entry.Resource.Type)
+			assert.Equal(t, "log-inject-job", entry.Resource.Labels["job_name"])
 			if s, ok := entry.Payload.(string); ok {
 				messages = append(messages, s)
 			}
 		}
-	}
+		return len(messages) >= 2
+	}, 60*time.Second, 200*time.Millisecond)
 
 	require.GreaterOrEqual(t, len(messages), 2, "should have at least start and completion log entries")
 	assert.Equal(t, "Container started", messages[0])
@@ -224,6 +223,20 @@ func createAndRunJob(t *testing.T, jobID string) string {
 }
 
 // getExecution fetches an execution and returns it as a map.
+// waitExecutionDone polls getExecution until the execution completes
+// (completionTime set). The sim runs the job asynchronously (process start +
+// completion), so a fixed sleep races a loaded CI runner.
+func waitExecutionDone(t *testing.T, execName string) map[string]any {
+	t.Helper()
+	var exec map[string]any
+	require.Eventually(t, func() bool {
+		exec = getExecution(t, execName)
+		ct, _ := exec["completionTime"].(string)
+		return ct != ""
+	}, 60*time.Second, 200*time.Millisecond)
+	return exec
+}
+
 func getExecution(t *testing.T, execName string) map[string]any {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "GET", baseURL+"/v2/"+execName, nil)
@@ -252,10 +265,7 @@ func TestCloudRun_ExecutionRunningState(t *testing.T) {
 func TestCloudRun_ExecutionSucceededState(t *testing.T) {
 	execName := createAndRunJob(t, "status-succeeded-job")
 
-	// Wait for auto-completion (1s timeout + buffer)
-	time.Sleep(2 * time.Second)
-
-	exec := getExecution(t, execName)
+	exec := waitExecutionDone(t, execName)
 	assert.Equal(t, float64(0), exec["runningCount"])
 	assert.Equal(t, float64(1), exec["succeededCount"])
 	assert.Equal(t, float64(0), exec["failedCount"])
@@ -332,10 +342,7 @@ func createAndRunJobWithImageAndCommand(t *testing.T, jobID string, image string
 func TestCloudRun_ExecutionRunsCommand(t *testing.T) {
 	execName := createAndRunJobWithCommand(t, "exec-cmd-job", []string{"echo", "hello"}, "5s")
 
-	// Wait for process to complete
-	time.Sleep(2 * time.Second)
-
-	exec := getExecution(t, execName)
+	exec := waitExecutionDone(t, execName)
 	assert.Equal(t, float64(0), exec["runningCount"])
 	assert.Equal(t, float64(1), exec["succeededCount"])
 	assert.Equal(t, float64(0), exec["failedCount"])
@@ -345,10 +352,7 @@ func TestCloudRun_ExecutionRunsCommand(t *testing.T) {
 func TestCloudRun_ExecutionFailedState(t *testing.T) {
 	execName := createAndRunJobWithCommand(t, "exec-fail-job", []string{"sh", "-c", "exit 1"}, "5s")
 
-	// Wait for process to complete
-	time.Sleep(2 * time.Second)
-
-	exec := getExecution(t, execName)
+	exec := waitExecutionDone(t, execName)
 	assert.Equal(t, float64(0), exec["runningCount"])
 	assert.Equal(t, float64(0), exec["succeededCount"])
 	assert.Equal(t, float64(1), exec["failedCount"])
@@ -358,26 +362,38 @@ func TestCloudRun_ExecutionFailedState(t *testing.T) {
 func TestCloudRun_ExecutionLogsRealOutput(t *testing.T) {
 	_ = createAndRunJobWithCommand(t, "exec-log-job", []string{"echo", "real output from process"}, "5s")
 
-	// Wait for process to complete and logs to be written
-	time.Sleep(2 * time.Second)
-
+	// Poll until the process has run and its stdout is ingested into Cloud
+	// Logging (both async in the sim) — a fixed sleep races a loaded runner.
 	client := logadminClient(t)
 	filter := `resource.type="cloud_run_job" AND resource.labels.job_name="exec-log-job"`
-	it := client.Entries(ctx, logadmin.Filter(filter))
-
 	var messages []string
-	for {
-		entry, err := it.Next()
-		if err == iterator.Done {
-			break
-		}
-		require.NoError(t, err)
-		if entry.Payload != nil {
+	require.Eventually(t, func() bool {
+		it := client.Entries(ctx, logadmin.Filter(filter))
+		messages = nil
+		for {
+			entry, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return false
+			}
 			if s, ok := entry.Payload.(string); ok {
 				messages = append(messages, s)
 			}
 		}
-	}
+		return containsString(messages, "real output from process")
+	}, 60*time.Second, 200*time.Millisecond)
 
 	assert.Contains(t, messages, "real output from process", "process stdout should appear in Cloud Logging")
+}
+
+// containsString reports whether want is an element of msgs.
+func containsString(msgs []string, want string) bool {
+	for _, m := range msgs {
+		if m == want {
+			return true
+		}
+	}
+	return false
 }
