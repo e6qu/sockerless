@@ -6,13 +6,14 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleeplab-ui` (Arc 3 Phase 4; PR pending). |
-| In-flight | **bleeplab dashboard UI (GitLab-themed) — the last bleephub-parity piece.** A React 19 / Vite / Tailwind 4 SPA at `ui/packages/bleeplab/`, embedded into the bleeplab binary via `//go:embed` (`ui_embed.go`/`ui_noembed.go`, served at `/ui/`, `/` → `/ui/`). Views: Overview (status + storage + recent pipelines), Projects, Project detail, Pipelines, Pipeline detail (GitLab stage graph), Job detail (trace), Runners. Fed by a new read-only `/internal/*` aggregation API (status/projects/pipelines/jobs/runners/storage). Theme deliberately distinct from bleephub's teal: GitLab indigo/purple accent (`#6E49CB`) + tanuki-orange brand (`#FC6D26`) + GitLab Pajamas status colors, reusing the shared ui-core token contract. Built/embedded via `UI_PACKAGE := bleeplab` (go-app.mk); harness Dockerfile builds `-tags noui` (headless). |
+| Active branch | `feat/bleeplab-services` (Arc 3; PR pending). |
+| In-flight | **Cloud Map completeness + ECS service-alias registration (BUG-1804) — unblocks GitLab `services:`.** A container can now resolve under MULTIPLE Cloud Map DNS names (real Cloud Map's one-instance-many-services model): the aws sim's Docker-network DNS realization re-attaches a task container with the FULL set of service names it backs (disconnect-then-reconnect, since Docker rejects a second `NetworkConnect`); the ECS backend captures the request's `NetworkingConfig` aliases and registers the container under its hostname AND every alias (and deregisters by enumerating the namespace's services). So a GitLab `services:` alias like `redis` resolves. Proven by `TestECS_MultiServiceDNS` (a client resolves both of a server's two service names via real Cloud Map DNS) + the harness log (the redis service container carries `redis` + its hostname as namespace aliases). The full gitlab-runner `services:` e2e on ECS has a separate remaining gate (BUG-1805: `FF_NETWORK_PER_BUILD` build-container produces no trace output) — the harness `services:` job is descoped pending that; the SDK test is the standing validation. |
+| Prev merged (#580) | bleeplab dashboard UI (GitLab-themed) — completed bleephub parity (git + artifacts + UI). |
 | Prev merged (#579) | bleeplab object-store-backed CI artifacts (cross-stage passing) + BUG-1803 (azf attach stdin-capture race). |
 | Prev merged (#578) | The single-job bleeplab GitLab ECS cell GREEN: **BUG-1801** bleeplab serves each project as a real git repo over smart-HTTP (object-store-backed go-git), `GIT_STRATEGY: clone` materializes `CI_PROJECT_DIR`; **BUG-1802** the ECS backend reconstructs a container's `HostConfig.Binds` from the task def's mount points on restart so gitlab-runner's per-stage helper restarts keep the EFS `/builds` mount. |
 | Last merged | #577 BUG-1800 EFS access-point writability. #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness (BUG-1797, BUG-1799). #574 bleeplab GitLab sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
+| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1805 (gitlab-runner `services:` e2e gate on ECS). |
 | Live infra | None up. |
 
 ## What's next
