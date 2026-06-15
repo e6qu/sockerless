@@ -4,15 +4,26 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleeplab-services` (Arc 3; PR #581). **Full gitlab-runner `services:` support on the bleeplab GitLab ECS cell (BUG-1804 + BUG-1805).** A `services:` job's build container reaches the service (redis) by alias over the per-build pod network — `redis-cli` PING/SET/GET green (harness TEST 4). Merged previously: #580 (UI), #579 (artifacts + BUG-1803), #578 (git + ECS binds).
+`feat/azf-multicontainer-pods` (PR pending). **FaaS multi-container pod assembly (BUG-1781).** lambda + gcf already delivered shared-localhost pods; this PR closes the remaining gap — **azf**, which hard-rejected multi-container pods — by assembling the pod as ONE App Service site with **sitecontainers**. A GitHub-`services:`-shaped pod (job + service) on the azf sim reaches the sidecar on `localhost:9099` AND by alias `svc`. Merged previously: #581 (BUG-1804/1805 GitLab `services:` on ECS), #580 (UI), #579 (artifacts + BUG-1803), #578 (git + ECS binds).
 
-### Arc 3 remaining work
+### BUG-1781 — what shipped (reusable findings)
 
-1. **(done, #578/#579/#580)** bleeplab git + artifacts + UI — full bleephub parity.
-2. **(done, this PR — BUG-1804) Cloud Map multi-name + ECS service-alias registration.** The aws sim's Docker-network DNS realization re-attaches a task container with the FULL set of service names it backs (disconnect-then-reconnect, since Docker rejects a 2nd `NetworkConnect`); the ECS backend captures `NetworkingConfig` aliases and registers the container under hostname + every alias, and deregisters by enumerating namespace services. Proven by `TestECS_MultiServiceDNS`.
-3. **(done, this PR — BUG-1805) GitLab `services:` end-to-end on ECS.** Removed the ECS backend's `/etc/resolv.conf` command-wrapper (it froze per-network DNS to a static entrypoint snapshot — dropping the namespace network's DNS the runtime adds on Cloud Map connect — and mangled the user argv); the sim now realizes each service as both `<service>` and `<service>.<namespace>` network aliases, so DNS is the runtime's and the user command runs verbatim. The bleeplab ECS harness gained a 3rd `integration` stage running redis as a `services:` container; TEST 4 (PING/SET/GET by alias over the per-build pod network) is green. **Runtime fact (Podman):** each network's DNS runs at its gateway; a container gets one nameserver per attached network, added as networks connect — so static resolv.conf surgery is wrong. Bare aliases resolve directly; no search domain needed.
-4. **Phase 4 cont. — more jobs/stages** and the other backends' GitLab cells (cloudrun/gcf/aca), reusing the bleephub overlay model.
-5. Then **FaaS multi-container pod assembly (BUG-1781)** and standing items.
+- **Premise was partly stale.** Verified against code: **lambda** runs all pod members as chroot subprocesses of one supervisor in a single Lambda execution env (one shared netns → `localhost` works; `agent/cmd/sockerless-lambda-bootstrap`); **gcf** co-deploys members into one multi-container Cloud Run revision + `/etc/hosts` alias→127.0.0.1 (`backends/cloudrun-functions/network_pod.go` + `pod_service.go`). The only backend that rejected pods was **azf**.
+- **azf primitive = App Service sitecontainers** (`Microsoft.Web/sites/{name}/sitecontainers` — verified in armappservice/v5 SDK, `az webapp sitecontainers` CLI, and the vendored `web-arm-openapi-2025-03-01` spec). One `isMain` container + N sidecars share a network namespace → intrinsic `localhost`. No agent loopback-proxy needed (unlike the multi-function fallback).
+- **Sim:** `simulators/azure/sitecontainers.go` models the sub-resource (CRUD) + `invokeAzureFunctionHTTP` starts the `isMain` HTTP container then each sidecar with `NetworkMode: container:<main>` (shared netns), mirroring the ACA multi-container path. `startUpCommand` round-trips an argv via shell-quoting (backend) + a quote-aware splitter (sim) — naive whitespace splitting mangles `sh -c '<script>'`.
+- **Backend:** `network_pod.go` (gcf-mirror `shouldDeferOrMaterializeNetworkPod`) + `pod_site.go::materializePodSite`. The `isMain` runs the reverse-agent overlay; **sidecars run their RAW service image** (stashed in a label pre-overlay), because the overlay bootstrap binds the main's :8080 and would collide in the shared netns. Cloud-state reconstructs members from a `sockerless-pod-members` site-tag manifest (stateless — no local map). The two fail-fast rejections (`PodStart`, `ContainerStart`) are gone.
+- **azf bootstrap** writes `SOCKERLESS_HOST_ALIASES` → `/etc/hosts` so a sibling resolves by name (mirror of gcf's `writeHostAliases`).
+
+### Next
+
+1. **Phase 4 cont. — more jobs/stages** and the other backends' GitLab cells (cloudrun/gcf/aca), reusing the bleephub overlay model.
+2. **FaaS pod polish (follow-on):** a shared-workspace volume across azf pod members + per-sidecar exec routing; standing items (live pass, releases, sim audits).
+
+### Arc 3 (merged, reusable findings)
+
+1. **(#578/#579/#580)** bleeplab git + artifacts + UI — full bleephub parity.
+2. **(#581 — BUG-1804) Cloud Map multi-name + ECS service-alias registration.** The aws sim's Docker-network DNS realization re-attaches a task container with the FULL set of service names it backs (disconnect-then-reconnect, since Docker rejects a 2nd `NetworkConnect`); the ECS backend captures `NetworkingConfig` aliases and registers the container under hostname + every alias, and deregisters by enumerating namespace services. Proven by `TestECS_MultiServiceDNS`.
+3. **(#581 — BUG-1805) GitLab `services:` end-to-end on ECS.** Removed the ECS backend's `/etc/resolv.conf` command-wrapper (it froze per-network DNS to a static entrypoint snapshot — dropping the namespace network's DNS the runtime adds on Cloud Map connect — and mangled the user argv); the sim realizes each service as both `<service>` and `<service>.<namespace>` network aliases. **Runtime fact (Podman):** each network's DNS runs at its gateway; a container gets one nameserver per attached network, added as networks connect — so static resolv.conf surgery is wrong.
 
 ### bleeplab ECS harness (reusable findings)
 - `bleeplab/Dockerfile` bundles `simulator-aws` + `sockerless-backend-ecs` + `sockerless-agent` + `bleeplab` + a real upstream `gitlab-runner` binary; `bleeplab/test/run-integration.sh` provisions ECS (the bleephub `provision_ecs` shape), starts bleeplab, registers the runner with `[runners.docker] host = tcp://127.0.0.1:3375`, triggers a pipeline, asserts success.

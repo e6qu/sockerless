@@ -494,6 +494,115 @@ func TestAZFGitLabRunnerAttachStdin(t *testing.T) {
 	}
 }
 
+// TestAZFMultiContainerPodSharesLocalhost proves BUG-1781 on AZF: a pod of
+// containers on a user-defined network is assembled as ONE App Service site
+// whose sitecontainers share a network namespace, so a sidecar service is
+// reachable from the main job container on localhost:<port> AND by alias.
+// This is the GitHub `services:` topology: job container created first, then
+// the service.
+func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
+	ctx := context.Background()
+	testID := generateTestID()
+
+	netName := "azf-pod-net-" + testID
+	netResp, err := dockerClient.NetworkCreate(ctx, netName, network.CreateOptions{})
+	if err != nil {
+		t.Fatalf("network create failed: %v", err)
+	}
+	defer dockerClient.NetworkRemove(ctx, netResp.ID)
+
+	netCfg := func(aliases ...string) *network.NetworkingConfig {
+		return &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				netName: {Aliases: aliases},
+			},
+		}
+	}
+
+	// 1. Job container (the main): overlay image, reachable via the reverse
+	//    agent. Created + started FIRST — defers until its service arrives.
+	jobResp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{Image: alpineImageName, Cmd: []string{"tail", "-f", "/dev/null"}},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		netCfg("job"), nil, "azf_pod_job_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("job create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, jobResp.ID, container.RemoveOptions{Force: true})
+	if err := dockerClient.ContainerStart(ctx, jobResp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("job start (deferred) failed: %v", err)
+	}
+
+	// 2. Service sidecar: a RAW alpine image running a tiny netcat server on
+	//    :9099, aliased `svc`. Starting it materializes the whole pod.
+	svcResp, err := dockerClient.ContainerCreate(ctx,
+		&container.Config{
+			Image: "public.ecr.aws/docker/library/alpine:latest",
+			Cmd:   []string{"sh", "-c", "while true; do printf 'sidecar-ok' | nc -l -p 9099; done"},
+		},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		netCfg("svc"), nil, "azf_pod_svc_"+testID,
+	)
+	if err != nil {
+		t.Fatalf("service create failed: %v", err)
+	}
+	defer dockerClient.ContainerRemove(ctx, svcResp.ID, container.RemoveOptions{Force: true})
+	if err := dockerClient.ContainerStart(ctx, svcResp.ID, container.StartOptions{}); err != nil {
+		t.Fatalf("service start (materialize) failed: %v", err)
+	}
+
+	// 3. From the job, reach the sidecar over the shared loopback — both by
+	//    localhost:<port> and by alias (host-alias → 127.0.0.1).
+	reach := func(target string) (string, int) {
+		cmd := "printf '' | nc -w 5 " + target + " 9099"
+		if target == "DIAG" {
+			cmd = "cat /etc/hosts; echo '---ports---'; (netstat -ltn 2>/dev/null || ss -ltn 2>/dev/null); echo '---ps---'; ps -ef 2>/dev/null | head"
+		}
+		execResp, err := dockerClient.ContainerExecCreate(ctx, jobResp.ID, container.ExecOptions{
+			Cmd:          []string{"sh", "-c", cmd},
+			AttachStdout: true, AttachStderr: true,
+		})
+		if err != nil {
+			t.Fatalf("exec create (%s) failed: %v", target, err)
+		}
+		hj, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+		if err != nil {
+			t.Fatalf("exec attach (%s) failed: %v", target, err)
+		}
+		defer hj.Close()
+		var stdout, stderr bytes.Buffer
+		_, _ = stdcopy.StdCopy(&stdout, &stderr, hj.Reader)
+		insp, err := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+		if err != nil {
+			t.Fatalf("exec inspect (%s) failed: %v", target, err)
+		}
+		return stdout.String(), insp.ExitCode
+	}
+
+	// The sidecar takes a moment to start and bind inside the shared netns.
+	reachRetry := func(target string) (string, int) {
+		var out string
+		var code int
+		for i := 0; i < 20; i++ {
+			out, code = reach(target)
+			if code == 0 && out == "sidecar-ok" {
+				return out, code
+			}
+			time.Sleep(time.Second)
+		}
+		return out, code
+	}
+
+	if out, code := reachRetry("127.0.0.1"); out != "sidecar-ok" || code != 0 {
+		diag, _ := reach("DIAG")
+		t.Fatalf("localhost reach: out=%q exit=%d (want sidecar-ok/0); diag=%q", out, code, diag)
+	}
+	if out, code := reachRetry("svc"); out != "sidecar-ok" || code != 0 {
+		t.Errorf("alias reach: out=%q exit=%d (want sidecar-ok/0; host-alias resolution)", out, code)
+	}
+}
+
 func TestAZFNetworkOperations(t *testing.T) {
 	ctx := context.Background()
 

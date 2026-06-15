@@ -41,6 +41,40 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+	case "probe-retry":
+		// Long-lived HTTP server on :8080 that, on each request, retries
+		// connecting to the sidecar on localhost:9090 for up to 10s before
+		// answering — tolerates a sidecar still coming up when the first
+		// invocation arrives (App Service / Cloud Run sidecar startup).
+		message := "sidecar-ok"
+		if len(os.Args) >= 3 {
+			message = os.Args[2]
+		}
+		http.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) {
+			client := &http.Client{Timeout: 500 * time.Millisecond}
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				resp, err := client.Get("http://127.0.0.1:9090/")
+				if err == nil {
+					_ = resp.Body.Close()
+					w.Header().Set("X-Sockerless-Exit-Code", "0")
+					w.WriteHeader(http.StatusOK)
+					_, _ = io.WriteString(w, message)
+					return
+				}
+				if time.Now().After(deadline) {
+					w.Header().Set("X-Sockerless-Exit-Code", "1")
+					w.WriteHeader(http.StatusOK)
+					_, _ = io.WriteString(w, "sidecar-missing")
+					return
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
+		})
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
 	case "echo-request":
 		http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(w, "%s %s", r.Method, r.URL.RequestURI())

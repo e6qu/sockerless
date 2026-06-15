@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -54,6 +55,7 @@ const (
 	envUserWorkdir    = "SOCKERLESS_USER_WORKDIR"
 	envCallbackURL    = "SOCKERLESS_CALLBACK_URL"
 	envContainerID    = "SOCKERLESS_CONTAINER_ID"
+	envHostAliases    = "SOCKERLESS_HOST_ALIASES"
 	envJobTimeout     = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 )
 
@@ -68,6 +70,14 @@ func main() {
 		os.Getpid(), os.Args, os.Getenv(envPort), os.Getenv(envWebsitesPort))
 	fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: MAIN ENTRY pid=%d args=%v PORT=%q WEBSITES_PORT=%q\n",
 		os.Getpid(), os.Args, os.Getenv(envPort), os.Getenv(envWebsitesPort))
+
+	// In a multi-container (sitecontainers) pod, the main shares one network
+	// namespace with its sidecars, so a sibling service is reachable on
+	// localhost. Map each pod alias to 127.0.0.1 so the workload can also
+	// reach a sibling by name (e.g. `postgres:5432`, `redis`).
+	if err := writeHostAliases(os.Getenv(envHostAliases)); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: writeHostAliases: %v\n", err)
+	}
 
 	callbackURL := os.Getenv(envCallbackURL)
 	containerID := os.Getenv(envContainerID)
@@ -107,6 +117,37 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: server exited: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+// writeHostAliases appends `127.0.0.1 <alias...>` to /etc/hosts so a pod
+// sibling reached by name resolves to the shared loopback (the App Service
+// sitecontainers in one site share a network namespace). Comma-separated
+// input via SOCKERLESS_HOST_ALIASES; empty input is a no-op.
+func writeHostAliases(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var aliases []string
+	for _, a := range strings.Split(raw, ",") {
+		if a = strings.TrimSpace(a); a != "" {
+			aliases = append(aliases, a)
+		}
+	}
+	if len(aliases) == 0 {
+		return nil
+	}
+	f, err := os.OpenFile("/etc/hosts", os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	line := "127.0.0.1\t" + strings.Join(aliases, " ") + "\n"
+	if _, err := f.WriteString(line); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: /etc/hosts += %q\n", line)
+	return nil
 }
 
 func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
