@@ -285,14 +285,20 @@ func (s *Server) ContainerStart(ref string) error {
 	// task per stage; cross-stage state lives on the cache volumes
 	// gitlab-runner mounts itself, not on a long-lived container.
 	if ecsState.OpenStdin {
-		if v, ok := s.stdinPipes.Load(id); ok {
-			pipe := v.(*stdinPipe)
-			if pipe.IsOpen() {
-				exitCh := markRunning()
-				cContainer := c
-				go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
-				return nil
-			}
+		// The runner created this container with stdin attached and will
+		// /attach + stream the script before this /start completes; the
+		// attach handler opens the stdin pipe. /start can win the race just
+		// ahead of the attach handler opening the pipe (the attach hijack
+		// completes before the driver runs), so wait briefly for the open
+		// pipe before deciding. Without this the task would launch the
+		// image-default command and the streamed script would never run —
+		// the gitlab-runner helper's `gitlab-runner-build` then hangs
+		// forever waiting for stdin.
+		if pipe := s.waitForOpenStdinPipe(id, 5*time.Second); pipe != nil {
+			exitCh := markRunning()
+			cContainer := c
+			go s.launchAfterStdin(id, &cContainer, pipe, exitCh)
+			return nil
 		}
 	}
 
@@ -1246,6 +1252,31 @@ func (s *Server) inUseVolumeNames() map[string]struct{} {
 // Errors (RunTask failure, taskdef registration failure, etc.) close
 // the WaitCh so ContainerWait unblocks; the failure surfaces through
 // CloudState.GetContainer reading STOPPED state.
+// waitForOpenStdinPipe polls for the container's stdin pipe to be created and
+// opened by the attach handler, up to timeout. Returns the open pipe, or nil
+// if none appears within the window (e.g. OpenStdin was set but the caller
+// never attaches). gitlab-runner / `docker run -i` does create → /attach →
+// /start; /start can win the race just ahead of the attach handler opening the
+// pipe, so this closes that window without blocking a never-attached container
+// for more than `timeout`.
+func (s *Server) waitForOpenStdinPipe(id string, timeout time.Duration) *stdinPipe {
+	deadline := time.After(timeout)
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if v, ok := s.stdinPipes.Load(id); ok {
+			if p := v.(*stdinPipe); p.IsOpen() {
+				return p
+			}
+		}
+		select {
+		case <-deadline:
+			return nil
+		case <-tick.C:
+		}
+	}
+}
+
 func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, exitCh chan struct{}) {
 	s.Logger.Info().Str("container", id[:12]).Msg("launchAfterStdin: entered, waiting for stdin EOF")
 	defer func() {

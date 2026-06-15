@@ -33,6 +33,34 @@ func (d *ecsStdinAttachDriver) Describe() string {
 func (d *ecsStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn io.ReadWriter) error {
 	id := dctx.Container.ID
 
+	// Create + open the stdin pipe FIRST, before the stage barrier below.
+	// ContainerStart's deferred-stdin path checks for an open pipe to decide
+	// whether to bake the streamed script into the task command, and
+	// gitlab-runner's docker executor does create → /attach → /start (the
+	// /start races right behind /attach). If the pipe were created only
+	// after the barrier — which itself waits for /start to register a
+	// WaitCh — /start would arrive first, find no pipe, fall through, and
+	// launch the image-default command (the helper's `gitlab-runner-build`
+	// then waits forever for stdin). Pipe-before-barrier breaks that
+	// dependency inversion.
+	//
+	// Wire stdin only when the container was created with `OpenStdin &&
+	// AttachStdin` (the flag is persisted in ECSState — Container.Config
+	// from CloudState doesn't synthesize stdin flags from ECS task data).
+	// Get-or-create so per-cycle restarts (gitlab-runner reuses the same
+	// container ID across script steps; each cycle does attach → start →
+	// stream → close stdin → wait → stop) each get a fresh buffer:
+	// launchAfterStdin removes the pipe after consuming it, so the
+	// subsequent attach lands on a freshly-created one.
+	var pipe *stdinPipe
+	ecsState, _ := d.s.ECS.Get(id)
+	if ecsState.OpenStdin {
+		p := newStdinPipe()
+		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
+		pipe = actual.(*stdinPipe)
+		pipe.Open()
+	}
+
 	// Stage-boundary barrier for the gitlab-runner predefined-helper
 	// flow: gitlab-runner does /attach then /start per stage on the
 	// same container ID, but the previous stage's Fargate task is
@@ -78,25 +106,6 @@ barrierDone:
 		return err
 	}
 	defer rwc.Close()
-
-	// Wire stdin only when the container was created with the
-	// `OpenStdin && AttachStdin` flags (gitlab-runner / `docker run -i`
-	// pattern). The flag is persisted in ECSState (not in
-	// Container.Config from CloudState, which doesn't synthesize stdin
-	// flags from ECS task data). Get-or-create a pipe so per-cycle
-	// restarts — gitlab-runner reuses the same container ID across
-	// script steps; each cycle does attach → start → stream → close
-	// stdin → wait → stop — each get a fresh buffer:
-	// launchAfterStdin removes the pipe after consuming it, so the
-	// subsequent attach lands on a freshly-created one.
-	var pipe *stdinPipe
-	ecsState, _ := d.s.ECS.Get(id)
-	if ecsState.OpenStdin {
-		p := newStdinPipe()
-		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
-		pipe = actual.(*stdinPipe)
-		pipe.Open()
-	}
 
 	done := make(chan struct{})
 	// Pump stdout/stderr (cloud-logs) → caller.

@@ -4,6 +4,29 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - ECS gitlab-runner attach-stdin gate closed (BUG-1798)
+
+Fixed the Phase-3 gate for the bleeplab GitLab ECS cell. gitlab-runner 18's
+docker executor does `create(OpenStdin) → /attach(stdin) → /start` (no
+`docker exec`) and pipes the stage script to the helper container's stdin (its
+default `gitlab-runner-build` reads it). On ECS the `/start` deferral that bakes
+the captured stdin into the task command requires the stdin pipe to already
+exist + be open — but `ecsStdinAttachDriver.Attach` created the pipe only
+**after** a stage-boundary barrier that itself **waits for `/start`** to
+register a WaitCh. A dependency inversion: `/start` arrived first, found no pipe
+(DIAG: `pipe_exists=false`), fell through, and launched the helper's image-
+default command, which hung forever waiting for stdin.
+
+Fix (backend-side, no sim coupling): create + open the stdin pipe **before** the
+barrier in the attach driver, and have `ContainerStart` wait briefly
+(`waitForOpenStdinPipe`, 5s) for the open pipe before deciding — closing the
+create→attach→start race from both ends. Root-caused with temporary DIAG logs
+(removed) that captured the exact ordering. Validated: the harness now runs the
+helper stages and delivers the script into the build container — the hang is
+gone; it advances to the build `step_script`, blocked next only by BUG-1800 (the
+aws sim doesn't apply EFS access-point `CreationInfo`, so the `/builds` volume is
+`0755 root` and the build job can't write — the next, sim-side gate).
+
 ## 2026-06-14 - bleeplab ECS harness + arch-aware image pull (Arc 3 Phase 3, WIP)
 
 Phase 3 points a real `gitlab-runner` 18.11's docker executor at a sockerless
