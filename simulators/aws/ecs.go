@@ -1540,11 +1540,18 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 		var binds []string
 		for _, mp := range cd.MountPoints {
 			if src, ok := volMap[mp.SourceVolume]; ok {
-				bind := src + ":" + mp.ContainerPath
+				// `z` = SELinux shared relabel: on an SELinux-enforcing host
+				// (e.g. a local podman machine) the sim-spawned task container
+				// runs confined as `container_t`, which cannot write to the EFS
+				// host dir's default label even at mode 0777 — relabeling the
+				// bind to a shared container label lets the workload access it.
+				// Ignored on hosts without SELinux (Docker on CI), so safe
+				// everywhere.
+				opts := "z"
 				if mp.ReadOnly {
-					bind += ":ro"
+					opts = "ro,z"
 				}
-				binds = append(binds, bind)
+				binds = append(binds, src+":"+mp.ContainerPath+":"+opts)
 			}
 		}
 

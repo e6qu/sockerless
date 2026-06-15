@@ -4,6 +4,35 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - aws sim EFS access-point writability for GitLab workloads (BUG-1800)
+
+After BUG-1798, the bleeplab GitLab ECS build `step_script` failed at
+`mkdir: can't create directory '/builds/project-1.tmp': Permission denied`. Two
+sim-side EFS gaps, both fixed:
+
+1. **CreationInfo ignored.** `EFSAccessPointHostDir`/`EFSFileSystemHostDir`
+   created the host dir with `os.MkdirAll(…, 0o777)`, whose mode the umask
+   reduces to `0755 root` — and the access point's `RootDirectory.CreationInfo`
+   (the gitlab `/builds` volume requests `0777`, uid/gid 1000) was never applied.
+   New `ensureAccessPointRootDir` applies `CreationInfo.{Permissions(chmod, not
+   umask-masked), OwnerUid, OwnerGid(chown, best-effort)}` on creation only (so a
+   workload's later perm changes aren't clobbered), defaulting to `0777`.
+   Unit-tested (`efs_creationinfo_test.go`).
+2. **SELinux.** On an SELinux-enforcing host (a local podman machine) the
+   sim-spawned ECS task runs confined as `container_t` and can't write the EFS
+   host dir even at `0777`. The sim now mounts task EFS binds with the `z`
+   (shared relabel) option → relabels them `container_file_t`; a no-op on hosts
+   without SELinux (Docker on CI), so it removes the bleephub harness's manual
+   `chcon` note for the bleeplab path.
+
+Validated on a frozen stack: the access-point dir is now `drwxrwxrwx 1000 1000
+… container_file_t`, the `/builds` write succeeds, and the cell advances past
+the permission error to the next gate — BUG-1801, where the `/builds` volume
+doesn't persist across the per-stage Fargate tasks (`cd /builds/project-1` → No
+such file or directory; the same docker volume resolves to a different EFS
+access point per task). aws sim ECS/EFS SDK tests stay green. No backend
+coupling.
+
 ## 2026-06-15 - ECS gitlab-runner attach-stdin gate closed (BUG-1798)
 
 Fixed the Phase-3 gate for the bleeplab GitLab ECS cell. gitlab-runner 18's
