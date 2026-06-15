@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleeplab-ecs-harness` (Arc 3 Phase 3; PR pending). |
-| In-flight | **Arc 3 Phase 3 in progress: the bleeplab ECS harness drives a real `gitlab-runner` 18.11 against sockerless-backend-ecs.** The runner registers with bleeplab, claims a job, uses sockerless as its `--docker-host`, and image pull + build/helper container create all work. Fixed a real core bug found en route (**BUG-1797**: image manifest selection hardcoded amd64 → arch-aware via `SOCKERLESS_WORKLOAD_ARCH`, so the arm64-only gitlab-runner-helper tag pulls on arm64). **Remaining gate — BUG-1798:** the helper container's attach-stdin script isn't delivered (the ECS deferred-RunTask runs the image-default `gitlab-runner-build` instead of baking the piped script), so the job hangs in `Preparing environment`. (Phase 1 — the bleeplab control-plane sim — merged in #574.) |
-| Last merged | #574 bleeplab GitLab control-plane sim (Arc 3 Phase 1). #573 GCF cell GREEN (BUG-1795) + exec observability (BUG-1796). #572 Cloud Run cell GREEN (BUG-1794 + BUG-1792). |
+| Active branch | `feat/ecs-gitlab-attach-stdin-1798` (Arc 3 Phase 3; PR pending). |
+| In-flight | **Arc 3 Phase 3 advancing: BUG-1798 fixed — the bleeplab GitLab ECS attach-stdin gate is closed.** The ECS attach-stdin deferral had a dependency inversion (the attach driver created the stdin pipe only after a barrier that waited for `/start`, but `/start`'s deferral needed the pipe first); fixed by creating+opening the pipe before the barrier and having `/start` wait briefly for it. The harness now runs the gitlab-runner helper stages and delivers the step script into the build container — the hang is gone. **Next gate — BUG-1800:** the build job's `mkdir /builds/...` is `Permission denied` because the aws sim materializes EFS access-point dirs with default `0755 root` perms instead of applying the access point's `CreationInfo` (`0777`, uid/gid 1000); sim-side fix. (BUG-1797 arch-aware image pull + BUG-1799 flake fix merged in #575; Phase 1 sim in #574.) |
+| Last merged | #575 bleeplab ECS harness + arch-aware image pull (BUG-1797, BUG-1799). #574 bleeplab GitLab control-plane sim. #573 GCF cell GREEN (BUG-1795) + exec observability (BUG-1796). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1798 (bleeplab ECS gitlab-helper attach-stdin — the Phase-3 gate). |
+| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1800 (aws sim EFS access-point CreationInfo — the next bleeplab ECS gate). |
 | Live infra | None up. |
 
 ## What's next
