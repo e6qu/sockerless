@@ -205,3 +205,48 @@ func TestTaskToContainer_DefaultNameFromID(t *testing.T) {
 		t.Fatalf("expected default name '/abc123def456', got %q", c.Name)
 	}
 }
+
+// TestTaskToContainer_BindsFromMountPoints verifies that a container resolved
+// from cloud state carries its named-volume binds, reconstructed from the task
+// definition's mount points. Without this, a restarted container (e.g.
+// gitlab-runner's predefined helper across build stages) loses its EFS volume
+// mounts on the second start.
+func TestTaskToContainer_BindsFromMountPoints(t *testing.T) {
+	task := ecstypes.Task{
+		LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("main"), Image: aws.String("alpine")},
+		},
+	}
+	tags := map[string]string{
+		"sockerless-managed":      "true",
+		"sockerless-container-id": "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+		"sockerless-name":         "/helper",
+	}
+	td := ecstypes.TaskDefinition{
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name:  aws.String("main"),
+			Image: aws.String("alpine"),
+			MountPoints: []ecstypes.MountPoint{
+				{SourceVolume: aws.String("buildsvol"), ContainerPath: aws.String("/builds")},
+				{SourceVolume: aws.String("cachevol"), ContainerPath: aws.String("/cache"), ReadOnly: aws.Bool(true)},
+			},
+		}},
+		Volumes: []ecstypes.Volume{
+			{Name: aws.String("buildsvol")},
+			{Name: aws.String("cachevol")},
+		},
+	}
+
+	c := taskToContainer(task, tags, td)
+
+	want := []string{"buildsvol:/builds", "cachevol:/cache:ro"}
+	if len(c.HostConfig.Binds) != len(want) {
+		t.Fatalf("expected %d binds, got %v", len(want), c.HostConfig.Binds)
+	}
+	for i, w := range want {
+		if c.HostConfig.Binds[i] != w {
+			t.Fatalf("bind %d: expected %q, got %q", i, w, c.HostConfig.Binds[i])
+		}
+	}
+}

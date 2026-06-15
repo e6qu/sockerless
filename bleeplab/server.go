@@ -16,8 +16,10 @@ package bleeplab
 
 import (
 	"net/http"
+	"os"
 	"sync"
 
+	gitStorage "github.com/go-git/go-git/v5/storage"
 	"github.com/rs/zerolog"
 )
 
@@ -27,12 +29,22 @@ type Server struct {
 	logger zerolog.Logger
 	mux    *http.ServeMux
 
+	// externalURL is the base URL a runner uses to clone project repos
+	// (git_info.repo_url). It must be reachable from the job/helper
+	// container, which is a different network vantage point than the runner
+	// process — hence a distinct coordinate from the control-plane API URL.
+	// Set via BLEEPLAB_EXTERNAL_URL; empty falls back to the request Host.
+	externalURL string
+
 	mu        sync.Mutex
 	nextID    int
 	runners   map[string]*Runner // by auth token
 	projects  map[int]*Project
 	pipelines map[int]*Pipeline
 	jobs      map[int]*Job
+	// gitStorages holds each project's go-git Storer, keyed by path
+	// (namespace/project). The repos are served over smart-HTTP (git.go).
+	gitStorages map[string]gitStorage.Storer
 	// queue holds pending job IDs in FIFO order, ready for a runner to
 	// claim via POST /api/v4/jobs/request. A job enters the queue when its
 	// pipeline reaches it (stage ordering) and leaves when claimed.
@@ -42,14 +54,16 @@ type Server struct {
 // NewServer constructs an empty bleeplab control plane listening on addr.
 func NewServer(addr string, logger zerolog.Logger) *Server {
 	s := &Server{
-		addr:      addr,
-		logger:    logger,
-		mux:       http.NewServeMux(),
-		nextID:    1,
-		runners:   map[string]*Runner{},
-		projects:  map[int]*Project{},
-		pipelines: map[int]*Pipeline{},
-		jobs:      map[int]*Job{},
+		addr:        addr,
+		logger:      logger,
+		mux:         http.NewServeMux(),
+		externalURL: os.Getenv("BLEEPLAB_EXTERNAL_URL"),
+		nextID:      1,
+		runners:     map[string]*Runner{},
+		projects:    map[int]*Project{},
+		pipelines:   map[int]*Pipeline{},
+		jobs:        map[int]*Job{},
+		gitStorages: map[string]gitStorage.Storer{},
 	}
 	s.routes()
 	return s
@@ -88,6 +102,19 @@ func (s *Server) routes() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+
+	// Catch-all: git smart-HTTP (clone/fetch/push) lives on dynamic
+	// /{namespace}/{project}.git/... paths the ServeMux can't pattern-match,
+	// so it falls through here.
+	s.mux.HandleFunc("/", s.handleCatchAll)
+}
+
+// handleCatchAll routes git smart-HTTP requests; anything else is 404.
+func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
+	if s.tryHandleGitRequest(w, r) {
+		return
+	}
+	http.NotFound(w, r)
 }
 
 func (s *Server) logMiddleware(next http.Handler) http.Handler {

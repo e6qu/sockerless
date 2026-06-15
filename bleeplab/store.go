@@ -15,8 +15,10 @@ type Runner struct {
 type Project struct {
 	ID       int
 	Name     string
+	Path     string // path_with_namespace (e.g. "root/demo"); the git repo key
 	CIConfig string // raw .gitlab-ci.yml content
 	Ref      string // default branch
+	SHA      string // HEAD commit SHA of the default branch (set by a commit)
 }
 
 // Pipeline is one run of a project's CI config; it owns an ordered set of

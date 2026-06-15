@@ -14,11 +14,11 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	id := s.nextID
 	s.nextID++
-	p := &Project{ID: id, Name: req.Name, Ref: "main"}
+	p := &Project{ID: id, Name: req.Name, Path: "root/" + req.Name, Ref: "main"}
 	s.projects[id] = p
 	s.mu.Unlock()
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"id": id, "name": req.Name, "path_with_namespace": "root/" + req.Name,
+		"id": id, "name": req.Name, "path_with_namespace": p.Path,
 		"default_branch": "main",
 	})
 }
@@ -50,12 +50,34 @@ func (s *Server) handleCommitCreate(w http.ResponseWriter, r *http.Request) {
 			p.Ref = req.Branch
 		}
 	}
+	repoPath, branch := "", ""
+	if ok {
+		repoPath, branch = p.Path, p.Ref
+	}
 	s.mu.Unlock()
 	if !ok {
 		http.Error(w, "404 project not found", http.StatusNotFound)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": commitSHA(p.CIConfig), "short_id": commitSHA(p.CIConfig)[:8]})
+
+	// Materialize the commit in the project's git repo so a real gitlab-runner
+	// can clone it (creating CI_PROJECT_DIR). The runner clones the same repo
+	// it would on gitlab.com — bleeplab differs only in coordinates.
+	files := make(map[string]string, len(req.Actions))
+	for _, a := range req.Actions {
+		files[a.FilePath] = a.Content
+	}
+	sha, err := s.seedCommit(r.Context(), repoPath, branch, files)
+	if err != nil {
+		s.logger.Error().Err(err).Str("repo", repoPath).Msg("seed commit failed")
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.mu.Lock()
+	p.SHA = sha
+	s.mu.Unlock()
+
+	writeJSON(w, http.StatusCreated, map[string]any{"id": sha, "short_id": sha[:8]})
 }
 
 // handlePipelineCreate triggers a pipeline (`POST /api/v4/projects/:id/pipeline`).
@@ -76,7 +98,11 @@ func (s *Server) handlePipelineCreate(w http.ResponseWriter, r *http.Request) {
 	if ref == "" {
 		ref = p.Ref
 	}
-	pl, err := s.createPipelineLocked(p, ref, commitSHA(p.CIConfig))
+	sha := p.SHA
+	if sha == "" {
+		sha = commitSHA(p.CIConfig)
+	}
+	pl, err := s.createPipelineLocked(p, ref, sha)
 	s.mu.Unlock()
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"message": err.Error()})

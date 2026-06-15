@@ -542,6 +542,17 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 			}
 		}
 	}
+	// Reconstruct the named-volume binds from the task def's mount points
+	// so the container's create-time volumes survive a stop/start cycle.
+	// gitlab-runner's docker executor restarts the same predefined helper
+	// container for each build stage; each restart resolves the container
+	// from cloud state (this function), then re-registers a task definition
+	// from it — without these binds the stage tasks after the first lose
+	// their /builds (and cache) EFS mounts, so get_sources clones into
+	// ephemeral storage the build container can't see. The mount point's
+	// SourceVolume is the original Docker volume name and ContainerPath the
+	// mount path, which is exactly the `volName:/path[:ro]` bind spec.
+	var binds []string
 	if def, ok := containerDefFromTaskDef(td); ok {
 		if image == "" {
 			image = aws.ToString(def.Image)
@@ -557,6 +568,18 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 		}
 		for _, kv := range def.Environment {
 			env = append(env, aws.ToString(kv.Name)+"="+aws.ToString(kv.Value))
+		}
+		for _, mp := range def.MountPoints {
+			vol := aws.ToString(mp.SourceVolume)
+			path := aws.ToString(mp.ContainerPath)
+			if vol == "" || path == "" {
+				continue
+			}
+			bind := vol + ":" + path
+			if aws.ToBool(mp.ReadOnly) {
+				bind += ":ro"
+			}
+			binds = append(binds, bind)
 		}
 	}
 
@@ -643,6 +666,7 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 			NetworkMode: networkName,
 			Memory:      memBytes,
 			NanoCPUs:    nanoCPUs,
+			Binds:       binds,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
