@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/sim-efs-access-point-creationinfo-1800` (Arc 3 Phase 3; PR pending). |
-| In-flight | **Arc 3 Phase 3 advancing: BUG-1800 fixed — the bleeplab GitLab ECS `/builds` write gate is closed** (BUG-1798 attach-stdin was merged in #576). Two sim-side EFS fixes: the access-point host dir now applies `CreationInfo` (it was `0755 root` from a umask-masked MkdirAll; now `0777 1000:1000`), and the sim mounts task EFS binds with the SELinux `z` (shared relabel) option so the confined `container_t` workload can write on local podman machines (no-op on CI). Validated: the build `step_script` now writes to `/builds`. **Next gate — BUG-1801:** the gitlab-runner `/builds` volume doesn't persist across the per-stage Fargate tasks (`cd /builds/project-1` → No such file or directory) — the same docker volume resolves to a different EFS access point per task; needs the backend's `AccessPointForVolume` to be idempotent by volume name. |
-| Last merged | #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness + arch-aware image pull (BUG-1797, BUG-1799). #574 bleeplab GitLab control-plane sim. |
+| Active branch | `feat/ecs-gitlab-builds-volume-1801` (Arc 3 Phase 3; PR pending — diagnosis correction). |
+| In-flight | **Arc 3 Phase 3: the bleeplab GitLab ECS cell is one gate from green.** Merged: BUG-1798 (attach-stdin, #576), BUG-1800 (EFS perms + SELinux, #577). The helper stages run, the script is delivered, `/builds` is writable, and the `/builds` volume IS shared across stages (proven by a `DIAG resolveBindToVolume` log — one EFS access point for all three stage tasks; the earlier "not shared" guess was a stale-data-dir artifact). **Final gate — BUG-1801 (re-diagnosed):** with `GIT_STRATEGY: none` (bleeplab doesn't serve git) the build job's `CI_PROJECT_DIR` (`/builds/<project>`) is never created — gitlab-runner normally makes it by cloning the repo in get_sources — so the auto-`cd` fails. The faithful fix is **bleeplab serving the project as a git repo** over smart-HTTP (clone creates the dir), then `GIT_STRATEGY: clone`. A test-scaffold/feature gap, not a sockerless backend/sim bug. |
+| Last merged | #577 BUG-1800 EFS access-point writability. #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness (BUG-1797, BUG-1799). #574 bleeplab GitLab sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1801 (gitlab `/builds` volume not shared across ECS stage tasks — the next bleeplab ECS gate). |
+| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1801 (bleeplab must serve git so the gitlab job's project dir is created — the final bleeplab ECS gate). |
 | Live infra | None up. |
 
 ## What's next
