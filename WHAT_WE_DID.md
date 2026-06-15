@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-16 - bleeplab GitLab cell on the Cloud Run backend (GREEN)
+
+The full gitlab-runner docker-executor flow now runs on the Cloud Run backend.
+A real `gitlab-runner` registers against the bleeplab control-plane simulator
+and runs a 3-stage pipeline through a docker executor whose `--docker-host` is
+`sockerless-backend-cloudrun`: **build** (gcc-compiles `calc.c` from the cloned
+repo, runs the self-test + `6 x 7 = 42`), **test** (consumes the build's `calc`
+artifact with no recompile, folds `sum 1..100 = 5050`), and **integration** (a
+`services:` redis container reached by alias over the per-build pod network —
+`redis-cli` PING/SET/GET). Reproducibly green.
+
+The harness is the one-image, `BLEEPLAB_BACKEND`-switched shape that bleephub
+proved: `bleeplab/Dockerfile` now also builds `simulator-gcp` +
+`sockerless-backend-cloudrun` + `sockerless-cloudrun-bootstrap` (+ `openssl`);
+`run-integration.sh` gains `write_fake_sa_json` + `provision_cloudrun` (GCS
+buckets, fake service-account JSON whose `token_uri` is the sim's `/token`,
+`gcs-sync` workspace, Cloud Build→Artifact Registry overlay through the sim's
+`/v2/` published at `127.0.0.1:5000`, reverse-agent `/v1/cloudrun/reverse`); the
+Makefile gets `bleeplab-runner-docker-test-cloudrun`. The CI job markers were
+made backend-neutral (`BLEEPLAB-{BUILD,TEST,SERVICE}-OK`) so one CI config
+covers every backend. gitlab-runner has no `/runner/externals` tree (that's
+github-runner only), so the GitHub externals volume was dropped.
+
+**Validation surfaced + fixed three real bugs** (each grounded in evidence from
+the harness, not assumption):
+
+- **BUG-1808** — the cloudrun backend hardcoded `Architecture: "amd64"` in its
+  docker `/version`, so on an arm64 host gitlab-runner chose the wrong
+  (`x86_64`) helper image. Now derived from `config.BuildPlatform` via
+  `archFromPlatform`, mirroring how ECS reports the *workload's* arch.
+- **BUG-1809** — the gcp sim's Artifact Registry pull-through hydrated only
+  `docker-hub` images from the local daemon, but the backend rewrites
+  `registry.gitlab.com/<path>` → `<AR>/gitlab-registry/<path>`, so the
+  `gitlab-runner-helper` image 404'd. `hydrateOCIImageFromLocalDocker` now also
+  maps `/gitlab-registry/` → the local `registry.gitlab.com/<path>` ref.
+- **BUG-1810** — the gcp sim's Cloud Run Service one-shot invoke dialed
+  `127.0.0.1:<hostPort>`, which is unreachable when the sim runs *inside* the
+  harness container (the host-published port binds the host's loopback, not the
+  sim container's). The sim now reaches the workload by its **bridge container
+  IP:8080** (routable container-to-container), falling back to the host port
+  for a sim running directly on the host. A new bootstrap-stdout-on-failure
+  diagnostic (`start_service.go`) made the opaque permission-container exit
+  diagnosable. bleephub never hit this — its github-runner containers are
+  exec-driven (reverse-agent), never one-shot Service invokes; gitlab-runner's
+  cache-volume permission container is the first to exercise the path.
+
 ## 2026-06-15 - AZF pod polish (shared volume + per-sidecar exec) + bleeplab artifact UI
 
 Three follow-on enhancements after the BUG-1781 AZF pod assembly shipped.

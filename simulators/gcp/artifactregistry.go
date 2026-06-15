@@ -279,13 +279,20 @@ func registerArtifactRegistry(srv *sim.Server) {
 // miss for a docker-hub remote repo it saves the image from the local Docker
 // daemon and populates the shared registry's blobs + manifest.
 func hydrateOCIImageFromLocalDocker(reg *sim.OCIRegistry, dockerImages sim.Store[DockerImage], imageName, reference string) error {
-	if !strings.Contains(imageName, "/docker-hub/") {
-		return fmt.Errorf("repository is not a docker-hub remote repository")
-	}
-
-	localRef := imageName + ":" + reference
-	if idx := strings.Index(imageName, "/docker-hub/"); idx >= 0 {
+	// Map the AR remote-repo path back to the local Docker daemon ref it
+	// proxies, mirroring the backend's image rewrite (gcp-common
+	// image_resolve.go): `docker-hub` proxies Docker Hub, `gitlab-registry`
+	// proxies registry.gitlab.com (the gitlab-runner-helper image).
+	var localRef string
+	switch {
+	case strings.Contains(imageName, "/docker-hub/"):
+		idx := strings.Index(imageName, "/docker-hub/")
 		localRef = strings.TrimPrefix(imageName[idx+len("/docker-hub/"):], "library/") + ":" + reference
+	case strings.Contains(imageName, "/gitlab-registry/"):
+		idx := strings.Index(imageName, "/gitlab-registry/")
+		localRef = "registry.gitlab.com/" + imageName[idx+len("/gitlab-registry/"):] + ":" + reference
+	default:
+		return fmt.Errorf("repository is not a docker-hub or gitlab-registry remote repository")
 	}
 	ctx := context.Background()
 	cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())

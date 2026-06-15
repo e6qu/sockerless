@@ -824,6 +824,32 @@ func FindContainerByIP(ip string) string {
 	return ""
 }
 
+// ContainerIPv4 returns a running container's primary IPv4 address on its
+// docker network, or "" if unavailable. A sim running inside a harness
+// container reaches a workload by this bridge IP (routable container-to-
+// container) rather than a host-published port, which binds the host's
+// loopback — not the sim container's.
+func ContainerIPv4(id string) string {
+	if dockerClient == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	insp, err := dockerClient.ContainerInspect(ctx, id)
+	if err != nil || insp.NetworkSettings == nil {
+		return ""
+	}
+	if insp.NetworkSettings.IPAddress != "" {
+		return insp.NetworkSettings.IPAddress
+	}
+	for _, ep := range insp.NetworkSettings.Networks {
+		if ep != nil && ep.IPAddress != "" {
+			return ep.IPAddress
+		}
+	}
+	return ""
+}
+
 // RuntimeInfo returns the container runtime name and version for display.
 func RuntimeInfo() string {
 	if dockerClient == nil {

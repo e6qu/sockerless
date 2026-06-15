@@ -243,7 +243,14 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		}
 		return
 	}
-	s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr)).Msg("invokeServiceDefaultCmd: bootstrap response")
+	logEvt := s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr))
+	if res.ExitCode != 0 {
+		// Surface the failing default-cmd's output rather than only its
+		// length — an opaque non-zero exit (e.g. gitlab-runner's permission
+		// container) is otherwise un-diagnosable from the backend log.
+		logEvt = logEvt.Str("stdout_tail", tailString(res.Stdout, 1024)).Str("stderr_tail", tailString(res.Stderr, 1024))
+	}
+	logEvt.Msg("invokeServiceDefaultCmd: bootstrap response")
 
 	if len(res.Stdout) > 0 {
 		s.Store.LogBuffers.Store(id, res.Stdout)
@@ -568,4 +575,13 @@ func (s *Server) deleteServiceStrict(serviceName string) error {
 		return fmt.Errorf("await delete cloud run service %q: %w", serviceName, werr)
 	}
 	return nil
+}
+
+// tailString returns the last n bytes of b as a string (for bounded
+// diagnostic logging of a failing subprocess's output).
+func tailString(b []byte, n int) string {
+	if len(b) > n {
+		b = b[len(b)-n:]
+	}
+	return string(b)
 }
