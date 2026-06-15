@@ -335,11 +335,13 @@ func (s *Server) ListenAndServe() error {
 	handler := otelhttp.NewHandler(s.loggingMiddleware(observed), "bleephub")
 
 	srv := &http.Server{
-		Addr:         s.addr,
-		Handler:      handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:    s.addr,
+		Handler: handler,
+		// Bound only the header read (slowloris protection). A fixed
+		// ReadTimeout/WriteTimeout caps the WHOLE body, which cuts off large
+		// git push/pull + artifact uploads/downloads under load.
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Resolve addr for log output
