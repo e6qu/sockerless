@@ -315,6 +315,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		if sites.Delete(resourceID) {
 			stopAzureFunctionInstance(name)
+			cleanupSiteContainers(resourceID, name)
 			// Clean up associated functions
 			funcs := functionConfigs.Filter(func(f FunctionEnvelope) bool {
 				return strings.HasPrefix(f.ID, resourceID+"/functions/")
@@ -1011,11 +1012,13 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		containerImage string
 		mainCmd        []string
 		mainEnv        map[string]string
+		mainBinds      []string
 	)
 	if main != nil {
 		containerImage = main.Properties.Image
 		mainCmd = splitStartUpCommand(main.Properties.StartUpCommand)
 		mainEnv = envVarsMap(main.Properties.EnvironmentVariables)
+		mainBinds = siteContainerVolumeBinds(site.Name, main.Properties.VolumeMounts)
 	} else {
 		containerImage = siteContainerImage(site)
 	}
@@ -1050,6 +1053,7 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		HostPort:     hostPort,
 		Env:          env,
 		Cmd:          mainCmd,
+		Binds:        mainBinds,
 		Name:         fmt.Sprintf("sockerless-sim-azure-func-http-%s-%d", site.Name, hostPort),
 		Labels: map[string]string{
 			"sockerless-sim-type": "azure-function-http",

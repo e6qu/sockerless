@@ -56,6 +56,7 @@ const (
 	envCallbackURL    = "SOCKERLESS_CALLBACK_URL"
 	envContainerID    = "SOCKERLESS_CONTAINER_ID"
 	envHostAliases    = "SOCKERLESS_HOST_ALIASES"
+	envSidecar        = "SOCKERLESS_SIDECAR"
 	envJobTimeout     = "SOCKERLESS_JOB_TIMEOUT_SECONDS"
 )
 
@@ -94,6 +95,16 @@ func main() {
 		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: reverse-agent connected to %s (session=%s)\n", callbackURL, containerID)
 	} else {
 		fmt.Fprintln(os.Stderr, "sockerless-azf-bootstrap: SOCKERLESS_CALLBACK_URL or SOCKERLESS_CONTAINER_ID empty - reverse-agent disabled")
+	}
+
+	// Sidecar mode: a pod sidecar (a `services:` container) shares the main's
+	// network namespace and runs its service process as a long-lived
+	// foreground subprocess — it does NOT bind the function HTTP port (the
+	// main owns it in the shared netns). The reverse-agent is already
+	// connected above, so `docker exec <sidecar>` routes to this container.
+	if os.Getenv(envSidecar) == "1" {
+		runSidecarService()
+		return
 	}
 
 	port := os.Getenv(envPort)
@@ -304,6 +315,33 @@ func runExecEnvelope(w http.ResponseWriter, parent context.Context, env execEnve
 	w.Header().Set("X-Sockerless-Exit-Code", strconv.Itoa(exitCode))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(payload)
+}
+
+// runSidecarService runs the sidecar's service process (its image's
+// entrypoint/cmd, passed as SOCKERLESS_USER_ENTRYPOINT/CMD) in the
+// foreground so the container stays alive for the pod's lifetime while the
+// reverse-agent keeps serving exec. With no user argv it idles so the
+// container (and its agent) stay up.
+func runSidecarService() {
+	argv, err := userArgv()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: sidecar user argv: %v\n", err)
+	}
+	if len(argv) == 0 {
+		fmt.Fprintln(os.Stderr, "sockerless-azf-bootstrap: sidecar has no service argv; idling for exec")
+		select {}
+	}
+	cmd := exec.Command(argv[0], argv[1:]...)
+	if wd := os.Getenv(envUserWorkdir); wd != "" {
+		cmd.Dir = wd
+	}
+	cmd.Env = os.Environ()
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: sidecar service exited: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func userArgv() ([]string, error) {

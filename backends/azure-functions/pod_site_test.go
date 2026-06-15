@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/sockerless/api"
@@ -154,16 +155,50 @@ func TestPodMemberImageAndStartup(t *testing.T) {
 			labelBaseCmd:        base64.StdEncoding.EncodeToString(cmd),
 		},
 	}}
-	// Sidecar runs its RAW image, not the overlay.
-	if got := podMemberImage(side, false); got != "redis:7-alpine" {
-		t.Errorf("sidecar image = %q, want raw redis:7-alpine", got)
+	// docker ps shows the ORIGINAL image, not the overlay that runs.
+	if got := podMemberDisplayImage(side); got != "redis:7-alpine" {
+		t.Errorf("display image = %q, want raw redis:7-alpine", got)
 	}
-	// Main runs the overlay.
-	if got := podMemberImage(side, true); got != "sockerless-overlay/azf-redis:test" {
-		t.Errorf("main image = %q, want overlay", got)
+	// The container is overlaid (run image differs from the base).
+	if !isAZFOverlaid(side) {
+		t.Error("expected sidecar to be detected as overlaid")
 	}
-	if got := podMemberStartupCommand(side); !reflect.DeepEqual(got, []string{"redis-server", "--port", "6379"}) {
-		t.Errorf("startup = %v", got)
+	if got := podMemberRawArgv(side); !reflect.DeepEqual(got, []string{"redis-server", "--port", "6379"}) {
+		t.Errorf("raw argv = %v", got)
+	}
+}
+
+func TestSidecarRunSpec(t *testing.T) {
+	s := &Server{}
+	s.config.CallbackURL = "ws://host.docker.internal:3375/v1/azf/reverse"
+	ep, _ := json.Marshal([]string{"redis-server"})
+	// Overlaid sidecar: runs the overlay in sidecar mode + reverse-agent env.
+	over := api.Container{ID: "sc1", Config: api.ContainerConfig{
+		Image:  "sockerless-overlay/azf-redis:test",
+		Env:    []string{"FOO=bar"},
+		Labels: map[string]string{labelBaseImage: "redis:7-alpine", labelBaseEntrypoint: base64.StdEncoding.EncodeToString(ep)},
+	}}
+	img, startUp, env := s.sidecarRunSpec(over)
+	if img != "sockerless-overlay/azf-redis:test" {
+		t.Errorf("overlaid run image = %q, want overlay", img)
+	}
+	if startUp != nil {
+		t.Errorf("overlaid startUp = %v, want nil (bootstrap runs baked argv)", startUp)
+	}
+	joined := strings.Join(env, " ")
+	for _, want := range []string{"SOCKERLESS_SIDECAR=1", "SOCKERLESS_CONTAINER_ID=sc1", "SOCKERLESS_CALLBACK_URL="} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("overlaid env missing %q: %v", want, env)
+		}
+	}
+	// Raw sidecar (no overlay): runs the raw image with the original argv.
+	raw := api.Container{ID: "sc2", Config: api.ContainerConfig{
+		Image:  "redis:7-alpine",
+		Labels: map[string]string{labelBaseImage: "redis:7-alpine", labelBaseEntrypoint: base64.StdEncoding.EncodeToString(ep)},
+	}}
+	img, startUp, _ = s.sidecarRunSpec(raw)
+	if img != "redis:7-alpine" || !reflect.DeepEqual(startUp, []string{"redis-server"}) {
+		t.Errorf("raw run spec = %q %v, want redis:7-alpine [redis-server]", img, startUp)
 	}
 }
 

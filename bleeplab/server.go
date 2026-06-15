@@ -122,6 +122,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /internal/pipelines", s.handleInternalPipelines)
 	s.mux.HandleFunc("GET /internal/pipelines/{id}", s.handleInternalPipeline)
 	s.mux.HandleFunc("GET /internal/jobs/{id}", s.handleInternalJob)
+	s.mux.HandleFunc("GET /internal/jobs/{id}/artifact", s.handleInternalArtifactDownload)
 	s.mux.HandleFunc("GET /internal/runners", s.handleInternalRunners)
 	s.mux.HandleFunc("GET /internal/storage", s.handleInternalStorage)
 

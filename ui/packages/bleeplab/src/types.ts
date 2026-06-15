@@ -40,6 +40,7 @@ export interface Job {
   sha: string;
   project_id: number;
   artifact_size: number;
+  artifact_filename?: string;
   trace?: string;
 }
 

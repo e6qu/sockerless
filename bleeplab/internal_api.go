@@ -1,6 +1,7 @@
 package bleeplab
 
 import (
+	"fmt"
 	"net/http"
 	"os"
 	"sort"
@@ -45,15 +46,16 @@ type pipelineView struct {
 }
 
 type jobView struct {
-	ID           int    `json:"id"`
-	Name         string `json:"name"`
-	Stage        string `json:"stage"`
-	Status       string `json:"status"`
-	Ref          string `json:"ref"`
-	SHA          string `json:"sha"`
-	ProjectID    int    `json:"project_id"`
-	ArtifactSize int64  `json:"artifact_size"`
-	Trace        string `json:"trace,omitempty"`
+	ID               int    `json:"id"`
+	Name             string `json:"name"`
+	Stage            string `json:"stage"`
+	Status           string `json:"status"`
+	Ref              string `json:"ref"`
+	SHA              string `json:"sha"`
+	ProjectID        int    `json:"project_id"`
+	ArtifactSize     int64  `json:"artifact_size"`
+	ArtifactFilename string `json:"artifact_filename,omitempty"`
+	Trace            string `json:"trace,omitempty"`
 }
 
 type pipelineDetailView struct {
@@ -160,7 +162,8 @@ func (s *Server) jobViewLocked(j *Job, withTrace bool) jobView {
 	defer j.mu.Unlock()
 	v := jobView{
 		ID: j.ID, Name: j.Name, Stage: j.Stage, Status: j.Status,
-		Ref: j.Ref, SHA: j.SHA, ProjectID: j.ProjectID, ArtifactSize: j.ArtifactSize,
+		Ref: j.Ref, SHA: j.SHA, ProjectID: j.ProjectID,
+		ArtifactSize: j.ArtifactSize, ArtifactFilename: j.ArtifactFilename,
 	}
 	if withTrace {
 		v.Trace = j.trace.String()
@@ -178,6 +181,46 @@ func (s *Server) handleInternalJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, s.jobViewLocked(j, true))
+}
+
+// handleInternalArtifactDownload serves a job's artifact archive to the UI.
+// Unlike the runner-facing `/api/v4/jobs/{id}/artifacts` route it is NOT
+// JOB-TOKEN gated, so a browser anchor can download it directly; it carries
+// the recorded artifact filename via Content-Disposition.
+func (s *Server) handleInternalArtifactDownload(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	s.mu.Lock()
+	job, ok := s.jobs[id]
+	s.mu.Unlock()
+	if !ok {
+		http.Error(w, "404 job not found", http.StatusNotFound)
+		return
+	}
+	store, err := s.getArtifactStore(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data, ok, err := store.Get(artifactKey(id))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !ok {
+		http.Error(w, "404 artifact not found", http.StatusNotFound)
+		return
+	}
+	job.mu.Lock()
+	filename := job.ArtifactFilename
+	job.mu.Unlock()
+	if filename == "" {
+		filename = "artifacts.zip"
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(data)
 }
 
 func (s *Server) handleInternalRunners(w http.ResponseWriter, _ *http.Request) {

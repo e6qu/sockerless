@@ -9,6 +9,46 @@ import {
 } from "@sockerless/ui-core/components";
 import { api } from "../api.js";
 import { shortSHA, bytes } from "../format.js";
+import type { Job } from "../types.js";
+
+function ArtifactsPanel({ job }: { job: Job }) {
+  if (job.artifact_size <= 0) return null;
+  const filename = job.artifact_filename || "artifacts.zip";
+  return (
+    <section className="mb-6">
+      <h2 className="font-display mb-3 text-sm font-semibold uppercase tracking-wide">
+        Artifacts
+      </h2>
+      <div
+        className="flex items-center gap-3"
+        style={{
+          padding: "0.6rem 1rem",
+          border: "1px solid var(--color-border)",
+          borderRadius: "0.5rem",
+          background: "var(--color-bg-subtle)",
+        }}
+      >
+        <span style={{ fontSize: "0.86rem", fontWeight: 500, color: "var(--color-fg)" }}>
+          {filename}
+        </span>
+        <span
+          className="tabular-nums"
+          style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}
+        >
+          {bytes(job.artifact_size)}
+        </span>
+        <a
+          href={`/internal/jobs/${job.id}/artifact`}
+          className="ml-auto inline-flex items-center gap-1"
+          style={{ fontSize: "0.8rem", color: "var(--color-accent)", textDecoration: "none" }}
+          download
+        >
+          ↓ Download
+        </a>
+      </div>
+    </section>
+  );
+}
 
 export function JobDetailPage() {
   const { id } = useParams();
@@ -29,6 +69,7 @@ export function JobDetailPage() {
         meta={`${j.ref} · ${shortSHA(j.sha)}${j.artifact_size > 0 ? ` · artifact ${bytes(j.artifact_size)}` : ""}`}
         actions={<StatusBadge status={j.status} />}
       />
+      <ArtifactsPanel job={j} />
       <h2 className="font-display mb-3 text-sm font-semibold uppercase tracking-wide">
         Trace
       </h2>

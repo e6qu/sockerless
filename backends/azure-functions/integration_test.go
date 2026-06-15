@@ -519,11 +519,17 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 		}
 	}
 
+	// A named volume mounted into BOTH members at /shared proves the pod
+	// shares one workspace (site-level Azure Files share → sitecontainer
+	// VolumeMounts). The sidecar writes a marker file; the main reads it.
+	vol := "azfpodvol" + testID
+	bind := []string{vol + ":/shared"}
+
 	// 1. Job container (the main): overlay image, reachable via the reverse
 	//    agent. Created + started FIRST — defers until its service arrives.
 	jobResp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{Image: alpineImageName, Cmd: []string{"tail", "-f", "/dev/null"}},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind},
 		netCfg("job"), nil, "azf_pod_job_"+testID,
 	)
 	if err != nil {
@@ -534,14 +540,18 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 		t.Fatalf("job start (deferred) failed: %v", err)
 	}
 
-	// 2. Service sidecar: a RAW alpine image running a tiny netcat server on
-	//    :9099, aliased `svc`. Starting it materializes the whole pod.
+	// 2. Service sidecar: a RAW alpine image that writes a marker to the
+	//    shared volume, then runs a tiny netcat server on :9099, aliased
+	//    `svc`. Starting it materializes the whole pod.
+	// Use the overlay image (bootstrap baked in) so the sidecar runs in
+	// sidecar mode + registers a reverse-agent (per-sidecar exec). In a real
+	// deployment the backend builds this overlay from the raw service image.
 	svcResp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
-			Image: "public.ecr.aws/docker/library/alpine:latest",
-			Cmd:   []string{"sh", "-c", "while true; do printf 'sidecar-ok' | nc -l -p 9099; done"},
+			Image: alpineImageName,
+			Cmd:   []string{"sh", "-c", "echo vol-shared-ok > /shared/from-svc; while true; do printf 'sidecar-ok' | nc -l -p 9099; done"},
 		},
-		&container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		&container.HostConfig{NetworkMode: container.NetworkMode(netName), Binds: bind},
 		netCfg("svc"), nil, "azf_pod_svc_"+testID,
 	)
 	if err != nil {
@@ -600,6 +610,68 @@ func TestAZFMultiContainerPodSharesLocalhost(t *testing.T) {
 	}
 	if out, code := reachRetry("svc"); out != "sidecar-ok" || code != 0 {
 		t.Errorf("alias reach: out=%q exit=%d (want sidecar-ok/0; host-alias resolution)", out, code)
+	}
+
+	// Shared workspace volume: the main reads the marker the sidecar wrote to
+	// the volume both mount at /shared.
+	readShared := func() (string, int) {
+		execResp, err := dockerClient.ContainerExecCreate(ctx, jobResp.ID, container.ExecOptions{
+			Cmd:          []string{"sh", "-c", "cat /shared/from-svc 2>/dev/null"},
+			AttachStdout: true, AttachStderr: true,
+		})
+		if err != nil {
+			t.Fatalf("shared-vol exec create failed: %v", err)
+		}
+		hj, err := dockerClient.ContainerExecAttach(ctx, execResp.ID, container.ExecAttachOptions{})
+		if err != nil {
+			t.Fatalf("shared-vol exec attach failed: %v", err)
+		}
+		defer hj.Close()
+		var so, se bytes.Buffer
+		_, _ = stdcopy.StdCopy(&so, &se, hj.Reader)
+		insp, _ := dockerClient.ContainerExecInspect(ctx, execResp.ID)
+		return strings.TrimSpace(so.String()), insp.ExitCode
+	}
+	var shared string
+	for i := 0; i < 15; i++ {
+		if shared, _ = readShared(); shared == "vol-shared-ok" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if shared != "vol-shared-ok" {
+		t.Errorf("shared volume: main read %q from /shared/from-svc (want vol-shared-ok)", shared)
+	}
+
+	// Per-sidecar exec: the sidecar runs the overlay in sidecar mode, so it
+	// registers its own reverse-agent and `docker exec <sidecar>` works.
+	execSidecar := func() (string, int) {
+		ex, err := dockerClient.ContainerExecCreate(ctx, svcResp.ID, container.ExecOptions{
+			Cmd: []string{"sh", "-c", "printf sidecar-exec-ok"}, AttachStdout: true, AttachStderr: true,
+		})
+		if err != nil {
+			t.Fatalf("sidecar exec create failed: %v", err)
+		}
+		hj, err := dockerClient.ContainerExecAttach(ctx, ex.ID, container.ExecAttachOptions{})
+		if err != nil {
+			return err.Error(), 1
+		}
+		defer hj.Close()
+		var so, se bytes.Buffer
+		_, _ = stdcopy.StdCopy(&so, &se, hj.Reader)
+		insp, _ := dockerClient.ContainerExecInspect(ctx, ex.ID)
+		return so.String(), insp.ExitCode
+	}
+	var sx string
+	var sc int
+	for i := 0; i < 20; i++ {
+		if sx, sc = execSidecar(); sc == 0 && sx == "sidecar-exec-ok" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if sx != "sidecar-exec-ok" || sc != 0 {
+		t.Errorf("sidecar exec: out=%q exit=%d (want sidecar-exec-ok/0; per-sidecar reverse-agent)", sx, sc)
 	}
 }
 
