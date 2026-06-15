@@ -372,14 +372,30 @@ func handleCMRegisterInstance(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// cmDockerAliasesForContainer returns every Cloud Map service name in the
-// namespace whose registered instance maps to containerName — the full set of
-// DNS aliases the container must answer to on the namespace's Docker network.
-// This is the Docker-network-tier analogue of syncCMNamespaceHosts (which does
-// the same aggregation for the netns/host-entries tier).
+// cmDockerAliasesForContainer returns every DNS alias the container must answer
+// to on the namespace's Docker network: for each Cloud Map service whose
+// registered instance maps to containerName, both the short service name AND
+// its `<service>.<namespace>` FQDN (so e.g. `redis` and `redis.skls-net.local`
+// both resolve — the runtime's network DNS resolves both as network aliases).
+// This is the Docker-network-tier analogue of syncCMNamespaceHosts, which adds
+// the same two forms as /etc/hosts entries for the netns tier.
 func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
+	nsName := ""
+	if ns, ok := cmNamespaces.Get(namespaceID); ok {
+		nsName = ns.Name
+	}
 	seen := make(map[string]struct{})
 	var aliases []string
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		if _, dup := seen[name]; dup {
+			return
+		}
+		seen[name] = struct{}{}
+		aliases = append(aliases, name)
+	}
 	for _, svc := range cmServices.List() {
 		if svc.NamespaceId != namespaceID {
 			continue
@@ -391,11 +407,10 @@ func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
 			if resolveTaskContainerForInstance(inst.Id) != containerName {
 				continue
 			}
-			if _, dup := seen[svc.Name]; dup {
-				continue
+			add(svc.Name)
+			if nsName != "" {
+				add(svc.Name + "." + nsName)
 			}
-			seen[svc.Name] = struct{}{}
-			aliases = append(aliases, svc.Name)
 		}
 	}
 	return aliases

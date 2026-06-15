@@ -136,14 +136,21 @@ wait_for_url "$BL/health"
 # directly. Pre-pull alpine from the ECR gallery (no Docker Hub throttle) and
 # tag it; the gitlab-runner helper comes from registry.gitlab.com (not
 # throttled) and the runner pulls it on first use.
-log "Staging workload image (alpine) on the host engine…"
-for attempt in 1 2 3 4 5; do
-    if docker pull -q public.ecr.aws/docker/library/alpine:3.20 >/dev/null 2>&1; then
-        docker tag public.ecr.aws/docker/library/alpine:3.20 alpine:3.20
-        break
-    fi
-    sleep "$((attempt * 3))"
-done
+log "Staging workload images (alpine, redis) on the host engine…"
+stage_image() { # gallery-ref local-tag
+    for attempt in 1 2 3 4 5; do
+        if docker pull -q "$1" >/dev/null 2>&1; then
+            docker tag "$1" "$2"
+            return 0
+        fi
+        sleep "$((attempt * 3))"
+    done
+    fail "stage image $1"
+}
+stage_image public.ecr.aws/docker/library/alpine:3.20 alpine:3.20
+# redis backs the `services:` job — a real CI service container the build job
+# connects to by network alias over the per-build pod network.
+stage_image public.ecr.aws/docker/library/redis:7-alpine redis:7-alpine
 
 # ── Create the project, CI config, runner, and pipeline ────────────────
 log "Creating project + .gitlab-ci.yml + runner + pipeline"
@@ -216,7 +223,7 @@ EOF
 # compiles calc.c with gcc and publishes the `calc` binary as an artifact; the
 # test job downloads that artifact (no recompile — it has no toolchain) and
 # verifies real arithmetic, proving cross-stage artifact passing end to end.
-CI='stages: [build, test]
+CI='stages: [build, test, integration]
 build-job:
   stage: build
   image: alpine:3.20
@@ -245,7 +252,24 @@ test-job:
     - test "$(./calc 100 / 7)" = "100 / 7 = 14"
     - test "$(./calc 17 % 5)" = "17 % 5 = 2"
     - acc=0; for i in $(seq 1 100); do acc=$(./calc -q $acc + $i); done; echo "SUM 1..100 = $acc"; test "$acc" = "5050"
-    - echo BLEEPLAB-ECS-TEST-OK'
+    - echo BLEEPLAB-ECS-TEST-OK
+service-job:
+  stage: integration
+  image: alpine:3.20
+  variables:
+    GIT_STRATEGY: "none"
+    FF_NETWORK_PER_BUILD: "true"
+  services:
+    - name: redis:7-alpine
+      alias: redis
+  script:
+    - echo "BLEEPLAB-ECS-SERVICE connecting to the redis service by alias over the pod network"
+    - apk add --no-cache redis
+    - for i in $(seq 1 30); do redis-cli -h redis ping >/dev/null 2>&1 && break; sleep 1; done
+    - test "$(redis-cli -h redis ping)" = "PONG"
+    - redis-cli -h redis set bleeplab 42 >/dev/null
+    - test "$(redis-cli -h redis get bleeplab)" = "42"
+    - echo BLEEPLAB-ECS-SERVICE-OK'
 # Commit the CI config + calculator source via the bleeplab commits API (the
 # repo bleeplab then serves over git; JSON-safe via jq).
 jq -n --arg ci "$CI" --arg calc "$CALC_C" \
@@ -288,7 +312,9 @@ PIDS+=($!)
 # ── Wait for the pipeline to finish ────────────────────────────────────
 log "Waiting for pipeline $PLID to complete…"
 STATUS=""
-for _ in $(seq 1 120); do
+# Three stages (build, test, integration), each pulling images + apk-installing
+# toolchains, comfortably exceed a 240s budget — poll up to ~7 min.
+for _ in $(seq 1 210); do
     STATUS=$(bl GET "/api/v4/projects/$PID/pipelines/$PLID" '' | jq -r '.status')
     case "$STATUS" in
         success) log "TEST 1 PASSED: GitLab pipeline succeeded on sockerless-$BLEEPLAB_BACKEND"; break ;;
@@ -303,10 +329,21 @@ done
 # compiled self-test, a live multiplication, the folded sum, and both stage
 # markers. These only appear if gcc compiled the cloned calc.c and the binary
 # executed with correct arithmetic on the sockerless ECS backend.
-ALLTRACE=""
-for JID in $(bl GET "/api/v4/projects/$PID/pipelines/$PLID/jobs" '' | jq -r '.[].id'); do
-    ALLTRACE="$ALLTRACE
-$(bl GET "/api/v4/projects/$PID/jobs/$JID/trace" '')"
+# Aggregate every job's trace into a file (robust against transient fetch
+# blips and large/binary trace bodies that command-substitution mishandles).
+TRACE_FILE=$(mktemp)
+for attempt in 1 2 3 4 5; do
+    : > "$TRACE_FILE"
+    JIDS=$(bl GET "/api/v4/projects/$PID/pipelines/$PLID/jobs" '' | jq -r '.[].id' 2>/dev/null)
+    for JID in $JIDS; do
+        bl GET "/api/v4/projects/$PID/jobs/$JID/trace" '' >> "$TRACE_FILE" 2>/dev/null
+        printf '\n' >> "$TRACE_FILE"
+    done
+    # Done once every job's terminal marker is present (or the last attempt).
+    if grep -qF "BLEEPLAB-ECS-SERVICE-OK" "$TRACE_FILE" || [ "$attempt" = 5 ]; then
+        break
+    fi
+    sleep 2
 done
 for marker in \
     "CALC-SELFTEST-OK" \
@@ -314,10 +351,13 @@ for marker in \
     "BLEEPLAB-ECS-BUILD-OK" \
     "ARTIFACT-CALC-PRESENT" \
     "SUM 1..100 = 5050" \
-    "BLEEPLAB-ECS-TEST-OK"; do
-    echo "$ALLTRACE" | grep -qF "$marker" || fail "job trace missing expected marker '$marker'; full trace:\n$ALLTRACE"
+    "BLEEPLAB-ECS-TEST-OK" \
+    "BLEEPLAB-ECS-SERVICE-OK"; do
+    grep -qF "$marker" "$TRACE_FILE" || fail "job trace missing expected marker '$marker'; full trace:\n$(cat "$TRACE_FILE")"
 done
+rm -f "$TRACE_FILE"
 log "TEST 2 PASSED: gcc-compiled calc.c ran in the cloud workload (self-test, 6 x 7 = 42, sum 1..100 = 5050)"
 log "TEST 3 PASSED: the test stage consumed the build stage's calc artifact (no recompile)"
+log "TEST 4 PASSED: the integration stage reached the redis service container by alias over the per-build pod network (PING/SET/GET)"
 
 log "===== ALL bleeplab-ecs INTEGRATION TESTS PASSED ====="

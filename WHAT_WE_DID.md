@@ -35,11 +35,27 @@ that leaked the extra registrations.
 Proven by `TestECS_MultiServiceDNS` (a client task resolves BOTH of a server's
 two service names — `web` and `webalias` — via real Cloud Map DNS in Docker) +
 `TestDedupeNonEmpty`/`TestCloudMapNamesFor`; the existing `TestECS_CrossTaskDNS`
-still passes. End-to-end, the redis `services:` container is registered under
-both `redis` and its task hostname and carries both as Docker aliases on the
-namespace network. The full gitlab-runner `services:` e2e on ECS has a separate
-remaining gate (BUG-1805: the `FF_NETWORK_PER_BUILD` build container streams no
-trace output); the harness `services:` job is descoped pending that fix.
+still passes.
+
+**BUG-1805 — full gitlab-runner `services:` support (resolv.conf wrapper
+removed).** With the alias registered (BUG-1804), a `services:` job's build
+container still couldn't resolve `redis`. Root cause (verified on Podman, the
+local runtime): each network's DNS runs at its gateway and a container gets one
+nameserver per attached network, added as networks connect. The ECS backend
+wrapped the user's container command in a `/bin/sh` shim that rewrote
+`/etc/resolv.conf` to a STATIC snapshot at entrypoint time (to inject the
+namespace as a DNS search domain) — capturing only the VPC nameserver and
+dropping the namespace network's DNS that the runtime adds when Cloud Map
+connects the container *after* it starts. The wrapper also mangled the user's
+argv. Fix, respecting module boundaries: **remove the backend's resolv.conf
+command-wrapper** (the container argv runs verbatim; DNS is the runtime's), and
+have the **sim** realize each service name as BOTH `<service>` and
+`<service>.<namespace>` network aliases (both verified to resolve), matching the
+netns/`/etc/hosts` tier — so no search domain is needed. The now-dead
+`searchDomainsForContainer`/`shellQuoteArgs` helpers + tests were removed.
+Validated end to end: the bleeplab GitLab ECS harness runs a 3-stage pipeline
+whose integration stage `apk add redis` + `redis-cli -h redis` PING/SET/GET all
+succeed over the per-build pod network (TEST 4).
 
 ## 2026-06-15 - bleeplab dashboard UI (GitLab-themed) — completes bleephub parity
 

@@ -97,29 +97,17 @@ func (s *Server) buildContainerDef(ctx context.Context, ci containerInput) (ecst
 		containerDef.User = aws.String(config.User)
 	}
 
-	// ECS rejects ContainerDefinition.DnsSearchDomains for
-	// awsvpc mode. Wrap the user's command in a /bin/sh shim that rewrites
-	// etc/resolv.conf to add the per-network Cloud Map namespaces as DNS
-	// search domains, preserving VPC DNS nameservers, then exec's the
-	// original argv. Only applied when the container is on at least one
-	// user-defined network and has an explicit entrypoint or command (so we
-	// have something to exec — image-default CMD without explicit override
-	// is left alone since we can't reconstruct argv without the image
-	// manifest, and Fargate would have to re-pull just to read it).
-	if domains := s.searchDomainsForContainer(ci.Container); len(domains) > 0 {
-		origArgv := append([]string{}, entrypoint...)
-		origArgv = append(origArgv, command...)
-		if len(origArgv) > 0 {
-			searchLine := "search " + strings.Join(domains, " ")
-			script := fmt.Sprintf(
-				"{ awk '/^nameserver /' /etc/resolv.conf; printf '%s\\n'; } > /tmp/.skls-resolv && cat /tmp/.skls-resolv > /etc/resolv.conf 2>/dev/null; exec %s",
-				searchLine,
-				shellQuoteArgs(origArgv),
-			)
-			containerDef.EntryPoint = []string{"/bin/sh", "-c"}
-			containerDef.Command = []string{script}
-		}
-	}
+	// Cross-container DNS (Cloud Map service discovery) is realized entirely by
+	// the simulator: a container attached to a Cloud Map namespace network
+	// resolves the namespace's services — under both their short name and their
+	// `<service>.<namespace>` FQDN — as network aliases, via the network's own
+	// DNS. The backend used to wrap the user's command in a /bin/sh shim that
+	// rewrote /etc/resolv.conf to add the namespace as a DNS search domain, but
+	// that mangled the container command (breaking faithful argv execution) and
+	// froze resolv.conf to a static snapshot, defeating the runtime's dynamic
+	// per-network DNS (e.g. Podman/aardvark adds a nameserver per attached
+	// network only after the namespace connect, which the snapshot dropped). The
+	// container's argv now runs verbatim and its DNS is managed by the runtime.
 
 	// Resolve each named-volume bind spec via the storage-backing
 	// registry. ContainerCreate has already rejected host-path bind
@@ -304,17 +292,6 @@ func fargateResources(containers []containerInput) (cpu, memory string) {
 
 // sanitizeContainerName converts a container name to a valid ECS container definition name.
 // Strips leading "/" and replaces non-alphanumeric characters with "-".
-// shellQuoteArgs joins argv with single-quoted POSIX shell escaping so the
-// caller can use `exec $(shellQuoteArgs(argv))` from inside an `sh -c` script
-// without arg-splitting hazards.
-func shellQuoteArgs(argv []string) string {
-	parts := make([]string, len(argv))
-	for i, a := range argv {
-		parts[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
-	}
-	return strings.Join(parts, " ")
-}
-
 func sanitizeContainerName(name string) string {
 	name = strings.TrimPrefix(name, "/")
 	if name == "" {
