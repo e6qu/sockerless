@@ -93,6 +93,22 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
 
 	originalImage := config.Image
+	// Stash the pre-overlay image + entrypoint/cmd. If this container ends up
+	// a pod sidecar, materializePodSite runs its RAW service image (services
+	// are reached over the shared loopback; only the pod main needs the
+	// reverse-agent overlay).
+	if config.Labels == nil {
+		config.Labels = make(map[string]string)
+	}
+	config.Labels[labelBaseImage] = originalImage
+	if len(config.Entrypoint) > 0 {
+		b, _ := json.Marshal(config.Entrypoint)
+		config.Labels[labelBaseEntrypoint] = base64.StdEncoding.EncodeToString(b)
+	}
+	if len(config.Cmd) > 0 {
+		b, _ := json.Marshal(config.Cmd)
+		config.Labels[labelBaseCmd] = base64.StdEncoding.EncodeToString(b)
+	}
 	if s.useAZFOverlayPath(originalImage) {
 		spec := azfOverlaySpec{
 			BaseImageRef:        originalImage,
@@ -196,6 +212,12 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
+	var netAliases []string
+	if req.NetworkingConfig != nil {
+		if ep, ok := req.NetworkingConfig.EndpointsConfig[netName]; ok && ep != nil {
+			netAliases = ep.Aliases
+		}
+	}
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
@@ -203,6 +225,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
+		Aliases:     netAliases,
 	}
 
 	// Inject SOCKERLESS_DNS_SEARCH_DOMAIN so the bootstrap can append a
@@ -218,68 +241,52 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	// Function App names must be globally unique -- use skls- prefix + truncated container ID
 	funcAppName := "skls-" + id[:12]
 
-	// Build environment variables for App Settings
-	envVars := make(map[string]string)
-	for _, e := range config.Env {
-		parts := strings.SplitN(e, "=", 2)
-		if len(parts) == 2 {
-			envVars[parts[0]] = parts[1]
-		}
-	}
+	appSettings := s.buildAZFAppSettings(id, config)
 
-	// Build App Settings
-	appSettings := []*armappservice.NameValuePair{
-		{Name: ptr("FUNCTIONS_EXTENSION_VERSION"), Value: ptr("~4")},
-		{Name: ptr("WEBSITES_ENABLE_APP_SERVICE_STORAGE"), Value: ptr("false")},
-		{Name: ptr("AzureWebJobsStorage"), Value: ptr(fmt.Sprintf("DefaultEndpointsProtocol=https;AccountName=%s;EndpointSuffix=core.windows.net", s.config.StorageAccount))},
-	}
-
-	if s.config.Registry != "" {
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name: ptr("DOCKER_REGISTRY_SERVER_URL"), Value: ptr(s.config.Registry),
+	// Containers that join a user-defined network are potential pod members
+	// (GitHub/GitLab `services:` topologies). Defer their Function App
+	// creation: ContainerStart assembles the whole pod as ONE site whose
+	// sitecontainers share a loopback. Single-container (bridge/default)
+	// workloads create their site eagerly here.
+	if _, onUserNet := s.userDefinedNetworkID(container); onUserNet {
+		s.PendingCreates.Put(id, container)
+		s.EmitEvent("container", "create", id, map[string]string{
+			"name":  strings.TrimPrefix(name, "/"),
+			"image": config.Image,
 		})
+		return &api.ContainerCreateResponse{ID: id, Warnings: []string{}}, nil
 	}
 
-	// Add user environment variables as App Settings
-	for k, v := range envVars {
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name: ptr(k), Value: ptr(v),
-		})
+	azfState, err := s.createFunctionSite(s.ctx(), id, funcAppName, container, appSettings)
+	if err != nil {
+		return nil, err
 	}
 
-	// Pass entrypoint + cmd SEPARATELY so the simulator preserves docker's
-	// ENTRYPOINT/CMD semantics (an image's ENTRYPOINT must still fire
-	// when the user only sets Cmd — flattening would override it).
-	if len(config.Entrypoint) > 0 {
-		epJSON, _ := json.Marshal(config.Entrypoint)
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name:  ptr("SOCKERLESS_ENTRYPOINT"),
-			Value: ptr(base64.StdEncoding.EncodeToString(epJSON)),
-		})
-	}
-	if len(config.Cmd) > 0 {
-		cmdJSON, _ := json.Marshal(config.Cmd)
-		appSettings = append(appSettings, &armappservice.NameValuePair{
-			Name:  ptr("SOCKERLESS_CMD"),
-			Value: ptr(base64.StdEncoding.EncodeToString(cmdJSON)),
-		})
-	}
+	s.PendingCreates.Put(id, container)
+	s.AZF.Put(id, azfState)
 
-	// Inject reverse-agent callback URL + container ID so a bootstrap
-	// in the function container can dial back for docker top / exec / cp.
-	appSettings = append(appSettings, &armappservice.NameValuePair{
-		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
-	})
-	appSettings = append(appSettings, &armappservice.NameValuePair{
-		Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+	s.EmitEvent("container", "create", id, map[string]string{
+		"name":  strings.TrimPrefix(name, "/"),
+		"image": config.Image,
 	})
 
-	// Build the Function App Site resource
+	return &api.ContainerCreateResponse{
+		ID:       id,
+		Warnings: []string{},
+	}, nil
+}
+
+// createFunctionSite creates the single-container Function App site for a
+// container (LinuxFxVersion=DOCKER|<image>), attaches any named-volume binds,
+// records the resource in the registry, and returns the resolved AZFState.
+// Shared by the eager ContainerCreate path and the deferred-single
+// ContainerStart path (a lone container on a user-defined network whose site
+// creation was deferred at create time).
+func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string, container api.Container, appSettings []*armappservice.NameValuePair) (AZFState, error) {
 	siteConfig := &armappservice.SiteConfig{
-		LinuxFxVersion: ptr("DOCKER|" + config.Image),
+		LinuxFxVersion: ptr("DOCKER|" + container.Config.Image),
 		AppSettings:    appSettings,
 	}
-	// Build resource tags
 	tags := core.TagSet{
 		ContainerID: id,
 		Backend:     "azf",
@@ -295,34 +302,27 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			SiteConfig: siteConfig,
 		},
 	}
-
 	if s.config.AppServicePlan != "" {
 		site.Properties.ServerFarmID = ptr(s.config.AppServicePlan)
 	}
 
-	// Create Function App
-	poller, err := s.azure.WebApps.BeginCreateOrUpdate(s.ctx(), s.config.ResourceGroup, funcAppName, site, nil)
+	poller, err := s.azure.WebApps.BeginCreateOrUpdate(ctx, s.config.ResourceGroup, funcAppName, site, nil)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("failed to create Function App")
-		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
+		return AZFState{}, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
-
-	result, err := poller.PollUntilDone(s.ctx(), nil)
+	result, err := poller.PollUntilDone(ctx, nil)
 	if err != nil {
-		// Best-effort: delete potentially-created Function App
-		_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
+		_, _ = s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, funcAppName, nil)
 		s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("Function App creation failed")
-		return nil, azurecommon.MapAzureError(err, "function app", funcAppName)
+		return AZFState{}, azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
-	// Attach named-volume binds to the function site via
-	// sites/<site>/config/azurestorageaccounts. Freshest storage-account
-	// access key is fetched at attach-time.
-	if len(hostConfig.Binds) > 0 {
-		if err := s.attachVolumesToFunctionSite(s.ctx(), funcAppName, hostConfig.Binds); err != nil {
-			_, _ = s.azure.WebApps.Delete(s.ctx(), s.config.ResourceGroup, funcAppName, nil)
+	if len(container.HostConfig.Binds) > 0 {
+		if err := s.attachVolumesToFunctionSite(ctx, funcAppName, container.HostConfig.Binds); err != nil {
+			_, _ = s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, funcAppName, nil)
 			s.Logger.Error().Err(err).Str("functionApp", funcAppName).Msg("failed to attach Azure Files volumes")
-			return nil, &api.ServerError{Message: fmt.Sprintf("attach volumes to function app %q: %v", funcAppName, err)}
+			return AZFState{}, &api.ServerError{Message: fmt.Sprintf("attach volumes to function app %q: %v", funcAppName, err)}
 		}
 	}
 
@@ -330,7 +330,6 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	if result.ID != nil {
 		resourceID = *result.ID
 	}
-
 	s.Registry.Register(core.ResourceEntry{
 		ContainerID:  id,
 		Backend:      "azf",
@@ -346,25 +345,72 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		functionHost = *result.Properties.DefaultHostName
 		functionURL = invokeURLForHost(s.config.EndpointURL, functionHost)
 	}
-
-	s.PendingCreates.Put(id, container)
-
-	s.AZF.Put(id, AZFState{
+	return AZFState{
 		FunctionAppName: funcAppName,
 		ResourceID:      resourceID,
 		FunctionURL:     functionURL,
 		FunctionHost:    functionHost,
-	})
-
-	s.EmitEvent("container", "create", id, map[string]string{
-		"name":  strings.TrimPrefix(name, "/"),
-		"image": config.Image,
-	})
-
-	return &api.ContainerCreateResponse{
-		ID:       id,
-		Warnings: []string{},
 	}, nil
+}
+
+// buildAZFAppSettings builds the Function App app settings for a container:
+// the Functions runtime defaults, the registry, the user env, the
+// ENTRYPOINT/CMD (passed separately to preserve docker semantics), and the
+// reverse-agent callback wiring.
+func (s *Server) buildAZFAppSettings(id string, config api.ContainerConfig) []*armappservice.NameValuePair {
+	envVars := make(map[string]string)
+	for _, e := range config.Env {
+		parts := strings.SplitN(e, "=", 2)
+		if len(parts) == 2 {
+			envVars[parts[0]] = parts[1]
+		}
+	}
+
+	appSettings := []*armappservice.NameValuePair{
+		{Name: ptr("FUNCTIONS_EXTENSION_VERSION"), Value: ptr("~4")},
+		{Name: ptr("WEBSITES_ENABLE_APP_SERVICE_STORAGE"), Value: ptr("false")},
+		{Name: ptr("AzureWebJobsStorage"), Value: ptr(fmt.Sprintf("DefaultEndpointsProtocol=https;AccountName=%s;EndpointSuffix=core.windows.net", s.config.StorageAccount))},
+	}
+
+	if s.config.Registry != "" {
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name: ptr("DOCKER_REGISTRY_SERVER_URL"), Value: ptr(s.config.Registry),
+		})
+	}
+
+	for k, v := range envVars {
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name: ptr(k), Value: ptr(v),
+		})
+	}
+
+	// Pass entrypoint + cmd SEPARATELY so the simulator preserves docker's
+	// ENTRYPOINT/CMD semantics (an image's ENTRYPOINT must still fire when
+	// the user only sets Cmd — flattening would override it).
+	if len(config.Entrypoint) > 0 {
+		epJSON, _ := json.Marshal(config.Entrypoint)
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name:  ptr("SOCKERLESS_ENTRYPOINT"),
+			Value: ptr(base64.StdEncoding.EncodeToString(epJSON)),
+		})
+	}
+	if len(config.Cmd) > 0 {
+		cmdJSON, _ := json.Marshal(config.Cmd)
+		appSettings = append(appSettings, &armappservice.NameValuePair{
+			Name:  ptr("SOCKERLESS_CMD"),
+			Value: ptr(base64.StdEncoding.EncodeToString(cmdJSON)),
+		})
+	}
+
+	// Inject reverse-agent callback URL + container ID so a bootstrap in the
+	// function container can dial back for docker top / exec / cp.
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CONTAINER_ID"), Value: ptr(id),
+	})
+	appSettings = append(appSettings, &armappservice.NameValuePair{
+		Name: ptr("SOCKERLESS_CALLBACK_URL"), Value: ptr(s.config.CallbackURL),
+	})
+	return appSettings
 }
 
 // ContainerStart starts a Function App invocation for the container.
@@ -390,15 +436,40 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
-	// Multi-container pods are not supported by FaaS backends
-	if pod, inPod := s.Store.Pods.GetPodForContainer(id); inPod && len(pod.ContainerIDs) > 1 {
-		return &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the azure-functions backend",
-		}
+	// Docker user-defined network → assemble a multi-container pod as ONE
+	// App Service site whose sitecontainers share a loopback. Pure Docker
+	// signals: network membership + Container.Config.OpenStdin.
+	shouldDefer, members := s.shouldDeferOrMaterializeNetworkPod(c)
+	if shouldDefer {
+		// Service-style sidecar awaiting its pod peer; it deploys as a
+		// sitecontainer when the pod materializes. Report success.
+		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+		return nil
+	}
+	if len(members) > 1 {
+		return s.materializePodSite(members)
 	}
 
-	azfState, _ := s.AZF.Get(id)
+	azfState, ok := s.AZF.Get(id)
+	if !ok || azfState.FunctionURL == "" {
+		// A lone container on a user-defined network deferred its site
+		// creation at ContainerCreate; create it now.
+		var cerr error
+		azfState, cerr = s.createFunctionSite(s.ctx(), id, "skls-"+id[:12], c, s.buildAZFAppSettings(id, c.Config))
+		if cerr != nil {
+			return cerr
+		}
+		s.AZF.Put(id, azfState)
+	}
 
+	return s.invokeFunctionAsync(id, c, azfState)
+}
+
+// invokeFunctionAsync invokes a deployed Function App's HTTP trigger
+// asynchronously and (for non-OpenStdin containers) blocks until the
+// in-function reverse-agent registers. Shared by the single-container start
+// path and the materialized-pod main.
+func (s *Server) invokeFunctionAsync(id string, c api.Container, azfState AZFState) error {
 	// Remove from PendingCreates now that we're starting.
 	s.PendingCreates.Delete(id)
 

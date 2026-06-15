@@ -230,6 +230,7 @@ type HTTPContainerConfig struct {
 	Architecture string            // OS/arch (e.g. "linux/arm64"); workload's spec — never derived from host
 	HostPort     int               // host port to publish container's :8080 to
 	Env          map[string]string // env vars (must include PORT to match the published port-target)
+	Cmd          []string          // command override (empty = image default); honors a sitecontainer startUpCommand
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
 	ExtraHosts   []string          // --add-host entries (e.g. "host.docker.internal:host-gateway")
@@ -277,6 +278,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 	containerCfg := &container.Config{
 		Image:        imageRef,
 		Env:          env,
+		Cmd:          cfg.Cmd,
 		Labels:       labels,
 		ExposedPorts: nat.PortSet{exposedPort: struct{}{}},
 	}

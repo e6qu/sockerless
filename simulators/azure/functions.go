@@ -690,6 +690,7 @@ func registerAzureFunctions(srv *sim.Server) {
 	})
 
 	registerSiteConfigHandlers(srv, armBase, sites)
+	registerSiteContainerHandlers(srv, armBase, sites)
 }
 
 // AzureSiteAppSettings is the canonical StringDictionary wire shape
@@ -979,6 +980,11 @@ func hasAzureFunctionHTTPBootstrap(site *Site) bool {
 	if site == nil || site.Properties.SiteConfig == nil {
 		return false
 	}
+	// A multi-container (sitecontainers) site always runs as a long-lived
+	// main container with its sidecars sharing one network namespace.
+	if mainSiteContainer(site.ID) != nil {
+		return true
+	}
 	imageRef := site.Properties.SiteConfig.LinuxFxVersion
 	if strings.Contains(imageRef, "/sockerless-overlay/") || strings.Contains(imageRef, "|sockerless-overlay/") {
 		return true
@@ -996,7 +1002,23 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 	if site == nil || site.Properties.SiteConfig == nil {
 		return nil, -1, fmt.Errorf("site config is required")
 	}
-	containerImage := siteContainerImage(site)
+
+	// Multi-container (sitecontainers) sites run the IsMain member as the
+	// long-lived HTTP container; the LinuxFxVersion-derived image is the
+	// single-container fallback.
+	main := mainSiteContainer(site.ID)
+	var (
+		containerImage string
+		mainCmd        []string
+		mainEnv        map[string]string
+	)
+	if main != nil {
+		containerImage = main.Properties.Image
+		mainCmd = splitStartUpCommand(main.Properties.StartUpCommand)
+		mainEnv = envVarsMap(main.Properties.EnvironmentVariables)
+	} else {
+		containerImage = siteContainerImage(site)
+	}
 	if containerImage == "" {
 		return nil, -1, fmt.Errorf("site %q has no container image", site.Name)
 	}
@@ -1019,6 +1041,7 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		"WEBSITES_PORT": "8080",
 	}, siteAppSettings(site))
 	env = mergeEnv(env, hostMetadataEnv())
+	env = mergeEnv(env, mainEnv)
 	sink := &funcLogSink{appName: site.Name}
 
 	containerID, err := sim.StartHTTPContainer(ctx, sim.HTTPContainerConfig{
@@ -1026,6 +1049,7 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		Architecture: platform,
 		HostPort:     hostPort,
 		Env:          env,
+		Cmd:          mainCmd,
 		Name:         fmt.Sprintf("sockerless-sim-azure-func-http-%s-%d", site.Name, hostPort),
 		Labels: map[string]string{
 			"sockerless-sim-type": "azure-function-http",
@@ -1042,12 +1066,20 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 	azureFunctionInstances.Lock()
 	azureFunctionInstances.bySite[site.Name] = inst
 	azureFunctionInstances.Unlock()
+
+	// Sidecar sitecontainers share the main's network namespace, so a
+	// sidecar that binds a port is reachable from the main on
+	// localhost:<port> — the App Service multi-container loopback contract.
+	sidecarHandles := startSidecarContainers(site, containerID, sink)
 	defer func() {
 		azureFunctionInstances.Lock()
 		if azureFunctionInstances.bySite[site.Name] == inst {
 			delete(azureFunctionInstances.bySite, site.Name)
 		}
 		azureFunctionInstances.Unlock()
+		for _, h := range sidecarHandles {
+			h.Cancel()
+		}
 		cancelLogs()
 		sim.StopAndRemoveContainer(containerID)
 	}()

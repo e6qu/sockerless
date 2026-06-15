@@ -18,14 +18,19 @@ func (s *Server) PodStart(name string) (*api.PodActionResponse, error) {
 		return nil, &api.NotFoundError{Resource: "pod", ID: name}
 	}
 
-	// Azure Functions is single-invocation: a pod can hold at most one
-	// container. Reject a multi-container pod up front with one clear error
-	// rather than looping and surfacing a buried per-container ContainerStart
-	// rejection (the ContainerStart guard remains the backstop for the
-	// per-container `docker start` path).
+	// A multi-container pod is assembled as ONE App Service site whose
+	// sitecontainers share a network namespace (localhost between members),
+	// the Azure analog of an ECS multi-container task / Cloud Run multi-
+	// container revision.
 	if len(pod.ContainerIDs) > 1 {
-		return nil, &api.InvalidParameterError{
-			Message: "multi-container pods are not supported by the azure-functions backend (single-invocation model); run each container as its own single-container workload",
+		members := s.resolvePodMembers(pod)
+		if len(members) > 1 {
+			if err := s.materializePodSite(members); err != nil {
+				s.Store.Pods.SetStatus(pod.ID, "exited")
+				return &api.PodActionResponse{ID: pod.ID, Errs: []string{err.Error()}}, nil
+			}
+			s.Store.Pods.SetStatus(pod.ID, "running")
+			return &api.PodActionResponse{ID: pod.ID, Errs: []string{}}, nil
 		}
 	}
 

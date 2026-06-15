@@ -169,6 +169,14 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 				continue
 			}
 
+			// A multi-container pod site carries a members manifest: expand it
+			// into one running container per member (cloud is the source of
+			// truth for the whole pod, not just the main).
+			if membersTag := derefTag(site.Tags[podMembersTagKey]); membersTag != "" {
+				containers = append(containers, p.expandPodSite(site, membersTag, seen)...)
+				continue
+			}
+
 			containerID := derefTag(site.Tags["sockerless-container-id"])
 			if containerID == "" || seen[containerID] {
 				continue
@@ -216,6 +224,94 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 	}
 
 	return containers, nil
+}
+
+// expandPodSite reconstructs one api.Container per member of a multi-
+// container pod site from its members manifest. The main carries any
+// recorded invocation outcome (exited); sidecars are reported running while
+// the site exists. AZFState for every member is synced to the site so exec /
+// inspect / wait route to it.
+func (p *azfCloudState) expandPodSite(site *armappservice.Site, membersTag string, seen map[string]bool) []api.Container {
+	members := decodePodMembers(membersTag)
+	if len(members) == 0 {
+		return nil
+	}
+
+	funcAppName := ""
+	if site.Name != nil {
+		funcAppName = *site.Name
+	}
+	resourceID := ""
+	if site.ID != nil {
+		resourceID = *site.ID
+	}
+	functionURL, functionHost := "", ""
+	if site.Properties != nil && site.Properties.DefaultHostName != nil {
+		functionHost = *site.Properties.DefaultHostName
+		functionURL = invokeURLForHost(p.server.config.EndpointURL, functionHost)
+	}
+	state := AZFState{
+		FunctionAppName: funcAppName,
+		ResourceID:      resourceID,
+		FunctionURL:     functionURL,
+		FunctionHost:    functionHost,
+	}
+
+	created := derefTag(site.Tags["sockerless-created-at"])
+	dockerLabels := core.ParseLabelsFromTags(azureTagsToMap(site.Tags))
+	if dockerLabels == nil {
+		dockerLabels = make(map[string]string)
+	}
+
+	var out []api.Container
+	for _, m := range members {
+		if m.ID == "" || seen[m.ID] {
+			continue
+		}
+		seen[m.ID] = true
+		if _, exists := p.server.AZF.Get(m.ID); !exists {
+			p.server.AZF.Put(m.ID, state)
+		}
+
+		name := m.Name
+		if name == "" {
+			name = m.ID[:12]
+		}
+		if !strings.HasPrefix(name, "/") {
+			name = "/" + name
+		}
+		c := api.Container{
+			ID:      m.ID,
+			Name:    name,
+			Created: created,
+			Image:   m.Image,
+			State:   api.ContainerState{Status: "running", Running: true},
+			Config: api.ContainerConfig{
+				Image:  m.Image,
+				Labels: dockerLabels,
+			},
+			HostConfig: api.HostConfig{NetworkMode: "bridge"},
+			NetworkSettings: api.NetworkSettings{
+				Networks: map[string]*api.EndpointSettings{"bridge": {NetworkID: "bridge"}},
+			},
+			Platform: "linux",
+			Driver:   "azure-functions",
+		}
+		// The main carries the recorded invocation outcome.
+		if m.IsMain {
+			if inv, ok := p.server.Store.GetInvocationResult(m.ID); ok {
+				c.State = api.ContainerState{
+					Status:     "exited",
+					Running:    false,
+					ExitCode:   inv.ExitCode,
+					FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+					Error:      inv.Error,
+				}
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // siteToContainer reconstructs an api.Container from Azure Function App tags and properties.

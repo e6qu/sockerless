@@ -4,6 +4,62 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - FaaS multi-container pod assembly (BUG-1781)
+
+Full pod semantics — including localhost / shared-loopback networking between
+members — on the FaaS backends, so GitHub `services:` / sidecar `container:`
+jobs and GitLab service containers run there.
+
+**Investigation: the premise was partly stale.** Verified against code, **lambda
+and gcf already deliver shared-localhost pods**: lambda runs all pod members as
+chroot subprocesses of one supervisor inside a single Lambda execution
+environment (one shared netns → `localhost` works); gcf co-deploys members into
+one multi-container Cloud Run revision and injects `/etc/hosts` alias→127.0.0.1.
+The only backend that still hard-rejected multi-container pods was **azf** — the
+gap this work closes.
+
+**azf assembles the pod as ONE App Service site with `sitecontainers`** — the
+native Azure multi-container primitive (`Microsoft.Web/sites/{name}/sitecontainers`:
+one `isMain` container + N sidecars sharing a network namespace), the Azure
+analog of an ECS multi-container task / Cloud Run multi-container revision.
+Confirmed real across every surface the testing contract requires: the
+`armappservice/v5` SDK (`CreateOrUpdateSiteContainer`/`Get`/`List`/`Delete`),
+the `az webapp sitecontainers` CLI, and the vendored `web-arm-openapi-2025-03-01`
+spec.
+
+- **azure simulator** (`simulators/azure/sitecontainers.go`): models the
+  `sitecontainers` ARM sub-resource (CRUD). `invokeAzureFunctionHTTP` starts the
+  `isMain` member as the long-lived HTTP container, then each sidecar with
+  `NetworkMode: container:<main>` so they share one netns (a sidecar binding a
+  port is reachable from the main on `localhost:<port>`) — mirroring the ACA
+  multi-container path. A `startUpCommand` carries an argv across the
+  string-typed Azure field via shell-quoting (backend) + a quote-aware splitter
+  (sim), so an embedded `sh -c '<script>'` survives. SDK + CLI tests; the
+  shared-localhost guarantee is proven by
+  `TestSDK_AzureFunctions_MultiContainerSharesLocalhost`.
+
+- **azf backend** (`network_pod.go` + `pod_site.go`): the two fail-fast
+  rejections (`PodStart`, `ContainerStart`) are replaced with a network-pod
+  materializer mirroring gcf's `shouldDeferOrMaterializeNetworkPod` (pure Docker
+  signals: user-defined network membership + `Container.Config.OpenStdin`).
+  `materializePodSite` creates one site whose `isMain` sitecontainer runs the
+  reverse-agent overlay (the runner execs into it) and whose sidecars run their
+  **RAW service images** — sidecars must NOT run the overlay, which would bind
+  the main's HTTP port in the shared netns; the pre-overlay image + entrypoint
+  are stashed in a container label at create time. Cloud-state reconstructs
+  every member from a `sockerless-pod-members` site-tag manifest (stateless — no
+  local map). `ContainerCreate` defers site creation for networked containers.
+
+- **azf bootstrap** (`agent/cmd/sockerless-azf-bootstrap`): writes
+  `SOCKERLESS_HOST_ALIASES` to `/etc/hosts` (mirror of gcf's `writeHostAliases`)
+  so a sibling resolves by name to the shared loopback.
+
+Proven end to end: `TestAZFMultiContainerPodSharesLocalhost` runs a
+GitHub-`services:`-shaped pod (job container + a service sidecar) on the azf
+sim — the job reaches the sidecar both on `localhost:9099` AND by alias `svc`
+over the shared netns. Single-container azf paths re-verified green after the
+`ContainerCreate`/`ContainerStart` refactor.
+
 ## 2026-06-15 - Cloud Map completeness: one instance, many DNS names (BUG-1804)
 
 Real AWS Cloud Map registers an instance *per service* (`ServiceId`+`InstanceId`),

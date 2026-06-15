@@ -6,14 +6,15 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleeplab-services` (Arc 3; PR pending). |
-| In-flight | **Full gitlab-runner `services:` support on the bleeplab GitLab ECS cell (BUG-1804 + BUG-1805).** A GitLab `services:` job now stands up a service container (redis) on the per-build pod network and the build container reaches it by alias — `apk add redis` + `redis-cli -h redis` PING/SET/GET all succeed (harness TEST 4). Two fixes: **BUG-1804** Cloud Map now realizes one instance under MULTIPLE DNS names (sim re-attaches the task container with the full set of service names it backs; backend captures `NetworkingConfig` aliases + registers hostname + every alias + enumerate-deregister) — proven by `TestECS_MultiServiceDNS`. **BUG-1805** removed the ECS backend's `/etc/resolv.conf` command-wrapper (it froze per-network DNS to a static snapshot at entrypoint, dropping the namespace network's DNS the runtime adds on connect, and mangled the user's argv); the sim now realizes each service as both `<service>` and `<service>.<namespace>` aliases, so DNS is owned by the runtime and the user command runs verbatim. The bleeplab ECS harness is GREEN across all 4 tests (build → artifact passing → services). |
+| Active branch | `feat/azf-multicontainer-pods` (FaaS pod assembly; PR pending). |
+| In-flight | **FaaS multi-container pod assembly (BUG-1781).** Investigation found **lambda and gcf already deliver** shared-localhost pods (lambda: chroot subprocesses of one supervisor in one execution env → one shared netns; gcf: one multi-container Cloud Run revision + `/etc/hosts` alias→127.0.0.1). The remaining gap was **azf, which hard-rejected multi-container pods** — now fixed by assembling the pod as ONE App Service site with **sitecontainers** (the native Azure multi-container primitive, one `isMain` + N sidecars sharing a netns). The **azure sim** models the `sitecontainers` sub-resource (CRUD) + starts main+sidecars sharing one netns on invoke (SDK+CLI tests; `TestSDK_AzureFunctions_MultiContainerSharesLocalhost`). The **azf backend** replaces the two fail-fast rejections with a network-pod materializer (mirrors gcf's `shouldDeferOrMaterializeNetworkPod`): the site's `isMain` runs the reverse-agent overlay, sidecars run their RAW service images; cloud-state reconstructs members from a site manifest tag (stateless). The **azf bootstrap** writes `SOCKERLESS_HOST_ALIASES` to `/etc/hosts` for by-name resolution. Proven end to end: a GitHub-`services:`-shaped pod (job + service) on the azf sim — the job reaches the sidecar on `localhost:9099` AND by alias `svc` (`TestAZFMultiContainerPodSharesLocalhost`). |
+| Prev merged (#581) | Full gitlab-runner `services:` on the bleeplab GitLab ECS cell (BUG-1804 Cloud Map one-instance-many-DNS-names + BUG-1805 dropped the ECS resolv.conf wrapper). |
 | Prev merged (#580) | bleeplab dashboard UI (GitLab-themed) — completed bleephub parity (git + artifacts + UI). |
 | Prev merged (#579) | bleeplab object-store-backed CI artifacts (cross-stage passing) + BUG-1803 (azf attach stdin-capture race). |
 | Prev merged (#578) | The single-job bleeplab GitLab ECS cell GREEN: **BUG-1801** bleeplab serves each project as a real git repo over smart-HTTP (object-store-backed go-git), `GIT_STRATEGY: clone` materializes `CI_PROJECT_DIR`; **BUG-1802** the ECS backend reconstructs a container's `HostConfig.Binds` from the task def's mount points on restart so gitlab-runner's per-stage helper restarts keep the EFS `/builds` mount. |
 | Last merged | #577 BUG-1800 EFS access-point writability. #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness (BUG-1797, BUG-1799). #574 bleeplab GitLab sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
+| Bugs | See [BUGS.md](BUGS.md) header. 2 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream). |
 | Live infra | None up. |
 
 ## What's next
@@ -21,7 +22,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 Ordered continuation plan (full detail in [PLAN.md](PLAN.md) § Next; resume steps in [DO_NEXT.md](DO_NEXT.md)):
 
 - **A. Arc 3 — GitLab docker-executor parity (in progress).** Phase 1 (the `bleeplab` control-plane sim) is done + real-runner-validated. **Phase 3:** point the runner's `--docker-host` at a sockerless backend; one cloud job end-to-end. **Phase 4:** a `bleeplab-runner-docker-test` harness mirroring the bleephub TEST suite (multi-stage, services, artifacts) across backends.
-- **B. FaaS multi-container pod assembly (BUG-1781).**
+- **B. FaaS multi-container pod assembly (BUG-1781) — DONE** (lambda + gcf already delivered; azf now assembles via App Service sitecontainers). Remaining FaaS pod polish: a shared-workspace volume across pod members and per-sidecar exec routing are follow-on niceties, not blockers.
 - **C. Standing** — live pass (BUG-1075), releases (#363), sim audits.
 
 All four container backends (ECS, ACA, Cloud Run, GCF) are sim-proven for the full GitHub container-job topology; GitLab control plane now exists (bleeplab) and runs jobs with a real gitlab-runner.
