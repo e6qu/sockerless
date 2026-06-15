@@ -4,6 +4,47 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - AZF pod polish (shared volume + per-sidecar exec) + bleeplab artifact UI
+
+Three follow-on enhancements after the BUG-1781 AZF pod assembly shipped.
+
+**AZF pod shared-workspace volume.** A GitHub `services:` / GitLab services job's
+members need a shared workspace. `materializePodSite` now dedups every member's
+translated named-volume binds into one set, attaches each as a site-level Azure
+Files share (`UpdateAzureStorageAccounts`), and declares each member's binds as
+the sitecontainer's `SiteContainerProperties.VolumeMounts`. The azure sim
+realizes a VolumeMount as a per-(site, volume) Docker named volume bound into
+every member (`HTTPContainerConfig.Binds` for the main, `ContainerConfig.Binds`
+for sidecars), so members mounting the same volume share one workspace — the pod
+analog of an ECS task's shared task-level Volumes. The volume persists across
+stages and is torn down when the site is deleted (`cleanupSiteContainers`).
+
+**AZF per-sidecar exec.** Sidecars previously ran their RAW service image with no
+agent, so `docker exec <sidecar>` failed. They now run the overlay in *sidecar
+mode* (`SOCKERLESS_SIDECAR=1`): the bootstrap dials its own reverse-agent (keyed
+to the sidecar's container ID) and execs the service as a long-lived foreground
+subprocess WITHOUT binding the function HTTP port (the main owns it in the shared
+netns). Because `--network container:` shares `/etc/hosts`, the sidecar resolves
+`host.docker.internal` from the main and dials back successfully. So
+`docker exec <sidecar>` now works, mirroring Cloud Run (where every pod member
+registers an agent). A raw image remains the no-overlay fallback (no per-sidecar
+exec). `isAZFOverlaid` detects both on-the-fly and pre-built overlay images.
+
+**bleeplab artifact browse UI.** The GitLab-themed bleeplab dashboard gains an
+Artifacts panel on the JobDetail page: `jobView` now carries `artifact_filename`,
+a new unauthenticated `GET /internal/jobs/{id}/artifact` route streams the
+archive with a `Content-Disposition` filename (the runner-facing
+`/api/v4/jobs/{id}/artifacts` stays JOB-TOKEN gated), and the page shows the
+filename + size with a Download link when the job produced an artifact.
+
+Proven: `TestAZFMultiContainerPodSharesLocalhost` (integration) now also asserts
+a marker file written by the sidecar to the shared `/shared` volume is readable
+by the main, and `docker exec` into the sidecar returns its output;
+`TestArtifactFlow` asserts the internal job view's `artifact_filename` and the
+unauthenticated internal download; the bleeplab UI builds + typechecks + its
+vitest passes. `sidecarRunSpec` / `isAZFOverlaid` / pod-volume helpers carry unit
+tests.
+
 ## 2026-06-15 - FaaS multi-container pod assembly (BUG-1781)
 
 Full pod semantics — including localhost / shared-loopback networking between

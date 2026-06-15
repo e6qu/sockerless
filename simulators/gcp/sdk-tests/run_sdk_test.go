@@ -229,14 +229,13 @@ func TestSDK_CloudRun_GetExecution(t *testing.T) {
 	exec, err := runOp.Wait(ctx)
 	require.NoError(t, err)
 
-	// Wait for completion
-	time.Sleep(2 * time.Second)
-
-	// Get execution via SDK
-	gotExec, err := execClient.GetExecution(ctx, &runpb.GetExecutionRequest{
-		Name: exec.Name,
-	})
-	require.NoError(t, err)
+	// runOp.Wait returns when the execution STARTS; poll GetExecution until it
+	// completes (CompletionTime set) — a fixed sleep races a loaded runner.
+	var gotExec *runpb.Execution
+	require.Eventually(t, func() bool {
+		gotExec, err = execClient.GetExecution(ctx, &runpb.GetExecutionRequest{Name: exec.Name})
+		return err == nil && gotExec.CompletionTime != nil
+	}, 60*time.Second, 200*time.Millisecond)
 
 	assert.Equal(t, exec.Name, gotExec.Name)
 	assert.Equal(t, int32(1), gotExec.SucceededCount)

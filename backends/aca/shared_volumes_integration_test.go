@@ -3,6 +3,7 @@
 package aca
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // startBackendWithEnv spawns an additional sockerless-backend-aca
@@ -101,10 +103,10 @@ func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds [
 		if result.StatusCode != 0 {
 			out := ""
 			if logRC, lerr := cli.ContainerLogs(ctx, resp.ID, container.LogsOptions{ShowStdout: true, ShowStderr: true}); lerr == nil {
-				buf := make([]byte, 8192)
-				n, _ := logRC.Read(buf)
+				var b bytes.Buffer
+				_, _ = stdcopy.StdCopy(&b, &b, logRC)
 				logRC.Close()
-				out = string(buf[:n])
+				out = b.String()
 			}
 			t.Fatalf("container %s exited with %d, want 0; logs:\n%s", name, result.StatusCode, out)
 		}
@@ -118,9 +120,12 @@ func sharedVolRun(t *testing.T, cli *client.Client, name, script string, binds [
 		t.Fatalf("logs (%s) failed: %v", name, err)
 	}
 	defer logRC.Close()
-	logBuf := make([]byte, 8192)
-	n, _ := logRC.Read(logBuf)
-	return string(logBuf[:n])
+	// Read the FULL demuxed log stream: a single Read() can return only the
+	// sim's first "Container started" frame and miss the script's output in a
+	// later frame (CI-flaky), which read as "workspace not shared".
+	var out bytes.Buffer
+	_, _ = stdcopy.StdCopy(&out, &out, logRC)
+	return out.String()
 }
 
 // TestACASharedVolumeWorkspaceSharing proves the runner-workspace

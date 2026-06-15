@@ -157,6 +157,27 @@ func envVarsMap(vars []SiteContainerEnvVar) map[string]string {
 	return m
 }
 
+// siteContainerVolumeBinds realizes a sitecontainer's VolumeMounts as Docker
+// bind specs against a per-(site, volume) named volume. Pod members of the
+// same site that mount the same VolumeSubPath share one Docker volume — the
+// shared workspace, the sim's realization of the site-level Azure Files share
+// every sitecontainer references.
+func siteContainerVolumeBinds(siteName string, mounts []SiteContainerVolMount) []string {
+	var binds []string
+	for _, vm := range mounts {
+		if vm.VolumeSubPath == "" || vm.ContainerMountPath == "" {
+			continue
+		}
+		vol := fmt.Sprintf("skls-azf-%s-%s", siteName, vm.VolumeSubPath)
+		spec := vol + ":" + vm.ContainerMountPath
+		if vm.ReadOnly {
+			spec += ":ro"
+		}
+		binds = append(binds, spec)
+	}
+	return binds
+}
+
 // startSidecarContainers launches every non-main sitecontainer of a site so
 // it shares the main container's network namespace (NetworkMode
 // container:<mainID>). A sidecar that binds localhost:<port> is then
@@ -181,6 +202,7 @@ func startSidecarContainers(site *Site, mainContainerID string, sink sim.LogSink
 			Architecture: platform,
 			Args:         splitStartUpCommand(sc.Properties.StartUpCommand),
 			Env:          mergeEnv(envVarsMap(sc.Properties.EnvironmentVariables), hostMetadataEnv()),
+			Binds:        siteContainerVolumeBinds(site.Name, sc.Properties.VolumeMounts),
 			Name:         fmt.Sprintf("sockerless-sim-azure-func-sidecar-%s-%s-%d", site.Name, sc.Name, time.Now().UnixNano()),
 			Labels: map[string]string{
 				"sockerless-sim-type":           "azure-function-sidecar",
@@ -194,6 +216,30 @@ func startSidecarContainers(site *Site, mainContainerID string, sink sim.LogSink
 		handles = append(handles, handle)
 	}
 	return handles
+}
+
+// cleanupSiteContainers removes a deleted site's sitecontainers from the
+// store and best-effort removes the shared Docker volumes their VolumeMounts
+// realized (the pod workspace persists across stages, so it's torn down only
+// when the site is deleted).
+func cleanupSiteContainers(siteID, siteName string) {
+	if azfSiteContainers == nil {
+		return
+	}
+	vols := map[string]bool{}
+	for _, sc := range siteContainersFor(siteID) {
+		for _, vm := range sc.Properties.VolumeMounts {
+			if vm.VolumeSubPath != "" {
+				vols[fmt.Sprintf("skls-azf-%s-%s", siteName, vm.VolumeSubPath)] = true
+			}
+		}
+		azfSiteContainers.Delete(sc.ID)
+	}
+	if cli := sim.DockerClient(); cli != nil {
+		for v := range vols {
+			_ = cli.VolumeRemove(context.Background(), v, true)
+		}
+	}
 }
 
 func registerSiteContainerHandlers(srv *sim.Server, armBase string, sites sim.Store[Site]) {

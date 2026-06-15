@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -72,6 +73,30 @@ func TestArtifactFlow(t *testing.T) {
 	got := downloadArtifact(t, ts, build.ID, dep.Token)
 	if !bytes.Equal(got, archive) {
 		t.Fatalf("downloaded artifact mismatch: got %q want %q", got, archive)
+	}
+
+	// The UI's internal job view surfaces the artifact filename + size.
+	_, jbody := do(t, ts, http.MethodGet, "/internal/jobs/"+strconv.Itoa(build.ID), nil, nil)
+	var jv struct {
+		ArtifactSize     int64  `json:"artifact_size"`
+		ArtifactFilename string `json:"artifact_filename"`
+	}
+	mustJSON(t, jbody, &jv)
+	if jv.ArtifactSize != int64(len(archive)) || jv.ArtifactFilename == "" {
+		t.Fatalf("internal job view artifact: size=%d filename=%q", jv.ArtifactSize, jv.ArtifactFilename)
+	}
+
+	// The UI's unauthenticated internal download returns the archive with the
+	// recorded filename in Content-Disposition (no JOB-TOKEN needed).
+	resp, dbody := do(t, ts, http.MethodGet, "/internal/jobs/"+strconv.Itoa(build.ID)+"/artifact", nil, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("internal artifact download: status %d", resp.StatusCode)
+	}
+	if !bytes.Equal(dbody, archive) {
+		t.Fatalf("internal artifact download mismatch: got %q want %q", dbody, archive)
+	}
+	if cd := resp.Header.Get("Content-Disposition"); !strings.Contains(cd, jv.ArtifactFilename) {
+		t.Fatalf("Content-Disposition %q missing filename %q", cd, jv.ArtifactFilename)
 	}
 }
 

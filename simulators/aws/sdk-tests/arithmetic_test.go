@@ -224,19 +224,24 @@ func TestECS_TaskArithmeticLogs(t *testing.T) {
 		},
 	})
 
-	time.Sleep(2 * time.Second)
-
+	// Poll CloudWatch until the task has run and its logs are ingested (both
+	// async in the sim) — a fixed sleep races a loaded runner.
 	cw := cwLogsClient()
-	logEvents, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
-		LogGroupName: aws.String("/ecs/arith-ecs-logs"),
-	})
-	require.NoError(t, err)
-
-	var messages []string
-	for _, e := range logEvents.Events {
-		messages = append(messages, *e.Message)
-	}
-	allLogs := strings.Join(messages, "\n")
+	var allLogs string
+	require.Eventually(t, func() bool {
+		out, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+			LogGroupName: aws.String("/ecs/arith-ecs-logs"),
+		})
+		if err != nil {
+			return false
+		}
+		var messages []string
+		for _, e := range out.Events {
+			messages = append(messages, *e.Message)
+		}
+		allLogs = strings.Join(messages, "\n")
+		return strings.Contains(allLogs, "3.333") && strings.Contains(allLogs, "Parsing expression:")
+	}, 60*time.Second, 250*time.Millisecond)
 	assert.Contains(t, allLogs, "3.333", "expected result '3.333...' in CloudWatch logs")
 	assert.Contains(t, allLogs, "Parsing expression:", "expected parsing log in CloudWatch")
 }

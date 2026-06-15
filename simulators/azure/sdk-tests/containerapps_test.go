@@ -114,12 +114,14 @@ func TestContainerApps_StartJobInjectsLogs(t *testing.T) {
 	startResp.Body.Close()
 	require.Equal(t, http.StatusAccepted, startResp.StatusCode)
 
-	// Wait for auto-completion (1s timeout + buffer)
-	time.Sleep(2 * time.Second)
-
-	// Query logs via KQL
+	// Poll until both the start + completion log entries are ingested (async
+	// in the sim) — a fixed sleep races a loaded runner.
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "log-test-job"`
-	result := queryWorkspace(t, "default", kql)
+	var result queryResponse
+	require.Eventually(t, func() bool {
+		result = queryWorkspace(t, "default", kql)
+		return len(result.Tables) == 1 && len(result.Tables[0].Rows) >= 2
+	}, 60*time.Second, 200*time.Millisecond)
 
 	require.Len(t, result.Tables, 1)
 	table := result.Tables[0]
@@ -272,6 +274,24 @@ func acaStartExecution(t *testing.T, rg, jobName string) string {
 }
 
 // acaGetExecution returns the execution status.
+// acaWaitExecution polls acaGetExecution until the execution reaches a
+// terminal state (endTime set). The sim runs the job asynchronously, so a
+// fixed sleep races a loaded CI runner.
+func acaWaitExecution(t *testing.T, rg, jobName, execName string) map[string]any {
+	t.Helper()
+	var exec map[string]any
+	require.Eventually(t, func() bool {
+		exec = acaGetExecution(t, rg, jobName, execName)
+		props, _ := exec["properties"].(map[string]any)
+		if props == nil {
+			return false
+		}
+		et, _ := props["endTime"].(string)
+		return et != ""
+	}, 60*time.Second, 200*time.Millisecond)
+	return exec
+}
+
 func acaGetExecution(t *testing.T, rg, jobName, execName string) map[string]any {
 	t.Helper()
 	req, _ := http.NewRequestWithContext(ctx, "GET",
@@ -304,10 +324,7 @@ func TestContainerApps_ExecutionSucceededState(t *testing.T) {
 	acaCreateJob(t, "status-rg", "succeed-job")
 	execName := acaStartExecution(t, "status-rg", "succeed-job")
 
-	// Wait for auto-completion (1s timeout + buffer)
-	time.Sleep(2 * time.Second)
-
-	exec := acaGetExecution(t, "status-rg", "succeed-job", execName)
+	exec := acaWaitExecution(t, "status-rg", "succeed-job", execName)
 	props := exec["properties"].(map[string]any)
 	assert.Equal(t, "Succeeded", props["status"])
 	assert.NotEmpty(t, props["endTime"])
@@ -387,10 +404,7 @@ func TestContainerApps_ExecutionRunsCommand(t *testing.T) {
 	acaCreateJobWithCommand(t, "exec-rg", "exec-cmd-job", []string{"echo", "hello"})
 	execName := acaStartExecution(t, "exec-rg", "exec-cmd-job")
 
-	// Wait for process to complete
-	time.Sleep(2 * time.Second)
-
-	exec := acaGetExecution(t, "exec-rg", "exec-cmd-job", execName)
+	exec := acaWaitExecution(t, "exec-rg", "exec-cmd-job", execName)
 	props := exec["properties"].(map[string]any)
 	assert.Equal(t, "Succeeded", props["status"])
 	assert.NotEmpty(t, props["endTime"])
@@ -400,10 +414,7 @@ func TestContainerApps_ExecutionFailedStatus(t *testing.T) {
 	acaCreateJobWithCommand(t, "exec-rg", "exec-fail-job", []string{"sh", "-c", "exit 1"})
 	execName := acaStartExecution(t, "exec-rg", "exec-fail-job")
 
-	// Wait for process to complete
-	time.Sleep(2 * time.Second)
-
-	exec := acaGetExecution(t, "exec-rg", "exec-fail-job", execName)
+	exec := acaWaitExecution(t, "exec-rg", "exec-fail-job", execName)
 	props := exec["properties"].(map[string]any)
 	assert.Equal(t, "Failed", props["status"])
 	assert.NotEmpty(t, props["endTime"])
@@ -413,12 +424,24 @@ func TestContainerApps_ExecutionLogsRealOutput(t *testing.T) {
 	acaCreateJobWithCommand(t, "exec-rg", "exec-log-job", []string{"echo", "real aca output"})
 	_ = acaStartExecution(t, "exec-rg", "exec-log-job")
 
-	// Wait for process to complete and logs to be written
-	time.Sleep(2 * time.Second)
-
-	// Query logs via KQL
+	// Poll until the process has run and its stdout is ingested (async in the
+	// sim) — a fixed sleep races a loaded runner.
 	kql := `ContainerAppConsoleLogs_CL | where ContainerGroupName_s == "exec-log-job"`
-	result := queryWorkspace(t, "default", kql)
+	var result queryResponse
+	require.Eventually(t, func() bool {
+		result = queryWorkspace(t, "default", kql)
+		if len(result.Tables) != 1 {
+			return false
+		}
+		for _, row := range result.Tables[0].Rows {
+			for _, cell := range row {
+				if s, ok := cell.(string); ok && s == "real aca output" {
+					return true
+				}
+			}
+		}
+		return false
+	}, 60*time.Second, 200*time.Millisecond)
 
 	require.Len(t, result.Tables, 1)
 	table := result.Tables[0]
@@ -554,31 +577,31 @@ func TestSDK_ContainerApps_StartAndListExecutions(t *testing.T) {
 	execName := *execResp.Name
 	assert.NotEmpty(t, execName)
 
-	// Wait for execution to finish
-	time.Sleep(3 * time.Second)
-
-	// List executions
+	// Poll the executions list until the execution appears in a terminal
+	// (Succeeded) state — completion is async in the sim, so a fixed sleep
+	// races a loaded runner.
 	execClient, err := armappcontainers.NewJobsExecutionsClient(subscriptionID, cred, clientOpts())
 	require.NoError(t, err)
 
-	pager := execClient.NewListPager(rg, "sdk-exec-job", nil)
-	var executions []*armappcontainers.JobExecution
-	for pager.More() {
-		page, err := pager.NextPage(ctx)
-		require.NoError(t, err)
-		executions = append(executions, page.Value...)
-	}
-
-	require.GreaterOrEqual(t, len(executions), 1)
 	found := false
-	for _, e := range executions {
-		if *e.Name == execName {
-			found = true
-			require.NotNil(t, e.Properties)
-			assert.Equal(t, "Succeeded", string(*e.Properties.Status))
+	require.Eventually(t, func() bool {
+		pager := execClient.NewListPager(rg, "sdk-exec-job", nil)
+		for pager.More() {
+			page, perr := pager.NextPage(ctx)
+			if perr != nil {
+				return false
+			}
+			for _, e := range page.Value {
+				if e.Name != nil && *e.Name == execName && e.Properties != nil &&
+					e.Properties.Status != nil && string(*e.Properties.Status) == "Succeeded" {
+					found = true
+					return true
+				}
+			}
 		}
-	}
-	assert.True(t, found, "expected to find execution %s in list", execName)
+		return false
+	}, 60*time.Second, 200*time.Millisecond)
+	assert.True(t, found, "expected to find execution %s as Succeeded in list", execName)
 }
 
 func TestSDK_ContainerApps_ListByResourceGroup(t *testing.T) {

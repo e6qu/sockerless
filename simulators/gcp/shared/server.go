@@ -181,11 +181,15 @@ func (s *Server) Logger() zerolog.Logger {
 // It listens for SIGTERM and SIGINT for graceful shutdown.
 func (s *Server) ListenAndServe() error {
 	srv := &http.Server{
-		Addr:         s.config.ListenAddr,
-		Handler:      s.handler,
-		ReadTimeout:  30 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:    s.config.ListenAddr,
+		Handler: s.handler,
+		// Bound only the header read (slowloris protection). A fixed
+		// ReadTimeout/WriteTimeout caps the WHOLE body, which cuts off large
+		// image-layer / build-context uploads + downloads under load —
+		// surfacing as a "failed to read data: i/o timeout" 500 on a slow
+		// GCS/OCI transfer on a loaded CI runner.
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 
 	// Graceful shutdown

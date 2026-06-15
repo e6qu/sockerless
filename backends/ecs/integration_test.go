@@ -3,6 +3,7 @@
 package ecs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 var dockerClient *client.Client
@@ -327,9 +329,11 @@ func TestECSContainerLogs(t *testing.T) {
 	}
 	defer logRC.Close()
 
-	logBuf := make([]byte, 4096)
-	n, _ := logRC.Read(logBuf)
-	logOutput := string(logBuf[:n])
+	// Read the FULL demuxed stream: a single Read() can return only the first
+	// multiplexed frame and miss the payload in a later frame (CI-flaky).
+	var logBuf bytes.Buffer
+	_, _ = stdcopy.StdCopy(&logBuf, &logBuf, logRC)
+	logOutput := logBuf.String()
 	if !strings.Contains(logOutput, "log-test-output") {
 		t.Errorf("expected logs to contain 'log-test-output', got %q", logOutput)
 	}

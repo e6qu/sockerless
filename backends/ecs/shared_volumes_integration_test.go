@@ -3,6 +3,7 @@
 package ecs
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/volume"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
 
 // startBackendWithEnv spawns an additional sockerless-backend-ecs
@@ -95,9 +97,12 @@ func runToCompletion(t *testing.T, cli *client.Client, name string, cmd []string
 		t.Fatalf("logs (%s) failed: %v", name, err)
 	}
 	defer logRC.Close()
-	logBuf := make([]byte, 8192)
-	n, _ := logRC.Read(logBuf)
-	return string(logBuf[:n])
+	// Read the FULL demuxed stream: a single Read() can return only the sim's
+	// first frame and miss the script's output in a later frame (CI-flaky),
+	// which read as a shared-workspace failure even when the volume was shared.
+	var out bytes.Buffer
+	_, _ = stdcopy.StdCopy(&out, &out, logRC)
+	return out.String()
 }
 
 // TestECSSharedVolumeWorkspaceSharing proves the runner-workspace

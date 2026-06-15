@@ -74,7 +74,7 @@ func (s *Server) materializePodSite(members []api.Container) error {
 		manifest = append(manifest, podMember{
 			ID:     m.ID,
 			Name:   strings.TrimPrefix(m.Name, "/"),
-			Image:  podMemberImage(m, i == 0),
+			Image:  podMemberDisplayImage(m),
 			IsMain: i == 0,
 		})
 	}
@@ -110,18 +110,29 @@ func (s *Server) materializePodSite(members []api.Container) error {
 		return azurecommon.MapAzureError(err, "function app", funcAppName)
 	}
 
+	// Attach each named volume any member mounts to the site once (site-level
+	// Azure Files shares), so the sitecontainers' VolumeMounts share one
+	// workspace — the pod analog of an ECS task's shared task-level Volumes.
+	if siteBinds := dedupePodVolumes(members); len(siteBinds) > 0 {
+		if err := s.attachVolumesToFunctionSite(ctx, funcAppName, siteBinds); err != nil {
+			_, _ = s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, funcAppName, nil)
+			return err
+		}
+	}
+
 	// Attach the main container as the IsMain sitecontainer (the overlay
 	// image), then each sidecar as a non-main sitecontainer (its raw service
 	// image — sidecars are reached over the shared loopback, so they must
 	// NOT run the reverse-agent overlay which would bind the same HTTP port).
-	if err := s.putSiteContainer(ctx, funcAppName, "main", main.Config.Image, true, nil, main.Config.Env); err != nil {
+	// Each member declares its binds as VolumeMounts on the shared site share.
+	if err := s.putSiteContainer(ctx, funcAppName, "main", main.Config.Image, true, nil, main.Config.Env, main.HostConfig.Binds); err != nil {
 		_, _ = s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, funcAppName, nil)
 		return err
 	}
 	for i, m := range members[1:] {
 		scName := sanitizeSiteContainerName(m.Name, i+1)
-		startUp := podMemberStartupCommand(m)
-		if err := s.putSiteContainer(ctx, funcAppName, scName, podMemberImage(m, false), false, startUp, m.Config.Env); err != nil {
+		image, startUp, env := s.sidecarRunSpec(m)
+		if err := s.putSiteContainer(ctx, funcAppName, scName, image, false, startUp, env, m.HostConfig.Binds); err != nil {
 			_, _ = s.azure.WebApps.Delete(ctx, s.config.ResourceGroup, funcAppName, nil)
 			return err
 		}
@@ -196,7 +207,10 @@ func (s *Server) resolvePodMembers(pod *core.PodContext) []api.Container {
 }
 
 // putSiteContainer creates/updates one sitecontainer on a Function App site.
-func (s *Server) putSiteContainer(ctx context.Context, funcAppName, name, image string, isMain bool, startUpCommand []string, env []string) error {
+// binds are the member's translated `volName:/mnt[:ro]` specs, declared as
+// the sitecontainer's VolumeMounts so it mounts the site-level Azure Files
+// share — pod members mounting the same volume get a shared workspace.
+func (s *Server) putSiteContainer(ctx context.Context, funcAppName, name, image string, isMain bool, startUpCommand []string, env, binds []string) error {
 	mainFlag := isMain
 	props := &armappservice.SiteContainerProperties{
 		Image:  ptr(image),
@@ -214,6 +228,18 @@ func (s *Server) putSiteContainer(ctx context.Context, funcAppName, name, image 
 			Name: ptr(kv[0]), Value: ptr(kv[1]),
 		})
 	}
+	for _, b := range binds {
+		volName, mountPath, ro, ok := parseBind(b)
+		if !ok {
+			continue
+		}
+		roFlag := ro
+		props.VolumeMounts = append(props.VolumeMounts, &armappservice.VolumeMount{
+			VolumeSubPath:      ptr(volName),
+			ContainerMountPath: ptr(mountPath),
+			ReadOnly:           &roFlag,
+		})
+	}
 	_, err := s.azure.WebApps.CreateOrUpdateSiteContainer(ctx, s.config.ResourceGroup, funcAppName, name,
 		armappservice.SiteContainer{Properties: props}, nil)
 	if err != nil {
@@ -222,24 +248,82 @@ func (s *Server) putSiteContainer(ctx context.Context, funcAppName, name, image 
 	return nil
 }
 
-// podMemberImage returns the image a pod member should run as a
-// sitecontainer. The main runs the overlay (config.Image) so it serves the
-// reverse-agent. A sidecar runs its RAW service image — recovered from the
-// base-image label the backend stashed before overlaying — so it isn't
-// wrapped in the bootstrap (which would bind the main's HTTP port).
-func podMemberImage(c api.Container, isMain bool) string {
-	if isMain {
-		return c.Config.Image
+// parseBind splits a translated `volName:/mnt[:ro]` bind spec.
+func parseBind(b string) (volName, mountPath string, ro bool, ok bool) {
+	parts := strings.SplitN(b, ":", 3)
+	if len(parts) < 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false, false
 	}
+	return parts[0], parts[1], len(parts) == 3 && parts[2] == "ro", true
+}
+
+// dedupePodVolumes collects every member's translated binds into one set of
+// site-level `volName:/mnt[:ro]` specs (one per volume name), so a single
+// `UpdateAzureStorageAccounts` attaches each Azure Files share to the site
+// that all sitecontainers then mount.
+func dedupePodVolumes(members []api.Container) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, m := range members {
+		for _, b := range m.HostConfig.Binds {
+			volName, _, _, ok := parseBind(b)
+			if !ok || seen[volName] {
+				continue
+			}
+			seen[volName] = true
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// podMemberDisplayImage returns the ORIGINAL image a member was created with
+// (the pre-overlay base) for `docker ps` / cloud-state — the user sees
+// `redis:7-alpine`, not the sockerless overlay that actually runs.
+func podMemberDisplayImage(c api.Container) string {
 	if base := c.Config.Labels[labelBaseImage]; base != "" {
 		return base
 	}
 	return c.Config.Image
 }
 
-// podMemberStartupCommand recovers a sidecar's original entrypoint+cmd
-// (stashed before overlay) so the raw service image runs the right process.
-func podMemberStartupCommand(c api.Container) []string {
+// sidecarRunSpec returns the (image, startUpCommand, env) a sidecar
+// sitecontainer runs with. When an overlay was built (the common case), the
+// sidecar runs the overlay in SIDECAR mode: the bootstrap dials the
+// reverse-agent (so `docker exec <sidecar>` works, mirroring Cloud Run) and
+// execs the service's baked entrypoint/cmd — it does NOT bind the function
+// HTTP port (the main owns it in the shared netns). When no overlay is
+// available, it falls back to running the raw image with the original argv
+// as the startUpCommand (no per-sidecar exec).
+func (s *Server) sidecarRunSpec(m api.Container) (image string, startUp, env []string) {
+	env = append([]string{}, m.Config.Env...)
+	if isAZFOverlaid(m) {
+		env = append(env,
+			envSidecarFlag,
+			"SOCKERLESS_CONTAINER_ID="+m.ID,
+			"SOCKERLESS_CALLBACK_URL="+s.config.CallbackURL,
+		)
+		return m.Config.Image, nil, env
+	}
+	return m.Config.Image, podMemberRawArgv(m), env
+}
+
+// isAZFOverlaid reports whether a container runs the sockerless overlay
+// bootstrap — either because an overlay was built on the fly (run image
+// differs from the stashed base) or because the image is already an overlay
+// repo (pre-built). Only overlaid sidecars can run in sidecar mode + register
+// a reverse-agent.
+func isAZFOverlaid(c api.Container) bool {
+	base := c.Config.Labels[labelBaseImage]
+	if base != "" && c.Config.Image != base {
+		return true
+	}
+	return hasAZFOverlayRepo(c.Config.Image)
+}
+
+// podMemberRawArgv recovers a member's original entrypoint+cmd (stashed
+// before overlay), used as the startUpCommand when running a raw image.
+func podMemberRawArgv(c api.Container) []string {
 	var argv []string
 	if ep := decodeStrSliceLabel(c.Config.Labels[labelBaseEntrypoint]); len(ep) > 0 {
 		argv = append(argv, ep...)
@@ -249,6 +333,10 @@ func podMemberStartupCommand(c api.Container) []string {
 	}
 	return argv
 }
+
+// envSidecarFlag marks a sitecontainer as a pod sidecar so its bootstrap runs
+// in sidecar mode (service subprocess + reverse-agent, no HTTP listen).
+const envSidecarFlag = "SOCKERLESS_SIDECAR=1"
 
 // sanitizeSiteContainerName derives a valid sitecontainer name from a
 // container name, falling back to an index-based name.

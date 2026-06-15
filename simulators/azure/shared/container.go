@@ -231,6 +231,7 @@ type HTTPContainerConfig struct {
 	HostPort     int               // host port to publish container's :8080 to
 	Env          map[string]string // env vars (must include PORT to match the published port-target)
 	Cmd          []string          // command override (empty = image default); honors a sitecontainer startUpCommand
+	Binds        []string          // bind/volume mounts (e.g. "vol:/path"); shared site volumes across pod members
 	Name         string            // container name (optional, auto-generated if empty)
 	Labels       map[string]string // container labels for tracking
 	ExtraHosts   []string          // --add-host entries (e.g. "host.docker.internal:host-gateway")
@@ -287,6 +288,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
 		ExtraHosts: cfg.ExtraHosts,
+		Binds:      cfg.Binds,
 	}
 	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
 		return "", fmt.Errorf("sandbox enforce: %w", err)

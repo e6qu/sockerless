@@ -43,25 +43,29 @@ func TestContainerApps_CLI_ArithmeticEval(t *testing.T) {
 	parseJSON(t, out, &startResult)
 	require.NotEmpty(t, startResult.Name)
 
-	// Wait for execution to complete
-	time.Sleep(3 * time.Second)
-
-	// GET execution status
+	// Poll until the execution completes (async in the sim) — a fixed sleep
+	// races a loaded runner.
 	execURL := armURL("Microsoft.App", "jobs/"+jobName+"/executions/"+startResult.Name, acaAPIVersion)
-	out = runCLI(t, azRest("GET", execURL, ""))
-
 	var execResult struct {
 		Properties struct {
 			Status string `json:"status"`
 		} `json:"properties"`
 	}
-	parseJSON(t, out, &execResult)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, azRest("GET", execURL, ""))
+		parseJSON(t, out, &execResult)
+		s := execResult.Properties.Status
+		return s == "Succeeded" || s == "Failed"
+	}, 60*time.Second, 300*time.Millisecond)
 	assert.Equal(t, "Succeeded", execResult.Properties.Status)
 
-	// Query Log Analytics for the output
+	// Poll Log Analytics until the output is ingested.
 	queryURL := baseURL + "/v1/workspaces/default/query"
 	kqlBody := `{"query": "ContainerAppConsoleLogs_CL | where ContainerGroupName_s == \"` + jobName + `\""}`
-	out = runCLI(t, azRest("POST", queryURL, kqlBody))
+	require.Eventually(t, func() bool {
+		out = runCLI(t, azRest("POST", queryURL, kqlBody))
+		return strings.Contains(out, "14")
+	}, 60*time.Second, 300*time.Millisecond)
 	assert.Contains(t, out, "14", "expected '14' in Log Analytics")
 
 	// Cleanup
@@ -101,19 +105,19 @@ func TestContainerApps_CLI_ArithmeticInvalid(t *testing.T) {
 	parseJSON(t, out, &startResult)
 	require.NotEmpty(t, startResult.Name)
 
-	// Wait for execution to complete
-	time.Sleep(3 * time.Second)
-
-	// GET execution status — should be Failed
+	// Poll until the execution reaches a terminal status (async in the sim).
 	execURL := armURL("Microsoft.App", "jobs/"+jobName+"/executions/"+startResult.Name, acaAPIVersion)
-	out = runCLI(t, azRest("GET", execURL, ""))
-
 	var execResult struct {
 		Properties struct {
 			Status string `json:"status"`
 		} `json:"properties"`
 	}
-	parseJSON(t, out, &execResult)
+	require.Eventually(t, func() bool {
+		out = runCLI(t, azRest("GET", execURL, ""))
+		parseJSON(t, out, &execResult)
+		s := execResult.Properties.Status
+		return s == "Succeeded" || s == "Failed"
+	}, 60*time.Second, 300*time.Millisecond)
 	assert.True(t, strings.Contains(execResult.Properties.Status, "Failed"),
 		"expected status to be Failed, got: %s", execResult.Properties.Status)
 
