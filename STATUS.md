@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/ecs-gitlab-attach-stdin-1798` (Arc 3 Phase 3; PR pending). |
-| In-flight | **Arc 3 Phase 3 advancing: BUG-1798 fixed — the bleeplab GitLab ECS attach-stdin gate is closed.** The ECS attach-stdin deferral had a dependency inversion (the attach driver created the stdin pipe only after a barrier that waited for `/start`, but `/start`'s deferral needed the pipe first); fixed by creating+opening the pipe before the barrier and having `/start` wait briefly for it. The harness now runs the gitlab-runner helper stages and delivers the step script into the build container — the hang is gone. **Next gate — BUG-1800:** the build job's `mkdir /builds/...` is `Permission denied` because the aws sim materializes EFS access-point dirs with default `0755 root` perms instead of applying the access point's `CreationInfo` (`0777`, uid/gid 1000); sim-side fix. (BUG-1797 arch-aware image pull + BUG-1799 flake fix merged in #575; Phase 1 sim in #574.) |
-| Last merged | #575 bleeplab ECS harness + arch-aware image pull (BUG-1797, BUG-1799). #574 bleeplab GitLab control-plane sim. #573 GCF cell GREEN (BUG-1795) + exec observability (BUG-1796). |
+| Active branch | `feat/sim-efs-access-point-creationinfo-1800` (Arc 3 Phase 3; PR pending). |
+| In-flight | **Arc 3 Phase 3 advancing: BUG-1800 fixed — the bleeplab GitLab ECS `/builds` write gate is closed** (BUG-1798 attach-stdin was merged in #576). Two sim-side EFS fixes: the access-point host dir now applies `CreationInfo` (it was `0755 root` from a umask-masked MkdirAll; now `0777 1000:1000`), and the sim mounts task EFS binds with the SELinux `z` (shared relabel) option so the confined `container_t` workload can write on local podman machines (no-op on CI). Validated: the build `step_script` now writes to `/builds`. **Next gate — BUG-1801:** the gitlab-runner `/builds` volume doesn't persist across the per-stage Fargate tasks (`cd /builds/project-1` → No such file or directory) — the same docker volume resolves to a different EFS access point per task; needs the backend's `AccessPointForVolume` to be idempotent by volume name. |
+| Last merged | #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness + arch-aware image pull (BUG-1797, BUG-1799). #574 bleeplab GitLab control-plane sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1800 (aws sim EFS access-point CreationInfo — the next bleeplab ECS gate). |
+| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1801 (gitlab `/builds` volume not shared across ECS stage tasks — the next bleeplab ECS gate). |
 | Live infra | None up. |
 
 ## What's next

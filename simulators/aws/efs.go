@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -28,7 +29,17 @@ func efsHostRoot() string {
 // callers. Exported for use by the ECS task runner.
 func EFSFileSystemHostDir(fsID string) string {
 	dir := filepath.Join(efsHostRoot(), fsID)
+	created := false
+	if _, err := os.Stat(dir); err != nil {
+		created = true
+	}
 	_ = os.MkdirAll(dir, 0o777)
+	if created {
+		// MkdirAll's mode is masked by the umask; chmod (which isn't) so a
+		// directly-mounted filesystem (an EFS volume without an access point)
+		// is writable by a non-root / uid-mapped workload.
+		_ = os.Chmod(dir, 0o777)
+	}
 	return dir
 }
 
@@ -44,8 +55,44 @@ func EFSAccessPointHostDir(apID string) string {
 	if ap.RootDirectory != nil && ap.RootDirectory.Path != "" {
 		root = filepath.Join(root, strings.TrimPrefix(ap.RootDirectory.Path, "/"))
 	}
-	_ = os.MkdirAll(root, 0o777)
+	ensureAccessPointRootDir(root, ap.RootDirectory)
 	return root
+}
+
+// ensureAccessPointRootDir creates an access point's root directory, applying
+// the RootDirectory.CreationInfo (owner uid/gid + permissions) exactly as real
+// EFS does — but only when the directory is first created, so a workload that
+// later changes the perms keeps them on subsequent mounts.
+//
+// Why this matters: `os.MkdirAll`'s mode argument is masked by the process
+// umask (typically 022), so a requested 0777 lands as 0755 — and CreationInfo
+// was otherwise ignored entirely. A gitlab-runner build volume created with
+// CreationInfo{0777, 1000:1000} would then be 0755 root and the (non-root, or
+// uid-mapped) job container couldn't write to it.
+func ensureAccessPointRootDir(root string, rd *EFSRootDirectory) {
+	if _, err := os.Stat(root); err == nil {
+		return // already exists — don't clobber workload-set ownership/perms
+	}
+	_ = os.MkdirAll(root, 0o777)
+
+	// Default to 0777 when no CreationInfo is supplied so the mount is writable
+	// regardless of the umask (the prior behaviour intended 0777 but the umask
+	// reduced it). CreationInfo, when present, is authoritative.
+	mode := os.FileMode(0o777)
+	if rd != nil && rd.CreationInfo != nil && rd.CreationInfo.Permissions != "" {
+		if parsed, err := strconv.ParseUint(rd.CreationInfo.Permissions, 8, 32); err == nil {
+			mode = os.FileMode(parsed)
+		}
+	}
+	_ = os.Chmod(root, mode) // chmod is not umask-masked; this is the real mode
+
+	// Best-effort chown to the access point's owner. Requires privilege (the
+	// sim runs as root inside the harness/CI container); if it fails — e.g. a
+	// developer running the sim natively as a non-root user — the permissions
+	// above still make the directory usable.
+	if rd != nil && rd.CreationInfo != nil {
+		_ = os.Chown(root, int(rd.CreationInfo.OwnerUid), int(rd.CreationInfo.OwnerGid))
+	}
 }
 
 // EFS types
