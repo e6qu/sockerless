@@ -114,10 +114,170 @@ provision_ecs() {
     log "sockerless-backend-ecs ready"
 }
 
+# write_fake_sa_json writes a service-account JSON whose token_uri points at the
+# sim's /token endpoint, so the backend's google clients sign + exchange against
+# the sim exactly as against real GCP (differing only in coordinates).
+write_fake_sa_json() {
+    local out="$1" token_uri="$2" project="$3"
+    local key
+    key=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null) || fail "generate SA RSA key"
+    jq -n --arg pk "$key" --arg tu "$token_uri" --arg proj "$project" '{
+        type: "service_account",
+        project_id: $proj,
+        private_key_id: "sim-key",
+        private_key: $pk,
+        client_email: ("sockerless-runner@" + $proj + ".iam.gserviceaccount.com"),
+        client_id: "111111111111111111111",
+        auth_uri: "https://accounts.google.com/o/oauth2/auth",
+        token_uri: $tu,
+        auth_provider_x509_cert_url: "https://www.googleapis.com/oauth2/v1/certs",
+        universe_domain: "googleapis.com"
+    }' > "$out" || fail "write SA JSON"
+}
+
+# ── Provision the sim-backed sockerless backend (Cloud Run) ────────────
+provision_cloudrun() {
+    # Unlike ECS's live EFS mount, the Cloud Run backend shares the runner
+    # workspace via GCS snapshot-sync (gcs-sync): the workspace mount inside
+    # the job container is an empty tmpfs the bootstrap restores from GCS
+    # before each exec and persists back after; the backend syncs the same
+    # GCS object to/from the runner's local --work dir. The sim materialises
+    # each GCS bucket at $SIM_GCS_DATA_DIR/<bucket> on the host engine.
+    SIM_GCS_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_GCS_DATA_DIR
+    SIM_ADDR="127.0.0.1:4567"
+    local sim_grpc_port=4577
+    local project="sim-project"
+    local build_bucket="sockerless-build"
+    local ws_bucket="sockerless-runner-ws"
+    # gitlab-runner picks its helper image arch from the DOCKER_HOST's reported
+    # arch (docker /version), and the sim selects image manifests by
+    # SOCKERLESS_WORKLOAD_ARCH — both must match the host the workloads run on.
+    # gitlab's helper tag uses `x86_64`/`arm64`.
+    local build_platform helper_arch workload_arch
+    case "$(uname -m)" in
+        aarch64|arm64) build_platform="linux/arm64"; helper_arch="arm64";  workload_arch="arm64" ;;
+        *)             build_platform="linux/amd64"; helper_arch="x86_64"; workload_arch="amd64" ;;
+    esac
+    export SOCKERLESS_WORKLOAD_ARCH="$workload_arch"
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # The sim serves the Cloud Logging admin read API over gRPC on a separate
+    # port; the backend reads container logs from it.
+    export SIM_GCP_GRPC_PORT="$sim_grpc_port"
+    log "Starting simulator-gcp on :4567 (gRPC :$sim_grpc_port)"
+    simulator-gcp --addr ":4567" >"$LOG_DIR/simulator-gcp.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: GCS buckets (build + workspace)"
+    local b
+    for b in "$build_bucket" "$ws_bucket"; do
+        curl -sf -X POST "http://$SIM_ADDR/storage/v1/b?project=$project" \
+            -H 'Content-Type: application/json' -d "{\"name\":\"$b\"}" >/dev/null \
+            || fail "create GCS bucket $b"
+    done
+
+    # GCP auth: a fake SA JSON whose token_uri is the sim's /token.
+    local sa_json="$SOCKERLESS_HARNESS_DATA_DIR/cloudrun-sa.json"
+    write_fake_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
+    export GOOGLE_APPLICATION_CREDENTIALS="$sa_json"
+
+    # The gitlab-runner build workspace is a LOCAL dir synced to/from GCS
+    # around each container-job exec (unlike ECS, where it lives on the EFS
+    # mount). gitlab-runner has no externals tree (that is github-runner only).
+    WORK_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-ws"
+    mkdir -p "$WORK_DIR"
+
+    export SOCKERLESS_ENDPOINT_URL="http://$SIM_ADDR"
+    export SOCKERLESS_GCP_LOGADMIN_ENDPOINT="127.0.0.1:${sim_grpc_port}"
+    export SOCKERLESS_GCR_PROJECT="$project"
+    export SOCKERLESS_GCR_REGION="us-central1"
+    export SOCKERLESS_GCP_BUILD_BUCKET="$build_bucket"
+    export SOCKERLESS_GCP_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_POLL_INTERVAL=500ms
+    # The reverse-agent overlay is built via Cloud Build, pushed to Artifact
+    # Registry, and pulled on the Cloud Run task — all at this registry
+    # coordinate: the sim's /v2/ published to the host engine at
+    # 127.0.0.1:5000. A real docker push (build) + pull (run); registry and
+    # compute stay agnostic, connected only by the /v2/ API.
+    export SOCKERLESS_GCP_AR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
+    # The overlay pull + Service start + bootstrap dial-back must complete
+    # within this window (kept below the per-job wait so a real reverse-agent
+    # registration failure surfaces as "did not register").
+    # NOTE: on a freshly-created podman machine the sim-registry insecure
+    # drop-in is not honored by the build path until the podman service
+    # reloads — `podman machine stop && start` once, or the overlay `FROM`
+    # pull fails with "http: server gave HTTP response to HTTPS client".
+    export SOCKERLESS_CLOUDRUN_BOOTSTRAP_TIMEOUT_SEC=180
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    # Cloud Run exec/attach is via the reverse agent: the overlay bootstrap
+    # inside the task dials back to the backend's reverse endpoint.
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/cloudrun/reverse"
+    # The in-container bootstrap's gcs-sync workspace restore/save reaches the
+    # sim's storage through the published sim port on the host gateway (the
+    # backend's in-container SOCKERLESS_ENDPOINT_URL is not workload-reachable).
+    # Injected into the task as STORAGE_EMULATOR_HOST.
+    export SOCKERLESS_GCS_WORKLOAD_ENDPOINT="host.docker.internal:5000"
+    # gitlab-runner cycles its OpenStdin container across stages; the backend
+    # keeps the Cloud Run Service alive between stages (backend_impl.go). The
+    # `services:` container runs as a Cloud Run Service discovered over Cloud
+    # DNS via the VPC connector.
+    export SOCKERLESS_GCR_USE_SERVICE=1
+    export SOCKERLESS_GCR_VPC_CONNECTOR="projects/$project/locations/us-central1/connectors/sim-connector"
+    # gitlab-runner build-container binds translate onto the gcs-sync workspace.
+    export SOCKERLESS_GCP_SHARED_VOLUMES="runner-ws=${WORK_DIR}=${ws_bucket}=gcs-sync"
+
+    # Stage workload base images into the host daemon: the Cloud Run overlay
+    # build rewrites a Docker Hub base (alpine/redis) to the AR docker-hub
+    # pull-through ref the sim serves by hydrating from the local daemon, so
+    # the base must be present locally. Pull from the ECR gallery (no Docker
+    # Hub throttle) and tag under the bare Docker Hub name the pull-through maps.
+    log "Staging workload base images (alpine, redis) into the host daemon…"
+    local img src ok
+    for img in "alpine:3.20" "redis:7-alpine"; do
+        src="public.ecr.aws/docker/library/$img"
+        ok=""
+        for attempt in 1 2 3 4 5; do
+            if docker pull -q "$src" >/dev/null 2>&1; then ok=1; break; fi
+            sleep "$((attempt * 3))"
+        done
+        [ -n "$ok" ] || fail "pull base image $src"
+        docker tag "$src" "$img" || fail "tag base image $img"
+    done
+
+    # The gitlab-runner-helper (git clone + artifact-transfer container) is also
+    # overlay-built on Cloud Run, so the sim's gitlab-registry pull-through must
+    # hydrate it from the local daemon. Stage the arch-matched tag straight from
+    # registry.gitlab.com (not Docker-Hub-throttled); the version must match the
+    # gitlab-runner binary baked into this image.
+    local runner_ver helper_ref
+    runner_ver=$(gitlab-runner --version 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -1)
+    [ -n "$runner_ver" ] || fail "determine gitlab-runner version"
+    helper_ref="registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:${helper_arch}-v${runner_ver}"
+    log "Staging gitlab-runner-helper ($helper_ref)…"
+    ok=""
+    for attempt in 1 2 3 4 5; do
+        if docker pull -q "$helper_ref" >/dev/null 2>&1; then ok=1; break; fi
+        sleep "$((attempt * 3))"
+    done
+    [ -n "$ok" ] || fail "pull gitlab-runner-helper $helper_ref"
+
+    log "Starting sockerless-backend-cloudrun on :3375"
+    sockerless-backend-cloudrun --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-cloudrun.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-cloudrun ready (gcs-sync workspace)"
+}
+
 BLEEPLAB_BACKEND="${BLEEPLAB_BACKEND:-ecs}"
 case "$BLEEPLAB_BACKEND" in
-    ecs) provision_ecs ;;
-    *) fail "unsupported BLEEPLAB_BACKEND: $BLEEPLAB_BACKEND (ecs)" ;;
+    ecs)      provision_ecs ;;
+    cloudrun) provision_cloudrun ;;
+    *) fail "unsupported BLEEPLAB_BACKEND: $BLEEPLAB_BACKEND (ecs|cloudrun)" ;;
 esac
 
 # ── Start bleeplab ─────────────────────────────────────────────────────
@@ -230,12 +390,12 @@ build-job:
   variables:
     GIT_STRATEGY: "clone"
   script:
-    - echo "BLEEPLAB-ECS-BUILD on $(uname -m)"
+    - echo "BLEEPLAB-BUILD on $(uname -m)"
     - apk add --no-cache gcc musl-dev
     - gcc -O2 -Wall -Werror -o calc calc.c
     - ./calc --selftest
     - ./calc 6 x 7
-    - echo BLEEPLAB-ECS-BUILD-OK
+    - echo BLEEPLAB-BUILD-OK
   artifacts:
     paths:
       - calc
@@ -245,14 +405,14 @@ test-job:
   variables:
     GIT_STRATEGY: "clone"
   script:
-    - echo "BLEEPLAB-ECS-TEST consuming the build artifact (no toolchain, no recompile)"
+    - echo "BLEEPLAB-TEST consuming the build artifact (no toolchain, no recompile)"
     - test -x ./calc && echo ARTIFACT-CALC-PRESENT
     - ./calc --selftest
     - test "$(./calc 7 + 4)" = "7 + 4 = 11"
     - test "$(./calc 100 / 7)" = "100 / 7 = 14"
     - test "$(./calc 17 % 5)" = "17 % 5 = 2"
     - acc=0; for i in $(seq 1 100); do acc=$(./calc -q $acc + $i); done; echo "SUM 1..100 = $acc"; test "$acc" = "5050"
-    - echo BLEEPLAB-ECS-TEST-OK
+    - echo BLEEPLAB-TEST-OK
 service-job:
   stage: integration
   image: alpine:3.20
@@ -263,13 +423,13 @@ service-job:
     - name: redis:7-alpine
       alias: redis
   script:
-    - echo "BLEEPLAB-ECS-SERVICE connecting to the redis service by alias over the pod network"
+    - echo "BLEEPLAB-SERVICE connecting to the redis service by alias over the pod network"
     - apk add --no-cache redis
     - for i in $(seq 1 30); do redis-cli -h redis ping >/dev/null 2>&1 && break; sleep 1; done
     - test "$(redis-cli -h redis ping)" = "PONG"
     - redis-cli -h redis set bleeplab 42 >/dev/null
     - test "$(redis-cli -h redis get bleeplab)" = "42"
-    - echo BLEEPLAB-ECS-SERVICE-OK'
+    - echo BLEEPLAB-SERVICE-OK'
 # Commit the CI config + calculator source via the bleeplab commits API (the
 # repo bleeplab then serves over git; JSON-safe via jq).
 jq -n --arg ci "$CI" --arg calc "$CALC_C" \
@@ -294,7 +454,7 @@ concurrent = 1
 check_interval = 1
 
 [[runners]]
-  name = "bleeplab-ecs"
+  name = "bleeplab-$BLEEPLAB_BACKEND"
   url = "$BLEEPLAB_EXTERNAL_URL"
   token = "$TOKEN"
   executor = "docker"
@@ -340,7 +500,7 @@ for attempt in 1 2 3 4 5; do
         printf '\n' >> "$TRACE_FILE"
     done
     # Done once every job's terminal marker is present (or the last attempt).
-    if grep -qF "BLEEPLAB-ECS-SERVICE-OK" "$TRACE_FILE" || [ "$attempt" = 5 ]; then
+    if grep -qF "BLEEPLAB-SERVICE-OK" "$TRACE_FILE" || [ "$attempt" = 5 ]; then
         break
     fi
     sleep 2
@@ -348,11 +508,11 @@ done
 for marker in \
     "CALC-SELFTEST-OK" \
     "6 x 7 = 42" \
-    "BLEEPLAB-ECS-BUILD-OK" \
+    "BLEEPLAB-BUILD-OK" \
     "ARTIFACT-CALC-PRESENT" \
     "SUM 1..100 = 5050" \
-    "BLEEPLAB-ECS-TEST-OK" \
-    "BLEEPLAB-ECS-SERVICE-OK"; do
+    "BLEEPLAB-TEST-OK" \
+    "BLEEPLAB-SERVICE-OK"; do
     grep -qF "$marker" "$TRACE_FILE" || fail "job trace missing expected marker '$marker'; full trace:\n$(cat "$TRACE_FILE")"
 done
 rm -f "$TRACE_FILE"
@@ -360,4 +520,4 @@ log "TEST 2 PASSED: gcc-compiled calc.c ran in the cloud workload (self-test, 6 
 log "TEST 3 PASSED: the test stage consumed the build stage's calc artifact (no recompile)"
 log "TEST 4 PASSED: the integration stage reached the redis service container by alias over the per-build pod network (PING/SET/GET)"
 
-log "===== ALL bleeplab-ecs INTEGRATION TESTS PASSED ====="
+log "===== ALL bleeplab-$BLEEPLAB_BACKEND INTEGRATION TESTS PASSED ====="

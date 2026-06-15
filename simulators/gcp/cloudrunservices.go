@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strconv"
@@ -171,6 +172,7 @@ func containerEnvMap(envVars []EnvVar) map[string]string {
 
 type cloudRunServiceInstance struct {
 	containerID string
+	containerIP string // bridge IP — preferred when the sim runs in a container
 	sidecars    []*sim.ContainerHandle
 	hostPort    int
 	specSig     string
@@ -273,6 +275,7 @@ func ensureCloudRunServiceInstance(ctx context.Context, name, serviceID string, 
 
 	inst := &cloudRunServiceInstance{
 		containerID: containerID,
+		containerIP: sim.ContainerIPv4(containerID),
 		sidecars:    sidecars,
 		hostPort:    hostPort,
 		specSig:     specSig,
@@ -312,14 +315,59 @@ func stopCloudRunServiceInstance(inst *cloudRunServiceInstance) {
 }
 
 func postCloudRunServiceInstance(ctx context.Context, inst *cloudRunServiceInstance, requestPath, rawQuery string, body io.Reader, contentType string) ([]byte, int, error) {
-	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d%s", inst.hostPort, requestPath)
+	// Reach the workload's bootstrap by whichever address is connectable:
+	//   - <containerIP>:8080 — works when the sim runs INSIDE a harness
+	//     container (the host-published port binds the host's loopback, not
+	//     the sim container's, so 127.0.0.1:hostPort is unreachable there);
+	//   - 127.0.0.1:<hostPort> — works when the sim runs directly on the host
+	//     (and on podman, the host forwards the published port to loopback).
+	var cands []string
+	if inst.containerIP != "" {
+		cands = append(cands, fmt.Sprintf("http://%s:8080", inst.containerIP))
+	}
+	cands = append(cands, fmt.Sprintf("http://127.0.0.1:%d", inst.hostPort))
+
+	base, err := firstReachableBase(ctx, cands, 60*time.Second)
+	if err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
+	}
+	bootstrapURL := base + requestPath
 	if rawQuery != "" {
 		bootstrapURL += "?" + rawQuery
 	}
-	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
-		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
-	}
 	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 5*time.Minute)
+}
+
+// firstReachableBase polls the candidate base URLs (each round, in order) and
+// returns the first whose host:port accepts a TCP connection within timeout.
+func firstReachableBase(ctx context.Context, cands []string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		for _, base := range cands {
+			parsed, perr := urlpkgParse(base)
+			if perr != nil {
+				lastErr = perr
+				continue
+			}
+			conn, derr := net.DialTimeout("tcp", parsed.Host, 1*time.Second)
+			if derr == nil {
+				_ = conn.Close()
+				return base, nil
+			}
+			lastErr = derr
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("timeout after %s", timeout)
+	}
+	return "", lastErr
 }
 
 func envSignature(env map[string]string) string {

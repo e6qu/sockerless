@@ -448,6 +448,9 @@ bleeplab-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleeplab runner-integration image…$(COLOR_RESET)\n"
 	@docker build -f bleeplab/Dockerfile -t bleeplab-runner-int:local .
 
+# $(1)=backend, $(2)=sim port. Publishes the sim's /v2/ registry at
+# 127.0.0.1:5000 so the overlay build→push→pull (cloudrun) reaches it; ECS
+# has no overlay/registry so the publish is a harmless no-op there.
 define run_bleeplab_harness
 	@printf "$(COLOR_CYAN)▸ Running gitlab-runner harness ($(1))…$(COLOR_RESET)\n"
 	@rm -rf /tmp/sockerless-bleeplab-data && mkdir -p /tmp/sockerless-bleeplab-data
@@ -459,13 +462,19 @@ define run_bleeplab_harness
 	  -e SOCKERLESS_HARNESS_DATA_DIR=/tmp/sockerless-bleeplab-data \
 	  -e BLEEPLAB_BACKEND=$(1) \
 	  -e BLEEPLAB_HOLD \
-	  -p 8929:8929 -p 3375:3375 \
+	  -p 8929:8929 -p 3375:3375 -p 5000:$(2) \
 	  bleeplab-runner-int:local
 endef
 
 .PHONY: bleeplab-runner-docker-test-ecs
 bleeplab-runner-docker-test-ecs: bleeplab-runner-docker-build
-	$(call run_bleeplab_harness,ecs)
+	$(call run_bleeplab_harness,ecs,4566)
+
+# cloudrun: overlay build→push→pull through the sim registry, so it needs the
+# :5000 publish + the podman insecure-registry trust (reused from bleephub).
+.PHONY: bleeplab-runner-docker-test-cloudrun
+bleeplab-runner-docker-test-cloudrun: bleeplab-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleeplab_harness,cloudrun,4567)
 
 # Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
 # Build) paths do a real docker push + pull of the bootstrap overlay
