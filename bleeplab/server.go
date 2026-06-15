@@ -45,6 +45,11 @@ type Server struct {
 	// gitStorages holds each project's go-git Storer, keyed by path
 	// (namespace/project). The repos are served over smart-HTTP (git.go).
 	gitStorages map[string]gitStorage.Storer
+	// artifactsStore persists CI job artifact archives, object-store-backed
+	// like the git storage (built lazily, see getArtifactStore).
+	artifactsOnce  sync.Once
+	artifactsStore artifactStore
+	artifactsErr   error
 	// queue holds pending job IDs in FIFO order, ready for a runner to
 	// claim via POST /api/v4/jobs/request. A job enters the queue when its
 	// pipeline reaches it (stage ordering) and leaves when claimed.
@@ -86,6 +91,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v4/jobs/request", s.handleJobRequest)
 	s.mux.HandleFunc("PUT /api/v4/jobs/{id}", s.handleJobUpdate)
 	s.mux.HandleFunc("PATCH /api/v4/jobs/{id}/trace", s.handleJobTrace)
+	s.mux.HandleFunc("POST /api/v4/jobs/{id}/artifacts", s.handleArtifactUpload)
+	s.mux.HandleFunc("GET /api/v4/jobs/{id}/artifacts", s.handleArtifactDownload)
 
 	// Control-plane API (the orchestrator / harness drives these).
 	s.mux.HandleFunc("POST /api/v4/user/runners", s.handleUserRunnerCreate)

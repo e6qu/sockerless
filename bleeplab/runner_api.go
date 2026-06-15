@@ -192,6 +192,66 @@ func (s *Server) handleJobTrace(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// buildDependenciesLocked builds the runner-API `dependencies` list: the jobs
+// in earlier stages of the same pipeline whose artifacts this job should
+// download before running. With no explicit `dependencies:` the job depends on
+// every earlier-stage job (GitLab's default); an explicit list restricts it.
+// Each entry carries the dependency's token + artifacts_file metadata so the
+// runner fetches `GET /api/v4/jobs/:id/artifacts` with that token. Caller holds
+// s.mu.
+func (s *Server) buildDependenciesLocked(job *Job) []jobDependency {
+	deps := []jobDependency{}
+	pl, ok := s.pipelines[job.PipelineID]
+	if !ok {
+		return deps
+	}
+	stageIndex := func(stage string) int {
+		for i, st := range pl.Stages {
+			if st == stage {
+				return i
+			}
+		}
+		return -1
+	}
+	myStage := stageIndex(job.Stage)
+	if myStage < 0 {
+		return deps
+	}
+	explicit := job.Dependencies != nil
+	want := make(map[string]bool, len(job.Dependencies))
+	for _, d := range job.Dependencies {
+		want[d] = true
+	}
+	for _, jid := range pl.JobIDs {
+		cand := s.jobs[jid]
+		if cand == nil || cand.ID == job.ID {
+			continue
+		}
+		if ci := stageIndex(cand.Stage); ci < 0 || ci >= myStage {
+			continue
+		}
+		if explicit && !want[cand.Name] {
+			continue
+		}
+		cand.mu.Lock()
+		size, fn := cand.ArtifactSize, cand.ArtifactFilename
+		cand.mu.Unlock()
+		if size <= 0 {
+			continue
+		}
+		if fn == "" {
+			fn = "artifacts.zip"
+		}
+		deps = append(deps, jobDependency{
+			ID:            cand.ID,
+			Name:          cand.Name,
+			Token:         cand.Token,
+			ArtifactsFile: &artifactFile{Filename: fn, Size: size},
+		})
+	}
+	return deps
+}
+
 // buildJobResponse renders a Job into the runner-API 201 wire shape. gitBase
 // is the base URL the runner clones the project repo from (git_info.repo_url),
 // reachable from the job/helper container.
@@ -222,12 +282,19 @@ func (s *Server) buildJobResponse(job *Job, gitBase string) jobResponse {
 		services = append(services, jobImage{Name: sv.Name, Alias: sv.Alias})
 	}
 	proj, projPath := "", ""
+	var deps []jobDependency
 	s.mu.Lock()
 	if p, ok := s.projects[job.ProjectID]; ok {
 		proj = p.Name
 		projPath = p.Path
 	}
+	deps = s.buildDependenciesLocked(job)
 	s.mu.Unlock()
+
+	artifacts := job.Artifacts
+	if artifacts == nil {
+		artifacts = []jobArtifactSpec{}
+	}
 
 	repoURL := ""
 	if projPath != "" {
@@ -243,6 +310,11 @@ func (s *Server) buildJobResponse(job *Job, gitBase string) jobResponse {
 		{Key: "CI_PROJECT_PATH", Value: projPath, Public: true},
 		{Key: "CI_COMMIT_REF_NAME", Value: job.Ref, Public: true},
 		{Key: "CI_COMMIT_SHA", Value: job.SHA, Public: true},
+		// The artifact uploader/downloader runs inside the job/helper
+		// container and hits CI_API_V4_URL — which must be reachable from
+		// there, not the runner process's loopback API URL. Same coordinate
+		// as git_info.repo_url (host.docker.internal in the harness).
+		{Key: "CI_API_V4_URL", Value: strings.TrimSuffix(gitBase, "/") + "/api/v4", Public: true},
 	}, job.Variables...)
 
 	return jobResponse{
@@ -262,10 +334,10 @@ func (s *Server) buildJobResponse(job *Job, gitBase string) jobResponse {
 		Steps:        steps,
 		Image:        img,
 		Services:     services,
-		Artifacts:    []jobArtifactSpec{},
+		Artifacts:    artifacts,
 		Cache:        []any{},
 		Credentials:  []any{},
-		Dependencies: []any{},
+		Dependencies: deps,
 		// `features` is a mixed-type object: trace_sections is a bool, but
 		// failure_reasons is a []JobFailureReason — so it can't be
 		// map[string]bool. We advertise only trace_sections; omitting

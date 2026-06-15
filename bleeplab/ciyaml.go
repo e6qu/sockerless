@@ -17,14 +17,16 @@ type ciConfig struct {
 }
 
 type ciJob struct {
-	Name      string
-	Stage     string
-	Script    []string
-	Before    []string
-	After     []string
-	Image     string
-	Services  []JobService
-	Variables []JobVariable
+	Name         string
+	Stage        string
+	Script       []string
+	Before       []string
+	After        []string
+	Image        string
+	Services     []JobService
+	Variables    []JobVariable
+	Artifacts    []jobArtifactSpec
+	Dependencies []string
 }
 
 // reserved top-level keys that are NOT jobs.
@@ -113,6 +115,10 @@ func parseCIConfig(raw string) (*ciConfig, error) {
 				job.Services = decodeServices(jv)
 			case "variables":
 				job.Variables = append(job.Variables, decodeVariables(jv)...)
+			case "artifacts":
+				job.Artifacts = decodeArtifacts(jv)
+			case "dependencies":
+				job.Dependencies = decodeStringList(jv)
 			}
 		}
 		cfg.Jobs = append(cfg.Jobs, job)
@@ -204,6 +210,36 @@ func serviceAlias(image string) string {
 		name = name[i+1:]
 	}
 	return name
+}
+
+// decodeArtifacts parses a job's `artifacts:` mapping (name, paths, when,
+// expire_in, untracked) into the runner-API upload spec. GitLab models a
+// single artifacts block per job; it's returned as a one-element slice to
+// match the runner-API `artifacts` array shape.
+func decodeArtifacts(n *yaml.Node) []jobArtifactSpec {
+	if n.Kind != yaml.MappingNode {
+		return nil
+	}
+	var spec jobArtifactSpec
+	spec.When = "on_success"
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		switch n.Content[i].Value {
+		case "name":
+			spec.Name = n.Content[i+1].Value
+		case "paths":
+			spec.Paths = decodeStringList(n.Content[i+1])
+		case "when":
+			spec.When = n.Content[i+1].Value
+		case "expire_in":
+			spec.ExpireIn = n.Content[i+1].Value
+		case "untracked":
+			spec.Untracked = n.Content[i+1].Value == "true"
+		}
+	}
+	if len(spec.Paths) == 0 && !spec.Untracked {
+		return nil
+	}
+	return []jobArtifactSpec{spec}
 }
 
 func decodeVariables(n *yaml.Node) []JobVariable {

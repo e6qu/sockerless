@@ -24,21 +24,23 @@ func (s *Server) createPipelineLocked(p *Project, ref, sha string) (*Pipeline, e
 
 	for _, jc := range cfg.Jobs {
 		job := &Job{
-			ID:         s.nextID,
-			Token:      newToken("gljt", s.nextID),
-			Name:       jc.Name,
-			Stage:      jc.Stage,
-			Status:     "created",
-			Script:     jc.Script,
-			BeforeS:    jc.Before,
-			AfterS:     jc.After,
-			Image:      jc.Image,
-			Services:   jc.Services,
-			Variables:  jc.Variables,
-			ProjectID:  p.ID,
-			PipelineID: pl.ID,
-			Ref:        ref,
-			SHA:        sha,
+			ID:           s.nextID,
+			Token:        newToken("gljt", s.nextID),
+			Name:         jc.Name,
+			Stage:        jc.Stage,
+			Status:       "created",
+			Script:       jc.Script,
+			BeforeS:      jc.Before,
+			AfterS:       jc.After,
+			Image:        jc.Image,
+			Services:     jc.Services,
+			Variables:    jc.Variables,
+			Artifacts:    jc.Artifacts,
+			Dependencies: jc.Dependencies,
+			ProjectID:    p.ID,
+			PipelineID:   pl.ID,
+			Ref:          ref,
+			SHA:          sha,
 		}
 		s.nextID++
 		s.jobs[job.ID] = job

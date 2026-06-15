@@ -412,7 +412,7 @@ func (s *Server) ContainerStart(ref string) error {
 	// container as exited with a real exit code.
 	go func() {
 		inv := core.InvocationResult{}
-		capturedStdin, hasCapturedStdin := s.captureAZFStdin(id)
+		capturedStdin, hasCapturedStdin := s.captureAZFStdin(id, c.Config.OpenStdin)
 		if azfState.FunctionURL == "" {
 			s.Logger.Warn().Str("functionApp", azfState.FunctionAppName).Msg("no function URL available, cannot invoke")
 			inv.ExitCode = 1
@@ -489,6 +489,10 @@ func (s *Server) ContainerStart(ref string) error {
 						inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
 						s.Logger.Warn().Int("status", resp.StatusCode).Str("functionApp", azfState.FunctionAppName).Msg("Function App returned error")
 					}
+					// Always publish so an attached reader unblocks promptly
+					// instead of stranding to the attach deadline; a no-op when
+					// no reader is attached (non-interactive invoke).
+					s.publishAZFAttachResponse(id, body, nil)
 				}
 			}
 		}
@@ -573,7 +577,32 @@ func (s *Server) waitAZFFunctionListening(rawURL string) error {
 	return fmt.Errorf("function app %s never accepted connections: %w", addr, lastErr)
 }
 
-func (s *Server) captureAZFStdin(id string) ([]byte, bool) {
+// captureAZFStdin returns the buffered attach stdin for a container's invoke.
+// When expectStdin is set (the container was created with OpenStdin), the
+// attach handler stores the stdin pipe asynchronously — the hijacked attach
+// connection is processed independently of /start — so /start's invoke
+// goroutine can win the race and find no pipe yet. Without waiting it would run
+// the workload with no stdin: `sh` reads EOF, exits with no output, and the
+// attached reader gets an empty stream (the create→attach→start race, cf. ECS
+// BUG-1798). Wait briefly for the pipe to appear+open before claiming it; a
+// container that genuinely never attaches just falls through after the bound.
+func (s *Server) captureAZFStdin(id string, expectStdin bool) ([]byte, bool) {
+	if expectStdin {
+		deadline := time.After(5 * time.Second)
+		tick := time.NewTicker(20 * time.Millisecond)
+		defer tick.Stop()
+		for {
+			if v, ok := s.stdinPipes.Load(id); ok && v.(*stdinPipe).IsOpen() {
+				break
+			}
+			select {
+			case <-deadline:
+			case <-tick.C:
+				continue
+			}
+			break
+		}
+	}
 	v, ok := s.stdinPipes.LoadAndDelete(id)
 	if !ok {
 		return nil, false
