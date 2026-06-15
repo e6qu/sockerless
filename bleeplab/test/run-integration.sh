@@ -213,8 +213,9 @@ EOF
 
 # GIT_STRATEGY: clone — the runner clones the project repo bleeplab serves over
 # smart-HTTP into CI_PROJECT_DIR, exactly as against gitlab.com. The build job
-# compiles calc.c with gcc and runs its self-test; the test job rebuilds it and
-# verifies real arithmetic (including folding calc over 1..100 to sum 5050).
+# compiles calc.c with gcc and publishes the `calc` binary as an artifact; the
+# test job downloads that artifact (no recompile — it has no toolchain) and
+# verifies real arithmetic, proving cross-stage artifact passing end to end.
 CI='stages: [build, test]
 build-job:
   stage: build
@@ -228,14 +229,17 @@ build-job:
     - ./calc --selftest
     - ./calc 6 x 7
     - echo BLEEPLAB-ECS-BUILD-OK
+  artifacts:
+    paths:
+      - calc
 test-job:
   stage: test
   image: alpine:3.20
   variables:
     GIT_STRATEGY: "clone"
   script:
-    - apk add --no-cache gcc musl-dev
-    - gcc -O2 -Wall -Werror -o calc calc.c
+    - echo "BLEEPLAB-ECS-TEST consuming the build artifact (no toolchain, no recompile)"
+    - test -x ./calc && echo ARTIFACT-CALC-PRESENT
     - ./calc --selftest
     - test "$(./calc 7 + 4)" = "7 + 4 = 11"
     - test "$(./calc 100 / 7)" = "100 / 7 = 14"
@@ -256,13 +260,18 @@ PLID=$(bl POST "/api/v4/projects/$PID/pipeline" '{"ref":"main"}' | jq -r '.id')
 log "project=$PID runner=$TOKEN pipeline=$PLID"
 
 # ── Run the gitlab-runner against the sockerless backend ───────────────
+# The runner's URL must be reachable from BOTH the runner process (here, the
+# harness host) AND the job/helper containers (where the artifacts
+# uploader/downloader and git client run): host.docker.internal resolves to the
+# harness loopback via /etc/hosts here, and to the host gateway (published
+# :8929) from the containers. So a single coordinate works everywhere.
 cat > /tmp/gitlab-runner-config.toml <<EOF
 concurrent = 1
 check_interval = 1
 
 [[runners]]
   name = "bleeplab-ecs"
-  url = "$BL"
+  url = "$BLEEPLAB_EXTERNAL_URL"
   token = "$TOKEN"
   executor = "docker"
   [runners.docker]
@@ -303,10 +312,12 @@ for marker in \
     "CALC-SELFTEST-OK" \
     "6 x 7 = 42" \
     "BLEEPLAB-ECS-BUILD-OK" \
+    "ARTIFACT-CALC-PRESENT" \
     "SUM 1..100 = 5050" \
     "BLEEPLAB-ECS-TEST-OK"; do
     echo "$ALLTRACE" | grep -qF "$marker" || fail "job trace missing expected marker '$marker'; full trace:\n$ALLTRACE"
 done
 log "TEST 2 PASSED: gcc-compiled calc.c ran in the cloud workload (self-test, 6 x 7 = 42, sum 1..100 = 5050)"
+log "TEST 3 PASSED: the test stage consumed the build stage's calc artifact (no recompile)"
 
 log "===== ALL bleeplab-ecs INTEGRATION TESTS PASSED ====="

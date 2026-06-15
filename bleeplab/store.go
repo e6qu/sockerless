@@ -54,6 +54,16 @@ type Job struct {
 	Ref        string
 	SHA        string
 
+	// Artifacts is the job's upload spec (what to archive after it runs);
+	// Dependencies names the jobs whose artifacts to download before it runs
+	// (empty = GitLab's default: every job in earlier stages).
+	Artifacts    []jobArtifactSpec
+	Dependencies []string
+	// ArtifactSize/ArtifactFilename are set when the runner uploads this
+	// job's artifact archive; ArtifactSize == 0 means it produced none.
+	ArtifactSize     int64
+	ArtifactFilename string
+
 	mu    sync.Mutex
 	trace strings.Builder
 }
@@ -122,7 +132,7 @@ type jobResponse struct {
 	Artifacts     []jobArtifactSpec `json:"artifacts"`
 	Cache         []any             `json:"cache"`
 	Credentials   []any             `json:"credentials"`
-	Dependencies  []any             `json:"dependencies"`
+	Dependencies  []jobDependency   `json:"dependencies"`
 	Features      map[string]any    `json:"features"`
 }
 
@@ -168,4 +178,20 @@ type jobArtifactSpec struct {
 	When      string   `json:"when,omitempty"`
 	ExpireIn  string   `json:"expire_in,omitempty"`
 	Untracked bool     `json:"untracked,omitempty"`
+}
+
+// jobDependency is one entry in the runner-API `dependencies` list: a job in an
+// earlier stage whose artifacts this job downloads before running. The runner
+// fetches the archive from `GET /api/v4/jobs/:id/artifacts` using Token.
+type jobDependency struct {
+	ID            int           `json:"id"`
+	Name          string        `json:"name"`
+	Token         string        `json:"token"`
+	ArtifactsFile *artifactFile `json:"artifacts_file,omitempty"`
+}
+
+// artifactFile is the metadata for a dependency's uploaded artifact archive.
+type artifactFile struct {
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
 }

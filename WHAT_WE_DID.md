@@ -4,6 +4,40 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - bleeplab object-store-backed CI artifacts (cross-stage passing)
+
+bleeplab now stores and serves CI job artifacts, object-store-backed exactly
+like its git storage (and bleephub): an `artifactStore` chosen by env — an
+S3-compatible object store, a filesystem dir (`BLEEPLAB_ARTIFACTS_DIR`), or
+in-memory — behind the real GitLab runner endpoints `POST /api/v4/jobs/:id/
+artifacts` (multipart upload) and `GET /api/v4/jobs/:id/artifacts` (download).
+The CI parser now reads per-job `artifacts:` (name/paths/when/expire_in/
+untracked) and `dependencies:`; the job response advertises the upload spec and
+a typed `dependencies` list — every earlier-stage job that produced an artifact,
+with its size and a download token (an explicit `dependencies:` restricts it,
+matching GitLab). This completes the user's "storage based on object store, just
+like bleephub" ask (git + artifacts).
+
+The GitLab ECS cell now does real **cross-stage** work: build-job compiles
+`calc` and publishes it as an artifact; test-job carries no toolchain, downloads
+the artifact, and runs the prebuilt binary — proving the artifact round-tripped
+through the store and that the test stage depends on the build stage's output.
+
+**Coordinate finding (artifact reachability).** gitlab-runner's in-container
+`artifacts-uploader`/`-downloader` use the runner's *config `url`*, not
+`CI_API_V4_URL`, so that URL must be reachable from inside the job/helper
+container — `http://127.0.0.1:8929` (the harness loopback) gave `connection
+refused`. The fix is a coordinate: the runner config `url` is set to
+`host.docker.internal:8929`, which resolves to the harness loopback from the
+runner process (via `/etc/hosts`) and to the published port from the workload
+containers — one URL that works from both vantage points. (bleeplab also sends
+`CI_API_V4_URL` in the job variables, as real GitLab does.)
+
+Typed over `any`: the `dependencies` entries are a `jobDependency` struct
+(`id`/`name`/`token`/`artifacts_file`), not `map[string]any` in `[]any`. Tested
+in-process by `TestArtifactFlow` (upload → dependency advertisement → download,
+byte-for-byte) and end-to-end by the harness (TEST 3).
+
 ## 2026-06-15 - bleeplab serves git + ECS restart preserves volumes → the GitLab ECS cell builds & runs a real program (BUG-1801, BUG-1802)
 
 The single-job bleeplab GitLab ECS cell is GREEN and does **real work**: a real
