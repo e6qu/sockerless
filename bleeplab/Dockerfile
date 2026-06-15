@@ -21,8 +21,10 @@ RUN cd agent && GOWORK=off go mod download && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent
 
 # --- bleeplab GitLab control-plane simulator ---
+# Built with -tags noui: the runner harness is headless and the embedded SPA's
+# dist/ isn't in the build context (it's a generated, gitignored artifact).
 COPY bleeplab/ bleeplab/
-RUN cd bleeplab && GOWORK=off go build -o /out/bleeplab ./cmd
+RUN cd bleeplab && GOWORK=off go build -tags noui -o /out/bleeplab ./cmd
 
 # --- Runtime stage ---
 FROM ubuntu:22.04

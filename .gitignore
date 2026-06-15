@@ -112,6 +112,7 @@ cmd/sockerless-admin/admin
 bleephub/dist/
 bleephub/bleephub-server
 bleephub/sdk-tests/bleephub-server
+bleeplab/dist/
 bleeplab/bleeplab
 
 # Playwright
