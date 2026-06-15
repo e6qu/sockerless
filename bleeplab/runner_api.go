@@ -97,8 +97,12 @@ func (s *Server) handleJobRequest(w http.ResponseWriter, r *http.Request) {
 	job.mu.Unlock()
 	s.setPipelineStatus(job.ProjectID, "running")
 
+	gitBase := s.externalURL
+	if gitBase == "" {
+		gitBase = "http://" + r.Host
+	}
 	s.logger.Info().Int("job", job.ID).Str("name", job.Name).Str("stage", job.Stage).Str("runner", req.Token).Msg("job claimed by runner")
-	writeJSON(w, http.StatusCreated, s.buildJobResponse(job))
+	writeJSON(w, http.StatusCreated, s.buildJobResponse(job, gitBase))
 }
 
 // handleJobUpdate processes the runner's terminal/intermediate status update
@@ -188,8 +192,10 @@ func (s *Server) handleJobTrace(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusAccepted)
 }
 
-// buildJobResponse renders a Job into the runner-API 201 wire shape.
-func (s *Server) buildJobResponse(job *Job) jobResponse {
+// buildJobResponse renders a Job into the runner-API 201 wire shape. gitBase
+// is the base URL the runner clones the project repo from (git_info.repo_url),
+// reachable from the job/helper container.
+func (s *Server) buildJobResponse(job *Job, gitBase string) jobResponse {
 	var steps []jobStep
 	if len(job.BeforeS) > 0 || len(job.Script) > 0 {
 		steps = append(steps, jobStep{
@@ -215,18 +221,26 @@ func (s *Server) buildJobResponse(job *Job) jobResponse {
 	for _, sv := range job.Services {
 		services = append(services, jobImage{Name: sv.Name, Alias: sv.Alias})
 	}
-	proj := ""
+	proj, projPath := "", ""
 	s.mu.Lock()
 	if p, ok := s.projects[job.ProjectID]; ok {
 		proj = p.Name
+		projPath = p.Path
 	}
 	s.mu.Unlock()
+
+	repoURL := ""
+	if projPath != "" {
+		repoURL = strings.TrimSuffix(gitBase, "/") + "/" + projPath + ".git"
+	}
 
 	vars := append([]JobVariable{
 		{Key: "CI_JOB_ID", Value: strconv.Itoa(job.ID), Public: true},
 		{Key: "CI_JOB_NAME", Value: job.Name, Public: true},
 		{Key: "CI_JOB_STAGE", Value: job.Stage, Public: true},
 		{Key: "CI_PROJECT_ID", Value: strconv.Itoa(job.ProjectID), Public: true},
+		{Key: "CI_PROJECT_NAME", Value: proj, Public: true},
+		{Key: "CI_PROJECT_PATH", Value: projPath, Public: true},
 		{Key: "CI_COMMIT_REF_NAME", Value: job.Ref, Public: true},
 		{Key: "CI_COMMIT_SHA", Value: job.SHA, Public: true},
 	}, job.Variables...)
@@ -236,16 +250,22 @@ func (s *Server) buildJobResponse(job *Job) jobResponse {
 		Token:         job.Token,
 		AllowGitFetch: false,
 		JobInfo:       jobInfo{Name: job.Name, Stage: job.Stage, ProjectID: job.ProjectID, ProjectName: proj},
-		GitInfo:       gitInfo{Ref: job.Ref, SHA: job.SHA, RefType: "branch"},
-		RunnerInfo:    runnerInfo{Timeout: 3600},
-		Variables:     vars,
-		Steps:         steps,
-		Image:         img,
-		Services:      services,
-		Artifacts:     []jobArtifactSpec{},
-		Cache:         []any{},
-		Credentials:   []any{},
-		Dependencies:  []any{},
+		GitInfo: gitInfo{
+			RepoURL:  repoURL,
+			Ref:      job.Ref,
+			SHA:      job.SHA,
+			RefType:  "branch",
+			Refspecs: []string{"+refs/heads/" + job.Ref + ":refs/remotes/origin/" + job.Ref},
+		},
+		RunnerInfo:   runnerInfo{Timeout: 3600},
+		Variables:    vars,
+		Steps:        steps,
+		Image:        img,
+		Services:     services,
+		Artifacts:    []jobArtifactSpec{},
+		Cache:        []any{},
+		Credentials:  []any{},
+		Dependencies: []any{},
 		// `features` is a mixed-type object: trace_sections is a bool, but
 		// failure_reasons is a []JobFailureReason — so it can't be
 		// map[string]bool. We advertise only trace_sections; omitting

@@ -6,11 +6,11 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/ecs-gitlab-builds-volume-1801` (Arc 3 Phase 3; PR pending — diagnosis correction). |
-| In-flight | **Arc 3 Phase 3: the bleeplab GitLab ECS cell is one gate from green.** Merged: BUG-1798 (attach-stdin, #576), BUG-1800 (EFS perms + SELinux, #577). The helper stages run, the script is delivered, `/builds` is writable, and the `/builds` volume IS shared across stages (proven by a `DIAG resolveBindToVolume` log — one EFS access point for all three stage tasks; the earlier "not shared" guess was a stale-data-dir artifact). **Final gate — BUG-1801 (re-diagnosed):** with `GIT_STRATEGY: none` (bleeplab doesn't serve git) the build job's `CI_PROJECT_DIR` (`/builds/<project>`) is never created — gitlab-runner normally makes it by cloning the repo in get_sources — so the auto-`cd` fails. The faithful fix is **bleeplab serving the project as a git repo** over smart-HTTP (clone creates the dir), then `GIT_STRATEGY: clone`. A test-scaffold/feature gap, not a sockerless backend/sim bug. |
+| Active branch | `feat/ecs-gitlab-builds-volume-1801` (Arc 3 Phase 3; PR pending). |
+| In-flight | **Arc 3 Phase 3: the single-job bleeplab GitLab ECS cell is GREEN** — a real gitlab-runner clones the project, runs the multi-stage (build, test) pipeline through the sockerless ECS backend against the aws sim, and the pipeline succeeds (`make bleeplab-runner-docker-test-ecs` → "ALL bleeplab-ecs INTEGRATION TESTS PASSED"). Two fixes landed it: **BUG-1801** — bleeplab now serves each project as a real git repo over smart-HTTP, object-store-backed exactly like bleephub (pure-Go go-git; `s3fs`/`BLEEPLAB_GIT_DIR`/in-memory Storer; commit writes a real go-git commit; `git_info.repo_url` reachable via `host.docker.internal:8929`), so `GIT_STRATEGY: clone` materializes `CI_PROJECT_DIR`. **BUG-1802** — the ECS backend lost a container's named-volume binds on restart, so gitlab-runner's predefined helper (restarted per stage) cloned `get_sources` into ephemeral storage the build container couldn't see; `taskToContainer` now reconstructs `HostConfig.Binds` from the task def's mount points so every restart re-registers the EFS `/builds` mount. |
 | Last merged | #577 BUG-1800 EFS access-point writability. #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness (BUG-1797, BUG-1799). #574 bleeplab GitLab sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header. 4 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods), BUG-1801 (bleeplab must serve git so the gitlab job's project dir is created — the final bleeplab ECS gate). |
+| Bugs | See [BUGS.md](BUGS.md) header. 3 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream), BUG-1781 (FaaS multi-container pods). |
 | Live infra | None up. |
 
 ## What's next

@@ -4,6 +4,60 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - bleeplab serves git + ECS restart preserves volumes → the GitLab ECS cell builds & runs a real program (BUG-1801, BUG-1802)
+
+The single-job bleeplab GitLab ECS cell is GREEN and does **real work**: a real
+`gitlab-runner` (docker executor, `--docker-host` = sockerless ECS backend)
+clones the project, then a two-stage pipeline `apk add gcc` + `gcc -O2 -Wall
+-Werror -o calc calc.c` and runs a real C arithmetic calculator from the cloned
+source — self-test plus verified arithmetic (`6 x 7 = 42`, `7 + 4 = 11`,
+`100 / 7 = 14`, `17 % 5 = 2`, and folding `calc` over 1..100 to `5050`). Two
+fixes landed it:
+
+**BUG-1801 — bleeplab serves each project as a real git repository.** Without a
+git server the harness used `GIT_STRATEGY: none`, so the runner never created
+`CI_PROJECT_DIR` and `cd $CI_PROJECT_DIR` failed. bleeplab now serves git over
+smart-HTTP with pure-Go **go-git** (`/info/refs` + `git-upload-pack` /
+`git-receive-pack`), object-store-backed exactly like bleephub: an `s3fs`
+go-billy filesystem → go-git Storer chosen by env (`BLEEPLAB_S3_BUCKET` >
+`BLEEPLAB_GIT_DIR` > in-memory). A commit through the GitLab commits API writes
+a real go-git commit (additive create/update on the branch) and records the real
+SHA; `git_info.repo_url` points at `<BLEEPLAB_EXTERNAL_URL>/<ns>/<project>.git`
+(reachable from the job/helper container via `host.docker.internal:8929`) and
+`git_info.{sha,refspecs}` drive a faithful clone. The harness switched to
+`GIT_STRATEGY: clone`. bleeplab accepts the runner's `gitlab-ci-token` exactly
+as GitLab does — coordinate-only, no sockerless-aware special-casing. Validated
+in-process by `TestGitCloneSeededProject` (a real go-git client clones; HEAD ==
+commit SHA; a second commit is additive).
+
+**BUG-1802 — the ECS backend preserves a container's volume binds across
+restart.** gitlab-runner's docker executor runs each build stage by re-starting
+the *same* predefined helper container (`create` once → `attach→start→wait→stop`
+per stage). On ECS each `/start` spawns a fresh deferred task; the **first**
+start carried the `/builds` EFS mount (resolved from `PendingCreates`, which
+holds `HostConfig.Binds`), but **later** starts resolved the container from cloud
+state via `taskToContainer`, whose reconstructed `HostConfig` dropped `Binds`
+entirely — so the re-registered task def had no volume mounts and `get_sources`
+cloned into ephemeral storage the build container couldn't see (`cd
+/builds/root/demo` → "No such file or directory"). Diagnosed with per-container
+DIAG logging: all stage containers resolved the *same* access point, yet the sim
+showed two helper tasks with `mountPoints=0 binds=[]`. Fix (backend-side,
+stateless): `taskToContainer` reconstructs the named-volume binds from the task
+definition's mount points (`SourceVolume:ContainerPath[:ro]`), so every restart
+re-registers a task def with the original volumes. Unit-tested
+(`TestTaskToContainer_BindsFromMountPoints`). No sim change — the sim already
+shares an access point's host dir across tasks deterministically.
+
+(Earlier on this branch the "volume not shared across stages" theory was a
+stale-data-dir artifact: the harness `rm -rf` couldn't clear root-owned EFS
+files from prior runs, so disk archaeology saw cross-run filesystems. The
+authoritative diagnosis came from logging the *resolved* access point and the
+*applied* binds, not from inspecting the accreted data dir.)
+
+Still open for full bleephub parity (the user asked for both): a bleeplab
+artifact **ArtifactStore** (object-store-backed) and a bleeplab **UI** — the
+git/object-store slice is the piece that landed here.
+
 ## 2026-06-15 - aws sim EFS access-point writability for GitLab workloads (BUG-1800)
 
 After BUG-1798, the bleeplab GitLab ECS build `step_script` failed at

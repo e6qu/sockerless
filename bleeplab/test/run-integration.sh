@@ -122,7 +122,11 @@ esac
 
 # ── Start bleeplab ─────────────────────────────────────────────────────
 echo "127.0.0.1 host.docker.internal" >> /etc/hosts
-log "Starting bleeplab on :8929"
+# The runner clones git_info.repo_url from inside the job/helper container,
+# which reaches bleeplab via host.docker.internal (not the harness loopback the
+# runner process uses for the control-plane API).
+export BLEEPLAB_EXTERNAL_URL="http://host.docker.internal:8929"
+log "Starting bleeplab on :8929 (git external URL $BLEEPLAB_EXTERNAL_URL)"
 bleeplab --addr :8929 --log-level info >"$LOG_DIR/bleeplab.log" 2>&1 &
 PIDS+=($!)
 wait_for_url "$BL/health"
@@ -146,26 +150,104 @@ log "Creating project + .gitlab-ci.yml + runner + pipeline"
 PID=$(bl POST /api/v4/projects '{"name":"demo"}' | jq -r '.id')
 [ -n "$PID" ] || fail "create project"
 
+# A real arithmetic calculator the CI job compiles from the cloned source and
+# runs — genuine build + execute work (not an echo), proving the clone delivers
+# usable source and the cloud workload compiles + runs it correctly.
+CALC_C=$(cat <<'EOF'
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static long apply(long a, const char *op, long b, int *err) {
+    *err = 0;
+    if (!strcmp(op, "+")) return a + b;
+    if (!strcmp(op, "-")) return a - b;
+    if (!strcmp(op, "*") || !strcmp(op, "x")) return a * b;
+    if (!strcmp(op, "/")) { if (b == 0) { *err = 2; return 0; } return a / b; }
+    if (!strcmp(op, "%")) { if (b == 0) { *err = 2; return 0; } return a % b; }
+    *err = 1;
+    return 0;
+}
+
+static int selftest(void) {
+    struct { long a; const char *op; long b; long want; } c[] = {
+        {3, "+", 4, 7}, {10, "-", 3, 7}, {6, "x", 7, 42},
+        {20, "/", 5, 4}, {17, "%", 5, 2}, {-3, "+", 8, 5},
+    };
+    size_t n = sizeof(c) / sizeof(c[0]);
+    for (size_t i = 0; i < n; i++) {
+        int err;
+        long got = apply(c[i].a, c[i].op, c[i].b, &err);
+        if (err || got != c[i].want) {
+            fprintf(stderr, "selftest FAIL: %ld %s %ld = %ld (want %ld)\n",
+                    c[i].a, c[i].op, c[i].b, got, c[i].want);
+            return 1;
+        }
+    }
+    printf("CALC-SELFTEST-OK (%zu cases)\n", n);
+    return 0;
+}
+
+int main(int argc, char **argv) {
+    int quiet = 0, i = 1;
+    if (i < argc && (!strcmp(argv[i], "-q") || !strcmp(argv[i], "--value"))) { quiet = 1; i++; }
+    if (!quiet && i < argc && !strcmp(argv[i], "--selftest")) return selftest();
+    if (argc - i != 3) {
+        fprintf(stderr, "usage: %s [-q] <a> <op> <b> | --selftest\n", argv[0]);
+        return 64;
+    }
+    char *ea, *eb;
+    long a = strtol(argv[i], &ea, 10);
+    long b = strtol(argv[i + 2], &eb, 10);
+    if (*ea || *eb) { fprintf(stderr, "non-integer operand\n"); return 65; }
+    int err;
+    long r = apply(a, argv[i + 1], b, &err);
+    if (err == 1) { fprintf(stderr, "unknown operator %s\n", argv[i + 1]); return 66; }
+    if (err == 2) { fprintf(stderr, "division by zero\n"); return 67; }
+    if (quiet) printf("%ld\n", r);
+    else printf("%ld %s %ld = %ld\n", a, argv[i + 1], b, r);
+    return 0;
+}
+EOF
+)
+
+# GIT_STRATEGY: clone — the runner clones the project repo bleeplab serves over
+# smart-HTTP into CI_PROJECT_DIR, exactly as against gitlab.com. The build job
+# compiles calc.c with gcc and runs its self-test; the test job rebuilds it and
+# verifies real arithmetic (including folding calc over 1..100 to sum 5050).
 CI='stages: [build, test]
 build-job:
   stage: build
   image: alpine:3.20
   variables:
-    GIT_STRATEGY: "none"
+    GIT_STRATEGY: "clone"
   script:
+    - echo "BLEEPLAB-ECS-BUILD on $(uname -m)"
+    - apk add --no-cache gcc musl-dev
+    - gcc -O2 -Wall -Werror -o calc calc.c
+    - ./calc --selftest
+    - ./calc 6 x 7
     - echo BLEEPLAB-ECS-BUILD-OK
-    - cat /etc/os-release | head -1
 test-job:
   stage: test
   image: alpine:3.20
   variables:
-    GIT_STRATEGY: "none"
+    GIT_STRATEGY: "clone"
   script:
+    - apk add --no-cache gcc musl-dev
+    - gcc -O2 -Wall -Werror -o calc calc.c
+    - ./calc --selftest
+    - test "$(./calc 7 + 4)" = "7 + 4 = 11"
+    - test "$(./calc 100 / 7)" = "100 / 7 = 14"
+    - test "$(./calc 17 % 5)" = "17 % 5 = 2"
+    - acc=0; for i in $(seq 1 100); do acc=$(./calc -q $acc + $i); done; echo "SUM 1..100 = $acc"; test "$acc" = "5050"
     - echo BLEEPLAB-ECS-TEST-OK'
-# Commit the CI config via the bleeplab commits API (JSON-safe via jq).
-jq -n --arg c "$CI" '{branch:"main",actions:[{file_path:".gitlab-ci.yml",content:$c}]}' \
+# Commit the CI config + calculator source via the bleeplab commits API (the
+# repo bleeplab then serves over git; JSON-safe via jq).
+jq -n --arg ci "$CI" --arg calc "$CALC_C" \
+    '{branch:"main",actions:[{file_path:".gitlab-ci.yml",content:$ci},{file_path:"calc.c",content:$calc}]}' \
     | curl -sf -X POST "$BL/api/v4/projects/$PID/repository/commits" -H 'Content-Type: application/json' -d @- >/dev/null \
-    || fail "commit .gitlab-ci.yml"
+    || fail "commit .gitlab-ci.yml + calc.c"
 
 TOKEN=$(bl POST /api/v4/user/runners '{"runner_type":"project_type"}' | jq -r '.token')
 [ -n "$TOKEN" ] || fail "create runner"
@@ -207,9 +289,24 @@ for _ in $(seq 1 120); do
 done
 [ "$STATUS" = "success" ] || fail "pipeline did not finish (last status=$STATUS)"
 
-# ── Assert the job trace shows the script ran in the cloud workload ────
-JID=$(bl GET "/api/v4/projects/$PID/pipelines/$PLID/jobs" '' | jq -r '.[0].id')
-TRACE=$(bl GET "/api/v4/projects/$PID/jobs/$JID/trace" '')
-echo "$TRACE" | grep -q 'BLEEPLAB-ECS' || fail "job trace missing expected script output:\n$TRACE"
+# ── Assert the calculator was compiled + run correctly in the cloud workload ──
+# Concatenate every job's trace, then require the real build/run evidence: the
+# compiled self-test, a live multiplication, the folded sum, and both stage
+# markers. These only appear if gcc compiled the cloned calc.c and the binary
+# executed with correct arithmetic on the sockerless ECS backend.
+ALLTRACE=""
+for JID in $(bl GET "/api/v4/projects/$PID/pipelines/$PLID/jobs" '' | jq -r '.[].id'); do
+    ALLTRACE="$ALLTRACE
+$(bl GET "/api/v4/projects/$PID/jobs/$JID/trace" '')"
+done
+for marker in \
+    "CALC-SELFTEST-OK" \
+    "6 x 7 = 42" \
+    "BLEEPLAB-ECS-BUILD-OK" \
+    "SUM 1..100 = 5050" \
+    "BLEEPLAB-ECS-TEST-OK"; do
+    echo "$ALLTRACE" | grep -qF "$marker" || fail "job trace missing expected marker '$marker'; full trace:\n$ALLTRACE"
+done
+log "TEST 2 PASSED: gcc-compiled calc.c ran in the cloud workload (self-test, 6 x 7 = 42, sum 1..100 = 5050)"
 
 log "===== ALL bleeplab-ecs INTEGRATION TESTS PASSED ====="
