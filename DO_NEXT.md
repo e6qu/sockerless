@@ -4,14 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleeplab-ui` (Arc 3 Phase 4; PR pending). **bleeplab now has a GitLab-themed dashboard UI** — the last bleephub-parity piece. A React 19 SPA (`ui/packages/bleeplab/`) embedded into the binary at `/ui/`, fed by a read-only `/internal/*` aggregation API. Merged previously: #579 (artifacts + BUG-1803), #578 (BUG-1801 git + BUG-1802 ECS binds), #577 (BUG-1800), #576 (BUG-1798).
+`feat/bleeplab-services` (Arc 3; PR #581). **Full gitlab-runner `services:` support on the bleeplab GitLab ECS cell (BUG-1804 + BUG-1805).** A `services:` job's build container reaches the service (redis) by alias over the per-build pod network — `redis-cli` PING/SET/GET green (harness TEST 4). Merged previously: #580 (UI), #579 (artifacts + BUG-1803), #578 (git + ECS binds).
 
 ### Arc 3 remaining work
 
-1. **(done, #578) BUG-1801 git + BUG-1802 ECS volume binds.** bleeplab serves each project as a real git repo over smart-HTTP (object-store-backed go-git); the ECS backend reconstructs `HostConfig.Binds` from the task def on restart.
-2. **(done, #579) Object-store-backed CI artifacts.** bleeplab artifact store (S3 > `BLEEPLAB_ARTIFACTS_DIR` > memory); runner upload/download endpoints; `artifacts:`/`dependencies:` CI parsing; typed `dependencies` in the job response. **Coordinate finding:** the in-container artifacts-uploader uses the runner's *config `url`* (not `CI_API_V4_URL`), so it must be container-reachable (`host.docker.internal:8929`).
-3. **(done, this PR) bleeplab dashboard UI** — React 19/Vite/Tailwind SPA at `ui/packages/bleeplab/`, embedded via `ui_embed.go`/`ui_noembed.go` + `UI_PACKAGE := bleeplab`, served at `/ui/`. Views: Overview, Projects (+detail), Pipelines (+detail GitLab stage graph), Job (trace), Runners — fed by `/internal/{status,projects,pipelines,pipelines/{id},jobs/{id},runners,storage}`. GitLab-themed (indigo/purple + tanuki orange, distinct from bleephub teal). **This completes the full bleephub-parity ask (git + artifacts + UI).**
-4. **Phase 4 cont. — extend the harness** (services container; more jobs/stages) and bring up the other backends' GitLab cells (cloudrun/gcf/aca), reusing the bleephub overlay model.
+1. **(done, #578/#579/#580)** bleeplab git + artifacts + UI — full bleephub parity.
+2. **(done, this PR — BUG-1804) Cloud Map multi-name + ECS service-alias registration.** The aws sim's Docker-network DNS realization re-attaches a task container with the FULL set of service names it backs (disconnect-then-reconnect, since Docker rejects a 2nd `NetworkConnect`); the ECS backend captures `NetworkingConfig` aliases and registers the container under hostname + every alias, and deregisters by enumerating namespace services. Proven by `TestECS_MultiServiceDNS`.
+3. **(done, this PR — BUG-1805) GitLab `services:` end-to-end on ECS.** Removed the ECS backend's `/etc/resolv.conf` command-wrapper (it froze per-network DNS to a static entrypoint snapshot — dropping the namespace network's DNS the runtime adds on Cloud Map connect — and mangled the user argv); the sim now realizes each service as both `<service>` and `<service>.<namespace>` network aliases, so DNS is the runtime's and the user command runs verbatim. The bleeplab ECS harness gained a 3rd `integration` stage running redis as a `services:` container; TEST 4 (PING/SET/GET by alias over the per-build pod network) is green. **Runtime fact (Podman):** each network's DNS runs at its gateway; a container gets one nameserver per attached network, added as networks connect — so static resolv.conf surgery is wrong. Bare aliases resolve directly; no search domain needed.
+4. **Phase 4 cont. — more jobs/stages** and the other backends' GitLab cells (cloudrun/gcf/aca), reusing the bleephub overlay model.
 5. Then **FaaS multi-container pod assembly (BUG-1781)** and standing items.
 
 ### bleeplab ECS harness (reusable findings)

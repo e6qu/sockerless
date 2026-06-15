@@ -509,3 +509,143 @@ func TestCloudMap_DeleteServiceAndNamespace(t *testing.T) {
 	})
 	assert.Error(t, err, "GetNamespace should fail after deletion")
 }
+
+// TestECS_MultiServiceDNS verifies the Cloud Map model where one task (instance)
+// backs MULTIPLE services — i.e. resolves under several DNS names that all point
+// at its IP. This is what GitLab CI `services:` needs: a service container
+// reachable by its alias AND its task hostname. Real Cloud Map registers an
+// instance per service (ServiceId+InstanceId), so the same instance may join
+// several services; the simulator must realize every such name into DNS. Before
+// the fix, the second registration's Docker network-connect failed ("already
+// connected") and only one name resolved.
+func TestECS_MultiServiceDNS(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Fatalf("docker CLI required for multi-service DNS test (no fallback): %v", err)
+	}
+	cm := cmClient()
+	ecsCli := ecsClient()
+	vpcID, subnetID := createECSTestVPCSubnet(t, "multi-svc-dns")
+
+	createNs, err := cm.CreatePrivateDnsNamespace(ctx, &servicediscovery.CreatePrivateDnsNamespaceInput{
+		Name: aws.String("multi-svc.local"), Vpc: aws.String(vpcID),
+	})
+	require.NoError(t, err)
+	opOut, err := cm.GetOperation(ctx, &servicediscovery.GetOperationInput{OperationId: createNs.OperationId})
+	require.NoError(t, err)
+	nsID := opOut.Operation.Targets["NAMESPACE"]
+
+	mkSvc := func(name string) string {
+		out, err := cm.CreateService(ctx, &servicediscovery.CreateServiceInput{
+			Name: aws.String(name), NamespaceId: aws.String(nsID),
+			DnsConfig: &sdtypes.DnsConfig{DnsRecords: []sdtypes.DnsRecord{{Type: sdtypes.RecordTypeA, TTL: aws.Int64(10)}}},
+		})
+		require.NoError(t, err)
+		return aws.ToString(out.Service.Id)
+	}
+	svcWeb := mkSvc("web")        // the server's primary name
+	svcAlias := mkSvc("webalias") // the server's alias — the multi-name case
+	svcClient := mkSvc("client")  // puts the client task on the namespace network
+
+	serverCID := strings.Repeat("c", 64)
+	clientCID := strings.Repeat("d", 64)
+	t.Cleanup(func() {
+		for _, s := range []struct{ id, cid string }{{svcWeb, serverCID}, {svcAlias, serverCID}, {svcClient, clientCID}} {
+			_, _ = cm.DeregisterInstance(ctx, &servicediscovery.DeregisterInstanceInput{ServiceId: aws.String(s.id), InstanceId: aws.String(s.cid[:12])})
+			_, _ = cm.DeleteService(ctx, &servicediscovery.DeleteServiceInput{Id: aws.String(s.id)})
+		}
+		_, _ = cm.DeleteNamespace(ctx, &servicediscovery.DeleteNamespaceInput{Id: aws.String(nsID)})
+	})
+
+	_, err = ecsCli.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String("multi-svc-dns")})
+	require.NoError(t, err)
+	tdOut, err := ecsCli.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:                  aws.String("multi-svc-td"),
+		RequiresCompatibilities: []ecstypes.Compatibility{ecstypes.CompatibilityFargate},
+		NetworkMode:             ecstypes.NetworkModeAwsvpc, Cpu: aws.String("256"), Memory: aws.String("512"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{
+			Name: aws.String("app"), Image: aws.String("alpine:latest"),
+			EntryPoint: []string{"sh", "-c"}, Command: []string{"sleep 120"},
+		}},
+	})
+	require.NoError(t, err)
+
+	runTask := func(cid string) string {
+		out, err := ecsCli.RunTask(ctx, &ecs.RunTaskInput{
+			Cluster: aws.String("multi-svc-dns"), TaskDefinition: tdOut.TaskDefinition.TaskDefinitionArn,
+			Count: aws.Int32(1), LaunchType: ecstypes.LaunchTypeFargate,
+			NetworkConfiguration: &ecstypes.NetworkConfiguration{AwsvpcConfiguration: &ecstypes.AwsVpcConfiguration{Subnets: []string{subnetID}}},
+			Tags:                 []ecstypes.Tag{{Key: aws.String("sockerless-container-id"), Value: aws.String(cid)}},
+		})
+		require.NoError(t, err)
+		require.Len(t, out.Tasks, 1)
+		return aws.ToString(out.Tasks[0].TaskArn)
+	}
+	containerName := func(taskArn string) string {
+		taskID := taskArn[strings.LastIndex(taskArn, "/")+1:]
+		return "sockerless-sim-aws-task-" + taskID[:12]
+	}
+	waitRunning := func(tasks ...string) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			out, err := ecsCli.DescribeTasks(ctx, &ecs.DescribeTasksInput{Cluster: aws.String("multi-svc-dns"), Tasks: tasks})
+			if err != nil || len(out.Tasks) < len(tasks) {
+				return false
+			}
+			for _, tk := range out.Tasks {
+				if aws.ToString(tk.LastStatus) != "RUNNING" {
+					return false
+				}
+			}
+			return true
+		}, 45*time.Second, 500*time.Millisecond, "tasks should reach RUNNING")
+	}
+	waitContainer := func(name string) {
+		t.Helper()
+		require.Eventually(t, func() bool {
+			return exec.Command("docker", "inspect", name).Run() == nil
+		}, 45*time.Second, 500*time.Millisecond, "container %s should exist", name)
+	}
+
+	// Start the server first and wait for RUNNING so it provisions the shared
+	// VPC network before the client task races to create the same one.
+	serverTask := runTask(serverCID)
+	cleanupECSTask(t, ecsCli, "multi-svc-dns", serverTask)
+	waitRunning(serverTask)
+	waitContainer(containerName(serverTask))
+	clientTask := runTask(clientCID)
+	cleanupECSTask(t, ecsCli, "multi-svc-dns", clientTask)
+	waitRunning(serverTask, clientTask)
+	clientContainer := containerName(clientTask)
+	waitContainer(clientContainer)
+
+	serverIP := ecsTaskPrivateIPv4(t, ecsCli, "multi-svc-dns", serverTask)
+	clientIP := ecsTaskPrivateIPv4(t, ecsCli, "multi-svc-dns", clientTask)
+
+	register := func(svcID, cid, ip string) {
+		t.Helper()
+		var rerr error
+		require.Eventually(t, func() bool {
+			_, rerr = cm.RegisterInstance(ctx, &servicediscovery.RegisterInstanceInput{
+				ServiceId: aws.String(svcID), InstanceId: aws.String(cid[:12]),
+				Attributes: map[string]string{"AWS_INSTANCE_IPV4": ip},
+			})
+			return rerr == nil
+		}, 45*time.Second, 500*time.Millisecond, "RegisterInstance: %v", rerr)
+	}
+	// The server task backs BOTH services under the SAME instance ID — the
+	// multi-name registration that previously failed on the second connect.
+	register(svcWeb, serverCID, serverIP)
+	register(svcAlias, serverCID, serverIP)
+	register(svcClient, clientCID, clientIP)
+
+	// From the client, BOTH of the server's names must resolve.
+	for _, name := range []string{"web", "webalias"} {
+		var getent []byte
+		var execErr error
+		require.Eventually(t, func() bool {
+			getent, execErr = exec.Command("docker", "exec", clientContainer, "getent", "hosts", name).CombinedOutput()
+			return execErr == nil && len(getent) > 0
+		}, 15*time.Second, 500*time.Millisecond, "client should resolve %q via Cloud Map: getent=%q err=%v", name, getent, execErr)
+		assert.Contains(t, string(getent), name, "getent for %s should resolve", name)
+	}
+}

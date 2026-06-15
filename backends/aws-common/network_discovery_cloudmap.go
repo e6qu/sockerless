@@ -124,8 +124,8 @@ func (d *CloudMapDiscovery) registerInstance(ctx context.Context, containerID, h
 }
 
 func (d *CloudMapDiscovery) deregisterInstance(ctx context.Context, containerID, networkID string) error {
-	serviceID, ok := d.cfg.GetContainerServiceID(containerID)
-	if !ok || serviceID == "" {
+	namespaceID, ok := d.cfg.GetNetworkNamespaceID(networkID)
+	if !ok || namespaceID == "" {
 		return nil
 	}
 
@@ -134,28 +134,49 @@ func (d *CloudMapDiscovery) deregisterInstance(ctx context.Context, containerID,
 		cidShort = cidShort[:12]
 	}
 
-	_, err := d.cfg.ServiceDiscovery.DeregisterInstance(ctx,
-		&servicediscovery.DeregisterInstanceInput{
-			ServiceId:  aws.String(serviceID),
-			InstanceId: aws.String(cidShort),
+	// A container may back several services — one per DNS name it was registered
+	// under (its hostname plus every network alias). Deregister its instance
+	// from every service in the namespace, then reclaim now-empty services so
+	// their DNS names free up. (Cloud Map keys instances by container-ID, so a
+	// service that never held this container simply isn't found — skip it.)
+	listOut, err := d.cfg.ServiceDiscovery.ListServices(ctx,
+		&servicediscovery.ListServicesInput{
+			Filters: []sdtypes.ServiceFilter{
+				{
+					Name:      sdtypes.ServiceFilterNameNamespaceId,
+					Values:    []string{namespaceID},
+					Condition: sdtypes.FilterConditionEq,
+				},
+			},
 		},
 	)
 	if err != nil {
-		return fmt.Errorf("failed to deregister instance %s: %w", cidShort, err)
+		return fmt.Errorf("failed to list services in namespace: %w", err)
+	}
+	for _, svc := range listOut.Services {
+		serviceID := aws.ToString(svc.Id)
+		if _, err := d.cfg.ServiceDiscovery.DeregisterInstance(ctx,
+			&servicediscovery.DeregisterInstanceInput{
+				ServiceId:  aws.String(serviceID),
+				InstanceId: aws.String(cidShort),
+			},
+		); err != nil {
+			// This container wasn't registered in this service — best-effort
+			// cleanup; the namespace teardown is the backstop.
+			continue
+		}
+		if empty, err := d.serviceHasNoInstances(ctx, serviceID); err == nil && empty {
+			_, _ = d.cfg.ServiceDiscovery.DeleteService(ctx,
+				&servicediscovery.DeleteServiceInput{Id: aws.String(serviceID)},
+			)
+		}
 	}
 
 	d.cfg.SetContainerServiceID(containerID, "")
 
-	// Best-effort: delete the service if empty so the DNS name is reclaimed.
-	if empty, err := d.serviceHasNoInstances(ctx, serviceID); err == nil && empty {
-		_, _ = d.cfg.ServiceDiscovery.DeleteService(ctx,
-			&servicediscovery.DeleteServiceInput{Id: aws.String(serviceID)},
-		)
-	}
-
 	d.cfg.Logger.Debug().
 		Str("container", cidShort).
-		Str("service", serviceID).
+		Str("namespace", namespaceID).
 		Msg("deregistered container from Cloud Map")
 	return nil
 }

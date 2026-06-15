@@ -7,7 +7,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/servicediscovery"
 	sdtypes "github.com/aws/aws-sdk-go-v2/service/servicediscovery/types"
-	"github.com/sockerless/api"
 )
 
 // cloudNamespaceCreate creates a Cloud Map private DNS namespace for a
@@ -205,65 +204,4 @@ func pollOperation(
 		sleep(interval)
 	}
 	return "", fmt.Errorf("timeout waiting for operation %s after %s", operationID, time.Duration(maxAttempts)*interval)
-}
-
-// searchDomainsForContainer collects the Cloud Map namespace names
-// (one per attached user-defined network) so they can be set as DNS
-// search domains on the ECS task definition. Pre-defined Docker
-// networks (bridge/host/none) are skipped — they have no namespace.
-func (s *Server) searchDomainsForContainer(c *api.Container) []string {
-	if c == nil {
-		return nil
-	}
-	var domains []string
-	seen := make(map[string]struct{})
-	for netName, ep := range c.NetworkSettings.Networks {
-		if ep == nil || ep.NetworkID == "" {
-			continue
-		}
-		if netName == "bridge" || netName == "host" || netName == "none" {
-			continue
-		}
-		ns, ok := s.NetworkState.Get(ep.NetworkID)
-		if !ok || ns.NamespaceID == "" {
-			continue
-		}
-		nsName, err := s.getNamespaceName(ns.NamespaceID)
-		if err != nil {
-			// Aggregating search domains is a best-effort path (used for
-			// resolv.conf construction); log and skip unresolvable IDs
-			// rather than fail the container start.
-			s.Logger.Warn().Err(err).Str("namespace_id", ns.NamespaceID).
-				Msg("skipping namespace in search-domain list")
-			continue
-		}
-		if nsName == "" {
-			continue
-		}
-		if _, dup := seen[nsName]; dup {
-			continue
-		}
-		seen[nsName] = struct{}{}
-		domains = append(domains, nsName)
-	}
-	return domains
-}
-
-// getNamespaceName fetches the namespace name from Cloud Map by ID.
-// Returns the underlying error so callers can decide between retry,
-// skip, or propagate — substituting the raw ID produced confusing
-// downstream failures when the ID was then used as a DNS name.
-func (s *Server) getNamespaceName(namespaceID string) (string, error) {
-	result, err := s.aws.ServiceDiscovery.GetNamespace(s.ctx(),
-		&servicediscovery.GetNamespaceInput{
-			Id: aws.String(namespaceID),
-		},
-	)
-	if err != nil {
-		return "", fmt.Errorf("GetNamespace(%s): %w", namespaceID, err)
-	}
-	if result.Namespace == nil || result.Namespace.Name == nil {
-		return "", fmt.Errorf("GetNamespace(%s): response missing name", namespaceID)
-	}
-	return aws.ToString(result.Namespace.Name), nil
 }

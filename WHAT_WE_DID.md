@@ -4,6 +4,59 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - Cloud Map completeness: one instance, many DNS names (BUG-1804)
+
+Real AWS Cloud Map registers an instance *per service* (`ServiceId`+`InstanceId`),
+so one task (one IP) may back several services — i.e. resolve under several DNS
+names (verified against the vendored `specs/cloud-api/aws/servicediscovery.smithy.json`
+model). The sockerless stack only supported ONE name per container, so a GitLab
+`services:` alias (gitlab-runner attaches a service container with network alias
+`redis`) never resolved. Two layers were completed:
+
+**aws simulator** — the Docker-network DNS realization connected the task
+container to the namespace network with a single alias via a plain
+`NetworkConnect`, which Docker rejects on the second registration ("network is
+already connected" — verified by hand) so the second `RegisterInstance` 500'd
+and only one name resolved. `handleCMRegisterInstance` now stores the instance
+first, then re-attaches the container with the FULL set of service names it
+backs via disconnect-then-reconnect (the same pattern azure's ACA multi-CNAME
+path already uses; multiple aliases per endpoint all resolve, verified);
+`DeregisterInstance` re-realizes the reduced set. The netns/`/etc/hosts` tier
+already aggregated every name, so only the Docker-network tier needed the fix.
+
+**ECS backend** — `ContainerCreate` dropped the request's
+`NetworkingConfig.EndpointsConfig[net].Aliases`, and Cloud Map registration used
+only the container hostname. It now captures the aliases into
+`EndpointSettings.Aliases` and registers the container under its hostname AND
+every alias; `deregisterInstance` enumerates the namespace's services (a
+container may back several) rather than the old 1:1 container→service mapping
+that leaked the extra registrations.
+
+Proven by `TestECS_MultiServiceDNS` (a client task resolves BOTH of a server's
+two service names — `web` and `webalias` — via real Cloud Map DNS in Docker) +
+`TestDedupeNonEmpty`/`TestCloudMapNamesFor`; the existing `TestECS_CrossTaskDNS`
+still passes.
+
+**BUG-1805 — full gitlab-runner `services:` support (resolv.conf wrapper
+removed).** With the alias registered (BUG-1804), a `services:` job's build
+container still couldn't resolve `redis`. Root cause (verified on Podman, the
+local runtime): each network's DNS runs at its gateway and a container gets one
+nameserver per attached network, added as networks connect. The ECS backend
+wrapped the user's container command in a `/bin/sh` shim that rewrote
+`/etc/resolv.conf` to a STATIC snapshot at entrypoint time (to inject the
+namespace as a DNS search domain) — capturing only the VPC nameserver and
+dropping the namespace network's DNS that the runtime adds when Cloud Map
+connects the container *after* it starts. The wrapper also mangled the user's
+argv. Fix, respecting module boundaries: **remove the backend's resolv.conf
+command-wrapper** (the container argv runs verbatim; DNS is the runtime's), and
+have the **sim** realize each service name as BOTH `<service>` and
+`<service>.<namespace>` network aliases (both verified to resolve), matching the
+netns/`/etc/hosts` tier — so no search domain is needed. The now-dead
+`searchDomainsForContainer`/`shellQuoteArgs` helpers + tests were removed.
+Validated end to end: the bleeplab GitLab ECS harness runs a 3-stage pipeline
+whose integration stage `apk add redis` + `redis-cli -h redis` PING/SET/GET all
+succeed over the per-build pod network (TEST 4).
+
 ## 2026-06-15 - bleeplab dashboard UI (GitLab-themed) — completes bleephub parity
 
 bleeplab now ships an embedded dashboard UI, the last piece of bleephub parity

@@ -160,6 +160,16 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 			}
 		})
 	}
+	// Capture the caller's per-network DNS aliases (e.g. gitlab-runner attaches
+	// a `services:` container with alias `redis`). They're registered in Cloud
+	// Map alongside the hostname at start so siblings resolve the container by
+	// any of its names.
+	var netAliases []string
+	if req.NetworkingConfig != nil {
+		if ep := req.NetworkingConfig.EndpointsConfig[netName]; ep != nil {
+			netAliases = dedupeNonEmpty(ep.Aliases)
+		}
+	}
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
@@ -167,6 +177,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		IPAddress:   "",
 		IPPrefixLen: 16,
 		MacAddress:  "",
+		Aliases:     netAliases,
 	}
 
 	// Inject SOCKERLESS_DNS_SEARCH_DOMAIN so the agent / bootstrap can
@@ -404,7 +415,10 @@ func (s *Server) ContainerStart(ref string) error {
 		taskIP = taskAddr[:i]
 	}
 
-	// Register in Cloud Map for service discovery (skip pre-defined networks)
+	// Register in Cloud Map for service discovery (skip pre-defined networks).
+	// Each container is registered under its hostname AND every per-network DNS
+	// alias the caller attached (e.g. a gitlab-runner `services:` container's
+	// alias), so siblings resolve it by any of its names.
 	hostname := strings.TrimPrefix(c.Name, "/")
 	for netName, ep := range c.NetworkSettings.Networks {
 		if ep == nil || ep.NetworkID == "" {
@@ -413,10 +427,12 @@ func (s *Server) ContainerStart(ref string) error {
 		if netName == "bridge" || netName == "host" || netName == "none" {
 			continue
 		}
-		if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, hostname, id, &core.CloudEndpoint{
-			IPAddress: taskIP,
-		}); err != nil {
-			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("failed to register in Cloud Map")
+		for _, name := range cloudMapNamesFor(hostname, ep.Aliases) {
+			if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, name, id, &core.CloudEndpoint{
+				IPAddress: taskIP,
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Str("name", name).Msg("failed to register in Cloud Map")
+			}
 		}
 	}
 
@@ -1411,12 +1427,39 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		if netName == "bridge" || netName == "host" || netName == "none" {
 			continue
 		}
-		if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, hostname, id, &core.CloudEndpoint{
-			IPAddress: taskIP,
-		}); err != nil {
-			s.Logger.Warn().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register in Cloud Map")
+		for _, name := range cloudMapNamesFor(hostname, ep.Aliases) {
+			if err := s.NetworkDiscovery.RegisterContainer(context.Background(), ep.NetworkID, name, id, &core.CloudEndpoint{
+				IPAddress: taskIP,
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("container", id[:12]).Str("name", name).Msg("deferred-stdin: failed to register in Cloud Map")
+			}
 		}
 	}
 
 	go s.pollTaskExit(id, taskARN, exitCh)
+}
+
+// cloudMapNamesFor returns the de-duplicated set of DNS names a container
+// should be registered under in Cloud Map: its hostname plus every per-network
+// alias the caller attached (e.g. a gitlab-runner `services:` alias).
+func cloudMapNamesFor(hostname string, aliases []string) []string {
+	return dedupeNonEmpty(append([]string{hostname}, aliases...))
+}
+
+// dedupeNonEmpty returns in with empty strings dropped and duplicates removed,
+// preserving first-seen order.
+func dedupeNonEmpty(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s == "" {
+			continue
+		}
+		if _, ok := seen[s]; ok {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	return out
 }
