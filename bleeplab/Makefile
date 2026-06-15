@@ -2,6 +2,7 @@
 
 APP_NAME      := bleeplab
 GO_PACKAGE    := ./cmd
+UI_PACKAGE    := bleeplab
 DEFAULT_PORT  := 8929
 RUN_FLAGS     := -addr :8929
 GO_ENV        := CGO_ENABLED=0

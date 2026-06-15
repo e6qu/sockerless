@@ -43,6 +43,7 @@ include make/colors.mk
 GO_UI_APPS := \
   cmd/sockerless-admin \
   bleephub \
+  bleeplab \
   backends/docker \
   backends/ecs \
   backends/lambda \
@@ -64,12 +65,13 @@ GO_APPS := \
   github-runner-dispatcher-gcp \
   github-runner-dispatcher-azure
 
-# UI packages (14). Each consumed by the corresponding GO_UI_APPS entry
+# UI packages (15). Each consumed by the corresponding GO_UI_APPS entry
 # (except `core` which is a shared library, and `frontend-docker` which
 # is standalone).
 UI_APPS := \
   ui/packages/admin \
   ui/packages/bleephub \
+  ui/packages/bleeplab \
   ui/packages/backend-docker \
   ui/packages/backend-ecs \
   ui/packages/backend-lambda \

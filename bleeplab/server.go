@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	gitStorage "github.com/go-git/go-git/v5/storage"
 	"github.com/rs/zerolog"
@@ -35,6 +36,8 @@ type Server struct {
 	// process — hence a distinct coordinate from the control-plane API URL.
 	// Set via BLEEPLAB_EXTERNAL_URL; empty falls back to the request Host.
 	externalURL string
+	// started is the process start time, surfaced as uptime on /internal/status.
+	started time.Time
 
 	mu        sync.Mutex
 	nextID    int
@@ -63,6 +66,7 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		logger:      logger,
 		mux:         http.NewServeMux(),
 		externalURL: os.Getenv("BLEEPLAB_EXTERNAL_URL"),
+		started:     time.Now(),
 		nextID:      1,
 		runners:     map[string]*Runner{},
 		projects:    map[int]*Project{},
@@ -108,6 +112,25 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
+	})
+
+	// Internal read-only aggregation surface the embedded UI consumes for its
+	// dashboard (projections over control-plane state with no clean public-API
+	// equivalent). Resource detail still comes from the public /api/v4 surface.
+	s.mux.HandleFunc("GET /internal/status", s.handleInternalStatus)
+	s.mux.HandleFunc("GET /internal/projects", s.handleInternalProjects)
+	s.mux.HandleFunc("GET /internal/pipelines", s.handleInternalPipelines)
+	s.mux.HandleFunc("GET /internal/pipelines/{id}", s.handleInternalPipeline)
+	s.mux.HandleFunc("GET /internal/jobs/{id}", s.handleInternalJob)
+	s.mux.HandleFunc("GET /internal/runners", s.handleInternalRunners)
+	s.mux.HandleFunc("GET /internal/storage", s.handleInternalStorage)
+
+	// Embedded SPA at /ui/ (no-op when built with -tags noui). Registered
+	// before the catch-all so the mux's longest-prefix match routes /ui/...
+	// to the SPA while git paths fall through.
+	s.registerUI()
+	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
 	})
 
 	// Catch-all: git smart-HTTP (clone/fetch/push) lives on dynamic

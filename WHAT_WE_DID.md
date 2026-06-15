@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-15 - bleeplab dashboard UI (GitLab-themed) — completes bleephub parity
+
+bleeplab now ships an embedded dashboard UI, the last piece of bleephub parity
+(git + artifacts + UI). It's a React 19 / Vite 6 / Tailwind 4 SPA at
+`ui/packages/bleeplab/`, built and `//go:embed`ed into the bleeplab binary
+exactly as bleephub's is: `bleeplab/ui_embed.go` (`!noui`, `//go:embed all:dist`,
+`spaHandler` mounted at `/ui/`) + `bleeplab/ui_noembed.go` (`noui` no-op),
+`UI_PACKAGE := bleeplab` in `bleeplab/Makefile` driving the dist-copy in
+`make/go-app.mk`, registered in the root Makefile's `GO_UI_APPS` + `UI_APPS`. `/`
+redirects to `/ui/`; deep links fall back to `index.html`; the headless runner
+harness Dockerfile builds `-tags noui`.
+
+Views (React Router): **Overview** (status metrics + git/artifact storage backend
++ recent pipelines), **Projects** (+ detail with the project's pipelines),
+**Pipelines** (+ detail rendered as a GitLab-style stage graph — one column per
+stage, status-coloured job cards, artifact sizes), **Job** detail (ANSI trace via
+ui-core's LogViewer), **Runners**. It polls every 5s (React Query) and reuses the
+shared `@sockerless/ui-core` primitives (AppShell-less custom Shell, DataTable,
+StatusBadge, MetricsCard, ThemeToggle, ErrorBoundary).
+
+The UI is fed by a new **read-only `/internal/*` aggregation API** in bleeplab
+(`internal_api.go`) — typed view structs (not `map[string]any`) over the
+in-memory control-plane state: `/internal/{status,projects,pipelines,
+pipelines/{id},jobs/{id},runners,storage}`. Resource detail still comes from the
+public `/api/v4` GitLab surface; `/internal` only adds the dashboard projections
+(e.g. "every pipeline across every project") with no clean public-API
+equivalent. Tested in-process (`TestInternalAPI`) + a UI unit test.
+
+**Theme** (the explicit ask — "approaching the colour schemes of actual
+GitLab", distinct from bleephub): same shared design-token contract, GitLab
+values — an indigo/purple action accent (`#6E49CB`), the iconic tanuki orange
+(`#FC6D26`) as the brand highlight (wordmark + artifact badges), GitLab Pajamas
+status greens/reds/oranges, and a purple-tinted dark mode. bleephub stays
+neutral-gray + teal, so the two sims are unmistakable at a glance.
+
 ## 2026-06-15 - bleeplab object-store-backed CI artifacts (cross-stage passing)
 
 bleeplab now stores and serves CI job artifacts, object-store-backed exactly
