@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleeplab-azure-cells` (WIP — NOT a PR yet; aca services job is RED, see BUG-1825). **bleeplab GitLab cells on aca + azf, in one PR.** gcf (PR #586) merged.
+`feat/bleeplab-azure-cells` → **PR #587 open**. **bleeplab GitLab cells on aca + azf, in one PR.** gcf (PR #586) merged. aca cell GREEN; azf cell RED (BUG-1828) — continuing on this same branch/PR.
 
 ### State of this branch (updated)
 
