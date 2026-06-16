@@ -59,6 +59,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		// Carry the image's declared ExposedPorts onto the container config so
+		// `docker inspect` reports them — gitlab-runner reads a service
+		// container's exposed ports to health-check it (a `services:` redis with
+		// no reported ports is flagged "probably didn't start properly"). The
+		// overlay rewrite below clears Entrypoint/Cmd but must not lose the
+		// ports, so capture them from the base image here, before the rewrite.
+		if len(config.ExposedPorts) == 0 && len(img.Config.ExposedPorts) > 0 {
+			config.ExposedPorts = img.Config.ExposedPorts
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
@@ -172,17 +181,13 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	networkID := netName
 	if net, ok := s.Store.ResolveNetwork(netName); ok {
 		networkID = net.ID
-		// Register container in the network's Containers map
-		s.Store.Networks.Update(net.ID, func(n *api.Network) {
-			if n.Containers == nil {
-				n.Containers = make(map[string]api.EndpointResource)
-			}
-			n.Containers[id] = api.EndpointResource{
-				Name:       strings.TrimPrefix(name, "/"),
-				EndpointID: core.GenerateID()[:16],
-			}
-		})
 	}
+	// The network's container-membership map is NOT written to local Store
+	// state here — a stateless backend never owns that. NetworkInspect /
+	// NetworkList report membership from cloud-truth (the running Apps tagged
+	// with this network), so a stopped container can't linger as a stale
+	// "zombie" that makes a docker-host client (gitlab-runner) loop trying to
+	// disconnect it.
 	container.NetworkSettings.Networks[netName] = &api.EndpointSettings{
 		NetworkID:   networkID,
 		EndpointID:  core.GenerateID()[:16],
@@ -248,6 +253,26 @@ func (s *Server) ContainerStart(ref string) error {
 	}
 	id := c.ID
 
+	// Re-start of a kept-alive runner App: gitlab-runner cycles its predefined/
+	// build helper start→wait→stop→start per stage on the SAME container. The
+	// App was kept alive across the stop (see ContainerStop), so re-invoke the
+	// next stage's script through the reverse-agent instead of re-deploying the
+	// App (a slow ACR-Tasks redeploy that, repeated per stage, made the runner
+	// loop). A fresh stdinPipe (registered by the per-stage attach) on a
+	// container whose App is already deployed signals this. Mirrors cloudrun's
+	// invokeRunningRunnerStage. A fresh wait channel scopes this stage.
+	if s.config.UseApp && c.Config.OpenStdin {
+		if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+			if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+				exitCh := make(chan struct{})
+				s.Store.WaitChs.Store(id, exitCh)
+				s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
+				go s.runACAInitialStdinStage(id, c)
+				return nil
+			}
+		}
+	}
+
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -298,6 +323,21 @@ func (s *Server) ContainerStart(ref string) error {
 				go s.runACAInitialStdinStage(id, c)
 				return nil
 			}
+		}
+		// Command container (e.g. gitlab-runner's cache-volume permission
+		// container, whose command is `gitlab-runner-helper cache-init …`):
+		// the overlay moved its user command into SOCKERLESS_USER_* env but
+		// did NOT mark it to run at App startup (that marker, RUN_USER_WORKLOAD,
+		// is set only for serviceLike service workloads). Such a container is
+		// one the client `docker wait`s on, so run its command once via the
+		// reverse-agent and close the wait channel; otherwise the App stays
+		// alive only serving the agent and `docker wait` hangs. Long-lived
+		// exec-driven job containers (e.g. a keepalive entrypoint) run their
+		// command the same way — it stays up until the container is stopped,
+		// which closes the wait channel then.
+		if !c.Config.OpenStdin && acaCommandRunsViaAgent(c) {
+			go s.runACAOneShotCommand(id, c)
+			return nil
 		}
 		return s.waitForReverseAgentAfterStart(id, c.Config.OpenStdin)
 	}
@@ -480,11 +520,25 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		return &api.NotModifiedError{}
 	}
 
-	// — for Apps, the ContainerApp IS the running instance;
-	// there's no in-flight Execution to stop. Delete the App to stop
-	// the container; next Start re-creates it.
+	// — for Apps, the ContainerApp IS the running instance; there's no
+	// in-flight Execution to stop. Normally the App is deleted to stop the
+	// container. EXCEPTION: gitlab-runner cycles its predefined/build helper
+	// with start→wait→stop→start on the SAME container per stage; deleting the
+	// App on each stop would force a slow ACR-Tasks redeploy every stage (and
+	// the redeploy churn makes the runner loop). For these runner-pattern
+	// stdin containers (OpenStdin), keep the App alive — the bootstrap's HTTP /
+	// reverse-agent stays up to run the next stage's script (re-invoked from
+	// ContainerStart), and final teardown happens in ContainerRemove. Mirrors
+	// cloudrun's UseService runner-pattern exception. OpenStdin lives on the
+	// original PendingCreates container (cloud-state reconstruction drops it).
+	openStdin := false
+	if pc, pcOK := s.PendingCreates.Get(id); pcOK {
+		openStdin = pc.Config.OpenStdin
+	}
 	if s.config.UseApp {
-		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
+		if openStdin {
+			s.Logger.Info().Str("container", id).Msg("ContainerStop: OpenStdin runner-pattern — keeping App alive across stages")
+		} else if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
 			s.deleteApp(appState.AppName)
 			s.Registry.MarkCleanedUp(appState.AppName)
 		}

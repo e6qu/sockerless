@@ -1437,6 +1437,36 @@ func startECSPauseContainer(taskID string, td ECSTaskDefinition, sink sim.LogSin
 	}, sink)
 }
 
+// ecsContainerResourceLimits translates the advertised ECS sizing into Docker
+// cgroup limits so the launched container is actually bounded the way the task
+// metadata reports (a Fargate task advertising 512 CPU / 1024 MiB should see a
+// matching cpu.max / memory.max, not the host's full capacity). Container-level
+// cpu/memory refine the task-level size (matching ECS, where per-container
+// limits sit under the task size); the task size is the fallback. CPU is in ECS
+// units (1024 == 1 vCPU); memory is in MiB.
+func ecsContainerResourceLimits(td ECSTaskDefinition, cd ECSContainerDefinition) (memBytes, nanoCPU int64) {
+	memMiB := cd.Memory
+	if memMiB == 0 {
+		if m, err := strconv.Atoi(td.Memory); err == nil {
+			memMiB = m
+		}
+	}
+	if memMiB > 0 {
+		memBytes = int64(memMiB) * 1024 * 1024
+	}
+
+	cpuUnits := cd.Cpu
+	if cpuUnits == 0 {
+		if c, err := strconv.Atoi(td.Cpu); err == nil {
+			cpuUnits = c
+		}
+	}
+	if cpuUnits > 0 {
+		nanoCPU = int64(cpuUnits) * 1_000_000_000 / 1024
+	}
+	return memBytes, nanoCPU
+}
+
 func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string, sink sim.LogSink) (*ecsTaskProcesses, error) {
 	if len(td.ContainerDefinitions) == 0 {
 		return nil, nil
@@ -1586,6 +1616,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			Binds:     binds,
 			Sandbox:   sim.SandboxFargate,
 		}
+		cfg.MemoryBytes, cfg.NanoCPU = ecsContainerResourceLimits(td, cd)
 		switch {
 		case sharedNetMode != "":
 			// netns tier: share the pause container's ENI netns.

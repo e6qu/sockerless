@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-16 - bleeplab GitLab cell on the ACA backend (GREEN) + AZF (WIP) + AWS sim faithfulness
+
+The full gitlab-runner docker-executor flow now also runs on the **Azure
+Container Apps (aca) backend** — all 4 cell tests pass, including the redis
+`services:` job (PING/SET/GET) over the per-build network. The runner stages
+route through the bootstrap's **HTTP buffered-invoke** to the App's ingress
+(like cloudrun/gcf), not the reverse-agent WebSocket: the WS exec half-opened
+backend→container under the heavy per-stage container churn (gvisor/podman
+port-reuse), so `agent.CollectExecWithStdin` blocked forever. The azure sim
+implements **faithful ACA ingress** (`registerContainerAppsIngress`): a
+`WrapHandler` that reverse-proxies any request whose Host matches an App's
+`latestRevisionFqdn` to that App's running replica on its configured ingress
+`targetPort` — exactly how real ACA routes an App FQDN to the container, the
+same virtual-host shape as the storage data-plane and Functions invoke. The
+backend reaches it via the `EndpointURL` coordinate + the FQDN Host header,
+differing from real ACA only in that coordinate (no sim-specific endpoint).
+
+Also landed: a backend WebSocket **keepalive** on `agent.ReverseAgentConn`
+(ping ticker + `SetPongHandler`/read-deadline, refreshed on pong+data) that
+detects a half-open reverse-agent connection and closes it instead of hanging
+forever — a real robustness fix for every FaaS backend; the cloudrun cell
+re-verified green. The `bleeplab-runner-docker-build` Makefile target now uses
+`docker build --load` (the default `docker-container` buildx driver was
+otherwise leaving `bleeplab-runner-int:local` STALE — every `docker run` silently
+re-ran an old image). A run of aca-cell hurdle fixes (arch, cache-init-via-agent,
+azure-files volumes, sim umask/SELinux, cloud-truth NetworkInspect, stdin-attach
+precedence, `/bin/sh` stage) precede the green.
+
+**azf cell — WIP (BUG-1828):** the overlay base-ref (BUG-1826) and the azure
+sim's AZF-invoke-reach-by-container-bridge-IP (BUG-1827) are fixed, so the
+cache-init one-shot runs, but the runner pattern needs a *persistent* workload
+container while the azf FaaS invoke is ephemeral (a container per
+`/api/function`, removed after) — so gitlab-runner's later `docker exec` hits
+"No such container". The fix is to run the App-Service site container
+persistently (the provision pins an EP1/Premium = always-on plan) like an ACA
+App and route invoke/ingress/exec to it.
+
+**AWS sim faithfulness (#583/#569, BUG-1827):** ECS now applies the advertised
+task/container CPU/Memory to the launched container's cgroup (`HostConfig`
+`Memory`/`NanoCPUs` from `ecsContainerResourceLimits`), so a Fargate task is
+actually bounded the way its `/task` metadata reports; the process-mode
+managed-EBS path was hardened so `ebsRemoveDockerVolume` never dereferences a
+nil Docker client. SDK probes `TestECS_TaskDefinitionFidelitySDK` +
+`TestECS_ManagedEBSRunTaskProcessMode` (and the azure ACA App SDK suite) stay
+green.
+
 ## 2026-06-16 - bleeplab GitLab cell on the Cloud Run Functions (gcf) backend (GREEN)
 
 The full gitlab-runner docker-executor flow now also runs on the Cloud Run

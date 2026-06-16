@@ -3795,9 +3795,16 @@ func ebsRemoveDockerVolume(name string) {
 	if name == "" {
 		return
 	}
+	cli := sim.DockerClient()
+	if cli == nil {
+		// Process mode (SIM_RUNTIME=process): the managed-EBS volume is
+		// host-path-backed, so no Docker volume exists to remove — never
+		// dereference the nil client (the panic reported in #569).
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_ = sim.DockerClient().VolumeRemove(ctx, name, false)
+	_ = cli.VolumeRemove(ctx, name, false)
 }
 
 // ebsCopyDockerVolumes copies all content from srcVolume into dstVolume using a

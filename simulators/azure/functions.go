@@ -1089,11 +1089,64 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 	}()
 	go sim.StreamContainerLogs(logCtx, containerID, sink)
 
-	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort)
-	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
-		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	// Reach the bootstrap by whichever address connects:
+	//   - <containerIP>:8080 — works when the sim runs INSIDE a harness
+	//     container (the host-published port binds the host's loopback, not the
+	//     sim container's, so 127.0.0.1:hostPort is unreachable there);
+	//   - 127.0.0.1:<hostPort> — works when the sim runs directly on the host.
+	// Same reach the gcp sim's Cloud Run/Functions invoke and the ACA App
+	// invoke use.
+	var cands []string
+	if ip := sim.ContainerIPv4(containerID); ip != "" {
+		cands = append(cands, fmt.Sprintf("http://%s:8080/api/function", ip))
+	}
+	cands = append(cands, fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort))
+	bootstrapURL, err := firstReachableHTTP(ctx, cands, 30*time.Second)
+	if err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
 	}
 	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+}
+
+// firstReachableHTTP polls the candidate URLs (each round, in order) and
+// returns the first whose host:port accepts a TCP connection within timeout.
+func firstReachableHTTP(ctx context.Context, cands []string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		for _, cand := range cands {
+			parsed, perr := url.Parse(cand)
+			if perr != nil {
+				lastErr = perr
+				continue
+			}
+			host := parsed.Host
+			if _, _, splitErr := net.SplitHostPort(host); splitErr != nil {
+				switch parsed.Scheme {
+				case "https":
+					host = net.JoinHostPort(host, "443")
+				default:
+					host = net.JoinHostPort(host, "80")
+				}
+			}
+			conn, derr := net.DialTimeout("tcp", host, time.Second)
+			if derr == nil {
+				_ = conn.Close()
+				return cand, nil
+			}
+			lastErr = derr
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("timeout after %s", timeout)
+	}
+	return "", lastErr
 }
 
 func stopAzureFunctionInstance(siteName string) {
@@ -1169,39 +1222,6 @@ func pickFreeTCPPort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
 	return port, nil
-}
-
-func waitForHTTP(ctx context.Context, rawURL string, timeout time.Duration) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse url %q: %w", rawURL, err)
-	}
-	addr := parsed.Host
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		switch parsed.Scheme {
-		case "http":
-			addr = net.JoinHostPort(addr, "80")
-		case "https":
-			addr = net.JoinHostPort(addr, "443")
-		default:
-			return fmt.Errorf("url %q has no explicit port", rawURL)
-		}
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		conn, err := net.DialTimeout("tcp", addr, time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout after %s", timeout)
 }
 
 func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Reader, contentType string, timeout time.Duration) ([]byte, int, error) {

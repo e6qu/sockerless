@@ -89,6 +89,15 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Labels = make(map[string]string)
 	}
 
+	// The overlay's `FROM` runs in the ACR-Tasks build environment, which can
+	// only resolve a locally-present or registry-pullable ref — NOT the ACR
+	// hostname rewrite below (`<acr>.azurecr.io/library/<digest>` doesn't
+	// resolve there; the sim registry is reached via the ACR-endpoint
+	// coordinate, not DNS). Capture the pre-rewrite ref for the overlay base so
+	// the build's FROM stays pullable, exactly as aca keeps its overlay base
+	// (ResolveAzureImageURIWithCache passes a local digest through unchanged).
+	overlayBaseRef := config.Image
+
 	// Resolve Docker Hub images to ACR or normalize for Azure Functions
 	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
 
@@ -111,7 +120,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 	if s.useAZFOverlayPath(originalImage) {
 		spec := azfOverlaySpec{
-			BaseImageRef:        originalImage,
+			BaseImageRef:        overlayBaseRef,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}

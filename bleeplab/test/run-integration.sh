@@ -378,12 +378,193 @@ provision_gcf() {
     log "sockerless-backend-gcf ready (gcs-sync workspace)"
 }
 
+# stage_gitlab_helper pulls the arch-matched gitlab-runner-helper into the host
+# daemon so the azure/gcp sim's registry pull-through can hydrate it when the
+# backend overlay-builds the reverse-agent bootstrap FROM it (ACR Tasks / Cloud
+# Build). ECS skips this (no overlay — the runner pulls the helper directly).
+stage_gitlab_helper() { # helper_arch
+    local runner_ver helper_ref
+    runner_ver=$(gitlab-runner --version 2>/dev/null | sed -n 's/^Version:[[:space:]]*//p' | head -1)
+    [ -n "$runner_ver" ] || fail "determine gitlab-runner version"
+    helper_ref="registry.gitlab.com/gitlab-org/gitlab-runner/gitlab-runner-helper:${1}-v${runner_ver}"
+    log "Staging gitlab-runner-helper ($helper_ref)…"
+    local attempt
+    for attempt in 1 2 3 4 5; do
+        if docker pull -q "$helper_ref" >/dev/null 2>&1; then return 0; fi
+        sleep "$((attempt * 3))"
+    done
+    fail "pull gitlab-runner-helper $helper_ref"
+}
+
+provision_aca() {
+    # ACA deploys container-jobs as Container Apps (the App path,
+    # SOCKERLESS_ACA_USE_APP=1): backend-aca builds the reverse-agent overlay via
+    # ACR Tasks (uploads the build context to a blob container, scheduleRun →
+    # docker build on the host engine, push to the sim's /v2/), then runs the
+    # App and exec/attaches over the reverse agent. A `services:` container
+    # co-deploys as a sibling Container App sharing the per-build network. The
+    # runner workspace is shared via an Azure-Files-ephemeral volume.
+    SIM_AZURE_FILES_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_AZURE_FILES_DATA_DIR
+    SIM_ADDR="127.0.0.1:4568"
+    local sim_endpoint="http://localhost:4568"
+    local sub="00000000-0000-0000-0000-000000000001"
+    local rg="sim-rg" acct="simstorage" env="sockerless" acr="simacr"
+    local build_platform helper_arch workload_arch
+    case "$(uname -m)" in
+        aarch64|arm64) build_platform="linux/arm64"; helper_arch="arm64";  workload_arch="arm64" ;;
+        *)             build_platform="linux/amd64"; helper_arch="x86_64"; workload_arch="amd64" ;;
+    esac
+    export SOCKERLESS_WORKLOAD_ARCH="$workload_arch"
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # The ACR-Tasks overlay build uploads its context to blob storage via the
+    # storage account's advertised endpoint. Pin that to a deterministic
+    # `<account>.blob.localhost` host and resolve it to loopback inside this
+    # container (`*.localhost` is not special-cased by the container resolver).
+    export SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='{"storage":{"blob":"http://{account}.blob.localhost:{port}/"}}'
+    if ! grep -q "${acct}.blob.localhost" /etc/hosts 2>/dev/null; then
+        echo "127.0.0.1 ${acct}.blob.localhost" >>/etc/hosts || fail "add storage host alias"
+    fi
+
+    log "Starting simulator-azure on :4568 (all interfaces, so the published registry port reaches it)"
+    simulator-azure --addr ":4568" >"$LOG_DIR/simulator-azure.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: storage account + managed environment + ACR"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Storage/storageAccounts/$acct?api-version=2023-01-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}' >/dev/null || fail "create storage account"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.App/managedEnvironments/$env?api-version=2024-03-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","properties":{}}' >/dev/null || fail "create managed environment"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ContainerRegistry/registries/$acr?api-version=2023-07-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Basic"},"properties":{}}' >/dev/null || fail "create ACR registry"
+    curl -sf -X PUT "http://$SIM_ADDR/build-context?restype=container" \
+        -H "Host: ${acct}.blob.localhost:4568" >/dev/null || fail "create build-context container"
+
+    WORK_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-ws"
+    mkdir -p "$WORK_DIR"
+
+    export SOCKERLESS_ENDPOINT_URL="$sim_endpoint"
+    export SOCKERLESS_ACA_SUBSCRIPTION_ID="$sub"
+    export SOCKERLESS_ACA_RESOURCE_GROUP="$rg"
+    export SOCKERLESS_ACA_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_ACA_LOG_ANALYTICS_WORKSPACE="default"
+    export SOCKERLESS_ACA_ENVIRONMENT="$env"
+    export SOCKERLESS_ACA_USE_APP=1
+    export SOCKERLESS_AZURE_ACR_NAME="$acr"
+    export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZURE_BUILD_CONTAINER="build-context"
+    export SOCKERLESS_AZURE_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_AZURE_ACR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/aca/reverse"
+    export SOCKERLESS_ACA_BOOTSTRAP=/usr/local/bin/sockerless-cloudrun-bootstrap
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    export SOCKERLESS_ACA_SHARED_VOLUMES="runner-ws=${WORK_DIR}=runner-ws=azure-files-ephemeral"
+
+    stage_gitlab_helper "$helper_arch"
+
+    log "Starting sockerless-backend-aca on :3375"
+    sockerless-backend-aca --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-aca.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-aca ready (azure-files-ephemeral workspace)"
+}
+
+provision_azf() {
+    # Azure Functions deploys container-jobs as Linux Function App sites whose
+    # sitecontainers run the workload (SOCKERLESS_AZF_REGISTRY overlay built via
+    # ACR Tasks, same build→push→pull as aca): backend-azf builds the
+    # reverse-agent overlay, deploys the site, and exec/attaches over the
+    # reverse agent. A `services:` container deploys as a sibling site on the
+    # per-build network, reachable by name through Azure Private DNS (cloud-dns
+    # discovery — azf's faithful network primitive, matching aca). The runner
+    # workspace is shared via an Azure-Files-ephemeral volume.
+    SIM_AZURE_FILES_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_AZURE_FILES_DATA_DIR
+    SIM_ADDR="127.0.0.1:4568"
+    local sim_endpoint="http://localhost:4568"
+    local sub="00000000-0000-0000-0000-000000000001"
+    local rg="sim-rg" acct="simstorage" plan="sockerless-plan" acr="simacr"
+    local build_platform helper_arch workload_arch
+    case "$(uname -m)" in
+        aarch64|arm64) build_platform="linux/arm64"; helper_arch="arm64";  workload_arch="arm64" ;;
+        *)             build_platform="linux/amd64"; helper_arch="x86_64"; workload_arch="amd64" ;;
+    esac
+    export SOCKERLESS_WORKLOAD_ARCH="$workload_arch"
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # ACR-Tasks overlay build uploads its context to blob storage via the
+    # account's advertised endpoint — pin it to a deterministic
+    # `<account>.blob.localhost` resolved to loopback inside this container.
+    export SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='{"storage":{"blob":"http://{account}.blob.localhost:{port}/"}}'
+    if ! grep -q "${acct}.blob.localhost" /etc/hosts 2>/dev/null; then
+        echo "127.0.0.1 ${acct}.blob.localhost" >>/etc/hosts || fail "add storage host alias"
+    fi
+
+    log "Starting simulator-azure on :4568 (all interfaces, so the published registry port reaches it)"
+    simulator-azure --addr ":4568" >"$LOG_DIR/simulator-azure.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: storage account + App Service plan + ACR"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Storage/storageAccounts/$acct?api-version=2023-01-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}' >/dev/null || fail "create storage account"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/serverfarms/$plan?api-version=2023-12-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"EP1","tier":"ElasticPremium"},"kind":"linux","properties":{"reserved":true}}' >/dev/null || fail "create App Service plan"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ContainerRegistry/registries/$acr?api-version=2023-07-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Basic"},"properties":{}}' >/dev/null || fail "create ACR registry"
+    curl -sf -X PUT "http://$SIM_ADDR/build-context?restype=container" \
+        -H "Host: ${acct}.blob.localhost:4568" >/dev/null || fail "create build-context container"
+
+    WORK_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-ws"
+    mkdir -p "$WORK_DIR"
+
+    export SOCKERLESS_ENDPOINT_URL="$sim_endpoint"
+    export SOCKERLESS_AZF_SUBSCRIPTION_ID="$sub"
+    export SOCKERLESS_AZF_RESOURCE_GROUP="$rg"
+    export SOCKERLESS_AZF_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="default"
+    export SOCKERLESS_AZF_APP_SERVICE_PLAN="/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/serverfarms/$plan"
+    export SOCKERLESS_AZF_REGISTRY="${acr}.azurecr.io"
+    export SOCKERLESS_AZF_NETWORK_DISCOVERY="cloud-dns"
+    export SOCKERLESS_AZURE_ACR_NAME="$acr"
+    export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZURE_BUILD_CONTAINER="build-context"
+    export SOCKERLESS_AZURE_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_AZURE_ACR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/azf/reverse"
+    export SOCKERLESS_AZF_BOOTSTRAP=/usr/local/bin/sockerless-azf-bootstrap
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    export SOCKERLESS_AZF_SHARED_VOLUMES="runner-ws=${WORK_DIR}=runner-ws=azure-files-ephemeral"
+
+    stage_gitlab_helper "$helper_arch"
+
+    log "Starting sockerless-backend-azf on :3375"
+    sockerless-backend-azf --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-azf.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-azf ready (azure-files-ephemeral workspace)"
+}
+
 BLEEPLAB_BACKEND="${BLEEPLAB_BACKEND:-ecs}"
 case "$BLEEPLAB_BACKEND" in
     ecs)      provision_ecs ;;
     cloudrun) provision_cloudrun ;;
     gcf)      provision_gcf ;;
-    *) fail "unsupported BLEEPLAB_BACKEND: $BLEEPLAB_BACKEND (ecs|cloudrun|gcf)" ;;
+    aca)      provision_aca ;;
+    azf)      provision_azf ;;
+    *) fail "unsupported BLEEPLAB_BACKEND: $BLEEPLAB_BACKEND (ecs|cloudrun|gcf|aca|azf)" ;;
 esac
 
 # ── Start bleeplab ─────────────────────────────────────────────────────

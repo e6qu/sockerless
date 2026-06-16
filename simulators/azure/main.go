@@ -109,6 +109,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerAzureMonitor(srv)
 	registerContainerApps(srv)
 	registerContainerAppsApps(srv)
+	registerContainerAppsIngress(srv)
 	registerAzureFiles(srv)
 	registerACR(srv)
 	registerACRTasks(srv)

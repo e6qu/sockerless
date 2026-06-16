@@ -28,11 +28,17 @@ import (
 // when the resolved backing actually needs it
 // (BackingAzureFilesEphemeral). Memory-backed volumes don't need a share.
 func (s *Server) resolveVolumeForName(ctx context.Context, volName string) (*armappcontainers.Volume, error) {
-	requested := core.StorageBacking("")
 	ref := core.SharedVolumeRef{
 		Name:                volName,
 		AzureStorageAccount: s.config.StorageAccount,
 	}
+	// An ad-hoc named volume (`docker volume create <name>` or an auto-created
+	// named-volume bind) is shared across the containers that mount it and
+	// persists for the run, so back it with a shared Azure Files share — the
+	// same share VolumeCreate provisions. A per-container EmptyDir would give
+	// each container its own empty mount (e.g. a gitlab-runner build container
+	// couldn't see the workspace its helper container cloned into /builds).
+	requested := core.BackingAzureFilesEphemeral
 	if sv := s.config.LookupSharedVolumeByName(volName); sv != nil {
 		// Explicit Backing, no default — empty/unknown fails loudly in
 		// Resolve per the no-fallbacks directive.
