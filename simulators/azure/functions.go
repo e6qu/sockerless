@@ -958,6 +958,27 @@ type AzureStoragePropertyDictionaryResource struct {
 	Properties map[string]*AzureStorageInfoValue `json:"properties"`
 }
 
+// siteAzureStorageBinds realizes a single-container site's attached Azure Files
+// shares (Properties.AzureStorageAccounts, set via
+// WebApps.UpdateAzureStorageAccounts) as Docker host binds
+// `<host-share-dir>:<mountPath>`, so the persistent container mounts the same
+// shared share that other containers mounting the same named volume see. This
+// is the App Service `azureStorageAccounts` mount contract, mirroring the ACA
+// App replica's volume binds.
+func siteAzureStorageBinds(site *Site) []string {
+	if site == nil {
+		return nil
+	}
+	var binds []string
+	for _, v := range site.Properties.AzureStorageAccounts {
+		if v == nil || v.AccountName == "" || v.ShareName == "" || v.MountPath == "" {
+			continue
+		}
+		binds = append(binds, FileShareHostDir(v.AccountName, v.ShareName)+":"+v.MountPath)
+	}
+	return binds
+}
+
 // AzureStorageInfoValue mirrors armappservice.AzureStorageInfoValue.
 type AzureStorageInfoValue struct {
 	Type        string `json:"type,omitempty"`
@@ -1075,6 +1096,12 @@ func (inst *azureFunctionInstance) startLocked(site *Site) error {
 		mainBinds = siteContainerVolumeBinds(site.Name, main.Properties.VolumeMounts)
 	} else {
 		containerImage = siteContainerImage(site)
+		// Single-container site: mount the site's Azure Files shares (attached
+		// via WebApps.UpdateAzureStorageAccounts). A shared named volume like
+		// gitlab-runner's /builds dir maps to one share, so every container that
+		// mounts that volume sees the same workspace — the build container must
+		// see what the helper container cloned into /builds.
+		mainBinds = siteAzureStorageBinds(site)
 	}
 	if containerImage == "" {
 		return fmt.Errorf("site %q has no container image", site.Name)

@@ -185,8 +185,14 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 
 			c := siteToContainer(site.Tags, site.Properties, site.Name)
 
-			// Overlay recorded invocation outcome.
-			if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok {
+			// Overlay recorded invocation outcome. A gitlab-runner-pattern
+			// (OpenStdin) container is re-invoked per stage and must stay
+			// running across stages so the runner's docker exec resolves —
+			// docker wait still returns each stage's exit code via WaitForExit
+			// (InvocationResult / WaitChs), independent of this running flag.
+			// It is reported exited only once the site is deleted. A one-shot
+			// FaaS container (no OpenStdin) overlays exited as before.
+			if inv, ok := p.server.Store.GetInvocationResult(c.ID); ok && !c.Config.OpenStdin {
 				c.State = api.ContainerState{
 					Status:     "exited",
 					Running:    false,
@@ -359,8 +365,9 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 		Image:   image,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:  image,
-			Labels: dockerLabels,
+			Image:     image,
+			Labels:    dockerLabels,
+			OpenStdin: derefTag(tags["sockerless-open-stdin"]) == "true",
 		},
 		HostConfig: api.HostConfig{NetworkMode: networkName},
 		NetworkSettings: api.NetworkSettings{

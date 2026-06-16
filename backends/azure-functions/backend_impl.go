@@ -302,11 +302,20 @@ func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string,
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 	}
+	azTags := tags.AsAzurePtrMap()
+	// Persist OpenStdin in the site tags: CloudState reconstruction drops the
+	// container Config, but a gitlab-runner-pattern (OpenStdin) container must
+	// be reported running across per-stage invokes (the cloud is the source of
+	// truth), so the runner's per-stage docker exec resolves instead of 409ing
+	// on a one-shot-FaaS "exited" overlay.
+	if container.Config.OpenStdin {
+		azTags["sockerless-open-stdin"] = ptr("true")
+	}
 
 	site := armappservice.Site{
 		Location: ptr(s.config.Location),
 		Kind:     ptr("functionapp,linux,container"),
-		Tags:     tags.AsAzurePtrMap(),
+		Tags:     azTags,
 		Properties: &armappservice.SiteProperties{
 			SiteConfig: siteConfig,
 		},
@@ -460,11 +469,13 @@ func (s *Server) ContainerStart(ref string) error {
 		// script rather than reporting NotModified, which would strand the
 		// stage waiting for output it never gets.
 		if c.Config.OpenStdin {
-			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
-				azfState, hasState := s.AZF.Get(id)
-				if hasState && azfState.FunctionURL != "" {
-					return s.invokeFunctionAsync(id, c, azfState)
-				}
+			// Re-invoke for the next stage. Don't gate on the stdinPipe being
+			// present yet — gitlab-runner's per-stage attach and start race, and
+			// invokeFunctionAsync → captureAZFStdin(expectStdin) waits for the
+			// pipe to appear before draining + POSTing the stage script.
+			azfState, hasState := s.AZF.Get(id)
+			if hasState && azfState.FunctionURL != "" {
+				return s.invokeFunctionAsync(id, c, azfState)
 			}
 		}
 		s.PendingCreates.Delete(id)
@@ -1114,15 +1125,22 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
+	// gitlab-runner attach-stdin pattern: a per-stage / prepare script is
+	// written to the container's MAIN process stdin. This must take precedence
+	// over the reverse-agent routing below — the reverse-agent registers no main
+	// process (rt.mp==nil; reverse mode carries only exec sessions), so a stdin
+	// attach routed to it fails "no main process to attach to" and the stage
+	// never runs. The captured script belongs on the buffered-invoke stdinPipe
+	// path (drained + POSTed by invokeFunctionAsync on the matching start).
 	if opts.Stdin && hasAZFOverlayRepo(c.Config.Image) {
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
 		pipe := actual.(*stdinPipe)
 		pipe.Open()
 		return s.newAttachStream(c.ID, pipe), nil
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
 	if opts.Stdin {
 		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}
