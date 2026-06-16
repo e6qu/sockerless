@@ -967,15 +967,38 @@ type AzureStorageInfoValue struct {
 	MountPath   string `json:"mountPath,omitempty"`
 }
 
+// azureFunctionInstance tracks the persistent App Service site container for a
+// function app. On an always-on plan (the only plan the sim models for a
+// container-image site) the platform keeps one container running for the life
+// of the site; invokes route to it and it is torn down only when the site is
+// deleted. The per-instance mutex serializes the lazy start so concurrent
+// invokes to the same site share one container.
 type azureFunctionInstance struct {
-	containerID string
-	cancelLogs  context.CancelFunc
+	mu             sync.Mutex
+	containerID    string
+	cancelLogs     context.CancelFunc
+	sidecarHandles []*sim.ContainerHandle
+	bootstrapURL   string
 }
 
 var azureFunctionInstances = struct {
 	sync.Mutex
 	bySite map[string]*azureFunctionInstance
 }{bySite: map[string]*azureFunctionInstance{}}
+
+// azfInstanceFor returns the (lazily created) instance holder for a site,
+// creating an empty one on first reference. The returned holder's own mutex
+// guards its container lifecycle.
+func azfInstanceFor(siteName string) *azureFunctionInstance {
+	azureFunctionInstances.Lock()
+	defer azureFunctionInstances.Unlock()
+	inst := azureFunctionInstances.bySite[siteName]
+	if inst == nil {
+		inst = &azureFunctionInstance{}
+		azureFunctionInstances.bySite[siteName] = inst
+	}
+	return inst
+}
 
 func hasAzureFunctionHTTPBootstrap(site *Site) bool {
 	if site == nil || site.Properties.SiteConfig == nil {
@@ -1004,6 +1027,37 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		return nil, -1, fmt.Errorf("site config is required")
 	}
 
+	// App Service runs the site's container persistently on an always-on plan:
+	// start it on first invoke and keep it for the life of the site. Subsequent
+	// invokes (gitlab-runner cycles create/start/exec/wait per stage against the
+	// same site) reuse the one long-lived container — its in-container bootstrap
+	// HTTP server handles repeated buffered invokes, and its reverse-agent stays
+	// registered for docker exec. The container is torn down only when the site
+	// is deleted (stopAzureFunctionInstance, from the DELETE handler).
+	inst := azfInstanceFor(site.Name)
+	inst.mu.Lock()
+	if inst.containerID == "" || !sim.ContainerRunning(inst.containerID) {
+		if inst.containerID != "" {
+			// A previously-started container died; reap before restarting.
+			inst.teardownLocked()
+		}
+		if err := inst.startLocked(site); err != nil {
+			inst.mu.Unlock()
+			return nil, -1, err
+		}
+	}
+	bootstrapURL := inst.bootstrapURL
+	inst.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
+	defer cancel()
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+}
+
+// startLocked launches the persistent site container (plus any sidecar
+// sitecontainers) and resolves the reachable in-container bootstrap URL,
+// recording everything on the instance. Caller holds inst.mu.
+func (inst *azureFunctionInstance) startLocked(site *Site) error {
 	// Multi-container (sitecontainers) sites run the IsMain member as the
 	// long-lived HTTP container; the LinuxFxVersion-derived image is the
 	// single-container fallback.
@@ -1023,7 +1077,7 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		containerImage = siteContainerImage(site)
 	}
 	if containerImage == "" {
-		return nil, -1, fmt.Errorf("site %q has no container image", site.Name)
+		return fmt.Errorf("site %q has no container image", site.Name)
 	}
 
 	localImage := sim.ResolveLocalImage(containerImage)
@@ -1032,11 +1086,11 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 
 	platform, err := localImagePlatform(ctx, localImage)
 	if err != nil {
-		return nil, -1, err
+		return err
 	}
 	hostPort, err := pickFreeTCPPort()
 	if err != nil {
-		return nil, -1, fmt.Errorf("pick free port: %w", err)
+		return fmt.Errorf("pick free port: %w", err)
 	}
 
 	env := mergeEnv(map[string]string{
@@ -1063,30 +1117,14 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		Sandbox:    sim.SandboxAZF,
 	})
 	if err != nil {
-		return nil, -1, fmt.Errorf("start function http container: %w", err)
+		return fmt.Errorf("start function http container: %w", err)
 	}
 	logCtx, cancelLogs := context.WithCancel(context.Background())
-	inst := &azureFunctionInstance{containerID: containerID, cancelLogs: cancelLogs}
-	azureFunctionInstances.Lock()
-	azureFunctionInstances.bySite[site.Name] = inst
-	azureFunctionInstances.Unlock()
 
 	// Sidecar sitecontainers share the main's network namespace, so a
 	// sidecar that binds a port is reachable from the main on
 	// localhost:<port> — the App Service multi-container loopback contract.
 	sidecarHandles := startSidecarContainers(site, containerID, sink)
-	defer func() {
-		azureFunctionInstances.Lock()
-		if azureFunctionInstances.bySite[site.Name] == inst {
-			delete(azureFunctionInstances.bySite, site.Name)
-		}
-		azureFunctionInstances.Unlock()
-		for _, h := range sidecarHandles {
-			h.Cancel()
-		}
-		cancelLogs()
-		sim.StopAndRemoveContainer(containerID)
-	}()
 	go sim.StreamContainerLogs(logCtx, containerID, sink)
 
 	// Reach the bootstrap by whichever address connects:
@@ -1103,9 +1141,38 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 	cands = append(cands, fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort))
 	bootstrapURL, err := firstReachableHTTP(ctx, cands, 30*time.Second)
 	if err != nil {
-		return nil, -1, fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
+		// Failed to come up — reap the partial container set.
+		cancelLogs()
+		for _, h := range sidecarHandles {
+			h.Cancel()
+		}
+		sim.StopAndRemoveContainer(containerID)
+		return fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
 	}
-	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+
+	inst.containerID = containerID
+	inst.cancelLogs = cancelLogs
+	inst.sidecarHandles = sidecarHandles
+	inst.bootstrapURL = bootstrapURL
+	return nil
+}
+
+// teardownLocked stops the instance's main container, its sidecars, and its log
+// stream, clearing the recorded handles. Caller holds inst.mu.
+func (inst *azureFunctionInstance) teardownLocked() {
+	for _, h := range inst.sidecarHandles {
+		h.Cancel()
+	}
+	if inst.cancelLogs != nil {
+		inst.cancelLogs()
+	}
+	if inst.containerID != "" {
+		sim.StopAndRemoveContainer(inst.containerID)
+	}
+	inst.containerID = ""
+	inst.cancelLogs = nil
+	inst.sidecarHandles = nil
+	inst.bootstrapURL = ""
 }
 
 // firstReachableHTTP polls the candidate URLs (each round, in order) and
@@ -1157,10 +1224,9 @@ func stopAzureFunctionInstance(siteName string) {
 	if inst == nil {
 		return
 	}
-	if inst.cancelLogs != nil {
-		inst.cancelLogs()
-	}
-	sim.StopAndRemoveContainer(inst.containerID)
+	inst.mu.Lock()
+	inst.teardownLocked()
+	inst.mu.Unlock()
 }
 
 func siteContainerImage(site *Site) string {

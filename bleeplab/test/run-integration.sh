@@ -765,7 +765,14 @@ for _ in $(seq 1 210); do
     STATUS=$(bl GET "/api/v4/projects/$PID/pipelines/$PLID" '' | jq -r '.status')
     case "$STATUS" in
         success) log "TEST 1 PASSED: GitLab pipeline succeeded on sockerless-$BLEEPLAB_BACKEND"; break ;;
-        failed)  fail "pipeline failed (status=failed)" ;;
+        failed)
+            DBG_TRACE=$(mktemp)
+            for JID in $(bl GET "/api/v4/projects/$PID/pipelines/$PLID/jobs" '' | jq -r '.[].id' 2>/dev/null); do
+                printf '\n===== job %s trace =====\n' "$JID" >> "$DBG_TRACE"
+                bl GET "/api/v4/projects/$PID/jobs/$JID/trace" '' >> "$DBG_TRACE" 2>/dev/null
+            done
+            fail "pipeline failed (status=failed); job traces:\n$(cat "$DBG_TRACE")"
+            ;;
     esac
     sleep 2
 done

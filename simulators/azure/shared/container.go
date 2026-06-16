@@ -147,6 +147,23 @@ func ContainerIPv4(id string) string {
 	return ""
 }
 
+// ContainerRunning reports whether the container with the given id exists and
+// is currently in the running state. Used by the App Service site model to
+// decide whether a persistent (always-on plan) site container is already up
+// before routing an invoke to it.
+func ContainerRunning(id string) bool {
+	if dockerClient == nil || id == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	insp, err := dockerClient.ContainerInspect(ctx, id)
+	if err != nil || insp.State == nil {
+		return false
+	}
+	return insp.State.Running
+}
+
 // CleanupContainers stops and removes all simulator-managed containers.
 // Also prunes any Docker networks labeled `sockerless-sim=true` that
 // aren't in use (typically namespace-backed networks that weren't

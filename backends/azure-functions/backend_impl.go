@@ -437,11 +437,37 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		// gitlab-runner cycles start→wait→stop→start on the SAME container id
+		// per stage. After the first start the container leaves PendingCreates,
+		// so a re-start must resolve via CloudState. Re-add to PendingCreates so
+		// the network-pod / re-invoke flow below can run for the next stage.
+		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
+			c = got
+			ok = true
+			s.PendingCreates.Put(c.ID, c)
+		}
+	}
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
 
 	if c.State.Running {
+		// Runner re-start for the next stage: the per-stage attach just
+		// registered a fresh stdinPipe. The App Service site container is
+		// persistent (always-on plan), so its in-container bootstrap HTTP
+		// server is still alive — re-invoke it with the new stage's captured
+		// script rather than reporting NotModified, which would strand the
+		// stage waiting for output it never gets.
+		if c.Config.OpenStdin {
+			if _, hasPipe := s.stdinPipes.Load(id); hasPipe {
+				azfState, hasState := s.AZF.Get(id)
+				if hasState && azfState.FunctionURL != "" {
+					return s.invokeFunctionAsync(id, c, azfState)
+				}
+			}
+		}
+		s.PendingCreates.Delete(id)
 		return &api.NotModifiedError{}
 	}
 
