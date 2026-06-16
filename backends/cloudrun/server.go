@@ -3,7 +3,6 @@ package cloudrun
 import (
 	"context"
 	"io"
-	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -89,7 +88,7 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		// backend's host arch — reported in docker /version so a client (e.g.
 		// gitlab-runner) selects a matching helper image rather than the wrong
 		// arch's.
-		Architecture: archFromPlatform(config.BuildPlatform),
+		Architecture: gcpcommon.ArchFromPlatform(config.BuildPlatform),
 		NCPU:         1,
 		MemTotal:     536870912,
 	}, logger)
@@ -252,19 +251,4 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 // ctx returns a background context.
 func (s *Server) ctx() context.Context {
 	return context.Background()
-}
-
-// archFromPlatform extracts the docker arch ("arm64"/"amd64") from a
-// "linux/<arch>" build platform — the architecture Cloud Run tasks run at and
-// the value reported in docker /version. Defaults to amd64.
-func archFromPlatform(platform string) string {
-	if i := strings.LastIndex(platform, "/"); i >= 0 {
-		platform = platform[i+1:]
-	}
-	switch strings.ToLower(strings.TrimSpace(platform)) {
-	case "arm64", "aarch64":
-		return "arm64"
-	default:
-		return "amd64"
-	}
 }

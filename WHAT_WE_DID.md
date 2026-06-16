@@ -4,6 +4,59 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-16 - bleeplab GitLab cell on the Cloud Run Functions (gcf) backend (GREEN)
+
+The full gitlab-runner docker-executor flow now also runs on the Cloud Run
+Functions backend. A real `gitlab-runner` registers against the bleeplab
+control-plane simulator and runs the same 3-stage pipeline through a docker
+executor whose `--docker-host` is `sockerless-backend-gcf`: **build** (gcc-
+compiles `calc.c`, self-test + `6 x 7 = 42`), **test** (consumes the build's
+`calc` artifact with no recompile, `sum 1..100 = 5050`), and **integration** (a
+`services:` redis container reached by alias over the per-build network-pod —
+`redis-cli` PING/SET/GET). All 4 harness assertions pass. gcf reuses the gcp
+simulator and the cloudrun backend's `gcp-common`; the redis `services:` job
+exercises the BUG-1781 network-pod (one multi-container Cloud Run revision)
+assembly — no BUG-964 default-invoke gate was hit.
+
+The harness gains a `gcf` arm: `bleeplab/Dockerfile` builds
+`backends/cloudrun-functions` → `sockerless-backend-gcf` + the
+`sockerless-gcf-bootstrap`; `run-integration.sh` gains `provision_gcf` (mirrors
+`provision_cloudrun` with `SOCKERLESS_GCF_*` coordinates + `/v1/gcf/reverse`,
+**without** `SOCKERLESS_GCR_USE_SERVICE` — gcf runs the native multi-container
+revision, not a kept-alive Service); the Makefile gets
+`bleeplab-runner-docker-test-gcf`.
+
+Validation surfaced and fixed four real backend/bootstrap bugs — each one a
+place where the gcf network-pod execution model diverged from a mechanism the
+green cloudrun cell already had:
+
+- **BUG-1811** — `ContainerStart` resolved only from `PendingCreates`, so the
+  gitlab-runner per-stage start→wait→stop→start cycle failed `NOT FOUND` once a
+  container left PendingCreates. Now falls back to `ResolveContainerAuto`
+  (CloudState) and re-adds it, mirroring cloudrun.
+- **BUG-1812** — `ContainerAttach` routed a gitlab-runner stdin-script to the
+  reverse-agent (whose router has no main process in reverse mode — `mp==nil`),
+  failing `no main process to attach to`. The network-pod bootstrap registers a
+  reverse-agent for every member, so the stdin path now takes precedence over
+  the reverse-agent routing.
+- **BUG-1813** — the captured attach-stdin script was piped to the image's own
+  entrypoint (`gitlab-runner-build`, which ignores a raw script) instead of a
+  shell, so `get_sources` ran but never cloned. Now overrides
+  `invokeArgv=[/bin/sh]` when stdin is captured, matching cloudrun's
+  `postBootstrap`.
+- **BUG-1814** — a reused gcf function instance restored its persist (gcs-
+  snapshot) `/builds` only at startup, so `upload_artifacts` couldn't see the
+  build container's `calc` (and its stale save clobbered the build's snapshot).
+  The bootstrap now `restoreAll(persistVols)` before every invoke; cloudrun gets
+  this free via `UseService` cold-starting a fresh per-stage instance.
+
+Cross-cutting: the gcf BackendDescriptor architecture is now derived from
+`config.BuildPlatform` via a shared `gcpcommon.ArchFromPlatform` (cloudrun's
+local helper promoted to `gcp-common`, used by both backends), and the gcp
+simulator's gcf function-invoke path reaches the workload by bridge container IP
+(the same fix as the Service path in BUG-1810), so it works when the simulator
+itself runs inside the harness container.
+
 ## 2026-06-16 - bleeplab GitLab cell on the Cloud Run backend (GREEN)
 
 The full gitlab-runner docker-executor flow now runs on the Cloud Run backend.

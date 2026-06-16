@@ -22,11 +22,15 @@ COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
-# CGO_ENABLED=0: the reverse-agent + cloudrun bootstrap are injected into
+COPY backends/cloudrun-functions/ backends/cloudrun-functions/
+RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
+# CGO_ENABLED=0: the reverse-agent + cloudrun/gcf bootstraps are injected into
 # arbitrary workload images, so they must be statically linked.
 RUN cd agent && GOWORK=off go mod download && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent && \
-    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap && \
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap
 
 # --- bleeplab GitLab control-plane simulator ---
 # Built with -tags noui: the runner harness is headless and the embedded SPA's

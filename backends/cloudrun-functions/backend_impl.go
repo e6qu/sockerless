@@ -324,6 +324,18 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		// gitlab-runner does start→wait→stop→start cycling per stage on the
+		// SAME container ID. After the first ContainerStart the container
+		// leaves PendingCreates, so subsequent restarts must look up via
+		// CloudState. Re-add to PendingCreates so the flow below can re-invoke
+		// the function (with potentially a new cmd) for the next stage.
+		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
+			c = got
+			ok = true
+			s.PendingCreates.Put(c.ID, c)
+		}
+	}
+	if !ok {
 		s.Logger.Warn().Str("ref", ref).Msg("ContainerStart: NOT FOUND in PendingCreates")
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -485,12 +497,25 @@ func (s *Server) ContainerStart(ref string) error {
 	go func() {
 		inv := core.InvocationResult{}
 		capturedStdin, hasCapturedStdin := s.captureGCFStdin(id)
+		invokeArgv := argv
+		if hasCapturedStdin && len(capturedStdin) > 0 {
+			// gitlab-runner attach-stdin pattern: the captured bytes are a
+			// shell script the runner pipes to the container's process. It
+			// must run under /bin/sh — not the image's own entrypoint+cmd
+			// (e.g. the gitlab-runner-helper's `gitlab-runner-build`, which
+			// reads stdin in its own protocol and silently ignores a raw
+			// script, printing only its "Running on …" banner and exiting 0
+			// without executing the clone). Mirror cloudrun's postBootstrap,
+			// which forces argv=[/bin/sh] whenever stdin is captured.
+			invokeArgv = []string{"/bin/sh"}
+		}
+		s.Logger.Debug().Str("container", id).Bool("hasCapturedStdin", hasCapturedStdin).Int("stdin_bytes", len(capturedStdin)).Strs("invokeArgv", invokeArgv).Bool("openStdin", c.Config.OpenStdin).Msg("invoke goroutine: captured stdin")
 		if gcfState.FunctionURL == "" {
 			s.Logger.Error().Str("function", gcfState.FunctionName).Msg("no function URL available for invocation")
 			inv.ExitCode = 1
 			inv.Error = "no function URL available"
 			s.publishGCFAttachResponse(id, nil, []byte(inv.Error))
-		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, argv, c.Config.WorkingDir, envSlice, capturedStdin); err != nil {
+		} else if resp, err := s.invokeFunction(s.ctx(), gcfState.FunctionURL, invokeArgv, c.Config.WorkingDir, envSlice, capturedStdin); err != nil {
 			if !c.Config.OpenStdin {
 				if _, hasAgent := s.reverseAgents.Resolve(id); hasAgent {
 					s.Logger.Warn().Err(err).Str("function", gcfState.FunctionName).Str("container", id).Msg("function invoke returned after reverse-agent registration; preserving running container state")
@@ -1090,7 +1115,15 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		s.Logger.Warn().Str("id", id).Msg("ContainerAttach: NOT FOUND")
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+	// Route a NON-stdin attach to the reverse-agent (read-only output
+	// stream). A stdin attach must NOT go here: gitlab-runner writes the
+	// per-stage script to the container's MAIN process stdin, but the
+	// reverse-agent never registers a main process (mp==nil — reverse mode
+	// carries only exec sessions), so a stdin attach routed to it fails
+	// "no main process to attach to". The network-pod bootstrap registers a
+	// reverse-agent for every member (unlike cloudrun's single helper), so
+	// the stdin attach is handled by the stdinPipe/buffered-invoke path below.
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent && !opts.Stdin {
 		s.Logger.Info().Str("id", id).Msg("ContainerAttach: routing to reverse-agent")
 		return s.BaseServer.ContainerAttach(id, opts)
 	}

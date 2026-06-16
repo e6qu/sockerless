@@ -376,6 +376,25 @@ func handleInvoke(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Per-exec persist restore. The function instance is reused across a
+	// gitlab-runner job's stages (get_sources, then upload_artifacts on the
+	// SAME predefined-helper instance), so restoring persist volumes only
+	// once at startup would leave a reused instance blind to a sibling
+	// container's saves — e.g. the build container compiles `calc` into the
+	// shared /builds and saves it, but the reused helper's upload_artifacts
+	// would still see its own stale get_sources workspace and report "no
+	// matching files". Restore before every invoke so each stage observes
+	// the latest cross-container snapshot, mirroring the sync path above and
+	// the saveAll below. (cloudrun gets this for free because UseService
+	// cold-starts a fresh instance per stage that restores at startup.)
+	if len(persistVols) > 0 {
+		if err := restoreAll(context.Background(), persistVols); err != nil {
+			fmt.Fprintf(os.Stderr, "sockerless-gcf-bootstrap: persist restore failed: %v\n", err)
+			writeSaveFailure(w, err, isEnvelope)
+			return
+		}
+	}
+
 	switch {
 	case isEnvelope:
 		runExecEnvelope(buf, env)
