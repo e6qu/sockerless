@@ -84,6 +84,14 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		// Carry the image's declared ExposedPorts onto the container config so a
+		// `services:` container (e.g. a redis sidecar on a FF_NETWORK_PER_BUILD
+		// pod) advertises its ports: gitlab-runner reads the service container's
+		// exposed ports during preparation to health-check it, and times out
+		// ("getting exposed ports: service failed to start") when none surface.
+		if len(config.ExposedPorts) == 0 && len(img.Config.ExposedPorts) > 0 {
+			config.ExposedPorts = img.Config.ExposedPorts
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
@@ -488,7 +496,17 @@ func (s *Server) ContainerStart(ref string) error {
 	shouldDefer, members := s.shouldDeferOrMaterializeNetworkPod(c)
 	if shouldDefer {
 		// Service-style sidecar awaiting its pod peer; it deploys as a
-		// sitecontainer when the pod materializes. Report success.
+		// sitecontainer when the pod materializes. Mark it running so the
+		// runner's service health-check during preparation (docker inspect for
+		// State.Running + the image's ExposedPorts) passes — the real service
+		// process comes up when the pod main arrives and materializePodSite runs
+		// it. Without this the deferred service reads as "created" and the runner
+		// times out "getting exposed ports: service failed to start".
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return nil
 	}
