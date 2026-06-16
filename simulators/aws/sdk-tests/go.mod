@@ -33,7 +33,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.92.3
 	github.com/aws/aws-sdk-go-v2/service/rds v1.119.3
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.63.3
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/scheduler v1.18.7
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.3
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.6

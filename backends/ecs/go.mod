@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.4
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.83.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.42.1
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.103.3
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.40.6
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/google/uuid v1.6.0
