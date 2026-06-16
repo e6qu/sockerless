@@ -763,13 +763,21 @@ func invokeOverlayContainerHTTPWithBody(image, functionID string, timeout time.D
 	defer logStreamCancel()
 	go sim.StreamContainerLogs(logStreamCtx, containerID, sink)
 
-	// Wait for the bootstrap to start serving HTTP. Bootstrap prints
-	// "sockerless-gcf-bootstrap: listening on :8080" then calls
-	// ListenAndServe — once the listener is up, any TCP dial succeeds.
-	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/", hostPort)
-	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
-		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+	// Reach the bootstrap by whichever address is connectable: the workload's
+	// bridge container IP:8080 (works when the sim runs INSIDE a harness
+	// container, where the host-published port binds the host's loopback, not
+	// the sim container's), else 127.0.0.1:<hostPort> (sim on the host). Same
+	// fix as the Cloud Run Services invoke path.
+	var cands []string
+	if ip := sim.ContainerIPv4(containerID); ip != "" {
+		cands = append(cands, fmt.Sprintf("http://%s:8080", ip))
 	}
+	cands = append(cands, fmt.Sprintf("http://127.0.0.1:%d", hostPort))
+	base, err := firstReachableBase(ctx, cands, 60*time.Second)
+	if err != nil {
+		return nil, -1, fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
+	}
+	bootstrapURL := base + "/"
 
 	// POST the invocation. Body is forwarded from the caller (the gcf
 	// backend's exec envelope) when present. Cloud Functions Gen2
@@ -870,44 +878,6 @@ func pickFreeTCPPort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
 	return port, nil
-}
-
-// waitForHTTP polls the TCP address in `url` until the container's
-// HTTP listener accepts connections or the deadline elapses. It does
-// not issue an HTTP request because the Cloud Run / GCF bootstrap's
-// root route is the real invocation endpoint; a readiness probe must
-// not run the user's command.
-func waitForHTTP(ctx context.Context, url string, timeout time.Duration) error {
-	parsed, err := urlpkgParse(url)
-	if err != nil {
-		return err
-	}
-	addr := parsed.Host
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		switch parsed.Scheme {
-		case "http":
-			addr = net.JoinHostPort(addr, "80")
-		case "https":
-			addr = net.JoinHostPort(addr, "443")
-		default:
-			return fmt.Errorf("url %q has no explicit port", url)
-		}
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		conn, err := net.DialTimeout("tcp", addr, 1*time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout after %s", timeout)
 }
 
 func urlpkgParse(raw string) (*url.URL, error) {

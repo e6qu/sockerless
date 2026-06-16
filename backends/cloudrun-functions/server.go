@@ -111,9 +111,12 @@ func NewServer(config Config, gcpClients *GCPClients, logger zerolog.Logger) *Se
 		Driver:          "cloud-run-functions",
 		OperatingSystem: "Google Cloud Functions",
 		OSType:          "linux",
-		Architecture:    "amd64",
-		NCPU:            2,
-		MemTotal:        4294967296,
+		// Functions tasks run at the configured build platform, not the
+		// backend's host arch — reported in docker /version so a client (e.g.
+		// gitlab-runner) selects a matching helper image, not the wrong arch's.
+		Architecture: gcpcommon.ArchFromPlatform(config.BuildPlatform),
+		NCPU:         2,
+		MemTotal:     4294967296,
 	}, logger)
 	s.images = &core.ImageManager{
 		Base:   s.BaseServer,

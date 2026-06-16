@@ -108,3 +108,20 @@ func parseDockerRef(ref string) (registry, repo, tag string) {
 	}
 	return
 }
+
+// ArchFromPlatform extracts the docker arch ("arm64"/"amd64") from a
+// "linux/<arch>" build platform — the architecture Cloud Run / Cloud Run
+// Functions tasks run at and the value the backend reports in docker
+// /version (so a client like gitlab-runner selects a matching helper image).
+// Defaults to amd64.
+func ArchFromPlatform(platform string) string {
+	if i := strings.LastIndex(platform, "/"); i >= 0 {
+		platform = platform[i+1:]
+	}
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "arm64", "aarch64":
+		return "arm64"
+	default:
+		return "amd64"
+	}
+}

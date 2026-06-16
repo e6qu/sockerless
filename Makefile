@@ -470,11 +470,16 @@ endef
 bleeplab-runner-docker-test-ecs: bleeplab-runner-docker-build
 	$(call run_bleeplab_harness,ecs,4566)
 
-# cloudrun: overlay build→push→pull through the sim registry, so it needs the
-# :5000 publish + the podman insecure-registry trust (reused from bleephub).
+# cloudrun + gcf: overlay build→push→pull through the sim registry, so they
+# need the :5000 publish + the podman insecure-registry trust (reused from
+# bleephub). Both run on the gcp sim (port 4567).
 .PHONY: bleeplab-runner-docker-test-cloudrun
 bleeplab-runner-docker-test-cloudrun: bleeplab-runner-docker-build bleephub-sim-registry-trust
 	$(call run_bleeplab_harness,cloudrun,4567)
+
+.PHONY: bleeplab-runner-docker-test-gcf
+bleeplab-runner-docker-test-gcf: bleeplab-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleeplab_harness,gcf,4567)
 
 # Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
 # Build) paths do a real docker push + pull of the bootstrap overlay
