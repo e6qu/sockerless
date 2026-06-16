@@ -213,12 +213,17 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 		}
 
 		acaOverlayImageName = fmt.Sprintf("sockerless-overlay/aca:test-%d", os.Getpid())
-		overlayDockerfile := fmt.Sprintf(`FROM scratch
+		// busybox base (not scratch) so the image carries a real /bin/sh —
+		// the gitlab-runner attach-stdin pattern pipes a shell script that the
+		// bootstrap runs under /bin/sh (see TestACAGitLabRunnerAttachStdin),
+		// mirroring the shell-capable images real overlays are built on.
+		overlayDockerfile := fmt.Sprintf(`FROM busybox:latest
 COPY %s /opt/sockerless/sockerless-cloudrun-bootstrap
 COPY container-command /opt/sockerless/container-command
 ENTRYPOINT ["/opt/sockerless/sockerless-cloudrun-bootstrap"]
 `, filepath.Base(bootstrapPath))
 		overlayBuild := exec.Command("docker", "build",
+			"--load",
 			"--platform", "linux/arm64",
 			"-t", acaOverlayImageName,
 			"-f", "-", overlayCtx)
@@ -550,10 +555,15 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 
 	ctx := context.Background()
 	testID := generateTestID()
+	// gitlab-runner attach-stdin pattern: the runner pipes a shell script to the
+	// container's process and the backend runs it under /bin/sh (it must — the
+	// gitlab-runner helper's own entrypoint reads stdin in a private protocol and
+	// ignores a raw script). So the captured stdin is a shell command, mirroring
+	// the gcf/cloudrun equivalents.
 	resp, err := dockerClient.ContainerCreate(ctx,
 		&container.Config{
 			Image:        acaOverlayImageName,
-			Cmd:          []string{"/opt/sockerless/container-command", "stdin-echo"},
+			Cmd:          []string{"sh"},
 			OpenStdin:    true,
 			AttachStdin:  true,
 			AttachStdout: true,
@@ -577,7 +587,7 @@ func TestACAGitLabRunnerAttachStdin(t *testing.T) {
 	}
 	defer hijacked.Close()
 
-	if _, err := hijacked.Conn.Write([]byte("aca-gitlab-stdin-ok\n")); err != nil {
+	if _, err := hijacked.Conn.Write([]byte("echo aca-gitlab-stdin-ok\n")); err != nil {
 		t.Fatalf("write attach stdin: %v", err)
 	}
 	if err := hijacked.CloseWrite(); err != nil {
