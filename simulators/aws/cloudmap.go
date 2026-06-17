@@ -436,30 +436,57 @@ func realizeCMContainerDockerAliases(ns CMNamespace, containerName string) error
 	return sim.ConnectContainerToNetwork(containerName, networkName, aliases)
 }
 
-// resolveTaskContainerForInstance maps a Cloud Map instance ID back to the
-// simulator's Docker container. Sockerless's ECS backend uses `containerID[:12]`
-// as the instance ID and tags each RunTask with `sockerless-container-id: <full
-// id>`. On the netns awsvpc fabric the pause container owns the namespace; that
-// tier cannot be connected to Docker's DNS network after the real ENI occupies
-// eth0, so Cloud Map uses host entries in the task container instead.
+// resolveTaskContainerForInstance maps a Cloud Map instance to the simulator's
+// Docker container by the registered `AWS_INSTANCE_IPV4` attribute — the
+// faithful Cloud Map mechanism (a client registers an instance with the task's
+// IP; the sim matches it to the task carrying that private IP), not any
+// sockerless-specific tag. On the netns awsvpc fabric the pause container owns
+// the namespace; that tier cannot join Docker's DNS network after the real ENI
+// occupies eth0, so Cloud Map uses host entries in the task container instead.
 func resolveTaskContainerForInstance(instanceId string) string {
+	ip := cmInstanceIPv4(instanceId)
+	if ip == "" {
+		return ""
+	}
 	for _, task := range ecsTasks.List() {
-		for _, tag := range task.Tags {
-			if tag.Key == "sockerless-container-id" && len(tag.Value) >= len(instanceId) && tag.Value[:len(instanceId)] == instanceId {
-				// Derive task UUID from ARN ("arn:…/task/<cluster>/<taskId>").
-				taskId := task.TaskArn
-				if i := lastSlash(taskId); i >= 0 {
-					taskId = taskId[i+1:]
-				}
-				if len(taskId) < 12 {
-					return ""
-				}
-				containerName := "sockerless-sim-aws-task-" + taskId[:12]
-				if taskHasENI(task) && ec2ECSRealNetAvailable() {
-					return containerName + "-pause"
-				}
-				return containerName
-			}
+		if ecsTaskPrivateIP(task) != ip {
+			continue
+		}
+		// Derive task UUID from ARN ("arn:…/task/<cluster>/<taskId>").
+		taskId := task.TaskArn
+		if i := lastSlash(taskId); i >= 0 {
+			taskId = taskId[i+1:]
+		}
+		if len(taskId) < 12 {
+			return ""
+		}
+		containerName := "sockerless-sim-aws-task-" + taskId[:12]
+		if taskHasENI(task) && ec2ECSRealNetAvailable() {
+			return containerName + "-pause"
+		}
+		return containerName
+	}
+	return ""
+}
+
+// cmInstanceIPv4 returns a registered Cloud Map instance's AWS_INSTANCE_IPV4
+// attribute (the standard address attribute), searched across services.
+func cmInstanceIPv4(instanceID string) string {
+	for _, inst := range cmInstances.List() {
+		if inst.Id == instanceID {
+			return inst.Attributes["AWS_INSTANCE_IPV4"]
+		}
+	}
+	return ""
+}
+
+// ecsTaskPrivateIP returns a task's private IPv4 address from its awsvpc ENI
+// attachment's `privateIPv4Address` detail (the value DescribeTasks surfaces and
+// the ECS backend registers as the Cloud Map instance's AWS_INSTANCE_IPV4).
+func ecsTaskPrivateIP(task ECSTask) string {
+	for _, att := range task.Attachments {
+		if ip := ecsTaskDetail(att.Details, "privateIPv4Address"); ip != "" {
+			return ip
 		}
 	}
 	return ""

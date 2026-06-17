@@ -200,8 +200,14 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 			return
 		}
 
-		// Check if already exited (cloud or local)
-		c, found, _ := s.CloudState.GetContainer(r.Context(), id)
+		// Check if already exited (cloud or local). A CloudState query error is
+		// not the same as "not found" — log it loudly so a cloud failure isn't
+		// silently masked by the local-store fallback (which is the docker
+		// passthrough's legitimate source of truth).
+		c, found, gerr := s.CloudState.GetContainer(r.Context(), id)
+		if gerr != nil {
+			s.Logger.Warn().Err(gerr).Str("container", id).Msg("ContainerWait: CloudState.GetContainer failed; falling back to local store")
+		}
 		if !found {
 			if lc, lok := s.Store.Containers.Get(id); lok {
 				c = lc
@@ -237,12 +243,24 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 				// fast-path the channel signal was meant to provide.
 				if inv, ok := s.Store.GetInvocationResult(id); ok {
 					writeWaitBody(w, inv.ExitCode)
-				} else if cc, found, _ := s.CloudState.GetContainer(r.Context(), id); found {
-					writeWaitBody(w, cc.State.ExitCode)
-				} else if lc, lok := s.Store.Containers.Get(id); lok {
-					writeWaitBody(w, lc.State.ExitCode)
 				} else {
-					writeWaitBody(w, 0)
+					cc, found, gerr := s.CloudState.GetContainer(r.Context(), id)
+					if gerr != nil {
+						s.Logger.Warn().Err(gerr).Str("container", id).Msg("ContainerWait: post-exit CloudState.GetContainer failed; falling back to local store")
+					}
+					if found {
+						writeWaitBody(w, cc.State.ExitCode)
+					} else if lc, lok := s.Store.Containers.Get(id); lok {
+						writeWaitBody(w, lc.State.ExitCode)
+					} else {
+						// Last resort: the wait channel closed (container exited)
+						// but no source recorded an exit code. Default to 0, the
+						// graceful-stop result (a SIGTERM-trapping container that
+						// exits cleanly). The proper fix is the backend recording
+						// the real exit code so this branch isn't reached — until
+						// then a unilateral non-zero here misreports a clean exit.
+						writeWaitBody(w, 0)
+					}
 				}
 			case <-r.Context().Done():
 				// Headers already sent; best we can do is send an

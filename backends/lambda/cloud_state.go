@@ -358,7 +358,15 @@ func podMembersFromLambda(ctx context.Context, srv *Server, funcName string, fn 
 	out, err := srv.aws.Lambda.GetFunction(ctx, &awslambda.GetFunctionInput{
 		FunctionName: aws.String(funcName),
 	})
-	if err != nil || out.Configuration == nil || out.Configuration.Environment == nil {
+	if err != nil {
+		// A GetFunction failure (throttle / transient) is NOT "not a pod" —
+		// surface it loudly so a pod-managed function doesn't silently vanish
+		// from `docker ps`; the cloud is the source of truth.
+		srv.Logger.Warn().Err(err).Str("function", funcName).
+			Msg("cloud-state: GetFunction failed; pod members omitted from this listing")
+		return nil
+	}
+	if out.Configuration == nil || out.Configuration.Environment == nil {
 		return nil
 	}
 	enc := out.Configuration.Environment.Variables["SOCKERLESS_POD_CONTAINERS"]

@@ -22,9 +22,11 @@
 package core
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
@@ -55,6 +57,33 @@ func JobTimeoutDefault() int {
 		return 0
 	}
 	return n
+}
+
+// ValidateDurationEnvs returns an error if any named env var is set but isn't a
+// valid Go duration — so a typo in a backend's process env fails startup loudly
+// instead of silently reverting to a default. An unset var is fine (the default
+// applies). Call from each backend's Config.Validate.
+func ValidateDurationEnvs(names ...string) error {
+	for _, n := range names {
+		if v := strings.TrimSpace(os.Getenv(n)); v != "" {
+			if _, err := time.ParseDuration(v); err != nil {
+				return fmt.Errorf("%s=%q is not a valid Go duration: %w", n, v, err)
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateJobTimeoutEnv returns an error if SOCKERLESS_JOB_TIMEOUT_SECONDS is
+// set in the backend's process env but isn't a valid integer — JobTimeoutDefault
+// would otherwise silently fall back to DefaultJobTimeoutSeconds on a typo.
+func ValidateJobTimeoutEnv() error {
+	if v := strings.TrimSpace(os.Getenv(JobTimeoutEnvName)); v != "" {
+		if _, err := strconv.Atoi(v); err != nil {
+			return fmt.Errorf("%s=%q is not a valid integer (seconds): %w", JobTimeoutEnvName, v, err)
+		}
+	}
+	return nil
 }
 
 // JobTimeoutEnvIfUnset returns the SOCKERLESS_JOB_TIMEOUT_SECONDS

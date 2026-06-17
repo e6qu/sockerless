@@ -337,7 +337,10 @@ func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {
 	}
 	subnetID := strings.TrimSpace(strings.Split(asg.VPCZoneIdentifier, ",")[0])
 	if subnetID == "" {
-		subnetID = "subnet-0123456789abcdef0"
+		// No VPCZoneIdentifier — fall back to the account's default VPC subnet
+		// (a real ASG without AZ/subnet config lands in the default VPC), not a
+		// hardcoded ID.
+		subnetID = defaultVPCSubnetID()
 	}
 	subnet, ok := ec2Subnets.Get(subnetID)
 	if !ok {

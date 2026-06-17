@@ -248,15 +248,9 @@ func (s *Server) resolveNetworkState(ctx context.Context, networkID string) (Net
 	if err == nil && len(sgOut.SecurityGroups) > 0 {
 		state.SecurityGroupID = aws.ToString(sgOut.SecurityGroups[0].GroupId)
 	}
-	// Cloud Map namespace by tag (added at create time per.
-	nsOut, nsErr := s.aws.ServiceDiscovery.ListTagsForResource(ctx, &servicediscovery.ListTagsForResourceInput{
-		ResourceARN: nil,
-	})
-	_ = nsOut
-	_ = nsErr
-	// ListTagsForResource on namespaces requires an ARN, which we don't
-	// have. Instead enumerate namespaces and inspect their tags. Use a
-	// limited list — sockerless networks are O(10), not O(thousands).
+	// Cloud Map namespace by tag: ListTagsForResource needs an ARN we don't
+	// have here, so enumerate namespaces and inspect their tags. Use a limited
+	// list — sockerless networks are O(10), not O(thousands).
 	listOut, listErr := s.aws.ServiceDiscovery.ListNamespaces(ctx, &servicediscovery.ListNamespacesInput{
 		Filters: []sdtypes.NamespaceFilter{
 			{

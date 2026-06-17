@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1095,16 +1096,22 @@ func (s *Server) PodRemove(name string, force bool) error {
 		}
 	}
 
-	// Remove each container through our ContainerRemove (handles ECS cleanup)
+	// Remove each container through our ContainerRemove (handles ECS cleanup).
+	// Remove ALL members even if one fails, then surface the joined error — a
+	// failed member delete orphans a live ECS task and must not read as a
+	// successful pod removal.
+	var errs []error
 	for _, cid := range pod.ContainerIDs {
 		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
 			continue
 		}
-		_ = s.ContainerRemove(cid, force)
+		if err := s.ContainerRemove(cid, force); err != nil {
+			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
+		}
 	}
 
 	s.Store.Pods.DeletePod(pod.ID)
-	return nil
+	return errors.Join(errs...)
 }
 
 // Info returns system information, enriched with real ECS cluster stats.

@@ -143,8 +143,7 @@ func (s *Server) trackNetworkService(netID, containerID string) {
 		}
 		updated := append([]string{}, existing...)
 		updated = append(updated, containerID)
-		if v, loaded := s.networkServices.LoadOrStore(netID, updated); !loaded {
-			_ = v
+		if _, loaded := s.networkServices.LoadOrStore(netID, updated); !loaded {
 			return
 		}
 		// Race with concurrent writer — retry.

@@ -390,8 +390,27 @@ func AllocateSubnetIP(subnetID string) (string, error) {
 // propagates through every VPC/Subnet/SG OwnerId.
 func ec2Owner() string { return awsAccountID() }
 
-// ensureSimDefaults creates `vpc-sim` and `subnet-0123456789abcdef0` entries if they
-// don't already exist. Called on simulator startup. Idempotent.
+// defaultVPCSubnetID returns the subnet ID of the account's default VPC, or ""
+// if none exists. Operations that launch "into the default VPC" when the caller
+// omits a subnet (RunInstances, an ASG with no VPCZoneIdentifier) resolve the
+// subnet through this — faithfully, by the IsDefault VPC — rather than a
+// hardcoded ID.
+func defaultVPCSubnetID() string {
+	for _, s := range ec2Subnets.List() {
+		if v, ok := ec2Vpcs.Get(s.VpcId); ok && v.IsDefault {
+			return s.SubnetId
+		}
+	}
+	return ""
+}
+
+// ensureSimDefaults seeds the account's default VPC + a default subnet, the same
+// way a real AWS account is auto-provisioned with a default VPC and one default
+// subnet per AZ (so DescribeVpcs/DescribeSubnets return them and a
+// subnet-less RunInstances has somewhere to land). The IDs are deterministic — a
+// simulator convention, like the fixed account ID — so coordinate-only callers
+// can reference them; nothing in the sim is keyed on a sockerless-specific name.
+// Idempotent; called on startup.
 func ensureSimDefaults() {
 	if _, ok := ec2Vpcs.Get("vpc-sim"); !ok {
 		ec2Vpcs.Put("vpc-sim", EC2Vpc{
@@ -523,13 +542,9 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("DeleteKeyPair", handleDeleteKeyPair)
 	r.Register("ModifyInstanceMetadataOptions", handleModifyInstanceMetadataOptions)
 
-	// Pre-register a default `vpc-sim` + `subnet-0123456789abcdef0` so harnesses that
-	// hardcode those IDs (smoke-tests/run.sh, backend config examples)
-	// can call DescribeSubnets / DescribeVpcs without first provisioning.
-	// Real AWS would never have these exact IDs; they're a simulator
-	// convention. Backends resolve subnet → VPC on network create, so
-	// without this pre-registration Cloud Map namespace setup fails
-	// silently.
+	// Seed the account's default VPC + default subnet, like a real AWS account
+	// (auto-provisioned with a default VPC and a default subnet per AZ). See
+	// ensureSimDefaults for the deterministic-ID rationale.
 	ensureSimDefaults()
 
 	// Network Interfaces (used during destroy to check ENIs before deleting SGs/subnets)
@@ -2934,7 +2949,9 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		subnetID = r.FormValue("NetworkInterface.1.SubnetId")
 	}
 	if subnetID == "" {
-		subnetID = "subnet-0123456789abcdef0"
+		// No subnet specified — launch into the account's default VPC subnet,
+		// as real EC2 does.
+		subnetID = defaultVPCSubnetID()
 	}
 	subnet, ok := ec2Subnets.Get(subnetID)
 	if !ok {

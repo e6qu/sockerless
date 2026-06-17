@@ -379,8 +379,22 @@ func computeDeleteGlobalResource[T computeNamedResource](w http.ResponseWriter, 
 	sim.WriteJSON(w, http.StatusOK, computeGlobalOp(project, selfLink, "delete"))
 }
 
+// computeFingerprint returns a fresh opaque optimistic-concurrency token. Real
+// GCP fingerprints change whenever the resource is mutated, so callers set a new
+// one on every write; a client that PATCHes with a stale fingerprint then fails
+// the precondition (see fingerprintMatches). Generated per call (not a
+// constant) so each mutation invalidates the prior token.
 func computeFingerprint() string {
-	return "c29ja2VybGVzcw=="
+	return strings.ReplaceAll(generateUUID(), "-", "")[:16]
+}
+
+// fingerprintMatches reports whether a client-supplied fingerprint may proceed
+// against the resource's current fingerprint. An empty client fingerprint is
+// permitted (the SDK omits it on first write / when the caller opts out of the
+// optimistic-concurrency check); a non-empty one must equal the current value,
+// exactly as real GCP gates setLabels/setMetadata/setTags/PATCH.
+func fingerprintMatches(current, supplied string) bool {
+	return supplied == "" || supplied == current
 }
 
 func registerGCPComputeLoadBalancerDataPlane(srv *sim.Server) {
