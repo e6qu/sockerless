@@ -16,10 +16,13 @@ import (
 // via App Service regional VNet integration and its --network-alias names are
 // registered in the linked Private DNS zone, so peer sites resolve it by name.
 //
-// A script-runner (OpenStdin, e.g. the gitlab-runner build container) deploys
-// the overlay image and is invoked over HTTP per stage. A service (non-OpenStdin,
-// e.g. a `services:` redis) deploys its raw image and runs its own process on
-// the VNet — reached container-to-container on its own port (6379), never
+// A container the client exec/attaches into (a gitlab-runner OpenStdin script
+// runner, or a GitHub `container:` job whose entrypoint the runner overrides to
+// a keepalive) deploys the reverse-agent overlay and is started by an HTTP
+// invoke, which brings up the in-site bootstrap so exec/attach work. A pure
+// service (`serviceLike` — no client entrypoint/cmd override, not OpenStdin;
+// e.g. a `services:` redis or nginx) deploys its raw image and runs its own
+// process on the VNet — reached container-to-container on its own port, never
 // HTTP-invoked.
 func (s *Server) startCloudDNSSite(id string, c api.Container, netID string) error {
 	var aliasList []string
@@ -28,7 +31,15 @@ func (s *Server) startCloudDNSSite(id string, c api.Container, netID string) err
 			aliasList = append(aliasList, ep.Aliases...)
 		}
 	}
-	s.Logger.Info().Str("container", id[:min(12, len(id))]).Str("name", c.Name).Bool("openStdin", c.Config.OpenStdin).Str("netID", netID[:min(12, len(netID))]).Strs("aliases", aliasList).Msg("cloud-dns: starting site")
+	// A service runs its image as-is (no client entrypoint/cmd override, not
+	// OpenStdin) and gets its raw image; an exec/attach-driven container (a
+	// GitHub `container:` job, a gitlab-runner OpenStdin runner) needs the
+	// reverse-agent overlay. ContainerCreate recorded this from the ORIGINAL
+	// client request (labelServiceLike), before the image's default
+	// entrypoint/cmd were merged in — so it can't be re-derived from the base
+	// labels here (those carry the image defaults for a service too).
+	serviceLike := c.Config.Labels[labelServiceLike] == "true"
+	s.Logger.Info().Str("container", id[:min(12, len(id))]).Str("name", c.Name).Bool("serviceLike", serviceLike).Bool("openStdin", c.Config.OpenStdin).Str("netID", netID[:min(12, len(netID))]).Strs("aliases", aliasList).Msg("cloud-dns: starting site")
 
 	state, ok := s.resolveNetworkState(s.ctx(), netID)
 	if !ok || state.SubnetID == "" {
@@ -36,21 +47,21 @@ func (s *Server) startCloudDNSSite(id string, c api.Container, netID string) err
 			"network %s has no VNet/subnet provisioned for cloud-dns service discovery; was the docker network created through NetworkCreate?", netID[:min(12, len(netID))])}
 	}
 
-	// Deploy the site. A service runs its raw image (no function bootstrap); the
-	// script-runner keeps the overlay image it was created with.
+	// Deploy the site. A service runs its raw image (no function bootstrap); an
+	// exec-driven container keeps the overlay image it was created with.
 	deployContainer := c
-	if !c.Config.OpenStdin {
+	if serviceLike {
 		deployContainer.Config.Image = podMemberDisplayImage(c)
 	}
 
 	azfState, hasState := s.AZF.Get(id)
 	if !hasState || azfState.FunctionURL == "" {
-		// A script-runner deploys with the function bootstrap app settings; a
-		// service deploys clean (it runs its raw image, with no SOCKERLESS_*
-		// bootstrap env — those would make the App Service site look like an
-		// HTTP function and never run the service process).
+		// An exec-driven container deploys with the function bootstrap app
+		// settings; a service deploys clean (it runs its raw image, with no
+		// SOCKERLESS_* bootstrap env — those would make the App Service site look
+		// like an HTTP function and never run the service process).
 		appSettings := s.buildAZFServiceAppSettings(deployContainer)
-		if c.Config.OpenStdin {
+		if !serviceLike {
 			appSettings = s.buildAZFAppSettings(id, deployContainer.Config)
 		}
 		var err error
@@ -72,8 +83,12 @@ func (s *Server) startCloudDNSSite(id string, c api.Container, netID string) err
 	// hostname, so peers on the linked VNet resolve the alias to this site.
 	s.registerSiteServiceDiscovery(c, azfState, state.DNSZoneName)
 
-	if c.Config.OpenStdin {
-		// Script-runner: invoke the stage over HTTP.
+	if !serviceLike {
+		// Exec-driven container: invoke to bring up the bootstrap. For a
+		// non-OpenStdin container (a GitHub `container:` job) invokeFunctionAsync
+		// blocks until the in-site reverse-agent registers, so the runner's
+		// subsequent `docker exec` of each step reaches it; for an OpenStdin
+		// runner it invokes the captured stage script.
 		return s.invokeFunctionAsync(id, c, azfState)
 	}
 

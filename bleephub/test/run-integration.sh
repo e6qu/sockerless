@@ -285,6 +285,98 @@ provision_aca() {
     log "sockerless-backend-aca ready (shared volumes: workspace + externals)"
 }
 
+provision_azf() {
+    # Azure Functions deploys container-mode jobs as Linux Function App sites
+    # whose sitecontainers run the workload. backend-azf builds the
+    # reverse-agent overlay through ACR Tasks (the same build→push→pull as aca),
+    # deploys the site, and exec/attaches over the reverse agent. A `services:`
+    # container deploys as a sibling Function App site on the per-build network,
+    # reached by name through Azure Private DNS — azf's faithful network
+    # primitive (cloud-dns discovery), matching aca's per-build network. The
+    # runner workspace + externals are shared via Azure-Files-ephemeral volumes.
+    SIM_AZURE_FILES_DATA_DIR="$SOCKERLESS_HARNESS_DATA_DIR"
+    export SIM_AZURE_FILES_DATA_DIR
+    SIM_ADDR="127.0.0.1:4568"
+    # As with aca, the backend reaches the sim via the `localhost` hostname so
+    # the storage account's advertised blob endpoint resolves to loopback.
+    local sim_endpoint="http://localhost:4568"
+    local sub="00000000-0000-0000-0000-000000000001"
+    local rg="sim-rg" acct="simstorage" plan="sockerless-plan" acr="simacr"
+    case "$(uname -m)" in
+        aarch64|arm64) local build_platform="linux/arm64" ;;
+        *)             local build_platform="linux/amd64" ;;
+    esac
+
+    LOG_DIR="$SOCKERLESS_HARNESS_DATA_DIR/logs"
+    mkdir -p "$LOG_DIR"
+
+    # The ACR-Tasks overlay build uploads its context to blob storage via the
+    # account's advertised endpoint — pin it to a deterministic
+    # `<account>.blob.localhost` resolved to loopback inside this container.
+    export SIM_AZURE_ARM_EXTERNAL_DATA_PLANE_URLS_JSON='{"storage":{"blob":"http://{account}.blob.localhost:{port}/"}}'
+    if ! grep -q "${acct}.blob.localhost" /etc/hosts 2>/dev/null; then
+        echo "127.0.0.1 ${acct}.blob.localhost" >>/etc/hosts || fail "add storage host alias"
+    fi
+
+    log "Starting simulator-azure on :4568 (all interfaces, so the published registry port reaches it)"
+    simulator-azure --addr ":4568" >"$LOG_DIR/simulator-azure.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://$SIM_ADDR/health"
+
+    log "Bootstrapping sim: storage account + App Service plan + ACR"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Storage/storageAccounts/$acct?api-version=2023-01-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Standard_LRS"},"kind":"StorageV2","properties":{}}' >/dev/null || fail "create storage account"
+    # azf's host primitive is an App Service plan (Microsoft.Web/serverfarms),
+    # not a managed environment: `services:` siblings deploy as Function App
+    # sites on this plan / per-build VNet.
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/serverfarms/$plan?api-version=2023-12-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"EP1","tier":"ElasticPremium"},"kind":"linux","properties":{"reserved":true}}' >/dev/null || fail "create App Service plan"
+    curl -sf -X PUT "http://$SIM_ADDR/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.ContainerRegistry/registries/$acr?api-version=2023-07-01" \
+        -H 'Content-Type: application/json' \
+        -d '{"location":"eastus","sku":{"name":"Basic"},"properties":{}}' >/dev/null || fail "create ACR registry"
+    curl -sf -X PUT "http://$SIM_ADDR/build-context?restype=container" \
+        -H "Host: ${acct}.blob.localhost:4568" >/dev/null || fail "create build-context container"
+
+    # The runner workspace + externals live on Azure Files shares; the sim
+    # materialises each (account, share) at $DATA_DIR/<account>/<share>.
+    WORK_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-ws"
+    EXT_DIR="$SIM_AZURE_FILES_DATA_DIR/$acct/runner-externals"
+    mkdir -p "$WORK_DIR" "$EXT_DIR"
+    log "Staging runner externals onto Azure Files ($EXT_DIR)…"
+    cp -a /runner/externals/. "$EXT_DIR/"
+
+    export SOCKERLESS_ENDPOINT_URL="$sim_endpoint"
+    export SOCKERLESS_AZF_SUBSCRIPTION_ID="$sub"
+    export SOCKERLESS_AZF_RESOURCE_GROUP="$rg"
+    export SOCKERLESS_AZF_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZF_LOG_ANALYTICS_WORKSPACE="default"
+    export SOCKERLESS_AZF_APP_SERVICE_PLAN="/subscriptions/$sub/resourceGroups/$rg/providers/Microsoft.Web/serverfarms/$plan"
+    export SOCKERLESS_AZF_REGISTRY="${acr}.azurecr.io"
+    # azf composes the per-build network + service discovery from real Azure
+    # primitives: a VNet + Microsoft.Web/serverFarms-delegated subnet + a linked
+    # Private DNS zone, with each site VNet-integrated and its --network-alias
+    # registered as a Private DNS CNAME.
+    export SOCKERLESS_AZF_NETWORK_DISCOVERY="cloud-dns"
+    export SOCKERLESS_AZURE_ACR_NAME="$acr"
+    export SOCKERLESS_AZURE_BUILD_STORAGE_ACCOUNT="$acct"
+    export SOCKERLESS_AZURE_BUILD_CONTAINER="build-context"
+    export SOCKERLESS_AZURE_BUILD_PLATFORM="$build_platform"
+    export SOCKERLESS_AZURE_ACR_ENDPOINT="127.0.0.1:5000"
+    export SOCKERLESS_CALLBACK_URL="ws://host.docker.internal:3375/v1/azf/reverse"
+    export SOCKERLESS_AZF_BOOTSTRAP=/usr/local/bin/sockerless-azf-bootstrap
+    export SOCKERLESS_AUTO_AGENT_BIN=/usr/local/bin/sockerless-agent
+    # Runner container-job binds translate onto the shared Azure Files volumes.
+    export SOCKERLESS_AZF_SHARED_VOLUMES="runner-ws=${WORK_DIR}=runner-ws=azure-files-ephemeral,runner-externals=/runner/externals=runner-externals=azure-files-ephemeral"
+
+    log "Starting sockerless-backend-azf on :3375"
+    sockerless-backend-azf --addr :3375 --log-level debug >"$LOG_DIR/sockerless-backend-azf.log" 2>&1 &
+    PIDS+=($!)
+    wait_for_url "http://127.0.0.1:3375/_ping"
+    log "sockerless-backend-azf ready (shared volumes: workspace + externals)"
+}
+
 # write_fake_sa_json writes a service-account JSON whose token_uri points
 # at the sim's /token endpoint. The backend's google-cloud Go clients
 # parse the (real, freshly generated) RSA private key, self-sign a JWT,
@@ -550,9 +642,10 @@ provision_gcf() {
 case "${BLEEPHUB_BACKEND:-ecs}" in
     ecs) provision_ecs ;;
     aca) provision_aca ;;
+    azf) provision_azf ;;
     cloudrun) provision_cloudrun ;;
     gcf) provision_gcf ;;
-    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca|cloudrun|gcf)" ;;
+    *) fail "unsupported BLEEPHUB_BACKEND: ${BLEEPHUB_BACKEND} (ecs|aca|azf|cloudrun|gcf)" ;;
 esac
 
 # --- 4. Configure the runner ---

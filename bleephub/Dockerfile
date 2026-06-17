@@ -25,6 +25,9 @@ COPY backends/azure-common/ backends/azure-common/
 COPY backends/aca/ backends/aca/
 RUN cd backends/aca && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+COPY backends/azure-functions/ backends/azure-functions/
+RUN cd backends/azure-functions && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
 COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/
 RUN cd backends/cloudrun && GOWORK=off go mod download && \
@@ -39,7 +42,8 @@ RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
 RUN cd agent && GOWORK=off go mod download && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap && \
-    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap && \
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-azf-bootstrap ./cmd/sockerless-azf-bootstrap
 
 # --- Build the dispatcher (runner-as-task control plane) ---
 COPY github-runner-dispatcher-aws/ github-runner-dispatcher-aws/

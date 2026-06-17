@@ -21,6 +21,14 @@ const (
 	labelBaseImage      = "sockerless.azf/base-image"
 	labelBaseEntrypoint = "sockerless.azf/base-entrypoint"
 	labelBaseCmd        = "sockerless.azf/base-cmd"
+	// labelServiceLike records, from the ORIGINAL client create request (before
+	// the image's default entrypoint/cmd are merged in), whether the container
+	// runs its image as-is — no client entrypoint/cmd override and not OpenStdin.
+	// Such a container is a service (run its raw image); anything else is
+	// exec/attach-driven and needs the reverse-agent overlay. Must be derived
+	// pre-merge: after the merge, base-entrypoint/base-cmd reflect the image's
+	// defaults, not whether the client overrode them.
+	labelServiceLike = "sockerless.azf/service-like"
 )
 
 // podMembersTagKey carries a pod's full membership manifest on the site's
