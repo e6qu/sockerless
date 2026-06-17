@@ -119,6 +119,7 @@ RUN chmod +x /opt/sockerless/sockerless-azf-bootstrap
 ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 `
 	alpineBuild := exec.Command("docker", "build",
+		"--load",
 		"--platform", "linux/arm64",
 		"-t", alpineImageName, "-f", "-", repoRoot+"/agent")
 	alpineBuild.Stdin = strings.NewReader(alpineDockerfile)
@@ -140,6 +141,7 @@ ENV SOCKERLESS_USER_ENTRYPOINT=WyIvdXNyL2xvY2FsL2Jpbi9ldmFsLWFyaXRobWV0aWMiXQ==
 ENTRYPOINT ["/opt/sockerless/sockerless-azf-bootstrap"]
 `
 	evalImageBuild := exec.Command("docker", "build",
+		"--load",
 		"--platform", "linux/arm64",
 		"-t", evalImageName, "-f", "-", repoRoot)
 	evalImageBuild.Stdin = strings.NewReader(evalDockerfile)

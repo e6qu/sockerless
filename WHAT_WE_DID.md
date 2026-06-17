@@ -4,7 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-06-16 - bleeplab GitLab cell on the ACA backend (GREEN) + AZF (WIP) + AWS sim faithfulness
+## 2026-06-16 - bleeplab GitLab cells on the ACA + AZF backends (both GREEN) + AWS sim faithfulness
+
+The full gitlab-runner docker-executor flow (build → artifact → `services:`)
+now runs on **both** Azure backends — aca and **Azure Functions (azf)** — all 4
+cell tests green on each. azf's last and hardest hurdle was **faithful cloud-dns
+service discovery** so the build site resolves `redis:6379`: it is assembled
+end-to-end from real Azure primitives, with the *same backend code against the
+sim and real Azure* (no sim-awareness). `NetworkCreate` provisions a
+`Microsoft.Network/virtualNetworks` + a subnet delegated to
+`Microsoft.Web/serverFarms` + a Private DNS zone linked to the VNet
+(`armnetwork`/`armprivatedns`). `ContainerStart` under cloud-dns deploys each
+container as its **own** App Service site (a `services:` redis runs its raw
+image; the build runs the bootstrap overlay), does App Service **regional VNet
+integration** (`WebApps.CreateOrUpdateSwiftVirtualNetworkConnectionWithCheck`)
+into the subnet, and registers each `--network-alias` as a Private DNS CNAME →
+the site's default hostname. The azure sim realizes these faithfully: a
+`Microsoft.Web/serverFarms`-delegated subnet is the App Service container fabric
+→ a Docker user-defined network (not the IaaS netns the compute stack uses);
+swift integration attaches the site's container to it; a CNAME → a site's
+default hostname is realized as a Docker embedded-DNS alias on that site's
+container (`realizeCNAMEAsSiteDockerAlias`, the App Service analog of the ACA
+`realizeCNAMEAsDockerAlias`). The build site then reaches `redis` over the
+shared VNet (DNS) and PING/SET/GET pass. This composes Docker's network + DNS +
+services purely from Azure cloud primitives — the bar the whole project holds.
 
 The full gitlab-runner docker-executor flow now also runs on the **Azure
 Container Apps (aca) backend** — all 4 cell tests pass, including the redis

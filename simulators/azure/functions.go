@@ -692,6 +692,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 	registerSiteConfigHandlers(srv, armBase, sites)
 	registerSiteContainerHandlers(srv, armBase, sites)
+	registerSiteVNetIntegration(srv, armBase, sites)
 }
 
 // AzureSiteAppSettings is the canonical StringDictionary wire shape
@@ -999,7 +1000,12 @@ type azureFunctionInstance struct {
 	containerID    string
 	cancelLogs     context.CancelFunc
 	sidecarHandles []*sim.ContainerHandle
-	bootstrapURL   string
+	rawHandle      *sim.ContainerHandle // non-HTTP service container (e.g. a redis `services:` site)
+	bootstrapURL   string               // "" for a raw service (no HTTP invoke)
+	// dockerNetwork is the App Service VNet-integration network (sim-vnet-<vnet>)
+	// the site joined, set by the swift virtualNetwork connection handler. The
+	// site container attaches to it with its identity aliases so peers resolve it.
+	dockerNetwork string
 }
 
 var azureFunctionInstances = struct {
@@ -1057,28 +1063,106 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 	// is deleted (stopAzureFunctionInstance, from the DELETE handler).
 	inst := azfInstanceFor(site.Name)
 	inst.mu.Lock()
-	if inst.containerID == "" || !sim.ContainerRunning(inst.containerID) {
-		if inst.containerID != "" {
-			// A previously-started container died; reap before restarting.
-			inst.teardownLocked()
-		}
-		if err := inst.startLocked(site); err != nil {
-			inst.mu.Unlock()
-			return nil, -1, err
-		}
+	if err := inst.ensureStarted(site); err != nil {
+		inst.mu.Unlock()
+		return nil, -1, err
 	}
 	bootstrapURL := inst.bootstrapURL
 	inst.mu.Unlock()
 
+	if bootstrapURL == "" {
+		return nil, -1, fmt.Errorf("site %q runs a non-HTTP service container; it has no function bootstrap to invoke", site.Name)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
 	defer cancel()
 	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+}
+
+// ensureStarted starts the site's persistent container if it isn't already
+// running, and (for a VNet-integrated site) ensures it's attached to its App
+// Service network. Caller holds inst.mu. Used by both the HTTP invoke path and
+// the swift VNet-integration handler (which starts a non-HTTP service such as a
+// `services:` redis that is never invoked).
+func (inst *azureFunctionInstance) ensureStarted(site *Site) error {
+	if inst.containerID != "" && sim.ContainerRunning(inst.containerID) {
+		if inst.dockerNetwork != "" {
+			// Idempotent: a re-connect of an already-attached endpoint is a
+			// harmless no-op error we ignore.
+			_ = sim.ConnectContainerToNetwork(inst.containerID, inst.dockerNetwork, siteNetAliases(site))
+		}
+		return nil
+	}
+	if inst.containerID != "" {
+		// A previously-started container died; reap before restarting.
+		inst.teardownLocked()
+	}
+	return inst.startLocked(site)
+}
+
+// siteNetAliases are the identity names an App Service site is reachable by on
+// its VNet-integration network: the site name and its default hostname. Service
+// aliases (a `--network-alias`) are added on top via the Private DNS record the
+// backend registers (realizeCNAMEAsSiteDockerAlias).
+func siteNetAliases(site *Site) []string {
+	var out []string
+	if site.Name != "" {
+		out = append(out, site.Name)
+	}
+	if site.Properties.DefaultHostName != "" {
+		out = append(out, site.Properties.DefaultHostName)
+	}
+	return out
+}
+
+// startRawServiceLocked runs a non-bootstrap site image (a `services:` container
+// such as redis) directly on its App Service VNet network, with the site's
+// identity aliases, so peers reach it by name over that network. It serves its
+// own port (e.g. redis 6379) container-to-container — there is no HTTP function
+// bootstrap, so bootstrapURL stays "". Caller holds inst.mu.
+func (inst *azureFunctionInstance) startRawServiceLocked(site *Site) error {
+	image := siteContainerImage(site)
+	if image == "" {
+		return fmt.Errorf("site %q has no container image", site.Name)
+	}
+	localImage := sim.ResolveLocalImage(image)
+	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
+	defer cancel()
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return err
+	}
+	sink := &funcLogSink{appName: site.Name}
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:          localImage,
+		Architecture:   platform,
+		Env:            mergeEnv(siteAppSettings(site), hostMetadataEnv()),
+		Binds:          siteAzureStorageBinds(site),
+		Name:           fmt.Sprintf("sockerless-sim-azure-svc-%s-%s", site.Name, randomSuffix(6)),
+		Labels:         map[string]string{"sockerless-sim-type": "azure-service", "sockerless-site": site.Name},
+		Network:        inst.dockerNetwork,
+		NetworkAliases: siteNetAliases(site),
+		Sandbox:        sim.SandboxAZF,
+	}, sink)
+	if err != nil {
+		return fmt.Errorf("start service container: %w", err)
+	}
+	inst.containerID = handle.ContainerID
+	inst.rawHandle = handle
+	inst.bootstrapURL = ""
+	return nil
 }
 
 // startLocked launches the persistent site container (plus any sidecar
 // sitecontainers) and resolves the reachable in-container bootstrap URL,
 // recording everything on the instance. Caller holds inst.mu.
 func (inst *azureFunctionInstance) startLocked(site *Site) error {
+	// A site whose image carries no sockerless function bootstrap (a `services:`
+	// container such as redis) runs its own process directly on the VNet network
+	// and is reached by peers over it — not via an HTTP invoke.
+	if !hasAzureFunctionHTTPBootstrap(site) {
+		return inst.startRawServiceLocked(site)
+	}
+
 	// Multi-container (sitecontainers) sites run the IsMain member as the
 	// long-lived HTTP container; the LinuxFxVersion-derived image is the
 	// single-container fallback.
@@ -1177,6 +1261,13 @@ func (inst *azureFunctionInstance) startLocked(site *Site) error {
 		return fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
 	}
 
+	// VNet-integrated site: attach the (running) HTTP container to its App
+	// Service network so peers resolve it by name. The container's :8080 is for
+	// the function bootstrap; cross-site reachability is over this network.
+	if inst.dockerNetwork != "" {
+		_ = sim.ConnectContainerToNetwork(containerID, inst.dockerNetwork, siteNetAliases(site))
+	}
+
 	inst.containerID = containerID
 	inst.cancelLogs = cancelLogs
 	inst.sidecarHandles = sidecarHandles
@@ -1190,6 +1281,9 @@ func (inst *azureFunctionInstance) teardownLocked() {
 	for _, h := range inst.sidecarHandles {
 		h.Cancel()
 	}
+	if inst.rawHandle != nil {
+		inst.rawHandle.Cancel()
+	}
 	if inst.cancelLogs != nil {
 		inst.cancelLogs()
 	}
@@ -1199,6 +1293,7 @@ func (inst *azureFunctionInstance) teardownLocked() {
 	inst.containerID = ""
 	inst.cancelLogs = nil
 	inst.sidecarHandles = nil
+	inst.rawHandle = nil
 	inst.bootstrapURL = ""
 }
 

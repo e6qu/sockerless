@@ -20,12 +20,19 @@ fail() {
 }
 
 show_diag() {
-    for lf in "${LOG_DIR:-/tmp}"/simulator-*.log "${LOG_DIR:-/tmp}"/sockerless-backend-"${BLEEPLAB_BACKEND:-*}".log "${LOG_DIR:-/tmp}"/bleeplab.log "${LOG_DIR:-/tmp}"/gitlab-runner.log; do
+    for lf in "${LOG_DIR:-/tmp}"/simulator-*.log "${LOG_DIR:-/tmp}"/bleeplab.log "${LOG_DIR:-/tmp}"/gitlab-runner.log; do
         if [ -f "$lf" ]; then
             echo "=== tail $lf ==="
-            tail -50 "$lf"
+            tail -80 "$lf"
         fi
     done
+    # Full backend log — the cloud-dns / VNet / service-discovery flow needs the
+    # whole API sequence, not a tail.
+    bl="${LOG_DIR:-/tmp}/sockerless-backend-${BLEEPLAB_BACKEND:-}.log"
+    if [ -f "$bl" ]; then
+        echo "=== FULL $bl ==="
+        cat "$bl"
+    fi
 }
 
 PIDS=()

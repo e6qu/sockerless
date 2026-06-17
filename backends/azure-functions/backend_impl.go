@@ -490,6 +490,17 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
+	// cloud-dns discovery: a container on a user-defined network is its own
+	// App Service site, joined to the network's VNet via regional VNet
+	// integration and resolvable by its --network-alias through the linked
+	// Private DNS zone. This is the faithful Azure model (separate sites + VNet
+	// + Private DNS), distinct from the host-aliases sitecontainer-pod below.
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
+		if netID, ok := s.userDefinedNetworkID(c); ok {
+			return s.startCloudDNSSite(id, c, netID)
+		}
+	}
+
 	// Docker user-defined network → assemble a multi-container pod as ONE
 	// App Service site whose sitecontainers share a loopback. Pure Docker
 	// signals: network membership + Container.Config.OpenStdin.

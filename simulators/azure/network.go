@@ -6,7 +6,41 @@ import (
 	"strings"
 
 	sim "github.com/sockerless/simulator"
+	realexec "github.com/sockerless/simulator-realexec"
 )
+
+// dockerNetForVNet is the Docker user-defined network that realizes an Azure
+// VNet's App Service-delegated subnet locally — the App Service container
+// fabric. Mirrors the ACA managed environment's `sim-env-<name>` network.
+func dockerNetForVNet(vnetName string) string {
+	return "sim-vnet-" + vnetName
+}
+
+// vnetNameFromSubnetID extracts the VNet name from a subnet resource ID
+// (.../virtualNetworks/<vnet>/subnets/<subnet>).
+func vnetNameFromSubnetID(subnetID string) string {
+	const marker = "/virtualNetworks/"
+	i := strings.Index(subnetID, marker)
+	if i < 0 {
+		return ""
+	}
+	rest := subnetID[i+len(marker):]
+	if j := strings.Index(rest, "/"); j >= 0 {
+		return rest[:j]
+	}
+	return rest
+}
+
+// subnetIsWebDelegated reports whether a subnet is delegated to
+// Microsoft.Web/serverFarms (App Service regional VNet integration).
+func subnetIsWebDelegated(sn Subnet) bool {
+	for _, d := range sn.Properties.Delegations {
+		if strings.EqualFold(d.Properties.ServiceName, "Microsoft.Web/serverFarms") {
+			return true
+		}
+	}
+	return false
+}
 
 // Virtual Network types
 
@@ -236,14 +270,19 @@ func registerNetwork(srv *sim.Server) {
 			vnet.Properties.Subnets = append(vnet.Properties.Subnets, SubnetRef{ID: s.ID, Name: s.Name})
 		}
 
-		if !azureRequireNetworkHost(w) {
-			return
-		}
-		if err := azureCreateRealVnet(r.Context(), vnet); err != nil {
-			sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to create real virtual network fabric: %v", err)
-			return
-		}
 		vnets.Put(resourceID, vnet)
+		// Realize the IaaS netns fabric only where the host can (Linux + caps).
+		// A VNet that only ever carries App Service-delegated subnets needs no
+		// netns — those subnets are realized as the App Service container fabric
+		// (a Docker network) at subnet create. Storing the VNet metadata without
+		// netns lets an App Service VNet be created on a host without netns
+		// capabilities; a compute subnet added later still requires the host.
+		if realexec.DetectNetworkCapabilities().Require() == nil {
+			if err := azureCreateRealVnet(r.Context(), vnet); err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to create real virtual network fabric: %v", err)
+				return
+			}
+		}
 
 		// go-azure-sdk expects 200 for sync creates
 		sim.WriteJSON(w, http.StatusOK, vnet)
@@ -337,6 +376,21 @@ func registerNetwork(srv *sim.Server) {
 				PrivateEndpointNetworkPolicies:    privateEndpointPolicies,
 				PrivateLinkServiceNetworkPolicies: privateLinkPolicies,
 			},
+		}
+		// A subnet delegated to Microsoft.Web/serverFarms is App Service's
+		// regional-VNet-integration subnet. App Service workloads are containers,
+		// not netns VMs, so Azure realizes such a subnet as the App Service
+		// container network — the sim realizes it as a Docker user-defined
+		// network (the same mechanism the ACA managed environment uses), and an
+		// App Service site joins it via swift VNet integration. No netns fabric.
+		if subnetIsWebDelegated(sn) {
+			if _, err := sim.EnsureDockerNetwork(dockerNetForVNet(vnetName)); err != nil {
+				sim.AzureErrorf(w, "InternalServerError", http.StatusInternalServerError, "failed to realize App Service subnet network: %v", err)
+				return
+			}
+			subnets.Put(resourceID, sn)
+			sim.WriteJSON(w, http.StatusOK, sn)
+			return
 		}
 		if !azureRequireNetworkHost(w) {
 			return

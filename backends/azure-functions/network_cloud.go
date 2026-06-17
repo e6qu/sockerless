@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 )
 
@@ -30,14 +31,101 @@ func (s *Server) cloudNetworkCreate(ctx context.Context, name, networkID string)
 		return fmt.Errorf("wait Private DNS zone %s: %w", zoneName, err)
 	}
 
-	s.NetworkState.Put(networkID, NetworkState{DNSZoneName: zoneName})
+	// Provision the VNet + a subnet delegated to Microsoft.Web/serverFarms, so
+	// the per-build sites can join it via App Service regional VNet integration
+	// and reach each other by name. Link the Private DNS zone to the VNet so
+	// names registered in the zone resolve for the integrated sites.
+	vnetName := truncate("skls-vnet-"+name, 64)
+	subnetID, err := s.cloudNetworkProvisionVNet(ctx, vnetName, zoneName)
+	if err != nil {
+		return err
+	}
+
+	s.NetworkState.Put(networkID, NetworkState{
+		DNSZoneName: zoneName,
+		VNetName:    vnetName,
+		SubnetID:    subnetID,
+	})
 
 	s.Logger.Debug().
 		Str("network", name).
 		Str("networkID", networkID).
 		Str("zone", zoneName).
-		Msg("created cloud network state with Private DNS zone")
+		Str("vnet", vnetName).
+		Msg("created cloud network state with Private DNS zone + VNet")
 	return nil
+}
+
+// cloudNetworkProvisionVNet creates a VNet, a subnet delegated to
+// Microsoft.Web/serverFarms (the App Service regional-VNet-integration subnet),
+// and links the Private DNS zone to the VNet. Returns the subnet's resource ID.
+func (s *Server) cloudNetworkProvisionVNet(ctx context.Context, vnetName, zoneName string) (string, error) {
+	const subnetName = "appservice"
+
+	vnetPoller, err := s.azure.VirtualNetworks.BeginCreateOrUpdate(ctx, s.config.ResourceGroup, vnetName, armnetwork.VirtualNetwork{
+		Location: to.Ptr(s.config.Location),
+		Properties: &armnetwork.VirtualNetworkPropertiesFormat{
+			AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{to.Ptr("10.40.0.0/16")}},
+		},
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("create VNet %s: %w", vnetName, err)
+	}
+	vnetResp, err := vnetPoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("wait VNet %s: %w", vnetName, err)
+	}
+	vnetID := ""
+	if vnetResp.ID != nil {
+		vnetID = *vnetResp.ID
+	}
+
+	subnetPoller, err := s.azure.Subnets.BeginCreateOrUpdate(ctx, s.config.ResourceGroup, vnetName, subnetName, armnetwork.Subnet{
+		Properties: &armnetwork.SubnetPropertiesFormat{
+			AddressPrefix: to.Ptr("10.40.1.0/24"),
+			Delegations: []*armnetwork.Delegation{{
+				Name:       to.Ptr("appservice-delegation"),
+				Properties: &armnetwork.ServiceDelegationPropertiesFormat{ServiceName: to.Ptr("Microsoft.Web/serverFarms")},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("create subnet %s/%s: %w", vnetName, subnetName, err)
+	}
+	subnetResp, err := subnetPoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		return "", fmt.Errorf("wait subnet %s/%s: %w", vnetName, subnetName, err)
+	}
+	subnetID := ""
+	if subnetResp.ID != nil {
+		subnetID = *subnetResp.ID
+	}
+
+	// Link the Private DNS zone to the VNet so the integrated sites resolve
+	// names registered in the zone.
+	linkPoller, err := s.azure.PrivateDNSLinks.BeginCreateOrUpdate(ctx, s.config.ResourceGroup, zoneName, vnetName+"-link", armprivatedns.VirtualNetworkLink{
+		Location: to.Ptr("global"),
+		Properties: &armprivatedns.VirtualNetworkLinkProperties{
+			VirtualNetwork:      &armprivatedns.SubResource{ID: to.Ptr(vnetID)},
+			RegistrationEnabled: to.Ptr(false),
+		},
+	}, nil)
+	if err != nil {
+		return "", fmt.Errorf("link Private DNS zone %s to VNet %s: %w", zoneName, vnetName, err)
+	}
+	if _, err := linkPoller.PollUntilDone(ctx, nil); err != nil {
+		return "", fmt.Errorf("wait Private DNS zone link %s: %w", zoneName, err)
+	}
+
+	return subnetID, nil
+}
+
+// truncate returns s capped to n bytes.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // cloudNetworkDelete tears down the Private DNS zone for a Docker network.
@@ -63,10 +151,18 @@ func (s *Server) cloudNetworkDelete(ctx context.Context, networkID string) error
 				Msg("poll delete Private DNS zone failed")
 		}
 	}
+	if state.VNetName != "" {
+		if vnetPoller, err := s.azure.VirtualNetworks.BeginDelete(ctx, s.config.ResourceGroup, state.VNetName, nil); err != nil {
+			s.Logger.Warn().Err(err).Str("vnet", state.VNetName).Msg("begin delete VNet failed")
+		} else if _, err := vnetPoller.PollUntilDone(ctx, nil); err != nil {
+			s.Logger.Warn().Err(err).Str("vnet", state.VNetName).Msg("poll delete VNet failed")
+		}
+	}
 	s.NetworkState.Delete(networkID)
 	s.Logger.Debug().
 		Str("networkID", networkID).
 		Str("zone", state.DNSZoneName).
+		Str("vnet", state.VNetName).
 		Msg("deleted cloud network state")
 	return nil
 }

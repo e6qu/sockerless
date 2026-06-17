@@ -195,7 +195,11 @@ func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 		dockerfile = "Dockerfile"
 	}
 
-	args := []string{"build", "-f", dockerfile}
+	// --load: export the built image into the daemon image store so the
+	// subsequent `docker push` finds it. Without it, the default
+	// docker-container buildx driver leaves the result in the build cache only
+	// and the push fails "image not known" (a no-op on the plain docker driver).
+	args := []string{"build", "--load", "-f", dockerfile}
 	for _, img := range req.ImageNames {
 		args = append(args, "-t", img)
 	}
