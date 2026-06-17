@@ -131,30 +131,93 @@ func (s *Server) integrateSiteVNet(siteName, subnetID string) error {
 // have stable per-site FQDNs, so a CNAME (not an A-record) is the faithful
 // service-discovery record — mirroring the ACA Apps path.
 func (s *Server) registerSiteServiceDiscovery(c api.Container, azfState AZFState, zoneName string) {
-	fqdn := azfState.FunctionHost
+	for _, ep := range c.NetworkSettings.Networks {
+		if ep == nil {
+			continue
+		}
+		s.registerSiteAliases(ep.Aliases, azfState.FunctionHost, zoneName)
+	}
+}
+
+// registerSiteAliases registers each alias as a Private DNS CNAME → the site's
+// default hostname (fqdn) in the given zone. App Service sites have stable
+// per-site FQDNs, so a CNAME (not an A-record) is the faithful service-discovery
+// record — mirroring the ACA Apps path.
+func (s *Server) registerSiteAliases(aliases []string, fqdn, zoneName string) {
 	if fqdn == "" || zoneName == "" {
 		return
 	}
-	for _, ep := range c.NetworkSettings.Networks {
-		if ep == nil || len(ep.Aliases) == 0 {
+	for _, alias := range aliases {
+		if alias == "" {
 			continue
 		}
-		for _, alias := range ep.Aliases {
-			if alias == "" {
-				continue
-			}
-			if _, err := s.azure.PrivateDNSRecords.CreateOrUpdate(s.ctx(), s.config.ResourceGroup, zoneName, armprivatedns.RecordTypeCNAME, alias, armprivatedns.RecordSet{
-				Properties: &armprivatedns.RecordSetProperties{
-					TTL:         to.Ptr(int64(3600)),
-					CnameRecord: &armprivatedns.CnameRecord{Cname: to.Ptr(fqdn)},
-				},
-			}, nil); err != nil {
-				s.Logger.Warn().Err(err).Str("alias", alias).Str("fqdn", fqdn).Msg("register service CNAME in Private DNS failed")
-			} else {
-				s.Logger.Info().Str("alias", alias).Str("fqdn", fqdn).Str("zone", zoneName).Msg("cloud-dns: registered service CNAME")
-			}
+		if _, err := s.azure.PrivateDNSRecords.CreateOrUpdate(s.ctx(), s.config.ResourceGroup, zoneName, armprivatedns.RecordTypeCNAME, alias, armprivatedns.RecordSet{
+			Properties: &armprivatedns.RecordSetProperties{
+				TTL:         to.Ptr(int64(3600)),
+				CnameRecord: &armprivatedns.CnameRecord{Cname: to.Ptr(fqdn)},
+			},
+		}, nil); err != nil {
+			s.Logger.Warn().Err(err).Str("alias", alias).Str("fqdn", fqdn).Msg("register service CNAME in Private DNS failed")
+		} else {
+			s.Logger.Info().Str("alias", alias).Str("fqdn", fqdn).Str("zone", zoneName).Msg("cloud-dns: registered service CNAME")
 		}
 	}
+}
+
+// cloudDNSNetworkConnect handles a `docker network connect [--network-alias X]`
+// under cloud-dns discovery. The synthetic network driver records the endpoint
+// in Store.Containers, which this stateless backend doesn't use, so:
+//   - connect-before-start (a PendingCreate): stamp the network + aliases onto
+//     it so ContainerStart's startCloudDNSSite VNet-integrates and registers
+//     them, exactly as the create-with-network path does;
+//   - live connect (an already-deployed site): VNet-integrate the site into the
+//     network's subnet and register the aliases as Private DNS CNAMEs now.
+func (s *Server) cloudDNSNetworkConnect(networkID string, req *api.NetworkConnectRequest) {
+	net, ok := s.Store.ResolveNetwork(networkID)
+	if !ok {
+		return
+	}
+	cid, ok := s.ResolveContainerIDAuto(s.ctx(), req.Container)
+	if !ok {
+		return
+	}
+	var aliases []string
+	if req.EndpointConfig != nil {
+		aliases = req.EndpointConfig.Aliases
+	}
+
+	if pc, ok := s.PendingCreates.Get(cid); ok && !pc.State.Running {
+		s.PendingCreates.Update(cid, func(c *api.Container) {
+			if c.NetworkSettings.Networks == nil {
+				c.NetworkSettings.Networks = map[string]*api.EndpointSettings{}
+			}
+			ep := c.NetworkSettings.Networks[net.Name]
+			if ep == nil {
+				ep = &api.EndpointSettings{}
+				c.NetworkSettings.Networks[net.Name] = ep
+			}
+			ep.NetworkID = net.ID
+			if len(aliases) > 0 {
+				ep.Aliases = aliases
+			}
+		})
+		return
+	}
+
+	azfState, has := s.AZF.Get(cid)
+	if !has || azfState.FunctionURL == "" {
+		return
+	}
+	st, ok := s.resolveNetworkState(s.ctx(), net.ID)
+	if !ok {
+		return
+	}
+	if st.SubnetID != "" {
+		if err := s.integrateSiteVNet(azfState.FunctionAppName, st.SubnetID); err != nil {
+			s.Logger.Warn().Err(err).Str("site", azfState.FunctionAppName).Msg("live NetworkConnect: VNet integration failed")
+		}
+	}
+	s.registerSiteAliases(aliases, azfState.FunctionHost, st.DNSZoneName)
 }
 
 func trimSlash(s string) string {

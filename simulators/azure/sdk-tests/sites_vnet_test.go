@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
@@ -50,11 +51,20 @@ func TestSDK_SiteVNetIntegration_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, put.Properties)
 	assert.Equal(t, subnetID, *put.Properties.SubnetResourceID)
+	// The operation path is .../networkConfig/virtualNetwork, but the resource's
+	// canonical ARM id is the config sub-resource .../config/virtualNetwork —
+	// the value terraform-provider-azurerm parses from the response.
+	require.NotNil(t, put.ID)
+	assert.True(t, strings.HasSuffix(*put.ID, "/config/virtualNetwork"),
+		"swift connection id must be the canonical config sub-resource; got %s", *put.ID)
 
 	got, err := client.GetSwiftVirtualNetworkConnection(ctx, rg, site, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got.Properties)
 	assert.Equal(t, subnetID, *got.Properties.SubnetResourceID)
+	require.NotNil(t, got.ID)
+	assert.True(t, strings.HasSuffix(*got.ID, "/config/virtualNetwork"),
+		"swift connection id must be the canonical config sub-resource; got %s", *got.ID)
 
 	_, err = client.DeleteSwiftVirtualNetwork(ctx, rg, site, nil)
 	require.NoError(t, err)

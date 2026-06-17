@@ -96,7 +96,8 @@ type SubnetDelegation struct {
 	ID         string `json:"id,omitempty"`
 	Name       string `json:"name"`
 	Properties struct {
-		ServiceName string `json:"serviceName"`
+		ServiceName string   `json:"serviceName"`
+		Actions     []string `json:"actions,omitempty"`
 	} `json:"properties"`
 }
 

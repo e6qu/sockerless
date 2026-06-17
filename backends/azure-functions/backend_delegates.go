@@ -244,7 +244,17 @@ func (s *Server) ImageSearch(term string, limit int, filters map[string][]string
 // Network methods (pass-through to BaseServer).
 
 func (s *Server) NetworkConnect(id string, req *api.NetworkConnectRequest) error {
-	return s.BaseServer.NetworkConnect(id, req)
+	if err := s.BaseServer.NetworkConnect(id, req); err != nil {
+		return err
+	}
+	// The synthetic network driver records the endpoint in Store.Containers,
+	// which this stateless backend doesn't use, so a `docker network connect
+	// --network-alias X` after create would otherwise be lost. Under cloud-dns,
+	// propagate it to the PendingCreate / the deployed site's Private DNS.
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
+		s.cloudDNSNetworkConnect(id, req)
+	}
+	return nil
 }
 
 func (s *Server) NetworkCreate(req *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
