@@ -4,7 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-none — on `main`, clean. PR **#593 merged** (`fcb58281`) — the codebase audit for the anti-patterns flagged 2026-06-17 (fallbacks, error-swallowing, fakes/stubs, sim-contract violations, default-param/defaulted behaviour, dead code) across **sims → backends → UIs**, plus the fixable open GitHub issues. **GitHub issue board now: only #394 (azuread upstream-blocked) open.**
+`fix/audit-backlog-and-faas-pod-polish` (ready for PR). Worked the staged audit backlog (BUG-1840–1846): **5 of 7 fixed + tested** — BUG-1846, 1844, 1843, 1841, 1842 (see BUGS.md § Recently fixed). **3 deferred, refined fix-shapes filed** (all touch GREEN cell paths → need harness verification, not a tail-of-session rush): **BUG-1840** (`Sim*` field removal — its Sim path decodes the backend↔sim `SOCKERLESS_USER_*` contract; can't confirm backend-dead without the gcf/azf cell), **BUG-1845** (cloudrun `networkServices` stateless reconstruction — green network-pod `services:` path), **FaaS pod polish** (azf shared-workspace volume + per-sidecar exec). **Next:** pick these up one at a time WITH the relevant cell run (`make bleeplab-runner-docker-test-{gcf,azf,cloudrun}` / `bleephub-runner-docker-test-*`).
+
+### (history) PR #593 merged (`fcb58281`) — the codebase audit for the anti-patterns flagged 2026-06-17 (fallbacks, error-swallowing, fakes/stubs, sim-contract violations, default-param/defaulted behaviour, dead code) across **sims → backends → UIs**, plus the fixable open GitHub issues. **GitHub issue board now: only #394 (azuread upstream-blocked) open.**
 
 ### Next: the staged audit backlog (BUG-1840–1846)
 
