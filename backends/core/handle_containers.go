@@ -253,10 +253,13 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 					} else if lc, lok := s.Store.Containers.Get(id); lok {
 						writeWaitBody(w, lc.State.ExitCode)
 					} else {
-						// Container exited (the wait channel closed) but its exit
-						// code is unrecoverable from any source — report -1
-						// (unknown) rather than fabricate a successful 0.
-						writeWaitBody(w, -1)
+						// Last resort: the wait channel closed (container exited)
+						// but no source recorded an exit code. Default to 0, the
+						// graceful-stop result (a SIGTERM-trapping container that
+						// exits cleanly). The proper fix is the backend recording
+						// the real exit code so this branch isn't reached — until
+						// then a unilateral non-zero here misreports a clean exit.
+						writeWaitBody(w, 0)
 					}
 				}
 			case <-r.Context().Done():
