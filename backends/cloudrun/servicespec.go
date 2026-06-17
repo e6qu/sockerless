@@ -2,6 +2,8 @@ package cloudrun
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +13,14 @@ import (
 	core "github.com/sockerless/backend-core"
 	gcpcommon "github.com/sockerless/gcp-common"
 	"google.golang.org/protobuf/types/known/durationpb"
+)
+
+// Annotation keys that persist a network pod's service-style members on its
+// Cloud Run Service revision, so the in-memory networkServices map can be
+// rebuilt from the cloud after a backend restart.
+const (
+	networkIDAnnotation             = "sockerless_network_id"
+	networkServiceMembersAnnotation = "sockerless_network_service_members"
 )
 
 // buildServiceName generates a Cloud Run Service name from a container ID.
@@ -57,6 +67,13 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 	}
 	injectPersistEnv(specs, persistEntries)
 
+	// Network ID this revision's containers share (empty for non-network
+	// pods). Read from the main container's standard Docker network membership.
+	netID := ""
+	if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
+		netID = id
+	}
+
 	// Multi-container revision: inject SOCKERLESS_HOST_ALIASES into the
 	// main container's env so the bootstrap can write `127.0.0.1 <alias>`
 	// to /etc/hosts. The aliases are aggregated from every sibling's
@@ -66,10 +83,6 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		members := make([]api.Container, 0, len(containers))
 		for _, ci := range containers {
 			members = append(members, *ci.Container)
-		}
-		netID := ""
-		if id, ok := s.userDefinedNetworkID(*containers[0].Container); ok {
-			netID = id
 		}
 		aliases := hostAliasesForMembers(members, netID)
 		if len(aliases) > 0 {
@@ -134,9 +147,37 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		gcpLabels[gcpcommon.OwnerRunnerTaskLabel] = owner
 	}
 
+	annotations := tags.AsGCPAnnotations()
+	// Persist the network's service-style members (e.g. a `services:` redis)
+	// on the revision so `serviceMembersOfNetwork` can rebuild the
+	// in-memory `networkServices` map from the cloud after a backend
+	// restart — those members are bundled sidecars, never their own cloud
+	// resource, so the Service revision is the only durable record of them.
+	if netID != "" {
+		var svcMembers []api.Container
+		for _, ci := range containers {
+			if ci.IsMain || ci.Container == nil {
+				continue
+			}
+			// Service-style = the image's default command (no client stdin
+			// attach). The script-runner siblings (OpenStdin) are transient
+			// per-stage containers, not re-bundled across stages.
+			if ci.Container.Config.OpenStdin {
+				continue
+			}
+			svcMembers = append(svcMembers, *ci.Container)
+		}
+		if len(svcMembers) > 0 {
+			if blob, err := json.Marshal(svcMembers); err == nil {
+				annotations[networkIDAnnotation] = netID
+				annotations[networkServiceMembersAnnotation] = base64.StdEncoding.EncodeToString(blob)
+			}
+		}
+	}
+
 	return &runpb.Service{
 		Labels:      gcpLabels,
-		Annotations: tags.AsGCPAnnotations(),
+		Annotations: annotations,
 		// Ingress=ALL with IAM-required invoke. Cloud Run rejects
 		// cross-project-service-to-service via .a.run.app + Cloud NAT
 		// with HTTP 404 because the NAT'd source IP isn't auto-detected

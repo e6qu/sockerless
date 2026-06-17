@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-17 - Audit backlog (deferred): cloudrun network-service stateless reconstruction (BUG-1845)
+
+The cloudrun backend's `networkServices` map (user-defined-network ID →
+service-style container IDs) was authoritative local state with no cloud
+reconstruction: after a backend restart mid-job, `serviceMembersOfNetwork`
+returned nil and the next gitlab-runner stage's revision lost its `services:`
+sidecars (e.g. redis). The members are bundled sidecars in each per-stage
+script-runner Service revision — never their own cloud resource — so the
+revision is the only durable record of them.
+
+`buildServiceSpec` now persists the network's service-style members on the
+revision as annotations (`sockerless_network_id` + a base64-JSON
+`sockerless_network_service_members` of the non-OpenStdin members; the
+OpenStdin script-runner siblings are per-stage transients and excluded).
+`serviceMembersOfNetwork` rebuilds the in-memory map on a cache miss —
+`rebuildNetworkServicesFromCloud` lists the network's Services, takes the
+latest revision's member blob, and re-seeds each member into PendingCreates so
+the next stage re-bundles it exactly as it would within a single process. A
+`networkRebuilt` guard ensures a service-less network doesn't list Services
+every stage, and the live `trackNetworkService` path is untouched within one
+process (the only green-path change is the additive annotations). gcf is
+unaffected — it runs a `services:` job as a single multi-container revision,
+not via this map.
+
+Unit test `TestNetworkServiceMembers_PersistAndRebuild` exercises the
+persist → simulated-restart → rebuild round-trip; the green `services:` redis
+flow (PING/SET/GET across stages) is verified by the bleeplab cloudrun cell.
+
 ## 2026-06-17 - Audit backlog (deferred): removed the sim-only `Sim*` fake fields (BUG-1840)
 
 Picked up the first of the three items deferred from #594. The gcp and azure
