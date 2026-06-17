@@ -678,16 +678,17 @@ function TopologyFileCard({ path }: { path: string }) {
 }
 
 function HTTPSGatewayCard({ gateway }: { gateway?: HTTPSGatewayInfo }) {
+  // The make targets are fixed documentation (how you bring the gateway up),
+  // so they're a safe default. The per-cloud endpoints and CA path are RUNTIME
+  // values reported by the gateway — never fabricate them when the gateway info
+  // is unavailable, or an operator sees invented infra coordinates as
+  // authoritative. Show "—" instead.
   const commands = gateway?.commands ?? [
     "make stack-https-up",
     "make stack-https-status",
     "make stack-https-down",
   ];
-  const endpoints = gateway?.endpoints ?? {
-    aws: "https://aws.sockerless.localhost:8443",
-    gcp: "https://gcp.sockerless.localhost:8443",
-    azure: "https://azure.sockerless.localhost:8443",
-  };
+  const endpoints = gateway?.endpoints;
   return (
     <section style={cardStyle}>
       <header
@@ -740,7 +741,7 @@ function HTTPSGatewayCard({ gateway }: { gateway?: HTTPSGatewayInfo }) {
                 className="mt-1 break-all font-mono"
                 style={{ color: "var(--color-fg)", fontSize: "0.76rem" }}
               >
-                {endpoints[key]}
+                {endpoints?.[key] ?? "—"}
               </div>
             </div>
           ))}
@@ -750,7 +751,7 @@ function HTTPSGatewayCard({ gateway }: { gateway?: HTTPSGatewayInfo }) {
             className="font-mono"
             style={{ color: "var(--color-fg-muted)", fontSize: "0.72rem" }}
           >
-            CA: {gateway?.ca_path ?? ".sockerless-state/https-gateway/.../root.crt"}
+            CA: {gateway?.ca_path ?? "—"}
             {gateway && !gateway.ca_present ? " (not generated yet)" : ""}
           </div>
           {commands.map((cmd) => (

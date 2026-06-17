@@ -129,14 +129,12 @@ func handleRedisCacheListFirewallRules(w http.ResponseWriter, r *http.Request) {
 	sub := sim.PathParam(r, "subscriptionId")
 	rg := sim.PathParam(r, "resourceGroupName")
 	cache := sim.PathParam(r, "name")
-	prefix := sub + "/" + rg + "/" + cache + "/"
 	all := redisFirewallRules.Filter(func(fr RedisFirewallRule) bool {
 		return strings.HasPrefix(fr.ID, redisCacheID(sub, rg, cache)+"/firewallRules/")
 	})
 	if all == nil {
 		all = []RedisFirewallRule{}
 	}
-	_ = prefix
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 }
 

@@ -693,8 +693,7 @@ func handleQueuePutMessage(w http.ResponseWriter, r *http.Request, account, queu
 
 func handleQueueGetMessages(w http.ResponseWriter, r *http.Request, account, queue string) {
 	key := queueKey(account, queue)
-	q, ok := queueData.Get(key)
-	if !ok {
+	if _, ok := queueData.Get(key); !ok {
 		writeStorageError(w, "QueueNotFound", "The specified queue does not exist.", http.StatusNotFound)
 		return
 	}
@@ -734,7 +733,6 @@ func handleQueueGetMessages(w http.ResponseWriter, r *http.Request, account, que
 		Messages []QueueMessageResponse `xml:"QueueMessage"`
 	}
 	out := wrap{}
-	_ = q
 	for _, m := range picked {
 		out.Messages = append(out.Messages, QueueMessageResponse{
 			MessageID:       m.MessageID,

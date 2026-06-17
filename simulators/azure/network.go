@@ -328,7 +328,10 @@ func registerNetwork(srv *sim.Server) {
 			return strings.HasPrefix(s.ID, resourceID+"/subnets/")
 		})
 		for _, s := range subnetList {
-			_ = azureDeleteRealSubnet(r.Context(), s.ID)
+			if err := azureDeleteRealSubnet(r.Context(), s.ID); err != nil {
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to delete real subnet network fabric: %v", err)
+				return
+			}
 			subnets.Delete(s.ID)
 		}
 		if err := azureDeleteRealVnet(r.Context(), resourceID); err != nil {

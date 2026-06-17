@@ -357,10 +357,10 @@ func executeBuild(ctx context.Context, b Build) Build {
 	}
 
 	// Fetch the tarball from sim GCS (gcs.go on-disk + sim.Store metadata).
-	data := GCSObjectBytes(b.Source.StorageSource.Bucket, b.Source.StorageSource.Object)
-	if data == nil {
-		return fail(fmt.Sprintf("source object %s not found in bucket %s",
-			b.Source.StorageSource.Object, b.Source.StorageSource.Bucket))
+	data, err := GCSObjectBytes(b.Source.StorageSource.Bucket, b.Source.StorageSource.Object)
+	if err != nil {
+		return fail(fmt.Sprintf("fetch source object %s in bucket %s: %v",
+			b.Source.StorageSource.Object, b.Source.StorageSource.Bucket, err))
 	}
 
 	// Extract to a temp dir.
@@ -469,6 +469,13 @@ func extractTarball(data []byte, dir string) error {
 // then drops the local copy, so the workload pulls from the registry — not a
 // local-daemon shortcut. The ref's host routes to the registry's /v2/ (the
 // configured AR endpoint / the harness's published sim registry).
+// dockerBuildxAvailable reports whether the host's docker CLI has the buildx
+// plugin, which decides how a `docker build` step must be invoked so the result
+// lands in the daemon image store on every builder driver (see runDockerStep).
+func dockerBuildxAvailable(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "docker", "buildx", "version").Run() == nil
+}
+
 func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretValues map[string]string) error {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return fmt.Errorf("docker CLI not available: %w", err)
@@ -489,7 +496,21 @@ func runDockerStep(ctx context.Context, workDir string, step *BuildStep, secretV
 		}
 		return nil
 	}
-	cmd := exec.CommandContext(ctx, "docker", step.Args...)
+	// A `docker build` step must leave the image in the daemon image store so a
+	// later push step finds it — exactly as real Cloud Build's docker daemon
+	// does. On a host whose default builder is the docker-container buildx
+	// driver, plain `docker build` leaves the result in the build cache only and
+	// the push fails "image not known". When the buildx plugin is present, route
+	// the build through `docker buildx build --load` (loads to the store for
+	// every driver); when it's absent (the legacy `docker.io` builder), plain
+	// `docker build` writes to the store natively and rejects the buildx-only
+	// `--load` flag. Other steps run verbatim.
+	args := step.Args
+	if len(args) >= 1 && args[0] == "build" && dockerBuildxAvailable(ctx) {
+		args = append([]string{"buildx", "build", "--load"}, args[1:]...)
+		fmt.Fprintf(os.Stderr, "cloudbuild: building via `docker buildx build --load` (buildx present)\n")
+	}
+	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = workDir
 	if step.Dir != "" {
 		cmd.Dir = filepath.Join(workDir, step.Dir)

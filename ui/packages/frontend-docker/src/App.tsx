@@ -1,6 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import {
   AppShell,
+  Button,
+  InlineError,
   MetricsCard,
   NavLinkButton,
   PageHeading,
@@ -22,7 +24,13 @@ export function App() {
     queryFn: fetchHealth,
     refetchInterval: 10_000,
   });
-  const { data: status, isLoading } = useQuery({
+  const {
+    data: status,
+    isLoading,
+    isError,
+    error,
+    refetch,
+  } = useQuery({
     queryKey: ["frontend-status"],
     queryFn: fetchStatus,
     refetchInterval: 5_000,
@@ -42,6 +50,21 @@ export function App() {
     >
       {isLoading ? (
         <Spinner label="loading frontend" />
+      ) : isError ? (
+        // Surface the failure loudly — never render a healthy-looking
+        // zeroed dashboard when the frontend can't be reached.
+        <div>
+          <PageHeading kicker="docker · proxy" title={<>Docker frontend</>} />
+          <InlineError
+            title="Failed to reach the docker frontend"
+            detail={error instanceof Error ? error.message : String(error)}
+            action={
+              <Button variant="ghost" onClick={() => refetch()}>
+                Retry
+              </Button>
+            }
+          />
+        </div>
       ) : (
         <div>
           <PageHeading
@@ -57,17 +80,20 @@ export function App() {
           <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <MetricsCard
               title="Docker requests"
-              value={metrics?.docker_requests ?? 0}
+              value={metrics ? metrics.docker_requests : "—"}
               emphasized={(metrics?.docker_requests ?? 0) > 0}
             />
-            <MetricsCard title="Goroutines" value={metrics?.goroutines ?? 0} />
+            <MetricsCard
+              title="Goroutines"
+              value={metrics ? metrics.goroutines : "—"}
+            />
             <MetricsCard
               title="Heap"
-              value={`${(metrics?.heap_alloc_mb ?? 0).toFixed(1)} MB`}
+              value={metrics ? `${metrics.heap_alloc_mb.toFixed(1)} MB` : "—"}
             />
             <MetricsCard
               title="Uptime"
-              value={formatUptime(status?.uptime_seconds ?? 0)}
+              value={status ? formatUptime(status.uptime_seconds) : "—"}
             />
           </div>
 

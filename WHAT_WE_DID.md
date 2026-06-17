@@ -4,6 +4,40 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-17 - Codebase audit: fallbacks / error-swallowing / fakes / sim-contract / dead code (sims → backends → UIs) + open-issue fixes
+
+A targeted sweep for the anti-patterns the user flagged — fail loudly, never
+swallow; no fallbacks or sim special-behaviour that breaks the "sims faithfully
+reimplement cloud APIs" contract; avoid defaulted behaviour; no functionally-dead
+code. Three parallel read-only audits (one per simulator), a backend audit, and a
+UI audit. The audit was productive — it found real P1/P2 issues and a backlog of
+genuine fakes/fallbacks.
+
+**Fixed in the sweep:** gcp sim `gcsObjectBytes` silent empty-body on a disk-read
+failure → now errors → 500 (BUG-1836); azure sim swallowed real-exec subnet-delete
+error → surfaced (1837); azure sim five dead-variable linter-pins removed (1838);
+cloudrun backend `resolveExecutionState` fabricated `ExitCode 0` on a cloud-query
+failure → now `-1` so a failed job isn't reported as success (1839); gcp Cloud
+Build sim's `docker build` step hit the same buildx-`--load` portability bug as the
+azure ACR-Tasks sim (BUG-1834) → same buildx-probe fix (1847). Plus the three open
+AWS-sim fidelity GitHub issues: CreateVolume now requires AvailabilityZone
+(#591/1848), ECS cluster-scoped ops raise `ClusterNotFoundException` for an unknown
+cluster (#592/1849), DescribeSnapshots/Volumes honour `MaxResults`+`NextToken`
+(#590/1850) — each with an SDK test. Two UI fail-loud fixes: the docker-frontend
+dashboard no longer renders a healthy-looking zeroed page on a failed fetch
+(1851), and the admin HTTPS-gateway card no longer fabricates plausible endpoint
+URLs / CA path when the gateway info is unavailable (1852). Closed the
+already-fixed issues #583 (ECS CPU/Mem enforcement) and #569 (process-mode EBS
+panic).
+
+**Staged backlog (filed OPEN with fix-shapes, BUG-1840–1846):** the genuine
+larger items that need careful, tested, sometimes contract-changing work — the
+sim-only `Sim*` fake fields (gcp+azure), aws Cloud Map sockerless-tag DNS, aws ec2
+sockerless pre-seeding, gcp fingerprint optimistic-concurrency, the backend
+error-swallow batch (PodRemove ×4, core ContainerWait, ecs zero-stats, lambda
+pod-row), the cloudrun `networkServices` stateless violation, and the backend
+default-param-on-invalid + dead-code batch. These are tracked, not dismissed.
+
 ## 2026-06-17 - GitHub `actions/runner` cells on ACA + AZF (both GREEN) — GitHub+GitLab parity on every container backend
 
 The bleephub GitHub `actions/runner` topology cell — a real `actions/runner`

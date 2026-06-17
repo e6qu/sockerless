@@ -3764,15 +3764,27 @@ func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
 		}
 		volumes = append(volumes, vol)
 	}
+	// MaxResults/NextToken pagination applies only to the list form (not when
+	// explicit VolumeIds are requested), matching real EC2. Sort by id for a
+	// stable offset cursor across pages.
+	nextToken := ""
+	if len(volumeIDs) == 0 {
+		sort.Slice(volumes, func(i, j int) bool { return volumes[i].VolumeId < volumes[j].VolumeId })
+		volumes, nextToken = awsPageExplicit(volumes, r.FormValue("NextToken"), ec2AtoiOr(r.FormValue("MaxResults"), 0))
+	}
 	var items strings.Builder
 	for _, vol := range volumes {
 		items.WriteString(ec2VolumeXML(vol))
 	}
+	nextTokenXML := ""
+	if nextToken != "" {
+		nextTokenXML = "<nextToken>" + nextToken + "</nextToken>"
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeVolumesResponse %s>
   <requestId>%s</requestId>
-  <volumeSet>%s</volumeSet>
-</DescribeVolumesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+  <volumeSet>%s</volumeSet>%s
+</DescribeVolumesResponse>`, ec2Xmlns(), generateUUID(), items.String(), nextTokenXML)
 }
 
 // ebsECSDockerVolumeName returns the Docker named volume name for an ECS-managed EBS volume.
@@ -4069,9 +4081,12 @@ func ec2VolumeHasAttachment(vol EC2Volume, pred func(EC2VolumeAttachment) bool) 
 }
 
 func handleCreateVolume(w http.ResponseWriter, r *http.Request) {
+	// AvailabilityZone is a required CreateVolume parameter; real EC2 rejects a
+	// request without it rather than defaulting the AZ.
 	az := r.FormValue("AvailabilityZone")
 	if az == "" {
-		az = awsAvailabilityZone()
+		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter availability_zone", http.StatusBadRequest)
+		return
 	}
 	size := 8
 	if v := r.FormValue("Size"); v != "" {
@@ -4437,13 +4452,25 @@ func handleDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
 			snapshots = append(snapshots, snap)
 		}
 	}
+	// MaxResults/NextToken pagination applies only to the list form (not when
+	// explicit SnapshotIds are requested), matching real EC2. Sort by id for a
+	// stable offset cursor across pages.
+	nextToken := ""
+	if len(ids) == 0 {
+		sort.Slice(snapshots, func(i, j int) bool { return snapshots[i].SnapshotId < snapshots[j].SnapshotId })
+		snapshots, nextToken = awsPageExplicit(snapshots, r.FormValue("NextToken"), ec2AtoiOr(r.FormValue("MaxResults"), 0))
+	}
 	var items strings.Builder
 	for _, snap := range snapshots {
 		items.WriteString(ec2SnapshotXML(snap))
 	}
+	nextTokenXML := ""
+	if nextToken != "" {
+		nextTokenXML = "<nextToken>" + nextToken + "</nextToken>"
+	}
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<DescribeSnapshotsResponse %s><requestId>%s</requestId><snapshotSet>%s</snapshotSet></DescribeSnapshotsResponse>`,
-		ec2Xmlns(), generateUUID(), items.String())
+	fmt.Fprintf(w, `<DescribeSnapshotsResponse %s><requestId>%s</requestId><snapshotSet>%s</snapshotSet>%s</DescribeSnapshotsResponse>`,
+		ec2Xmlns(), generateUUID(), items.String(), nextTokenXML)
 }
 
 func ec2SnapshotXML(snap EC2Snapshot) string {

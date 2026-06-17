@@ -4,7 +4,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/github-runner-aca-azf-cells` (ready for PR). **GitHub `actions/runner` cells on aca + azf — both GREEN** (all 14 bleephub harness tests, incl. TEST 12 container job, TEST 13 `services:` container, TEST 14 dispatcher-spawned runner). aca was already wired (stayed green after #587); azf was newly wired into the bleephub harness. PR **#588 merged** (`dacbc6dc`, azf cloud-dns hardening); PR **#587 merged** (`084b62dd`, GitLab cells).
+`audit/fallbacks-deadcode-sweep` (ready for PR). A codebase audit for the anti-patterns the user flagged (2026-06-17): fallbacks, error-swallowing, fakes/stubs, sim-contract violations (sockerless-awareness), default-param/defaulted behaviour, and functionally-dead code — across **sims → backends → UIs** — plus the **fixable open GitHub issues** in `e6qu/sockerless`.
+
+**Fixed in this branch:** azure-sim swallows + dead-var pins (1836/1837/1838), cloudrun fabricated exit-0 (1839), gcp Cloud Build buildx-`--load` (1847, the azure→gcp twin of 1834), the three open AWS-sim fidelity issues #591/#592/#590 (1848/1849/1850), and two UI fail-loud fixes (1851 docker-frontend no-error-state, 1852 admin fabricated gateway endpoints). Closed already-fixed issues #583/#569.
+
+**Staged backlog (filed OPEN with fix-shapes — these need careful, tested, sometimes contract-changing work, not a rushed batch):**
+- **BUG-1840** gcp+azure sim `SimCommand`/`SimImage`/`SimArchitecture` — sim-only fake fields on the cloud resource model, set only by SDK tests; remove + rewrite the function-invoke tests to the real `SOCKERLESS_CMD` overlay path. (Biggest "no fakes" cleanup.)
+- **BUG-1841** aws sim Cloud Map DNS keyed on the `sockerless-container-id` tag → resolve by `AWS_INSTANCE_IPV4`.
+- **BUG-1842** aws sim ec2 `ensureSimDefaults` sockerless-harness pre-seed → provision via real EC2 + fail loud.
+- **BUG-1843** gcp sim fingerprint constant + no optimistic-concurrency validation.
+- **BUG-1844** backend swallow batch (PodRemove `_ = ContainerRemove` ×4, aca NetworkRemove, core ContainerWait `GetContainer` err + `writeWaitBody(0)`, ecs zero-stats-on-error, lambda pod-row drop) — collect+surface; never fabricate success/zero.
+- **BUG-1845** cloudrun `networkServices sync.Map` authoritative local state not rebuilt from cloud (stateless violation) → reconstruct from Service revision tags in recovery.
+- **BUG-1846** backend default-param-on-invalid (job_timeout/parseDuration) + dead code (cloudrun `maybeAutoRemove` no-op, ecs nil-ARN ListTags, dead pins, lambda replay swallow).
+
+### Just merged (#589): GitHub `actions/runner` cells on aca + azf, both GREEN (all 14 bleephub harness tests: TEST 12 container job, TEST 13 `services:` container, TEST 14 dispatcher-spawned runner), giving GitHub+GitLab runner parity on every container-capable backend. PR **#588 merged** (`dacbc6dc`, azf cloud-dns hardening); PR **#587 merged** (`084b62dd`, GitLab cells).
 
 ### This branch — what shipped (reusable findings)
 
