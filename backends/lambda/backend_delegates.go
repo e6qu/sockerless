@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -409,14 +410,20 @@ func (s *Server) PodRemove(name string, force bool) error {
 			}
 		}
 	}
+	// Remove ALL members even if one fails, then surface the joined error — a
+	// failed member delete orphans a live Lambda function and must not read as a
+	// successful pod removal.
+	var errs []error
 	for _, cid := range pod.ContainerIDs {
 		if _, ok := s.ResolveContainerAuto(context.Background(), cid); !ok {
 			continue
 		}
-		_ = s.ContainerRemove(cid, force)
+		if err := s.ContainerRemove(cid, force); err != nil {
+			errs = append(errs, fmt.Errorf("remove pod member %s: %w", cid, err))
+		}
 	}
 	s.Store.Pods.DeletePod(pod.ID)
-	return nil
+	return errors.Join(errs...)
 }
 
 func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {

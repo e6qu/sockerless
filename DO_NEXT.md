@@ -4,9 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`audit/fallbacks-deadcode-sweep` (ready for PR). A codebase audit for the anti-patterns the user flagged (2026-06-17): fallbacks, error-swallowing, fakes/stubs, sim-contract violations (sockerless-awareness), default-param/defaulted behaviour, and functionally-dead code — across **sims → backends → UIs** — plus the **fixable open GitHub issues** in `e6qu/sockerless`.
+none — on `main`, clean. PR **#593 merged** (`fcb58281`) — the codebase audit for the anti-patterns flagged 2026-06-17 (fallbacks, error-swallowing, fakes/stubs, sim-contract violations, default-param/defaulted behaviour, dead code) across **sims → backends → UIs**, plus the fixable open GitHub issues. **GitHub issue board now: only #394 (azuread upstream-blocked) open.**
 
-**Fixed in this branch:** azure-sim swallows + dead-var pins (1836/1837/1838), cloudrun fabricated exit-0 (1839), gcp Cloud Build buildx-`--load` (1847, the azure→gcp twin of 1834), the three open AWS-sim fidelity issues #591/#592/#590 (1848/1849/1850), and two UI fail-loud fixes (1851 docker-frontend no-error-state, 1852 admin fabricated gateway endpoints). Closed already-fixed issues #583/#569.
+### Next: the staged audit backlog (BUG-1840–1846)
+
+The audit's larger findings, filed OPEN with fix-shapes — the genuine "no fakes / no fallback / fail loud" cleanups that need careful, individually-tested work. Suggested order: **BUG-1840 first** (sim-only `Sim*` fake fields — clearest contract violation, well-defined test rewrite), then the **BUG-1844** backend swallow batch (PodRemove ×4 / core ContainerWait / ecs zero-stats / lambda pod-row), then **BUG-1845** (cloudrun `networkServices` stateless violation), then the rest (1841 aws cloudmap DNS, 1842 aws ec2 seeding, 1843 gcp fingerprint, 1846 default-param + dead-code batch). Each is in [BUGS.md](BUGS.md) § Open with a fix-shape.
+
+### What #593 fixed azure-sim swallows + dead-var pins (1836/1837/1838), cloudrun fabricated exit-0 (1839), gcp Cloud Build buildx-`--load` (1847, the azure→gcp twin of 1834), the three open AWS-sim fidelity issues #591/#592/#590 (1848/1849/1850), and two UI fail-loud fixes (1851 docker-frontend no-error-state, 1852 admin fabricated gateway endpoints). Closed already-fixed issues #583/#569.
 
 **Staged backlog (filed OPEN with fix-shapes — these need careful, tested, sometimes contract-changing work, not a rushed batch):**
 - **BUG-1840** gcp+azure sim `SimCommand`/`SimImage`/`SimArchitecture` — sim-only fake fields on the cloud resource model, set only by SDK tests; remove + rewrite the function-invoke tests to the real `SOCKERLESS_CMD` overlay path. (Biggest "no fakes" cleanup.)

@@ -80,7 +80,15 @@ func (s *Server) ReplayInvocationsFromCloudWatch(ctx context.Context) error {
 			tagsResult, err := s.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
 				Resource: fn.FunctionArn,
 			})
-			if err != nil || tagsResult.Tags["sockerless-managed"] != "true" {
+			if err != nil {
+				// A ListTags failure (throttle / transient) is NOT the same as
+				// "unmanaged" — surface it loudly so a managed function whose
+				// invocation result should replay isn't silently skipped.
+				s.Logger.Warn().Err(err).Str("function", aws.ToString(fn.FunctionArn)).
+					Msg("replay: ListTags failed; skipping function this pass")
+				continue
+			}
+			if tagsResult.Tags["sockerless-managed"] != "true" {
 				continue
 			}
 			containerID := tagsResult.Tags["sockerless-container-id"]

@@ -43,10 +43,17 @@ func (s *Server) NetworkRemove(id string) error {
 		return &api.NotFoundError{Resource: "network", ID: id}
 	}
 
-	// Clean up cloud network state (Private DNS zone + NSG tracking)
-	_ = s.cloudNetworkDelete(n.ID)
-
-	return s.BaseServer.NetworkRemove(id)
+	// Clean up cloud network state (Private DNS zone + NSG tracking) and the
+	// local metadata. Surface a cloud-cleanup failure — swallowing it orphans
+	// the Private DNS zone / NSG while reporting a successful network removal.
+	cloudErr := s.cloudNetworkDelete(n.ID)
+	if err := s.BaseServer.NetworkRemove(id); err != nil {
+		return err
+	}
+	if cloudErr != nil {
+		return fmt.Errorf("network %s removed locally but cloud cleanup failed: %w", id, cloudErr)
+	}
+	return nil
 }
 
 // registerContainerServiceDiscovery registers the network aliases a client

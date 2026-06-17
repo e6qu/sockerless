@@ -304,6 +304,12 @@ func ConfigFromEnvironment(env *core.Environment, sim *core.SimulatorConfig) Con
 
 // Validate checks required configuration.
 func (c Config) Validate() error {
+	if err := core.ValidateDurationEnvs("SOCKERLESS_POLL_INTERVAL", "SOCKERLESS_LOG_TIMEOUT"); err != nil {
+		return err
+	}
+	if err := core.ValidateJobTimeoutEnv(); err != nil {
+		return err
+	}
 	if c.sharedVolumesErr != nil {
 		return fmt.Errorf("SOCKERLESS_GCP_SHARED_VOLUMES: %w", c.sharedVolumesErr)
 	}

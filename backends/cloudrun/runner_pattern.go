@@ -24,8 +24,7 @@ func isRunnerPattern(c *api.Container) bool {
 	if c.Config.Labels["sockerless.runner-pattern"] == "true" {
 		return true
 	}
-	for portKey := range c.Config.ExposedPorts {
-		_ = portKey
+	if len(c.Config.ExposedPorts) > 0 {
 		return true
 	}
 	return false
