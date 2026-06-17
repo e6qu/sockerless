@@ -2270,17 +2270,28 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 		name := sim.PathParam(r, "name")
 		selfLink := instanceSelfLink(project, zone, name)
 		var req struct {
-			Labels map[string]string `json:"labels"`
+			Labels           map[string]string `json:"labels"`
+			LabelFingerprint string            `json:"labelFingerprint"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		if ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+		var conflict bool
+		ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+			if !fingerprintMatches(inst.LabelFingerprint, req.LabelFingerprint) {
+				conflict = true
+				return
+			}
 			inst.Labels = req.Labels
-			inst.LabelFingerprint = generateUUID()[:8]
-		}); !ok {
+			inst.LabelFingerprint = computeFingerprint()
+		})
+		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		if conflict {
+			sim.GCPErrorf(w, http.StatusPreconditionFailed, "conditionNotMet", "labelFingerprint mismatch; the resource was modified concurrently")
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setLabels"))
@@ -2296,11 +2307,25 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		if ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+		var conflict bool
+		ok := instances.Update(selfLink, func(inst *ComputeInstance) {
+			current := ""
+			if inst.Tags != nil {
+				current = inst.Tags.Fingerprint
+			}
+			if !fingerprintMatches(current, req.Fingerprint) {
+				conflict = true
+				return
+			}
 			inst.Tags = &req
-			inst.Tags.Fingerprint = generateUUID()[:8]
-		}); !ok {
+			inst.Tags.Fingerprint = computeFingerprint()
+		})
+		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance %q not found in zone %q", name, zone)
+			return
+		}
+		if conflict {
+			sim.GCPErrorf(w, http.StatusPreconditionFailed, "conditionNotMet", "tags fingerprint mismatch; the resource was modified concurrently")
 			return
 		}
 		if err := gcpReapplyRealFirewalls(r.Context()); err != nil {
@@ -2435,12 +2460,21 @@ func registerComputeDisks(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		var conflict bool
 		ok := disks.Update(selfLink, func(d *ComputeDisk) {
+			if !fingerprintMatches(d.LabelFingerprint, req.LabelFingerprint) {
+				conflict = true
+				return
+			}
 			d.Labels = req.Labels
-			d.LabelFingerprint = generateUUID()[:8]
+			d.LabelFingerprint = computeFingerprint()
 		})
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "disk %q not found in zone %q", name, zone)
+			return
+		}
+		if conflict {
+			sim.GCPErrorf(w, http.StatusPreconditionFailed, "conditionNotMet", "labelFingerprint mismatch; the resource was modified concurrently")
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setLabels"))
