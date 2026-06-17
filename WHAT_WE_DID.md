@@ -4,6 +4,52 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-17 - GitHub `actions/runner` cells on ACA + AZF (both GREEN) — GitHub+GitLab parity on every container backend
+
+The bleephub GitHub `actions/runner` topology cell — a real `actions/runner`
+running container-mode jobs (`container:`), service containers (`services:`),
+and a dispatcher-spawned runner against a sockerless backend — is now green on
+**ACA and Azure Functions**, completing GitHub+GitLab runner parity across all
+six container-capable backends (ECS, Lambda-class, Cloud Run, GCF, ACA, AZF).
+
+**ACA** was already wired and stayed green after the #587 backend changes
+(faithful ingress, WS keepalive, runner-stage HTTP invoke). **AZF** was newly
+wired into the bleephub harness, mirroring aca: the harness image builds
+`sockerless-backend-azf` + `sockerless-azf-bootstrap`; a `provision_azf` brings
+up the Azure sim + backend with azf's host primitive (an App Service plan), the
+ACR-Tasks overlay registry coordinate, cloud-dns service discovery
+(`SOCKERLESS_AZF_NETWORK_DISCOVERY=cloud-dns`), the `/v1/azf/reverse` agent
+path, and runner-workspace + externals Azure-Files shares; a Makefile target
+`bleephub-runner-docker-test-azf` runs it.
+
+Two real bugs surfaced bringing azf up, both fixed:
+
+- **BUG-1834** — the Azure sim's ACR-Tasks overlay build hardcoded the
+  buildx-only `--load` flag. The harness container ships the legacy `docker.io`
+  builder (no buildx plugin), which rejects `--load` (`unknown flag`), so the
+  `container:` job's `ContainerCreate` returned 500. There is no single
+  `docker build` invocation that works across the legacy builder, the buildx
+  `docker` driver, and the buildx `docker-container` driver, so the sim now
+  probes `docker buildx` and uses `docker buildx build --load` when present
+  (loads to the daemon store for every driver) else plain `docker build`
+  (legacy, store-native), logging the chosen path. (The bleeplab cells had
+  passed only on a cached overlay; the bleephub harness wipes its data dir,
+  forcing a real build that exposed it.)
+- **BUG-1835** — azf cloud-dns `startCloudDNSSite` keyed overlay-vs-raw deploy
+  on `OpenStdin`, a gitlab-runner-only signal. A GitHub `container:` job is
+  exec-driven but NOT OpenStdin → it was deployed as a raw image with no
+  reverse-agent, so `docker exec` of each step failed `exit 126`; and a
+  `services:` container (image-default entrypoint) must run its RAW image, not
+  the overlay. The fix derives `serviceLike` (no client entrypoint/cmd override
+  AND not OpenStdin) from the ORIGINAL client create request, recorded at
+  ContainerCreate into `labelServiceLike` BEFORE the image's default
+  entrypoint/cmd are merged in (post-merge, the base labels can't distinguish a
+  client override from an image default — the same reason aca computes
+  `serviceLike` pre-merge). `startCloudDNSSite` reads the marker: a service
+  deploys its raw image and runs on the VNet (started by swift integration);
+  anything else deploys the overlay and is invoked so the in-site reverse-agent
+  registers (`invokeFunctionAsync` blocks for the agent — no fallback).
+
 ## 2026-06-17 - azf cloud-dns hardening: connect-after-create alias registration + swift VNet-integration CLI/TF contract
 
 Hardened the merged azf cloud-dns service discovery (`feat/azf-clouddns-hardening`).

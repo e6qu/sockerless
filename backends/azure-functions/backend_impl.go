@@ -70,6 +70,11 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config = *req.ContainerConfig
 	}
 
+	// Derive serviceLike from the ORIGINAL client config, before the image's
+	// default entrypoint/cmd are merged in below — a service runs its image
+	// as-is (no client override, not OpenStdin); anything else is exec-driven.
+	clientServiceLike := len(config.Entrypoint) == 0 && len(config.Cmd) == 0 && !config.OpenStdin
+
 	// Merge image config if available
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		// Merge ENV by key — image provides defaults, container overrides
@@ -118,6 +123,9 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		config.Labels = make(map[string]string)
 	}
 	config.Labels[labelBaseImage] = originalImage
+	if clientServiceLike {
+		config.Labels[labelServiceLike] = "true"
+	}
 	if len(config.Entrypoint) > 0 {
 		b, _ := json.Marshal(config.Entrypoint)
 		config.Labels[labelBaseEntrypoint] = base64.StdEncoding.EncodeToString(b)

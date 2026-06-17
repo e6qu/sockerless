@@ -169,6 +169,13 @@ func handleACRGetRun(w http.ResponseWriter, r *http.Request) {
 // host, is the source of truth; the workload later pulls the image from the
 // registry over the standard /v2/ API. The build context is a gzipped tar
 // (Dockerfile + COPY'd files) streamed to `docker build -` on stdin.
+// dockerBuildxAvailable reports whether the host's docker CLI has the buildx
+// plugin, which decides how the ACR Tasks build must invoke docker (see
+// executeACRBuild). Probed per build — cheap relative to the build itself.
+func dockerBuildxAvailable(ctx context.Context) bool {
+	return exec.CommandContext(ctx, "docker", "buildx", "version").Run() == nil
+}
+
 func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 	if len(req.ImageNames) == 0 {
 		return fmt.Errorf("imageNames is required")
@@ -195,11 +202,22 @@ func executeACRBuild(ctx context.Context, req acrDockerBuildRequest) error {
 		dockerfile = "Dockerfile"
 	}
 
-	// --load: export the built image into the daemon image store so the
-	// subsequent `docker push` finds it. Without it, the default
-	// docker-container buildx driver leaves the result in the build cache only
-	// and the push fails "image not known" (a no-op on the plain docker driver).
-	args := []string{"build", "--load", "-f", dockerfile}
+	// Choose the build invocation that lands the image in the daemon store on
+	// whatever docker CLI the host has, so the subsequent `docker push` finds
+	// it. When the buildx plugin is present, `docker buildx build --load`
+	// exports the result into the daemon store for every driver (the default
+	// docker-container buildx driver otherwise leaves it in the build cache only
+	// → push "image not known"). When buildx is absent (the legacy builder,
+	// e.g. the `docker.io` package), plain `docker build` writes to the store
+	// natively and rejects the buildx-only `--load` flag, so it must be omitted.
+	var args []string
+	if dockerBuildxAvailable(ctx) {
+		args = []string{"buildx", "build", "--load", "-f", dockerfile}
+	} else {
+		args = []string{"build", "-f", dockerfile}
+	}
+	acrTasksLogger.Info().Str("invocation", "docker "+args[0]).Bool("load", args[0] == "buildx").
+		Strs("images", req.ImageNames).Msg("ACR Tasks: building overlay")
 	for _, img := range req.ImageNames {
 		args = append(args, "-t", img)
 	}

@@ -397,7 +397,7 @@ bleephub-gh-docker-test:
 .PHONY: bleephub-runner-docker-build
 bleephub-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
-	@docker build -f bleephub/Dockerfile -t bleephub-runner-int:local .
+	@docker build --load -f bleephub/Dockerfile -t bleephub-runner-int:local .
 
 # $(1) = backend (ecs|aca|cloudrun). $(2) = the sim's in-container HTTP
 # port, published to the host engine at 127.0.0.1:5000 so the overlay
@@ -428,6 +428,10 @@ bleephub-runner-docker-test: bleephub-runner-docker-build
 .PHONY: bleephub-runner-docker-test-aca
 bleephub-runner-docker-test-aca: bleephub-runner-docker-build bleephub-sim-registry-trust
 	$(call run_bleephub_harness,aca,4568)
+
+.PHONY: bleephub-runner-docker-test-azf
+bleephub-runner-docker-test-azf: bleephub-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleephub_harness,azf,4568)
 
 .PHONY: bleephub-runner-docker-test-cloudrun
 bleephub-runner-docker-test-cloudrun: bleephub-runner-docker-build bleephub-sim-registry-trust
