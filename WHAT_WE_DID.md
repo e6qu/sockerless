@@ -27,7 +27,18 @@ discovery is built on — gained the CLI (`az rest` round-trip) and Terraform
 (`azurerm_app_service_virtual_network_swift_connection` against an EP1 function
 app + a `Microsoft.Web/serverFarms`-delegated subnet, in the apply/idempotency/
 destroy stack) coverage to join the SDK test from #587. Adding the Terraform
-path surfaced and fixed two real azure-sim fidelity bugs: **BUG-1832** — a
+path surfaced and fixed three real azure-sim fidelity bugs. **BUG-1833** — the
+swift response returned its resource `id`/`type` from the *operation* path
+(`.../sites/{name}/networkConfig/virtualNetwork`, type
+`Microsoft.Web/sites/networkConfig`) rather than the canonical *config*
+sub-resource id real Azure returns (`.../sites/{name}/config/virtualNetwork`,
+type `Microsoft.Web/sites/config`); terraform-provider-azurerm's Create parses
+the response `id` (`*read.Model.Id`), and its parser rejects an id without a
+`config` segment, so the apply failed `ID was missing the 'config' element`. The
+#587 SDK test missed it (it asserted only `subnetResourceId`); the SDK + CLI
+tests now also assert the returned `id` carries `/config/virtualNetwork`, so the
+regression is caught in the widely-run `sim (azure)` job, not only the gated
+`tf (azure)` job. **BUG-1832** — a
 delegated subnet dropped the delegation's `actions` array on read-back, so an
 `azurerm_subnet` with a `service_delegation` block wasn't idempotent (added an
 `Actions []string` round-trip); **BUG-1831** — the swift PUT force-started a

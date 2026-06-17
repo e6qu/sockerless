@@ -1,6 +1,7 @@
 package azure_cli_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +35,7 @@ func TestSiteVNetIntegration_CLI_RoundTrip(t *testing.T) {
 	swiftBody := `{"properties":{"subnetResourceId":"` + subnetID + `","swiftSupported":true}}`
 
 	var conn struct {
+		ID         string `json:"id"`
 		Name       string `json:"name"`
 		Properties struct {
 			SubnetResourceID string `json:"subnetResourceId"`
@@ -45,11 +47,17 @@ func TestSiteVNetIntegration_CLI_RoundTrip(t *testing.T) {
 	parseJSON(t, out, &conn)
 	assert.Equal(t, subnetID, conn.Properties.SubnetResourceID)
 	assert.True(t, conn.Properties.SwiftSupported)
+	// The operation path is .../networkConfig/virtualNetwork, but the resource's
+	// canonical ARM id is the config sub-resource .../config/virtualNetwork.
+	assert.True(t, strings.HasSuffix(conn.ID, "/config/virtualNetwork"),
+		"swift connection id must be the canonical config sub-resource; got %s", conn.ID)
 
 	// GET — connection round-trips.
 	out = runCLI(t, azRest("GET", swiftURL, ""))
 	parseJSON(t, out, &conn)
 	assert.Equal(t, subnetID, conn.Properties.SubnetResourceID)
+	assert.True(t, strings.HasSuffix(conn.ID, "/config/virtualNetwork"),
+		"swift connection id must be the canonical config sub-resource; got %s", conn.ID)
 
 	// DELETE — disconnect, then cleanup the site.
 	runCLI(t, azRest("DELETE", swiftURL, ""))

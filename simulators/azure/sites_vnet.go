@@ -33,7 +33,11 @@ var azfSwiftConnections sim.Store[SwiftVirtualNetwork]
 func registerSiteVNetIntegration(srv *sim.Server, armBase string, sites sim.Store[Site]) {
 	azfSwiftConnections = sim.MakeStore[SwiftVirtualNetwork](srv.DB(), "azf_swift_vnet")
 
-	swiftID := func(siteID string) string { return siteID + "/networkConfig/virtualNetwork" }
+	// The operation path is .../sites/{name}/networkConfig/virtualNetwork, but the
+	// resource's canonical ARM id (and the value clients like
+	// terraform-provider-azurerm parse from the response) is the config
+	// sub-resource .../sites/{name}/config/virtualNetwork.
+	swiftID := func(siteID string) string { return siteID + "/config/virtualNetwork" }
 
 	// PUT — create/update the swift VNet connection (regional VNet integration).
 	srv.HandleFunc("PUT "+armBase+"/sites/{siteName}/networkConfig/virtualNetwork", func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +97,7 @@ func registerSiteVNetIntegration(srv *sim.Server, armBase string, sites sim.Stor
 		resp := SwiftVirtualNetwork{
 			ID:   swiftID(siteID),
 			Name: "virtualNetwork",
-			Type: "Microsoft.Web/sites/networkConfig",
+			Type: "Microsoft.Web/sites/config",
 			Properties: SwiftVirtualNetworkProperties{
 				SubnetResourceID: subnetID,
 				SwiftSupported:   true,
@@ -113,7 +117,7 @@ func registerSiteVNetIntegration(srv *sim.Server, armBase string, sites sim.Stor
 		if !ok {
 			// No integration: return an empty connection resource (real Azure
 			// returns a virtualNetwork resource with empty properties).
-			conn = SwiftVirtualNetwork{ID: swiftID(siteID), Name: "virtualNetwork", Type: "Microsoft.Web/sites/networkConfig"}
+			conn = SwiftVirtualNetwork{ID: swiftID(siteID), Name: "virtualNetwork", Type: "Microsoft.Web/sites/config"}
 		}
 		sim.WriteJSON(w, http.StatusOK, conn)
 	})
