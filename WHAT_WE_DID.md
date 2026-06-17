@@ -4,6 +4,39 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-17 - azf cloud-dns hardening: connect-after-create alias registration + swift VNet-integration CLI/TF contract
+
+Hardened the merged azf cloud-dns service discovery (`feat/azf-clouddns-hardening`).
+
+**azf `NetworkConnect` on connect-after-create.** The merged cell only ever
+created containers *with* their network, so `docker network connect
+--network-alias X` *after* create was lost: the core `SyntheticNetworkDriver.Connect`
+records the endpoint in `Store.Containers`, which the stateless azf backend
+doesn't read. `cloudDNSNetworkConnect` (wired into `NetworkConnect` behind the
+cloud-dns config) closes the gap two ways — a connect *before start* stamps the
+network + aliases onto the PendingCreate so `startCloudDNSSite` VNet-integrates
+and registers them exactly as the create-with-network path does; a connect to an
+*already-deployed* site VNet-integrates it into the network's subnet and writes
+the `--network-alias` names as Private DNS CNAMEs immediately. Unit test
+`TestCloudDNSNetworkConnect_StampsPendingCreate`.
+
+**Swift VNet-integration testing contract (SDK+CLI+Terraform).** The App Service
+regional-VNet-integration endpoint (`PUT/GET/DELETE
+.../sites/{name}/networkConfig/virtualNetwork`) — the primitive cloud-dns
+discovery is built on — gained the CLI (`az rest` round-trip) and Terraform
+(`azurerm_app_service_virtual_network_swift_connection` against an EP1 function
+app + a `Microsoft.Web/serverFarms`-delegated subnet, in the apply/idempotency/
+destroy stack) coverage to join the SDK test from #587. Adding the Terraform
+path surfaced and fixed two real azure-sim fidelity bugs: **BUG-1832** — a
+delegated subnet dropped the delegation's `actions` array on read-back, so an
+`azurerm_subnet` with a `service_delegation` block wasn't idempotent (added an
+`Actions []string` round-trip); **BUG-1831** — the swift PUT force-started a
+workload container for any non-HTTP site, so VNet-integrating a site with no
+container image (a plain Terraform function app) returned `500 … has no
+container image` (gated the start on the site actually having a container image —
+real Azure VNet integration is a pure networking-config operation; the
+redis-with-image services path is unchanged).
+
 ## 2026-06-16 - bleeplab GitLab cells on the ACA + AZF backends (both GREEN) + AWS sim faithfulness
 
 The full gitlab-runner docker-executor flow (build → artifact → `services:`)

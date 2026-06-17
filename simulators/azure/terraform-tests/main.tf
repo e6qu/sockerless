@@ -585,6 +585,60 @@ resource "azurerm_linux_function_app" "az_fa" {
   site_config {}
 }
 
+# App Service regional VNet integration (the "swift" virtual network
+# connection) — the Microsoft.Web/sites/networkConfig/virtualNetwork endpoint
+# the azure-functions backend uses for cloud-dns service discovery. Regional
+# VNet integration requires an Elastic Premium (or dedicated) plan and a subnet
+# delegated to Microsoft.Web/serverFarms. The provider PUTs the swift
+# connection, then reads it back on every plan — so the sim must round-trip
+# both the subnet delegation (incl. its actions) and the connection's
+# subnetResourceId for the apply to stay idempotent.
+resource "azurerm_virtual_network" "az_swift_vnet" {
+  name                = "tf-azrm-swift-vnet"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  address_space       = ["10.94.0.0/16"]
+}
+
+resource "azurerm_subnet" "az_swift_subnet" {
+  name                 = "tf-azrm-swift-subnet"
+  resource_group_name  = azurerm_resource_group.az_rg.name
+  virtual_network_name = azurerm_virtual_network.az_swift_vnet.name
+  address_prefixes     = ["10.94.1.0/24"]
+
+  delegation {
+    name = "appservice-delegation"
+    service_delegation {
+      name    = "Microsoft.Web/serverFarms"
+      actions = ["Microsoft.Network/virtualNetworks/subnets/action"]
+    }
+  }
+}
+
+resource "azurerm_service_plan" "az_swift_sp" {
+  name                = "tf-azrm-swift-sp"
+  resource_group_name = azurerm_resource_group.az_rg.name
+  location            = azurerm_resource_group.az_rg.location
+  os_type             = "Linux"
+  sku_name            = "EP1"
+}
+
+resource "azurerm_linux_function_app" "az_swift_fa" {
+  name                       = "tf-azrm-swift-fa"
+  resource_group_name        = azurerm_resource_group.az_rg.name
+  location                   = azurerm_resource_group.az_rg.location
+  service_plan_id            = azurerm_service_plan.az_swift_sp.id
+  storage_account_name       = azurerm_storage_account.az_st.name
+  storage_account_access_key = azurerm_storage_account.az_st.primary_access_key
+
+  site_config {}
+}
+
+resource "azurerm_app_service_virtual_network_swift_connection" "az_swift" {
+  app_service_id = azurerm_linux_function_app.az_swift_fa.id
+  subnet_id      = azurerm_subnet.az_swift_subnet.id
+}
+
 # Key Vault + a single secret. The secret resource is what fires the
 # challenge-then-retry handshake: terraform-provider-azurerm constructs
 # an azsecrets client, issues the unauthenticated PUT, parses the
@@ -886,6 +940,14 @@ output "azrm_storage_table_id" {
 
 output "azrm_function_app_id" {
   value = azurerm_linux_function_app.az_fa.id
+}
+
+output "azrm_swift_subnet_id" {
+  value = azurerm_subnet.az_swift_subnet.id
+}
+
+output "azrm_swift_connection_id" {
+  value = azurerm_app_service_virtual_network_swift_connection.az_swift.id
 }
 
 output "azrm_apim_id" {

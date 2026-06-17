@@ -40,6 +40,8 @@ import (
 //   - Microsoft.Insights/components
 //   - Microsoft.App/managedEnvironments + containerApps + jobs
 //   - Microsoft.Web/serverfarms + sites (Function App)
+//   - Microsoft.Web/sites/networkConfig/virtualNetwork (App Service regional
+//     VNet "swift" integration) + a Microsoft.Web/serverFarms-delegated subnet
 func TestTerraformApplyDestroy(t *testing.T) {
 	requireTerraformNetworkHost(t)
 	cleanTerraformWorkspace(t)
@@ -251,6 +253,14 @@ func TestTerraformApplyDestroy(t *testing.T) {
 	azrmFA := outputs.must(t, "azrm_function_app_id")
 	require.Contains(t, azrmFA, "/providers/Microsoft.Web/sites/tf-azrm-fa",
 		"azurerm Function App id must include canonical ARM path; got %s", azrmFA)
+
+	azrmSwiftSubnet := outputs.must(t, "azrm_swift_subnet_id")
+	require.Contains(t, azrmSwiftSubnet, "/virtualNetworks/tf-azrm-swift-vnet/subnets/tf-azrm-swift-subnet",
+		"azurerm App Service swift subnet id must include the canonical ARM path; got %s", azrmSwiftSubnet)
+
+	azrmSwift := outputs.must(t, "azrm_swift_connection_id")
+	require.Contains(t, azrmSwift, "/providers/Microsoft.Web/sites/tf-azrm-swift-fa/networkConfig/virtualNetwork",
+		"azurerm App Service VNet swift connection id must include the site networkConfig path; got %s", azrmSwift)
 
 	azrmAPIM := outputs.must(t, "azrm_apim_id")
 	require.Contains(t, azrmAPIM, "/providers/Microsoft.ApiManagement/service/tf-azrm-apim",

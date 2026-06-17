@@ -79,7 +79,7 @@ func registerSiteVNetIntegration(srv *sim.Server, armBase string, sites sim.Stor
 		inst.mu.Lock()
 		inst.dockerNetwork = dockerNet
 		var startErr error
-		if !hasAzureFunctionHTTPBootstrap(&s) {
+		if !hasAzureFunctionHTTPBootstrap(&s) && siteContainerImage(&s) != "" {
 			startErr = inst.ensureStarted(&s)
 		} else if inst.containerID != "" && sim.ContainerRunning(inst.containerID) {
 			_ = sim.ConnectContainerToNetwork(inst.containerID, dockerNet, siteNetAliases(&s))
