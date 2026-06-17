@@ -4,6 +4,75 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-16 - bleeplab GitLab cells on the ACA + AZF backends (both GREEN) + AWS sim faithfulness
+
+The full gitlab-runner docker-executor flow (build → artifact → `services:`)
+now runs on **both** Azure backends — aca and **Azure Functions (azf)** — all 4
+cell tests green on each. azf's last and hardest hurdle was **faithful cloud-dns
+service discovery** so the build site resolves `redis:6379`: it is assembled
+end-to-end from real Azure primitives, with the *same backend code against the
+sim and real Azure* (no sim-awareness). `NetworkCreate` provisions a
+`Microsoft.Network/virtualNetworks` + a subnet delegated to
+`Microsoft.Web/serverFarms` + a Private DNS zone linked to the VNet
+(`armnetwork`/`armprivatedns`). `ContainerStart` under cloud-dns deploys each
+container as its **own** App Service site (a `services:` redis runs its raw
+image; the build runs the bootstrap overlay), does App Service **regional VNet
+integration** (`WebApps.CreateOrUpdateSwiftVirtualNetworkConnectionWithCheck`)
+into the subnet, and registers each `--network-alias` as a Private DNS CNAME →
+the site's default hostname. The azure sim realizes these faithfully: a
+`Microsoft.Web/serverFarms`-delegated subnet is the App Service container fabric
+→ a Docker user-defined network (not the IaaS netns the compute stack uses);
+swift integration attaches the site's container to it; a CNAME → a site's
+default hostname is realized as a Docker embedded-DNS alias on that site's
+container (`realizeCNAMEAsSiteDockerAlias`, the App Service analog of the ACA
+`realizeCNAMEAsDockerAlias`). The build site then reaches `redis` over the
+shared VNet (DNS) and PING/SET/GET pass. This composes Docker's network + DNS +
+services purely from Azure cloud primitives — the bar the whole project holds.
+
+The full gitlab-runner docker-executor flow now also runs on the **Azure
+Container Apps (aca) backend** — all 4 cell tests pass, including the redis
+`services:` job (PING/SET/GET) over the per-build network. The runner stages
+route through the bootstrap's **HTTP buffered-invoke** to the App's ingress
+(like cloudrun/gcf), not the reverse-agent WebSocket: the WS exec half-opened
+backend→container under the heavy per-stage container churn (gvisor/podman
+port-reuse), so `agent.CollectExecWithStdin` blocked forever. The azure sim
+implements **faithful ACA ingress** (`registerContainerAppsIngress`): a
+`WrapHandler` that reverse-proxies any request whose Host matches an App's
+`latestRevisionFqdn` to that App's running replica on its configured ingress
+`targetPort` — exactly how real ACA routes an App FQDN to the container, the
+same virtual-host shape as the storage data-plane and Functions invoke. The
+backend reaches it via the `EndpointURL` coordinate + the FQDN Host header,
+differing from real ACA only in that coordinate (no sim-specific endpoint).
+
+Also landed: a backend WebSocket **keepalive** on `agent.ReverseAgentConn`
+(ping ticker + `SetPongHandler`/read-deadline, refreshed on pong+data) that
+detects a half-open reverse-agent connection and closes it instead of hanging
+forever — a real robustness fix for every FaaS backend; the cloudrun cell
+re-verified green. The `bleeplab-runner-docker-build` Makefile target now uses
+`docker build --load` (the default `docker-container` buildx driver was
+otherwise leaving `bleeplab-runner-int:local` STALE — every `docker run` silently
+re-ran an old image). A run of aca-cell hurdle fixes (arch, cache-init-via-agent,
+azure-files volumes, sim umask/SELinux, cloud-truth NetworkInspect, stdin-attach
+precedence, `/bin/sh` stage) precede the green.
+
+**azf cell — WIP (BUG-1828):** the overlay base-ref (BUG-1826) and the azure
+sim's AZF-invoke-reach-by-container-bridge-IP (BUG-1827) are fixed, so the
+cache-init one-shot runs, but the runner pattern needs a *persistent* workload
+container while the azf FaaS invoke is ephemeral (a container per
+`/api/function`, removed after) — so gitlab-runner's later `docker exec` hits
+"No such container". The fix is to run the App-Service site container
+persistently (the provision pins an EP1/Premium = always-on plan) like an ACA
+App and route invoke/ingress/exec to it.
+
+**AWS sim faithfulness (#583/#569, BUG-1827):** ECS now applies the advertised
+task/container CPU/Memory to the launched container's cgroup (`HostConfig`
+`Memory`/`NanoCPUs` from `ecsContainerResourceLimits`), so a Fargate task is
+actually bounded the way its `/task` metadata reports; the process-mode
+managed-EBS path was hardened so `ebsRemoveDockerVolume` never dereferences a
+nil Docker client. SDK probes `TestECS_TaskDefinitionFidelitySDK` +
+`TestECS_ManagedEBSRunTaskProcessMode` (and the azure ACA App SDK suite) stay
+green.
+
 ## 2026-06-16 - bleeplab GitLab cell on the Cloud Run Functions (gcf) backend (GREEN)
 
 The full gitlab-runner docker-executor flow now also runs on the Cloud Run

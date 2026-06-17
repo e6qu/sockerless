@@ -8,8 +8,23 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
+)
+
+// reverseAgentPongWait bounds how long the backend will wait for any inbound
+// frame (a data message OR a pong) before declaring the WebSocket dead and
+// tearing it down. reverseAgentPingPeriod (< pongWait) is how often the
+// backend sends a keepalive ping. Without this, a connection whose
+// server→client direction silently stops delivering (e.g. a half-open
+// connection behind a NAT/proxy) is never detected — an in-flight
+// CollectExec would block forever instead of failing via rc.done so the
+// caller can retry. The bootstrap (gorilla client) auto-answers pings during
+// its serve-loop ReadMessage, so a healthy/idle connection stays alive.
+const (
+	reverseAgentPongWait   = 30 * time.Second
+	reverseAgentPingPeriod = 10 * time.Second
 )
 
 // AgentExecErrorExitCode is the exit code surfaced when the agent reports
@@ -53,6 +68,7 @@ func NewReverseAgentConn(ws *websocket.Conn) *ReverseAgentConn {
 		ws:   ws,
 		done: make(chan struct{}),
 	}
+	rc.startKeepalive()
 	go rc.readLoop()
 	return rc
 }
@@ -68,8 +84,38 @@ func NewReverseAgentConnWithSystemHandler(ws *websocket.Conn, handler func(Messa
 		done:            make(chan struct{}),
 		OnSystemMessage: handler,
 	}
+	rc.startKeepalive()
 	go rc.readLoop()
 	return rc
+}
+
+// startKeepalive arms the read deadline + pong handler and launches the ping
+// ticker. Together with the per-message deadline refresh in readLoop, this
+// detects a connection whose server→client direction has silently stopped
+// delivering and tears it down (closing rc.done) so blocked callers fail and
+// retry instead of hanging. Must be called before readLoop starts.
+func (rc *ReverseAgentConn) startKeepalive() {
+	_ = rc.ws.SetReadDeadline(time.Now().Add(reverseAgentPongWait))
+	rc.ws.SetPongHandler(func(string) error {
+		return rc.ws.SetReadDeadline(time.Now().Add(reverseAgentPongWait))
+	})
+	go func() {
+		t := time.NewTicker(reverseAgentPingPeriod)
+		defer t.Stop()
+		for {
+			select {
+			case <-rc.done:
+				return
+			case <-t.C:
+				// WriteControl is safe to call concurrently with the
+				// SendJSON writers (gorilla documents control writes as
+				// concurrency-safe with NextWriter/WriteMessage).
+				if err := rc.ws.WriteControl(websocket.PingMessage, nil, time.Now().Add(reverseAgentPingPeriod)); err != nil {
+					return
+				}
+			}
+		}
+	}()
 }
 
 // readLoop reads messages from the WebSocket and dispatches them to the
@@ -81,6 +127,8 @@ func (rc *ReverseAgentConn) readLoop() {
 		if err != nil {
 			return
 		}
+		// Any inbound frame proves the link is alive — extend the deadline.
+		_ = rc.ws.SetReadDeadline(time.Now().Add(reverseAgentPongWait))
 
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {

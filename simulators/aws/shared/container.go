@@ -82,6 +82,17 @@ type ContainerConfig struct {
 	// startup but the container still runs. Production callers must
 	// always set Sandbox.
 	Sandbox SandboxProfile
+
+	// MemoryBytes is the hard memory limit (cgroup memory.max) applied to the
+	// container, in bytes. Zero = unbounded. Cloud handlers translate the
+	// product's advertised sizing (ECS/Fargate task or container memory) here
+	// so the container's cgroup matches what the metadata advertises.
+	MemoryBytes int64
+
+	// NanoCPU is the CPU limit (cgroup cpu.max) in units of 1e-9 CPUs — e.g.
+	// 1_000_000_000 == 1 vCPU. Zero = unbounded. Cloud handlers translate the
+	// product's advertised CPU sizing here.
+	NanoCPU int64
 }
 
 // ContainerHandle manages a running container.
@@ -428,6 +439,16 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	hostCfg := &container.HostConfig{
 		Binds:      cfg.Binds,
 		ExtraHosts: cfg.ExtraHosts,
+	}
+	// Apply the advertised resource limits to the container's cgroup so the
+	// workload is actually bounded the way the cloud product reports (e.g. a
+	// Fargate task that advertises 512 CPU / 1024 MiB sees a matching
+	// memory.max / cpu.max, not the host's full capacity).
+	if cfg.MemoryBytes > 0 {
+		hostCfg.Memory = cfg.MemoryBytes
+	}
+	if cfg.NanoCPU > 0 {
+		hostCfg.NanoCPUs = cfg.NanoCPU
 	}
 	if cfg.NetworkMode != "" {
 		hostCfg.NetworkMode = container.NetworkMode(cfg.NetworkMode)

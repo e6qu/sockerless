@@ -121,6 +121,49 @@ func DockerClient() *client.Client {
 // managedContainers tracks containers created by this simulator instance for cleanup.
 var managedContainers sync.Map // containerID -> true
 
+// ContainerIPv4 returns a running container's primary IPv4 address on its
+// docker network, or "" if unavailable. A sim running inside a harness
+// container reaches a workload by this bridge IP (routable container-to-
+// container) rather than a host-published port, which binds the host's
+// loopback — not the sim container's.
+func ContainerIPv4(id string) string {
+	if dockerClient == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	insp, err := dockerClient.ContainerInspect(ctx, id)
+	if err != nil || insp.NetworkSettings == nil {
+		return ""
+	}
+	if insp.NetworkSettings.IPAddress != "" {
+		return insp.NetworkSettings.IPAddress
+	}
+	for _, ep := range insp.NetworkSettings.Networks {
+		if ep != nil && ep.IPAddress != "" {
+			return ep.IPAddress
+		}
+	}
+	return ""
+}
+
+// ContainerRunning reports whether the container with the given id exists and
+// is currently in the running state. Used by the App Service site model to
+// decide whether a persistent (always-on plan) site container is already up
+// before routing an invoke to it.
+func ContainerRunning(id string) bool {
+	if dockerClient == nil || id == "" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	insp, err := dockerClient.ContainerInspect(ctx, id)
+	if err != nil || insp.State == nil {
+		return false
+	}
+	return insp.State.Running
+}
+
 // CleanupContainers stops and removes all simulator-managed containers.
 // Also prunes any Docker networks labeled `sockerless-sim=true` that
 // aren't in use (typically namespace-backed networks that weren't
@@ -152,6 +195,29 @@ func CleanupContainers() {
 }
 
 // StartContainer pulls the image (if needed), creates and starts a container.
+// selinuxRelabelBinds appends the shared SELinux relabel option (`z`) to each
+// bind so a workload container on an SELinux-enforcing host (e.g. a rootful
+// podman machine VM) can read+write the bind-mounted directory. The simulator's
+// Azure Files shares are deliberately shared across the containers that mount
+// them, so the shared (`z`) — not private (`Z`) — relabel applies. The option
+// is ignored on hosts without SELinux, so this is portable.
+func selinuxRelabelBinds(binds []string) []string {
+	out := make([]string, 0, len(binds))
+	for _, b := range binds {
+		parts := strings.SplitN(b, ":", 3)
+		if len(parts) < 2 {
+			out = append(out, b)
+			continue
+		}
+		if len(parts) == 3 && parts[2] != "" {
+			out = append(out, b+",z")
+		} else {
+			out = append(out, parts[0]+":"+parts[1]+":z")
+		}
+	}
+	return out
+}
+
 // Returns a ContainerHandle immediately. Call handle.Wait() to block until exit.
 // Stdout/stderr are streamed to the LogSink.
 func StartContainer(cfg ContainerConfig, sink LogSink) *ContainerHandle {
@@ -288,7 +354,7 @@ func StartHTTPContainer(ctx context.Context, cfg HTTPContainerConfig) (string, e
 			exposedPort: []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: strconv.Itoa(cfg.HostPort)}},
 		},
 		ExtraHosts: cfg.ExtraHosts,
-		Binds:      cfg.Binds,
+		Binds:      selinuxRelabelBinds(cfg.Binds),
 	}
 	if err := cfg.Sandbox.Apply(hostCfg, containerCfg); err != nil {
 		return "", fmt.Errorf("sandbox enforce: %w", err)
@@ -519,7 +585,7 @@ func createAndStartContainer(ctx context.Context, cli *client.Client, cfg Contai
 	}
 
 	hostCfg := &container.HostConfig{
-		Binds:      cfg.Binds,
+		Binds:      selinuxRelabelBinds(cfg.Binds),
 		ExtraHosts: cfg.ExtraHosts,
 	}
 	if cfg.NetworkMode != "" {

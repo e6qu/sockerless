@@ -44,4 +44,6 @@ type AZFState struct {
 // managed plane, not through caller-controlled NSGs).
 type NetworkState struct {
 	DNSZoneName string // Azure Private DNS zone backing this network
+	VNetName    string // Azure VNet backing this network (App Service VNet integration)
+	SubnetID    string // resource ID of the Microsoft.Web/serverFarms-delegated subnet
 }

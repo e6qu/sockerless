@@ -494,6 +494,7 @@ func registerPrivateDNS(srv *sim.Server) {
 				// the App's env-network connection so peers resolve it.
 				if recordType == "CNAME" && rs.Properties.CNAMERecord != nil {
 					realizeCNAMEAsDockerAlias(rs.Properties.CNAMERecord.CName)
+					realizeCNAMEAsSiteDockerAlias(rs.Properties.CNAMERecord.CName)
 				}
 				sim.WriteJSON(w, http.StatusOK, rs)
 			})

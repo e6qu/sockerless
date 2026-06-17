@@ -185,14 +185,70 @@ func (s *Server) NetworkDisconnect(id string, req *api.NetworkDisconnectRequest)
 	return s.BaseServer.NetworkDisconnect(id, req)
 }
 
-// NetworkInspect returns details about a network.
+// NetworkInspect returns details about a network, with container membership
+// reported from cloud-truth (the running Apps tagged with this network) rather
+// than local synthetic Store state. A stateless backend never owns membership;
+// reporting stale stopped containers makes a docker-host client (gitlab-runner)
+// loop trying to disconnect "zombie" containers it can't remove.
 func (s *Server) NetworkInspect(id string) (*api.Network, error) {
-	return s.BaseServer.NetworkInspect(id)
+	net, err := s.BaseServer.NetworkInspect(id)
+	if err != nil {
+		return nil, err
+	}
+	setNetworkMembership(net, s.cloudNetworkMembers())
+	return net, nil
 }
 
-// NetworkList lists networks.
+// NetworkList lists networks, each with cloud-truth container membership.
 func (s *Server) NetworkList(filters map[string][]string) ([]*api.Network, error) {
-	return s.BaseServer.NetworkList(filters)
+	nets, err := s.BaseServer.NetworkList(filters)
+	if err != nil {
+		return nil, err
+	}
+	members := s.cloudNetworkMembers()
+	for _, net := range nets {
+		setNetworkMembership(net, members)
+	}
+	return nets, nil
+}
+
+// cloudNetworkMembers returns the running cloud containers (one cloud query) so
+// network-membership reporting reflects the cloud, not local Store state.
+func (s *Server) cloudNetworkMembers() []api.Container {
+	containers, err := s.CloudState.ListContainers(s.ctx(), true, nil)
+	if err != nil {
+		s.Logger.Debug().Err(err).Msg("network membership: ListContainers failed; reporting no members")
+		return nil
+	}
+	return containers
+}
+
+// setNetworkMembership rewrites net.Containers to exactly the running containers
+// whose NetworkSettings reference this network (by name or ID).
+func setNetworkMembership(net *api.Network, containers []api.Container) {
+	if net == nil {
+		return
+	}
+	members := make(map[string]api.EndpointResource)
+	for _, c := range containers {
+		if !c.State.Running {
+			continue
+		}
+		for netName, ep := range c.NetworkSettings.Networks {
+			if netName != net.Name && (ep == nil || ep.NetworkID != net.ID) {
+				continue
+			}
+			res := api.EndpointResource{Name: strings.TrimPrefix(c.Name, "/")}
+			if ep != nil {
+				res.EndpointID = ep.EndpointID
+				res.IPv4Address = ep.IPAddress
+				res.MacAddress = ep.MacAddress
+			}
+			members[c.ID] = res
+			break
+		}
+	}
+	net.Containers = members
 }
 
 // NetworkPrune prunes unused networks.

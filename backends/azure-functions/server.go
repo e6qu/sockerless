@@ -60,7 +60,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Driver:          "azure-functions",
 		OperatingSystem: "Azure Functions",
 		OSType:          "linux",
-		Architecture:    "amd64",
+		Architecture:    azurecommon.ArchFromPlatform(config.BuildPlatform),
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)

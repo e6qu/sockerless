@@ -9,6 +9,8 @@ COPY simulators/aws/ /sim-aws/
 RUN cd /sim-aws && GOWORK=off go build -tags noui -o /out/simulator-aws .
 COPY simulators/gcp/ /sim-gcp/
 RUN cd /sim-gcp && GOWORK=off go build -tags noui -o /out/simulator-gcp .
+COPY simulators/azure/ /sim-azure/
+RUN cd /sim-azure && GOWORK=off go build -tags noui -o /out/simulator-azure .
 
 # --- Backends (the gitlab-runner docker executor's DOCKER_HOST target) + agent ---
 COPY api/ api/
@@ -25,12 +27,21 @@ RUN cd backends/cloudrun && GOWORK=off go mod download && \
 COPY backends/cloudrun-functions/ backends/cloudrun-functions/
 RUN cd backends/cloudrun-functions && GOWORK=off go mod download && \
     GOWORK=off go build -tags noui -o /out/sockerless-backend-gcf ./cmd/sockerless-backend-gcf
-# CGO_ENABLED=0: the reverse-agent + cloudrun/gcf bootstraps are injected into
-# arbitrary workload images, so they must be statically linked.
+COPY backends/azure-common/ backends/azure-common/
+COPY backends/aca/ backends/aca/
+RUN cd backends/aca && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-aca ./cmd/sockerless-backend-aca
+COPY backends/azure-functions/ backends/azure-functions/
+RUN cd backends/azure-functions && GOWORK=off go mod download && \
+    GOWORK=off go build -tags noui -o /out/sockerless-backend-azf ./cmd/sockerless-backend-azf
+# CGO_ENABLED=0: the reverse-agent + cloudrun/gcf/azf bootstraps are injected
+# into arbitrary workload images, so they must be statically linked. The
+# cloudrun bootstrap is reused as the ACA App overlay bootstrap.
 RUN cd agent && GOWORK=off go mod download && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-agent ./cmd/sockerless-agent && \
     CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-cloudrun-bootstrap ./cmd/sockerless-cloudrun-bootstrap && \
-    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-gcf-bootstrap ./cmd/sockerless-gcf-bootstrap && \
+    CGO_ENABLED=0 GOWORK=off go build -o /out/sockerless-azf-bootstrap ./cmd/sockerless-azf-bootstrap
 
 # --- bleeplab GitLab control-plane simulator ---
 # Built with -tags noui: the runner harness is headless and the embedded SPA's

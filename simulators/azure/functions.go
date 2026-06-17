@@ -692,6 +692,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 	registerSiteConfigHandlers(srv, armBase, sites)
 	registerSiteContainerHandlers(srv, armBase, sites)
+	registerSiteVNetIntegration(srv, armBase, sites)
 }
 
 // AzureSiteAppSettings is the canonical StringDictionary wire shape
@@ -958,6 +959,27 @@ type AzureStoragePropertyDictionaryResource struct {
 	Properties map[string]*AzureStorageInfoValue `json:"properties"`
 }
 
+// siteAzureStorageBinds realizes a single-container site's attached Azure Files
+// shares (Properties.AzureStorageAccounts, set via
+// WebApps.UpdateAzureStorageAccounts) as Docker host binds
+// `<host-share-dir>:<mountPath>`, so the persistent container mounts the same
+// shared share that other containers mounting the same named volume see. This
+// is the App Service `azureStorageAccounts` mount contract, mirroring the ACA
+// App replica's volume binds.
+func siteAzureStorageBinds(site *Site) []string {
+	if site == nil {
+		return nil
+	}
+	var binds []string
+	for _, v := range site.Properties.AzureStorageAccounts {
+		if v == nil || v.AccountName == "" || v.ShareName == "" || v.MountPath == "" {
+			continue
+		}
+		binds = append(binds, FileShareHostDir(v.AccountName, v.ShareName)+":"+v.MountPath)
+	}
+	return binds
+}
+
 // AzureStorageInfoValue mirrors armappservice.AzureStorageInfoValue.
 type AzureStorageInfoValue struct {
 	Type        string `json:"type,omitempty"`
@@ -967,15 +989,43 @@ type AzureStorageInfoValue struct {
 	MountPath   string `json:"mountPath,omitempty"`
 }
 
+// azureFunctionInstance tracks the persistent App Service site container for a
+// function app. On an always-on plan (the only plan the sim models for a
+// container-image site) the platform keeps one container running for the life
+// of the site; invokes route to it and it is torn down only when the site is
+// deleted. The per-instance mutex serializes the lazy start so concurrent
+// invokes to the same site share one container.
 type azureFunctionInstance struct {
-	containerID string
-	cancelLogs  context.CancelFunc
+	mu             sync.Mutex
+	containerID    string
+	cancelLogs     context.CancelFunc
+	sidecarHandles []*sim.ContainerHandle
+	rawHandle      *sim.ContainerHandle // non-HTTP service container (e.g. a redis `services:` site)
+	bootstrapURL   string               // "" for a raw service (no HTTP invoke)
+	// dockerNetwork is the App Service VNet-integration network (sim-vnet-<vnet>)
+	// the site joined, set by the swift virtualNetwork connection handler. The
+	// site container attaches to it with its identity aliases so peers resolve it.
+	dockerNetwork string
 }
 
 var azureFunctionInstances = struct {
 	sync.Mutex
 	bySite map[string]*azureFunctionInstance
 }{bySite: map[string]*azureFunctionInstance{}}
+
+// azfInstanceFor returns the (lazily created) instance holder for a site,
+// creating an empty one on first reference. The returned holder's own mutex
+// guards its container lifecycle.
+func azfInstanceFor(siteName string) *azureFunctionInstance {
+	azureFunctionInstances.Lock()
+	defer azureFunctionInstances.Unlock()
+	inst := azureFunctionInstances.bySite[siteName]
+	if inst == nil {
+		inst = &azureFunctionInstance{}
+		azureFunctionInstances.bySite[siteName] = inst
+	}
+	return inst
+}
 
 func hasAzureFunctionHTTPBootstrap(site *Site) bool {
 	if site == nil || site.Properties.SiteConfig == nil {
@@ -1004,6 +1054,115 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		return nil, -1, fmt.Errorf("site config is required")
 	}
 
+	// App Service runs the site's container persistently on an always-on plan:
+	// start it on first invoke and keep it for the life of the site. Subsequent
+	// invokes (gitlab-runner cycles create/start/exec/wait per stage against the
+	// same site) reuse the one long-lived container — its in-container bootstrap
+	// HTTP server handles repeated buffered invokes, and its reverse-agent stays
+	// registered for docker exec. The container is torn down only when the site
+	// is deleted (stopAzureFunctionInstance, from the DELETE handler).
+	inst := azfInstanceFor(site.Name)
+	inst.mu.Lock()
+	if err := inst.ensureStarted(site); err != nil {
+		inst.mu.Unlock()
+		return nil, -1, err
+	}
+	bootstrapURL := inst.bootstrapURL
+	inst.mu.Unlock()
+
+	if bootstrapURL == "" {
+		return nil, -1, fmt.Errorf("site %q runs a non-HTTP service container; it has no function bootstrap to invoke", site.Name)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
+	defer cancel()
+	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+}
+
+// ensureStarted starts the site's persistent container if it isn't already
+// running, and (for a VNet-integrated site) ensures it's attached to its App
+// Service network. Caller holds inst.mu. Used by both the HTTP invoke path and
+// the swift VNet-integration handler (which starts a non-HTTP service such as a
+// `services:` redis that is never invoked).
+func (inst *azureFunctionInstance) ensureStarted(site *Site) error {
+	if inst.containerID != "" && sim.ContainerRunning(inst.containerID) {
+		if inst.dockerNetwork != "" {
+			// Idempotent: a re-connect of an already-attached endpoint is a
+			// harmless no-op error we ignore.
+			_ = sim.ConnectContainerToNetwork(inst.containerID, inst.dockerNetwork, siteNetAliases(site))
+		}
+		return nil
+	}
+	if inst.containerID != "" {
+		// A previously-started container died; reap before restarting.
+		inst.teardownLocked()
+	}
+	return inst.startLocked(site)
+}
+
+// siteNetAliases are the identity names an App Service site is reachable by on
+// its VNet-integration network: the site name and its default hostname. Service
+// aliases (a `--network-alias`) are added on top via the Private DNS record the
+// backend registers (realizeCNAMEAsSiteDockerAlias).
+func siteNetAliases(site *Site) []string {
+	var out []string
+	if site.Name != "" {
+		out = append(out, site.Name)
+	}
+	if site.Properties.DefaultHostName != "" {
+		out = append(out, site.Properties.DefaultHostName)
+	}
+	return out
+}
+
+// startRawServiceLocked runs a non-bootstrap site image (a `services:` container
+// such as redis) directly on its App Service VNet network, with the site's
+// identity aliases, so peers reach it by name over that network. It serves its
+// own port (e.g. redis 6379) container-to-container — there is no HTTP function
+// bootstrap, so bootstrapURL stays "". Caller holds inst.mu.
+func (inst *azureFunctionInstance) startRawServiceLocked(site *Site) error {
+	image := siteContainerImage(site)
+	if image == "" {
+		return fmt.Errorf("site %q has no container image", site.Name)
+	}
+	localImage := sim.ResolveLocalImage(image)
+	ctx, cancel := context.WithTimeout(context.Background(), 230*time.Second)
+	defer cancel()
+	platform, err := localImagePlatform(ctx, localImage)
+	if err != nil {
+		return err
+	}
+	sink := &funcLogSink{appName: site.Name}
+	handle, err := sim.StartContainerSync(sim.ContainerConfig{
+		Image:          localImage,
+		Architecture:   platform,
+		Env:            mergeEnv(siteAppSettings(site), hostMetadataEnv()),
+		Binds:          siteAzureStorageBinds(site),
+		Name:           fmt.Sprintf("sockerless-sim-azure-svc-%s-%s", site.Name, randomSuffix(6)),
+		Labels:         map[string]string{"sockerless-sim-type": "azure-service", "sockerless-site": site.Name},
+		Network:        inst.dockerNetwork,
+		NetworkAliases: siteNetAliases(site),
+		Sandbox:        sim.SandboxAZF,
+	}, sink)
+	if err != nil {
+		return fmt.Errorf("start service container: %w", err)
+	}
+	inst.containerID = handle.ContainerID
+	inst.rawHandle = handle
+	inst.bootstrapURL = ""
+	return nil
+}
+
+// startLocked launches the persistent site container (plus any sidecar
+// sitecontainers) and resolves the reachable in-container bootstrap URL,
+// recording everything on the instance. Caller holds inst.mu.
+func (inst *azureFunctionInstance) startLocked(site *Site) error {
+	// A site whose image carries no sockerless function bootstrap (a `services:`
+	// container such as redis) runs its own process directly on the VNet network
+	// and is reached by peers over it — not via an HTTP invoke.
+	if !hasAzureFunctionHTTPBootstrap(site) {
+		return inst.startRawServiceLocked(site)
+	}
+
 	// Multi-container (sitecontainers) sites run the IsMain member as the
 	// long-lived HTTP container; the LinuxFxVersion-derived image is the
 	// single-container fallback.
@@ -1021,9 +1180,15 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		mainBinds = siteContainerVolumeBinds(site.Name, main.Properties.VolumeMounts)
 	} else {
 		containerImage = siteContainerImage(site)
+		// Single-container site: mount the site's Azure Files shares (attached
+		// via WebApps.UpdateAzureStorageAccounts). A shared named volume like
+		// gitlab-runner's /builds dir maps to one share, so every container that
+		// mounts that volume sees the same workspace — the build container must
+		// see what the helper container cloned into /builds.
+		mainBinds = siteAzureStorageBinds(site)
 	}
 	if containerImage == "" {
-		return nil, -1, fmt.Errorf("site %q has no container image", site.Name)
+		return fmt.Errorf("site %q has no container image", site.Name)
 	}
 
 	localImage := sim.ResolveLocalImage(containerImage)
@@ -1032,11 +1197,11 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 
 	platform, err := localImagePlatform(ctx, localImage)
 	if err != nil {
-		return nil, -1, err
+		return err
 	}
 	hostPort, err := pickFreeTCPPort()
 	if err != nil {
-		return nil, -1, fmt.Errorf("pick free port: %w", err)
+		return fmt.Errorf("pick free port: %w", err)
 	}
 
 	env := mergeEnv(map[string]string{
@@ -1063,37 +1228,114 @@ func invokeAzureFunctionHTTP(site *Site, body io.Reader, contentType string) ([]
 		Sandbox:    sim.SandboxAZF,
 	})
 	if err != nil {
-		return nil, -1, fmt.Errorf("start function http container: %w", err)
+		return fmt.Errorf("start function http container: %w", err)
 	}
 	logCtx, cancelLogs := context.WithCancel(context.Background())
-	inst := &azureFunctionInstance{containerID: containerID, cancelLogs: cancelLogs}
-	azureFunctionInstances.Lock()
-	azureFunctionInstances.bySite[site.Name] = inst
-	azureFunctionInstances.Unlock()
 
 	// Sidecar sitecontainers share the main's network namespace, so a
 	// sidecar that binds a port is reachable from the main on
 	// localhost:<port> — the App Service multi-container loopback contract.
 	sidecarHandles := startSidecarContainers(site, containerID, sink)
-	defer func() {
-		azureFunctionInstances.Lock()
-		if azureFunctionInstances.bySite[site.Name] == inst {
-			delete(azureFunctionInstances.bySite, site.Name)
-		}
-		azureFunctionInstances.Unlock()
+	go sim.StreamContainerLogs(logCtx, containerID, sink)
+
+	// Reach the bootstrap by whichever address connects:
+	//   - <containerIP>:8080 — works when the sim runs INSIDE a harness
+	//     container (the host-published port binds the host's loopback, not the
+	//     sim container's, so 127.0.0.1:hostPort is unreachable there);
+	//   - 127.0.0.1:<hostPort> — works when the sim runs directly on the host.
+	// Same reach the gcp sim's Cloud Run/Functions invoke and the ACA App
+	// invoke use.
+	var cands []string
+	if ip := sim.ContainerIPv4(containerID); ip != "" {
+		cands = append(cands, fmt.Sprintf("http://%s:8080/api/function", ip))
+	}
+	cands = append(cands, fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort))
+	bootstrapURL, err := firstReachableHTTP(ctx, cands, 30*time.Second)
+	if err != nil {
+		// Failed to come up — reap the partial container set.
+		cancelLogs()
 		for _, h := range sidecarHandles {
 			h.Cancel()
 		}
-		cancelLogs()
 		sim.StopAndRemoveContainer(containerID)
-	}()
-	go sim.StreamContainerLogs(logCtx, containerID, sink)
-
-	bootstrapURL := fmt.Sprintf("http://127.0.0.1:%d/api/function", hostPort)
-	if err := waitForHTTP(ctx, bootstrapURL, 30*time.Second); err != nil {
-		return nil, -1, fmt.Errorf("bootstrap not ready at %s: %w", bootstrapURL, err)
+		return fmt.Errorf("bootstrap not ready (tried %d address(es)): %w", len(cands), err)
 	}
-	return postBootstrapWithRetry(ctx, bootstrapURL, body, contentType, 230*time.Second)
+
+	// VNet-integrated site: attach the (running) HTTP container to its App
+	// Service network so peers resolve it by name. The container's :8080 is for
+	// the function bootstrap; cross-site reachability is over this network.
+	if inst.dockerNetwork != "" {
+		_ = sim.ConnectContainerToNetwork(containerID, inst.dockerNetwork, siteNetAliases(site))
+	}
+
+	inst.containerID = containerID
+	inst.cancelLogs = cancelLogs
+	inst.sidecarHandles = sidecarHandles
+	inst.bootstrapURL = bootstrapURL
+	return nil
+}
+
+// teardownLocked stops the instance's main container, its sidecars, and its log
+// stream, clearing the recorded handles. Caller holds inst.mu.
+func (inst *azureFunctionInstance) teardownLocked() {
+	for _, h := range inst.sidecarHandles {
+		h.Cancel()
+	}
+	if inst.rawHandle != nil {
+		inst.rawHandle.Cancel()
+	}
+	if inst.cancelLogs != nil {
+		inst.cancelLogs()
+	}
+	if inst.containerID != "" {
+		sim.StopAndRemoveContainer(inst.containerID)
+	}
+	inst.containerID = ""
+	inst.cancelLogs = nil
+	inst.sidecarHandles = nil
+	inst.rawHandle = nil
+	inst.bootstrapURL = ""
+}
+
+// firstReachableHTTP polls the candidate URLs (each round, in order) and
+// returns the first whose host:port accepts a TCP connection within timeout.
+func firstReachableHTTP(ctx context.Context, cands []string, timeout time.Duration) (string, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		default:
+		}
+		for _, cand := range cands {
+			parsed, perr := url.Parse(cand)
+			if perr != nil {
+				lastErr = perr
+				continue
+			}
+			host := parsed.Host
+			if _, _, splitErr := net.SplitHostPort(host); splitErr != nil {
+				switch parsed.Scheme {
+				case "https":
+					host = net.JoinHostPort(host, "443")
+				default:
+					host = net.JoinHostPort(host, "80")
+				}
+			}
+			conn, derr := net.DialTimeout("tcp", host, time.Second)
+			if derr == nil {
+				_ = conn.Close()
+				return cand, nil
+			}
+			lastErr = derr
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("timeout after %s", timeout)
+	}
+	return "", lastErr
 }
 
 func stopAzureFunctionInstance(siteName string) {
@@ -1104,10 +1346,9 @@ func stopAzureFunctionInstance(siteName string) {
 	if inst == nil {
 		return
 	}
-	if inst.cancelLogs != nil {
-		inst.cancelLogs()
-	}
-	sim.StopAndRemoveContainer(inst.containerID)
+	inst.mu.Lock()
+	inst.teardownLocked()
+	inst.mu.Unlock()
 }
 
 func siteContainerImage(site *Site) string {
@@ -1169,39 +1410,6 @@ func pickFreeTCPPort() (int, error) {
 	port := l.Addr().(*net.TCPAddr).Port
 	_ = l.Close()
 	return port, nil
-}
-
-func waitForHTTP(ctx context.Context, rawURL string, timeout time.Duration) error {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return fmt.Errorf("parse url %q: %w", rawURL, err)
-	}
-	addr := parsed.Host
-	if _, _, err := net.SplitHostPort(addr); err != nil {
-		switch parsed.Scheme {
-		case "http":
-			addr = net.JoinHostPort(addr, "80")
-		case "https":
-			addr = net.JoinHostPort(addr, "443")
-		default:
-			return fmt.Errorf("url %q has no explicit port", rawURL)
-		}
-	}
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-		conn, err := net.DialTimeout("tcp", addr, time.Second)
-		if err == nil {
-			_ = conn.Close()
-			return nil
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	return fmt.Errorf("timeout after %s", timeout)
 }
 
 func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Reader, contentType string, timeout time.Duration) ([]byte, int, error) {

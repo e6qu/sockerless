@@ -84,10 +84,27 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 		if config.WorkingDir == "" {
 			config.WorkingDir = img.Config.WorkingDir
 		}
+		// Carry the image's declared ExposedPorts onto the container config so a
+		// `services:` container (e.g. a redis sidecar on a FF_NETWORK_PER_BUILD
+		// pod) advertises its ports: gitlab-runner reads the service container's
+		// exposed ports during preparation to health-check it, and times out
+		// ("getting exposed ports: service failed to start") when none surface.
+		if len(config.ExposedPorts) == 0 && len(img.Config.ExposedPorts) > 0 {
+			config.ExposedPorts = img.Config.ExposedPorts
+		}
 	}
 	if config.Labels == nil {
 		config.Labels = make(map[string]string)
 	}
+
+	// The overlay's `FROM` runs in the ACR-Tasks build environment, which can
+	// only resolve a locally-present or registry-pullable ref — NOT the ACR
+	// hostname rewrite below (`<acr>.azurecr.io/library/<digest>` doesn't
+	// resolve there; the sim registry is reached via the ACR-endpoint
+	// coordinate, not DNS). Capture the pre-rewrite ref for the overlay base so
+	// the build's FROM stays pullable, exactly as aca keeps its overlay base
+	// (ResolveAzureImageURIWithCache passes a local digest through unchanged).
+	overlayBaseRef := config.Image
 
 	// Resolve Docker Hub images to ACR or normalize for Azure Functions
 	config.Image = azurecommon.ResolveAzureImageURI(config.Image, s.config.Registry)
@@ -111,7 +128,7 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	}
 	if s.useAZFOverlayPath(originalImage) {
 		spec := azfOverlaySpec{
-			BaseImageRef:        originalImage,
+			BaseImageRef:        overlayBaseRef,
 			BootstrapBinaryPath: s.config.BootstrapBinaryPath,
 			BootstrapBinaryHash: s.config.BootstrapBinaryHash,
 		}
@@ -293,11 +310,20 @@ func (s *Server) createFunctionSite(ctx context.Context, id, funcAppName string,
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 	}
+	azTags := tags.AsAzurePtrMap()
+	// Persist OpenStdin in the site tags: CloudState reconstruction drops the
+	// container Config, but a gitlab-runner-pattern (OpenStdin) container must
+	// be reported running across per-stage invokes (the cloud is the source of
+	// truth), so the runner's per-stage docker exec resolves instead of 409ing
+	// on a one-shot-FaaS "exited" overlay.
+	if container.Config.OpenStdin {
+		azTags["sockerless-open-stdin"] = ptr("true")
+	}
 
 	site := armappservice.Site{
 		Location: ptr(s.config.Location),
 		Kind:     ptr("functionapp,linux,container"),
-		Tags:     tags.AsAzurePtrMap(),
+		Tags:     azTags,
 		Properties: &armappservice.SiteProperties{
 			SiteConfig: siteConfig,
 		},
@@ -428,12 +454,51 @@ func (s *Server) ContainerStart(ref string) error {
 		}
 	}
 	if !ok {
+		// gitlab-runner cycles start→wait→stop→start on the SAME container id
+		// per stage. After the first start the container leaves PendingCreates,
+		// so a re-start must resolve via CloudState. Re-add to PendingCreates so
+		// the network-pod / re-invoke flow below can run for the next stage.
+		if got, hit := s.ResolveContainerAuto(s.ctx(), ref); hit {
+			c = got
+			ok = true
+			s.PendingCreates.Put(c.ID, c)
+		}
+	}
+	if !ok {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
 
 	if c.State.Running {
+		// Runner re-start for the next stage: the per-stage attach just
+		// registered a fresh stdinPipe. The App Service site container is
+		// persistent (always-on plan), so its in-container bootstrap HTTP
+		// server is still alive — re-invoke it with the new stage's captured
+		// script rather than reporting NotModified, which would strand the
+		// stage waiting for output it never gets.
+		if c.Config.OpenStdin {
+			// Re-invoke for the next stage. Don't gate on the stdinPipe being
+			// present yet — gitlab-runner's per-stage attach and start race, and
+			// invokeFunctionAsync → captureAZFStdin(expectStdin) waits for the
+			// pipe to appear before draining + POSTing the stage script.
+			azfState, hasState := s.AZF.Get(id)
+			if hasState && azfState.FunctionURL != "" {
+				return s.invokeFunctionAsync(id, c, azfState)
+			}
+		}
+		s.PendingCreates.Delete(id)
 		return &api.NotModifiedError{}
+	}
+
+	// cloud-dns discovery: a container on a user-defined network is its own
+	// App Service site, joined to the network's VNet via regional VNet
+	// integration and resolvable by its --network-alias through the linked
+	// Private DNS zone. This is the faithful Azure model (separate sites + VNet
+	// + Private DNS), distinct from the host-aliases sitecontainer-pod below.
+	if s.config.NetworkDiscovery == api.NetworkDiscoveryCloudDNS {
+		if netID, ok := s.userDefinedNetworkID(c); ok {
+			return s.startCloudDNSSite(id, c, netID)
+		}
 	}
 
 	// Docker user-defined network → assemble a multi-container pod as ONE
@@ -442,7 +507,17 @@ func (s *Server) ContainerStart(ref string) error {
 	shouldDefer, members := s.shouldDeferOrMaterializeNetworkPod(c)
 	if shouldDefer {
 		// Service-style sidecar awaiting its pod peer; it deploys as a
-		// sitecontainer when the pod materializes. Report success.
+		// sitecontainer when the pod materializes. Mark it running so the
+		// runner's service health-check during preparation (docker inspect for
+		// State.Running + the image's ExposedPorts) passes — the real service
+		// process comes up when the pod main arrives and materializePodSite runs
+		// it. Without this the deferred service reads as "created" and the runner
+		// times out "getting exposed ports: service failed to start".
+		s.PendingCreates.Update(id, func(pc *api.Container) {
+			pc.State.Status = "running"
+			pc.State.Running = true
+			pc.State.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		})
 		s.EmitEvent("container", "start", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 		return nil
 	}
@@ -1079,15 +1154,22 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
-	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
-		return s.BaseServer.ContainerAttach(id, opts)
-	}
+	// gitlab-runner attach-stdin pattern: a per-stage / prepare script is
+	// written to the container's MAIN process stdin. This must take precedence
+	// over the reverse-agent routing below — the reverse-agent registers no main
+	// process (rt.mp==nil; reverse mode carries only exec sessions), so a stdin
+	// attach routed to it fails "no main process to attach to" and the stage
+	// never runs. The captured script belongs on the buffered-invoke stdinPipe
+	// path (drained + POSTed by invokeFunctionAsync on the matching start).
 	if opts.Stdin && hasAZFOverlayRepo(c.Config.Image) {
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
 		pipe := actual.(*stdinPipe)
 		pipe.Open()
 		return s.newAttachStream(c.ID, pipe), nil
+	}
+	if _, hasAgent := s.reverseAgents.Resolve(c.ID); hasAgent {
+		return s.BaseServer.ContainerAttach(id, opts)
 	}
 	if opts.Stdin {
 		return nil, &api.NotImplementedError{Message: "interactive docker attach requires a reverse-agent bootstrap inside the function container (SOCKERLESS_CALLBACK_URL); no session registered"}

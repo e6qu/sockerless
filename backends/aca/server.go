@@ -59,7 +59,7 @@ func NewServer(config Config, azureClients *AzureClients, logger zerolog.Logger)
 		Driver:          "aca-jobs",
 		OperatingSystem: "Azure Container Apps",
 		OSType:          "linux",
-		Architecture:    "amd64",
+		Architecture:    azurecommon.ArchFromPlatform(config.BuildPlatform),
 		NCPU:            2,
 		MemTotal:        4294967296,
 	}, logger)

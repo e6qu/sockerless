@@ -32,6 +32,12 @@ func azureFilesHostRoot() string {
 func FileShareHostDir(storageAccount, shareName string) string {
 	dir := filepath.Join(azureFilesHostRoot(), storageAccount, shareName)
 	_ = os.MkdirAll(dir, 0o777)
+	// MkdirAll honors the process umask, so the share dir lands at 0755 and a
+	// non-root workload (e.g. a gitlab-runner helper writing the build
+	// workspace) can't create files in it. A real Azure Files SMB mount is
+	// writable by the mounting container (CIFS default dir_mode/file_mode
+	// 0777); chmod past the umask so the materialized share matches.
+	_ = os.Chmod(dir, 0o777)
 	return dir
 }
 

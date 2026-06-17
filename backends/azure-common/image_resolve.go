@@ -187,3 +187,20 @@ func parseDockerRef(ref string) (registry, repo, tag string) {
 	}
 	return
 }
+
+// ArchFromPlatform extracts the docker architecture ("arm64"/"amd64") from a
+// "linux/<arch>" build platform string — the architecture the Azure workload
+// runs at. Sockerless reports the cloud workload's architecture (not the host
+// the backend runs on) in the Docker /version response, so a docker-host client
+// such as gitlab-runner selects the matching helper image arch.
+func ArchFromPlatform(platform string) string {
+	if i := strings.LastIndex(platform, "/"); i >= 0 {
+		platform = platform[i+1:]
+	}
+	switch strings.ToLower(strings.TrimSpace(platform)) {
+	case "arm64", "aarch64":
+		return "arm64"
+	default:
+		return "amd64"
+	}
+}

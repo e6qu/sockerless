@@ -348,9 +348,21 @@ jobs:
         timeout-minutes: 3
         env:
           GOWORK: "off"
+      # Compile the sim binary + the (large, AWS-SDK-importing) SDK test binary
+      # in a separate deterministic build step, so the timed test run below isn't
+      # eaten by a cold recompile after an unrelated dep change busts the shared
+      # **/go.sum Go cache. Build time gets its own budget; the test keeps a
+      # tight one.
+      - name: Pre-build AWS SDK tests (warm build cache)
+        run: |
+          cd simulators/aws && go mod download && make build
+          cd sdk-tests && GOWORK=off CGO_ENABLED=0 go test -c -o /tmp/aws-sdk-tests.test .
+        timeout-minutes: 6
+        env:
+          GOWORK: "off"
       - name: Run AWS SDK tests
         run: |
-          cd simulators/aws && go mod download
+          cd simulators/aws
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \

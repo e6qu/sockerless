@@ -194,14 +194,24 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		return nil, &api.NotFoundError{Resource: "container", ID: id}
 	}
 
+	// gitlab-runner attach-stdin pattern: a per-stage / prepare script is
+	// written to the container's MAIN process stdin. This must take precedence
+	// over the reverse-agent routing below — the reverse-agent never registers
+	// a main process (mp==nil; reverse mode carries only exec sessions), so a
+	// stdin attach routed to it fails "no main process to attach to". The App
+	// bootstrap registers a reverse-agent (and on a per-build network it
+	// registers before the runner attaches), so without this precedence the
+	// stdin attach resolves the agent and breaks — the script never runs and
+	// the runner loops recreating the container. The stdin script always
+	// belongs on the buffered-invoke stdinPipe path (runACAInitialStdinStage).
+	if opts.Stdin && s.config.UseApp {
+		p := newStdinPipe()
+		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
+		pipe := actual.(*stdinPipe)
+		pipe.Open()
+		return s.newAttachStream(c.ID, pipe), nil
+	}
 	if _, hasAgent := s.reverseAgents.Resolve(c.ID); !hasAgent {
-		if opts.Stdin && s.config.UseApp {
-			p := newStdinPipe()
-			actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-			pipe := actual.(*stdinPipe)
-			pipe.Open()
-			return s.newAttachStream(c.ID, pipe), nil
-		}
 		return nil, &api.ServerError{Message: fmt.Sprintf(
 			"reverse-agent WebSocket not registered for container %s. "+
 				"ACA attach requires SOCKERLESS_CALLBACK_URL reachable from inside the App / Job "+
@@ -209,7 +219,14 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 			c.ID[:12],
 		)}
 	}
-	return s.BaseServer.ContainerAttach(id, opts)
+	// Read-only attach is bridged through the reverse agent by the base server;
+	// pass the cloud-resolved container ID (ResolveContainerAuto above) — never
+	// raw local-store state.
+	cid, ok := s.ResolveContainerIDAuto(context.Background(), id)
+	if !ok {
+		return nil, &api.NotFoundError{Resource: "container", ID: id}
+	}
+	return s.BaseServer.ContainerAttach(cid, opts)
 }
 
 // ContainerExport streams the container's rootfs as tar via the

@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
 	"github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v5"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v8"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/privatedns/armprivatedns"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage"
 )
@@ -40,6 +41,14 @@ type AzureClients struct {
 	// written by azurecommon.PrivateDNSDiscovery.
 	PrivateDNSZones   *armprivatedns.PrivateZonesClient
 	PrivateDNSRecords *armprivatedns.RecordSetsClient
+
+	// VNet plumbing for App Service regional VNet integration (cloud-dns
+	// service discovery). NetworkCreate provisions a VNet + a subnet delegated
+	// to Microsoft.Web/serverFarms + links the Private DNS zone to the VNet;
+	// each site's container joins the VNet via WebApps swift integration.
+	VirtualNetworks *armnetwork.VirtualNetworksClient
+	Subnets         *armnetwork.SubnetsClient
+	PrivateDNSLinks *armprivatedns.VirtualNetworkLinksClient
 }
 
 // NewAzureClients initializes Azure SDK clients.
@@ -98,6 +107,18 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 	if err != nil {
 		return nil, err
 	}
+	privateLinks, err := armprivatedns.NewVirtualNetworkLinksClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	vnets, err := armnetwork.NewVirtualNetworksClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
+	subnets, err := armnetwork.NewSubnetsClient(subscriptionID, cred, opts)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
 		WebApps:           webAppsClient,
@@ -107,6 +128,9 @@ func newAzureClientsWithEndpoint(subscriptionID string, endpointURL string) (*Az
 		StorageAccounts:   storageAccounts,
 		PrivateDNSZones:   privateZones,
 		PrivateDNSRecords: privateRecords,
+		PrivateDNSLinks:   privateLinks,
+		VirtualNetworks:   vnets,
+		Subnets:           subnets,
 	}, nil
 }
 
@@ -142,6 +166,18 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 	if err != nil {
 		return nil, err
 	}
+	privateLinks, err := armprivatedns.NewVirtualNetworkLinksClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	vnets, err := armnetwork.NewVirtualNetworksClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
+	subnets, err := armnetwork.NewSubnetsClient(subscriptionID, cred, nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return &AzureClients{
 		WebApps:           webAppsClient,
@@ -151,5 +187,8 @@ func newAzureClientsDefault(subscriptionID string) (*AzureClients, error) {
 		StorageAccounts:   storageAccounts,
 		PrivateDNSZones:   privateZones,
 		PrivateDNSRecords: privateRecords,
+		PrivateDNSLinks:   privateLinks,
+		VirtualNetworks:   vnets,
+		Subnets:           subnets,
 	}, nil
 }

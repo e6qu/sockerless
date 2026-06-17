@@ -446,7 +446,7 @@ bleephub-runner-docker-test-gcf: bleephub-runner-docker-build bleephub-sim-regis
 .PHONY: bleeplab-runner-docker-build
 bleeplab-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleeplab runner-integration image…$(COLOR_RESET)\n"
-	@docker build -f bleeplab/Dockerfile -t bleeplab-runner-int:local .
+	@docker build --load -f bleeplab/Dockerfile -t bleeplab-runner-int:local .
 
 # $(1)=backend, $(2)=sim port. Publishes the sim's /v2/ registry at
 # 127.0.0.1:5000 so the overlay build→push→pull (cloudrun) reaches it; ECS
@@ -480,6 +480,18 @@ bleeplab-runner-docker-test-cloudrun: bleeplab-runner-docker-build bleephub-sim-
 .PHONY: bleeplab-runner-docker-test-gcf
 bleeplab-runner-docker-test-gcf: bleeplab-runner-docker-build bleephub-sim-registry-trust
 	$(call run_bleeplab_harness,gcf,4567)
+
+# aca + azf run on the azure sim (port 4568): the ACA App-overlay and the AZF
+# sitecontainers-overlay paths build→push→pull the bootstrap overlay through
+# ACR Tasks at the sim's /v2/ published to 127.0.0.1:5000 (needs the registry
+# trust drop-in on podman).
+.PHONY: bleeplab-runner-docker-test-aca
+bleeplab-runner-docker-test-aca: bleeplab-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleeplab_harness,aca,4568)
+
+.PHONY: bleeplab-runner-docker-test-azf
+bleeplab-runner-docker-test-azf: bleeplab-runner-docker-build bleephub-sim-registry-trust
+	$(call run_bleeplab_harness,azf,4568)
 
 # Both the ACA App-overlay (ACR Tasks) and the Cloud Run overlay (Cloud
 # Build) paths do a real docker push + pull of the bootstrap overlay
