@@ -4,6 +4,45 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-17 - Audit backlog (deferred): removed the sim-only `Sim*` fake fields (BUG-1840)
+
+Picked up the first of the three items deferred from #594. The gcp and azure
+simulators carried `SimCommand`/`SimImage`/`SimArchitecture` (gcp Cloud Functions
+`ServiceConfig`) and `SimCommand` (azure App Service `SiteConfig`) — sim-only
+fields on the real cloud resource model, accepted off the wire though no real
+client produces them. A faithful sim must not have them.
+
+**gcp.** The image-less "Sim path" of `invokeCloudFunctionProcess` (which ran a
+`SimImage` container directly so SDK tests could check invoke semantics without
+staging an overlay) was backend-dead: a Cloud Functions Gen2 is backed by a Cloud
+Run service, and the gcf backend invokes that service's `svc.Uri`
+(→ `/v2-services-invoke`, served by `cloudrunservices.go invokeService`), never the
+sim-only `/v2-functions-invoke` endpoint that fronted the Sim path. Removed the
+fields, the Sim branch, and the `Sim*`-only `TestCloudFunctions_Invoke*` /
+`InvokeArithmetic*` SDK tests. `invokeCloudFunctionProcess` now runs only the
+faithful overlay-image path; a function with no deployed image records
+"Function invoked" in Cloud Logging and returns `{}`. Real gcp container-execution
+coverage stays via the Cloud Run **Jobs** arithmetic tests and the gcf cell.
+
+**azure.** Kept `invokeAzureFunctionProcess` — that IS the real App Service
+container-run path the azf backend drives via `LinuxFxVersion` (`DOCKER|<image>`) +
+`SOCKERLESS_CMD`/`SOCKERLESS_ENTRYPOINT` app settings. Removed only the sim-only
+`SimCommand` fallback and the now-identity `Site.wire()` stripper. The invoke SDK
+tests were rewritten to deliver the command exactly as the backend does — a
+`SOCKERLESS_CMD` app setting carrying `base64(json(argv))` — and still execute real
+`alpine`/`eval-arithmetic` containers.
+
+**Sub-fix (BUG-1824 class).** Verifying the azure rewrite surfaced a pre-existing
+local-repro failure: the three sim sdk-tests' `buildGoScratchImage` used
+`docker build -t` with no `--load`, so on a `docker-container` buildx-default host
+the freshly-built workload image landed in the build cache only and the sim
+couldn't run it (eval/`InvokeArithmetic*` 500'd). It now probes
+`docker buildx version` and uses `buildx build --load` when present. CI was
+unaffected (its docker driver loads to the store); this only blocked local runs.
+
+Cell impact was confirmed by tracing the backend invoke target rather than
+re-running the multi-minute gcf/azf cells, which don't exercise the changed code.
+
 ## 2026-06-17 - Codebase audit: fallbacks / error-swallowing / fakes / sim-contract / dead code (sims → backends → UIs) + open-issue fixes
 
 A targeted sweep for the anti-patterns the user flagged — fail loudly, never

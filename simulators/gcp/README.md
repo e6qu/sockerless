@@ -257,18 +257,19 @@ http.DefaultClient.Do(runReq)
 
 ### Cloud Functions
 
-Create a function with a command, invoke it, and check logs.
+Create a function, invoke it, and check logs. Cloud Functions Gen2 run on a
+backing Cloud Run service; the invoke endpoint executes that service's overlay
+container. A function with no deployed image records the invocation in Cloud
+Logging and returns an empty body.
 
 ```bash
 curl -s -X POST 'http://localhost:4567/v2/projects/my-project/locations/us-central1/functions?functionId=my-fn' \
   -H 'Content-Type: application/json' \
-  -d '{"buildConfig":{"runtime":"go121","entryPoint":"Handler"},
-       "serviceConfig":{"simCommand":["echo","hello from function"]}}'
-# The simCommand field is simulator-specific. The LRO response includes
-# serviceConfig.uri pointing to the invoke endpoint.
+  -d '{"buildConfig":{"runtime":"go121","entryPoint":"Handler"}}'
+# The LRO response includes serviceConfig.uri pointing to the invoke endpoint.
 
 curl -s -X POST 'http://localhost:4567/v2-functions-invoke/my-fn' -d '{}'
-# => hello from function
+# => {}   (and a "Function invoked" entry in Cloud Logging)
 ```
 
 ### Cloud Logging
