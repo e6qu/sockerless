@@ -259,8 +259,8 @@ func TestTerraformApplyDestroy(t *testing.T) {
 		"azurerm App Service swift subnet id must include the canonical ARM path; got %s", azrmSwiftSubnet)
 
 	azrmSwift := outputs.must(t, "azrm_swift_connection_id")
-	require.Contains(t, azrmSwift, "/providers/Microsoft.Web/sites/tf-azrm-swift-fa/networkConfig/virtualNetwork",
-		"azurerm App Service VNet swift connection id must include the site networkConfig path; got %s", azrmSwift)
+	require.Contains(t, azrmSwift, "/providers/Microsoft.Web/sites/tf-azrm-swift-fa/config/virtualNetwork",
+		"azurerm App Service VNet swift connection id must be the canonical config sub-resource path; got %s", azrmSwift)
 
 	azrmAPIM := outputs.must(t, "azrm_apim_id")
 	require.Contains(t, azrmAPIM, "/providers/Microsoft.ApiManagement/service/tf-azrm-apim",
