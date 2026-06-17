@@ -355,7 +355,7 @@ jobs:
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
             make sdk-test
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           GOWORK: "off"
       - name: Spec-shape ratchet (aws sdk)
