@@ -570,11 +570,15 @@ func (p *cloudRunCloudState) resolveExecutionState(ctx context.Context, job *run
 		Name: latestExec.Name,
 	})
 	if err != nil {
-		// If we can't fetch, use the reference's completion info
+		// The execution completed (the job reference carries a CompletionTime)
+		// but we can't fetch its real exit code. Do NOT fabricate exit 0 — that
+		// would report a failed job as success. Report -1 (completed, exit code
+		// unknown) so `docker wait` surfaces it as a failure rather than masking
+		// it. A transient pre-completion fetch error stays "created".
 		if latestExec.CompletionTime != nil {
 			return api.ContainerState{
 				Status:   "exited",
-				ExitCode: 0,
+				ExitCode: -1,
 			}
 		}
 		return api.ContainerState{

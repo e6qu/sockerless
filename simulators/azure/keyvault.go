@@ -2778,6 +2778,5 @@ func handleKVPurgeDeletedSecret(w http.ResponseWriter, r *http.Request, vault, n
 		return
 	}
 	keyVaultData.Delete(key)
-	_ = rec
 	w.WriteHeader(http.StatusNoContent)
 }

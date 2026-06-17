@@ -92,16 +92,12 @@ func handlePGListConfigurations(w http.ResponseWriter, r *http.Request) {
 	sub := sim.PathParam(r, "subscriptionId")
 	rg := sim.PathParam(r, "resourceGroupName")
 	server := sim.PathParam(r, "name")
-	prefix := sub + "/" + rg + "/" + server + "/"
 	all := pgConfigurations.Filter(func(c PGConfiguration) bool {
 		return strings.HasPrefix(c.ID, pgServerID(sub, rg, server)+"/configurations/")
 	})
 	if all == nil {
 		all = []PGConfiguration{}
 	}
-	// Reference the prefix so it doesn't get linted out — the Filter
-	// above could equivalently use a prefix string key.
-	_ = prefix
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 }
 

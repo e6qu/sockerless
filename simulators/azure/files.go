@@ -218,7 +218,6 @@ func registerAzureFiles(srv *sim.Server) {
 	storageAccounts := sim.MakeStore[StorageAccount](srv.DB(), "storage_accounts")
 	azStorageAccounts = storageAccounts
 	fileShares := sim.MakeStore[FileShare](srv.DB(), "file_shares")
-	fileData := sim.MakeStore[[]byte](srv.DB(), "file_data")
 	storageTables = sim.MakeStore[StorageTable](srv.DB(), "storage_tables")
 	// dataPlaneShares tracks shares created via either ARM or data-plane APIs
 	// so that the data-plane middleware can return 404 for non-existent shares.
@@ -842,9 +841,6 @@ func registerAzureFiles(srv *sim.Server) {
 			next.ServeHTTP(w, r)
 		})
 	})
-
-	// Keep fileData available for potential future file data-plane operations
-	_ = fileData
 }
 
 // blobServiceResponse builds the ARM blobServices/default resource envelope,

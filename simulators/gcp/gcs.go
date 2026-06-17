@@ -766,7 +766,11 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 		if r.URL.Query().Get("alt") == "media" {
-			body := gcsObjectBytes(obj, bucketName, objectName)
+			body, err := gcsObjectBytes(obj, bucketName, objectName)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+				return
+			}
 			setGCSObjectResponseHeaders(w.Header(), obj, len(body))
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write(body)
@@ -1060,7 +1064,12 @@ func registerGCS(srv *sim.Server) {
 			} else {
 				componentCount++
 			}
-			composed = append(composed, gcsObjectBytes(srcObj, bucketName, src.Name)...)
+			srcBytes, err := gcsObjectBytes(srcObj, bucketName, src.Name)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+				return
+			}
+			composed = append(composed, srcBytes...)
 		}
 		objAttrs := GCSObject{}
 		if req.Destination != nil {
@@ -1113,7 +1122,11 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
-		body := gcsObjectBytes(obj, bucketName, objectName)
+		body, err := gcsObjectBytes(obj, bucketName, objectName)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+			return
+		}
 		setGCSObjectResponseHeaders(w.Header(), obj, len(body))
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
@@ -1131,7 +1144,11 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
-		body := gcsObjectBytes(obj, bucketName, objectName)
+		body, err := gcsObjectBytes(obj, bucketName, objectName)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+			return
+		}
 		setGCSObjectResponseHeaders(w.Header(), obj, len(body))
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
@@ -1256,7 +1273,12 @@ func copyGCSObject(w http.ResponseWriter, r *http.Request, srcBucket, srcObject,
 		}
 		dstAttrs = meta.applyTo(dstAttrs)
 	}
-	data := append([]byte(nil), gcsObjectBytes(src, srcBucket, srcObject)...)
+	srcBytes, err := gcsObjectBytes(src, srcBucket, srcObject)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "%v", err)
+		return GCSObject{}, false
+	}
+	data := append([]byte(nil), srcBytes...)
 	dst, err := persistGCSObject(objects, dstBucket, dstObject, data, dstAttrs)
 	if err != nil {
 		writeGCSPersistError(w, "write copied object", err)
@@ -1267,27 +1289,31 @@ func copyGCSObject(w http.ResponseWriter, r *http.Request, srcBucket, srcObject,
 
 // gcsObjectBytes returns the object's payload bytes. Prefers the
 // in-memory copy when present (uploaded in the same process lifetime);
-// falls back to the on-disk file at <gcsHostRoot>/<bucket>/<object>
+// otherwise reads the on-disk file at <gcsHostRoot>/<bucket>/<object>
 // (which IS the source of truth — the in-memory `data` field is
 // stripped by the SQLite-backed sim.Store's JSON round-trip on every
-// Get). Returns nil if the disk read fails (caller writes empty body).
-func gcsObjectBytes(obj GCSObject, bucket, object string) []byte {
+// Get). A read failure is a real error (the object metadata exists but
+// its payload is unreadable) and is returned so the caller fails the
+// request loudly rather than serving an empty body. A legitimately
+// empty object reads as a zero-length file with no error.
+func gcsObjectBytes(obj GCSObject, bucket, object string) ([]byte, error) {
 	if len(obj.data) > 0 {
-		return obj.data
+		return obj.data, nil
 	}
 	body, err := os.ReadFile(filepath.Join(GCSBucketHostDir(bucket), object))
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("read object payload %s/%s: %w", bucket, object, err)
 	}
-	return body
+	return body, nil
 }
 
 // GCSObjectBytes is exported for cross-package callers (e.g.
-// cloudbuild.go's executeBuild source-fetch).
-func GCSObjectBytes(bucket, object string) []byte {
+// cloudbuild.go's executeBuild source-fetch). It errors when the object
+// is unknown or its payload is unreadable.
+func GCSObjectBytes(bucket, object string) ([]byte, error) {
 	obj, ok := gcsObjects.Get(bucket + "/" + object)
 	if !ok {
-		return nil
+		return nil, fmt.Errorf("object %s/%s not found", bucket, object)
 	}
 	return gcsObjectBytes(obj, bucket, object)
 }

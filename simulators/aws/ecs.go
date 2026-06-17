@@ -1848,6 +1848,29 @@ func ecsTaskVPCNetwork(taskID string) (networkName, eniIP string, ok bool, err e
 	return name, eniIP, true, nil
 }
 
+// ecsRequireCluster resolves a cluster ref (name or ARN; "" → "default") and,
+// if it doesn't exist, writes a ClusterNotFoundException and returns false. Real
+// ECS rejects every cluster-scoped operation against an unknown cluster, so a
+// deleted/unknown cluster is distinguishable from an empty cluster or a missing
+// task.
+func ecsRequireCluster(w http.ResponseWriter, ref string) bool {
+	name := ref
+	if name == "" {
+		name = "default"
+	}
+	if strings.HasPrefix(name, "arn:") {
+		parts := strings.Split(name, "/")
+		if len(parts) > 1 {
+			name = parts[len(parts)-1]
+		}
+	}
+	if _, ok := ecsClusters.Get(name); !ok {
+		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest, "Cluster not found: %s", ref)
+		return false
+	}
+	return true
+}
+
 func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Cluster string   `json:"cluster"`
@@ -1855,6 +1878,9 @@ func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !ecsRequireCluster(w, req.Cluster) {
 		return
 	}
 
@@ -1896,6 +1922,9 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !ecsRequireCluster(w, req.Cluster) {
 		return
 	}
 	if req.Task == "" {
@@ -1959,6 +1988,9 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if !ecsRequireCluster(w, req.Cluster) {
 		return
 	}
 
