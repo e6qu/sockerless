@@ -34,7 +34,7 @@ jobs:
           - shard: dispatchers
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -55,7 +55,7 @@ jobs:
     name: check-deps (deps + actions + scripts)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -95,7 +95,7 @@ jobs:
     permissions:
       pull-requests: read
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: At most one PR open
         env:
           GH_TOKEN: ${{ github.token }}
@@ -108,7 +108,7 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -122,7 +122,7 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -169,7 +169,7 @@ jobs:
           - shard: azure backends
             backends: aca azure-functions
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -207,7 +207,7 @@ jobs:
           - shard: azure-functions
             backends: azf
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -229,7 +229,7 @@ jobs:
     runs-on: ubuntu-24.04-arm
     name: test (e2e)
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -243,7 +243,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -273,7 +273,7 @@ jobs:
         cloud: [gcp, azure]
     name: sim (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -328,7 +328,7 @@ jobs:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -393,7 +393,7 @@ jobs:
             timeout: 420s
             timeout_minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -441,7 +441,7 @@ jobs:
         cloud: [aws, gcp, azure]
     name: tf (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -496,7 +496,7 @@ jobs:
   ui:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: '1.3'
@@ -510,7 +510,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -539,7 +539,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -573,7 +573,7 @@ jobs:
     # a hit; the headroom covers a cold cache.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -642,7 +642,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -658,7 +658,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: gh CLI parity harness (Docker)
         run: make bleephub-gh-docker-test
 
@@ -674,7 +674,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: Official runner integration harness (Docker)
         run: make bleephub-runner-docker-test
 
@@ -682,7 +682,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -699,7 +699,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -735,7 +735,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -774,7 +774,7 @@ jobs:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
@@ -794,7 +794,7 @@ jobs:
   terraform:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
