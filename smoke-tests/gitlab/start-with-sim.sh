@@ -28,7 +28,9 @@ case "$CLOUD" in
         SIM_LISTEN_ADDR=":4566" simulator-aws &
         wait_for_url "http://127.0.0.1:4566/health"
         # Create ECS cluster
-        curl -s -X POST http://127.0.0.1:4566/ \
+        # -f so a non-2xx CreateCluster aborts (set -e) instead of starting the
+        # backend against a missing cluster.
+        curl -sf -X POST http://127.0.0.1:4566/ \
             -H "Content-Type: application/x-amz-json-1.1" \
             -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster" \
             -d '{"clusterName":"sim-cluster"}' >/dev/null

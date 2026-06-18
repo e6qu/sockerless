@@ -48,28 +48,33 @@ export function RepoDetailPage() {
     queryFn: () => fetchRepoBranches(owner, repo),
     enabled: !!owner && !!repo,
   });
-  const { data: commits = [], isLoading: commitsLoading } = useQuery({
+  const {
+    data: commits = [],
+    isLoading: commitsLoading,
+    isError: commitsError,
+    error: commitsErr,
+  } = useQuery({
     queryKey: ["commits", owner, repo],
     queryFn: () => fetchRepoCommits(owner, repo),
     enabled: tab === "commits" || tab === "code",
   });
   const counts = useOpenCounts(owner, repo);
-  const { data: webhooks = [] } = useQuery({
+  const { data: webhooks = [], isError: webhooksError, error: webhooksErr } = useQuery({
     queryKey: ["webhooks", owner, repo],
     queryFn: () => fetchWebhooks(owner, repo),
     enabled: tab === "webhooks" && !!owner && !!repo,
   });
-  const { data: secrets = [] } = useQuery({
+  const { data: secrets = [], isError: secretsError, error: secretsErr } = useQuery({
     queryKey: ["secrets", owner, repo],
     queryFn: () => fetchSecrets(owner, repo),
     enabled: tab === "secrets" && !!owner && !!repo,
   });
-  const { data: environments = [] } = useQuery({
+  const { data: environments = [], isError: environmentsError, error: environmentsErr } = useQuery({
     queryKey: ["environments", owner, repo],
     queryFn: () => fetchEnvironments(owner, repo),
     enabled: tab === "environments" && !!owner && !!repo,
   });
-  const { data: releases = [] } = useQuery({
+  const { data: releases = [], isError: releasesError, error: releasesErr } = useQuery({
     queryKey: ["releases", owner, repo],
     queryFn: () => fetchReleases(owner, repo),
     enabled: tab === "releases" && !!owner && !!repo,
@@ -121,14 +126,42 @@ export function RepoDetailPage() {
         ))}
       </div>
 
-      {tab === "code" && (
-        <CodeView owner={owner} repo={repo} commits={commits} loading={commitsLoading} branch={repoData.default_branch} />
-      )}
-      {tab === "commits" && <CommitsList commits={commits} loading={commitsLoading} />}
-      {tab === "releases" && <ReleasesList releases={releases} />}
-      {tab === "webhooks" && <WebhooksList hooks={webhooks} />}
-      {tab === "secrets" && <SecretsList secrets={secrets} />}
-      {tab === "environments" && <EnvironmentsList environments={environments} />}
+      {tab === "code" &&
+        (commitsError ? (
+          <InlineError title="Failed to load repository contents" detail={String(commitsErr)} />
+        ) : (
+          <CodeView owner={owner} repo={repo} commits={commits} loading={commitsLoading} branch={repoData.default_branch} />
+        ))}
+      {tab === "commits" &&
+        (commitsError ? (
+          <InlineError title="Failed to load commits" detail={String(commitsErr)} />
+        ) : (
+          <CommitsList commits={commits} loading={commitsLoading} />
+        ))}
+      {tab === "releases" &&
+        (releasesError ? (
+          <InlineError title="Failed to load releases" detail={String(releasesErr)} />
+        ) : (
+          <ReleasesList releases={releases} />
+        ))}
+      {tab === "webhooks" &&
+        (webhooksError ? (
+          <InlineError title="Failed to load webhooks" detail={String(webhooksErr)} />
+        ) : (
+          <WebhooksList hooks={webhooks} />
+        ))}
+      {tab === "secrets" &&
+        (secretsError ? (
+          <InlineError title="Failed to load secrets" detail={String(secretsErr)} />
+        ) : (
+          <SecretsList secrets={secrets} />
+        ))}
+      {tab === "environments" &&
+        (environmentsError ? (
+          <InlineError title="Failed to load environments" detail={String(environmentsErr)} />
+        ) : (
+          <EnvironmentsList environments={environments} />
+        ))}
     </div>
   );
 }

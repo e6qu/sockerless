@@ -53,10 +53,10 @@ case "$BACKEND_TYPE" in
         SIM_LISTEN_ADDR=":4566" /usr/local/bin/simulator-aws 2>/tmp/sim.log &
         SIM_PID=$!
         wait_for_url "http://127.0.0.1:4566/health"
-        curl -s -X POST http://127.0.0.1:4566/ \
+        curl -sf -X POST http://127.0.0.1:4566/ \
             -H "Content-Type: application/x-amz-json-1.1" \
             -H "X-Amz-Target: AmazonEC2ContainerServiceV20141113.CreateCluster" \
-            -d '{"clusterName":"sim-cluster"}' >/dev/null
+            -d '{"clusterName":"sim-cluster"}' >/dev/null || fail "create ECS sim-cluster"
         export SOCKERLESS_ENDPOINT_URL="http://127.0.0.1:4566"
         export SOCKERLESS_ECS_CLUSTER="sim-cluster"
         export SOCKERLESS_ECS_SUBNETS="subnet-0123456789abcdef0"

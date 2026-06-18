@@ -213,13 +213,13 @@ check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off
 # The host Docker socket mount is required: the simulator executes
 # workloads on the host daemon.
 smoke-test-ecs:
-	docker build -t sockerless-smoke-ecs -f smoke-tests/Dockerfile.ecs .
+	docker build --load -t sockerless-smoke-ecs -f smoke-tests/Dockerfile.ecs .
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-ecs
 smoke-test-cloudrun:
-	docker build -t sockerless-smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
+	docker build --load -t sockerless-smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-cloudrun
 smoke-test-aca:
-	docker build -t sockerless-smoke-aca -f smoke-tests/Dockerfile.aca .
+	docker build --load -t sockerless-smoke-aca -f smoke-tests/Dockerfile.aca .
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-aca
 smoke-test-all: smoke-test-ecs smoke-test-cloudrun smoke-test-aca
 
@@ -378,7 +378,7 @@ upstream-test-gcl-all:
 .PHONY: bleephub-gh-docker-test
 bleephub-gh-docker-test:
 	@printf "$(COLOR_CYAN)▸ Building bleephub gh-test image…$(COLOR_RESET)\n"
-	@docker build -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .
+	@docker build --load -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .
 	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
 	@docker run --rm bleephub-gh-test:local
 
