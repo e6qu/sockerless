@@ -28,7 +28,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Prev merged (#578) | The single-job bleeplab GitLab ECS cell GREEN: **BUG-1801** bleeplab serves each project as a real git repo over smart-HTTP (object-store-backed go-git), `GIT_STRATEGY: clone` materializes `CI_PROJECT_DIR`; **BUG-1802** the ECS backend reconstructs a container's `HostConfig.Binds` from the task def's mount points on restart so gitlab-runner's per-stage helper restarts keep the EFS `/builds` mount. |
 | Last merged | #577 BUG-1800 EFS access-point writability. #576 BUG-1798 ECS gitlab attach-stdin. #575 bleeplab ECS harness (BUG-1797, BUG-1799). #574 bleeplab GitLab sim. |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (1877 filed · 1834 fixed · 2 open · 9 FP). 2 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream) — both externally gated. |
+| Bugs | See [BUGS.md](BUGS.md) header (1878 filed · 1835 fixed · 2 open · 9 FP). 2 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream) — both externally gated. BUG-1878: the BUG-1871 Playwright fix wrapped `apt` in a kill-timeout → corrupted dpkg → install failed; split apt (unguarded) from the cacheable download (retried). |
 | Live infra | None up. |
 
 ## What's next
