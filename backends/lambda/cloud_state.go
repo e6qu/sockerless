@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -119,7 +120,10 @@ func (p *lambdaCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary,
 					NextToken:      imgToken,
 				})
 				if imErr != nil {
-					break
+					// A truncated list returned as complete hides images on a
+					// transient ECR error — surface it (the outer
+					// DescribeRepositories error is already surfaced).
+					return nil, fmt.Errorf("ECR DescribeImages %s: %w", repoName, imErr)
 				}
 				for _, img := range imgsOut.ImageDetails {
 					var repoTags []string

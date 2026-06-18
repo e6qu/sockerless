@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -408,8 +409,10 @@ func (p *ecsCloudState) ListImages(ctx context.Context) ([]*api.ImageSummary, er
 					NextToken:      imgToken,
 				})
 				if imErr != nil {
-					// Skip repos we can't read (permissions, empty, etc.)
-					break
+					// A DescribeImages error mid-pagination must not be returned
+					// as a complete-but-truncated list — surface it (the outer
+					// DescribeRepositories error is already surfaced).
+					return nil, fmt.Errorf("ECR DescribeImages %s: %w", repoName, imErr)
 				}
 				for _, img := range imgsOut.ImageDetails {
 					tags := img.ImageTags
@@ -580,12 +583,9 @@ func taskToContainer(task ecstypes.Task, tags map[string]string, td ecstypes.Tas
 	// Map ECS status to Docker state
 	state := mapTaskStatus(task, tags)
 
-	// Extract real IP from ENI
+	// Extract real IP + MAC from the ENI attachment (never synthesized).
 	ip := extractENIIP(task)
-	mac := ""
-	if ip != "" {
-		mac = deriveMACFromIP(ip)
-	}
+	mac := extractENIMAC(task)
 
 	// Parse creation time
 	created := ""

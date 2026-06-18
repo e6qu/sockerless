@@ -29,6 +29,26 @@ func TestResolveAzureImageURI_WithACRAndOrg(t *testing.T) {
 	}
 }
 
+// TestResolveAzureImageURI_HonorsCoordinate proves the resolver routes through
+// the SOCKERLESS_AZURE_ACR_ENDPOINT coordinate (the same one the overlay
+// build→push path uses) instead of a hardcoded `.azurecr.io`, so the deployed
+// ref points at the registry the overlay was actually pushed to. A
+// coordinate-relocated ref then round-trips unchanged.
+func TestResolveAzureImageURI_HonorsCoordinate(t *testing.T) {
+	t.Setenv("SOCKERLESS_AZURE_ACR_ENDPOINT", "https://127.0.0.1:5000/")
+
+	got := ResolveAzureImageURI("alpine:latest", "myacr")
+	want := "127.0.0.1:5000/library/alpine:latest"
+	if got != want {
+		t.Fatalf("got %q, want %q (must honor the registry coordinate, not .azurecr.io)", got, want)
+	}
+
+	// An already-resolved coordinate ref passes through unchanged.
+	if got := ResolveAzureImageURI(want, "myacr"); got != want {
+		t.Fatalf("coordinate ref should pass through, got %q", got)
+	}
+}
+
 func TestResolveAzureImageURI_NoACR(t *testing.T) {
 	got := ResolveAzureImageURI("alpine:latest", "")
 	// Should normalize to docker.io/library/alpine:latest or similar

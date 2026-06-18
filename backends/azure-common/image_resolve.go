@@ -47,11 +47,11 @@ func ResolveAzureImageURI(ref, acrName string) string {
 		return ref
 	}
 
-	// If ACR name is provided, rewrite to ACR URI
+	// If ACR name is provided, rewrite to the registry URI — honoring the
+	// SOCKERLESS_AZURE_ACR_ENDPOINT coordinate (the same one the overlay
+	// build→push path uses) instead of a hardcoded `.azurecr.io`.
 	if acrName != "" {
-		// Strip any trailing .azurecr.io if someone passed the full hostname
-		acrName = strings.TrimSuffix(acrName, ".azurecr.io")
-		return acrName + ".azurecr.io/" + repo + ":" + tag
+		return AzureRegistryHost(acrName) + "/" + repo + ":" + tag
 	}
 
 	// No ACR — pass ref through unchanged; ACA pulls Docker Hub directly.
@@ -133,8 +133,7 @@ func ResolveAzureImageURIWithCache(
 			default:
 				continue
 			}
-			acrName := strings.TrimSuffix(registryName, ".azurecr.io")
-			return acrName + ".azurecr.io/" + tailRepo + ":" + tag, nil
+			return AzureRegistryHost(registryName) + "/" + tailRepo + ":" + tag, nil
 		}
 	}
 

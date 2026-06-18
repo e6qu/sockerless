@@ -163,6 +163,7 @@ func TestTaskToContainer_NetworkIPFromENI(t *testing.T) {
 				Type: aws.String("ElasticNetworkInterface"),
 				Details: []ecstypes.KeyValuePair{
 					{Name: aws.String("privateIPv4Address"), Value: aws.String("10.0.1.42")},
+					{Name: aws.String("macAddress"), Value: aws.String("0a:58:0a:00:01:2a")},
 				},
 			},
 		},
@@ -182,8 +183,10 @@ func TestTaskToContainer_NetworkIPFromENI(t *testing.T) {
 	if net.IPAddress != "10.0.1.42" {
 		t.Fatalf("expected IP 10.0.1.42, got %q", net.IPAddress)
 	}
-	if net.MacAddress != "02:42:0a:00:01:2a" {
-		t.Fatalf("expected MAC 02:42:0a:00:01:2a, got %q", net.MacAddress)
+	// The MAC is the ENI attachment's real macAddress, never synthesized from
+	// the IP.
+	if net.MacAddress != "0a:58:0a:00:01:2a" {
+		t.Fatalf("expected MAC 0a:58:0a:00:01:2a, got %q", net.MacAddress)
 	}
 }
 
