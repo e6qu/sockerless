@@ -4,6 +4,43 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Audit round 5: concurrency / leaks / shared-copy divergence
+
+Four audit passes had combed the code with the same "fakes / swallows / dead-code"
+lens, so this round switched to lenses none of them used — concurrency-race
+correctness, resource leaks, and divergence between the three vendored copies of
+the shared sim library — plus an empirical `go test -race`. The race detector was
+clean (the races live in untested concurrent paths), but inspection found real
+ones.
+
+- **BUG-1875 (concurrency).** Five fixes. `core/reverse_agent.go` assigned
+  `OnDroppedMessage` after the constructor had already started `readLoop`, racing
+  the read loop's unsynchronized field read — the exact race the code had already
+  fixed for `OnSystemMessage`; a new `NewReverseAgentConnWithHandlers` sets both
+  handlers before the loop. `core execForOutput` read the result `bytes.Buffer`
+  on its 5s-timeout path without waiting for the `io.Copy` goroutine. `core
+  DropSession` closed the registry session unconditionally, so after a
+  crash-restart re-dial (where `Register` replaces+closes the old conn) the old
+  handler's drop killed the NEW live session — now identity-checked. `cloudrun`'s
+  invoke-defer belt-and-suspenders `else` branch double-closed a WaitCh that
+  `ContainerStop`/`Kill` (a non-atomic LoadAndDelete-then-close) had already
+  taken, panicking — removed to restore single-owner close. `agent/server.go`'s
+  per-conn `<-mp.Done()` watcher blocked forever when the WS dropped while the
+  main process ran, leaking a goroutine per reconnect — now guarded by a
+  defer-closed `connDone`.
+- **BUG-1876 (resource leak).** The azure sim's EventGrid webhook delivery and
+  subscription-validation discarded the `*http.Response` from `http.Post`, never
+  closing the body — leaking a connection per subscriber per event. Both drain +
+  close now.
+- **BUG-1877 (shared-copy divergence).** The three sims vendor a copy of the same
+  `shared/` library, and AWS had drifted ahead: its `RegisterUI` guards the root
+  redirect against a `ServeMux` panic (when a service already owns `GET /{$}`) and
+  its middleware captures the 5xx error body for logging — both missing from the
+  GCP/Azure copies. Ported AWS's versions to both (the GCP/Azure panic is latent
+  only because no current handler owns their root). Genuinely cloud-specific
+  divergences (sandbox profiles, the AWS-query router, Azure path normalization)
+  were left alone.
+
 ## 2026-06-19 - Audit round 4: deep UI pass + sim structure + harness scripts
 
 A fourth parallel-agent audit, targeting areas the first three didn't deeply

@@ -268,11 +268,19 @@ func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 	connMu := &sync.Mutex{}
 	router := NewRouter(s.registry, s.mp, s.logger)
 
-	// If main process exits, close the connection to unblock ReadMessage
+	// If main process exits, close the connection to unblock ReadMessage.
+	// The connDone guard lets the watcher exit when THIS connection drops
+	// (ReadMessage error) while the main process keeps running — otherwise it
+	// would block on s.mp.Done() forever, leaking one goroutine per reconnect.
 	if s.mp != nil {
+		connDone := make(chan struct{})
+		defer close(connDone)
 		go func() {
-			<-s.mp.Done()
-			_ = conn.Close()
+			select {
+			case <-s.mp.Done():
+				_ = conn.Close()
+			case <-connDone:
+			}
 		}()
 	}
 

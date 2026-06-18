@@ -2,6 +2,7 @@ package simulator
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 
 	"github.com/rs/zerolog"
 )
+
+// loggedErrorBodyLimit caps how much of a 5xx response body the request log
+// captures (see statusWriter.Write).
+const loggedErrorBodyLimit = 4096
 
 type contextKey int
 
@@ -104,6 +109,9 @@ func LoggingMiddleware(logger zerolog.Logger, provider string) func(http.Handler
 			if k := r.Header.Get("x-goog-encryption-key-sha256"); k != "" {
 				event.Bool("gcs_sse_c", true)
 			}
+			if sw.status >= 500 && sw.body.Len() > 0 {
+				event.Str("error_body", sw.body.String())
+			}
 
 			event.Msg("request")
 		})
@@ -179,11 +187,26 @@ func generateRequestID() string {
 type statusWriter struct {
 	http.ResponseWriter
 	status int
+	body   bytes.Buffer
 }
 
 func (w *statusWriter) WriteHeader(code int) {
 	w.status = code
 	w.ResponseWriter.WriteHeader(code)
+}
+
+// Write captures up to loggedErrorBodyLimit bytes of the response so a 5xx can
+// be logged with its error body (the request-log line reads sw.body).
+func (w *statusWriter) Write(p []byte) (int, error) {
+	if w.body.Len() < loggedErrorBodyLimit {
+		remaining := loggedErrorBodyLimit - w.body.Len()
+		if len(p) > remaining {
+			_, _ = w.body.Write(p[:remaining])
+		} else {
+			_, _ = w.body.Write(p)
+		}
+	}
+	return w.ResponseWriter.Write(p)
 }
 
 // Hijack implements http.Hijacker so WebSocket upgrades work through the middleware.

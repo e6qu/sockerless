@@ -34,7 +34,7 @@ jobs:
           - shard: dispatchers
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -54,15 +54,16 @@ jobs:
   check-deps:
     name: check-deps (deps + actions + scripts)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install script check tools
-        run: sudo apt-get update && sudo apt-get install -y jq shellcheck zsh
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y jq shellcheck zsh
       - name: Check shell scripts
         run: |
           shellcheck -x -s bash scripts/*.sh
@@ -92,10 +93,11 @@ jobs:
   single-open-pr:
     name: At most one PR open
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: At most one PR open
         env:
           GH_TOKEN: ${{ github.token }}
@@ -107,8 +109,9 @@ jobs:
     name: Branch rebased on origin/main
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
@@ -121,8 +124,9 @@ jobs:
   test-core:
     name: test (core)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -156,6 +160,7 @@ jobs:
   test-backend:
     name: test (${{ matrix.shard }})
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -169,7 +174,7 @@ jobs:
           - shard: azure backends
             backends: aca azure-functions
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -194,6 +199,7 @@ jobs:
   test-faas-smoke:
     name: test (${{ matrix.shard }} faas-smoke)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -207,7 +213,7 @@ jobs:
           - shard: azure-functions
             backends: azf
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -227,9 +233,10 @@ jobs:
     # Native linux/arm64 CPU architecture, matching the simulator
     # capacity contract without QEMU.
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     name: test (e2e)
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -243,7 +250,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -255,8 +262,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install Firecracker test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iptables iputils-ping nftables openssh-client squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iptables iputils-ping nftables openssh-client squashfs-tools
       - name: Install Firecracker
         run: bash scripts/install-firecracker.sh
       - name: Run Firecracker arithmetic smoke
@@ -267,13 +274,14 @@ jobs:
   sim:
     # VM-backed simulator slices require /dev/kvm for real Firecracker guests.
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         cloud: [gcp, azure]
     name: sim (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -293,8 +301,8 @@ jobs:
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run module unit tests
         run: cd simulators/${{ matrix.cloud }} && GOWORK=off make unit-test
@@ -327,8 +335,9 @@ jobs:
   sim-aws-sdk:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -340,8 +349,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run AWS module unit tests
         run: cd simulators/aws && GOWORK=off make unit-test
@@ -376,6 +385,7 @@ jobs:
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -393,7 +403,7 @@ jobs:
             timeout: 420s
             timeout_minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -405,8 +415,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Install Session Manager plugin
         run: |
@@ -435,13 +445,14 @@ jobs:
     # against a provider sequence that the SDK tests had already
     # marked green).
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         cloud: [aws, gcp, azure]
     name: tf (${{ matrix.cloud }})
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -456,17 +467,17 @@ jobs:
           terraform_wrapper: false
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Install Caddy
         run: |
-          sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y debian-keyring debian-archive-keyring apt-transport-https curl
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
           sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-          sudo apt-get update
-          sudo apt-get install -y caddy
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y caddy
       - name: Run terraform tests
         run: |
           cd simulators/${{ matrix.cloud }}
@@ -495,8 +506,9 @@ jobs:
 
   ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: oven-sh/setup-bun@v2.2.0
         with:
           bun-version: '1.3'
@@ -510,7 +522,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -539,7 +551,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -573,7 +585,7 @@ jobs:
     # a hit; the headroom covers a cold cache.
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -588,11 +600,11 @@ jobs:
         run: cp -r ui/packages/bleephub/dist bleephub/dist
       - name: Build bleephub binary
         run: cd bleephub && GOWORK=off go build -o /tmp/bleephub-server ./cmd/
-      # Cache the chromium binary so the install isn't a ~150MB download every
-      # run (the variable-time step that previously cancelled the job on the
-      # 10-min wall). Keyed on the lockfile so a @playwright/test version bump
-      # invalidates it; restore-keys keeps a warm cache across other dep bumps,
-      # and `playwright install` re-downloads only if the version differs.
+      # Cache the chromium binary so it isn't a ~150MB download every run (the
+      # variable-time step that previously hung the job). Keyed on the lockfile
+      # so a @playwright/test version bump invalidates it; restore-keys keeps a
+      # warm cache across other dep bumps, and `playwright install` re-downloads
+      # only if the version differs.
       - name: Cache Playwright browsers
         uses: actions/cache@v5.0.5
         with:
@@ -600,21 +612,29 @@ jobs:
           key: playwright-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
           restore-keys: |
             playwright-${{ runner.os }}-
-      # Bounded retry: the chromium download / apt step has hung for many
-      # minutes on a stalled mirror (one run spent 9 min here and was cancelled
-      # on the job timeout). `timeout` caps each attempt so a hang fails fast
-      # and retries instead of consuming the whole job budget. With the cache
-      # above, the common case is a fast no-op.
-      - name: Install Playwright browsers
+      # System deps (apt) run UNGUARDED, in their own step: `install-deps` runs
+      # `sudo apt-get`, and wrapping it in a kill-`timeout` corrupts dpkg if it's
+      # killed mid-transaction (a prior version did exactly that — attempt 1
+      # timed out in apt, leaving the lock held, so retries failed instantly with
+      # apt exit 100). On GitHub runners most of these libs are pre-installed, so
+      # this is fast; a rare apt hang falls to the job timeout, not a wedged dpkg.
+      - name: Install Playwright system deps
+        run: cd ui/packages/bleephub && npx playwright install-deps chromium
+      # The chromium binary download IS the variable-network step the cache
+      # covers; bound it with `timeout` + retry. Killing a download mid-flight is
+      # safe (no dpkg/apt state), unlike killing apt above. On a cache hit this
+      # is a fast no-op.
+      - name: Install Playwright chromium
         run: |
           cd ui/packages/bleephub
           for attempt in 1 2 3; do
-            if timeout 240 npx playwright install --with-deps chromium; then
+            if timeout 180 npx playwright install chromium; then
               exit 0
             fi
-            echo "::warning::playwright install attempt ${attempt} timed out or failed; retrying"
+            echo "::warning::playwright chromium download attempt ${attempt} failed; retrying"
+            sleep 5
           done
-          echo "::error::playwright install failed after 3 attempts"
+          echo "::error::playwright chromium download failed after 3 attempts"
           exit 1
       - name: Run Playwright E2E tests
         run: cd ui/packages/bleephub && SERVER_BIN=/tmp/bleephub-server npx playwright test --timeout=60000
@@ -634,7 +654,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -650,7 +670,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: gh CLI parity harness (Docker)
         run: make bleephub-gh-docker-test
 
@@ -666,7 +686,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: Official runner integration harness (Docker)
         run: make bleephub-runner-docker-test
 
@@ -674,7 +694,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -691,7 +711,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -727,7 +747,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'
@@ -765,8 +785,9 @@ jobs:
   smoke:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - name: Smoke test (ecs)
         run: |
           docker build -t smoke-ecs -f smoke-tests/Dockerfile.ecs .
@@ -785,8 +806,9 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6.0.3
+      - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
         with:
           go-version: '1.25'

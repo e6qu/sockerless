@@ -782,7 +782,10 @@ func (s *BaseServer) execForOutput(containerID string, cmd []string) string {
 	select {
 	case <-readDone:
 	case <-time.After(5 * time.Second):
+		// Closing pw unblocks the io.Copy reader; wait for it to finish before
+		// reading buf, otherwise buf.String() races the copier's last write.
 		_ = pw.Close()
+		<-readDone
 	}
 
 	return buf.String()

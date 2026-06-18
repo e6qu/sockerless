@@ -168,10 +168,16 @@ func (r *ReverseAgentRegistry) Drop(id string) {
 // FaaSPodLifetimeExceeded. The full Drop runs later when
 // ContainerRemove fires (or never — and a new container gets a fresh
 // ID anyway).
-func (r *ReverseAgentRegistry) DropSession(id string) {
+//
+// conn is the connection THIS handler owns: the drop is a no-op unless it is
+// still the registered session. A crash-restart re-dial calls Register, which
+// closes the old conn (firing its Done) and stores the NEW conn under the same
+// id; without the identity check the old handler's drop would close the new
+// live session.
+func (r *ReverseAgentRegistry) DropSession(id string, conn *agent.ReverseAgentConn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if c, ok := r.sessions[id]; ok {
+	if c, ok := r.sessions[id]; ok && c == conn {
 		_ = c.Close()
 		delete(r.sessions, id)
 	}
@@ -200,22 +206,24 @@ func HandleReverseAgentWS(reg *ReverseAgentRegistry, logger zerolog.Logger) http
 			logger.Warn().Err(err).Str("session_id", sessionID).Msg("reverse-agent WebSocket upgrade failed")
 			return
 		}
-		rc := agent.NewReverseAgentConnWithSystemHandler(ws, func(m agent.Message) {
+		// Both handlers are set before the read loop starts (via the
+		// constructor) — assigning either after construction races with
+		// messages arriving in the first scheduler quantum.
+		rc := agent.NewReverseAgentConnWithHandlers(ws, func(m agent.Message) {
 			if m.Type == agent.TypeLifetimeExpired {
 				reg.MarkLifetimeExpired(sessionID)
 				logger.Warn().Str("container", sessionID).Msg("reverse-agent reported FaaS pod lifetime expiring; future exec will return operator-guidance error")
 			}
-		})
-		rc.OnDroppedMessage = func(m agent.Message) {
+		}, func(m agent.Message) {
 			logger.Warn().Str("session_id", sessionID).Str("exec", m.ID).Str("msg_type", m.Type).Msg("reverse-agent dropped an inbound session message (consumer channel full — exec stream may be truncated)")
-		}
+		})
 		if reg.Register(sessionID, rc) {
 			logger.Warn().Str("session_id", sessionID).Msg("reverse-agent session replaced a prior live session under the same container ID (re-dial / crash-restart)")
 		}
 		logger.Info().Str("session_id", sessionID).Str("remote", r.RemoteAddr).Msg("reverse-agent session registered")
 
 		<-rc.Done()
-		reg.DropSession(sessionID)
+		reg.DropSession(sessionID, rc)
 		logger.Info().Str("session_id", sessionID).Msg("reverse-agent session dropped (WebSocket closed)")
 	}
 }
