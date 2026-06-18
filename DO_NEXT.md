@@ -4,11 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/audit-round4-ui` — a FOURTH audit pass, 5 parallel agents over the UI packages (deep — only a shallow pass in #593), the sim mux/emitted-URL structure, and the integration harness scripts. The dominant find was the BUG-1851/1852 class — a failed fetch rendered as a confident healthy/empty state — recurring in pages that pass shallow review.
-- **BUG-1872 (bleephub UI, fixed):** `RepoDetailPage` ×5 secondary queries (commits/webhooks/secrets/environments/releases) destructured `data = []` with no `isError` → "No secrets configured" etc. on a 500; `OAuthPage` → infinite spinner on error; Issues/Pulls comments → "No comments yet". All now `InlineError` on `isError`.
-- **BUG-1873 (sim/bleeplab/admin/core UIs, fixed):** sim Overview ×3 rendered an all-zeros "running" board on a failed `/sim/v1/summary` (the exact docker-frontend defect, unfixed ×3); bleeplab Overview/ProjectDetail pipelines+storage swallows; core `MetricsPage` `status?.containers ?? 0` → `—`; admin ComponentDetail/ProcessDetail section swallows → `ErrorPanel`.
-- **BUG-1874 (harness + sim hygiene, fixed):** host-side `docker build`s (`smoke-test-{ecs,cloudrun,aca}` + `bleephub-gh-docker-test`) lacked `--load` (smoke targets were unusable on a buildx-default host) → added `--load` matching `Makefile:400/453`; smoke ECS-cluster bootstrap `curl -s`→`curl -sf …||fail`; aws sim `apigatewayv2.apiEndpoint` marked `// external:`.
-- **FALSE POSITIVE:** the in-harness `bleephub-spawn-runner` build "needs `--load`" — the harness uses the classic `docker.io` CLI (writes to the daemon store, rejects `--load`), so it's correct as-is. Verifying caught it (FP 8→9). Next: open ONE PR, drive CI green.
+`fix/audit-round5-concurrency` — a FIFTH audit pass using lenses the prior four didn't: concurrency/race correctness, resource leaks, and shared-sim-copy divergence, plus empirical `go test -race` (clean — the races are in untested concurrent paths, found by inspection).
+- **BUG-1875 (concurrency batch, fixed):** core reverse-agent `OnDroppedMessage` was set AFTER the constructor started `readLoop` (race — `NewReverseAgentConnWithHandlers` now sets both handlers up front); `execForOutput` read `buf` on the timeout path without waiting for the copier (`<-readDone`); `DropSession` closed `r.sessions[id]` unconditionally → after a re-dial it killed the NEW live session (now identity-checked, `DropSession(id, conn)`); cloudrun invoke-defer `else`-branch `close(exitCh)` double-closed the WaitCh `ContainerStop` already owned → panic (removed, single-owner close); agent per-conn `<-mp.Done()` watcher leaked a goroutine per reconnect (now `select`s on a `connDone` defer-closed).
+- **BUG-1876 (resource leak, fixed):** azure `eventgrid` discarded the `http.Post` response per subscriber/event → leaked a body each time; now drained + closed.
+- **BUG-1877 (shared-copy divergence, fixed):** AWS's `RegisterUI` panic-guard (`slices.Contains(routePatterns, "GET /{$}")`) + 5xx error-body logging were missing in the GCP/Azure `shared/` copies → ported to both. Next: open ONE PR, drive CI green.
+
+### (history) `fix/audit-round4-ui` (MERGED as #599) — deep UI pass + sim emitted-URL + harness scripts: BUG-1872/1873/1874 + a spawn-runner FP.
 
 ### (history) `fix/audit-round3-deferred` (MERGED as #598) — the 3 deferred items: BUG-1868/1869 fixed, BUG-1870 false positive.
 

@@ -104,7 +104,7 @@ func TestLifetimeExpired_DropSessionPreservesMarker(t *testing.T) {
 	// of FaaSPodLifetimeExceeded.
 	r := NewReverseAgentRegistry()
 	r.MarkLifetimeExpired("c1")
-	r.DropSession("c1")
+	r.DropSession("c1", nil) // no session registered → no-op; must not touch the marker
 	if !r.IsLifetimeExpired("c1") {
 		t.Fatal("DropSession wiped lifetime-expired (regression)")
 	}

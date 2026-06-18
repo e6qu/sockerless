@@ -705,7 +705,10 @@ func publishEventGridTopic(w http.ResponseWriter, r *http.Request, topic EventGr
 			continue
 		}
 		if endpoint := eventGridWebhookEndpoint(es); endpoint != "" {
-			_, _ = http.Post(endpoint, "application/json", bytes.NewReader(body))
+			if resp, err := http.Post(endpoint, "application/json", bytes.NewReader(body)); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
 		}
 	}
 	w.WriteHeader(http.StatusOK)
@@ -809,5 +812,8 @@ func deliverEventGridValidation(es EventGridEventSubscription) {
 		"dataVersion": "1",
 	}}
 	payload, _ := json.Marshal(event)
-	_, _ = http.Post(endpoint, "application/json", bytes.NewReader(payload))
+	if resp, err := http.Post(endpoint, "application/json", bytes.NewReader(payload)); err == nil {
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+	}
 }

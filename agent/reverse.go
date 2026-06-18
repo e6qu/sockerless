@@ -79,10 +79,21 @@ func NewReverseAgentConn(ws *websocket.Conn) *ReverseAgentConn {
 // TypeLifetimeExpired arriving immediately after the WS handshake
 // would be dropped because OnSystemMessage hadn't been assigned yet.
 func NewReverseAgentConnWithSystemHandler(ws *websocket.Conn, handler func(Message)) *ReverseAgentConn {
+	return NewReverseAgentConnWithHandlers(ws, handler, nil)
+}
+
+// NewReverseAgentConnWithHandlers wraps a WebSocket connection, registers BOTH
+// the connection-level system-message handler and the dropped-message handler,
+// and only then starts the read loop. Either handler assigned AFTER the
+// constructor returns races with messages arriving in the first scheduler
+// quantum (the readLoop reads the fields concurrently), so both must be set up
+// front.
+func NewReverseAgentConnWithHandlers(ws *websocket.Conn, system, dropped func(Message)) *ReverseAgentConn {
 	rc := &ReverseAgentConn{
-		ws:              ws,
-		done:            make(chan struct{}),
-		OnSystemMessage: handler,
+		ws:               ws,
+		done:             make(chan struct{}),
+		OnSystemMessage:  system,
+		OnDroppedMessage: dropped,
 	}
 	rc.startKeepalive()
 	go rc.readLoop()

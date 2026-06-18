@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -230,11 +231,16 @@ func (s *Server) ListenAndServe() error {
 }
 
 // RegisterUI registers an embedded SPA at /ui/ and redirects GET / to /ui/.
+// When a simulated service already owns the API root ("GET /{$}"), the API
+// surface wins: registering the redirect anyway would panic the mux at startup,
+// and the UI stays reachable at /ui/ directly.
 func (s *Server) RegisterUI(fsys fs.FS) {
 	s.mux.Handle("GET /ui/", spaHandler(fsys, "/ui/"))
-	s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
-	})
+	if !slices.Contains(s.routePatterns, "GET /{$}") {
+		s.mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)
+		})
+	}
 	s.logger.Info().Msg("UI registered at /ui/")
 }
 

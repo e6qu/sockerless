@@ -169,21 +169,16 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 	serviceURL := s.waitForServiceURL(id, 5*time.Minute)
 	s.Logger.Info().Str("container", id).Str("url", serviceURL).Msg("invokeServiceDefaultCmd: waitForServiceURL returned")
 	defer func() {
+		// Single-owner close: whoever wins the WaitChs LoadAndDelete owns the
+		// close (the same discipline every other WaitCh site uses). The old
+		// `else` branch closed the local exitCh — the SAME channel — when
+		// LoadAndDelete failed, but that only happens because ContainerStop/Kill
+		// already took it (LoadAndDelete then close, in two steps); closing here
+		// in the window between those two steps double-closed it → panic.
 		closed := false
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 			closed = true
-		} else if exitCh != nil {
-			// Belt-and-suspenders close in case WaitChs was already
-			// drained (e.g. by ContainerStop firing before invoke
-			// returned). Closing the local channel is harmless if
-			// nobody's reading.
-			select {
-			case <-exitCh:
-			default:
-				close(exitCh)
-				closed = true
-			}
 		}
 		s.Logger.Info().Str("container", id).Bool("waitch_closed", closed).Msg("invokeServiceDefaultCmd: defer ran (goroutine exiting)")
 	}()
