@@ -499,7 +499,30 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 	repoType.AddFieldConfig("viewerPermission", &graphql.Field{
 		Type: graphql.String,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return "ADMIN", nil
+			// Real GitHub computes viewerPermission from the viewer's actual
+			// access — ADMIN/WRITE/READ (bleephub models pull/push/admin; it
+			// does not track MAINTAIN/TRIAGE). Return null for no access.
+			src, _ := p.Source.(map[string]interface{})
+			fullName, _ := src["nameWithOwner"].(string)
+			parts := strings.SplitN(fullName, "/", 2)
+			if len(parts) != 2 {
+				return nil, nil
+			}
+			repo := s.store.GetRepo(parts[0], parts[1])
+			if repo == nil {
+				return nil, nil
+			}
+			viewer := ghUserFromContext(p.Context)
+			switch {
+			case canAdminRepo(s.store, viewer, repo):
+				return "ADMIN", nil
+			case canPushRepo(s.store, viewer, repo):
+				return "WRITE", nil
+			case canReadRepo(s.store, viewer, repo):
+				return "READ", nil
+			default:
+				return nil, nil
+			}
 		},
 	})
 

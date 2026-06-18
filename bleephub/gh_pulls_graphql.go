@@ -32,8 +32,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
-	_ = mergeableStateEnum // used as field type below
-
 	// MergeStateStatus carries real GitHub's full value set; bleephub derives
 	// CLEAN/DIRTY/UNKNOWN from the PR's stored mergeability (the only merge
 	// gates it models).
@@ -68,8 +66,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"REVIEW_REQUIRED":   &graphql.EnumValueConfig{Value: "REVIEW_REQUIRED"},
 		},
 	})
-
-	_ = pullRequestReviewDecisionEnum // used in PR type
 
 	// --- PR Label types (PR-prefixed to avoid name collision) ---
 	prLabelType := graphql.NewObject(graphql.ObjectConfig{
@@ -663,7 +659,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"headRefName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"baseRefName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"headRefOid":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"mergeable":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"mergeable":        &graphql.Field{Type: graphql.NewNonNull(mergeableStateEnum)},
 			"merged":           &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 			"mergedAt":         &graphql.Field{Type: graphql.String},
 			"additions":        &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
@@ -674,7 +670,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"createdAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"updatedAt":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"closedAt":         &graphql.Field{Type: graphql.String},
-			"reviewDecision":   &graphql.Field{Type: graphql.String},
+			"reviewDecision":   &graphql.Field{Type: pullRequestReviewDecisionEnum},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {

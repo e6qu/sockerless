@@ -186,8 +186,15 @@ func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(r.Body)
+		var rerr error
+		body, rerr = io.ReadAll(r.Body)
 		_ = r.Body.Close()
+		if rerr != nil {
+			// A partial read would mis-parse as "not an exec envelope" and
+			// silently fall through to the default-invoke argv — surface it.
+			writeTextResult(w, 1, []byte("failed to read invoke body: "+rerr.Error()+"\n"))
+			return
+		}
 	}
 	if env, ok := parseExecEnvelope(body); ok {
 		runExecEnvelope(w, r.Context(), env)
@@ -380,8 +387,20 @@ func jobTimeout() time.Duration {
 		return defaultJobTimeoutSeconds * time.Second
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 0
+	if err != nil {
+		// A malformed value must not silently disable the timeout (running
+		// unbounded) — log and fall back to the default.
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: %s=%q is not an integer — using default %ds: %v\n",
+			envJobTimeout, v, defaultJobTimeoutSeconds, err)
+		return defaultJobTimeoutSeconds * time.Second
+	}
+	if n < 0 {
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: %s=%d is negative — using default %ds\n",
+			envJobTimeout, n, defaultJobTimeoutSeconds)
+		return defaultJobTimeoutSeconds * time.Second
+	}
+	if n == 0 {
+		return 0 // explicit "no timeout"
 	}
 	return time.Duration(n) * time.Second
 }

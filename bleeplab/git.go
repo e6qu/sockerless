@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"path"
 	"sort"
@@ -276,7 +277,10 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, re
 		return
 	}
 	result, err := sess.ReceivePack(r.Context(), req)
-	if err != nil && !strings.Contains(err.Error(), "EOF") {
+	// A clean/short EOF is the benign end-of-stream for an empty or
+	// flush-only push; any OTHER ReceivePack error is a real failure and
+	// must not be swallowed by a substring match on "EOF".
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

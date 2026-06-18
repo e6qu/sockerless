@@ -1377,7 +1377,7 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 	var manifestLayers []ManifestLayerEntry
 	var totalSize int64
 	if result != nil && len(result.Layers) > 0 {
-		for layerPath, content := range result.Layers {
+		for _, content := range result.Layers {
 			digest := fmt.Sprintf("sha256:%x", sha256.Sum256(content))
 			layers = append(layers, digest)
 			totalSize += int64(len(content))
@@ -1388,7 +1388,6 @@ func (s *BaseServer) ImageLoad(r io.Reader) (io.ReadCloser, error) {
 				Size:      int64(len(content)),
 				MediaType: "application/vnd.docker.image.rootfs.diff.tar.gzip",
 			})
-			_ = layerPath
 		}
 	}
 	if len(layers) == 0 {

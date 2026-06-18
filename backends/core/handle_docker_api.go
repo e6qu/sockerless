@@ -300,7 +300,13 @@ func (s *BaseServer) handleDockerImageCreate(w http.ResponseWriter, r *http.Requ
 				loaded = strings.TrimSpace(loaded[:idx])
 				if loaded != "" {
 					tag := r.URL.Query().Get("tag")
-					_ = s.self.ImageTag(loaded, repo, tag)
+					// A failed tag must surface — otherwise `docker import`
+					// reports success while the requested repo:tag never
+					// got applied (the user can't find the image).
+					if err := s.self.ImageTag(loaded, repo, tag); err != nil {
+						WriteError(w, err)
+						return
+					}
 				}
 			}
 			w.Header().Set("Content-Type", "application/json")
