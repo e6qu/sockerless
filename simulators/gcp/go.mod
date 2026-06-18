@@ -3,7 +3,7 @@ module github.com/sockerless/simulator-gcp
 go 1.25.8
 
 require (
-	cloud.google.com/go/bigtable v1.49.0
+	cloud.google.com/go/bigtable v1.50.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/longrunning v1.0.0
 	github.com/docker/docker v28.5.2+incompatible
