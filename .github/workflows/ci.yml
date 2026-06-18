@@ -63,7 +63,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Install script check tools
-        run: sudo apt-get update && sudo apt-get install -y jq shellcheck zsh
+        run: sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update && sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y jq shellcheck zsh
       - name: Check shell scripts
         run: |
           shellcheck -x -s bash scripts/*.sh
@@ -262,8 +262,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install Firecracker test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iptables iputils-ping nftables openssh-client squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iptables iputils-ping nftables openssh-client squashfs-tools
       - name: Install Firecracker
         run: bash scripts/install-firecracker.sh
       - name: Run Firecracker arithmetic smoke
@@ -301,8 +301,8 @@ jobs:
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run module unit tests
         run: cd simulators/${{ matrix.cloud }} && GOWORK=off make unit-test
@@ -349,8 +349,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Run AWS module unit tests
         run: cd simulators/aws && GOWORK=off make unit-test
@@ -415,8 +415,8 @@ jobs:
           key: firecracker-ci-${{ env.FIRECRACKER_VERSION }}-${{ runner.arch }}
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Install Session Manager plugin
         run: |
@@ -467,17 +467,17 @@ jobs:
           terraform_wrapper: false
       - name: Install real-execution tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y curl e2fsprogs iproute2 iputils-ping nftables procps squashfs-tools
           bash scripts/install-firecracker.sh
       - name: Install Caddy
         run: |
-          sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y debian-keyring debian-archive-keyring apt-transport-https curl
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
           curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
           sudo chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-          sudo apt-get update
-          sudo apt-get install -y caddy
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y caddy
       - name: Run terraform tests
         run: |
           cd simulators/${{ matrix.cloud }}
