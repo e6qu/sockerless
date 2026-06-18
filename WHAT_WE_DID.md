@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Audit round 4: deep UI pass + sim structure + harness scripts
+
+A fourth parallel-agent audit, targeting areas the first three didn't deeply
+cover: the UI packages (only a shallow pass in #593), the sims' HTTP routing +
+emitted URLs (mux-overlap / emitted-URL-roundtrip lenses), and the integration
+harness shell scripts. The dominant find was the BUG-1851/1852 class — a failed
+query rendered as a confident healthy/empty state — recurring in pages that
+pass shallow review.
+
+- **BUG-1872 (bleephub UI).** `RepoDetailPage` destructured five secondary
+  queries (commits, webhooks, secrets, environments, releases) as `data = []`
+  with no `isError`, so a 500 rendered "No secrets configured" / "This
+  repository is empty" — an admin reads "no secrets" when the fetch actually
+  failed (the sibling `RepoSecretsPage` already handled it). `OAuthPage` showed
+  an infinite spinner on error; Issues/Pulls comment queries rendered "No
+  comments yet". All now surface `<InlineError>` on `isError`.
+- **BUG-1873 (sim / bleeplab / admin / core UIs).** The simulator-aws/gcp/azure
+  Overview pages branched only on `isLoading`, so a failed `/sim/v1/summary`
+  collapsed `services` to `{}` and rendered a full board of `?? 0` zeros with
+  the header still "running" — the exact docker-frontend defect, unfixed in
+  three places. bleeplab Overview/ProjectDetail swallowed pipelines/storage
+  errors into empty tables; the shared core `MetricsPage` rendered
+  `status?.containers ?? 0` (fabricated 0 on a `useStatus` failure → now `—`);
+  admin ComponentDetail/ProcessDetail silently omitted sections on error → now
+  render an `ErrorPanel`.
+- **BUG-1874 (harness + sim hygiene).** Three host-side `docker build -t`
+  invocations lacked `--load`; on a buildx-default host that leaves the image
+  in the build cache only, so `smoke-test-{ecs,cloudrun,aca}` were outright
+  unusable (`docker run` → "image not found") and `bleephub-gh-docker-test`
+  could run a stale image — added `--load` matching the `Makefile:400/453`
+  convention. The two smoke ECS-cluster bootstraps used `curl -s` (no `-f`) so
+  a non-2xx `CreateCluster` started the backend against a missing cluster → now
+  `curl -sf … || fail`. Also marked the aws sim's `apigatewayv2.apiEndpoint`
+  field `// external:` — the one emitted URL missing the codebase's
+  external-marker convention.
+- **FALSE POSITIVE.** The agent flagged the in-harness
+  `bleephub-spawn-runner` `docker build` for lacking `--load`. But the harness
+  installs the classic `docker.io` CLI (no buildx plugin), which writes the
+  build straight to the daemon store regardless of the host's buildx default
+  and rejects `--load` as an unknown flag — so it's correct as-is. Verifying
+  before acting caught it (the host-side Makefile builds, which DO run the
+  buildx-aware CLI, are the real gap — fixed under BUG-1874).
+
 ## 2026-06-18 - Audit round 3 deferred items: SQLite integrity, stats fabrication, + a false positive
 
 Closed out the three findings deferred from #597. Verifying each before acting

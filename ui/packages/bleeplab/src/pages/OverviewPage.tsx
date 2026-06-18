@@ -58,25 +58,33 @@ export function OverviewPage() {
         <MetricsCard title="Runners" value={s.connected_runners} />
       </div>
 
-      {storage.data && (
-        <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <MetricsCard
-            title="Git storage"
-            value={storage.data.git.backend}
-            subtitle={storage.data.git.detail}
-          />
-          <MetricsCard
-            title="Artifact storage"
-            value={storage.data.artifacts.backend}
-            subtitle={storage.data.artifacts.detail}
-          />
+      {storage.isError ? (
+        <div className="mb-8">
+          <InlineError inline title="Failed to load storage backends" detail={storage.error as Error} />
         </div>
+      ) : (
+        storage.data && (
+          <div className="mb-8 grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <MetricsCard
+              title="Git storage"
+              value={storage.data.git.backend}
+              subtitle={storage.data.git.detail}
+            />
+            <MetricsCard
+              title="Artifact storage"
+              value={storage.data.artifacts.backend}
+              subtitle={storage.data.artifacts.detail}
+            />
+          </div>
+        )
       )}
 
       <h2 className="font-display mb-3 text-sm font-semibold uppercase tracking-wide">
         Recent pipelines
       </h2>
-      {pipelines.isLoading ? (
+      {pipelines.isError ? (
+        <InlineError inline title="Failed to load pipelines" detail={pipelines.error as Error} />
+      ) : pipelines.isLoading ? (
         <Spinner />
       ) : (
         <DataTable

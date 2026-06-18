@@ -20,7 +20,7 @@ const col = createColumnHelper<RequestRow>();
 
 export function MetricsPage() {
   const { data: metrics, isLoading, refetch, isFetching, isError, error } = useMetrics();
-  const { data: status } = useStatus();
+  const { data: status, isError: statusError } = useStatus();
 
   if (isLoading) return <Spinner label="loading metrics" />;
 
@@ -129,10 +129,13 @@ export function MetricsPage() {
         />
         <MetricsCard
           title="Containers"
-          value={status?.containers ?? 0}
-          emphasized={(status?.containers ?? 0) > 0}
+          value={statusError ? "—" : (status?.containers ?? 0)}
+          emphasized={!statusError && (status?.containers ?? 0) > 0}
         />
-        <MetricsCard title="Active resources" value={status?.active_resources ?? 0} />
+        <MetricsCard
+          title="Active resources"
+          value={statusError ? "—" : (status?.active_resources ?? 0)}
+        />
       </div>
 
       <h3

@@ -28,7 +28,7 @@ export function ProcessDetailPage() {
     refetchInterval: 3000,
   });
 
-  const { data: logs } = useQuery({
+  const { data: logs, isError: logsError, error: logsErr } = useQuery({
     queryKey: ["process-logs", name],
     queryFn: () => api.processLogs(name!, 200),
     enabled: !!name,
@@ -193,7 +193,11 @@ export function ProcessDetailPage() {
       >
         Logs (tail 200)
       </h3>
-      <LogViewer lines={logs ?? []} />
+      {logsError ? (
+        <ErrorPanel kicker="logs unavailable" message={`Failed to load process logs: ${String(logsErr)}`} />
+      ) : (
+        <LogViewer lines={logs ?? []} />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { Spinner } from "@sockerless/ui-core/components";
+import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { useState, type ReactNode } from "react";
 import { fetchOAuthState } from "../api.js";
 import type { BleephubAuthCode, BleephubDeviceCode } from "../types.js";
@@ -65,7 +65,7 @@ function OAuthCodesTable<T>({
 }
 
 export function OAuthPage() {
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["oauth_state"],
     queryFn: fetchOAuthState,
     refetchInterval: 3000,
@@ -85,7 +85,9 @@ export function OAuthPage() {
 
       <FlowSimulator />
 
-      {isLoading || !data ? (
+      {isError ? (
+        <InlineError title="Failed to load OAuth state" detail={String(error)} />
+      ) : isLoading || !data ? (
         <Spinner label="loading oauth state" />
       ) : (
         <div className="grid gap-5 md:grid-cols-2">

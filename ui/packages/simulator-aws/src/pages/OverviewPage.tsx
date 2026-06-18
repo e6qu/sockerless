@@ -1,5 +1,6 @@
 import { useSimSummary, useSimHealth } from "@sockerless/ui-core/hooks";
 import {
+  InlineError,
   MetricsCard,
   PageHeading,
   Spinner,
@@ -11,6 +12,15 @@ export function OverviewPage() {
   const summary = useSimSummary();
 
   if (health.isLoading || summary.isLoading) return <Spinner label="loading" />;
+  // A failed summary/health fetch must not render an all-zeros "healthy" board.
+  if (health.isError || summary.isError) {
+    return (
+      <InlineError
+        title="Failed to load simulator overview"
+        detail={String(summary.error ?? health.error)}
+      />
+    );
+  }
 
   const services = summary.data?.services ?? {};
   const isOk = health.data?.status === "ok";

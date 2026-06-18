@@ -37,21 +37,21 @@ export function ComponentDetailPage() {
 
   const comp = components?.find((c: AdminComponent) => c.name === name);
 
-  const { data: status } = useQuery({
+  const { data: status, isError: statusError, error: statusErr } = useQuery({
     queryKey: ["component-status", name],
     queryFn: () => api.componentStatus(name!),
     enabled: !!name,
     refetchInterval: 5000,
   });
 
-  const { data: metrics } = useQuery({
+  const { data: metrics, isError: metricsError, error: metricsErr } = useQuery({
     queryKey: ["component-metrics", name],
     queryFn: () => api.componentMetrics(name!),
     enabled: !!name,
     refetchInterval: 5000,
   });
 
-  const { data: provider } = useQuery({
+  const { data: provider, isError: providerError, error: providerErr } = useQuery({
     queryKey: ["component-provider", name],
     queryFn: () => api.componentProvider(name!),
     enabled: !!name && comp?.type === "backend",
@@ -201,6 +201,20 @@ export function ComponentDetailPage() {
           emphasized={(statusObj?.containers ?? 0) > 0}
         />
       </div>
+
+      {(statusError || metricsError) && (
+        <ErrorPanel
+          kicker="live data unavailable"
+          message={`Failed to load live component data: ${String(statusErr ?? metricsErr)}`}
+        />
+      )}
+
+      {comp.type === "backend" && providerError && (
+        <ErrorPanel
+          kicker="cloud connection"
+          message={`Failed to load cloud connection: ${String(providerErr)}`}
+        />
+      )}
 
       {provider && comp.type === "backend" && (
         <section

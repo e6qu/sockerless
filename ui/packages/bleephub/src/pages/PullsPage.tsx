@@ -139,7 +139,7 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
     queryKey: ["pr", owner, repo, number],
     queryFn: () => fetchPRDetail(owner, repo, number),
   });
-  const { data: comments = [] } = useQuery({
+  const { data: comments = [], isError: commentsError, error: commentsErr } = useQuery({
     queryKey: ["pr-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
     enabled: !!pr,
@@ -218,7 +218,11 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
       <ChecksSection owner={owner} repo={repo} sha={pr.head.sha} />
 
       <CommentCard login={pr.user?.login} body={pr.body} date={pr.created_at} isOp />
-      <CommentList comments={comments} />
+      {commentsError ? (
+        <InlineError inline title="Failed to load comments" detail={String(commentsErr)} />
+      ) : (
+        <CommentList comments={comments} />
+      )}
     </div>
   );
 }

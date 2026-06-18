@@ -52,12 +52,16 @@ export function ProjectDetailPage() {
       <h2 className="font-display mb-3 text-sm font-semibold uppercase tracking-wide">
         Pipelines
       </h2>
-      <DataTable
-        data={mine}
-        columns={columns}
-        emptyMessage="No pipelines for this project yet."
-        onRowClick={(p) => navigate(`/ui/pipelines/${p.id}`)}
-      />
+      {pipelines.isError ? (
+        <InlineError inline title="Failed to load pipelines" detail={pipelines.error as Error} />
+      ) : (
+        <DataTable
+          data={mine}
+          columns={columns}
+          emptyMessage="No pipelines for this project yet."
+          onRowClick={(p) => navigate(`/ui/pipelines/${p.id}`)}
+        />
+      )}
     </div>
   );
 }

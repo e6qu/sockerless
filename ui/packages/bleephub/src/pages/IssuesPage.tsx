@@ -189,7 +189,7 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
     queryKey: ["issue", owner, repo, number],
     queryFn: () => fetchIssueDetail(owner, repo, number),
   });
-  const { data: comments = [] } = useQuery({
+  const { data: comments = [], isError: commentsError, error: commentsErr } = useQuery({
     queryKey: ["issue-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
     enabled: !!issue,
@@ -238,11 +238,17 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
       </div>
 
       <CommentCard login={issue.user?.login} body={issue.body} date={issue.created_at} isOp />
-      <CommentList comments={comments} />
-      {comments.length === 0 && (
-        <div style={{ padding: "0.5rem 0", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
-          No comments yet.
-        </div>
+      {commentsError ? (
+        <InlineError inline title="Failed to load comments" detail={String(commentsErr)} />
+      ) : (
+        <>
+          <CommentList comments={comments} />
+          {comments.length === 0 && (
+            <div style={{ padding: "0.5rem 0", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+              No comments yet.
+            </div>
+          )}
+        </>
       )}
     </div>
   );
