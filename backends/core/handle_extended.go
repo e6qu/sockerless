@@ -97,36 +97,53 @@ func (s *BaseServer) handleContainerStats(w http.ResponseWriter, r *http.Request
 
 	if !c.State.Running {
 		now := time.Now().UTC()
-		WriteJSON(w, http.StatusOK, s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit))
+		entry, err := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, entry)
+		return
+	}
+
+	now := time.Now().UTC()
+	entry, err := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
+	if err != nil {
+		WriteError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
-	enc := json.NewEncoder(w)
-	now := time.Now().UTC()
-	entry := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
-	_ = enc.Encode(entry)
+	_ = json.NewEncoder(w).Encode(entry)
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
 }
 
-// buildStatsEntry constructs a Docker-compatible stats JSON object.
-// Uses StatsProvider for real metrics when available.
-func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread string, memLimit int64) map[string]any {
+// buildStatsEntry constructs a Docker-compatible stats JSON object from real
+// cloud metrics. A backend with no StatsProvider returns NotImplementedError
+// rather than fabricating zeros (synthetic stats are a bug — a live container
+// reported at 0% CPU / 0 B is worse than an honest "not available"); a provider
+// error propagates rather than being swallowed back to zeros. (A provider that
+// succeeds with zero values — e.g. a just-started task with no datapoint yet —
+// is a legitimate empty reading, not an error.)
+func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread string, memLimit int64) (map[string]any, error) {
 	var memUsage int64
 	var cpuNanos int64
 	var pids int
 
-	// Fetch real metrics from cloud provider if available.
-	if s.StatsProvider != nil {
-		if m, err := s.StatsProvider.ContainerMetrics(containerID); err == nil && m != nil {
-			cpuNanos = m.CPUNanos
-			memUsage = m.MemBytes
-			pids = m.PIDs
-		}
+	if s.StatsProvider == nil {
+		return nil, &api.NotImplementedError{Message: "container stats require a cloud metrics provider, which is not wired for this backend"}
+	}
+	m, err := s.StatsProvider.ContainerMetrics(containerID)
+	if err != nil {
+		return nil, err
+	}
+	if m != nil {
+		cpuNanos = m.CPUNanos
+		memUsage = m.MemBytes
+		pids = m.PIDs
 	}
 
 	systemNanos := now.UnixNano()
@@ -176,7 +193,7 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 			"current": pids,
 		},
 		"networks": s.buildNetworkStats(containerID),
-	}
+	}, nil
 }
 
 // prevCPUStats holds the previous CPU stats reading for a container.
