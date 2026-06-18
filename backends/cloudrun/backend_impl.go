@@ -623,7 +623,11 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	// envelope POST. Final teardown happens in ContainerRemove.
 	if s.config.UseService && !c.Config.OpenStdin {
 		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
-			s.deleteService(svcState.ServiceName)
+			// A swallowed delete leaves the Service running (billable) while
+			// `docker stop` reports success — propagate like ContainerRemove.
+			if err := s.deleteServiceStrict(svcState.ServiceName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker stop %s: delete Cloud Run Service failed: %v", id, err)}
+			}
 			s.Registry.MarkCleanedUp(svcState.ServiceName)
 			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
 		}
@@ -672,7 +676,11 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	// resource; for Jobs we cancel the execution.
 	if s.config.UseService {
 		if svcState, ok := s.resolveServiceCloudRunState(s.ctx(), id); ok && svcState.ServiceName != "" {
-			s.deleteService(svcState.ServiceName)
+			// A swallowed delete leaves the Service running (billable) while
+			// `docker kill` reports success — propagate like ContainerRemove.
+			if err := s.deleteServiceStrict(svcState.ServiceName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker kill %s: delete Cloud Run Service failed: %v", id, err)}
+			}
 			s.Registry.MarkCleanedUp(svcState.ServiceName)
 			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
 		}

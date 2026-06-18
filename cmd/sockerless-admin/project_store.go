@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,13 +35,16 @@ func LoadProjects(dir string) ([]*ProjectConfig, error) {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		path := filepath.Join(dir, e.Name())
+		data, err := os.ReadFile(path)
 		if err != nil {
-			continue
+			// A project config that can't be read must not silently vanish
+			// from the admin's view.
+			return nil, fmt.Errorf("read project config %s: %w", e.Name(), err)
 		}
 		var cfg ProjectConfig
 		if err := json.Unmarshal(data, &cfg); err != nil {
-			continue
+			return nil, fmt.Errorf("parse project config %s: %w", e.Name(), err)
 		}
 		projects = append(projects, &cfg)
 	}

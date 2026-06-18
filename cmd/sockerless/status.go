@@ -29,7 +29,10 @@ func cmdStatus() {
 
 	var resp map[string]any
 	if err := json.Unmarshal(data, &resp); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not parse health response: %v\n", err)
+		// Reachable but the health body is malformed — report that honestly
+		// instead of printing "UP" with a fabricated 0s uptime.
+		fmt.Printf("Server (%s): UP but health response unparseable: %v\n", addr, err)
+		return
 	}
 	uptime, _ := resp["uptime_seconds"].(float64)
 	fmt.Printf("Server (%s): UP (uptime: %ds)\n", addr, int(uptime))

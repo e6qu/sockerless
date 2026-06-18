@@ -602,11 +602,15 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 				{Key: aws.String("sockerless-kill-signal"), Value: aws.String(signal)},
 			},
 		})
-		_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+		if _, err := s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
 			Cluster: aws.String(cluster),
 			Task:    aws.String(ecsState.TaskARN),
 			Reason:  aws.String("Container killed with " + signal),
-		})
+		}); err != nil {
+			// A swallowed StopTask leaves a billable Fargate task running
+			// while `docker kill` reports success — surface it like ContainerStop.
+			return &api.ServerError{Message: fmt.Sprintf("docker kill %s: ECS StopTask failed: %v", id, err)}
+		}
 	}
 
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -654,11 +658,15 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			if ecsState.ClusterARN != "" {
 				cluster = ecsState.ClusterARN
 			}
-			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+			if _, err := s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
 				Cluster: aws.String(cluster),
 				Task:    aws.String(ecsState.TaskARN),
 				Reason:  aws.String("Container removed"),
-			})
+			}); err != nil {
+				// Don't tear down the local view + deregister the task def
+				// while a running task is orphaned (billable, invisible).
+				return &api.ServerError{Message: fmt.Sprintf("docker rm -f %s: ECS StopTask failed: %v", id, err)}
+			}
 		}
 	}
 

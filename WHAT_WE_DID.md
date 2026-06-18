@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-18 - Audit round 3: shared sim library, per-cloud common, cloud backends, CLI + harnesses
+
+A third parallel-agent audit, targeting the areas the first two passes didn't
+deeply cover: the shared `sim` library (one copy per cloud under
+`simulators/<cloud>/shared/`, all three audited via the aws copy), the per-cloud
+`backends/*-common` modules, the cloud backend `api.Backend` method
+implementations, and the CLI + the simulator test harnesses. Every candidate was
+confirmed at its `file:line` before any fix.
+
+**Fixed (each tested in its module):**
+- **BUG-1860:** ecs `deriveMACFromIP` fabricated the container MAC from the IP
+  octets (and hardcoded `02:42:ac:11:00:02` on parse failure). The real MAC is
+  in the same ENI attachment `Details` as the IP — now read via `extractENIMAC`
+  (`macAddress`), never synthesized.
+- **BUG-1861 / 1866:** orphan-on-swallow — ecs `ContainerKill`/`ContainerRemove`
+  and cloudrun/aca `ContainerStop`/`ContainerKill` dropped the cloud
+  stop/delete error and reported success, leaving a billable task/Service/App
+  running. All now propagate (the `*Strict` delete variants for cloudrun/aca);
+  same BUG-1844 class that earlier fixed PodRemove/NetworkRemove but not these.
+- **BUG-1862:** ecs `fargateResources` returned the smallest tier (256/512) for
+  a request exceeding the largest Fargate tier — now clamps to the max.
+- **BUG-1863:** ecs + lambda `ListImages` returned a truncated list as complete
+  on a transient `DescribeImages` error (BUG-1853 iterator-swallow class) — now
+  propagate.
+- **BUG-1864 (BUG-1789 class, 3rd instance):** azure-common's image resolvers
+  hardcoded `<acr>.azurecr.io` and the ACR-Task `sourceURL` re-hardcoded
+  `<account>.blob.core.windows.net`, ignoring the `SOCKERLESS_AZURE_ACR_ENDPOINT`
+  / discovered-blob coordinates that the same module's overlay-push path already
+  honors. Latent (the green cells run with no ACR name). Routed both resolvers
+  through a new `AzureRegistryHost(acrName)` helper (mirrors gcp-common's
+  `OverlayRegistryHost`) and built `sourceURL` from the endpoint
+  `ensureBlobClient` discovers; regression test added.
+- **BUG-1865:** the shared sim `process.go` swallowed `cmd.StdoutPipe()` /
+  `StderrPipe()` errors — a nil reader then panicked the scan goroutine and lost
+  all process output. Both checked before `Start` now; `cp`'d to all three
+  shared copies.
+- **BUG-1867:** CLI fabricated success after a parse failure — `status` printed
+  `UP (uptime 0s)`, `context reload` printed `Reloaded`, and admin
+  `LoadProjects` silently dropped corrupt configs. All fail loud now.
+
+**Filed open** with fix-shapes (each needs its own careful, separately-tested
+change): BUG-1868 (cloudrun/gcf/aca/azf `ContainerStats` fabricate zeros — no
+`StatsProvider`), BUG-1869 (shared-sim `state_sqlite` Put/Update/Get/List/Len
+swallow DB errors — a `Store` interface change rippling through all 3 sims), and
+BUG-1870 (the gcp sim mounts Spanner under a non-canonical `/spanner/` path that
+its own tests bake in).
+
 ## 2026-06-18 - Audit round 2: fail-loud / no-swallow / no-fake / no-dead-code sweep of the glue/harness/core code
 
 The #593 audit focused on sims → backends → UIs; this round targeted the areas

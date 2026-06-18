@@ -539,7 +539,11 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 		if openStdin {
 			s.Logger.Info().Str("container", id).Msg("ContainerStop: OpenStdin runner-pattern — keeping App alive across stages")
 		} else if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
-			s.deleteApp(appState.AppName)
+			// A swallowed delete leaves the App running (billable) while
+			// `docker stop` reports success — propagate like ContainerRemove.
+			if err := s.deleteAppStrict(appState.AppName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker stop %s: delete Container App failed: %v", id, err)}
+			}
 			s.Registry.MarkCleanedUp(appState.AppName)
 		}
 	} else {
@@ -584,7 +588,11 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	// — same as Stop: Apps delete, Jobs cancel execution.
 	if s.config.UseApp {
 		if appState, ok := s.resolveAppACAState(s.ctx(), id); ok && appState.AppName != "" {
-			s.deleteApp(appState.AppName)
+			// A swallowed delete leaves the App running (billable) while
+			// `docker kill` reports success — propagate like ContainerRemove.
+			if err := s.deleteAppStrict(appState.AppName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker kill %s: delete Container App failed: %v", id, err)}
+			}
 			s.Registry.MarkCleanedUp(appState.AppName)
 			s.ACA.Update(id, func(st *ACAState) { st.AppName = "" })
 		}

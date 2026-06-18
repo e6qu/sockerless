@@ -29,6 +29,7 @@ type ACRBuildService struct {
 	acr              *armcontainerregistry.RegistriesClient
 	runs             *armcontainerregistry.RunsClient
 	blobClient       *azblob.Client
+	blobEndpoint     string // resolved blob service URL (public account URL or the account's ARM-advertised endpoint)
 	subscriptionID   string
 	resourceGroup    string
 	acrName          string
@@ -111,6 +112,7 @@ func NewACRBuildService(cred azcore.TokenCredential, subscriptionID, resourceGro
 			return nil, fmt.Errorf("create blob client: %w", err)
 		}
 		s.blobClient = blobClient
+		s.blobEndpoint = blobURL
 	}
 
 	return s, nil
@@ -143,6 +145,7 @@ func (s *ACRBuildService) ensureBlobClient(ctx context.Context) error {
 		return fmt.Errorf("create blob client for %s: %w", blobEndpoint, err)
 	}
 	s.blobClient = blobClient
+	s.blobEndpoint = blobEndpoint
 	return nil
 }
 
@@ -189,7 +192,11 @@ func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 		return nil, fmt.Errorf("upload context to blob storage: %w", err)
 	}
 
-	sourceURL := fmt.Sprintf("https://%s.blob.core.windows.net/%s/%s", s.storageAccount, s.containerName, blobName)
+	// Build the ACR-Task source URL from the SAME blob endpoint the context
+	// was uploaded through (the account's ARM-advertised endpoint on a
+	// custom/sim cloud), not a re-hardcoded `.blob.core.windows.net` the
+	// build environment can't reach there.
+	sourceURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(s.blobEndpoint, "/"), s.containerName, blobName)
 
 	// Determine target image name
 	tag := "latest"

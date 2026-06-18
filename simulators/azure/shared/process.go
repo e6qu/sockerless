@@ -3,6 +3,7 @@ package simulator
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -112,11 +113,28 @@ func StartProcess(cfg ProcessConfig, sink LogSink) *ProcessHandle {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
 
-	// Set up pipes for stdout and stderr
-	stdoutPipe, _ := cmd.StdoutPipe()
-	stderrPipe, _ := cmd.StderrPipe()
-
 	startedAt := time.Now()
+
+	// Set up pipes for stdout and stderr. A pipe-creation failure must fail
+	// the launch — a nil reader would panic the scan goroutine
+	// (bufio.NewScanner(nil).Scan()) and silently lose all process output.
+	stdoutPipe, outErr := cmd.StdoutPipe()
+	stderrPipe, errErr := cmd.StderrPipe()
+	if outErr != nil || errErr != nil {
+		cancel()
+		err := outErr
+		if err == nil {
+			err = errErr
+		}
+		resultCh <- ProcessResult{
+			ExitCode:  -1,
+			StartedAt: startedAt,
+			StoppedAt: time.Now(),
+			Error:     fmt.Errorf("create process pipes: %w", err),
+		}
+		return &ProcessHandle{cancel: func() {}, done: resultCh}
+	}
+
 	if err := cmd.Start(); err != nil {
 		cancel()
 		resultCh <- ProcessResult{

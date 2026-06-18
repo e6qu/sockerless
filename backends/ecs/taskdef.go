@@ -287,7 +287,11 @@ func fargateResources(containers []containerInput) (cpu, memory string) {
 		}
 	}
 
-	return "256", "512"
+	// The request exceeds the largest Fargate tier — clamp to the maximum the
+	// platform offers rather than silently dropping to the smallest tier
+	// (256/512), which would massively under-provision a large container.
+	last := fargateCombos[len(fargateCombos)-1]
+	return fmt.Sprintf("%d", last.cpu), fmt.Sprintf("%d", last.memMax)
 }
 
 // sanitizeContainerName converts a container name to a valid ECS container definition name.

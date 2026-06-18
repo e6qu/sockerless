@@ -218,7 +218,10 @@ func contextReload() {
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(data, &resp); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not parse reload response: %v\n", err)
+		// Don't print "Reloaded" for a result we couldn't read — fail like
+		// the resources-cleanup command does on the same error.
+		fmt.Fprintf(os.Stderr, "error: could not parse reload response: %v\n", err)
+		os.Exit(1)
 	}
 	changed, _ := resp["changed"].(float64)
 	fmt.Printf("Reloaded (%d vars changed)\n", int(changed))
