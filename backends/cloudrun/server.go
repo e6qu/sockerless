@@ -48,7 +48,14 @@ type Server struct {
 	// only the FIRST script-runner stage would see postgres on loopback;
 	// later stages (gitlab-runner v17.5 creates a new container per
 	// stage) would deploy without the sidecar and lose service access.
+	//
+	// The map is reconstructed from cloud after a backend restart: each
+	// network revision persists its service members in annotations (see
+	// servicespec.go), and serviceMembersOfNetwork rebuilds the map on a
+	// cache miss. networkRebuilt records which networks have had a rebuild
+	// attempted so a service-less network doesn't list Services every stage.
 	networkServices sync.Map
+	networkRebuilt  sync.Map
 }
 
 // NewServer creates a new Cloud Run backend server.

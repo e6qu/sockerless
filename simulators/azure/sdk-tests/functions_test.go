@@ -1,6 +1,7 @@
 package azure_sdk_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -24,13 +25,17 @@ func azureDeleteSite(rg, name string) {
 	}
 }
 
-// azureCreateSite creates a resource group and function app, optionally with SimCommand.
-func azureCreateSite(t *testing.T, rg, name string, simCommand []string) {
-	azureCreateSiteWithImage(t, rg, name, simCommand, "")
+// azureCreateSite creates a resource group and function app, optionally with a
+// command supplied via the real SOCKERLESS_CMD app-setting contract.
+func azureCreateSite(t *testing.T, rg, name string, command []string) {
+	azureCreateSiteWithImage(t, rg, name, command, "")
 }
 
-// azureCreateSiteWithImage creates a function app with a Docker image and optional SimCommand.
-func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string, image string) {
+// azureCreateSiteWithImage creates a function app with a Docker image and an
+// optional command. The command is delivered exactly as the azure-functions
+// backend delivers it: a SOCKERLESS_CMD app setting carrying
+// base64(json.Marshal(argv)) — the same contract a real invocation uses.
+func azureCreateSiteWithImage(t *testing.T, rg, name string, command []string, image string) {
 	t.Helper()
 	rgBody := `{"location":"eastus"}`
 	rgReq, _ := http.NewRequestWithContext(ctx, "PUT",
@@ -46,8 +51,11 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string
 		"serverFarmId": "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg + "/providers/Microsoft.Web/serverFarms/test-plan",
 	}
 	siteConfig := map[string]any{}
-	if len(simCommand) > 0 {
-		siteConfig["simCommand"] = simCommand
+	if len(command) > 0 {
+		cmdJSON, _ := json.Marshal(command)
+		siteConfig["appSettings"] = []map[string]any{
+			{"name": "SOCKERLESS_CMD", "value": base64.StdEncoding.EncodeToString(cmdJSON)},
+		}
 	}
 	if image != "" {
 		siteConfig["linuxFxVersion"] = "DOCKER|" + image
@@ -68,12 +76,8 @@ func azureCreateSiteWithImage(t *testing.T, rg, name string, simCommand []string
 	siteReq.Header.Set("Authorization", "Bearer fake-token")
 	siteResp, err := http.DefaultClient.Do(siteReq)
 	require.NoError(t, err)
-	echo, _ := io.ReadAll(siteResp.Body)
 	siteResp.Body.Close()
 	require.Equal(t, http.StatusOK, siteResp.StatusCode)
-	// simCommand is sim-internal wiring accepted on the request; the
-	// Site read shape must never echo it.
-	require.NotContains(t, string(echo), "simCommand")
 }
 
 // azureInvokeFunction connects to the sim's TCP port but sets the Host header

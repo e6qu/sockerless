@@ -32,19 +32,6 @@ type Site struct {
 	Properties SiteProperties    `json:"properties"`
 }
 
-// wire returns the ARM response shape for a site: the stored record
-// with sockerless-internal wiring (siteConfig.simCommand) stripped.
-// SimCommand persists via the store's JSON marshal of Site and drives
-// the invoke-time process launch; it never appears on the wire.
-func (s Site) wire() Site {
-	if s.Properties.SiteConfig != nil {
-		cfg := *s.Properties.SiteConfig
-		cfg.SimCommand = nil
-		s.Properties.SiteConfig = &cfg
-	}
-	return s
-}
-
 // SiteProperties holds the properties of a function app.
 type SiteProperties struct {
 	State                string                            `json:"state,omitempty"`
@@ -74,7 +61,6 @@ type SiteConfig struct {
 	MinTLSVersion                          string          `json:"minTlsVersion,omitempty"`
 	ScmMinTLSVersion                       string          `json:"scmMinTlsVersion,omitempty"`
 	ScmIPSecurityRestrictionsDefaultAction string          `json:"scmIpSecurityRestrictionsDefaultAction,omitempty"`
-	SimCommand                             []string        `json:"simCommand,omitempty"` // Simulator-only: command to execute on invoke
 }
 
 // NameValuePair holds a name-value pair for app settings.
@@ -265,7 +251,7 @@ func registerAzureFunctions(srv *sim.Server) {
 
 		// Always return 200 OK so the ARM SDK's BeginCreateOrUpdate poller
 		// treats this as an immediately completed operation.
-		sim.WriteJSON(w, http.StatusOK, site.wire())
+		sim.WriteJSON(w, http.StatusOK, site)
 	})
 
 	// GET - Get function app
@@ -283,7 +269,7 @@ func registerAzureFunctions(srv *sim.Server) {
 			return
 		}
 
-		sim.WriteJSON(w, http.StatusOK, site.wire())
+		sim.WriteJSON(w, http.StatusOK, site)
 	})
 
 	// GET - List function apps by resource group
@@ -296,9 +282,7 @@ func registerAzureFunctions(srv *sim.Server) {
 			return strings.HasPrefix(s.ID, prefix)
 		})
 		out := make([]Site, 0, len(filtered))
-		for _, s := range filtered {
-			out = append(out, s.wire())
-		}
+		out = append(out, filtered...)
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"value": out,
@@ -418,9 +402,6 @@ func registerAzureFunctions(srv *sim.Server) {
 					hasCmd = true
 					break
 				}
-			}
-			if !hasCmd && len(matchedSite.Properties.SiteConfig.SimCommand) > 0 {
-				hasCmd = true
 			}
 		}
 		if hasCmd {
@@ -1493,10 +1474,6 @@ func invokeAzureFunctionProcess(site *Site) ([]byte, int) {
 					return []byte(msg), 1
 				}
 			}
-		}
-		// Fallback: SimCommand (backward compat for SDK tests)
-		if len(entrypoint) == 0 && len(cmd) == 0 {
-			cmd = site.Properties.SiteConfig.SimCommand
 		}
 	}
 	if len(entrypoint) == 0 && len(cmd) == 0 {

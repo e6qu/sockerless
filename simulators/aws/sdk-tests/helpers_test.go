@@ -141,9 +141,20 @@ func buildGoScratchImage(imageName, sourceDir, binaryName, platform string) {
 COPY %s /usr/local/bin/%s
 ENTRYPOINT ["/usr/local/bin/%s"]
 `, binaryName, binaryName, binaryName)
-	dockerBuild := exec.Command("docker", "build",
-		"--platform", platform,
-		"-t", imageName, "-f", "-", buildDir)
+	// On a docker-container buildx driver (the default on many dev machines),
+	// `docker build -t` leaves the image in the build cache only — never the
+	// daemon store — so the sim's container start can't find it. `docker buildx
+	// build --load` materializes it into the daemon store. The legacy builder
+	// builds into the store natively and rejects the buildx-only `--load`, so
+	// omit it there.
+	var args []string
+	if exec.Command("docker", "buildx", "version").Run() == nil {
+		args = []string{"buildx", "build", "--load"}
+	} else {
+		args = []string{"build"}
+	}
+	args = append(args, "--platform", platform, "-t", imageName, "-f", "-", buildDir)
+	dockerBuild := exec.Command("docker", args...)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
 		log.Fatalf("Failed to build %s Docker image: %v\n%s", binaryName, err, out)

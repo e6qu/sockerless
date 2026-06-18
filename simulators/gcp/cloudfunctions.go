@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -59,22 +57,17 @@ type ServiceConfig struct {
 	EnvironmentVariables       map[string]string `json:"environmentVariables,omitempty"`
 }
 
-// storedServiceConfig is the persisted/request-side ServiceConfig: the
-// wire shape plus the simulator-only workload wiring. The sim* members
-// are accepted on requests (test-convenience inputs) and persisted so
-// invocations survive a simulator restart, but real ServiceConfig has
-// no such members, so responses emit only the embedded wire shape.
+// storedServiceConfig is the persisted/request-side ServiceConfig. It embeds
+// the wire shape so the persisted row matches what the wire Function carries;
+// `wire()` returns the embedded ServiceConfig verbatim.
 type storedServiceConfig struct {
 	ServiceConfig
-	SimCommand      []string `json:"simCommand,omitempty"`      // Simulator-only: command to execute on invoke (passed as Cmd to the sim image)
-	SimImage        string   `json:"simImage,omitempty"`        // Simulator-only: Docker image hosting the workload; required when SimCommand is set
-	SimArchitecture string   `json:"simArchitecture,omitempty"` // Simulator-only: workload arch (e.g. "linux/arm64"); empty = image default
 }
 
 // storedFunction is the persisted row backing a function. Its
-// serviceConfig field shadows the embedded wire Function's, so request
-// decoding captures the sim* wiring and sim.Store persistence keeps the
-// same nested row shape the wiring has always been recovered from.
+// serviceConfig field shadows the embedded wire Function's so request
+// decoding and sim.Store persistence keep the same nested row shape that
+// `wire()` recovers the wire Function from.
 type storedFunction struct {
 	Function
 	ServiceConfig *storedServiceConfig `json:"serviceConfig,omitempty"`
@@ -312,29 +305,14 @@ func registerCloudFunctions(srv *sim.Server) {
 		if fn != nil {
 			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
 
-			// Check for SOCKERLESS_CMD env var (cloud-native) or SimCommand fallback
-			simCmd := false
-			if fn.ServiceConfig != nil {
-				if _, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CMD"]; ok {
-					simCmd = true
-				}
-				if !simCmd && len(fn.ServiceConfig.SimCommand) > 0 {
-					simCmd = true
-				}
-			}
-
-			if simCmd {
-				var exitCode int
-				responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
-				if exitCode != 0 {
-					// Real Cloud Functions returns HTTP error when function crashes
-					w.Header().Set("Content-Type", "application/json")
-					w.WriteHeader(http.StatusInternalServerError)
-					w.Write(responseBody)
-					return
-				}
-			} else {
-				injectCloudFunctionLog(project, functionID, "Function invoked")
+			var exitCode int
+			responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
+			if exitCode != 0 {
+				// Real Cloud Functions returns HTTP error when function crashes
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write(responseBody)
+				return
 			}
 		}
 
@@ -363,30 +341,23 @@ func registerCloudFunctions(srv *sim.Server) {
 	})
 }
 
-// invokeCloudFunctionProcess executes a Cloud Function invocation. Two
-// paths:
+// invokeCloudFunctionProcess executes a Cloud Function invocation. Cloud
+// Functions Gen2 are backed by a Cloud Run service whose container image
+// is the sockerless overlay; the gcf backend's overlay-and-swap path lands
+// that image on the service via `Run.Services.UpdateService`. The sim
+// reads the image back from the backing service and HTTP-invokes the
+// overlay's bootstrap — start the container, POST the request envelope to
+// its bootstrap listener, read the response, stop the container — exactly
+// what real Cloud Run Functions Gen2 does on every invocation. The exit
+// code rides in the `X-Sockerless-Exit-Code` header.
 //
-//   - Image path (cloud-faithful): the function is backed by a real
-//     Cloud Run service whose container image is the sockerless overlay.
-//     The overlay's ENTRYPOINT is the bootstrap HTTP server, which on
-//     each request runs the user's entrypoint+cmd as a subprocess and
-//     returns the captured output. The sim mirrors this by starting
-//     the overlay container, POSTing to its bootstrap, reading the
-//     response, then stopping the container — which is what real Cloud
-//     Run Functions Gen2 does on every invocation. Exit code rides in
-//     the `X-Sockerless-Exit-Code` header.
-//
-//   - Process path (sim-only test convenience): the function has no
-//     image and a `simCommand` set on its ServiceConfig. The sim runs
-//     the command as a host process. Used by SDK tests that want to
-//     verify Cloud Functions invocation semantics without staging an
-//     overlay image.
+// A function with no backing service image has been created but never
+// deployed with an overlay; there is nothing to execute, so the sim records
+// the invocation in Cloud Logging and returns an empty body.
 func invokeCloudFunctionProcess(fn *storedFunction, project, functionID string) ([]byte, int) {
-	// Container image lives on the underlying Cloud Run service —
-	// Cloud Functions Gen2 are backed by a Run service, and the gcf
-	// backend's overlay-and-swap path lands the real image there via
-	// `Run.Services.UpdateService`. Read it back from there; the sim
-	// has no other source of truth for what to execute.
+	// Container image lives on the underlying Cloud Run service — read it
+	// back from there; the sim has no other source of truth for what to
+	// execute.
 	var image string
 	var serviceEnv map[string]string
 	if fn.ServiceConfig != nil && fn.ServiceConfig.Service != "" {
@@ -399,138 +370,36 @@ func invokeCloudFunctionProcess(fn *storedFunction, project, functionID string) 
 		}
 	}
 
+	sink := &cfLogSink{project: project, functionName: functionID}
+
+	if image == "" {
+		injectCloudFunctionLog(project, functionID, "Function invoked")
+		return []byte("{}"), 0
+	}
+
 	timeout := 60 * time.Second // GCP default
 	if fn.ServiceConfig != nil && fn.ServiceConfig.TimeoutSeconds > 0 {
 		timeout = time.Duration(fn.ServiceConfig.TimeoutSeconds) * time.Second
 	}
 
-	sink := &cfLogSink{project: project, functionName: functionID}
-
-	if image != "" {
-		// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
-		env := serviceEnv
-		if fn.ServiceConfig != nil {
-			env = mergeEnv(fn.ServiceConfig.EnvironmentVariables, serviceEnv)
-		}
-		body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink, env)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "[sim-gcf] invocation error fn=%s img=%s: %v\n", functionID, image, err)
-			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function invocation error: %v", err))
-			return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
-		}
-		if exitCode != 0 {
-			fmt.Fprintf(os.Stderr, "[sim-gcf] non-zero exit fn=%s img=%s exit=%d body=%q\n", functionID, image, exitCode, string(body))
-			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function exited with code %d body=%q", exitCode, string(body)))
-		}
-		return body, exitCode
-	}
-
-	// Sim path: dispatch through Docker, never os/exec a workload on the
-	// sim host. The function spec's SimImage carries the image; SimCommand
-	// is the entrypoint+args override; SimArchitecture (default empty =
-	// image default) carries the workload's arch.
-	//
-	// SOCKERLESS_USER_ENTRYPOINT / _USER_CMD are set by the cloudrun-functions
-	// backend as base64(json.Marshal(argv)) — both decode steps are part of
-	// the backend↔sim contract. A malformed value means the backend produced
-	// garbage; surface it as an invocation error rather than silently invoke
-	// with an empty argv.
-	var entrypoint, userCmd []string
+	// Cloud-faithful: HTTP-invoke the overlay's bootstrap.
+	env := serviceEnv
 	if fn.ServiceConfig != nil {
-		if epB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_ENTRYPOINT"]; ok {
-			decoded, err := base64.StdEncoding.DecodeString(epB64)
-			if err != nil {
-				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_ENTRYPOINT base64: %s"}`, err.Error())), 1
-			}
-			if err := json.Unmarshal(decoded, &entrypoint); err != nil {
-				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_ENTRYPOINT JSON: %s"}`, err.Error())), 1
-			}
-		}
-		if cmdB64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_USER_CMD"]; ok {
-			decoded, err := base64.StdEncoding.DecodeString(cmdB64)
-			if err != nil {
-				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_CMD base64: %s"}`, err.Error())), 1
-			}
-			if err := json.Unmarshal(decoded, &userCmd); err != nil {
-				return []byte(fmt.Sprintf(`{"error":"malformed SOCKERLESS_USER_CMD JSON: %s"}`, err.Error())), 1
-			}
-		}
-		if len(entrypoint) == 0 && len(userCmd) == 0 {
-			userCmd = fn.ServiceConfig.SimCommand
-		}
+		env = mergeEnv(fn.ServiceConfig.EnvironmentVariables, serviceEnv)
 	}
-
-	if len(entrypoint) == 0 && len(userCmd) == 0 {
-		// Nothing to invoke — function is essentially a stub.
-		return []byte("{}"), 0
-	}
-
-	var simImage, simArch string
-	var cmdEnv map[string]string
-	if fn.ServiceConfig != nil {
-		simImage = fn.ServiceConfig.SimImage
-		simArch = fn.ServiceConfig.SimArchitecture
-		cmdEnv = fn.ServiceConfig.EnvironmentVariables
-	}
-	if simImage == "" {
-		// No image to host the workload — the sim no longer os/exec's
-		// workload binaries on the host process. Tests must set
-		// serviceConfig.simImage to a Docker image carrying the
-		// workload (and optionally simArchitecture).
-		injectCloudFunctionLog(project, functionID,
-			"Function invocation error: serviceConfig.simImage required (set to a Docker image hosting the workload)")
-		return []byte(`{"error":"simImage required"}`), 1
-	}
-	localImage := sim.ResolveLocalImage(simImage)
-	if simArch == "" {
-		platform, err := localImagePlatform(context.Background(), localImage)
-		if err != nil {
-			injectCloudFunctionLog(project, functionID,
-				fmt.Sprintf("Function invocation error: resolve image platform: %v", err))
-			return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
-		}
-		simArch = platform
-	}
-
-	var stdout bytes.Buffer
-	collectSink := sim.FuncSink(func(line sim.LogLine) {
-		sink.WriteLog(line)
-		if line.Stream == "stdout" {
-			stdout.WriteString(line.Text)
-			stdout.WriteByte('\n')
-		}
-	})
-
-	handle, err := sim.StartContainerSync(sim.ContainerConfig{
-		Image:        localImage,
-		Architecture: simArch,
-		Command:      entrypoint,
-		Args:         userCmd,
-		Env:          mergeEnv(cmdEnv, hostMetadataEnv()),
-		Timeout:      timeout,
-		Labels:       map[string]string{"sockerless-sim-function": functionID},
-		ExtraHosts:   hostMetadataExtraHosts(),
-		Sandbox:      sim.SandboxGCFGen2,
-	}, collectSink)
+	body, exitCode, err := invokeOverlayContainerHTTP(image, functionID, timeout, sink, env)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "[sim-gcf] invocation error fn=%s img=%s: %v\n", functionID, image, err)
 		injectCloudFunctionLog(project, functionID,
 			fmt.Sprintf("Function invocation error: %v", err))
 		return []byte(fmt.Sprintf(`{"error":%q}`, err.Error())), 1
 	}
-	result := handle.Wait()
-
-	if result.ExitCode != 0 {
+	if exitCode != 0 {
+		fmt.Fprintf(os.Stderr, "[sim-gcf] non-zero exit fn=%s img=%s exit=%d body=%q\n", functionID, image, exitCode, string(body))
 		injectCloudFunctionLog(project, functionID,
-			fmt.Sprintf("Function execution error: container exited with code %d", result.ExitCode))
+			fmt.Sprintf("Function exited with code %d body=%q", exitCode, string(body)))
 	}
-
-	output := strings.TrimRight(stdout.String(), "\n")
-	if output == "" {
-		return []byte("{}"), result.ExitCode
-	}
-	return []byte(output), result.ExitCode
+	return body, exitCode
 }
 
 // cfLogSink implements sim.LogSink and writes log lines to Cloud Logging

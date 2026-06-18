@@ -55,40 +55,36 @@ func TestManagedZoneWireHasNoDockerNetworkName(t *testing.T) {
 	}
 }
 
-func TestStoredFunctionWireHasNoSimWiring(t *testing.T) {
-	// Decode the request shape a test client sends (sim wiring inside
-	// serviceConfig) — also the exact row shape sim.Store persists.
+func TestStoredFunctionRoundTrip(t *testing.T) {
+	// Decode the request shape a client sends — also the exact row shape
+	// sim.Store persists — and confirm wire() recovers it verbatim with
+	// no sim-only fields ever appearing on the wire.
 	row := `{
 		"name": "projects/p/locations/l/functions/f",
 		"state": "ACTIVE",
 		"serviceConfig": {
 			"uri": "http://sim/v2-functions-invoke/f",
-			"environmentVariables": {"FOO": "bar"},
-			"simImage": "alpine:latest",
-			"simCommand": ["echo", "hi"],
-			"simArchitecture": "linux/arm64"
+			"service": "projects/p/locations/l/services/f",
+			"environmentVariables": {"FOO": "bar"}
 		}
 	}`
 	var fn storedFunction
 	if err := json.Unmarshal([]byte(row), &fn); err != nil {
 		t.Fatalf("unmarshal stored: %v", err)
 	}
-	if fn.ServiceConfig == nil || fn.ServiceConfig.SimImage != "alpine:latest" ||
-		len(fn.ServiceConfig.SimCommand) != 2 || fn.ServiceConfig.SimArchitecture != "linux/arm64" {
-		t.Fatalf("request/restart decode lost sim wiring: %+v", fn.ServiceConfig)
-	}
-	if fn.ServiceConfig.EnvironmentVariables["FOO"] != "bar" {
-		t.Fatalf("decode lost wire serviceConfig members: %+v", fn.ServiceConfig)
+	if fn.ServiceConfig == nil || fn.ServiceConfig.EnvironmentVariables["FOO"] != "bar" ||
+		fn.ServiceConfig.Service != "projects/p/locations/l/services/f" {
+		t.Fatalf("decode lost serviceConfig members: %+v", fn.ServiceConfig)
 	}
 
 	assertNoJSONKeys(t, fn.wire(), "simImage", "simCommand", "simArchitecture")
 
-	// The persisted row keeps the wiring nested under serviceConfig.
+	// The persisted row round-trips the real serviceConfig members.
 	persisted, err := json.Marshal(fn)
 	if err != nil {
 		t.Fatalf("marshal stored: %v", err)
 	}
-	for _, key := range []string{`"simImage":"alpine:latest"`, `"simCommand":["echo","hi"]`} {
+	for _, key := range []string{`"FOO":"bar"`, `"service":"projects/p/locations/l/services/f"`} {
 		if !strings.Contains(string(persisted), key) {
 			t.Errorf("stored row must persist %s: %s", key, persisted)
 		}
