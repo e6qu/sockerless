@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1870 filed - 1825 fixed - 5 open - 7 false positives.**
+**1871 filed - 1826 fixed - 5 open - 7 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -19,6 +19,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1871~~ | P3 | CI `sim (bleephub e2e)` job — flaky "cancelled" (NOT a code failure) | flaky CI — unbounded network step on a tight job timeout | The `Install Playwright browsers` step (`npx playwright install --with-deps chromium`) hung on a stalled mirror — one run spent **9.1 min** in it (normal: <1 min) and the 10-min job timeout cancelled the job (GitHub reports a timeout as "cancelled"). Investigated per the boy-scout rule rather than just re-run. Fixed three ways in `.github/workflows/ci.yml`: (1) cache `~/.cache/ms-playwright` keyed on `ui/bun.lock` (+ `restore-keys`) so the ~150MB chromium download is a no-op on a hit; (2) wrap the install in a bounded retry (`timeout 240` × 3 attempts) so a hung attempt fails fast and retries instead of eating the whole job budget; (3) raise the job `timeout-minutes` 10 → 15 for cold-cache headroom. Only this one job uses Playwright. Found while driving #597's CI green. |
 | ~~1860~~ | P2 | ecs backend — `deriveMACFromIP` (`eni.go`) fabricated a container MAC from the IP octets (`02:42:%02x...`), defaulting to a hardcoded `02:42:ac:11:00:02` on parse failure | synthetic data | The real ENI MAC is in the same Fargate attachment `Details` the IP is read from (`macAddress` alongside `privateIPv4Address`). Replaced the synthesis with `extractENIMAC` reading the real `macAddress`; absent → "" (honest), never synthesized or hardcoded. `TestTaskToContainer_NetworkIPFromENI` now supplies + asserts the real MAC. Found by the 2026-06-18 audit-round-3. |
 | ~~1861~~ | P2 | ecs backend — `ContainerKill`/`ContainerRemove(force)` (`backend_impl.go`) dropped the `StopTask` error (`_, _ = ...`) then reported success | swallowed cloud error → orphaned billable task | `docker kill`/`docker rm -f` reported success while the Fargate task could still be running (billable, invisible) — `ContainerStop` already surfaced the same error. Both now return a `ServerError` on `StopTask` failure instead of orphaning the task. Found by the 2026-06-18 audit-round-3. |
 | ~~1862~~ | P3 | ecs backend — `fargateResources` (`taskdef.go`) returned `"256","512"` (the SMALLEST tier) when a container's CPU/mem request exceeded the largest Fargate tier | default-on-invalid → massive under-provisioning | An oversized request silently dropped to 256 CPU / 512 MB. Now clamps to the largest valid Fargate combo (the max the platform offers) rather than the smallest. Found by the 2026-06-18 audit-round-3. |

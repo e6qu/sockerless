@@ -566,7 +566,12 @@ jobs:
   sim-bleephub-e2e:
     name: sim (bleephub e2e)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15 (not 10): the chromium download in "Install Playwright browsers" is a
+    # variable-time network step that, stacked on the UI + Go builds, used to
+    # push a slow run past a 10-min wall mid-install — GitHub reports that as a
+    # "cancelled" job. The browser cache below makes the install near-instant on
+    # a hit; the headroom covers a cold cache.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6.0.3
       - uses: actions/setup-go@v6.4.0
@@ -583,8 +588,34 @@ jobs:
         run: cp -r ui/packages/bleephub/dist bleephub/dist
       - name: Build bleephub binary
         run: cd bleephub && GOWORK=off go build -o /tmp/bleephub-server ./cmd/
+      # Cache the chromium binary so the install isn't a ~150MB download every
+      # run (the variable-time step that previously cancelled the job on the
+      # 10-min wall). Keyed on the lockfile so a @playwright/test version bump
+      # invalidates it; restore-keys keeps a warm cache across other dep bumps,
+      # and `playwright install` re-downloads only if the version differs.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v5.0.5
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('ui/bun.lock') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+      # Bounded retry: the chromium download / apt step has hung for many
+      # minutes on a stalled mirror (one run spent 9 min here and was cancelled
+      # on the job timeout). `timeout` caps each attempt so a hang fails fast
+      # and retries instead of consuming the whole job budget. With the cache
+      # above, the common case is a fast no-op.
       - name: Install Playwright browsers
-        run: cd ui/packages/bleephub && npx playwright install --with-deps chromium
+        run: |
+          cd ui/packages/bleephub
+          for attempt in 1 2 3; do
+            if timeout 240 npx playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "::warning::playwright install attempt ${attempt} timed out or failed; retrying"
+          done
+          echo "::error::playwright install failed after 3 attempts"
+          exit 1
       - name: Run Playwright E2E tests
         run: cd ui/packages/bleephub && SERVER_BIN=/tmp/bleephub-server npx playwright test --timeout=60000
       - name: Upload screenshots on failure
