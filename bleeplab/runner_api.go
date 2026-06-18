@@ -19,14 +19,15 @@ func (s *Server) handleRunnerVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	_, ok := s.runners[req.Token]
+	rn, ok := s.runners[req.Token]
 	s.mu.Unlock()
 	if !ok {
 		writeJSON(w, http.StatusForbidden, map[string]string{"message": "403 Forbidden"})
 		return
 	}
-	// Real GitLab returns the runner identity on verify.
-	writeJSON(w, http.StatusOK, map[string]any{"id": 0, "token": req.Token})
+	// Real GitLab returns the runner identity on verify — emit the real
+	// runner id, not a fabricated 0.
+	writeJSON(w, http.StatusOK, map[string]any{"id": rn.ID, "token": req.Token})
 }
 
 // handleRunnerRegister is the legacy registration-token flow
@@ -160,7 +161,15 @@ func (s *Server) handleJobTrace(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]string{"message": "403 Forbidden"})
 		return
 	}
-	body, _ := io.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		// A failed/truncated read must not be appended and acknowledged —
+		// returning 202 + an advanced Range would tell gitlab-runner the
+		// bytes were durably stored and move its send offset past data we
+		// never kept, corrupting the trace.
+		http.Error(w, "400 failed to read trace chunk", http.StatusBadRequest)
+		return
+	}
 
 	// Content-Range: "start-end" — the byte offset this chunk begins at.
 	start := job.traceLen()

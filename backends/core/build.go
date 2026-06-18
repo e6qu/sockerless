@@ -396,37 +396,47 @@ func prepareBuildContext(contextDir string, copies []copyInstruction) (string, e
 		}
 
 		if srcInfo.IsDir() {
-			// Copy directory contents
-			_ = filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
+			// Copy directory contents. A real staging failure (mkdir/read/
+			// write) must fail the build, not silently produce an image
+			// missing the COPY'd files — propagate the first error.
+			werr := filepath.Walk(srcPath, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
-					return nil
+					return err
 				}
 				rel, _ := filepath.Rel(srcPath, path)
 				dest := filepath.Join(dstPath, rel)
 				if info.IsDir() {
-					_ = os.MkdirAll(dest, info.Mode())
-					return nil
+					return os.MkdirAll(dest, info.Mode())
 				}
-				_ = os.MkdirAll(filepath.Dir(dest), 0755)
+				if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+					return err
+				}
 				data, err := os.ReadFile(path)
 				if err != nil {
-					return nil
+					return err
 				}
-				_ = os.WriteFile(dest, data, info.Mode())
-				return nil
+				return os.WriteFile(dest, data, info.Mode())
 			})
+			if werr != nil {
+				return stagingDir, fmt.Errorf("stage COPY %s: %w", cp.src, werr)
+			}
 		} else {
 			// Single file copy
 			// If dst ends with /, it's a directory — put file inside
 			if strings.HasSuffix(cp.dst, "/") {
 				dstPath = filepath.Join(dstPath, filepath.Base(cp.src))
 			}
-			_ = os.MkdirAll(filepath.Dir(dstPath), 0755)
+			if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+				return stagingDir, fmt.Errorf("stage COPY %s: %w", cp.src, err)
+			}
 			data, err := os.ReadFile(srcPath)
 			if err != nil {
-				continue
+				// srcPath was Stat'd above; a read failure here is real.
+				return stagingDir, fmt.Errorf("read COPY source %s: %w", cp.src, err)
 			}
-			_ = os.WriteFile(dstPath, data, srcInfo.Mode())
+			if err := os.WriteFile(dstPath, data, srcInfo.Mode()); err != nil {
+				return stagingDir, fmt.Errorf("stage COPY %s: %w", cp.src, err)
+			}
 		}
 	}
 

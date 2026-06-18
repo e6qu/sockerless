@@ -121,8 +121,6 @@ func (s *Server) handleResetOAuthToken(w http.ResponseWriter, r *http.Request) {
 	// Revoke old + mint fresh pair carrying same scopes + user.
 	s.store.RevokeUserToServerToken(tok.Token)
 	fresh, refresh := s.store.CreateUserToServerToken(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, 8*time.Hour, tok.RefreshTokenValue != "")
-	user, _ := s.store.LookupUserToServerToken(fresh.Token)
-	_ = user
 	resp := oauthTokenInspectionJSON(s.store, fresh, s.userByID(fresh.UserID))
 	resp["token"] = fresh.Token
 	if refresh != nil {

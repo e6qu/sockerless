@@ -29,6 +29,7 @@ import (
 	runpb "cloud.google.com/go/run/apiv2/runpb"
 	secretmanager "cloud.google.com/go/secretmanager/apiv1"
 	"cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
+	"google.golang.org/api/iterator"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -382,8 +383,14 @@ func ListManaged(ctx context.Context, project, region string) ([]Managed, error)
 	var managed []Managed
 	for {
 		j, err := it.Next()
-		if err != nil {
+		if err == iterator.Done {
 			break
+		}
+		if err != nil {
+			// A truncated list returned as complete would make Cleanup
+			// treat live runner Jobs as orphaned and reap their Services —
+			// fail loudly instead of silently dropping entries.
+			return nil, fmt.Errorf("list jobs: %w", err)
 		}
 		if j.Labels[LabelManagedBy] != LabelManagedVal {
 			continue
@@ -423,8 +430,16 @@ func executionStateForJob(ctx context.Context, j *runpb.Job) string {
 	var latest *runpb.Execution
 	for {
 		ex, err := it.Next()
-		if err != nil {
+		if err == iterator.Done {
 			break
+		}
+		if err != nil {
+			// A transient ListExecutions error must NOT read as "no
+			// execution": that state is reap-eligible, so a network/throttle
+			// blip during a long-running CI job would delete the live runner
+			// Job. Return UNKNOWN (non-terminal, never reaped), matching the
+			// Azure twin's "never delete on partial information."
+			return "UNKNOWN"
 		}
 		if latest == nil || (ex.CreateTime != nil && latest.CreateTime != nil && ex.CreateTime.AsTime().After(latest.CreateTime.AsTime())) {
 			latest = ex
@@ -473,8 +488,11 @@ func ListManagedServices(ctx context.Context, project, region string) ([]Managed
 	var out []ManagedService
 	for {
 		svc, err := it.Next()
-		if err != nil {
+		if err == iterator.Done {
 			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list services: %w", err)
 		}
 		if svc.Labels["sockerless_managed"] != "true" {
 			continue

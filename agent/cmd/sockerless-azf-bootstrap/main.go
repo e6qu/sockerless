@@ -186,8 +186,15 @@ func sendLifetimeExpiredOnSIGTERM(conn *websocket.Conn, connMu *sync.Mutex) {
 func handleInvoke(w http.ResponseWriter, r *http.Request) {
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(r.Body)
+		var rerr error
+		body, rerr = io.ReadAll(r.Body)
 		_ = r.Body.Close()
+		if rerr != nil {
+			// A partial read would mis-parse as "not an exec envelope" and
+			// silently fall through to the default-invoke argv — surface it.
+			writeTextResult(w, 1, []byte("failed to read invoke body: "+rerr.Error()+"\n"))
+			return
+		}
 	}
 	if env, ok := parseExecEnvelope(body); ok {
 		runExecEnvelope(w, r.Context(), env)

@@ -4,6 +4,46 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-18 - Audit round 2: fail-loud / no-swallow / no-fake / no-dead-code sweep of the glue/harness/core code
+
+The #593 audit focused on sims → backends → UIs; this round targeted the areas
+it didn't — the in-container agent bootstraps, the GitHub-runner dispatchers,
+bleephub, bleeplab, and the shared core engine + the Linux realexec host. Five
+parallel read-only agents proposed candidates; every one was confirmed at its
+`file:line` before any fix (the dispatcher agent even reported a wrong absolute
+path — the dirs are repo-root `github-runner-dispatcher-*`, not `dispatchers/`
+— which verification caught).
+
+**Fixed (each tested in its module):**
+- **BUG-1853 (P1):** the gcp github-runner dispatcher's `it.Next()` loops
+  treated a real Cloud Run API error the same as `iterator.Done`. In
+  `executionStateForJob` a transient `ListExecutions` blip yielded
+  `NO_EXECUTION` — a reap-eligible state — so a network/throttle hiccup during
+  a long CI job would delete the live runner Job (the BUG-1752 class). Now
+  returns `UNKNOWN` (never reaped) and `ListManaged`/`ListManagedServices`
+  propagate the error so the cleanup sweep skips that cycle, matching the
+  already-correct Azure twin. AWS + Azure dispatchers were clean.
+- **BUG-1854:** agent bootstraps — the cloudrun/gcf PostExec hook silently
+  dropped the GCS workspace save on a malformed `SOCKERLESS_SYNC_VOLUMES`
+  (data loss); `parseUserArgv` silently returned "no command" on a malformed
+  argv; azf `handleInvoke` swallowed a partial body read. All now fail loud.
+- **BUG-1855:** core `prepareBuildContext` swallowed every COPY-staging
+  filesystem error and `ImageBuild` streamed `Successfully built` anyway —
+  an image silently missing its COPY'd files. Now propagates + fails the
+  build. Plus a swallowed `docker import` ImageTag and a `_ = layerPath` pin.
+- **BUG-1856:** bleeplab runner-verify returned a fabricated `id: 0` instead
+  of the real runner identity; job-trace `io.ReadAll` swallow returned `202`
+  + an advanced `Range`, acking bytes it never stored.
+- **BUG-1857:** bleephub had two dead GraphQL enum silencers
+  (`mergeableStateEnum`/`pullRequestReviewDecisionEnum`) — wired them as the
+  field types (faithful to GitHub's enum-typed schema; stored values already
+  match) and removed a dead token lookup.
+
+**Filed open** with fix-shapes: BUG-1858 (bleephub `viewerPermission` hardcoded
+`ADMIN` — needs viewer/repo resolution + a TeamPermission→RepositoryPermission
+mapping, deferred for its own test) and BUG-1859 (assorted minor swallows).
+`simulators/realexec/` audited clean.
+
 ## 2026-06-17 - Audit backlog (deferred): cloudrun network-service stateless reconstruction (BUG-1845)
 
 The cloudrun backend's `networkServices` map (user-defined-network ID →

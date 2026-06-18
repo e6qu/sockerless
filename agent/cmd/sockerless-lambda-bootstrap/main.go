@@ -575,10 +575,12 @@ func parseUserArgv(key string) []string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-lambda-bootstrap: %s is not valid base64 — argv ignored: %v\n", key, err)
 		return nil
 	}
 	var out []string
 	if err := json.Unmarshal(decoded, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-lambda-bootstrap: %s is not JSON argv — argv ignored: %v\n", key, err)
 		return nil
 	}
 	return out

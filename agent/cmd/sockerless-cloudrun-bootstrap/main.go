@@ -244,7 +244,14 @@ func main() {
 			},
 			PostExec: func(env []string) {
 				vols, perr := parseSyncVolumes(extractSyncVolumesEnv(env), syncMounts)
-				if perr != nil || len(vols) == 0 {
+				if perr != nil {
+					// A malformed SOCKERLESS_SYNC_VOLUMES must not be conflated
+					// with "no volumes to save" — that silently drops the
+					// workspace save (data loss). Surface it loudly.
+					fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: WS exec sync save SKIPPED — malformed sync volumes: %v\n", perr)
+					return
+				}
+				if len(vols) == 0 {
 					return
 				}
 				if serr := saveSyncAll(context.Background(), vols); serr != nil {
@@ -581,10 +588,12 @@ func parseUserArgv(key string) []string {
 	}
 	decoded, err := base64.StdEncoding.DecodeString(raw)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: %s is not valid base64 — argv ignored: %v\n", key, err)
 		return nil
 	}
 	var out []string
 	if err := json.Unmarshal(decoded, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "sockerless-cloudrun-bootstrap: %s is not JSON argv — argv ignored: %v\n", key, err)
 		return nil
 	}
 	return out

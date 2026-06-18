@@ -344,10 +344,16 @@ func (s *BaseServer) ImageBuild(opts api.ImageBuildOptions, context io.Reader) (
 	}
 	StoreImageWithAliases(s.Store, ref, img)
 
-	// Process COPY instructions
+	// Process COPY instructions. A staging failure must fail the build —
+	// reporting "Successfully built" for an image silently missing its
+	// COPY'd files is a fake success.
 	if len(parsed.copies) > 0 {
 		stagingDir, err := prepareBuildContext(contextDir, parsed.copies)
-		if err == nil && stagingDir != "" {
+		if err != nil {
+			os.RemoveAll(contextDir)
+			return nil, &api.ServerError{Message: "failed to stage COPY build context: " + err.Error()}
+		}
+		if stagingDir != "" {
 			s.Store.BuildContexts.Store(imageID, stagingDir)
 		}
 	}
