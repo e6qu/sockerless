@@ -54,6 +54,7 @@ jobs:
   check-deps:
     name: check-deps (deps + actions + scripts)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -92,6 +93,7 @@ jobs:
   single-open-pr:
     name: At most one PR open
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       pull-requests: read
     steps:
@@ -107,6 +109,7 @@ jobs:
     name: Branch rebased on origin/main
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.0
         with:
@@ -121,6 +124,7 @@ jobs:
   test-core:
     name: test (core)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -156,6 +160,7 @@ jobs:
   test-backend:
     name: test (${{ matrix.shard }})
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -194,6 +199,7 @@ jobs:
   test-faas-smoke:
     name: test (${{ matrix.shard }} faas-smoke)
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     env:
       SOCKERLESS_TEST_TARGET: "sim"
     strategy:
@@ -227,6 +233,7 @@ jobs:
     # Native linux/arm64 CPU architecture, matching the simulator
     # capacity contract without QEMU.
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
     name: test (e2e)
     steps:
       - uses: actions/checkout@v7.0.0
@@ -267,6 +274,7 @@ jobs:
   sim:
     # VM-backed simulator slices require /dev/kvm for real Firecracker guests.
     runs-on: ubuntu-24.04
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -327,6 +335,7 @@ jobs:
   sim-aws-sdk:
     name: sim (aws sdk)
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -376,6 +385,7 @@ jobs:
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -435,6 +445,7 @@ jobs:
     # against a provider sequence that the SDK tests had already
     # marked green).
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -495,6 +506,7 @@ jobs:
 
   ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: oven-sh/setup-bun@v2.2.0
@@ -773,6 +785,7 @@ jobs:
   smoke:
     # Native linux/arm64 CPU architecture — simulator primary capacity.
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.0
       - name: Smoke test (ecs)
@@ -793,6 +806,7 @@ jobs:
 
   terraform:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
