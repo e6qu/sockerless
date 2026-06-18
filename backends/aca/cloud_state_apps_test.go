@@ -97,11 +97,12 @@ func TestAppToContainer_Shape(t *testing.T) {
 	main := "main"
 	img := "myreg.azurecr.io/app:v1"
 	tags := map[string]*string{
-		"sockerless-managed":      ptr("true"),
-		"sockerless-container-id": ptr("abcdef012345"),
-		"sockerless-name":         ptr("/webapp"),
-		"sockerless-network":      ptr("mynet"),
-		"sockerless-backend":      ptr("aca"),
+		"sockerless-managed":       ptr("true"),
+		"sockerless-container-id":  ptr("abcdef012345"),
+		"sockerless-name":          ptr("/webapp"),
+		"sockerless-network":       ptr("mynet"),
+		"sockerless-backend":       ptr("aca"),
+		"sockerless-exposed-ports": ptr("6379/tcp,8080/tcp"),
 	}
 	app := &armappcontainers.ContainerApp{
 		Tags: tags,
@@ -137,5 +138,36 @@ func TestAppToContainer_Shape(t *testing.T) {
 	}
 	if got.Driver != "aca-apps" {
 		t.Errorf("Driver = %q, want aca-apps", got.Driver)
+	}
+	// ExposedPorts reconstruct from the sockerless-exposed-ports tag — cloud
+	// truth must carry the same port set the create-time path declared.
+	for _, want := range []string{"6379/tcp", "8080/tcp"} {
+		if _, ok := got.Config.ExposedPorts[want]; !ok {
+			t.Errorf("ExposedPorts missing %q; got %v", want, got.Config.ExposedPorts)
+		}
+	}
+	if len(got.Config.ExposedPorts) != 2 {
+		t.Errorf("ExposedPorts len = %d, want 2 (%v)", len(got.Config.ExposedPorts), got.Config.ExposedPorts)
+	}
+}
+
+// TestExposedPortsTag_RoundTrip — encode→parse is the identity on a port set.
+func TestExposedPortsTag_RoundTrip(t *testing.T) {
+	in := map[string]struct{}{"8080/tcp": {}, "6379/tcp": {}}
+	enc := encodeExposedPorts(in)
+	if enc != "6379/tcp,8080/tcp" { // deterministic (sorted)
+		t.Fatalf("encodeExposedPorts = %q", enc)
+	}
+	out := parseExposedPorts(enc)
+	if len(out) != len(in) {
+		t.Fatalf("round-trip len = %d, want %d", len(out), len(in))
+	}
+	for k := range in {
+		if _, ok := out[k]; !ok {
+			t.Errorf("round-trip dropped %q", k)
+		}
+	}
+	if encodeExposedPorts(nil) != "" || parseExposedPorts("") != nil {
+		t.Errorf("empty cases not handled")
 	}
 }
