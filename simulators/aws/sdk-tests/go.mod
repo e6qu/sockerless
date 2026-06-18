@@ -10,18 +10,18 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/amplify v1.39.4
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.6
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.6
-	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.42.2
+	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.4
-	github.com/aws/aws-sdk-go-v2/service/batch v1.65.6
+	github.com/aws/aws-sdk-go-v2/service/batch v1.66.0
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.2
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.56.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.76.0
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.77.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.4
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.307.1
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.4
-	github.com/aws/aws-sdk-go-v2/service/ecs v1.84.0
+	github.com/aws/aws-sdk-go-v2/service/ecs v1.85.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.42.1
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.54.3
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.4
@@ -30,7 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.54.5
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.44.2
 	github.com/aws/aws-sdk-go-v2/service/kms v1.53.4
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.92.3
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.93.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.119.3
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.63.3
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.104.0
