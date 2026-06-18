@@ -387,8 +387,20 @@ func jobTimeout() time.Duration {
 		return defaultJobTimeoutSeconds * time.Second
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n <= 0 {
-		return 0
+	if err != nil {
+		// A malformed value must not silently disable the timeout (running
+		// unbounded) — log and fall back to the default.
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: %s=%q is not an integer — using default %ds: %v\n",
+			envJobTimeout, v, defaultJobTimeoutSeconds, err)
+		return defaultJobTimeoutSeconds * time.Second
+	}
+	if n < 0 {
+		fmt.Fprintf(os.Stderr, "sockerless-azf-bootstrap: %s=%d is negative — using default %ds\n",
+			envJobTimeout, n, defaultJobTimeoutSeconds)
+		return defaultJobTimeoutSeconds * time.Second
+	}
+	if n == 0 {
+		return 0 // explicit "no timeout"
 	}
 	return time.Duration(n) * time.Second
 }

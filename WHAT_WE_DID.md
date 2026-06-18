@@ -39,9 +39,20 @@ path — the dirs are repo-root `github-runner-dispatcher-*`, not `dispatchers/`
   field types (faithful to GitHub's enum-typed schema; stored values already
   match) and removed a dead token lookup.
 
-**Filed open** with fix-shapes: BUG-1858 (bleephub `viewerPermission` hardcoded
-`ADMIN` — needs viewer/repo resolution + a TeamPermission→RepositoryPermission
-mapping, deferred for its own test) and BUG-1859 (assorted minor swallows).
+- **BUG-1858:** bleephub `Repository.viewerPermission` hardcoded `ADMIN` —
+  now computes the real permission from the viewer (`ghUserFromContext`) + repo
+  (`store.GetRepo`) via the existing `rbac.go` helpers
+  (`canAdminRepo`/`canPushRepo`/`canReadRepo` → ADMIN/WRITE/READ/null).
+  Regression test proves an anonymous viewer of a public repo gets a non-ADMIN
+  result.
+- **BUG-1859 (minor batch):** bleeplab three `_ = readJSON(...)` handlers now
+  fail loud (400) + reject a blank project name; receive-pack matches
+  `errors.Is(io.EOF/io.ErrUnexpectedEOF)` instead of a `"EOF"` substring; agent
+  azf `jobTimeout` treats a malformed value as default (never silently
+  unbounded), only an explicit `0` disables; core `image_manager` logs the
+  skipped local-record populate instead of swallowing it.
+
+Everything found was fixed in this one PR — nothing deferred.
 `simulators/realexec/` audited clean.
 
 ## 2026-06-17 - Audit backlog (deferred): cloudrun network-service stateless reconstruction (BUG-1845)

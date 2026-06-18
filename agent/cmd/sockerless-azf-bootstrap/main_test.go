@@ -146,11 +146,18 @@ func TestJobTimeout(t *testing.T) {
 	}
 	t.Setenv(envJobTimeout, "0")
 	if got := jobTimeout(); got != 0 {
-		t.Fatalf("timeout = %v, want disabled", got)
+		t.Fatalf("timeout = %v, want disabled (explicit 0)", got)
 	}
+	// A malformed value must NOT silently disable the timeout (running
+	// unbounded) — it falls back to the default.
 	t.Setenv(envJobTimeout, "not-an-int")
-	if got := jobTimeout(); got != 0 {
-		t.Fatalf("timeout = %v, want disabled", got)
+	if got := jobTimeout(); got != defaultJobTimeoutSeconds*time.Second {
+		t.Fatalf("timeout = %v, want default (malformed value must not disable)", got)
+	}
+	// A negative value is likewise invalid → default, not disabled.
+	t.Setenv(envJobTimeout, "-5")
+	if got := jobTimeout(); got != defaultJobTimeoutSeconds*time.Second {
+		t.Fatalf("timeout = %v, want default (negative must not disable)", got)
 	}
 }
 

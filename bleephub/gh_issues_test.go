@@ -765,3 +765,25 @@ func TestGraphQLHasIssuesEnabled(t *testing.T) {
 		t.Fatalf("expected viewerPermission=ADMIN, got %v", repo["viewerPermission"])
 	}
 }
+
+// TestGraphQLViewerPermissionNotHardcoded proves viewerPermission is computed
+// from the viewer's real access, not a hardcoded ADMIN: an anonymous viewer of
+// a public repo gets READ (not ADMIN).
+func TestGraphQLViewerPermissionNotHardcoded(t *testing.T) {
+	createTestIssueRepo(t, "gql-viewer-perm")
+
+	// No token → anonymous viewer.
+	resp := ghPost(t, "/api/graphql", "", map[string]interface{}{
+		"query": `{repository(owner:"admin",name:"gql-viewer-perm"){viewerPermission}}`,
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	d, _ := data["data"].(map[string]interface{})
+	repo, _ := d["repository"].(map[string]interface{})
+	if got := repo["viewerPermission"]; got == "ADMIN" {
+		t.Fatalf("anonymous viewer must not get ADMIN (hardcoded), got %v", got)
+	}
+}

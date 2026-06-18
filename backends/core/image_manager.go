@@ -402,10 +402,22 @@ func (m *ImageManager) Build(opts api.ImageBuildOptions, ctxReader io.Reader) (i
 			return pr, nil
 		}
 
-		// Fetch the built image metadata from the cloud registry
+		// Populate the local image record from the cloud registry. The build
+		// itself already succeeded (the image is in the registry — the source
+		// of truth), so a failure here doesn't fail the build, but it must be
+		// logged loudly: a silently-skipped populate surfaces later as a
+		// confusing missing-local-metadata on `docker run <tag>`.
 		if result.ImageRef != "" {
-			if meta, fetchErr := FetchImageMetadata(result.ImageRef); fetchErr == nil && meta != nil {
-				_, _ = m.Base.ImagePullWithMetadata(result.ImageRef, "", meta)
+			meta, fetchErr := FetchImageMetadata(result.ImageRef)
+			switch {
+			case fetchErr != nil:
+				m.Logger.Warn().Err(fetchErr).Str("ref", result.ImageRef).
+					Msg("cloud build: fetch metadata failed; local image record not populated (image is in the registry)")
+			case meta != nil:
+				if _, perr := m.Base.ImagePullWithMetadata(result.ImageRef, "", meta); perr != nil {
+					m.Logger.Warn().Err(perr).Str("ref", result.ImageRef).
+						Msg("cloud build: populate local image record failed (image is in the registry)")
+				}
 			}
 		}
 

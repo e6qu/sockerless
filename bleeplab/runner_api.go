@@ -45,7 +45,10 @@ func (s *Server) handleRunnerUnregister(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		Token string `json:"token"`
 	}
-	_ = readJSON(r, &req)
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.mu.Lock()
 	delete(s.runners, req.Token)
 	s.mu.Unlock()

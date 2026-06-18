@@ -10,7 +10,15 @@ func (s *Server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name string `json:"name"`
 	}
-	_ = readJSON(r, &req)
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		// Real GitLab rejects a project create with no name.
+		http.Error(w, `{"message":{"name":["can't be blank"]}}`, http.StatusBadRequest)
+		return
+	}
 	s.mu.Lock()
 	id := s.nextID
 	s.nextID++
@@ -86,7 +94,10 @@ func (s *Server) handlePipelineCreate(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Ref string `json:"ref"`
 	}
-	_ = readJSON(r, &req)
+	if err := readJSON(r, &req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	s.mu.Lock()
 	p, ok := s.projects[pid]
 	if !ok {
