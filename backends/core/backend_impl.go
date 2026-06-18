@@ -902,7 +902,10 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 
 	if !stream || !c.State.Running {
 		now := time.Now().UTC()
-		entry := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
+		entry, err := s.buildStatsEntry(id, now, "0001-01-01T00:00:00Z", memLimit)
+		if err != nil {
+			return nil, err
+		}
 		data, _ := json.Marshal(entry)
 		return io.NopCloser(bytes.NewReader(data)), nil
 	}
@@ -913,7 +916,11 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 		preread := "0001-01-01T00:00:00Z"
 		for {
 			now := time.Now().UTC()
-			entry := s.buildStatsEntry(id, now, preread, memLimit)
+			entry, err := s.buildStatsEntry(id, now, preread, memLimit)
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
 			if err := enc.Encode(entry); err != nil {
 				pw.CloseWithError(err)
 				return

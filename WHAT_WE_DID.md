@@ -4,6 +4,43 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-18 - Audit round 3 deferred items: SQLite integrity, stats fabrication, + a false positive
+
+Closed out the three findings deferred from #597. Verifying each before acting
+turned the third into a false positive — a good reminder that an agent-proposed
+fix can be flatly wrong.
+
+- **BUG-1869 (shared-sim SQLite integrity).** `SQLiteStore`'s
+  `Put`/`Update`/`Get`/`List`/`Len`/`Delete` swallowed every DB error: a failed
+  write returned as "stored", a transient read error read back as "absent" (so a
+  resource 404s or gets recreated), `List` dropped rows on a scan error and never
+  checked `rows.Err()`. The `Store` interface has no error returns, so widening
+  it would ripple through all three sims; instead a new `fatalDBErr` panics on an
+  UNEXPECTED DB error — net/http recovers a handler panic into a 500, so it's
+  loud without nuking the sim, the same fail-loud stance `MakeStore` already
+  takes. A legitimate miss stays `sql.ErrNoRows → (zero,false)`. Fixed in all
+  three shared copies (azure keeps its `[]T{}` empty-slice List style);
+  regression test asserts every op on a closed DB panics; all three sim suites
+  stay green.
+- **BUG-1868 (fabricated zero stats).** cloudrun/gcf/aca/azf registered no
+  `StatsProvider`, so `core buildStatsEntry` returned all-zero CPU/memory as a
+  real stats document (a live container shown at 0%), and it also swallowed a
+  provider error back to zeros. `buildStatsEntry` now returns `(map, error)` —
+  `NotImplementedError` when there's no provider, the provider's error when it
+  fails — and the four call sites surface it. ECS keeps its real CloudWatch
+  metrics; its legitimate "just-started task, no datapoint yet" zeros are a
+  successful empty reading, untouched.
+- **BUG-1870 (Spanner `/spanner/` path) — FALSE POSITIVE.** The audit agent
+  flagged the prefix as a fake-test masking a wire-path bug. In fact it's a
+  documented, load-bearing collapsed-port disambiguation: Cloud SQL registers
+  `registerCloudSQLPrefix(srv, "/v1")` and owns the canonical
+  `/v1/projects/{project}/instances` (terraform-provider-google's `sqladmin/v1`
+  client uses it), so mounting Spanner's identical real path there would panic
+  Go's ServeMux at registration. Real GCP separates the two by hostname; the
+  single-port sim disambiguates by prefix (the `gcpMountPrefixes` mechanism). The
+  test endpoint `baseURL+"/spanner/"` is the per-service coordinate. Reclassified
+  as a false positive — "fixing" it would crash the sim.
+
 ## 2026-06-18 - Audit round 3: shared sim library, per-cloud common, cloud backends, CLI + harnesses
 
 A third parallel-agent audit, targeting the areas the first two passes didn't

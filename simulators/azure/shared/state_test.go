@@ -223,3 +223,47 @@ func TestSQLiteStoreWithNilDB(t *testing.T) {
 		t.Error("memory fallback should work with nil db")
 	}
 }
+
+// TestSQLiteStoreFailsLoudOnDBError proves an unexpected DB error (here: the
+// underlying DB is closed) panics rather than being swallowed into a silent
+// "stored"/"not found"/"empty". A persistence fault must surface, not corrupt
+// state — net/http recovers a handler panic into a 500.
+func TestSQLiteStoreFailsLoudOnDBError(t *testing.T) {
+	dir, err := os.MkdirTemp("", "sim-state-faulttest-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	db, err := OpenDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := NewSQLiteStore[testItem](db, "fault_items")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Put("a", testItem{Name: "alpha", Value: 1}) // works while the DB is open
+	if err := db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	// Every op against the now-closed DB must panic (fail loud), not swallow.
+	ops := map[string]func(){
+		"Put":    func() { s.Put("b", testItem{Name: "beta"}) },
+		"Get":    func() { s.Get("a") },
+		"Update": func() { s.Update("a", func(i *testItem) { i.Value = 2 }) },
+		"List":   func() { s.List() },
+		"Len":    func() { s.Len() },
+		"Delete": func() { s.Delete("a") },
+	}
+	for name, op := range ops {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s on a closed DB must panic (fail loud), not swallow the error", name)
+				}
+			}()
+			op()
+		})
+	}
+}
