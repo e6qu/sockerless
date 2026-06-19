@@ -244,6 +244,20 @@ func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
 	if req.Timeout == 0 {
 		req.Timeout = 3
 	}
+	// MemorySize is 128–10240 MB; Timeout is 1–900 s (server-side ranges the
+	// SDK doesn't check).
+	if req.MemorySize < 128 || req.MemorySize > 10240 {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"'memorySize' failed to satisfy constraint: Member must have value less than or equal to 10240 and greater than or equal to 128",
+			http.StatusBadRequest)
+		return
+	}
+	if req.Timeout < 1 || req.Timeout > 900 {
+		sim.AWSError(w, "InvalidParameterValueException",
+			"'timeout' failed to satisfy constraint: Member must have value less than or equal to 900 and greater than or equal to 1",
+			http.StatusBadRequest)
+		return
+	}
 	if req.PackageType == "" {
 		req.PackageType = "Zip"
 	}

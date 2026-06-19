@@ -3,6 +3,7 @@ package lambda
 import (
 	"errors"
 	"io"
+	"time"
 
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
@@ -78,6 +79,14 @@ func (d *lambdaStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn
 		}
 	}()
 	<-done
+	// The stdout pump finished (attach over) — unblock the stdin pump parked on
+	// conn.Read so it doesn't leak until the caller closes conn.
+	switch cc := conn.(type) {
+	case interface{ SetReadDeadline(time.Time) error }:
+		_ = cc.SetReadDeadline(time.Now())
+	case interface{ CloseRead() error }:
+		_ = cc.CloseRead()
+	}
 
 	if err == nil {
 		return nil
