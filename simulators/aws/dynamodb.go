@@ -1236,80 +1236,11 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 
 // ddbEvalCondition reports whether a DynamoDB ConditionExpression holds for an
 // item. `exists` is whether the item is currently present. Supports the common
-// subset: attribute_exists / attribute_not_exists, begins_with, and the
-// comparison operators (=, <>, <, <=, >, >=), combined with AND. An empty
-// expression always holds.
+// ConditionExpression via the full expression grammar in dynamodb_expr.go
+// (functions, comparators, BETWEEN/IN, AND/OR/NOT, parentheses, nested paths).
+// An empty expression always holds.
 func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return true
-	}
-	for _, raw := range splitTopLevelAnd(expr) {
-		clause := strings.TrimSpace(raw)
-		if !ddbEvalConditionClause(item, exists, clause, names, values) {
-			return false
-		}
-	}
-	return true
-}
-
-func splitTopLevelAnd(expr string) []string {
-	// AND is the only conjunction the sim models; split case-insensitively.
-	lower := strings.ToLower(expr)
-	var parts []string
-	last := 0
-	for {
-		idx := strings.Index(lower[last:], " and ")
-		if idx < 0 {
-			parts = append(parts, expr[last:])
-			break
-		}
-		parts = append(parts, expr[last:last+idx])
-		last += idx + len(" and ")
-	}
-	return parts
-}
-
-func ddbEvalConditionClause(item map[string]any, exists bool, clause string, names map[string]string, values map[string]any) bool {
-	clause = strings.TrimSpace(clause)
-	if rest, ok := ddbFuncArg(clause, "attribute_not_exists"); ok {
-		attr := ddbResolveAttrName(rest, names)
-		return !exists || item[attr] == nil
-	}
-	if rest, ok := ddbFuncArg(clause, "attribute_exists"); ok {
-		attr := ddbResolveAttrName(rest, names)
-		return exists && item[attr] != nil
-	}
-	if rest, ok := ddbFuncArg(clause, "begins_with"); ok {
-		args := strings.SplitN(rest, ",", 2)
-		if len(args) != 2 {
-			return false
-		}
-		attr := ddbResolveAttrName(strings.TrimSpace(args[0]), names)
-		want := ddbScalarString(values[strings.TrimSpace(args[1])])
-		return strings.HasPrefix(ddbScalarString(item[attr]), want)
-	}
-	// Comparison operators, longest-first so "<=" / ">=" / "<>" win over "<"/">".
-	for _, op := range []string{"<=", ">=", "<>", "=", "<", ">"} {
-		if left, right, found := strings.Cut(clause, op); found {
-			attr := ddbResolveAttrName(strings.TrimSpace(left), names)
-			want, ok := values[strings.TrimSpace(right)]
-			if !ok {
-				return false
-			}
-			return ddbCompare(item[attr], want, op)
-		}
-	}
-	return false
-}
-
-// ddbFuncArg returns the single argument of fn(arg) if clause matches.
-func ddbFuncArg(clause, fn string) (string, bool) {
-	clause = strings.TrimSpace(clause)
-	if !strings.HasPrefix(strings.ToLower(clause), fn+"(") || !strings.HasSuffix(clause, ")") {
-		return "", false
-	}
-	return strings.TrimSpace(clause[len(fn)+1 : len(clause)-1]), true
+	return ddbEvalExpr(item, exists, expr, names, values)
 }
 
 func ddbScalarString(v any) string {
@@ -1580,32 +1511,11 @@ func ddbItemKeys(prefix string) []string {
 	return out
 }
 
+// ddbMatchesExpression evaluates a KeyConditionExpression / FilterExpression
+// against a stored item via the full expression grammar (dynamodb_expr.go).
 func ddbMatchesExpression(table DDBTable, item map[string]any, expr string, names map[string]string, values map[string]any) bool {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return true
-	}
-	parts := strings.Split(expr, " AND ")
-	if len(parts) == 1 {
-		parts = strings.Split(expr, " and ")
-	}
-	for _, part := range parts {
-		left, right, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			return false
-		}
-		attr := ddbResolveAttrName(strings.TrimSpace(left), names)
-		token := strings.TrimSpace(right)
-		want, ok := values[token]
-		if !ok {
-			return false
-		}
-		if !ddbAttrValuesEqual(item[attr], want) {
-			return false
-		}
-	}
 	_ = table
-	return true
+	return ddbEvalExpr(item, true, expr, names, values)
 }
 
 func ddbResolveAttrName(name string, aliases map[string]string) string {
