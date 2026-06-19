@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Deep behavioral audit (round 1: AWS error-semantics + tags + paging)
+
+Where the spec-shape ratchet validates response *shapes*, this audit targeted
+*semantics*: 6 parallel agents probed async state machines, error codes,
+pagination cursors, idempotency, optimistic concurrency, and cross-op invariants
+across all three sims and the cloud backends. Each finding was verified at
+file:line, and the agents skeptically self-corrected several false positives (the
+GCP `base64("sockerless")` fingerprint concern was unfounded — fingerprints are
+real per-mutation UUIDs with genuine 412 validation; ARM LROs, Container Apps,
+ACR Tasks, and the previously-staged backend BUG-1844/1845/1846 are already
+faithful/fixed).
+
+Round 1 fixed the bounded AWS error-semantics + tag + paging findings, each with
+SDK (and CLI for the new op) tests:
+
+- **ELBv2** CreateLoadBalancer/CreateTargetGroup now reject a duplicate Name with
+  `DuplicateLoadBalancerName`/`DuplicateTargetGroupName` (1902).
+- **Route53** CreateHostedZone honors `CallerReference` idempotency →
+  `HostedZoneAlreadyExists` (1903).
+- **EC2** DeleteSecurityGroup errors `InvalidGroup.NotFound` on a missing group
+  (1904) — and via `ec2ErrorXML`, since EC2 uses the query-XML error protocol
+  (a `sim.AWSErrorf` awsJson shape parsed as `UnknownError`).
+- **ECR** DescribeRepositories errors on a missing named repo (1905); the missing
+  `UntagResource` op is implemented and registered (1906).
+- **Lambda** DeleteAlias errors `ResourceNotFoundException` on a missing alias
+  (1907).
+- **CodeBuild** list ops sort before the offset paginator so pages don't
+  duplicate/skip (1908).
+
+The larger state-machine / optimistic-concurrency findings are filed as
+BUG-1909–1921 with fix-shapes for follow-up PRs. Durable takeaway: the sims are
+behaviorally strong; the recurring real gaps are unvalidated optimistic
+concurrency (ETag/fingerprint), a few missing create-handler guards, and
+synchronous shortcuts that skip intermediate states.
+
 ## 2026-06-19 - CloudWatch Logs Insights query engine (completes the query-language program)
 
 The last query surface without a real parser. New `cloudwatch_insights.go` +

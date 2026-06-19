@@ -333,9 +333,16 @@ func handleLambdaDeleteAlias(w http.ResponseWriter, r *http.Request) {
 	aliasName := sim.PathParam(r, "alias")
 	lambdaAliasesMu.Lock()
 	defer lambdaAliasesMu.Unlock()
-	if as, ok := lambdaAliases[name]; ok {
-		delete(as, aliasName)
+	as, ok := lambdaAliases[name]
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound, "Function not found: %s", name)
+		return
 	}
+	if _, ok := as[aliasName]; !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound, "Alias not found: %s", aliasName)
+		return
+	}
+	delete(as, aliasName)
 	w.WriteHeader(http.StatusNoContent)
 }
 

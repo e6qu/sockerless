@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -216,6 +217,8 @@ func handleCBListProjects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range all {
 		names = append(names, p.Name)
 	}
+	// Deterministic order so the offset-based NextToken pages each name once.
+	sort.Strings(names)
 	page, nextTok := awsPage(names, req.NextToken, 0, 100)
 	resp := map[string]any{"projects": page}
 	if nextTok != "" {
@@ -469,6 +472,7 @@ func handleCBListBuildsForProject(w http.ResponseWriter, r *http.Request) {
 			ids = append(ids, b.ID)
 		}
 	}
+	sort.Strings(ids)
 	page, nextTok := awsPage(ids, req.NextToken, 0, 100)
 	resp := map[string]any{"ids": page}
 	if nextTok != "" {
@@ -489,6 +493,7 @@ func handleCBListBuilds(w http.ResponseWriter, r *http.Request) {
 	for _, b := range all {
 		ids = append(ids, b.ID)
 	}
+	sort.Strings(ids)
 	page, nextTok := awsPage(ids, req.NextToken, 0, 100)
 	resp := map[string]any{"ids": page}
 	if nextTok != "" {
