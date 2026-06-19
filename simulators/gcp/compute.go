@@ -680,6 +680,7 @@ func registerCompute(srv *sim.Server) {
 			return strings.HasPrefix(n.SelfLink, prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return
@@ -779,6 +780,7 @@ func registerCompute(srv *sim.Server) {
 			return strings.HasPrefix(t.SelfLink, "https://www.googleapis.com/compute/v1/"+prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return
@@ -958,6 +960,7 @@ func registerCompute(srv *sim.Server) {
 			return strings.HasPrefix(f.SelfLink, prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return
@@ -1110,6 +1113,7 @@ func registerCompute(srv *sim.Server) {
 			return strings.HasPrefix(addr.SelfLink, prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return
@@ -1219,6 +1223,7 @@ func registerCompute(srv *sim.Server) {
 			return strings.HasPrefix(rt.SelfLink, prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return
@@ -2173,6 +2178,7 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 			return strings.HasPrefix(inst.SelfLink, prefix)
 		})
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateListCompute(w, r, all)
 		if !ok {
 			return

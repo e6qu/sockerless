@@ -844,10 +844,41 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	writeDDBJSON(w, http.StatusOK, resp)
 }
 
+// ddbProjectItem restricts an item to the top-level attributes named in a
+// ProjectionExpression (resolving #alias names via ExpressionAttributeNames).
+// An empty projection returns the item unchanged. Nested document paths select
+// by their top-level attribute — sufficient for the common projection case;
+// previously ProjectionExpression was ignored entirely and the whole item came
+// back.
+func ddbProjectItem(item map[string]any, projection string, exprNames map[string]string) map[string]any {
+	if projection == "" || item == nil {
+		return item
+	}
+	out := map[string]any{}
+	for _, raw := range strings.Split(projection, ",") {
+		name := strings.TrimSpace(raw)
+		if i := strings.IndexAny(name, ".["); i >= 0 {
+			name = strings.TrimSpace(name[:i])
+		}
+		if name == "" {
+			continue
+		}
+		if resolved, ok := exprNames[name]; ok {
+			name = resolved
+		}
+		if v, ok := item[name]; ok {
+			out[name] = v
+		}
+	}
+	return out
+}
+
 func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                string            `json:"TableName"`
+		Key                      map[string]any    `json:"Key"`
+		ProjectionExpression     string            `json:"ProjectionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -866,6 +897,7 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 		writeDDBJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
+	item = ddbProjectItem(item, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"Item": item})
 }
 
@@ -1044,6 +1076,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		IndexName                 string            `json:"IndexName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
@@ -1098,13 +1131,26 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": len(items)}
-	// Emit LastEvaluatedKey if we hit the Limit and more items may exist.
+	out := map[string]any{"Count": len(items), "ScannedCount": len(items)}
+	// Emit LastEvaluatedKey if we hit the Limit and more items may exist — from
+	// the FULL item, before projection could strip its key attributes.
 	if req.Limit > 0 && len(items) == req.Limit {
-		last := items[len(items)-1]
-		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
 	}
+	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)
+}
+
+// ddbProjectItems projects every item by a ProjectionExpression (no-op when empty).
+func ddbProjectItems(items []map[string]any, projection string, exprNames map[string]string) []map[string]any {
+	if projection == "" {
+		return items
+	}
+	out := make([]map[string]any, len(items))
+	for i, it := range items {
+		out[i] = ddbProjectItem(it, projection, exprNames)
+	}
+	return out
 }
 
 // ddbHasIndex reports whether the table has a GSI or LSI with the given name.
@@ -1127,6 +1173,7 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		IndexName                 string            `json:"IndexName"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
@@ -1179,11 +1226,11 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": scanned}
+	out := map[string]any{"Count": len(items), "ScannedCount": scanned}
 	if req.Limit > 0 && len(items) == req.Limit {
-		last := items[len(items)-1]
-		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
 	}
+	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)
 }
 

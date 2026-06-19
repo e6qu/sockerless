@@ -11,7 +11,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-1890:** Lambda `GetFunction` omitted `Code.RepositoryType` (S3 zip / ECR image). (SDK + CLI.)
 - **BUG-1891:** ECS `ListTasks` ignored `launchType` → added the field + filter.
 
-**Filed open (next fidelity follow-up):** BUG-1892 (AWS read-param batch: CloudWatch `GetLogEvents` startFromHead, EC2 `DescribeNetworkInterfaces`/`DescribeNatGateways` filters + `DescribeVolumesModifications`/`DescribeTags` pagination, SQS `ReceiveMessage` fields), BUG-1893 (DynamoDB `ProjectionExpression`), BUG-1894 (GCP/Azure list `filter`/`orderBy`/`$top` ignored — larger, the sim's lists are small so low priority).
+**Then cleared the whole backlog in the same PR (no deferrals):**
+- **BUG-1892:** CloudWatch `GetLogEvents` `startFromHead` (default false → latest first); EC2 `DescribeNetworkInterfaces`/`DescribeNatGateways` filter sets; EC2 `DescribeVolumesModifications`/`DescribeTags` `MaxResults`/`NextToken` pagination; SQS `ReceiveMessage` `ApproximateFirstReceiveTimestamp` + `MessageAttributeNames` (SendMessage stores attrs + computes the AWS `MD5OfMessageAttributes` the SDK validates).
+- **BUG-1893:** DynamoDB `ProjectionExpression` on GetItem/Query/Scan (`ddbProjectItem`; LastEvaluatedKey taken from the full item pre-projection).
+- **BUG-1894:** GCP list `filter`/`orderBy` (`listparams.go::gcpApplyListParams`, a JSON-evaluated conjunctive-clause filter) wired into Compute/AR/BigQuery/Functions/Logging; Azure `$top`/`$skiptoken` on Cosmos/APIM/KeyVault via the existing `armPage`.
+
+Tests: AWS SDK (SQS attrs+MD5, DynamoDB projection, CloudWatch startFromHead, EC2 ENI filter) + GCP/Azure unit tests (`gcpApplyListParams`, `armPage` $top).
 
 **Method note:** the parallel-Explore-per-sim-area pass keeps finding real gaps; ~half the agents' findings were genuine, the rest intentional shortcuts / false positives / out-of-scope (full GCP `filter=` expression engines). Verify each at file:line before fixing.
 

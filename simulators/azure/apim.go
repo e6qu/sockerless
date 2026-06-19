@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -422,16 +423,22 @@ func handleAPIMPurgeDeletedService(w http.ResponseWriter, r *http.Request) {
 func handleAPIMListServicesByRG(w http.ResponseWriter, r *http.Request) {
 	prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ApiManagement/service/",
 		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
-	var out []APIMService
+	var all []APIMService
 	for _, s := range apimServices.List() {
 		if strings.HasPrefix(s.ID, prefix) {
-			out = append(out, s)
+			all = append(all, s)
 		}
 	}
-	if out == nil {
-		out = []APIMService{}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	page, next := armPage(r, all)
+	if page == nil {
+		page = []APIMService{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleAPIMCreateApi(w http.ResponseWriter, r *http.Request) {
@@ -502,16 +509,22 @@ func handleAPIMDeleteApi(w http.ResponseWriter, r *http.Request) {
 
 func handleAPIMListApis(w http.ResponseWriter, r *http.Request) {
 	prefix := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/apis/"
-	var out []APIMApi
+	var all []APIMApi
 	for _, a := range apimApis.List() {
 		if strings.HasPrefix(a.ID, prefix) {
-			out = append(out, a)
+			all = append(all, a)
 		}
 	}
-	if out == nil {
-		out = []APIMApi{}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	page, next := armPage(r, all)
+	if page == nil {
+		page = []APIMApi{}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleAPIMCreateProduct(w http.ResponseWriter, r *http.Request) {

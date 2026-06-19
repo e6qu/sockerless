@@ -442,7 +442,11 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, e)
 	}
 
-	// Parse offset from NextToken (format: "f/{offset}" or "b/{offset}")
+	// Parse offset from NextToken (format: "f/{offset}" or "b/{offset}").
+	// On the first call (no token), startFromHead chooses the window: true →
+	// earliest events first (offset 0); false/unset (the documented default) →
+	// the latest events first, i.e. the tail of the stream. Within-page order is
+	// always ascending by timestamp either way.
 	offset := 0
 	if req.NextToken != "" {
 		parts := strings.SplitN(req.NextToken, "/", 2)
@@ -450,6 +454,11 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 			if n, err := strconv.Atoi(parts[1]); err == nil && n >= 0 {
 				offset = n
 			}
+		}
+	} else {
+		fromHead := req.StartFromHead != nil && *req.StartFromHead
+		if !fromHead && req.Limit > 0 && len(filtered) > req.Limit {
+			offset = len(filtered) - req.Limit
 		}
 	}
 

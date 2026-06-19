@@ -30,10 +30,25 @@ Five verified gaps fixed, each SDK-tested:
   (`S3` for a ZIP package, `ECR` for a container image). Now set from the type.
 - **ECS `ListTasks` (BUG-1891)** ignored the `launchType` filter. Added it.
 
-The genuine gaps not fixed in this pass were filed (BUG-1892–1894: an AWS
-read-param batch, DynamoDB ProjectionExpression, and GCP/Azure list
-filter/orderBy/$top — the last lower-priority since the sim's lists are small
-and faithful `filter=` is an expression-language effort).
+The rest of the pass's findings were then fixed in the same PR (no deferrals):
+
+- **AWS read-param batch (BUG-1892).** CloudWatch `GetLogEvents` honors
+  `startFromHead` (default false → latest events first); EC2
+  `DescribeNetworkInterfaces`/`DescribeNatGateways` apply their documented filter
+  sets; EC2 `DescribeVolumesModifications`/`DescribeTags` paginate via
+  MaxResults/NextToken; SQS `ReceiveMessage` returns
+  ApproximateFirstReceiveTimestamp and honors MessageAttributeNames — SendMessage
+  now stores message attributes and computes the AWS `MD5OfMessageAttributes`
+  digest the SDK validates on receive (pinned by an SDK test).
+- **DynamoDB ProjectionExpression (BUG-1893).** GetItem/Query/Scan restrict the
+  returned item(s) to the named attributes; LastEvaluatedKey is computed from the
+  full item before projection so paging is unaffected.
+- **GCP/Azure list params (BUG-1894).** A new JSON-evaluated GCP filter/orderBy
+  helper (`gcpApplyListParams`, conjunctive `field op value` clauses) wired into
+  Compute/AR/BigQuery/Functions lists + Cloud Logging `orderBy`; Azure
+  `$top`/`$skiptoken` pagination on Cosmos/APIM/Key-Vault list handlers via the
+  existing `armPage`. Faithful for the common documented forms; richer GCP filter
+  expressions fall through as match-all (safe for the sim's small lists).
 
 ## 2026-06-19 - AWS sim observability fidelity batch (#602–#606)
 

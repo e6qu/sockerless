@@ -286,6 +286,7 @@ func handleBQListDatasets(w http.ResponseWriter, r *http.Request) {
 		return d.DatasetReference.ProjectID == project
 	})
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	all = gcpApplyListParams(all, r)
 	items := make([]map[string]any, 0, len(all))
 	for _, d := range all {
 		items = append(items, map[string]any{

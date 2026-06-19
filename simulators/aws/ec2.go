@@ -1547,12 +1547,13 @@ func handleDescribeNatGateways(w http.ResponseWriter, r *http.Request) {
 		if n, ok := ec2NatGateways.Get(id); ok {
 			nats = append(nats, n)
 		}
-	} else if vpcIDs := ec2Filters(r)["vpc-id"]; len(vpcIDs) > 0 {
-		nats = ec2NatGateways.Filter(func(n EC2NatGateway) bool {
-			return ec2StrInValues(n.VpcId, vpcIDs)
-		})
 	} else {
-		nats = ec2NatGateways.List()
+		filters := ec2Filters(r)
+		for _, n := range ec2NatGateways.List() {
+			if ec2NatGatewayMatchesFilters(n, filters) {
+				nats = append(nats, n)
+			}
+		}
 	}
 
 	var items strings.Builder
@@ -3760,39 +3761,55 @@ func handleDescribeTags(w http.ResponseWriter, r *http.Request) {
 		}
 		return true
 	}
-	var items strings.Builder
-	writeEntry := func(entry tagEntry) {
-		if !matches(entry) {
-			return
+	entries := make([]tagEntry, 0)
+	add := func(entry tagEntry) {
+		if matches(entry) {
+			entries = append(entries, entry)
 		}
-		fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>%s</resourceType><key>%s</key><value>%s</value></item>`,
-			entry.resourceID, entry.resourceType, entry.key, entry.value)
 	}
 	for _, inst := range ec2Instances.List() {
 		for _, tag := range inst.Tags {
-			writeEntry(tagEntry{resourceID: inst.InstanceId, resourceType: "instance", key: tag.Key, value: tag.Value})
+			add(tagEntry{resourceID: inst.InstanceId, resourceType: "instance", key: tag.Key, value: tag.Value})
 		}
 	}
 	for _, eni := range ec2NetworkInterfaces.List() {
 		for _, tag := range eni.Tags {
-			writeEntry(tagEntry{resourceID: eni.NetworkInterfaceId, resourceType: "network-interface", key: tag.Key, value: tag.Value})
+			add(tagEntry{resourceID: eni.NetworkInterfaceId, resourceType: "network-interface", key: tag.Key, value: tag.Value})
 		}
 	}
 	for _, vol := range ec2Volumes.List() {
 		for _, tag := range vol.Tags {
-			writeEntry(tagEntry{resourceID: vol.VolumeId, resourceType: "volume", key: tag.Key, value: tag.Value})
+			add(tagEntry{resourceID: vol.VolumeId, resourceType: "volume", key: tag.Key, value: tag.Value})
 		}
 	}
 	for _, snap := range ec2Snapshots.List() {
 		for _, tag := range snap.Tags {
-			writeEntry(tagEntry{resourceID: snap.SnapshotId, resourceType: "snapshot", key: tag.Key, value: tag.Value})
+			add(tagEntry{resourceID: snap.SnapshotId, resourceType: "snapshot", key: tag.Key, value: tag.Value})
 		}
+	}
+	// Stable order so the MaxResults/NextToken offset cursor is consistent.
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].resourceID != entries[j].resourceID {
+			return entries[i].resourceID < entries[j].resourceID
+		}
+		return entries[i].key < entries[j].key
+	})
+	entries, nextToken := awsPageExplicit(entries, r.FormValue("NextToken"), ec2AtoiOr(r.FormValue("MaxResults"), 0))
+
+	var items strings.Builder
+	for _, entry := range entries {
+		fmt.Fprintf(&items, `<item><resourceId>%s</resourceId><resourceType>%s</resourceType><key>%s</key><value>%s</value></item>`,
+			entry.resourceID, entry.resourceType, entry.key, entry.value)
+	}
+	nextTokenXML := ""
+	if nextToken != "" {
+		nextTokenXML = "<nextToken>" + nextToken + "</nextToken>"
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeTagsResponse %s>
   <requestId>%s</requestId>
-  <tagSet>%s</tagSet>
-</DescribeTagsResponse>`, ec2Xmlns(), generateUUID(), items.String())
+  <tagSet>%s</tagSet>%s
+</DescribeTagsResponse>`, ec2Xmlns(), generateUUID(), items.String(), nextTokenXML)
 }
 
 func handleDescribeVolumes(w http.ResponseWriter, r *http.Request) {
@@ -4372,20 +4389,31 @@ func ec2VolumeModFieldsXML(m EC2VolumeModification) string {
 // updates error with UnknownOperation.
 func handleDescribeVolumesModifications(w http.ResponseWriter, r *http.Request) {
 	ids := ec2ParamList(r, "VolumeId")
-	var items strings.Builder
-	items.WriteString("<volumeModificationSet>")
+	mods := make([]EC2VolumeModification, 0)
 	for _, mod := range ec2VolumeMods.List() {
 		if len(ids) > 0 && !ec2StrInValues(mod.VolumeId, ids) {
 			continue
 		}
+		mods = append(mods, mod)
+	}
+	sort.Slice(mods, func(i, j int) bool { return mods[i].VolumeId < mods[j].VolumeId })
+	mods, nextToken := awsPageExplicit(mods, r.FormValue("NextToken"), ec2AtoiOr(r.FormValue("MaxResults"), 0))
+
+	var items strings.Builder
+	items.WriteString("<volumeModificationSet>")
+	for _, mod := range mods {
 		items.WriteString("<item>")
 		items.WriteString(ec2VolumeModFieldsXML(mod))
 		items.WriteString("</item>")
 	}
 	items.WriteString("</volumeModificationSet>")
+	nextTokenXML := ""
+	if nextToken != "" {
+		nextTokenXML = "<nextToken>" + nextToken + "</nextToken>"
+	}
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<DescribeVolumesModificationsResponse %s><requestId>%s</requestId>%s</DescribeVolumesModificationsResponse>`,
-		ec2Xmlns(), generateUUID(), items.String())
+	fmt.Fprintf(w, `<DescribeVolumesModificationsResponse %s><requestId>%s</requestId>%s%s</DescribeVolumesModificationsResponse>`,
+		ec2Xmlns(), generateUUID(), items.String(), nextTokenXML)
 }
 
 func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -4774,6 +4802,96 @@ func handleDescribeInstanceTypeOfferings(w http.ResponseWriter, r *http.Request)
 
 // ---- Network Interfaces ----
 
+// ec2AnyStrInValues reports whether any of items matches any of vals.
+func ec2AnyStrInValues(items, vals []string) bool {
+	for _, it := range items {
+		if ec2StrInValues(it, vals) {
+			return true
+		}
+	}
+	return false
+}
+
+// ec2NetworkInterfaceMatchesFilters applies the DescribeNetworkInterfaces filter
+// set (previously all filters were ignored, so a scoped query returned every ENI).
+func ec2NetworkInterfaceMatchesFilters(eni EC2NetworkInterface, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "network-interface-id":
+			if !ec2StrInValues(eni.NetworkInterfaceId, vals) {
+				return false
+			}
+		case "vpc-id":
+			if !ec2StrInValues(eni.VpcId, vals) {
+				return false
+			}
+		case "subnet-id":
+			if !ec2StrInValues(eni.SubnetId, vals) {
+				return false
+			}
+		case "status":
+			if !ec2StrInValues(eni.Status, vals) {
+				return false
+			}
+		case "attachment.instance-id":
+			if !ec2StrInValues(eni.InstanceId, vals) {
+				return false
+			}
+		case "description":
+			if !ec2StrInValues(eni.Description, vals) {
+				return false
+			}
+		case "interface-type":
+			if !ec2StrInValues(eni.InterfaceType, vals) {
+				return false
+			}
+		case "private-ip-address", "addresses.private-ip-address":
+			if !ec2StrInValues(eni.PrivateIpAddress, vals) && !ec2AnyStrInValues(eni.SecondaryPrivateIps, vals) {
+				return false
+			}
+		case "group-id":
+			if !ec2AnyStrInValues(eni.SecurityGroupIds, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, eni.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// ec2NatGatewayMatchesFilters applies the DescribeNatGateways filter set
+// (previously only vpc-id was honored).
+func ec2NatGatewayMatchesFilters(n EC2NatGateway, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "nat-gateway-id":
+			if !ec2StrInValues(n.NatGatewayId, vals) {
+				return false
+			}
+		case "vpc-id":
+			if !ec2StrInValues(n.VpcId, vals) {
+				return false
+			}
+		case "subnet-id":
+			if !ec2StrInValues(n.SubnetId, vals) {
+				return false
+			}
+		case "state":
+			if !ec2StrInValues(n.State, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, n.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 func handleDescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 	ids := ec2ParamList(r, "NetworkInterfaceId")
 	var enis []EC2NetworkInterface
@@ -4787,7 +4905,12 @@ func handleDescribeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 			enis = append(enis, eni)
 		}
 	} else {
-		enis = ec2NetworkInterfaces.List()
+		filters := ec2Filters(r)
+		for _, eni := range ec2NetworkInterfaces.List() {
+			if ec2NetworkInterfaceMatchesFilters(eni, filters) {
+				enis = append(enis, eni)
+			}
+		}
 	}
 	var items strings.Builder
 	for _, eni := range enis {

@@ -211,6 +211,7 @@ func registerArtifactRegistry(srv *sim.Server) {
 		result := repos.Filter(func(repo Repository) bool {
 			return strings.HasPrefix(repo.Name, prefix)
 		})
+		result = gcpApplyListParams(result, r)
 		if result == nil {
 			result = []Repository{}
 		}

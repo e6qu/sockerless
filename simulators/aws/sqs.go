@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -59,6 +62,91 @@ type SQSMessage struct {
 	SentTimestamp           int64
 	VisibleAt               int64
 	ApproximateReceiveCount int
+	FirstReceivedAt         int64
+	MessageAttributes       map[string]SQSMessageAttribute
+	MD5OfMessageAttributes  string
+}
+
+type SQSMessageAttribute struct {
+	DataType    string `json:"DataType"`
+	StringValue string `json:"StringValue,omitempty"`
+	BinaryValue []byte `json:"BinaryValue,omitempty"`
+}
+
+// sqsMessageAttributeMD5 computes the MD5 digest of a message-attribute set the
+// way real SQS does (the aws-sdk-go-v2 client validates it on receive), per
+// https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-message-metadata.html:
+// attributes sorted by name, each encoded as length-prefixed name + data-type,
+// a transport byte (1 string/number, 2 binary), then the length-prefixed value.
+func sqsMessageAttributeMD5(attrs map[string]SQSMessageAttribute) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	names := make([]string, 0, len(attrs))
+	for n := range attrs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	var buf bytes.Buffer
+	encStr := func(s string) {
+		var l [4]byte
+		binary.BigEndian.PutUint32(l[:], uint32(len(s)))
+		buf.Write(l[:])
+		buf.WriteString(s)
+	}
+	encBytes := func(b []byte) {
+		var l [4]byte
+		binary.BigEndian.PutUint32(l[:], uint32(len(b)))
+		buf.Write(l[:])
+		buf.Write(b)
+	}
+	for _, n := range names {
+		a := attrs[n]
+		encStr(n)
+		encStr(a.DataType)
+		if strings.HasPrefix(a.DataType, "Binary") {
+			buf.WriteByte(2)
+			encBytes(a.BinaryValue)
+		} else {
+			buf.WriteByte(1)
+			encStr(a.StringValue)
+		}
+	}
+	sum := md5.Sum(buf.Bytes())
+	return hex.EncodeToString(sum[:])
+}
+
+// sqsSelectMessageAttributes filters the stored attributes by the requested
+// names ("All" / ".*" select everything), the way ReceiveMessage scopes them.
+func sqsSelectMessageAttributes(attrs map[string]SQSMessageAttribute, requested []string) map[string]any {
+	if len(attrs) == 0 || len(requested) == 0 {
+		return nil
+	}
+	all := false
+	want := map[string]bool{}
+	for _, n := range requested {
+		if n == "All" || n == ".*" {
+			all = true
+		}
+		want[n] = true
+	}
+	out := map[string]any{}
+	for name, a := range attrs {
+		if !all && !want[name] {
+			continue
+		}
+		entry := map[string]any{"DataType": a.DataType}
+		if strings.HasPrefix(a.DataType, "Binary") {
+			entry["BinaryValue"] = a.BinaryValue
+		} else {
+			entry["StringValue"] = a.StringValue
+		}
+		out[name] = entry
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 var sqsQueues sim.Store[SQSQueue]
@@ -341,8 +429,9 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 
 func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueUrl    string `json:"QueueUrl"`
-		MessageBody string `json:"MessageBody"`
+		QueueUrl          string                         `json:"QueueUrl"`
+		MessageBody       string                         `json:"MessageBody"`
+		MessageAttributes map[string]SQSMessageAttribute `json:"MessageAttributes"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
@@ -360,26 +449,34 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 	msgID := generateUUID()
 	hash := md5.Sum([]byte(req.MessageBody))
 	md5OfBody := hex.EncodeToString(hash[:])
+	md5OfAttrs := sqsMessageAttributeMD5(req.MessageAttributes)
 	now := time.Now().Unix()
 	sqsQueues.Update(name, func(q *SQSQueue) {
 		q.Messages = append(q.Messages, SQSMessage{
-			MessageId:     msgID,
-			Body:          req.MessageBody,
-			MD5OfBody:     md5OfBody,
-			SentTimestamp: now,
+			MessageId:              msgID,
+			Body:                   req.MessageBody,
+			MD5OfBody:              md5OfBody,
+			SentTimestamp:          now,
+			MessageAttributes:      req.MessageAttributes,
+			MD5OfMessageAttributes: md5OfAttrs,
 		})
 	})
-	sim.WriteJSON(w, http.StatusOK, map[string]string{
+	resp := map[string]string{
 		"MessageId":        msgID,
 		"MD5OfMessageBody": md5OfBody,
-	})
+	}
+	if md5OfAttrs != "" {
+		resp["MD5OfMessageAttributes"] = md5OfAttrs
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueUrl            string `json:"QueueUrl"`
-		MaxNumberOfMessages int    `json:"MaxNumberOfMessages"`
-		VisibilityTimeout   *int   `json:"VisibilityTimeout"`
+		QueueUrl              string   `json:"QueueUrl"`
+		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
+		VisibilityTimeout     *int     `json:"VisibilityTimeout"`
+		MessageAttributeNames []string `json:"MessageAttributeNames"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
@@ -419,22 +516,33 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			qq.Messages[i].ReceiptHandle = generateUUID()
 			qq.Messages[i].VisibleAt = now + int64(visTimeout)
 			qq.Messages[i].ApproximateReceiveCount++
+			if qq.Messages[i].FirstReceivedAt == 0 {
+				qq.Messages[i].FirstReceivedAt = now
+			}
 			picked = append(picked, qq.Messages[i])
 		}
 	})
 
 	out := make([]map[string]any, 0, len(picked))
 	for _, m := range picked {
-		out = append(out, map[string]any{
+		msg := map[string]any{
 			"MessageId":     m.MessageId,
 			"ReceiptHandle": m.ReceiptHandle,
 			"MD5OfBody":     m.MD5OfBody,
 			"Body":          m.Body,
 			"Attributes": map[string]string{
-				"ApproximateReceiveCount": strconv.Itoa(m.ApproximateReceiveCount),
-				"SentTimestamp":           strconv.FormatInt(m.SentTimestamp, 10),
+				"ApproximateReceiveCount":          strconv.Itoa(m.ApproximateReceiveCount),
+				"SentTimestamp":                    strconv.FormatInt(m.SentTimestamp, 10),
+				"ApproximateFirstReceiveTimestamp": strconv.FormatInt(m.FirstReceivedAt, 10),
 			},
-		})
+		}
+		if attrs := sqsSelectMessageAttributes(m.MessageAttributes, req.MessageAttributeNames); attrs != nil {
+			msg["MessageAttributes"] = attrs
+			if m.MD5OfMessageAttributes != "" {
+				msg["MD5OfMessageAttributes"] = m.MD5OfMessageAttributes
+			}
+		}
+		out = append(out, msg)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Messages": out})
 }
