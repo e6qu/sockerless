@@ -161,6 +161,14 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	}
 	defer rc.Close()
 
+	// Close the stream when the client disconnects (request context cancelled)
+	// so a follow-mode producer goroutine stops polling instead of leaking on a
+	// container that produces no further output.
+	go func() {
+		<-r.Context().Done()
+		_ = rc.Close()
+	}()
+
 	tty := c.Config.Tty
 
 	// Read details query parameter and prepend labels

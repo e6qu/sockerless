@@ -290,6 +290,16 @@ func (s *BaseServer) ContainerStart(ref string) error {
 		return &api.NotFoundError{Resource: "container", ID: ref}
 	}
 	id := c.ID
+	// Serialize concurrent ContainerStart of the same container: without this,
+	// two callers both pass the not-running check below and race the
+	// wait-channel + running-state writes, orphaning one caller's ContainerWait.
+	lk := s.Store.StartLock(id)
+	lk.Lock()
+	defer lk.Unlock()
+	// Re-read state under the lock — a concurrent start may have completed.
+	if cur, ok := s.Store.Containers.Get(id); ok {
+		c = cur
+	}
 	if c.State.Running {
 		return &api.NotModifiedError{}
 	}
@@ -2181,6 +2191,8 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 			}
 		}
 
+		heartbeat := time.NewTicker(10 * time.Second)
+		defer heartbeat.Stop()
 		for {
 			select {
 			case event, ok := <-ch:
@@ -2193,6 +2205,13 @@ func (s *BaseServer) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error)
 						pw.CloseWithError(err)
 						return
 					}
+				}
+			case <-heartbeat.C:
+				// Detect a disconnected consumer (closed pipe) while the event
+				// stream is idle, so this goroutine stops instead of blocking on
+				// <-ch forever.
+				if _, err := pw.Write(nil); err != nil {
+					return
 				}
 			case <-func() <-chan time.Time {
 				if untilCh != nil {

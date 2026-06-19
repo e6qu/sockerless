@@ -178,6 +178,7 @@ type Store struct {
 	HealthChecks      sync.Map // containerID → context.CancelFunc
 	BuildContexts     sync.Map // imageID → string (temp dir with COPY files at destination paths)
 	TmpfsDirs         sync.Map // containerID → []string (tmpfs temp dir paths)
+	StartLocks        sync.Map // containerID → *sync.Mutex (serializes ContainerStart of one container)
 	PrevCPUStats      sync.Map // containerID → *prevCPUStats
 	ImageHistory      sync.Map // imageID → []ImageHistoryItem (real build history)
 	LayerContent      sync.Map // layerDigest → []byte (preserved layer tarballs from docker load)
@@ -290,6 +291,15 @@ func NewStore() *Store {
 // Replaces hardcoded Pid=42 / Pid=43 values.
 func (st *Store) NextPID() int {
 	return int(st.pidCounter.Add(1))
+}
+
+// StartLock returns the per-container mutex that serializes ContainerStart for
+// one container id, so two concurrent starts can't both pass the not-running
+// check and race the wait-channel / running-state writes. Distinct ids get
+// distinct locks (no cross-container contention).
+func (st *Store) StartLock(id string) *sync.Mutex {
+	m, _ := st.StartLocks.LoadOrStore(id, &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 // StopContainer transitions a container to the exited state and closes wait channels.
