@@ -215,6 +215,9 @@ func TestStackProductionShape(t *testing.T) {
 	cwAlarmARN := outputs.must(t, "cloudwatch_alarm_arn")
 	require.Contains(t, cwAlarmARN, ":alarm:tf-alarm",
 		"CloudWatch metric alarm ARN must use the alarm resource path; got %s", cwAlarmARN)
+	cwDashARN := outputs.must(t, "cloudwatch_dashboard_arn")
+	require.Contains(t, cwDashARN, ":dashboard/tf-dash",
+		"CloudWatch dashboard ARN must use the dashboard resource path; got %s", cwDashARN)
 
 	require.Equal(t, "tf-asg", outputs.must(t, "autoscaling_group_name"),
 		"Auto Scaling group name must round-trip through provider refresh")

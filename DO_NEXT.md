@@ -4,7 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/sim-fidelity-pass-6` — a sixth sim fidelity pass (5 parallel Explore probes across the AWS/GCP/Azure sims; every finding verified at file:line before fixing — caught one false positive, the azure `acrCatalogPage` "logic error" that traced correct). **Fixed, each SDK-tested:**
+`feat/cloudwatch-dashboards-percentile-insights` — two fresh consumer CloudWatch issues (filed after #610 merged), both blocking terraform applies:
+- **BUG-1900 (#608):** CloudWatch dashboard API was unrouted → 404. New `cloudwatch_dashboards.go` implements `PutDashboard`/`GetDashboard`/`ListDashboards`/`DeleteDashboards` over a name→body store on all three CW wire protocols (query/awsJson/cbor). (Query `DeleteDashboards` needed a `<DeleteDashboardsResult/>` element or botocore errors; list `LastModified` must encode as a timestamp, not a string, or the cbor SDK rejects it.)
+- **BUG-1899 (#609):** metric alarm `ExtendedStatistic` (percentile p99) was dropped → terraform perpetual diff. Added the field to the alarm struct + put-decode/describe-encode across all three protocols; `Statistic`/`ExtendedStatistic` are mutually exclusive (describe emits only the set one → idempotent); state evaluation computes the percentile (`cwApplyAlarmStat`/`cwPercentile`).
+
+SDK + CLI + terraform (`aws_cloudwatch_dashboard`, `aws_cloudwatch_metric_alarm` with `extended_statistic`) for both. Closes #608, #609.
+
+**Remaining query-language item (next PR, after this merges):** CloudWatch Logs **Insights** (`StartQuery` — `fields | filter | stats | sort | limit`), a separate SQL-like language. KQL (Log Analytics) already exists; S3 Select / Athena SQL are unused by sockerless.
+
+### (history) `feat/sim-fidelity-pass-6` (MERGED as #610) — a sixth sim fidelity pass (5 parallel Explore probes across the AWS/GCP/Azure sims; every finding verified at file:line before fixing — caught one false positive, the azure `acrCatalogPage` "logic error" that traced correct). **Fixed, each SDK-tested:**
 - **BUG-1887:** EC2 `DescribeSecurityGroupRules` honored only `group-id` → `ec2SecurityGroupRuleMatchesFilters` applies the full documented filter set (is-egress / security-group-rule-id / cidr / tag:*).
 - **BUG-1888:** EventBridge `CreateEventBus` echoed `KmsKeyIdentifier` but never stored it → `DescribeEventBus` empty → `aws_cloudwatch_event_bus` TF drift. Added the field to the struct + create handler. (SDK + CLI.)
 - **BUG-1889:** Cloud Map `DiscoverInstances` hardcoded `HealthStatus: "HEALTHY"` and ignored the filter → reports each instance's real `AWS_INIT_HEALTH_STATUS` + applies HEALTHY/UNHEALTHY/ALL (no-fakes).
