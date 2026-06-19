@@ -748,6 +748,15 @@ func handleEBPutEvents(w http.ResponseWriter, r *http.Request) {
 	writeEBJSON(w, http.StatusOK, map[string]any{"FailedEntryCount": failed, "Entries": entries})
 }
 
+// ebMaxArchivedEvents bounds an archive's retained-event slice when the archive
+// has no finite RetentionDays (0 = indefinite in real EventBridge). Without a
+// bound a long-lived sim leaks memory as ArchivedEvents grows unboundedly. A
+// real indefinite archive is effectively bounded by storage; the sim models that
+// as a generous in-memory window, dropping the oldest events past the cap.
+// replayArchivedEvents iterates the retained slice, so only the retained window
+// replays — faithful to a retention period.
+const ebMaxArchivedEvents = 10000
+
 func archiveEBEvent(bus string, record EBEventRecord) {
 	sourceArn := ebBusArn(bus)
 	for _, archive := range ebArchives.List() {
@@ -758,10 +767,38 @@ func archiveEBEvent(bus string, record EBEventRecord) {
 			continue
 		}
 		archive.ArchivedEvents = append(archive.ArchivedEvents, record)
+		archive.ArchivedEvents = ebApplyRetention(archive.ArchivedEvents, archive.RetentionDays)
+		// EventCount and SizeBytes describe the retained window, recomputed from
+		// the (possibly trimmed) slice so they stay consistent after aging-out.
 		archive.EventCount = int64(len(archive.ArchivedEvents))
-		archive.SizeBytes += int64(len(record.Detail))
+		archive.SizeBytes = 0
+		for _, e := range archive.ArchivedEvents {
+			archive.SizeBytes += int64(len(e.Detail))
+		}
 		ebArchives.Put(archive.ArchiveName, archive)
 	}
+}
+
+// ebApplyRetention bounds an archive's retained events. When RetentionDays is set
+// (> 0), events older than that window (by their epoch Time) age out, matching
+// EventBridge's retention period. When it is unset/0 (indefinite), the slice is
+// capped to the newest ebMaxArchivedEvents so memory stays bounded. The newest
+// events are always retained, so a just-archived event survives both paths.
+func ebApplyRetention(events []EBEventRecord, retentionDays *int32) []EBEventRecord {
+	if retentionDays != nil && *retentionDays > 0 {
+		cutoff := time.Now().Unix() - int64(*retentionDays)*86400
+		kept := events[:0]
+		for _, e := range events {
+			if e.Time >= cutoff {
+				kept = append(kept, e)
+			}
+		}
+		return kept
+	}
+	if len(events) > ebMaxArchivedEvents {
+		return events[len(events)-ebMaxArchivedEvents:]
+	}
+	return events
 }
 
 func deliverEBEvent(bus, source, detailType, detail, eventID string) {

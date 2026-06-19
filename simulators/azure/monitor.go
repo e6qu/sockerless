@@ -89,6 +89,14 @@ type LogEntry struct {
 // Package-level so other handlers (e.g., Container Apps) can inject log entries.
 var monitorLogs sim.Store[[]monitorLogRow]
 
+// monitorMaxRetainedRows bounds the rows retained per table/log. Log Analytics
+// ages out rows past the workspace retention policy; the sim caps the in-memory
+// window so a long-running workload cannot grow a table without bound. Reads are
+// insertion-order, filtered then limited from the front, so dropping the oldest
+// rows is faithful to retention. The cap sits well above any single query or the
+// dashboard's 100-row flatten.
+const monitorMaxRetainedRows = 50000
+
 // appendLogRow safely appends a log row to the given store key,
 // protecting the read-modify-write cycle with logMu.
 func appendLogRow(storeKey string, row monitorLogRow) {
@@ -96,6 +104,9 @@ func appendLogRow(storeKey string, row monitorLogRow) {
 	defer logMu.Unlock()
 	existing, _ := monitorLogs.Get(storeKey)
 	existing = append(existing, row)
+	if over := len(existing) - monitorMaxRetainedRows; over > 0 {
+		existing = existing[over:]
+	}
 	monitorLogs.Put(storeKey, existing)
 }
 

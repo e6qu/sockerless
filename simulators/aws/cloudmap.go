@@ -396,6 +396,10 @@ func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
 		seen[name] = struct{}{}
 		aliases = append(aliases, name)
 	}
+	// Resolve every instance ID to its task container in a single combined pass
+	// over instances and ECS tasks, so the service×instance loop below is a map
+	// lookup instead of re-scanning all instances and all tasks per pair.
+	instanceContainers := resolveTaskContainersForInstances()
 	for _, svc := range cmServices.List() {
 		if svc.NamespaceId != namespaceID {
 			continue
@@ -404,7 +408,7 @@ func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
 			if _, ok := cmInstances.Get(cmInstanceKey(svc.Id, inst.Id)); !ok {
 				continue
 			}
-			if resolveTaskContainerForInstance(inst.Id) != containerName {
+			if instanceContainers[inst.Id] != containerName {
 				continue
 			}
 			add(svc.Name)
@@ -414,6 +418,49 @@ func cmDockerAliasesForContainer(namespaceID, containerName string) []string {
 		}
 	}
 	return aliases
+}
+
+// resolveTaskContainersForInstances maps every Cloud Map instance ID to its task
+// container name in two single passes — one to index ECS tasks by private IP,
+// one over instances — replacing the per-instance re-scan of all instances
+// (cmInstanceIPv4) and all ECS tasks (resolveTaskContainerForInstance) that a
+// naive nested loop incurs. The per-instance result is identical to
+// resolveTaskContainerForInstance(id).
+func resolveTaskContainersForInstances() map[string]string {
+	containerByIP := make(map[string]string)
+	for _, task := range ecsTasks.List() {
+		ip := ecsTaskPrivateIP(task)
+		if ip == "" {
+			continue
+		}
+		// Derive task UUID from ARN ("arn:…/task/<cluster>/<taskId>").
+		taskId := task.TaskArn
+		if i := lastSlash(taskId); i >= 0 {
+			taskId = taskId[i+1:]
+		}
+		if len(taskId) < 12 {
+			continue
+		}
+		containerName := "sockerless-sim-aws-task-" + taskId[:12]
+		if taskHasENI(task) && ec2ECSRealNetAvailable() {
+			containerName += "-pause"
+		}
+		containerByIP[ip] = containerName
+	}
+	out := make(map[string]string)
+	for _, inst := range cmInstances.List() {
+		if _, dup := out[inst.Id]; dup {
+			continue
+		}
+		ip := inst.Attributes["AWS_INSTANCE_IPV4"]
+		if ip == "" {
+			continue
+		}
+		if name, ok := containerByIP[ip]; ok {
+			out[inst.Id] = name
+		}
+	}
+	return out
 }
 
 // realizeCMContainerDockerAliases (re)attaches a task container to its Cloud Map

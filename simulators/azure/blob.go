@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -93,10 +94,136 @@ var (
 	blobBlocks         sim.Store[BlobBlockData]
 )
 
+// Secondary indexes that let a per-container / per-blob operation enumerate
+// only the relevant keys instead of scanning every blob in every container
+// (or every block in every blob) — the store exposes no prefix scan. Both
+// index the FULL store key:
+//   - blobIndex:  containerKey ("account/container") → set of blobObjectKeys
+//   - blockIndex: blobKey ("account/container/blob") → set of blobBlockKeys
+//
+// All blobObjects / blobBlocks mutations route through the put*/delete*
+// helpers below so the indexes stay consistent. blobIndexMu guards both.
+//   - blocksByContainer: containerKey ("account/container") → set of
+//     blobBlockKeys, so a container delete can reach staged-but-uncommitted
+//     blocks that have no committed blob object.
+var (
+	blobIndexMu       sync.Mutex
+	blobIndex         = map[string]map[string]struct{}{}
+	blockIndex        = map[string]map[string]struct{}{}
+	blocksByContainer = map[string]map[string]struct{}{}
+)
+
+func indexAdd(idx map[string]map[string]struct{}, group, key string) {
+	set := idx[group]
+	if set == nil {
+		set = map[string]struct{}{}
+		idx[group] = set
+	}
+	set[key] = struct{}{}
+}
+
+func indexRemove(idx map[string]map[string]struct{}, group, key string) {
+	set := idx[group]
+	if set == nil {
+		return
+	}
+	delete(set, key)
+	if len(set) == 0 {
+		delete(idx, group)
+	}
+}
+
+func putBlobObject(account, container, name string, b BlobObject) {
+	key := blobObjectKey(account, container, name)
+	blobIndexMu.Lock()
+	indexAdd(blobIndex, blobContainerKey(account, container), key)
+	blobIndexMu.Unlock()
+	blobObjects.Put(key, b)
+}
+
+func deleteBlobObject(account, container, name string) {
+	key := blobObjectKey(account, container, name)
+	blobIndexMu.Lock()
+	indexRemove(blobIndex, blobContainerKey(account, container), key)
+	blobIndexMu.Unlock()
+	blobObjects.Delete(key)
+}
+
+func putBlobBlock(account, container, blob, blockID string, b BlobBlockData) {
+	key := blobBlockKey(account, container, blob, blockID)
+	blobIndexMu.Lock()
+	indexAdd(blockIndex, blobObjectKey(account, container, blob), key)
+	indexAdd(blocksByContainer, blobContainerKey(account, container), key)
+	blobIndexMu.Unlock()
+	blobBlocks.Put(key, b)
+}
+
+func deleteBlobBlock(account, container, blob, blockID string) {
+	key := blobBlockKey(account, container, blob, blockID)
+	blobIndexMu.Lock()
+	indexRemove(blockIndex, blobObjectKey(account, container, blob), key)
+	indexRemove(blocksByContainer, blobContainerKey(account, container), key)
+	blobIndexMu.Unlock()
+	blobBlocks.Delete(key)
+}
+
+// blobKeysInContainer returns the store keys of every blob in the container.
+func blobKeysInContainer(account, container string) []string {
+	blobIndexMu.Lock()
+	defer blobIndexMu.Unlock()
+	set := blobIndex[blobContainerKey(account, container)]
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
+}
+
+// blockKeysForBlob returns the store keys of every block staged/committed
+// under the given blob.
+func blockKeysForBlob(account, container, blob string) []string {
+	blobIndexMu.Lock()
+	defer blobIndexMu.Unlock()
+	set := blockIndex[blobObjectKey(account, container, blob)]
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
+}
+
+// blockKeysInContainer returns the store keys of every block staged/committed
+// in the container, including blocks with no committed blob object.
+func blockKeysInContainer(account, container string) []string {
+	blobIndexMu.Lock()
+	defer blobIndexMu.Unlock()
+	set := blocksByContainer[blobContainerKey(account, container)]
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	return out
+}
+
 func registerBlobDataPlane(srv *sim.Server) {
 	blobObjects = sim.MakeStore[BlobObject](srv.DB(), "blob_objects")
 	blobContainersData = sim.MakeStore[BlobContainerData](srv.DB(), "blob_containers_data")
 	blobBlocks = sim.MakeStore[BlobBlockData](srv.DB(), "blob_blocks")
+
+	// Rebuild the secondary indexes from any persisted store contents so a
+	// restart with a SQLite-backed store starts consistent.
+	blobIndexMu.Lock()
+	blobIndex = map[string]map[string]struct{}{}
+	blockIndex = map[string]map[string]struct{}{}
+	blocksByContainer = map[string]map[string]struct{}{}
+	for _, b := range blobObjects.List() {
+		indexAdd(blobIndex, blobContainerKey(b.Account, b.Container), blobObjectKey(b.Account, b.Container, b.Name))
+	}
+	for _, bl := range blobBlocks.List() {
+		indexAdd(blockIndex, blobObjectKey(bl.Account, bl.Container, bl.Blob), blobBlockKey(bl.Account, bl.Container, bl.Blob, bl.BlockID))
+		indexAdd(blocksByContainer, blobContainerKey(bl.Account, bl.Container), blobBlockKey(bl.Account, bl.Container, bl.Blob, bl.BlockID))
+	}
+	blobIndexMu.Unlock()
 
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -391,16 +518,16 @@ func handleDeleteContainer(w http.ResponseWriter, r *http.Request, account, cont
 			"The specified container does not exist.", http.StatusNotFound)
 		return
 	}
-	// Cascade-delete blobs.
-	prefix := account + "/" + container + "/"
-	for _, b := range blobObjects.List() {
-		if strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), prefix) {
-			blobObjects.Delete(blobObjectKey(b.Account, b.Container, b.Name))
+	// Cascade-delete this container's blobs and their staged/committed blocks
+	// via the secondary indexes, touching only the container's own keys.
+	for _, key := range blobKeysInContainer(account, container) {
+		if b, ok := blobObjects.Get(key); ok {
+			deleteBlobObject(b.Account, b.Container, b.Name)
 		}
 	}
-	for _, b := range blobBlocks.List() {
-		if strings.HasPrefix(blobBlockKey(b.Account, b.Container, b.Blob, b.BlockID), prefix) {
-			blobBlocks.Delete(blobBlockKey(b.Account, b.Container, b.Blob, b.BlockID))
+	for _, key := range blockKeysInContainer(account, container) {
+		if bl, ok := blobBlocks.Get(key); ok {
+			deleteBlobBlock(bl.Account, bl.Container, bl.Blob, bl.BlockID)
 		}
 	}
 	w.WriteHeader(http.StatusAccepted)
@@ -491,10 +618,10 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 	reqPrefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
 
-	storeKeyPrefix := account + "/" + container + "/"
 	var all []blobEntry
-	for _, b := range blobObjects.List() {
-		if !strings.HasPrefix(blobObjectKey(b.Account, b.Container, b.Name), storeKeyPrefix) {
+	for _, key := range blobKeysInContainer(account, container) {
+		b, ok := blobObjects.Get(key)
+		if !ok {
 			continue
 		}
 		if reqPrefix != "" && !strings.HasPrefix(b.Name, reqPrefix) {
@@ -602,7 +729,7 @@ func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, b
 		LastModified: lastMod,
 		Metadata:     collectMetadata(r),
 	}
-	blobObjects.Put(blobObjectKey(account, container, blob), b)
+	putBlobObject(account, container, blob, b)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", lastMod)
 	w.Header().Set("Content-MD5", hex.EncodeToString(hash[:]))
@@ -652,7 +779,7 @@ func handleCopyBlob(w http.ResponseWriter, r *http.Request, account, container, 
 		CopyStatus:   "success",
 		CopySource:   sourceURL,
 	}
-	blobObjects.Put(blobObjectKey(account, container, blob), dst)
+	putBlobObject(account, container, blob, dst)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Last-Modified", lastMod)
 	w.Header().Set("x-ms-copy-id", copyID)
@@ -753,7 +880,7 @@ func handleStageBlock(w http.ResponseWriter, r *http.Request, account, container
 	block.BlockID = blockID
 	block.UncommittedData = data
 	block.HasUncommitted = true
-	blobBlocks.Put(key, block)
+	putBlobBlock(account, container, blob, blockID, block)
 	w.WriteHeader(http.StatusCreated)
 }
 
@@ -815,10 +942,9 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 		data = append(data, ref.data...)
 		committed[ref.id] = ref
 	}
-	prefix := account + "/" + container + "/" + blob + "/"
-	for _, block := range blobBlocks.List() {
-		key := blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID)
-		if !strings.HasPrefix(key, prefix) {
+	for _, key := range blockKeysForBlob(account, container, blob) {
+		block, ok := blobBlocks.Get(key)
+		if !ok {
 			continue
 		}
 		ref, keepCommitted := committed[block.BlockID]
@@ -830,10 +956,10 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 			block.UncommittedData = nil
 		}
 		if !block.HasCommitted && !block.HasUncommitted {
-			blobBlocks.Delete(key)
+			deleteBlobBlock(block.Account, block.Container, block.Blob, block.BlockID)
 			continue
 		}
-		blobBlocks.Put(key, block)
+		putBlobBlock(block.Account, block.Container, block.Blob, block.BlockID, block)
 	}
 	for idx, ref := range refs {
 		key := blobBlockKey(account, container, blob, ref.id)
@@ -847,13 +973,13 @@ func handleCommitBlockList(w http.ResponseWriter, r *http.Request, account, cont
 		block.HasUncommitted = false
 		block.UncommittedData = nil
 		block.CommitOrdinal = idx
-		blobBlocks.Put(key, block)
+		putBlobBlock(account, container, blob, ref.id, block)
 	}
 
 	hash := md5.Sum(data)
 	etag := `"` + hex.EncodeToString(hash[:]) + `"`
 	lastMod := time.Now().UTC().Format(http.TimeFormat)
-	blobObjects.Put(blobObjectKey(account, container, blob), BlobObject{
+	putBlobObject(account, container, blob, BlobObject{
 		Account:      account,
 		Container:    container,
 		Name:         blob,
@@ -898,9 +1024,9 @@ func handleGetBlockList(w http.ResponseWriter, r *http.Request, account, contain
 		UncommittedBlocks []blockEntry `xml:"UncommittedBlocks>Block"`
 	}
 	out := blockList{}
-	prefix := account + "/" + container + "/" + blob + "/"
-	for _, block := range blobBlocks.List() {
-		if !strings.HasPrefix(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID), prefix) {
+	for _, key := range blockKeysForBlob(account, container, blob) {
+		block, ok := blobBlocks.Get(key)
+		if !ok {
 			continue
 		}
 		if (listType == "committed" || listType == "all") && block.HasCommitted {
@@ -958,11 +1084,10 @@ func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container
 	if !azureBlobPreconditionOK(w, r, existing.ETag, true) {
 		return
 	}
-	blobObjects.Delete(blobObjectKey(account, container, blob))
-	prefix := account + "/" + container + "/" + blob + "/"
-	for _, block := range blobBlocks.List() {
-		if strings.HasPrefix(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID), prefix) {
-			blobBlocks.Delete(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID))
+	deleteBlobObject(account, container, blob)
+	for _, key := range blockKeysForBlob(account, container, blob) {
+		if block, ok := blobBlocks.Get(key); ok {
+			deleteBlobBlock(block.Account, block.Container, block.Blob, block.BlockID)
 		}
 	}
 	w.WriteHeader(http.StatusAccepted)

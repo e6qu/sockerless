@@ -182,16 +182,14 @@ func (p *lambdaCloudState) resolveFunctionARN(ctx context.Context, containerID s
 			return "", "", err
 		}
 		for _, fn := range result.Functions {
-			tagsResult, err := p.server.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
-				Resource: fn.FunctionArn,
-			})
+			tags, err := p.server.tagCache.listTagsCached(ctx, p.server.aws.Lambda, fn.FunctionArn)
 			if err != nil {
 				continue
 			}
-			if tagsResult.Tags["sockerless-managed"] != "true" {
+			if tags["sockerless-managed"] != "true" {
 				continue
 			}
-			if tagsResult.Tags["sockerless-container-id"] == containerID {
+			if tags["sockerless-container-id"] == containerID {
 				return aws.ToString(fn.FunctionArn), aws.ToString(fn.FunctionName), nil
 			}
 		}
@@ -244,15 +242,14 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 		for _, fn := range result.Functions {
 			funcName := aws.ToString(fn.FunctionName)
 
-			// Get tags to check if sockerless-managed
-			tagsResult, err := p.server.aws.Lambda.ListTags(ctx, &awslambda.ListTagsInput{
-				Resource: fn.FunctionArn,
-			})
+			// Get tags to check if sockerless-managed. The short-TTL cache
+			// coalesces a burst of poll ticks / concurrent docker ps calls so
+			// they share one ListTags per function instead of issuing one per
+			// function per call (the ListFunctions N+1).
+			tags, err := p.server.tagCache.listTagsCached(ctx, p.server.aws.Lambda, fn.FunctionArn)
 			if err != nil {
 				continue
 			}
-
-			tags := tagsResult.Tags
 			if tags["sockerless-managed"] != "true" {
 				continue
 			}

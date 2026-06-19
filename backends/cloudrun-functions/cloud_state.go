@@ -121,6 +121,13 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Resolve the single backing (non-pod) Function name once; if found,
+	// GetFunction just that one per tick and derive its state instead of
+	// re-listing every Function + pod-Service each tick. Pod-backed members
+	// and resolve failures fall back to the full scan, which keeps its
+	// gone-counter so a vanished resource still returns -1.
+	fnName, _ := p.resolveFunctionName(ctx, containerID)
+
 	gone := 0
 	for {
 		select {
@@ -129,6 +136,16 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 		case <-ticker.C:
 			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 				return inv.ExitCode, nil
+			}
+			if fnName != "" {
+				st, ok := p.functionStateByName(ctx, fnName, containerID)
+				if ok {
+					if !st.Running && st.Status == "exited" {
+						return st.ExitCode, nil
+					}
+					continue
+				}
+				// Function vanished — fall through to the full scan below.
 			}
 			containers, err := p.queryFunctions(ctx)
 			if err != nil {
@@ -145,6 +162,65 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			}
 		}
 	}
+}
+
+// resolveFunctionName returns the Cloud Function name backing a single
+// (non-pod) container ID, or "" if no matching sockerless-managed
+// single-container function is found. Pod-managed functions are skipped
+// so WaitForExit falls back to the full scan for pod members.
+func (p *gcfCloudState) resolveFunctionName(ctx context.Context, containerID string) (string, error) {
+	parent := fmt.Sprintf("projects/%s/locations/%s", p.server.config.Project, p.server.config.Region)
+	it := p.server.gcp.Functions.ListFunctions(ctx, &functionspb.ListFunctionsRequest{Parent: parent})
+	for {
+		fn, err := it.Next()
+		if err == iterator.Done {
+			return "", nil
+		}
+		if err != nil {
+			return "", err
+		}
+		labels := fn.Labels
+		if labels["sockerless_managed"] != "true" {
+			continue
+		}
+		// Pod-managed functions back N members — single-resource derivation
+		// doesn't apply; let those fall back to the scan.
+		if labels["sockerless_pod"] != "" {
+			continue
+		}
+		cid := labels["sockerless_allocation"]
+		if cid == "" {
+			cid = labels["sockerless_container_id"]
+		}
+		if cid == "" && fn.ServiceConfig != nil {
+			cid = fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_CONTAINER_ID"]
+		}
+		if cid == containerID {
+			return fn.Name, nil
+		}
+	}
+}
+
+// functionStateByName GetFunctions a single Cloud Function by name and
+// derives its Docker container state via the same mapFunctionState +
+// invocation-result overlay queryFunctions uses. Returns ok=false when
+// the function can't be fetched (vanished/error) so the caller can fall
+// back to the full scan.
+func (p *gcfCloudState) functionStateByName(ctx context.Context, fnName, containerID string) (api.ContainerState, bool) {
+	fn, err := p.server.gcp.Functions.GetFunction(ctx, &functionspb.GetFunctionRequest{Name: fnName})
+	if err != nil || fn == nil {
+		return api.ContainerState{}, false
+	}
+	if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
+		return api.ContainerState{
+			Status:     "exited",
+			Running:    false,
+			ExitCode:   inv.ExitCode,
+			FinishedAt: inv.FinishedAt.UTC().Format(time.RFC3339Nano),
+			Error:      inv.Error,
+		}, true
+	}
+	return mapFunctionState(fn), true
 }
 
 // queryFunctions lists all sockerless-managed Cloud Functions and merges with PendingCreates.

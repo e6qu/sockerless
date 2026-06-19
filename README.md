@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-241.8k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-242.9k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-25.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-136.3k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-136.8k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -112,9 +112,9 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![core](https://img.shields.io/badge/core-19.5k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-39.6k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-55.5k-00ADD8)
-![sim/azure](https://img.shields.io/badge/sim%2Fazure-32.3k-00ADD8)
-![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-22.7k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-56k-00ADD8)
+![sim/azure](https://img.shields.io/badge/sim%2Fazure-32.5k-00ADD8)
+![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-22.8k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.8k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-6.5k-5BC0DE)
@@ -124,8 +124,8 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 ![api](https://img.shields.io/badge/api-2.1k-5BC0DE)
 ![azf](https://img.shields.io/badge/azf-5.1k-A0D8EF)
 ![cli](https://img.shields.io/badge/cli-1.5k-A0D8EF)
-![gcf](https://img.shields.io/badge/gcf-6.3k-A0D8EF)
-![lambda](https://img.shields.io/badge/lambda-5.4k-A0D8EF)
+![gcf](https://img.shields.io/badge/gcf-6.4k-A0D8EF)
+![lambda](https://img.shields.io/badge/lambda-5.5k-A0D8EF)
 
 **TypeScript**
 

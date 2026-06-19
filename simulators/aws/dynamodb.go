@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -837,6 +838,7 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Put(itemKey, req.Item)
 	ddbItemNames.Put(itemKey, itemKey)
+	ddbBumpKeyGen()
 	resp := map[string]any{}
 	if req.ReturnValues == "ALL_OLD" && exists {
 		resp["Attributes"] = old
@@ -961,6 +963,7 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Put(itemKey, item)
 	ddbItemNames.Put(itemKey, itemKey)
+	ddbBumpKeyGen()
 
 	resp := map[string]any{}
 	switch strings.ToUpper(req.ReturnValues) {
@@ -1060,6 +1063,7 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItems.Delete(itemKey)
 	ddbItemNames.Delete(itemKey)
+	ddbBumpKeyGen()
 	if strings.EqualFold(req.ReturnValues, "ALL_OLD") && existed {
 		writeDDBJSON(w, http.StatusOK, map[string]any{"Attributes": oldItem})
 		return
@@ -1101,20 +1105,11 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := req.TableName + "/"
-	keys := ddbItemKeys(prefix)
-	sort.Strings(keys)
+	keys := ddbTableSortedKeys(prefix)
 
 	// Advance past ExclusiveStartKey if provided.
 	startKey := ddbItemKey(t, req.ExclusiveStartKey)
-	startIdx := 0
-	if startKey != prefix && startKey != t.TableName+"/" {
-		for i, k := range keys {
-			if k == startKey {
-				startIdx = i + 1
-				break
-			}
-		}
-	}
+	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
 
 	var items []map[string]any
 	for _, k := range keys[startIdx:] {
@@ -1195,19 +1190,10 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := req.TableName + "/"
-	keys := ddbItemKeys(prefix)
-	sort.Strings(keys)
+	keys := ddbTableSortedKeys(prefix)
 
 	startKey := ddbItemKey(t, req.ExclusiveStartKey)
-	startIdx := 0
-	if startKey != prefix && startKey != t.TableName+"/" {
-		for i, k := range keys {
-			if k == startKey {
-				startIdx = i + 1
-				break
-			}
-		}
-	}
+	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
 
 	var items []map[string]any
 	scanned := 0
@@ -1320,10 +1306,12 @@ func handleDDBBatchWriteItem(w http.ResponseWriter, r *http.Request) {
 				key := ddbItemKey(t, op.PutRequest.Item)
 				ddbItems.Put(key, op.PutRequest.Item)
 				ddbItemNames.Put(key, key)
+				ddbBumpKeyGen()
 			case op.DeleteRequest != nil:
 				key := ddbItemKey(t, op.DeleteRequest.Key)
 				ddbItems.Delete(key)
 				ddbItemNames.Delete(key)
+				ddbBumpKeyGen()
 			}
 		}
 	}
@@ -1440,11 +1428,13 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 			key := ddbItemKey(t, ti.Put.Item)
 			ddbItems.Put(key, ti.Put.Item)
 			ddbItemNames.Put(key, key)
+			ddbBumpKeyGen()
 		case ti.Delete != nil:
 			t, _ := ddbTables.Get(ti.Delete.TableName)
 			key := ddbItemKey(t, ti.Delete.Key)
 			ddbItems.Delete(key)
 			ddbItemNames.Delete(key)
+			ddbBumpKeyGen()
 		}
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
@@ -1497,18 +1487,72 @@ func ddbExtractKey(t DDBTable, item map[string]any) map[string]any {
 	return key
 }
 
-// ddbItemKeys returns all item keys with the given prefix. The Store
-// API doesn't expose key iteration directly, but ddbItemNames mirrors
-// the keys for sim use.
-func ddbItemKeys(prefix string) []string {
-	var out []string
-	for _, name := range ddbItemNames.List() {
-		// each entry is the full item key (table/<...>); filter by prefix.
-		if len(name) >= len(prefix) && name[:len(prefix)] == prefix {
-			out = append(out, name)
+// ddbKeyIndex caches per-table sorted item-key slices so a paginated Query/Scan
+// resumes from its ExclusiveStartKey cursor without re-walking and re-sorting the
+// entire cross-table key set on every page. It is rebuilt from ddbItemNames (the
+// source of truth, which survives SQLite-backed restarts) only when a write has
+// bumped the generation since the last build — within a page sequence no write
+// occurs, so pages 2..N reuse the cached slice.
+var ddbKeyIndex struct {
+	mu      sync.Mutex
+	gen     uint64 // last generation the cache was built at
+	byTable map[string][]string
+}
+
+// ddbKeyGen is bumped (atomically) on every item-name Put/Delete so the index
+// cache knows to rebuild. Mutations already hold ddbItemsMu, but the read path
+// (Query/Scan) does not, so a dedicated counter keeps the cache coherent.
+var ddbKeyGen atomic.Uint64
+
+// ddbBumpKeyGen invalidates the cached key index. Call after any ddbItemNames
+// Put/Delete.
+func ddbBumpKeyGen() { ddbKeyGen.Add(1) }
+
+// ddbTableSortedKeys returns the sorted item keys for one table (prefix
+// "<table>/"), using the cached index and rebuilding it only when the key set
+// has changed since the last build.
+func ddbTableSortedKeys(prefix string) []string {
+	gen := ddbKeyGen.Load()
+	ddbKeyIndex.mu.Lock()
+	defer ddbKeyIndex.mu.Unlock()
+	if ddbKeyIndex.byTable == nil || ddbKeyIndex.gen != gen {
+		byTable := make(map[string][]string)
+		for _, name := range ddbItemNames.List() {
+			if i := strings.IndexByte(name, '/'); i >= 0 {
+				tp := name[:i+1]
+				byTable[tp] = append(byTable[tp], name)
+			}
 		}
+		for tp := range byTable {
+			sort.Strings(byTable[tp])
+		}
+		ddbKeyIndex.byTable = byTable
+		ddbKeyIndex.gen = gen
 	}
+	keys := ddbKeyIndex.byTable[prefix]
+	// Return a copy so callers can't mutate the cached slice.
+	out := make([]string, len(keys))
+	copy(out, keys)
 	return out
+}
+
+// ddbResumeIndex returns the index into a sorted key slice at which to resume
+// after an ExclusiveStartKey, via binary search rather than a linear scan. keys
+// must be sorted. The resume point is the first key strictly greater than
+// startKey, matching the original "advance past the matching key" semantics.
+func ddbResumeIndex(keys []string, startKey, prefix, tablePrefix string) int {
+	if startKey == prefix || startKey == tablePrefix {
+		return 0
+	}
+	// sort.Search finds the first index with keys[i] >= startKey. The original
+	// linear scan advanced one past an exact match and left the cursor at 0 when
+	// the key was absent (e.g. it was deleted between pages); reproduce both:
+	// exact match → i+1, no match → 0.
+	i := sort.Search(len(keys), func(i int) bool { return keys[i] >= startKey })
+	if i < len(keys) && keys[i] == startKey {
+		return i + 1
+	}
+	return 0
 }
 
 // ddbMatchesExpression evaluates a KeyConditionExpression / FilterExpression

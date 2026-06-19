@@ -31,6 +31,7 @@ func registerECROCI(srv *sim.Server) {
 			}
 			ecrImages.Put(repo+":"+ref, detail)
 			ecrImages.Put(repo+":"+digest, detail)
+			ecrBumpImageGen()
 		},
 	}
 	reg.Register(srv)
