@@ -52,8 +52,8 @@ github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.4 h1:M/98mES2p
 github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.4/go.mod h1:sUBnPF4iTc3KaCTIbLTr8xXjsnw8J0kXwr0nPCaAK3I=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.46.6 h1:rJFqZQH9sT7vNEPX+Irn3miu/zOKkt80HHA18Tmk3OE=
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.46.6/go.mod h1:Ahoy85HXn2dWwT4hseCxPS1USL9mowNWKlN1sdjcKxs=
-github.com/aws/aws-sdk-go-v2/service/glue v1.145.0 h1:RyWboTUJF1tAxin3NJ1PASysockVj7jnPus2Uoo17rE=
-github.com/aws/aws-sdk-go-v2/service/glue v1.145.0/go.mod h1:cPV3sb+zsvCS8gCgOubuCIN2uWMeFrwgJTr8C1sDspg=
+github.com/aws/aws-sdk-go-v2/service/glue v1.146.0 h1:LGfL4DlucaYj9ITrO8Dy4WIDgsUG5bvkffHqqrI/hhI=
+github.com/aws/aws-sdk-go-v2/service/glue v1.146.0/go.mod h1:cPV3sb+zsvCS8gCgOubuCIN2uWMeFrwgJTr8C1sDspg=
 github.com/aws/aws-sdk-go-v2/service/iam v1.54.5 h1:a/gAOhIOi+vHYeRU224WIXlJrLXs4Z1Qbm92vfX64jc=
 github.com/aws/aws-sdk-go-v2/service/iam v1.54.5/go.mod h1:tMNzI+fYFCk4cIdZ7FEybLzShwnmWkfxQw85ED1b4ng=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.12 h1:ZD2+BSw9vFsNlKYIasSNt3uDbjqqXIBcM13UJv/Lx2k=
