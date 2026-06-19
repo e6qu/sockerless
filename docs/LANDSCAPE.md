@@ -94,6 +94,168 @@ paywalling/archiving its Community tier. **None are multi-cloud**, and almost al
 are in-memory mocks; the two closest in *approach* — Fakecloud (Smithy-validated)
 and floci (real containers) — are each AWS-only and young.
 
+## Service-by-service matrix
+
+Exact per-project coverage (researched 2026-06-19 from each project's docs/repo).
+Legend: ✅ supported · — not supported · for **LocalStack** the cell shows the
+plan tier (**F** = free/Hobby, **B** = Base ~$39/mo, **U** = Ultimate ~$89/mo).
+"real" = runs a real container/engine, not an in-memory mock.
+
+### AWS
+
+Projects: **sock** = sockerless · **LS** = LocalStack (tier) · **moto** ·
+**fake** = Fakecloud (41 svc) · **mini** = MiniStack (~65) · **floci** (58).
+(Also: LocalEmu ≈ 132, a fork of archived LocalStack ⇒ ~LocalStack-free surface;
+CloudMock ≈ 100, moto-like mock — omitted as columns to keep the table legible.)
+
+| AWS service | sock | LS | moto | fake | mini | floci |
+|---|---|---|---|---|---|---|
+| EC2 | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| ECS | ✅ real | **B** | ✅ mock | ✅ | ✅ | ✅ real |
+| ECR | ✅ | **B** | ✅ | ✅ | ✅ | ✅ |
+| EKS | — | F | ✅ | — | ✅ | ✅ |
+| Batch | ✅ | **U** | ✅ | — | ✅ | — |
+| Lambda | ✅ real | F real | ✅ leaky | ✅ | ✅ | ✅ real |
+| Step Functions | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| API Gateway v1 | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| API Gateway v2 | ✅ | **B** | ✅ | ✅ | ✅ | ✅ |
+| ELBv2 | ✅ | **B** | ✅ | ✅ | ✅ | ✅ |
+| Auto Scaling | ✅ | **B** | ✅ | — | ✅ | ✅ |
+| App Auto Scaling | ✅ | **B** | ✅ | ✅ | — | — |
+| EventBridge | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| EventBridge Scheduler | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| S3 | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| DynamoDB | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| RDS | ✅ | **B** | ✅ | ✅ | ✅ | ✅ real |
+| ElastiCache | ✅ | **B** | ✅ | ✅ | ✅ | ✅ |
+| EFS | ✅ | **U** | ✅ | — | ✅ | — |
+| SQS | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| SNS | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| Kinesis | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| IAM | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| STS | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| KMS | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| Secrets Manager | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| SSM | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| ACM | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| WAFv2 | ✅ | **U** | ✅ | ✅ | ✅ | ✅ |
+| Route53 | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| CloudFront | ✅ | **B** | ✅ | ✅ | ✅ | — |
+| Cloud Map / ServiceDiscovery | ✅ | **U** | ✅ | — | ✅ | ✅ |
+| CloudWatch metrics | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| CloudWatch Logs | ✅ | F | ✅ | ✅ | ✅ | ✅ |
+| CloudWatch alarms | ✅ | F | ✅ | ✅ | — | — |
+| CloudWatch **dashboards** | ✅ | ~ | ✅ | — | — | — |
+| CloudWatch Logs **Insights** | ✅ | ~ | — | — | — | — |
+| CloudTrail | ✅ | **B** | ✅ | — | ✅ | ✅ |
+| CodeBuild | ✅ | **B** | ✅ | — | ✅ | ✅ |
+| Glue | ✅ | **U** | ✅ | ✅ | ✅ | ✅ |
+| Amplify | ✅ | **U** | — | — | — | — |
+
+Reading it: on the **free** tier, sockerless and LocalStack-free overlap on the
+CRUD services, but the container/CI workloads — **ECS, ECR, CloudFront,
+ElastiCache, RDS, CodeBuild, CloudTrail (Base)** and **Cloud Map, EFS, Glue,
+Batch, WAFv2, Amplify (Ultimate)** — are paid in LocalStack and free in
+sockerless. moto matches the breadth but is in-memory (no real ECS, leaky
+Lambda). The 2026 mocks (Fakecloud/MiniStack/floci) are catching up on breadth
+but skip parts of the long tail (EFS/Batch/CloudFront/Amplify vary) and the
+deeper observability surfaces (alarms/dashboards/Insights). sockerless is the
+only one with CloudWatch **Insights**, and shares **dashboards/Amplify** with
+almost no one.
+
+### GCP
+
+Projects: **sock** = sockerless · **gcloud** = official Google emulators (5) ·
+**lgcp** = localgcp (14) · **mini** = MiniSky (~30) · plus single-service
+fake-gcs-server (GCS) / gcw-emulator (Workflows).
+
+| GCP service | sock | gcloud | lgcp | mini |
+|---|---|---|---|---|
+| Cloud Run (+ Jobs) | ✅ | — | ✅ | ✅ |
+| Cloud Functions | ✅ | — | — | ✅ |
+| Compute Engine | ✅ | — | — | ✅ |
+| GKE | — | — | — | ✅ |
+| Cloud Build | ✅ | — | — | ✅ |
+| Artifact Registry | ✅ | — | — | ✅ |
+| Cloud Storage (GCS) | ✅ | — | ✅ | ✅ |
+| Pub/Sub | ✅ | ✅ | ✅ | ✅ |
+| Firestore | ✅ | ✅ | ✅ | ✅ |
+| Datastore | — | ✅ | — | ✅ |
+| Bigtable | ✅ | ✅ | ✅ | ✅ |
+| Spanner | ✅ | ✅ | ✅ | ✅ |
+| BigQuery | ✅ | — | ✅ | ✅ |
+| Cloud SQL | ✅ | — | ✅ | ✅ |
+| Memorystore (Redis) | ✅ | — | ✅ | ✅ |
+| IAM | ✅ | — | — | ✅ |
+| Cloud KMS | ✅ | — | ✅ | ✅ |
+| Secret Manager | ✅ | — | ✅ | ✅ |
+| Cloud Logging | ✅ | — | ✅ | ✅ |
+| Cloud Monitoring | ✅ | — | — | ✅ |
+| Cloud DNS | ✅ | — | — | ✅ |
+| Eventarc | ✅ | — | — | — |
+| Dataflow | ✅ | — | — | — |
+| API Gateway | ✅ | — | — | — |
+| VPC Access | ✅ | — | — | — |
+| Service Usage | ✅ | — | — | — |
+| Cloud Tasks | — | — | ✅ | ✅ |
+| Vertex AI | — | — | ✅ | ✅ |
+
+**MiniSky** is the one project that approaches sockerless's GCP management-plane
+breadth (it also does Cloud Run/Compute/Build/AR/Functions/IAM) — but it's
+single-cloud, new (2026), in-memory, and its BigQuery SQL only executes on
+Linux/WSL2. The **official Google** emulators cover only 5 data-plane services.
+
+### Azure
+
+Projects: **sock** = sockerless · **MS** = official Microsoft emulators ·
+**laz** = localaz (10) · **mb** = miniblue (27) · **tz** = topaz · plus the
+community Key Vault emulator (Key Vault only).
+
+| Azure service | sock | MS | laz | mb | tz |
+|---|---|---|---|---|---|
+| Container Apps | ✅ | — | — | — | — |
+| Container Instances | ✅ | — | — | ✅ | — |
+| App Service | ✅ | — | — | — | ✅ model |
+| AKS | — | — | — | ✅ | — |
+| ACR (Container Registry) | ✅ | — | — | ✅ | ✅ |
+| Azure Functions | ✅ | runtime | — | ✅ | — |
+| Key Vault | ✅ | — | ✅ | ✅ | ✅ |
+| Cosmos DB (data) | ✅ | ✅ | — | ✅ | ✅ |
+| Cosmos DB (mgmt) | ✅ | — | — | ✅ | ✅ model |
+| Blob / Queue / Table | ✅ | ✅ Azurite | ✅ | ✅ | ✅ |
+| Azure Files | ✅ | — | — | — | — |
+| Service Bus | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Event Hubs | ✅ | ✅ | — | — | ✅ |
+| Event Grid | ✅ | — | ✅ | ✅ | — |
+| APIM | ✅ | — | — | — | — |
+| Monitor / Log Analytics (KQL) | ✅ | — | ✅ logs | — | — |
+| VNet / Network | ✅ | — | — | ✅ | ✅ model |
+| Public / Private DNS | ✅ | — | — | ✅ | — |
+| PostgreSQL | ✅ | — | — | ✅ | — |
+| Redis Cache | ✅ | — | — | ✅ | — |
+| Entra ID (Azure AD) | ✅ | — | ✅ | — | ✅ |
+| Managed Identity | ✅ | — | — | ✅ | — |
+| Authorization / RBAC | ✅ | — | — | — | ✅ |
+| Logic Apps | ✅ | — | — | — | — |
+| Resource Groups / Subscriptions | ✅ | — | ✅ ARM | ✅ | ✅ ARM |
+
+**miniblue** (27) and **topaz** (broad, + RBAC + ARM/Bicep) are the closest
+single-cloud Azure analogs, but both are in-memory dev/test grade; the **official
+Microsoft** emulators are all single-service, data-plane only, no management
+plane. sockerless is alone on **Container Apps, APIM, Log Analytics/KQL, Azure
+Files, Logic Apps**.
+
+### The honest read
+
+On *each individual cloud* a single-cloud project now approaches sockerless's
+breadth — LocalStack/moto (AWS), MiniSky (GCP), miniblue/topaz (Azure). But:
+
+- **None spans all three clouds.** Sockerless is the only AWS+GCP+Azure surface.
+- **The per-cloud newcomers are in-memory mocks**; sockerless (and LocalStack's
+  paid tier) actually run the workloads.
+- **Only sockerless enforces per-response spec conformance** (the ratchet) across
+  all three clouds.
+
 ## Per-cloud coverage: what sockerless implements
 
 ### AWS (~50 service slices, ~700 operations)
