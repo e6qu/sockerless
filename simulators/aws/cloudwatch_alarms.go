@@ -34,6 +34,7 @@ type CWAlarm struct {
 	MetricName              string            `json:"MetricName" cbor:"MetricName"`
 	Dimensions              []CWDimension     `json:"Dimensions,omitempty" cbor:"Dimensions,omitempty"`
 	Statistic               string            `json:"Statistic,omitempty" cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string            `json:"ExtendedStatistic,omitempty" cbor:"ExtendedStatistic,omitempty"`
 	Period                  int32             `json:"Period" cbor:"Period"`
 	EvaluationPeriods       int32             `json:"EvaluationPeriods" cbor:"EvaluationPeriods"`
 	Threshold               float64           `json:"Threshold" cbor:"Threshold"`
@@ -117,10 +118,6 @@ func cwEvaluateAlarmState(a CWAlarm) (state, reason string) {
 	if evalPeriods <= 0 {
 		evalPeriods = 1
 	}
-	stat := a.Statistic
-	if stat == "" {
-		stat = "Average"
-	}
 	now := time.Now().UTC().Unix()
 	windowStart := now - int64(evalPeriods)*int64(period)
 
@@ -158,7 +155,7 @@ func cwEvaluateAlarmState(a CWAlarm) (state, reason string) {
 			break
 		}
 		evaluated++
-		if cwAlarmBreaches(cwApplyStat(stat, buckets[k]), a.Threshold, a.ComparisonOperator) {
+		if cwAlarmBreaches(cwApplyAlarmStat(a, buckets[k]), a.Threshold, a.ComparisonOperator) {
 			breaching++
 		}
 	}
@@ -166,6 +163,55 @@ func cwEvaluateAlarmState(a CWAlarm) (state, reason string) {
 		return "ALARM", fmt.Sprintf("Threshold Crossed: %d datapoints were %s the threshold (%g)", breaching, a.ComparisonOperator, a.Threshold)
 	}
 	return "OK", "Threshold not crossed"
+}
+
+// cwApplyAlarmStat reduces a bucket by the alarm's statistic — a percentile when
+// ExtendedStatistic (e.g. "p99") is set, otherwise the named Statistic.
+func cwApplyAlarmStat(a CWAlarm, vals []float64) float64 {
+	if a.ExtendedStatistic != "" {
+		if p, ok := cwParsePercentile(a.ExtendedStatistic); ok {
+			return cwPercentile(vals, p)
+		}
+	}
+	stat := a.Statistic
+	if stat == "" {
+		stat = "Average"
+	}
+	return cwApplyStat(stat, vals)
+}
+
+// cwParsePercentile parses "p99" / "p99.9" into the percentile 99 / 99.9.
+func cwParsePercentile(s string) (float64, bool) {
+	if len(s) < 2 || (s[0] != 'p' && s[0] != 'P') {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(s[1:], 64)
+	if err != nil {
+		return 0, false
+	}
+	return f, true
+}
+
+// cwPercentile returns the linear-interpolated p-th percentile (0..100) of vals.
+func cwPercentile(vals []float64, p float64) float64 {
+	if len(vals) == 0 {
+		return 0
+	}
+	sorted := append([]float64(nil), vals...)
+	sort.Float64s(sorted)
+	switch {
+	case p <= 0:
+		return sorted[0]
+	case p >= 100:
+		return sorted[len(sorted)-1]
+	}
+	rank := (p / 100) * float64(len(sorted)-1)
+	lo := int(rank)
+	frac := rank - float64(lo)
+	if lo+1 < len(sorted) {
+		return sorted[lo] + frac*(sorted[lo+1]-sorted[lo])
+	}
+	return sorted[lo]
 }
 
 // cwListAlarms returns alarms filtered by an optional name set, sorted by name.
@@ -201,6 +247,7 @@ func handleCWJSONPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		MetricName              string        `json:"MetricName"`
 		Dimensions              []CWDimension `json:"Dimensions"`
 		Statistic               string        `json:"Statistic"`
+		ExtendedStatistic       string        `json:"ExtendedStatistic"`
 		Period                  int32         `json:"Period"`
 		EvaluationPeriods       int32         `json:"EvaluationPeriods"`
 		Threshold               float64       `json:"Threshold"`
@@ -237,6 +284,7 @@ func handleCWJSONPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		MetricName:              req.MetricName,
 		Dimensions:              req.Dimensions,
 		Statistic:               req.Statistic,
+		ExtendedStatistic:       req.ExtendedStatistic,
 		Period:                  req.Period,
 		EvaluationPeriods:       req.EvaluationPeriods,
 		Threshold:               req.Threshold,
@@ -272,14 +320,13 @@ func handleCWJSONDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		for _, d := range a.Dimensions {
 			dims = append(dims, map[string]string{"Name": d.Name, "Value": d.Value})
 		}
-		out = append(out, map[string]any{
+		entry := map[string]any{
 			"AlarmName":             a.AlarmName,
 			"AlarmArn":              a.AlarmArn,
 			"AlarmDescription":      a.AlarmDescription,
 			"Namespace":             a.Namespace,
 			"MetricName":            a.MetricName,
 			"Dimensions":            dims,
-			"Statistic":             a.Statistic,
 			"Period":                a.Period,
 			"EvaluationPeriods":     a.EvaluationPeriods,
 			"Threshold":             cwJSONStat(a.Threshold),
@@ -290,7 +337,15 @@ func handleCWJSONDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 			"StateValue":            state,
 			"StateReason":           reason,
 			"StateUpdatedTimestamp": float64(now.Unix()),
-		})
+		}
+		// Statistic and ExtendedStatistic are mutually exclusive — emit only the
+		// one that was set, so a percentile alarm round-trips (no terraform diff).
+		if a.ExtendedStatistic != "" {
+			entry["ExtendedStatistic"] = a.ExtendedStatistic
+		} else if a.Statistic != "" {
+			entry["Statistic"] = a.Statistic
+		}
+		out = append(out, entry)
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"MetricAlarms": out})
 }
@@ -351,6 +406,7 @@ func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		MetricName              string        `cbor:"MetricName"`
 		Dimensions              []CWDimension `cbor:"Dimensions"`
 		Statistic               string        `cbor:"Statistic"`
+		ExtendedStatistic       string        `cbor:"ExtendedStatistic"`
 		Period                  int32         `cbor:"Period"`
 		EvaluationPeriods       int32         `cbor:"EvaluationPeriods"`
 		Threshold               float64       `cbor:"Threshold"`
@@ -383,6 +439,7 @@ func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		MetricName:              req.MetricName,
 		Dimensions:              req.Dimensions,
 		Statistic:               req.Statistic,
+		ExtendedStatistic:       req.ExtendedStatistic,
 		Period:                  req.Period,
 		EvaluationPeriods:       req.EvaluationPeriods,
 		Threshold:               req.Threshold,
@@ -499,6 +556,7 @@ type cborMetricAlarm struct {
 	MetricName            string        `cbor:"MetricName"`
 	Dimensions            []CWDimension `cbor:"Dimensions,omitempty"`
 	Statistic             string        `cbor:"Statistic,omitempty"`
+	ExtendedStatistic     string        `cbor:"ExtendedStatistic,omitempty"`
 	Period                int32         `cbor:"Period"`
 	EvaluationPeriods     int32         `cbor:"EvaluationPeriods"`
 	Threshold             float64       `cbor:"Threshold"`
@@ -540,6 +598,7 @@ func handleCWCBORDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 			MetricName:            a.MetricName,
 			Dimensions:            a.Dimensions,
 			Statistic:             a.Statistic,
+			ExtendedStatistic:     a.ExtendedStatistic,
 			Period:                a.Period,
 			EvaluationPeriods:     a.EvaluationPeriods,
 			Threshold:             a.Threshold,
@@ -633,6 +692,7 @@ func handleCWQueryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		MetricName:              r.FormValue("MetricName"),
 		Dimensions:              cwQueryDimensions(r, "Dimensions"),
 		Statistic:               r.FormValue("Statistic"),
+		ExtendedStatistic:       r.FormValue("ExtendedStatistic"),
 		Period:                  int32(period),
 		EvaluationPeriods:       int32(evalPeriods),
 		Threshold:               threshold,
@@ -671,8 +731,13 @@ func handleCWQueryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 			fmt.Fprintf(&members, "<member><Name>%s</Name><Value>%s</Value></member>", xmlEscape(dim.Name), xmlEscape(dim.Value))
 		}
 		members.WriteString("</Dimensions>")
-		fmt.Fprintf(&members, "<Statistic>%s</Statistic><Period>%d</Period><EvaluationPeriods>%d</EvaluationPeriods>",
-			xmlEscape(a.Statistic), a.Period, a.EvaluationPeriods)
+		if a.ExtendedStatistic != "" {
+			fmt.Fprintf(&members, "<ExtendedStatistic>%s</ExtendedStatistic>", xmlEscape(a.ExtendedStatistic))
+		} else if a.Statistic != "" {
+			fmt.Fprintf(&members, "<Statistic>%s</Statistic>", xmlEscape(a.Statistic))
+		}
+		fmt.Fprintf(&members, "<Period>%d</Period><EvaluationPeriods>%d</EvaluationPeriods>",
+			a.Period, a.EvaluationPeriods)
 		fmt.Fprintf(&members, "<Threshold>%s</Threshold><ComparisonOperator>%s</ComparisonOperator>",
 			cwFormatFloat(a.Threshold), xmlEscape(a.ComparisonOperator))
 		if a.TreatMissingData != "" {

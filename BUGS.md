@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1898 filed - 1855 fixed - 2 open - 10 false positives.**
+**1900 filed - 1857 fixed - 2 open - 10 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1900~~ | P2 | AWS sim CloudWatch — dashboard API (`PutDashboard`/`GetDashboard`/`ListDashboards`/`DeleteDashboards`) unimplemented → 404 (issue #608) | endpoint gap → terraform `aws_cloudwatch_dashboard` apply aborts | New `cloudwatch_dashboards.go`: a name→body store + the four ops on all three CloudWatch wire protocols (query/awsJson/cbor). `PutDashboard` returns an empty `DashboardValidationMessages`; `GetDashboard` echoes the body; `ListDashboards` enumerates by prefix; `DeleteDashboards` removes. (Query `DeleteDashboards` needed a `<DeleteDashboardsResult/>` element or botocore errors.) SDK + CLI + terraform (`aws_cloudwatch_dashboard`). |
+| ~~1899~~ | P2 | AWS sim CloudWatch — metric alarm `ExtendedStatistic` (percentile, e.g. p99) dropped → terraform perpetual diff (issue #609) | dropped field on read-back | The #607 alarm store had no `ExtendedStatistic` field, so a percentile alarm lost it and `DescribeAlarms` returned neither `Statistic` nor `ExtendedStatistic`. Added the field to the struct + the put-decode/describe-encode across all three protocols; `Statistic` and `ExtendedStatistic` are mutually exclusive — describe emits only the one that was set, so `aws_cloudwatch_metric_alarm` with `extended_statistic` is idempotent. State evaluation computes the percentile (`cwApplyAlarmStat`/`cwPercentile`) when `ExtendedStatistic` is set. SDK + CLI + terraform. |
 | ~~1898~~ | P3 | Azure sim — `$filter` (OData) ignored on ARM list handlers | partial query-language support | New `odata_filter.go` implements the OData `$filter` grammar (eq/ne/gt/ge/lt/le, and/or/not, parentheses, startswith/endswith/contains/substringof, `/`-nested paths) + `$orderby`, evaluated against each resource's JSON; wired into Cosmos / APIM / Key Vault list handlers via `azureApplyListQuery`. Fixed a slice-aliasing bug (the filter result reused the caller's backing array). Unit-tested. |
 | ~~1897~~ | P3 | CloudWatch Logs sim — `FilterLogEvents` filterPattern was a naive substring match | partial query-language support | New `cloudwatch_filter_pattern.go` implements the full metric-filter pattern language: unstructured (AND terms, `?` optional/OR, `-` exclude, "quoted phrases") + structured-JSON (`{ $.field op value && \|\| … }`, nested `$.a.b`/`$.a[0]` selectors, `*` wildcard). Unit-tested across both grammars. |
 | ~~1896~~ | P3 | DynamoDB sim — Condition/Filter/KeyCondition expressions were a `=`/AND-only subset | partial query-language support | New `dynamodb_expr.go` is a real recursive-descent evaluator: comparators, BETWEEN, IN, functions (attribute_exists / attribute_not_exists / attribute_type / begins_with / contains / size), AND/OR/NOT + parens, nested document paths (`a.b`/`a[0]`), `#alias`/`:ref`. `ddbEvalCondition`/`ddbMatchesExpression` route through it; existing SDK suite unchanged. Unit-tested. |

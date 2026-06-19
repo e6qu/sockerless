@@ -274,6 +274,26 @@ resource "aws_cloudwatch_metric_alarm" "tf_alarm" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "tf_alarm_p99" {
+  alarm_name          = "tf-alarm-p99"
+  alarm_description   = "terraform percentile alarm coverage"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Latency"
+  namespace           = "Custom/TF"
+  period              = 300
+  extended_statistic  = "p99"
+  threshold           = 120000
+  treat_missing_data  = "notBreaching"
+}
+
+resource "aws_cloudwatch_dashboard" "tf_dashboard" {
+  dashboard_name = "tf-dash"
+  dashboard_body = jsonencode({
+    widgets = [{ type = "text", x = 0, y = 0, width = 6, height = 2, properties = { markdown = "hello" } }]
+  })
+}
+
 resource "aws_ebs_snapshot_copy" "tf_ebs_snapshot_copy" {
   source_snapshot_id = aws_ebs_snapshot.tf_ebs_snapshot.id
   source_region      = "us-east-1"
@@ -1434,6 +1454,9 @@ output "ec2_ebs_snapshot_id" {
 }
 output "ec2_ebs_snapshot_copy_id" {
   value = aws_ebs_snapshot_copy.tf_ebs_snapshot_copy.id
+}
+output "cloudwatch_dashboard_arn" {
+  value = aws_cloudwatch_dashboard.tf_dashboard.dashboard_arn
 }
 output "cloudwatch_alarm_arn" {
   value = aws_cloudwatch_metric_alarm.tf_alarm.arn

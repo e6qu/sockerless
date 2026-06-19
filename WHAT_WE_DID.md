@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - CloudWatch dashboards + percentile alarms (#608/#609)
+
+Two consumer CloudWatch issues filed after #610 merged, both blocking terraform
+applies, fixed in one PR alongside in-flight work:
+
+- **Dashboards (#608, BUG-1900).** The CloudWatch dashboard API was unrouted →
+  404, so `aws_cloudwatch_dashboard` couldn't apply. New `cloudwatch_dashboards.go`
+  implements PutDashboard / GetDashboard / ListDashboards / DeleteDashboards over
+  a name→body store on all three CloudWatch wire protocols (query, awsJson1.0,
+  rpc-v2-cbor). Two protocol gotchas: the query `DeleteDashboards` needs a
+  `<DeleteDashboardsResult/>` element or botocore errors, and the list
+  `LastModified` must encode as a timestamp (cbor tag-1 / RFC3339), not a bare
+  string, or the SDK's `*time.Time` field fails to decode.
+- **Percentile alarms (#609, BUG-1899).** The #607 alarm store had no
+  `ExtendedStatistic` field, so a `p99` alarm lost it and DescribeAlarms returned
+  neither Statistic nor ExtendedStatistic — a terraform perpetual diff. Added the
+  field across the struct and the put-decode / describe-encode on all three
+  protocols; Statistic and ExtendedStatistic are mutually exclusive, so describe
+  emits only the one that was set (idempotent). State evaluation computes the
+  requested percentile from the metric data.
+
+SDK + CLI + terraform for both. Remaining query-language work: CloudWatch Logs
+Insights (StartQuery), a separate SQL-like language — a follow-up PR.
+
 ## 2026-06-19 - Query-language program: full filter/expression grammars
 
 Per the directive for full filter-expression / query-language support across the
