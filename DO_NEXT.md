@@ -4,7 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/cloudwatch-dashboards-percentile-insights` — two fresh consumer CloudWatch issues (filed after #610 merged), both blocking terraform applies:
+`feat/cloudwatch-logs-insights` — **BUG-1901**: the CloudWatch Logs **Insights** query API was unimplemented. New `cloudwatch_insights.go` (`StartQuery`/`GetQueryResults`/`StopQuery`/`DescribeQueries`) + `cloudwatch_insights_filter.go` implement a real executor for the Insights query language: pipe-delimited `fields | filter | stats | sort | limit | dedup`, run synchronously at StartQuery over the matching log events (flattened into Insights fields incl. parsed JSON). `filter` is a full recursive-descent grammar (`= != < <= > >=`, `like` substring/`/regex/`, `in [...]`, `and`/`or`/`not`, parens, dotted fields); `stats` does count/count_distinct/sum/avg/min/max `by` group fields. CloudWatch Logs is awsJson-only (one handler covers SDK + CLI). SDK + CLI tests + an engine unit test.
+
+**This completes the query-language program** — every query surface the sims expose now has a real parser/evaluator: GCP list `filter` (AIP-160), DynamoDB Condition/Filter/KeyCondition expressions, CloudWatch Logs filter-pattern **and** Insights, Azure OData `$filter`. KQL (Log Analytics) was already implemented; S3 Select / Athena SQL are unused by sockerless. **Next: fresh consumer issues, or another fidelity audit.**
+
+### (history) `feat/cloudwatch-dashboards-percentile-insights` (MERGED as #611) — two consumer CloudWatch issues (filed after #610 merged), both blocking terraform applies:
 - **BUG-1900 (#608):** CloudWatch dashboard API was unrouted → 404. New `cloudwatch_dashboards.go` implements `PutDashboard`/`GetDashboard`/`ListDashboards`/`DeleteDashboards` over a name→body store on all three CW wire protocols (query/awsJson/cbor). (Query `DeleteDashboards` needed a `<DeleteDashboardsResult/>` element or botocore errors; list `LastModified` must encode as a timestamp, not a string, or the cbor SDK rejects it.)
 - **BUG-1899 (#609):** metric alarm `ExtendedStatistic` (percentile p99) was dropped → terraform perpetual diff. Added the field to the alarm struct + put-decode/describe-encode across all three protocols; `Statistic`/`ExtendedStatistic` are mutually exclusive (describe emits only the set one → idempotent); state evaluation computes the percentile (`cwApplyAlarmStat`/`cwPercentile`).
 

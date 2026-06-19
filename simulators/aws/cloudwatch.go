@@ -66,7 +66,9 @@ func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	cwLogGroups = sim.MakeStore[CWLogGroup](srv.DB(), "cw_log_groups")
 	cwLogStreams = sim.MakeStore[CWLogStream](srv.DB(), "cw_log_streams")
 	cwLogEvents = sim.MakeStore[[]CWLogEvent](srv.DB(), "cw_log_events")
+	cwQueries = sim.MakeStore[CWQuery](srv.DB(), "cw_insights_queries")
 	cwSeqCounter = 1
+	registerCloudWatchInsights(r)
 
 	r.Register("Logs_20140328.CreateLogGroup", handleCWCreateLogGroup)
 	r.Register("Logs_20140328.DescribeLogGroups", handleCWDescribeLogGroups)

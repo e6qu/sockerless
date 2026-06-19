@@ -4,6 +4,26 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - CloudWatch Logs Insights query engine (completes the query-language program)
+
+The last query surface without a real parser. New `cloudwatch_insights.go` +
+`cloudwatch_insights_filter.go` implement the CloudWatch Logs Insights API
+(StartQuery / GetQueryResults / StopQuery / DescribeQueries) with a real
+executor for the Insights query language. A query is a pipe-delimited sequence of
+commands — `fields | filter | stats | sort | limit | dedup` — run synchronously
+at StartQuery over the matching log events; each event is flattened into Insights
+fields (`@timestamp`, `@message`, `@logStream`, plus parsed-JSON leaf fields like
+`level` / `req.path`). `filter` is a full recursive-descent grammar (`= != < <=
+> >=`, `like` substring / `/regex/`, `in [...]`, `and`/`or`/`not`, parentheses,
+dotted fields); `stats` does count / count_distinct / sum / avg / min / max with
+`by` group fields. CloudWatch Logs is awsJson-only, so one handler set covers
+both the SDK and CLI. SDK + CLI tests + an engine unit test.
+
+With this, **every query surface the sims expose has a real parser/evaluator**:
+GCP list `filter` (AIP-160), DynamoDB Condition/Filter/KeyCondition expressions,
+CloudWatch Logs filter-pattern and Insights, Azure OData `$filter`. KQL was
+already implemented; S3 Select / Athena SQL are unused by sockerless.
+
 ## 2026-06-19 - CloudWatch dashboards + percentile alarms (#608/#609)
 
 Two consumer CloudWatch issues filed after #610 merged, both blocking terraform
