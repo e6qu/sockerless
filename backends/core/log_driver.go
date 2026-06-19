@@ -102,6 +102,13 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		defer ticker.Stop()
 
 		for range ticker.C {
+			// Heartbeat: a zero-length write detects a disconnected client
+			// (the handler closes the pipe on request-context cancel) even
+			// while the container is idle and producing no new lines, so this
+			// poller stops instead of leaking until the next real log line.
+			if _, werr := pw.Write(nil); werr != nil {
+				return
+			}
 			// Stop following only when the container has reached a
 			// terminal state. Pre-start (status "created") must keep
 			// polling because attach-before-start is a valid docker

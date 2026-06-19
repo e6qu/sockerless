@@ -10,7 +10,7 @@
 
 [![Go](https://img.shields.io/badge/Go-241.2k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-25.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-135.9k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-136k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -110,7 +110,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 **Go**
 
-![core](https://img.shields.io/badge/core-19.4k-00ADD8)
+![core](https://img.shields.io/badge/core-19.5k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-39.6k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-55.3k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-32.3k-00ADD8)
