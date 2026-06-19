@@ -208,9 +208,15 @@ func azureODataTokenize(s string) []odataTok {
 // ── parser ─────────────────────────────────────────────────────────────────
 
 type odataParser struct {
-	toks []odataTok
-	pos  int
+	toks  []odataTok
+	pos   int
+	depth int
 }
+
+// maxODataParseDepth bounds parenthesis nesting so a pathological $filter can't
+// overflow the goroutine stack and crash the sim process (a Go stack-overflow
+// fatal error is not recoverable).
+const maxODataParseDepth = 1000
 
 func azureParseODataFilter(s string) odataNode {
 	s = strings.TrimSpace(s)
@@ -261,7 +267,13 @@ func (p *odataParser) parseNot() odataNode {
 func (p *odataParser) parseTerm() odataNode {
 	if p.peek().kind == odataLParen {
 		p.next()
+		p.depth++
+		if p.depth > maxODataParseDepth {
+			p.depth--
+			return odataTrue{}
+		}
 		inner := p.parseOr()
+		p.depth--
 		if p.peek().kind == odataRParen {
 			p.next()
 		}

@@ -161,22 +161,25 @@ func (reg *OCIRegistry) handleBlobUpload(w http.ResponseWriter, r *http.Request,
 
 	case http.MethodPatch:
 		// PATCH /v2/{repo}/blobs/uploads/{uuid} — append a chunk.
-		upload, ok := reg.Uploads.Get(uploadID)
-		if !ok {
-			ociError(w, "BLOB_UPLOAD_UNKNOWN", "upload not found", http.StatusNotFound)
-			return
-		}
 		data, err := ociReadBody(r)
 		if err != nil {
 			ociError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
 			return
 		}
-		start := len(upload.Data)
-		upload.Data = append(upload.Data, data...)
-		reg.Uploads.Put(uploadID, upload)
+		// Atomic append: concurrent chunk PATCHes for the same upload must not
+		// race a Get→append→Put (a lost chunk → DIGEST_INVALID on finalize).
+		var end int
+		ok := reg.Uploads.Update(uploadID, func(u *OCIUpload) {
+			u.Data = append(u.Data, data...)
+			end = len(u.Data)
+		})
+		if !ok {
+			ociError(w, "BLOB_UPLOAD_UNKNOWN", "upload not found", http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Location", fmt.Sprintf("/v2/%s/blobs/uploads/%s", repo, uploadID))
 		w.Header().Set("Docker-Upload-UUID", uploadID)
-		w.Header().Set("Range", fmt.Sprintf("0-%d", maxInt(start+len(data)-1, 0)))
+		w.Header().Set("Range", fmt.Sprintf("0-%d", maxInt(end-1, 0)))
 		w.WriteHeader(http.StatusAccepted)
 
 	case http.MethodPut:

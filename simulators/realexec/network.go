@@ -14,6 +14,30 @@ import (
 
 var linuxNameRE = regexp.MustCompile(`^[a-zA-Z0-9_.-]{1,15}$`)
 
+// nftTableLocks serializes the destructive `nft delete table`+recreate sequences
+// per table name. Several of these tables are shared per-VPC / per-subnet / per-
+// route (their names derive from the VPC/subnet/route id), so concurrent
+// instance/task/route operations on the same table race: one goroutine's
+// `nft delete table` nukes another's freshly-created table mid-setup, failing
+// the rule add with "No such file or directory".
+var nftTableLocks sync.Map // tableName -> *sync.Mutex
+
+// withTableLock serializes fn against any other configure operation on the same
+// nft table name.
+func withTableLock(tableName string, fn func() error) error {
+	defer lockTable(tableName)()
+	return fn()
+}
+
+// lockTable acquires the per-table-name lock and returns its release func, for
+// `defer lockTable(name)()` at the top of a long-bodied configure function.
+func lockTable(tableName string) func() {
+	lkAny, _ := nftTableLocks.LoadOrStore(tableName, &sync.Mutex{})
+	lk := lkAny.(*sync.Mutex)
+	lk.Lock()
+	return lk.Unlock
+}
+
 type Host struct {
 	runner Runner
 }
@@ -36,6 +60,7 @@ type Network struct {
 	defaultSubnet *Subnet
 	subnets       map[string]*Subnet
 	mu            sync.Mutex
+	egressMu      sync.Mutex // serializes EnsureEgress so the veth pair is created once
 	cleanup       *CleanupStack
 	runner        Runner
 }
@@ -119,6 +144,19 @@ func (n *Network) Close(ctx context.Context) error {
 }
 
 func (n *Network) EnsureEgress(ctx context.Context) (*EgressLink, error) {
+	n.mu.Lock()
+	if n.egress != nil {
+		link := *n.egress
+		n.mu.Unlock()
+		return &link, nil
+	}
+	n.mu.Unlock()
+
+	// Serialize creation: without this, two concurrent first-uses both pass the
+	// nil check above and both run `ip link add <veth>`, the second failing
+	// "File exists" and failing its caller's task attach / DNAT setup.
+	n.egressMu.Lock()
+	defer n.egressMu.Unlock()
 	n.mu.Lock()
 	if n.egress != nil {
 		link := *n.egress
@@ -216,23 +254,26 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 	if err := n.runner.Run(ctx, "ip", "route", "replace", publicIP.String()+"/32", "via", link.NetIP.String(), "dev", link.HostVethName); err != nil {
 		return err
 	}
-	_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
-		return err
-	}
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
-		return err
-	}
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "daddr", link.HostIP.String(), "oifname", link.NetVethName, "accept"); err != nil {
-		return err
-	}
-	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
+			return err
+		}
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
+			return err
+		}
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "daddr", link.HostIP.String(), "oifname", link.NetVethName, "accept"); err != nil {
+			return err
+		}
+		return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "postrouting", "ip", "saddr", sourceCIDR, "oifname", link.NetVethName, "snat", "to", publicIP.String())
+	})
 }
 
 func (n *Network) ConfigureHostEgress(ctx context.Context, sourceCIDR string, tableName string, cleanup *CleanupStack) error {
 	if tableName == "" {
 		tableName = deriveLinuxName("he"+n.NamespaceName, "he")
 	}
+	defer lockTable(tableName)()
 	if _, _, err := net.ParseCIDR(sourceCIDR); err != nil {
 		return err
 	}
@@ -282,18 +323,20 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 	if err != nil {
 		return err
 	}
-	_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "ip", tableName); err != nil {
-		return err
-	}
-	n.cleanup.Add(func(cleanupCtx context.Context) error {
-		_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
-		return nil
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "ip", tableName); err != nil {
+			return err
+		}
+		n.cleanup.Add(func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
+			return nil
+		})
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "ip", tableName, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"); err != nil {
+			return err
+		}
+		return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", targetIPv4, "tcp", "dport", "80", "dnat", "to", net.JoinHostPort(link.HostIP.String(), strconv.Itoa(targetPort)))
 	})
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "ip", tableName, "prerouting", "{", "type", "nat", "hook", "prerouting", "priority", "dstnat", ";", "}"); err != nil {
-		return err
-	}
-	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "ip", tableName, "prerouting", "ip", "daddr", targetIPv4, "tcp", "dport", "80", "dnat", "to", net.JoinHostPort(link.HostIP.String(), strconv.Itoa(targetPort)))
 }
 
 func (n *Network) ConfigureMetadataDNAT(ctx context.Context, targetPort int, tableName string) error {
@@ -336,26 +379,28 @@ func (n *Network) ConfigureEgressPolicy(ctx context.Context, allowedSourceCIDRs 
 	}
 	sort.Strings(cidrs)
 
-	_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
-		return err
-	}
-	n.cleanup.Add(func(cleanupCtx context.Context) error {
-		_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
-		return nil
-	})
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "}"); err != nil {
-		return err
-	}
-	if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "daddr", link.HostIP.String(), "accept"); err != nil {
-		return err
-	}
-	for _, cidr := range cidrs {
-		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "saddr", cidr, "accept"); err != nil {
+	return withTableLock(tableName, func() error {
+		_ = n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
 			return err
 		}
-	}
-	return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "drop")
+		n.cleanup.Add(func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+			return nil
+		})
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "forward", "{", "type", "filter", "hook", "forward", "priority", "filter", ";", "}"); err != nil {
+			return err
+		}
+		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "daddr", link.HostIP.String(), "accept"); err != nil {
+			return err
+		}
+		for _, cidr := range cidrs {
+			if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "ip", "saddr", cidr, "accept"); err != nil {
+				return err
+			}
+		}
+		return n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "rule", "inet", tableName, "forward", "oifname", link.NetVethName, "drop")
+	})
 }
 
 func egressIPs(namespaceName string) (hostIP, netIP net.IP, prefixBits int) {
@@ -838,6 +883,7 @@ func (n *NamespaceNIC) configureIngressFilter(ctx context.Context, devName strin
 
 func configureBridgeIngressFilter(ctx context.Context, network *Network, cleanup *CleanupStack, devName string, rules []PacketRule) error {
 	table := deriveLinuxName("fw"+devName, "fw")
+	defer lockTable(table)()
 	_ = network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "delete", "table", "bridge", table)
 	if err := network.runner.Run(ctx, "ip", "netns", "exec", network.NamespaceName, "nft", "add", "table", "bridge", table); err != nil {
 		return err

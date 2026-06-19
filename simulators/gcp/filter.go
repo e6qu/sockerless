@@ -159,9 +159,15 @@ func gcpTokenize(s string) []gcpTok {
 // ── parser (recursive descent) ─────────────────────────────────────────────
 
 type gcpFilterParser struct {
-	toks []gcpTok
-	pos  int
+	toks  []gcpTok
+	pos   int
+	depth int
 }
+
+// maxFilterParseDepth bounds parenthesis nesting so a pathological filter can't
+// overflow the goroutine stack and crash the sim process (a Go stack-overflow
+// fatal error is not recoverable).
+const maxFilterParseDepth = 1000
 
 func gcpParseFilterExpr(s string) gcpFilterNode {
 	s = strings.TrimSpace(s)
@@ -215,7 +221,13 @@ func (p *gcpFilterParser) parseFactor() gcpFilterNode {
 	}
 	if p.peek().kind == tokLParen {
 		p.next()
+		p.depth++
+		if p.depth > maxFilterParseDepth {
+			p.depth--
+			return gcpFilterTrue{}
+		}
 		inner := p.parseOr()
+		p.depth--
 		if p.peek().kind == tokRParen {
 			p.next()
 		}

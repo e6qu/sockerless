@@ -265,9 +265,15 @@ func ddbExprTokenize(s string) []ddbExprTok {
 // ── parser ─────────────────────────────────────────────────────────────────
 
 type ddbExprParser struct {
-	toks []ddbExprTok
-	pos  int
+	toks  []ddbExprTok
+	pos   int
+	depth int
 }
+
+// maxExprParseDepth bounds parenthesis nesting so a pathological expression
+// (thousands of `(`) can't overflow the goroutine stack and crash the whole sim
+// process — a recover() can't catch a Go stack-overflow fatal error.
+const maxExprParseDepth = 1000
 
 func (p *ddbExprParser) peek() ddbExprTok { return p.toks[p.pos] }
 func (p *ddbExprParser) next() ddbExprTok { t := p.toks[p.pos]; p.pos++; return t }
@@ -301,7 +307,13 @@ func (p *ddbExprParser) parseNot() ddbCond {
 func (p *ddbExprParser) parseTerm() ddbCond {
 	if p.peek().kind == ddbTokLParen {
 		p.next()
+		p.depth++
+		if p.depth > maxExprParseDepth {
+			p.depth--
+			return ddbCondFalse{}
+		}
 		inner := p.parseOr()
+		p.depth--
 		if p.peek().kind == ddbTokRParen {
 			p.next()
 		}

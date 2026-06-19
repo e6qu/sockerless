@@ -185,8 +185,9 @@ func cwInsTokenize(s string) []cwInsTok {
 // ── parser ─────────────────────────────────────────────────────────────────
 
 type cwInsParser struct {
-	toks []cwInsTok
-	pos  int
+	toks  []cwInsTok
+	pos   int
+	depth int
 }
 
 func cwParseInsightsFilter(s string) cwInsightsNode {
@@ -234,7 +235,13 @@ func (p *cwInsParser) parseNot() cwInsightsNode {
 func (p *cwInsParser) parseTerm() cwInsightsNode {
 	if p.peek().kind == cwInsLParen {
 		p.next()
+		p.depth++
+		if p.depth > maxExprParseDepth {
+			p.depth--
+			return cwInsTrue{}
+		}
 		inner := p.parseOr()
+		p.depth--
 		if p.peek().kind == cwInsRParen {
 			p.next()
 		}

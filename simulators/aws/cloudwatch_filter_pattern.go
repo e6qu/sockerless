@@ -112,6 +112,10 @@ func cwStructuredPatternMatch(message, expr string) bool {
 
 type cwPatNode interface{ eval(doc any) bool }
 
+type cwPatTrue struct{}
+
+func (cwPatTrue) eval(any) bool { return true }
+
 type cwPatOr struct{ l, r cwPatNode }
 
 func (n cwPatOr) eval(d any) bool { return n.l.eval(d) || n.r.eval(d) }
@@ -239,8 +243,9 @@ func cwPatTokenize(s string) []cwPatTok {
 }
 
 type cwPatParser struct {
-	toks []cwPatTok
-	pos  int
+	toks  []cwPatTok
+	pos   int
+	depth int
 }
 
 func (p *cwPatParser) peek() cwPatTok { return p.toks[p.pos] }
@@ -267,7 +272,13 @@ func (p *cwPatParser) parseAnd() cwPatNode {
 func (p *cwPatParser) parseTerm() cwPatNode {
 	if p.peek().kind == cwPatLParen {
 		p.next()
+		p.depth++
+		if p.depth > maxExprParseDepth {
+			p.depth--
+			return cwPatTrue{}
+		}
 		inner := p.parseOr()
+		p.depth--
 		if p.peek().kind == cwPatRParen {
 			p.next()
 		}
