@@ -346,8 +346,22 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 		name = "/" + mid[:12]
 	}
 	image := ""
+	var cmd, entrypoint, env []string
+	var memBytes, nanoCPUs int64
 	if svc.Template != nil && len(svc.Template.Containers) > 0 {
-		image = svc.Template.Containers[0].Image
+		main := svc.Template.Containers[0]
+		image = main.Image
+		entrypoint = main.Command
+		cmd = main.Args
+		for _, e := range main.Env {
+			if v, ok := e.Values.(*runpb.EnvVar_Value); ok {
+				env = append(env, e.Name+"="+v.Value)
+			}
+		}
+		if main.Resources != nil {
+			memBytes = core.DockerMemoryBytes(main.Resources.Limits["memory"])
+			nanoCPUs = core.DockerNanoCPUs(main.Resources.Limits["cpu"])
+		}
 	}
 	// Decode Docker labels stamped by pod_service via TagSet.AsGCPLabels.
 	// They land under sockerless_labels_b64{,-N} keys (or in Annotations
@@ -360,10 +374,13 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 		Image:   image,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:  image,
-			Labels: dockerLabels,
+			Image:      image,
+			Cmd:        cmd,
+			Entrypoint: entrypoint,
+			Env:        env,
+			Labels:     dockerLabels,
 		},
-		HostConfig: api.HostConfig{NetworkMode: "default"},
+		HostConfig: api.HostConfig{NetworkMode: "default", Memory: memBytes, NanoCPUs: nanoCPUs},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
 				"bridge": {NetworkID: "bridge"},
@@ -541,10 +558,13 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) (ap
 
 	// Extract environment variables
 	var env []string
+	var memBytes, nanoCPUs int64
 	if fn.ServiceConfig != nil {
 		for k, v := range fn.ServiceConfig.EnvironmentVariables {
 			env = append(env, k+"="+v)
 		}
+		memBytes = core.DockerMemoryBytes(fn.ServiceConfig.AvailableMemory)
+		nanoCPUs = core.DockerNanoCPUs(fn.ServiceConfig.AvailableCpu)
 	}
 
 	created := labels["sockerless_created_at"]
@@ -562,7 +582,7 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) (ap
 			Env:    env,
 			Labels: dockerLabels,
 		},
-		HostConfig: api.HostConfig{NetworkMode: networkName},
+		HostConfig: api.HostConfig{NetworkMode: networkName, Memory: memBytes, NanoCPUs: nanoCPUs},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
 				networkName: {

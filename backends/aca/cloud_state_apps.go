@@ -154,6 +154,7 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 	var cmd []string
 	var entrypoint []string
 	var env []string
+	var memBytes, nanoCPUs int64
 	if app.Properties != nil && app.Properties.Template != nil {
 		for _, tc := range app.Properties.Template.Containers {
 			if (tc.Name != nil && *tc.Name == "main") || len(app.Properties.Template.Containers) == 1 {
@@ -173,6 +174,14 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 				for _, ev := range tc.Env {
 					if ev.Name != nil && ev.Value != nil {
 						env = append(env, *ev.Name+"="+*ev.Value)
+					}
+				}
+				if tc.Resources != nil {
+					if tc.Resources.Memory != nil {
+						memBytes = core.DockerMemoryBytes(*tc.Resources.Memory)
+					}
+					if tc.Resources.CPU != nil {
+						nanoCPUs = int64(*tc.Resources.CPU * 1e9)
 					}
 				}
 				break
@@ -225,6 +234,8 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
+			Memory:      memBytes,
+			NanoCPUs:    nanoCPUs,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

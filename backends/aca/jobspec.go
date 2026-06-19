@@ -165,9 +165,17 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 		tags.Pod = pod.Name
 	}
 
+	// ExposedPorts have no ACA template field — carry the image's declared
+	// ports through the Job tags so docker inspect/ps reflect them (mirrors the
+	// App path in appspec.go).
+	azureTags := tags.AsAzurePtrMap()
+	if ports := encodeExposedPorts(mainContainer.Config.ExposedPorts); ports != "" {
+		azureTags[tagExposedPorts] = ptr(ports)
+	}
+
 	return armappcontainers.Job{
 		Location: ptr(s.config.Location),
-		Tags:     tags.AsAzurePtrMap(),
+		Tags:     azureTags,
 		Properties: &armappcontainers.JobProperties{
 			EnvironmentID: ptr(environmentID),
 			Configuration: &armappcontainers.JobConfiguration{

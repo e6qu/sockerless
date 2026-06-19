@@ -4,18 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/behavioral-audit-round1` — first fix-batch from a **deep behavioral audit** (6 parallel agents probing async state machines, error codes, pagination, idempotency, optimistic concurrency, cross-op invariants across all 3 sims + the backends; every finding verified at file:line; agents self-corrected several false positives). **Fixed this PR (SDK+CLI tested):**
-- **BUG-1902** ELBv2 CreateLoadBalancer/CreateTargetGroup duplicate-name → `DuplicateLoadBalancerName`/`DuplicateTargetGroupName` 400 (was silent duplicate).
-- **BUG-1903** Route53 CreateHostedZone CallerReference idempotency → `HostedZoneAlreadyExists` 409 (Terraform's retry key).
-- **BUG-1904** EC2 DeleteSecurityGroup missing → `InvalidGroup.NotFound` (query-XML; not idempotent).
-- **BUG-1905** ECR DescribeRepositories missing-name → `RepositoryNotFoundException` (was silent skip).
-- **BUG-1906** ECR `UntagResource` implemented + registered (was 400 → Terraform tag-removal failed).
-- **BUG-1907** Lambda DeleteAlias missing → `ResourceNotFoundException` 404 (was silent 204).
-- **BUG-1908** CodeBuild list ops `sort.Strings` before the offset paginator (was nondeterministic → dup/skip pages).
+`fix/sweep-concurrency-faithfulness-ui` — a **fresh sweep** (3 parallel agents + `go test -race`) on angles the prior spec-shape and behavioral audits didn't cover: concurrency/data-races, backend Docker-API faithfulness, and UI fail-loud.
 
-**All deferred items now fixed in this PR (nothing staged):** 1909-1911,1914,1915,1917,1918,1920,1921 (earlier) plus the final four — 1912 (SFN Task/Choice/Parallel/Map interpreter + GetExecutionHistory), 1916 (GCP compute operation registry → 404 unknown ops), 1919 (Azure ARM If-Match on blob put/delete + Cosmos), and 1913 (resolved by analysis: the offset cursor is snapshot-stable for the sim's sorted, non-concurrently-mutated input; a token-snapshot rewrite was reverted because it broke DynamoDB/Amplify name-cursor introspection).
+**Fixed this PR:**
+- **BUG-1922 (P1, critical):** cloudrun `trackNetworkService` infinite livelock — `sync.Map.LoadOrStore` cannot update an existing key, so the 2nd container on any user-defined network spun forever (deterministic hang). Now a mutex-guarded read-modify-write.
+- **BUG-1923:** gcp `idTokenSignKey` lazy-init data race → `sync.Once`.
+- **BUG-1924:** aws scheduler-store reassignment racing the firing-loop goroutine (caught by `go test -race`) → `schedulesMu` + `schedulerStore()` accessor.
+- **BUG-1925:** ACA Jobs dropped `Config.ExposedPorts` on `docker inspect`/`ps` (mirrored the Apps tag path in jobspec + builder).
+- **BUG-1926:** UI fail-quiet write failures + loading/error conflation across admin/bleephub/bleeplab/core.
 
-**Audit takeaways (durable):** the sims are behaviorally strong — most state machines (ECS RunTask, Cloud Run Jobs, Container Apps, ACR Tasks, CodeBuild, Scheduler firing) are faithful with real container-driven transitions; ARM LROs are real async; DynamoDB conditional writes + S3/DynamoDB key-cursor pagination are correct. The recurring real gaps are: (a) **optimistic concurrency** (ETag/fingerprint emitted but not validated — Azure especially), (b) a few **create handlers missing duplicate/not-found guards** (the AWS batch fixed here), and (c) **synchronous shortcuts** that skip intermediate states (Batch, Lambda async).
+**Filed for the next sweep round (BUG-1927-1933):** backend `docker inspect` faithfulness — HostConfig CPU/Memory not sourced from cloud spec (1927), NetworkSettings IPAddress empty where queryable (1928), gcf/azf Cmd/Env omitted (1929), Mounts empty despite cloud volumes (1930); + two more core concurrency leaks — SystemEvents/log-follow `context.Background` goroutine leak (1931), ContainerStart orphaned WaitCh on concurrent double-start (1932), attach stdin-pump not joined (1933). These are the per-backend cloud-IP/CPU/mem plumbing + core handler-context threading — bounded but distinct from this PR's themes.
+
 
 ### (history) `feat/cloudwatch-logs-insights` (MERGED as #612) — **BUG-1901**: the CloudWatch Logs **Insights** query API was unimplemented. New `cloudwatch_insights.go` (`StartQuery`/`GetQueryResults`/`StopQuery`/`DescribeQueries`) + `cloudwatch_insights_filter.go` implement a real executor for the Insights query language: pipe-delimited `fields | filter | stats | sort | limit | dedup`, run synchronously at StartQuery over the matching log events (flattened into Insights fields incl. parsed JSON). `filter` is a full recursive-descent grammar (`= != < <= > >=`, `like` substring/`/regex/`, `in [...]`, `and`/`or`/`not`, parens, dotted fields); `stats` does count/count_distinct/sum/avg/min/max `by` group fields. CloudWatch Logs is awsJson-only (one handler covers SDK + CLI). SDK + CLI tests + an engine unit test.
 

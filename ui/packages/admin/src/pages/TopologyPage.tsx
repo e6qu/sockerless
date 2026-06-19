@@ -270,6 +270,8 @@ export function TopologyPage() {
         title: `Added ${ref.instance.name} to ${ref.project}`,
       });
     },
+    onError: (err, vars) =>
+      reportError(err, `Failed to add ${vars.inst.name} to ${vars.project}`),
   });
 
   const updateInstanceMutation = useMutation({
@@ -284,6 +286,8 @@ export function TopologyPage() {
       invalidate();
       push({ tone: "success", title: `Updated ${ref.instance.name}` });
     },
+    onError: (err, vars) =>
+      reportError(err, `Failed to update ${vars.inst.name}`),
   });
 
   const removeInstanceMutation = useMutation({

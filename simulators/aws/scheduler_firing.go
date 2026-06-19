@@ -44,7 +44,8 @@ func startSchedulerFiringLoop() {
 }
 
 func schedulerTick(now time.Time) {
-	for _, s := range schedules.List() {
+	store := schedulerStore()
+	for _, s := range store.List() {
 		if s.State != "ENABLED" {
 			continue
 		}
@@ -55,7 +56,7 @@ func schedulerTick(now time.Time) {
 		fireSchedule(s)
 		schedulerAfterFire(key, s, now)
 		if s.ActionAfterCompletion == "DELETE" && !schedulerRecurring(s.ScheduleExpression) {
-			schedules.Delete(key)
+			store.Delete(key)
 			schedulerFireMu.Lock()
 			delete(schedulerFireRecs, key)
 			schedulerFireMu.Unlock()

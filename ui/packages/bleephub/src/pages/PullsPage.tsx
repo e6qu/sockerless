@@ -203,6 +203,14 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
                 Merging is blocked — required checks must pass
               </span>
             )}
+            {mergeMutation.isError && (
+              <span style={{ fontSize: "0.8rem", color: "var(--color-status-error)" }}>
+                Merge failed:{" "}
+                {mergeMutation.error instanceof Error
+                  ? mergeMutation.error.message
+                  : "unknown error"}
+              </span>
+            )}
             <Button
               variant="primary"
               size="sm"

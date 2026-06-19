@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -65,13 +66,16 @@ func registerOAuth2(srv *sim.Server) {
 // sim mints (oauth2 endpoint id_token + iamcredentials.generateIdToken).
 // Real Google rotates the signing key; the sim is process-scoped so a
 // restart issues fresh tokens regardless.
-var idTokenKey []byte
+var (
+	idTokenKey     []byte
+	idTokenKeyOnce sync.Once
+)
 
 func idTokenSignKey() []byte {
-	if idTokenKey == nil {
+	idTokenKeyOnce.Do(func() {
 		idTokenKey = make([]byte, 32)
 		_, _ = rand.Read(idTokenKey)
-	}
+	})
 	return idTokenKey
 }
 

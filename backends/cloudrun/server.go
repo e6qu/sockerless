@@ -56,6 +56,9 @@ type Server struct {
 	// attempted so a service-less network doesn't list Services every stage.
 	networkServices sync.Map
 	networkRebuilt  sync.Map
+	// networkServicesMu guards the read-modify-write of a networkServices
+	// entry's member slice (Load → append → Store must be atomic).
+	networkServicesMu sync.Mutex
 }
 
 // NewServer creates a new Cloud Run backend server.

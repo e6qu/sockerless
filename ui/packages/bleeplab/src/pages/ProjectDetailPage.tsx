@@ -52,7 +52,9 @@ export function ProjectDetailPage() {
       <h2 className="font-display mb-3 text-sm font-semibold uppercase tracking-wide">
         Pipelines
       </h2>
-      {pipelines.isError ? (
+      {pipelines.isLoading ? (
+        <Spinner label="loading pipelines" />
+      ) : pipelines.isError ? (
         <InlineError inline title="Failed to load pipelines" detail={pipelines.error as Error} />
       ) : (
         <DataTable

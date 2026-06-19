@@ -443,6 +443,7 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 	var cmd []string
 	var entrypoint []string
 	var env []string
+	var memBytes, nanoCPUs int64
 	if job.Properties != nil && job.Properties.Template != nil {
 		for _, tc := range job.Properties.Template.Containers {
 			if tc.Name != nil && *tc.Name == "main" || len(job.Properties.Template.Containers) == 1 {
@@ -462,6 +463,14 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 				for _, ev := range tc.Env {
 					if ev.Name != nil && ev.Value != nil {
 						env = append(env, *ev.Name+"="+*ev.Value)
+					}
+				}
+				if tc.Resources != nil {
+					if tc.Resources.Memory != nil {
+						memBytes = core.DockerMemoryBytes(*tc.Resources.Memory)
+					}
+					if tc.Resources.CPU != nil {
+						nanoCPUs = int64(*tc.Resources.CPU * 1e9)
 					}
 				}
 				break
@@ -508,14 +517,17 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 		Args:    args,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:      image,
-			Cmd:        cmd,
-			Entrypoint: entrypoint,
-			Env:        env,
-			Labels:     labels,
+			Image:        image,
+			Cmd:          cmd,
+			Entrypoint:   entrypoint,
+			Env:          env,
+			Labels:       labels,
+			ExposedPorts: parseExposedPorts(tags[tagExposedPorts]),
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
+			Memory:      memBytes,
+			NanoCPUs:    nanoCPUs,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

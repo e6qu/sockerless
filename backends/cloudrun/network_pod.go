@@ -228,23 +228,23 @@ func (s *Server) trackNetworkService(netID, containerID string) {
 	if netID == "" || containerID == "" {
 		return
 	}
-	for {
-		var existing []string
-		if v, ok := s.networkServices.Load(netID); ok {
-			existing = v.([]string)
-		}
-		for _, id := range existing {
-			if id == containerID {
-				return
-			}
-		}
-		updated := append([]string{}, existing...)
-		updated = append(updated, containerID)
-		if _, loaded := s.networkServices.LoadOrStore(netID, updated); !loaded {
+	// Atomic read-modify-write: LoadOrStore cannot update an existing key (it
+	// returns the present value without storing, so the old code livelocked on
+	// the 2nd container of any network) — a plain Load→append→Store under a
+	// mutex is required.
+	s.networkServicesMu.Lock()
+	defer s.networkServicesMu.Unlock()
+	var existing []string
+	if v, ok := s.networkServices.Load(netID); ok {
+		existing = v.([]string)
+	}
+	for _, id := range existing {
+		if id == containerID {
 			return
 		}
-		// Race with concurrent writer — retry.
 	}
+	updated := append(append([]string{}, existing...), containerID)
+	s.networkServices.Store(netID, updated)
 }
 
 // userDefinedNetworkID returns the ID of the first user-defined network
