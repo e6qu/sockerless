@@ -463,11 +463,13 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 	var entrypoint []string
 	var env []string
 	var memBytes, nanoCPUs int64
+	var mounts []api.MountPoint
 	if job.Template != nil && job.Template.Template != nil && len(job.Template.Template.Containers) > 0 {
 		mainContainer := job.Template.Template.Containers[0]
 		image = mainContainer.Image
 		entrypoint = mainContainer.Command
 		cmd = mainContainer.Args
+		mounts = cloudRunMounts(mainContainer.VolumeMounts)
 		if mainContainer.Resources != nil {
 			memBytes = core.DockerMemoryBytes(mainContainer.Resources.Limits["memory"])
 			nanoCPUs = core.DockerNanoCPUs(mainContainer.Resources.Limits["cpu"])
@@ -559,7 +561,29 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 				},
 			},
 		},
+		Mounts: mounts,
 	}, nil
+}
+
+// cloudRunMounts reconstructs the docker-inspect Mounts list from a Cloud Run
+// container's VolumeMounts — each preserves the original Docker bind name and
+// destination (set at create time in jobspec/servicespec).
+func cloudRunMounts(vms []*runpb.VolumeMount) []api.MountPoint {
+	out := make([]api.MountPoint, 0, len(vms))
+	for _, vm := range vms {
+		if vm == nil {
+			continue
+		}
+		out = append(out, api.MountPoint{
+			Type:        "volume",
+			Name:        vm.Name,
+			Source:      vm.Name,
+			Destination: vm.MountPath,
+			RW:          true,
+			Mode:        "rw",
+		})
+	}
+	return out
 }
 
 // resolveExecutionState determines container state from the job's latest execution.

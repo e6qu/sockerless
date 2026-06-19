@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"time"
 
 	"github.com/sockerless/api"
 )
@@ -111,6 +112,16 @@ func (a *legacyContainerAttachAdapter) Attach(dctx DriverContext, tty bool, conn
 		}
 	}()
 	<-done
+	// The stdout pump finished (container output done), so the attach is over.
+	// Unblock the stdin pump if it's still parked on conn.Read, so it doesn't
+	// leak until the caller eventually closes conn. Best-effort: only conns
+	// exposing a read deadline / read-side close can be interrupted here.
+	switch cc := conn.(type) {
+	case interface{ SetReadDeadline(time.Time) error }:
+		_ = cc.SetReadDeadline(time.Now())
+	case interface{ CloseRead() error }:
+		_ = cc.CloseRead()
+	}
 	return nil
 }
 

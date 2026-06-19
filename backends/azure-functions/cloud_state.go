@@ -2,6 +2,8 @@ package azf
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -340,6 +342,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 	if image == "" {
 		image = derefTag(tags["sockerless-image"])
 	}
+	cmd, entrypoint, env := azfSpecFromProps(props)
 
 	// Function Apps that exist in Azure are considered "running" (available for invocation)
 	state := api.ContainerState{
@@ -365,9 +368,12 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 		Image:   image,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:     image,
-			Labels:    dockerLabels,
-			OpenStdin: derefTag(tags["sockerless-open-stdin"]) == "true",
+			Image:      image,
+			Cmd:        cmd,
+			Entrypoint: entrypoint,
+			Env:        env,
+			Labels:     dockerLabels,
+			OpenStdin:  derefTag(tags["sockerless-open-stdin"]) == "true",
 		},
 		HostConfig: api.HostConfig{NetworkMode: networkName},
 		NetworkSettings: api.NetworkSettings{
@@ -402,10 +408,54 @@ func derefTag(s *string) string {
 	return *s
 }
 
-// imageFromSiteProps extracts the container image from a Function
-// App's site config. ARM stores it as `LinuxFxVersion="DOCKER|<image>"`
-// on `Properties.SiteConfig`. Returns empty when the site has no
-// SiteConfig, no LinuxFxVersion, or a non-DOCKER prefix.
+// azfSpecFromProps recovers the container's docker Cmd / Entrypoint / Env from
+// the Function App's site config app-settings. Cmd/Entrypoint are stored exactly
+// (base64-JSON in SOCKERLESS_CMD / SOCKERLESS_ENTRYPOINT by buildAZFAppSettings);
+// the user Env is every app-setting that isn't Azure/sockerless plumbing.
+func azfSpecFromProps(props interface{}) (cmd, entrypoint, env []string) {
+	sp, ok := props.(*armappservice.SiteProperties)
+	if !ok || sp == nil || sp.SiteConfig == nil {
+		return nil, nil, nil
+	}
+	plumbing := func(name string) bool {
+		for _, p := range []string{"FUNCTIONS_", "WEBSITE", "AzureWebJobs", "DOCKER_REGISTRY_", "SOCKERLESS_"} {
+			if strings.HasPrefix(name, p) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, s := range sp.SiteConfig.AppSettings {
+		if s == nil || s.Name == nil {
+			continue
+		}
+		name := *s.Name
+		val := ""
+		if s.Value != nil {
+			val = *s.Value
+		}
+		switch name {
+		case "SOCKERLESS_ENTRYPOINT":
+			if raw, err := base64.StdEncoding.DecodeString(val); err == nil {
+				_ = json.Unmarshal(raw, &entrypoint)
+			}
+		case "SOCKERLESS_CMD":
+			if raw, err := base64.StdEncoding.DecodeString(val); err == nil {
+				_ = json.Unmarshal(raw, &cmd)
+			}
+		default:
+			if !plumbing(name) {
+				env = append(env, name+"="+val)
+			}
+		}
+	}
+	return cmd, entrypoint, env
+}
+
+// imageFromSiteProps extracts the container image from a Function App's site
+// config. ARM stores it as `LinuxFxVersion="DOCKER|<image>"` on
+// `Properties.SiteConfig`. Returns empty when the site has no SiteConfig, no
+// LinuxFxVersion, or a non-DOCKER prefix.
 func imageFromSiteProps(props interface{}) string {
 	sp, ok := props.(*armappservice.SiteProperties)
 	if !ok || sp == nil || sp.SiteConfig == nil || sp.SiteConfig.LinuxFxVersion == nil {
