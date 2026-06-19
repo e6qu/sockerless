@@ -1,0 +1,295 @@
+package main
+
+import (
+	"regexp"
+	"strings"
+)
+
+// CloudWatch Logs Insights `filter` expression grammar:
+//
+//	expr   = or
+//	or     = and { "or" and }
+//	and    = not { "and" not }
+//	not    = ["not"] term
+//	term   = "(" expr ")" | comparison | restriction
+//	comparison = field (= | != | < | <= | > | >= | like | in) value
+//	restriction = field                       (bare field → present & truthy)
+//	value  = "string" | number | /regex/ | [ v, v, … ]   (in)
+//
+// Evaluated against a flattened record (field → string).
+
+type cwInsightsNode interface {
+	eval(rec cwInsightsRecord) bool
+}
+
+type cwInsTrue struct{}
+
+func (cwInsTrue) eval(cwInsightsRecord) bool { return true }
+
+type cwInsOr struct{ l, r cwInsightsNode }
+
+func (n cwInsOr) eval(rec cwInsightsRecord) bool { return n.l.eval(rec) || n.r.eval(rec) }
+
+type cwInsAnd struct{ l, r cwInsightsNode }
+
+func (n cwInsAnd) eval(rec cwInsightsRecord) bool { return n.l.eval(rec) && n.r.eval(rec) }
+
+type cwInsNot struct{ inner cwInsightsNode }
+
+func (n cwInsNot) eval(rec cwInsightsRecord) bool { return !n.inner.eval(rec) }
+
+type cwInsCmp struct {
+	field string
+	op    string
+	value string
+	list  []string
+	re    *regexp.Regexp
+}
+
+func (n cwInsCmp) eval(rec cwInsightsRecord) bool {
+	actual, present := rec[n.field]
+	switch n.op {
+	case "":
+		return present && actual != "" && actual != "false" && actual != "0"
+	case "=", "==":
+		return actual == n.value
+	case "!=":
+		return actual != n.value
+	case "<", "<=", ">", ">=":
+		return cwNumCompare(actual, n.op, n.value)
+	case "like":
+		if n.re != nil {
+			return n.re.MatchString(actual)
+		}
+		return strings.Contains(actual, n.value)
+	case "in":
+		for _, v := range n.list {
+			if actual == v {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// ── tokenizer ──────────────────────────────────────────────────────────────
+
+type cwInsTokKind int
+
+const (
+	cwInsEOF cwInsTokKind = iota
+	cwInsLParen
+	cwInsRParen
+	cwInsLBracket
+	cwInsRBracket
+	cwInsComma
+	cwInsOp
+	cwInsAndKw
+	cwInsOrKw
+	cwInsNotKw
+	cwInsLikeKw
+	cwInsInKw
+	cwInsWord
+	cwInsString
+	cwInsRegex
+)
+
+type cwInsTok struct {
+	kind cwInsTokKind
+	text string
+}
+
+func cwInsTokenize(s string) []cwInsTok {
+	var toks []cwInsTok
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		switch c {
+		case ' ', '\t', '\n':
+			i++
+		case '(':
+			toks = append(toks, cwInsTok{cwInsLParen, "("})
+			i++
+		case ')':
+			toks = append(toks, cwInsTok{cwInsRParen, ")"})
+			i++
+		case '[':
+			toks = append(toks, cwInsTok{cwInsLBracket, "["})
+			i++
+		case ']':
+			toks = append(toks, cwInsTok{cwInsRBracket, "]"})
+			i++
+		case ',':
+			toks = append(toks, cwInsTok{cwInsComma, ","})
+			i++
+		case '=', '!', '<', '>':
+			op := string(c)
+			if i+1 < len(s) && s[i+1] == '=' {
+				op += "="
+				i++
+			}
+			toks = append(toks, cwInsTok{cwInsOp, op})
+			i++
+		case '"', '\'':
+			q := c
+			i++
+			start := i
+			for i < len(s) && s[i] != q {
+				i++
+			}
+			toks = append(toks, cwInsTok{cwInsString, s[start:i]})
+			if i < len(s) {
+				i++
+			}
+		case '/':
+			i++
+			start := i
+			for i < len(s) && s[i] != '/' {
+				i++
+			}
+			toks = append(toks, cwInsTok{cwInsRegex, s[start:i]})
+			if i < len(s) {
+				i++
+			}
+		default:
+			start := i
+			for i < len(s) {
+				ch := s[i]
+				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' ||
+					ch == '[' || ch == ']' || ch == ',' || ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '/' {
+					break
+				}
+				i++
+			}
+			word := s[start:i]
+			switch strings.ToLower(word) {
+			case "and":
+				toks = append(toks, cwInsTok{cwInsAndKw, word})
+			case "or":
+				toks = append(toks, cwInsTok{cwInsOrKw, word})
+			case "not":
+				toks = append(toks, cwInsTok{cwInsNotKw, word})
+			case "like":
+				toks = append(toks, cwInsTok{cwInsLikeKw, word})
+			case "in":
+				toks = append(toks, cwInsTok{cwInsInKw, word})
+			default:
+				toks = append(toks, cwInsTok{cwInsWord, word})
+			}
+		}
+	}
+	return append(toks, cwInsTok{cwInsEOF, ""})
+}
+
+// ── parser ─────────────────────────────────────────────────────────────────
+
+type cwInsParser struct {
+	toks []cwInsTok
+	pos  int
+}
+
+func cwParseInsightsFilter(s string) cwInsightsNode {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return cwInsTrue{}
+	}
+	p := &cwInsParser{toks: cwInsTokenize(s)}
+	node := p.parseOr()
+	if node == nil {
+		return cwInsTrue{}
+	}
+	return node
+}
+
+func (p *cwInsParser) peek() cwInsTok { return p.toks[p.pos] }
+func (p *cwInsParser) next() cwInsTok { t := p.toks[p.pos]; p.pos++; return t }
+
+func (p *cwInsParser) parseOr() cwInsightsNode {
+	left := p.parseAnd()
+	for p.peek().kind == cwInsOrKw {
+		p.next()
+		left = cwInsOr{left, p.parseAnd()}
+	}
+	return left
+}
+
+func (p *cwInsParser) parseAnd() cwInsightsNode {
+	left := p.parseNot()
+	for p.peek().kind == cwInsAndKw {
+		p.next()
+		left = cwInsAnd{left, p.parseNot()}
+	}
+	return left
+}
+
+func (p *cwInsParser) parseNot() cwInsightsNode {
+	if p.peek().kind == cwInsNotKw {
+		p.next()
+		return cwInsNot{p.parseNot()}
+	}
+	return p.parseTerm()
+}
+
+func (p *cwInsParser) parseTerm() cwInsightsNode {
+	if p.peek().kind == cwInsLParen {
+		p.next()
+		inner := p.parseOr()
+		if p.peek().kind == cwInsRParen {
+			p.next()
+		}
+		return inner
+	}
+	if p.peek().kind != cwInsWord {
+		if p.peek().kind != cwInsEOF {
+			p.next()
+		}
+		return cwInsTrue{}
+	}
+	field := p.next().text
+	switch p.peek().kind {
+	case cwInsOp:
+		op := p.next().text
+		return cwInsCmp{field: field, op: op, value: p.parseValue()}
+	case cwInsLikeKw:
+		p.next()
+		if p.peek().kind == cwInsRegex {
+			re, err := regexp.Compile(p.next().text)
+			if err != nil {
+				return cwInsCmp{field: field, op: "like", value: ""}
+			}
+			return cwInsCmp{field: field, op: "like", re: re}
+		}
+		return cwInsCmp{field: field, op: "like", value: p.parseValue()}
+	case cwInsInKw:
+		p.next()
+		var list []string
+		if p.peek().kind == cwInsLBracket {
+			p.next()
+			for p.peek().kind != cwInsRBracket && p.peek().kind != cwInsEOF {
+				list = append(list, p.parseValue())
+				if p.peek().kind == cwInsComma {
+					p.next()
+				}
+			}
+			if p.peek().kind == cwInsRBracket {
+				p.next()
+			}
+		}
+		return cwInsCmp{field: field, op: "in", list: list}
+	}
+	return cwInsCmp{field: field, op: ""}
+}
+
+func (p *cwInsParser) parseValue() string {
+	switch p.peek().kind {
+	case cwInsString, cwInsWord:
+		return p.next().text
+	case cwInsRegex:
+		return p.next().text
+	}
+	if p.peek().kind != cwInsEOF {
+		return p.next().text
+	}
+	return ""
+}
