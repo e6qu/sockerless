@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -50,11 +51,26 @@ type ScheduleGroup struct {
 var (
 	schedules      sim.Store[Schedule]
 	scheduleGroups sim.Store[ScheduleGroup]
+	// schedulesMu guards reassignment of the package-level schedules store
+	// (registration) against the once-per-second firing-loop goroutine that
+	// reads it — they live in different goroutines when several sims are built
+	// in one process (tests).
+	schedulesMu sync.RWMutex
 )
 
+// schedulerStore returns the current schedules store under the read lock; the
+// firing loop uses it so a concurrent re-registration can't race the read.
+func schedulerStore() sim.Store[Schedule] {
+	schedulesMu.RLock()
+	defer schedulesMu.RUnlock()
+	return schedules
+}
+
 func registerScheduler(srv *sim.Server) {
+	schedulesMu.Lock()
 	schedules = sim.MakeStore[Schedule](srv.DB(), "scheduler_schedules")
 	scheduleGroups = sim.MakeStore[ScheduleGroup](srv.DB(), "scheduler_schedule_groups")
+	schedulesMu.Unlock()
 
 	srv.HandleFunc("POST /schedules/{Name}", schedulerRecorded("CreateSchedule", handleSchedulerCreateSchedule))
 	srv.HandleFunc("GET /schedules/{Name}", schedulerRecorded("GetSchedule", handleSchedulerGetSchedule))

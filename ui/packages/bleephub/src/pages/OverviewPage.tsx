@@ -21,7 +21,7 @@ export function OverviewPage() {
     queryFn: fetchMetrics,
     refetchInterval: 3000,
   });
-  const { data: workflows } = useQuery({
+  const { data: workflows, isError: workflowsError } = useQuery({
     queryKey: ["workflows"],
     queryFn: fetchWorkflows,
     refetchInterval: 3000,
@@ -127,13 +127,17 @@ export function OverviewPage() {
       )}
 
       <SectionLabel>Recent workflows</SectionLabel>
-      <DataTable
-        data={recent}
-        columns={columns}
-        filterPlaceholder="Filter recent workflows…"
-        emptyMessage="No workflow runs yet."
-        onRowClick={(row) => navigate(`/ui/workflows/${row.id}`)}
-      />
+      {workflowsError ? (
+        <InlineError title="Failed to load workflows" />
+      ) : (
+        <DataTable
+          data={recent}
+          columns={columns}
+          filterPlaceholder="Filter recent workflows…"
+          emptyMessage="No workflow runs yet."
+          onRowClick={(row) => navigate(`/ui/workflows/${row.id}`)}
+        />
+      )}
     </div>
   );
 }

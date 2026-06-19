@@ -508,11 +508,12 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 		Args:    args,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:      image,
-			Cmd:        cmd,
-			Entrypoint: entrypoint,
-			Env:        env,
-			Labels:     labels,
+			Image:        image,
+			Cmd:          cmd,
+			Entrypoint:   entrypoint,
+			Env:          env,
+			Labels:       labels,
+			ExposedPorts: parseExposedPorts(tags[tagExposedPorts]),
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
