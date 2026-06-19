@@ -25,7 +25,30 @@ var (
 	ec2RealEBSSlots = map[string]map[string]string{}
 	ec2RealNATNICs  = map[string]*realexec.NamespaceNIC{}
 	ec2RealECSNICs  = map[string]*realexec.NamespaceNIC{} // taskID -> veth into the container netns
+
+	// ec2RealVMStartLocks serializes ec2StartRealVM per instance id so two
+	// concurrent starts of the same instance can't both pass the not-running
+	// check and both AttachTapNIC the same tap (the second failing "File
+	// exists" / "IP already leased").
+	ec2RealVMStartLocks sync.Map // instanceID -> *sync.Mutex
+
+	// ec2RealVPCLocks gates VPC teardown against in-flight attaches: an attach
+	// (RLock) provisions netns resources and only records the NIC at the end, so
+	// a concurrent ec2DeleteRealVPC (Lock) must wait for in-flight attaches —
+	// otherwise it closes the netns mid-attach, orphaning the veth/tap and
+	// leaking the NIC map entry. RLock allows parallel attaches in the same VPC.
+	ec2RealVPCLocks sync.Map // vpcID -> *sync.RWMutex
 )
+
+func ec2RealVMStartLock(instanceID string) *sync.Mutex {
+	m, _ := ec2RealVMStartLocks.LoadOrStore(instanceID, &sync.Mutex{})
+	return m.(*sync.Mutex)
+}
+
+func ec2RealVPCLock(vpcID string) *sync.RWMutex {
+	m, _ := ec2RealVPCLocks.LoadOrStore(vpcID, &sync.RWMutex{})
+	return m.(*sync.RWMutex)
+}
 
 // ec2ECSRealNetAvailable reports whether ECS tasks can be plumbed into real VPC
 // network namespaces — Linux network capabilities plus nsenter (to configure the
@@ -44,6 +67,11 @@ func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid i
 	if !ok {
 		return fmt.Errorf("subnet %s not found", subnetID)
 	}
+	// Hold the per-VPC read lock for the whole attach so a concurrent VPC
+	// teardown waits for us instead of closing the netns mid-attach.
+	vpcLk := ec2RealVPCLock(sn.VpcId)
+	vpcLk.RLock()
+	defer vpcLk.RUnlock()
 	if err := ec2CreateRealSubnet(ctx, sn); err != nil {
 		return err
 	}
@@ -142,6 +170,11 @@ func ec2CreateRealVPC(ctx context.Context, vpc EC2Vpc) error {
 }
 
 func ec2DeleteRealVPC(ctx context.Context, vpcID string) error {
+	// Wait for in-flight attaches/starts in this VPC before tearing down the
+	// netns, so we don't orphan a half-attached veth/tap.
+	vpcLk := ec2RealVPCLock(vpcID)
+	vpcLk.Lock()
+	defer vpcLk.Unlock()
 	ec2RealMu.Lock()
 	network := ec2RealVPCs[vpcID]
 	delete(ec2RealVPCs, vpcID)
@@ -351,6 +384,15 @@ func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
 	if inst.NetworkInterfaceId == "" {
 		return fmt.Errorf("instance %s has no network interface", inst.InstanceId)
 	}
+	// Hold the per-VPC read lock so a concurrent teardown waits for this start.
+	vpcLk := ec2RealVPCLock(inst.VpcId)
+	vpcLk.RLock()
+	defer vpcLk.RUnlock()
+	// Serialize concurrent starts of the same instance so the tap-NIC
+	// check-then-create below can't double-attach.
+	startLk := ec2RealVMStartLock(inst.InstanceId)
+	startLk.Lock()
+	defer startLk.Unlock()
 	ec2RealMu.Lock()
 	if vm := ec2RealVMs[inst.InstanceId]; vm != nil && vm.Alive() {
 		ec2RealMu.Unlock()
@@ -370,6 +412,10 @@ func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
 		ec2RealMu.Lock()
 		subnet = ec2RealSubnets[inst.SubnetId]
 		ec2RealMu.Unlock()
+	}
+	if subnet == nil {
+		// A concurrent VPC/subnet teardown removed it between the re-read above.
+		return fmt.Errorf("subnet %s no longer exists", inst.SubnetId)
 	}
 	if tap == nil {
 		created, err := subnet.AttachTapNIC(ctx, realexec.TapNICSpec{

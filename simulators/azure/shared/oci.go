@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 )
 
 // OCI Distribution data plane — the Docker Registry HTTP API v2 (`/v2/…`),
@@ -49,6 +50,11 @@ type OCIRegistry struct {
 	Manifests Store[OCIManifest]
 	Blobs     Store[OCIBlob]
 	Uploads   Store[OCIUpload]
+
+	// manifestMu serializes the multi-key manifest mutations (a put writes the
+	// tag + digest aliases; a delete removes both) so a concurrent push+delete
+	// of the same manifest can't leave a dangling half-manifest.
+	manifestMu sync.Mutex
 
 	// OnManifestPut, if set, is invoked after a manifest is stored so the cloud
 	// can register a control-plane image row.
@@ -316,8 +322,10 @@ func (reg *OCIRegistry) handleManifest(w http.ResponseWriter, r *http.Request, r
 		w.WriteHeader(http.StatusCreated)
 
 	case http.MethodDelete:
+		reg.manifestMu.Lock()
 		entry, ok := reg.Manifests.Get(repo + ":" + ref)
 		if !ok {
+			reg.manifestMu.Unlock()
 			ociError(w, "MANIFEST_UNKNOWN", fmt.Sprintf("manifest %q is not found", ref), http.StatusNotFound)
 			return
 		}
@@ -330,6 +338,7 @@ func (reg *OCIRegistry) handleManifest(w http.ResponseWriter, r *http.Request, r
 			reg.Manifests.Delete(repo + ":" + m.Ref)
 		}
 		reg.Manifests.Delete(repo + ":" + ref)
+		reg.manifestMu.Unlock()
 		w.WriteHeader(http.StatusAccepted)
 
 	default:
@@ -343,6 +352,8 @@ func (reg *OCIRegistry) handleManifest(w http.ResponseWriter, r *http.Request, r
 func (reg *OCIRegistry) putManifestRaw(repo, ref, contentType string, data []byte) {
 	digest := ociDigest(data)
 	m := OCIManifest{ContentType: contentType, Digest: digest, Data: data, Repo: repo, Ref: ref}
+	reg.manifestMu.Lock()
+	defer reg.manifestMu.Unlock()
 	reg.Manifests.Put(repo+":"+ref, m)
 	byDigest := m
 	byDigest.Ref = digest
