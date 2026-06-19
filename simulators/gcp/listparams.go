@@ -13,17 +13,9 @@ import (
 // Real GCP list APIs accept a `filter` expression and an `orderBy` clause; the
 // sim previously ignored both, returning the full name-sorted set. gcpApplyListParams
 // evaluates them against each resource's JSON representation, so it works for any
-// resource type. It supports the documented common forms — conjunctive
-// `field (= | != | : | > | < | >= | <=) value` clauses (quoted or bare values,
-// joined by AND) and `orderBy` of `field [desc]`. Richer expressions (OR, NOT,
-// nested parens) fall through as "match everything", which is safe for the sim's
-// small lists.
-
-type gcpFilterClause struct {
-	field string
-	op    string
-	value string
-}
+// resource type. `filter` is parsed by the full AIP-160 expression grammar in
+// filter.go (OR / AND / NOT, parentheses, all comparison operators, nested field
+// paths); `orderBy` is `field [asc|desc]`.
 
 func gcpApplyListParams[T any](items []T, r *http.Request) []T {
 	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
@@ -44,10 +36,11 @@ func gcpApplyListParams[T any](items []T, r *http.Request) []T {
 		pairs = append(pairs, pair{it, m})
 	}
 
-	if clauses := gcpParseFilter(filter); len(clauses) > 0 {
+	if filter != "" {
+		node := gcpParseFilterExpr(filter)
 		kept := pairs[:0]
 		for _, p := range pairs {
-			if gcpFilterMatches(p.m, clauses) {
+			if node.eval(p.m) {
 				kept = append(kept, p)
 			}
 		}
@@ -100,93 +93,6 @@ func gcpApplyOrderBy[T any](items []T, r *http.Request) []T {
 		out[i] = items[j]
 	}
 	return out
-}
-
-func gcpParseFilter(s string) []gcpFilterClause {
-	if s == "" {
-		return nil
-	}
-	// Split on case-insensitive " AND ".
-	var parts []string
-	rest := s
-	for {
-		lower := strings.ToLower(rest)
-		idx := strings.Index(lower, " and ")
-		if idx < 0 {
-			parts = append(parts, rest)
-			break
-		}
-		parts = append(parts, rest[:idx])
-		rest = rest[idx+5:]
-	}
-	var clauses []gcpFilterClause
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		for _, op := range []string{"!=", ">=", "<=", "=", ">", "<", ":"} {
-			if idx := strings.Index(p, op); idx > 0 {
-				field := strings.TrimSpace(p[:idx])
-				value := strings.TrimSpace(p[idx+len(op):])
-				value = strings.Trim(value, `"'`)
-				clauses = append(clauses, gcpFilterClause{field, op, value})
-				break
-			}
-		}
-	}
-	return clauses
-}
-
-func gcpFilterMatches(m map[string]any, clauses []gcpFilterClause) bool {
-	for _, c := range clauses {
-		actual := gcpFieldString(m, c.field)
-		switch c.op {
-		case "=":
-			if actual != c.value {
-				return false
-			}
-		case "!=":
-			if actual == c.value {
-				return false
-			}
-		case ":":
-			if !strings.Contains(actual, c.value) {
-				return false
-			}
-		case ">", "<", ">=", "<=":
-			if !gcpNumCompare(actual, c.op, c.value) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func gcpNumCompare(a, op, b string) bool {
-	af, aerr := strconv.ParseFloat(a, 64)
-	bf, berr := strconv.ParseFloat(b, 64)
-	if aerr != nil || berr != nil {
-		switch op { // lexicographic fallback
-		case ">":
-			return a > b
-		case "<":
-			return a < b
-		case ">=":
-			return a >= b
-		case "<=":
-			return a <= b
-		}
-		return false
-	}
-	switch op {
-	case ">":
-		return af > bf
-	case "<":
-		return af < bf
-	case ">=":
-		return af >= bf
-	case "<=":
-		return af <= bf
-	}
-	return false
 }
 
 func gcpParseOrderBy(s string) (field string, desc bool) {

@@ -42,6 +42,36 @@ func TestGCPApplyListParams_Filter(t *testing.T) {
 	if len(got) != 1 || got[0].Name != "c" {
 		t.Fatalf("ACTIVE AND name!=a → %v", got)
 	}
+
+	// Full grammar: OR.
+	got = gcpApplyListParams(items, lpReq(map[string]string{"filter": `name="a" OR name="b"`}))
+	if len(got) != 2 || got[0].Name != "a" || got[1].Name != "b" {
+		t.Fatalf("name=a OR name=b → %v", got)
+	}
+
+	// NOT.
+	got = gcpApplyListParams(items, lpReq(map[string]string{"filter": `NOT state="ACTIVE"`}))
+	if len(got) != 1 || got[0].Name != "b" {
+		t.Fatalf("NOT state=ACTIVE → %v", got)
+	}
+
+	// Parentheses + precedence: (a OR b) AND prod-env.
+	got = gcpApplyListParams(items, lpReq(map[string]string{"filter": `(name="a" OR name="b") AND labels.env="prod"`}))
+	if len(got) != 1 || got[0].Name != "a" {
+		t.Fatalf("(a OR b) AND env=prod → %v", got)
+	}
+
+	// Implicit AND (adjacency).
+	got = gcpApplyListParams(items, lpReq(map[string]string{"filter": `state="ACTIVE" labels.env="prod"`}))
+	if len(got) != 2 {
+		t.Fatalf("implicit-AND → %v", got)
+	}
+
+	// Has-operator wildcard (labels.env present).
+	got = gcpApplyListParams(items, lpReq(map[string]string{"filter": `labels.env:*`}))
+	if len(got) != 3 {
+		t.Fatalf("labels.env:* → %v", got)
+	}
 }
 
 func TestGCPApplyListParams_OrderBy(t *testing.T) {
