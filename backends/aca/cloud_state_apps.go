@@ -155,12 +155,14 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 	var entrypoint []string
 	var env []string
 	var memBytes, nanoCPUs int64
+	var mounts []api.MountPoint
 	if app.Properties != nil && app.Properties.Template != nil {
 		for _, tc := range app.Properties.Template.Containers {
 			if (tc.Name != nil && *tc.Name == "main") || len(app.Properties.Template.Containers) == 1 {
 				if tc.Image != nil {
 					image = *tc.Image
 				}
+				mounts = acaMounts(tc.VolumeMounts)
 				for _, a := range tc.Command {
 					if a != nil {
 						entrypoint = append(entrypoint, *a)
@@ -245,9 +247,37 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 				},
 			},
 		},
+		Mounts:   mounts,
 		Platform: "linux",
 		Driver:   "aca-apps",
 	}
+}
+
+// acaMounts reconstructs the docker-inspect Mounts list from an ACA container's
+// VolumeMounts — each preserves the original Docker bind name (VolumeName) and
+// destination (MountPath), set at create time in appspec/jobspec.
+func acaMounts(vms []*armappcontainers.VolumeMount) []api.MountPoint {
+	acaStr := func(s *string) string {
+		if s == nil {
+			return ""
+		}
+		return *s
+	}
+	out := make([]api.MountPoint, 0, len(vms))
+	for _, vm := range vms {
+		if vm == nil {
+			continue
+		}
+		out = append(out, api.MountPoint{
+			Type:        "volume",
+			Name:        acaStr(vm.VolumeName),
+			Source:      acaStr(vm.VolumeName),
+			Destination: acaStr(vm.MountPath),
+			RW:          true,
+			Mode:        "rw",
+		})
+	}
+	return out
 }
 
 // appContainerState derives api.ContainerState from the ContainerApp's

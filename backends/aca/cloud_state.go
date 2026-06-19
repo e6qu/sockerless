@@ -444,12 +444,14 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 	var entrypoint []string
 	var env []string
 	var memBytes, nanoCPUs int64
+	var mounts []api.MountPoint
 	if job.Properties != nil && job.Properties.Template != nil {
 		for _, tc := range job.Properties.Template.Containers {
 			if tc.Name != nil && *tc.Name == "main" || len(job.Properties.Template.Containers) == 1 {
 				if tc.Image != nil {
 					image = *tc.Image
 				}
+				mounts = acaMounts(tc.VolumeMounts)
 				for _, a := range tc.Command {
 					if a != nil {
 						entrypoint = append(entrypoint, *a)
@@ -537,6 +539,7 @@ func (p *acaCloudState) jobToContainer(ctx context.Context, job *armappcontainer
 				},
 			},
 		},
+		Mounts:   mounts,
 		Platform: "linux",
 		Driver:   "aca-jobs",
 	}

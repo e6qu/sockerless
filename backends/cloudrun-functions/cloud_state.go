@@ -348,6 +348,7 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 	image := ""
 	var cmd, entrypoint, env []string
 	var memBytes, nanoCPUs int64
+	var mounts []api.MountPoint
 	if svc.Template != nil && len(svc.Template.Containers) > 0 {
 		main := svc.Template.Containers[0]
 		image = main.Image
@@ -358,6 +359,7 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 				env = append(env, e.Name+"="+v.Value)
 			}
 		}
+		mounts = gcfMounts(main.VolumeMounts)
 		if main.Resources != nil {
 			memBytes = core.DockerMemoryBytes(main.Resources.Limits["memory"])
 			nanoCPUs = core.DockerNanoCPUs(main.Resources.Limits["cpu"])
@@ -386,7 +388,7 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 				"bridge": {NetworkID: "bridge"},
 			},
 		},
-		Mounts:   []api.MountPoint{},
+		Mounts:   mounts,
 		Platform: "linux",
 		Driver:   "cloud-run-service",
 	}
@@ -646,4 +648,25 @@ func gcpLabelsToHyphenMap(labels map[string]string) map[string]string {
 		m[hyphenKey] = v
 	}
 	return m
+}
+
+// gcfMounts reconstructs the docker-inspect Mounts list from a Cloud Run
+// container's VolumeMounts — each preserves the original Docker bind name and
+// destination set at create time.
+func gcfMounts(vms []*runpb.VolumeMount) []api.MountPoint {
+	out := make([]api.MountPoint, 0, len(vms))
+	for _, vm := range vms {
+		if vm == nil {
+			continue
+		}
+		out = append(out, api.MountPoint{
+			Type:        "volume",
+			Name:        vm.Name,
+			Source:      vm.Name,
+			Destination: vm.MountPath,
+			RW:          true,
+			Mode:        "rw",
+		})
+	}
+	return out
 }
