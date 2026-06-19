@@ -188,9 +188,20 @@ func writeLogEntries(logName string, resource *MonitoredResource, labels map[str
 			existing = []LogEntry{}
 		}
 		existing = append(existing, entry)
+		// Bound retention per log. Real Cloud Logging ages entries out by a
+		// retention period; without a cap this store grows forever (a memory
+		// leak in a long-running sim) and listLogEntries re-sorts an ever-
+		// larger corpus. Reads filter+sort+paginate (never by index), so
+		// dropping the oldest entries is safe.
+		if len(existing) > maxRetainedLogEntries {
+			existing = existing[len(existing)-maxRetainedLogEntries:]
+		}
 		logEntries.Put(ln, existing)
 	}
 }
+
+// maxRetainedLogEntries bounds the in-memory entries kept per log name.
+const maxRetainedLogEntries = 10000
 
 // REST request/response types
 

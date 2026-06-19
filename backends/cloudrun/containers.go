@@ -18,6 +18,7 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 	ticker := time.NewTicker(s.config.PollInterval * 2)
 	defer ticker.Stop()
 
+	gone := 0
 	for {
 		select {
 		case <-exitCh:
@@ -27,8 +28,19 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 				Name: executionName,
 			})
 			if err != nil {
+				// Execution deleted out-of-band (NotFound) or a sustained
+				// outage — after a few consecutive failures treat it as
+				// terminal so a blocked ContainerWait unblocks instead of
+				// polling forever.
+				if gone++; gone >= pollGoneThreshold {
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+						close(ch.(chan struct{}))
+					}
+					return
+				}
 				continue
 			}
+			gone = 0
 
 			if exec.CompletionTime != nil {
 				// Close wait channel so ContainerWait unblocks
@@ -40,6 +52,11 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 		}
 	}
 }
+
+// pollGoneThreshold is the number of consecutive polls in which the backing
+// cloud resource is absent before a poller treats the container as terminally
+// gone and unblocks waiters (mirrors core.WaitGoneThreshold).
+const pollGoneThreshold = 5
 
 // cancelExecution cancels a Cloud Run execution (best-effort), waiting for completion.
 func (s *Server) cancelExecution(executionName string) {

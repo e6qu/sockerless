@@ -13,15 +13,19 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 	ticker := time.NewTicker(s.config.PollInterval * 2)
 	defer ticker.Stop()
 
+	gone := 0
 	for {
 		select {
 		case <-exitCh:
 			return
 		case <-ticker.C:
 			pager := s.azure.Executions.NewListPager(s.config.ResourceGroup, jobName, nil)
+			found := false
+			enumErr := false
 			for pager.More() {
 				page, err := pager.NextPage(s.ctx())
 				if err != nil {
+					enumErr = true
 					break
 				}
 				for _, exec := range page.Value {
@@ -29,6 +33,7 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					if executionName != "" && (exec.Name == nil || *exec.Name != executionName) {
 						continue
 					}
+					found = true
 					if exec.Properties.Status == nil {
 						continue
 					}
@@ -45,9 +50,31 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 					}
 				}
 			}
+			if enumErr {
+				continue
+			}
+			if !found {
+				// Execution (or its Job) GC'd / deleted out-of-band — after a
+				// few consecutive successful enumerations that don't list it,
+				// treat it as terminal so a blocked ContainerWait unblocks
+				// instead of polling forever.
+				if gone++; gone >= pollGoneThreshold {
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+						close(ch.(chan struct{}))
+					}
+					return
+				}
+			} else {
+				gone = 0
+			}
 		}
 	}
 }
+
+// pollGoneThreshold is the number of consecutive polls in which the backing
+// cloud resource is absent before a poller treats the container as terminally
+// gone and unblocks waiters (mirrors core.WaitGoneThreshold).
+const pollGoneThreshold = 5
 
 // stopExecution stops an ACA Job execution (best-effort), waiting for completion.
 func (s *Server) stopExecution(jobName, executionName string) {

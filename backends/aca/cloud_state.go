@@ -117,6 +117,7 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	// job / App-backed container falls back to the full scan.
 	jobName, _ := p.resolveJobName(ctx, containerID)
 
+	gone := 0
 	for {
 		if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 			return inv.ExitCode, nil
@@ -142,10 +143,14 @@ func (p *acaCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			if err != nil {
 				continue
 			}
-			for _, c := range containers {
-				if c.ID == containerID && !c.State.Running && c.State.Status == "exited" {
-					return c.State.ExitCode, nil
+			if exit, found, exited := core.ScanContainersForExit(containers, containerID); exited {
+				return exit, nil
+			} else if !found {
+				if gone++; gone >= core.WaitGoneThreshold {
+					return -1, nil
 				}
+			} else {
+				gone = 0
 			}
 		}
 	}
