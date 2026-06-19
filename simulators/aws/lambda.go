@@ -502,7 +502,16 @@ func handleLambdaInvoke(w http.ResponseWriter, r *http.Request) {
 
 	switch strings.ToLower(invocationType) {
 	case "event":
-		injectLambdaLogs(fn.FunctionName)
+		// Async invocation: run the function for real in the background — which
+		// produces real logs — rather than fabricating a log group/stream for an
+		// invocation that never executed.
+		payload, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.AWSError(w, "RequestBodyInvalid",
+				"failed to read invocation payload: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
 		w.WriteHeader(http.StatusAccepted)
 	case "dryrun":
 		w.WriteHeader(http.StatusNoContent)

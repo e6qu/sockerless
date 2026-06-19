@@ -345,6 +345,13 @@ func handleS3CreateBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if _, exists := s3Buckets_.Get(bucket); exists {
+		// In us-east-1 a same-owner repeat CreateBucket is idempotent (200);
+		// every other region returns BucketAlreadyOwnedByYou (409).
+		if awsRegion() == "us-east-1" {
+			w.Header().Set("Location", "/"+bucket)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		sim.S3ErrorXML(w, "BucketAlreadyOwnedByYou",
 			"Your previous request to create the named bucket succeeded and you already own it.",
 			bucket, sim.RequestID(r.Context()), http.StatusConflict)
@@ -689,6 +696,22 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 		sim.S3ErrorXML(w, "NoSuchBucket", "The specified bucket does not exist",
 			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
 		return
+	}
+
+	// Conditional write (optimistic concurrency): If-None-Match: * fails if the
+	// object already exists; If-Match: <etag> fails if the current ETag differs.
+	existing, exists := s3Objects.Get(s3ObjectKey(bucket, key))
+	if inm := r.Header.Get("If-None-Match"); inm == "*" && exists {
+		sim.S3ErrorXML(w, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold",
+			key, sim.RequestID(r.Context()), http.StatusPreconditionFailed)
+		return
+	}
+	if im := r.Header.Get("If-Match"); im != "" {
+		if !exists || strings.Trim(im, `"`) != strings.Trim(existing.ETag, `"`) {
+			sim.S3ErrorXML(w, "PreconditionFailed", "At least one of the pre-conditions you specified did not hold",
+				key, sim.RequestID(r.Context()), http.StatusPreconditionFailed)
+			return
+		}
 	}
 
 	defer r.Body.Close()

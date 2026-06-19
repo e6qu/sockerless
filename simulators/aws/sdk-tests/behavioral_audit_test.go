@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -12,6 +13,7 @@ import (
 	elbv2types "github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/route53"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -120,6 +122,41 @@ func TestECR_UntagResource(t *testing.T) {
 	}
 	assert.True(t, keys["keep"], "kept tag must remain")
 	assert.False(t, keys["drop"], "untagged key must be gone")
+}
+
+// TestS3_ConditionalPut — If-None-Match:* fails when the object exists;
+// If-Match:<etag> fails on a stale etag (optimistic concurrency).
+func TestS3_ConditionalPut(t *testing.T) {
+	c := s3Client()
+	bucket := "cond-put-bucket"
+	_, err := c.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
+	require.NoError(t, err)
+
+	put, err := c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("k"), Body: strings.NewReader("v1"),
+	})
+	require.NoError(t, err)
+
+	// If-None-Match: * must fail now that the object exists.
+	_, err = c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("k"), Body: strings.NewReader("v2"),
+		IfNoneMatch: aws.String("*"),
+	})
+	assert.Equal(t, "PreconditionFailed", errCode(t, err))
+
+	// If-Match with a stale etag must fail.
+	_, err = c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("k"), Body: strings.NewReader("v3"),
+		IfMatch: aws.String(`"deadbeefdeadbeefdeadbeefdeadbeef"`),
+	})
+	assert.Equal(t, "PreconditionFailed", errCode(t, err))
+
+	// If-Match with the current etag succeeds.
+	_, err = c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("k"), Body: strings.NewReader("v4"),
+		IfMatch: put.ETag,
+	})
+	require.NoError(t, err)
 }
 
 // TestLambda_DeleteAliasNotFound — deleting a missing alias errors with

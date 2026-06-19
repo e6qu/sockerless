@@ -127,7 +127,8 @@ func TestIntegration_ECSFullLifecycle(t *testing.T) {
 	assert.Equal(t, ecstypes.TaskStopCodeUserInitiated, stoppedTask.StopCode)
 	for _, c := range stoppedTask.Containers {
 		require.NotNil(t, c.ExitCode)
-		assert.Equal(t, int32(0), *c.ExitCode)
+		// User-initiated StopTask SIGKILLs the container → 137 (128+SIGKILL).
+		assert.Equal(t, int32(137), *c.ExitCode)
 	}
 
 	// Deregister task definition
