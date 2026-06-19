@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Sim fidelity pass 6 (AWS/GCP/Azure probe + 5 fixes)
+
+A sixth fidelity pass: five parallel read-only Explore agents probed the AWS,
+GCP, and Azure sims for the gap classes the recent consumer issues shared —
+silently-ignored request params, offset pagination, dropped read-back fields,
+unimplemented ops. Every finding was verified at file:line before acting, which
+caught a false positive (the azure `acrCatalogPage` "logic error" traced
+correct against hand-worked inputs) and several intentional shortcuts /
+out-of-scope items (full GCP `filter=` expression engines).
+
+Five verified gaps fixed, each SDK-tested:
+
+- **EC2 `DescribeSecurityGroupRules` (BUG-1887)** honored only the `group-id`
+  filter, so a query scoped by `is-egress`/`cidr`/a tag returned every rule.
+  Added `ec2SecurityGroupRuleMatchesFilters` over the shared EC2 filter helpers.
+- **EventBridge `CreateEventBus` (BUG-1888)** echoed `KmsKeyIdentifier` but never
+  stored it → `DescribeEventBus` returned empty and `aws_cloudwatch_event_bus`
+  drifted every terraform plan. Added the field to the struct + create handler.
+- **Cloud Map `DiscoverInstances` (BUG-1889)** hardcoded `HealthStatus: HEALTHY`
+  and ignored the request's HealthStatus filter — a synthetic-data smell. Now it
+  reports each instance's real registered health (`AWS_INIT_HEALTH_STATUS`) and
+  applies the HEALTHY/UNHEALTHY/ALL filter (with the HEALTHY_OR_ELSE_ALL default).
+- **Lambda `GetFunction` (BUG-1890)** omitted the documented `Code.RepositoryType`
+  (`S3` for a ZIP package, `ECR` for a container image). Now set from the type.
+- **ECS `ListTasks` (BUG-1891)** ignored the `launchType` filter. Added it.
+
+The genuine gaps not fixed in this pass were filed (BUG-1892–1894: an AWS
+read-param batch, DynamoDB ProjectionExpression, and GCP/Azure list
+filter/orderBy/$top — the last lower-priority since the sim's lists are small
+and faithful `filter=` is an expression-language effort).
+
 ## 2026-06-19 - AWS sim observability fidelity batch (#602–#606)
 
 The consumer filed five new AWS-sim fidelity gaps, all observability. Each was

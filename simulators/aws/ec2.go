@@ -2498,17 +2498,10 @@ func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 		ruleIds = append(ruleIds, id)
 	}
 
-	// Check for filters
-	var groupId string
-	for i := 1; ; i++ {
-		name := r.FormValue(fmt.Sprintf("Filter.%d.Name", i))
-		if name == "" {
-			break
-		}
-		if name == "group-id" {
-			groupId = r.FormValue(fmt.Sprintf("Filter.%d.Value.1", i))
-		}
-	}
+	// Apply the documented filters. Previously only group-id was honored, so a
+	// query scoped by is-egress / security-group-rule-id / a tag returned every
+	// rule in the account.
+	filters := ec2Filters(r)
 
 	var rules []EC2SecurityGroupRule
 	if len(ruleIds) > 0 {
@@ -2517,12 +2510,12 @@ func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 				rules = append(rules, rule)
 			}
 		}
-	} else if groupId != "" {
-		rules = ec2SecurityGroupRules.Filter(func(rule EC2SecurityGroupRule) bool {
-			return rule.GroupId == groupId
-		})
 	} else {
-		rules = ec2SecurityGroupRules.List()
+		for _, rule := range ec2SecurityGroupRules.List() {
+			if ec2SecurityGroupRuleMatchesFilters(rule, filters) {
+				rules = append(rules, rule)
+			}
+		}
 	}
 
 	var items strings.Builder
@@ -2535,6 +2528,45 @@ func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {
   <requestId>%s</requestId>
   <securityGroupRuleSet>%s</securityGroupRuleSet>
 </DescribeSecurityGroupRulesResponse>`, ec2Xmlns(), generateUUID(), items.String())
+}
+
+// ec2SecurityGroupRuleMatchesFilters applies the DescribeSecurityGroupRules
+// filter set (group-id, security-group-rule-id, is-egress, group-owner-id,
+// cidr, description, tag:<key>/tag-key) to one rule.
+func ec2SecurityGroupRuleMatchesFilters(rule EC2SecurityGroupRule, filters map[string][]string) bool {
+	for name, vals := range filters {
+		switch name {
+		case "group-id":
+			if !ec2StrInValues(rule.GroupId, vals) {
+				return false
+			}
+		case "security-group-rule-id":
+			if !ec2StrInValues(rule.RuleId, vals) {
+				return false
+			}
+		case "is-egress":
+			if ec2StrInValues("true", vals) != rule.IsEgress {
+				return false
+			}
+		case "group-owner-id":
+			if !ec2StrInValues(rule.GroupOwner, vals) {
+				return false
+			}
+		case "cidr":
+			if !ec2StrInValues(rule.CidrIpv4, vals) && !ec2StrInValues(rule.CidrIpv6, vals) {
+				return false
+			}
+		case "description":
+			if !ec2StrInValues(rule.Description, vals) {
+				return false
+			}
+		default:
+			if handled, match := ec2TagFilterMatch(name, vals, rule.Tags); handled && !match {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // handleModifySecurityGroupRules updates existing rule attributes in place.

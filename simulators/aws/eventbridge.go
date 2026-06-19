@@ -34,6 +34,7 @@ type EBEventBus struct {
 	Name             string            `json:"Name"`
 	Arn              string            `json:"Arn"`
 	Description      string            `json:"Description,omitempty"`
+	KmsKeyIdentifier string            `json:"KmsKeyIdentifier,omitempty"`
 	Policy           string            `json:"Policy,omitempty"`
 	CreationTime     int64             `json:"CreationTime,omitempty"`
 	LastModifiedTime int64             `json:"LastModifiedTime,omitempty"`
@@ -249,10 +250,11 @@ func handleEBCreateEventBus(w http.ResponseWriter, r *http.Request) {
 		tags[tag.Key] = tag.Value
 	}
 	bus := EBEventBus{
-		Name:        req.Name,
-		Arn:         ebBusArn(req.Name),
-		Description: req.Description,
-		Tags:        tags,
+		Name:             req.Name,
+		Arn:              ebBusArn(req.Name),
+		Description:      req.Description,
+		KmsKeyIdentifier: req.KmsKeyIdentifier,
+		Tags:             tags,
 	}
 	ebPutBus(bus)
 	writeEBJSON(w, http.StatusOK, map[string]any{

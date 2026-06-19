@@ -344,11 +344,15 @@ func handleLambdaGetFunction(w http.ResponseWriter, r *http.Request) {
 	// receive whatever real AWS returns for an unknown snapshot.
 	code := map[string]string{
 		"Location": fmt.Sprintf("https://awslambda-%s-tasks.s3.%s.amazonaws.com/snapshots/%s", awsRegion(), awsRegion(), name),
+		// RepositoryType is a documented GetFunction response field: "S3" for a
+		// ZIP package, "ECR" for a container-image package (overridden below).
+		"RepositoryType": "S3",
 	}
 	if fn.Code != nil {
 		if fn.Code.ImageUri != "" {
 			code["ImageUri"] = fn.Code.ImageUri
 			code["ResolvedImageUri"] = fn.Code.ImageUri
+			code["RepositoryType"] = "ECR"
 		}
 		if fn.Code.SourceKMSKeyArn != "" {
 			code["SourceKMSKeyArn"] = fn.Code.SourceKMSKeyArn
