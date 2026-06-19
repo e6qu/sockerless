@@ -462,11 +462,16 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 	var cmd []string
 	var entrypoint []string
 	var env []string
+	var memBytes, nanoCPUs int64
 	if job.Template != nil && job.Template.Template != nil && len(job.Template.Template.Containers) > 0 {
 		mainContainer := job.Template.Template.Containers[0]
 		image = mainContainer.Image
 		entrypoint = mainContainer.Command
 		cmd = mainContainer.Args
+		if mainContainer.Resources != nil {
+			memBytes = core.DockerMemoryBytes(mainContainer.Resources.Limits["memory"])
+			nanoCPUs = core.DockerNanoCPUs(mainContainer.Resources.Limits["cpu"])
+		}
 		for _, e := range mainContainer.Env {
 			env = append(env, e.Name+"="+e.Values.(*runpb.EnvVar_Value).Value)
 		}
@@ -544,6 +549,8 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
 			AutoRemove:  autoRemove,
+			Memory:      memBytes,
+			NanoCPUs:    nanoCPUs,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{

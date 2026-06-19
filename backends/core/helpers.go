@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/sockerless/api"
 )
@@ -84,4 +86,55 @@ func GenerateToken() string {
 	b := make([]byte, 32)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+// DockerMemoryBytes parses a Kubernetes-style quantity ("512Mi", "1Gi", "256M")
+// or a plain byte count into bytes for HostConfig.Memory. Returns 0 when empty
+// or unparseable (so docker inspect honestly omits the limit rather than lying).
+func DockerMemoryBytes(qty string) int64 {
+	qty = strings.TrimSpace(qty)
+	if qty == "" {
+		return 0
+	}
+	mult := int64(1)
+	suffixes := []struct {
+		s string
+		m int64
+	}{
+		{"Gi", 1 << 30}, {"Mi", 1 << 20}, {"Ki", 1 << 10},
+		{"G", 1e9}, {"M", 1e6}, {"K", 1e3}, {"k", 1e3},
+	}
+	num := qty
+	for _, sf := range suffixes {
+		if strings.HasSuffix(qty, sf.s) {
+			num = strings.TrimSuffix(qty, sf.s)
+			mult = sf.m
+			break
+		}
+	}
+	v, err := strconv.ParseFloat(strings.TrimSpace(num), 64)
+	if err != nil || v <= 0 {
+		return 0
+	}
+	return int64(v * float64(mult))
+}
+
+// DockerNanoCPUs parses a Kubernetes-style CPU quantity ("1000m", "0.5", "2")
+// into nanoCPUs for HostConfig.NanoCpus (1 vCPU = 1e9). Returns 0 when empty or
+// unparseable.
+func DockerNanoCPUs(qty string) int64 {
+	qty = strings.TrimSpace(qty)
+	if qty == "" {
+		return 0
+	}
+	if strings.HasSuffix(qty, "m") { // millicpu
+		if v, err := strconv.ParseFloat(strings.TrimSuffix(qty, "m"), 64); err == nil && v > 0 {
+			return int64(v * 1e6)
+		}
+		return 0
+	}
+	if v, err := strconv.ParseFloat(qty, 64); err == nil && v > 0 {
+		return int64(v * 1e9)
+	}
+	return 0
 }

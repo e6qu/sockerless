@@ -137,11 +137,16 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 	var cmd []string
 	var entrypoint []string
 	var env []string
+	var memBytes, nanoCPUs int64
 	if svc.Template != nil && len(svc.Template.Containers) > 0 {
 		main := svc.Template.Containers[0]
 		image = main.Image
 		entrypoint = main.Command
 		cmd = main.Args
+		if main.Resources != nil {
+			memBytes = core.DockerMemoryBytes(main.Resources.Limits["memory"])
+			nanoCPUs = core.DockerNanoCPUs(main.Resources.Limits["cpu"])
+		}
 		for _, e := range main.Env {
 			if v, ok := e.Values.(*runpb.EnvVar_Value); ok {
 				env = append(env, e.Name+"="+v.Value)
@@ -194,6 +199,8 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,
+			Memory:      memBytes,
+			NanoCPUs:    nanoCPUs,
 		},
 		NetworkSettings: api.NetworkSettings{
 			Networks: map[string]*api.EndpointSettings{
