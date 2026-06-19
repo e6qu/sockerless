@@ -90,8 +90,8 @@ func handleCWGetQueryResults(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Query %s does not exist", req.QueryID)
 		return
 	}
+	// Real GetQueryResults returns results/status/statistics — not queryId.
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"queryId": q.QueryID,
 		"status":  q.Status,
 		"results": q.Results,
 		"statistics": map[string]any{
