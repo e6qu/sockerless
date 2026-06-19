@@ -240,3 +240,23 @@ func cronAtoi(s string, names map[string]int) (int, bool) {
 	}
 	return v, true
 }
+
+// schedulerExpressionValid reports whether a ScheduleExpression is one of the
+// three documented forms — at(yyyy-mm-ddThh:mm:ss), rate(value unit), or
+// cron(...) — and is well-formed. Real EventBridge Scheduler rejects anything
+// else with a ValidationException at create/update time.
+func schedulerExpressionValid(expr string) bool {
+	expr = strings.TrimSpace(expr)
+	switch {
+	case strings.HasPrefix(expr, "at(") && strings.HasSuffix(expr, ")"):
+		inner := strings.TrimSuffix(strings.TrimPrefix(expr, "at("), ")")
+		_, err := time.Parse("2006-01-02T15:04:05", inner)
+		return err == nil
+	case strings.HasPrefix(expr, "rate(") && strings.HasSuffix(expr, ")"):
+		_, ok := schedulerRateInterval(expr)
+		return ok
+	case strings.HasPrefix(expr, "cron(") && strings.HasSuffix(expr, ")"):
+		return schedulerCronValid(expr)
+	}
+	return false
+}

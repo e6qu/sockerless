@@ -173,10 +173,10 @@ func handleSchedulerCreateSchedule(w http.ResponseWriter, r *http.Request) {
 		schedulerError(w, "ValidationException", http.StatusBadRequest, "ScheduleExpression is required")
 		return
 	}
-	// A malformed cron(...) is rejected here (as real AWS does) rather than
-	// accepted into a schedule that would silently never fire.
-	if strings.HasPrefix(strings.TrimSpace(req.ScheduleExpression), "cron(") &&
-		!schedulerCronValid(req.ScheduleExpression) {
+	// The expression must be a valid at()/rate()/cron() form — real AWS rejects
+	// anything else (and a malformed cron) with a ValidationException at create
+	// time, rather than storing a schedule that would silently never fire.
+	if !schedulerExpressionValid(req.ScheduleExpression) {
 		schedulerError(w, "ValidationException", http.StatusBadRequest,
 			"Invalid Schedule Expression %q.", req.ScheduleExpression)
 		return
@@ -292,6 +292,15 @@ func handleSchedulerUpdateSchedule(w http.ResponseWriter, r *http.Request) {
 	group := req.GroupName
 	if group == "" {
 		group = "default"
+	}
+	if req.ScheduleExpression == "" {
+		schedulerError(w, "ValidationException", http.StatusBadRequest, "ScheduleExpression is required")
+		return
+	}
+	if !schedulerExpressionValid(req.ScheduleExpression) {
+		schedulerError(w, "ValidationException", http.StatusBadRequest,
+			"Invalid Schedule Expression %q.", req.ScheduleExpression)
+		return
 	}
 	key := scheduleKey(group, name)
 	existing, ok := schedules.Get(key)
