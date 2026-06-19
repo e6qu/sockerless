@@ -678,6 +678,16 @@ func handleECSRegisterTaskDefinition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Fargate requires task-level cpu and memory — AWS runs this compatibility
+	// check when requiresCompatibilities includes FARGATE and rejects a task
+	// definition missing either with a ClientException.
+	if hasFargate(req.RequiresCompatibilities) && (req.Cpu == "" || req.Memory == "") {
+		sim.AWSError(w, "ClientException",
+			"Task definition does not support launch type FARGATE: task-level memory and cpu are required.",
+			http.StatusBadRequest)
+		return
+	}
+
 	// Validate Fargate CPU/memory combinations
 	if hasFargate(req.RequiresCompatibilities) && req.Cpu != "" && req.Memory != "" {
 		if err := validateFargateResources(req.Cpu, req.Memory); err != nil {
@@ -1089,6 +1099,12 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Count == 0 {
 		req.Count = 1
+	}
+	// RunTask accepts up to 10 tasks per call (documented max).
+	if req.Count > 10 {
+		sim.AWSError(w, "InvalidParameterException",
+			"count cannot be greater than 10.", http.StatusBadRequest)
+		return
 	}
 	if req.Cluster == "" {
 		req.Cluster = "default"
@@ -1878,6 +1894,11 @@ func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	// The `tasks` list is required and must be non-empty.
+	if len(req.Tasks) == 0 {
+		sim.AWSError(w, "InvalidParameterException", "Tasks cannot be empty.", http.StatusBadRequest)
 		return
 	}
 	if !ecsRequireCluster(w, req.Cluster) {
