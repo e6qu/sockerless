@@ -28,6 +28,23 @@ type CRService struct {
 	Status     *CRServiceStatus  `json:"status,omitempty"`
 }
 
+// crStatusTraffic derives status.traffic from the client-supplied spec.traffic
+// (echoing the requested split, resolving latestRevision→the new revision)
+// rather than discarding it; with no split requested it defaults to 100% latest.
+func crStatusTraffic(specTraffic []CRTraffic, latestRev string) []CRTraffic {
+	if len(specTraffic) == 0 {
+		return []CRTraffic{{RevisionName: latestRev, Percent: 100, LatestRevision: true}}
+	}
+	out := make([]CRTraffic, len(specTraffic))
+	for i, t := range specTraffic {
+		out[i] = t
+		if t.LatestRevision && out[i].RevisionName == "" {
+			out[i].RevisionName = latestRev
+		}
+	}
+	return out
+}
+
 type CRServiceMetadata struct {
 	Name              string            `json:"name"`
 	Namespace         string            `json:"namespace"`
@@ -169,11 +186,7 @@ func registerCloudRun(srv *sim.Server) {
 				Status:             "True",
 				LastTransitionTime: time.Now().UTC().Format(time.RFC3339),
 			}},
-			Traffic: []CRTraffic{{
-				RevisionName:   svc.Metadata.Name + "-00001",
-				Percent:        100,
-				LatestRevision: true,
-			}},
+			Traffic: crStatusTraffic(svc.Spec.Traffic, svc.Metadata.Name+"-00001"),
 		}
 
 		services.Put(key, svc)
@@ -249,11 +262,7 @@ func registerCloudRun(srv *sim.Server) {
 				Status:             "True",
 				LastTransitionTime: time.Now().UTC().Format(time.RFC3339),
 			}},
-			Traffic: []CRTraffic{{
-				RevisionName:   revName,
-				Percent:        100,
-				LatestRevision: true,
-			}},
+			Traffic: crStatusTraffic(update.Spec.Traffic, revName),
 		}
 
 		services.Put(key, update)

@@ -127,6 +127,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeleteLifecyclePolicy", handleECRDeleteLifecyclePolicy)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.ListTagsForResource", handleECRListTagsForResource)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.TagResource", handleECRTagResource)
+	r.Register("AmazonEC2ContainerRegistry_V20150921.UntagResource", handleECRUntagResource)
 
 	// Pull-through cache rules. Used by sockerless image resolvers
 	// and by terraform's aws_ecr_pull_through_cache_rule resource.
@@ -336,9 +337,12 @@ func handleECRDescribeRepositories(w http.ResponseWriter, r *http.Request) {
 	} else {
 		for _, name := range req.RepositoryNames {
 			repo, ok := ecrRepositories.Get(name)
-			if ok {
-				repos = append(repos, repo)
+			if !ok {
+				sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest,
+					"The repository with name '%s' does not exist in the registry with id '%s'", name, awsAccountID())
+				return
 			}
+			repos = append(repos, repo)
 		}
 	}
 	if repos == nil {
@@ -830,6 +834,36 @@ func handleECRTagResource(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		repo.Tags = append(merged, req.Tags...)
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleECRUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string   `json:"resourceArn"`
+		TagKeys     []string `json:"tagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	name, ok := ecrRepoByArn(req.ResourceArn)
+	if !ok {
+		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest, "repository not found: %s", req.ResourceArn)
+		return
+	}
+	remove := map[string]struct{}{}
+	for _, k := range req.TagKeys {
+		remove[k] = struct{}{}
+	}
+	ecrRepositories.Update(name, func(repo *ECRRepository) {
+		kept := make([]SMTag, 0, len(repo.Tags))
+		for _, t := range repo.Tags {
+			if _, drop := remove[t.Key]; !drop {
+				kept = append(kept, t)
+			}
+		}
+		repo.Tags = kept
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }

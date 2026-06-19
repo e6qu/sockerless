@@ -419,6 +419,15 @@ func handleR53CreateHostedZone(w http.ResponseWriter, r *http.Request) {
 		r53WriteError(w, http.StatusBadRequest, "InvalidInput", "CallerReference is required")
 		return
 	}
+	// CallerReference is the idempotency key — a reused value (a safe retry of a
+	// zone that already exists) returns HostedZoneAlreadyExists, not a duplicate.
+	for _, sz := range r53Zones.List() {
+		if sz.Zone.CallerReference == req.CallerReference {
+			r53WriteError(w, http.StatusConflict, "HostedZoneAlreadyExists",
+				"A hosted zone has already been created with the specified caller reference "+req.CallerReference+".")
+			return
+		}
+	}
 	name := r53NormalizeName(req.Name)
 	id := r53RandomID()
 	zone := R53HostedZone{

@@ -6,10 +6,25 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// cosmosETagSeq makes document ETags unique even within the same wall-clock
+// second, so optimistic-concurrency (If-Match) can distinguish two quick writes.
+var cosmosETagSeq atomic.Uint64
+
+// cosmosIfMatchOK reports whether the request's If-Match precondition is
+// satisfied against the current ETag (an absent header always passes).
+func cosmosIfMatchOK(r *http.Request, currentETag string) bool {
+	im := r.Header.Get("If-Match")
+	if im == "" {
+		return true
+	}
+	return strings.Trim(im, `"`) == strings.Trim(currentETag, `"`)
+}
 
 // Azure Cosmos DB for NoSQL. The simulator exposes both the
 // Microsoft.DocumentDB ARM control plane used by Terraform/az and the
@@ -837,16 +852,32 @@ func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body["id"] = docID
+	if existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID)); ok {
+		if !cosmosIfMatchOK(r, existing.ETag) {
+			cosmosDataError(w, "PreconditionFailed",
+				"Operation cannot be performed because one of the specified precondition is not met.",
+				http.StatusPreconditionFailed)
+			return
+		}
+	}
 	doc := cosmosStoreDoc(account, db, coll, docID, body)
 	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
 }
 
 func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
-	if !cosmosDocs.Delete(cosmosDocKey(account, db, coll, docID)) {
+	existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	if !ok {
 		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
 		return
 	}
+	if !cosmosIfMatchOK(r, existing.ETag) {
+		cosmosDataError(w, "PreconditionFailed",
+			"Operation cannot be performed because one of the specified precondition is not met.",
+			http.StatusPreconditionFailed)
+		return
+	}
+	cosmosDocs.Delete(cosmosDocKey(account, db, coll, docID))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -885,7 +916,7 @@ func cosmosStoreDoc(account, db, coll, id string, body map[string]any) CosmosDoc
 		DB:      db,
 		Coll:    coll,
 		Body:    body,
-		ETag:    fmt.Sprintf(`"%x"`, now),
+		ETag:    fmt.Sprintf(`"%x-%x"`, now, cosmosETagSeq.Add(1)),
 		RID:     account + "-" + db + "-" + coll + "-" + id,
 		Self:    "dbs/" + db + "/colls/" + coll + "/docs/" + id + "/",
 		TS:      now,

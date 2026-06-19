@@ -1362,7 +1362,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 						stoppedAt := time.Now().Unix()
 						ecsTasks.Update(taskID, func(t *ECSTask) {
 							if t.LastStatus == ECSTaskStatusStopped {
-								return // already stopped
+								return // already stopped (e.g. by StopTask)
 							}
 							t.LastStatus = ECSTaskStatusStopped
 							t.DesiredStatus = ECSTaskStatusStopped
@@ -1953,8 +1953,12 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		t.StopCode = "UserInitiated"
 		if req.Reason != "" {
 			t.StoppedReason = req.Reason
+		} else {
+			t.StoppedReason = "Task stopped by user"
 		}
-		exitCode := 0
+		// A user-initiated stop SIGKILLs the container; the faithful exit code is
+		// 137 (128+SIGKILL), what real Fargate reports — not a clean-exit 0.
+		exitCode := 137
 		for j := range t.Containers {
 			t.Containers[j].LastStatus = "STOPPED"
 			t.Containers[j].ExitCode = &exitCode

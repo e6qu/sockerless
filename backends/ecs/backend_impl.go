@@ -801,17 +801,23 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 			if ecsState.ClusterARN != "" {
 				cluster = ecsState.ClusterARN
 			}
-			_, _ = s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
+			if _, err := s.aws.ECS.StopTask(s.ctx(), &awsecs.StopTaskInput{
 				Cluster: aws.String(cluster),
 				Task:    aws.String(ecsState.TaskARN),
 				Reason:  aws.String("Container restarted via API"),
-			})
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("task", ecsState.TaskARN).
+					Msg("restart: StopTask failed; old task may be orphaned")
+			}
 			s.Registry.MarkCleanedUp(ecsState.TaskARN)
 		}
 		if ecsState.TaskDefARN != "" {
-			_, _ = s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
+			if _, err := s.aws.ECS.DeregisterTaskDefinition(s.ctx(), &awsecs.DeregisterTaskDefinitionInput{
 				TaskDefinition: aws.String(ecsState.TaskDefARN),
-			})
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("taskDef", ecsState.TaskDefARN).
+					Msg("restart: DeregisterTaskDefinition failed")
+			}
 		}
 		// Clear stale ECS state so ContainerStart registers a fresh task definition.
 		s.ECS.Update(id, func(state *ECSState) {

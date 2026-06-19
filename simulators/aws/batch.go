@@ -568,7 +568,7 @@ func handleBatchSubmitJob(w http.ResponseWriter, r *http.Request) {
 		JobArn:        batchARN("job/" + jobID),
 		JobName:       req.JobName,
 		JobQueue:      req.JobQueue,
-		Status:        "RUNNING",
+		Status:        "SUBMITTED",
 		JobDefinition: jd.JobDefinitionArn,
 		CreatedAt:     now,
 		StartedAt:     now,
@@ -588,13 +588,41 @@ func handleBatchSubmitJob(w http.ResponseWriter, r *http.Request) {
 		job.Container["containerInstanceArn"] = batchARN("container/" + handle.ContainerID)
 		batchJobs.Put(jobID, job)
 		batchJobHandles.Store(jobID, handle)
-		go batchWaitForJob(jobID, handle)
+		go batchRunJobLifecycle(jobID, handle)
 	}
 	batchWriteJSON(w, http.StatusOK, map[string]any{
 		"jobId":   jobID,
 		"jobName": req.JobName,
 		"jobArn":  batchARN("job/" + jobID),
 	})
+}
+
+func batchTerminal(status string) bool {
+	return status == "SUCCEEDED" || status == "FAILED"
+}
+
+// batchRunJobLifecycle drives the real Batch job state machine
+// SUBMITTED→PENDING→RUNNABLE→STARTING→RUNNING (sub-second dwells, real states,
+// no synthetic timer) before delegating to batchWaitForJob for the terminal
+// transition driven by the real container exit. A job whose container has
+// already finished is not regressed back into a running state.
+func batchRunJobLifecycle(jobID string, handle *sim.ContainerHandle) {
+	for _, st := range []string{"PENDING", "RUNNABLE", "STARTING", "RUNNING"} {
+		time.Sleep(40 * time.Millisecond)
+		batchMu.Lock()
+		job, ok := batchJobs.Get(jobID)
+		if !ok || batchTerminal(job.Status) {
+			batchMu.Unlock()
+			break
+		}
+		job.Status = st
+		if st == "RUNNING" {
+			job.StartedAt = batchEpochMs()
+		}
+		batchJobs.Put(jobID, job)
+		batchMu.Unlock()
+	}
+	batchWaitForJob(jobID, handle)
 }
 
 func batchWaitForJob(jobID string, handle *sim.ContainerHandle) {

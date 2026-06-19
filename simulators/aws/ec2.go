@@ -2161,6 +2161,10 @@ func ec2SecurityGroupMatchesFilters(sg EC2SecurityGroup, filters map[string][]st
 
 func handleDeleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	id := r.FormValue("GroupId")
+	if _, ok := ec2SecurityGroups.Get(id); !ok {
+		ec2ErrorXML(w, "InvalidGroup.NotFound", fmt.Sprintf("The security group '%s' does not exist", id), http.StatusBadRequest)
+		return
+	}
 	ec2SecurityGroups.Delete(id)
 
 	w.Header().Set("Content-Type", "text/xml")

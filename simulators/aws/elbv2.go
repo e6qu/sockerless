@@ -234,6 +234,14 @@ func handleELBv2CreateLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	if ipType == "" {
 		ipType = "ipv4"
 	}
+	for _, existing := range elbv2LoadBalancers.List() {
+		if existing.Name == name {
+			elbv2ErrorXML(w, "DuplicateLoadBalancerName",
+				fmt.Sprintf("A load balancer with the same name '%s' exists, but with different settings.", name),
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+	}
 	id := generateUUID()[:12]
 	resourceKind := "app"
 	if lbType == "network" {
@@ -383,6 +391,14 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 	targetType := r.FormValue("TargetType")
 	if targetType == "" {
 		targetType = "instance"
+	}
+	for _, existing := range elbv2TargetGroups.List() {
+		if existing.Name == name {
+			elbv2ErrorXML(w, "DuplicateTargetGroupName",
+				fmt.Sprintf("A target group with the same name '%s' exists, but with different settings.", name),
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
 	}
 	id := generateUUID()[:12]
 	arn := fmt.Sprintf("arn:aws:elasticloadbalancing:%s:%s:targetgroup/%s/%s", awsRegion(), awsAccountID(), name, id)

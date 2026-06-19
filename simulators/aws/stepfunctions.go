@@ -66,6 +66,7 @@ func registerStepFunctions(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSStepFunctions.ListStateMachineVersions", handleSFNListStateMachineVersions)
 	r.Register("AWSStepFunctions.StartExecution", handleSFNStartExecution)
 	r.Register("AWSStepFunctions.DescribeExecution", handleSFNDescribeExecution)
+	r.Register("AWSStepFunctions.GetExecutionHistory", handleSFNGetExecutionHistory)
 	r.Register("AWSStepFunctions.ListExecutions", handleSFNListExecutions)
 	r.Register("AWSStepFunctions.StopExecution", handleSFNStopExecution)
 }
@@ -426,6 +427,33 @@ type sfnState struct {
 	Seconds *int             `json:"Seconds"`
 	Error   string           `json:"Error"`
 	Cause   string           `json:"Cause"`
+	// Task
+	Resource string `json:"Resource"`
+	// Choice
+	Choices []sfnChoiceRule `json:"Choices"`
+	Default string          `json:"Default"`
+	// Parallel
+	Branches []sfnDefinition `json:"Branches"`
+	// Map
+	Iterator      *sfnDefinition `json:"Iterator"`
+	ItemProcessor *sfnDefinition `json:"ItemProcessor"`
+	ItemsPath     string         `json:"ItemsPath"`
+}
+
+// sfnChoiceRule is one Choice rule: a data-test (optionally nested via
+// And/Or/Not) plus the Next state to transition to when it matches.
+type sfnChoiceRule struct {
+	Variable           string          `json:"Variable"`
+	StringEquals       *string         `json:"StringEquals"`
+	NumericEquals      *float64        `json:"NumericEquals"`
+	NumericGreaterThan *float64        `json:"NumericGreaterThan"`
+	NumericLessThan    *float64        `json:"NumericLessThan"`
+	BooleanEquals      *bool           `json:"BooleanEquals"`
+	IsPresent          *bool           `json:"IsPresent"`
+	And                []sfnChoiceRule `json:"And"`
+	Or                 []sfnChoiceRule `json:"Or"`
+	Not                *sfnChoiceRule  `json:"Not"`
+	Next               string          `json:"Next"`
 }
 
 var errSFNAborted = errors.New("execution aborted")
@@ -466,6 +494,12 @@ func sfnExecute(definition, input string, cancel <-chan struct{}) (string, strin
 	if err := json.Unmarshal([]byte(definition), &def); err != nil {
 		return "", "FAILED", err
 	}
+	return sfnRunDef(def, input, cancel)
+}
+
+// sfnRunDef runs one (sub-)state-machine. Parallel/Map recurse through it for
+// their branches/iterations.
+func sfnRunDef(def sfnDefinition, input string, cancel <-chan struct{}) (string, string, error) {
 	current := def.StartAt
 	data := input
 	for steps := 0; steps < 1000; steps++ {
@@ -519,11 +553,224 @@ func sfnExecute(definition, input string, cancel <-chan struct{}) (string, strin
 				return "", "FAILED", fmt.Errorf("wait state %q must declare End or Next", current)
 			}
 			current = state.Next
+		case "Task":
+			out, err := sfnRunTask(state, data)
+			if err != nil {
+				return "", "FAILED", err
+			}
+			data = out
+			if state.End {
+				return data, "SUCCEEDED", nil
+			}
+			if state.Next == "" {
+				return "", "FAILED", fmt.Errorf("task state %q must declare End or Next", current)
+			}
+			current = state.Next
+		case "Choice":
+			next := state.Default
+			for _, rule := range state.Choices {
+				if sfnEvalChoice(rule, data) {
+					next = rule.Next
+					break
+				}
+			}
+			if next == "" {
+				return "", "FAILED", fmt.Errorf("choice state %q matched no rule and has no Default", current)
+			}
+			current = next
+		case "Parallel":
+			results := make([]json.RawMessage, len(state.Branches))
+			for i, branch := range state.Branches {
+				out, status, err := sfnRunDef(branch, data, cancel)
+				if err != nil || status != "SUCCEEDED" {
+					if status == "ABORTED" {
+						return "", "ABORTED", errSFNAborted
+					}
+					return "", "FAILED", fmt.Errorf("parallel branch %d failed: %v", i, err)
+				}
+				results[i] = json.RawMessage(sfnNormalizeJSON(out))
+			}
+			merged, _ := json.Marshal(results)
+			data = string(merged)
+			if state.End {
+				return data, "SUCCEEDED", nil
+			}
+			if state.Next == "" {
+				return "", "FAILED", fmt.Errorf("parallel state %q must declare End or Next", current)
+			}
+			current = state.Next
+		case "Map":
+			proc := state.ItemProcessor
+			if proc == nil {
+				proc = state.Iterator
+			}
+			if proc == nil {
+				return "", "FAILED", fmt.Errorf("map state %q requires an ItemProcessor or Iterator", current)
+			}
+			items, ok := sfnJSONPathArray(data, state.ItemsPath)
+			if !ok {
+				return "", "FAILED", fmt.Errorf("map state %q: ItemsPath %q did not resolve to an array", current, state.ItemsPath)
+			}
+			results := make([]json.RawMessage, len(items))
+			for i, item := range items {
+				out, status, err := sfnRunDef(*proc, string(item), cancel)
+				if err != nil || status != "SUCCEEDED" {
+					if status == "ABORTED" {
+						return "", "ABORTED", errSFNAborted
+					}
+					return "", "FAILED", fmt.Errorf("map iteration %d failed: %v", i, err)
+				}
+				results[i] = json.RawMessage(sfnNormalizeJSON(out))
+			}
+			merged, _ := json.Marshal(results)
+			data = string(merged)
+			if state.End {
+				return data, "SUCCEEDED", nil
+			}
+			if state.Next == "" {
+				return "", "FAILED", fmt.Errorf("map state %q must declare End or Next", current)
+			}
+			current = state.Next
 		default:
 			return "", "FAILED", fmt.Errorf("unsupported state type %q", state.Type)
 		}
 	}
 	return "", "FAILED", fmt.Errorf("state transition limit exceeded")
+}
+
+// sfnRunTask dispatches a Task state to its Lambda resource (a direct
+// `arn:aws:lambda:...:function:NAME` ARN), invoking it in-process exactly as a
+// real Task would, and returns the function's response as the new state data.
+func sfnRunTask(state sfnState, data string) (string, error) {
+	name, ok := sfnLambdaNameFromResource(state.Resource)
+	if !ok {
+		return "", fmt.Errorf("unsupported Task resource %q (only lambda function ARNs are supported)", state.Resource)
+	}
+	fn, ok := lambdaFunctions.Get(name)
+	if !ok {
+		return "", fmt.Errorf("task resource lambda %q not found", name)
+	}
+	resp, unhandled, _ := invokeLambdaViaRuntimeAPI(fn, []byte(data))
+	if unhandled {
+		return "", fmt.Errorf("task lambda %q returned an error: %s", name, string(resp))
+	}
+	return string(resp), nil
+}
+
+func sfnLambdaNameFromResource(resource string) (string, bool) {
+	if i := strings.Index(resource, ":function:"); i >= 0 {
+		name := resource[i+len(":function:"):]
+		if j := strings.IndexByte(name, ':'); j >= 0 { // strip a :version/:alias suffix
+			name = name[:j]
+		}
+		return name, name != ""
+	}
+	return "", false
+}
+
+// sfnNormalizeJSON returns s if it is valid JSON, else a JSON string of s.
+func sfnNormalizeJSON(s string) string {
+	if json.Valid([]byte(s)) {
+		return s
+	}
+	b, _ := json.Marshal(s)
+	return string(b)
+}
+
+// sfnJSONValue resolves a Choice `Variable` reference-path (e.g. "$.a.b") against
+// the state data.
+func sfnJSONValue(data, path string) (any, bool) {
+	var doc any
+	if json.Unmarshal([]byte(data), &doc) != nil {
+		return nil, false
+	}
+	path = strings.TrimPrefix(path, "$")
+	path = strings.TrimPrefix(path, ".")
+	if path == "" {
+		return doc, true
+	}
+	cur := doc
+	for _, seg := range strings.Split(path, ".") {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[seg]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func sfnJSONPathArray(data, path string) ([]json.RawMessage, bool) {
+	src := data
+	if path != "" {
+		v, ok := sfnJSONValue(data, path)
+		if !ok {
+			return nil, false
+		}
+		b, _ := json.Marshal(v)
+		src = string(b)
+	}
+	var arr []json.RawMessage
+	if json.Unmarshal([]byte(src), &arr) != nil {
+		return nil, false
+	}
+	return arr, true
+}
+
+func sfnEvalChoice(rule sfnChoiceRule, data string) bool {
+	switch {
+	case len(rule.And) > 0:
+		for _, sub := range rule.And {
+			if !sfnEvalChoice(sub, data) {
+				return false
+			}
+		}
+		return true
+	case len(rule.Or) > 0:
+		for _, sub := range rule.Or {
+			if sfnEvalChoice(sub, data) {
+				return true
+			}
+		}
+		return false
+	case rule.Not != nil:
+		return !sfnEvalChoice(*rule.Not, data)
+	}
+	val, present := sfnJSONValue(data, rule.Variable)
+	switch {
+	case rule.IsPresent != nil:
+		return present == *rule.IsPresent
+	case rule.StringEquals != nil:
+		s, ok := val.(string)
+		return ok && s == *rule.StringEquals
+	case rule.BooleanEquals != nil:
+		b, ok := val.(bool)
+		return ok && b == *rule.BooleanEquals
+	case rule.NumericEquals != nil:
+		n, ok := sfnAsFloat(val)
+		return ok && n == *rule.NumericEquals
+	case rule.NumericGreaterThan != nil:
+		n, ok := sfnAsFloat(val)
+		return ok && n > *rule.NumericGreaterThan
+	case rule.NumericLessThan != nil:
+		n, ok := sfnAsFloat(val)
+		return ok && n < *rule.NumericLessThan
+	}
+	return false
+}
+
+func sfnAsFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	}
+	return 0, false
 }
 
 func sfnCompleteExecution(execARN, status, output string) {
@@ -556,6 +803,48 @@ func handleSFNDescribeExecution(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sfnWriteJSON(w, http.StatusOK, exec)
+}
+
+// handleSFNGetExecutionHistory returns the execution-level event history
+// (ExecutionStarted + the terminal Succeeded/Failed/Aborted event).
+func handleSFNGetExecutionHistory(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExecutionArn string `json:"executionArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	exec, ok := sfnExecutions.Get(req.ExecutionArn)
+	if !ok {
+		sfnWriteError(w, "ExecutionDoesNotExist", "Execution does not exist: "+req.ExecutionArn)
+		return
+	}
+	events := []map[string]any{{
+		"timestamp": exec.StartDate,
+		"type":      "ExecutionStarted",
+		"id":        1,
+		"executionStartedEventDetails": map[string]any{
+			"input":   exec.Input,
+			"roleArn": "",
+		},
+	}}
+	if exec.Status != "RUNNING" && exec.StopDate != nil {
+		ev := map[string]any{"timestamp": *exec.StopDate, "id": 2, "previousEventId": 1}
+		switch exec.Status {
+		case "SUCCEEDED":
+			ev["type"] = "ExecutionSucceeded"
+			ev["executionSucceededEventDetails"] = map[string]any{"output": exec.Output}
+		case "ABORTED":
+			ev["type"] = "ExecutionAborted"
+			ev["executionAbortedEventDetails"] = map[string]any{}
+		default:
+			ev["type"] = "ExecutionFailed"
+			ev["executionFailedEventDetails"] = map[string]any{}
+		}
+		events = append(events, ev)
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"events": events})
 }
 
 func handleSFNListExecutions(w http.ResponseWriter, r *http.Request) {

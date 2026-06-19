@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -98,6 +99,13 @@ var gcpAutoModeSubnetCIDRs = map[string]string{
 	"us-west4":                "10.182.0.0/20",
 }
 
+// computeOpRegistry records every operation the sim hands out (name→targetLink)
+// so an operations GET/wait for an unknown name 404s instead of fabricating DONE.
+var computeOpRegistry sync.Map
+
+func recordComputeOp(name, targetLink string) { computeOpRegistry.Store(name, targetLink) }
+func computeOpKnown(name string) bool         { _, ok := computeOpRegistry.Load(name); return ok }
+
 func newComputeOp(project, scope string, targetLink string) map[string]any {
 	return newComputeOpWithType(project, scope, targetLink, "operation")
 }
@@ -106,6 +114,7 @@ func newComputeOpWithType(project, scope string, targetLink string, operationTyp
 	opID := generateUUID()[:8]
 	now := time.Now().UTC().Format(time.RFC3339)
 	path := fmt.Sprintf("projects/%s/%s/operations/operation-%s", project, scope, opID)
+	recordComputeOp("operation-"+opID, targetLink)
 	op := map[string]any{
 		"kind":          "compute#operation",
 		"id":            computeNumericID(),
@@ -1316,6 +1325,10 @@ func registerCompute(srv *sim.Server) {
 	srv.HandleFunc("GET /compute/v1/projects/{project}/global/operations/{name}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		name := sim.PathParam(r, "name")
+		if !computeOpKnown(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "notFound", "operation %q not found", name)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":     "compute#operation",
 			"id":       computeNumericID(),
@@ -1331,6 +1344,10 @@ func registerCompute(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		region := sim.PathParam(r, "region")
 		name := sim.PathParam(r, "name")
+		if !computeOpKnown(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "notFound", "operation %q not found", name)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":     "compute#operation",
 			"id":       computeNumericID(),
@@ -1344,6 +1361,10 @@ func registerCompute(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		region := sim.PathParam(r, "region")
 		name := sim.PathParam(r, "name")
+		if !computeOpKnown(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "notFound", "operation %q not found", name)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":     "compute#operation",
 			"id":       computeNumericID(),
@@ -1699,17 +1720,29 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := instanceGroupSelfLink(project, zone, name)
 		var req struct {
-			NamedPorts []ComputeInstanceGroupNamedPort `json:"namedPorts"`
+			Fingerprint string                          `json:"fingerprint"`
+			NamedPorts  []ComputeInstanceGroupNamedPort `json:"namedPorts"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		var conflict bool
 		if !groups.Update(selfLink, func(group *storedComputeInstanceGroup) {
+			// setNamedPorts honors the fingerprint for optimistic concurrency
+			// (a stale read-modify-write must 412).
+			if !fingerprintMatches(group.Fingerprint, req.Fingerprint) {
+				conflict = true
+				return
+			}
 			group.NamedPorts = req.NamedPorts
 			group.Fingerprint = computeFingerprint()
 		}) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		if conflict {
+			sim.GCPErrorf(w, http.StatusPreconditionFailed, "conditionNotMet", "named ports fingerprint mismatch; the resource was modified concurrently")
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setNamedPorts"))
@@ -1969,6 +2002,7 @@ func computeZoneOp(project, zone, target, opType string) map[string]any {
 	opID := generateUUID()[:8]
 	now := time.Now().UTC().Format(time.RFC3339)
 	path := fmt.Sprintf("projects/%s/zones/%s/operations/operation-%s", project, zone, opID)
+	recordComputeOp("operation-"+opID, target)
 	return map[string]any{
 		"kind":          "compute#operation",
 		"id":            computeNumericID(),
@@ -2517,6 +2551,10 @@ func registerComputeDisks(srv *sim.Server) {
 
 	// Zonal operations endpoint (disks return zonal ops the SDK polls).
 	writeZonalOperation := func(w http.ResponseWriter, project, zone, name string) {
+		if !computeOpKnown(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "notFound", "operation %q not found", name)
+			return
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":     "compute#operation",
 			"id":       computeNumericID(),

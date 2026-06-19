@@ -642,7 +642,9 @@ func TestECS_ExitCodeNilWhileRunning(t *testing.T) {
 	assert.Equal(t, ecstypes.TaskStopCodeUserInitiated, stoppedTask.StopCode)
 	for _, c := range stoppedTask.Containers {
 		require.NotNil(t, c.ExitCode, "ExitCode should be set when task is STOPPED")
-		assert.Equal(t, int32(0), *c.ExitCode)
+		// A user-initiated stop SIGKILLs the container → 137 (128+SIGKILL),
+		// the code real Fargate reports, not a clean-exit 0.
+		assert.Equal(t, int32(137), *c.ExitCode)
 	}
 }
 
