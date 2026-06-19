@@ -4,6 +4,29 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - aca ExposedPorts cloud-state reconstruction (BUG-1879) + DO_NEXT cleanup
+
+With every audit-found bug fixed (five rounds + the staged BUG-1840–1846 backlog),
+the remaining open bugs are both externally gated (#1345 azuread-TF-upstream,
+#1075 live-cloud spend). Verifying the already-merged aca GitLab cell (#587) — the
+work a stale DO_NEXT "NEXT" section still framed as open — surfaced one genuine
+latent gap it had flagged: the aca backend's `appToContainer`, which rebuilds an
+`api.Container` from the ACA App for cloud-truth queries (post-restart, or a
+`services:` inspect), never populated `Config.ExposedPorts`, while the create-time
+path carries them from image config. So `docker inspect` returned the ports when
+fresh but dropped them once resolved from the cloud — a stateless
+cloud-is-source-of-truth divergence.
+
+ACA's container template has no field for ExposedPorts (its ingress carries only
+the bootstrap's single `targetPort`, not the image's declared set), so they now
+ride a `sockerless-exposed-ports` tag — the same pattern Name/Network/Pod use for
+Docker concepts with no cloud-native home. `buildAppSpec` stamps a deterministic
+sorted CSV (`encodeExposedPorts`); `appToContainer` reconstructs it
+(`parseExposedPorts`). Kept aca-local (Azure tags are charset-permissive) rather
+than widening the shared `core.TagSet` for one backend. Tests: `TestAppToContainer_Shape`
+(tag→ports) and `TestExposedPortsTag_RoundTrip`. The branch also streamlined the
+stale "bleeplab aca cell NEXT" framing in DO_NEXT/STATUS into history.
+
 ## 2026-06-19 - Audit round 5: concurrency / leaks / shared-copy divergence
 
 Four audit passes had combed the code with the same "fakes / swallows / dead-code"

@@ -90,7 +90,7 @@ mkdir -p "$workdir"
 
 ci_version="${version%.*}"
 asset_index="$workdir/firecracker-ci-assets.xml"
-curl -fsSLo "$asset_index" "https://s3.amazonaws.com/spec.ccfc.min/?prefix=firecracker-ci/${ci_version}/${arch}/&list-type=2"
+curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$asset_index" "https://s3.amazonaws.com/spec.ccfc.min/?prefix=firecracker-ci/${ci_version}/${arch}/&list-type=2"
 
 kernel_key="$(tr '<' '\n' < "$asset_index" | sed -n 's#^Key>\(.*\)#\1#p' | grep -E "^firecracker-ci/${ci_version}/${arch}/vmlinux-[0-9]+\\.[0-9]+\\.[0-9]+$" | sort -V | tail -1)"
 rootfs_key="$(tr '<' '\n' < "$asset_index" | sed -n 's#^Key>\(.*\)#\1#p' | grep "^firecracker-ci/${ci_version}/${arch}/ubuntu-.*[.]squashfs$" | sort -V | tail -1)"
@@ -107,8 +107,8 @@ ebs_volume="$workdir/ebs-volume.raw"
 ebs_snapshot="$workdir/ebs-snapshot.raw"
 ebs_restored="$workdir/ebs-restored.raw"
 
-curl -fsSLo "$kernel" "https://s3.amazonaws.com/spec.ccfc.min/${kernel_key}"
-curl -fsSLo "$rootfs_squash" "https://s3.amazonaws.com/spec.ccfc.min/${rootfs_key}"
+curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$kernel" "https://s3.amazonaws.com/spec.ccfc.min/${kernel_key}"
+curl -fsSL --retry 5 --retry-delay 2 --retry-connrefused -o "$rootfs_squash" "https://s3.amazonaws.com/spec.ccfc.min/${rootfs_key}"
 
 unsquashfs -quiet -d "$rootfs_dir" "$rootfs_squash"
 

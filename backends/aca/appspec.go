@@ -88,9 +88,17 @@ func (s *Server) buildAppSpec(ctx context.Context, containers []containerInput) 
 	activeRevMode := armappcontainers.ActiveRevisionsModeSingle
 	minR, maxR := int32(1), int32(1)
 
+	azureTags := tags.AsAzurePtrMap()
+	// Persist the image's declared ExposedPorts so appToContainer can
+	// reconstruct them from cloud truth — the ACA template has no field for
+	// them (ingress carries only the bootstrap's targetPort).
+	if ports := encodeExposedPorts(mainContainer.Config.ExposedPorts); ports != "" {
+		azureTags[tagExposedPorts] = ptr(ports)
+	}
+
 	return armappcontainers.ContainerApp{
 		Location: ptr(s.config.Location),
-		Tags:     tags.AsAzurePtrMap(),
+		Tags:     azureTags,
 		Properties: &armappcontainers.ContainerAppProperties{
 			EnvironmentID: ptr(environmentID),
 			Configuration: &armappcontainers.Configuration{

@@ -2,12 +2,55 @@ package aca
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3"
 	"github.com/sockerless/api"
 	core "github.com/sockerless/backend-core"
 )
+
+// tagExposedPorts carries the image's declared Docker ExposedPorts through
+// to the ACA App's tags. ExposedPorts have no ACA template field — the App's
+// ingress carries a single targetPort (the bootstrap's 8080), not the image's
+// declared port set — so they ride a sockerless tag, the same pattern Name /
+// Network / Pod use for Docker concepts with no cloud-native home. Without
+// this, a container resolved from cloud truth (post-restart, or a `services:`
+// inspect) loses the ports the create-time path carried from image config.
+const tagExposedPorts = "sockerless-exposed-ports"
+
+// encodeExposedPorts serializes a Docker ExposedPorts set ("8080/tcp") to a
+// deterministic comma-separated tag value. Empty set → "".
+func encodeExposedPorts(ports map[string]struct{}) string {
+	if len(ports) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(ports))
+	for k := range ports {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return strings.Join(keys, ",")
+}
+
+// parseExposedPorts reconstructs the ExposedPorts set from the tag value
+// written by encodeExposedPorts. Returns nil for an empty/absent value.
+func parseExposedPorts(v string) map[string]struct{} {
+	if v == "" {
+		return nil
+	}
+	m := make(map[string]struct{})
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			m[p] = struct{}{}
+		}
+	}
+	if len(m) == 0 {
+		return nil
+	}
+	return m
+}
 
 // — App-oriented siblings of the Job helpers in cloud_state.go.
 // When Config.UseApp is true, sockerless provisions ACA ContainerApps
@@ -173,11 +216,12 @@ func (p *acaCloudState) appToContainer(app *armappcontainers.ContainerApp, tags 
 		Args:    args,
 		State:   state,
 		Config: api.ContainerConfig{
-			Image:      image,
-			Cmd:        cmd,
-			Entrypoint: entrypoint,
-			Env:        env,
-			Labels:     labels,
+			Image:        image,
+			Cmd:          cmd,
+			Entrypoint:   entrypoint,
+			Env:          env,
+			Labels:       labels,
+			ExposedPorts: parseExposedPorts(tags[tagExposedPorts]),
 		},
 		HostConfig: api.HostConfig{
 			NetworkMode: networkName,

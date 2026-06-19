@@ -118,7 +118,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
 ![ecs](https://img.shields.io/badge/ecs-6.7k-5BC0DE)
 ![cloudrun](https://img.shields.io/badge/cloudrun-6.4k-5BC0DE)
-![aca](https://img.shields.io/badge/aca-5.5k-5BC0DE)
+![aca](https://img.shields.io/badge/aca-5.6k-5BC0DE)
 ![docker](https://img.shields.io/badge/docker-2.6k-5BC0DE)
 ![agent](https://img.shields.io/badge/agent-7k-5BC0DE)
 ![api](https://img.shields.io/badge/api-2.1k-5BC0DE)
