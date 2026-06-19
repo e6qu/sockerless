@@ -54,12 +54,33 @@ type ehEventRecord struct {
 	Properties     map[string]any
 }
 
+// ehMaxRetainedEvents bounds the per-partition retained window. Event Hubs
+// ages out events past the retention policy; the sim caps the in-memory
+// window so a long-lived publisher cannot grow a partition without bound.
+// Trimmed events are gone (a consumer requesting an aged-out offset gets
+// "no event", as it would against real Event Hubs past retention).
+const ehMaxRetainedEvents = 10000
+
+// ehPartitionLog is the bounded per-partition event window.
+//
+// Records holds at most ehMaxRetainedEvents entries (the newest). Base is the
+// number of events that have aged out of the front of the window, so the
+// SequenceNumber of Records[i] is (record's own SequenceNumber) and its
+// positional index in the partition's full history is (Base + i). NextSeq is
+// the true monotonic sequence to assign to the next enqueued event; it is
+// decoupled from len(Records) so trimming never rewinds sequence numbers.
+type ehPartitionLog struct {
+	Records []ehEventRecord
+	Base    int64
+	NextSeq int64
+}
+
 var (
 	ehNamespaces      sim.Store[EHNamespace]
 	ehEventHubs       sim.Store[EHEventHub]
 	ehConsumerGroups  sim.Store[EHConsumerGroup]
 	ehAuthRules       sim.Store[EHAuthorizationRule]
-	ehPartitionEvents sim.Store[[]ehEventRecord]
+	ehPartitionEvents sim.Store[ehPartitionLog]
 	ehMu              sync.Mutex
 )
 
@@ -68,7 +89,7 @@ func registerEventHubs(srv *sim.Server) {
 	ehEventHubs = sim.MakeStore[EHEventHub](srv.DB(), "eventhub_eventhubs")
 	ehConsumerGroups = sim.MakeStore[EHConsumerGroup](srv.DB(), "eventhub_consumer_groups")
 	ehAuthRules = sim.MakeStore[EHAuthorizationRule](srv.DB(), "eventhub_auth_rules")
-	ehPartitionEvents = sim.MakeStore[[]ehEventRecord](srv.DB(), "eventhub_partition_events")
+	ehPartitionEvents = sim.MakeStore[ehPartitionLog](srv.DB(), "eventhub_partition_events")
 
 	const ns = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.EventHub/namespaces"
 
@@ -643,24 +664,34 @@ func ehAMQPHandleRPC(namespace string, req *amqp.Message) (*amqp.Message, bool) 
 		if !ok {
 			return ehAMQPError(req, 404, "Event Hub not found"), true
 		}
-		records, _ := ehPartitionEvents.Get(ehPartitionKey(namespace, hub.Name, partition))
+		plog, _ := ehPartitionEvents.Get(ehPartitionKey(namespace, hub.Name, partition))
 		lastSeq := int64(-1)
 		lastOffset := ""
 		lastTime := time.Time{}
-		if len(records) > 0 {
-			last := records[len(records)-1]
+		// begin_sequence_number is the oldest sequence a consumer can still
+		// read. With no trimming and no events it is 0; once events age out
+		// of the retained window it advances to the oldest retained sequence.
+		beginSeq := int64(0)
+		if len(plog.Records) > 0 {
+			first := plog.Records[0]
+			beginSeq = first.SequenceNumber
+			last := plog.Records[len(plog.Records)-1]
 			lastSeq = last.SequenceNumber
 			lastOffset = last.Offset
 			lastTime = last.EnqueuedTime
+		} else if plog.NextSeq > 0 {
+			// All retained events trimmed but some were produced: the next
+			// readable sequence is NextSeq (nothing currently retained).
+			beginSeq = plog.NextSeq
 		}
 		return ehAMQPValue(req, map[string]any{
 			"name":                          hub.Name,
 			"partition":                     partition,
-			"begin_sequence_number":         int64(0),
+			"begin_sequence_number":         beginSeq,
 			"last_enqueued_sequence_number": lastSeq,
 			"last_enqueued_offset":          lastOffset,
 			"last_enqueued_time_utc":        lastTime,
-			"is_partition_empty":            len(records) == 0,
+			"is_partition_empty":            len(plog.Records) == 0,
 		}), true
 	default:
 		return nil, false
@@ -725,10 +756,11 @@ func ehAMQPEnqueue(namespace, address string, msg *amqp.Message) {
 	ehMu.Lock()
 	defer ehMu.Unlock()
 	key := ehPartitionKey(namespace, hub.Name, partitionID)
-	records, _ := ehPartitionEvents.Get(key)
+	plog, _ := ehPartitionEvents.Get(key)
 	for _, event := range ehExpandAMQPEvents(msg) {
-		seq := int64(len(records))
-		records = append(records, ehEventRecord{
+		seq := plog.NextSeq
+		plog.NextSeq = seq + 1
+		plog.Records = append(plog.Records, ehEventRecord{
 			SequenceNumber: seq,
 			Offset:         strconv.FormatInt(seq, 10),
 			EnqueuedTime:   time.Now().UTC(),
@@ -736,7 +768,14 @@ func ehAMQPEnqueue(namespace, address string, msg *amqp.Message) {
 			Properties:     event.ApplicationProperties,
 		})
 	}
-	ehPartitionEvents.Put(key, records)
+	// Trim the oldest events past the retention cap, advancing Base by the
+	// number trimmed so positional reads (Base + i) and begin_sequence_number
+	// stay correct.
+	if over := len(plog.Records) - ehMaxRetainedEvents; over > 0 {
+		plog.Records = plog.Records[over:]
+		plog.Base += int64(over)
+	}
+	ehPartitionEvents.Put(key, plog)
 }
 
 func ehExpandAMQPEvents(msg *amqp.Message) []*amqp.Message {
@@ -759,11 +798,15 @@ func ehAMQPNextEvent(namespace, address string, index int) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	records, _ := ehPartitionEvents.Get(ehPartitionKey(namespace, hubName, partitionID))
-	if index < 0 || index >= len(records) {
+	plog, _ := ehPartitionEvents.Get(ehPartitionKey(namespace, hubName, partitionID))
+	// index is the absolute position in the partition's full history; map it
+	// into the retained window. An index below Base has aged out (faithful to
+	// retention: no event); an index past the window's end is not yet produced.
+	pos := index - int(plog.Base)
+	if index < 0 || pos < 0 || pos >= len(plog.Records) {
 		return nil, false
 	}
-	rec := records[index]
+	rec := plog.Records[pos]
 	out := &amqp.Message{
 		DeliveryTag: []byte(generateUUID()),
 		Annotations: amqp.Annotations{

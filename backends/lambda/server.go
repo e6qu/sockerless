@@ -22,6 +22,7 @@ type Server struct {
 	Lambda          *core.StateStore[LambdaState]
 	NetworkState    *core.StateStore[NetworkState]
 	reverseAgents   *reverseAgentRegistry // reverse-agent session registry
+	tagCache        *lambdaTagCache       // short-TTL ListTags coalescing
 	storageBackings *core.StorageBackingRegistry
 	ipCounter       atomic.Int32
 	volumeState
@@ -41,6 +42,7 @@ func NewServer(config Config, awsClients *AWSClients, logger zerolog.Logger) *Se
 		Lambda:        core.NewStateStore[LambdaState](),
 		NetworkState:  core.NewStateStore[NetworkState](),
 		reverseAgents: newReverseAgentRegistry(),
+		tagCache:      newLambdaTagCache(),
 	}
 	s.ipCounter.Store(2)
 

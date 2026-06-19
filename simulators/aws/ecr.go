@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"net/http"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -405,19 +407,56 @@ func handleECRGetAuthorizationToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ecrImageIndex caches the registry's images grouped by repository name so a
+// per-repo lookup doesn't scan every image in the whole registry (each image is
+// stored under both its tag and its digest key, doubling the raw row count). It
+// is rebuilt from ecrImages — the source of truth, which survives SQLite-backed
+// restarts — only when a Put/Delete has bumped the generation since the last
+// build, so a burst of ListImages/DescribeImages calls between pushes pays the
+// scan once.
+var ecrImageIndex struct {
+	mu     sync.Mutex
+	gen    uint64
+	byRepo map[string][]ECRImageDetail
+}
+
+// ecrImageGen is bumped on every ecrImages Put/Delete to invalidate the index.
+var ecrImageGen atomic.Uint64
+
+// ecrBumpImageGen invalidates the per-repo image index. Call after any ecrImages
+// Put/Delete (in ecr.go and ecr_oci.go).
+func ecrBumpImageGen() { ecrImageGen.Add(1) }
+
 // ecrRepoImages returns the distinct images in a repository (the ecrImages
 // store holds each image under both its tag and its digest key, so dedup by
-// digest).
+// digest). The deduped set is identical to a full-registry scan filtered to the
+// repo; the per-repo index just avoids re-walking unrelated repositories.
 func ecrRepoImages(repo string) []ECRImageDetail {
-	seen := map[string]bool{}
-	var out []ECRImageDetail
-	for _, img := range ecrImages.List() {
-		if img.RepositoryName != repo || seen[img.ImageDigest] {
-			continue
+	gen := ecrImageGen.Load()
+	ecrImageIndex.mu.Lock()
+	defer ecrImageIndex.mu.Unlock()
+	if ecrImageIndex.byRepo == nil || ecrImageIndex.gen != gen {
+		byRepo := make(map[string][]ECRImageDetail)
+		seenByRepo := make(map[string]map[string]bool)
+		for _, img := range ecrImages.List() {
+			seen := seenByRepo[img.RepositoryName]
+			if seen == nil {
+				seen = map[string]bool{}
+				seenByRepo[img.RepositoryName] = seen
+			}
+			if seen[img.ImageDigest] {
+				continue
+			}
+			seen[img.ImageDigest] = true
+			byRepo[img.RepositoryName] = append(byRepo[img.RepositoryName], img)
 		}
-		seen[img.ImageDigest] = true
-		out = append(out, img)
+		ecrImageIndex.byRepo = byRepo
+		ecrImageIndex.gen = gen
 	}
+	src := ecrImageIndex.byRepo[repo]
+	// Return a copy so callers can't mutate the cached slice.
+	out := make([]ECRImageDetail, len(src))
+	copy(out, src)
 	return out
 }
 
@@ -588,6 +627,7 @@ func handleECRPutImage(w http.ResponseWriter, r *http.Request) {
 	ecrImages.Put(key, img)
 	// Also store by digest
 	ecrImages.Put(req.RepositoryName+":"+digest, img)
+	ecrBumpImageGen()
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"image": map[string]any{
@@ -639,6 +679,7 @@ func handleECRBatchDeleteImage(w http.ResponseWriter, r *http.Request) {
 				ecrImages.Delete(req.RepositoryName + ":" + tag)
 			}
 			ecrImages.Delete(key)
+			ecrBumpImageGen()
 			// Deleted entries are bare ImageIdentifier objects. Real ECR
 			// resolves the digest even when the request deleted by tag.
 			imgId := map[string]any{"imageDigest": img.ImageDigest}

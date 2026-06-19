@@ -99,6 +99,97 @@ var (
 	gcsObjects sim.Store[GCSObject]
 )
 
+// gcsBucketObjectIndex maps a bucket name to the set of object names it
+// holds, so listing one bucket fetches only that bucket's rows instead
+// of scanning every object in every bucket (the underlying Store only
+// exposes a whole-store Filter). It is a pure optimization derived from
+// the object store — `gcsBucketObjects` rebuilds it from the store on
+// first use, and every persist/delete keeps it in sync. The object
+// store (and the host backing files) remain the source of truth.
+var (
+	gcsIndexMu     sync.RWMutex
+	gcsObjectIndex map[string]map[string]struct{}
+	gcsIndexBuilt  bool
+)
+
+// gcsIndexRebuildLocked populates gcsObjectIndex from the object store.
+// Caller holds gcsIndexMu for writing. Runs once (one full scan) and is
+// idempotent thereafter — incremental add/remove keep it current.
+func gcsIndexRebuildLocked() {
+	gcsObjectIndex = make(map[string]map[string]struct{})
+	for _, o := range gcsObjects.List() {
+		set := gcsObjectIndex[o.Bucket]
+		if set == nil {
+			set = make(map[string]struct{})
+			gcsObjectIndex[o.Bucket] = set
+		}
+		set[o.Name] = struct{}{}
+	}
+	gcsIndexBuilt = true
+}
+
+// gcsIndexAdd records bucket/objectName in the per-bucket index.
+func gcsIndexAdd(bucket, objectName string) {
+	gcsIndexMu.Lock()
+	defer gcsIndexMu.Unlock()
+	if !gcsIndexBuilt {
+		gcsIndexRebuildLocked()
+	}
+	set := gcsObjectIndex[bucket]
+	if set == nil {
+		set = make(map[string]struct{})
+		gcsObjectIndex[bucket] = set
+	}
+	set[objectName] = struct{}{}
+}
+
+// gcsIndexRemove drops bucket/objectName from the per-bucket index.
+func gcsIndexRemove(bucket, objectName string) {
+	gcsIndexMu.Lock()
+	defer gcsIndexMu.Unlock()
+	if !gcsIndexBuilt {
+		gcsIndexRebuildLocked()
+	}
+	if set := gcsObjectIndex[bucket]; set != nil {
+		delete(set, objectName)
+		if len(set) == 0 {
+			delete(gcsObjectIndex, bucket)
+		}
+	}
+}
+
+// gcsBucketObjects returns every object in one bucket, looking each up
+// by exact key (bucket/object) via the per-bucket index. This avoids the
+// whole-store Filter scan, so listing bucket A doesn't touch bucket B's
+// objects. Output is identical to filtering the store by bucket — a
+// stale index entry whose object was removed out-of-band is skipped
+// (the Get miss), and the store remains authoritative.
+func gcsBucketObjects(bucket string) []GCSObject {
+	gcsIndexMu.RLock()
+	if !gcsIndexBuilt {
+		gcsIndexMu.RUnlock()
+		gcsIndexMu.Lock()
+		if !gcsIndexBuilt {
+			gcsIndexRebuildLocked()
+		}
+		gcsIndexMu.Unlock()
+		gcsIndexMu.RLock()
+	}
+	names := make([]string, 0, len(gcsObjectIndex[bucket]))
+	for name := range gcsObjectIndex[bucket] {
+		names = append(names, name)
+	}
+	gcsIndexMu.RUnlock()
+
+	out := make([]GCSObject, 0, len(names))
+	for _, name := range names {
+		if o, ok := gcsObjects.Get(bucket + "/" + name); ok {
+			out = append(out, o)
+		}
+	}
+	return out
+}
+
 func (res gcsObjectResource) applyTo(obj GCSObject) GCSObject {
 	if res.ContentType != nil {
 		obj.ContentType = *res.ContentType
@@ -289,6 +380,7 @@ func persistGCSObject(objects sim.Store[GCSObject], bucketName, objectName strin
 	obj.metadataCloned = true
 	obj.data = append([]byte(nil), data...)
 	objects.Put(bucketName+"/"+objectName, obj)
+	gcsIndexAdd(bucketName, objectName)
 	return obj, nil
 }
 
@@ -646,12 +738,11 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
-		// Delete all objects in the bucket
-		objs := objects.Filter(func(o GCSObject) bool {
-			return o.Bucket == bucketName
-		})
-		for _, obj := range objs {
+		// Delete all objects in the bucket (index-scoped — only this
+		// bucket's rows, not every object in the store).
+		for _, obj := range gcsBucketObjects(bucketName) {
 			objects.Delete(bucketName + "/" + obj.Name)
+			gcsIndexRemove(bucketName, obj.Name)
 		}
 
 		w.WriteHeader(http.StatusNoContent)
@@ -691,15 +782,16 @@ func registerGCS(srv *sim.Server) {
 			return
 		}
 
-		allObjects := objects.Filter(func(o GCSObject) bool {
-			if o.Bucket != bucketName {
-				return false
-			}
+		// Index-scoped: fetch only this bucket's objects, then apply the
+		// prefix filter. Same result as filtering the whole store by
+		// bucket+prefix, without scanning other buckets' objects.
+		var allObjects []GCSObject
+		for _, o := range gcsBucketObjects(bucketName) {
 			if prefix != "" && !strings.HasPrefix(o.Name, prefix) {
-				return false
+				continue
 			}
-			return true
-		})
+			allObjects = append(allObjects, o)
+		}
 
 		var items []map[string]any
 		var prefixes []string
@@ -822,6 +914,7 @@ func registerGCS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "object %q not found in bucket %q", objectName, bucketName)
 			return
 		}
+		gcsIndexRemove(bucketName, objectName)
 
 		w.WriteHeader(http.StatusNoContent)
 	})

@@ -85,6 +85,7 @@ func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(snsAPIVersion, "ListSubscriptions", handleSNSListSubscriptions)
 	r.RegisterVersioned(snsAPIVersion, "ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
 	r.RegisterVersioned(snsAPIVersion, "Publish", handleSNSPublish)
+	r.RegisterVersioned(snsAPIVersion, "PublishBatch", handleSNSPublishBatch)
 	r.RegisterVersioned(snsAPIVersion, "TagResource", handleSNSTagResource)
 	r.RegisterVersioned(snsAPIVersion, "UntagResource", handleSNSUntagResource)
 	r.RegisterVersioned(snsAPIVersion, "ListTagsForResource", handleSNSListTagsForResource)
@@ -111,12 +112,62 @@ func handleSNSCreateTopic(w http.ResponseWriter, r *http.Request) {
 		snsErrorXML(w, "InvalidParameter", "Name is required", http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
+	// CreateTopic carries initial topic attributes as Attributes.entry.N.{key,value}
+	// (the SNS query flattening of the Attributes map). FifoTopic, in
+	// particular, must be set here so the .fifo-suffix coupling and the
+	// per-message FIFO rules apply.
+	attrs := snsCreateTopicAttributes(r)
+	if msg, ok := snsFifoNameAttrMismatch(name, attrs); !ok {
+		snsErrorXML(w, "InvalidParameter", msg, http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	arn := snsTopicARN(name)
 	if _, ok := snsTopics.Get(name); !ok {
-		snsTopics.Put(name, SNSTopic{Name: name, ARN: arn, Tags: make(map[string]string)})
+		snsTopics.Put(name, SNSTopic{Name: name, ARN: arn, Tags: make(map[string]string), Attributes: attrs})
 	}
 	body := fmt.Sprintf("<CreateTopicResult><TopicArn>%s</TopicArn></CreateTopicResult>", xmlEscape(arn))
 	snsXMLResponse(w, "CreateTopic", body, sim.RequestID(r.Context()))
+}
+
+// snsCreateTopicAttributes pulls the initial Attributes map out of a
+// CreateTopic query request (Attributes.entry.N.key / .value).
+func snsCreateTopicAttributes(r *http.Request) map[string]string {
+	out := map[string]string{}
+	for i := 1; i <= 50; i++ {
+		k := r.FormValue(fmt.Sprintf("Attributes.entry.%d.key", i))
+		if k == "" {
+			break
+		}
+		out[k] = r.FormValue(fmt.Sprintf("Attributes.entry.%d.value", i))
+	}
+	return out
+}
+
+// snsTopicIsFifo reports whether a topic is FIFO (FifoTopic=true).
+func snsTopicIsFifo(t SNSTopic) bool {
+	return strings.EqualFold(t.Attributes["FifoTopic"], "true")
+}
+
+// snsTopicContentBasedDedup reports whether the topic has
+// ContentBasedDeduplication enabled.
+func snsTopicContentBasedDedup(t SNSTopic) bool {
+	return strings.EqualFold(t.Attributes["ContentBasedDeduplication"], "true")
+}
+
+// snsFifoNameAttrMismatch enforces the real-SNS coupling between the
+// .fifo name suffix and FifoTopic=true: a topic named "<x>.fifo"
+// requires FifoTopic=true and vice-versa. Returns (errMessage, ok=false)
+// on mismatch.
+func snsFifoNameAttrMismatch(name string, attrs map[string]string) (string, bool) {
+	hasSuffix := strings.HasSuffix(name, ".fifo")
+	fifoAttr := strings.EqualFold(attrs["FifoTopic"], "true")
+	if fifoAttr && !hasSuffix {
+		return "Fifo topic names must end with .fifo and be 1 to 256 characters long.", false
+	}
+	if hasSuffix && !fifoAttr {
+		return "Topic names must be made up of only uppercase and lowercase ASCII letters, numbers, underscores, and hyphens, and must be between 1 and 256 characters long.", false
+	}
+	return "", true
 }
 
 func handleSNSDeleteTopic(w http.ResponseWriter, r *http.Request) {
@@ -326,42 +377,50 @@ func handleSNSListSubscriptionsByTopic(w http.ResponseWriter, r *http.Request) {
 // for integration tests of "did the subscription configuration
 // get applied"; in-flight delivery is out of scope for the first
 // cut.
-func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
-	topicARN := r.FormValue("TopicArn")
-	message := r.FormValue("Message")
-	subject := r.FormValue("Subject")
-	if topicARN == "" || message == "" {
-		snsErrorXML(w, "InvalidParameter",
-			"TopicArn and Message are required",
-			http.StatusBadRequest, sim.RequestID(r.Context()))
-		return
-	}
-	if len(message) > 262144 {
-		snsErrorXML(w, "InvalidParameter",
-			"Invalid parameter: Message too long",
-			http.StatusBadRequest, sim.RequestID(r.Context()))
-		return
-	}
-	name := snsTopicNameFromARN(topicARN)
-	if _, ok := snsTopics.Get(name); !ok {
-		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
-		return
-	}
-	msgID := generateUUID()
+// snsPublishEntry is the common publish payload shared by Publish and
+// each PublishBatch entry.
+type snsPublishEntry struct {
+	Id                     string
+	Message                string
+	Subject                string
+	MessageGroupId         string
+	MessageDeduplicationId string
+}
 
-	// Fan out to SQS subscribers in-process. The published payload
-	// wraps the message in SNS's canonical envelope shape so SQS
-	// consumers parsing it like real SQS see the expected JSON.
-	for _, sub := range snsSubscriptions.List() {
-		if sub.TopicARN != topicARN {
-			continue
+// snsValidatePublish applies the per-message validation real SNS
+// performs: non-empty message, the 256 KiB limit, and — for a FIFO
+// topic — the MessageGroupId and dedup requirements. Returns an
+// (errCode, message) pair; empty code means valid.
+func snsValidatePublish(t SNSTopic, e snsPublishEntry) (string, string) {
+	if e.Message == "" {
+		return "InvalidParameter", "Invalid parameter: Empty value for parameter Message"
+	}
+	if len(e.Message) > 262144 {
+		return "InvalidParameter", "Invalid parameter: Message too long"
+	}
+	if snsTopicIsFifo(t) {
+		if e.MessageGroupId == "" {
+			return "InvalidParameter", "Invalid parameter: The MessageGroupId parameter is required for FIFO topics"
 		}
-		if sub.Protocol != "sqs" {
+		if !snsTopicContentBasedDedup(t) && e.MessageDeduplicationId == "" {
+			return "InvalidParameter",
+				"Invalid parameter: The topic should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly"
+		}
+	}
+	return "", ""
+}
+
+// snsFanout delivers one published message to the topic's SQS
+// subscribers in-process, wrapping it in SNS's canonical Notification
+// envelope so SQS consumers parse it like real SNS→SQS fan-out.
+func snsFanout(topicARN, msgID, subject, message string) {
+	for _, sub := range snsSubscriptions.List() {
+		if sub.TopicARN != topicARN || sub.Protocol != "sqs" {
 			continue
 		}
 		// Subscription Endpoint for an SQS subscriber is the queue ARN
 		// (arn:aws:sqs:<region>:<account>:<queue-name>).
-		queueName := snsTopicNameFromARN(sub.Endpoint) // ARN-suffix extractor reused
+		queueName := snsTopicNameFromARN(sub.Endpoint)
 		if _, ok := sqsQueues.Get(queueName); !ok {
 			continue
 		}
@@ -378,9 +437,132 @@ func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
 			})
 		})
 	}
+}
+
+func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
+	topicARN := r.FormValue("TopicArn")
+	if topicARN == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"TopicArn and Message are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	name := snsTopicNameFromARN(topicARN)
+	t, ok := snsTopics.Get(name)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	entry := snsPublishEntry{
+		Message:                r.FormValue("Message"),
+		Subject:                r.FormValue("Subject"),
+		MessageGroupId:         r.FormValue("MessageGroupId"),
+		MessageDeduplicationId: r.FormValue("MessageDeduplicationId"),
+	}
+	if code, msg := snsValidatePublish(t, entry); code != "" {
+		snsErrorXML(w, code, msg, http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	msgID := generateUUID()
+	snsFanout(topicARN, msgID, entry.Subject, entry.Message)
 
 	body := fmt.Sprintf("<PublishResult><MessageId>%s</MessageId></PublishResult>", xmlEscape(msgID))
 	snsXMLResponse(w, "Publish", body, sim.RequestID(r.Context()))
+}
+
+// handleSNSPublishBatch publishes up to 10 messages to a topic in a
+// single call, reporting per-entry success/failure. Batch-level errors
+// (empty list, >10 entries, duplicate Ids, total payload over 256 KiB)
+// are top-level error responses; per-entry validation failures (e.g. a
+// FIFO entry missing MessageGroupId) land in the <Failed> list with HTTP
+// 200, matching the real SNS wire contract.
+func handleSNSPublishBatch(w http.ResponseWriter, r *http.Request) {
+	requestID := sim.RequestID(r.Context())
+	topicARN := r.FormValue("TopicArn")
+	if topicARN == "" {
+		snsErrorXML(w, "InvalidParameter", "TopicArn is required", http.StatusBadRequest, requestID)
+		return
+	}
+	name := snsTopicNameFromARN(topicARN)
+	t, ok := snsTopics.Get(name)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, requestID)
+		return
+	}
+	entries := snsPublishBatchEntries(r)
+	if len(entries) == 0 {
+		snsErrorXML(w, "EmptyBatchRequest",
+			"The batch request doesn't contain any entries.", http.StatusBadRequest, requestID)
+		return
+	}
+	if len(entries) > 10 {
+		snsErrorXML(w, "TooManyEntriesInBatchRequest",
+			"The batch request contains more entries than permissible.", http.StatusBadRequest, requestID)
+		return
+	}
+	seen := map[string]bool{}
+	total := 0
+	for _, e := range entries {
+		if seen[e.Id] {
+			snsErrorXML(w, "BatchEntryIdsNotDistinct",
+				"Two or more batch entries in the request have the same Id.", http.StatusBadRequest, requestID)
+			return
+		}
+		seen[e.Id] = true
+		total += len(e.Message)
+	}
+	if total > 262144 {
+		snsErrorXML(w, "BatchRequestTooLong",
+			"The length of all the batch messages put together is more than the limit.", http.StatusBadRequest, requestID)
+		return
+	}
+
+	var b strings.Builder
+	b.WriteString("<PublishBatchResult><Successful>")
+	var failed strings.Builder
+	for _, e := range entries {
+		if code, msg := snsValidatePublish(t, e); code != "" {
+			fmt.Fprintf(&failed,
+				"<member><Id>%s</Id><Code>%s</Code><Message>%s</Message><SenderFault>true</SenderFault></member>",
+				xmlEscape(e.Id), xmlEscape(code), xmlEscape(msg))
+			continue
+		}
+		msgID := generateUUID()
+		snsFanout(topicARN, msgID, e.Subject, e.Message)
+		fmt.Fprintf(&b, "<member><Id>%s</Id><MessageId>%s</MessageId></member>",
+			xmlEscape(e.Id), xmlEscape(msgID))
+	}
+	b.WriteString("</Successful><Failed>")
+	b.WriteString(failed.String())
+	b.WriteString("</Failed></PublishBatchResult>")
+	snsXMLResponse(w, "PublishBatch", b.String(), requestID)
+}
+
+// snsPublishBatchEntries pulls the PublishBatchRequestEntries.member.N.*
+// flattened query parameters into typed entries.
+func snsPublishBatchEntries(r *http.Request) []snsPublishEntry {
+	var out []snsPublishEntry
+	// Parse past the 10-entry cap so an over-limit batch is detectable
+	// (the handler rejects len > 10 with TooManyEntriesInBatchRequest).
+	for i := 1; ; i++ {
+		prefix := fmt.Sprintf("PublishBatchRequestEntries.member.%d.", i)
+		id := r.FormValue(prefix + "Id")
+		msg := r.FormValue(prefix + "Message")
+		// An absent member breaks the contiguous member sequence.
+		if id == "" && msg == "" &&
+			r.FormValue(prefix+"MessageGroupId") == "" &&
+			r.FormValue(prefix+"Subject") == "" {
+			break
+		}
+		out = append(out, snsPublishEntry{
+			Id:                     id,
+			Message:                msg,
+			Subject:                r.FormValue(prefix + "Subject"),
+			MessageGroupId:         r.FormValue(prefix + "MessageGroupId"),
+			MessageDeduplicationId: r.FormValue(prefix + "MessageDeduplicationId"),
+		})
+	}
+	return out
 }
 
 func handleSNSTagResource(w http.ResponseWriter, r *http.Request) {

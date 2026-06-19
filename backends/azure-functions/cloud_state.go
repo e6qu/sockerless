@@ -119,6 +119,14 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	// Resolve the single backing (non-pod) Function App name once; if found,
+	// Get just that one per tick instead of re-listing every Function App
+	// each tick. A pod-site member / resolve failure falls back to the full
+	// scan, which keeps its gone-counter so a vanished resource still
+	// returns -1. The single-resource path likewise detects a deleted site
+	// (Get NotFound persistently) and returns -1 after the threshold.
+	appName, _ := p.resolveFunctionAppName(ctx, containerID)
+
 	gone := 0
 	for {
 		select {
@@ -127,6 +135,23 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 		case <-ticker.C:
 			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 				return inv.ExitCode, nil
+			}
+			if appName != "" {
+				_, err := p.server.azure.WebApps.Get(ctx, p.server.config.ResourceGroup, appName, nil)
+				if err == nil {
+					// Site still exists and no invocation result yet — the
+					// container is still available for invocation. A deleted
+					// site is the only exit signal for a one-shot FaaS
+					// container without a recorded result.
+					gone = 0
+					continue
+				}
+				// Site vanished (deleted) — count toward the gone threshold
+				// directly so we return -1 without a per-tick full scan.
+				if gone++; gone >= core.WaitGoneThreshold {
+					return -1, nil
+				}
+				continue
 			}
 			containers, err := p.queryFunctionApps(ctx)
 			if err != nil {
@@ -143,6 +168,39 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			}
 		}
 	}
+}
+
+// resolveFunctionAppName returns the Azure Function App name backing a
+// single (non-pod) container ID, or "" if no matching sockerless-managed
+// single-container site is found. Pod sites (carrying a members manifest)
+// are skipped so WaitForExit falls back to the full scan for pod members.
+func (p *azfCloudState) resolveFunctionAppName(ctx context.Context, containerID string) (string, error) {
+	pager := p.server.azure.WebApps.NewListByResourceGroupPager(p.server.config.ResourceGroup, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			return "", err
+		}
+		for _, site := range page.Value {
+			if site.Tags == nil {
+				continue
+			}
+			if derefTag(site.Tags["sockerless-managed"]) != "true" {
+				continue
+			}
+			// Pod sites back N members — single-resource derivation doesn't
+			// apply; let those fall back to the scan.
+			if derefTag(site.Tags[podMembersTagKey]) != "" {
+				continue
+			}
+			if derefTag(site.Tags["sockerless-container-id"]) == containerID {
+				if site.Name != nil {
+					return *site.Name, nil
+				}
+			}
+		}
+	}
+	return "", nil
 }
 
 // queryFunctionApps lists all sockerless-managed Azure Function Apps and merges with PendingCreates.

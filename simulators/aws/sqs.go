@@ -177,6 +177,7 @@ func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonSQS.GetQueueAttributes", handleSQSGetQueueAttributes)
 	r.Register("AmazonSQS.SetQueueAttributes", handleSQSSetQueueAttributes)
 	r.Register("AmazonSQS.SendMessage", handleSQSSendMessage)
+	r.Register("AmazonSQS.SendMessageBatch", handleSQSSendMessageBatch)
 	r.Register("AmazonSQS.ReceiveMessage", handleSQSReceiveMessage)
 	r.Register("AmazonSQS.DeleteMessage", handleSQSDeleteMessage)
 	r.Register("AmazonSQS.TagQueue", handleSQSTagQueue)
@@ -216,6 +217,10 @@ func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.QueueName == "" {
 		sqsErrorJSON(w, "MissingParameter", "QueueName is required", http.StatusBadRequest)
+		return
+	}
+	if msg, ok := sqsFifoNameAttrMismatch(req.QueueName, req.Attributes); !ok {
+		sqsErrorJSON(w, "InvalidParameterValue", msg, http.StatusBadRequest)
 		return
 	}
 	if existing, ok := sqsQueues.Get(req.QueueName); ok {
@@ -434,46 +439,92 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
+// sqsSendEntry is the common send payload shared by SendMessage and
+// each SendMessageBatch entry. The batch entry carries an Id; the
+// single-send path leaves it empty.
+type sqsSendEntry struct {
+	Id                     string                         `json:"Id"`
+	MessageBody            string                         `json:"MessageBody"`
+	MessageAttributes      map[string]SQSMessageAttribute `json:"MessageAttributes"`
+	MessageGroupId         string                         `json:"MessageGroupId"`
+	MessageDeduplicationId string                         `json:"MessageDeduplicationId"`
+}
+
+// sqsValidateSend applies the per-message validation real SQS performs
+// before enqueue: non-empty body, the 256 KiB body limit, and — for a
+// FIFO queue — the MessageGroupId and dedup requirements. It returns an
+// (errCode, message) pair on failure; empty code means the entry is valid.
+func sqsValidateSend(q SQSQueue, e sqsSendEntry) (string, string) {
+	if e.MessageBody == "" {
+		return "MissingParameter", "MessageBody is required"
+	}
+	if len(e.MessageBody) > sqsMaxMessageBytes {
+		return "InvalidParameterValue",
+			"One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes."
+	}
+	if sqsQueueIsFifo(q) {
+		if e.MessageGroupId == "" {
+			return "MissingParameter", "The request must contain the parameter MessageGroupId."
+		}
+		if !sqsContentBasedDedup(q) && e.MessageDeduplicationId == "" {
+			return "InvalidParameterValue",
+				"The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly"
+		}
+	}
+	return "", ""
+}
+
+// sqsEnqueue appends a validated entry to the queue and returns the
+// SDK-shaped result fields (MessageId, MD5OfMessageBody, and — when
+// attributes are present — MD5OfMessageAttributes).
+func sqsEnqueue(name string, e sqsSendEntry) (msgID, md5OfBody, md5OfAttrs string) {
+	msgID = generateUUID()
+	hash := md5.Sum([]byte(e.MessageBody))
+	md5OfBody = hex.EncodeToString(hash[:])
+	md5OfAttrs = sqsMessageAttributeMD5(e.MessageAttributes)
+	now := time.Now().Unix()
+	sqsQueues.Update(name, func(q *SQSQueue) {
+		q.Messages = append(q.Messages, SQSMessage{
+			MessageId:              msgID,
+			Body:                   e.MessageBody,
+			MD5OfBody:              md5OfBody,
+			SentTimestamp:          now,
+			MessageAttributes:      e.MessageAttributes,
+			MD5OfMessageAttributes: md5OfAttrs,
+		})
+	})
+	return msgID, md5OfBody, md5OfAttrs
+}
+
 func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		QueueUrl          string                         `json:"QueueUrl"`
-		MessageBody       string                         `json:"MessageBody"`
-		MessageAttributes map[string]SQSMessageAttribute `json:"MessageAttributes"`
+		QueueUrl               string                         `json:"QueueUrl"`
+		MessageBody            string                         `json:"MessageBody"`
+		MessageAttributes      map[string]SQSMessageAttribute `json:"MessageAttributes"`
+		MessageGroupId         string                         `json:"MessageGroupId"`
+		MessageDeduplicationId string                         `json:"MessageDeduplicationId"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
 		return
 	}
 	name := queueNameFromURL(req.QueueUrl)
-	if _, ok := sqsQueues.Get(name); !ok {
+	q, ok := sqsQueues.Get(name)
+	if !ok {
 		sqsQueueDoesNotExist(w)
 		return
 	}
-	if req.MessageBody == "" {
-		sqsErrorJSON(w, "MissingParameter", "MessageBody is required", http.StatusBadRequest)
+	entry := sqsSendEntry{
+		MessageBody:            req.MessageBody,
+		MessageAttributes:      req.MessageAttributes,
+		MessageGroupId:         req.MessageGroupId,
+		MessageDeduplicationId: req.MessageDeduplicationId,
+	}
+	if code, msg := sqsValidateSend(q, entry); code != "" {
+		sqsErrorJSON(w, code, msg, http.StatusBadRequest)
 		return
 	}
-	if len(req.MessageBody) > sqsMaxMessageBytes {
-		sqsErrorJSON(w, "InvalidParameterValue",
-			"One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes.",
-			http.StatusBadRequest)
-		return
-	}
-	msgID := generateUUID()
-	hash := md5.Sum([]byte(req.MessageBody))
-	md5OfBody := hex.EncodeToString(hash[:])
-	md5OfAttrs := sqsMessageAttributeMD5(req.MessageAttributes)
-	now := time.Now().Unix()
-	sqsQueues.Update(name, func(q *SQSQueue) {
-		q.Messages = append(q.Messages, SQSMessage{
-			MessageId:              msgID,
-			Body:                   req.MessageBody,
-			MD5OfBody:              md5OfBody,
-			SentTimestamp:          now,
-			MessageAttributes:      req.MessageAttributes,
-			MD5OfMessageAttributes: md5OfAttrs,
-		})
-	})
+	msgID, md5OfBody, md5OfAttrs := sqsEnqueue(name, entry)
 	resp := map[string]string{
 		"MessageId":        msgID,
 		"MD5OfMessageBody": md5OfBody,
@@ -482,6 +533,86 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 		resp["MD5OfMessageAttributes"] = md5OfAttrs
 	}
 	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// handleSQSSendMessageBatch sends up to 10 messages in a single call,
+// reporting per-entry success/failure the way real SQS does. Batch-level
+// failures (empty list, >10 entries, duplicate Ids, total payload over
+// the 256 KiB limit) are returned as top-level errors; per-entry
+// validation failures (e.g. a FIFO entry missing MessageGroupId) land in
+// the Failed array with HTTP 200, matching the real wire contract.
+func handleSQSSendMessageBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl string         `json:"QueueUrl"`
+		Entries  []sqsSendEntry `json:"Entries"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	q, ok := sqsQueues.Get(name)
+	if !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if len(req.Entries) == 0 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.EmptyBatchRequest",
+			"There should be at least one SendMessageBatchRequestEntry in the request.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(req.Entries) > 10 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.TooManyEntriesInBatchRequest",
+			"Maximum number of entries per request are 10. You have sent "+strconv.Itoa(len(req.Entries))+".",
+			http.StatusBadRequest)
+		return
+	}
+	seen := map[string]bool{}
+	total := 0
+	for _, e := range req.Entries {
+		if seen[e.Id] {
+			sqsErrorJSON(w, "AWS.SimpleQueueService.BatchEntryIdsNotDistinct",
+				"Id "+e.Id+" repeated.", http.StatusBadRequest)
+			return
+		}
+		seen[e.Id] = true
+		total += len(e.MessageBody)
+	}
+	if total > sqsMaxMessageBytes {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.BatchRequestTooLong",
+			"Batch requests cannot be longer than 262144 bytes. You have sent "+strconv.Itoa(total)+" bytes.",
+			http.StatusBadRequest)
+		return
+	}
+
+	successful := make([]map[string]string, 0, len(req.Entries))
+	failed := make([]map[string]any, 0)
+	for _, e := range req.Entries {
+		if code, msg := sqsValidateSend(q, e); code != "" {
+			failed = append(failed, map[string]any{
+				"Id":          e.Id,
+				"Code":        code,
+				"Message":     msg,
+				"SenderFault": true,
+			})
+			continue
+		}
+		msgID, md5OfBody, md5OfAttrs := sqsEnqueue(name, e)
+		entry := map[string]string{
+			"Id":               e.Id,
+			"MessageId":        msgID,
+			"MD5OfMessageBody": md5OfBody,
+		}
+		if md5OfAttrs != "" {
+			entry["MD5OfMessageAttributes"] = md5OfAttrs
+		}
+		successful = append(successful, entry)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Successful": successful,
+		"Failed":     failed,
+	})
 }
 
 func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
@@ -656,6 +787,39 @@ func handleSQSListQueueTags(w http.ResponseWriter, r *http.Request) {
 
 // sqsMaxMessageBytes is the SQS message-body size limit (256 KiB).
 const sqsMaxMessageBytes = 262144
+
+// sqsQueueIsFifo reports whether the queue is a FIFO queue, per its
+// FifoQueue attribute (real SQS keys FIFO behavior off this attribute,
+// which CreateQueue requires to agree with the .fifo name suffix).
+func sqsQueueIsFifo(q SQSQueue) bool {
+	return strings.EqualFold(q.Attributes["FifoQueue"], "true")
+}
+
+// sqsContentBasedDedup reports whether the queue has
+// ContentBasedDeduplication enabled — when set, a FIFO send may omit
+// MessageDeduplicationId (SQS derives the dedup id from the body).
+func sqsContentBasedDedup(q SQSQueue) bool {
+	return strings.EqualFold(q.Attributes["ContentBasedDeduplication"], "true")
+}
+
+// sqsFifoNameAttrMismatch enforces the real-SQS coupling between the
+// .fifo name suffix and the FifoQueue=true attribute: a queue named
+// "<x>.fifo" requires FifoQueue=true, and FifoQueue=true requires the
+// .fifo suffix. It returns (errMessage, ok=false) on a mismatch.
+func sqsFifoNameAttrMismatch(name string, attrs map[string]string) (string, bool) {
+	hasSuffix := strings.HasSuffix(name, ".fifo")
+	fifoAttr := strings.EqualFold(attrs["FifoQueue"], "true")
+	if fifoAttr && !hasSuffix {
+		return "The name of a FIFO queue can only include alphanumeric characters, hyphens, or underscores, must end with the .fifo suffix and be 1 to 80 in length", false
+	}
+	if hasSuffix && !fifoAttr {
+		// Real SQS rejects the '.' in a non-FIFO queue name: a dot is
+		// only valid as part of the trailing .fifo suffix, which is
+		// itself only valid when FifoQueue=true.
+		return "Can only include alphanumeric characters, hyphens, or underscores. 1 to 80 in length", false
+	}
+	return "", true
+}
 
 // sqsAttributesEqual reports whether two attribute maps are equal (CreateQueue
 // idempotency: same name + same attributes → OK; differing → QueueNameExists).

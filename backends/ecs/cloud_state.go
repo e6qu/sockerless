@@ -121,12 +121,30 @@ func (p *ecsCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	ticker := time.NewTicker(p.config.PollInterval)
 	defer ticker.Stop()
 
+	// Resolve the backing task ARN once; if found, DescribeTasks just that
+	// single ARN per tick (deriving exit state the same way queryTasks does)
+	// instead of listing+describing every task in the cluster each tick. A
+	// vanished task / resolve failure falls back to the full scan, which
+	// keeps the gone-counter so a removed container still returns -1.
+	taskARN, _, _ := p.resolveTaskARN(ctx, containerID)
+
 	gone := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
 		case <-ticker.C:
+			if taskARN != "" {
+				st, ok := p.taskStateByARN(ctx, taskARN)
+				if ok {
+					if !st.Running && st.Status == "exited" {
+						return st.ExitCode, nil
+					}
+					continue
+				}
+				// Task vanished (ECS evicted the stopped task) — fall
+				// through to the full scan + gone-counter below.
+			}
 			containers, err := p.queryTasks(ctx)
 			if err != nil {
 				continue
@@ -142,6 +160,23 @@ func (p *ecsCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			}
 		}
 	}
+}
+
+// taskStateByARN describes a single ECS task and derives its Docker
+// container state via the same mapTaskStatus path queryTasks uses.
+// Returns ok=false when the task can't be described (vanished/error),
+// so the caller can fall back to the full scan.
+func (p *ecsCloudState) taskStateByARN(ctx context.Context, taskARN string) (api.ContainerState, bool) {
+	desc, err := p.ecs.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+		Cluster: aws.String(p.cluster),
+		Tasks:   []string{taskARN},
+		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
+	})
+	if err != nil || len(desc.Tasks) == 0 {
+		return api.ContainerState{}, false
+	}
+	task := desc.Tasks[0]
+	return mapTaskStatus(task, tagsToMap(task.Tags)), true
 }
 
 // queryTasks fetches all sockerless-managed tasks from ECS and reconstructs containers.
