@@ -4,11 +4,11 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-06-19 - AWS sim CloudWatch alarms + EMF + EC2 CopySnapshot (#602/#603/#604)
+## 2026-06-19 - AWS sim observability fidelity batch (#602–#606)
 
-The consumer filed three new AWS-sim fidelity gaps, all observability. Each was
-implemented at cloud-API fidelity with SDK + CLI + terraform coverage in the
-same PR.
+The consumer filed five new AWS-sim fidelity gaps, all observability. Each was
+implemented at cloud-API fidelity with SDK + CLI coverage (+ terraform where the
+op maps to a TF resource) in the same PR.
 
 - **EC2 CopySnapshot (#602, BUG-1882).** The EBS lifecycle had create/describe/
   delete but not copy, so the cross-region snapshot DR flow (snapshot → copy →
@@ -29,6 +29,21 @@ same PR.
   event's `_aws.CloudWatchMetrics` directives and feeds the existing `cwMetrics`
   store, so the standard ECS/Fargate EMF-over-stdout → awslogs → CloudWatch path
   is now queryable through the ordinary metric APIs with no PutMetricData call.
+
+- **FilterLogEvents prefix (#605, BUG-1885).** `FilterLogEvents` decoded only
+  `logStreamNames`, so a `logStreamNamePrefix`-scoped query was treated as no
+  filter and returned every stream's events — a data-isolation gap. Added prefix
+  selection (reusing DescribeLogStreams' `HasPrefix`) + the mutual-exclusion
+  error real CloudWatch returns when both are supplied.
+
+- **LookupEvents pagination (#606, BUG-1886).** The CloudTrail `LookupEvents`
+  NextToken was an absolute offset over a list re-sorted newest-first each call,
+  so an event prepended between page fetches shifted every offset and consecutive
+  pages overlapped (duplicate EventIds). The token is now an opaque cursor on the
+  last event's stable `(EventTime, EventId)` key, resumed after — immune to
+  head-insertion, each event returned exactly once. Also stopped recording the
+  read-only `LookupEvents` calls into the trail (real CloudTrail doesn't log
+  them), which had self-amplified the drift.
 
 Reused the BUG-1513 lesson: CloudWatch speaks three wire protocols and different
 clients pick different ones (local CLI = query, CI CLI = awsJson, Go SDK +

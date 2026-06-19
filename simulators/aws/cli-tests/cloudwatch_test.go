@@ -128,6 +128,37 @@ func TestLogs_FilterLogEvents(t *testing.T) {
 	runCLI(t, awsCLI("logs", "delete-log-group", "--log-group-name", "/cli/filter-test"))
 }
 
+// TestLogs_FilterLogEventsByStreamPrefix covers --log-stream-name-prefix: it
+// scopes the searched streams (previously ignored, so every stream's events
+// leaked in).
+func TestLogs_FilterLogEventsByStreamPrefix(t *testing.T) {
+	group := "/cli/prefix-filter"
+	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", group))
+	defer runCLI(t, awsCLI("logs", "delete-log-group", "--log-group-name", group))
+	for _, s := range []string{"ws-aaa/x", "ws-bbb/y"} {
+		runCLI(t, awsCLI("logs", "create-log-stream", "--log-group-name", group, "--log-stream-name", s))
+	}
+	now := time.Now().UnixMilli()
+	put := func(stream, msg string) {
+		runCLI(t, awsCLI("logs", "put-log-events", "--log-group-name", group, "--log-stream-name", stream,
+			"--log-events", fmt.Sprintf(`[{"timestamp":%d,"message":%q}]`, now, msg)))
+	}
+	put("ws-aaa/x", "hello-aaa")
+	put("ws-bbb/y", "hello-bbb")
+
+	out := runCLI(t, awsCLI("logs", "filter-log-events",
+		"--log-group-name", group, "--log-stream-name-prefix", "ws-aaa",
+		"--output", "json"))
+	var result struct {
+		Events []struct {
+			Message string `json:"message"`
+		} `json:"events"`
+	}
+	parseJSON(t, out, &result)
+	require.Len(t, result.Events, 1, "prefix must scope to ws-aaa streams only")
+	assert.Equal(t, "hello-aaa", result.Events[0].Message)
+}
+
 func TestLogs_DeleteLogGroup(t *testing.T) {
 	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", "/cli/delete-test"))
 	runCLI(t, awsCLI("logs", "delete-log-group", "--log-group-name", "/cli/delete-test"))

@@ -4,10 +4,12 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/aws-sim-cloudwatch-snapshot-602-604` — three new AWS-sim fidelity issues filed by the consumer (all CloudWatch/EC2 observability), each fixed with SDK + CLI + terraform coverage:
+`feat/aws-sim-cloudwatch-snapshot-602-604` — **five** new AWS-sim fidelity issues filed by the consumer (#602–#606, all CloudWatch/EC2 observability), each fixed with SDK + CLI (+ terraform where it's a TF resource):
 - **BUG-1882 (#602):** EC2 `CopySnapshot` was unrouted (`InvalidAction`). `handleCopySnapshot` creates a new snapshot id duplicating the source's backing data (docker-volume / host-dir copy, same as `CreateSnapshot`), inheriting size + encryption + KMS — the cross-region EBS DR primitive. TF `aws_ebs_snapshot_copy`.
 - **BUG-1883 (#603):** CloudWatch metric alarms were entirely unimplemented. New `cloudwatch_alarms.go` adds `PutMetricAlarm`/`DescribeAlarms`/`DeleteAlarms` on **all three** CW wire protocols (query for older botocore, awsJson1.0 for newer CLI, rpc-v2-cbor for Go SDK / terraform) over one `cwAlarms` store; `DescribeAlarms` evaluates `StateValue` live from the metric data (OK/ALARM/INSUFFICIENT_DATA, honouring `TreatMissingData`). Alarm tagging on cbor makes `aws_cloudwatch_metric_alarm`'s transparent-tagging read idempotent.
 - **BUG-1884 (#604):** EMF log events weren't extracted into metrics. `extractEMFMetrics` parses `_aws.CloudWatchMetrics` blocks in `PutLogEvents` and feeds the existing `cwMetrics` store — the standard ECS/Fargate EMF-over-stdout → awslogs path, now queryable with no `PutMetricData` call.
+- **BUG-1885 (#605):** CloudWatch Logs `FilterLogEvents` ignored `logStreamNamePrefix` (decoded only `logStreamNames`), so a prefix-scoped query returned every stream's events. Added the field + `strings.HasPrefix` selection + the mutual-exclusion `InvalidParameterException`. SDK + CLI (runtime read op, no TF resource).
+- **BUG-1886 (#606):** CloudTrail `LookupEvents` paginated with an absolute offset token over a list re-sorted newest-first each call, so an event prepended mid-pagination shifted every offset → duplicate/overlapping pages. `NextToken` is now an opaque cursor on the last event's stable `(EventTime, EventId)` key (resume-after, immune to head-insertion); also stopped recording `LookupEvents` reads into the trail (real CloudTrail doesn't log them — they self-amplified the drift). SDK + CLI.
 
 **Lesson reused (BUG-1513 class):** CloudWatch has three wire protocols; the local aws CLI sends **query**, CI's newer CLI sends **awsJson**, the Go SDK/terraform send **cbor**. A new CW op must cover all three (alarms here mirror what metrics already did) or it passes on one client and 404s on another.
 

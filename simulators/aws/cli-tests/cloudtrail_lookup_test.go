@@ -120,3 +120,50 @@ func TestCloudTrailRecordsRESTServiceAPICallsCLI(t *testing.T) {
 		t.Fatalf("failed Lambda REST event did not carry error details: %s", record)
 	}
 }
+
+// TestCloudTrailLookupEventsPaginationCLI proves the lookup-events NextToken is
+// a stable cursor: an event ingested mid-pagination must not make a previously
+// returned EventId reappear on a later page (the old absolute-offset token
+// overlapped pages on head-insertion).
+func TestCloudTrailLookupEventsPaginationCLI(t *testing.T) {
+	for i := 0; i < 6; i++ {
+		runCLI(t, awsCLI("ec2", "create-volume", "--availability-zone", "us-east-1a", "--size", "1"))
+	}
+
+	seen := map[string]int{}
+	token := ""
+	pages := 0
+	for pages < 10 {
+		args := []string{"cloudtrail", "lookup-events", "--no-paginate", "--max-results", "3", "--output", "json"}
+		if token != "" {
+			args = append(args, "--next-token", token)
+		}
+		var res struct {
+			Events []struct {
+				EventId string `json:"EventId"`
+			} `json:"Events"`
+			NextToken string `json:"NextToken"`
+		}
+		parseJSON(t, runCLI(t, awsCLI(args...)), &res)
+		for _, e := range res.Events {
+			seen[e.EventId]++
+		}
+		pages++
+		if pages == 1 {
+			runCLI(t, awsCLI("ec2", "create-volume", "--availability-zone", "us-east-1a", "--size", "1"))
+		}
+		if res.NextToken == "" || len(res.Events) == 0 {
+			break
+		}
+		token = res.NextToken
+	}
+
+	if pages < 2 {
+		t.Fatalf("test must span multiple pages; got %d", pages)
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Fatalf("EventId %s appeared on %d pages; the cursor must return each event once", id, n)
+		}
+	}
+}

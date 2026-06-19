@@ -27,14 +27,14 @@ func TestCloudTrailLookupEventsReturnsNewestMatchesFirst(t *testing.T) {
 		Username:    "sockerless",
 	})
 
-	out := cloudTrailLookupEvents(events, nil, 50)
-	if got := out[0]["EventName"]; got != "CreateVpc" {
+	out := cloudTrailMatchedOrdered(events, nil)
+	if got := out[0].EventName; got != "CreateVpc" {
 		t.Fatalf("newest event must be first; got %v", got)
 	}
 
-	out = cloudTrailLookupEvents(events, []cloudTrailLookupAttribute{
+	out = cloudTrailMatchedOrdered(events, []cloudTrailLookupAttribute{
 		{AttributeKey: "EventName", AttributeValue: "CreateVpc"},
-	}, 50)
+	})
 	if len(out) != 1 {
 		t.Fatalf("expected one filtered CreateVpc event, got %d", len(out))
 	}

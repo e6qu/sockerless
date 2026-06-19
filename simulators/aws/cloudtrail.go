@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
@@ -270,16 +271,38 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// The full matched, time-ordered event list; pagination then slices it.
-	all := cloudTrailLookupEvents(cloudTrailEvents.List(), req.LookupAttributes, 0)
+	// The full matched, time-ordered event list; a stable cursor resumes within
+	// it so head-insertion between page fetches can't duplicate or skip events.
+	matched := cloudTrailMatchedOrdered(cloudTrailEvents.List(), req.LookupAttributes)
 	pageSize := req.MaxResults
-	if pageSize > 50 {
+	if pageSize <= 0 || pageSize > 50 {
 		pageSize = 50
 	}
-	page, next := awsPageExplicit(all, req.NextToken, pageSize)
+
+	start := 0
+	if req.NextToken != "" {
+		if curTime, curID, ok := cloudTrailDecodeToken(req.NextToken); ok {
+			start = len(matched) // token past the end → empty page
+			for i, ev := range matched {
+				if cloudTrailAfterCursor(ev, curTime, curID) {
+					start = i
+					break
+				}
+			}
+		}
+	}
+	end := start + pageSize
+	if end > len(matched) {
+		end = len(matched)
+	}
+
+	page := make([]map[string]any, 0, end-start)
+	for _, ev := range matched[start:end] {
+		page = append(page, cloudTrailEventJSON(ev))
+	}
 	resp := map[string]any{"Events": page}
-	if next != "" {
-		resp["NextToken"] = next
+	if end < len(matched) && end > start {
+		resp["NextToken"] = cloudTrailEncodeToken(matched[end-1])
 	}
 	writeAWSJSON(w, http.StatusOK, resp)
 }
@@ -289,10 +312,11 @@ type cloudTrailLookupAttribute struct {
 	AttributeValue string
 }
 
-// cloudTrailLookupEvents returns matched events in descending time order. A
-// max of 0 means no cap (the caller paginates the full list); a positive max
-// truncates the result.
-func cloudTrailLookupEvents(events []CloudTrailEvent, attrs []cloudTrailLookupAttribute, max int) []map[string]any {
+// cloudTrailMatchedOrdered returns the events matching attrs in descending
+// (EventTime, EventId) order — the stable total order that pagination cursors
+// resume against. (EventTime, EventId) is unique (EventId is a UUID), so a
+// cursor names exactly one position regardless of events ingested later.
+func cloudTrailMatchedOrdered(events []CloudTrailEvent, attrs []cloudTrailLookupAttribute) []CloudTrailEvent {
 	ordered := append([]CloudTrailEvent(nil), events...)
 	sort.SliceStable(ordered, func(i, j int) bool {
 		left, leftErr := time.Parse(time.RFC3339, ordered[i].EventTime)
@@ -305,17 +329,44 @@ func cloudTrailLookupEvents(events []CloudTrailEvent, attrs []cloudTrailLookupAt
 		}
 		return ordered[i].EventId > ordered[j].EventId
 	})
-	out := make([]map[string]any, 0, len(events))
+	matched := make([]CloudTrailEvent, 0, len(ordered))
 	for _, ev := range ordered {
-		if max > 0 && len(out) >= max {
-			break
+		if cloudTrailEventMatches(ev, attrs) {
+			matched = append(matched, ev)
 		}
-		if !cloudTrailEventMatches(ev, attrs) {
-			continue
-		}
-		out = append(out, cloudTrailEventJSON(ev))
 	}
-	return out
+	return matched
+}
+
+// cloudTrailEncodeToken / cloudTrailDecodeToken make the LookupEvents NextToken
+// an opaque cursor naming the last-returned event by its stable
+// (EventTime, EventId) key, rather than an absolute offset. Resuming "after"
+// that key is immune to head-insertion: events ingested mid-pagination are
+// newer (sort before the cursor) and so are never revisited, and none are
+// skipped — each matching event is returned exactly once.
+func cloudTrailEncodeToken(ev CloudTrailEvent) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(ev.EventTime + "\x00" + ev.EventId))
+}
+
+func cloudTrailDecodeToken(token string) (eventTime, eventID string, ok bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.SplitN(string(raw), "\x00", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
+}
+
+// cloudTrailAfterCursor reports whether ev sorts strictly after the cursor in
+// the descending (EventTime, EventId) order — i.e. ev belongs on a later page.
+func cloudTrailAfterCursor(ev CloudTrailEvent, curTime, curID string) bool {
+	if ev.EventTime != curTime {
+		return ev.EventTime < curTime // descending by time: later page = older event
+	}
+	return ev.EventId < curID // same second: descending by id
 }
 
 func handleCloudTrailDeleteTrail(w http.ResponseWriter, r *http.Request) {
@@ -488,6 +539,13 @@ func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, s
 	}
 	eventName := awsRequestOperationName(r)
 	if eventName == "" {
+		return
+	}
+	// Real CloudTrail does not log its own LookupEvents read calls. Recording
+	// them grows the trail under a paginating consumer's feet — each page fetch
+	// would prepend a fresh event — so skip it (the read API used to walk the
+	// trail must not perturb the trail it walks).
+	if eventName == "LookupEvents" {
 		return
 	}
 	source, ok := awsEventSource(r)
