@@ -6,6 +6,34 @@ import (
 	"github.com/sockerless/api"
 )
 
+// WaitGoneThreshold is the number of consecutive successful cloud scans in
+// which a waited-on container is wholly absent before WaitForExit treats it as
+// terminally gone. A container being waited on existed at wait time, so a
+// persistent absence (not a transient query error) means the cloud resource was
+// GC'd / deleted out-of-band — without this, WaitForExit (and a `docker wait`
+// blocked on it) would poll forever. Several ticks guard against a brief
+// eventual-consistency gap where a just-transitioned resource momentarily drops
+// out of a list.
+const WaitGoneThreshold = 5
+
+// ScanContainersForExit inspects a cloud scan result for the target container.
+// found reports whether the container appears at all; when it has reached a
+// terminal exited state, (exitCode, true, true) is returned so the caller
+// returns it. Callers count consecutive !found results against WaitGoneThreshold
+// to detect a vanished resource.
+func ScanContainersForExit(containers []api.Container, containerID string) (exitCode int, found, exited bool) {
+	for _, c := range containers {
+		if c.ID != containerID {
+			continue
+		}
+		found = true
+		if !c.State.Running && c.State.Status == "exited" {
+			return c.State.ExitCode, true, true
+		}
+	}
+	return 0, found, false
+}
+
 // CloudStateProvider abstracts cloud-side container queries.
 // Backends that implement this use the cloud as the source of truth
 // for container state, with no local Store.Containers dependency.

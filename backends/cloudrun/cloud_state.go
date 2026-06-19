@@ -119,6 +119,7 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 	// full scan so behavior is unchanged for them.
 	jobName, _ := p.resolveJobName(ctx, containerID)
 
+	gone := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -140,10 +141,14 @@ func (p *cloudRunCloudState) WaitForExit(ctx context.Context, containerID string
 			if err != nil {
 				continue
 			}
-			for _, c := range containers {
-				if c.ID == containerID && !c.State.Running && c.State.Status == "exited" {
-					return c.State.ExitCode, nil
+			if exit, found, exited := core.ScanContainersForExit(containers, containerID); exited {
+				return exit, nil
+			} else if !found {
+				if gone++; gone >= core.WaitGoneThreshold {
+					return -1, nil
 				}
+			} else {
+				gone = 0
 			}
 		}
 	}

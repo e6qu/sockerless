@@ -119,6 +119,7 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	gone := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,10 +132,14 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			if err != nil {
 				continue
 			}
-			for _, c := range containers {
-				if c.ID == containerID && !c.State.Running && c.State.Status == "exited" {
-					return c.State.ExitCode, nil
+			if exit, found, exited := core.ScanContainersForExit(containers, containerID); exited {
+				return exit, nil
+			} else if !found {
+				if gone++; gone >= core.WaitGoneThreshold {
+					return -1, nil
 				}
+			} else {
+				gone = 0
 			}
 		}
 	}

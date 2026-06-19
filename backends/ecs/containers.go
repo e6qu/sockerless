@@ -234,6 +234,7 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 	ticker := time.NewTicker(s.config.PollInterval * 2)
 	defer ticker.Stop()
 
+	gone := 0
 	for {
 		select {
 		case <-exitCh:
@@ -247,8 +248,19 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 				continue
 			}
 			if len(result.Tasks) == 0 {
+				// Task GC'd / deleted out-of-band (ECS retains stopped tasks
+				// only ~1h) — after a few consecutive misses treat it as
+				// terminal so a blocked ContainerWait unblocks instead of
+				// polling forever.
+				if gone++; gone >= pollGoneThreshold {
+					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
+						close(ch.(chan struct{}))
+					}
+					return
+				}
 				continue
 			}
+			gone = 0
 
 			task := result.Tasks[0]
 			// Apply task status on every poll (updates IP for RUNNING, exits for STOPPED)
@@ -259,6 +271,12 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 		}
 	}
 }
+
+// pollGoneThreshold is the number of consecutive polls in which the backing
+// cloud resource is absent before a poller treats the container as terminally
+// gone and unblocks waiters (mirrors core.WaitGoneThreshold for the
+// event-driven poll path).
+const pollGoneThreshold = 5
 
 // applyTaskStatus processes ECS task status changes.
 // Cloud is the source of truth for container state — no local Store.Containers writes.
