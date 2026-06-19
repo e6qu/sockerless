@@ -367,6 +367,14 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 		*events = append(*events, newEvents...)
 	})
 
+	// CloudWatch auto-extracts metrics from any EMF-formatted event into the
+	// metric store, queryable through the metric APIs with no PutMetricData call.
+	for _, e := range req.LogEvents {
+		for _, datum := range extractEMFMetrics(e.Message, e.Timestamp) {
+			cwStoreDatum(datum)
+		}
+	}
+
 	// Update stream timestamps
 	cwLogStreams.Update(key, func(s *CWLogStream) {
 		s.LastIngestionTime = now
