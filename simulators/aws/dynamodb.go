@@ -844,10 +844,41 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	writeDDBJSON(w, http.StatusOK, resp)
 }
 
+// ddbProjectItem restricts an item to the top-level attributes named in a
+// ProjectionExpression (resolving #alias names via ExpressionAttributeNames).
+// An empty projection returns the item unchanged. Nested document paths select
+// by their top-level attribute — sufficient for the common projection case;
+// previously ProjectionExpression was ignored entirely and the whole item came
+// back.
+func ddbProjectItem(item map[string]any, projection string, exprNames map[string]string) map[string]any {
+	if projection == "" || item == nil {
+		return item
+	}
+	out := map[string]any{}
+	for _, raw := range strings.Split(projection, ",") {
+		name := strings.TrimSpace(raw)
+		if i := strings.IndexAny(name, ".["); i >= 0 {
+			name = strings.TrimSpace(name[:i])
+		}
+		if name == "" {
+			continue
+		}
+		if resolved, ok := exprNames[name]; ok {
+			name = resolved
+		}
+		if v, ok := item[name]; ok {
+			out[name] = v
+		}
+	}
+	return out
+}
+
 func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName string         `json:"TableName"`
-		Key       map[string]any `json:"Key"`
+		TableName                string            `json:"TableName"`
+		Key                      map[string]any    `json:"Key"`
+		ProjectionExpression     string            `json:"ProjectionExpression"`
+		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -866,6 +897,7 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 		writeDDBJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
+	item = ddbProjectItem(item, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, map[string]any{"Item": item})
 }
 
@@ -1044,6 +1076,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		IndexName                 string            `json:"IndexName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
@@ -1098,13 +1131,26 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": len(items)}
-	// Emit LastEvaluatedKey if we hit the Limit and more items may exist.
+	out := map[string]any{"Count": len(items), "ScannedCount": len(items)}
+	// Emit LastEvaluatedKey if we hit the Limit and more items may exist — from
+	// the FULL item, before projection could strip its key attributes.
 	if req.Limit > 0 && len(items) == req.Limit {
-		last := items[len(items)-1]
-		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
 	}
+	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)
+}
+
+// ddbProjectItems projects every item by a ProjectionExpression (no-op when empty).
+func ddbProjectItems(items []map[string]any, projection string, exprNames map[string]string) []map[string]any {
+	if projection == "" {
+		return items
+	}
+	out := make([]map[string]any, len(items))
+	for i, it := range items {
+		out[i] = ddbProjectItem(it, projection, exprNames)
+	}
+	return out
 }
 
 // ddbHasIndex reports whether the table has a GSI or LSI with the given name.
@@ -1127,6 +1173,7 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		IndexName                 string            `json:"IndexName"`
 		FilterExpression          string            `json:"FilterExpression"`
+		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
@@ -1179,90 +1226,21 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Items": items, "Count": len(items), "ScannedCount": scanned}
+	out := map[string]any{"Count": len(items), "ScannedCount": scanned}
 	if req.Limit > 0 && len(items) == req.Limit {
-		last := items[len(items)-1]
-		out["LastEvaluatedKey"] = ddbExtractKey(t, last)
+		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
 	}
+	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)
 }
 
 // ddbEvalCondition reports whether a DynamoDB ConditionExpression holds for an
 // item. `exists` is whether the item is currently present. Supports the common
-// subset: attribute_exists / attribute_not_exists, begins_with, and the
-// comparison operators (=, <>, <, <=, >, >=), combined with AND. An empty
-// expression always holds.
+// ConditionExpression via the full expression grammar in dynamodb_expr.go
+// (functions, comparators, BETWEEN/IN, AND/OR/NOT, parentheses, nested paths).
+// An empty expression always holds.
 func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return true
-	}
-	for _, raw := range splitTopLevelAnd(expr) {
-		clause := strings.TrimSpace(raw)
-		if !ddbEvalConditionClause(item, exists, clause, names, values) {
-			return false
-		}
-	}
-	return true
-}
-
-func splitTopLevelAnd(expr string) []string {
-	// AND is the only conjunction the sim models; split case-insensitively.
-	lower := strings.ToLower(expr)
-	var parts []string
-	last := 0
-	for {
-		idx := strings.Index(lower[last:], " and ")
-		if idx < 0 {
-			parts = append(parts, expr[last:])
-			break
-		}
-		parts = append(parts, expr[last:last+idx])
-		last += idx + len(" and ")
-	}
-	return parts
-}
-
-func ddbEvalConditionClause(item map[string]any, exists bool, clause string, names map[string]string, values map[string]any) bool {
-	clause = strings.TrimSpace(clause)
-	if rest, ok := ddbFuncArg(clause, "attribute_not_exists"); ok {
-		attr := ddbResolveAttrName(rest, names)
-		return !exists || item[attr] == nil
-	}
-	if rest, ok := ddbFuncArg(clause, "attribute_exists"); ok {
-		attr := ddbResolveAttrName(rest, names)
-		return exists && item[attr] != nil
-	}
-	if rest, ok := ddbFuncArg(clause, "begins_with"); ok {
-		args := strings.SplitN(rest, ",", 2)
-		if len(args) != 2 {
-			return false
-		}
-		attr := ddbResolveAttrName(strings.TrimSpace(args[0]), names)
-		want := ddbScalarString(values[strings.TrimSpace(args[1])])
-		return strings.HasPrefix(ddbScalarString(item[attr]), want)
-	}
-	// Comparison operators, longest-first so "<=" / ">=" / "<>" win over "<"/">".
-	for _, op := range []string{"<=", ">=", "<>", "=", "<", ">"} {
-		if left, right, found := strings.Cut(clause, op); found {
-			attr := ddbResolveAttrName(strings.TrimSpace(left), names)
-			want, ok := values[strings.TrimSpace(right)]
-			if !ok {
-				return false
-			}
-			return ddbCompare(item[attr], want, op)
-		}
-	}
-	return false
-}
-
-// ddbFuncArg returns the single argument of fn(arg) if clause matches.
-func ddbFuncArg(clause, fn string) (string, bool) {
-	clause = strings.TrimSpace(clause)
-	if !strings.HasPrefix(strings.ToLower(clause), fn+"(") || !strings.HasSuffix(clause, ")") {
-		return "", false
-	}
-	return strings.TrimSpace(clause[len(fn)+1 : len(clause)-1]), true
+	return ddbEvalExpr(item, exists, expr, names, values)
 }
 
 func ddbScalarString(v any) string {
@@ -1533,32 +1511,11 @@ func ddbItemKeys(prefix string) []string {
 	return out
 }
 
+// ddbMatchesExpression evaluates a KeyConditionExpression / FilterExpression
+// against a stored item via the full expression grammar (dynamodb_expr.go).
 func ddbMatchesExpression(table DDBTable, item map[string]any, expr string, names map[string]string, values map[string]any) bool {
-	expr = strings.TrimSpace(expr)
-	if expr == "" {
-		return true
-	}
-	parts := strings.Split(expr, " AND ")
-	if len(parts) == 1 {
-		parts = strings.Split(expr, " and ")
-	}
-	for _, part := range parts {
-		left, right, ok := strings.Cut(strings.TrimSpace(part), "=")
-		if !ok {
-			return false
-		}
-		attr := ddbResolveAttrName(strings.TrimSpace(left), names)
-		token := strings.TrimSpace(right)
-		want, ok := values[token]
-		if !ok {
-			return false
-		}
-		if !ddbAttrValuesEqual(item[attr], want) {
-			return false
-		}
-	}
 	_ = table
-	return true
+	return ddbEvalExpr(item, true, expr, names, values)
 }
 
 func ddbResolveAttrName(name string, aliases map[string]string) string {

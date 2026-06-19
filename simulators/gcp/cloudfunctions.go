@@ -275,6 +275,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			result = append(result, fn.wire())
 		}
 		sortCloudFunctions(result)
+		result = gcpApplyOrderBy(result, r)
 		page, next, ok := paginateList(w, r, result)
 		if !ok {
 			return

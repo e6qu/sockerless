@@ -940,21 +940,56 @@ func handleCMDiscoverInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Collect all instances for this service
-	var httpInstances []map[string]any
+	// Each instance reports its real health (the AWS_INIT_HEALTH_STATUS attribute
+	// it registered with, default HEALTHY) — not a hardcoded value — and the
+	// HealthStatus request filter scopes the result the way real Cloud Map does.
+	type discovered struct {
+		entry  map[string]any
+		health string
+	}
+	var all []discovered
 	for _, inst := range cmInstances.List() {
 		key := cmInstanceKey(targetSvc.Id, inst.Id)
-		if _, ok := cmInstances.Get(key); ok {
-			httpInstances = append(httpInstances, map[string]any{
+		if _, ok := cmInstances.Get(key); !ok {
+			continue
+		}
+		health := "HEALTHY"
+		if h := inst.Attributes["AWS_INIT_HEALTH_STATUS"]; h != "" {
+			health = h
+		}
+		all = append(all, discovered{
+			entry: map[string]any{
 				"InstanceId":    inst.Id,
 				"NamespaceName": req.NamespaceName,
 				"ServiceName":   req.ServiceName,
-				"HealthStatus":  "HEALTHY",
+				"HealthStatus":  health,
 				"Attributes":    inst.Attributes,
-			})
-		}
+			},
+			health: health,
+		})
 	}
-	if httpInstances == nil {
-		httpInstances = []map[string]any{}
+	pick := func(keep func(string) bool) []map[string]any {
+		out := []map[string]any{}
+		for _, d := range all {
+			if keep(d.health) {
+				out = append(out, d.entry)
+			}
+		}
+		return out
+	}
+	var httpInstances []map[string]any
+	switch req.HealthStatus {
+	case "HEALTHY":
+		httpInstances = pick(func(h string) bool { return h == "HEALTHY" })
+	case "UNHEALTHY":
+		httpInstances = pick(func(h string) bool { return h == "UNHEALTHY" })
+	case "ALL":
+		httpInstances = pick(func(string) bool { return true })
+	default: // omitted / HEALTHY_OR_ELSE_ALL: healthy, or all if none are healthy
+		httpInstances = pick(func(h string) bool { return h == "HEALTHY" })
+		if len(httpInstances) == 0 {
+			httpInstances = pick(func(string) bool { return true })
+		}
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

@@ -440,7 +440,17 @@ func registerKeyVault(srv *sim.Server) {
 		for i := range all {
 			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+		all = azureApplyListQuery(all, r)
+		page, next := armPage(r, all)
+		if page == nil {
+			page = []KeyVault{}
+		}
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
 	})
 
 	// Subscription-scoped vault list — terraform-provider-azurerm
@@ -459,7 +469,17 @@ func registerKeyVault(srv *sim.Server) {
 		for i := range all {
 			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+		all = azureApplyListQuery(all, r)
+		page, next := armPage(r, all)
+		if page == nil {
+			page = []KeyVault{}
+		}
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
 	})
 
 	srv.HandleFunc("PUT "+armBase+"/vaults/{name}/accessPolicies/{operationKind}", func(w http.ResponseWriter, r *http.Request) {

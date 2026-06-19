@@ -332,7 +332,16 @@ func handleCosmosListAccounts(w http.ResponseWriter, r *http.Request) {
 		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
 	all := cosmosAccounts.Filter(func(a CosmosAccount) bool { return strings.HasPrefix(a.ID, prefix) })
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
+	all = azureApplyListQuery(all, r)
+	page, next := armPage(r, all)
+	if page == nil {
+		page = []CosmosAccount{}
+	}
+	out := map[string]any{"value": page}
+	if next != "" {
+		out["nextLink"] = armNextLink(r, next)
+	}
+	sim.WriteJSON(w, http.StatusOK, out)
 }
 
 func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {

@@ -86,7 +86,7 @@ type LoggingMetric struct {
 // page plus an opaque numeric next-page token (empty when no more entries
 // remain). The token is a start index into the deterministically-ordered,
 // filtered entry set; pageSize/pageToken only take effect when pageSize > 0.
-func listLogEntries(filter string, resourceNames []string, pageSize int, pageToken string) ([]LogEntry, string) {
+func listLogEntries(filter string, resourceNames []string, pageSize int, pageToken string, orderBy string) ([]LogEntry, string) {
 	var allEntries []LogEntry
 	all := logEntries.List()
 	for _, entries := range all {
@@ -118,9 +118,15 @@ func listLogEntries(filter string, resourceNames []string, pageSize int, pageTok
 		allEntries = filtered
 	}
 
-	// Deterministic ordering so page tokens are stable across calls.
+	// Deterministic ordering so page tokens are stable across calls. orderBy
+	// "timestamp desc" returns newest-first; the default ("timestamp asc") is
+	// oldest-first. Real Cloud Logging only orders on timestamp.
+	desc := strings.Contains(strings.ToLower(orderBy), "desc")
 	sort.SliceStable(allEntries, func(i, j int) bool {
 		if allEntries[i].Timestamp != allEntries[j].Timestamp {
+			if desc {
+				return allEntries[i].Timestamp > allEntries[j].Timestamp
+			}
 			return allEntries[i].Timestamp < allEntries[j].Timestamp
 		}
 		return allEntries[i].InsertID < allEntries[j].InsertID
@@ -223,7 +229,7 @@ func registerCloudLogging(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
-		entries, next := listLogEntries(req.Filter, req.ResourceNames, req.PageSize, req.PageToken)
+		entries, next := listLogEntries(req.Filter, req.ResourceNames, req.PageSize, req.PageToken, req.OrderBy)
 		sim.WriteJSON(w, http.StatusOK, ListLogEntriesRESTResponse{
 			Entries:       entries,
 			NextPageToken: next,
@@ -473,7 +479,7 @@ func (s *loggingServer) WriteLogEntries(_ context.Context, req *loggingpb.WriteL
 }
 
 func (s *loggingServer) ListLogEntries(_ context.Context, req *loggingpb.ListLogEntriesRequest) (*loggingpb.ListLogEntriesResponse, error) {
-	entries, next := listLogEntries(req.Filter, req.ResourceNames, int(req.PageSize), req.PageToken)
+	entries, next := listLogEntries(req.Filter, req.ResourceNames, int(req.PageSize), req.PageToken, req.OrderBy)
 
 	var pbEntries []*loggingpb.LogEntry
 	for _, e := range entries {

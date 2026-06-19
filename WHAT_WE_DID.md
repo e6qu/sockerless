@@ -4,6 +4,83 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Query-language program: full filter/expression grammars
+
+Per the directive for full filter-expression / query-language support across the
+sims, replaced the partial matchers with real recursive-descent parser+evaluators,
+each unit-tested, all in the pass-6 PR:
+
+- **GCP list `filter`** (`filter.go`) — the full AIP-160 grammar: OR / AND
+  (explicit + implicit adjacency) / NOT, parentheses, `= != < <= > >= :`, the
+  `field:*` has-wildcard, nested dotted paths. Replaces the conjunctive-clause
+  matcher behind `gcpApplyListParams`.
+- **DynamoDB expressions** (`dynamodb_expr.go`) — Condition / Filter /
+  KeyCondition: comparators, BETWEEN, IN, the functions (attribute_exists,
+  attribute_not_exists, attribute_type, begins_with, contains, size), AND/OR/NOT
+  with parens and precedence, document paths with nested map (`a.b`) + list-index
+  (`a[0]`) segments, `#alias` and `:ref`. Replaces the `=`/AND-only subset;
+  existing DynamoDB SDK suite unchanged.
+- **CloudWatch Logs filter pattern** (`cloudwatch_filter_pattern.go`) — the
+  metric-filter language: unstructured (AND terms, `?` optional/OR, `-` exclude,
+  quoted phrases) + structured-JSON (`{ $.field op value && || … }`, nested
+  `$.a.b`/`$.a[0]` selectors, `*` wildcard). Replaces the naive substring match
+  in FilterLogEvents.
+- **Azure OData `$filter`** (`odata_filter.go`) — eq/ne/gt/ge/lt/le, and/or/not,
+  parens, startswith/endswith/contains/substringof, `/`-nested paths, plus
+  `$orderby`. Wired into the Cosmos/APIM/Key-Vault list handlers.
+
+Each grammar is a tokenizer + recursive-descent parser producing an AST that
+evaluates against the resource's JSON (or, for DynamoDB, the attribute-value
+item). Parse errors degrade safely (match-all for a list filter; non-match for a
+DynamoDB condition). Remaining for a future PR: CloudWatch Logs Insights
+(StartQuery) — a separate SQL-like language; KQL is already implemented.
+
+## 2026-06-19 - Sim fidelity pass 6 (AWS/GCP/Azure probe + 5 fixes)
+
+A sixth fidelity pass: five parallel read-only Explore agents probed the AWS,
+GCP, and Azure sims for the gap classes the recent consumer issues shared —
+silently-ignored request params, offset pagination, dropped read-back fields,
+unimplemented ops. Every finding was verified at file:line before acting, which
+caught a false positive (the azure `acrCatalogPage` "logic error" traced
+correct against hand-worked inputs) and several intentional shortcuts /
+out-of-scope items (full GCP `filter=` expression engines).
+
+Five verified gaps fixed, each SDK-tested:
+
+- **EC2 `DescribeSecurityGroupRules` (BUG-1887)** honored only the `group-id`
+  filter, so a query scoped by `is-egress`/`cidr`/a tag returned every rule.
+  Added `ec2SecurityGroupRuleMatchesFilters` over the shared EC2 filter helpers.
+- **EventBridge `CreateEventBus` (BUG-1888)** echoed `KmsKeyIdentifier` but never
+  stored it → `DescribeEventBus` returned empty and `aws_cloudwatch_event_bus`
+  drifted every terraform plan. Added the field to the struct + create handler.
+- **Cloud Map `DiscoverInstances` (BUG-1889)** hardcoded `HealthStatus: HEALTHY`
+  and ignored the request's HealthStatus filter — a synthetic-data smell. Now it
+  reports each instance's real registered health (`AWS_INIT_HEALTH_STATUS`) and
+  applies the HEALTHY/UNHEALTHY/ALL filter (with the HEALTHY_OR_ELSE_ALL default).
+- **Lambda `GetFunction` (BUG-1890)** omitted the documented `Code.RepositoryType`
+  (`S3` for a ZIP package, `ECR` for a container image). Now set from the type.
+- **ECS `ListTasks` (BUG-1891)** ignored the `launchType` filter. Added it.
+
+The rest of the pass's findings were then fixed in the same PR (no deferrals):
+
+- **AWS read-param batch (BUG-1892).** CloudWatch `GetLogEvents` honors
+  `startFromHead` (default false → latest events first); EC2
+  `DescribeNetworkInterfaces`/`DescribeNatGateways` apply their documented filter
+  sets; EC2 `DescribeVolumesModifications`/`DescribeTags` paginate via
+  MaxResults/NextToken; SQS `ReceiveMessage` returns
+  ApproximateFirstReceiveTimestamp and honors MessageAttributeNames — SendMessage
+  now stores message attributes and computes the AWS `MD5OfMessageAttributes`
+  digest the SDK validates on receive (pinned by an SDK test).
+- **DynamoDB ProjectionExpression (BUG-1893).** GetItem/Query/Scan restrict the
+  returned item(s) to the named attributes; LastEvaluatedKey is computed from the
+  full item before projection so paging is unaffected.
+- **GCP/Azure list params (BUG-1894).** A new JSON-evaluated GCP filter/orderBy
+  helper (`gcpApplyListParams`, conjunctive `field op value` clauses) wired into
+  Compute/AR/BigQuery/Functions lists + Cloud Logging `orderBy`; Azure
+  `$top`/`$skiptoken` pagination on Cosmos/APIM/Key-Vault list handlers via the
+  existing `armPage`. Faithful for the common documented forms; richer GCP filter
+  expressions fall through as match-all (safe for the sim's small lists).
+
 ## 2026-06-19 - AWS sim observability fidelity batch (#602–#606)
 
 The consumer filed five new AWS-sim fidelity gaps, all observability. Each was

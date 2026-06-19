@@ -4,7 +4,33 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/aws-sim-cloudwatch-snapshot-602-604` — **five** new AWS-sim fidelity issues filed by the consumer (#602–#606, all CloudWatch/EC2 observability), each fixed with SDK + CLI (+ terraform where it's a TF resource):
+`feat/sim-fidelity-pass-6` — a sixth sim fidelity pass (5 parallel Explore probes across the AWS/GCP/Azure sims; every finding verified at file:line before fixing — caught one false positive, the azure `acrCatalogPage` "logic error" that traced correct). **Fixed, each SDK-tested:**
+- **BUG-1887:** EC2 `DescribeSecurityGroupRules` honored only `group-id` → `ec2SecurityGroupRuleMatchesFilters` applies the full documented filter set (is-egress / security-group-rule-id / cidr / tag:*).
+- **BUG-1888:** EventBridge `CreateEventBus` echoed `KmsKeyIdentifier` but never stored it → `DescribeEventBus` empty → `aws_cloudwatch_event_bus` TF drift. Added the field to the struct + create handler. (SDK + CLI.)
+- **BUG-1889:** Cloud Map `DiscoverInstances` hardcoded `HealthStatus: "HEALTHY"` and ignored the filter → reports each instance's real `AWS_INIT_HEALTH_STATUS` + applies HEALTHY/UNHEALTHY/ALL (no-fakes).
+- **BUG-1890:** Lambda `GetFunction` omitted `Code.RepositoryType` (S3 zip / ECR image). (SDK + CLI.)
+- **BUG-1891:** ECS `ListTasks` ignored `launchType` → added the field + filter.
+
+**Then cleared the whole backlog in the same PR (no deferrals):**
+- **BUG-1892:** CloudWatch `GetLogEvents` `startFromHead` (default false → latest first); EC2 `DescribeNetworkInterfaces`/`DescribeNatGateways` filter sets; EC2 `DescribeVolumesModifications`/`DescribeTags` `MaxResults`/`NextToken` pagination; SQS `ReceiveMessage` `ApproximateFirstReceiveTimestamp` + `MessageAttributeNames` (SendMessage stores attrs + computes the AWS `MD5OfMessageAttributes` the SDK validates).
+- **BUG-1893:** DynamoDB `ProjectionExpression` on GetItem/Query/Scan (`ddbProjectItem`; LastEvaluatedKey taken from the full item pre-projection).
+- **BUG-1894:** GCP list `filter`/`orderBy` (`listparams.go::gcpApplyListParams`, a JSON-evaluated conjunctive-clause filter) wired into Compute/AR/BigQuery/Functions/Logging; Azure `$top`/`$skiptoken` on Cosmos/APIM/KeyVault via the existing `armPage`.
+
+Tests: AWS SDK (SQS attrs+MD5, DynamoDB projection, CloudWatch startFromHead, EC2 ENI filter) + GCP/Azure unit tests (`gcpApplyListParams`, `armPage` $top).
+
+**Then a full query-language program (per user directive "full support for filter expressions and query languages"), same PR:** real recursive-descent parser+evaluator for each sim's query surface, replacing the partial matchers:
+- **BUG-1895 GCP `filter`** (`filter.go`) — full AIP-160: OR / AND (explicit + implicit) / NOT, parens, `= != < <= > >= :`, `field:*`, nested dotted paths.
+- **BUG-1896 DynamoDB expressions** (`dynamodb_expr.go`) — Condition/Filter/KeyCondition: comparators, BETWEEN, IN, functions (attribute_exists/not_exists/type, begins_with, contains, size), AND/OR/NOT + parens, nested doc paths (`a.b`/`a[0]`), `#alias`/`:ref`.
+- **BUG-1897 CloudWatch Logs filter pattern** (`cloudwatch_filter_pattern.go`) — unstructured (AND terms / `?`-OR / `-`-exclude / quoted phrases) + structured-JSON (`{ $.field op value && || }`, nested selectors, `*` wildcard).
+- **BUG-1898 Azure OData `$filter`** (`odata_filter.go`) — eq/ne/gt/ge/lt/le, and/or/not, parens, startswith/endswith/contains/substringof, `/`-nested paths, `$orderby`.
+
+Each has dedicated unit tests; the existing SDK suites pass unchanged.
+
+**Remaining query-language work (future PR):** CloudWatch Logs **Insights** (`StartQuery`) is a separate SQL-like query language (fields/filter/stats/sort/limit) — a larger, standalone build. KQL (Log Analytics) is already implemented. S3 Select / Athena SQL are unused by sockerless.
+
+**Method note:** the parallel-Explore-per-sim-area pass keeps finding real gaps; ~half the agents' findings were genuine, the rest intentional shortcuts / false positives / out-of-scope (full GCP `filter=` expression engines). Verify each at file:line before fixing.
+
+### (history) merged #607 — five consumer AWS-sim issues (#602–#606), all observability, fixed with SDK + CLI (+ terraform where it's a TF resource):
 - **BUG-1882 (#602):** EC2 `CopySnapshot` was unrouted (`InvalidAction`). `handleCopySnapshot` creates a new snapshot id duplicating the source's backing data (docker-volume / host-dir copy, same as `CreateSnapshot`), inheriting size + encryption + KMS — the cross-region EBS DR primitive. TF `aws_ebs_snapshot_copy`.
 - **BUG-1883 (#603):** CloudWatch metric alarms were entirely unimplemented. New `cloudwatch_alarms.go` adds `PutMetricAlarm`/`DescribeAlarms`/`DeleteAlarms` on **all three** CW wire protocols (query for older botocore, awsJson1.0 for newer CLI, rpc-v2-cbor for Go SDK / terraform) over one `cwAlarms` store; `DescribeAlarms` evaluates `StateValue` live from the metric data (OK/ALARM/INSUFFICIENT_DATA, honouring `TreatMissingData`). Alarm tagging on cbor makes `aws_cloudwatch_metric_alarm`'s transparent-tagging read idempotent.
 - **BUG-1884 (#604):** EMF log events weren't extracted into metrics. `extractEMFMetrics` parses `_aws.CloudWatchMetrics` blocks in `PutLogEvents` and feeds the existing `cwMetrics` store — the standard ECS/Fargate EMF-over-stdout → awslogs path, now queryable with no `PutMetricData` call.

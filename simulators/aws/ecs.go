@@ -1983,6 +1983,7 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 		Cluster       string `json:"cluster"`
 		Family        string `json:"family"`
 		DesiredStatus string `json:"desiredStatus"`
+		LaunchType    string `json:"launchType"`
 		NextToken     string `json:"nextToken"`
 		MaxResults    int    `json:"maxResults"`
 	}
@@ -2018,6 +2019,9 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if req.DesiredStatus != "" && string(t.DesiredStatus) != req.DesiredStatus {
+			return false
+		}
+		if req.LaunchType != "" && t.LaunchType != req.LaunchType {
 			return false
 		}
 		return true
