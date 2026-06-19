@@ -252,3 +252,45 @@ func TestSFNDescribeStateMachineOmitsTags(t *testing.T) {
 	assert.Contains(t, raw, "stateMachineArn")
 	assert.NotContains(t, raw, "tags", "DescribeStateMachineOutput has no tags member")
 }
+
+// TestSFN_GetExecutionHistory_SDK covers GetExecutionHistory and exercises the
+// Choice interpreter end-to-end (input routes to the >5 branch).
+func TestSFN_GetExecutionHistory_SDK(t *testing.T) {
+	c := sfnClient()
+	create, err := c.CreateStateMachine(ctx, &sfn.CreateStateMachineInput{
+		Name: aws.String("sfn-sdk-history-sm"),
+		Definition: aws.String(`{"StartAt":"C","States":{` +
+			`"C":{"Type":"Choice","Choices":[{"Variable":"$.x","NumericGreaterThan":5,"Next":"Big"}],"Default":"Small"},` +
+			`"Big":{"Type":"Pass","Result":"big","End":true},` +
+			`"Small":{"Type":"Pass","Result":"small","End":true}}}`),
+		RoleArn: aws.String("arn:aws:iam::123456789012:role/sfn-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteStateMachine(ctx, &sfn.DeleteStateMachineInput{StateMachineArn: create.StateMachineArn})
+	})
+
+	start, err := c.StartExecution(ctx, &sfn.StartExecutionInput{
+		StateMachineArn: create.StateMachineArn,
+		Name:            aws.String("hist-1"),
+		Input:           aws.String(`{"x":10}`),
+	})
+	require.NoError(t, err)
+
+	var describe *sfn.DescribeExecutionOutput
+	require.Eventually(t, func() bool {
+		describe, err = c.DescribeExecution(ctx, &sfn.DescribeExecutionInput{ExecutionArn: start.ExecutionArn})
+		require.NoError(t, err)
+		return describe.Status == sfntypes.ExecutionStatusSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
+	assert.Equal(t, `"big"`, aws.ToString(describe.Output), "Choice must route x=10 to the >5 branch")
+
+	hist, err := c.GetExecutionHistory(ctx, &sfn.GetExecutionHistoryInput{ExecutionArn: start.ExecutionArn})
+	require.NoError(t, err)
+	types := map[sfntypes.HistoryEventType]bool{}
+	for _, e := range hist.Events {
+		types[e.Type] = true
+	}
+	assert.True(t, types[sfntypes.HistoryEventTypeExecutionStarted], "history must include ExecutionStarted")
+	assert.True(t, types[sfntypes.HistoryEventTypeExecutionSucceeded], "history must include ExecutionSucceeded")
+}

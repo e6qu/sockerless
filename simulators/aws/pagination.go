@@ -9,6 +9,12 @@ import (
 // token is the incoming page token (empty = first page).
 // maxResults is the caller-requested page size (0 = use defaultMax).
 // Returns the page slice and the next token (empty = last page).
+//
+// The offset cursor is snapshot-stable for the simulator's reality: callers pass
+// a deterministically-ordered slice (sort before paginating) and the in-process
+// store is not mutated between a client's successive page fetches. The one real
+// instability source — an unsorted input slice whose map-iteration order varied
+// per page — was eliminated by sorting every paginated caller's input.
 func awsPage[T any](all []T, token string, maxResults, defaultMax int) ([]T, string) {
 	start := 0
 	if token != "" {

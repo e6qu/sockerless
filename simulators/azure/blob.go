@@ -544,10 +544,33 @@ func handleListBlobs(w http.ResponseWriter, r *http.Request, account, container 
 	writeStorageXML(w, http.StatusOK, out)
 }
 
+// azureBlobPreconditionOK validates the conditional headers against the current
+// blob ETag (exists=false → no current blob). Writes a 412 ConditionNotMet and
+// returns false on a failed precondition; an absent header always passes.
+func azureBlobPreconditionOK(w http.ResponseWriter, r *http.Request, currentETag string, exists bool) bool {
+	if inm := r.Header.Get("If-None-Match"); inm == "*" && exists {
+		writeStorageError(w, "ConditionNotMet",
+			"The condition specified using HTTP conditional header(s) is not met.", http.StatusPreconditionFailed)
+		return false
+	}
+	if im := r.Header.Get("If-Match"); im != "" && im != "*" {
+		if !exists || strings.Trim(im, `"`) != strings.Trim(currentETag, `"`) {
+			writeStorageError(w, "ConditionNotMet",
+				"The condition specified using HTTP conditional header(s) is not met.", http.StatusPreconditionFailed)
+			return false
+		}
+	}
+	return true
+}
+
 func handlePutBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
 	if _, ok := blobContainersData.Get(blobContainerKey(account, container)); !ok {
 		writeStorageError(w, "ContainerNotFound",
 			"The specified container does not exist.", http.StatusNotFound)
+		return
+	}
+	existing, exists := blobObjects.Get(blobObjectKey(account, container, blob))
+	if !azureBlobPreconditionOK(w, r, existing.ETag, exists) {
 		return
 	}
 	body, err := openStreamingBody(r)
@@ -926,11 +949,16 @@ func handleHeadBlob(w http.ResponseWriter, r *http.Request, account, container, 
 }
 
 func handleDeleteBlob(w http.ResponseWriter, r *http.Request, account, container, blob string) {
-	if !blobObjects.Delete(blobObjectKey(account, container, blob)) {
+	existing, exists := blobObjects.Get(blobObjectKey(account, container, blob))
+	if !exists {
 		writeStorageError(w, "BlobNotFound",
 			"The specified blob does not exist.", http.StatusNotFound)
 		return
 	}
+	if !azureBlobPreconditionOK(w, r, existing.ETag, true) {
+		return
+	}
+	blobObjects.Delete(blobObjectKey(account, container, blob))
 	prefix := account + "/" + container + "/" + blob + "/"
 	for _, block := range blobBlocks.List() {
 		if strings.HasPrefix(blobBlockKey(block.Account, block.Container, block.Blob, block.BlockID), prefix) {
