@@ -18,6 +18,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 Tests: AWS SDK (SQS attrs+MD5, DynamoDB projection, CloudWatch startFromHead, EC2 ENI filter) + GCP/Azure unit tests (`gcpApplyListParams`, `armPage` $top).
 
+**Then a full query-language program (per user directive "full support for filter expressions and query languages"), same PR:** real recursive-descent parser+evaluator for each sim's query surface, replacing the partial matchers:
+- **BUG-1895 GCP `filter`** (`filter.go`) — full AIP-160: OR / AND (explicit + implicit) / NOT, parens, `= != < <= > >= :`, `field:*`, nested dotted paths.
+- **BUG-1896 DynamoDB expressions** (`dynamodb_expr.go`) — Condition/Filter/KeyCondition: comparators, BETWEEN, IN, functions (attribute_exists/not_exists/type, begins_with, contains, size), AND/OR/NOT + parens, nested doc paths (`a.b`/`a[0]`), `#alias`/`:ref`.
+- **BUG-1897 CloudWatch Logs filter pattern** (`cloudwatch_filter_pattern.go`) — unstructured (AND terms / `?`-OR / `-`-exclude / quoted phrases) + structured-JSON (`{ $.field op value && || }`, nested selectors, `*` wildcard).
+- **BUG-1898 Azure OData `$filter`** (`odata_filter.go`) — eq/ne/gt/ge/lt/le, and/or/not, parens, startswith/endswith/contains/substringof, `/`-nested paths, `$orderby`.
+
+Each has dedicated unit tests; the existing SDK suites pass unchanged.
+
+**Remaining query-language work (future PR):** CloudWatch Logs **Insights** (`StartQuery`) is a separate SQL-like query language (fields/filter/stats/sort/limit) — a larger, standalone build. KQL (Log Analytics) is already implemented. S3 Select / Athena SQL are unused by sockerless.
+
 **Method note:** the parallel-Explore-per-sim-area pass keeps finding real gaps; ~half the agents' findings were genuine, the rest intentional shortcuts / false positives / out-of-scope (full GCP `filter=` expression engines). Verify each at file:line before fixing.
 
 ### (history) merged #607 — five consumer AWS-sim issues (#602–#606), all observability, fixed with SDK + CLI (+ terraform where it's a TF resource):

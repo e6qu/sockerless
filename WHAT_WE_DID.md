@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - Query-language program: full filter/expression grammars
+
+Per the directive for full filter-expression / query-language support across the
+sims, replaced the partial matchers with real recursive-descent parser+evaluators,
+each unit-tested, all in the pass-6 PR:
+
+- **GCP list `filter`** (`filter.go`) — the full AIP-160 grammar: OR / AND
+  (explicit + implicit adjacency) / NOT, parentheses, `= != < <= > >= :`, the
+  `field:*` has-wildcard, nested dotted paths. Replaces the conjunctive-clause
+  matcher behind `gcpApplyListParams`.
+- **DynamoDB expressions** (`dynamodb_expr.go`) — Condition / Filter /
+  KeyCondition: comparators, BETWEEN, IN, the functions (attribute_exists,
+  attribute_not_exists, attribute_type, begins_with, contains, size), AND/OR/NOT
+  with parens and precedence, document paths with nested map (`a.b`) + list-index
+  (`a[0]`) segments, `#alias` and `:ref`. Replaces the `=`/AND-only subset;
+  existing DynamoDB SDK suite unchanged.
+- **CloudWatch Logs filter pattern** (`cloudwatch_filter_pattern.go`) — the
+  metric-filter language: unstructured (AND terms, `?` optional/OR, `-` exclude,
+  quoted phrases) + structured-JSON (`{ $.field op value && || … }`, nested
+  `$.a.b`/`$.a[0]` selectors, `*` wildcard). Replaces the naive substring match
+  in FilterLogEvents.
+- **Azure OData `$filter`** (`odata_filter.go`) — eq/ne/gt/ge/lt/le, and/or/not,
+  parens, startswith/endswith/contains/substringof, `/`-nested paths, plus
+  `$orderby`. Wired into the Cosmos/APIM/Key-Vault list handlers.
+
+Each grammar is a tokenizer + recursive-descent parser producing an AST that
+evaluates against the resource's JSON (or, for DynamoDB, the attribute-value
+item). Parse errors degrade safely (match-all for a list filter; non-match for a
+DynamoDB condition). Remaining for a future PR: CloudWatch Logs Insights
+(StartQuery) — a separate SQL-like language; KQL is already implemented.
+
 ## 2026-06-19 - Sim fidelity pass 6 (AWS/GCP/Azure probe + 5 fixes)
 
 A sixth fidelity pass: five parallel read-only Explore agents probed the AWS,
