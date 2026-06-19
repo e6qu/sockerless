@@ -201,7 +201,11 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 func (w *statusWriter) Write(p []byte) (int, error) {
-	if w.body.Len() < loggedErrorBodyLimit {
+	// Only buffer the body for error responses (the body is logged on ≥500);
+	// large 2xx OCI/S3 transfers must not pay the extra copy. A handler that
+	// errors sets the status via WriteHeader before writing the body, so the
+	// status is already known here.
+	if w.status >= 500 && w.body.Len() < loggedErrorBodyLimit {
 		remaining := loggedErrorBodyLimit - w.body.Len()
 		if len(p) > remaining {
 			_, _ = w.body.Write(p[:remaining])

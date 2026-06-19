@@ -336,6 +336,12 @@ func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
+	if len(message) > 262144 {
+		snsErrorXML(w, "InvalidParameter",
+			"Invalid parameter: Message too long",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	name := snsTopicNameFromARN(topicARN)
 	if _, ok := snsTopics.Get(name); !ok {
 		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))

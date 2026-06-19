@@ -219,8 +219,15 @@ func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if existing, ok := sqsQueues.Get(req.QueueName); ok {
-		// Real SQS is idempotent on identical-attribute Create.
-		sim.WriteJSON(w, http.StatusOK, map[string]string{"QueueUrl": existing.URL})
+		// Real SQS is idempotent only on an identical-attribute Create; the same
+		// name with different attribute values is a QueueNameExists error.
+		if sqsAttributesEqual(existing.Attributes, req.Attributes) {
+			sim.WriteJSON(w, http.StatusOK, map[string]string{"QueueUrl": existing.URL})
+			return
+		}
+		sqsErrorJSON(w, "QueueNameExists",
+			"A queue already exists with the same name and a different value for attribute(s).",
+			http.StatusBadRequest)
 		return
 	}
 	q := SQSQueue{
@@ -446,6 +453,12 @@ func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
 		sqsErrorJSON(w, "MissingParameter", "MessageBody is required", http.StatusBadRequest)
 		return
 	}
+	if len(req.MessageBody) > sqsMaxMessageBytes {
+		sqsErrorJSON(w, "InvalidParameterValue",
+			"One or more parameters are invalid. Reason: Message must be shorter than 262144 bytes.",
+			http.StatusBadRequest)
+		return
+	}
 	msgID := generateUUID()
 	hash := md5.Sum([]byte(req.MessageBody))
 	md5OfBody := hex.EncodeToString(hash[:])
@@ -639,4 +652,21 @@ func handleSQSListQueueTags(w http.ResponseWriter, r *http.Request) {
 		tags = map[string]string{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"Tags": tags})
+}
+
+// sqsMaxMessageBytes is the SQS message-body size limit (256 KiB).
+const sqsMaxMessageBytes = 262144
+
+// sqsAttributesEqual reports whether two attribute maps are equal (CreateQueue
+// idempotency: same name + same attributes → OK; differing → QueueNameExists).
+func sqsAttributesEqual(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if b[k] != v {
+			return false
+		}
+	}
+	return true
 }

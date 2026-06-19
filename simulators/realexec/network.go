@@ -61,8 +61,20 @@ type Network struct {
 	subnets       map[string]*Subnet
 	mu            sync.Mutex
 	egressMu      sync.Mutex // serializes EnsureEgress so the veth pair is created once
+	cleanupOnce   sync.Map   // tableName -> struct{}: a shared table's teardown is registered once
 	cleanup       *CleanupStack
 	runner        Runner
+}
+
+// registerTableCleanupOnce registers fn on the network's cleanup stack only the
+// first time for a given table name — a shared per-VPC table is reconfigured
+// once per instance/task, but its single teardown must be registered once, not
+// N times (which would grow the cleanup stack unboundedly).
+func (n *Network) registerTableCleanupOnce(tableName string, fn func(context.Context) error) {
+	if _, loaded := n.cleanupOnce.LoadOrStore(tableName, struct{}{}); loaded {
+		return
+	}
+	n.cleanup.Add(fn)
 }
 
 const (
@@ -328,7 +340,7 @@ func (n *Network) ConfigureAddressDNAT(ctx context.Context, targetIPv4 string, t
 		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "ip", tableName); err != nil {
 			return err
 		}
-		n.cleanup.Add(func(cleanupCtx context.Context) error {
+		n.registerTableCleanupOnce(tableName, func(cleanupCtx context.Context) error {
 			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "ip", tableName)
 			return nil
 		})
@@ -384,7 +396,7 @@ func (n *Network) ConfigureEgressPolicy(ctx context.Context, allowedSourceCIDRs 
 		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
 			return err
 		}
-		n.cleanup.Add(func(cleanupCtx context.Context) error {
+		n.registerTableCleanupOnce(tableName, func(cleanupCtx context.Context) error {
 			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
 			return nil
 		})

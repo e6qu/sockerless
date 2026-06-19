@@ -155,6 +155,14 @@ func handleIAMCreateRole(w http.ResponseWriter, r *http.Request) {
 	if decoded, err := url.QueryUnescape(assumeDoc); err == nil {
 		assumeDoc = decoded
 	}
+	if assumeDoc == "" {
+		iamErrorXML(w, "ValidationError", "AssumeRolePolicyDocument is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := parseIAMPolicy(assumeDoc); err != nil {
+		iamErrorXML(w, "MalformedPolicyDocument", "The trust policy could not be parsed: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	role := IAMRole{
 		RoleName:                 name,
@@ -507,6 +515,14 @@ func handleIAMCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	doc := r.FormValue("PolicyDocument")
 	if decoded, err := url.QueryUnescape(doc); err == nil {
 		doc = decoded
+	}
+	if doc == "" {
+		iamErrorXML(w, "ValidationError", "PolicyDocument is required", http.StatusBadRequest)
+		return
+	}
+	if _, err := parseIAMPolicy(doc); err != nil {
+		iamErrorXML(w, "MalformedPolicyDocument", "The policy document could not be parsed: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 	arn := fmt.Sprintf("arn:aws:iam::%s:policy%s%s", awsAccountID(), path, name)
 	if _, ok := iamPolicies.Get(arn); ok {

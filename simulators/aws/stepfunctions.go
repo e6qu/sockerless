@@ -111,6 +111,12 @@ func handleSFNCreateStateMachine(w http.ResponseWriter, r *http.Request) {
 		sfnWriteError(w, "InvalidName", "name is required")
 		return
 	}
+	// Validate the ASL definition at create time (the validator AWS runs);
+	// a malformed/empty definition is an InvalidDefinition error.
+	if err := sfnValidateDefinition(req.Definition); err != nil {
+		sfnWriteError(w, "InvalidDefinition", err.Error())
+		return
+	}
 
 	sfnMu.Lock()
 	defer sfnMu.Unlock()
