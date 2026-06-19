@@ -555,7 +555,7 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 			if req.EndTime > 0 && e.Timestamp > req.EndTime {
 				continue
 			}
-			if req.FilterPattern != "" && !strings.Contains(e.Message, req.FilterPattern) {
+			if req.FilterPattern != "" && !cwLogPatternMatches(e.Message, req.FilterPattern) {
 				continue
 			}
 			results = append(results, map[string]any{

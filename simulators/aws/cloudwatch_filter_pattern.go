@@ -1,0 +1,364 @@
+package main
+
+import (
+	"encoding/json"
+	"strconv"
+	"strings"
+)
+
+// CloudWatch Logs metric-filter pattern language (FilterLogEvents filterPattern),
+// replacing the naive substring match. Two grammars, per the AWS docs:
+//
+//   - Unstructured (plain-text events): space-separated terms — all required
+//     (AND); `?term` makes a term optional (OR group); `-term` excludes; quoted
+//     "phrases" match as a substring of the raw message.
+//   - Structured (pattern wrapped in {…}, JSON events): a boolean expression over
+//     JSON selectors — `$.field`, nested `$.a.b`, array `$.a[0]` — with the
+//     comparison operators = != < <= > >= (string equality supports a trailing
+//     `*` wildcard), combined with && / || and parentheses.
+//
+// https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html
+func cwLogPatternMatches(message, pattern string) bool {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" {
+		return true
+	}
+	if strings.HasPrefix(pattern, "{") && strings.HasSuffix(pattern, "}") {
+		return cwStructuredPatternMatch(message, pattern[1:len(pattern)-1])
+	}
+	return cwUnstructuredPatternMatch(message, pattern)
+}
+
+// ── unstructured ───────────────────────────────────────────────────────────
+
+func cwUnstructuredPatternMatch(message, pattern string) bool {
+	terms := cwSplitPatternTerms(pattern)
+	anyOptional, optionalMatched := false, false
+	for _, raw := range terms {
+		neg, opt := false, false
+		t := raw
+		if strings.HasPrefix(t, "-") {
+			neg, t = true, t[1:]
+		} else if strings.HasPrefix(t, "?") {
+			opt, t = true, t[1:]
+		}
+		t = strings.Trim(t, `"`)
+		if t == "" {
+			continue
+		}
+		contains := strings.Contains(message, t)
+		switch {
+		case neg:
+			if contains {
+				return false
+			}
+		case opt:
+			anyOptional = true
+			if contains {
+				optionalMatched = true
+			}
+		default:
+			if !contains {
+				return false
+			}
+		}
+	}
+	if anyOptional && !optionalMatched {
+		return false
+	}
+	return true
+}
+
+// cwSplitPatternTerms splits on whitespace, keeping "quoted phrases" together.
+func cwSplitPatternTerms(s string) []string {
+	var terms []string
+	var cur strings.Builder
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"':
+			inQuote = !inQuote
+			cur.WriteByte(c)
+		case (c == ' ' || c == '\t') && !inQuote:
+			if cur.Len() > 0 {
+				terms = append(terms, cur.String())
+				cur.Reset()
+			}
+		default:
+			cur.WriteByte(c)
+		}
+	}
+	if cur.Len() > 0 {
+		terms = append(terms, cur.String())
+	}
+	return terms
+}
+
+// ── structured (JSON) ──────────────────────────────────────────────────────
+
+func cwStructuredPatternMatch(message, expr string) bool {
+	var doc any
+	if err := json.Unmarshal([]byte(message), &doc); err != nil {
+		return false // a structured pattern only matches JSON events
+	}
+	p := &cwPatParser{toks: cwPatTokenize(expr)}
+	node := p.parseOr()
+	if node == nil || p.peek().kind != cwPatEOF {
+		return false
+	}
+	return node.eval(doc)
+}
+
+type cwPatNode interface{ eval(doc any) bool }
+
+type cwPatOr struct{ l, r cwPatNode }
+
+func (n cwPatOr) eval(d any) bool { return n.l.eval(d) || n.r.eval(d) }
+
+type cwPatAnd struct{ l, r cwPatNode }
+
+func (n cwPatAnd) eval(d any) bool { return n.l.eval(d) && n.r.eval(d) }
+
+type cwPatCmp struct{ selector, op, value string }
+
+func (n cwPatCmp) eval(d any) bool {
+	actual, present := cwSelectJSON(d, n.selector)
+	switch n.op {
+	case "=":
+		if strings.HasSuffix(n.value, "*") {
+			return present && strings.HasPrefix(cwJSONScalar(actual), strings.TrimSuffix(n.value, "*"))
+		}
+		return present && cwJSONScalar(actual) == n.value
+	case "!=":
+		return !present || cwJSONScalar(actual) != n.value
+	case "<", "<=", ">", ">=":
+		return present && cwNumCompare(cwJSONScalar(actual), n.op, n.value)
+	}
+	return false
+}
+
+func cwNumCompare(a, op, b string) bool {
+	af, aerr := strconv.ParseFloat(a, 64)
+	bf, berr := strconv.ParseFloat(b, 64)
+	if aerr != nil || berr != nil {
+		switch op {
+		case ">":
+			return a > b
+		case "<":
+			return a < b
+		case ">=":
+			return a >= b
+		case "<=":
+			return a <= b
+		}
+		return false
+	}
+	switch op {
+	case ">":
+		return af > bf
+	case "<":
+		return af < bf
+	case ">=":
+		return af >= bf
+	case "<=":
+		return af <= bf
+	}
+	return false
+}
+
+type cwPatKind int
+
+const (
+	cwPatEOF cwPatKind = iota
+	cwPatLParen
+	cwPatRParen
+	cwPatAndOp
+	cwPatOrOp
+	cwPatOp
+	cwPatWord
+)
+
+type cwPatTok struct {
+	kind cwPatKind
+	text string
+}
+
+func cwPatTokenize(s string) []cwPatTok {
+	var toks []cwPatTok
+	i := 0
+	for i < len(s) {
+		c := s[i]
+		switch {
+		case c == ' ' || c == '\t' || c == '\n':
+			i++
+		case c == '(':
+			toks = append(toks, cwPatTok{cwPatLParen, "("})
+			i++
+		case c == ')':
+			toks = append(toks, cwPatTok{cwPatRParen, ")"})
+			i++
+		case c == '&' && i+1 < len(s) && s[i+1] == '&':
+			toks = append(toks, cwPatTok{cwPatAndOp, "&&"})
+			i += 2
+		case c == '|' && i+1 < len(s) && s[i+1] == '|':
+			toks = append(toks, cwPatTok{cwPatOrOp, "||"})
+			i += 2
+		case c == '=' || c == '!' || c == '<' || c == '>':
+			op := string(c)
+			if i+1 < len(s) && s[i+1] == '=' {
+				op += "="
+				i++
+			}
+			toks = append(toks, cwPatTok{cwPatOp, op})
+			i++
+		case c == '"':
+			i++
+			start := i
+			for i < len(s) && s[i] != '"' {
+				i++
+			}
+			toks = append(toks, cwPatTok{cwPatWord, s[start:i]})
+			if i < len(s) {
+				i++
+			}
+		default:
+			start := i
+			for i < len(s) {
+				ch := s[i]
+				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' ||
+					ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '&' || ch == '|' {
+					break
+				}
+				i++
+			}
+			toks = append(toks, cwPatTok{cwPatWord, s[start:i]})
+		}
+	}
+	return append(toks, cwPatTok{cwPatEOF, ""})
+}
+
+type cwPatParser struct {
+	toks []cwPatTok
+	pos  int
+}
+
+func (p *cwPatParser) peek() cwPatTok { return p.toks[p.pos] }
+func (p *cwPatParser) next() cwPatTok { t := p.toks[p.pos]; p.pos++; return t }
+
+func (p *cwPatParser) parseOr() cwPatNode {
+	left := p.parseAnd()
+	for p.peek().kind == cwPatOrOp {
+		p.next()
+		left = cwPatOr{left, p.parseAnd()}
+	}
+	return left
+}
+
+func (p *cwPatParser) parseAnd() cwPatNode {
+	left := p.parseTerm()
+	for p.peek().kind == cwPatAndOp {
+		p.next()
+		left = cwPatAnd{left, p.parseTerm()}
+	}
+	return left
+}
+
+func (p *cwPatParser) parseTerm() cwPatNode {
+	if p.peek().kind == cwPatLParen {
+		p.next()
+		inner := p.parseOr()
+		if p.peek().kind == cwPatRParen {
+			p.next()
+		}
+		return inner
+	}
+	if p.peek().kind != cwPatWord {
+		if p.peek().kind != cwPatEOF {
+			p.next()
+		}
+		return cwPatCmp{op: "="}
+	}
+	selector := p.next().text
+	op, value := "", ""
+	if p.peek().kind == cwPatOp {
+		op = p.next().text
+		if p.peek().kind == cwPatWord {
+			value = p.next().text
+		}
+	}
+	return cwPatCmp{selector: selector, op: op, value: value}
+}
+
+// cwSelectJSON resolves a "$.a.b[0]" selector into a decoded JSON document.
+func cwSelectJSON(doc any, selector string) (any, bool) {
+	sel := strings.TrimPrefix(selector, "$")
+	sel = strings.TrimPrefix(sel, ".")
+	if sel == "" {
+		return doc, true
+	}
+	cur := doc
+	for _, seg := range cwSplitSelectorPath(sel) {
+		if strings.HasPrefix(seg, "[") {
+			idx, err := strconv.Atoi(strings.Trim(seg, "[]"))
+			arr, ok := cur.([]any)
+			if err != nil || !ok || idx < 0 || idx >= len(arr) {
+				return nil, false
+			}
+			cur = arr[idx]
+			continue
+		}
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		cur, ok = m[seg]
+		if !ok {
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+func cwSplitSelectorPath(s string) []string {
+	var segs []string
+	var cur strings.Builder
+	flush := func() {
+		if cur.Len() > 0 {
+			segs = append(segs, cur.String())
+			cur.Reset()
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '.':
+			flush()
+		case '[':
+			flush()
+			if j := strings.IndexByte(s[i:], ']'); j >= 0 {
+				segs = append(segs, s[i:i+j+1])
+				i += j
+			}
+		default:
+			cur.WriteByte(s[i])
+		}
+	}
+	flush()
+	return segs
+}
+
+func cwJSONScalar(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case bool:
+		return strconv.FormatBool(t)
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	default:
+		b, _ := json.Marshal(t)
+		return string(b)
+	}
+}
