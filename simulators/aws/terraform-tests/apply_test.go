@@ -206,6 +206,15 @@ func TestStackProductionShape(t *testing.T) {
 	ebsRestoredVolumeID := outputs.must(t, "ec2_ebs_restored_volume_id")
 	require.True(t, strings.HasPrefix(ebsRestoredVolumeID, "vol-"),
 		"EBS restored volume id must use vol-* shape; got %s", ebsRestoredVolumeID)
+	ebsSnapshotCopyID := outputs.must(t, "ec2_ebs_snapshot_copy_id")
+	require.True(t, strings.HasPrefix(ebsSnapshotCopyID, "snap-"),
+		"EBS snapshot copy id must use snap-* shape; got %s", ebsSnapshotCopyID)
+	require.NotEqual(t, ebsSnapshotID, ebsSnapshotCopyID,
+		"CopySnapshot must produce a new snapshot id distinct from the source")
+
+	cwAlarmARN := outputs.must(t, "cloudwatch_alarm_arn")
+	require.Contains(t, cwAlarmARN, ":alarm:tf-alarm",
+		"CloudWatch metric alarm ARN must use the alarm resource path; got %s", cwAlarmARN)
 
 	require.Equal(t, "tf-asg", outputs.must(t, "autoscaling_group_name"),
 		"Auto Scaling group name must round-trip through provider refresh")

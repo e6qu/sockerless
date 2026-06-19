@@ -43,6 +43,7 @@ provider "aws" {
     kms              = var.endpoint
     lambda           = var.endpoint
     cloudwatchlogs   = var.endpoint
+    cloudwatch       = var.endpoint
     elbv2            = var.endpoint
     autoscaling      = var.endpoint
     cloudtrail       = var.endpoint
@@ -254,6 +255,33 @@ resource "aws_ebs_snapshot" "tf_ebs_snapshot" {
   }
 
   depends_on = [aws_volume_attachment.tf_ebs_attachment]
+}
+
+resource "aws_cloudwatch_metric_alarm" "tf_alarm" {
+  alarm_name          = "tf-alarm"
+  alarm_description   = "terraform metric alarm coverage"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = 1
+  metric_name         = "Errors"
+  namespace           = "Custom/TF"
+  period              = 60
+  statistic           = "Sum"
+  threshold           = 0
+  treat_missing_data  = "notBreaching"
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+resource "aws_ebs_snapshot_copy" "tf_ebs_snapshot_copy" {
+  source_snapshot_id = aws_ebs_snapshot.tf_ebs_snapshot.id
+  source_region      = "us-east-1"
+  description        = "terraform ebs snapshot copy coverage"
+
+  tags = {
+    env = "terraform"
+  }
 }
 
 resource "aws_ebs_volume" "tf_ebs_restored" {
@@ -1403,6 +1431,12 @@ output "ec2_ebs_volume_id" {
 }
 output "ec2_ebs_snapshot_id" {
   value = aws_ebs_snapshot.tf_ebs_snapshot.id
+}
+output "ec2_ebs_snapshot_copy_id" {
+  value = aws_ebs_snapshot_copy.tf_ebs_snapshot_copy.id
+}
+output "cloudwatch_alarm_arn" {
+  value = aws_cloudwatch_metric_alarm.tf_alarm.arn
 }
 output "ec2_ebs_restored_volume_id" {
   value = aws_ebs_volume.tf_ebs_restored.id

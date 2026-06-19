@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-19 - AWS sim observability fidelity batch (#602–#606)
+
+The consumer filed five new AWS-sim fidelity gaps, all observability. Each was
+implemented at cloud-API fidelity with SDK + CLI coverage (+ terraform where the
+op maps to a TF resource) in the same PR.
+
+- **EC2 CopySnapshot (#602, BUG-1882).** The EBS lifecycle had create/describe/
+  delete but not copy, so the cross-region snapshot DR flow (snapshot → copy →
+  restore) couldn't be exercised. `handleCopySnapshot` duplicates the source's
+  backing data into a fresh snapshot id, inheriting size/encryption/KMS.
+
+- **CloudWatch metric alarms (#603, BUG-1883).** Metrics existed but the alarm
+  API returned InvalidAction. `cloudwatch_alarms.go` implements PutMetricAlarm /
+  DescribeAlarms / DeleteAlarms across all three CloudWatch wire protocols
+  (query, awsJson1.0, rpc-v2-cbor) over a single `cwAlarms` store, with
+  `StateValue` evaluated live from the metric data over the most-recent
+  EvaluationPeriods windows (OK / ALARM / INSUFFICIENT_DATA, honouring
+  TreatMissingData). Alarm tagging on the cbor surface makes the
+  `aws_cloudwatch_metric_alarm` provider's transparent-tagging read idempotent.
+
+- **EMF extraction (#604, BUG-1884).** PutLogEvents stored EMF messages verbatim;
+  the metric store was only fed by PutMetricData. `extractEMFMetrics` parses each
+  event's `_aws.CloudWatchMetrics` directives and feeds the existing `cwMetrics`
+  store, so the standard ECS/Fargate EMF-over-stdout → awslogs → CloudWatch path
+  is now queryable through the ordinary metric APIs with no PutMetricData call.
+
+- **FilterLogEvents prefix (#605, BUG-1885).** `FilterLogEvents` decoded only
+  `logStreamNames`, so a `logStreamNamePrefix`-scoped query was treated as no
+  filter and returned every stream's events — a data-isolation gap. Added prefix
+  selection (reusing DescribeLogStreams' `HasPrefix`) + the mutual-exclusion
+  error real CloudWatch returns when both are supplied.
+
+- **LookupEvents pagination (#606, BUG-1886).** The CloudTrail `LookupEvents`
+  NextToken was an absolute offset over a list re-sorted newest-first each call,
+  so an event prepended between page fetches shifted every offset and consecutive
+  pages overlapped (duplicate EventIds). The token is now an opaque cursor on the
+  last event's stable `(EventTime, EventId)` key, resumed after — immune to
+  head-insertion, each event returned exactly once. Also stopped recording the
+  read-only `LookupEvents` calls into the trail (real CloudTrail doesn't log
+  them), which had self-amplified the drift.
+
+Reused the BUG-1513 lesson: CloudWatch speaks three wire protocols and different
+clients pick different ones (local CLI = query, CI CLI = awsJson, Go SDK +
+terraform = cbor), so a new CW op must cover all three — the alarm surface
+mirrors what metrics already did, caught when the alarm CLI test hit the
+query-protocol path locally.
+
 ## 2026-06-19 - aca ExposedPorts cloud-state reconstruction (BUG-1879) + DO_NEXT cleanup
 
 With every audit-found bug fixed (five rounds + the staged BUG-1840–1846 backlog),

@@ -367,6 +367,14 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 		*events = append(*events, newEvents...)
 	})
 
+	// CloudWatch auto-extracts metrics from any EMF-formatted event into the
+	// metric store, queryable through the metric APIs with no PutMetricData call.
+	for _, e := range req.LogEvents {
+		for _, datum := range extractEMFMetrics(e.Message, e.Timestamp) {
+			cwStoreDatum(datum)
+		}
+	}
+
 	// Update stream timestamps
 	cwLogStreams.Update(key, func(s *CWLogStream) {
 		s.LastIngestionTime = now
@@ -472,12 +480,13 @@ func handleCWGetLogEvents(w http.ResponseWriter, r *http.Request) {
 
 func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		LogGroupName   string   `json:"logGroupName"`
-		LogStreamNames []string `json:"logStreamNames"`
-		FilterPattern  string   `json:"filterPattern"`
-		StartTime      int64    `json:"startTime"`
-		EndTime        int64    `json:"endTime"`
-		Limit          int      `json:"limit"`
+		LogGroupName        string   `json:"logGroupName"`
+		LogStreamNames      []string `json:"logStreamNames"`
+		LogStreamNamePrefix string   `json:"logStreamNamePrefix"`
+		FilterPattern       string   `json:"filterPattern"`
+		StartTime           int64    `json:"startTime"`
+		EndTime             int64    `json:"endTime"`
+		Limit               int      `json:"limit"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -485,6 +494,13 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.LogGroupName == "" {
 		sim.AWSError(w, "InvalidParameterException", "logGroupName is required", http.StatusBadRequest)
+		return
+	}
+	// logStreamNames and logStreamNamePrefix are mutually exclusive, exactly as
+	// real CloudWatch Logs rejects them.
+	if len(req.LogStreamNames) > 0 && req.LogStreamNamePrefix != "" {
+		sim.AWSError(w, "InvalidParameterException",
+			"LogStreamNames and LogStreamNamePrefix are mutually exclusive.", http.StatusBadRequest)
 		return
 	}
 	// Real CloudWatch Logs FilterLogEvents validates the group exists first
@@ -508,6 +524,9 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 			return false
+		}
+		if req.LogStreamNamePrefix != "" {
+			return strings.HasPrefix(s.LogStreamName, req.LogStreamNamePrefix)
 		}
 		return true
 	})

@@ -102,3 +102,35 @@ func TestEC2_EBSSnapshotFidelitySDK(t *testing.T) {
 	assert.True(t, aws.ToBool(out.Snapshots[0].Encrypted), "snapshot inherits encryption from the source volume")
 	assert.Contains(t, aws.ToString(out.Snapshots[0].KmsKeyId), "key/snap")
 }
+
+// TestEC2_CopySnapshotFidelitySDK covers CopySnapshot — the cross-region EBS DR
+// primitive: a copy gets a fresh snapshot id, inherits the source's size +
+// encryption, takes the supplied description, and lists via DescribeSnapshots.
+func TestEC2_CopySnapshotFidelitySDK(t *testing.T) {
+	c := ec2Client()
+	vol, err := c.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"), Size: aws.Int32(4), VolumeType: types.VolumeTypeGp3,
+		Encrypted: aws.Bool(true), KmsKeyId: aws.String("arn:aws:kms:us-east-1:123456789012:key/copy"),
+	})
+	require.NoError(t, err)
+	snap, err := c.CreateSnapshot(ctx, &ec2.CreateSnapshotInput{VolumeId: vol.VolumeId})
+	require.NoError(t, err)
+	srcID := aws.ToString(snap.SnapshotId)
+
+	cp, err := c.CopySnapshot(ctx, &ec2.CopySnapshotInput{
+		SourceRegion:     aws.String("us-east-1"),
+		SourceSnapshotId: aws.String(srcID),
+		Description:      aws.String("DR copy"),
+	})
+	require.NoError(t, err)
+	copyID := aws.ToString(cp.SnapshotId)
+	require.NotEmpty(t, copyID)
+	assert.NotEqual(t, srcID, copyID, "copy must get its own snapshot id")
+
+	out, err := c.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{copyID}})
+	require.NoError(t, err)
+	require.Len(t, out.Snapshots, 1)
+	assert.Equal(t, "DR copy", aws.ToString(out.Snapshots[0].Description))
+	assert.True(t, aws.ToBool(out.Snapshots[0].Encrypted), "copy inherits encryption from the source")
+	assert.Equal(t, int32(4), aws.ToInt32(out.Snapshots[0].VolumeSize))
+}

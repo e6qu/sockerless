@@ -11,6 +11,53 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestCloudWatch_FilterLogEventsByStreamPrefix covers logStreamNamePrefix on
+// FilterLogEvents: the prefix scopes the searched streams (previously ignored,
+// so events from every stream leaked in), and supplying both logStreamNames and
+// logStreamNamePrefix is rejected, matching real CloudWatch Logs.
+func TestCloudWatch_FilterLogEventsByStreamPrefix(t *testing.T) {
+	cw := cwLogsClient()
+	group := "/test/prefix-filter"
+	_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(group)})
+	require.NoError(t, err)
+	defer cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(group)})
+
+	for _, s := range []string{"ws-aaa/x", "ws-bbb/y"} {
+		_, err := cw.CreateLogStream(ctx, &cloudwatchlogs.CreateLogStreamInput{
+			LogGroupName: aws.String(group), LogStreamName: aws.String(s),
+		})
+		require.NoError(t, err)
+	}
+	now := time.Now().UnixMilli()
+	put := func(stream, msg string) {
+		_, err := cw.PutLogEvents(ctx, &cloudwatchlogs.PutLogEventsInput{
+			LogGroupName: aws.String(group), LogStreamName: aws.String(stream),
+			LogEvents: []cwlogtypes.InputLogEvent{{Timestamp: aws.Int64(now), Message: aws.String(msg)}},
+		})
+		require.NoError(t, err)
+	}
+	put("ws-aaa/x", "hello-aaa")
+	put("ws-bbb/y", "hello-bbb")
+
+	out, err := cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName:        aws.String(group),
+		LogStreamNamePrefix: aws.String("ws-aaa"),
+	})
+	require.NoError(t, err)
+	var msgs []string
+	for _, e := range out.Events {
+		msgs = append(msgs, aws.ToString(e.Message))
+	}
+	assert.Equal(t, []string{"hello-aaa"}, msgs, "prefix must scope to ws-aaa streams only")
+
+	_, err = cw.FilterLogEvents(ctx, &cloudwatchlogs.FilterLogEventsInput{
+		LogGroupName:        aws.String(group),
+		LogStreamNamePrefix: aws.String("ws-aaa"),
+		LogStreamNames:      []string{"ws-bbb/y"},
+	})
+	require.Error(t, err, "logStreamNames and logStreamNamePrefix are mutually exclusive")
+}
+
 func TestCloudWatch_GetLogEventsPagination(t *testing.T) {
 	cw := cwLogsClient()
 

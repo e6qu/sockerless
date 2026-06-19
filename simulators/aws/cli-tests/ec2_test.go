@@ -214,6 +214,42 @@ func TestEC2EBSVolumeSnapshotCLI(t *testing.T) {
 	runCLI(t, awsCLI("ec2", "terminate-instances", "--instance-ids", instanceID))
 }
 
+func TestEC2CopySnapshotCLI(t *testing.T) {
+	out := runCLI(t, awsCLI("ec2", "create-volume",
+		"--availability-zone", "us-east-1a", "--size", "1", "--volume-type", "gp3",
+		"--query", "VolumeId", "--output", "text"))
+	volumeID := strings.TrimSpace(out)
+
+	out = runCLI(t, awsCLI("ec2", "create-snapshot",
+		"--volume-id", volumeID, "--description", "src",
+		"--query", "SnapshotId", "--output", "text"))
+	srcID := strings.TrimSpace(out)
+	waitCLISnapshotStatus(t, srcID, "completed")
+
+	out = runCLI(t, awsCLI("ec2", "copy-snapshot",
+		"--source-region", "us-east-1", "--source-snapshot-id", srcID,
+		"--description", "dr-copy",
+		"--query", "SnapshotId", "--output", "text"))
+	copyID := strings.TrimSpace(out)
+	if copyID == "" || !strings.HasPrefix(copyID, "snap-") {
+		t.Fatalf("expected copied snapshot id, got %q", copyID)
+	}
+	if copyID == srcID {
+		t.Fatalf("copy must get a new id; got source id %s", srcID)
+	}
+	waitCLISnapshotStatus(t, copyID, "completed")
+
+	out = runCLI(t, awsCLI("ec2", "describe-snapshots",
+		"--snapshot-ids", copyID, "--query", "Snapshots[0].Description", "--output", "text"))
+	if strings.TrimSpace(out) != "dr-copy" {
+		t.Fatalf("copy description = %q, want dr-copy", strings.TrimSpace(out))
+	}
+
+	runCLI(t, awsCLI("ec2", "delete-snapshot", "--snapshot-id", copyID))
+	runCLI(t, awsCLI("ec2", "delete-snapshot", "--snapshot-id", srcID))
+	runCLI(t, awsCLI("ec2", "delete-volume", "--volume-id", volumeID))
+}
+
 func waitCLISnapshotStatus(t *testing.T, snapshotID, want string) {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

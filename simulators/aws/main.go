@@ -89,6 +89,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerECR(awsRouter, srv)
 	registerCloudWatchLogs(awsRouter, srv)
 	registerCloudWatchMetricsJSON(awsRouter)
+	registerCloudWatchAlarmsJSON(awsRouter)
 	registerCloudMap(awsRouter, srv)
 	registerSecretsManager(awsRouter, srv)
 	registerSSMParameterStore(awsRouter, srv)
@@ -115,6 +116,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerELBv2(queryRouter, srv)
 	registerAutoScaling(queryRouter, srv)
 	registerCloudWatchMetricsQuery(queryRouter)
+	registerCloudWatchAlarmsQuery(queryRouter)
 
 	// Host-addressed service data planes are registered outside the
 	// control-plane routers, AFTER armSpecValidator: a later WrapHandler

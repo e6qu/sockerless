@@ -531,6 +531,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("ModifyVolume", handleModifyVolume)
 	r.Register("DescribeVolumesModifications", handleDescribeVolumesModifications)
 	r.Register("CreateSnapshot", handleCreateSnapshot)
+	r.Register("CopySnapshot", handleCopySnapshot)
 	r.Register("DescribeSnapshots", handleDescribeSnapshots)
 	r.Register("DeleteSnapshot", handleDeleteSnapshot)
 	r.Register("DescribeImages", handleDescribeImages)
@@ -4401,6 +4402,61 @@ func handleCreateSnapshot(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateSnapshotResponse %s><requestId>%s</requestId>%s</CreateSnapshotResponse>`,
 		ec2Xmlns(), generateUUID(), ec2SnapshotFieldsXML(snap))
+}
+
+// handleCopySnapshot copies an existing snapshot into a new snapshot id,
+// duplicating its backing data so a restore from the copy yields the source's
+// bytes. Real CopySnapshot is the cross-region DR primitive (snapshot → copy
+// to another region → restore); the destination-region endpoint receives the
+// request with SourceRegion + SourceSnapshotId, and the sim — single-account,
+// single-store — realizes the copy locally against the source snapshot. The
+// response carries only the new snapshotId (not the full snapshot fields).
+func handleCopySnapshot(w http.ResponseWriter, r *http.Request) {
+	srcID := r.FormValue("SourceSnapshotId")
+	if srcID == "" {
+		ec2ErrorXML(w, "MissingParameter", "The request must contain the parameter SourceSnapshotId", http.StatusBadRequest)
+		return
+	}
+	ec2SettleSnapshot(srcID)
+	src, ok := ec2Snapshots.Get(srcID)
+	if !ok {
+		ec2ErrorXML(w, "InvalidSnapshot.NotFound", fmt.Sprintf("The snapshot %q does not exist", srcID), http.StatusBadRequest)
+		return
+	}
+	now := time.Now().UTC()
+	snap := EC2Snapshot{
+		SnapshotId:    ec2ID("snap"),
+		VolumeId:      src.VolumeId,
+		VolumeSize:    src.VolumeSize,
+		State:         "pending",
+		StartTime:     now.Format(time.RFC3339),
+		CompletionDue: now.Add(100 * time.Millisecond).Format(time.RFC3339Nano),
+		Progress:      "0%",
+		Description:   r.FormValue("Description"),
+		OwnerId:       ec2Owner(),
+		Encrypted:     src.Encrypted,
+		KmsKeyId:      src.KmsKeyId,
+		Tags:          parseTags(r),
+		VolumeData:    append([]byte(nil), src.VolumeData...),
+	}
+	if src.DockerVolumeName != "" {
+		snap.DockerVolumeName = ebsSnapshotDockerVolumeName(snap.SnapshotId)
+		if err := ebsCopyDockerVolumes(r.Context(), src.DockerVolumeName, snap.DockerVolumeName); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not copy snapshot data: %v", err), http.StatusInternalServerError)
+			return
+		}
+	} else if src.HostPath != "" {
+		snap.HostPath = ebsSnapshotHostDirPath(snap.SnapshotId)
+		if err := ebsCopyDir(snap.HostPath, src.HostPath); err != nil {
+			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not copy snapshot data: %v", err), http.StatusInternalServerError)
+			return
+		}
+	}
+	ec2Snapshots.Put(snap.SnapshotId, snap)
+	go ec2TransitionSnapshotToCompleted(snap.SnapshotId)
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<CopySnapshotResponse %s><requestId>%s</requestId><snapshotId>%s</snapshotId></CopySnapshotResponse>`,
+		ec2Xmlns(), generateUUID(), snap.SnapshotId)
 }
 
 func ec2TransitionSnapshotToCompleted(snapshotID string) {
