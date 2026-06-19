@@ -321,6 +321,13 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 				}
 			}
 
+			// Lambda allocates memory (MB); CPU is proportional and not
+			// separately exposed, so only HostConfig.Memory is set.
+			var memBytes int64
+			if fn.MemorySize != nil {
+				memBytes = int64(*fn.MemorySize) * 1024 * 1024
+			}
+
 			containers = append(containers, api.Container{
 				ID:      containerID,
 				Name:    name,
@@ -331,7 +338,7 @@ func (p *lambdaCloudState) queryFunctions(ctx context.Context) ([]api.Container,
 					Image:  image,
 					Labels: labels,
 				},
-				HostConfig: api.HostConfig{NetworkMode: "bridge"},
+				HostConfig: api.HostConfig{NetworkMode: "bridge", Memory: memBytes},
 				NetworkSettings: api.NetworkSettings{
 					Networks: map[string]*api.EndpointSettings{
 						"bridge": {NetworkID: "bridge", IPAddress: ""},
