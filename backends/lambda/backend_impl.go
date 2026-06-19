@@ -1153,9 +1153,12 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		// Clean up Lambda cloud resources
 		lambdaState, _ := s.resolveLambdaState(s.ctx(), c.ID)
 		if lambdaState.FunctionName != "" {
-			_, _ = s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
+			if _, err := s.aws.Lambda.DeleteFunction(s.ctx(), &awslambda.DeleteFunctionInput{
 				FunctionName: aws.String(lambdaState.FunctionName),
-			})
+			}); err != nil {
+				s.Logger.Warn().Err(err).Str("function", lambdaState.FunctionName).
+					Msg("prune: DeleteFunction failed; function may be orphaned")
+			}
 		}
 		if lambdaState.FunctionARN != "" {
 			s.Registry.MarkCleanedUp(lambdaState.FunctionARN)

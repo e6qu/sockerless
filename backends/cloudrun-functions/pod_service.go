@@ -111,8 +111,12 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		fullName := fmt.Sprintf("projects/%s/locations/%s/functions/%s",
 			s.config.Project, s.config.Region, state.FunctionName)
 		if delOp, derr := s.gcp.Functions.DeleteFunction(ctx, &functionspb.DeleteFunctionRequest{Name: fullName}); derr == nil {
-			_ = delOp.Wait(ctx)
+			if werr := delOp.Wait(ctx); werr != nil {
+				s.Logger.Warn().Err(werr).Str("function", fullName).Msg("pre-materialize cleanup: DeleteFunction wait failed; leftover may be swept later")
+			}
 			s.Registry.MarkCleanedUp(fullName)
+		} else {
+			s.Logger.Warn().Err(derr).Str("function", fullName).Msg("pre-materialize cleanup: DeleteFunction failed; leftover may be swept later")
 		}
 	}
 

@@ -82,11 +82,16 @@ func (s *Server) cloudNamespaceDelete(ctx context.Context, networkID string) err
 			},
 		},
 	)
-	if err == nil {
+	if err != nil {
+		s.Logger.Warn().Err(err).Msg("cloudmap cleanup: ListServices failed; namespace delete may fail")
+	} else {
 		for _, svc := range listOut.Services {
-			_, _ = s.aws.ServiceDiscovery.DeleteService(ctx,
+			if _, derr := s.aws.ServiceDiscovery.DeleteService(ctx,
 				&servicediscovery.DeleteServiceInput{Id: svc.Id},
-			)
+			); derr != nil {
+				s.Logger.Warn().Err(derr).Str("service", aws.ToString(svc.Id)).
+					Msg("cloudmap cleanup: DeleteService failed")
+			}
 		}
 	}
 

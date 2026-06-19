@@ -1699,17 +1699,29 @@ func registerComputeInstanceGroups(srv *sim.Server) {
 		name := sim.PathParam(r, "name")
 		selfLink := instanceGroupSelfLink(project, zone, name)
 		var req struct {
-			NamedPorts []ComputeInstanceGroupNamedPort `json:"namedPorts"`
+			Fingerprint string                          `json:"fingerprint"`
+			NamedPorts  []ComputeInstanceGroupNamedPort `json:"namedPorts"`
 		}
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		var conflict bool
 		if !groups.Update(selfLink, func(group *storedComputeInstanceGroup) {
+			// setNamedPorts honors the fingerprint for optimistic concurrency
+			// (a stale read-modify-write must 412).
+			if !fingerprintMatches(group.Fingerprint, req.Fingerprint) {
+				conflict = true
+				return
+			}
 			group.NamedPorts = req.NamedPorts
 			group.Fingerprint = computeFingerprint()
 		}) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance group %q not found", name)
+			return
+		}
+		if conflict {
+			sim.GCPErrorf(w, http.StatusPreconditionFailed, "conditionNotMet", "named ports fingerprint mismatch; the resource was modified concurrently")
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, computeZoneOp(project, zone, selfLink, "setNamedPorts"))
