@@ -430,6 +430,7 @@ func handleAPIMListServicesByRG(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	all = azureApplyListQuery(all, r)
 	page, next := armPage(r, all)
 	if page == nil {
 		page = []APIMService{}
@@ -516,6 +517,7 @@ func handleAPIMListApis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	all = azureApplyListQuery(all, r)
 	page, next := armPage(r, all)
 	if page == nil {
 		page = []APIMApi{}

@@ -332,6 +332,7 @@ func handleCosmosListAccounts(w http.ResponseWriter, r *http.Request) {
 		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"))
 	all := cosmosAccounts.Filter(func(a CosmosAccount) bool { return strings.HasPrefix(a.ID, prefix) })
 	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	all = azureApplyListQuery(all, r)
 	page, next := armPage(r, all)
 	if page == nil {
 		page = []CosmosAccount{}
