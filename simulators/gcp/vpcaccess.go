@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -34,6 +35,17 @@ func registerVPCAccess(srv *sim.Server) {
 		var req VPCAccessConnector
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+
+		// Real Cloud VPC Access requires a connector to be defined either by a
+		// network + IP CIDR range, or by an existing subnet. A request with
+		// neither is rejected with INVALID_ARGUMENT.
+		hasNetwork := req.Network != "" && req.IpCidrRange != ""
+		hasSubnet := req.Subnet != nil && req.Subnet.Name != ""
+		if !hasNetwork && !hasSubnet {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+				"connector must specify either network and ipCidrRange, or a subnet")
 			return
 		}
 
@@ -103,9 +115,19 @@ func registerVPCAccess(srv *sim.Server) {
 		conns := connectors.Filter(func(c VPCAccessConnector) bool {
 			return len(c.Name) > len(prefix) && c.Name[:len(prefix)] == prefix
 		})
+		sort.Slice(conns, func(i, j int) bool { return conns[i].Name < conns[j].Name })
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"connectors": conns,
-		})
+		page, next, ok := paginateList(w, r, conns)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []VPCAccessConnector{}
+		}
+		resp := map[string]any{"connectors": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 }

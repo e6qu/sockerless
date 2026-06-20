@@ -273,6 +273,17 @@ func handleEFSDescribeFileSystems(w http.ResponseWriter, r *http.Request) {
 	} else {
 		fileSystems = efsFileSystems.List()
 		sort.Slice(fileSystems, func(i, j int) bool { return fileSystems[i].FileSystemId < fileSystems[j].FileSystemId })
+		// Refresh each file system's live mount-target count so the list path
+		// matches the by-id path (real EFS always reports the current count).
+		for i := range fileSystems {
+			count := 0
+			for _, mt := range efsMountTargets.List() {
+				if mt.FileSystemId == fileSystems[i].FileSystemId {
+					count++
+				}
+			}
+			fileSystems[i].NumberOfMountTargets = count
+		}
 	}
 	if fileSystems == nil {
 		fileSystems = []EFSFileSystem{}

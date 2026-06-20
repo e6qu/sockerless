@@ -114,6 +114,28 @@ func TestAutoScalingGroupLifecycleSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, activitiesOut.Activities)
+
+	// DescribeAutoScalingGroups Filters: the sim used to ignore Filters and
+	// return every group. A tag:env=sdk filter must return only sdk-asg, and a
+	// tag:env=nope filter must return nothing.
+	matched, err := asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		Filters: []types.Filter{{Name: aws.String("tag:env"), Values: []string{"sdk"}}},
+	})
+	require.NoError(t, err)
+	names := make([]string, 0)
+	for _, g := range matched.AutoScalingGroups {
+		names = append(names, aws.ToString(g.AutoScalingGroupName))
+	}
+	assert.Contains(t, names, "sdk-asg")
+
+	none, err := asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		Filters: []types.Filter{{Name: aws.String("tag:env"), Values: []string{"nope"}}},
+	})
+	require.NoError(t, err)
+	for _, g := range none.AutoScalingGroups {
+		assert.NotEqual(t, "sdk-asg", aws.ToString(g.AutoScalingGroupName),
+			"tag:env=nope must not match sdk-asg")
+	}
 }
 
 func TestCloudTrailRecordsAPICallsToS3SDK(t *testing.T) {

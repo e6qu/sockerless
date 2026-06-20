@@ -135,3 +135,15 @@ func TestELBv2_ListenerRulesAndModifyListener(t *testing.T) {
 	require.Len(t, final.Rules, 1, "only the default rule should remain")
 	assert.True(t, aws.ToBool(final.Rules[0].IsDefault))
 }
+
+// TestELBv2_DescribeRulesNotFound proves DescribeRules raises RuleNotFound when
+// a requested RuleArn doesn't exist, instead of silently returning a short list
+// (which made terraform refresh see destroyed rules as still present).
+func TestELBv2_DescribeRulesNotFound(t *testing.T) {
+	elb := elbv2Client()
+	_, err := elb.DescribeRules(ctx, &elbv2.DescribeRulesInput{
+		RuleArns: []string{"arn:aws:elasticloadbalancing:us-east-1:123456789012:listener-rule/app/x/0/0/does-not-exist"},
+	})
+	require.Error(t, err)
+	assertAWSAPIErrorCode(t, err, "RuleNotFound")
+}

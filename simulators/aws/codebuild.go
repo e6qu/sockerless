@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,6 +43,9 @@ type CBBuild struct {
 	Phases      []CBPhase      `json:"phases"`
 	Logs        map[string]any `json:"logs"`
 	Environment map[string]any `json:"environment,omitempty"`
+	// Seq is a sim-internal monotonic creation order used to sort ListBuilds
+	// faithfully by start order; it's not part of the CodeBuild wire shape.
+	Seq int64 `json:"-"`
 }
 
 type CBPhase struct {
@@ -100,6 +104,13 @@ func cbARN(resource string) string {
 func cbEpochNow() float64 {
 	return float64(time.Now().UTC().Unix())
 }
+
+// cbBuildSeq is a process-wide monotonic counter giving each build a strictly
+// increasing creation order, so ListBuilds sorts faithfully by start order even
+// when builds are created within the same wall-clock second.
+var cbBuildSeq atomic.Int64
+
+func cbNextBuildSeq() int64 { return cbBuildSeq.Add(1) }
 
 func cbWriteJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.1")
@@ -217,8 +228,11 @@ func handleCBListProjects(w http.ResponseWriter, r *http.Request) {
 	for _, p := range all {
 		names = append(names, p.Name)
 	}
-	// Deterministic order so the offset-based NextToken pages each name once.
+	// ListProjects sorts by name; default order is ASCENDING.
 	sort.Strings(names)
+	if strings.EqualFold(req.SortOrder, "DESCENDING") {
+		reverseStrings(names)
+	}
 	page, nextTok := awsPage(names, req.NextToken, 0, 100)
 	resp := map[string]any{"projects": page}
 	if nextTok != "" {
@@ -317,6 +331,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		Arn:         cbARN("build/" + buildID),
 		ProjectName: req.ProjectName,
 		BuildStatus: "IN_PROGRESS",
+		Seq:         cbNextBuildSeq(),
 		StartTime:   now,
 		EndTime:     now,
 		Environment: p.Environment,
@@ -466,13 +481,13 @@ func handleCBListBuildsForProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	all := cbBuilds.List()
-	var ids []string
+	var builds []CBBuild
 	for _, b := range all {
 		if b.ProjectName == req.ProjectName {
-			ids = append(ids, b.ID)
+			builds = append(builds, b)
 		}
 	}
-	sort.Strings(ids)
+	ids := cbSortBuildIDs(builds, req.SortOrder)
 	page, nextTok := awsPage(ids, req.NextToken, 0, 100)
 	resp := map[string]any{"ids": page}
 	if nextTok != "" {
@@ -489,17 +504,37 @@ func handleCBListBuilds(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
 	all := cbBuilds.List()
-	ids := make([]string, 0, len(all))
-	for _, b := range all {
-		ids = append(ids, b.ID)
-	}
-	sort.Strings(ids)
+	ids := cbSortBuildIDs(all, req.SortOrder)
 	page, nextTok := awsPage(ids, req.NextToken, 0, 100)
 	resp := map[string]any{"ids": page}
 	if nextTok != "" {
 		resp["nextToken"] = nextTok
 	}
 	cbWriteJSON(w, http.StatusOK, resp)
+}
+
+// cbSortBuildIDs orders builds by start time and returns their IDs. AWS
+// ListBuilds / ListBuildsForProject default to DESCENDING (most-recent first);
+// sortOrder="ASCENDING" reverses it. Ties break on ID for a stable page cursor.
+func cbSortBuildIDs(builds []CBBuild, sortOrder string) []string {
+	ascending := strings.EqualFold(sortOrder, "ASCENDING")
+	sort.Slice(builds, func(i, j int) bool {
+		if ascending {
+			return builds[i].Seq < builds[j].Seq
+		}
+		return builds[i].Seq > builds[j].Seq
+	})
+	ids := make([]string, 0, len(builds))
+	for _, b := range builds {
+		ids = append(ids, b.ID)
+	}
+	return ids
+}
+
+func reverseStrings(s []string) {
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		s[i], s[j] = s[j], s[i]
+	}
 }
 
 func cbNameFromARN(arn string) string {

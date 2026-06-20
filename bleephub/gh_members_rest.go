@@ -43,7 +43,23 @@ func (s *Server) handleListOrgMembers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	members := s.store.ListOrgMembers(orgLogin)
+	// Real GitHub only exposes the full member list to authenticated members of
+	// the org; a non-member (or anonymous caller) sees just the publicized
+	// members. This mirrors the behaviour of GET /orgs/{org}/members vs
+	// /orgs/{org}/public_members.
+	user := ghUserFromContext(r.Context())
+	isMember := false
+	if user != nil {
+		if m := s.store.GetMembership(orgLogin, user.ID); m != nil && m.State == MembershipStateActive {
+			isMember = true
+		}
+	}
+	var members []*User
+	if isMember {
+		members = s.store.ListOrgMembers(orgLogin)
+	} else {
+		members = s.store.ListPublicOrgMembers(orgLogin)
+	}
 	result := make([]map[string]interface{}, 0, len(members))
 	for _, u := range members {
 		result = append(result, userToJSON(u))

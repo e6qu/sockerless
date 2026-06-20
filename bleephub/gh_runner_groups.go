@@ -26,22 +26,26 @@ type RunnerGroup struct {
 const defaultRunnerGroupID = 1
 
 func (s *Server) registerRunnerGroupRoutes() {
-	s.route("GET /api/v3/orgs/{org}/actions/runner-groups", s.orgGated(s.handleListRunnerGroups))
+	s.route("GET /api/v3/orgs/{org}/actions/runner-groups",
+		s.requirePerm(scopeAdministration, permRead, s.orgGated(s.handleListRunnerGroups)))
 	s.route("POST /api/v3/orgs/{org}/actions/runner-groups",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleCreateRunnerGroup)))
-	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}", s.orgGated(s.handleGetRunnerGroup))
+	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}",
+		s.requirePerm(scopeAdministration, permRead, s.orgGated(s.handleGetRunnerGroup)))
 	s.route("PATCH /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleUpdateRunnerGroup)))
 	s.route("DELETE /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleDeleteRunnerGroup)))
-	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/runners", s.orgGated(s.handleListGroupRunners))
+	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/runners",
+		s.requirePerm(scopeAdministration, permRead, s.orgGated(s.handleListGroupRunners)))
 	s.route("PUT /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/runners",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleSetGroupRunners)))
 	s.route("PUT /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleAddGroupRunner)))
 	s.route("DELETE /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleRemoveGroupRunner)))
-	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/repositories", s.orgGated(s.handleListGroupRepos))
+	s.route("GET /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/repositories",
+		s.requirePerm(scopeAdministration, permRead, s.orgGated(s.handleListGroupRepos)))
 	s.route("PUT /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/repositories",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleSetGroupRepos)))
 	s.route("PUT /api/v3/orgs/{org}/actions/runner-groups/{runner_group_id}/repositories/{repository_id}",

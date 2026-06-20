@@ -1141,6 +1141,17 @@ func (s *Server) handleBranchProtectionDelete(w http.ResponseWriter, r *http.Req
 
 func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
 	orgName := r.PathValue("org")
+
+	// The audit log exposes secret-name changes, hook-config edits and actor
+	// identities; real GitHub restricts it to org owners (read:audit_log /
+	// admin:org). Anyone else gets 404 (GitHub hides existence from non-admins).
+	user := ghUserFromContext(r.Context())
+	org := s.store.GetOrg(orgName)
+	if user == nil || org == nil || !canAdminOrg(s.store, user, org) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
 	s.store.Misc.mu.RLock()
 	entries := make([]*AuditEntry, 0, len(s.store.Misc.auditLog))
 	for _, e := range s.store.Misc.auditLog {

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2026 filed - 1982 fixed - 2 open - 12 false positives.**
+**2062 filed - 2018 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,42 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2062~~ | P3 | AWS sim Kinesis — ListShards/ListStreams ignored pagination | fidelity | now honor Limit/MaxResults + NextToken/ExclusiveStart* with truncation tokens (SDK+CLI tests). |
+| ~~2061~~ | P2 | AWS sim EventBridge — event-pattern matcher only did source/detail-type string arrays | fidelity | now recurses the detail object + supports prefix/suffix/anything-but/numeric/exists/cidr/equals-ignore-case content matchers (SDK+CLI tests). |
+| ~~2060~~ | P3 | bleephub — embedded GraphQL connections ignored first/last/after/before | fidelity | PullRequest.reviews/comments/labels/assignees + Issue.comments/labels/assignees + repo labels/milestones now paginate via the hardened paginateGQL with correct pageInfo; node order deterministic (createdAt,_dbID). |
+| ~~2059~~ | HIGH | bleephub — GraphQL connection `first` integer-overflow panic (fuzz) | crash | paginateGQL/paginateAndLink clamp first to [1,100] + int64 guards against negative/overflow slice bounds. |
+| ~~2058~~ | HIGH | bleephub — GraphQL `repository(owner,name)` leaked private-repo contents | security | added the canReadRepo gate the REST path has → NOT_FOUND for no-access. |
+| ~~2057~~ | HIGH | bleephub — GraphQL `search(type:ISSUE)` leaked private-repo issues/PRs | security | filter the candidate-repo set to viewer-readable repos. |
+| ~~2056~~ | HIGH | bleephub — `GET /orgs/{org}/audit-log` fully ungated | security | gated with canAdminOrg (was anonymous). |
+| ~~2055~~ | HIGH | bleephub — `GET /orgs/{org}/members` exposed private memberships anonymously | security | non-members now see only ListPublicOrgMembers. |
+| ~~2054~~ | P2 | bleephub — org runner-group READ endpoints ungated | security | 4 GET routes now requirePerm(administration, read). |
+| ~~2053~~ | P2 | bleephub — `onJobCompleted` not idempotent (DELETE AgentRequest + POST FinishJob) | correctness | terminal-state guard so a duplicate can't re-emit webhooks / flip the conclusion. |
+| ~~2052~~ | P2 | bleephub — off-lock reads of a concurrently-written *Job + check-run/suite live-pointer races (-race) | data race | snapshot job fields under the lock; render workflowJobJSON under RLock; check-run/suite getters return snapshots. |
+| ~~2051~~ | HIGH | Azure sim — NAT-gateway→subnet association never persisted | fidelity | the subnet's NatGateway mutation was discarded (no Put); now persisted atomically via Update + rollback. |
+| ~~2050~~ | HIGH | Azure sim — storage-account PATCH check-then-act race | data race | single atomic Update instead of Get→mutate→Put. |
+| ~~2049~~ | HIGH | Azure sim — Tables Query-Entities ignored $filter/$top | fidelity | server-side OData $filter + $top + x-ms-continuation paging (the aztables SDK doesn't re-filter). |
+| ~~2048~~ | P2 | Azure sim — managed-identity PUT always returned 200 | fidelity | 201 Created for a new identity, 200 for update (atomic existence check). |
+| ~~2047~~ | P2 | Azure sim — managed-environment hardcoded StaticIp 10.0.0.100 on every env | synthetic value | deterministic env-unique IP derived from the resource id. |
+| ~~2046~~ | P2 | AWS sim Step Functions — ASL interpreter unbounded recursion (fuzz) | crash | a deeply-nested Parallel/Map definition overflowed the goroutine stack; depth cap (200) → graceful FAILED. |
+| ~~2045~~ | P3 | AWS sim CodeBuild — ListBuilds/ForProject/ListProjects ignored sortOrder | fidelity | honor sortOrder via a monotonic Seq + reverse (DESCENDING is the ListBuilds default). |
+| ~~2044~~ | P3 | AWS sim CloudTrail — LookupEvents ignored StartTime/EndTime | fidelity | decode + filter the time window. |
+| ~~2043~~ | P3 | AWS sim RDS — RestoreDBInstanceFromDBSnapshot hardcoded port 5432 | fidelity | derive the default port from the snapshot engine. |
+| ~~2042~~ | P3 | AWS sim AutoScaling — DescribeAutoScalingGroups ignored Filters | fidelity | apply tag-key/tag-value/tag:<k> filters. |
+| ~~2041~~ | P3 | AWS sim ELBv2 — DescribeRules silently dropped unknown RuleArns | fidelity | raise RuleNotFound (terraform refresh saw destroyed rules as present). |
+| ~~2040~~ | P3 | AWS sim KMS — ListAliases ignored the KeyId filter (+ Limit/Marker) | fidelity | resolve+filter by KeyId, paginate. |
+| ~~2039~~ | P3 | AWS sim EFS — DescribeFileSystems returned stale NumberOfMountTargets on the list path | fidelity | refresh each item's live count. |
+| ~~2038~~ | P3 | AWS sim Route53 — ListHostedZones ignored marker/maxitems | fidelity | validate maxitems + opaque-marker pagination. |
+| ~~2037~~ | P2 | GCP sim Secret Manager — AddSecretVersion check-then-act race on version id | data race | per-secret atomic counter (concurrent adds collided). |
+| ~~2036~~ | P2 | GCP sim Cloud KMS — CreateCryptoKeyVersion same version-id race | data race | stored-only atomic VersionSeq counter. |
+| ~~2035~~ | P2 | GCP sim Cloud DNS — Changes.create non-atomic change-id + record mutation | data race | per-zone mutex serializing the change application. |
+| ~~2034~~ | P2 | GCP sim Pub/Sub — Publish upsert raced concurrent publishes (lost messages) | data race | seed the delivery queue at subscribe; drive off Update's return. |
+| ~~2033~~ | P2 | GCP sim Cloud Logging — writeLogEntries appended into a shared backing array a reader held | data race | build a fresh slice each write. |
+| ~~2032~~ | P2 | GCP sim — dashboard bucket-name + cloudfunctions name-split could panic | crash | comma-ok assertion + length guard. |
+| ~~2031~~ | P3 | GCP sim — vpcaccess CreateConnector under-validated + List ops (vpcaccess/serviceusage/secretmanager) ignored list params | fidelity | added validation + pageSize/pageToken/filter. |
+| ~~2030~~ | P3 | GCP sim — pubsub Seek / spanner CreateSession / redis Upgrade swallowed malformed JSON (200); cloudfunctions ReadAll + iam key-store ordering | error swallow | surface 400 / propagate the read error / generate-then-store. |
+| ~~2029~~ | HIGH | sim shared OCI `/v2/` data plane — `ociReadBody` did unbounded `io.ReadAll` of the request body, and unbounded `io.ReadAll(gz)` on a gzip stream (security/DoS, fuzzing-adjacent) | unbounded read / zip-bomb | any `docker push` client could POST a body with no Content-Length, or a tiny gzip blob that inflates to gigabytes ("zip bomb"), and OOM the simulator (all 3 cloud sims share this code). **Fixed:** `readCapped` bounds both paths at a post-decompression 2 GiB cap via `io.LimitReader`, erroring loudly past the limit rather than truncating (a truncated blob would later fail DIGEST_INVALID confusingly). Also bounded the spec-validate capture middleware's request-body read (256 MiB). Regression tests (`TestOCIReadBody*`) + fuzzers (`FuzzParsePlatform`/`FuzzResolveLocalImage`); applied to aws then cp'd to gcp+azure (byte-identical). |
+| ~~2028~~ | HIGH | agent — every WebSocket read loop (`server.go` handleWebSocket/serveReverseConn, `reverse.go` readLoop, `wsclient.go` Dial) read frames with NO `SetReadLimit` (security/DoS) | unbounded read | gorilla/websocket defaults to unlimited message size, so a malicious/buggy peer (agent or backend) could declare a multi-GB frame and OOM the process. **Fixed:** `conn.SetReadLimit(maxWSMessageBytes)` (4 MiB — far above any real 32 KiB-chunk JSON envelope) on all four read paths. Fuzzers `FuzzMessageUnmarshal`/`FuzzRouterHandle` exercise the envelope/base64/signal parsing for panics. |
+| ~~2027~~ | P2 | sim shared `sandbox.go` — `isDockerSocketBind` deny-check was a naive substring match (security/sandbox-bypass) | sandbox bypass | a workload bind could evade the docker.sock deny via path-traversal (`/var/run/../run/docker.sock`), dot/double-slash segments, or a parent-directory mount (`-v /var/run:/x` or `-v /:/x`) that exposes the socket inside the mount — none matched the substring check. **Fixed:** parse the bind source, `path.Clean`-normalize it, and deny exact socket paths, traversal variants, ancestor-directory mounts, and podman sockets too. Regression test `TestSandboxDenyDockerSocketBypasses` + `FuzzIsDockerSocketBind`; shared-logic region cp'd byte-identical to gcp+azure (per-cloud profile vars untouched). |
 | ~~2026~~ | P3 | AWS sim Secrets Manager — `ListSecrets` ignored the `Filters` parameter (issue #629) | wrong result-set | a `tag-key` (or any) Filter returned every secret regardless; a downstream GC enumerating only its own tag-scoped secrets saw all of them. **Fixed:** apply Filters server-side (tag-key/tag-value/name/description/all, AND across filters, OR within Values). SDK test. |
 | ~~2025~~ | P3 | AWS sim ECS — `ListTaskDefinitions` ignored `sort` (DESC) + `status` (issue #630) | wrong result-set / order | DESC returned ascending; a deregistered (INACTIVE) revision still appeared in the default/ACTIVE listing. **Fixed:** default status ACTIVE (exclude INACTIVE unless INACTIVE/ALL), revision-numeric ordering, DESC reverses. SDK test. |
 | ~~2024~~ | P3 | scripts — `check-simulator-tests.sh` HandleFunc enforcement scanned `_test.go` files (self-found) | guard false-positive | the new HandleFunc rule diffed `'simulators/*.go'` (incl. test files), so a throwaway route in a soak/test fixture (e.g. `GET /boom`) was flagged as a real endpoint needing SDK/CLI/TF tests; now scans only the production `changed_go` set (already excludes `_test.go`). |

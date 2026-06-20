@@ -186,3 +186,62 @@ func TestEventBridgeCLI_BusArchiveReplay(t *testing.T) {
 	parseJSON(t, out, &replays)
 	require.Len(t, replays.Replays, 1)
 }
+
+// TestEventBridgeCLI_ContentFilterPattern exercises a content-filtering event
+// pattern over the CLI: nested detail-object matching plus the prefix and
+// numeric matchers. It asserts a matching event is delivered and a near-miss
+// (right source, wrong detail) is correctly rejected.
+func TestEventBridgeCLI_ContentFilterPattern(t *testing.T) {
+	runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "eb-cli-content-q"))
+	out := runCLI(t, awsCLI("sqs", "get-queue-url", "--queue-name", "eb-cli-content-q"))
+	var q struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	parseJSON(t, out, &q)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("sqs", "delete-queue", "--queue-url", q.QueueUrl))
+	})
+
+	out = runCLI(t, awsCLI("sqs", "get-queue-attributes",
+		"--queue-url", q.QueueUrl,
+		"--attribute-names", "QueueArn"))
+	var attrs struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	parseJSON(t, out, &attrs)
+	queueARN := attrs.Attributes["QueueArn"]
+	require.NotEmpty(t, queueARN)
+
+	// detail.state prefix "run" AND detail.code numeric > 200.
+	pattern := `{"source":["sockerless.cli.content"],"detail":{"state":[{"prefix":"run"}],"code":[{"numeric":[">",200]}]}}`
+	runCLI(t, awsCLI("events", "put-rule",
+		"--name", "eb-cli-content-rule",
+		"--event-pattern", pattern))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("events", "remove-targets", "--rule", "eb-cli-content-rule", "--ids", "queue"))
+		runCLI(t, awsCLI("events", "delete-rule", "--name", "eb-cli-content-rule"))
+	})
+	runCLI(t, awsCLI("events", "put-targets",
+		"--rule", "eb-cli-content-rule",
+		"--targets", `[{"Id":"queue","Arn":"`+queueARN+`"}]`))
+
+	entries, err := json.Marshal([]map[string]string{
+		{"Source": "sockerless.cli.content", "DetailType": "job", "Detail": `{"state":"running","code":500}`},
+		{"Source": "sockerless.cli.content", "DetailType": "job", "Detail": `{"state":"queued","code":100}`},
+	})
+	require.NoError(t, err)
+	runCLI(t, awsCLI("events", "put-events", "--entries", string(entries)))
+
+	// Drain up to 10 messages; only the matching event must arrive.
+	out = runCLI(t, awsCLI("sqs", "receive-message",
+		"--queue-url", q.QueueUrl,
+		"--max-number-of-messages", "10"))
+	var recv struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
+	}
+	parseJSON(t, out, &recv)
+	require.Len(t, recv.Messages, 1, "only the matching event must be delivered")
+	assert.JSONEq(t, `{"state":"running","code":500}`, recv.Messages[0].Body)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -763,7 +764,7 @@ func archiveEBEvent(bus string, record EBEventRecord) {
 		if archive.EventSourceArn != sourceArn || archive.State != "ENABLED" {
 			continue
 		}
-		if archive.EventPattern != "" && !ebEventPatternMatches(archive.EventPattern, record.Source, record.DetailType) {
+		if archive.EventPattern != "" && !ebEventPatternMatches(archive.EventPattern, record.Source, record.DetailType, record.Detail) {
 			continue
 		}
 		archive.ArchivedEvents = append(archive.ArchivedEvents, record)
@@ -806,7 +807,7 @@ func deliverEBEvent(bus, source, detailType, detail, eventID string) {
 		if rule.EventBusName != bus || rule.State == "DISABLED" {
 			continue
 		}
-		if !ebRuleMatches(rule, source, detailType) {
+		if !ebRuleMatches(rule, source, detailType, detail) {
 			continue
 		}
 		targets, _ := ebTargets.Get(ebRuleKey(rule.EventBusName, rule.Name))
@@ -820,34 +821,237 @@ func deliverEBEvent(bus, source, detailType, detail, eventID string) {
 	}
 }
 
-func ebRuleMatches(rule EBRule, source, detailType string) bool {
+func ebRuleMatches(rule EBRule, source, detailType, detail string) bool {
 	if rule.EventPattern == "" {
 		return true
 	}
-	return ebEventPatternMatches(rule.EventPattern, source, detailType)
+	return ebEventPatternMatches(rule.EventPattern, source, detailType, detail)
 }
 
-func ebEventPatternMatches(patternJSON, source, detailType string) bool {
-	var pattern map[string][]string
+// ebEventPatternMatches evaluates an EventBridge event pattern against an event.
+// It builds the event as the same nested JSON object EventBridge matches against
+// (top-level "source"/"detail-type"/"resources" plus the parsed "detail" object)
+// and recurses through the pattern. Per the EventBridge content-filtering rules
+// (https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-event-patterns.html):
+//   - a pattern value array is an OR — the event value matches if it satisfies
+//     any element (an exact string or a content-matcher object);
+//   - sibling keys (including nested keys inside "detail") are ANDed;
+//   - a pattern value that is an object recurses into the event's matching key.
+func ebEventPatternMatches(patternJSON, source, detailType, detail string) bool {
+	var pattern map[string]any
 	if err := json.Unmarshal([]byte(patternJSON), &pattern); err != nil {
 		return false
 	}
-	if allowed := pattern["source"]; len(allowed) > 0 && !stringIn(source, allowed) {
+	event := map[string]any{
+		"source":      source,
+		"detail-type": detailType,
+	}
+	if detail != "" {
+		var d any
+		if err := json.Unmarshal([]byte(detail), &d); err == nil {
+			event["detail"] = d
+		}
+	}
+	return ebMatchObject(pattern, event)
+}
+
+// ebMatchObject ANDs every key in the pattern against the event object.
+func ebMatchObject(pattern map[string]any, event any) bool {
+	obj, ok := event.(map[string]any)
+	if !ok {
 		return false
 	}
-	if allowed := pattern["detail-type"]; len(allowed) > 0 && !stringIn(detailType, allowed) {
-		return false
+	for key, patVal := range pattern {
+		eventVal, present := obj[key]
+		if !ebMatchValue(patVal, eventVal, present) {
+			return false
+		}
 	}
 	return true
 }
 
-func stringIn(value string, allowed []string) bool {
-	for _, candidate := range allowed {
-		if value == candidate {
-			return true
+// ebMatchValue dispatches on the pattern node shape: a nested object recurses,
+// an array is an OR of leaf matchers, anything else is invalid.
+func ebMatchValue(patVal, eventVal any, present bool) bool {
+	switch pv := patVal.(type) {
+	case map[string]any:
+		// Nested key path: recurse into the event's sub-object.
+		return ebMatchObject(pv, eventVal)
+	case []any:
+		// OR list: the event value matches if it satisfies any element.
+		for _, candidate := range pv {
+			if ebMatchLeaf(candidate, eventVal, present) {
+				return true
+			}
 		}
+		return false
+	default:
+		return false
+	}
+}
+
+// ebMatchLeaf evaluates one element of a pattern's value array against the event
+// value: either an exact value (string/number/bool/null) or a content-matcher
+// object ({"prefix":...}, {"suffix":...}, {"anything-but":...}, {"numeric":...},
+// {"exists":...}, {"cidr":...}, {"equals-ignore-case":...}).
+func ebMatchLeaf(candidate, eventVal any, present bool) bool {
+	if m, ok := candidate.(map[string]any); ok {
+		return ebMatchContentFilter(m, eventVal, present)
+	}
+	// Exact match. EventBridge compares decoded JSON values, so a string
+	// pattern matches a string event value, a number matches a number, etc.
+	if !present {
+		return false
+	}
+	return ebValuesEqual(candidate, eventVal)
+}
+
+func ebValuesEqual(a, b any) bool {
+	switch av := a.(type) {
+	case string:
+		bv, ok := b.(string)
+		return ok && av == bv
+	case bool:
+		bv, ok := b.(bool)
+		return ok && av == bv
+	case float64:
+		bv, ok := ebToFloat(b)
+		return ok && av == bv
+	case nil:
+		return b == nil
+	default:
+		return false
+	}
+}
+
+// ebMatchContentFilter implements EventBridge's content-matcher objects.
+func ebMatchContentFilter(filter map[string]any, eventVal any, present bool) bool {
+	// exists is evaluated on presence/absence, not on the value.
+	if want, ok := filter["exists"]; ok {
+		wantBool, _ := want.(bool)
+		return present == wantBool
+	}
+	if prefix, ok := filter["prefix"]; ok {
+		s, sok := eventVal.(string)
+		p, pok := prefix.(string)
+		return present && sok && pok && strings.HasPrefix(s, p)
+	}
+	if suffix, ok := filter["suffix"]; ok {
+		s, sok := eventVal.(string)
+		p, pok := suffix.(string)
+		return present && sok && pok && strings.HasSuffix(s, p)
+	}
+	if ci, ok := filter["equals-ignore-case"]; ok {
+		s, sok := eventVal.(string)
+		p, pok := ci.(string)
+		return present && sok && pok && strings.EqualFold(s, p)
+	}
+	if ab, ok := filter["anything-but"]; ok {
+		return present && ebMatchAnythingBut(ab, eventVal)
+	}
+	if num, ok := filter["numeric"]; ok {
+		return present && ebMatchNumeric(num, eventVal)
+	}
+	if c, ok := filter["cidr"]; ok {
+		s, sok := eventVal.(string)
+		cidr, cok := c.(string)
+		return present && sok && cok && ebMatchCIDR(cidr, s)
 	}
 	return false
+}
+
+// ebMatchAnythingBut matches when the event value differs from every excluded
+// value. The exclusion can be a single scalar or a list of scalars.
+func ebMatchAnythingBut(exclude, eventVal any) bool {
+	switch ex := exclude.(type) {
+	case []any:
+		for _, e := range ex {
+			if ebValuesEqual(e, eventVal) {
+				return false
+			}
+		}
+		return true
+	default:
+		return !ebValuesEqual(exclude, eventVal)
+	}
+}
+
+// ebMatchNumeric implements {"numeric": [op, value, ...]} where op is one of
+// "=", "!=", "<", "<=", ">", ">=" and pairs can be chained (e.g.
+// [">", 0, "<=", 5]). All chained conditions are ANDed.
+func ebMatchNumeric(spec, eventVal any) bool {
+	terms, ok := spec.([]any)
+	if !ok || len(terms)%2 != 0 {
+		return false
+	}
+	val, ok := ebToFloat(eventVal)
+	if !ok {
+		return false
+	}
+	for i := 0; i < len(terms); i += 2 {
+		op, ok := terms[i].(string)
+		if !ok {
+			return false
+		}
+		bound, ok := ebToFloat(terms[i+1])
+		if !ok {
+			return false
+		}
+		switch op {
+		case "=":
+			if val != bound {
+				return false
+			}
+		case "!=":
+			if val == bound {
+				return false
+			}
+		case "<":
+			if !(val < bound) {
+				return false
+			}
+		case "<=":
+			if !(val <= bound) {
+				return false
+			}
+		case ">":
+			if !(val > bound) {
+				return false
+			}
+		case ">=":
+			if !(val >= bound) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func ebToFloat(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
+	default:
+		return 0, false
+	}
+}
+
+// ebMatchCIDR reports whether ip falls inside the cidr block.
+func ebMatchCIDR(cidr, ip string) bool {
+	_, network, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return false
+	}
+	addr := net.ParseIP(ip)
+	if addr == nil {
+		return false
+	}
+	return network.Contains(addr)
 }
 
 func deliverEBTarget(target EBTarget, body, source, detailType, eventID string) {

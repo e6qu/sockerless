@@ -68,13 +68,24 @@ var (
 	smSecrets        sim.Store[Secret]
 	smSecretVersions sim.Store[SecretVersion]
 	smSecretPayloads sim.Store[smPayloadRecord]
-	smCRC32CTable    = crc32.MakeTable(crc32.Castagnoli)
+	// smVersionSeq holds the monotonic per-secret version counter, keyed by
+	// secret name. AddSecretVersion bumps it atomically (store Update holds the
+	// write lock) so concurrent adds never collide on a version ID. Kept out of
+	// the Secret wire shape because GCP's Secret resource has no such field.
+	smVersionSeq  sim.Store[smSeqRecord]
+	smCRC32CTable = crc32.MakeTable(crc32.Castagnoli)
 )
+
+// smSeqRecord is the persisted monotonic version counter for one secret.
+type smSeqRecord struct {
+	Next int `json:"next"`
+}
 
 func registerSecretManager(srv *sim.Server) {
 	smSecrets = sim.MakeStore[Secret](srv.DB(), "sm_secrets")
 	smSecretVersions = sim.MakeStore[SecretVersion](srv.DB(), "sm_secret_versions")
 	smSecretPayloads = sim.MakeStore[smPayloadRecord](srv.DB(), "sm_secret_payloads")
+	smVersionSeq = sim.MakeStore[smSeqRecord](srv.DB(), "sm_version_seq")
 
 	// CreateSecret: POST /v1/projects/{project}/secrets?secretId=X
 	srv.HandleFunc("POST /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +130,7 @@ func registerSecretManager(srv *sim.Server) {
 			Topics:         req.Topics,
 		}
 		smSecrets.Put(name, secret)
+		smVersionSeq.Put(name, smSeqRecord{Next: 0})
 		sim.WriteJSON(w, http.StatusOK, secret)
 	})
 
@@ -140,6 +152,9 @@ func registerSecretManager(srv *sim.Server) {
 			all = []Secret{}
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		// Honor the `filter` query param (e.g. labels.env=prod) the Secret
+		// Manager ListSecrets API supports.
+		all = gcpApplyListParams(all, r)
 		page, next, ok := paginateList(w, r, all)
 		if !ok {
 			return
@@ -218,6 +233,7 @@ func registerSecretManager(srv *sim.Server) {
 			return
 		}
 
+		smVersionSeq.Delete(name)
 		prefix := name + "/versions/"
 		for _, v := range smSecretVersions.List() {
 			if strings.HasPrefix(v.Name, prefix) {
@@ -268,15 +284,26 @@ func registerSecretManager(srv *sim.Server) {
 			return
 		}
 
-		// Version IDs are monotonically increasing; count existing
-		// versions of this secret to pick the next.
-		var n int
-		for _, v := range smSecretVersions.List() {
-			if strings.HasPrefix(v.Name, secretName+"/versions/") {
-				n++
+		// Version IDs are monotonically increasing. Reserve the next ID
+		// atomically by bumping the per-secret counter under the store write
+		// lock, so concurrent AddSecretVersion calls never collide on an ID.
+		var assigned int
+		if !smVersionSeq.Update(secretName, func(s *smSeqRecord) {
+			s.Next++
+			assigned = s.Next
+		}) {
+			// Counter absent (secret created before the counter existed): seed
+			// it from the current version count, then reserve the next ID.
+			n := 0
+			for _, v := range smSecretVersions.List() {
+				if strings.HasPrefix(v.Name, secretName+"/versions/") {
+					n++
+				}
 			}
+			assigned = n + 1
+			smVersionSeq.Put(secretName, smSeqRecord{Next: assigned})
 		}
-		versionID := fmt.Sprintf("%d", n+1)
+		versionID := fmt.Sprintf("%d", assigned)
 		versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
 		ver := SecretVersion{
 			Name:                           versionName,

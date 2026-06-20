@@ -153,6 +153,48 @@ func TestCodeBuild_BuildLifecycle_SDK(t *testing.T) {
 	require.Contains(t, allBuilds.Ids, buildID)
 }
 
+// TestCodeBuild_ListBuildsSortOrder_SDK pins that ListBuildsForProject honors
+// the sortOrder parameter: DESCENDING (the AWS default) returns most-recent
+// builds first, ASCENDING reverses it. The sim used to ignore sortOrder and
+// always sort alphabetically by build ID.
+func TestCodeBuild_ListBuildsSortOrder_SDK(t *testing.T) {
+	c := codebuildClient()
+	proj := "cb-sortorder-project"
+	_, err := c.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name:        aws.String(proj),
+		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - printf ok\n")},
+		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(proj)}) })
+
+	var ordered []string
+	for i := 0; i < 3; i++ {
+		sb, err := c.StartBuild(ctx, &codebuild.StartBuildInput{ProjectName: aws.String(proj)})
+		require.NoError(t, err)
+		ordered = append(ordered, aws.ToString(sb.Build.Id))
+	}
+
+	desc, err := c.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
+		ProjectName: aws.String(proj),
+		SortOrder:   cbtypes.SortOrderTypeDescending,
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.Ids, 3)
+	// DESCENDING = most-recent (last started) first.
+	assert.Equal(t, []string{ordered[2], ordered[1], ordered[0]}, desc.Ids)
+
+	asc, err := c.ListBuildsForProject(ctx, &codebuild.ListBuildsForProjectInput{
+		ProjectName: aws.String(proj),
+		SortOrder:   cbtypes.SortOrderTypeAscending,
+	})
+	require.NoError(t, err)
+	require.Len(t, asc.Ids, 3)
+	assert.Equal(t, []string{ordered[0], ordered[1], ordered[2]}, asc.Ids)
+}
+
 // TestCodeBuild_FailedBuildPhaseContext_SDK pins where failure detail
 // lives on the Build shape: the BUILD phase's contexts (PhaseContext),
 // not the LogsLocation.

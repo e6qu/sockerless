@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1105,18 +1107,92 @@ func handleEntityQuery(w http.ResponseWriter, r *http.Request, account, table st
 		return
 	}
 	prefix := account + "/" + table + "/"
-	var entries []map[string]json.RawMessage
-	for _, e := range tableEntities.List() {
-		if strings.HasPrefix(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey), prefix) {
-			out := map[string]json.RawMessage{}
-			for k, v := range e.Properties {
-				out[k] = v
-			}
-			out["Timestamp"], _ = json.Marshal(e.Timestamp)
-			entries = append(entries, out)
+
+	// Gather this table's entities, sorted by (PartitionKey, RowKey) — the
+	// canonical Tables ordering real Azure pages over.
+	matching := tableEntities.Filter(func(e TableEntity) bool {
+		return strings.HasPrefix(tableEntityKey(e.Account, e.Table, e.PartitionKey, e.RowKey), prefix)
+	})
+	sort.Slice(matching, func(i, j int) bool {
+		if matching[i].PartitionKey != matching[j].PartitionKey {
+			return matching[i].PartitionKey < matching[j].PartitionKey
+		}
+		return matching[i].RowKey < matching[j].RowKey
+	})
+
+	// $filter — Azure Tables evaluates a server-side OData filter against each
+	// entity's properties (incl. PartitionKey/RowKey). aztables pushes the
+	// filter to the server and does not re-filter client-side, so ignoring it
+	// returns wrong results.
+	var filterNode odataNode
+	if f := strings.TrimSpace(r.URL.Query().Get("$filter")); f != "" {
+		filterNode = azureParseODataFilter(f)
+	}
+
+	// $skiptoken — the sim pages by entity offset (encoded in the
+	// continuation headers Azure emits when $top truncates the result).
+	start := 0
+	if tok := r.URL.Query().Get("NextRowKey"); tok != "" {
+		if n, err := strconv.Atoi(tok); err == nil && n >= 0 {
+			start = n
 		}
 	}
+
+	limit := -1
+	if raw := r.URL.Query().Get("$top"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	entries := []map[string]json.RawMessage{}
+	idx := 0
+	nextToken := ""
+	for _, e := range matching {
+		if filterNode != nil && !filterNode.eval(tableEntityFilterMap(e)) {
+			continue
+		}
+		if idx < start {
+			idx++
+			continue
+		}
+		if limit >= 0 && len(entries) >= limit {
+			nextToken = strconv.Itoa(idx)
+			break
+		}
+		out := map[string]json.RawMessage{}
+		for k, v := range e.Properties {
+			out[k] = v
+		}
+		out["Timestamp"], _ = json.Marshal(e.Timestamp)
+		entries = append(entries, out)
+		idx++
+	}
+
+	if nextToken != "" {
+		// Real Tables returns the continuation tokens as response headers; the
+		// SDK forwards them back as NextPartitionKey/NextRowKey query params.
+		w.Header().Set("x-ms-continuation-NextPartitionKey", "p")
+		w.Header().Set("x-ms-continuation-NextRowKey", nextToken)
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": entries})
+}
+
+// tableEntityFilterMap builds the property map an OData $filter is evaluated
+// against: every stored property (unmarshalled from its raw JSON) plus the
+// PartitionKey/RowKey/Timestamp system properties.
+func tableEntityFilterMap(e TableEntity) map[string]any {
+	m := make(map[string]any, len(e.Properties)+3)
+	for k, raw := range e.Properties {
+		var v any
+		if err := json.Unmarshal(raw, &v); err == nil {
+			m[k] = v
+		}
+	}
+	m["PartitionKey"] = e.PartitionKey
+	m["RowKey"] = e.RowKey
+	m["Timestamp"] = e.Timestamp
+	return m
 }
 
 func jsonString(raw json.RawMessage) string {

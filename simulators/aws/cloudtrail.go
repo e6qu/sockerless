@@ -262,6 +262,8 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 		LookupAttributes []cloudTrailLookupAttribute
 		MaxResults       int
 		NextToken        string
+		StartTime        *float64
+		EndTime          *float64
 	}
 	_ = readAWSJSONAllowEmpty(r, &req)
 	for _, attr := range req.LookupAttributes {
@@ -274,6 +276,9 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 	// The full matched, time-ordered event list; a stable cursor resumes within
 	// it so head-insertion between page fetches can't duplicate or skip events.
 	matched := cloudTrailMatchedOrdered(cloudTrailEvents.List(), req.LookupAttributes)
+	// StartTime/EndTime (epoch-second numbers in awsJson) scope events to a
+	// [StartTime, EndTime] window — inclusive, matching the real LookupEvents API.
+	matched = cloudTrailFilterTimeWindow(matched, req.StartTime, req.EndTime)
 	pageSize := req.MaxResults
 	if pageSize <= 0 || pageSize > 50 {
 		pageSize = 50
@@ -336,6 +341,31 @@ func cloudTrailMatchedOrdered(events []CloudTrailEvent, attrs []cloudTrailLookup
 		}
 	}
 	return matched
+}
+
+// cloudTrailFilterTimeWindow keeps only events whose EventTime falls within the
+// inclusive [start, end] window. Either bound may be nil (unbounded on that
+// side). Bounds arrive as epoch seconds (awsJson timestamp wire form).
+func cloudTrailFilterTimeWindow(events []CloudTrailEvent, start, end *float64) []CloudTrailEvent {
+	if start == nil && end == nil {
+		return events
+	}
+	out := make([]CloudTrailEvent, 0, len(events))
+	for _, ev := range events {
+		t, err := time.Parse(time.RFC3339, ev.EventTime)
+		if err != nil {
+			continue
+		}
+		secs := float64(t.Unix())
+		if start != nil && secs < *start {
+			continue
+		}
+		if end != nil && secs > *end {
+			continue
+		}
+		out = append(out, ev)
+	}
+	return out
 }
 
 // cloudTrailEncodeToken / cloudTrailDecodeToken make the LookupEvents NextToken

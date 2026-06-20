@@ -43,4 +43,11 @@ func TestSFN_Interpreter(t *testing.T) {
 	if out, status, err := sfnExecute(mp, `{"items":[1,2,3]}`, cancel); err != nil || status != "SUCCEEDED" || out != `["x","x","x"]` {
 		t.Fatalf("map → %q %q %v", out, status, err)
 	}
+
+	// Pathologically nested Parallel must fail gracefully via the depth guard,
+	// never overflow the goroutine stack (a fatal crash).
+	deep := sfnNestedParallel(sfnMaxNestingDepth + 50)
+	if _, status, err := sfnExecute(deep, `{}`, cancel); status != "FAILED" || err == nil {
+		t.Fatalf("deep nesting should FAIL via depth guard, got status=%q err=%v", status, err)
+	}
 }

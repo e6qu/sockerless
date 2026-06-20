@@ -144,17 +144,7 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 			"DB instance already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	port := 3306
-	switch r.FormValue("Engine") {
-	case "postgres", "aurora-postgresql":
-		port = 5432
-	case "mysql", "aurora", "aurora-mysql", "mariadb":
-		port = 3306
-	case "sqlserver-ex", "sqlserver-se", "sqlserver-ee", "sqlserver-web":
-		port = 1433
-	case "oracle-ee", "oracle-se2":
-		port = 1521
-	}
+	port := rdsDefaultPort(r.FormValue("Engine"))
 	engine := r.FormValue("Engine")
 	engineVersion := r.FormValue("EngineVersion")
 	if engineVersion == "" {
@@ -407,6 +397,22 @@ func removeAWSQueryTags(tags map[string]string, r *http.Request) {
 //
 // Versions kept current as of mid-2026 GA releases. New majors land
 // rarely (1-2× per year); update here when they ship.
+// rdsDefaultPort returns the engine's default listener port, matching what RDS
+// assigns when no explicit Port is given (and what a snapshot restore inherits
+// from the source engine).
+func rdsDefaultPort(engine string) int {
+	switch engine {
+	case "postgres", "aurora-postgresql":
+		return 5432
+	case "sqlserver-ex", "sqlserver-se", "sqlserver-ee", "sqlserver-web":
+		return 1433
+	case "oracle-ee", "oracle-se2":
+		return 1521
+	default: // mysql, aurora, aurora-mysql, mariadb, and unknown engines
+		return 3306
+	}
+}
+
 func rdsDefaultEngineVersion(engine string) string {
 	switch engine {
 	case "postgres":
@@ -606,7 +612,7 @@ func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
 		MasterUsername:       snap.MasterUsername,
 		AllocatedStorage:     snap.AllocatedStorage,
 		Endpoint:             fmt.Sprintf("%s.%s.rds.amazonaws.com", newInstID, awsRegion()),
-		Port:                 5432,
+		Port:                 rdsDefaultPort(snap.Engine),
 		AvailabilityZone:     awsRegion() + "a",
 		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
 		ARN:                  rdsInstanceARN(newInstID),

@@ -410,23 +410,49 @@ func ociError(w http.ResponseWriter, code, message string, status int) {
 	})
 }
 
+// ociMaxBodyBytes bounds the size of any single blob/manifest upload the
+// registry will buffer in memory. A registry caller streams whole image layers
+// through here, so the cap is generous (2 GiB) — larger than any realistic test
+// image layer — but finite: without it an attacker could POST a body with no
+// Content-Length (or a tiny gzip blob that inflates to gigabytes — a "zip bomb")
+// and OOM the simulator. The decompressed size is what the cap guards, since
+// that is what gets materialized.
+const ociMaxBodyBytes = 2 << 30 // 2 GiB
+
 // ociReadBody reads the request body, transparently gunzipping it when the
-// client sets Content-Encoding: gzip (real registry clients do).
+// client sets Content-Encoding: gzip (real registry clients do). The read is
+// bounded by ociMaxBodyBytes (post-decompression) so a maliciously large or
+// highly-compressible body cannot exhaust memory.
 func ociReadBody(r *http.Request) ([]byte, error) {
-	ce := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
-	switch ce {
+	switch ce := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))); ce {
 	case "", "identity":
-		return io.ReadAll(r.Body)
+		return readCapped(r.Body)
 	case "gzip":
 		gz, err := gzip.NewReader(r.Body)
 		if err != nil {
 			return nil, fmt.Errorf("gzip body: %w", err)
 		}
 		defer func() { _ = gz.Close() }()
-		return io.ReadAll(gz)
+		return readCapped(gz)
 	default:
 		return nil, fmt.Errorf("unsupported Content-Encoding %q", ce)
 	}
+}
+
+// readCapped reads up to ociMaxBodyBytes from r, returning an error if the
+// stream exceeds the cap rather than silently truncating (a truncated blob
+// would later fail the digest check with a confusing DIGEST_INVALID).
+func readCapped(r io.Reader) ([]byte, error) {
+	// Read one byte past the cap so a body of exactly the limit succeeds while
+	// anything larger is rejected.
+	data, err := io.ReadAll(io.LimitReader(r, ociMaxBodyBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > ociMaxBodyBytes {
+		return nil, fmt.Errorf("request body exceeds %d-byte limit", int64(ociMaxBodyBytes))
+	}
+	return data, nil
 }
 
 func maxInt(a, b int) int {

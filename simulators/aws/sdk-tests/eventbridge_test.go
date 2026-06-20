@@ -317,3 +317,97 @@ func TestEventBridge_RuleTargetPutEventsSDK(t *testing.T) {
 	require.Len(t, received.Messages, 1)
 	assert.JSONEq(t, `{"ok":true}`, aws.ToString(received.Messages[0].Body))
 }
+
+// TestEventBridge_ContentFilterPatternSDK exercises the content-filtering event
+// pattern features beyond plain string-array equality: matching on the nested
+// "detail" object, the {"prefix":...} matcher, and the {"numeric":[...]} matcher.
+// It asserts a faithfully-matching event is delivered and a near-miss event
+// (right source, wrong detail) is correctly REJECTED.
+func TestEventBridge_ContentFilterPatternSDK(t *testing.T) {
+	eb := eventbridgeClient()
+	sqsC := sqsClient()
+
+	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("eb-sdk-content-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl}) })
+	attrs, err := sqsC.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{"QueueArn"},
+	})
+	require.NoError(t, err)
+	queueARN := attrs.Attributes["QueueArn"]
+	require.NotEmpty(t, queueARN)
+
+	// Pattern: source EXACT, detail.state PREFIX "run", detail.code NUMERIC > 200.
+	// Nested keys are ANDed; each value array is an OR of leaf matchers.
+	pattern := `{
+		"source": ["sockerless.content"],
+		"detail": {
+			"state": [{"prefix": "run"}],
+			"code": [{"numeric": [">", 200]}]
+		}
+	}`
+	_, err = eb.PutRule(ctx, &eventbridge.PutRuleInput{
+		Name:         aws.String("eb-sdk-content-rule"),
+		EventPattern: aws.String(pattern),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
+			Rule: aws.String("eb-sdk-content-rule"),
+			Ids:  []string{"queue"},
+		})
+		_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: aws.String("eb-sdk-content-rule")})
+	})
+	_, err = eb.PutTargets(ctx, &eventbridge.PutTargetsInput{
+		Rule: aws.String("eb-sdk-content-rule"),
+		Targets: []ebtypes.Target{{
+			Id:  aws.String("queue"),
+			Arn: aws.String(queueARN),
+		}},
+	})
+	require.NoError(t, err)
+
+	// Matching event: state "running" (prefix run), code 500 (>200).
+	matchDetail := `{"state":"running","code":500}`
+	// Non-matching event: same source but state "queued" (no run prefix) AND
+	// code 100 (not >200) — must be rejected by the pattern.
+	rejectDetail := `{"state":"queued","code":100}`
+
+	_, err = eb.PutEvents(ctx, &eventbridge.PutEventsInput{
+		Entries: []ebtypes.PutEventsRequestEntry{
+			{
+				Source:     aws.String("sockerless.content"),
+				DetailType: aws.String("job"),
+				Detail:     aws.String(matchDetail),
+			},
+			{
+				Source:     aws.String("sockerless.content"),
+				DetailType: aws.String("job"),
+				Detail:     aws.String(rejectDetail),
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	// Drain the queue; exactly one message — the matching event — should arrive.
+	var bodies []string
+	require.Eventually(t, func() bool {
+		out, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl:            q.QueueUrl,
+			MaxNumberOfMessages: 10,
+		})
+		require.NoError(t, err)
+		for _, m := range out.Messages {
+			bodies = append(bodies, aws.ToString(m.Body))
+			_, _ = sqsC.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+				QueueUrl:      q.QueueUrl,
+				ReceiptHandle: m.ReceiptHandle,
+			})
+		}
+		return len(bodies) >= 1
+	}, 3*time.Second, 50*time.Millisecond)
+
+	require.Len(t, bodies, 1, "only the matching event must be delivered")
+	assert.JSONEq(t, matchDetail, bodies[0])
+}

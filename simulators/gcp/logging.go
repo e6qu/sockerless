@@ -183,20 +183,23 @@ func writeLogEntries(logName string, resource *MonitoredResource, labels map[str
 	defer logEntriesMu.Unlock()
 	for _, entry := range entries {
 		ln := entry.LogName
-		existing, ok := logEntries.Get(ln)
-		if !ok {
-			existing = []LogEntry{}
-		}
-		existing = append(existing, entry)
+		prev, _ := logEntries.Get(ln)
+		// Build a fresh slice rather than append-in-place: a concurrent reader
+		// (listLogEntries → logEntries.List()) holds the stored slice header by
+		// value and shares its backing array. Appending into spare capacity
+		// would race that reader. A fresh allocation each write is the safe RMW.
+		next := make([]LogEntry, 0, len(prev)+1)
+		next = append(next, prev...)
+		next = append(next, entry)
 		// Bound retention per log. Real Cloud Logging ages entries out by a
 		// retention period; without a cap this store grows forever (a memory
 		// leak in a long-running sim) and listLogEntries re-sorts an ever-
 		// larger corpus. Reads filter+sort+paginate (never by index), so
 		// dropping the oldest entries is safe.
-		if len(existing) > maxRetainedLogEntries {
-			existing = existing[len(existing)-maxRetainedLogEntries:]
+		if len(next) > maxRetainedLogEntries {
+			next = next[len(next)-maxRetainedLogEntries:]
 		}
-		logEntries.Put(ln, existing)
+		logEntries.Put(ln, next)
 	}
 }
 

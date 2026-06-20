@@ -20,6 +20,13 @@ import (
 // scripts/check-spec-violations.sh; production runs leave the variable
 // unset and pay nothing.
 
+// specCaptureBodyLimit bounds the request body the spec-validate middleware
+// materializes per exchange. Validation is test-only (gated by
+// SOCKERLESS_SPEC_VALIDATE) but still must not allow an unbounded read; 256 MiB
+// covers every legitimate validated request (control-plane JSON/XML, never raw
+// blob uploads — those go through the OCI data plane which has its own cap).
+const specCaptureBodyLimit = 256 << 20 // 256 MiB
+
 // SpecViolation is one observed divergence between a simulator response
 // and the vendored cloud API spec (specs/cloud-api/).
 type SpecViolation struct {
@@ -64,8 +71,18 @@ func (s *Server) SetSpecValidator(v SpecValidator) {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			var reqBody []byte
 			if r.Body != nil {
-				reqBody, _ = io.ReadAll(r.Body)
+				// Validation snapshots every request body and restores it for the
+				// handler. Bound the materialized body so a maliciously large
+				// upload can't OOM a validation run; bodies past the cap are
+				// rejected loudly rather than silently truncated (a truncated
+				// body fed to the handler would corrupt the exchange).
+				lr := io.LimitReader(r.Body, specCaptureBodyLimit+1)
+				reqBody, _ = io.ReadAll(lr)
 				_ = r.Body.Close()
+				if int64(len(reqBody)) > specCaptureBodyLimit {
+					http.Error(w, "request body exceeds spec-validate capture limit", http.StatusRequestEntityTooLarge)
+					return
+				}
 				r.Body = io.NopCloser(bytes.NewReader(reqBody))
 			}
 			rec := &specCaptureWriter{ResponseWriter: w, status: http.StatusOK}

@@ -561,7 +561,11 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			owner, _ := p.Args["owner"].(string)
 			name, _ := p.Args["name"].(string)
 			repo := s.store.GetRepo(owner, name)
-			if repo == nil {
+			// A private repo the viewer can't read must look identical to a
+			// missing one: real GitHub returns null data + a NOT_FOUND error
+			// rather than leaking the repo's existence or contents. This
+			// mirrors the REST handler's canReadRepo gate.
+			if repo == nil || (repo.Private && !canReadRepo(s.store, ghUserFromContext(p.Context), repo)) {
 				// Real GitHub pairs the null with a typed NOT_FOUND error —
 				// gh CLI keys on errors[].type to report "repository not
 				// found" instead of decoding an empty object.

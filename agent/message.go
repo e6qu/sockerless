@@ -28,6 +28,16 @@ const (
 	TypeLifetimeExpired = "lifetime_expired"
 )
 
+// maxWSMessageBytes bounds the size of a single inbound WebSocket message on
+// every connection the agent reads (server, reverse-connect, and the
+// backend-side bridge/reverse readers). gorilla/websocket defaults to NO read
+// limit, so without this a peer can declare a multi-gigabyte frame and OOM the
+// process. Legitimate messages are JSON envelopes carrying at most one 32 KiB
+// stdin/stdout chunk base64-encoded (~44 KiB) plus small fields, so 4 MiB is far
+// above any real message yet bounds the attack surface. A message past the limit
+// makes ReadMessage return an error and the read loop tears the connection down.
+const maxWSMessageBytes = 4 << 20 // 4 MiB
+
 // Message is the unified WebSocket message type.
 // All fields are optional depending on the message type.
 type Message struct {

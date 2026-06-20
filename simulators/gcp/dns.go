@@ -10,9 +10,16 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// dnsChangeMu serializes the Changes.create critical section. Real Cloud DNS
+// applies changes atomically and sequentially per zone; without this lock two
+// concurrent POSTs could read the same highest change ID and overwrite each
+// other's change record, and interleave record-set mutations mid-validation.
+var dnsChangeMu sync.Mutex
 
 // Cloud DNS types
 
@@ -414,6 +421,8 @@ func registerCloudDNS(srv *sim.Server) {
 	})
 
 	srv.HandleFunc("POST /dns/v1/projects/{project}/managedZones/{zone}/changes", func(w http.ResponseWriter, r *http.Request) {
+		dnsChangeMu.Lock()
+		defer dnsChangeMu.Unlock()
 		project := sim.PathParam(r, "project")
 		zoneName := sim.PathParam(r, "zone")
 		zoneKey := project + "/" + zoneName

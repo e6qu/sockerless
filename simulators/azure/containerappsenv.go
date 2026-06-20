@@ -1,12 +1,25 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/http"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// envStaticIP derives a stable, environment-unique static IP for a managed
+// environment. Real Azure allocates a distinct staticIp per environment; a
+// single hardcoded value makes every environment collide, so terraform/SDK
+// read-backs across two environments see the same IP. The IP is deterministic
+// in the resource ID so re-reads of the same environment are stable.
+func envStaticIP(resourceID string) string {
+	h := sha256.Sum256([]byte(resourceID))
+	// 100.64.0.0/10 is the carrier-grade-NAT range Azure-managed environments
+	// surface; pick a host within it deterministically.
+	return fmt.Sprintf("100.%d.%d.%d", 64+int(h[0])%64, h[1], h[2])
+}
 
 type ContainerAppEnvironment struct {
 	ID         string            `json:"id"`
@@ -140,7 +153,7 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 			Properties: EnvProperties{
 				ProvisioningState:      "Succeeded",
 				DefaultDomain:          azureEndpointHostname(r, envName),
-				StaticIp:               "10.0.0.100",
+				StaticIp:               envStaticIP(resourceID),
 				AppLogsConfiguration:   req.Properties.AppLogsConfiguration,
 				VnetConfiguration:      req.Properties.VnetConfiguration,
 				InfrastructureSubnetId: req.Properties.InfrastructureSubnetId,

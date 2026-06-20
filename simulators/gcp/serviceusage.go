@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
@@ -83,10 +84,22 @@ func registerServiceUsage(srv *sim.Server) {
 		svcs := services.Filter(func(s ServiceUsageState) bool {
 			return len(s.Name) > len(prefix) && s.Name[:len(prefix)] == prefix
 		})
+		sort.Slice(svcs, func(i, j int) bool { return svcs[i].Name < svcs[j].Name })
+		// Honor the `filter` (e.g. state:ENABLED) and `orderBy` query params.
+		svcs = gcpApplyListParams(svcs, r)
 
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"services": svcs,
-		})
+		page, next, ok := paginateList(w, r, svcs)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ServiceUsageState{}
+		}
+		resp := map[string]any{"services": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Batch enable services

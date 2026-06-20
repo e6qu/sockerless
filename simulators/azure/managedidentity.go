@@ -49,8 +49,6 @@ func registerManagedIdentity(srv *sim.Server) {
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ManagedIdentity/userAssignedIdentities/%s",
 			sub, rg, identityName)
 
-		existing, exists := identities.Get(resourceID)
-
 		identity := UserAssignedIdentity{
 			ID:       resourceID,
 			Name:     identityName,
@@ -64,16 +62,24 @@ func registerManagedIdentity(srv *sim.Server) {
 			},
 		}
 
-		// Preserve existing IDs on update
-		if exists {
+		// Preserve existing IDs on update; the createOrUpdate is atomic so a
+		// concurrent PUT can't regenerate the principal/client IDs mid-flight.
+		exists := identities.Update(resourceID, func(existing *UserAssignedIdentity) {
 			identity.Properties.PrincipalId = existing.Properties.PrincipalId
 			identity.Properties.ClientId = existing.Properties.ClientId
+			*existing = identity
+		})
+		if !exists {
+			identities.Put(resourceID, identity)
 		}
 
-		identities.Put(resourceID, identity)
-
-		// go-azure-sdk expects 200 for sync creates
-		sim.WriteJSON(w, http.StatusOK, identity)
+		// Real Azure returns 201 Created for a new identity and 200 OK for an
+		// update of an existing one.
+		status := http.StatusCreated
+		if exists {
+			status = http.StatusOK
+		}
+		sim.WriteJSON(w, status, identity)
 	})
 
 	// GET - Get managed identity

@@ -644,6 +644,17 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		return // Not a workflow job
 	}
 
+	// The official runner reports a job's completion twice — once via
+	// DELETE /_apis/v1/AgentRequest and once via POST /_apis/v1/FinishJob —
+	// and both land here. Only the first terminal transition may finalize the
+	// job, emit the completion event, and re-drive dispatch; a second call must
+	// not re-emit a duplicate workflow_job/check_run webhook, re-run dispatch,
+	// or flip an already-recorded conclusion.
+	if foundJob.Status == JobStatusCompleted || foundJob.Status == JobStatusSkipped {
+		s.store.mu.Unlock()
+		return
+	}
+
 	foundJob.Status = JobStatusCompleted
 	foundJob.Result = Result(normalizeResult(result))
 	foundJob.CompletedAt = time.Now()

@@ -321,27 +321,28 @@ func registerAzureFiles(srv *sim.Server) {
 			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-		acct, ok := storageAccounts.Get(resourceID)
+		if req.Sku != nil && req.Sku.Tier == "" {
+			req.Sku.Tier = storageSkuTierFromName(req.Sku.Name)
+		}
+		ok := storageAccounts.Update(resourceID, func(acct *StorageAccount) {
+			if req.Sku != nil {
+				acct.Sku = req.Sku
+			}
+			if req.Kind != "" {
+				acct.Kind = req.Kind
+			}
+			if req.Tags != nil {
+				acct.Tags = *req.Tags
+			}
+			acct.Properties.ProvisioningState = "Succeeded"
+			applyStorageAccountEndpoints(r, acct)
+		})
 		if !ok {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 				"The Resource 'Microsoft.Storage/storageAccounts/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
-		if req.Sku != nil {
-			if req.Sku.Tier == "" {
-				req.Sku.Tier = storageSkuTierFromName(req.Sku.Name)
-			}
-			acct.Sku = req.Sku
-		}
-		if req.Kind != "" {
-			acct.Kind = req.Kind
-		}
-		if req.Tags != nil {
-			acct.Tags = *req.Tags
-		}
-		acct.Properties.ProvisioningState = "Succeeded"
-		applyStorageAccountEndpoints(r, &acct)
-		storageAccounts.Put(resourceID, acct)
+		acct, _ := storageAccounts.Get(resourceID)
 		sim.WriteJSON(w, http.StatusOK, acct)
 	})
 
