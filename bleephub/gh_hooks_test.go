@@ -399,14 +399,20 @@ func TestHooks_Deliveries_Redeliver(t *testing.T) {
 		t.Fatal("redelivered webhook not received")
 	}
 
-	// Poll until we see 2 deliveries (the original + the redeliver).
-	deliveries2 := pollDeliveries(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/deliveries", 2)
-
+	// Poll until a redelivery=true entry is persisted (the create-time
+	// auto-ping and the explicit ping also produce deliveries, so a fixed
+	// count isn't a reliable signal — wait for the redelivery flag itself).
 	foundRedelivery := false
-	for _, d := range deliveries2 {
-		if r, ok := d["redelivery"].(bool); ok && r {
-			foundRedelivery = true
-			break
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) && !foundRedelivery {
+		for _, d := range pollDeliveries(t, "/api/v3/repos/"+repo+"/hooks/"+strconv.Itoa(hookID)+"/deliveries", 1) {
+			if r, ok := d["redelivery"].(bool); ok && r {
+				foundRedelivery = true
+				break
+			}
+		}
+		if !foundRedelivery {
+			time.Sleep(50 * time.Millisecond)
 		}
 	}
 	if !foundRedelivery {

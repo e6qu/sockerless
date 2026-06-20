@@ -93,7 +93,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		defName = sanitizeContainerName(ci.Container.Name)
 	}
 
-	cpu, memory := mapCPUMemory()
+	cpu, memory := mapCPUMemory(ci)
 
 	var mounts []*runpb.VolumeMount
 	var syncMountEntries []string
@@ -134,7 +134,7 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		Resources: &runpb.ResourceRequirements{
 			Limits: map[string]string{
 				"cpu":    cpu,
-				"memory": memoryLimitForContainer(memory, ci.IsMain),
+				"memory": memory,
 			},
 		},
 	}
@@ -281,36 +281,74 @@ func (s *Server) buildJobSpec(ctx context.Context, containers []containerInput) 
 	}, nil
 }
 
-// mapCPUMemory returns the default Cloud Run resource limits.
-// Cloud Run valid CPU: 1, 2, 4, 8. 4Gi/container leaves headroom for
-// the in-Service bootstrap (~256 MiB), the 2 GiB tmpfs default
-// (`SOCKERLESS_CLOUDRUN_TMPFS_SIZE_MIB`), and a postgres-style sidecar
-// (the historical OOM that forced 1Gi over 512Mi was a postgres initdb
-// in a multi-container revision).
-func mapCPUMemory() (string, string) {
-	return "1", "4Gi"
+// cloudRunCombo is a valid Cloud Run (gen2) per-container CPU/memory
+// pairing. memMinMiB/memMaxMiB are the documented min/max memory for a
+// container declaring that many vCPU. Cloud Run accepts any integer-MiB
+// value in the range, so a request snaps to its own size clamped to the
+// tier's bounds rather than a fixed step.
+type cloudRunCombo struct {
+	cpu       int   // 1, 2, 4, 8
+	memMinMiB int64 // documented minimum memory for this vCPU count
+	memMaxMiB int64 // documented maximum memory for this vCPU count
 }
 
-// memoryLimitForContainer doubles the per-container memory for the main
-// container in a multi-container revision so go-build / toolchain
-// download workloads still fit alongside a postgres-style sidecar.
-// Cloud Run gen2's revision-level memory cap is the SUM of every
-// container's limit; the symmetric 1Gi/container default OOM'd at
-// 2Gi total when a `go build` pulled go1.24.0 alongside running
-// postgres. Sidecars stay at the original limit since service
-// containers idle at ~200-300Mi.
-func memoryLimitForContainer(base string, isMain bool) string {
-	if !isMain {
-		return base
+// cloudRunCombos lists the valid Cloud Run vCPU tiers with their memory
+// envelopes (per the Cloud Run resource-limits reference). Higher vCPU
+// counts raise both the minimum and maximum allowed memory.
+var cloudRunCombos = []cloudRunCombo{
+	{1, 512, 4096},
+	{2, 512, 8192},
+	{4, 2048, 16384},
+	{8, 4096, 32768},
+}
+
+// mapCPUMemory derives a Cloud Run per-container CPU/memory limit from the
+// container's real Docker resource request, snapping to the smallest valid
+// vCPU tier that satisfies both the requested CPU and memory. With no
+// request it returns the historical default floor (1 vCPU / 4Gi) — chosen
+// to leave headroom for the in-Service bootstrap (~256 MiB), the 2 GiB
+// tmpfs default, and a postgres-style sidecar.
+func mapCPUMemory(ci containerInput) (string, string) {
+	hc := ci.Container.HostConfig
+
+	var reqMemMiB int64
+	if hc.Memory > 0 {
+		reqMemMiB = hc.Memory / (1024 * 1024)
+	} else if hc.MemoryReservation > 0 {
+		reqMemMiB = hc.MemoryReservation / (1024 * 1024)
 	}
-	switch base {
-	case "1Gi":
-		return "2Gi"
-	case "2Gi":
-		return "4Gi"
-	default:
-		return base
+
+	var reqCPU int64 // in whole vCPU (rounded up)
+	if hc.NanoCPUs > 0 {
+		reqCPU = (hc.NanoCPUs + 1e9 - 1) / 1e9
+	} else if hc.CPUShares > 0 {
+		// Docker CPUShares are relative weights with 1024 == 1 vCPU.
+		reqCPU = (hc.CPUShares + 1023) / 1024
 	}
+
+	if reqMemMiB <= 0 && reqCPU <= 0 {
+		// Zero-request floor/default.
+		return "1", "4Gi"
+	}
+
+	for _, combo := range cloudRunCombos {
+		if int64(combo.cpu) < reqCPU {
+			continue
+		}
+		if reqMemMiB > combo.memMaxMiB {
+			continue
+		}
+		mem := reqMemMiB
+		if mem < combo.memMinMiB {
+			mem = combo.memMinMiB
+		}
+		return fmt.Sprintf("%d", combo.cpu), fmt.Sprintf("%dMi", mem)
+	}
+
+	// Request exceeds the largest tier — clamp to the maximum Cloud Run
+	// offers rather than under-provisioning.
+	last := cloudRunCombos[len(cloudRunCombos)-1]
+	return fmt.Sprintf("%d", last.cpu), fmt.Sprintf("%dMi", last.memMaxMiB)
 }
 
 // sanitizeContainerName converts a container name to a valid Cloud Run

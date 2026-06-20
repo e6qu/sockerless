@@ -54,13 +54,47 @@ func (r *SessionRegistry) Get(id string) (Session, bool) {
 	return s, ok
 }
 
-// Remove removes a session from the registry.
+// Remove removes a session from the registry, calling Close() to tear down
+// its process. Used by CleanupConn for whole-connection teardown, where the
+// process may still be running.
 func (r *SessionRegistry) Remove(id string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if s, ok := r.sessions[id]; ok {
+	r.forgetLocked(id, true)
+}
+
+// Forget removes a finished session from the registry WITHOUT calling
+// Close() — the process has already exited, so there is no child to
+// SIGKILL. Called from waitAndNotify after the exit frame is sent so a
+// keep-alive connection serving many execs over a container's lifetime
+// doesn't accumulate a stale *ExecSession per exec (and so a reused
+// session ID can't collide with a dead entry).
+func (r *SessionRegistry) Forget(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.forgetLocked(id, false)
+}
+
+// forgetLocked deletes the session from sessions and removes its id from
+// every connSessions slice. Must be called with r.mu held. When close is
+// true the session's Close() is invoked (caller still holds the lock, as
+// Remove always has).
+func (r *SessionRegistry) forgetLocked(id string, close bool) {
+	s, ok := r.sessions[id]
+	if !ok {
+		return
+	}
+	if close {
 		s.Close()
-		delete(r.sessions, id)
+	}
+	delete(r.sessions, id)
+	for conn, ids := range r.connSessions {
+		for i, sid := range ids {
+			if sid == id {
+				r.connSessions[conn] = append(ids[:i], ids[i+1:]...)
+				break
+			}
+		}
 	}
 }
 

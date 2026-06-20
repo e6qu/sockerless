@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"syscall"
 
 	"github.com/rs/zerolog"
 )
@@ -72,6 +73,9 @@ type MainProcess struct {
 	exitCode  *int
 	done      chan struct{}
 	logger    zerolog.Logger
+
+	reaper   *childReaper              // non-nil when running under PID-1 init
+	statusCh <-chan syscall.WaitStatus // delivers the main process exit status on the reaper path
 }
 
 // OutputEvent represents a chunk of output from the main process.
@@ -81,7 +85,7 @@ type OutputEvent struct {
 }
 
 // NewMainProcess creates and starts the main process.
-func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainProcess, error) {
+func NewMainProcess(logger zerolog.Logger, args []string, env []string, reaper *childReaper) (*MainProcess, error) {
 	if len(args) == 0 {
 		args = []string{"/bin/sh"}
 	}
@@ -112,9 +116,21 @@ func NewMainProcess(logger zerolog.Logger, args []string, env []string) (*MainPr
 		listeners: make(map[string]chan OutputEvent),
 		done:      make(chan struct{}),
 		logger:    logger,
+		reaper:    reaper,
 	}
 
-	if err := cmd.Start(); err != nil {
+	if reaper != nil {
+		ch, err := reaper.startAndRegister(func() (int, error) {
+			if serr := cmd.Start(); serr != nil {
+				return 0, serr
+			}
+			return cmd.Process.Pid, nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		mp.statusCh = ch
+	} else if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 
@@ -167,15 +183,34 @@ func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
 			_, _ = buf.Write(chunk) // bytes.Buffer.Write never fails
 			_, _ = osStream.Write(chunk)
 
+			var lossy []string
 			mp.mu.RLock()
-			for _, ch := range mp.listeners {
+			for id, ch := range mp.listeners {
 				select {
 				case ch <- OutputEvent{Stream: stream, Data: chunk}:
 				default:
-					// Drop if listener is slow
+					// A full listener buffer means a slow attach consumer.
+					// Silently dropping the chunk would truncate the stream
+					// undetectably, so mark the listener lossy: it's closed
+					// below so the consumer sees a clean EOF rather than a
+					// gap, and the drop is logged loudly.
+					lossy = append(lossy, id)
 				}
 			}
 			mp.mu.RUnlock()
+
+			if len(lossy) > 0 {
+				mp.mu.Lock()
+				for _, id := range lossy {
+					if ch, ok := mp.listeners[id]; ok {
+						mp.logger.Warn().Str("listener", id).Str("stream", stream).
+							Msg("attach listener buffer full — closing lossy stream to avoid silent truncation")
+						close(ch)
+						delete(mp.listeners, id)
+					}
+				}
+				mp.mu.Unlock()
+			}
 		}
 		if err != nil {
 			return
@@ -183,26 +218,52 @@ func (mp *MainProcess) fanOut(r io.Reader, stream string, buf *RingBuffer) {
 	}
 }
 
-func (mp *MainProcess) wait() {
+// waitCode returns the main process exit code. On the reaper path it reads the
+// status the childReaper collected — cmd.Wait() must NOT be called there or it
+// would race the reaper's Wait4 for the same PID and lose the status. On the
+// non-reaper path it uses cmd.Wait() (the host init reaps orphans).
+func (mp *MainProcess) waitCode() int {
+	if mp.reaper != nil {
+		status := <-mp.statusCh
+		switch {
+		case status.Exited():
+			return status.ExitStatus()
+		case status.Signaled():
+			return 128 + int(status.Signal())
+		default:
+			return 1
+		}
+	}
 	err := mp.cmd.Wait()
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
+func (mp *MainProcess) wait() {
+	code := mp.waitCode()
 
 	// Wait for fanOut goroutines to drain remaining pipe data and write
 	// it to os.Stdout/os.Stderr before signaling done. Without this,
 	// the agent binary can exit before all output is flushed.
 	mp.fanOutWg.Wait()
 
+	// On the reaper path cmd.Wait() never ran, so close the parent pipe
+	// read/write ends it would have closed (after the fanOut drain so no
+	// output is truncated).
+	if mp.reaper != nil {
+		_ = mp.stdin.Close()
+		_ = mp.stdout.Close()
+		_ = mp.stderr.Close()
+	}
+
 	// Clear the main-PID file so a stale value can't redirect a
 	// subsequent pause/unpause to a different process.
 	removeMainPIDFile()
-
-	code := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = 1
-		}
-	}
 
 	mp.mu.Lock()
 	mp.exitCode = &code

@@ -14,10 +14,6 @@ func sockerlessDir() string {
 	return filepath.Join(home, ".sockerless")
 }
 
-func contextDir(name string) string {
-	return filepath.Join(sockerlessDir(), "contexts", name)
-}
-
 func activeFile() string {
 	return filepath.Join(sockerlessDir(), "active")
 }

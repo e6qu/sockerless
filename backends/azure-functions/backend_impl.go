@@ -498,6 +498,11 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
+	// Clear any prior terminal outcome (e.g. a restart that recorded the
+	// stop's exit code) so this fresh start's WaitForExit blocks on the new
+	// invocation rather than the previous run's result.
+	s.Store.DeleteInvocationResult(id)
+
 	// cloud-dns discovery: a container on a user-defined network is its own
 	// App Service site, joined to the network's VNet via regional VNet
 	// integration and resolvable by its --network-alias through the linked
@@ -827,6 +832,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Azure Functions run to completion — stop transitions state
 	s.StopHealthCheck(id)
+	// Drop the reverse-agent WS session so a terminated container doesn't
+	// leak its registry entry / goroutine.
+	s.disconnectReverseAgent(id)
 	// Record stop outcome so CloudState reports exited with 137.
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
@@ -853,6 +861,9 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	}
 
 	s.StopHealthCheck(id)
+	// Drop the reverse-agent WS session so a killed container doesn't leak
+	// its registry entry / goroutine.
+	s.disconnectReverseAgent(id)
 
 	exitCode := core.SignalToExitCode(signal)
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
@@ -899,6 +910,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	}
 
 	s.StopHealthCheck(id)
+	// Drop the reverse-agent WS session so a removed container doesn't leak
+	// its registry entry / goroutine.
+	s.disconnectReverseAgent(id)
 
 	// Delete Function App. Errors propagate per the no-fallback rule.
 	var cleanupErrs []error
@@ -988,12 +1002,15 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 
 	if c.State.Running {
 		s.StopHealthCheck(id)
+		// `docker restart` sends SIGTERM → exit 143. Record the stop
+		// outcome before unblocking waiters so a `docker wait` racing the
+		// restart sees 143, not the channel-close failure sentinel.
+		stopExitCode := core.SignalToExitCode("SIGTERM")
+		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: stopExitCode})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
-		// `docker restart` sends SIGTERM → exit 143.
-		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),

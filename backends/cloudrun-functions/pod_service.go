@@ -29,6 +29,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -927,9 +928,20 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 			body, _ := readResponseBody(resp.Body)
 			_ = resp.Body.Close()
 			stdoutResp = body
-			inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+			// The bootstrap always returns HTTP 200 and reports the real
+			// process exit in X-Sockerless-Exit-Code. Trust that header;
+			// fall back to the HTTP status only when it is absent/unparseable.
+			if exitHeader := resp.Header.Get("X-Sockerless-Exit-Code"); exitHeader != "" {
+				if code, perr := strconv.Atoi(exitHeader); perr == nil {
+					inv.ExitCode = code
+				} else {
+					inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+				}
+			} else {
+				inv.ExitCode = core.HTTPStatusToExitCode(resp.StatusCode)
+			}
 			if inv.ExitCode != 0 {
-				inv.Error = fmt.Sprintf("HTTP %d", resp.StatusCode)
+				inv.Error = fmt.Sprintf("subprocess exit %d", inv.ExitCode)
 			}
 		}
 	}

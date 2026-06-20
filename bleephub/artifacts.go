@@ -547,18 +547,45 @@ func (s *Server) handleFinalizeArtifact(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
+	// The @actions/artifact v4 client scopes ListArtifacts to its own run
+	// via workflow_run_backend_id. Without filtering, concurrent runs see
+	// each other's artifacts (e.g. a later stage's upload_artifacts finds a
+	// name-collision from an unrelated run).
+	var req struct {
+		WorkflowRunBackendID string `json:"workflow_run_backend_id"`
+		NameFilter           *struct {
+			Value string `json:"value"`
+		} `json:"name_filter"`
+		IDFilter *struct {
+			Value string `json:"value"`
+		} `json:"id_filter"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
 	s.artifactStore.mu.RLock()
 	var list []map[string]interface{}
 	for _, art := range s.artifactStore.artifacts {
-		if art.Finalized {
-			list = append(list, map[string]interface{}{
-				"name":        art.Name,
-				"id":          art.ID,
-				"size":        art.Size,
-				"created_at":  art.CreatedAt.UTC().Format(time.RFC3339),
-				"database_id": art.ID,
-			})
+		if !art.Finalized {
+			continue
 		}
+		if req.WorkflowRunBackendID != "" && art.WorkflowRunBackendID != req.WorkflowRunBackendID {
+			continue
+		}
+		if req.NameFilter != nil && req.NameFilter.Value != "" && art.Name != req.NameFilter.Value {
+			continue
+		}
+		if req.IDFilter != nil && req.IDFilter.Value != "" && strconv.FormatInt(art.ID, 10) != req.IDFilter.Value {
+			continue
+		}
+		list = append(list, map[string]interface{}{
+			"name":        art.Name,
+			"id":          art.ID,
+			"size":        art.Size,
+			"created_at":  art.CreatedAt.UTC().Format(time.RFC3339),
+			"database_id": art.ID,
+		})
 	}
 	s.artifactStore.mu.RUnlock()
 

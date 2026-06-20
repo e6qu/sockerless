@@ -411,7 +411,8 @@ func TestActionsRunners_List(t *testing.T) {
 	s.store.Agents[2] = &Agent{ID: 2, Name: "runner-b", OSDescription: "Darwin", Status: "offline"}
 	s.store.mu.Unlock()
 
-	w := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/runners")
+	// The runner list requires administration:read — authenticate.
+	w := runAuthedRequest(s, "GET", "/api/v3/repos/octo/repo/actions/runners")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}
@@ -612,7 +613,7 @@ func TestActionsRunners_ExtraFields(t *testing.T) {
 	s.store.Agents[7] = &Agent{ID: 7, Name: "r", OSDescription: "Linux", Status: "online", Version: "2.300.0"}
 	s.store.mu.Unlock()
 
-	w := runRequest(s, "GET", "/api/v3/repos/octo/repo/actions/runners")
+	w := runAuthedRequest(s, "GET", "/api/v3/repos/octo/repo/actions/runners")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d", w.Code)
 	}

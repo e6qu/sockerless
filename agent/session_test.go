@@ -67,6 +67,67 @@ func TestSessionRegistryCleanupConn(t *testing.T) {
 	}
 }
 
+func TestSessionRegistryForget(t *testing.T) {
+	r := NewSessionRegistry()
+	s := &mockSession{id: "f1"}
+
+	conn := makeTestWSConn(t)
+	defer conn.Close()
+
+	r.Register(s, conn)
+
+	r.Forget("f1")
+
+	if _, ok := r.Get("f1"); ok {
+		t.Fatal("f1 should have been forgotten")
+	}
+	// Forget must NOT call Close() — the process already exited.
+	if s.closed {
+		t.Fatal("Forget must not Close the session (process already exited)")
+	}
+
+	// The id must also be removed from the per-conn slice so CleanupConn
+	// doesn't re-process a stale entry.
+	r.mu.RLock()
+	ids := r.connSessions[conn]
+	r.mu.RUnlock()
+	for _, id := range ids {
+		if id == "f1" {
+			t.Fatal("forgotten id still present in connSessions")
+		}
+	}
+
+	// Forgetting an unknown id is a no-op.
+	r.Forget("does-not-exist")
+}
+
+func TestSessionRegistryForgetThenCleanupConn(t *testing.T) {
+	r := NewSessionRegistry()
+	s1 := &mockSession{id: "g1"}
+	s2 := &mockSession{id: "g2"}
+
+	conn := makeTestWSConn(t)
+	defer conn.Close()
+
+	r.Register(s1, conn)
+	r.Register(s2, conn)
+
+	// g1 finished and was forgotten; only g2 remains for the connection.
+	r.Forget("g1")
+	r.CleanupConn(conn)
+
+	if _, ok := r.Get("g2"); ok {
+		t.Fatal("g2 should be removed by CleanupConn")
+	}
+	if !s2.closed {
+		t.Fatal("g2 should have been Closed by CleanupConn")
+	}
+	// g1 was already gone and must not have been Closed by either path.
+	if s1.closed {
+		t.Fatal("g1 was forgotten (process exited) and must never be Closed")
+	}
+}
+
 // makeTestWSConn creates a websocket.Conn for use as a map key in tests.
 func makeTestWSConn(t *testing.T) *websocket.Conn {
 	t.Helper()

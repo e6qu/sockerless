@@ -78,8 +78,35 @@ func run() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	if err := scopes.Verify(ctx, http.DefaultClient, *apiBase, *repo, *token); err != nil {
-		return err
+	// Token verification: retry-with-backoff on 403/429. When GitHub
+	// returns rate-limit hints (X-RateLimit-Reset, Retry-After), honor
+	// them strictly with a +10% +1s safety buffer (per
+	// feedback_strict_rate_limit.md). Without rate hints, fall back to
+	// exponential backoff (cap 30m). A single attempt that exits on a
+	// transient 429 crashloops straight back into the abuse window —
+	// sleeping wins.
+	verifyBackoff := 30 * time.Second
+	for {
+		err := scopes.Verify(ctx, http.DefaultClient, *apiBase, *repo, *token)
+		if err == nil {
+			break
+		}
+		wait := verifyBackoff
+		if rle, ok := scopes.AsRateLimit(err); ok && rle.Wait > 0 {
+			wait = rle.Wait
+		}
+		log.Printf("scope verify failed (sleeping %s before retry): %v", wait, err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
+		if verifyBackoff < 30*time.Minute {
+			verifyBackoff *= 2
+			if verifyBackoff > 30*time.Minute {
+				verifyBackoff = 30 * time.Minute
+			}
+		}
 	}
 	log.Printf("dispatcher ready: repo=%s labels=%d once=%v cleanup-only=%v",
 		*repo, len(cfg.Labels), *once, *cleanupOnly)
@@ -119,22 +146,49 @@ func run() error {
 		}
 	}()
 
-	ticker := time.NewTicker(gh.PollInterval())
-	defer ticker.Stop()
 	cleanupTicker := time.NewTicker(2 * time.Minute) // cheaper than a poll; reaps offline runners + dead containers
 	defer cleanupTicker.Stop()
+	pollEvery := gh.PollInterval()
+	// rateLimitedUntil tracks the wall-clock time before which Step()
+	// must not be called again. Set when a poll returns a rate-limit
+	// error; honored across BOTH the normal pollEvery tick AND the
+	// cleanup tick so the cleanup firing every 2m doesn't re-trigger
+	// GitHub calls (its offline-runner reap also costs quota).
+	var rateLimitedUntil time.Time
 	for {
-		if err := loop.Step(ctx); err != nil {
-			log.Printf("poll error (continuing): %v", err)
+		nextPoll := pollEvery
+		if !time.Now().Before(rateLimitedUntil) {
+			if err := loop.Step(ctx); err != nil {
+				if wait, ok := poller.AsRateLimit(err); ok {
+					log.Printf("poll error: rate-limited, sleeping %s (upstream reset + 10%% + 1s): %v", wait, err)
+					nextPoll = wait
+					rateLimitedUntil = time.Now().Add(wait)
+				} else {
+					log.Printf("poll error (continuing): %v", err)
+				}
+			}
+		} else {
+			// Skip Step entirely while inside the rate-limit window; wait
+			// out the remaining time before retrying.
+			nextPoll = time.Until(rateLimitedUntil)
+			if nextPoll < pollEvery {
+				nextPoll = pollEvery
+			}
 		}
 		select {
 		case <-ctx.Done():
 			return nil
 		case <-cleanupTicker.C:
-			if err := loop.Cleanup(ctx); err != nil {
-				log.Printf("cleanup error (continuing): %v", err)
+			// Cleanup's container reap (docker, not GitHub) is safe during
+			// a rate-limit window, but its offline-runner reap hits the
+			// GitHub API. Gate the whole sweep behind the same guard so we
+			// never touch GitHub while rate-limited.
+			if !time.Now().Before(rateLimitedUntil) {
+				if err := loop.Cleanup(ctx); err != nil {
+					log.Printf("cleanup error (continuing): %v", err)
+				}
 			}
-		case <-ticker.C:
+		case <-time.After(nextPoll):
 		}
 	}
 }

@@ -83,19 +83,25 @@ func (s *Server) handleRenewRequest(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Snapshot the fields read below while the lock is held; other
+	// goroutines (the broker, completion) mutate job.Status/LockedUntil.
+	jobStatusSnap := job.Status
+	lockedUntilSnap := job.LockedUntil
+	jobPlanID := job.PlanID
+	jobIDSnap := job.ID
 	s.store.mu.Unlock()
 
 	s.logger.Info().
 		Str("method", r.Method).
 		Int64("requestId", reqID).
-		Str("status", job.Status).
+		Str("status", jobStatusSnap).
 		Msg("renew/update request")
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"requestId":   reqID,
-		"lockedUntil": job.LockedUntil.UTC().Format(time.RFC3339),
-		"planId":      job.PlanID,
-		"jobId":       job.ID,
+		"lockedUntil": lockedUntilSnap.UTC().Format(time.RFC3339),
+		"planId":      jobPlanID,
+		"jobId":       jobIDSnap,
 	})
 }
 

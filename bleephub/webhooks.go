@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -132,16 +133,27 @@ func deliveryLastResponse(d *WebhookDelivery) *HookLastResponse {
 func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, payloadBytes []byte, redelivery bool) *WebhookDelivery {
 	start := time.Now()
 
+	// content_type=form (GitHub's default) sends the JSON payload as the
+	// value of a `payload` form field with an x-www-form-urlencoded body,
+	// and signs THAT body — not the raw JSON. content_type=json sends the
+	// JSON verbatim. The stored hook.ContentType picks which.
+	contentType := "application/json"
+	bodyBytes := payloadBytes
+	if hook.ContentType == "form" {
+		contentType = "application/x-www-form-urlencoded"
+		bodyBytes = []byte(url.Values{"payload": {string(payloadBytes)}}.Encode())
+	}
+
 	reqHeaders := map[string]string{
-		"Content-Type":      "application/json",
+		"Content-Type":      contentType,
 		"User-Agent":        "GitHub-Hookshot/bleephub",
 		"X-GitHub-Event":    event,
 		"X-GitHub-Delivery": guid,
 		"X-GitHub-Hook-ID":  strconv.Itoa(hook.ID),
 	}
 	if hook.Secret != "" {
-		reqHeaders["X-Hub-Signature-256"] = computeHMACSignature(hook.Secret, payloadBytes)
-		reqHeaders["X-Hub-Signature"] = computeHMACSignatureSHA1(hook.Secret, payloadBytes)
+		reqHeaders["X-Hub-Signature-256"] = computeHMACSignature(hook.Secret, bodyBytes)
+		reqHeaders["X-Hub-Signature"] = computeHMACSignatureSHA1(hook.Secret, bodyBytes)
 	}
 	// Installation-target headers identify the resource that owns the hook.
 	// App-bound hooks (HookID < 0) target the GitHub App ("integration");
@@ -165,7 +177,7 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 		}
 	}
 
-	httpReq, err := http.NewRequest("POST", hook.URL, bytes.NewReader(payloadBytes))
+	httpReq, err := http.NewRequest("POST", hook.URL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return &WebhookDelivery{
 			HookID:      hook.ID,

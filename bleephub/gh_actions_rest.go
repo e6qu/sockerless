@@ -37,19 +37,28 @@ func (s *Server) registerGHActionsRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/attempts/{attempt_number}/jobs", s.handleListRunAttemptJobs)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}", s.handleGetWorkflowJob)
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/jobs/{job_id}/logs", s.handleGetWorkflowJobLogs)
-	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners", s.handleListRunners)
-	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}", s.handleGetRunner)
+	// List/get runners require administration:read on real GitHub.
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners",
+		s.requirePerm(scopeAdministration, permRead, s.handleListRunners))
+	s.route("GET /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
+		s.requirePerm(scopeAdministration, permRead, s.handleGetRunner))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
 
 	// Org-scoped runner surface: bleephub's pool is global, so the org
 	// scope serves the same agents (404 only for unknown orgs).
-	s.route("GET /api/v3/orgs/{org}/actions/runners", s.handleListRunners)
-	s.route("GET /api/v3/orgs/{org}/actions/runners/{runner_id}", s.handleGetRunner)
+	s.route("GET /api/v3/orgs/{org}/actions/runners",
+		s.requirePerm(scopeAdministration, permRead, s.handleListRunners))
+	s.route("GET /api/v3/orgs/{org}/actions/runners/{runner_id}",
+		s.requirePerm(scopeAdministration, permRead, s.handleGetRunner))
 	s.route("DELETE /api/v3/orgs/{org}/actions/runners/{runner_id}",
 		s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRunner))
 	s.route("POST /api/v3/orgs/{org}/actions/runners/registration-token",
 		s.requirePerm(scopeAdministration, permWrite, s.handleOrgRegistrationToken))
+	s.route("POST /api/v3/orgs/{org}/actions/runners/remove-token",
+		s.requirePerm(scopeAdministration, permWrite, s.handleOrgRemoveToken))
+	s.route("POST /api/v3/orgs/{org}/actions/runners/generate-jitconfig",
+		s.requirePerm(scopeAdministration, permWrite, s.handleOrgGenerateJITConfig))
 }
 
 // handleOrgRegistrationToken mirrors the repo-scoped registration token
@@ -60,6 +69,24 @@ func (s *Server) handleOrgRegistrationToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	s.handleRegistrationToken(w, r)
+}
+
+// handleOrgRemoveToken mirrors the repo-scoped removal token at org scope.
+func (s *Server) handleOrgRemoveToken(w http.ResponseWriter, r *http.Request) {
+	if s.store.GetOrg(r.PathValue("org")) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.handleRemoveToken(w, r)
+}
+
+// handleOrgGenerateJITConfig mirrors the repo-scoped JIT config at org scope.
+func (s *Server) handleOrgGenerateJITConfig(w http.ResponseWriter, r *http.Request) {
+	if s.store.GetOrg(r.PathValue("org")) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.handleGenerateJITConfig(w, r)
 }
 
 // repoFullName returns "owner/repo" for the request's path params,
@@ -131,6 +158,8 @@ func jobStatus(internal string) string {
 	switch internal {
 	case "queued":
 		return "queued"
+	case "waiting":
+		return "waiting"
 	case "running":
 		return "in_progress"
 	case "completed", "skipped":
@@ -292,7 +321,7 @@ func (s *Server) workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repo
 		"workflow_name":     wf.Name,
 		"head_branch":       headBranchOf(wf),
 		"run_url":           fmt.Sprintf("%s/actions/runs/%d", apiBase, wf.RunID),
-		"run_attempt":       1,
+		"run_attempt":       wf.AttemptNumber(),
 		"node_id":           "JOB_" + wfJob.JobID,
 		"head_sha":          wf.Sha,
 		"url":               fmt.Sprintf("%s/actions/jobs/%d", apiBase, id),

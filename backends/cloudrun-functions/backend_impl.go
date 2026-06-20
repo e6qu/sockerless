@@ -364,6 +364,11 @@ func (s *Server) ContainerStart(ref string) error {
 		return &api.NotModifiedError{}
 	}
 
+	// Clear any prior terminal outcome (e.g. a restart that recorded the
+	// stop's exit code) so this fresh start's WaitForExit blocks on the new
+	// invocation rather than the previous run's result.
+	s.Store.DeleteInvocationResult(id)
+
 	// Docker-network → multi-member pod auto-detection FIRST. The
 	// decision is purely Standard-Docker-API: NetworkingConfig.EndpointsConfig
 	// + Container.Config.OpenStdin. Doing this BEFORE the deploy-await
@@ -733,6 +738,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"exitCode": fmt.Sprintf("%d", killExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
+		// Record the kill outcome before unblocking waiters so `docker wait`
+		// returns 137 rather than the channel-close failure sentinel.
+		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: killExitCode})
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
@@ -905,12 +913,15 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 
 	if c.State.Running {
 		s.StopHealthCheck(id)
+		// `docker restart` sends SIGTERM → exit 143. Record the stop
+		// outcome before unblocking waiters so a `docker wait` racing the
+		// restart sees 143, not the channel-close failure sentinel.
+		stopExitCode := core.SignalToExitCode("SIGTERM")
+		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: stopExitCode})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 			close(ch.(chan struct{}))
 		}
-		// `docker restart` sends SIGTERM → exit 143.
-		stopExitCode := core.SignalToExitCode("SIGTERM")
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": fmt.Sprintf("%d", stopExitCode),
 			"name":     strings.TrimPrefix(c.Name, "/"),
@@ -919,6 +930,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 	}
 
 	// Re-add to PendingCreates so ContainerStart can find and launch it.
+	// ContainerStart re-creates the WaitCh and clears the recorded result.
 	s.PendingCreates.Put(id, c)
 
 	// Start the container directly via typed method

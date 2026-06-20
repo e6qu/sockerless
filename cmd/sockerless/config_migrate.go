@@ -57,24 +57,22 @@ func configMigrate(args []string) {
 		os.Exit(0)
 	}
 
-	data, err := yaml.Marshal(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
 	if *write {
-		path := configFilePath()
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		// Route through saveConfigFile so the live config.yaml is written
+		// atomically (temp + rename) at 0600 — a direct WriteFile over the
+		// live file corrupts it on a crash mid-write and leaks the embedded
+		// agent token via 0644 perms.
+		if err := saveConfigFile(cfg); err != nil {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			os.Exit(1)
 		}
-		if err := os.WriteFile(path, data, 0o644); err != nil {
-			fmt.Fprintf(os.Stderr, "error: %v\n", err)
-			os.Exit(1)
-		}
-		fmt.Fprintf(os.Stderr, "Wrote %s (%d environments)\n", path, len(cfg.Environments))
+		fmt.Fprintf(os.Stderr, "Wrote %s (%d environments)\n", configFilePath(), len(cfg.Environments))
 	} else {
+		data, err := yaml.Marshal(cfg)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
 		fmt.Print(string(data))
 	}
 }

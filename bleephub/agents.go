@@ -1,6 +1,8 @@
 package bleephub
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -11,8 +13,16 @@ import (
 )
 
 func (s *Server) registerAgentRoutes() {
-	// Registration token (for config.sh)
-	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/registration-token", s.handleRegistrationToken)
+	// Registration token (for config.sh). Real GitHub gates this on
+	// administration:write — 401/403 without it.
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/registration-token",
+		s.requirePerm(scopeAdministration, permWrite, s.handleRegistrationToken))
+	// Removal token (config.sh remove --token) — also administration:write.
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/remove-token",
+		s.requirePerm(scopeAdministration, permWrite, s.handleRemoveToken))
+	// JIT config (ephemeral just-in-time runner registration).
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/generate-jitconfig",
+		s.requirePerm(scopeAdministration, permWrite, s.handleGenerateJITConfig))
 
 	// Agent pools
 	s.route("GET /_apis/v1/AgentPools", s.handleListPools)
@@ -25,12 +35,119 @@ func (s *Server) registerAgentRoutes() {
 	s.route("GET /_apis/v1/Agent/{poolId}", s.handleListAgents)
 }
 
+// randomRunnerToken mints an opaque registration/removal token in the
+// shape real GitHub returns ("A" + base64-ish blob). The token is never
+// recognized later — the runner echoes it during config.sh setup but
+// bleephub gates agent registration on the PAT/installation auth, exactly
+// as real GitHub treats the opaque token as a one-shot setup credential.
+func randomRunnerToken() string {
+	b := make([]byte, 30)
+	if _, err := rand.Read(b); err != nil {
+		panic("randomRunnerToken: " + err.Error())
+	}
+	return "A" + base64.RawURLEncoding.EncodeToString(b)
+}
+
 func (s *Server) handleRegistrationToken(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info().Msg("registration token requested")
-	// Real GitHub: 201 Created.
+	// Real GitHub: 201 Created, random token, ~1h TTL.
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"token":      "BLEEPHUB_REG_TOKEN",
-		"expires_at": "2099-01-01T00:00:00Z",
+		"token":      randomRunnerToken(),
+		"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+}
+
+// handleRemoveToken mints a runner removal token (config.sh remove --token).
+// Same opaque-token shape and ~1h TTL as the registration token.
+func (s *Server) handleRemoveToken(w http.ResponseWriter, r *http.Request) {
+	s.logger.Info().Msg("removal token requested")
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"token":      randomRunnerToken(),
+		"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+	})
+}
+
+// handleGenerateJITConfig mints a just-in-time runner config for an
+// ephemeral runner. Real GitHub: 201 with {runner, encoded_jit_config}
+// where encoded_jit_config is a base64-encoded JSON blob the runner
+// consumes via `Runner.Listener --jitconfig <blob>`. 422 when name /
+// runner_group_id / labels are missing.
+func (s *Server) handleGenerateJITConfig(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string   `json:"name"`
+		RunnerGroupID *int     `json:"runner_group_id"`
+		Labels        []string `json:"labels"`
+		WorkFolder    string   `json:"work_folder"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Name == "" || req.RunnerGroupID == nil || len(req.Labels) == 0 {
+		writeGHValidationError(w, "Runner", "name", "missing_field")
+		return
+	}
+	workFolder := req.WorkFolder
+	if workFolder == "" {
+		workFolder = "_work"
+	}
+
+	// Build the Agent the same way handleRegisterAgent does, so the
+	// JIT runner appears in the runners list and the broker can route to
+	// it. JIT runners are always ephemeral (auto-removed after one job).
+	var agent Agent
+	agent.Name = req.Name
+	agent.Ephemeral = true
+	agent.RunnerGroupID = *req.RunnerGroupID
+	for _, l := range req.Labels {
+		agent.Labels = append(agent.Labels, Label{Name: l, Type: "custom"})
+	}
+
+	s.store.mu.Lock()
+	agent.ID = s.store.NextAgent
+	s.store.NextAgent++
+	agent.Enabled = true
+	agent.Status = "online"
+	agent.CreatedOn = time.Now()
+	agent.Authorization = &AgentAuthorization{
+		AuthorizationURL: s.baseURL(r) + "/_apis/v1/auth/",
+		ClientID:         uuid.New().String(),
+	}
+	s.store.Agents[agent.ID] = &agent
+	s.store.mu.Unlock()
+
+	// encoded_jit_config: the base64 of the JSON config blob the runner's
+	// JIT listener reads. It carries the agent identity + server URL +
+	// auth so the runner can connect without a separate config.sh step.
+	jitBlob := map[string]interface{}{
+		".runner": map[string]interface{}{
+			"agentId":    agent.ID,
+			"agentName":  agent.Name,
+			"poolId":     1,
+			"poolName":   "Default",
+			"serverUrl":  s.baseURL(r),
+			"gitHubUrl":  s.baseURL(r) + "/" + repoFullName(r),
+			"workFolder": workFolder,
+			"ephemeral":  true,
+		},
+		".credentials": map[string]interface{}{
+			"scheme": "OAuth",
+			"data": map[string]interface{}{
+				"clientId":         agent.Authorization.ClientID,
+				"authorizationUrl": agent.Authorization.AuthorizationURL,
+			},
+		},
+	}
+	blobBytes, err := json.Marshal(jitBlob)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "encode jit config")
+		return
+	}
+	encoded := base64.StdEncoding.EncodeToString(blobBytes)
+
+	s.logger.Info().Int("id", agent.ID).Str("name", agent.Name).Msg("JIT runner config generated")
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"runner":             runnerJSON(&agent, false),
+		"encoded_jit_config": encoded,
 	})
 }
 
