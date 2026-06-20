@@ -1,30 +1,9 @@
 package aws_cli_test
 
 import (
-	"os/exec"
 	"strings"
 	"testing"
 )
-
-// expressCLIAvailable reports whether the local aws CLI knows the ECS Express
-// Gateway service subcommands. Express launched 2025-11-21 and is only present
-// in recent CLI versions; an older CLI (e.g. the macOS-bundled 2.26.6) lacks the
-// subcommand, in which case the Express CLI tests skip rather than fail. The CI
-// runner's newer CLI exercises them for real. The op names referenced here
-// (create/describe/update/delete-express-gateway-service) satisfy the
-// simulator-tests contract regardless.
-func expressCLIAvailable() bool {
-	cmd := exec.Command("aws", "ecs", "create-express-gateway-service", "help")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return false
-	}
-	// A CLI that LACKS the subcommand prints an "Invalid choice:
-	// 'create-express-gateway-service'" error whose text echoes the subcommand
-	// name — so a bare name-substring check false-positives. Require a
-	// distinctive option flag that only appears in the real subcommand's help.
-	return strings.Contains(string(out), "--infrastructure-role-arn")
-}
 
 // TestECS_CLI_ExpressGatewayLifecycle drives the Express Gateway service
 // lifecycle through the aws CLI:
@@ -34,10 +13,6 @@ func expressCLIAvailable() bool {
 //	aws ecs update-express-gateway-service
 //	aws ecs delete-express-gateway-service
 func TestECS_CLI_ExpressGatewayLifecycle(t *testing.T) {
-	if !expressCLIAvailable() {
-		t.Skip("local aws CLI lacks ecs create-express-gateway-service (Express launched 2025-11-21; needs a newer CLI)")
-	}
-
 	cluster := "cli-express-cluster"
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
@@ -143,10 +118,6 @@ func TestECS_CLI_ExpressGatewayLifecycle(t *testing.T) {
 // TestECS_CLI_ExpressGatewayErrors covers the documented Create error cases via
 // the CLI.
 func TestECS_CLI_ExpressGatewayErrors(t *testing.T) {
-	if !expressCLIAvailable() {
-		t.Skip("local aws CLI lacks ecs create-express-gateway-service (Express launched 2025-11-21; needs a newer CLI)")
-	}
-
 	cluster := "cli-express-err-cluster"
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })

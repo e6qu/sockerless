@@ -19,7 +19,6 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `dynamodb.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/dynamodb.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:43Z |
 | `ec2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ec2.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:45Z |
 | `ecr.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ecr.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:46Z |
-| `ecs.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ecs.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:47Z |
 | `efs.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/efs.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:48Z |
 | `elasticache.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/elasticache.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:49Z |
 | `elastic-load-balancing-v2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/elastic-load-balancing-v2.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:50:50Z |
@@ -42,3 +41,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `sts.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/sts.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:51:10Z |
 | `wafv2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/wafv2.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:51:11Z |
 | `cloudfront.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/cloudfront.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T09:04:27Z |
+| `ecs.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ecs.json` | Apache-2.0 | `dfa27a6c6ef442e9e27034e9b4992c7c3a3e9092` | 2026-06-20T14:58:16Z |
