@@ -126,11 +126,27 @@ func (d *LocalStreamDriver) Attach(_ context.Context, containerID string, _ bool
 // --- Path mapping helpers ---
 
 // addPathMapping records a container-path → host-path mapping for a container.
+//
+// The mapping is stored copy-on-write: the existing inner map is cloned
+// under PathMappingsMu, the new entry added to the clone, and the clone
+// Stored back. resolveContainerPath ranges over whatever snapshot it
+// Loads, so it never observes a torn map being mutated concurrently —
+// without this, two concurrent docker cp (or a cp racing an exec/cp-from)
+// on the same container crash the whole process with "concurrent map
+// writes" / "concurrent map iteration and map write", which recover()
+// cannot catch.
 func addPathMapping(store *Store, containerID string, containerPath, hostPath string) {
-	v, _ := store.PathMappings.LoadOrStore(containerID, make(map[string]string))
-	m := v.(map[string]string)
-	m[containerPath] = hostPath
-	store.PathMappings.Store(containerID, m)
+	store.PathMappingsMu.Lock()
+	defer store.PathMappingsMu.Unlock()
+
+	next := make(map[string]string)
+	if v, ok := store.PathMappings.Load(containerID); ok {
+		for k, val := range v.(map[string]string) {
+			next[k] = val
+		}
+	}
+	next[containerPath] = hostPath
+	store.PathMappings.Store(containerID, next)
 }
 
 // resolveContainerPath resolves a container path to its host path, checking

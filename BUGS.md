@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**1982 filed - 1938 fixed - 2 open - 11 false positives.**
+**1998 filed - 1954 fixed - 2 open - 11 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,22 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~1998~~ | P3 | api — `HostConfig.ConsoleSize [2]uint,omitempty` was a no-op (always serialized `[0,0]`) (audit) | wire-shape | changed to `*[2]uint` (matches `ExecStartRequest.ConsoleSize` + Docker's omit shape); regenerated `types_gen.go`; docker converters set/read the pointer (only consumer). |
+| ~~1997~~ | P4 | bleeplab — `git_test` assertion could pass on a short read (audit) | flaky test | `io.ReadAll` instead of a single `f.Read` into a fixed buffer. |
+| ~~1996~~ | P3 | bleeplab — data race reading `s.nextID` outside the lock (audit) | data race | capture `lastUpdate` inside the locked region before Unlock (the `X-GitLab-Last-Update` header). |
+| ~~1995~~ | P2 | tests — gitlab-runner e2e leaked the pre-start attach goroutine + a hardcoded sleep masked the race it tests (audit) | leak / fake assertion | the attach reports `(conn,err)` over a buffered chan; the test asserts success, `defer conn.Close()`, and selects with a 30 s `t.Fatal` instead of `time.Sleep`. |
+| ~~1994~~ | P1 | tests — gitlab-runner e2e Steps 7-9 could not fail (audit) | fake-green test | the wait/stop/list tail downgraded every real error (incl. a wait timeout + the build container missing from `docker ps`) to `t.Log`; now asserts (timeout/absent → `t.Fatal`/`t.Errorf`), mirroring the github cell's rigor. |
+| ~~1993~~ | P3 | ui bleephub — WorkflowDetailPage logs query had no `isError` (audit) | silent error | a failed log fetch rendered identically to "no logs"; now shows an InlineError. |
+| ~~1992~~ | P2 | ui bleephub — AppsPage suspend/delete mutations had no `onError` (audit) | silent failure | a failed suspend/unsuspend/delete looked like a no-op success; now sets state + renders an ErrorBanner. |
+| ~~1991~~ | P1 | ui frontend-docker — secondary metrics/health queries had no `isError` (audit) | fabricated/zeroed data | a failed `/metrics` rendered `"—"` cards (looked real) and a failed `/health` silently dropped the badge; both now show an explicit InlineError (the BUG-1851 class, on the un-gated secondary queries). |
+| ~~1990~~ | P4 | sims — OCI `OnManifestPut` fired outside `manifestMu` (audit) | concurrency | moved the control-plane hook into `putManifestRaw` under the lock so a concurrent same-digest DELETE can't race the image-row registration (3 shared/oci.go copies). |
+| ~~1989~~ | P3 | sims — `shared/process.go` swallowed a non-ExitError from `cmd.Wait` (audit) | error swallow | captured the non-`*ExitError` into `ProcessResult.Error` so callers distinguish "exited -1" from "failed to run" (3 copies). |
+| ~~1988~~ | P3 | realexec — `ConfigureSNAT` registered no nft-table cleanup (audit) | resource leak | added `registerTableCleanupOnce` mirroring `ConfigureAddressDNAT`/`ConfigureEgressPolicy`. |
+| ~~1987~~ | P3 | realexec — cross-pool public-IP release freed the wrong tenant's lease (audit) | concurrency / leak | the `default` + `gcp` pools shared the identical `8.34.210.0/24` CIDR so a release hit both; gave `default` a disjoint `8.35.210.0/24` (documented the disjoint-CIDR invariant). |
+| ~~1986~~ | P2 | sims — MemoryStore aliasing: OCI PUT-finalize `append` could corrupt stored bytes + diverged from SQLiteStore (audit) | aliasing / data race | non-aliasing concat on finalize; documented the `Get`/`List`/`Filter` no-mutate contract (use `Update`) — 3 shared/ copies. |
+| ~~1985~~ | P3 | core — dead restart-policy machinery (`RestartHook`/`handleRestartPolicy`/`StopContainer`) (audit) | dead code | the synthetic BaseServer path never monitors process exit, so the hook was unreachable (zero non-test callers); removed it per no-dead-code (`docker restart`'s RestartCount path is untouched). |
+| ~~1984~~ | P3 | core — `ContainerWait` ignored client disconnect → goroutine leak (audit) | leak | added a context-aware `ContainerWaitCtx` (`select` on `ctx.Done()`); the handler threads `r.Context()`; docker passthrough threads it into the SDK wait too. No interface-signature change. |
+| ~~1983~~ | P1 | core — `addPathMapping` concurrent map write → fatal process crash (audit) | crash (all backends) | the inner `PathMappings` map was mutated in place while a reader ranged it (`sync.Map` guards only the outer slot); two concurrent `docker cp` crashed the process. **Fixed:** copy-on-write under a dedicated mutex (readers see immutable snapshots). New `-race` test reproduces+verifies. |
 | ~~1982~~ | P4 | cli — `server start`/`restart` reported success without a liveness check (audit) | wrong status | now polls the mgmt `/healthz` (watching for immediate child death) and exits non-zero if the backend never comes up. |
 | ~~1981~~ | P4 | cli — `server stop` SIGTERM'd a possibly-recycled PID (audit) | correctness | `os.FindProcess` never errors on a dead PID; added a `Signal(0)` liveness probe (clean up the stale pidfile) before SIGTERM. |
 | ~~1980~~ | P3 | cli — `server start` dropped structured env config when launching the backend (audit) | silent misconfig | added `environmentEnvVars` (inverse of `config migrate`) translating the context's AWS/GCP/Azure/Common config back to `SOCKERLESS_*` on `cmd.Env`; removed the dead legacy-JSON branch. |

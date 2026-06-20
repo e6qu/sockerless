@@ -22,7 +22,6 @@ func newEmitTestServer() *BaseServer {
 	}
 	s.InitDrivers()
 	s.self = s
-	store.RestartHook = s.handleRestartPolicy
 	return s
 }
 

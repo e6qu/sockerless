@@ -31,6 +31,13 @@ func NewStateStore[T any]() *MemoryStore[T] {
 	}
 }
 
+// Get returns the stored item by value. T is returned by value, but reference
+// fields it carries (slices, maps, pointers) still share their backing storage
+// with the stored item — callers MUST NOT mutate those reference fields in
+// place, as that races concurrent Get/Put/Update and corrupts stored state.
+// SQLiteStore deep-copies via JSON, so a mutating caller diverges between the
+// two backends. To mutate a stored item, use Update (copy-modify-store under the
+// write lock); to build derived data, copy the reference field first.
 func (s *MemoryStore[T]) Get(id string) (T, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -54,6 +61,9 @@ func (s *MemoryStore[T]) Delete(id string) bool {
 	return ok
 }
 
+// List returns all stored items by value. As with Get, reference fields in the
+// returned items share backing storage with the stored items — callers MUST NOT
+// mutate them in place; use Update for in-place mutation.
 func (s *MemoryStore[T]) List() []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -64,6 +74,9 @@ func (s *MemoryStore[T]) List() []T {
 	return result
 }
 
+// Filter returns the stored items matching fn, by value. As with Get, reference
+// fields in the returned items share backing storage with the stored items —
+// callers MUST NOT mutate them in place; use Update for in-place mutation.
 func (s *MemoryStore[T]) Filter(fn func(T) bool) []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

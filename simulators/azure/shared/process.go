@@ -170,11 +170,16 @@ func StartProcess(cfg ProcessConfig, sink LogSink) *ProcessHandle {
 
 		err := cmd.Wait()
 		exitCode := 0
+		var waitErr error
 		if err != nil {
 			if exitErr, ok := err.(*exec.ExitError); ok {
 				exitCode = exitErr.ExitCode()
 			} else {
+				// Killed by signal/context, or an I/O error on the pipes — not a
+				// clean process exit. Surface it so the caller can distinguish
+				// "exited -1" from "failed to run / was killed".
 				exitCode = -1
+				waitErr = err
 			}
 		}
 		cancel()
@@ -182,6 +187,7 @@ func StartProcess(cfg ProcessConfig, sink LogSink) *ProcessHandle {
 			ExitCode:  exitCode,
 			StartedAt: startedAt,
 			StoppedAt: time.Now(),
+			Error:     waitErr,
 		}
 	}()
 

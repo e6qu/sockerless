@@ -190,10 +190,18 @@ func (s *Server) ContainerLogs(id string, opts api.ContainerLogsOptions) (io.Rea
 
 // ContainerWait blocks until a container stops and returns its exit code.
 func (s *Server) ContainerWait(id string, condition string) (*api.ContainerWaitResponse, error) {
+	return s.ContainerWaitCtx(context.Background(), id, condition)
+}
+
+// ContainerWaitCtx is the context-aware variant the wait handler prefers so
+// that a client which disconnects after issuing `docker wait` cancels the
+// upstream daemon wait instead of leaking this goroutine until the container
+// exits. It overrides the promoted *core.BaseServer.ContainerWaitCtx so the
+// real Docker SDK path (not the in-memory channel path) handles passthrough.
+func (s *Server) ContainerWaitCtx(ctx context.Context, id string, condition string) (*api.ContainerWaitResponse, error) {
 	if condition == "" {
 		condition = "not-running"
 	}
-	ctx := context.Background()
 	waitCh, errCh := s.docker.ContainerWait(ctx, id, container.WaitCondition(condition))
 	select {
 	case result := <-waitCh:
@@ -204,6 +212,8 @@ func (s *Server) ContainerWait(id string, condition string) (*api.ContainerWaitR
 		return resp, nil
 	case err := <-errCh:
 		return nil, mapDockerError(err)
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -839,7 +849,9 @@ func mapHostConfigToDocker(hc *api.HostConfig) *container.HostConfig {
 		Links:           hc.Links,
 		PublishAllPorts: hc.PublishAllPorts,
 		CgroupnsMode:    container.CgroupnsMode(hc.CgroupnsMode),
-		ConsoleSize:     hc.ConsoleSize,
+	}
+	if hc.ConsoleSize != nil {
+		hostConfig.ConsoleSize = *hc.ConsoleSize
 	}
 	if len(hc.PortBindings) > 0 {
 		hostConfig.PortBindings = make(nat.PortMap, len(hc.PortBindings))

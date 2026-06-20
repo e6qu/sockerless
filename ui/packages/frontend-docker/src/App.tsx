@@ -19,7 +19,11 @@ function renderLink(item: NavItem) {
 }
 
 export function App() {
-  const { data: health } = useQuery({
+  const {
+    data: health,
+    isError: healthIsError,
+    error: healthError,
+  } = useQuery({
     queryKey: ["frontend-health"],
     queryFn: fetchHealth,
     refetchInterval: 10_000,
@@ -35,7 +39,11 @@ export function App() {
     queryFn: fetchStatus,
     refetchInterval: 5_000,
   });
-  const { data: metrics } = useQuery({
+  const {
+    data: metrics,
+    isError: metricsIsError,
+    error: metricsError,
+  } = useQuery({
     queryKey: ["frontend-metrics"],
     queryFn: fetchMetrics,
     refetchInterval: 5_000,
@@ -77,25 +85,41 @@ export function App() {
             }
           />
 
-          <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <MetricsCard
-              title="Docker requests"
-              value={metrics ? metrics.docker_requests : "—"}
-              emphasized={(metrics?.docker_requests ?? 0) > 0}
-            />
-            <MetricsCard
-              title="Goroutines"
-              value={metrics ? metrics.goroutines : "—"}
-            />
-            <MetricsCard
-              title="Heap"
-              value={metrics ? `${metrics.heap_alloc_mb.toFixed(1)} MB` : "—"}
-            />
-            <MetricsCard
-              title="Uptime"
-              value={status ? formatUptime(status.uptime_seconds) : "—"}
-            />
-          </div>
+          {metricsIsError ? (
+            // A failed /metrics fetch must read as an error, never as
+            // zeroed "—" cards indistinguishable from real values.
+            <div className="mb-6">
+              <InlineError
+                inline
+                title="Metrics unavailable"
+                detail={
+                  metricsError instanceof Error
+                    ? metricsError.message
+                    : String(metricsError)
+                }
+              />
+            </div>
+          ) : (
+            <div className="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <MetricsCard
+                title="Docker requests"
+                value={metrics ? metrics.docker_requests : "—"}
+                emphasized={(metrics?.docker_requests ?? 0) > 0}
+              />
+              <MetricsCard
+                title="Goroutines"
+                value={metrics ? metrics.goroutines : "—"}
+              />
+              <MetricsCard
+                title="Heap"
+                value={metrics ? `${metrics.heap_alloc_mb.toFixed(1)} MB` : "—"}
+              />
+              <MetricsCard
+                title="Uptime"
+                value={status ? formatUptime(status.uptime_seconds) : "—"}
+              />
+            </div>
+          )}
 
           {status && (
             <div
@@ -122,13 +146,27 @@ export function App() {
             </div>
           )}
 
-          {health && (
-            <p
-              className="font-mono text-[11px] inline-flex items-center gap-2"
-              style={{ color: "var(--color-fg-subtle)" }}
-            >
-              health: <StatusBadge status={health.status} /> · component: {health.component}
-            </p>
+          {healthIsError ? (
+            // A failed /health fetch must be visible, not silently
+            // dropped — an absent badge looks like "no health info".
+            <InlineError
+              inline
+              title="Health unavailable"
+              detail={
+                healthError instanceof Error
+                  ? healthError.message
+                  : String(healthError)
+              }
+            />
+          ) : (
+            health && (
+              <p
+                className="font-mono text-[11px] inline-flex items-center gap-2"
+                style={{ color: "var(--color-fg-subtle)" }}
+              >
+                health: <StatusBadge status={health.status} /> · component: {health.component}
+              </p>
+            )
           )}
         </div>
       )}

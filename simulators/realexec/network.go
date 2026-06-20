@@ -271,6 +271,10 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "table", "inet", tableName); err != nil {
 			return err
 		}
+		n.registerTableCleanupOnce(tableName, func(cleanupCtx context.Context) error {
+			_ = n.runner.Run(cleanupCtx, "ip", "netns", "exec", n.NamespaceName, "nft", "delete", "table", "inet", tableName)
+			return nil
+		})
 		if err := n.runner.Run(ctx, "ip", "netns", "exec", n.NamespaceName, "nft", "add", "chain", "inet", tableName, "postrouting", "{", "type", "nat", "hook", "postrouting", "priority", "srcnat", ";", "}"); err != nil {
 			return err
 		}

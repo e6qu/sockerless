@@ -117,7 +117,6 @@ func NewBaseServer(store *Store, desc BackendDescriptor, logger zerolog.Logger) 
 	}
 	s.self = s
 	s.InitDrivers()
-	store.RestartHook = s.handleRestartPolicy
 	s.registerRoutes()
 	s.InitDefaultNetwork()
 	return s

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -73,19 +74,31 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 
 			// === Step 4: Attach to build container BEFORE start (GitLab Runner pattern) ===
 			t.Log("Step 4: Attaching to build container (before start)")
-			attachDone := make(chan struct{})
+			attachDone := make(chan error, 1)
+			var attachConn types.HijackedResponse
 			go func() {
-				defer close(attachDone)
-				_, _ = c.ContainerAttach(ctx, buildResp.ID, container.AttachOptions{
+				conn, err := c.ContainerAttach(ctx, buildResp.ID, container.AttachOptions{
 					Stream: true,
 					Stdin:  true,
 					Stdout: true,
 					Stderr: true,
 				})
+				attachConn = conn
+				attachDone <- err
 			}()
 
-			// Give attach time to register
-			time.Sleep(200 * time.Millisecond)
+			// Synchronize on the attach result instead of a bare sleep: the
+			// attach-before-start contract is the point of this test, so a
+			// failure here must fail the test, not be silently slept past.
+			select {
+			case err := <-attachDone:
+				if err != nil {
+					t.Fatalf("attach-before-start failed: %v", err)
+				}
+				defer attachConn.Close()
+			case <-time.After(30 * time.Second):
+				t.Fatal("timeout waiting for attach-before-start to return")
+			}
 
 			// === Step 5: Start build container ===
 			t.Log("Step 5: Starting build container")
@@ -146,46 +159,54 @@ func TestGitLabRunnerDockerExecutorFlow(t *testing.T) {
 			t.Log("Step 7: Stopping build container")
 			timeout := 10
 			if err := c.ContainerStop(ctx, buildResp.ID, container.StopOptions{Timeout: &timeout}); err != nil {
-				t.Logf("container stop error (may be expected): %v", err)
+				t.Fatalf("container stop failed: %v", err)
 			}
 
 			// === Step 8: Wait for container ===
+			// The stateless docker wait path is exactly what this test exists to
+			// exercise: a real StatusCode must come back, and a timeout means the
+			// backend never reported the container stopped — a failure, not a pass.
 			t.Log("Step 8: Waiting for container exit")
 			waitCh, errCh := c.ContainerWait(ctx, buildResp.ID, container.WaitConditionNotRunning)
 			select {
 			case result := <-waitCh:
 				t.Logf("Container exited with code: %d", result.StatusCode)
 			case err := <-errCh:
-				t.Logf("Container wait error: %v", err)
+				t.Fatalf("container wait error: %v", err)
 			case <-time.After(30 * time.Second):
-				t.Log("Timeout waiting for container — proceeding with cleanup")
+				t.Fatal("timeout waiting for container to stop")
 			}
 
 			// === Step 9: Cleanup ===
 			t.Log("Step 9: Cleanup")
 
-			// List containers with label filter to verify our container is tracked
+			// The build container must still be tracked by the cloud-backed
+			// docker ps — its absence is a stateless-listing failure, not a
+			// benign auto-removal (this container has no AutoRemove set).
 			containers, err := c.ContainerList(ctx, container.ListOptions{All: true})
 			if err != nil {
-				t.Logf("container list error: %v", err)
-			} else {
-				found := false
-				for _, ctr := range containers {
-					if ctr.ID == buildResp.ID {
-						found = true
-						break
-					}
+				t.Fatalf("container list failed: %v", err)
+			}
+			found := false
+			for _, ctr := range containers {
+				if ctr.ID == buildResp.ID {
+					found = true
+					break
 				}
-				if !found {
-					t.Log("WARNING: build container not found in list (may have been auto-removed)")
-				}
+			}
+			if !found {
+				t.Errorf("build container %s missing from ContainerList", buildResp.ID)
 			}
 
 			// Remove build container
-			c.ContainerRemove(ctx, buildResp.ID, container.RemoveOptions{Force: true})
+			if err := c.ContainerRemove(ctx, buildResp.ID, container.RemoveOptions{Force: true}); err != nil {
+				t.Errorf("container remove failed: %v", err)
+			}
 
 			// Remove network
-			c.NetworkRemove(ctx, netResp.ID)
+			if err := c.NetworkRemove(ctx, netResp.ID); err != nil {
+				t.Errorf("network remove failed: %v", err)
+			}
 
 			t.Log("GitLab Runner E2E flow completed successfully")
 		})

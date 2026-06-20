@@ -1797,7 +1797,8 @@ components:
         ConsoleSize:
           type: array
           items: { type: integer }
-          x-sockerless-go-type: "[2]uint"
+          x-sockerless-go-type: "*[2]uint"
+          x-sockerless-go-pointer: true
 
     PortBinding:
       type: object
