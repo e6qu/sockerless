@@ -19,6 +19,9 @@ func TestParseMemoryMiB(t *testing.T) {
 		{"abc", 0, true},
 		{"-5Gi", 0, true},
 		{"0Mi", 0, true},
+		// Overflow: n near MaxInt times the Gi multiplier wrapped negative and
+		// returned a negative limit with nil error. Must error instead.
+		{"9223372036854775807G", 0, true},
 	}
 	for _, c := range cases {
 		got, err := ParseMemoryMiB(c.in)

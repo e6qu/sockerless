@@ -97,7 +97,13 @@ func (s *Server) httpGet(ctx context.Context, path string) (*http.Response, erro
 		httpHost = host[6:]
 	}
 
-	url := fmt.Sprintf("%s://%s/v1.44%s", scheme, httpHost, path)
+	// Use the version the SDK negotiated with this daemon, not a hardcoded one:
+	// a daemon that negotiated a lower API version would 400/404 on /v1.44.
+	apiVersion := s.docker.ClientVersion()
+	if apiVersion == "" {
+		apiVersion = "1.44"
+	}
+	url := fmt.Sprintf("%s://%s/v%s%s", scheme, httpHost, apiVersion, path)
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err

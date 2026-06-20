@@ -75,7 +75,7 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 		go s.deliverWebhook(hook, "ping", "", mustMarshal(buildPingPayload(repo, hook)))
 	}
 
-	writeJSON(w, http.StatusCreated, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
+	writeJSON(w, http.StatusCreated, hookToJSON(hook, s.store.HookLastResp(hook), r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +91,7 @@ func (s *Server) handleListHooks(w http.ResponseWriter, r *http.Request) {
 	owner, repo := r.PathValue("owner"), r.PathValue("repo")
 	result := make([]map[string]interface{}, 0, len(hooks))
 	for _, h := range hooks {
-		result = append(result, hookToJSON(h, r, owner, repo))
+		result = append(result, hookToJSON(h, s.store.HookLastResp(h), r, owner, repo))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -116,7 +116,7 @@ func (s *Server) handleGetHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
+	writeJSON(w, http.StatusOK, hookToJSON(hook, s.store.HookLastResp(hook), r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
@@ -182,7 +182,7 @@ func (s *Server) handleUpdateHook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hook := s.store.GetHook(repoKey, hookID)
-	writeJSON(w, http.StatusOK, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
+	writeJSON(w, http.StatusOK, hookToJSON(hook, s.store.HookLastResp(hook), r, r.PathValue("owner"), r.PathValue("repo")))
 }
 
 func (s *Server) handleDeleteHook(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +354,7 @@ func (s *Server) handleRedeliverHookDelivery(w http.ResponseWriter, r *http.Requ
 
 // hookToJSON serialises a Webhook to GitHub's published hook object shape.
 // r and owner/repo are needed to construct the self-referential API URLs.
-func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]interface{} {
+func hookToJSON(h *Webhook, lastResp *HookLastResponse, r *http.Request, owner, repo string) map[string]interface{} {
 	base := "http://" + r.Host
 	hookBase := base + "/api/v3/repos/" + owner + "/" + repo + "/hooks/" + strconv.Itoa(h.ID)
 
@@ -384,7 +384,7 @@ func hookToJSON(h *Webhook, r *http.Request, owner, repo string) map[string]inte
 		"test_url":       hookBase + "/test",
 		"ping_url":       hookBase + "/pings",
 		"deliveries_url": hookBase + "/deliveries",
-		"last_response":  hookLastResponseJSON(h.LastResponse),
+		"last_response":  hookLastResponseJSON(lastResp),
 	}
 }
 

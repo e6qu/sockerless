@@ -402,9 +402,8 @@ func (s *Server) handleCreatePRComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListPRComments(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	num, err := strconv.Atoi(r.PathValue("number"))
@@ -427,9 +426,8 @@ func (s *Server) handleListPRComments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetPRComment(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	id, err := strconv.Atoi(r.PathValue("comment_id"))
@@ -527,9 +525,8 @@ func (s *Server) handleReplyPRComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListReviewThreads(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	num, err := strconv.Atoi(r.PathValue("number"))

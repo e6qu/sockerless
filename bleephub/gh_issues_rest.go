@@ -87,6 +87,10 @@ func (s *Server) handleListIssues(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 
 	state := r.URL.Query().Get("state")
 	if state == "" {
@@ -151,6 +155,10 @@ func (s *Server) handleGetIssue(w http.ResponseWriter, r *http.Request) {
 	numStr := r.PathValue("number")
 	repo := s.store.GetRepo(owner, repoName)
 	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -315,6 +323,10 @@ func (s *Server) handleListIssueComments(w http.ResponseWriter, r *http.Request)
 	numStr := r.PathValue("number")
 	repo := s.store.GetRepo(owner, repoName)
 	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}

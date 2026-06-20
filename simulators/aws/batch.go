@@ -482,6 +482,19 @@ func handleBatchDescribeJobDefinitions(w http.ResponseWriter, r *http.Request) {
 		if req.Status != "" && jd.Status != req.Status {
 			continue
 		}
+		if len(req.JobDefinitions) > 0 {
+			nameRev := fmt.Sprintf("%s:%d", jd.JobDefinitionName, jd.Revision)
+			matched := false
+			for _, want := range req.JobDefinitions {
+				if want == jd.JobDefinitionArn || want == nameRev || want == jd.JobDefinitionName {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				continue
+			}
+		}
 		result = append(result, jd)
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].JobDefinitionArn < result[j].JobDefinitionArn })

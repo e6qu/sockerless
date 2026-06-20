@@ -747,6 +747,9 @@ func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 
 	var containers []*api.ContainerSummary
 	for _, c := range du.Containers {
+		if c == nil {
+			continue
+		}
 		containers = append(containers, ConvertContainerSummary(*c))
 	}
 	if containers == nil {
@@ -755,6 +758,9 @@ func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 
 	var images []*api.ImageSummary
 	for _, img := range du.Images {
+		if img == nil {
+			continue
+		}
 		s := conv.ConvertImageSummary(*img)
 		images = append(images, &s)
 	}
@@ -765,6 +771,9 @@ func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 	var volumes []*api.Volume
 	if du.Volumes != nil {
 		for _, v := range du.Volumes {
+			if v == nil {
+				continue
+			}
 			vol := conv.ConvertVolume(*v)
 			volumes = append(volumes, &vol)
 		}
@@ -775,6 +784,9 @@ func (s *Server) SystemDf() (*api.DiskUsageResponse, error) {
 
 	var buildCache []*api.BuildCache
 	for _, bc := range du.BuildCache {
+		if bc == nil {
+			continue
+		}
 		entry := ConvertBuildCache(*bc)
 		buildCache = append(buildCache, &entry)
 	}

@@ -293,6 +293,41 @@ func (s *Server) lookupRepoFromPath(r *http.Request) *Repo {
 	return s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
 }
 
+// lookupReadableRepoFromPath resolves the {owner}/{repo} path the same as
+// lookupRepoFromPath, but additionally enforces private-repo visibility: a
+// private repo the caller cannot read returns nil and a 404, matching real
+// GitHub (which hides the existence of private repos behind 404, never 403, on
+// read paths). Use this on every GET handler that returns repo-scoped content;
+// lookupRepoFromPath stays for write handlers already gated by requirePerm.
+func (s *Server) lookupReadableRepoFromPath(w http.ResponseWriter, r *http.Request) *Repo {
+	repo := s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	return repo
+}
+
+// enforceRepoReadable applies the private-repo visibility gate without
+// requiring that a Repo record exist. It returns false (after writing a 404)
+// only when the path resolves to a KNOWN private repo the caller cannot read.
+// Paths whose repo has no Store record (e.g. workflow-run state tracked by
+// RepoFullName alone) are allowed through unchanged — those handlers carry
+// their own not-found semantics. Use this on repo-scoped read handlers that
+// must not leak private-repo content but operate on non-Repo-keyed state.
+func (s *Server) enforceRepoReadable(w http.ResponseWriter, r *http.Request) bool {
+	repo := s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
+	if repo != nil && repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return false
+	}
+	return true
+}
+
 func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	if user == nil {
@@ -330,9 +365,8 @@ func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	releases := s.store.Releases.List(repo.ID)
@@ -345,9 +379,8 @@ func (s *Server) handleListReleases(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetLatestRelease(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	rel := s.store.Releases.Latest(repo.ID)
@@ -359,9 +392,8 @@ func (s *Server) handleGetLatestRelease(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGetReleaseByTag(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	rel := s.store.Releases.GetByTag(repo.ID, r.PathValue("tag"))
@@ -373,9 +405,8 @@ func (s *Server) handleGetReleaseByTag(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetRelease(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	id, err := strconv.Atoi(r.PathValue("release_id"))

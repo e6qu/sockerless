@@ -18,6 +18,28 @@ type SyntheticNetworkDriver struct {
 
 func (d *SyntheticNetworkDriver) Name() string { return "synthetic" }
 
+// cloneEndpointResources returns a shallow copy of a Network.Containers map.
+// The StateStore hands callers a struct value whose map fields alias the stored
+// backing store; mutating that map in place races a lock-free reader. Cloning
+// before mutation (copy-on-write) keeps every prior reader's snapshot immutable.
+func cloneEndpointResources(m map[string]api.EndpointResource) map[string]api.EndpointResource {
+	out := make(map[string]api.EndpointResource, len(m)+1)
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// cloneEndpointSettings returns a shallow copy of a
+// Container.NetworkSettings.Networks map (same copy-on-write rationale).
+func cloneEndpointSettings(m map[string]*api.EndpointSettings) map[string]*api.EndpointSettings {
+	out := make(map[string]*api.EndpointSettings, len(m)+1)
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
 func (d *SyntheticNetworkDriver) Create(_ context.Context, name string, opts *api.NetworkCreateRequest) (*api.NetworkCreateResponse, error) {
 	if name == "" {
 		return nil, fmt.Errorf("network name is required")
@@ -145,9 +167,15 @@ func (d *SyntheticNetworkDriver) Connect(_ context.Context, networkID, container
 		}
 	}
 
-	// Add container to network's Containers map
+	// Add container to network's Containers map. Copy-on-write: the StateStore
+	// hands every reader a struct value that still aliases this map's backing
+	// store, and those readers range/len/marshal it without the store lock.
+	// Mutating the shared map in place would race a concurrent reader into an
+	// uncatchable "concurrent map iteration and map write" abort, so clone the
+	// map first and let the Update install the fresh copy.
 	c, _ = d.Store.Containers.Get(containerID)
 	d.Store.Networks.Update(net.ID, func(n *api.Network) {
+		n.Containers = cloneEndpointResources(n.Containers)
 		n.Containers[containerID] = api.EndpointResource{
 			Name:        strings.TrimPrefix(c.Name, "/"),
 			EndpointID:  endpoint.EndpointID,
@@ -156,8 +184,9 @@ func (d *SyntheticNetworkDriver) Connect(_ context.Context, networkID, container
 		}
 	})
 
-	// Add network to container's NetworkSettings
+	// Add network to container's NetworkSettings (same copy-on-write reason).
 	d.Store.Containers.Update(containerID, func(c *api.Container) {
+		c.NetworkSettings.Networks = cloneEndpointSettings(c.NetworkSettings.Networks)
 		c.NetworkSettings.Networks[net.Name] = &endpoint
 	})
 
@@ -177,10 +206,12 @@ func (d *SyntheticNetworkDriver) Disconnect(_ context.Context, networkID, contai
 	}
 
 	d.Store.Networks.Update(net.ID, func(n *api.Network) {
+		n.Containers = cloneEndpointResources(n.Containers)
 		delete(n.Containers, containerID)
 	})
 
 	d.Store.Containers.Update(containerID, func(c *api.Container) {
+		c.NetworkSettings.Networks = cloneEndpointSettings(c.NetworkSettings.Networks)
 		delete(c.NetworkSettings.Networks, net.Name)
 	})
 

@@ -252,6 +252,12 @@ func (n *Network) ConfigureSNAT(ctx context.Context, sourceCIDR string, publicIP
 	if publicIP == nil || publicIP.To4() == nil {
 		return fmt.Errorf("SNAT public IPv4 address is required")
 	}
+	// Validate the caller-supplied source prefix up front (matching the sibling
+	// ConfigureHostEgress/ConfigureEgressPolicy) so a malformed value yields a
+	// clear error instead of an opaque nft failure deep in the rule install.
+	if _, _, err := net.ParseCIDR(sourceCIDR); err != nil {
+		return fmt.Errorf("invalid SNAT source CIDR %q: %w", sourceCIDR, err)
+	}
 	if tableName == "" {
 		tableName = deriveLinuxName("sn"+n.NamespaceName, "sn")
 	}

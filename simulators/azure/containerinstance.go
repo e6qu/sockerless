@@ -318,7 +318,11 @@ func handleACIContainerExecSession(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Exec session %q not found.", sessionID)
 		return
 	}
-	session := v.(aciExecSession)
+	session, ok := v.(aciExecSession)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Exec session %q not found.", sessionID)
+		return
+	}
 	if session.Password != "" && r.URL.Query().Get("password") != session.Password && r.Header.Get("Authorization") != session.Password {
 		sim.AzureError(w, "Unauthorized", "Invalid exec session password.", http.StatusUnauthorized)
 		return

@@ -74,9 +74,16 @@ func (i *IPAM) Release(ip net.IP) {
 	if ip == nil {
 		return
 	}
+	ip4 := ip.To4()
+	if ip4 == nil {
+		// Non-IPv4 address: this allocator only ever hands out IPv4, so a
+		// non-IPv4 value can't be one of ours. Bail rather than panic on the
+		// nil .To4() deref below.
+		return
+	}
 	i.mu.Lock()
 	defer i.mu.Unlock()
-	key := ip.To4().String()
+	key := ip4.String()
 	if i.reserved[key] == "gateway" {
 		return
 	}

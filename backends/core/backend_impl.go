@@ -1021,6 +1021,8 @@ func (s *BaseServer) ContainerRename(ref string, newName string) error {
 		if ep != nil && ep.NetworkID != "" {
 			s.Store.Networks.Update(ep.NetworkID, func(n *api.Network) {
 				if er, ok := n.Containers[id]; ok {
+					// Copy-on-write: lock-free readers alias this map.
+					n.Containers = cloneEndpointResources(n.Containers)
 					er.Name = strings.TrimPrefix(newName, "/")
 					n.Containers[id] = er
 				}

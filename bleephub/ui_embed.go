@@ -4,6 +4,7 @@ package bleephub
 
 import (
 	"embed"
+	"io"
 	"io/fs"
 	"net/http"
 )
@@ -60,6 +61,16 @@ func spaHandler(fsys fs.FS, pathPrefix string) http.Handler {
 			Read(p []byte) (n int, err error)
 			Seek(offset int64, whence int) (int64, error)
 		}
-		http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile.(readSeeker))
+		rs, ok := indexFile.(readSeeker)
+		if !ok {
+			// embed.FS files always implement io.Seeker, but never panic if a
+			// future FS backing doesn't; fall back to a plain copy.
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			if _, err := io.Copy(w, indexFile); err != nil {
+				http.Error(w, "failed to serve index", http.StatusInternalServerError)
+			}
+			return
+		}
+		http.ServeContent(w, r, "index.html", stat.ModTime(), rs)
 	})
 }

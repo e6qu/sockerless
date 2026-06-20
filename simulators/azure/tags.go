@@ -46,12 +46,16 @@ func registerTags(srv *sim.Server) {
 	// authorization.go's role-definitions dispatcher).
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			lowerPath := strings.ToLower(r.URL.Path)
-			if !strings.HasSuffix(lowerPath, tagsDefaultMarker) {
+			// Match the marker case-insensitively against the ORIGINAL path's
+			// own bytes — slicing r.URL.Path by an offset derived from a
+			// strings.ToLower copy is unsafe, because case-folding can change
+			// byte length and push len(path)-len(marker) negative.
+			if len(r.URL.Path) < len(tagsDefaultMarker) ||
+				!strings.EqualFold(r.URL.Path[len(r.URL.Path)-len(tagsDefaultMarker):], tagsDefaultMarker) {
 				next.ServeHTTP(w, r)
 				return
 			}
-			scope := strings.ToLower(strings.TrimSuffix(r.URL.Path, r.URL.Path[len(r.URL.Path)-len(tagsDefaultMarker):]))
+			scope := strings.ToLower(r.URL.Path[:len(r.URL.Path)-len(tagsDefaultMarker)])
 			scope = strings.TrimSuffix(scope, "/")
 			handleTagsDefault(w, r, scope)
 		})

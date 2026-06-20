@@ -141,6 +141,10 @@ func (s *Server) handleListTeams(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 
 	teams := s.store.ListTeams(orgLogin)
 	result := make([]map[string]interface{}, 0, len(teams))
@@ -161,6 +165,10 @@ func (s *Server) handleGetTeam(w http.ResponseWriter, r *http.Request) {
 	orgLogin := r.PathValue("org")
 	org := s.store.GetOrg(orgLogin)
 	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}

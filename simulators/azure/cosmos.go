@@ -968,9 +968,29 @@ func cosmosDataError(w http.ResponseWriter, code, message string, status int) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message})
 }
 
+// caseInsensitiveIndex returns the byte index of the first case-insensitive
+// occurrence of sub in s, or -1. The returned index is a valid offset into s
+// (unlike indexing a strings.ToLower copy, whose offsets can diverge from the
+// original when case-folding changes byte length).
+func caseInsensitiveIndex(s, sub string) int {
+	if sub == "" {
+		return 0
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if strings.EqualFold(s[i:i+len(sub)], sub) {
+			return i
+		}
+	}
+	return -1
+}
+
 func cosmosParseEqualityQuery(query string, params []map[string]any) (string, string, bool) {
-	lower := strings.ToLower(query)
-	idx := strings.Index(lower, "where")
+	// Locate "where" case-insensitively over the ORIGINAL string. Indexing a
+	// strings.ToLower copy is unsafe: Unicode case-folding can change byte
+	// length, so an offset from the lowercased string can fall outside the
+	// original and panic the slice. caseInsensitiveIndex returns an offset
+	// that is always valid for query.
+	idx := caseInsensitiveIndex(query, "where")
 	if idx < 0 {
 		return "", "", false
 	}

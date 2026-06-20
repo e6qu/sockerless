@@ -31,18 +31,46 @@ func FuzzDDBEvalExpr(f *testing.F) {
 		",",
 		"NOT NOT NOT",
 		"size(a) = size(b)",
+		// contains()/begins_with()/attribute_type() on attribute values that are
+		// NOT well-formed {"S":...} maps — a malformed PutItem can store a bare
+		// scalar or list as an attribute value; the evaluator must not panic.
+		"contains(c, :v)",
+		"contains(d, :v)",
+		"contains(e, :v)",
+		"begins_with(c, :p)",
+		"attribute_type(d, :v)",
+		"contains(a.b, :v)",
+		"contains(b, :v)",
 	}
 	for _, s := range seeds {
 		f.Add(s)
 	}
-	item := map[string]any{
-		"a": map[string]any{"S": "hello"},
-		"b": map[string]any{"L": []any{map[string]any{"N": "1"}}},
+	// Items intentionally include malformed attribute values (bare scalars, a raw
+	// list, a nil) alongside well-formed ones to stress the type assertions in the
+	// evaluator's path/contains/type handling.
+	items := []map[string]any{
+		{
+			"a": map[string]any{"S": "hello"},
+			"b": map[string]any{"L": []any{map[string]any{"N": "1"}}},
+		},
+		{
+			"a": map[string]any{"S": "hello"},
+			"c": "raw-string-not-a-map",
+			"d": float64(42),
+			"e": []any{"x", "y"},
+			"b": nil,
+		},
+		{
+			"a": []any{map[string]any{"S": "x"}},
+			"b": map[string]any{"M": "not-a-map"},
+		},
 	}
 	names := map[string]string{"#n": "a"}
 	values := map[string]any{":v": map[string]any{"S": "hello"}, ":p": map[string]any{"S": "he"}, ":n": map[string]any{"N": "0"}}
 	f.Fuzz(func(t *testing.T, expr string) {
-		_ = ddbEvalExpr(item, true, expr, names, values)
-		_ = ddbEvalExpr(item, false, expr, names, values)
+		for _, item := range items {
+			_ = ddbEvalExpr(item, true, expr, names, values)
+			_ = ddbEvalExpr(item, false, expr, names, values)
+		}
 	})
 }

@@ -38,10 +38,20 @@ func NewSessionRegistry() *SessionRegistry {
 	}
 }
 
-// Register adds a session to the registry.
+// Register adds a session to the registry. If a session with the same ID is
+// already registered, it is Close()d and removed first — otherwise the old
+// entry would be dropped from the map (its child process left running and
+// unreachable by CleanupConn) and the id appended twice to a conn's slice.
+// Backends reuse container-derived ids across an exec lifecycle, so an id
+// collision while a prior exec is still draining is reachable.
 func (r *SessionRegistry) Register(s Session, conn *websocket.Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if _, exists := r.sessions[s.ID()]; exists {
+		// Tear down the prior session (kills its child) and scrub its id from
+		// every conn slice before re-registering under the same id.
+		r.forgetLocked(s.ID(), true)
+	}
 	r.sessions[s.ID()] = s
 	r.connSessions[conn] = append(r.connSessions[conn], s.ID())
 }

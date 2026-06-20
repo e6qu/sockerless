@@ -144,6 +144,49 @@ func TestGCS_ListObjects(t *testing.T) {
 	assert.Equal(t, []string{"a.txt", "b.txt", "c.txt"}, names)
 }
 
+// TestGCS_ListObjectsPaged verifies the GCS object list honors the page-size
+// limit the storage client sends as the "maxResults" query parameter. A single
+// page must be capped at the requested size, and paging through must still yield
+// every object exactly once.
+func TestGCS_ListObjectsPaged(t *testing.T) {
+	client := storageClient(t)
+	defer client.Close()
+
+	require.NoError(t, client.Bucket("paged-obj-bucket").Create(ctx, "test-project", nil))
+
+	for _, name := range []string{"o1", "o2", "o3", "o4", "o5"} {
+		w := client.Bucket("paged-obj-bucket").Object(name).NewWriter(ctx)
+		_, err := w.Write([]byte("data"))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+	}
+
+	it := client.Bucket("paged-obj-bucket").Objects(ctx, nil)
+	pager := iterator.NewPager(it, 2, "")
+
+	var firstPage []*storage.ObjectAttrs
+	nextTok, err := pager.NextPage(&firstPage)
+	require.NoError(t, err)
+	// maxResults=2 must cap the first page; if the sim ignored it (read
+	// "pageSize") the whole listing would come back in one page.
+	require.Len(t, firstPage, 2, "first page must honor maxResults=2")
+	require.NotEmpty(t, nextTok, "more objects remain, expected a nextPageToken")
+
+	all := append([]*storage.ObjectAttrs{}, firstPage...)
+	for nextTok != "" {
+		var page []*storage.ObjectAttrs
+		nextTok, err = pager.NextPage(&page)
+		require.NoError(t, err)
+		all = append(all, page...)
+	}
+
+	var names []string
+	for _, a := range all {
+		names = append(names, a.Name)
+	}
+	assert.Equal(t, []string{"o1", "o2", "o3", "o4", "o5"}, names)
+}
+
 func TestGCS_CopierFromRewriteTo(t *testing.T) {
 	client := storageClient(t)
 	defer client.Close()

@@ -418,7 +418,13 @@ func handleWAFListWebACLs(w http.ResponseWriter, r *http.Request) {
 			Description: s.WebACL.Description, LockToken: s.LockToken, ARN: s.WebACL.ARN,
 		})
 	}
-	wafWriteJSON(w, map[string]any{"WebACLs": items})
+	sortBy(items, func(s summary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"WebACLs": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
 }
 
 // ---------- Association handlers ----------
@@ -642,7 +648,13 @@ func handleWAFListIPSets(w http.ResponseWriter, r *http.Request) {
 			Description: s.IPSet.Description, LockToken: s.LockToken, ARN: s.IPSet.ARN,
 		})
 	}
-	wafWriteJSON(w, map[string]any{"IPSets": items})
+	sortBy(items, func(s summary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"IPSets": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
 }
 
 // ---------- RuleGroup handlers ----------
@@ -806,7 +818,13 @@ func handleWAFListRuleGroups(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, summary{Name: s.RuleGroup.Name, Id: s.RuleGroup.Id, Description: s.RuleGroup.Description, LockToken: s.LockToken, ARN: s.RuleGroup.ARN})
 	}
-	wafWriteJSON(w, map[string]any{"RuleGroups": items})
+	sortBy(items, func(s summary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"RuleGroups": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
 }
 
 // ---------- RegexPatternSet handlers ----------
@@ -935,7 +953,13 @@ func handleWAFListRegexSets(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, summary{Name: s.RegexSet.Name, Id: s.RegexSet.Id, Description: s.RegexSet.Description, LockToken: s.LockToken, ARN: s.RegexSet.ARN})
 	}
-	wafWriteJSON(w, map[string]any{"RegexPatternSets": items})
+	sortBy(items, func(s summary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"RegexPatternSets": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
 }
 
 // ---------- Tagging handlers ----------

@@ -576,6 +576,9 @@ func (s *Server) findJobByStableID(jobID int64) (*Workflow, *WorkflowJob) {
 // ?per_page=, ?page=. Returns `{total_count, workflow_runs:[...]}`
 // matching the real GitHub paginated-list shape.
 func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	repo := repoFullName(r)
 	statusFilter := r.URL.Query().Get("status")
 	branchFilter := r.URL.Query().Get("branch")
@@ -616,6 +619,9 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 
 // handleGetWorkflowRun — GET .../actions/runs/{run_id}
 func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
@@ -635,6 +641,9 @@ func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
 // most recent attempt's jobs). Bleephub doesn't track attempts so the
 // filter is accepted but ignored.
 func (s *Server) handleListWorkflowRunJobs(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
@@ -672,6 +681,9 @@ func (s *Server) handleListWorkflowRunJobs(w http.ResponseWriter, r *http.Reques
 
 // handleGetWorkflowJob — GET .../actions/jobs/{job_id}
 func (s *Server) handleGetWorkflowJob(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	jobID, err := strconv.ParseInt(r.PathValue("job_id"), 10, 64)
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid job_id")
@@ -691,6 +703,9 @@ func (s *Server) handleGetWorkflowJob(w http.ResponseWriter, r *http.Request) {
 // job's timeline records reference log files, falling back to the live
 // console capture in `store.LogLines`.
 func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	jobID, err := strconv.ParseInt(r.PathValue("job_id"), 10, 64)
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid job_id")
@@ -871,6 +886,9 @@ func (s *Server) findRunAttempt(runID, attempt int) *Workflow {
 
 // handleGetRunAttempt — GET .../actions/runs/{run_id}/attempts/{attempt_number}
 func (s *Server) handleGetRunAttempt(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
@@ -893,6 +911,9 @@ func (s *Server) handleGetRunAttempt(w http.ResponseWriter, r *http.Request) {
 
 // handleListRunAttemptJobs — GET .../runs/{run_id}/attempts/{attempt_number}/jobs
 func (s *Server) handleListRunAttemptJobs(w http.ResponseWriter, r *http.Request) {
+	if !s.enforceRepoReadable(w, r) {
+		return
+	}
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")

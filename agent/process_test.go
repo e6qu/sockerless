@@ -3,6 +3,7 @@ package agent
 import (
 	"bytes"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -97,6 +98,39 @@ func TestMainProcessSubscribeAfterExit(t *testing.T) {
 	code := mp.ExitCode()
 	if code == nil || *code != 0 {
 		t.Fatalf("expected exit code 0, got %v", code)
+	}
+}
+
+// TestMainProcessUnsubscribeClosesChannel verifies Unsubscribe closes the
+// listener channel so a consumer ranging over it (AttachSession.stream) exits,
+// even while the main process is still running. Without the close the channel
+// and its draining goroutine leak for the rest of a keep-alive container's life
+// — one leak per attach/detach cycle.
+func TestMainProcessUnsubscribeClosesChannel(t *testing.T) {
+	// Long-running process so the main process stays alive across the detach.
+	mp, err := NewMainProcess(testLogger(), []string{"/bin/sh", "-c", "sleep 5"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = mp.Signal(syscall.SIGKILL) }()
+
+	_, _, ch := mp.Subscribe("attach-1")
+
+	closed := make(chan struct{})
+	go func() {
+		for range ch { // exits only when ch is closed
+		}
+		close(closed)
+	}()
+
+	// Detach while the process is still running.
+	mp.Unsubscribe("attach-1")
+
+	select {
+	case <-closed:
+		// good — the range loop saw the channel close and returned.
+	case <-time.After(2 * time.Second):
+		t.Fatal("Unsubscribe did not close the listener channel; stream goroutine leaked")
 	}
 }
 

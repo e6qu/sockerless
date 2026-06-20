@@ -75,7 +75,11 @@ func ddbSplitUpdateClauses(expr string) map[string]string {
 		kw       string
 	}
 	var marks []mark
-	upper := strings.ToUpper(expr)
+	// ASCII-only uppercasing that preserves byte length, so the keyword indices
+	// computed against `upper` remain valid offsets into the original `expr`.
+	// strings.ToUpper can change the byte length of non-ASCII / invalid-UTF-8
+	// input, which would make the slice offsets below out-of-range for expr.
+	upper := ddbASCIIUpper(expr)
 	for _, kw := range keywords {
 		for i := 0; i+len(kw) <= len(upper); i++ {
 			if upper[i:i+len(kw)] != kw {
@@ -108,6 +112,19 @@ func ddbSplitUpdateClauses(expr string) map[string]string {
 		out[m.kw] = strings.TrimSpace(expr[m.end:bodyEnd])
 	}
 	return out
+}
+
+// ddbASCIIUpper uppercases only ASCII letters, byte-for-byte, leaving every
+// other byte (including invalid-UTF-8 bytes) untouched so the result has the
+// same byte length and indexing as the input.
+func ddbASCIIUpper(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'a' && b[i] <= 'z' {
+			b[i] -= 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 func isWordChar(b byte) bool {
@@ -176,8 +193,12 @@ func ddbResolveOperand(token string, item map[string]any, names map[string]strin
 
 func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, values map[string]any) (any, error) {
 	rhs = strings.TrimSpace(rhs)
-	if strings.HasPrefix(strings.ToLower(rhs), "if_not_exists(") {
-		inner := rhs[len("if_not_exists(") : len(rhs)-1]
+	const inpfx = "if_not_exists("
+	if strings.HasPrefix(strings.ToLower(rhs), inpfx) {
+		if !strings.HasSuffix(rhs, ")") || len(rhs) < len(inpfx)+1 {
+			return nil, fmt.Errorf("malformed if_not_exists: %q", rhs)
+		}
+		inner := rhs[len(inpfx) : len(rhs)-1]
 		args := ddbSplitTopLevel(inner, ',')
 		if len(args) != 2 {
 			return nil, fmt.Errorf("if_not_exists expects 2 args: %q", rhs)

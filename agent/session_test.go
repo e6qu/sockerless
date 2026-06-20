@@ -40,6 +40,39 @@ func TestSessionRegistryRegisterGet(t *testing.T) {
 	}
 }
 
+// TestSessionRegistryRegisterDuplicateID verifies that re-registering an
+// in-use ID Close()s and removes the prior session (so its child process can't
+// be orphaned, unreachable by CleanupConn) and leaves exactly one id in the
+// conn's session list (no double-append).
+func TestSessionRegistryRegisterDuplicateID(t *testing.T) {
+	r := NewSessionRegistry()
+	conn := makeTestWSConn(t)
+	defer conn.Close()
+
+	old := &mockSession{id: "dup"}
+	r.Register(old, conn)
+
+	fresh := &mockSession{id: "dup"}
+	r.Register(fresh, conn)
+
+	if !old.closed {
+		t.Fatal("prior session with the same id should have been Close()d on re-register")
+	}
+	got, ok := r.Get("dup")
+	if !ok || got != fresh {
+		t.Fatal("the fresh session should be the one registered under the id")
+	}
+
+	// CleanupConn must now find the id exactly once (no stale double entry).
+	r.CleanupConn(conn)
+	if _, ok := r.Get("dup"); ok {
+		t.Fatal("session should be gone after CleanupConn")
+	}
+	if !fresh.closed {
+		t.Fatal("fresh session should have been closed by CleanupConn")
+	}
+}
+
 func TestSessionRegistryCleanupConn(t *testing.T) {
 	r := NewSessionRegistry()
 	s1 := &mockSession{id: "s1"}
