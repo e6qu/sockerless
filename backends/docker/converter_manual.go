@@ -47,6 +47,13 @@ func ConvertContainerJSON(info types.ContainerJSON) api.Container {
 	}
 	c := conv.ConvertContainerBase(*info.ContainerJSONBase)
 
+	// The generated ConvertContainerBase does not populate State (the
+	// goverter `map . State` directive is not honored by the generated
+	// code), so map it explicitly here. Without this, `docker inspect`
+	// reports an empty State block (Status:"", Running:false, Pid:0,
+	// ExitCode:0, Health:nil) for every container.
+	c.State = MapContainerState(*info.ContainerJSONBase)
+
 	if info.Config != nil {
 		c.Config = conv.ConvertContainerConfig(*info.Config)
 		c.Config.ExposedPorts = PortSetToMap(info.Config.ExposedPorts)
@@ -173,6 +180,7 @@ func ConvertContainerSummary(c types.Container) *api.ContainerSummary {
 		SizeRw:     c.SizeRw,
 		SizeRootFs: c.SizeRootFs,
 		Mounts:     MountPointsToAPI(c.Mounts),
+		HostConfig: &api.HostConfigSummary{NetworkMode: c.HostConfig.NetworkMode},
 	}
 	for _, p := range c.Ports {
 		summary.Ports = append(summary.Ports, conv.ConvertPort(p))
@@ -293,6 +301,8 @@ func APIEndpointToDocker(ep *api.EndpointSettings) *network.EndpointSettings {
 		GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
 		MacAddress:          ep.MacAddress,
 		Aliases:             ep.Aliases,
+		DNSNames:            ep.DNSNames,
+		Links:               ep.Links,
 		DriverOpts:          ep.DriverOpts,
 	}
 	if ep.IPAMConfig != nil {

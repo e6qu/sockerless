@@ -88,9 +88,18 @@ func (s *Server) ContainerCreate(req *api.ContainerCreateRequest) (*api.Containe
 	if err != nil {
 		rc, pullErr := s.docker.ImagePull(ctx, config.Image, image.PullOptions{})
 		if pullErr != nil {
-			return nil, &api.NotFoundError{Resource: "image", ID: config.Image}
+			// Preserve the real status (401 auth, registry 5xx, network)
+			// instead of masking every failure as a 404.
+			return nil, mapDockerError(pullErr)
 		}
-		io.Copy(io.Discard, rc)
+		// The pull stream reports mid-stream failures (e.g. a layer that
+		// 401s after the manifest fetched) only as an error from the body
+		// reader; draining without checking would let a failed pull proceed
+		// to ContainerCreate.
+		if _, copyErr := io.Copy(io.Discard, rc); copyErr != nil {
+			rc.Close()
+			return nil, mapDockerError(copyErr)
+		}
 		rc.Close()
 	}
 
@@ -677,6 +686,16 @@ func (s *Server) VolumePrune(f map[string][]string) (*api.VolumePruneResponse, e
 
 // SystemEvents returns a stream of Docker events.
 func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
+	return s.SystemEventsCtx(context.Background(), opts)
+}
+
+// SystemEventsCtx is the context-aware variant the events handler prefers so
+// that a client which disconnects from `docker events` cancels the upstream
+// daemon event stream instead of leaking this goroutine (and its daemon
+// connection) until the process exits. It mirrors ContainerWaitCtx: the
+// api.Backend.SystemEvents signature is unchanged, the handler reaches the
+// cancellable path through the optional SystemEventsCtx interface.
+func (s *Server) SystemEventsCtx(ctx context.Context, opts api.EventsOptions) (io.ReadCloser, error) {
 	listOpts := events.ListOptions{
 		Since: opts.Since,
 		Until: opts.Until,
@@ -685,7 +704,7 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 		listOpts.Filters = filtersFromMap(opts.Filters)
 	}
 
-	eventsCh, errCh := s.docker.Events(context.Background(), listOpts)
+	eventsCh, errCh := s.docker.Events(ctx, listOpts)
 
 	pr, pw := io.Pipe()
 	go func() {
@@ -708,6 +727,9 @@ func (s *Server) SystemEvents(opts api.EventsOptions) (io.ReadCloser, error) {
 					return
 				}
 				_ = pw.Close()
+				return
+			case <-ctx.Done():
+				pw.CloseWithError(ctx.Err())
 				return
 			}
 		}
@@ -925,6 +947,8 @@ func mapNetworkingConfigToDocker(nc *api.NetworkingConfig) *network.NetworkingCo
 			GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
 			MacAddress:          ep.MacAddress,
 			Aliases:             ep.Aliases,
+			DNSNames:            ep.DNSNames,
+			Links:               ep.Links,
 			DriverOpts:          ep.DriverOpts,
 		}
 		if ep.IPAMConfig != nil {

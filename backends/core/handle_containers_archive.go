@@ -4,8 +4,10 @@ import (
 	"archive/tar"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -14,6 +16,26 @@ import (
 
 	"github.com/sockerless/api"
 )
+
+// classifyArchiveStatError maps a StatPath error to a typed NotFoundError
+// when the underlying cause is "path does not exist" (the FS drivers
+// return a plain os.IsNotExist/fs.ErrNotExist error). docker cp relies on
+// the archive HEAD/GET returning 404 (not 500) for a missing path. Already
+// typed api errors (e.g. a NotFoundError for a missing container from a
+// cloud agent) pass through unchanged.
+func classifyArchiveStatError(err error, path string) error {
+	if err == nil {
+		return nil
+	}
+	var nf *api.NotFoundError
+	if errors.As(err, &nf) {
+		return err
+	}
+	if errors.Is(err, fs.ErrNotExist) || os.IsNotExist(err) {
+		return &api.NotFoundError{Resource: "path", ID: path}
+	}
+	return err
+}
 
 // archiveDriverContext builds the typed driver context used by the
 // FS read/write dispatch sites. Resolves the container via the
@@ -49,7 +71,12 @@ func (s *BaseServer) handleHeadArchive(w http.ResponseWriter, r *http.Request) {
 	dctx := s.archiveDriverContext(r, r.PathValue("id"))
 	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
-		WriteError(w, err)
+		// docker cp probes the destination with HEAD and keys on a 404
+		// to mean "path does not exist, create it". A missing path
+		// surfaces as a plain os.IsNotExist error from the FS driver;
+		// classify it to a typed NotFoundError so WriteError yields 404
+		// instead of 500.
+		WriteError(w, classifyArchiveStatError(err, path))
 		return
 	}
 
@@ -72,7 +99,7 @@ func (s *BaseServer) handleGetArchive(w http.ResponseWriter, r *http.Request) {
 	dctx := s.archiveDriverContext(r, r.PathValue("id"))
 	stat, err := s.Typed.FSRead.StatPath(dctx, path)
 	if err != nil {
-		WriteError(w, err)
+		WriteError(w, classifyArchiveStatError(err, path))
 		return
 	}
 	statJSON, _ := json.Marshal(map[string]interface{}{

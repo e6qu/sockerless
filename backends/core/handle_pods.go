@@ -1,7 +1,6 @@
 package core
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
@@ -134,32 +133,23 @@ func (s *BaseServer) handlePodKill(w http.ResponseWriter, r *http.Request) {
 	writePodActionResponse(w, resp)
 }
 
-// writePodActionResponse serializes a PodActionResponse using the
-// podman-compatible convention: success path emits
-// `Errs: []` (the only `[]error` shape that survives podman's bindings
-// json.Unmarshal); per-container stop/kill failures are surfaced via
-// HTTP 409 + an ErrorModel-shaped body so the CLI prints them and
-// exits non-zero. Sockerless callers that want the per-error detail
-// can read the response body verbatim.
+// writePodActionResponse serializes a PodActionResponse in podman's
+// PodStopReport / PodKillReport shape: `{ "Id": ..., "Errs": [...] }`
+// returned with HTTP 200, regardless of whether any per-container action
+// failed. Real podman reports per-container stop/kill failures through
+// the report's `Errs` array with a 200 status — not an HTTP error — so
+// the CLI can present the pod's outcome along with the partial errors.
+// `Errs` is always a non-nil array (never null) so podman's bindings
+// json.Unmarshal succeeds.
 func writePodActionResponse(w http.ResponseWriter, resp *api.PodActionResponse) {
 	if resp == nil {
 		WriteJSON(w, http.StatusOK, map[string]any{"Errs": []any{}, "Id": ""})
 		return
 	}
-	if len(resp.Errs) > 0 {
-		// Match podman's ErrorModel shape — `cause` + `message` + `response`.
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"cause":    "pod-action errors",
-			"message":  strings.Join(resp.Errs, "; "),
-			"response": http.StatusConflict,
-		})
-		return
-	}
-	// Success — always emit Errs: [] (never null, never populated).
+	errs := make([]string, 0, len(resp.Errs))
+	errs = append(errs, resp.Errs...)
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"Errs":     []any{},
+		"Errs":     errs,
 		"Id":       resp.ID,
 		"RawInput": resp.RawInput,
 	})

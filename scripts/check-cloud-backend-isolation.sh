@@ -29,6 +29,12 @@ cloud_backends=(
   backends/cloudrun-functions
   backends/aca
   backends/azure-functions
+  # Per-cloud shared helper modules run *inside* the cloud backends, so a
+  # stateless violation in a shared helper is just as unguarded as one in the
+  # backend itself. Scan them too.
+  backends/aws-common
+  backends/gcp-common
+  backends/azure-common
 )
 
 forbidden_patterns=(
@@ -90,7 +96,9 @@ guarded_patterns=(
 failed=0
 for backend in "${cloud_backends[@]}"; do
   for pattern in "${forbidden_patterns[@]}"; do
-    matches=$(grep -rn "$pattern" "$backend"/*.go 2>/dev/null | grep -v '_test\.go' || true)
+    # Recurse so each backend's entrypoint (cmd/sockerless-backend-*/main.go)
+    # and any nested package are scanned, not just top-level *.go files.
+    matches=$(grep -rn "$pattern" "$backend" --include='*.go' 2>/dev/null | grep -v '_test\.go' || true)
     if [ -n "$matches" ]; then
       echo "ERROR: $backend violates stateless rule with '$pattern':"
       echo "$matches"
@@ -109,7 +117,7 @@ for backend in "${cloud_backends[@]}"; do
 
   # Check guarded patterns in backend files
   for pattern in "${guarded_patterns[@]}"; do
-    matches=$(grep -Hrn "$pattern" "$backend"/*.go 2>/dev/null | grep -v '_test\.go' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
+    matches=$(grep -Hrn "$pattern" "$backend" --include='*.go' 2>/dev/null | grep -v '_test\.go' | grep -vE '^[^:]+:[0-9]+:[[:space:]]*//' || true)
     if [ -n "$matches" ]; then
       # Verify the delegate resolves the container first
       while IFS=: read -r file line_num _; do

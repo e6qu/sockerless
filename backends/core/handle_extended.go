@@ -257,6 +257,36 @@ func (s *BaseServer) handleContainerUnpause(w http.ResponseWriter, r *http.Reque
 }
 
 func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) {
+	// Prefer the context-aware variant so a client that disconnects from
+	// `docker events` cancels the upstream stream instead of leaking the
+	// producer goroutine. Only the docker passthrough backend implements
+	// SystemEventsCtx (it streams from the real daemon); every other backend
+	// falls through to the in-memory EventBus loop below. The api.Backend
+	// interface stays unchanged.
+	if se, ok := s.self.(interface {
+		SystemEventsCtx(ctx context.Context, opts api.EventsOptions) (io.ReadCloser, error)
+	}); ok {
+		opts := api.EventsOptions{
+			Filters: ParseFilters(r.URL.Query().Get("filters")),
+			Since:   r.URL.Query().Get("since"),
+			Until:   r.URL.Query().Get("until"),
+		}
+		rc, err := se.SystemEventsCtx(r.Context(), opts)
+		if err != nil {
+			WriteError(w, err)
+			return
+		}
+		defer rc.Close()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		flushWriter := &eventFlushWriter{w: w}
+		_, _ = io.Copy(flushWriter, rc)
+		return
+	}
+
 	evFilters := ParseFilters(r.URL.Query().Get("filters"))
 	typeFilter := evFilters["type"]
 	actionFilter := evFilters["action"]
@@ -354,6 +384,19 @@ func (s *BaseServer) handleSystemEvents(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 	}
+}
+
+// eventFlushWriter flushes the underlying ResponseWriter after each write so
+// streamed events reach a `docker events` client promptly rather than sitting
+// in a buffer until the next event or stream close.
+type eventFlushWriter struct{ w http.ResponseWriter }
+
+func (e *eventFlushWriter) Write(p []byte) (int, error) {
+	n, err := e.w.Write(p)
+	if f, ok := e.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return n, err
 }
 
 // parseEventTimestamp parses a Docker event timestamp (Unix seconds or RFC3339).
