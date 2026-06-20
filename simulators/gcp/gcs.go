@@ -760,7 +760,7 @@ func registerGCS(srv *sim.Server) {
 		for _, b := range all {
 			items = append(items, b.Data)
 		}
-		page, next, ok := paginateList(w, r, items)
+		page, next, ok := paginateListGCS(w, r, items)
 		if !ok {
 			return
 		}
@@ -826,11 +826,13 @@ func registerGCS(srv *sim.Server) {
 			items = []map[string]any{}
 		}
 		sort.Slice(items, func(i, j int) bool {
-			return items[i]["name"].(string) < items[j]["name"].(string)
+			ni, _ := items[i]["name"].(string)
+			nj, _ := items[j]["name"].(string)
+			return ni < nj
 		})
 		sort.Strings(prefixes)
 
-		page, next, ok := paginateList(w, r, items)
+		page, next, ok := paginateListGCS(w, r, items)
 		if !ok {
 			return
 		}

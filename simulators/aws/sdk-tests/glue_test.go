@@ -218,6 +218,15 @@ func TestGlue_JobCRUD_SDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, runs.JobRuns, 1)
+
+	// GetJobRuns for a non-existent job must raise EntityNotFoundException, not
+	// silently return an empty list (matching real Glue).
+	_, err = c.GetJobRuns(ctx, &glue.GetJobRunsInput{
+		JobName: aws.String("glue-sdk-job-does-not-exist"),
+	})
+	require.Error(t, err)
+	var notFound *gluetypes.EntityNotFoundException
+	assert.ErrorAs(t, err, &notFound)
 }
 
 func TestGlue_Tags_SDK(t *testing.T) {

@@ -521,7 +521,8 @@ func startACAAppContainer(ctx context.Context, resourceID string, app ContainerA
 
 func stopACAAppReplicas(resourceID string) {
 	if v, ok := acaAppReplicaHandles.LoadAndDelete(resourceID); ok {
-		for _, handle := range v.([]*sim.ContainerHandle) {
+		handles, _ := v.([]*sim.ContainerHandle)
+		for _, handle := range handles {
 			handle.Cancel()
 			if handle.ContainerID != "" {
 				sim.StopAndRemoveContainer(handle.ContainerID)

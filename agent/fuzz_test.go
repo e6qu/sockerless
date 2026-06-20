@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 	"testing"
 
@@ -26,6 +27,15 @@ func FuzzMessageUnmarshal(f *testing.F) {
 		[]byte(`[]`),
 		[]byte(`{"type":12345}`),
 		[]byte(`{"code":1.5}`),
+		// Numeric-field edge cases for Code *int / Width / Height: overflow,
+		// float, exponent, and a deeply-nested object the decoder must reject
+		// without unbounded recursion.
+		[]byte(`{"code":9223372036854775808}`),
+		[]byte(`{"width":1e309,"height":-1e309}`),
+		[]byte(`{"code":-9999999999999999999}`),
+		[]byte(`{"data":"QUFB"}`),
+		[]byte(`{"type":"stdin","data":"////"}`),
+		[]byte(strings.Repeat(`{"a":`, 2000) + "1" + strings.Repeat("}", 2000)),
 	}
 	for _, s := range seeds {
 		f.Add(s)

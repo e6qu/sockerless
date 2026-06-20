@@ -4,16 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/sweep-concurrency-faithfulness-ui` — a **fresh sweep** (3 parallel agents + `go test -race`) on angles the prior spec-shape and behavioral audits didn't cover: concurrency/data-races, backend Docker-API faithfulness, and UI fail-loud.
+`audit-fuzz-weaktypes-round16` — a **weak-types + deep-fuzz + robustness audit** of the shared sim library, realexec, agent, and backend core/docker (4 parallel audit agents + targeted 45–90s fuzzing). **10 real bugs fixed (BUG-2074–2083), nothing deferred.** Full list in the BUGS.md entries; headline:
+- **BUG-2076 (HIGH, data race):** the network endpoint maps (`Network.Containers`, `Container.NetworkSettings.Networks`) were shared by reference out of `StateStore` and mutated in place under `Update` while ranged/marshalled lock-free → uncatchable map-iteration/write abort (same class as the already-fixed PathMappings). Copy-on-write fix; `TestNetworkMapsConcurrentReadWrite` proven to fail without it under -race.
+- **BUG-2074/2075 (agent leaks):** attach-detach goroutine+channel leak (Unsubscribe didn't close the channel) + duplicate-exec-id orphaned the prior session's child (Register overwrote without close).
+- **BUG-2077 (fuzz-found):** `ParseMemoryMiB("…G")` near MaxInt overflowed to a NEGATIVE memory limit with nil error.
+- **BUG-2078/2079 (sim):** AWSQueryRouter XML injection + uncapped JSON body. **2080/2081 (realexec):** SNAT CIDR validation + IPAM IPv6 panic. **2082 (docker):** SystemDf nil-deref + hardcoded API version.
+- **BUG-2083 (shared-copy reconcile):** router.go (stale routing) + state_sqlite.go (nil-vs-`[]` parity vs the swappable MemoryStore) reconciled across all 3 copies. `container.go`/`sandbox.go`/`server.go`/`middleware.go` confirmed legitimately cloud-specialized — left divergent.
 
-**Fixed this PR:**
-- **BUG-1922 (P1, critical):** cloudrun `trackNetworkService` infinite livelock — `sync.Map.LoadOrStore` cannot update an existing key, so the 2nd container on any user-defined network spun forever (deterministic hang). Now a mutex-guarded read-modify-write.
-- **BUG-1923:** gcp `idTokenSignKey` lazy-init data race → `sync.Once`.
-- **BUG-1924:** aws scheduler-store reassignment racing the firing-loop goroutine (caught by `go test -race`) → `schedulesMu` + `schedulerStore()` accessor.
-- **BUG-1925:** ACA Jobs dropped `Config.ExposedPorts` on `docker inspect`/`ps` (mirrored the Apps tag path in jobspec + builder).
-- **BUG-1926:** UI fail-quiet write failures + loading/error conflation across admin/bleephub/bleeplab/core.
+**Weak-types result:** of ~26 unchecked single-value type assertions across the four areas, ALL confirmed SAFE (each `sync.Map`/`Store` `any` load has exactly one matching writer type — every Store/Load pair traced; docker converters had zero unchecked assertions). New fuzzers: `FuzzParseMemoryMiB`/`FuzzParseImageRef`/`FuzzParseDockerTimestamp` + enriched OCI-serve (now in all 3 sims) + enriched message-envelope corpus.
 
-**Filed for the next sweep round (BUG-1927-1933):** backend `docker inspect` faithfulness — HostConfig CPU/Memory not sourced from cloud spec (1927), NetworkSettings IPAddress empty where queryable (1928), gcf/azf Cmd/Env omitted (1929), Mounts empty despite cloud volumes (1930); + two more core concurrency leaks — SystemEvents/log-follow `context.Background` goroutine leak (1931), ContainerStart orphaned WaitCh on concurrent double-start (1932), attach stdin-pump not joined (1933). These are the per-backend cloud-IP/CPU/mem plumbing + core handler-context threading — bounded but distinct from this PR's themes.
+**Next candidates:** the live-cloud track (BUG-1075 — Cloud Run/ACA/AZF unvalidated against real clouds); or another fresh fidelity/fuzz audit pass.
 
 
 ### (history) `feat/cloudwatch-logs-insights` (MERGED as #612) — **BUG-1901**: the CloudWatch Logs **Insights** query API was unimplemented. New `cloudwatch_insights.go` (`StartQuery`/`GetQueryResults`/`StopQuery`/`DescribeQueries`) + `cloudwatch_insights_filter.go` implement a real executor for the Insights query language: pipe-delimited `fields | filter | stats | sort | limit | dedup`, run synchronously at StartQuery over the matching log events (flattened into Insights fields incl. parsed JSON). `filter` is a full recursive-descent grammar (`= != < <= > >=`, `like` substring/`/regex/`, `in [...]`, `and`/`or`/`not`, parens, dotted fields); `stats` does count/count_distinct/sum/avg/min/max `by` group fields. CloudWatch Logs is awsJson-only (one handler covers SDK + CLI). SDK + CLI tests + an engine unit test.

@@ -4,6 +4,72 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-20 - Weak-types + deep-fuzz + robustness audit (round 16) — shared sim / realexec / agent / backend core+docker
+
+A focused audit of the four infrastructure areas through three lenses: weak
+types / type-assertion panics, deeper/longer fuzzing, and robustness /
+concurrency / security. Four parallel audit agents (agent, core, realexec+shared,
+docker) surfaced findings; each was verified at file:line before fixing. Ten real
+bugs fixed (BUG-2074–2083), nothing deferred.
+
+**Two HIGH data races (core).** `Network.Containers` and
+`Container.NetworkSettings.Networks` are maps inside structs stored in
+`StateStore`. `Get`/`List`/`Update` hand callers a *copy of the struct* whose map
+fields still alias the one stored backing map; connect/disconnect/rename mutate
+those maps in place under `Update` while many sites range/len/marshal the aliased
+map lock-free — `ContainerList`/`SystemDf` even assign the live map into a
+JSON-marshalled response. The result is the uncatchable "concurrent map iteration
+and map write" runtime abort — the exact class already fixed for `PathMappings`
+but never extended here. Fixed with copy-on-write helpers
+(`cloneEndpointResources`/`cloneEndpointSettings`) in every mutating `Update`
+closure. `TestNetworkMapsConcurrentReadWrite` (-race) was proven to fail without
+the COW and pass with it.
+
+**Two agent resource leaks.** (1) `MainProcess.Unsubscribe` only deleted the
+listener from the map without closing its channel, so `AttachSession.stream`'s
+`for evt := range ch` never returned while a keep-alive main process kept
+running — one leaked goroutine + channel per attach/detach cycle. Now closes the
+channel under the write lock. (2) `SessionRegistry.Register` overwrote an in-use
+exec id without closing the prior session, orphaning its child process
+(unreachable by `CleanupConn`) and double-appending the id to the conn slice; now
+tears down the prior session first. Regression tests for both.
+
+**Fuzz-found overflow (core).** A new `FuzzParseMemoryMiB` immediately caught
+`ParseMemoryMiB("9223372036854775807G")` returning `-1024` with a nil error:
+`n*1024` wrapped negative past the `n<=0` check, so a caller would set a negative
+cgroup memory limit. Guarded with `n > math.MaxInt/mult`.
+
+**Sim + realexec + docker hardening.** AWSQueryRouter reflected the raw `Action`
+into a hand-built XML error body (output injection → `xml.EscapeText`) and read
+the control-plane JSON body unbounded (→ 64 MiB cap); realexec `IPAM.Release`
+panicked on a non-IPv4 address (`.To4()` nil-deref) and `ConfigureSNAT` skipped
+the source-CIDR validation its siblings do; docker `SystemDf` dereferenced nil
+slice entries from the daemon and `httpGet` hardcoded `/v1.44` instead of the
+negotiated API version.
+
+**Shared-copy reconcile.** gcp/azure `shared/router.go` carried the stale
+pre-versioned `AWSQueryRouter`, and `state_sqlite.go` `List`/`Filter` returned a
+nil slice on aws/gcp but `[]` on azure — diverging from the swappable
+`MemoryStore` (non-nil empty), so swapping store backends changed a handler's JSON
+(`null` vs `[]`). Reconciled all three copies to canonical (router → aws,
+SQLite → empty-slice). Confirmed `container.go`/`sandbox.go`/`server.go`/
+`middleware.go` are **legitimately cloud-specialized** (per-cloud sandbox
+profiles, azure path-normalization middleware, per-cloud container fields) and
+left them divergent — the "all of shared/ is byte-identical" premise is true only
+for the 14 truly-shared files, all now verified identical.
+
+**Weak-types verdict.** Of ~26 unchecked single-value type assertions across the
+four areas, ALL confirmed SAFE: every `sync.Map`/`Store` `any` load
+(`InvocationResults`, `HealthChecks`, `StartLocks`, `WaitChs`, `StagingDirs`,
+`BuildContexts`, `VolumeDirs`, `PathMappings`, the agent `sessions` map, the sim
+`managedContainers` map, etc.) has exactly one writer type, traced Store→Load; the
+WS envelope decodes into a typed `Message` struct (no `map[string]any`); docker
+converters had zero unchecked assertions.
+
+All 4 modules + 3 sims + 8 backends + agent bootstraps build; core/docker/agent/
+realexec/3-shared `-race` clean; fuzzers run 45–90s clean post-fix; gofmt,
+simulator-tests, cloud-backend-isolation hooks pass.
+
 ## 2026-06-19 - Deep behavioral audit (round 1: AWS error-semantics + tags + paging)
 
 Where the spec-shape ratchet validates response *shapes*, this audit targeted

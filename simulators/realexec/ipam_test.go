@@ -32,6 +32,18 @@ func TestIPAMAllocatesLeasesFromCIDR(t *testing.T) {
 	}
 }
 
+// TestIPAMReleaseIPv6NoPanic verifies Release ignores a non-IPv4 address
+// instead of panicking on the nil result of (*net.IP).To4().
+func TestIPAMReleaseIPv6NoPanic(t *testing.T) {
+	ipam, err := NewIPAM("10.42.0.0/29", net.ParseIP("10.42.0.1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Must not panic.
+	ipam.Release(net.ParseIP("fe80::1"))
+	ipam.Release(net.ParseIP("::1"))
+}
+
 func TestIPAMRejectsReservedAndUnusableAddresses(t *testing.T) {
 	ipam, err := NewIPAM("10.42.1.0/30", net.ParseIP("10.42.1.1"))
 	if err != nil {

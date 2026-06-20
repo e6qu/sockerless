@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -208,6 +209,64 @@ func TestSyntheticNetworkDriverRemoveBuiltin(t *testing.T) {
 	if err == nil {
 		t.Fatal("should not be able to remove bridge network")
 	}
+}
+
+// TestNetworkMapsConcurrentReadWrite drives concurrent Connect/Disconnect
+// against lock-free readers of the aliased Network.Containers and
+// Container.NetworkSettings.Networks maps. Without the copy-on-write in those
+// Update closures this fails under -race (and can abort with "concurrent map
+// iteration and map write"), the same class already fixed for PathMappings.
+func TestNetworkMapsConcurrentReadWrite(t *testing.T) {
+	driver, store := newTestDriverAndStore()
+	ctx := context.Background()
+
+	resp, _ := driver.Create(ctx, "race-net", &api.NetworkCreateRequest{Name: "race-net"})
+	const n = 24
+	for i := 0; i < n; i++ {
+		cID := "c" + string(rune('a'+i%26)) + string(rune('0'+i/26))
+		store.Containers.Put(cID, api.Container{
+			ID:              cID,
+			Name:            "/" + cID,
+			NetworkSettings: api.NetworkSettings{Networks: make(map[string]*api.EndpointSettings)},
+		})
+	}
+
+	ids := store.Containers.Keys()
+	done := make(chan struct{})
+	go func() {
+		// Lock-free readers: range the aliased maps the way the real handlers do.
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			net, ok := store.Networks.Get(resp.ID)
+			if ok {
+				for range net.Containers { //nolint:revive
+				}
+				_ = len(net.Containers)
+			}
+			for _, c := range store.Containers.List() {
+				for range c.NetworkSettings.Networks { //nolint:revive
+				}
+			}
+		}
+	}()
+
+	var wg sync.WaitGroup
+	for _, id := range ids {
+		wg.Add(1)
+		go func(cID string) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				_ = driver.Connect(ctx, resp.ID, cID, nil)
+				_ = driver.Disconnect(ctx, resp.ID, cID)
+			}
+		}(id)
+	}
+	wg.Wait()
+	close(done)
 }
 
 func TestNetworkDriverIntegration(t *testing.T) {

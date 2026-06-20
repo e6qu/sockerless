@@ -679,7 +679,8 @@ func realizeCNAMEAsDockerAlias(cname string) {
 			app.Name,
 			strings.TrimSuffix(app.Properties.LatestRevisionFqdn, "."),
 		}, cnameAliasesForTarget(target)...))
-		for _, h := range handlesV.([]*sim.ContainerHandle) {
+		handles, _ := handlesV.([]*sim.ContainerHandle)
+		for _, h := range handles {
 			if h == nil || h.ContainerID == "" {
 				continue
 			}

@@ -442,18 +442,20 @@ func handleIAMListInstanceProfilesForRole(w http.ResponseWriter, r *http.Request
 	profiles := iamInstanceProfiles.Filter(func(ip IAMInstanceProfile) bool {
 		return ip.RoleName == roleName
 	})
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].InstanceProfileName < profiles[j].InstanceProfileName })
+	page, next := awsPageExplicit(profiles, r.FormValue("Marker"), atoiDefault(r.FormValue("MaxItems"), 0))
 	var members strings.Builder
-	for _, ip := range profiles {
+	for _, ip := range page {
 		fmt.Fprint(&members, "<member>", iamInstanceProfileXML(ip), "</member>")
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ListInstanceProfilesForRoleResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ListInstanceProfilesForRoleResult>
     <InstanceProfiles>%s</InstanceProfiles>
-    <IsTruncated>false</IsTruncated>
+    <IsTruncated>%t</IsTruncated>%s
   </ListInstanceProfilesForRoleResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListInstanceProfilesForRoleResponse>`, members.String(), generateUUID())
+</ListInstanceProfilesForRoleResponse>`, members.String(), next != "", iamMarkerXML(next), generateUUID())
 }
 
 func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
@@ -461,9 +463,11 @@ func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
 	policies := iamRolePolicies.Filter(func(p IAMRolePolicy) bool {
 		return p.RoleName == roleName
 	})
+	sort.Slice(policies, func(i, j int) bool { return policies[i].PolicyName < policies[j].PolicyName })
+	page, next := awsPageExplicit(policies, r.FormValue("Marker"), atoiDefault(r.FormValue("MaxItems"), 0))
 
 	var members strings.Builder
-	for _, p := range policies {
+	for _, p := range page {
 		fmt.Fprintf(&members, "<member>%s</member>", p.PolicyName)
 	}
 
@@ -471,10 +475,10 @@ func handleIAMListRolePolicies(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `<ListRolePoliciesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ListRolePoliciesResult>
     <PolicyNames>%s</PolicyNames>
-    <IsTruncated>false</IsTruncated>
+    <IsTruncated>%t</IsTruncated>%s
   </ListRolePoliciesResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListRolePoliciesResponse>`, members.String(), generateUUID())
+</ListRolePoliciesResponse>`, members.String(), next != "", iamMarkerXML(next), generateUUID())
 }
 
 // Managed policies + instance profiles. The canonical TF flow is

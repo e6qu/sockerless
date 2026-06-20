@@ -136,13 +136,15 @@ func (n ddbCondFunc) eval(c *ddbEvalCtx) bool {
 		if !ok || !present {
 			return false
 		}
-		if lst, isL := val.(map[string]any)["L"].([]any); isL {
-			for _, e := range lst {
-				if ddbAttrValuesEqual(e, want) {
-					return true
+		if valMap, isMap := val.(map[string]any); isMap {
+			if lst, isL := valMap["L"].([]any); isL {
+				for _, e := range lst {
+					if ddbAttrValuesEqual(e, want) {
+						return true
+					}
 				}
+				return false
 			}
-			return false
 		}
 		return strings.Contains(ddbScalarString(val), ddbScalarString(want))
 	case "attribute_type":

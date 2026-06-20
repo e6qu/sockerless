@@ -48,6 +48,34 @@ func TestACM_RequestDescribeDelete(t *testing.T) {
 	}
 
 	runCLI(t, awsCLI("acm", "list-certificates", "--output", "json"))
+
+	// --certificate-statuses filters by status. The cert above is
+	// PENDING_VALIDATION; filtering to ISSUED must exclude it, filtering to
+	// PENDING_VALIDATION must include it.
+	type listResult struct {
+		CertificateSummaryList []struct {
+			CertificateArn string `json:"CertificateArn"`
+		} `json:"CertificateSummaryList"`
+	}
+	issuedOut := runCLI(t, awsCLI("acm", "list-certificates",
+		"--certificate-statuses", "ISSUED", "--output", "json"))
+	var issued listResult
+	require.NoError(t, json.Unmarshal([]byte(issuedOut), &issued))
+	for _, s := range issued.CertificateSummaryList {
+		require.NotEqual(t, arn, s.CertificateArn, "ISSUED filter must exclude the PENDING_VALIDATION cert")
+	}
+	pendingOut := runCLI(t, awsCLI("acm", "list-certificates",
+		"--certificate-statuses", "PENDING_VALIDATION", "--output", "json"))
+	var pending listResult
+	require.NoError(t, json.Unmarshal([]byte(pendingOut), &pending))
+	foundPending := false
+	for _, s := range pending.CertificateSummaryList {
+		if s.CertificateArn == arn {
+			foundPending = true
+		}
+	}
+	require.True(t, foundPending, "PENDING_VALIDATION filter must include the cert")
+
 	runCLI(t, awsCLI("acm", "delete-certificate", "--certificate-arn", arn))
 }
 

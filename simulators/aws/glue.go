@@ -609,12 +609,15 @@ func handleGlueGetJobRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, ok := glueJobs.Get(req.JobName); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Job with name: "+req.JobName+" not found")
+		return
+	}
+
 	all := glueJobRuns.List()
 	var runs []GlueJobRun
-	prefix := req.JobName + "/"
 	for _, run := range all {
 		if run.JobName == req.JobName {
-			_ = prefix
 			runs = append(runs, run)
 		}
 	}

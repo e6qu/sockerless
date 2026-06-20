@@ -127,6 +127,18 @@ func TestBatch_JobDefinition_CLI(t *testing.T) {
 	assert.Equal(t, "batch-cli-jd", described.JobDefinitions[0].JobDefinitionName)
 	assert.Equal(t, "ACTIVE", described.JobDefinitions[0].Status)
 	assert.Equal(t, 1, described.JobDefinitions[0].Revision)
+
+	// --job-definitions <name:rev> filters to only that definition.
+	out = runCLI(t, awsCLI("batch", "describe-job-definitions",
+		"--job-definitions", "batch-cli-jd:1"))
+	var filtered struct {
+		JobDefinitions []struct {
+			JobDefinitionName string `json:"jobDefinitionName"`
+		} `json:"jobDefinitions"`
+	}
+	parseJSON(t, out, &filtered)
+	require.Len(t, filtered.JobDefinitions, 1)
+	assert.Equal(t, "batch-cli-jd", filtered.JobDefinitions[0].JobDefinitionName)
 }
 
 func TestBatch_SubmitJob_CLI(t *testing.T) {

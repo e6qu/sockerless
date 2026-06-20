@@ -91,7 +91,7 @@ func (s *SQLiteStore[T]) List() []T {
 		s.fatalDBErr("List", "", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var result []T
+	result := make([]T, 0)
 	for rows.Next() {
 		var data []byte
 		if err := rows.Scan(&data); err != nil {
@@ -111,7 +111,7 @@ func (s *SQLiteStore[T]) List() []T {
 
 func (s *SQLiteStore[T]) Filter(fn func(T) bool) []T {
 	all := s.List()
-	var result []T
+	result := make([]T, 0)
 	for _, v := range all {
 		if fn(v) {
 			result = append(result, v)

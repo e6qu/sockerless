@@ -9,6 +9,18 @@ func canAdminOrg(st *Store, user *User, org *Org) bool {
 	return m != nil && m.Role == OrgRoleAdmin && m.State == MembershipStateActive
 }
 
+// isActiveOrgMember reports whether user holds an active membership in the
+// org. Org teams (their names, members, and repo grants) are visible only to
+// org members on real GitHub — a non-member authenticated caller gets 404, the
+// same as an unknown org, so the org's internal structure never leaks.
+func isActiveOrgMember(st *Store, user *User, orgLogin string) bool {
+	if user == nil {
+		return false
+	}
+	m := st.GetMembership(orgLogin, user.ID)
+	return m != nil && m.State == MembershipStateActive
+}
+
 // canReadRepo checks if a user can read a repository.
 // Public repos are readable by all. Private repos require ownership or org membership.
 func canReadRepo(st *Store, user *User, repo *Repo) bool {

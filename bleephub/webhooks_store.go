@@ -191,6 +191,16 @@ func (st *Store) AddDelivery(delivery *WebhookDelivery) {
 	}
 }
 
+// HookLastResp returns the hook's last_response pointer read under the store
+// lock. Reading h.LastResponse directly races SetHookLastResponse's write,
+// which runs on the async deliverWebhook goroutine; this snapshot is the
+// synchronized read every JSON-rendering path must use.
+func (st *Store) HookLastResp(h *Webhook) *HookLastResponse {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return h.LastResponse
+}
+
 // SetHookLastResponse records the outcome of a hook's most recent delivery so
 // the hook object's last_response field reflects real delivery results.
 func (st *Store) SetHookLastResponse(repoKey string, hookID int, lr *HookLastResponse) {

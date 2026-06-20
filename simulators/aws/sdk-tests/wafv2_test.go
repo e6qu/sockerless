@@ -416,3 +416,57 @@ func TestWAFv2AssociateWebACLWithCloudFront(t *testing.T) {
 	})
 	require.NoError(t, err)
 }
+
+// TestWAFv2ListWebACLsPagination verifies ListWebACLs honors Limit and NextMarker.
+// Real WAFv2 ListWebACLs returns at most Limit summaries plus a NextMarker that
+// the caller passes back to fetch the next page.
+func TestWAFv2ListWebACLsPagination(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	// Use the regional scope so this test's ACLs don't collide with the
+	// cloudfront-scope lifecycle test's ACL.
+	scope := wafv2types.ScopeRegional
+	stamp := time.Now().Format("150405.000000")
+	for i := 0; i < 3; i++ {
+		name := "sdk-page-" + stamp + "-" + string(rune('a'+i))
+		_, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+			Name:          aws.String(name),
+			Scope:         scope,
+			DefaultAction: &wafv2types.DefaultAction{Allow: &wafv2types.AllowAction{}},
+			VisibilityConfig: &wafv2types.VisibilityConfig{
+				SampledRequestsEnabled:   true,
+				CloudWatchMetricsEnabled: true,
+				MetricName:               aws.String(name + "-m"),
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	// First page: Limit=2 must return exactly 2 and a NextMarker.
+	page1, err := c.ListWebACLs(ctx, &wafv2.ListWebACLsInput{
+		Scope: scope,
+		Limit: aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.WebACLs, 2, "Limit=2 must cap the first page")
+	require.NotNil(t, page1.NextMarker, "a truncated page must return NextMarker")
+
+	// Second page: same Limit + the marker must return the remaining item(s)
+	// disjoint from the first page.
+	page2, err := c.ListWebACLs(ctx, &wafv2.ListWebACLsInput{
+		Scope:      scope,
+		Limit:      aws.Int32(2),
+		NextMarker: page1.NextMarker,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, page2.WebACLs)
+	seen := map[string]bool{}
+	for _, s := range page1.WebACLs {
+		seen[aws.ToString(s.Id)] = true
+	}
+	for _, s := range page2.WebACLs {
+		assert.False(t, seen[aws.ToString(s.Id)], "page 2 must not repeat page 1 items")
+	}
+}

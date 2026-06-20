@@ -114,3 +114,46 @@ func TestDynamoDB_TimeToLiveAndContinuousBackups(t *testing.T) {
 	assert.Equal(t, ddbtypes.PointInTimeRecoveryStatusEnabled,
 		cb.ContinuousBackupsDescription.PointInTimeRecoveryDescription.PointInTimeRecoveryStatus)
 }
+
+// TestDynamoDB_UpdateItemMalformedExpression verifies that a malformed
+// UpdateExpression is rejected with a ValidationException rather than crashing
+// the service. The unterminated-if_not_exists( forms previously panicked the
+// sim process with "slice bounds out of range".
+func TestDynamoDB_UpdateItemMalformedExpression(t *testing.T) {
+	c := ddbClient()
+	ddbCoverageTable(t, c, "cov-update-malformed")
+
+	for _, expr := range []string{
+		"SET a = if_not_exists(",
+		"SET =if_not_exists(",
+		"SET a = if_not_exists(a",
+	} {
+		_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+			TableName:        aws.String("cov-update-malformed"),
+			Key:              ddbKey("m"),
+			UpdateExpression: aws.String(expr),
+		})
+		require.Error(t, err, "malformed expression %q must be rejected", expr)
+	}
+
+	// A clause keyword preceded by an invalid-UTF-8 byte previously panicked the
+	// process (ddbSplitUpdateClauses sliced expr with strings.ToUpper indices).
+	// It must no longer crash — whether it is accepted or rejected, the service
+	// must keep responding (verified by the well-formed call below).
+	_, _ = c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:        aws.String("cov-update-malformed"),
+		Key:              ddbKey("m"),
+		UpdateExpression: aws.String("\xcaREMOVE"),
+	})
+
+	// The service is still alive after the malformed requests: a well-formed
+	// UpdateItem still succeeds.
+	_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String("cov-update-malformed"),
+		Key:                       ddbKey("m"),
+		UpdateExpression:          aws.String("SET #s = :v"),
+		ExpressionAttributeNames:  map[string]string{"#s": "label"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":v": &ddbtypes.AttributeValueMemberS{Value: "ok"}},
+	})
+	require.NoError(t, err)
+}

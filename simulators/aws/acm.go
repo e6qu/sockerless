@@ -338,9 +338,25 @@ type acmCertSummary struct {
 }
 
 func handleACMListCertificates(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CertificateStatuses []string `json:"CertificateStatuses"`
+		MaxItems            int      `json:"MaxItems"`
+		NextToken           string   `json:"NextToken"`
+	}
+	// Body is optional for ListCertificates; ignore decode errors on an empty body.
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	statusFilter := map[string]bool{}
+	for _, s := range req.CertificateStatuses {
+		statusFilter[s] = true
+	}
+
 	items := []acmCertSummary{}
 	for _, stored := range acmCertificates.List() {
 		c := stored.Cert
+		if len(statusFilter) > 0 && !statusFilter[c.Status] {
+			continue
+		}
 		items = append(items, acmCertSummary{
 			CertificateArn:                  c.CertificateArn,
 			DomainName:                      c.DomainName,
@@ -351,9 +367,13 @@ func handleACMListCertificates(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:                       c.CreatedAt,
 		})
 	}
-	acmWriteJSON(w, http.StatusOK, map[string]any{
-		"CertificateSummaryList": items,
-	})
+	sortBy(items, func(s acmCertSummary) string { return s.CertificateArn })
+	page, next := awsPageExplicit(items, req.NextToken, req.MaxItems)
+	resp := map[string]any{"CertificateSummaryList": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	acmWriteJSON(w, http.StatusOK, resp)
 }
 
 type acmTagReq struct {

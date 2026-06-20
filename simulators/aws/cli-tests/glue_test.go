@@ -152,4 +152,9 @@ func TestGlue_JobCRUD_CLI(t *testing.T) {
 	}, 10*time.Second, 100*time.Millisecond)
 	assert.Equal(t, run.JobRunID, getRun.JobRun.ID)
 	assert.Equal(t, "SUCCEEDED", getRun.JobRun.JobRunState)
+
+	// get-job-runs for a non-existent job must error (EntityNotFoundException),
+	// not return an empty list.
+	errOut := runCLIExpectError(t, awsCLI("glue", "get-job-runs", "--job-name", "glue-cli-no-such-job"))
+	assert.Contains(t, errOut, "EntityNotFoundException")
 }

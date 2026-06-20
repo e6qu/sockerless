@@ -374,8 +374,10 @@ func (s *BaseServer) buildEndpointForNetwork(netRef, containerID, containerName 
 		}
 	}
 
-	// Add container to network's Containers map
+	// Add container to network's Containers map. Copy-on-write so a concurrent
+	// lock-free reader of the aliased map can't hit a map-iteration/write abort.
 	s.Store.Networks.Update(net.ID, func(n *api.Network) {
+		n.Containers = cloneEndpointResources(n.Containers)
 		n.Containers[containerID] = api.EndpointResource{
 			Name:        strings.TrimPrefix(containerName, "/"),
 			EndpointID:  endpoint.EndpointID,

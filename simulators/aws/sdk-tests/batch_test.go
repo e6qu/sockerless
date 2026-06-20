@@ -153,6 +153,50 @@ func TestBatch_JobDefinition_SDK(t *testing.T) {
 	assert.EqualValues(t, 1, aws.ToInt32(describe.JobDefinitions[0].Revision))
 }
 
+// TestBatch_DescribeJobDefinitions_FilterByList verifies the jobDefinitions[]
+// filter: DescribeJobDefinitions with an explicit list of name:revision / ARN
+// returns only those definitions, not every registered one.
+func TestBatch_DescribeJobDefinitions_FilterByList_SDK(t *testing.T) {
+	c := batchClient()
+
+	mk := func(name string) string {
+		reg, err := c.RegisterJobDefinition(ctx, &batch.RegisterJobDefinitionInput{
+			JobDefinitionName: aws.String(name),
+			Type:              batchtypes.JobDefinitionTypeContainer,
+			ContainerProperties: &batchtypes.ContainerProperties{
+				Image:  aws.String(containerCommandImage),
+				Vcpus:  aws.Int32(1),
+				Memory: aws.Int32(512),
+			},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			_, _ = c.DeregisterJobDefinition(ctx, &batch.DeregisterJobDefinitionInput{
+				JobDefinition: reg.JobDefinitionArn,
+			})
+		})
+		return aws.ToString(reg.JobDefinitionArn)
+	}
+	arnA := mk("batch-sdk-filter-a")
+	mk("batch-sdk-filter-b")
+
+	// Filter to only definition A by ARN — B must not appear.
+	out, err := c.DescribeJobDefinitions(ctx, &batch.DescribeJobDefinitionsInput{
+		JobDefinitions: []string{arnA},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.JobDefinitions, 1)
+	assert.Equal(t, "batch-sdk-filter-a", aws.ToString(out.JobDefinitions[0].JobDefinitionName))
+
+	// Filter by name:revision form.
+	out2, err := c.DescribeJobDefinitions(ctx, &batch.DescribeJobDefinitionsInput{
+		JobDefinitions: []string{"batch-sdk-filter-b:1"},
+	})
+	require.NoError(t, err)
+	require.Len(t, out2.JobDefinitions, 1)
+	assert.Equal(t, "batch-sdk-filter-b", aws.ToString(out2.JobDefinitions[0].JobDefinitionName))
+}
+
 func TestBatch_JobSubmitDescribe_SDK(t *testing.T) {
 	c := batchClient()
 

@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -67,6 +68,12 @@ func ParseMemoryMiB(s string) (int, error) {
 	}
 	if n <= 0 {
 		return 0, fmt.Errorf("memory value must be positive (got %d)", n)
+	}
+	// Guard the Gi/G multiply against int overflow: a value near math.MaxInt
+	// times 1024 wraps to a negative result, which previously slipped past the
+	// positive-n check and returned a negative memory limit.
+	if n > math.MaxInt/mult {
+		return 0, fmt.Errorf("memory value %q too large", s)
 	}
 	return n * mult, nil
 }

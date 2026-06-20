@@ -293,11 +293,21 @@ func (mp *MainProcess) Subscribe(id string) (stdoutBuf, stderrBuf []byte, ch cha
 	return mp.stdoutBuf.Bytes(), mp.stderrBuf.Bytes(), ch
 }
 
-// Unsubscribe removes a listener.
+// Unsubscribe removes a listener and closes its channel so the consuming
+// stream() goroutine's `for evt := range ch` loop exits. Without the close,
+// a detach (CleanupConn → AttachSession.Close → Unsubscribe) on a still-running
+// keep-alive main process would leak the channel and its draining goroutine for
+// the remaining lifetime of the process — one leak per attach/detach cycle.
+// Closing under the write lock is safe: fanOut sends only under RLock (mutually
+// exclusive with this), and wait() closes only listeners still in the map, so a
+// deleted id is never double-closed.
 func (mp *MainProcess) Unsubscribe(id string) {
 	mp.mu.Lock()
 	defer mp.mu.Unlock()
-	delete(mp.listeners, id)
+	if ch, ok := mp.listeners[id]; ok {
+		close(ch)
+		delete(mp.listeners, id)
+	}
 }
 
 // WriteStdin writes data to the main process stdin.

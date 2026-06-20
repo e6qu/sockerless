@@ -6,6 +6,19 @@ import (
 	"github.com/graphql-go/graphql"
 )
 
+// gqlSourceField reads key from a resolver's p.Source when Source is a
+// map[string]interface{}, returning nil otherwise. graphql-go only invokes a
+// sub-field resolver when the parent value is non-null, so in normal operation
+// Source is always the payload map; the comma-ok keeps a future schema change
+// (or a hand-driven fuzz input) from panicking.
+func gqlSourceField(p graphql.ResolveParams, key string) interface{} {
+	m, ok := p.Source.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	return m[key]
+}
+
 // addModerationMutationsToSchema registers comment minimization +
 // issue/PR locking GraphQL mutations against the shared mutationType.
 // Mirrors real GitHub's mutation surface: minimizeComment /
@@ -49,19 +62,19 @@ func (s *Server) addModerationMutationsToSchema(mutationType *graphql.Object) {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["nodeID"], nil
+					return gqlSourceField(p, "nodeID"), nil
 				},
 			},
 			"isMinimized": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["isMinimized"], nil
+					return gqlSourceField(p, "isMinimized"), nil
 				},
 			},
 			"minimizedReason": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["minimizedReason"], nil
+					return gqlSourceField(p, "minimizedReason"), nil
 				},
 			},
 		},
@@ -169,19 +182,19 @@ func (s *Server) addModerationMutationsToSchema(mutationType *graphql.Object) {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["nodeID"], nil
+					return gqlSourceField(p, "nodeID"), nil
 				},
 			},
 			"locked": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["locked"], nil
+					return gqlSourceField(p, "locked"), nil
 				},
 			},
 			"activeLockReason": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["activeLockReason"], nil
+					return gqlSourceField(p, "activeLockReason"), nil
 				},
 			},
 		},

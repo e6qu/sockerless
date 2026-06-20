@@ -395,9 +395,8 @@ func (s *Server) handleCreateDeployment(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	deployments := s.store.Deployments.ListDeployments(repo.ID)
@@ -410,9 +409,8 @@ func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetDeployment(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	id, err := strconv.Atoi(r.PathValue("deployment_id"))
@@ -487,9 +485,8 @@ func (s *Server) handleCreateDeploymentStatus(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleListDeploymentStatuses(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	id, err := strconv.Atoi(r.PathValue("deployment_id"))
@@ -512,9 +509,8 @@ func (s *Server) handleListDeploymentStatuses(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleGetDeploymentStatus(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	statusID, err := strconv.Atoi(r.PathValue("status_id"))
@@ -531,9 +527,8 @@ func (s *Server) handleGetDeploymentStatus(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	envs := s.store.Deployments.ListEnvironments(repo.ID)
@@ -548,9 +543,8 @@ func (s *Server) handleListEnvironments(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) handleGetEnvironment(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	env := s.store.Deployments.GetEnvironment(repo.ID, r.PathValue("env_name"))
