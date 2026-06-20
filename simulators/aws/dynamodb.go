@@ -1080,6 +1080,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		TableName                 string            `json:"TableName"`
 		IndexName                 string            `json:"IndexName"`
 		KeyConditionExpression    string            `json:"KeyConditionExpression"`
+		FilterExpression          string            `json:"FilterExpression"`
 		ProjectionExpression      string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
@@ -1111,14 +1112,31 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	startKey := ddbItemKey(t, req.ExclusiveStartKey)
 	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
 
+	// Query reads only the items matching the KeyConditionExpression; Limit caps
+	// how many such items are *examined* (ScannedCount), and the optional
+	// FilterExpression is applied to those, so Count <= ScannedCount.
+	remaining := keys[startIdx:]
 	var items []map[string]any
-	for _, k := range keys[startIdx:] {
-		if it, ok2 := ddbItems.Get(k); ok2 {
-			if ddbMatchesExpression(t, it, req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
-				items = append(items, it)
-			}
+	scanned := 0
+	var lastScanned map[string]any
+	exhausted := true
+	for i, k := range remaining {
+		it, ok2 := ddbItems.Get(k)
+		if !ok2 {
+			continue
 		}
-		if req.Limit > 0 && len(items) >= req.Limit {
+		if !ddbMatchesExpression(t, it, req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+			continue
+		}
+		scanned++
+		lastScanned = it
+		if req.FilterExpression == "" || ddbMatchesExpression(t, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+			items = append(items, it)
+		}
+		if req.Limit > 0 && scanned >= req.Limit {
+			if i+1 < len(remaining) {
+				exhausted = false
+			}
 			break
 		}
 	}
@@ -1126,11 +1144,11 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		items = []map[string]any{}
 	}
 
-	out := map[string]any{"Count": len(items), "ScannedCount": len(items)}
-	// Emit LastEvaluatedKey if we hit the Limit and more items may exist — from
-	// the FULL item, before projection could strip its key attributes.
-	if req.Limit > 0 && len(items) == req.Limit {
-		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
+	out := map[string]any{"Count": len(items), "ScannedCount": scanned}
+	// Emit LastEvaluatedKey when we stopped on Limit before exhausting the keys —
+	// from the last *scanned* (key-matched) item's full key, the resume cursor.
+	if !exhausted && lastScanned != nil {
+		out["LastEvaluatedKey"] = ddbExtractKey(t, lastScanned)
 	}
 	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)
@@ -1195,16 +1213,29 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	startKey := ddbItemKey(t, req.ExclusiveStartKey)
 	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
 
+	// Limit caps the number of items *examined* (ScannedCount), not the number
+	// returned; the FilterExpression is applied to the examined items, so a
+	// filtered Scan can return fewer than Limit and still carry a
+	// LastEvaluatedKey to resume from.
+	remaining := keys[startIdx:]
 	var items []map[string]any
 	scanned := 0
-	for _, k := range keys[startIdx:] {
-		if it, ok2 := ddbItems.Get(k); ok2 {
-			scanned++
-			if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
-				items = append(items, it)
-			}
+	var lastScanned map[string]any
+	exhausted := true
+	for i, k := range remaining {
+		it, ok2 := ddbItems.Get(k)
+		if !ok2 {
+			continue
 		}
-		if req.Limit > 0 && len(items) >= req.Limit {
+		scanned++
+		lastScanned = it
+		if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+			items = append(items, it)
+		}
+		if req.Limit > 0 && scanned >= req.Limit {
+			if i+1 < len(remaining) {
+				exhausted = false
+			}
 			break
 		}
 	}
@@ -1213,8 +1244,8 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	out := map[string]any{"Count": len(items), "ScannedCount": scanned}
-	if req.Limit > 0 && len(items) == req.Limit {
-		out["LastEvaluatedKey"] = ddbExtractKey(t, items[len(items)-1])
+	if !exhausted && lastScanned != nil {
+		out["LastEvaluatedKey"] = ddbExtractKey(t, lastScanned)
 	}
 	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	writeDDBJSON(w, http.StatusOK, out)

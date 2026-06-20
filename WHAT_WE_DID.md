@@ -4,6 +4,37 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-20 - Error-path fidelity + fresh fidelity audit (combined)
+
+A combined audit — error-path fidelity (the BUG-2094 class: handlers whose error
+paths emit the wrong wire shape / wrong code, latent because untested) plus a fresh
+general fidelity pass (round-trip fields, list envelopes, filters, pagination) on
+load-bearing ops. Five parallel agents + a precise self-grep; every finding verified
+at file:line (the agents over-reported — e.g. SSM GetParametersByPath was claimed
+un-paginated but already paginates; several Azure 201-vs-200 nits and a Spanner code
+were judged not-load-bearing and left). Six real bugs fixed, each with a regression
+test driving the real client:
+
+- **BUG-2095:** CloudWatch GetMetricData/PutMetricData (rpc-v2-cbor) emitted
+  awsJson-shaped errors via `sim.AWSError` (no `Smithy-Protocol` header) — the
+  remaining cbor-error sites after BUG-2094. Routed through `cwWriteCBORError`.
+- **BUG-2096:** Cloud Run v2 UpdateService ignored `updateMask`, doing a wholesale
+  replace that dropped unmasked fields (terraform drift; the gcf image-swap path).
+  Now merges only the masked top-level fields; absent mask = full replace.
+- **BUG-2097:** DynamoDB Query silently dropped FilterExpression (the field wasn't
+  in the request struct). Added + applied via `ddbMatchesExpression`.
+- **BUG-2098:** DynamoDB Scan applied Limit to *matched* items, not *examined* —
+  wrong ScannedCount/LastEvaluatedKey with Limit+Filter. Now caps scanned items and
+  resumes from the last scanned key. (Query had the same coupling, fixed together.)
+- **BUG-2099:** EC2 DescribeInstances had no MaxResults/NextToken pagination on the
+  list form; added it mirroring DescribeVolumes (skipped when explicit ids given).
+- **BUG-2100:** GCP Pub/Sub's local `gcpError` omitted the `details` array the shared
+  helper + real GCP include; added it.
+
+Error codes/shapes verified against the service models + existing conventions, not
+guessed (continuing the BUG-2093/2094 discipline). Build + lint clean across both
+sims; SDK + CLI tests added.
+
 ## 2026-06-20 - Fidelity: validate invalid/missing required numeric request params
 
 The "no-defaulted-behaviour on invalid input" sweep (offered after round 17). The
