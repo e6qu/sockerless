@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2092 filed - 2048 fixed - 2 open - 12 false positives.**
+**2094 filed - 2050 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2094~~ | P3 | AWS sim — CloudWatch rpc-v2-cbor handlers emitted awsJson-shaped errors (latent; surfaced by the BUG-2093 validation test) | error-shape fidelity | every `handleCWCBOR*` error path used `sim.AWSError` (Content-Type `application/x-amz-json-1.1`, no `Smithy-Protocol` header), so the Go SDK rejected it with 'unexpected smithy-protocol response header'. Untested → latent. **Fixed:** added `cwWriteCBORError`/`cwWriteCBORErrorf` (set `Smithy-Protocol: rpc-v2-cbor` + cbor body `{__type, message}`, verified against aws-sdk-go-v2's `getProtocolErrorInfo`) and routed all 24 cbor error sites (alarms + dashboards) through them. |
+| ~~2093~~ | P3 | AWS+GCP sims — invalid/missing required numeric request params silently defaulted to 0 instead of the cloud's validation error | fidelity (defaulted behaviour) | CloudWatch `PutMetricAlarm` parsed `Period`/`EvaluationPeriods` with a discarded error → a missing/non-numeric value became 0 (real CloudWatch returns a `ValidationError`: EvaluationPeriods must be ≥1, and a single-metric alarm needs Period ≥1). BigQuery `tabledata.list` parsed `startIndex`/`maxResults` the same way → a present-but-non-numeric value became 0 instead of the 400 real BigQuery returns. **Fixed:** validate across all 3 CloudWatch protocols (query/awsJson/cbor) via `cwValidateMetricAlarm`, and reject present-but-invalid BigQuery params; absent params still take their normal defaults. |
 | ~~2092~~ | P3 | bleephub — the postgres persistence test was broken AND never ran in CI (skip sweep) | dead/never-run test | `TestPersistence_PostgresRoundTrip` built a malformed DSN (`<url>_db=<name>` with no DB creation) and `BLEEPHUB_TEST_POSTGRES_URL` was set in no workflow, so it always skipped. **Fixed:** rewrote it to CREATE a unique throwaway database, point `BLEEPHUB_DATABASE_URL` at it, round-trip, and drop it; added a `postgres:16-alpine` service to the `test-core` CI job + the env var so it runs for real. |
 | ~~2091~~ | P3 | CI — the ubuntu-runner-bundled `aws` CLI lagged the ECS Express Mode subcommands (launched 2025-11-21) | stale CLI in CI | the ECS Express Mode command-line interface (CLI) tests can't run on a CLI without the subcommands. **Fixed properly** by adding an 'Install latest AWS CLI v2' step to the `sim-aws-cli` job so the cli-tests exercise every operation for real — no skip, no in-test workaround. |
 | ~~2090~~ | P3 | AWS sim — ECS Express Mode `taskDefinitionArn` missing from the pinned `ecs.smithy` snapshot | stale spec snapshot | the field IS real (member of `ExpressGatewayServiceConfiguration` in aws-sdk-go-v2 ecs@v1.85.0 + the API docs — 'present for all Express Gateway services'); the pinned snapshot (SHA 0016334f) predated it. **Fixed properly** by re-vendoring the latest aws-models ecs.json via `scripts/fetch-aws-spec.sh ecs` (SHA dfa27a6c — has the field + all 4 ECS Express Mode ops); SOURCES.md updated. No allowlist. |

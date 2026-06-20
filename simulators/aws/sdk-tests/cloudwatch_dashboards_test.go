@@ -1,11 +1,13 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -40,7 +42,13 @@ func TestCloudWatch_Dashboards(t *testing.T) {
 	_, err = c.DeleteDashboards(ctx, &cloudwatch.DeleteDashboardsInput{DashboardNames: []string{"ops"}})
 	require.NoError(t, err)
 	_, err = c.GetDashboard(ctx, &cloudwatch.GetDashboardInput{DashboardName: aws.String("ops")})
-	assert.Error(t, err, "a deleted dashboard must not be gettable")
+	require.Error(t, err, "a deleted dashboard must not be gettable")
+	// The error must deserialize as a proper rpc-v2-cbor API error (it carries the
+	// Smithy-Protocol header + a cbor __type/message body) — not a protocol-header
+	// parse failure, which an awsJson-shaped error response would have produced.
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "want a deserialized cbor API error, got: %v", err)
+	assert.Equal(t, "ResourceNotFound", apiErr.ErrorCode())
 }
 
 // TestCloudWatch_AlarmExtendedStatistic covers the percentile ExtendedStatistic

@@ -37,3 +37,39 @@ func TestBigQueryAndFirestore_RESTCLIFlows(t *testing.T) {
 		t.Fatalf("Firestore runQuery did not return alice: %s", q)
 	}
 }
+
+// TestBigQuery_TableDataListInvalidParams asserts tabledata.list rejects a
+// present-but-non-numeric/negative startIndex or maxResults with HTTP 400
+// (INVALID_ARGUMENT), as real BigQuery does, rather than silently parsing it to
+// 0. Absent params keep their defaults (start 0, all rows).
+func TestBigQuery_TableDataListInvalidParams(t *testing.T) {
+	ds := `{"datasetReference":{"projectId":"test-project","datasetId":"bq_validate"},"location":"US"}`
+	httpDoJSON(t, "POST", baseURL+"/bigquery/v2/projects/test-project/datasets", ds)
+	tbl := `{"tableReference":{"projectId":"test-project","datasetId":"bq_validate","tableId":"rows"},"schema":{"fields":[{"name":"id","type":"STRING"}]}}`
+	httpDoJSON(t, "POST", baseURL+"/bigquery/v2/projects/test-project/datasets/bq_validate/tables", tbl)
+	httpDoJSON(t, "POST", baseURL+"/bigquery/v2/projects/test-project/datasets/bq_validate/tables/rows/insertAll", `{"rows":[{"json":{"id":"a"}}]}`)
+
+	dataURL := baseURL + "/bigquery/v2/projects/test-project/datasets/bq_validate/tables/rows/data"
+
+	// Absent params → 200 (default path unchanged).
+	resp, err := httpDo("GET", dataURL, "")
+	if err != nil {
+		t.Fatalf("tabledata.list (no params): %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("tabledata.list (no params) want 200, got %d", resp.StatusCode)
+	}
+
+	// Present-but-invalid → 400.
+	for _, qs := range []string{"?startIndex=abc", "?maxResults=xyz", "?startIndex=-1"} {
+		resp, err := httpDo("GET", dataURL+qs, "")
+		if err != nil {
+			t.Fatalf("tabledata.list %s: %v", qs, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 400 {
+			t.Fatalf("tabledata.list %s want 400, got %d", qs, resp.StatusCode)
+		}
+	}
+}

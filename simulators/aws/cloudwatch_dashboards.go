@@ -145,7 +145,7 @@ func registerCloudWatchDashboardsCBOR(srv *sim.Server) {
 func handleCWCBORPutDashboard(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -153,11 +153,11 @@ func handleCWCBORPutDashboard(w http.ResponseWriter, r *http.Request) {
 		DashboardBody string `cbor:"DashboardBody"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	if req.DashboardName == "" {
-		sim.AWSError(w, "MissingParameter", "The parameter DashboardName is required.", http.StatusBadRequest)
+		cwWriteCBORError(w, "MissingParameter", "The parameter DashboardName is required.", http.StatusBadRequest)
 		return
 	}
 	cwPutDashboard(req.DashboardName, req.DashboardBody)
@@ -167,19 +167,19 @@ func handleCWCBORPutDashboard(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORGetDashboard(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		DashboardName string `cbor:"DashboardName"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	d, ok := cwDashboards.Get(req.DashboardName)
 	if !ok {
-		sim.AWSErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Dashboard %s does not exist", req.DashboardName)
+		cwWriteCBORErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Dashboard %s does not exist", req.DashboardName)
 		return
 	}
 	cwWriteCBOR(w, map[string]any{
@@ -192,7 +192,7 @@ func handleCWCBORGetDashboard(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORListDashboards(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -205,19 +205,19 @@ func handleCWCBORListDashboards(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORDeleteDashboards(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		DashboardNames []string `cbor:"DashboardNames"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	for _, n := range req.DashboardNames {
 		if _, ok := cwDashboards.Get(n); !ok {
-			sim.AWSErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Dashboard %s does not exist", n)
+			cwWriteCBORErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Dashboard %s does not exist", n)
 			return
 		}
 	}

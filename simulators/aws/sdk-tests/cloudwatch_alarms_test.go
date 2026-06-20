@@ -1,12 +1,14 @@
 package aws_sdk_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatch"
 	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
+	smithy "github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -84,4 +86,50 @@ func TestCloudWatch_MetricAlarms(t *testing.T) {
 	gone, err := client.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{"sdk-alarm"}})
 	require.NoError(t, err)
 	assert.Empty(t, gone.MetricAlarms)
+}
+
+// TestCloudWatch_MetricAlarmValidation asserts PutMetricAlarm rejects the
+// required numeric parameters CloudWatch validates server-side rather than
+// silently defaulting them to 0: EvaluationPeriods must be >= 1, and a
+// single-metric alarm (MetricName set) requires Period. EvaluationPeriods/Period
+// are not model-required, so the SDK passes a 0 straight through to the service.
+func TestCloudWatch_MetricAlarmValidation(t *testing.T) {
+	client := cloudwatchClient()
+	ns := "Custom/AlarmValidation"
+
+	apiCode := func(err error) string {
+		var apiErr smithy.APIError
+		if errors.As(err, &apiErr) {
+			return apiErr.ErrorCode()
+		}
+		return ""
+	}
+
+	_, err := client.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String("bad-eval"),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("M"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(0),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(0),
+		Statistic:          cwtypes.StatisticSum,
+	})
+	require.Error(t, err)
+	assert.Equal(t, "MissingParameter", apiCode(err))
+	assert.Contains(t, err.Error(), "EvaluationPeriods")
+
+	_, err = client.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String("bad-period"),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("M"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(0),
+		Threshold:          aws.Float64(0),
+		Statistic:          cwtypes.StatisticSum,
+	})
+	require.Error(t, err)
+	assert.Equal(t, "MissingParameter", apiCode(err))
+	assert.Contains(t, err.Error(), "Period")
 }
