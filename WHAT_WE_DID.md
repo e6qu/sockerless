@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-20 - Audit + extended-fuzz round 17 — verification-heavy, +11 fuzz targets
+
+A deep audit — five parallel agents across the AWS/GCP/Azure simulators, the cloud
+backends, the shared sim library + agent + realexec, and core/docker/bleephub —
+plus extended fuzzing (the existing ~21-target suite re-run at longer durations, in
+several streams) and targeted hunting (shared-copy divergence, stub/fake/TODO scans).
+
+**Result: the audited surface holds.** After 16 prior hardening rounds, every credible
+structural finding the agents surfaced was verified at `file:line` as a *false
+positive* guarded by an existing invariant — the reverse-agent readLoop's
+`select`-default non-blocking send (no leak/panic), `kinesisMakeShards` clamping
+count≥1 (no `Shards[0]` out-of-bounds), `aciNormalizeContainer` guaranteeing the
+`properties` map, `awsPage` falling back to the default page size on 0, the lambda
+stdin goroutine's explicit 30s timeout, and the streaming aws-chunked reader bounding
+each read to the caller's buffer (a huge chunk size only sets a counter). The shared
+`state*/process/oci/router/db/otel` copies are in sync; the four divergent files
+(`container/middleware/sandbox/server`) are the known legitimate cloud-specializations.
+Zero `TODO/FIXME`, no `return nil,nil` stubs. The full fuzz suite (now 32 targets,
+tens of millions of executions) produced **zero crashers**. No production bug was
+found — and none fabricated.
+
+**Durable deliverable: +11 fuzz targets** for previously-uncovered untrusted-input
+parsers, now permanent regression guards. AWS: `parseChunkSize` (aws-chunked size
+line), `cloudTrailDecodeToken` (pagination cursor), `cwParsePercentile` /
+`cwParseAggs` / `cwParseSortSpec` / `cwParseTimeUnix` (CloudWatch metric & Insights
+specs), `amplifyParseBuildSpec`. GCP: `parseGCSContentRange` (resumable-upload
+Content-Range — its fuzz invariant respects the `-1` unknown-end/total sentinel).
+Azure: `parseBlobCopySource` (copy-source URL), `parseACRImage` (image ref),
+`ehAMQPParseEventHubAddress` / `...ConsumerAddress` (AMQP addresses).
+
 ## 2026-06-20 - AWS ECS Express Mode (full faithful cloud-slice) + CLI / spec / test upgrades
 
 Added full AWS **ECS Express Mode** support to the AWS simulator — the managed
