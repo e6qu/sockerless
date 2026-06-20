@@ -462,18 +462,56 @@ func handleECSListClusters(w http.ResponseWriter, r *http.Request) {
 func handleECSListTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FamilyPrefix string `json:"familyPrefix"`
+		Status       string `json:"status"`
+		Sort         string `json:"sort"`
 		MaxResults   int    `json:"maxResults"`
 		NextToken    string `json:"nextToken"`
 	}
 	_ = sim.ReadJSON(r, &req)
-	all := make([]string, 0)
+	// status selects the lifecycle state; real AWS defaults to ACTIVE (INACTIVE
+	// revisions are excluded unless INACTIVE or ALL is requested explicitly).
+	status := strings.ToUpper(req.Status)
+	if status == "" {
+		status = "ACTIVE"
+	}
+	type tdRef struct {
+		arn      string
+		family   string
+		revision int
+	}
+	var defs []tdRef
 	for _, td := range ecsTaskDefinitions.List() {
 		if req.FamilyPrefix != "" && !strings.HasPrefix(td.Family, req.FamilyPrefix) {
 			continue
 		}
-		all = append(all, td.TaskDefinitionArn)
+		if status != "ALL" {
+			tdStatus := td.Status
+			if tdStatus == "" {
+				tdStatus = "ACTIVE"
+			}
+			if !strings.EqualFold(tdStatus, status) {
+				continue
+			}
+		}
+		defs = append(defs, tdRef{td.TaskDefinitionArn, td.Family, td.Revision})
 	}
-	sort.Strings(all)
+	// Order by family, then revision ascending (numeric, not lexical — so :10
+	// sorts after :2); sort=DESC returns newest-revision-first.
+	sort.Slice(defs, func(i, j int) bool {
+		if defs[i].family != defs[j].family {
+			return defs[i].family < defs[j].family
+		}
+		return defs[i].revision < defs[j].revision
+	})
+	if strings.EqualFold(req.Sort, "DESC") {
+		for i, j := 0, len(defs)-1; i < j; i, j = i+1, j-1 {
+			defs[i], defs[j] = defs[j], defs[i]
+		}
+	}
+	all := make([]string, 0, len(defs))
+	for _, d := range defs {
+		all = append(all, d.arn)
+	}
 	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
 	out := map[string]any{"taskDefinitionArns": page}
 	if next != "" {

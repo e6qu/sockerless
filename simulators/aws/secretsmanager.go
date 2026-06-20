@@ -452,10 +452,82 @@ func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// smFilter is one ListSecrets Filter (Key + Values). Documented keys:
+// tag-key, tag-value, name, description, primary-region, all.
+type smFilter struct {
+	Key    string   `json:"Key"`
+	Values []string `json:"Values"`
+}
+
+// smSecretMatchesFilters reports whether a secret satisfies every filter
+// (AND across filters; OR within a filter's Values).
+func smSecretMatchesFilters(s SMSecret, filters []smFilter) bool {
+	for _, f := range filters {
+		if !smSecretMatchesFilter(s, f) {
+			return false
+		}
+	}
+	return true
+}
+
+func smSecretMatchesFilter(s SMSecret, f smFilter) bool {
+	if len(f.Values) == 0 {
+		return true // no values → no constraint
+	}
+	anyValue := func(test func(v string) bool) bool {
+		for _, v := range f.Values {
+			if test(v) {
+				return true
+			}
+		}
+		return false
+	}
+	switch f.Key {
+	case "tag-key":
+		return anyValue(func(v string) bool {
+			for _, t := range s.Tags {
+				if t.Key == v {
+					return true
+				}
+			}
+			return false
+		})
+	case "tag-value":
+		return anyValue(func(v string) bool {
+			for _, t := range s.Tags {
+				if t.Value == v {
+					return true
+				}
+			}
+			return false
+		})
+	case "name":
+		return anyValue(func(v string) bool { return strings.HasPrefix(s.Name, v) })
+	case "description":
+		return anyValue(func(v string) bool { return strings.Contains(s.Description, v) })
+	case "all":
+		return anyValue(func(v string) bool {
+			if strings.Contains(s.Name, v) || strings.Contains(s.Description, v) {
+				return true
+			}
+			for _, t := range s.Tags {
+				if strings.Contains(t.Key, v) || strings.Contains(t.Value, v) {
+					return true
+				}
+			}
+			return false
+		})
+	case "primary-region":
+		return true // replica regions not modeled — don't exclude
+	}
+	return true // unknown filter key → lenient (don't exclude)
+}
+
 func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		NextToken  string `json:"NextToken"`
-		MaxResults int    `json:"MaxResults"`
+		NextToken  string     `json:"NextToken"`
+		MaxResults int        `json:"MaxResults"`
+		Filters    []smFilter `json:"Filters"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -464,6 +536,18 @@ func handleSMListSecrets(w http.ResponseWriter, r *http.Request) {
 	all := smSecrets.List()
 	if all == nil {
 		all = []SMSecret{}
+	}
+	// Apply the server-side Filters (AND-combined across filters, OR within a
+	// filter's Values), matching real Secrets Manager — a tag-key filter
+	// matching no secret returns [].
+	if len(req.Filters) > 0 {
+		filtered := make([]SMSecret, 0, len(all))
+		for _, s := range all {
+			if smSecretMatchesFilters(s, req.Filters) {
+				filtered = append(filtered, s)
+			}
+		}
+		all = filtered
 	}
 	sortBy(all, func(s SMSecret) string { return s.Name })
 	page, next := awsPage(all, req.NextToken, req.MaxResults, 100)
