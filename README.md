@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-246.1k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-247.1k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-25.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-143.5k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-144.1k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -112,7 +112,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![core](https://img.shields.io/badge/core-19.6k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-40.2k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-56.9k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-57.9k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-32.9k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-23.2k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)
@@ -545,6 +545,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
+| [`docs/ECS_EXPRESS_MODE.md`](docs/ECS_EXPRESS_MODE.md) | AWS ECS Express Mode (Express Gateway services) — API, Express-vs-vanilla-ECS comparison, and cloud-slice assembly |
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |

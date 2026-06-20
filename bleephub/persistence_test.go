@@ -3,8 +3,10 @@ package bleephub
 import (
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -17,13 +19,36 @@ func TestPersistence_RoundTripAppsInstallationsTokensRepos(t *testing.T) {
 }
 
 func TestPersistence_PostgresRoundTrip(t *testing.T) {
-	pgURL := os.Getenv("BLEEPHUB_TEST_POSTGRES_URL")
-	if pgURL == "" {
-		t.Skip("BLEEPHUB_TEST_POSTGRES_URL not set")
+	base := os.Getenv("BLEEPHUB_TEST_POSTGRES_URL")
+	if base == "" {
+		// CI provisions a postgres service and sets this; locally, run a
+		// `postgres` container and export it to exercise the postgres backend.
+		t.Skip("BLEEPHUB_TEST_POSTGRES_URL not set (set it to a base postgres DSN to run the postgres backend)")
 	}
 
-	uniqueDB := fmt.Sprintf("%s_db=%s", pgURL, t.Name())
-	t.Setenv("BLEEPHUB_DATABASE_URL", uniqueDB)
+	// Create a unique throwaway database on the server so repeated/parallel runs
+	// don't collide, then point BLEEPHUB_DATABASE_URL at it. (The Go test name is
+	// a simple lowercase identifier — no further escaping needed.)
+	dbName := "bleephub_test_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
+	admin, err := sql.Open("pgx", base)
+	if err != nil {
+		t.Fatalf("open admin connection: %v", err)
+	}
+	defer admin.Close()
+	if _, err := admin.Exec(`DROP DATABASE IF EXISTS "` + dbName + `"`); err != nil {
+		t.Fatalf("drop pre-existing %q: %v", dbName, err)
+	}
+	if _, err := admin.Exec(`CREATE DATABASE "` + dbName + `"`); err != nil {
+		t.Fatalf("create database %q: %v", dbName, err)
+	}
+	t.Cleanup(func() { _, _ = admin.Exec(`DROP DATABASE IF EXISTS "` + dbName + `"`) })
+
+	u, err := url.Parse(base)
+	if err != nil {
+		t.Fatalf("parse BLEEPHUB_TEST_POSTGRES_URL: %v", err)
+	}
+	u.Path = "/" + dbName
+	t.Setenv("BLEEPHUB_DATABASE_URL", u.String())
 
 	persistRoundTrip(t, func() (*Persistence, error) {
 		p, err := NewPersistence()
@@ -35,10 +60,6 @@ func TestPersistence_PostgresRoundTrip(t *testing.T) {
 		}
 		return p, nil
 	})
-
-	if err := dropTestDB(t, pgURL, t.Name()); err != nil {
-		t.Logf("cleanup: drop db: %v", err)
-	}
 }
 
 func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
@@ -122,24 +143,6 @@ func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
 	} else if got.ID != repo.ID {
 		t.Errorf("repo ID round-trip: got %d want %d", got.ID, repo.ID)
 	}
-}
-
-func dropTestDB(t *testing.T, baseURL, dbName string) error {
-	t.Helper()
-	postgresURL := baseURL
-	for i := 0; i < len(baseURL); i++ {
-		if baseURL[i] == '?' {
-			postgresURL = baseURL[:i]
-			break
-		}
-	}
-	db, err := sql.Open("pgx", postgresURL)
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	_, err = db.Exec(fmt.Sprintf(`DROP DATABASE IF EXISTS "%s"`, dbName))
-	return err
 }
 
 func TestPersistence_DisabledWhenEnvUnset(t *testing.T) {

@@ -125,6 +125,22 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    services:
+      # Postgres so bleephub's postgres-backed persistence test runs for real
+      # (it skips when BLEEPHUB_TEST_POSTGRES_URL is unset).
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -135,6 +151,8 @@ jobs:
       - name: Architecture checks
         run: bash scripts/check-cloud-backend-isolation.sh
       - name: Core + API + agent
+        env:
+          BLEEPHUB_TEST_POSTGRES_URL: postgres://ci:ci@localhost:5432/postgres?sslmode=disable
         run: |
           set -e
           run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
@@ -423,6 +441,16 @@ jobs:
           curl -fsSLo /tmp/session-manager-plugin.deb https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb
           sudo dpkg -i /tmp/session-manager-plugin.deb
           session-manager-plugin --version
+      - name: Install latest AWS CLI v2
+        # The ubuntu-runner-bundled aws CLI lags; newer service operations (e.g.
+        # ECS Express Mode, launched 2025-11-21) need a current CLI. Install the
+        # latest v2 so the cli-tests exercise every operation for real.
+        run: |
+          curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+          unzip -q -o /tmp/awscliv2.zip -d /tmp
+          sudo /tmp/aws/install --update
+          hash -r
+          aws --version
       - name: Run AWS CLI tests
         run: |
           cd simulators/aws && go mod download

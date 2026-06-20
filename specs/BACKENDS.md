@@ -145,6 +145,7 @@ Every backend implements all 65 `api.Backend` methods. Methods not explicitly ov
 - EFS-backed bind mounts when `AgentEFSID` set
 - CloudWatch Container Insights stats (`ecsStatsProvider`)
 - SSM ExecuteCommand for exec
+- Express Gateway services — the Amazon Web Services (AWS) simulator serves ECS Express Mode (managed Fargate + Application Load Balancer (ALB) + Hypertext Transfer Protocol Secure (HTTPS) listener + AWS Certificate Manager (ACM) certificate + security group + Application Auto Scaling), assembled from real underlying sim resources; see [`docs/ECS_EXPRESS_MODE.md`](../docs/ECS_EXPRESS_MODE.md)
 
 ### Cloud Run
 - Cloud DNS managed zones per Docker network

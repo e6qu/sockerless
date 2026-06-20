@@ -44,4 +44,15 @@ Surface registered in `simulators/aws/ecs_service.go` (and related files grouped
 - Missing public-cloud operations that are not registered by the simulator still require a concrete BUG and a row here when discovered by a community issue or periodic audit.
 
 <!-- HAND-WRITTEN BEGIN -->
+
+## ECS Express Mode (Express Gateway services)
+
+The four Express Gateway operations are registered in `simulators/aws/ecs_express.go`
+(`CreateExpressGatewayService`, `DescribeExpressGatewayService`,
+`UpdateExpressGatewayService`, `DeleteExpressGatewayService`). Each composes the real
+backing resources (ECS Fargate service, ELBv2 ALB/target-group/listener, ACM cert, EC2
+security group, Application Auto Scaling target + policy) so they are describable through
+their own service slices. See [`docs/ECS_EXPRESS_MODE.md`](../../docs/ECS_EXPRESS_MODE.md)
+for the full API, the Express-vs-vanilla-ECS comparison, and the assembly details.
+
 <!-- HAND-WRITTEN END -->

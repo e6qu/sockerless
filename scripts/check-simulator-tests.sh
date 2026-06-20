@@ -93,11 +93,17 @@ changed_sim_files=$(git diff --name-only "$staged_range" 2>/dev/null | grep -E '
 
 # Cloud of a registered op: the file whose added diff defines its Register line.
 op_to_cloud() {
-    local op escaped_op f
+    # Capture the match (instead of piping into `grep -q`): under `set -o
+    # pipefail`, a downstream `grep -q` exits early on the first match and
+    # SIGPIPEs the large upstream `git diff | grep` (e.g. a 900-line new file),
+    # whose non-zero exit pipefail then propagates as a false negative. Reading
+    # all input into a var avoids the early exit entirely.
+    local op escaped_op f hit
     op="$1"; escaped_op="$(regex_escape "$op")"
     for f in $changed_sim_files; do
-        if git diff "$staged_range" -- "$f" 2>/dev/null | grep -E '^\+[^+]' \
-                | grep -qE "(r\.Register\s*\(\s*\"${escaped_op}\")|(r\.RegisterVersioned\s*\(\s*[^,]+\s*,\s*\"${escaped_op}\")"; then
+        hit=$(git diff "$staged_range" -- "$f" 2>/dev/null | grep -E '^\+[^+]' \
+                | grep -E "(r\.Register\s*\(\s*\"${escaped_op}\")|(r\.RegisterVersioned\s*\(\s*[^,]+\s*,\s*\"${escaped_op}\")" || true)
+        if [[ -n "$hit" ]]; then
             cloud_of "$f"; return
         fi
     done
@@ -107,9 +113,11 @@ op_to_cloud() {
 route_to_cloud() {
     local route escaped f
     route="$1"; escaped="$(regex_escape "$route")"
+    local hit
     for f in $changed_sim_files; do
-        if git diff "$staged_range" -- "$f" 2>/dev/null | grep -E '^\+[^+]' \
-                | grep -qE "(srv|mux)\.HandleFunc\s*\(\s*\"${escaped}"; then
+        hit=$(git diff "$staged_range" -- "$f" 2>/dev/null | grep -E '^\+[^+]' \
+                | grep -E "(srv|mux)\.HandleFunc\s*\(\s*\"${escaped}" || true)
+        if [[ -n "$hit" ]]; then
             cloud_of "$f"; return
         fi
     done
@@ -126,9 +134,11 @@ op_referenced_in_tests() {
         | tr '[:upper:]' '[:lower:]')
     local esc_short esc_kebab
     esc_short="$(regex_escape "$short")"; esc_kebab="$(regex_escape "$kebab")"
+    local hit
     for tf in $tests_changed; do
-        if git diff "$staged_range" -- "$tf" 2>/dev/null | grep -E '^\+' \
-                | grep -qE "\.${esc_short}\(|\"${esc_kebab}\"|\"${esc_short}\""; then
+        hit=$(git diff "$staged_range" -- "$tf" 2>/dev/null | grep -E '^\+' \
+                | grep -E "\.${esc_short}\(|\"${esc_kebab}\"|\"${esc_short}\"" || true)
+        if [[ -n "$hit" ]]; then
             return 0
         fi
     done
@@ -144,9 +154,11 @@ route_referenced_in_tests() {
     local route tests_changed path last_seg tf
     route="$1"; shift; tests_changed="$*"
     path="${route#* }"
+    local hit
     for tf in $tests_changed; do
-        if git diff "$staged_range" -- "$tf" 2>/dev/null | grep -E '^\+' \
-                | grep -qF "$path" 2>/dev/null; then
+        hit=$(git diff "$staged_range" -- "$tf" 2>/dev/null | grep -E '^\+' \
+                | grep -F "$path" 2>/dev/null || true)
+        if [[ -n "$hit" ]]; then
             return 0
         fi
     done

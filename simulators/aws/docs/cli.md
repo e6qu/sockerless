@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- AWS CLI v2 installed (`aws --version`)
+- AWS CLI v2 installed (`aws --version`) — use a current version; recently-launched operations (e.g. the ECS Express Mode subcommands) are absent from older CLIs. CI installs the latest v2 for this reason.
 - Simulator running on `http://localhost:4566`
 
 ## Setup
