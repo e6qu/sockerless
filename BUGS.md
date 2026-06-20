@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2024 filed - 1980 fixed - 2 open - 12 false positives.**
+**2026 filed - 1982 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2026~~ | P3 | AWS sim Secrets Manager — `ListSecrets` ignored the `Filters` parameter (issue #629) | wrong result-set | a `tag-key` (or any) Filter returned every secret regardless; a downstream GC enumerating only its own tag-scoped secrets saw all of them. **Fixed:** apply Filters server-side (tag-key/tag-value/name/description/all, AND across filters, OR within Values). SDK test. |
+| ~~2025~~ | P3 | AWS sim ECS — `ListTaskDefinitions` ignored `sort` (DESC) + `status` (issue #630) | wrong result-set / order | DESC returned ascending; a deregistered (INACTIVE) revision still appeared in the default/ACTIVE listing. **Fixed:** default status ACTIVE (exclude INACTIVE unless INACTIVE/ALL), revision-numeric ordering, DESC reverses. SDK test. |
 | ~~2024~~ | P3 | scripts — `check-simulator-tests.sh` HandleFunc enforcement scanned `_test.go` files (self-found) | guard false-positive | the new HandleFunc rule diffed `'simulators/*.go'` (incl. test files), so a throwaway route in a soak/test fixture (e.g. `GET /boom`) was flagged as a real endpoint needing SDK/CLI/TF tests; now scans only the production `changed_go` set (already excludes `_test.go`). |
 | ~~2023~~ | P2 | AWS sim CloudWatch — metric-filter pattern tokenizer infinite-loop (hang/DoS) (fuzzing) | hang | a lone `&` or `|` (e.g. `filterPattern={0&}`) hit the word-scanner, which treats `&`/`|` as a delimiter and breaks with no progress → the `for i<len(s)` loop spun forever, hanging the sim goroutine. **Fixed:** emit the stray byte as a single-char token + advance when the word scan makes no progress. Found by `FuzzCWLogPatternMatches`; crashing input committed as a regression seed. |
 | ~~2022~~ | HIGH | sim shared — `OpenDB` applied `busy_timeout`/`journal_mode`/`synchronous` via `db.Exec("PRAGMA …")`, which configures only the one pooled connection it ran on (concurrency soak) | SQLITE_BUSY under load | `database/sql` opens further pool connections for concurrent reads that inherited `busy_timeout=0`, so a read connection holding a WAL read lock made a concurrent `SQLiteStore.Put` fail immediately with `database is locked (SQLITE_BUSY)` → `fatalDBErr` panic → 500. Moved all PRAGMAs into the DSN (`?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)`) so the driver applies them to every connection, + `db.Ping()` to surface a bad path eagerly. Found by `TestStoreMixedOpsSoak` (-race, 64 goroutines). Fixed in all 3 shared `db.go` copies. |
