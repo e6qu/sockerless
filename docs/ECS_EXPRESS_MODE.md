@@ -1,10 +1,11 @@
-# AWS ECS Express Mode
+# Amazon ECS Express Mode
 
-The AWS ECS simulator implements **ECS Express Mode** (Express Gateway services) — the
-managed, Fargate-based ECS service AWS launched on 2025-11-21. This document describes
-what the real service does, the four-operation API the simulator serves, how an Express
-service compares to a hand-assembled vanilla ECS service, and how the simulator composes
-the real underlying AWS resources to back it faithfully.
+The Amazon Web Services (AWS) Elastic Container Service (ECS) simulator implements
+**ECS Express Mode** (Express Gateway services) — the managed, Fargate-based ECS service
+AWS launched on 2025-11-21. This document describes what the real service does, the
+four-operation application programming interface (API) the simulator serves, how an
+ECS Express Mode service compares to a hand-assembled vanilla ECS service, and how the
+simulator composes the real underlying AWS resources to back it faithfully.
 
 Cross-references: the per-cloud resource mapping lives in
 [`specs/CLOUD_RESOURCE_MAPPING.md` § AWS ECS](../specs/CLOUD_RESOURCE_MAPPING.md#aws-ecs-backend-ecs);
@@ -17,8 +18,8 @@ ECS Express Mode is a managed deployment experience that turns a container image
 production-ready, internet-reachable web service from three inputs:
 
 1. **A container image**, plus its port and (optionally) command, environment, secrets, and logging.
-2. **An execution role** (`executionRoleArn`) — the task execution role ECS uses to pull
-   the image and write logs.
+2. **An execution role** (`executionRoleArn`, where Arn is an Amazon Resource Name (ARN)) —
+   the task execution role ECS uses to pull the image and write logs.
 3. **An infrastructure role** (`infrastructureRoleArn`, **required**) — the role ECS
    assumes to provision and manage the load balancer, certificate, security group, and
    auto-scaling resources on your behalf.
@@ -26,19 +27,21 @@ production-ready, internet-reachable web service from three inputs:
 From those inputs ECS provisions, manages, and hands back as one unit:
 
 - An **ECS Fargate service** running a managed task definition (single container named `Main`).
-- An **Application Load Balancer** (internet-facing for `PUBLIC`, internal for `PRIVATE`),
-  with an **HTTPS listener** and a target group, consolidating **up to 25 Express services**
-  behind a single ALB when their network configuration matches.
-- A managed **ACM certificate** for TLS on the HTTPS listener.
-- An **AWS-provided domain** — the ALB's DNS name — surfaced as the service's
-  `ingressPaths[].endpoint` (`https://<alb-dns>`). No Route 53 setup is required.
+- An **Application Load Balancer (ALB)** (internet-facing for `PUBLIC`, internal for `PRIVATE`),
+  with a Hypertext Transfer Protocol Secure (HTTPS) **listener** and a target group,
+  consolidating **up to 25 ECS Express Mode services** behind a single ALB when their
+  network configuration matches.
+- A managed **AWS Certificate Manager (ACM) certificate** for Transport Layer Security (TLS)
+  on the HTTPS listener.
+- An **AWS-provided domain** — the ALB's Domain Name System (DNS) name — surfaced as the
+  service's `ingressPaths[].endpoint` (`https://<alb-dns>`). No Amazon Route 53 setup is required.
 - A security group (when you don't supply one) and **built-in target-tracking auto-scaling**
   (Application Auto Scaling on the Fargate service's desired count).
 
 The result is that a single `CreateExpressGatewayService` call replaces the
-`RegisterTaskDefinition` + `CreateService` + ELBv2 (load balancer + target group +
-listener + certificate) + security-group + Application Auto Scaling choreography you would
-otherwise wire up yourself.
+`RegisterTaskDefinition` + `CreateService` + Elastic Load Balancing version 2 (ELBv2)
+(load balancer + target group + listener + certificate) + security-group + Application Auto
+Scaling choreography you would otherwise wire up yourself.
 
 References: AWS ECS API Reference (`CreateExpressGatewayService`,
 `DescribeExpressGatewayService`, `UpdateExpressGatewayService`,
@@ -69,8 +72,8 @@ All four operations are awsJson1.1 on the shared ECS service router, addressed b
 - **Mutual exclusion**: `taskDefinitionArn` cannot be combined with `primaryContainer`,
   `executionRoleArn`, `taskRoleArn`, `cpu`, or `memory` — those knobs derive the *managed*
   task definition, so supplying your own task definition replaces all of them. A supplied
-  task definition must contain a container named `Main` with a single TCP port mapping and
-  declare FARGATE compatibility.
+  task definition must contain a container named `Main` with a single Transmission Control
+  Protocol (TCP) port mapping and declare FARGATE compatibility.
 
 ### Response shapes
 
@@ -121,7 +124,7 @@ the single new revision rather than the full service: `cluster`, `createdAt`, `s
 
 All errors return HTTP 400 except `Server` (500).
 
-## Express Mode vs vanilla ECS
+## ECS Express Mode vs vanilla ECS
 
 | Aspect | ECS Express Mode | Vanilla ECS (assembled by hand) |
 |---|---|---|
@@ -131,9 +134,9 @@ All errors return HTTP 400 except `Server` (500).
 | **Domain / DNS** | **AWS-provided** — the ALB DNS name, surfaced as `ingressPaths[].endpoint`; no Route 53 work | **User-managed** — register a Route 53 record (or use the raw ALB DNS) yourself |
 | **TLS** | **Managed ACM certificate** on the HTTPS listener | **User-managed** — request/import an ACM cert and attach it to the listener |
 | **Auto-scaling** | **Built-in target-tracking** on desired count, driven by `autoScalingMetric`/`autoScalingTargetValue` | **User-configured** — register an Application Auto Scaling scalable target and scaling policy yourself |
-| **Networking / security groups** | **Auto** — a security group is created when you don't supply one; PUBLIC ⇒ internet-facing, PRIVATE ⇒ internal | **User-managed** — author security groups and the awsvpc network configuration |
-| **API surface** | One call: `CreateExpressGatewayService` | `RegisterTaskDefinition` + `CreateService` + ELBv2 (`CreateLoadBalancer`/`CreateTargetGroup`/`CreateListener`) + ACM + EC2 security groups + Application Auto Scaling (`RegisterScalableTarget`/`PutScalingPolicy`) |
-| **Update model** | `UpdateExpressGatewayService` — mutable knobs produce a **new revision** and roll the backing service; returns `UpdatedExpressGatewayService{targetConfiguration}` | `UpdateService` (+ new task-def revision) and separate updates to LB / scaling / DNS as needed |
+| **Networking / security groups** | **Auto** — a security group is created when you don't supply one; PUBLIC ⇒ internet-facing, PRIVATE ⇒ internal | **User-managed** — author security groups and the `awsvpc` (Virtual Private Cloud, VPC) network configuration |
+| **API surface** | One call: `CreateExpressGatewayService` | `RegisterTaskDefinition` + `CreateService` + ELBv2 (`CreateLoadBalancer`/`CreateTargetGroup`/`CreateListener`) + ACM + Elastic Compute Cloud (EC2) security groups + Application Auto Scaling (`RegisterScalableTarget`/`PutScalingPolicy`) |
+| **Update model** | `UpdateExpressGatewayService` — mutable knobs produce a **new revision** and roll the backing service; returns `UpdatedExpressGatewayService{targetConfiguration}` | `UpdateService` (+ new task-def revision) and separate updates to the load balancer / scaling / DNS as needed |
 | **Deletion** | `DeleteExpressGatewayService` — status → `DRAINING`, **cascade teardown** of all backing resources | **Manual teardown** — delete the service, then the listener, target group, load balancer, certificate, scaling policy, scalable target, and security group individually |
 | **Use cases** | Production web services you want managed end-to-end with minimal config — HTTPS APIs, web frontends, internal services | Full control over every resource — bespoke routing, multi-target-group services, existing shared load balancers, custom scaling logic |
 
@@ -147,7 +150,7 @@ through that API. Implemented in `simulators/aws/ecs_express.go`:
 | Backing resource | Simulator store | Describable via |
 |---|---|---|
 | ECS Fargate service (task def named `Main`, port mapping, `LoadBalancers` wired to the target group) | `ecsServices`, `ecsTaskDefinitions` | `DescribeServices`, `DescribeTaskDefinition` |
-| ALB (internet-facing for PUBLIC / internal for PRIVATE) + target group (ip targets) + HTTPS:443 listener | `elbv2LoadBalancers`, `elbv2TargetGroups`, `elbv2Listeners` | ELBv2 `DescribeLoadBalancers` / `DescribeTargetGroups` / `DescribeListeners` |
+| ALB (internet-facing for PUBLIC / internal for PRIVATE) + target group (Internet Protocol (IP) targets) + HTTPS port 443 listener | `elbv2LoadBalancers`, `elbv2TargetGroups`, `elbv2Listeners` | ELBv2 `DescribeLoadBalancers` / `DescribeTargetGroups` / `DescribeListeners` |
 | Managed ACM certificate for the HTTPS listener | `acmCertificates` | ACM `DescribeCertificate` |
 | Security group (only when the caller supplies none) | `ec2SecurityGroups` | EC2 `DescribeSecurityGroups` |
 | Application Auto Scaling scalable target + target-tracking policy | `appScalableTargets`, `appScalingPolicies` | Application Auto Scaling `DescribeScalableTargets` / `DescribeScalingPolicies` |
@@ -186,7 +189,7 @@ simulator-side resource queryable through its own service slice.
 A client points at the simulator by setting only its endpoint coordinate; the request
 shapes, identifiers, and operations are identical to those against real AWS.
 
-### SDK (`aws-sdk-go-v2`)
+### Software development kit (SDK) (`aws-sdk-go-v2`)
 
 ```go
 cfg, _ := config.LoadDefaultConfig(ctx,
@@ -206,7 +209,7 @@ out, err := client.CreateExpressGatewayService(ctx, &ecs.CreateExpressGatewaySer
 // out.Service.ActiveConfigurations[0].IngressPaths[0].Endpoint == "https://<alb-dns>"
 ```
 
-### CLI (`aws`)
+### Command-line interface (CLI) (`aws`)
 
 ```sh
 aws ecs create-express-gateway-service \

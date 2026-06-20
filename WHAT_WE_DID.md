@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-20 - AWS ECS Express Mode (full faithful cloud-slice) + CLI / spec / test upgrades
+
+Added full AWS **ECS Express Mode** support to the AWS simulator — the managed
+"Express Gateway service" AWS launched 2025-11-21. Researched from the AWS API
+reference, the ECS developer guide, the vendored `aws-sdk-go-v2/service/ecs@v1.85.0`
+(exact enums/shapes), botocore, and terraform-provider-aws
+(`aws_ecs_express_gateway_service`) — no guessing. The 4 operations
+`Create/Describe/Update/DeleteExpressGatewayService` (awsJson1.1,
+`AmazonEC2ContainerServiceV20141113.<Op>`) carry the exact request/response shapes,
+enums (accessType PUBLIC/PRIVATE, autoScalingMetric
+AVERAGE_CPU/AVERAGE_MEMORY/REQUEST_COUNT_PER_TARGET, statusCode
+ACTIVE/DRAINING/INACTIVE), defaults (cpu 256 / memory 512 / healthCheckPath /ping /
+port 80 / scaling target 60), and error cases.
+
+**Full faithful cloud-slice assembly.** Each Express service composes the REAL
+underlying sim resources — an ECS Fargate service + an ELBv2 ALB + target group +
+HTTPS:443 listener + ACM cert + EC2 security group + an Application Auto Scaling
+scalable-target + target-tracking policy — all describable via their own sim APIs;
+the AWS-provided domain is the ALB DNSName, with 25-services-per-ALB consolidation
+and a DRAINING→INACTIVE teardown cascade. SDK + CLI + Terraform tests across all
+three dimensions; new doc `docs/ECS_EXPRESS_MODE.md` (Express-vs-vanilla-ECS
+comparison), cross-linked from README / docs index / CLOUD_RESOURCE_MAPPING /
+SIM_SURFACE_TABLES / BACKENDS / POD_MATERIALIZATION. **BUG-2088** captures 3 issues
+Terraform testing surfaced (cluster returned as ARN not bare name; auto-scaling
+always provisioned; Delete persists INACTIVE so the destroy-waiter converges).
+
+**Real upgrades, no workarounds.** Two CI gaps the feature exposed were fixed at the
+root, not papered over:
+- The ECS Express Mode command-line interface (CLI) subcommands need a current aws CLI; CI now installs the latest aws
+  CLI v2 in the `sim-aws-cli` job so the ECS Express Mode CLI tests run for real. The whole
+  aws cli-test suite was drift-verified against aws v2.35.9 — clean. (**BUG-2091**)
+- The spec-shape ratchet flagged Express `taskDefinitionArn` because the pinned
+  `ecs.smithy` snapshot predated it (the field is genuinely real per the SDK);
+  re-vendored the latest aws-models ecs.json via `scripts/fetch-aws-spec.sh ecs`, no
+  allowlist. (**BUG-2090**)
+
+**Skip sweep.** A pass over every `t.Skip` site found one test both broken and never
+run: bleephub's postgres persistence test built a malformed DSN with no DB creation
+and `BLEEPHUB_TEST_POSTGRES_URL` was set in no workflow. Rewrote it to create / use /
+drop a unique throwaway database and added a `postgres:16-alpine` service to the
+`test-core` CI job so it runs for real. The other ~34 skips are legitimate
+platform/capability gates that do run in CI on the right host. (**BUG-2092**)
+
 ## 2026-06-20 - Weak-types + deep-fuzz + robustness audit (round 16) — shared sim / realexec / agent / backend core+docker
 
 A focused audit of the four infrastructure areas through three lenses: weak

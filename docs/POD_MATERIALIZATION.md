@@ -53,6 +53,8 @@ Every backend must answer these for single-container workloads. Multi-container 
 
 GitLab's hijacked-stdin pattern is handled with the `stdinPipes` map: `ContainerStart` reads the buffered stdin bytes (written by `docker attach`) and bakes them into the task definition's `Cmd` override before calling `ecs.RunTask` (BUG-859 fix). Fargate has no remote-stdin channel for a running task, so stdin must be embedded at task launch.
 
+**ECS Express Mode (separate path).** This section covers vanilla Elastic Container Service (ECS) Fargate task materialization — the runner-workload path. Amazon ECS also offers managed **ECS Express Mode** (Express Gateway services), a different primitive: one managed Fargate service behind an auto-provisioned Application Load Balancer with Hypertext Transfer Protocol Secure (HTTPS), a certificate, and auto-scaling, for long-running web services rather than runner workloads. The Amazon Web Services (AWS) simulator serves it; see [`docs/ECS_EXPRESS_MODE.md`](ECS_EXPRESS_MODE.md).
+
 ---
 
 ## lambda (AWS)

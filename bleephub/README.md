@@ -214,6 +214,8 @@ Two write-through database options, both fail-loud on open failure (never a sile
 - **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
 - **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
 
+Both backends are exercised by `persistence_test.go`: the SQLite round-trip always runs, and the PostgreSQL round-trip runs whenever `BLEEPHUB_TEST_POSTGRES_URL` (a base postgres data source name (DSN)) is set — it creates a unique throwaway database, round-trips, and drops it. Continuous integration (CI) runs it for real against a `postgres:16-alpine` service in the `test-core` job.
+
 The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + org hooks + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
 
 Intentionally NOT persisted: runner/workflow runtime state (workflows, sessions, agents — a restart abandons in-flight runs) and the Actions OIDC signing key, which rotates on restart; consumers must re-fetch the JWKS, exactly as against real GitHub key rotation.
