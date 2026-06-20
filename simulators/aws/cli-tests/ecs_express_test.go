@@ -19,7 +19,11 @@ func expressCLIAvailable() bool {
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(out), "create-express-gateway-service")
+	// A CLI that LACKS the subcommand prints an "Invalid choice:
+	// 'create-express-gateway-service'" error whose text echoes the subcommand
+	// name — so a bare name-substring check false-positives. Require a
+	// distinctive option flag that only appears in the real subcommand's help.
+	return strings.Contains(string(out), "--infrastructure-role-arn")
 }
 
 // TestECS_CLI_ExpressGatewayLifecycle drives the Express Gateway service
