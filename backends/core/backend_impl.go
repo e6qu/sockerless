@@ -605,7 +605,19 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 // shortcut) must Inspect first themselves — silent success on a
 // missing container is a fallback-hiding-bug.
 func (s *BaseServer) ContainerWait(ref string, condition string) (*api.ContainerWaitResponse, error) {
-	c, ok := s.ResolveContainerAuto(context.Background(), ref)
+	return s.ContainerWaitCtx(context.Background(), ref, condition)
+}
+
+// ContainerWaitCtx is the context-aware implementation behind ContainerWait.
+// The api.Backend interface's ContainerWait carries no context, but the HTTP
+// wait handler has the request context and prefers this method so that a
+// client which issues `docker wait` and then disconnects releases the parked
+// waiter (`select { case <-ch: ...; case <-ctx.Done(): ... }`) instead of
+// leaking a goroutine blocked on the channel until the container eventually
+// exits. The interface signature is intentionally left unchanged — adding a
+// context parameter would ripple across every backend's ContainerWait.
+func (s *BaseServer) ContainerWaitCtx(ctx context.Context, ref string, condition string) (*api.ContainerWaitResponse, error) {
+	c, ok := s.ResolveContainerAuto(ctx, ref)
 	if !ok {
 		return nil, &api.NotFoundError{Resource: "container", ID: ref}
 	}
@@ -621,7 +633,7 @@ func (s *BaseServer) ContainerWait(ref string, condition string) (*api.Container
 
 	// CloudState path: poll for exit via CloudState.WaitForExit
 	if s.CloudState != nil {
-		exitCode, err := s.CloudState.WaitForExit(context.Background(), id)
+		exitCode, err := s.CloudState.WaitForExit(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -631,18 +643,29 @@ func (s *BaseServer) ContainerWait(ref string, condition string) (*api.Container
 	// Store path (Docker passthrough): wait on channel
 	ch, ok := s.Store.WaitChs.Load(id)
 	if !ok {
-		c, _ = s.ResolveContainerAuto(context.Background(), id)
+		c, _ = s.ResolveContainerAuto(ctx, id)
 		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
 	}
 
-	<-ch.(chan struct{})
-	c, _ = s.ResolveContainerAuto(context.Background(), id)
+	select {
+	case <-ch.(chan struct{}):
+	case <-ctx.Done():
+		// Client disconnected (or the request was cancelled) before the
+		// container exited — release the waiter instead of parking the
+		// goroutine until the container eventually stops.
+		return nil, ctx.Err()
+	}
+	c, _ = s.ResolveContainerAuto(ctx, id)
 	if condition == "removed" {
 		for i := 0; i < 50; i++ {
-			if _, found := s.ResolveContainerAuto(context.Background(), id); !found {
+			if _, found := s.ResolveContainerAuto(ctx, id); !found {
 				break
 			}
-			time.Sleep(100 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(100 * time.Millisecond):
+			}
 		}
 	}
 	return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil

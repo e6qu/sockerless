@@ -119,6 +119,7 @@ const installsCol = createColumnHelper<BleephubInstallation>();
 
 function InstallationsTab() {
   const queryClient = useQueryClient();
+  const [mutationError, setMutationError] = useState<string | null>(null);
   const { data, isLoading, isError } = useQuery({
     queryKey: ["installations"],
     queryFn: fetchInstallations,
@@ -127,11 +128,19 @@ function InstallationsTab() {
 
   const suspendMut = useMutation({
     mutationFn: ({ id, suspend }: { id: number; suspend: boolean }) => suspendInstallation(id, suspend),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["installations"] }),
+    onSuccess: () => {
+      setMutationError(null);
+      queryClient.invalidateQueries({ queryKey: ["installations"] });
+    },
+    onError: (err: Error) => setMutationError(err.message),
   });
   const deleteMut = useMutation({
     mutationFn: (id: number) => deleteInstallation(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["installations"] }),
+    onSuccess: () => {
+      setMutationError(null);
+      queryClient.invalidateQueries({ queryKey: ["installations"] });
+    },
+    onError: (err: Error) => setMutationError(err.message),
   });
 
   if (isError) return <InlineError title="Failed to load installations" />;
@@ -218,12 +227,15 @@ function InstallationsTab() {
   ];
 
   return (
-    <DataTable
-      data={data}
-      columns={columns}
-      filterPlaceholder="Filter installations…"
-      emptyMessage="No installations. POST /internal/apps/{app_id}/installations."
-    />
+    <>
+      {mutationError && <ErrorBanner>{mutationError}</ErrorBanner>}
+      <DataTable
+        data={data}
+        columns={columns}
+        filterPlaceholder="Filter installations…"
+        emptyMessage="No installations. POST /internal/apps/{app_id}/installations."
+      />
+    </>
   );
 }
 

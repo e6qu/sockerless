@@ -206,7 +206,12 @@ func (reg *OCIRegistry) handleBlobUpload(w http.ResponseWriter, r *http.Request,
 			ociError(w, "UNSUPPORTED", err.Error(), http.StatusUnsupportedMediaType)
 			return
 		}
-		full := append(upload.Data, data...)
+		// Non-aliasing concat: `append(upload.Data, …)` could write into the
+		// stored OCIUpload.Data backing array (MemoryStore.Get returns the value
+		// with its reference fields shared), corrupting it for a concurrent
+		// Get/Update. Allocate a fresh buffer so the finalize is independent.
+		full := make([]byte, 0, len(upload.Data)+len(data))
+		full = append(append(full, upload.Data...), data...)
 		if !reg.storeBlob(w, upload.Repo, digest, full) {
 			reg.Uploads.Delete(uploadID)
 			return
@@ -312,10 +317,10 @@ func (reg *OCIRegistry) handleManifest(w http.ResponseWriter, r *http.Request, r
 		if contentType == "" {
 			contentType = "application/vnd.docker.distribution.manifest.v2+json"
 		}
+		// putManifestRaw fires OnManifestPut under manifestMu so a concurrent
+		// DELETE of the same digest can't race the control-plane row
+		// registration against the data-plane alias writes.
 		reg.putManifestRaw(repo, ref, contentType, data)
-		if reg.OnManifestPut != nil {
-			reg.OnManifestPut(repo, ref, contentType, data)
-		}
 		w.Header().Set("Docker-Content-Digest", ociDigest(data))
 		w.Header().Set("Location", fmt.Sprintf("/v2/%s/manifests/%s", repo, ociDigest(data)))
 		w.Header().Set("Content-Length", "0")
@@ -358,6 +363,13 @@ func (reg *OCIRegistry) putManifestRaw(repo, ref, contentType string, data []byt
 	byDigest := m
 	byDigest.Ref = digest
 	reg.Manifests.Put(repo+":"+digest, byDigest)
+	// Fire the control-plane hook while still holding manifestMu so it is
+	// serialized against a concurrent DELETE of the same digest (which also
+	// takes manifestMu). OnManifestPut registers a cloud image row and must not
+	// re-enter the manifest store under this lock.
+	if reg.OnManifestPut != nil {
+		reg.OnManifestPut(repo, ref, contentType, data)
+	}
 }
 
 func (reg *OCIRegistry) handleTagsList(w http.ResponseWriter, r *http.Request, repo string) {

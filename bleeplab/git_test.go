@@ -2,6 +2,7 @@ package bleeplab
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -77,8 +78,8 @@ func TestGitCloneSeededProject(t *testing.T) {
 		t.Fatalf("open cloned file: %v", err)
 	}
 	defer f.Close()
-	got := make([]byte, len(ci))
-	if _, err := f.Read(got); err != nil {
+	got, err := io.ReadAll(f)
+	if err != nil {
 		t.Fatalf("read cloned file: %v", err)
 	}
 	if string(got) != ci {

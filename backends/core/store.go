@@ -194,8 +194,13 @@ type Store struct {
 	ImageManifestLayers sync.Map // imageID → []ManifestLayerEntry
 	IPAlloc             *IPAllocator
 	RenameMu            sync.Mutex
-	RestartHook         func(containerID string, exitCode int) bool
-	pidCounter          atomic.Int64 // incrementing PID counter
+	// PathMappingsMu guards mutations of the per-container inner maps
+	// stored in PathMappings. The sync.Map only protects the outer key
+	// slot, not the inner map[string]string, so writers must clone the
+	// inner map under this lock and Store the new snapshot (copy-on-write)
+	// while readers range over the immutable snapshot they Load.
+	PathMappingsMu sync.Mutex
+	pidCounter     atomic.Int64 // incrementing PID counter
 }
 
 // InvocationResult captures the outcome of a single FaaS invocation so
@@ -302,23 +307,7 @@ func (st *Store) StartLock(id string) *sync.Mutex {
 	return m.(*sync.Mutex)
 }
 
-// StopContainer transitions a container to the exited state and closes wait channels.
-// If a RestartHook is set and returns true, the container is restarted instead of exiting.
-func (st *Store) StopContainer(id string, exitCode int) {
-	// Cancel health check goroutine if running
-	if cancel, ok := st.HealthChecks.LoadAndDelete(id); ok {
-		cancel.(context.CancelFunc)()
-	}
-
-	// Check restart policy before transitioning to exited
-	if st.RestartHook != nil && st.RestartHook(id, exitCode) {
-		return
-	}
-
-	st.forceStop(id, exitCode)
-}
-
-// ForceStopContainer transitions a container to exited, bypassing any restart policy.
+// ForceStopContainer transitions a container to exited and closes wait channels.
 // Used by explicit stop/kill handlers where the user intends to stop the container.
 func (st *Store) ForceStopContainer(id string, exitCode int) {
 	if cancel, ok := st.HealthChecks.LoadAndDelete(id); ok {

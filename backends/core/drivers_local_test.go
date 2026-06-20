@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/rs/zerolog"
@@ -135,4 +137,46 @@ func TestLocalFilesystemDriver_StatPath(t *testing.T) {
 	if info.Size() != 7 {
 		t.Errorf("expected size 7, got %d", info.Size())
 	}
+}
+
+// TestAddPathMapping_ConcurrentNoCrash drives concurrent writers and
+// readers against the same container's path mappings. Before the
+// copy-on-write fix, addPathMapping mutated the inner map in place while
+// resolveContainerPath ranged over it, so the race detector (and, in
+// production, the runtime) reported "concurrent map writes" /
+// "concurrent map iteration and map write" — a fatal, unrecoverable
+// crash of the whole process. With the fix every writer Stores a fresh
+// snapshot under PathMappingsMu and readers only range over immutable
+// snapshots.
+func TestAddPathMapping_ConcurrentNoCrash(t *testing.T) {
+	store := NewStore()
+	containerID := GenerateID()
+
+	const writers = 8
+	const readers = 8
+	const iterations = 200
+
+	var wg sync.WaitGroup
+	wg.Add(writers + readers)
+
+	for w := 0; w < writers; w++ {
+		go func(w int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				cp := "/data/" + strconv.Itoa(w) + "/" + strconv.Itoa(i)
+				addPathMapping(store, containerID, cp, "/host"+cp)
+			}
+		}(w)
+	}
+
+	for r := 0; r < readers; r++ {
+		go func() {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				_ = resolveContainerPath(containerID, "/data/0/0/file", store)
+			}
+		}()
+	}
+
+	wg.Wait()
 }

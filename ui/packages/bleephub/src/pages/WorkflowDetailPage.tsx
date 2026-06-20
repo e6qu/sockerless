@@ -1,6 +1,6 @@
 import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
-import { DataTable, LogViewer, Spinner, StatusBadge } from "@sockerless/ui-core/components";
+import { DataTable, InlineError, LogViewer, Spinner, StatusBadge } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { fetchWorkflowDetail, fetchWorkflowLogs } from "../api.js";
 import type { BleephubWorkflowJob } from "../types.js";
@@ -16,7 +16,11 @@ export function WorkflowDetailPage() {
     enabled: !!id,
     refetchInterval: 3000,
   });
-  const { data: logs } = useQuery({
+  const {
+    data: logs,
+    isError: logsIsError,
+    error: logsError,
+  } = useQuery({
     queryKey: ["workflow-logs", id],
     queryFn: () => fetchWorkflowLogs(id!),
     enabled: !!id,
@@ -141,7 +145,19 @@ export function WorkflowDetailPage() {
         emptyMessage="No jobs in this workflow."
       />
 
-      {logs && Object.keys(logs).length > 0 && (
+      {logsIsError && (
+        // A failed log fetch must not render as "no logs exist" — say so.
+        <section className="mt-8">
+          <SectionLabel>Logs</SectionLabel>
+          <InlineError
+            inline
+            title="Failed to load logs"
+            detail={logsError instanceof Error ? logsError.message : String(logsError)}
+          />
+        </section>
+      )}
+
+      {!logsIsError && logs && Object.keys(logs).length > 0 && (
         <section className="mt-8">
           <SectionLabel>Logs</SectionLabel>
           <div className="space-y-4">

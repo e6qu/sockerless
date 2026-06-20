@@ -421,7 +421,7 @@ type HostConfig struct {
 	CapAdd            []string                 `json:"CapAdd,omitempty"`
 	CapDrop           []string                 `json:"CapDrop,omitempty"`
 	CgroupnsMode      string                   `json:"CgroupnsMode,omitempty"`
-	ConsoleSize       [2]uint                  `json:"ConsoleSize,omitempty"`
+	ConsoleSize       *[2]uint                 `json:"ConsoleSize,omitempty"`
 	CPUPeriod         int64                    `json:"CpuPeriod,omitempty"`
 	CPUQuota          int64                    `json:"CpuQuota,omitempty"`
 	CPUShares         int64                    `json:"CpuShares,omitempty"`

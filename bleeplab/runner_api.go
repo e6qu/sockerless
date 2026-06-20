@@ -88,9 +88,10 @@ func (s *Server) handleJobRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	job := s.dequeueJobLocked()
+	lastUpdate := s.nextID
 	s.mu.Unlock()
 
-	w.Header().Set("X-GitLab-Last-Update", strconv.Itoa(s.nextID))
+	w.Header().Set("X-GitLab-Last-Update", strconv.Itoa(lastUpdate))
 	if job == nil {
 		w.WriteHeader(http.StatusNoContent)
 		return

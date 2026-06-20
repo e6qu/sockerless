@@ -114,7 +114,10 @@ func ConvertHostConfig(hc container.HostConfig) api.HostConfig {
 		Links:             hc.Links,
 		PublishAllPorts:   hc.PublishAllPorts,
 		CgroupnsMode:      string(hc.CgroupnsMode),
-		ConsoleSize:       hc.ConsoleSize,
+	}
+	if hc.ConsoleSize != [2]uint{} {
+		cs := hc.ConsoleSize
+		result.ConsoleSize = &cs
 	}
 	return result
 }

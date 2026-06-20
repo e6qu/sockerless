@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -312,7 +313,21 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 	// override does the right thing: docker forwards to the upstream
 	// daemon; BaseServer's default reads s.Store + WaitChs.
 	flushWaitHeaders(w)
-	resp, err := s.self.ContainerWait(ref, condition)
+	// Prefer the context-aware variant so a client that disconnects after
+	// issuing the wait releases the parked goroutine. Backends whose
+	// ContainerWait embeds *BaseServer (every non-docker backend) satisfy
+	// the optional interface; the docker passthrough threads cancellation
+	// through its own SDK call. Either way, the api.Backend interface stays
+	// unchanged.
+	var resp *api.ContainerWaitResponse
+	var err error
+	if cw, ok := s.self.(interface {
+		ContainerWaitCtx(ctx context.Context, ref string, condition string) (*api.ContainerWaitResponse, error)
+	}); ok {
+		resp, err = cw.ContainerWaitCtx(r.Context(), ref, condition)
+	} else {
+		resp, err = s.self.ContainerWait(ref, condition)
+	}
 	if err != nil {
 		// Headers already sent; signal failure via -1 exit code.
 		writeWaitBody(w, -1)
