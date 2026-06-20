@@ -25,12 +25,16 @@ type childReaper struct {
 	mu      sync.Mutex
 	waiters map[int]chan syscall.WaitStatus
 	logger  zerolog.Logger
+	sigCh   chan os.Signal
+	stop    chan struct{}
 }
 
 func newChildReaper(logger zerolog.Logger) *childReaper {
 	return &childReaper{
 		waiters: make(map[int]chan syscall.WaitStatus),
 		logger:  logger,
+		sigCh:   make(chan os.Signal, 1),
+		stop:    make(chan struct{}),
 	}
 }
 
@@ -57,11 +61,19 @@ func (r *childReaper) startAndRegister(start func() (int, error)) (<-chan syscal
 
 // run installs the SIGCHLD handler and reaps children. For each reaped PID it
 // delivers the status to a registered owner (and unregisters it) or discards
-// it as a genuine orphan. It runs for the lifetime of the agent.
+// it as a genuine orphan. It runs for the lifetime of the agent (or until
+// Stop is called, which detaches the SIGCHLD handler and ends the loop —
+// used by tests and by a graceful agent shutdown so the process-wide
+// Wait4(-1) reaper doesn't outlive its owner and steal unrelated children).
 func (r *childReaper) run() {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGCHLD)
-	for range sigCh {
+	signal.Notify(r.sigCh, syscall.SIGCHLD)
+	for {
+		select {
+		case <-r.stop:
+			signal.Stop(r.sigCh)
+			return
+		case <-r.sigCh:
+		}
 		for {
 			var status syscall.WaitStatus
 			pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
@@ -71,6 +83,13 @@ func (r *childReaper) run() {
 			r.deliver(pid, status)
 		}
 	}
+}
+
+// Stop detaches the SIGCHLD handler and ends the run loop. Safe to call once;
+// after Stop the reaper performs no further Wait4(-1) so it can no longer reap
+// children belonging to anything else in the process.
+func (r *childReaper) Stop() {
+	close(r.stop)
 }
 
 func (r *childReaper) deliver(pid int, status syscall.WaitStatus) {

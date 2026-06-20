@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2020 filed - 1976 fixed - 2 open - 12 false positives.**
+**2024 filed - 1980 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2024~~ | P3 | scripts — `check-simulator-tests.sh` HandleFunc enforcement scanned `_test.go` files (self-found) | guard false-positive | the new HandleFunc rule diffed `'simulators/*.go'` (incl. test files), so a throwaway route in a soak/test fixture (e.g. `GET /boom`) was flagged as a real endpoint needing SDK/CLI/TF tests; now scans only the production `changed_go` set (already excludes `_test.go`). |
+| ~~2023~~ | P2 | AWS sim CloudWatch — metric-filter pattern tokenizer infinite-loop (hang/DoS) (fuzzing) | hang | a lone `&` or `|` (e.g. `filterPattern={0&}`) hit the word-scanner, which treats `&`/`|` as a delimiter and breaks with no progress → the `for i<len(s)` loop spun forever, hanging the sim goroutine. **Fixed:** emit the stray byte as a single-char token + advance when the word scan makes no progress. Found by `FuzzCWLogPatternMatches`; crashing input committed as a regression seed. |
+| ~~2022~~ | HIGH | sim shared — `OpenDB` applied `busy_timeout`/`journal_mode`/`synchronous` via `db.Exec("PRAGMA …")`, which configures only the one pooled connection it ran on (concurrency soak) | SQLITE_BUSY under load | `database/sql` opens further pool connections for concurrent reads that inherited `busy_timeout=0`, so a read connection holding a WAL read lock made a concurrent `SQLiteStore.Put` fail immediately with `database is locked (SQLITE_BUSY)` → `fatalDBErr` panic → 500. Moved all PRAGMAs into the DSN (`?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)`) so the driver applies them to every connection, + `db.Ping()` to surface a bad path eagerly. Found by `TestStoreMixedOpsSoak` (-race, 64 goroutines). Fixed in all 3 shared `db.go` copies. |
+| ~~2021~~ | P3 | backend-core — `StreamCloudLogs` log-follow poller did unguarded `id[:12]` in 6 `Debug()` calls → slice-out-of-range panic in the goroutine for any container ID < 12 chars (concurrency soak) | uncatchable panic | a short/truncated container ID crashed the follow-stream poller goroutine (panic in a goroutine tears down the process, `recover()` can't catch it); added `logShortID()` (the guarded `len>12` pattern the rest of core already uses) at all 6 sites. Found by `TestLogFollowDisconnectNoLeak`. |
 | ~~2020~~ | P3 | scripts — `check-spec-violations.sh` passed vacuously when the validator never ran (audit) | guard false-negative | absent report now FAILs (validator never armed) vs present-empty PASS (ran, clean); the report file's existence is the run-marker. |
 | ~~2019~~ | P3 | scripts — `check-simulator-tests.sh` test-match was trivially satisfiable + undeterminable-cloud silently skipped (audit) | guard false-negative | now requires a call/assertion context (`.Op(`/`"kebab"`), and an undeterminable-cloud op is a hard fail. |
 | ~~2018~~ | P3 | workflows — 8 jobs (6 live-tests + publish + release) had no `timeout-minutes` (audit, BUG-1878 class) | unbounded job | bounded every job (45/30/20 min) so a hung live/release job can't run to the 6 h default burning cloud/release resources. |

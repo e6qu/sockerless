@@ -236,6 +236,15 @@ func cwPatTokenize(s string) []cwPatTok {
 				}
 				i++
 			}
+			if i == start {
+				// A lone '&' / '|' (not doubled into && / ||) reaches here: it is
+				// a delimiter for the word scanner but matches no operator case, so
+				// it would be consumed zero times — an infinite loop. Emit the stray
+				// byte as a word token and advance to guarantee forward progress.
+				toks = append(toks, cwPatTok{cwPatWord, s[i : i+1]})
+				i++
+				continue
+			}
 			toks = append(toks, cwPatTok{cwPatWord, s[start:i]})
 		}
 	}

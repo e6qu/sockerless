@@ -75,10 +75,10 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 
 		entries, cursor, err := fetch(ctx, params, nil)
 		if err != nil {
-			s.Logger.Debug().Err(err).Str("container", id[:12]).Msg("cloud-logs initial fetch error")
+			s.Logger.Debug().Err(err).Str("container", logShortID(id)).Msg("cloud-logs initial fetch error")
 			return
 		}
-		s.Logger.Debug().Str("container", id[:12]).Int("entries", len(entries)).Msg("cloud-logs initial fetch")
+		s.Logger.Debug().Str("container", logShortID(id)).Int("entries", len(entries)).Msg("cloud-logs initial fetch")
 
 		// Apply tail filtering.
 		if params.Tail >= 0 && len(entries) > params.Tail {
@@ -88,7 +88,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 		for i, e := range entries {
 			n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
 			if werr != nil {
-				s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("idx", i).Int("len", n).Msg("cloud-logs initial write error — pipe likely closed")
+				s.Logger.Debug().Err(werr).Str("container", logShortID(id)).Int("idx", i).Int("len", n).Msg("cloud-logs initial write error — pipe likely closed")
 				return
 			}
 		}
@@ -132,11 +132,11 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 					time.Sleep(3 * time.Second)
 					var newEntries []CloudLogEntry
 					newEntries, cursor, _ = fetch(ctx, params, cursor)
-					s.Logger.Debug().Str("container", id[:12]).Int("iter", i).Int("entries", len(newEntries)).Msg("cloud-logs settle fetch")
+					s.Logger.Debug().Str("container", logShortID(id)).Int("iter", i).Int("entries", len(newEntries)).Msg("cloud-logs settle fetch")
 					for j, e := range newEntries {
 						n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
 						if werr != nil {
-							s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("iter", i).Int("idx", j).Int("len", n).Msg("cloud-logs settle write error — pipe closed")
+							s.Logger.Debug().Err(werr).Str("container", logShortID(id)).Int("iter", i).Int("idx", j).Int("len", n).Msg("cloud-logs settle write error — pipe closed")
 							return
 						}
 					}
@@ -148,11 +148,11 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 			if err != nil {
 				continue
 			}
-			s.Logger.Debug().Str("container", id[:12]).Int("entries", len(entries)).Msg("cloud-logs follow fetch")
+			s.Logger.Debug().Str("container", logShortID(id)).Int("entries", len(entries)).Msg("cloud-logs follow fetch")
 			for i, e := range entries {
 				n, werr := io.WriteString(pw, params.FormatLine(e.Message, e.Timestamp))
 				if werr != nil {
-					s.Logger.Debug().Err(werr).Str("container", id[:12]).Int("idx", i).Int("len", n).Msg("cloud-logs follow write error — pipe closed")
+					s.Logger.Debug().Err(werr).Str("container", logShortID(id)).Int("idx", i).Int("len", n).Msg("cloud-logs follow write error — pipe closed")
 					return
 				}
 			}
@@ -160,6 +160,18 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 	}()
 
 	return pr, nil
+}
+
+// logShortID returns the first 12 characters of a container ID for log
+// context, without panicking on an ID shorter than 12 characters. Container
+// IDs are normally 64 hex, but a caller-supplied short ref (or a backend that
+// keys on a truncated id) must not crash the log-follow poller goroutine with
+// a slice-out-of-range — an uncatchable panic that would tear down the process.
+func logShortID(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // streamBufferedLogs creates a pipe reader that writes LogBuffers data
