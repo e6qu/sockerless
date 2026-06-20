@@ -366,13 +366,14 @@ func handlePSPublish(w http.ResponseWriter, r *http.Request, project, topic stri
 			if sub.Topic != tName {
 				continue
 			}
-			psQueues.Update(sub.Name, func(q *psQueue) {
+			// The queue entry is created when the subscription is created, so
+			// Update normally succeeds and appends atomically under the store
+			// write lock. If the entry is ever absent (e.g. created before this
+			// invariant existed), seed it with this message.
+			if !psQueues.Update(sub.Name, func(q *psQueue) {
 				q.Subscription = sub.Name
 				q.Messages = append(q.Messages, m)
-			})
-			// Ensure the queue entry exists (Update is a no-op
-			// when the key isn't present in the store).
-			if _, ok := psQueues.Get(sub.Name); !ok {
+			}) {
 				psQueues.Put(sub.Name, psQueue{Subscription: sub.Name, Messages: []PSMessage{m}})
 			}
 		}
@@ -424,6 +425,11 @@ func handlePSCreateSubscription(w http.ResponseWriter, r *http.Request) {
 		RetryPolicy:              req.RetryPolicy,
 	}
 	psSubscriptions.Put(s.Name, s)
+	// Seed the delivery queue so concurrent publishes append atomically via
+	// Update (which is a no-op when the key is absent).
+	if _, ok := psQueues.Get(s.Name); !ok {
+		psQueues.Put(s.Name, psQueue{Subscription: s.Name})
+	}
 	sim.WriteJSON(w, http.StatusOK, s)
 }
 
@@ -618,7 +624,10 @@ func handlePSSeek(w http.ResponseWriter, r *http.Request, subName string) {
 		Snapshot string `json:"snapshot,omitempty"`
 		Time     string `json:"time,omitempty"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		gcpError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

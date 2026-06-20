@@ -168,6 +168,15 @@ func handleASDescribeAutoScalingGroups(w http.ResponseWriter, r *http.Request) {
 		groups = autoScalingGroups.List()
 		sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
 	}
+	if filters := asDescribeFilters(r); len(filters) > 0 {
+		kept := groups[:0]
+		for _, asg := range groups {
+			if asgMatchesFilters(asg, filters) {
+				kept = append(kept, asg)
+			}
+		}
+		groups = kept
+	}
 	page, next := awsPageExplicit(groups, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
 	var items strings.Builder
 	for _, asg := range page {
@@ -470,6 +479,82 @@ func autoscalingParamList(r *http.Request, prefix string) []string {
 		out = append(out, v)
 	}
 	return out
+}
+
+type asFilter struct {
+	Name   string
+	Values []string
+}
+
+// asDescribeFilters parses the DescribeAutoScalingGroups Filters.member.N.{Name,
+// Values.member.M} query structure. Supported names match the real API:
+// "tag-key", "tag-value", and "tag:<key>".
+func asDescribeFilters(r *http.Request) []asFilter {
+	var out []asFilter
+	for i := 1; ; i++ {
+		name := r.FormValue(fmt.Sprintf("Filters.member.%d.Name", i))
+		if name == "" {
+			break
+		}
+		out = append(out, asFilter{
+			Name:   name,
+			Values: autoscalingParamList(r, fmt.Sprintf("Filters.member.%d.Values.member", i)),
+		})
+	}
+	return out
+}
+
+// asgMatchesFilters reports whether asg satisfies every filter (AND across
+// filters; OR across a filter's values), matching real AWS filter semantics.
+func asgMatchesFilters(asg AutoScalingGroup, filters []asFilter) bool {
+	for _, f := range filters {
+		if !asgMatchesOneFilter(asg, f) {
+			return false
+		}
+	}
+	return true
+}
+
+func asgMatchesOneFilter(asg AutoScalingGroup, f asFilter) bool {
+	valueMatch := func(v string) bool {
+		if len(f.Values) == 0 {
+			return true
+		}
+		for _, want := range f.Values {
+			if want == v {
+				return true
+			}
+		}
+		return false
+	}
+	switch {
+	case f.Name == "tag-key":
+		for _, t := range asg.Tags {
+			if valueMatch(t.Key) {
+				return true
+			}
+		}
+		return false
+	case f.Name == "tag-value":
+		for _, t := range asg.Tags {
+			if valueMatch(t.Value) {
+				return true
+			}
+		}
+		return false
+	case strings.HasPrefix(f.Name, "tag:"):
+		key := strings.TrimPrefix(f.Name, "tag:")
+		for _, t := range asg.Tags {
+			if t.Key == key && valueMatch(t.Value) {
+				return true
+			}
+		}
+		return false
+	default:
+		// Unknown filter name: real AWS rejects it, but a conservative
+		// no-match keeps the sim from silently returning everything.
+		return false
+	}
 }
 
 func asAtoiDefault(raw string, def int) int {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -66,11 +67,18 @@ func TestAppHookConfig_GetPatch(t *testing.T) {
 }
 
 func TestAppHookDeliveries_ListGetRedeliver(t *testing.T) {
-	// Spin up a sink to receive the redelivery.
+	// Spin up a sink to receive the redelivery. The handler runs on the
+	// httptest server's goroutine while the test body polls below, so the
+	// capture must be synchronized.
+	var gotMu sync.Mutex
 	var got []byte
+	gotLen := func() int { gotMu.Lock(); defer gotMu.Unlock(); return len(got) }
 	sink := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got = make([]byte, r.ContentLength)
-		_, _ = r.Body.Read(got)
+		buf := make([]byte, r.ContentLength)
+		_, _ = r.Body.Read(buf)
+		gotMu.Lock()
+		got = buf
+		gotMu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer sink.Close()
@@ -154,7 +162,7 @@ func TestAppHookDeliveries_ListGetRedeliver(t *testing.T) {
 	}
 	// Sink fires async — quick poll.
 	deadline := time.Now().Add(2 * time.Second)
-	for len(got) == 0 && time.Now().Before(deadline) {
+	for gotLen() == 0 && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
 	}
 

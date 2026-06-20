@@ -76,9 +76,13 @@ func handleELBv2DescribeRules(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case len(ruleArns) > 0:
 		for _, arn := range ruleArns {
-			if rl, ok := elbv2Rules.Get(arn); ok {
-				rules = append(rules, rl)
+			rl, ok := elbv2Rules.Get(arn)
+			if !ok {
+				elbv2ErrorXML(w, "RuleNotFound", "Rule '"+arn+"' not found",
+					http.StatusBadRequest, sim.RequestID(r.Context()))
+				return
 			}
+			rules = append(rules, rl)
 		}
 	case listenerArn != "":
 		listener, ok := elbv2Listeners.Get(listenerArn)

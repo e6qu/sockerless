@@ -304,7 +304,13 @@ func registerCloudFunctions(srv *sim.Server) {
 
 		responseBody := []byte("{}")
 		if fn != nil {
-			project := strings.Split(fn.Name, "/")[1] // projects/{project}/...
+			parts := strings.Split(fn.Name, "/") // projects/{project}/...
+			if len(parts) < 2 {
+				sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+					"function %q has a malformed resource name", fn.Name)
+				return
+			}
+			project := parts[1]
 
 			var exitCode int
 			responseBody, exitCode = invokeCloudFunctionProcess(fn, project, functionID)
@@ -709,7 +715,10 @@ func postBootstrapWithRetry(ctx context.Context, bootstrapURL string, body io.Re
 		resp, err := httpClient.Do(req)
 		if err == nil {
 			defer resp.Body.Close()
-			respBytes, _ := io.ReadAll(resp.Body)
+			respBytes, readErr := io.ReadAll(resp.Body)
+			if readErr != nil {
+				return nil, -1, fmt.Errorf("read bootstrap response: %w", readErr)
+			}
 			return respBytes, bootstrapExitCode(resp), nil
 		}
 		lastErr = err

@@ -316,20 +316,22 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				Type: labelConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
-					return i["labels"], nil
+					return repaginateConnection(i["labels"], p.Args), nil
 				},
 			},
 			"assignees": &graphql.Field{
 				Type: assigneeConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
-					return i["assignees"], nil
+					return repaginateConnection(i["assignees"], p.Args), nil
 				},
 			},
 			"milestone": &graphql.Field{
@@ -364,12 +366,14 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"comments": &graphql.Field{
 				Type: commentConnectionType,
 				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"first":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":   &graphql.ArgumentConfig{Type: graphql.Int},
+					"after":  &graphql.ArgumentConfig{Type: graphql.String},
+					"before": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i := p.Source.(map[string]interface{})
-					return i["comments"], nil
+					return repaginateConnection(i["comments"], p.Args), nil
 				},
 			},
 			"reactionGroups": &graphql.Field{
@@ -725,21 +729,12 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				labels = filtered
 			}
 
-			nodes := make([]map[string]interface{}, 0, len(labels))
-			for _, l := range labels {
-				nodes = append(nodes, labelToGQL(l))
+			first := 0
+			if f, ok := p.Args["first"].(int); ok {
+				first = f
 			}
-
-			return map[string]interface{}{
-				"nodes":      nodes,
-				"totalCount": len(nodes),
-				"pageInfo": map[string]interface{}{
-					"hasNextPage":     false,
-					"hasPreviousPage": false,
-					"startCursor":     nil,
-					"endCursor":       nil,
-				},
-			}, nil
+			after, _ := p.Args["after"].(string)
+			return paginateGQL(labels, first, after, labelToGQL), nil
 		},
 	})
 
@@ -777,21 +772,12 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				milestones = filtered
 			}
 
-			nodes := make([]map[string]interface{}, 0, len(milestones))
-			for _, ms := range milestones {
-				nodes = append(nodes, milestoneToGQL(ms))
+			first := 0
+			if f, ok := p.Args["first"].(int); ok {
+				first = f
 			}
-
-			return map[string]interface{}{
-				"nodes":      nodes,
-				"totalCount": len(nodes),
-				"pageInfo": map[string]interface{}{
-					"hasNextPage":     false,
-					"hasPreviousPage": false,
-					"startCursor":     nil,
-					"endCursor":       nil,
-				},
-			}, nil
+			after, _ := p.Args["after"].(string)
+			return paginateGQL(milestones, first, after, milestoneToGQL), nil
 		},
 	})
 
@@ -826,21 +812,16 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				users = filtered
 			}
 
-			nodes := make([]map[string]interface{}, 0, len(users))
-			for _, u := range users {
-				nodes = append(nodes, userToGraphQL(u))
-			}
+			// assignableUsers iterates a Go map, so order is nondeterministic;
+			// sort by ID to make cursor pagination stable across pages.
+			sort.Slice(users, func(a, b int) bool { return users[a].ID < users[b].ID })
 
-			return map[string]interface{}{
-				"nodes":      nodes,
-				"totalCount": len(nodes),
-				"pageInfo": map[string]interface{}{
-					"hasNextPage":     false,
-					"hasPreviousPage": false,
-					"startCursor":     nil,
-					"endCursor":       nil,
-				},
-			}, nil
+			first := 0
+			if f, ok := p.Args["first"].(int); ok {
+				first = f
+			}
+			after, _ := p.Args["after"].(string)
+			return paginateGQL(users, first, after, userToGraphQL), nil
 		},
 	})
 
@@ -1203,6 +1184,9 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 			commentNodes = append(commentNodes, commentToGQLLocked(c, st))
 		}
 	}
+	// st.Comments is a map, so iteration order is nondeterministic; sort for
+	// stable cursor pagination (oldest first, like GitHub's comments feed).
+	sortGQLNodesByCreatedAt(commentNodes)
 
 	// Resolve repo for URL
 	repo := st.Repos[issue.RepoID]
@@ -1316,6 +1300,7 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
+		"_dbID":               c.ID,
 		"nodeID":              c.NodeID,
 		"body":                c.Body,
 		"url":                 "",

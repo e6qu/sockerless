@@ -94,8 +94,9 @@ func handleDashboardGCSBuckets(w http.ResponseWriter, _ *http.Request) {
 	bkts := gcsBuckets.List()
 	out := make([]bucketSummary, len(bkts))
 	for i, b := range bkts {
+		name, _ := b.Data["name"].(string)
 		out[i] = bucketSummary{
-			Name: b.Data["name"].(string),
+			Name: name,
 			Data: b.Data,
 		}
 	}

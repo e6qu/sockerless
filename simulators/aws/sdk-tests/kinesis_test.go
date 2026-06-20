@@ -188,3 +188,118 @@ func TestKinesisSDK_StreamLifecycleAndRecords(t *testing.T) {
 	}, 2*time.Second, 50*time.Millisecond)
 	assert.Equal(t, map[string]bool{"one": true, "two": true, "three": true}, bodies)
 }
+
+// TestKinesisSDK_ListShardsPagination drives ListShards across multiple pages
+// via MaxResults + NextToken, asserting the page caps, the truncation token,
+// the strictly-after resume, and that the union covers every shard exactly once.
+func TestKinesisSDK_ListShardsPagination(t *testing.T) {
+	client := kinesisClient()
+	streamName := "sdk-kinesis-shard-paging"
+
+	_, err := client.CreateStream(ctx, &kinesis.CreateStreamInput{
+		StreamName: aws.String(streamName),
+		ShardCount: aws.Int32(5),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeleteStream(ctx, &kinesis.DeleteStreamInput{StreamName: aws.String(streamName)})
+	})
+
+	// First page: cap at 2, expect a NextToken because 5 > 2.
+	page1, err := client.ListShards(ctx, &kinesis.ListShardsInput{
+		StreamName: aws.String(streamName),
+		MaxResults: aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.Shards, 2)
+	require.NotEmpty(t, aws.ToString(page1.NextToken), "ListShards must return NextToken when truncated")
+
+	// Resume strictly after the first page; per the SDK contract, NextToken is
+	// specified WITHOUT StreamName.
+	page2, err := client.ListShards(ctx, &kinesis.ListShardsInput{
+		MaxResults: aws.Int32(2),
+		NextToken:  page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.Shards, 2)
+	require.NotEmpty(t, aws.ToString(page2.NextToken))
+
+	page3, err := client.ListShards(ctx, &kinesis.ListShardsInput{
+		MaxResults: aws.Int32(2),
+		NextToken:  page2.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page3.Shards, 1, "final page holds the remaining shard")
+	assert.Empty(t, aws.ToString(page3.NextToken), "no NextToken on the last page")
+
+	seen := map[string]int{}
+	for _, p := range [][]ktypes.Shard{page1.Shards, page2.Shards, page3.Shards} {
+		for _, s := range p {
+			seen[aws.ToString(s.ShardId)]++
+		}
+	}
+	assert.Len(t, seen, 5, "every shard appears exactly once across pages")
+	for id, n := range seen {
+		assert.Equal(t, 1, n, "shard %s must not repeat across pages", id)
+	}
+
+	// ExclusiveStartShardId resumes after a given shard id (legacy cursor).
+	exclusive, err := client.ListShards(ctx, &kinesis.ListShardsInput{
+		StreamName:            aws.String(streamName),
+		ExclusiveStartShardId: page1.Shards[1].ShardId,
+	})
+	require.NoError(t, err)
+	require.Len(t, exclusive.Shards, 3)
+	assert.Greater(t, aws.ToString(exclusive.Shards[0].ShardId), aws.ToString(page1.Shards[1].ShardId))
+}
+
+// TestKinesisSDK_ListStreamsPagination drives ListStreams across pages via
+// Limit + NextToken and asserts HasMoreStreams + the cursor advance.
+func TestKinesisSDK_ListStreamsPagination(t *testing.T) {
+	client := kinesisClient()
+	names := []string{
+		"sdk-paging-stream-aaa",
+		"sdk-paging-stream-bbb",
+		"sdk-paging-stream-ccc",
+	}
+	for _, n := range names {
+		_, err := client.CreateStream(ctx, &kinesis.CreateStreamInput{
+			StreamName: aws.String(n),
+			ShardCount: aws.Int32(1),
+		})
+		require.NoError(t, err)
+		nm := n
+		t.Cleanup(func() {
+			_, _ = client.DeleteStream(ctx, &kinesis.DeleteStreamInput{StreamName: aws.String(nm)})
+		})
+	}
+
+	// Page through ALL streams two-at-a-time, collecting only our three names
+	// (other tests' streams may coexist). Verify our trio appears once each and
+	// that pagination terminates.
+	collected := map[string]int{}
+	var token *string
+	pages := 0
+	for {
+		out, err := client.ListStreams(ctx, &kinesis.ListStreamsInput{
+			Limit:     aws.Int32(2),
+			NextToken: token,
+		})
+		require.NoError(t, err)
+		assert.LessOrEqual(t, len(out.StreamNames), 2, "Limit caps the page")
+		for _, n := range out.StreamNames {
+			collected[n]++
+		}
+		if !aws.ToBool(out.HasMoreStreams) {
+			assert.Empty(t, aws.ToString(out.NextToken), "no NextToken once HasMoreStreams is false")
+			break
+		}
+		require.NotEmpty(t, aws.ToString(out.NextToken), "HasMoreStreams=true must carry a NextToken")
+		token = out.NextToken
+		pages++
+		require.Less(t, pages, 100, "pagination must terminate")
+	}
+	for _, n := range names {
+		assert.Equal(t, 1, collected[n], "stream %s must appear exactly once across pages", n)
+	}
+}

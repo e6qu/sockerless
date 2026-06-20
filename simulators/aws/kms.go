@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -680,12 +681,33 @@ func handleKMSDeleteAlias(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleKMSListAliases(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId  string `json:"KeyId"`
+		Limit  int    `json:"Limit"`
+		Marker string `json:"Marker"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	// When KeyId is set, resolve it (it may be an ARN or key id) so aliases
+	// filter to that one key, matching the real ListAliases KeyId parameter.
+	var filterKeyID string
+	if req.KeyId != "" {
+		keyID, ok := resolveKMSKey(req.KeyId)
+		if !ok {
+			sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+				"Key %q does not exist", req.KeyId)
+			return
+		}
+		filterKeyID = keyID
+	}
 	out := make([]map[string]any, 0)
 	// `sim.Store` doesn't expose key iteration; instead, walk every
 	// known key and ask listAliasesForKey which alias names point at
 	// it. The alias store is bounded in practice (one alias per key
 	// in most operator setups) so the O(keys × aliases) scan is fine.
 	for _, key := range kmsKeys.List() {
+		if filterKeyID != "" && key.KeyId != filterKeyID {
+			continue
+		}
 		// For each key, find aliases pointing at it.
 		for _, alias := range listAliasesForKey(key.KeyId) {
 			out = append(out, map[string]any{
@@ -695,7 +717,16 @@ func handleKMSListAliases(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Aliases": out})
+	// Stable order so the offset-based Marker pages each alias once.
+	sort.Slice(out, func(i, j int) bool {
+		return out[i]["AliasName"].(string) < out[j]["AliasName"].(string)
+	})
+	page, next := awsPageExplicit(out, req.Marker, req.Limit)
+	resp := map[string]any{"Aliases": page, "Truncated": next != ""}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 // listAliasesForKey scans the alias store for entries pointing at

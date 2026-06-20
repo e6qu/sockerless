@@ -689,31 +689,35 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				Type: prLabelConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
-					return pr["labels"], nil
+					return repaginateConnection(pr["labels"], p.Args), nil
 				},
 			},
 			"assignees": &graphql.Field{
 				Type: prAssigneeConnectionType,
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
-					return pr["assignees"], nil
+					return repaginateConnection(pr["assignees"], p.Args), nil
 				},
 			},
 			"reviews": &graphql.Field{
 				Type: prReviewConnectionType,
 				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"first":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":   &graphql.ArgumentConfig{Type: graphql.Int},
+					"after":  &graphql.ArgumentConfig{Type: graphql.String},
+					"before": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
-					return pr["reviews"], nil
+					return repaginateConnection(pr["reviews"], p.Args), nil
 				},
 			},
 			"reviewRequests": &graphql.Field{
@@ -729,12 +733,14 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"comments": &graphql.Field{
 				Type: prCommentConnectionType,
 				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"last":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"first":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":   &graphql.ArgumentConfig{Type: graphql.Int},
+					"after":  &graphql.ArgumentConfig{Type: graphql.String},
+					"before": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr := p.Source.(map[string]interface{})
-					return pr["comments"], nil
+					return repaginateConnection(pr["comments"], p.Args), nil
 				},
 			},
 			"reviewThreads": &graphql.Field{
@@ -1288,7 +1294,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			}
 			after, _ := p.Args["after"].(string)
 
-			nodes := s.searchIssuesAndPRs(q)
+			nodes := s.searchIssuesAndPRs(q, ghUserFromContext(p.Context))
 			return paginateGQL(nodes, limit, after, func(n map[string]interface{}) map[string]interface{} {
 				return n
 			}), nil
@@ -1746,11 +1752,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			reviewNodes = append(reviewNodes, prReviewSourceLocked(r, st))
 		}
 	}
-	sort.Slice(reviewNodes, func(a, b int) bool {
-		ca, _ := reviewNodes[a]["createdAt"].(string)
-		cb, _ := reviewNodes[b]["createdAt"].(string)
-		return ca < cb
-	})
+	sortGQLNodesByCreatedAt(reviewNodes)
 
 	// latestReviews — the newest review per author.
 	latestByAuthor := map[int]*PullRequestReview{}
@@ -1786,6 +1788,9 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			prCommentNodes = append(prCommentNodes, prCommentToGQLLocked(c, st))
 		}
 	}
+	// st.Comments is a map, so iteration order is nondeterministic; sort for
+	// stable cursor pagination (oldest first, like GitHub's comments feed).
+	sortGQLNodesByCreatedAt(prCommentNodes)
 
 	// Review threads — inline file-line review comments grouped by thread.
 	reviewThreadNodes := reviewThreadsForGraphQL(st.PRReviewComments.ListThreads(pr.ID), st)
@@ -2047,6 +2052,7 @@ func prCommentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		}
 	}
 	return map[string]interface{}{
+		"_dbID":               c.ID,
 		"nodeID":              c.NodeID,
 		"body":                c.Body,
 		"url":                 "",
@@ -2133,6 +2139,7 @@ func prReviewSourceLocked(r *PullRequestReview, st *Store) map[string]interface{
 		reviewAuthor = userToGraphQL(u)
 	}
 	return map[string]interface{}{
+		"_dbID":             r.ID,
 		"nodeID":            r.NodeID,
 		"body":              r.Body,
 		"state":             r.State,
@@ -2230,7 +2237,7 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 // zero results IS the true answer. A qualifier bleephub cannot evaluate at
 // all yields honest empty results (never an over-matching ignore). Bare
 // keywords match title/body substrings. Results are newest-first.
-func (s *Server) searchIssuesAndPRs(query string) []map[string]interface{} {
+func (s *Server) searchIssuesAndPRs(query string, viewer *User) []map[string]interface{} {
 	type searchSpec struct {
 		repos      []string // repo full names; empty = all
 		states     []string // OPEN / CLOSED / MERGED; empty = all
@@ -2316,6 +2323,56 @@ func (s *Server) searchIssuesAndPRs(query string) []map[string]interface{} {
 	}
 
 	s.store.mu.RLock()
+	// Real GitHub search only returns results from repositories the
+	// authenticated viewer can access; a private repo the viewer can't read
+	// must never contribute issues/PRs. Mirror canReadRepo's logic inline
+	// (the store RLock is already held here, so we access its maps directly
+	// rather than calling the helpers, which take the lock themselves).
+	repoReadable := func(repo *Repo) bool {
+		if repo == nil {
+			return false
+		}
+		if !repo.Private {
+			return true
+		}
+		if viewer == nil {
+			return false
+		}
+		if repo.Owner != nil && repo.Owner.ID == viewer.ID {
+			return true
+		}
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) != 2 {
+			return false
+		}
+		if m := s.store.Memberships[membershipKey(parts[0], viewer.ID)]; m != nil && m.State == MembershipStateActive {
+			return true
+		}
+		// Team-level pull access.
+		if org := s.store.OrgsByLogin[parts[0]]; org != nil {
+			for _, team := range s.store.TeamsBySlug {
+				if team.OrgID != org.ID || !permissionAtLeast(team.Permission, TeamPermissionPull) {
+					continue
+				}
+				inRepo := false
+				for _, rn := range team.RepoNames {
+					if rn == repo.FullName {
+						inRepo = true
+						break
+					}
+				}
+				if !inRepo {
+					continue
+				}
+				for _, mid := range team.MemberIDs {
+					if mid == viewer.ID {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
 	// Candidate repos.
 	var repoIDs []int
 	if len(spec.repos) > 0 {
@@ -2331,7 +2388,9 @@ func (s *Server) searchIssuesAndPRs(query string) []map[string]interface{} {
 	}
 	repoSet := make(map[int]bool, len(repoIDs))
 	for _, id := range repoIDs {
-		repoSet[id] = true
+		if repoReadable(s.store.Repos[id]) {
+			repoSet[id] = true
+		}
 	}
 
 	loginOf := func(userID int) string {

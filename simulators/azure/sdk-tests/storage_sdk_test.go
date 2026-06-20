@@ -496,3 +496,81 @@ func TestStorageSDK_TableLifecycleAndPagedLists(t *testing.T) {
 	_, err = tableClient.DeleteEntity(ctx, "p1", "r1", nil)
 	require.NoError(t, err)
 }
+
+// TestStorageSDK_TableQueryFilterAndPaging verifies the Tables Query Entities
+// endpoint honors server-side $filter and pages results via $top + the
+// x-ms-continuation-* tokens, the way aztables drives the data plane.
+func TestStorageSDK_TableQueryFilterAndPaging(t *testing.T) {
+	account := "sdktablequeryacct"
+	tableName := "QueryTable"
+
+	serviceClient, err := aztables.NewServiceClientWithNoCredential(storageSDKURL(t, account, "table"),
+		&aztables.ClientOptions{ClientOptions: storageSDKOptions()})
+	require.NoError(t, err)
+
+	_, err = serviceClient.CreateTable(ctx, tableName, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = serviceClient.DeleteTable(ctx, tableName, nil) })
+
+	tableClient := serviceClient.NewClient(tableName)
+
+	// Five entities across two partitions.
+	type row struct{ pk, rk, color string }
+	rows := []row{
+		{"pA", "r1", "red"},
+		{"pA", "r2", "blue"},
+		{"pA", "r3", "red"},
+		{"pB", "r1", "green"},
+		{"pB", "r2", "red"},
+	}
+	for _, rw := range rows {
+		body, err := json.Marshal(map[string]any{
+			"PartitionKey": rw.pk,
+			"RowKey":       rw.rk,
+			"Color":        rw.color,
+		})
+		require.NoError(t, err)
+		_, err = tableClient.AddEntity(ctx, body, nil)
+		require.NoError(t, err)
+	}
+
+	// $filter on a system property (PartitionKey) — only pA's 3 rows.
+	pager := tableClient.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: to.Ptr("PartitionKey eq 'pA'"),
+	})
+	var pkFiltered int
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		pkFiltered += len(page.Entities)
+	}
+	require.Equal(t, 3, pkFiltered, "PartitionKey eq 'pA' should match exactly 3 entities")
+
+	// $filter on a user property (Color) — the 3 red rows across partitions.
+	pager = tableClient.NewListEntitiesPager(&aztables.ListEntitiesOptions{
+		Filter: to.Ptr("Color eq 'red'"),
+	})
+	var redFiltered int
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		redFiltered += len(page.Entities)
+	}
+	require.Equal(t, 3, redFiltered, "Color eq 'red' should match exactly 3 entities")
+
+	// $top=2 must page: first page has 2, and continuation returns the rest.
+	pager = tableClient.NewListEntitiesPager(&aztables.ListEntitiesOptions{Top: to.Ptr(int32(2))})
+	first, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, first.Entities, 2, "first $top=2 page must hold exactly 2 entities")
+	require.True(t, pager.More(), "more pages must remain after the first $top=2 page")
+
+	var total int
+	pager = tableClient.NewListEntitiesPager(&aztables.ListEntitiesOptions{Top: to.Ptr(int32(2))})
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		require.NoError(t, err)
+		total += len(page.Entities)
+	}
+	require.Equal(t, len(rows), total, "paging over $top=2 must visit every entity exactly once")
+}

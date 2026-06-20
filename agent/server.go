@@ -120,6 +120,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = conn.Close() }()
 	defer s.registry.CleanupConn(conn)
 
+	// Bound inbound message size: gorilla defaults to unlimited, so a peer
+	// could otherwise declare an arbitrarily large frame and OOM the agent.
+	conn.SetReadLimit(maxWSMessageBytes)
+
 	s.logger.Debug().Str("remote", r.RemoteAddr).Msg("websocket connection established")
 
 	connMu := &sync.Mutex{}
@@ -248,6 +252,7 @@ func (s *Server) ReverseConnect(callbackURL string) error {
 // serveReverseConn handles messages on a single reverse WebSocket connection.
 func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 	defer s.registry.CleanupConn(conn)
+	conn.SetReadLimit(maxWSMessageBytes)
 
 	connMu := &sync.Mutex{}
 	router := NewRouter(s.registry, s.mp, s.reaper, s.logger)

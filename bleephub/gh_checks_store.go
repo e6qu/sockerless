@@ -114,7 +114,15 @@ func (st *Store) CreateCheckSuite(repoKey, headBranch, headSHA string, appID int
 func (st *Store) GetCheckSuite(id int64) *CheckSuite {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	return st.CheckSuites[id]
+	suite := st.CheckSuites[id]
+	if suite == nil {
+		return nil
+	}
+	// Return a snapshot, not the live pointer: the engine mutates the stored
+	// suite's fields under the lock, so a caller that reads fields off the
+	// returned pointer after RUnlock would race those writes.
+	cp := *suite
+	return &cp
 }
 
 // ListCheckSuitesForCommit returns every suite recorded against (repoKey, headSHA),
@@ -130,7 +138,10 @@ func (st *Store) ListCheckSuitesForCommit(repoKey, headSHA string, appID int) []
 		if appID > 0 && s.AppID != appID {
 			continue
 		}
-		out = append(out, s)
+		// Snapshot, not the live pointer — the engine mutates suite fields
+		// under the lock; callers read fields off the result after RUnlock.
+		cp := *s
+		out = append(out, &cp)
 	}
 	return out
 }
@@ -193,7 +204,13 @@ func (st *Store) CreateCheckRun(repoKey, headSHA, name string, appID int, suiteI
 func (st *Store) GetCheckRun(id int64) *CheckRun {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	return st.CheckRuns[id]
+	cr := st.CheckRuns[id]
+	if cr == nil {
+		return nil
+	}
+	// Snapshot, not the live pointer — see GetCheckSuite.
+	cp := *cr
+	return &cp
 }
 
 // UpdateCheckRun mutates a check run via callback. Returns false if not found.
@@ -229,7 +246,9 @@ func (st *Store) ListCheckRunsForCommit(repoKey, headSHA, status, conclusion str
 		if appID > 0 && cr.AppID != appID {
 			continue
 		}
-		out = append(out, cr)
+		// Snapshot, not the live pointer — see ListCheckSuitesForCommit.
+		cp := *cr
+		out = append(out, &cp)
 	}
 	return out
 }
@@ -241,7 +260,9 @@ func (st *Store) ListCheckRunsForSuite(suiteID int64) []*CheckRun {
 	out := []*CheckRun{}
 	for _, cr := range st.CheckRuns {
 		if cr.SuiteID == suiteID {
-			out = append(out, cr)
+			// Snapshot, not the live pointer — see ListCheckSuitesForCommit.
+			cp := *cr
+			out = append(out, &cp)
 		}
 	}
 	return out

@@ -272,6 +272,12 @@ func TestAuditLogRecords(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
 
+	// The audit log is restricted to org owners; make the admin PAT's user an
+	// owner of both orgs under test so the gated reads succeed.
+	admin := s.store.LookupUserByLogin("admin")
+	s.store.CreateOrg(admin, "test-org", "Test Org", "")
+	s.store.CreateOrg(admin, "other-org", "Other Org", "")
+
 	s.recordAuditEvent("test.action", "admin", "test-org", map[string]interface{}{"key": "val"})
 
 	w := doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log", "")
@@ -321,6 +327,11 @@ func TestAuditLogFromRepoCreate(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
 	s.registerGHRepoRoutes()
+
+	// Audit-log reads require org-owner rights; make the admin PAT's user the
+	// owner of the org being queried.
+	admin := s.store.LookupUserByLogin("admin")
+	s.store.CreateOrg(admin, "default", "Default Org", "")
 
 	resp := doMiscReq(s, "POST", "/api/v3/user/repos", `{"name":"audit-test-repo"}`)
 	if resp.Code != 201 {

@@ -420,7 +420,10 @@ func handleSpannerCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Session spannerSession `json:"session"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
 	sessionID := generateUUID()
 	sess := req.Session
 	sess.Name = spannerSessionName(project, instance, database, sessionID)

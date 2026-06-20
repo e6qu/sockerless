@@ -1,6 +1,9 @@
 package simulator
 
 import (
+	"path"
+	"strings"
+
 	"github.com/docker/docker/api/types/container"
 )
 
@@ -114,24 +117,68 @@ func (p SandboxProfile) Apply(hostCfg *container.HostConfig, containerCfg *conta
 	return nil
 }
 
-// isDockerSocketBind matches the common host docker.sock paths.
-// Used by DenyDockerSocket. Conservative: matches a substring rather
-// than parsing the bind format, to catch e.g. `-v
-// /var/run/docker.sock:/var/run/docker.sock`.
+// dockerSocketPaths are the canonical host paths that expose the container
+// runtime's control socket. A bind whose normalized source is one of these —
+// OR is an ancestor directory that contains one (e.g. `/var/run` or `/`) — is
+// denied, since mounting the parent directory exposes the socket inside it.
+var dockerSocketPaths = []string{
+	"/var/run/docker.sock",
+	"/run/docker.sock",
+	"/var/run/podman/podman.sock",
+	"/run/podman/podman.sock",
+}
+
+// isDockerSocketBind reports whether a Docker bind spec exposes the host's
+// container-runtime socket. It parses the bind's source path and normalizes
+// `.`/`..`/duplicate-slash segments before matching, so path-traversal variants
+// (`/var/run/../run/docker.sock`) and parent-directory mounts (`/var/run`, `/`)
+// can't slip a socket through that a naive substring check would miss.
 func isDockerSocketBind(bind string) bool {
-	const sock1 = "/var/run/docker.sock"
-	const sock2 = "/run/docker.sock"
-	for i := 0; i+len(sock1) <= len(bind); i++ {
-		if bind[i:i+len(sock1)] == sock1 {
+	src := bindSource(bind)
+	if src == "" {
+		return false
+	}
+	// Normalize: collapse `.`/`..`/`//`. path.Clean keeps a leading slash for
+	// absolute paths and resolves traversal lexically.
+	src = path.Clean(src)
+	for _, sock := range dockerSocketPaths {
+		if src == sock {
 			return true
 		}
-	}
-	for i := 0; i+len(sock2) <= len(bind); i++ {
-		if bind[i:i+len(sock2)] == sock2 {
+		// Ancestor-directory mount: `src` is a prefix directory of the socket
+		// path, so the socket is reachable inside the mount. Guard the boundary
+		// with a trailing slash so `/var/run2` doesn't match `/var/run`.
+		if src == "/" || strings.HasPrefix(sock, ensureTrailingSlash(src)) {
 			return true
 		}
 	}
 	return false
+}
+
+// bindSource extracts the host-side source path from a Docker `-v` bind spec.
+// Docker binds are `src:dst[:opts]`; a named volume (`name:dst`) has a source
+// that isn't an absolute path, which we ignore (it can't reach a host socket).
+// Windows-style `C:\` sources are not relevant on the Linux daemons the sim
+// drives.
+func bindSource(bind string) string {
+	i := strings.IndexByte(bind, ':')
+	var src string
+	if i < 0 {
+		src = bind
+	} else {
+		src = bind[:i]
+	}
+	if !strings.HasPrefix(src, "/") {
+		return "" // named volume or relative — cannot reference a host socket
+	}
+	return src
+}
+
+func ensureTrailingSlash(p string) string {
+	if strings.HasSuffix(p, "/") {
+		return p
+	}
+	return p + "/"
 }
 
 // Sentinel errors so callers can distinguish + tests assert.

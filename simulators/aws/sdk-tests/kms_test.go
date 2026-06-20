@@ -93,6 +93,46 @@ func TestKMS_AliasResolution(t *testing.T) {
 	assert.True(t, found, "ListAliases must include the just-created alias")
 }
 
+// TestKMS_ListAliasesKeyIdFilter proves ListAliases honors the KeyId parameter,
+// returning only aliases pointing at that key. The sim used to ignore KeyId and
+// return every alias in the account.
+func TestKMS_ListAliasesKeyIdFilter(t *testing.T) {
+	c := kmsClient()
+
+	keyA, err := c.CreateKey(ctx, &kms.CreateKeyInput{Description: aws.String("filter-a")})
+	require.NoError(t, err)
+	keyB, err := c.CreateKey(ctx, &kms.CreateKeyInput{Description: aws.String("filter-b")})
+	require.NoError(t, err)
+	idA, idB := *keyA.KeyMetadata.KeyId, *keyB.KeyMetadata.KeyId
+
+	_, err = c.CreateAlias(ctx, &kms.CreateAliasInput{AliasName: aws.String("alias/filter-a"), TargetKeyId: aws.String(idA)})
+	require.NoError(t, err)
+	defer c.DeleteAlias(ctx, &kms.DeleteAliasInput{AliasName: aws.String("alias/filter-a")})
+	_, err = c.CreateAlias(ctx, &kms.CreateAliasInput{AliasName: aws.String("alias/filter-b"), TargetKeyId: aws.String(idB)})
+	require.NoError(t, err)
+	defer c.DeleteAlias(ctx, &kms.DeleteAliasInput{AliasName: aws.String("alias/filter-b")})
+
+	out, err := c.ListAliases(ctx, &kms.ListAliasesInput{KeyId: aws.String(idA)})
+	require.NoError(t, err)
+	require.NotEmpty(t, out.Aliases)
+	for _, a := range out.Aliases {
+		assert.Equal(t, idA, aws.ToString(a.TargetKeyId),
+			"KeyId filter must return only aliases for key %s, got alias for %s", idA, aws.ToString(a.TargetKeyId))
+	}
+	// The filtered result must include filter-a and exclude filter-b.
+	var sawA, sawB bool
+	for _, a := range out.Aliases {
+		switch aws.ToString(a.AliasName) {
+		case "alias/filter-a":
+			sawA = true
+		case "alias/filter-b":
+			sawB = true
+		}
+	}
+	assert.True(t, sawA, "KeyId=idA must list alias/filter-a")
+	assert.False(t, sawB, "KeyId=idA must not list alias/filter-b")
+}
+
 // TestKMS_GenerateDataKey covers envelope encryption — caller gets both
 // the plaintext data key (to use locally) and a wrapped ciphertext (to
 // store alongside the encrypted payload).

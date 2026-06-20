@@ -106,6 +106,9 @@ func NewReverseAgentConnWithHandlers(ws *websocket.Conn, system, dropped func(Me
 // delivering and tears it down (closing rc.done) so blocked callers fail and
 // retry instead of hanging. Must be called before readLoop starts.
 func (rc *ReverseAgentConn) startKeepalive() {
+	// Bound inbound frame size so a compromised/buggy agent can't OOM the
+	// backend with an oversized frame (gorilla defaults to unlimited).
+	rc.ws.SetReadLimit(maxWSMessageBytes)
 	_ = rc.ws.SetReadDeadline(time.Now().Add(reverseAgentPongWait))
 	rc.ws.SetPongHandler(func(string) error {
 		return rc.ws.SetReadDeadline(time.Now().Add(reverseAgentPongWait))

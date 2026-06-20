@@ -101,3 +101,51 @@ func TestRDS_Snapshot_Lifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, desc2.DBSnapshots)
 }
+
+// TestRDS_RestoreFromSnapshot_PortFromEngine proves a snapshot restore derives
+// the new instance's port from the source engine, not a hardcoded 5432. A MySQL
+// snapshot must restore to port 3306.
+func TestRDS_RestoreFromSnapshot_PortFromEngine(t *testing.T) {
+	c := rdsClient()
+	ctx := context.Background()
+
+	_, err := c.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("port-src"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+		Engine:               aws.String("mysql"),
+		MasterUsername:       aws.String("admin"),
+		AllocatedStorage:     aws.Int32(20),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
+			DBInstanceIdentifier: aws.String("port-src"), SkipFinalSnapshot: aws.Bool(true),
+		})
+	})
+
+	_, err = c.CreateDBSnapshot(ctx, &rds.CreateDBSnapshotInput{
+		DBSnapshotIdentifier: aws.String("port-snap"),
+		DBInstanceIdentifier: aws.String("port-src"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDBSnapshot(ctx, &rds.DeleteDBSnapshotInput{DBSnapshotIdentifier: aws.String("port-snap")})
+	})
+
+	restore, err := c.RestoreDBInstanceFromDBSnapshot(ctx, &rds.RestoreDBInstanceFromDBSnapshotInput{
+		DBInstanceIdentifier: aws.String("port-restored"),
+		DBSnapshotIdentifier: aws.String("port-snap"),
+		DBInstanceClass:      aws.String("db.t3.micro"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, restore.DBInstance)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
+			DBInstanceIdentifier: aws.String("port-restored"), SkipFinalSnapshot: aws.Bool(true),
+		})
+	})
+	assert.Equal(t, "mysql", aws.ToString(restore.DBInstance.Engine))
+	require.NotNil(t, restore.DBInstance.Endpoint)
+	assert.Equal(t, int32(3306), aws.ToInt32(restore.DBInstance.Endpoint.Port),
+		"MySQL snapshot must restore to port 3306, not a hardcoded 5432")
+}

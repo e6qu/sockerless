@@ -500,12 +500,20 @@ func sfnExecute(definition, input string, cancel <-chan struct{}) (string, strin
 	if err := json.Unmarshal([]byte(definition), &def); err != nil {
 		return "", "FAILED", err
 	}
-	return sfnRunDef(def, input, cancel)
+	return sfnRunDefDepth(def, input, cancel, 0)
 }
 
-// sfnRunDef runs one (sub-)state-machine. Parallel/Map recurse through it for
-// their branches/iterations.
-func sfnRunDef(def sfnDefinition, input string, cancel <-chan struct{}) (string, string, error) {
+// sfnMaxNestingDepth bounds Parallel/Map branch recursion so a pathologically
+// nested definition can't overflow the goroutine stack and crash the process.
+// AWS's own ASL nesting limit is far below this.
+const sfnMaxNestingDepth = 200
+
+// sfnRunDefDepth runs one (sub-)state-machine. Parallel/Map recurse through it
+// for their branches/iterations, carrying a depth counter that bounds nesting.
+func sfnRunDefDepth(def sfnDefinition, input string, cancel <-chan struct{}, depth int) (string, string, error) {
+	if depth > sfnMaxNestingDepth {
+		return "", "FAILED", fmt.Errorf("state machine nesting depth exceeded %d", sfnMaxNestingDepth)
+	}
 	current := def.StartAt
 	data := input
 	for steps := 0; steps < 1000; steps++ {
@@ -587,7 +595,7 @@ func sfnRunDef(def sfnDefinition, input string, cancel <-chan struct{}) (string,
 		case "Parallel":
 			results := make([]json.RawMessage, len(state.Branches))
 			for i, branch := range state.Branches {
-				out, status, err := sfnRunDef(branch, data, cancel)
+				out, status, err := sfnRunDefDepth(branch, data, cancel, depth+1)
 				if err != nil || status != "SUCCEEDED" {
 					if status == "ABORTED" {
 						return "", "ABORTED", errSFNAborted
@@ -619,7 +627,7 @@ func sfnRunDef(def sfnDefinition, input string, cancel <-chan struct{}) (string,
 			}
 			results := make([]json.RawMessage, len(items))
 			for i, item := range items {
-				out, status, err := sfnRunDef(*proc, string(item), cancel)
+				out, status, err := sfnRunDefDepth(*proc, string(item), cancel, depth+1)
 				if err != nil || status != "SUCCEEDED" {
 					if status == "ABORTED" {
 						return "", "ABORTED", errSFNAborted

@@ -125,16 +125,21 @@ func (s *Server) handleCompleteRequest(w http.ResponseWriter, r *http.Request) {
 	if result != "" {
 		job.Result = result
 	}
+	// Snapshot under the lock: job fields are concurrently written by the
+	// broker (e.g. recordJobAgentLocked sets AgentID), so reads after the
+	// unlock must use locals, not the shared *Job.
+	jobIDSnap := job.ID
+	jobResultSnap := job.Result
 	s.store.mu.Unlock()
 
 	s.logger.Info().
 		Int64("requestId", reqID).
-		Str("job_id", job.ID).
+		Str("job_id", jobIDSnap).
 		Str("result", result).
 		Msg("job request completed (DELETE)")
 
 	// Notify workflow engine of job completion
-	s.onJobCompleted(r.Context(), job.ID, job.Result)
+	s.onJobCompleted(r.Context(), jobIDSnap, jobResultSnap)
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -171,20 +176,26 @@ func (s *Server) handleFinishJob(w http.ResponseWriter, r *http.Request) {
 		} else {
 			job.Result = "Succeeded"
 		}
+		// Snapshot under the lock: the broker concurrently mutates these
+		// fields (recordJobAgentLocked writes AgentID), so every read after
+		// the unlock must come from a local, not the shared *Job.
+		jobIDSnap := job.ID
+		jobResultSnap := job.Result
+		jobAgentSnap := job.AgentID
 		s.store.mu.Unlock()
-		s.logger.Info().Str("jobId", job.ID).Str("result", job.Result).Msg("job status updated")
+		s.logger.Info().Str("jobId", jobIDSnap).Str("result", jobResultSnap).Msg("job status updated")
 
 		// Capture output variables from the runner
-		s.captureJobOutputs(job.ID, body)
+		s.captureJobOutputs(jobIDSnap, body)
 
 		// Notify workflow engine of job completion
-		s.onJobCompleted(r.Context(), job.ID, job.Result)
+		s.onJobCompleted(r.Context(), jobIDSnap, jobResultSnap)
 
 		// Ephemeral runners exist for exactly one job — real GitHub
 		// auto-deregisters them after it completes (the dispatcher's
 		// one-runner-per-job model depends on the registration not
 		// lingering as an offline zombie).
-		s.removeEphemeralAgent(job.AgentID)
+		s.removeEphemeralAgent(jobAgentSnap)
 	} else {
 		s.logger.Warn().Str("planId", planID).Msg("could not find job for finish")
 	}

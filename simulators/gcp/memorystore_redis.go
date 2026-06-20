@@ -97,7 +97,10 @@ func handleMSRedisUpgrade(w http.ResponseWriter, r *http.Request, id string) {
 	var req struct {
 		RedisVersion string `json:"redisVersion"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
 	if req.RedisVersion != "" {
 		inst.RedisVersion = req.RedisVersion
 	}

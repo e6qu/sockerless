@@ -295,6 +295,19 @@ func eventOf(wf *Workflow) string {
 // detail comes from the timeline records the runner reported for the
 // job's plan.
 func (s *Server) workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string) map[string]any {
+	// The job's mutable fields (Status/Result/StartedAt/CompletedAt/
+	// DisplayName) are written by the workflow engine under store.mu, and this
+	// renderer runs both on request goroutines and on the async webhook-drain
+	// goroutine. Hold the read lock across the whole render so those reads are
+	// synchronized with the engine's writes.
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	return s.workflowJobJSONLocked(wf, wfJob, baseURL, repoName)
+}
+
+// workflowJobJSONLocked renders the job payload assuming the caller already
+// holds store.mu (read or write).
+func (s *Server) workflowJobJSONLocked(wf *Workflow, wfJob *WorkflowJob, baseURL, repoName string) map[string]any {
 	repoPath := repoName
 	if wf.RepoFullName != "" {
 		repoPath = wf.RepoFullName
@@ -332,7 +345,7 @@ func (s *Server) workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repo
 		"started_at":        startedAt,
 		"completed_at":      completedAt,
 		"name":              wfJob.DisplayName,
-		"steps":             s.jobStepsJSON(wfJob),
+		"steps":             s.jobStepsJSONLocked(wfJob),
 		"check_run_url":     fmt.Sprintf("%s/check-runs/%d", apiBase, id),
 		"labels":            labelsForJob(wfJob),
 		"runner_id":         nil,
@@ -342,13 +355,12 @@ func (s *Server) workflowJobJSON(wf *Workflow, wfJob *WorkflowJob, baseURL, repo
 	}
 }
 
-// jobStepsJSON renders the GitHub-shape `steps` array from the timeline
+// jobStepsJSONLocked renders the GitHub-shape `steps` array from the timeline
 // records the runner uploaded for the job's plan (Type "Task", in Order).
 // A job whose runner hasn't reported records yet has no step truth to
-// serve, so the array is empty — step state is never fabricated.
-func (s *Server) jobStepsJSON(wfJob *WorkflowJob) []map[string]any {
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
+// serve, so the array is empty — step state is never fabricated. The caller
+// holds store.mu (the only caller is workflowJobJSONLocked).
+func (s *Server) jobStepsJSONLocked(wfJob *WorkflowJob) []map[string]any {
 	tasks := s.taskRecordsForJobLocked(wfJob.JobID)
 	steps := make([]map[string]any, 0, len(tasks))
 	for i, rec := range tasks {

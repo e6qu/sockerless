@@ -737,13 +737,21 @@ func registerNetwork(srv *sim.Server) {
 		}
 		natGateways.Put(resourceID, gw)
 		for _, ref := range gw.Properties.Subnets {
-			if sn, ok := azureSubnets.Get(ref.ID); ok {
+			// Persist the subnet→NAT-gateway association atomically so the
+			// subnet's own Get and azureSubnetsForNatGateway both observe it.
+			if !azureSubnets.Update(ref.ID, func(sn *Subnet) {
 				sn.Properties.NatGateway = &SubResource{ID: gw.ID}
-				if err := azureConfigureRealNATGatewayForSubnet(r.Context(), sn); err != nil {
-					natGateways.Delete(resourceID)
-					sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to program real NAT gateway fabric: %v", err)
-					return
-				}
+			}) {
+				continue
+			}
+			sn, _ := azureSubnets.Get(ref.ID)
+			if err := azureConfigureRealNATGatewayForSubnet(r.Context(), sn); err != nil {
+				natGateways.Delete(resourceID)
+				azureSubnets.Update(ref.ID, func(sn *Subnet) {
+					sn.Properties.NatGateway = nil
+				})
+				sim.AzureErrorf(w, "OperationNotAllowed", http.StatusServiceUnavailable, "failed to program real NAT gateway fabric: %v", err)
+				return
 			}
 		}
 		sim.WriteJSON(w, http.StatusOK, gw)

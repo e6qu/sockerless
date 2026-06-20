@@ -88,6 +88,11 @@ type kmsStoredCryptoKey struct {
 	Algorithm        string            `json:"algorithm"`
 	Labels           map[string]string `json:"labels,omitempty"`
 	PrimaryVersionID string            `json:"primaryVersionId"`
+	// VersionSeq is the monotonic version counter for this key. Reserved
+	// atomically under the store write lock so concurrent
+	// CreateCryptoKeyVersion calls never collide on a version ID. Stored only;
+	// kmsAssembleCryptoKey never copies it onto the wire CryptoKey.
+	VersionSeq int `json:"versionSeq,omitempty"`
 }
 
 // kmsKeyMaterialRecord holds the (non-exportable) AES key bytes for a
@@ -222,6 +227,7 @@ func registerCloudKMS(srv *sim.Server) {
 				return
 			}
 			stored.PrimaryVersionID = ver
+			stored.VersionSeq = 1
 		}
 		kmsCryptoKeys.Put(name, stored)
 		sim.WriteJSON(w, http.StatusOK, kmsAssembleCryptoKey(stored))
@@ -357,7 +363,18 @@ func registerCloudKMS(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "CryptoKey %s not found", keyName)
 			return
 		}
-		next := kmsNextVersionID(keyName)
+		// Reserve the next version ID atomically by bumping the per-key counter
+		// under the store write lock, so concurrent CreateCryptoKeyVersion calls
+		// never collide on a version ID.
+		var assigned int
+		kmsCryptoKeys.Update(keyName, func(k *kmsStoredCryptoKey) {
+			if k.VersionSeq < kmsHighestVersionID(keyName) {
+				k.VersionSeq = kmsHighestVersionID(keyName)
+			}
+			k.VersionSeq++
+			assigned = k.VersionSeq
+		})
+		next := fmt.Sprintf("%d", assigned)
 		versionID, err := kmsCreateVersion(keyName, next, key.ProtectionLevel, key.Algorithm)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "could not generate key version: %v", err)
@@ -432,9 +449,10 @@ func registerCloudKMS(srv *sim.Server) {
 	})
 }
 
-// kmsNextVersionID returns the next numeric version ID for a key (one past
-// the current highest existing version, or "1" when none exist).
-func kmsNextVersionID(keyName string) string {
+// kmsHighestVersionID returns the highest existing numeric version ID for a
+// key, or 0 when none exist. Used to seed the per-key version counter for keys
+// created before VersionSeq tracking existed.
+func kmsHighestVersionID(keyName string) int {
 	prefix := keyName + "/cryptoKeyVersions/"
 	highest := 0
 	for _, v := range kmsCryptoKeyVersions.List() {
@@ -445,7 +463,7 @@ func kmsNextVersionID(keyName string) string {
 			highest = n
 		}
 	}
-	return fmt.Sprintf("%d", highest+1)
+	return highest
 }
 
 // ----- crypto handlers -----

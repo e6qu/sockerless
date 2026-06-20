@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/md5"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -302,16 +303,76 @@ func handleKinesisDescribeStreamSummary(w http.ResponseWriter, r *http.Request) 
 }
 
 func handleKinesisListStreams(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Limit                    int    `json:"Limit"`
+		ExclusiveStartStreamName string `json:"ExclusiveStartStreamName"`
+		NextToken                string `json:"NextToken"`
+	}
+	_ = sim.ReadJSON(r, &req)
+
 	var names []string
 	for _, stream := range kinesisStreams.List() {
 		names = append(names, stream.StreamName)
 	}
 	sort.Strings(names)
-	writeKinesisJSON(w, http.StatusOK, map[string]any{
+
+	// Real Kinesis caps the page at Limit (default/max 100). Both
+	// ExclusiveStartStreamName (legacy cursor) and NextToken (modern cursor,
+	// which the SDK paginator uses) resume after a stream name; NextToken wins
+	// if both are present, matching the service's precedence.
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+	start := req.ExclusiveStartStreamName
+	if req.NextToken != "" {
+		// NextToken is opaque in real Kinesis; decode it back to the
+		// last-returned stream name. ExclusiveStartStreamName is the plain-name
+		// legacy cursor and is used as-is.
+		if name, ok := kinesisDecodeStreamToken(req.NextToken); ok {
+			start = name
+		} else {
+			sim.AWSError(w, "InvalidArgumentException", "Invalid NextToken", http.StatusBadRequest)
+			return
+		}
+	}
+	if start != "" {
+		idx := sort.SearchStrings(names, start)
+		// SearchStrings returns the position of start (or insertion point); skip
+		// past an exact match so we resume strictly after it.
+		for idx < len(names) && names[idx] <= start {
+			idx++
+		}
+		names = names[idx:]
+	}
+
+	hasMore := false
+	if len(names) > limit {
+		names = names[:limit]
+		hasMore = true
+	}
+
+	out := map[string]any{
 		"StreamNames":     names,
-		"HasMoreStreams":  false,
+		"HasMoreStreams":  hasMore,
 		"StreamSummaries": kinesisStreamSummaries(names),
-	})
+	}
+	if hasMore && len(names) > 0 {
+		out["NextToken"] = kinesisEncodeStreamToken(names[len(names)-1])
+	}
+	writeKinesisJSON(w, http.StatusOK, out)
+}
+
+func kinesisEncodeStreamToken(name string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(name))
+}
+
+func kinesisDecodeStreamToken(token string) (string, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
 }
 
 func kinesisStreamSummaries(names []string) []map[string]any {
@@ -326,16 +387,83 @@ func kinesisStreamSummaries(names []string) []map[string]any {
 
 func handleKinesisListShards(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		StreamName string `json:"StreamName"`
-		StreamARN  string `json:"StreamARN"`
+		StreamName            string `json:"StreamName"`
+		StreamARN             string `json:"StreamARN"`
+		MaxResults            int    `json:"MaxResults"`
+		NextToken             string `json:"NextToken"`
+		ExclusiveStartShardId string `json:"ExclusiveStartShardId"`
 	}
 	_ = sim.ReadJSON(r, &req)
-	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
+
+	// NextToken is an opaque cursor; in real Kinesis it encodes the stream
+	// identity and the resume position, so a paginating client supplies only
+	// NextToken (never StreamName/StreamARN). Decode it to recover both.
+	streamName, streamARN, start := req.StreamName, req.StreamARN, req.ExclusiveStartShardId
+	if req.NextToken != "" {
+		tokStream, tokShard, ok := kinesisDecodeShardToken(req.NextToken)
+		if !ok {
+			sim.AWSError(w, "InvalidArgumentException", "Invalid NextToken", http.StatusBadRequest)
+			return
+		}
+		streamName, start = tokStream, tokShard
+		streamARN = ""
+	}
+
+	stream, ok := kinesisStreamByNameOrARN(streamName, streamARN)
 	if !ok {
 		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
 		return
 	}
-	writeKinesisJSON(w, http.StatusOK, map[string]any{"Shards": stream.Shards})
+
+	// Shards are returned in ShardId order so paging is deterministic.
+	shards := make([]KinesisShard, len(stream.Shards))
+	copy(shards, stream.Shards)
+	sort.Slice(shards, func(i, j int) bool { return shards[i].ShardId < shards[j].ShardId })
+
+	// MaxResults caps a page (real Kinesis allows up to 10000; default 10000).
+	maxResults := req.MaxResults
+	if maxResults <= 0 || maxResults > 10000 {
+		maxResults = 10000
+	}
+	if start != "" {
+		idx := 0
+		for idx < len(shards) && shards[idx].ShardId <= start {
+			idx++
+		}
+		shards = shards[idx:]
+	}
+
+	var nextToken string
+	if len(shards) > maxResults {
+		shards = shards[:maxResults]
+		nextToken = kinesisEncodeShardToken(stream.StreamName, shards[len(shards)-1].ShardId)
+	}
+
+	out := map[string]any{"Shards": shards}
+	if nextToken != "" {
+		out["NextToken"] = nextToken
+	}
+	writeKinesisJSON(w, http.StatusOK, out)
+}
+
+// kinesisEncodeShardToken / kinesisDecodeShardToken make ListShards' NextToken
+// an opaque cursor carrying the stream name and the last-returned shard id, so a
+// paginating client resumes by passing only NextToken — matching real Kinesis,
+// whose token must not be combined with StreamName/StreamARN.
+func kinesisEncodeShardToken(streamName, shardID string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(streamName + "\x00" + shardID))
+}
+
+func kinesisDecodeShardToken(token string) (streamName, shardID string, ok bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return "", "", false
+	}
+	parts := strings.SplitN(string(raw), "\x00", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 func handleKinesisPutRecord(w http.ResponseWriter, r *http.Request) {

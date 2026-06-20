@@ -168,13 +168,16 @@ func registerIAM(srv *sim.Server) {
 			ValidBeforeTime: now.AddDate(10, 0, 0).Format(time.RFC3339),
 			KeyType:         "USER_MANAGED",
 		}
-		saKeys.Put(keyName, key)
-
+		// Generate the key material before persisting metadata: if generation
+		// fails, the store must not retain a key that never had private-key
+		// material (a subsequent Get would return a phantom key).
 		privateKeyData, err := gcpMakeSAKeyJSON(project, keyID, email, key.ValidAfterTime, key.ValidBeforeTime)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "generate key: %v", err)
 			return
 		}
+		saKeys.Put(keyName, key)
+
 		resp := key
 		resp.PrivateKeyData = privateKeyData
 		resp.PrivateKeyType = "TYPE_GOOGLE_CREDENTIALS_FILE"

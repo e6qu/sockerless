@@ -36,6 +36,9 @@ func Dial(agentAddr, agentToken string) (*AgentConn, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Bound inbound frame size so a compromised/buggy agent can't OOM the
+	// backend with an oversized frame (gorilla defaults to unlimited).
+	conn.SetReadLimit(maxWSMessageBytes)
 	return &AgentConn{ws: conn}, nil
 }
 

@@ -104,6 +104,41 @@ func TestSandboxDenyDockerSocket(t *testing.T) {
 	}
 }
 
+// TestSandboxDenyDockerSocketBypasses guards the hardened bind matcher against
+// path-traversal and parent-directory-mount bypasses a naive substring check
+// would miss.
+func TestSandboxDenyDockerSocketBypasses(t *testing.T) {
+	deny := []string{
+		"/var/run/../run/docker.sock:/x",        // traversal back to /run
+		"/var/run/./docker.sock:/x",             // dot segment
+		"/var//run//docker.sock:/x",             // duplicate slashes
+		"/var/run:/host/var/run",                // parent-dir mount exposes socket inside
+		"/run:/host/run",                        // parent-dir mount
+		"/:/host",                               // whole-root mount
+		"/run/podman/podman.sock:/run/p.sock",   // podman socket
+		"/var/run/podman/../podman/podman.sock", // podman traversal
+	}
+	for _, bind := range deny {
+		hc := &container.HostConfig{Binds: []string{bind}}
+		if err := SandboxLambda.Apply(hc, &container.Config{}); !errors.Is(err, errSandboxDockerSock) {
+			t.Errorf("bind %q: must be denied, got err=%v", bind, err)
+		}
+	}
+
+	allow := []string{
+		"/var/run2/docker.sock-not:/x", // /var/run2 is not /var/run
+		"/home/user/data:/data",        // unrelated bind
+		"myvolume:/data",               // named volume
+		"/var/log:/var/log:ro",         // unrelated host dir
+	}
+	for _, bind := range allow {
+		hc := &container.HostConfig{Binds: []string{bind}}
+		if err := SandboxLambda.Apply(hc, &container.Config{}); errors.Is(err, errSandboxDockerSock) {
+			t.Errorf("bind %q: must be allowed, got socket-deny error", bind)
+		}
+	}
+}
+
 func TestSandboxPreservesExistingUser(t *testing.T) {
 	// If the caller already set User, the profile shouldn't override
 	// (Fargate, Cloud Run, ACA all let the image's USER win).

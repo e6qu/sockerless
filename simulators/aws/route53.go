@@ -524,16 +524,34 @@ func handleR53DeleteHostedZone(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleR53ListHostedZones(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	maxItems := 100
+	if raw := q.Get("maxitems"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			r53WriteError(w, http.StatusBadRequest, "InvalidInput", "maxitems must be between 1 and 100")
+			return
+		}
+		maxItems = parsed
+	}
+
 	items := []R53HostedZone{}
 	for _, stored := range r53Zones.List() {
 		items = append(items, stored.Zone)
 	}
+	// Stable order so the opaque offset Marker pages each zone exactly once.
+	sort.Slice(items, func(i, j int) bool {
+		return r53ZoneIDFromPath(items[i].Id) < r53ZoneIDFromPath(items[j].Id)
+	})
+
+	page, next := awsPageExplicit(items, q.Get("marker"), maxItems)
 	r53WriteXML(w, http.StatusOK, R53HostedZoneList{
 		Xmlns:       r53Namespace,
-		HostedZones: items,
-		Marker:      "",
-		IsTruncated: false,
-		MaxItems:    "100",
+		HostedZones: page,
+		Marker:      q.Get("marker"),
+		IsTruncated: next != "",
+		NextMarker:  next,
+		MaxItems:    strconv.Itoa(maxItems),
 	})
 }
 
