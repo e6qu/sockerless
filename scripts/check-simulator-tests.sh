@@ -48,8 +48,11 @@ fi
 
 regex_escape() { printf '%s' "$1" | sed 's|[][\\.*^$/]|\\&|g'; }
 
-# Added ('+') lines across changed simulator .go files.
-added_lines=$(git diff "$staged_range" -- 'simulators/*.go' 2>/dev/null \
+# Added ('+') lines across the changed PRODUCTION simulator .go files only
+# (`changed_go` already excludes *_test.go). A route mounted in a _test.go
+# fixture is not a real endpoint and must not require SDK/CLI/terraform coverage.
+# shellcheck disable=SC2086
+added_lines=$(git diff "$staged_range" -- $changed_go 2>/dev/null \
     | grep -E '^\+[^+]' || true)
 
 # Newly-registered operations (Register / RegisterVersioned).
