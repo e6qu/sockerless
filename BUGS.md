@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2091 filed - 2047 fixed - 2 open - 12 false positives.**
+**2092 filed - 2048 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2092~~ | P3 | bleephub — the postgres persistence test was broken AND never ran in CI (skip sweep) | dead/never-run test | `TestPersistence_PostgresRoundTrip` built a malformed DSN (`<url>_db=<name>` with no DB creation) and `BLEEPHUB_TEST_POSTGRES_URL` was set in no workflow, so it always skipped. **Fixed:** rewrote it to CREATE a unique throwaway database, point `BLEEPHUB_DATABASE_URL` at it, round-trip, and drop it; added a `postgres:16-alpine` service to the `test-core` CI job + the env var so it runs for real. |
 | ~~2091~~ | P3 | CI — the ubuntu-runner-bundled `aws` CLI lagged the ECS Express subcommands (launched 2025-11-21) | stale CLI in CI | the Express CLI tests can't run on a CLI without the subcommands. **Fixed properly** by adding an 'Install latest AWS CLI v2' step to the `sim-aws-cli` job so the cli-tests exercise every operation for real — no skip, no in-test workaround. |
 | ~~2090~~ | P3 | AWS sim — ECS Express `taskDefinitionArn` missing from the pinned `ecs.smithy` snapshot | stale spec snapshot | the field IS real (member of `ExpressGatewayServiceConfiguration` in aws-sdk-go-v2 ecs@v1.85.0 + the API docs — 'present for all Express services'); the pinned snapshot (SHA 0016334f) predated it. **Fixed properly** by re-vendoring the latest aws-models ecs.json via `scripts/fetch-aws-spec.sh ecs` (SHA dfa27a6c — has the field + all 4 Express ops); SOURCES.md updated. No allowlist. |
 | ~~2089~~ | P2 | scripts — `check-simulator-tests.sh` false-negative on a large new sim file (self-found) | guard / pipefail SIGPIPE | under `set -o pipefail`, `git diff \| grep '^+[^+]' \| grep -q PATTERN` gave a false negative for a big new file: `grep -q` matched the first line + exited early, SIGPIPE'd the still-writing upstream grep, and pipefail propagated that non-zero as 'no match' — so a 900-line new handler file's registered ops were reported as 'cloud undeterminable'. Fixed all 4 large-producer→`grep -q` sites (op/route cloud-resolution + the two test-reference checks) to capture the filtered output and test `[[ -n ]]` (reads all input, no early exit). |

@@ -125,6 +125,22 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
+    services:
+      # Postgres so bleephub's postgres-backed persistence test runs for real
+      # (it skips when BLEEPHUB_TEST_POSTGRES_URL is unset).
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -135,6 +151,8 @@ jobs:
       - name: Architecture checks
         run: bash scripts/check-cloud-backend-isolation.sh
       - name: Core + API + agent
+        env:
+          BLEEPHUB_TEST_POSTGRES_URL: postgres://ci:ci@localhost:5432/postgres?sslmode=disable
         run: |
           set -e
           run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
