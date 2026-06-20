@@ -503,8 +503,27 @@ func handleBQTableDataList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rowSet, _ := bqRows.Get(bqTableKey(project, dataset, table))
-	start, _ := strconv.Atoi(r.URL.Query().Get("startIndex"))
-	max, _ := strconv.Atoi(r.URL.Query().Get("maxResults"))
+	// Absent params take their defaults (startIndex 0, all rows); a present but
+	// non-numeric/negative value is rejected, as real BigQuery does, rather than
+	// silently parsing to 0.
+	start := 0
+	if s := r.URL.Query().Get("startIndex"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Invalid value for parameter 'startIndex': %s", s)
+			return
+		}
+		start = v
+	}
+	max := 0
+	if s := r.URL.Query().Get("maxResults"); s != "" {
+		v, err := strconv.Atoi(s)
+		if err != nil || v < 0 {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Invalid value for parameter 'maxResults': %s", s)
+			return
+		}
+		max = v
+	}
 	if max <= 0 {
 		max = len(rowSet.Rows)
 	}

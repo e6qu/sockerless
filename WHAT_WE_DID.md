@@ -4,6 +4,36 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-20 - Fidelity: validate invalid/missing required numeric request params
+
+The "no-defaulted-behaviour on invalid input" sweep (offered after round 17). The
+simulators parsed several required numeric request parameters with a discarded
+error, silently defaulting a missing/non-numeric value to 0 instead of returning
+the cloud's validation error.
+
+- **BUG-2093:** CloudWatch `PutMetricAlarm` now rejects EvaluationPeriods < 1, and a
+  single-metric alarm (MetricName set) missing Period, across all three wire
+  protocols (query / awsJson / rpc-v2-cbor) via a shared `cwValidateMetricAlarm`.
+  BigQuery `tabledata.list` rejects a present-but-non-numeric/negative `startIndex`
+  or `maxResults` with HTTP 400 `INVALID_ARGUMENT`; absent params still take their
+  defaults (startIndex 0, all rows). The error codes were verified against the
+  cloudwatch Smithy model and the handlers' existing `MissingParameter` convention,
+  and BigQuery's established `INVALID_ARGUMENT` reason — not guessed. The other ~18
+  silently-defaulted strconv sites are internal (own pagination cursors, stored
+  values, content hashes) and left as-is.
+
+- **BUG-2094 (surfaced by the new validation test):** every CloudWatch rpc-v2-cbor
+  handler (`handleCWCBOR*`, alarms + dashboards) emitted awsJson-shaped errors via
+  `sim.AWSError` — `application/x-amz-json-1.1`, no `Smithy-Protocol` header — so the
+  Go SDK rejected them with "unexpected smithy-protocol response header". Latent
+  because no test had ever triggered a cbor error path (the existing
+  deleted-dashboard test only asserted `err != nil`, which a protocol-parse failure
+  also satisfies). Added `cwWriteCBORError` / `cwWriteCBORErrorf` — `Smithy-Protocol:
+  rpc-v2-cbor` header + a cbor `{__type, message}` body, the exact shape
+  aws-sdk-go-v2's `getProtocolErrorInfo` reads — and routed all 24 cbor error sites
+  through them. The dashboard test now asserts the error deserializes to a proper
+  `ResourceNotFound` API error.
+
 ## 2026-06-20 - Audit + extended-fuzz round 17 — verification-heavy, +11 fuzz targets
 
 A deep audit — five parallel agents across the AWS/GCP/Azure simulators, the cloud

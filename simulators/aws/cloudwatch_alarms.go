@@ -272,6 +272,10 @@ func handleCWJSONPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "MissingParameter", "The parameter ComparisonOperator is required.", http.StatusBadRequest)
 		return
 	}
+	if code, msg, ok := cwValidateMetricAlarm(req.MetricName, req.Period, req.EvaluationPeriods); !ok {
+		sim.AWSError(w, code, msg, http.StatusBadRequest)
+		return
+	}
 	actionsEnabled := true
 	if req.ActionsEnabled != nil {
 		actionsEnabled = *req.ActionsEnabled
@@ -393,10 +397,33 @@ func cwWriteCBOR(w http.ResponseWriter, v any) {
 	_, _ = w.Write(data)
 }
 
+// cwWriteCBORError writes an rpc-v2-cbor protocol error: the Go SDK rejects any
+// response to a cbor request that lacks the `Smithy-Protocol: rpc-v2-cbor`
+// header, and reads the error code from the cbor body's `__type` and the message
+// from `message` (verified against aws-sdk-go-v2 cloudwatch's getProtocolErrorInfo).
+// The plain JSON `sim.AWSError` shape is only valid for the awsJson surfaces.
+func cwWriteCBORError(w http.ResponseWriter, code, message string, status int) {
+	data, err := cwEncMode.Marshal(map[string]any{"__type": code, "message": message})
+	if err != nil {
+		sim.AWSError(w, "InternalFailure", "Failed to encode error", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/cbor")
+	w.Header().Set("Smithy-Protocol", "rpc-v2-cbor")
+	w.WriteHeader(status)
+	_, _ = w.Write(data)
+}
+
+// cwWriteCBORErrorf is the formatted-message form of cwWriteCBORError (argument
+// order mirrors sim.AWSErrorf: code, status, format, args).
+func cwWriteCBORErrorf(w http.ResponseWriter, code string, status int, format string, args ...any) {
+	cwWriteCBORError(w, code, fmt.Sprintf(format, args...), status)
+}
+
 func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -420,11 +447,15 @@ func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		Tags                    []cwTagKV     `cbor:"Tags"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	if req.AlarmName == "" {
-		sim.AWSError(w, "MissingParameter", "The parameter AlarmName is required.", http.StatusBadRequest)
+		cwWriteCBORError(w, "MissingParameter", "The parameter AlarmName is required.", http.StatusBadRequest)
+		return
+	}
+	if code, msg, ok := cwValidateMetricAlarm(req.MetricName, req.Period, req.EvaluationPeriods); !ok {
+		cwWriteCBORError(w, code, msg, http.StatusBadRequest)
 		return
 	}
 	actionsEnabled := true
@@ -460,19 +491,19 @@ func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		ResourceARN string `cbor:"ResourceARN"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	a, ok := cwAlarmByArn(req.ResourceARN)
 	if !ok {
-		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
+		cwWriteCBORErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
 		return
 	}
 	tags := make([]cwTagKV, 0, len(a.Tags))
@@ -485,7 +516,7 @@ func handleCWCBORListTagsForResource(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORTagResource(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -493,12 +524,12 @@ func handleCWCBORTagResource(w http.ResponseWriter, r *http.Request) {
 		Tags        []cwTagKV `cbor:"Tags"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	a, ok := cwAlarmByArn(req.ResourceARN)
 	if !ok {
-		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
+		cwWriteCBORErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
 		return
 	}
 	if a.Tags == nil {
@@ -514,7 +545,7 @@ func handleCWCBORTagResource(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORUntagResource(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -522,12 +553,12 @@ func handleCWCBORUntagResource(w http.ResponseWriter, r *http.Request) {
 		TagKeys     []string `cbor:"TagKeys"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	a, ok := cwAlarmByArn(req.ResourceARN)
 	if !ok {
-		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
+		cwWriteCBORErrorf(w, "ResourceNotFoundException", http.StatusBadRequest, "Unknown resource %s", req.ResourceARN)
 		return
 	}
 	for _, k := range req.TagKeys {
@@ -572,7 +603,7 @@ type cborMetricAlarm struct {
 func handleCWCBORDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
@@ -580,7 +611,7 @@ func handleCWCBORDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		StateValue string   `cbor:"StateValue"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	now := time.Now().UTC()
@@ -617,19 +648,19 @@ func handleCWCBORDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 func handleCWCBORDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req struct {
 		AlarmNames []string `cbor:"AlarmNames"`
 	}
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 	for _, n := range req.AlarmNames {
 		if _, ok := cwAlarms.Get(n); !ok {
-			sim.AWSErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Alarm %s does not exist", n)
+			cwWriteCBORErrorf(w, "ResourceNotFound", http.StatusBadRequest, "Alarm %s does not exist", n)
 			return
 		}
 	}
@@ -659,6 +690,23 @@ func cwQueryStringList(r *http.Request, prefix string) []string {
 	return out
 }
 
+// cwValidateMetricAlarm enforces the required-numeric-parameter validation
+// PutMetricAlarm needs: EvaluationPeriods is required (minimum 1), and a
+// single-metric alarm (MetricName set) requires Period. Without this a missing
+// or non-numeric value parses to 0 and the alarm is silently created with a
+// nonsensical configuration. The (code, message) mirror this handler's existing
+// missing-required-parameter convention (as used for AlarmName /
+// ComparisonOperator) — the `MissingParameter` query-protocol framework error.
+func cwValidateMetricAlarm(metricName string, period, evalPeriods int32) (code, msg string, ok bool) {
+	if evalPeriods < 1 {
+		return "MissingParameter", "The parameter EvaluationPeriods is required.", false
+	}
+	if metricName != "" && period < 1 {
+		return "MissingParameter", "The parameter Period is required.", false
+	}
+	return "", "", true
+}
+
 func handleCWQueryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("AlarmName")
 	if name == "" {
@@ -671,6 +719,10 @@ func handleCWQueryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 	}
 	period, _ := strconv.Atoi(r.FormValue("Period"))
 	evalPeriods, _ := strconv.Atoi(r.FormValue("EvaluationPeriods"))
+	if code, msg, ok := cwValidateMetricAlarm(r.FormValue("MetricName"), int32(period), int32(evalPeriods)); !ok {
+		cwQueryError(w, code, msg)
+		return
+	}
 	threshold, _ := strconv.ParseFloat(r.FormValue("Threshold"), 64)
 	actionsEnabled := true
 	if v := r.FormValue("ActionsEnabled"); v != "" {
