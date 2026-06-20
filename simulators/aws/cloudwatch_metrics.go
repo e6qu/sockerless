@@ -106,12 +106,12 @@ type metricDataResult struct {
 func handleCWGetMetricData(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req getMetricDataRequest
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 
@@ -141,7 +141,7 @@ func handleCWGetMetricData(w http.ResponseWriter, r *http.Request) {
 	resp := getMetricDataResponse{MetricDataResults: results}
 	data, err := cwEncMode.Marshal(resp)
 	if err != nil {
-		sim.AWSError(w, "InternalFailure", "Failed to encode response", http.StatusInternalServerError)
+		cwWriteCBORError(w, "InternalFailure", "Failed to encode response", http.StatusInternalServerError)
 		return
 	}
 
@@ -236,12 +236,12 @@ type putMetricItem struct {
 func handleCWPutMetricData(w http.ResponseWriter, r *http.Request) {
 	raw, err := cwReadBody(r)
 	if err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid request body", http.StatusBadRequest)
 		return
 	}
 	var req putMetricDataRequest
 	if err := cbor.Unmarshal(raw, &req); err != nil {
-		sim.AWSError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
 		return
 	}
 

@@ -3325,16 +3325,28 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// MaxResults/NextToken pagination applies only to the list form (not when
+	// explicit InstanceIds are requested), matching real EC2. Sort by id for a
+	// stable offset cursor across pages.
+	nextToken := ""
+	if len(instanceIDs) == 0 {
+		sort.Slice(instances, func(i, j int) bool { return instances[i].InstanceId < instances[j].InstanceId })
+		instances, nextToken = awsPageExplicit(instances, r.FormValue("NextToken"), ec2AtoiOr(r.FormValue("MaxResults"), 0))
+	}
 	var reservations strings.Builder
 	for _, inst := range instances {
 		fmt.Fprintf(&reservations, `<item><reservationId>%s</reservationId><ownerId>%s</ownerId><groupSet/><instancesSet>%s</instancesSet></item>`,
 			inst.ReservationId, ec2Owner(), ec2InstanceXML(inst))
 	}
+	nextTokenXML := ""
+	if nextToken != "" {
+		nextTokenXML = "<nextToken>" + nextToken + "</nextToken>"
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DescribeInstancesResponse %s>
   <requestId>%s</requestId>
-  <reservationSet>%s</reservationSet>
-</DescribeInstancesResponse>`, ec2Xmlns(), generateUUID(), reservations.String())
+  <reservationSet>%s</reservationSet>%s
+</DescribeInstancesResponse>`, ec2Xmlns(), generateUUID(), reservations.String(), nextTokenXML)
 }
 
 func filterEC2Instances(instances []EC2Instance, filters map[string][]string) ([]EC2Instance, error) {

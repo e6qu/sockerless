@@ -725,7 +725,7 @@ func handlePSModifyAck(w http.ResponseWriter, r *http.Request, subName string) {
 func gcpError(w http.ResponseWriter, status int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	fmt.Fprintf(w, `{"error":{"code":%d,"message":%q,"status":%q}}`, status, message, code)
+	fmt.Fprintf(w, `{"error":{"code":%d,"message":%q,"status":%q,"details":[]}}`, status, message, code)
 }
 
 // generateUUIDLocal is a Pub/Sub-scoped UUID helper that produces

@@ -619,6 +619,46 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 
+		// Honor updateMask: real Cloud Run v2 merges only the masked top-level
+		// fields into the existing service (terraform-provider-google always
+		// sends one); an absent mask replaces all mutable fields. Without this a
+		// masked PATCH dropped every unlisted field, causing terraform drift.
+		if mask := r.URL.Query().Get("updateMask"); mask != "" {
+			fields := strings.Split(mask, ",")
+			has := func(p string) bool {
+				for _, f := range fields {
+					f = strings.TrimSpace(f)
+					if f == p || strings.HasPrefix(f, p+".") {
+						return true
+					}
+				}
+				return false
+			}
+			merged := existing
+			if has("template") {
+				merged.Template = update.Template
+			}
+			if has("labels") {
+				merged.Labels = update.Labels
+			}
+			if has("annotations") {
+				merged.Annotations = update.Annotations
+			}
+			if has("ingress") {
+				merged.Ingress = update.Ingress
+			}
+			if has("traffic") {
+				merged.Traffic = update.Traffic
+			}
+			if has("launchStage") || has("launch_stage") {
+				merged.LaunchStage = update.LaunchStage
+			}
+			if has("defaultUriDisabled") || has("default_uri_disabled") {
+				merged.DefaultUriDisabled = update.DefaultUriDisabled
+			}
+			update = merged
+		}
+
 		// Cloud Run revisions are immutable, so each PATCH spawns a new
 		// revision. Charge its CPU load against the regional sliding-window
 		// quota — a quota-exhausted UpdateService is the failure mode
