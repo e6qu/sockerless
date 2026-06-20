@@ -545,6 +545,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
+| [`docs/ECS_EXPRESS_MODE.md`](docs/ECS_EXPRESS_MODE.md) | AWS ECS Express Mode (Express Gateway services) — API, Express-vs-vanilla-ECS comparison, and cloud-slice assembly |
 | [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |

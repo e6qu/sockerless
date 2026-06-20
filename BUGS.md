@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2087 filed - 2043 fixed - 2 open - 12 false positives.**
+**2089 filed - 2045 fixed - 2 open - 12 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2089~~ | P2 | scripts — `check-simulator-tests.sh` false-negative on a large new sim file (self-found) | guard / pipefail SIGPIPE | under `set -o pipefail`, `git diff \| grep '^+[^+]' \| grep -q PATTERN` gave a false negative for a big new file: `grep -q` matched the first line + exited early, SIGPIPE'd the still-writing upstream grep, and pipefail propagated that non-zero as 'no match' — so a 900-line new handler file's registered ops were reported as 'cloud undeterminable'. Fixed all 4 large-producer→`grep -q` sites (op/route cloud-resolution + the two test-reference checks) to capture the filtered output and test `[[ -n ]]` (reads all input, no early exit). |
+| ~~2088~~ | P2 | AWS sim ECS Express — Create/Describe returned the cluster as a bare name, and auto-scaling provisioned only when `scalingTarget` was given | fidelity | terraform-provider-aws's `aws_ecs_express_gateway_service` runs the response `cluster` through `clusterNameFromARN` (splits on `/`, expects a full ARN) so a bare name read back empty → "Provider produced inconsistent result after apply: .cluster ... now null". Now the service record stores `cluster.ClusterArn` (the real-AWS shape); the revision-ARN derives the name via `ecsClusterNameFromRef`. Also: real ECS always provisions a managed Application Auto Scaling target (default metric AVERAGE_CPU, target value 60, min/max 1) — the sim created it only when the caller passed `scalingTarget`, so a default-config service had no scalable target; `expressCreateAutoScaling` + the read-back config now always reflect the managed target. And Delete left the service in DRAINING permanently, but the provider's delete-waiter polls Describe until **INACTIVE** → `terraform destroy` hung until timeout; the sim's teardown is synchronous (fully drained on return), so Delete now persists INACTIVE while still returning DRAINING in the immediate response (real API shape). SDK + CLI + Terraform (`terraform-tests/ecs-express`) tests, all green incl. apply/plan-no-drift/destroy. |
 | ~~2087~~ | P3 | GCP sim GCS — object-list sort comparator did an unchecked `["name"].(string)` (weak-types fuzz) | crash (latent) | comma-ok hardened (panic on name-less metadata). |
 | ~~2086~~ | P3 | GCP sim GCS — buckets.list/objects.list paginated on `pageSize` not `maxResults` (fidelity) | ignored param | the GCS JSON API + Go storage client send `maxResults`; the client page-size limit was silently ignored (whole listing in one page) → `paginateListGCS`. SDK test. |
 | ~~2085~~ | P2 | Azure sim — Tags-default middleware case-fold slice panic (weak-types fuzz) | crash / DoS | the marker was matched on `ToLower(path)` but sliced the original bytes; a case-expanding multibyte rune made the index negative → panic. Fixed to a length-guarded case-insensitive match. |

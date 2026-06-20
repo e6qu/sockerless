@@ -345,6 +345,8 @@ Tekton + Argo are k8s-native — they talk to the k8s API directly, never Docker
 - `s.NetworkState *StateStore[NetworkState]` — transient cache; populated on create, recovered via `resolveNetworkState` on miss.
 - `s.VolumeState *StateStore[VolumeState]` — transient cache (volume state is simpler; follows same pattern).
 
+**ECS Express Mode:** the AWS simulator also serves ECS Express Gateway services (managed Fargate + ALB + HTTPS + ACM cert + auto-scaling). See [`docs/ECS_EXPRESS_MODE.md`](../docs/ECS_EXPRESS_MODE.md) for the API, the Express-vs-vanilla-ECS comparison, and the cloud-slice assembly that backs each Express service with real ELBv2 / ACM / EC2 / Application Auto Scaling resources.
+
 ### AWS Lambda (backend `lambda`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |

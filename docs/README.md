@@ -31,6 +31,7 @@ Topic guides, design notes, and research references. Specifications live in [`sp
 |----------|-------------|
 | [`POD_MATERIALIZATION.md`](POD_MATERIALIZATION.md) | How a runner pod (long-lived runner + per-step sub-task containers) materializes on each of the 7 backends |
 | [`ECS_SERVICES_DESIGN.md`](ECS_SERVICES_DESIGN.md) | Cross-container DNS for ECS via Cloud Map |
+| [`ECS_EXPRESS_MODE.md`](ECS_EXPRESS_MODE.md) | AWS ECS Express Mode (Express Gateway services) — the managed Fargate + ALB + HTTPS + auto-scaling service and how the simulator composes its backing resources |
 | [`LAMBDA_EXEC_DESIGN.md`](LAMBDA_EXEC_DESIGN.md) | `docker exec` on Lambda-backed containers via the mandatory reverse-agent model |
 
 ## Research & reference notes

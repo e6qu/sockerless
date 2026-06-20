@@ -95,6 +95,10 @@ func registerECSServices(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTaskDefinitions", handleECSListTaskDefinitions)
 	r.Register("AmazonEC2ContainerServiceV20141113.ListTaskDefinitionFamilies", handleECSListTaskDefinitionFamilies)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeCapacityProviders", handleECSDescribeCapacityProviders)
+
+	// ECS Express Mode (Express Gateway services) — the managed
+	// ALB+Fargate+autoscaling bundle.
+	registerECSExpress(r, srv)
 }
 
 // ecsBuiltInCapacityProviders are the two AWS-managed providers every account
