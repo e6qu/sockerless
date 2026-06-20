@@ -10,6 +10,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -148,6 +150,28 @@ func startWebhookReceiver(t *testing.T, handler http.HandlerFunc) (string, func(
 	srv := &http.Server{Handler: handler}
 	go srv.Serve(ln)
 	return "http://" + ln.Addr().String(), func() { srv.Close() }
+}
+
+// webhookEventJSON extracts the JSON event payload from a received
+// webhook request body, honoring the Content-Type the way a real
+// receiver must: content_type=form (GitHub's default) sends the JSON as
+// the `payload` field of an x-www-form-urlencoded body; content_type=json
+// sends it verbatim.
+func webhookEventJSON(t *testing.T, contentType string, body []byte) map[string]interface{} {
+	t.Helper()
+	raw := body
+	if strings.HasPrefix(contentType, "application/x-www-form-urlencoded") {
+		vals, err := url.ParseQuery(string(body))
+		if err != nil {
+			t.Fatalf("parse form webhook body: %v", err)
+		}
+		raw = []byte(vals.Get("payload"))
+	}
+	var out map[string]interface{}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode webhook payload: %v", err)
+	}
+	return out
 }
 
 func TestWebhookDeliverySuccess(t *testing.T) {
@@ -318,7 +342,7 @@ func TestWebhookPushEvent(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
 		lastEvent = r.Header.Get("X-GitHub-Event")
-		json.Unmarshal(body, &lastPayload)
+		lastPayload = webhookEventJSON(t, r.Header.Get("Content-Type"), body)
 		mu.Unlock()
 		w.WriteHeader(200)
 	}))
@@ -426,8 +450,7 @@ func TestWebhookIssuesEvent(t *testing.T) {
 	url, cleanup := startWebhookReceiver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		received.Add(1)
 		body, _ := io.ReadAll(r.Body)
-		var p map[string]interface{}
-		json.Unmarshal(body, &p)
+		p := webhookEventJSON(t, r.Header.Get("Content-Type"), body)
 		mu.Lock()
 		payloads = append(payloads, p)
 		mu.Unlock()
@@ -506,7 +529,7 @@ func TestWebhookPing(t *testing.T) {
 		received.Add(1)
 		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		json.Unmarshal(body, &lastPayload)
+		lastPayload = webhookEventJSON(t, r.Header.Get("Content-Type"), body)
 		mu.Unlock()
 		w.WriteHeader(200)
 	}))
@@ -760,14 +783,17 @@ func pushTestCommit(t *testing.T, owner, repoName string) {
 // payloads; user-owned repos must not.
 func TestWebhookOrganizationBlock(t *testing.T) {
 	var mu sync.Mutex
-	var payloads []map[string]interface{}
+	type recvd struct {
+		event   string
+		payload map[string]interface{}
+	}
+	var payloads []recvd
 
 	url, cleanup := startWebhookReceiver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		var p map[string]interface{}
-		json.Unmarshal(body, &p)
+		p := webhookEventJSON(t, r.Header.Get("Content-Type"), body)
 		mu.Lock()
-		payloads = append(payloads, p)
+		payloads = append(payloads, recvd{event: r.Header.Get("X-GitHub-Event"), payload: p})
 		mu.Unlock()
 		w.WriteHeader(200)
 	}))
@@ -820,7 +846,13 @@ func TestWebhookOrganizationBlock(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 	var orgSeen, userSeen bool
-	for _, p := range payloads {
+	for _, rec := range payloads {
+		// The organization block is asserted on real repo events; the
+		// automatic create-time ping carries no organization member.
+		if rec.event != "issues" {
+			continue
+		}
+		p := rec.payload
 		repo, _ := p["repository"].(map[string]interface{})
 		fullName, _ := repo["full_name"].(string)
 		switch fullName {

@@ -360,6 +360,10 @@ func (rc *ReverseAgentConn) BridgeAttach(conn net.Conn, sessionID string, tty bo
 // reverse agent connection using the session's message channel.
 func (rc *ReverseAgentConn) bridge(conn net.Conn, sessionID string, ch chan Message, tty bool) int {
 	done := make(chan int, 1)
+	// stop unblocks the Client->Agent goroutine once the session exits (or the
+	// connection drops), so it stops reading the caller connection and can't
+	// send TypeStdin / TypeCloseStdin for an already-Deleted session ID.
+	stop := make(chan struct{})
 
 	// Client -> Agent: read stdin from connection, send to agent as base64
 	go func() {
@@ -371,6 +375,11 @@ func (rc *ReverseAgentConn) bridge(conn net.Conn, sessionID string, ch chan Mess
 		}()
 		buf := make([]byte, 32*1024)
 		for {
+			select {
+			case <-stop:
+				return
+			default:
+			}
 			n, err := conn.Read(buf)
 			if n > 0 {
 				_ = rc.SendJSON(Message{
@@ -388,6 +397,11 @@ func (rc *ReverseAgentConn) bridge(conn net.Conn, sessionID string, ch chan Mess
 	// Agent -> Client: read from session channel, write to connection with mux framing
 	go func() {
 		defer func() {
+			// Unblock the stdin goroutine: close stop and force a read
+			// deadline so its in-flight conn.Read returns rather than
+			// blocking forever on a now-finished session.
+			close(stop)
+			_ = conn.SetReadDeadline(time.Now())
 			if len(done) == 0 {
 				done <- -1
 			}

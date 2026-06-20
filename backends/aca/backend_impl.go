@@ -606,6 +606,10 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.EmitEvent("container", "kill", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
+	// Record the kill outcome so `docker wait` after kill returns the
+	// signal-derived code (e.g. 137 for SIGKILL) instead of -1.
+	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
+
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
 		close(ch.(chan struct{}))
 	}

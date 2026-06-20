@@ -20,20 +20,29 @@ type ExecSession struct {
 	id       string
 	cmd      *exec.Cmd
 	stdin    io.WriteCloser
-	ptmx     *os.File // non-nil when TTY mode
+	stdout   io.ReadCloser             // pipe read end (nil in TTY mode); closed on reaper path
+	stderr   io.ReadCloser             // pipe read end (nil in TTY mode); closed on reaper path
+	ptmx     *os.File                  // non-nil when TTY mode
+	tty      bool                      // requested TTY mode (drives Start)
+	reaper   *childReaper              // non-nil when running under PID-1 init; owns child waiting
+	statusCh <-chan syscall.WaitStatus // delivers the child's exit status on the reaper path
 	conn     *websocket.Conn
 	connMu   *sync.Mutex
 	logger   zerolog.Logger
 	done     chan struct{}
 	streamWg sync.WaitGroup // tracks readStream/readPTY goroutines
 	postExec func()         // optional per-exec teardown (e.g. gcs-sync save), run after the process exits, before the exit code is sent
+	onExit   func()         // optional hook run after the exit frame is sent (e.g. forget this session from the registry); set by the router
 }
 
-// NewExecSession creates and starts an exec session. postExec (may be nil)
-// runs after the process exits, before the exit code is sent to the backend —
+// NewExecSession creates an exec session; the caller invokes Start to launch
+// the process (after registering the session). postExec (may be nil) runs
+// after the process exits, before the exit code is sent to the backend —
 // used by the cloudrun bootstrap to save the gcs-sync workspace so the
-// backend's PostExec download sees the step's modifications.
-func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.Mutex, logger zerolog.Logger, postExec func()) (*ExecSession, error) {
+// backend's PostExec download sees the step's modifications. onExit (may be
+// nil) runs after the exit frame is sent — the router uses it to forget the
+// finished session from the registry.
+func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.Mutex, logger zerolog.Logger, postExec, onExit func(), reaper *childReaper) (*ExecSession, error) {
 	if len(msg.Cmd) == 0 {
 		return nil, &sessionError{"exec requires cmd"}
 	}
@@ -59,25 +68,47 @@ func NewExecSession(id string, msg *Message, conn *websocket.Conn, connMu *sync.
 		logger:   logger.With().Str("session", id).Logger(),
 		done:     make(chan struct{}),
 		postExec: postExec,
-	}
-
-	if msg.Tty {
-		if err := s.startWithPTY(); err != nil {
-			return nil, err
-		}
-	} else {
-		if err := s.startWithPipes(); err != nil {
-			return nil, err
-		}
+		onExit:   onExit,
+		tty:      msg.Tty,
+		reaper:   reaper,
 	}
 
 	return s, nil
 }
 
+// Start launches the session's child process and its stream/wait
+// goroutines. The router calls Start AFTER registering the session, so the
+// onExit hook (which forgets the session from the registry) can never race
+// ahead of the Register that added it. A start failure is returned without
+// any goroutine having run, so the caller removes the session it registered.
+func (s *ExecSession) Start() error {
+	if s.tty {
+		return s.startWithPTY()
+	}
+	return s.startWithPipes()
+}
+
 func (s *ExecSession) startWithPTY() error {
-	ptmx, err := pty.Start(s.cmd)
-	if err != nil {
-		return err
+	var ptmx *os.File
+	if s.reaper != nil {
+		ch, err := s.reaper.startAndRegister(func() (int, error) {
+			p, perr := pty.Start(s.cmd)
+			if perr != nil {
+				return 0, perr
+			}
+			ptmx = p
+			return s.cmd.Process.Pid, nil
+		})
+		if err != nil {
+			return err
+		}
+		s.statusCh = ch
+	} else {
+		p, err := pty.Start(s.cmd)
+		if err != nil {
+			return err
+		}
+		ptmx = p
 	}
 	s.ptmx = ptmx
 	s.stdin = ptmx
@@ -103,8 +134,23 @@ func (s *ExecSession) startWithPipes() error {
 	if err != nil {
 		return err
 	}
+	// Retain the pipe read ends so the reaper path can close them itself
+	// (it skips cmd.Wait(), which is what normally closes them).
+	s.stdout = stdout
+	s.stderr = stderr
 
-	if err := s.cmd.Start(); err != nil {
+	if s.reaper != nil {
+		ch, serr := s.reaper.startAndRegister(func() (int, error) {
+			if cerr := s.cmd.Start(); cerr != nil {
+				return 0, cerr
+			}
+			return s.cmd.Process.Pid, nil
+		})
+		if serr != nil {
+			return serr
+		}
+		s.statusCh = ch
+	} else if err := s.cmd.Start(); err != nil {
 		return err
 	}
 
@@ -156,6 +202,40 @@ func (s *ExecSession) sendOutput(streamType string, data []byte) {
 	}
 }
 
+// waitCode returns the child's exit code. On the reaper path it reads the
+// status the childReaper collected (cmd.Wait() must NOT be called there — it
+// would race the reaper's Wait4 for the same PID and lose the status) and
+// closes the parent pipe fds itself, the cleanup cmd.Wait() would otherwise do.
+// On the non-reaper path it uses cmd.Wait() as the host's init reaps orphans.
+func (s *ExecSession) waitCode() int {
+	if s.reaper != nil {
+		status := <-s.statusCh
+		if s.stdout != nil {
+			_ = s.stdout.Close()
+		}
+		if s.stderr != nil {
+			_ = s.stderr.Close()
+		}
+		switch {
+		case status.Exited():
+			return status.ExitStatus()
+		case status.Signaled():
+			return 128 + int(status.Signal())
+		default:
+			return 1
+		}
+	}
+
+	err := s.cmd.Wait()
+	if err == nil {
+		return 0
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode()
+	}
+	return 1
+}
+
 func (s *ExecSession) waitAndNotify() {
 	defer close(s.done)
 
@@ -165,15 +245,7 @@ func (s *ExecSession) waitAndNotify() {
 	// get EOF and return — independent of cmd.Wait().
 	s.streamWg.Wait()
 
-	err := s.cmd.Wait()
-	code := 0
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			code = exitErr.ExitCode()
-		} else {
-			code = 1
-		}
-	}
+	code := s.waitCode()
 
 	s.logger.Debug().Int("code", code).Msg("process exited")
 
@@ -190,12 +262,20 @@ func (s *ExecSession) waitAndNotify() {
 		Code: intPtr(code),
 	}
 	s.connMu.Lock()
-	defer s.connMu.Unlock()
 	// If the exit frame fails to send, the backend's bridge blocks until
 	// the whole WebSocket tears down and the caller sees an opaque exit
 	// rather than this code — so log it loudly on the agent side.
 	if err := s.conn.WriteJSON(msg); err != nil {
 		s.logger.Error().Err(err).Str("id", s.id).Int("code", code).Msg("failed to send exit frame to backend — exec exit code may be lost")
+	}
+	s.connMu.Unlock()
+
+	// Forget this finished session from the registry so a keep-alive
+	// connection serving many execs doesn't leak a stale *ExecSession per
+	// exec. Done after the exit frame (and after releasing connMu) so the
+	// registry teardown never re-SIGKILLs the already-exited process.
+	if s.onExit != nil {
+		s.onExit()
 	}
 }
 

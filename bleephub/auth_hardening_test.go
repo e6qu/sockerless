@@ -25,6 +25,7 @@ func unauthedRequest(s *Server, method, path string) *httptest.ResponseRecorder 
 func TestActionsWriteEndpointsRequireAuth(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
+	s.registerAgentRoutes()
 	s.registerGHWorkflowsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "running", "")
 	file := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", sampleWorkflowYAML, "submitted")
@@ -37,6 +38,14 @@ func TestActionsWriteEndpointsRequireAuth(t *testing.T) {
 		{"rerun", "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID)},
 		{"delete-run", "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID)},
 		{"delete-runner", "DELETE", "/api/v3/repos/octo/repo/actions/runners/1"},
+		// Runner setup + listing require administration (read/write); an
+		// anonymous caller must never mint a registration/removal/JIT token
+		// or enumerate the repo's runners.
+		{"registration-token", "POST", "/api/v3/repos/octo/repo/actions/runners/registration-token"},
+		{"remove-token", "POST", "/api/v3/repos/octo/repo/actions/runners/remove-token"},
+		{"generate-jitconfig", "POST", "/api/v3/repos/octo/repo/actions/runners/generate-jitconfig"},
+		{"list-runners", "GET", "/api/v3/repos/octo/repo/actions/runners"},
+		{"get-runner", "GET", "/api/v3/repos/octo/repo/actions/runners/1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

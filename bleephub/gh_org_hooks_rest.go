@@ -85,6 +85,12 @@ func (s *Server) handleCreateOrgHook(w http.ResponseWriter, r *http.Request) {
 	hook := s.store.CreateOrgHook(org.Login, req.Config.URL, req.Config.Secret,
 		req.Config.ContentType, normalizeInsecureSSL(req.Config.InsecureSSL), events, active)
 	s.recordAuditEvent("hook.create", ghUserFromContext(r.Context()).Login, org.Login, map[string]interface{}{"hook_id": hook.ID})
+
+	// Real GitHub fires a `ping` event automatically on active-hook creation.
+	if hook.Active {
+		go s.deliverWebhook(hook, "ping", "", mustMarshal(s.orgPingPayload(org, hook, r)))
+	}
+
 	writeJSON(w, http.StatusCreated, orgHookToJSON(hook, org, s.baseURL(r)))
 }
 
@@ -275,14 +281,18 @@ func (s *Server) handlePingOrgHook(w http.ResponseWriter, r *http.Request) {
 	if hook == nil {
 		return
 	}
-	payload := map[string]interface{}{
+	go s.deliverWebhook(hook, "ping", "", mustMarshal(s.orgPingPayload(org, hook, r)))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// orgPingPayload builds the `ping` event payload for an org hook.
+func (s *Server) orgPingPayload(org *Org, hook *Webhook, r *http.Request) map[string]interface{} {
+	return map[string]interface{}{
 		"zen":          "Keep it logically awesome.",
 		"hook_id":      hook.ID,
 		"hook":         orgHookToJSON(hook, org, s.baseURL(r)),
 		"organization": orgWebhookPayload(org),
 	}
-	go s.deliverWebhook(hook, "ping", "", mustMarshal(payload))
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // orgHookToJSON serialises an org webhook to GitHub's org-hook shape.

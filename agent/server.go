@@ -5,9 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/signal"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -38,8 +36,8 @@ type Server struct {
 	config   Config
 	logger   zerolog.Logger
 	registry *SessionRegistry
-	mp       *MainProcess   // non-nil in keep-alive mode
-	hc       *HealthChecker // non-nil if health check configured
+	mp       *MainProcess // non-nil in keep-alive mode
+	reaper   *childReaper // non-nil when running as PID 1 (container init)
 	upgrader websocket.Upgrader
 }
 
@@ -59,20 +57,19 @@ func NewServer(config Config, logger zerolog.Logger) *Server {
 func (s *Server) ListenAndServe() error {
 	// Start main process in keep-alive mode
 	if s.config.KeepAlive {
-		mp, err := NewMainProcess(s.logger, s.config.Args, s.config.Env)
+		// Run a child reaper only as PID 1 (container init). On the host,
+		// the system init reaps orphans, and a competing Wait4(-1) reaper
+		// would steal owned children's exit status. The reaper is the single
+		// waiter for owned children (main process + exec sessions), so it
+		// must be started before NewMainProcess registers its PID.
+		s.startReaperIfInit()
+
+		mp, err := NewMainProcess(s.logger, s.config.Args, s.config.Env, s.reaper)
 		if err != nil {
 			return err
 		}
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
-
-		// Reap zombies only when running as PID 1 (container init).
-		// On the host, orphan reaping is handled by the system init.
-		// Running reapZombies on the host causes a race with cmd.Wait()
-		// because Wait4(-1) can steal the main process exit status.
-		if os.Getpid() == 1 {
-			go s.reapZombies()
-		}
 
 		// Exit when main process exits (if not serving requests)
 		go func() {
@@ -110,14 +107,6 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if s.hc != nil {
-		resp["health"] = map[string]any{
-			"status":        s.hc.Status(),
-			"failingStreak": s.hc.FailingStreak(),
-			"log":           s.hc.Log(),
-		}
-	}
-
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -134,7 +123,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	s.logger.Debug().Str("remote", r.RemoteAddr).Msg("websocket connection established")
 
 	connMu := &sync.Mutex{}
-	router := NewRouter(s.registry, s.mp, s.logger)
+	router := NewRouter(s.registry, s.mp, s.reaper, s.logger)
 
 	for {
 		_, data, err := conn.ReadMessage()
@@ -155,17 +144,14 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) reapZombies() {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGCHLD)
-	for range sigCh {
-		for {
-			var status syscall.WaitStatus
-			pid, err := syscall.Wait4(-1, &status, syscall.WNOHANG, nil)
-			if pid <= 0 || err != nil {
-				break
-			}
-		}
+// startReaperIfInit starts the child reaper when the agent runs as PID 1
+// (container init). It must be called before any owned child is started so
+// the reaper is the single waiter for them. A no-op on the host, where the
+// system init reaps orphans.
+func (s *Server) startReaperIfInit() {
+	if os.Getpid() == 1 && s.reaper == nil {
+		s.reaper = newChildReaper(s.logger)
+		go s.reaper.run()
 	}
 }
 
@@ -175,16 +161,14 @@ func (s *Server) reapZombies() {
 func (s *Server) ReverseConnect(callbackURL string) error {
 	// Start main process in keep-alive mode
 	if s.config.KeepAlive {
-		mp, err := NewMainProcess(s.logger, s.config.Args, s.config.Env)
+		s.startReaperIfInit()
+
+		mp, err := NewMainProcess(s.logger, s.config.Args, s.config.Env, s.reaper)
 		if err != nil {
 			return err
 		}
 		s.mp = mp
 		s.logger.Info().Int("pid", mp.Pid()).Strs("args", s.config.Args).Msg("main process started")
-
-		if os.Getpid() == 1 {
-			go s.reapZombies()
-		}
 	}
 
 	// Build WebSocket URL from callback URL
@@ -266,7 +250,7 @@ func (s *Server) serveReverseConn(conn *websocket.Conn) error {
 	defer s.registry.CleanupConn(conn)
 
 	connMu := &sync.Mutex{}
-	router := NewRouter(s.registry, s.mp, s.logger)
+	router := NewRouter(s.registry, s.mp, s.reaper, s.logger)
 
 	// If main process exits, close the connection to unblock ReadMessage.
 	// The connDone guard lets the watcher exit when THIS connection drops

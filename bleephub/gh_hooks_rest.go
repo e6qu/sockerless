@@ -66,6 +66,15 @@ func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
 	hook := s.store.CreateHook(repoKey, req.Config.URL, req.Config.Secret,
 		req.Config.ContentType, normalizeInsecureSSL(req.Config.InsecureSSL), events, active)
 	s.recordAuditEvent("hook.create", user.Login, "", map[string]interface{}{"repo": repoKey, "hook_id": hook.ID})
+
+	// Real GitHub fires a `ping` event automatically when an active hook
+	// is created (so the consumer can verify the endpoint). Inactive hooks
+	// receive no deliveries.
+	if hook.Active {
+		repo := s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
+		go s.deliverWebhook(hook, "ping", "", mustMarshal(buildPingPayload(repo, hook)))
+	}
+
 	writeJSON(w, http.StatusCreated, hookToJSON(hook, r, r.PathValue("owner"), r.PathValue("repo")))
 }
 

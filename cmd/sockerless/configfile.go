@@ -149,8 +149,10 @@ func saveConfigFile(cfg *unifiedConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	// 0600: the unified config embeds the agent token (commonConfig.AgentToken).
+	// On a shared host a 0644 file lets any local user read another's token.
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)

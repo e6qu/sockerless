@@ -61,7 +61,10 @@ func ServeReverseAgent(conn *websocket.Conn, connMu *sync.Mutex) {
 func ServeReverseAgentWithExecHooks(conn *websocket.Conn, connMu *sync.Mutex, hooks ExecHooks) {
 	logger := zerolog.New(os.Stderr).With().Str("component", "bootstrap-reverse-agent").Logger()
 	registry := NewSessionRegistry()
-	router := NewRouter(registry, nil, logger)
+	// No mp and no reaper here: a FaaS bootstrap owns its own process
+	// supervision (it is the container's PID 1 and reaps its members),
+	// so exec children use cmd.Wait() directly.
+	router := NewRouter(registry, nil, nil, logger)
 	router.execHooks = hooks
 	defer registry.CleanupConn(conn)
 

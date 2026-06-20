@@ -634,9 +634,13 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	} else if s.config.UseService {
 		s.Logger.Info().Str("container", id).Msg("ContainerStop: OpenStdin=true (runner-pattern) — keeping Service alive across stages")
 	} else {
-		// cloud-fallback lookup so stop works post-restart.
+		// cloud-fallback lookup so stop works post-restart. A swallowed
+		// cancel leaves the execution running (billable) while `docker stop`
+		// reports success — propagate like the Service path.
 		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
-			s.cancelExecution(crState.ExecutionName)
+			if err := s.cancelExecutionStrict(crState.ExecutionName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker stop %s: cancel Cloud Run execution failed: %v", id, err)}
+			}
 		}
 	}
 
@@ -685,9 +689,13 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 			s.CloudRun.Update(id, func(st *CloudRunState) { st.ServiceName = "" })
 		}
 	} else {
-		// cloud-fallback lookup so kill works post-restart.
+		// cloud-fallback lookup so kill works post-restart. A swallowed
+		// cancel leaves the execution running (billable) while `docker kill`
+		// reports success — propagate like the Service path.
 		if crState, ok := s.resolveCloudRunState(s.ctx(), id); ok && crState.ExecutionName != "" {
-			s.cancelExecution(crState.ExecutionName)
+			if err := s.cancelExecutionStrict(crState.ExecutionName); err != nil {
+				return &api.ServerError{Message: fmt.Sprintf("docker kill %s: cancel Cloud Run execution failed: %v", id, err)}
+			}
 		}
 	}
 
@@ -729,6 +737,12 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	// Disconnect reverse agent if connected (unblocks invoke goroutine)
 
+	// — delete the backing cloud resource. Jobs and Services
+	// live in distinct GCP resource namespaces so cached state is
+	// unambiguous. Errors propagate per the no-fallback rule —
+	// `docker rm` succeeds only when the cloud is actually clean.
+	var cleanupErrs []error
+
 	if c.State.Running {
 		// `docker rm -f` is SIGKILL → exit 137.
 		killExitCode := core.SignalToExitCode("SIGKILL")
@@ -738,20 +752,20 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			"name":     strings.TrimPrefix(c.Name, "/"),
 		})
 		if !s.config.UseService {
+			// A swallowed cancel leaves the execution running (billable)
+			// while `docker rm -f` reports success — propagate so the
+			// removal fails loudly if the teardown didn't take.
 			crState, _ := s.resolveCloudRunState(s.ctx(), id)
 			if crState.ExecutionName != "" {
-				s.cancelExecution(crState.ExecutionName)
+				if err := s.cancelExecutionStrict(crState.ExecutionName); err != nil {
+					cleanupErrs = append(cleanupErrs, err)
+				}
 			}
 		}
 	}
 
 	s.StopHealthCheck(id)
 
-	// — delete the backing cloud resource. Jobs and Services
-	// live in distinct GCP resource namespaces so cached state is
-	// unambiguous. Errors propagate per the no-fallback rule —
-	// `docker rm` succeeds only when the cloud is actually clean.
-	var cleanupErrs []error
 	if s.config.UseService {
 		svcState, _ := s.resolveServiceCloudRunState(s.ctx(), id)
 		if svcState.ServiceName != "" {

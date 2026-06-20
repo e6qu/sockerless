@@ -58,16 +58,35 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 // gone and unblocks waiters (mirrors core.WaitGoneThreshold).
 const pollGoneThreshold = 5
 
-// cancelExecution cancels a Cloud Run execution (best-effort), waiting for completion.
+// cancelExecution cancels a Cloud Run execution (best-effort), waiting for
+// completion. Used by rollback paths inside ContainerStart where the primary
+// error already carries the operator-visible context. Stop/Kill/Remove use
+// cancelExecutionStrict so a failed teardown surfaces instead of leaving a
+// billable execution running while the docker op reports success.
 func (s *Server) cancelExecution(executionName string) {
+	if err := s.cancelExecutionStrict(executionName); err != nil {
+		s.Logger.Warn().Err(err).Str("execution", executionName).Msg("cancelExecution: cloud cancel failed (rollback path)")
+	}
+}
+
+// cancelExecutionStrict cancels a Cloud Run execution and returns nil on
+// success or when the execution is already gone. Errors propagate so the
+// no-fallback teardown contract holds — `docker stop/kill/rm` only succeeds
+// when the cloud execution is actually cancelled.
+func (s *Server) cancelExecutionStrict(executionName string) error {
 	op, err := s.gcp.Executions.CancelExecution(s.ctx(), &runpb.CancelExecutionRequest{
 		Name: executionName,
 	})
 	if err != nil {
-		s.Logger.Debug().Err(err).Str("execution", executionName).Msg("failed to cancel execution")
-		return
+		if gcpcommon.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("cancel cloud run execution %q: %w", executionName, err)
 	}
-	_, _ = op.Wait(s.ctx())
+	if _, werr := op.Wait(s.ctx()); werr != nil {
+		return fmt.Errorf("await cancel cloud run execution %q: %w", executionName, werr)
+	}
+	return nil
 }
 
 // deleteJob deletes a Cloud Run Job (best-effort, error logged).

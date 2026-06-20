@@ -41,7 +41,7 @@ func TestRingBufferExact(t *testing.T) {
 }
 
 func TestMainProcessExitCode(t *testing.T) {
-	mp, err := NewMainProcess(testLogger(), []string{"true"}, nil)
+	mp, err := NewMainProcess(testLogger(), []string{"true"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestMainProcessExitCode(t *testing.T) {
 }
 
 func TestMainProcessNonZeroExit(t *testing.T) {
-	mp, err := NewMainProcess(testLogger(), []string{"false"}, nil)
+	mp, err := NewMainProcess(testLogger(), []string{"false"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestMainProcessNonZeroExit(t *testing.T) {
 }
 
 func TestMainProcessSubscribeAfterExit(t *testing.T) {
-	mp, err := NewMainProcess(testLogger(), []string{"/bin/sh", "-c", "echo hello"}, nil)
+	mp, err := NewMainProcess(testLogger(), []string{"/bin/sh", "-c", "echo hello"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +101,7 @@ func TestMainProcessSubscribeAfterExit(t *testing.T) {
 }
 
 func TestMainProcessConcurrentSubscribers(t *testing.T) {
-	mp, err := NewMainProcess(testLogger(), []string{"/bin/sh", "-c", "sleep 0.1 && echo done"}, nil)
+	mp, err := NewMainProcess(testLogger(), []string{"/bin/sh", "-c", "sleep 0.1 && echo done"}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -107,7 +107,10 @@ func (p *azfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 				return inv.ExitCode, nil
 			}
-			return 0, nil
+			// Channel closed without a recorded result (force-stop /
+			// restart race). Never fabricate a successful exit — report a
+			// failure sentinel rather than a misleading 0.
+			return -1, nil
 		}
 	}
 
@@ -219,8 +222,10 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
-			// If the API call fails, return what we have from PendingCreates
-			break
+			// Never treat a partial list as authoritative — the cloud is the
+			// source of truth, so surface the error to the caller rather than
+			// silently dropping the un-paged Function Apps.
+			return containers, err
 		}
 
 		for _, site := range page.Value {

@@ -22,15 +22,17 @@ type ExecHooks struct {
 type Router struct {
 	registry  *SessionRegistry
 	mp        *MainProcess // may be nil if not in keep-alive mode
+	reaper    *childReaper // non-nil when running as PID 1; owns exec child waiting
 	logger    zerolog.Logger
 	execHooks ExecHooks
 }
 
 // NewRouter creates a new message router.
-func NewRouter(registry *SessionRegistry, mp *MainProcess, logger zerolog.Logger) *Router {
+func NewRouter(registry *SessionRegistry, mp *MainProcess, reaper *childReaper, logger zerolog.Logger) *Router {
 	return &Router{
 		registry: registry,
 		mp:       mp,
+		reaper:   reaper,
 		logger:   logger,
 	}
 }
@@ -78,13 +80,27 @@ func (rt *Router) handleExec(msg *Message, conn *websocket.Conn, connMu *sync.Mu
 		postExec = func() { rt.execHooks.PostExec(env) }
 	}
 
-	session, err := NewExecSession(msg.ID, msg, conn, connMu, rt.logger, postExec)
+	// Forget the session from the registry once its process exits and the
+	// exit frame is sent, so a keep-alive connection serving many execs
+	// doesn't leak a finished *ExecSession (and per-conn id) per exec.
+	id := msg.ID
+	onExit := func() { rt.registry.Forget(id) }
+
+	session, err := NewExecSession(msg.ID, msg, conn, connMu, rt.logger, postExec, onExit, rt.reaper)
 	if err != nil {
 		rt.sendError(conn, connMu, msg.ID, err.Error())
 		return
 	}
 
+	// Register BEFORE Start so the onExit hook (which forgets the session)
+	// can't run before the entry exists. On a Start failure the process
+	// never launched, so drop the registration we just made.
 	rt.registry.Register(session, conn)
+	if err := session.Start(); err != nil {
+		rt.registry.Forget(msg.ID)
+		rt.sendError(conn, connMu, msg.ID, err.Error())
+		return
+	}
 	rt.logger.Debug().Str("id", msg.ID).Strs("cmd", msg.Cmd).Msg("exec session started")
 }
 

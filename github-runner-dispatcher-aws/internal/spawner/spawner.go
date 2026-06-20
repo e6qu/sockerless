@@ -82,6 +82,18 @@ func Spawn(ctx context.Context, req Request) (string, error) {
 		"--label", LabelManagedBy+"="+LabelManagedVal,
 		"--label", fmt.Sprintf("%s=%d", LabelJobID, req.JobID),
 		"--label", LabelRunnerName+"="+req.RunnerName,
+		// The registration token rides as a plain container env var. It is
+		// visible in `docker inspect` to any local user who can reach this
+		// daemon — a bounded risk: the token is a GitHub-ephemeral,
+		// single-use, 1h registration token (not a PAT), consumed the
+		// moment the runner registers. The cloud dispatchers (GCP Secret
+		// Manager, Azure secret binding) keep it out of the resource's
+		// plain env because their control plane offers a secret store; a
+		// local docker daemon has no equivalent that also preserves the
+		// runner image's `RUNNER_REG_TOKEN`-from-env bootstrap contract
+		// (an env-file's value still resolves in `docker inspect`, and
+		// stdin/file delivery would require changing the runner image's
+		// entrypoint). So this stays as the documented bounded-risk path.
 		"-e", "RUNNER_REG_TOKEN="+req.RegToken,
 		"-e", "RUNNER_REPO="+req.Repo,
 		"-e", "RUNNER_NAME="+req.RunnerName,
