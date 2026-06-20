@@ -118,6 +118,7 @@ func (s *GCPBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 	objectName := fmt.Sprintf("build-context/%d.tar.gz", time.Now().UnixNano())
 	writer := s.gcs.Bucket(s.bucket).Object(objectName).NewWriter(ctx)
 	if _, err := writer.Write(contextBuf.Bytes()); err != nil {
+		_ = writer.Close()
 		return nil, fmt.Errorf("upload context to GCS: %w", err)
 	}
 	if err := writer.Close(); err != nil {

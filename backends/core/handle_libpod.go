@@ -39,6 +39,11 @@ func (s *BaseServer) registerLibpodRoutes() {
 	// Exec
 	s.Mux.HandleFunc("POST /libpod/containers/{id}/exec", lp(s.handleExecCreate))
 	s.Mux.HandleFunc("POST /libpod/exec/{id}/start", lp(s.handleExecStart))
+	// podman exec retrieves the exit code via GET /libpod/exec/{id}/json;
+	// without this route it 404'd on the libpod prefix (only the
+	// docker-compat /exec/{id}/json existed).
+	s.Mux.HandleFunc("GET /libpod/exec/{id}/json", lp(s.handleExecInspect))
+	s.Mux.HandleFunc("POST /libpod/exec/{id}/resize", lp(s.handleExecResize))
 
 	// Images
 	s.Mux.HandleFunc("POST /libpod/images/pull", lp(s.handleLibpodImagePull))

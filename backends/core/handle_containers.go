@@ -174,6 +174,19 @@ func (s *BaseServer) handleContainerRestart(w http.ResponseWriter, r *http.Reque
 func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
 
+	// Validate the condition up front. Docker accepts only the empty
+	// string (treated as not-running, the default), not-running,
+	// next-exit, and removed; anything else is a 400, not a silent
+	// fall-through to the backend default.
+	switch r.URL.Query().Get("condition") {
+	case "", "not-running", "next-exit", "removed":
+	default:
+		WriteError(w, &api.InvalidParameterError{
+			Message: "invalid condition: " + r.URL.Query().Get("condition"),
+		})
+		return
+	}
+
 	// Fast-path: when an InvocationResult is already recorded the
 	// container has exited via the invoke goroutine and the cached exit
 	// code is the truth — return it without paying the slow

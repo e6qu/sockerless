@@ -18,6 +18,7 @@ jobs:
   test-gate:
     needs: ci
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.4.0
@@ -37,6 +38,7 @@ jobs:
   release:
     needs: test-gate
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
         with:

@@ -22,8 +22,27 @@ REPORT="$2"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ALLOWLIST="$ROOT/simulators/$CLOUD/spec-violation-allowlist.txt"
 
-if [ ! -f "$REPORT" ] || [ ! -s "$REPORT" ]; then
-  echo "check-spec-violations: $CLOUD: no violations recorded"
+# The report file is the validator's run-marker: SetSpecValidator opens it with
+# O_CREATE the instant validation arms (before any request), so the file EXISTS
+# whenever the validator actually ran — even on a clean run with zero violations.
+# Therefore:
+#   - file ABSENT  => the validator never armed (sim built without it, wrong
+#                     SOCKERLESS_SPEC_DIR/SOCKERLESS_SPEC_VALIDATE, or the sim
+#                     never started). A vacuous "exit 0" here would be a false
+#                     negative — the gate validated nothing. Fail loud.
+#   - file present, EMPTY => validator ran, observed zero divergences. Clean pass.
+if [ ! -f "$REPORT" ]; then
+  echo "check-spec-violations: $CLOUD: FAIL — report file '$REPORT' is absent." >&2
+  echo "The spec validator never ran: it creates this file the moment it arms," >&2
+  echo "so an absent file means the sim was built/started without validation" >&2
+  echo "(check SOCKERLESS_SPEC_VALIDATE / SOCKERLESS_SPEC_DIR and that the sim" >&2
+  echo "binary includes the spec validator). Refusing to pass a gate that" >&2
+  echo "validated nothing." >&2
+  exit 1
+fi
+
+if [ ! -s "$REPORT" ]; then
+  echo "check-spec-violations: $CLOUD: validator ran; no violations recorded"
   exit 0
 fi
 

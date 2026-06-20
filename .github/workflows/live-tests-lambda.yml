@@ -48,6 +48,7 @@ permissions:
 jobs:
   infra-up:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '0')
     env:
       AWS_REGION: ${{ inputs.region }}
@@ -67,6 +68,7 @@ jobs:
   lambda-baseline:
     needs: infra-up
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') || contains(inputs.scripts, '2')
     env:
       AWS_REGION: ${{ inputs.region }}
@@ -88,6 +90,7 @@ jobs:
   lambda-runtime-api:
     needs: [infra-up, lambda-baseline]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: |
       contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
       contains(inputs.scripts, '3')
@@ -106,6 +109,7 @@ jobs:
   github-runner:
     needs: infra-up
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     if: |
       contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
       contains(inputs.scripts, '4')
@@ -131,6 +135,7 @@ jobs:
       contains(fromJSON(format('["all","{0}"]', inputs.scripts)), 'all') ||
       contains(inputs.scripts, 'hello')
     runs-on: [self-hosted, sockerless-lambda]
+    timeout-minutes: 30
     container:
       image: alpine:latest
     steps:
@@ -141,6 +146,7 @@ jobs:
     needs: [lambda-baseline, lambda-runtime-api, github-runner, hello]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       AWS_REGION: ${{ inputs.region }}
     steps:

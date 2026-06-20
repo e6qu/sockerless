@@ -281,14 +281,15 @@ func (s *ACRBuildService) Build(ctx context.Context, opts core.CloudBuildOptions
 		return nil, fmt.Errorf("ACR Task failed: %w", err)
 	}
 
+	if result.Run.Properties == nil || result.Run.Properties.Status == nil {
+		return nil, fmt.Errorf("ACR Task: poller returned no run status")
+	}
+	if *result.Run.Properties.Status != armcontainerregistry.RunStatusSucceeded {
+		return nil, fmt.Errorf("ACR Task %s", *result.Run.Properties.Status)
+	}
 	runID := ""
-	if result.Run.Properties != nil {
-		if result.Run.Properties.Status != nil && *result.Run.Properties.Status != armcontainerregistry.RunStatusSucceeded {
-			return nil, fmt.Errorf("ACR Task %s", *result.Run.Properties.Status)
-		}
-		if result.Run.Properties.RunID != nil {
-			runID = *result.Run.Properties.RunID
-		}
+	if result.Run.Properties.RunID != nil {
+		runID = *result.Run.Properties.RunID
 	}
 
 	s.logger.Info().Str("image", imageName).Str("runID", runID).Dur("duration", time.Since(start)).Msg("ACR Task succeeded")

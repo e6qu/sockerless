@@ -375,6 +375,8 @@ func EndpointSettingsToAPI(ep *network.EndpointSettings) *api.EndpointSettings {
 		GlobalIPv6PrefixLen: ep.GlobalIPv6PrefixLen,
 		MacAddress:          ep.MacAddress,
 		Aliases:             ep.Aliases,
+		DNSNames:            ep.DNSNames,
+		Links:               ep.Links,
 		DriverOpts:          ep.DriverOpts,
 	}
 }

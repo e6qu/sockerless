@@ -134,12 +134,22 @@ func (s *BaseServer) handleContainerLogs(w http.ResponseWriter, r *http.Request)
 	// Parse stdout/stderr params
 	stdoutParam := r.URL.Query().Get("stdout")
 	stderrParam := r.URL.Query().Get("stderr")
-	wantStdout := stdoutParam != "0" && stdoutParam != "false" &&
-		((stderrParam != "1" && stderrParam != "true") || stdoutParam != "")
+	stdoutOn := stdoutParam == "1" || stdoutParam == "true"
+	stderrOn := stderrParam == "1" || stderrParam == "true"
+	// Real Docker rejects a logs request that selects no stream — neither
+	// stdout nor stderr — with 400 instead of silently defaulting to
+	// stdout.
+	if !stdoutOn && !stderrOn {
+		WriteError(w, &api.InvalidParameterError{
+			Message: "Bad parameters: you must choose at least one stream",
+		})
+		return
+	}
+	wantStdout := stdoutOn
 
 	opts := api.ContainerLogsOptions{
 		ShowStdout: wantStdout,
-		ShowStderr: stderrParam == "1" || stderrParam == "true",
+		ShowStderr: stderrOn,
 		Follow:     r.URL.Query().Get("follow") == "1" || r.URL.Query().Get("follow") == "true",
 		Timestamps: r.URL.Query().Get("timestamps") == "1" || r.URL.Query().Get("timestamps") == "true",
 		Tail:       r.URL.Query().Get("tail"),
@@ -230,11 +240,31 @@ func prependDetailsToLines(data []byte, prefix string) []byte {
 // handleContainerAttach establishes a bidirectional stream to the container.
 func (s *BaseServer) handleContainerAttach(w http.ResponseWriter, r *http.Request) {
 	ref := r.PathValue("id")
-	c, _ := s.ResolveContainerAuto(r.Context(), ref)
+
+	// Resolve the container and surface a 404 BEFORE hijacking. Once the
+	// connection is hijacked the client would parse error-message bytes
+	// as a multiplexed stdcopy frame; mirror handleExecStart, which
+	// resolves up front. A missing ref previously got 101 UPGRADED +
+	// empty body instead of a 404.
+	c, found := s.ResolveContainerAuto(r.Context(), ref)
+	if !found {
+		WriteError(w, &api.NotFoundError{Resource: "container", ID: ref})
+		return
+	}
 	if c.ID == "" {
 		c.ID = ref
 	}
 	tty := c.Config.Tty
+
+	// The typed AttachDriver models a single bidirectional pipe
+	// (Attach(dctx, tty, conn)) and does not expose per-stream
+	// stdin/stdout/stderr/logs selection: every attach gets all streams
+	// the driver produces. The ?stdin/stdout/stderr/logs/stream= params
+	// are therefore not yet honored individually — threading them into
+	// the driver needs the AttachDriver interface to grow per-stream
+	// options, which is out of scope for the HTTP-translation layer. The
+	// load-bearing fidelity fix here is the resolve-before-hijack 404
+	// above.
 
 	hj, ok := w.(http.Hijacker)
 	if !ok {

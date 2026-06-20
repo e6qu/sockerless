@@ -44,6 +44,7 @@ jobs:
           - { platform: linux/arm64, runner: ubuntu-24.04-arm, suffix: arm64 }
     name: ${{ matrix.image.name }} (${{ matrix.arch.suffix }})
     runs-on: ${{ matrix.arch.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7.0.0
 
@@ -73,6 +74,7 @@ jobs:
     needs: build
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
