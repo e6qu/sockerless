@@ -4,6 +4,39 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - DynamoDB PartiQL + the remaining actionable tail
+
+Closed out every actionable DynamoDB item in one PR (BUG-2141..2148), leaving only
+the externally-gated #1075 (live-cloud) and #1345 (azuread upstream) open.
+
+**PartiQL (2142)** — new `dynamodb_partiql.go` implements `ExecuteStatement`,
+`BatchExecuteStatement`, and `ExecuteTransaction` as a faithful translation layer
+over the existing item engine, not a second store. A bounds-safe lexer/parser
+(`sim.Scanner` + `sim.ParseGuard`) builds a statement AST; SELECT/INSERT/UPDATE/
+DELETE map onto the engine — WHERE predicates render to a DynamoDB
+ConditionExpression evaluated by `ddbEvalExpr`, UPDATE SET/REMOVE render to an
+UpdateExpression applied by `ddbApplyUpdateExpression`, SELECT dispatches to a
+point read when the WHERE supplies the full key else a filtered scan, with ORDER
+BY and an opaque base64 NextToken. BatchExecuteStatement reports per-statement
+errors without failing the batch; ExecuteTransaction is all-or-nothing with a
+per-statement `CancellationReasons` array. Validated by SDK **and** CLI tests plus
+`FuzzDDBPartiQLParse` (zero crashers).
+
+**ConsumedCapacity (2141)** — decoded `ReturnConsumedCapacity` on
+Get/Put/Update/Delete/Query/Scan and emit a `ConsumedCapacity` block computed from
+a faithful item-size calculation (attribute-name + value bytes → 4KB read / 1KB
+write capacity blocks, halved for eventually-consistent reads).
+
+**Completeness-audit tail** — CreateTable now validates that every KeySchema
+attribute (table + GSI + LSI) is declared in AttributeDefinitions (2143); the
+legacy `AttributeUpdates` ADD action increments numbers / unions sets instead of
+overwriting (2144); nested `ProjectionExpression` paths return only the projected
+sub-attribute, merging shared prefixes (2145); the legacy `Expected` /
+`ConditionalOperator` parameters are translated to the condition engine and
+evaluated (2146); `ConsistentRead` against a global secondary index is rejected
+(2147); and `DescribeLimits` is implemented (2148). `DescribeEndpoints` was
+deliberately not added — it's internal endpoint-discovery, not a public SDK/CLI op.
+
 ## 2026-06-21 - DynamoDB: 4 consumer bugs + a completeness/safety sweep
 
 Fixed four consumer-reported DynamoDB defects (#641–#644) and, on the same PR, a

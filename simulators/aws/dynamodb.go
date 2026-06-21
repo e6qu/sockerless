@@ -255,6 +255,18 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("DynamoDB_20120810.ListTagsOfResource", handleDDBListTagsOfResource)
 	r.Register("DynamoDB_20120810.TagResource", handleDDBTagResource)
 	r.Register("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
+	r.Register("DynamoDB_20120810.DescribeLimits", handleDDBDescribeLimits)
+	registerDDBPartiQL(r)
+}
+
+// handleDDBDescribeLimits returns the account/table capacity maximums.
+func handleDDBDescribeLimits(w http.ResponseWriter, r *http.Request) {
+	writeDDBJSON(w, http.StatusOK, map[string]any{
+		"AccountMaxReadCapacityUnits":  80000,
+		"AccountMaxWriteCapacityUnits": 80000,
+		"TableMaxReadCapacityUnits":    40000,
+		"TableMaxWriteCapacityUnits":   40000,
+	})
 }
 
 // handleDDBUpdateContinuousBackups enables/disables PITR. Persists to
@@ -525,6 +537,30 @@ func handleDDBCreateTable(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "ResourceInUseException", http.StatusBadRequest,
 			"Table already exists: %s", req.TableName)
 		return
+	}
+	if len(req.KeySchema) == 0 {
+		sim.AWSError(w, "ValidationException", "KeySchema is required", http.StatusBadRequest)
+		return
+	}
+	// Every key attribute (table + GSI + LSI) must be declared in
+	// AttributeDefinitions — real DynamoDB rejects otherwise.
+	defined := map[string]bool{}
+	for _, ad := range req.AttributeDefinitions {
+		defined[ad.AttributeName] = true
+	}
+	keyAttrs := append([]DDBKeySchemaEntry(nil), req.KeySchema...)
+	for _, g := range req.GlobalSecondaryIndexes {
+		keyAttrs = append(keyAttrs, g.KeySchema...)
+	}
+	for _, l := range req.LocalSecondaryIndexes {
+		keyAttrs = append(keyAttrs, l.KeySchema...)
+	}
+	for _, k := range keyAttrs {
+		if !defined[k.AttributeName] {
+			sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+				"One or more parameter values were invalid: Some index key attributes are not defined in AttributeDefinitions. Keys: [%s]", k.AttributeName)
+			return
+		}
 	}
 	billingMode := req.BillingMode
 	if billingMode == "" {
@@ -835,6 +871,102 @@ func ddbExtractAttrValue(v any) string {
 	return ""
 }
 
+// ddbAttrValueSize approximates the bytes DynamoDB attributes a value, per the
+// documented item-size rules (used for ConsumedCapacity). Bounded by the
+// 32-level write-side nesting limit so the recursion can't overflow.
+func ddbAttrValueSize(v any) int {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return 1
+	}
+	if s, ok := m["S"].(string); ok {
+		return len(s)
+	}
+	if n, ok := m["N"].(string); ok {
+		digits := 0
+		for _, c := range n {
+			if c >= '0' && c <= '9' {
+				digits++
+			}
+		}
+		if sz := digits/2 + 1; sz < 21 {
+			return sz
+		}
+		return 21
+	}
+	if b, ok := m["B"].(string); ok {
+		return len(b)
+	}
+	if mm, ok := m["M"].(map[string]any); ok {
+		sz := 3
+		for k, sub := range mm {
+			sz += len(k) + ddbAttrValueSize(sub) + 1
+		}
+		return sz
+	}
+	if ll, ok := m["L"].([]any); ok {
+		sz := 3
+		for _, sub := range ll {
+			sz += ddbAttrValueSize(sub) + 1
+		}
+		return sz
+	}
+	for _, st := range []string{"SS", "NS", "BS"} {
+		if set, ok := m[st].([]any); ok {
+			sz := 0
+			for _, e := range set {
+				if s, ok := e.(string); ok {
+					sz += len(s)
+				}
+			}
+			return sz
+		}
+	}
+	return 1 // BOOL / NULL
+}
+
+func ddbItemSizeBytes(item map[string]any) int {
+	sz := 0
+	for name, v := range item {
+		sz += len(name) + ddbAttrValueSize(v)
+	}
+	return sz
+}
+
+// ddbReadUnits / ddbWriteUnits convert an item size to consumed capacity units
+// (read: 4KB blocks, halved for eventually-consistent; write: 1KB blocks).
+func ddbReadUnits(item map[string]any, strong bool) float64 {
+	blocks := (ddbItemSizeBytes(item) + 4095) / 4096
+	if blocks < 1 {
+		blocks = 1
+	}
+	if strong {
+		return float64(blocks)
+	}
+	return float64(blocks) / 2
+}
+
+func ddbWriteUnits(item map[string]any) float64 {
+	blocks := (ddbItemSizeBytes(item) + 1023) / 1024
+	if blocks < 1 {
+		blocks = 1
+	}
+	return float64(blocks)
+}
+
+// ddbConsumedCapacity builds the ConsumedCapacity response block, or nil when
+// ReturnConsumedCapacity was unset/NONE.
+func ddbConsumedCapacity(returnLevel, tableName string, units float64) map[string]any {
+	if returnLevel == "" || strings.EqualFold(returnLevel, "NONE") {
+		return nil
+	}
+	return map[string]any{
+		"TableName":     tableName,
+		"CapacityUnits": units,
+		"Table":         map[string]any{"CapacityUnits": units},
+	}
+}
+
 // ddbCanonicalNumber returns an exact canonical form of a DynamoDB number string
 // so equal numbers share a store key. Falls back to the trimmed input when it
 // isn't a valid number.
@@ -889,13 +1021,16 @@ func ddbAttrExceedsDepth(v any, remaining int) bool {
 
 func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                           string            `json:"TableName"`
-		Item                                map[string]any    `json:"Item"`
-		ConditionExpression                 string            `json:"ConditionExpression"`
-		ExpressionAttributeNames            map[string]string `json:"ExpressionAttributeNames,omitempty"`
-		ExpressionAttributeValues           map[string]any    `json:"ExpressionAttributeValues,omitempty"`
-		ReturnValues                        string            `json:"ReturnValues,omitempty"`
-		ReturnValuesOnConditionCheckFailure string            `json:"ReturnValuesOnConditionCheckFailure,omitempty"`
+		TableName                           string                      `json:"TableName"`
+		Item                                map[string]any              `json:"Item"`
+		ConditionExpression                 string                      `json:"ConditionExpression"`
+		ExpressionAttributeNames            map[string]string           `json:"ExpressionAttributeNames,omitempty"`
+		ExpressionAttributeValues           map[string]any              `json:"ExpressionAttributeValues,omitempty"`
+		ReturnValues                        string                      `json:"ReturnValues,omitempty"`
+		ReturnValuesOnConditionCheckFailure string                      `json:"ReturnValuesOnConditionCheckFailure,omitempty"`
+		Expected                            map[string]ddbExpectedEntry `json:"Expected,omitempty"`
+		ConditionalOperator                 string                      `json:"ConditionalOperator,omitempty"`
+		ReturnConsumedCapacity              string                      `json:"ReturnConsumedCapacity,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -924,12 +1059,22 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, old, exists)
 		return
 	}
+	if okExp, err := ddbCheckExpected(old, exists, req.Expected, req.ConditionalOperator); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !okExp {
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, old, exists)
+		return
+	}
 	ddbItems.Put(itemKey, req.Item)
 	ddbItemNames.Put(itemKey, itemKey)
 	ddbBumpKeyGen()
 	resp := map[string]any{}
 	if req.ReturnValues == "ALL_OLD" && exists {
 		resp["Attributes"] = old
+	}
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, ddbWriteUnits(req.Item)); cc != nil {
+		resp["ConsumedCapacity"] = cc
 	}
 	writeDDBJSON(w, http.StatusOK, resp)
 }
@@ -946,18 +1091,15 @@ func ddbProjectItem(item map[string]any, projection string, exprNames map[string
 	}
 	out := map[string]any{}
 	for _, raw := range strings.Split(projection, ",") {
-		name := strings.TrimSpace(raw)
-		if i := strings.IndexAny(name, ".["); i >= 0 {
-			name = strings.TrimSpace(name[:i])
-		}
-		if name == "" {
+		path := strings.TrimSpace(raw)
+		if path == "" {
 			continue
 		}
-		if resolved, ok := exprNames[name]; ok {
-			name = resolved
-		}
-		if v, ok := item[name]; ok {
-			out[name] = v
+		// Project just the value at this (possibly nested) path, grafting it into
+		// out at the same path so `a.b` returns only the nested sub-attribute and
+		// sibling paths (`a.b, a.c`) merge under their shared prefix.
+		if v, ok := ddbResolvePath(item, path, exprNames); ok {
+			_ = ddbSetByPath(out, path, exprNames, v)
 		}
 	}
 	return out
@@ -969,6 +1111,8 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 		Key                      map[string]any    `json:"Key"`
 		ProjectionExpression     string            `json:"ProjectionExpression"`
 		ExpressionAttributeNames map[string]string `json:"ExpressionAttributeNames"`
+		ConsistentRead           bool              `json:"ConsistentRead"`
+		ReturnConsumedCapacity   string            `json:"ReturnConsumedCapacity"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -981,14 +1125,15 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemKey := ddbItemKey(t, req.Key)
-	item, ok := ddbItems.Get(itemKey)
-	if !ok {
-		// Real DynamoDB returns 200 with no Item field for missing keys.
-		writeDDBJSON(w, http.StatusOK, map[string]any{})
-		return
+	item, found := ddbItems.Get(itemKey)
+	out := map[string]any{}
+	if found {
+		out["Item"] = ddbProjectItem(item, req.ProjectionExpression, req.ExpressionAttributeNames)
 	}
-	item = ddbProjectItem(item, req.ProjectionExpression, req.ExpressionAttributeNames)
-	writeDDBJSON(w, http.StatusOK, map[string]any{"Item": item})
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, ddbReadUnits(item, req.ConsistentRead)); cc != nil {
+		out["ConsumedCapacity"] = cc
+	}
+	writeDDBJSON(w, http.StatusOK, out)
 }
 
 func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
@@ -1004,9 +1149,12 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 			Action string         `json:"Action"`
 			Value  map[string]any `json:"Value"`
 		} `json:"AttributeUpdates"`
-		ConditionExpression                 string `json:"ConditionExpression"`
-		ReturnValues                        string `json:"ReturnValues"`
-		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
+		ConditionExpression                 string                      `json:"ConditionExpression"`
+		ReturnValues                        string                      `json:"ReturnValues"`
+		ReturnValuesOnConditionCheckFailure string                      `json:"ReturnValuesOnConditionCheckFailure"`
+		Expected                            map[string]ddbExpectedEntry `json:"Expected,omitempty"`
+		ConditionalOperator                 string                      `json:"ConditionalOperator,omitempty"`
+		ReturnConsumedCapacity              string                      `json:"ReturnConsumedCapacity,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -1027,6 +1175,13 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, item, existed)
 		return
 	}
+	if okExp, err := ddbCheckExpected(item, existed, req.Expected, req.ConditionalOperator); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !okExp {
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, item, existed)
+		return
+	}
 	oldItem := ddbCloneItem(item)
 	if item == nil {
 		item = map[string]any{}
@@ -1044,8 +1199,17 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	for attr, upd := range req.AttributeUpdates {
 		switch upd.Action {
 		case "DELETE":
-			delete(item, attr)
-		default: // PUT (default) and ADD treated as overwrite for sim's needs
+			// No value removes the attribute; a set value removes those elements.
+			if upd.Value != nil {
+				if cur, ok := item[attr]; ok {
+					item[attr] = ddbDeleteSetElems(cur, upd.Value)
+				}
+			} else {
+				delete(item, attr)
+			}
+		case "ADD":
+			item[attr] = ddbAddValues(item[attr], upd.Value)
+		default: // PUT (default)
 			item[attr] = upd.Value
 		}
 	}
@@ -1088,6 +1252,9 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 		}
 	default: // NONE (default) and "" emit no Attributes field.
 	}
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, ddbWriteUnits(item)); cc != nil {
+		resp["ConsumedCapacity"] = cc
+	}
 	writeDDBJSON(w, http.StatusOK, resp)
 }
 
@@ -1122,13 +1289,16 @@ func ddbAttrEqual(a, b any) bool {
 
 func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                           string            `json:"TableName"`
-		Key                                 map[string]any    `json:"Key"`
-		ConditionExpression                 string            `json:"ConditionExpression"`
-		ExpressionAttributeNames            map[string]string `json:"ExpressionAttributeNames"`
-		ExpressionAttributeValues           map[string]any    `json:"ExpressionAttributeValues"`
-		ReturnValues                        string            `json:"ReturnValues"`
-		ReturnValuesOnConditionCheckFailure string            `json:"ReturnValuesOnConditionCheckFailure"`
+		TableName                           string                      `json:"TableName"`
+		Key                                 map[string]any              `json:"Key"`
+		ConditionExpression                 string                      `json:"ConditionExpression"`
+		ExpressionAttributeNames            map[string]string           `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues           map[string]any              `json:"ExpressionAttributeValues"`
+		ReturnValues                        string                      `json:"ReturnValues"`
+		ReturnValuesOnConditionCheckFailure string                      `json:"ReturnValuesOnConditionCheckFailure"`
+		Expected                            map[string]ddbExpectedEntry `json:"Expected,omitempty"`
+		ConditionalOperator                 string                      `json:"ConditionalOperator,omitempty"`
+		ReturnConsumedCapacity              string                      `json:"ReturnConsumedCapacity,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -1149,14 +1319,24 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, oldItem, existed)
 		return
 	}
+	if okExp, err := ddbCheckExpected(oldItem, existed, req.Expected, req.ConditionalOperator); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !okExp {
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, oldItem, existed)
+		return
+	}
 	ddbItems.Delete(itemKey)
 	ddbItemNames.Delete(itemKey)
 	ddbBumpKeyGen()
+	out := map[string]any{}
 	if strings.EqualFold(req.ReturnValues, "ALL_OLD") && existed {
-		writeDDBJSON(w, http.StatusOK, map[string]any{"Attributes": oldItem})
-		return
+		out["Attributes"] = oldItem
 	}
-	writeDDBJSON(w, http.StatusOK, map[string]any{})
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, ddbWriteUnits(oldItem)); cc != nil {
+		out["ConsumedCapacity"] = cc
+	}
+	writeDDBJSON(w, http.StatusOK, out)
 }
 
 // handleDDBQuery returns items whose primary-key attributes match the
@@ -1176,6 +1356,8 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
 		ScanIndexForward          *bool             `json:"ScanIndexForward"`
 		Select                    string            `json:"Select"`
+		ConsistentRead            bool              `json:"ConsistentRead"`
+		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -1193,6 +1375,11 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	if req.IndexName != "" && !ddbHasIndex(t, req.IndexName) {
 		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
 			"The table does not have the specified index: %s", req.IndexName)
+		return
+	}
+	if req.ConsistentRead && ddbIsGSI(t, req.IndexName) {
+		sim.AWSError(w, "ValidationException",
+			"Consistent reads are not supported on global secondary indexes", http.StatusBadRequest)
 		return
 	}
 	prefix := req.TableName + "/"
@@ -1244,6 +1431,13 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(req.Select, "COUNT") {
 		out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	}
+	queryUnits := 0.0
+	for _, it := range items {
+		queryUnits += ddbReadUnits(it, req.ConsistentRead)
+	}
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, queryUnits); cc != nil {
+		out["ConsumedCapacity"] = cc
+	}
 	writeDDBJSON(w, http.StatusOK, out)
 }
 
@@ -1279,6 +1473,20 @@ func ddbProjectItems(items []map[string]any, projection string, exprNames map[st
 	return out
 }
 
+// ddbIsGSI reports whether name is one of the table's global secondary indexes
+// (which, unlike LSIs and the base table, don't support consistent reads).
+func ddbIsGSI(t DDBTable, name string) bool {
+	if name == "" {
+		return false
+	}
+	for _, g := range t.GlobalSecondaryIndexes {
+		if g.IndexName == name {
+			return true
+		}
+	}
+	return false
+}
+
 // ddbHasIndex reports whether the table has a GSI or LSI with the given name.
 func ddbHasIndex(t DDBTable, name string) bool {
 	for _, g := range t.GlobalSecondaryIndexes {
@@ -1307,6 +1515,8 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		Select                    string            `json:"Select"`
 		Segment                   *int              `json:"Segment"`
 		TotalSegments             *int              `json:"TotalSegments"`
+		ConsistentRead            bool              `json:"ConsistentRead"`
+		ReturnConsumedCapacity    string            `json:"ReturnConsumedCapacity"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -1321,6 +1531,11 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	if req.IndexName != "" && !ddbHasIndex(t, req.IndexName) {
 		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
 			"The table does not have the specified index: %s", req.IndexName)
+		return
+	}
+	if req.ConsistentRead && ddbIsGSI(t, req.IndexName) {
+		sim.AWSError(w, "ValidationException",
+			"Consistent reads are not supported on global secondary indexes", http.StatusBadRequest)
 		return
 	}
 	// Segment/TotalSegments must be provided together and 0 <= Segment < TotalSegments.
@@ -1400,6 +1615,13 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	if !strings.EqualFold(req.Select, "COUNT") {
 		out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
 	}
+	scanUnits := 0.0
+	for _, it := range items {
+		scanUnits += ddbReadUnits(it, req.ConsistentRead)
+	}
+	if cc := ddbConsumedCapacity(req.ReturnConsumedCapacity, req.TableName, scanUnits); cc != nil {
+		out["ConsumedCapacity"] = cc
+	}
 	writeDDBJSON(w, http.StatusOK, out)
 }
 
@@ -1410,6 +1632,114 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 // An empty expression always holds.
 func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
 	return ddbEvalExpr(item, exists, expr, names, values)
+}
+
+// ddbExpectedEntry is one entry of the legacy Expected map.
+type ddbExpectedEntry struct {
+	Value              map[string]any   `json:"Value"`
+	Exists             *bool            `json:"Exists"`
+	ComparisonOperator string           `json:"ComparisonOperator"`
+	AttributeValueList []map[string]any `json:"AttributeValueList"`
+}
+
+// ddbExpectedToCondition translates the legacy Expected map (+ ConditionalOperator)
+// into an equivalent ConditionExpression with generated #name/:val placeholders,
+// so it evaluates through the same engine as a modern ConditionExpression.
+func ddbExpectedToCondition(expected map[string]ddbExpectedEntry, condOp string) (string, map[string]string, map[string]any, error) {
+	names := map[string]string{}
+	values := map[string]any{}
+	var clauses []string
+	i := 0
+	for attr, spec := range expected {
+		n := fmt.Sprintf("#e%d", i)
+		names[n] = attr
+		addVal := func(v map[string]any) string {
+			p := fmt.Sprintf(":e%d_%d", i, len(values))
+			values[p] = v
+			return p
+		}
+		op := strings.ToUpper(spec.ComparisonOperator)
+		// Legacy shorthand: Exists / Value without an explicit operator.
+		if op == "" {
+			switch {
+			case spec.Exists != nil && !*spec.Exists:
+				clauses = append(clauses, "attribute_not_exists("+n+")")
+			case spec.Value != nil:
+				clauses = append(clauses, n+" = "+addVal(spec.Value))
+			case spec.Exists != nil && *spec.Exists:
+				clauses = append(clauses, "attribute_exists("+n+")")
+			default:
+				return "", nil, nil, fmt.Errorf("invalid Expected entry for %q", attr)
+			}
+			i++
+			continue
+		}
+		args := spec.AttributeValueList
+		if len(args) == 0 && spec.Value != nil {
+			args = []map[string]any{spec.Value}
+		}
+		var clause string
+		switch op {
+		case "EQ":
+			clause = n + " = " + addVal(args[0])
+		case "NE":
+			clause = n + " <> " + addVal(args[0])
+		case "LE":
+			clause = n + " <= " + addVal(args[0])
+		case "LT":
+			clause = n + " < " + addVal(args[0])
+		case "GE":
+			clause = n + " >= " + addVal(args[0])
+		case "GT":
+			clause = n + " > " + addVal(args[0])
+		case "NOT_NULL":
+			clause = "attribute_exists(" + n + ")"
+		case "NULL":
+			clause = "attribute_not_exists(" + n + ")"
+		case "CONTAINS":
+			clause = "contains(" + n + ", " + addVal(args[0]) + ")"
+		case "NOT_CONTAINS":
+			clause = "NOT contains(" + n + ", " + addVal(args[0]) + ")"
+		case "BEGINS_WITH":
+			clause = "begins_with(" + n + ", " + addVal(args[0]) + ")"
+		case "BETWEEN":
+			if len(args) < 2 {
+				return "", nil, nil, fmt.Errorf("BETWEEN needs 2 values for %q", attr)
+			}
+			clause = n + " BETWEEN " + addVal(args[0]) + " AND " + addVal(args[1])
+		case "IN":
+			ps := make([]string, len(args))
+			for j, a := range args {
+				ps[j] = addVal(a)
+			}
+			clause = n + " IN (" + strings.Join(ps, ", ") + ")"
+		default:
+			return "", nil, nil, fmt.Errorf("unsupported ComparisonOperator %q", spec.ComparisonOperator)
+		}
+		if (op != "NOT_NULL" && op != "NULL") && len(args) == 0 {
+			return "", nil, nil, fmt.Errorf("ComparisonOperator %q needs a value for %q", op, attr)
+		}
+		clauses = append(clauses, clause)
+		i++
+	}
+	joiner := " AND "
+	if strings.EqualFold(condOp, "OR") {
+		joiner = " OR "
+	}
+	return strings.Join(clauses, joiner), names, values, nil
+}
+
+// ddbCheckExpected evaluates the legacy Expected condition (no-op when empty).
+// Returns false only when a non-empty Expected condition fails.
+func ddbCheckExpected(item map[string]any, exists bool, expected map[string]ddbExpectedEntry, condOp string) (bool, error) {
+	if len(expected) == 0 {
+		return true, nil
+	}
+	expr, names, values, err := ddbExpectedToCondition(expected, condOp)
+	if err != nil {
+		return false, err
+	}
+	return ddbEvalExpr(item, exists, expr, names, values), nil
 }
 
 func ddbScalarString(v any) string {
