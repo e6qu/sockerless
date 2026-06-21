@@ -83,7 +83,9 @@ func (d *LocalFilesystemDriver) RootPath(_ string) (string, error) {
 // getOrCreateStagingDir returns or creates a temp directory for pre-start file staging.
 func (d *LocalFilesystemDriver) getOrCreateStagingDir(containerID string) string {
 	if sd, ok := d.Store.StagingDirs.Load(containerID); ok {
-		return sd.(string)
+		if dir, ok := sd.(string); ok {
+			return dir
+		}
 	}
 	shortID := containerID
 	if len(shortID) > 12 {
@@ -106,7 +108,9 @@ type LocalStreamDriver struct {
 
 func (d *LocalStreamDriver) LogBytes(containerID string) []byte {
 	if v, ok := d.Store.LogBuffers.Load(containerID); ok {
-		return v.([]byte)
+		if b, ok := v.([]byte); ok {
+			return b
+		}
 	}
 	return nil
 }
@@ -141,8 +145,10 @@ func addPathMapping(store *Store, containerID string, containerPath, hostPath st
 
 	next := make(map[string]string)
 	if v, ok := store.PathMappings.Load(containerID); ok {
-		for k, val := range v.(map[string]string) {
-			next[k] = val
+		if existing, ok := v.(map[string]string); ok {
+			for k, val := range existing {
+				next[k] = val
+			}
 		}
 	}
 	next[containerPath] = hostPath
@@ -156,18 +162,22 @@ func resolveContainerPath(containerID string, path string, store *Store) string 
 
 	// Check path mappings first
 	if v, ok := store.PathMappings.Load(containerID); ok {
-		for containerPath, hostPath := range v.(map[string]string) {
-			if strings.HasPrefix(cleanPath, containerPath) {
-				return hostPath + cleanPath[len(containerPath):]
+		if mappings, ok := v.(map[string]string); ok {
+			for containerPath, hostPath := range mappings {
+				if strings.HasPrefix(cleanPath, containerPath) {
+					return hostPath + cleanPath[len(containerPath):]
+				}
 			}
 		}
 	}
 
 	// Check staging dir
 	if sd, ok := store.StagingDirs.Load(containerID); ok {
-		stagedPath := filepath.Join(sd.(string), cleanPath)
-		if _, err := os.Stat(stagedPath); err == nil {
-			return stagedPath
+		if dir, ok := sd.(string); ok {
+			stagedPath := filepath.Join(dir, cleanPath)
+			if _, err := os.Stat(stagedPath); err == nil {
+				return stagedPath
+			}
 		}
 	}
 

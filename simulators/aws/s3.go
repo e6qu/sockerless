@@ -569,7 +569,9 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	maxKeysStr := r.URL.Query().Get("max-keys")
 	maxKeys := 1000
 	if maxKeysStr != "" {
-		fmt.Sscanf(maxKeysStr, "%d", &maxKeys)
+		if _, err := fmt.Sscanf(maxKeysStr, "%d", &maxKeys); err != nil {
+			maxKeys = 1000
+		}
 	}
 	if maxKeys < 0 {
 		maxKeys = 0

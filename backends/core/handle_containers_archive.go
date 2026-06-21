@@ -467,7 +467,9 @@ func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[s
 		source, target := parts[0], parts[1]
 		// Check if source is a named volume
 		if dir, ok := s.Store.VolumeDirs.Load(source); ok {
-			result[target] = dir.(string)
+			if path, ok := dir.(string); ok {
+				result[target] = path
+			}
 		} else if filepath.IsAbs(source) {
 			// Host path bind mount — pass through if the source directory exists
 			if info, err := os.Stat(source); err == nil && info.IsDir() {
@@ -495,7 +497,9 @@ func (s *BaseServer) resolveBindMounts(binds []string, mounts []api.Mount) map[s
 	for _, m := range mounts {
 		if m.Type == "volume" && m.Source != "" && m.Target != "" {
 			if dir, ok := s.Store.VolumeDirs.Load(m.Source); ok {
-				result[m.Target] = dir.(string)
+				if path, ok := dir.(string); ok {
+					result[m.Target] = path
+				}
 			} else {
 				// Auto-create the volume if it doesn't exist yet
 				volDir, err := os.MkdirTemp("", "vol-"+m.Source+"-")

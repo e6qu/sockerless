@@ -185,8 +185,14 @@ func (pa *PortAllocator) Allocate(project string, n int) ([]int, error) {
 			return nil, fmt.Errorf("failed to allocate port: %w", err)
 		}
 		listeners = append(listeners, ln)
-		port := ln.Addr().(*net.TCPAddr).Port
-		ports = append(ports, port)
+		tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+		if !ok {
+			for _, l := range listeners {
+				_ = l.Close()
+			}
+			return nil, fmt.Errorf("failed to allocate port: listener address is %T, not *net.TCPAddr", ln.Addr())
+		}
+		ports = append(ports, tcpAddr.Port)
 	}
 
 	// Close listeners so the ports can be used

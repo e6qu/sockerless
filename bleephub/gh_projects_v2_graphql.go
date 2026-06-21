@@ -75,7 +75,11 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 						"id": &graphql.Field{
 							Type: graphql.NewNonNull(graphql.ID),
 							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-								return p.Source.(map[string]interface{})["nodeID"], nil
+								src, ok := p.Source.(map[string]interface{})
+								if !ok {
+									return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+								}
+								return src["nodeID"], nil
 							},
 						},
 					},
@@ -149,7 +153,11 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["nodeID"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["nodeID"], nil
 				},
 			},
 			"name":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
@@ -234,7 +242,11 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 						"id": &graphql.Field{
 							Type: graphql.NewNonNull(graphql.ID),
 							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-								return p.Source.(map[string]interface{})["nodeID"], nil
+								src, ok := p.Source.(map[string]interface{})
+								if !ok {
+									return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+								}
+								return src["nodeID"], nil
 							},
 						},
 					},

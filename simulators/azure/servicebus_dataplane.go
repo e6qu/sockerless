@@ -63,7 +63,12 @@ func sbQueueKey(namespace, path string) string {
 
 func sbQueueStateFor(key string) *sbQueueState {
 	v, _ := sbQueueMessages.LoadOrStore(key, &sbQueueState{})
-	return v.(*sbQueueState)
+	st, ok := v.(*sbQueueState)
+	if !ok {
+		st = &sbQueueState{}
+		sbQueueMessages.Store(key, st)
+	}
+	return st
 }
 
 // registerServiceBusDataPlane wires the subdomain dispatcher. Requests

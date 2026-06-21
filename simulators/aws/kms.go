@@ -719,7 +719,9 @@ func handleKMSListAliases(w http.ResponseWriter, r *http.Request) {
 	}
 	// Stable order so the offset-based Marker pages each alias once.
 	sort.Slice(out, func(i, j int) bool {
-		return out[i]["AliasName"].(string) < out[j]["AliasName"].(string)
+		a, _ := out[i]["AliasName"].(string)
+		b, _ := out[j]["AliasName"].(string)
+		return a < b
 	})
 	page, next := awsPageExplicit(out, req.Marker, req.Limit)
 	resp := map[string]any{"Aliases": page, "Truncated": next != ""}

@@ -80,7 +80,9 @@ func (s *BaseServer) StartHealthCheck(containerID string) {
 // StopHealthCheck cancels the health check goroutine for a container.
 func (s *BaseServer) StopHealthCheck(containerID string) {
 	if cancel, ok := s.Store.HealthChecks.LoadAndDelete(containerID); ok {
-		cancel.(context.CancelFunc)()
+		if cancelFn, ok := cancel.(context.CancelFunc); ok {
+			cancelFn()
+		}
 	}
 }
 

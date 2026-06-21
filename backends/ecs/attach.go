@@ -92,7 +92,11 @@ func (s *Server) buildCloudWatchFetcher(containerID string) core.CloudLogFetchFu
 			StartFromHead: aws.Bool(true),
 		}
 		if cursor != nil {
-			input.NextToken = cursor.(*string)
+			tok, ok := cursor.(*string)
+			if !ok {
+				return nil, cursor, fmt.Errorf("ecs cloudwatch log cursor: unexpected type %T", cursor)
+			}
+			input.NextToken = tok
 		} else {
 			input.StartFromHead = aws.Bool(params.CloudLogTailInt32() == nil)
 			if limit := params.CloudLogTailInt32(); limit != nil {

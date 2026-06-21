@@ -29,7 +29,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					r := p.Source.(map[string]interface{})
+					r, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return r["nodeID"], nil
 				},
 			},
@@ -50,14 +53,20 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"owner": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					r := p.Source.(map[string]interface{})
+					r, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return r["owner"], nil
 				},
 			},
 			"defaultBranchRef": &graphql.Field{
 				Type: refType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					r := p.Source.(map[string]interface{})
+					r, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					branch, _ := r["defaultBranch"].(string)
 					if branch == "" {
 						return nil, nil
@@ -161,7 +170,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		// null when unset, exactly like a language-less repo on GitHub.
 		Type: languageType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			r := p.Source.(map[string]interface{})
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			lang, _ := r["language"].(string)
 			if lang == "" {
 				return nil, nil
@@ -215,7 +227,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"first": &graphql.ArgumentConfig{Type: graphql.Int},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			r := p.Source.(map[string]interface{})
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			topics, _ := r["topics"].([]string)
 			nodes := make([]interface{}, 0, len(topics))
 			for _, tp := range topics {
@@ -243,7 +258,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		// HEAD commit (matches GitHub's "repository is empty" semantics).
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			r := p.Source.(map[string]interface{})
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			nameWithOwner, _ := r["nameWithOwner"].(string)
 			owner, name, ok := strings.Cut(nameWithOwner, "/")
 			if !ok {
@@ -340,7 +358,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					rel := p.Source.(map[string]interface{})
+					rel, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return rel["nodeID"], nil
 				},
 			},
@@ -398,7 +419,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			})},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 			repoFullName, _ := repo["nameWithOwner"].(string)
 
@@ -449,7 +473,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"tagName": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 			repoFullName, _ := repo["nameWithOwner"].(string)
 			tagName, _ := p.Args["tagName"].(string)
@@ -473,7 +500,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		// gh repo view --json latestRelease selects {publishedAt,tagName,name,url}.
 		Type: releaseType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 			repoFullName, _ := repo["nameWithOwner"].(string)
 			latest := s.store.Releases.Latest(repoID)
@@ -502,7 +532,10 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			})},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			u := p.Source.(map[string]interface{})
+			u, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			login, _ := u["login"].(string)
 			repos := s.store.ListReposByOwner(login)
 

@@ -1064,7 +1064,9 @@ func handleAzureFilesPath(w http.ResponseWriter, r *http.Request, hostPath, rest
 		}
 		size := int64(0)
 		if v := r.Header.Get("x-ms-content-length"); v != "" {
-			fmt.Sscanf(v, "%d", &size)
+			if _, err := fmt.Sscanf(v, "%d", &size); err != nil {
+				size = 0
+			}
 		}
 		f, err := os.Create(hostPath)
 		if err != nil {
@@ -1133,8 +1135,12 @@ func handleAzureFilesPutRange(w http.ResponseWriter, r *http.Request, hostPath s
 		}
 		parts := strings.SplitN(s, "-", 2)
 		if len(parts) == 2 {
-			fmt.Sscanf(parts[0], "%d", &start)
-			fmt.Sscanf(parts[1], "%d", &end)
+			if _, err := fmt.Sscanf(parts[0], "%d", &start); err != nil {
+				start = 0
+			}
+			if _, err := fmt.Sscanf(parts[1], "%d", &end); err != nil {
+				end = 0
+			}
 		}
 	}
 	if err := os.MkdirAll(filepath.Dir(hostPath), 0o777); err != nil {

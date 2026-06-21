@@ -34,7 +34,7 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 				// polling forever.
 				if gone++; gone >= pollGoneThreshold {
 					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-						close(ch.(chan struct{}))
+						closeWaitCh(ch)
 					}
 					return
 				}
@@ -45,7 +45,7 @@ func (s *Server) pollExecutionExit(containerID, executionName string, exitCh cha
 			if exec.CompletionTime != nil {
 				// Close wait channel so ContainerWait unblocks
 				if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-					close(ch.(chan struct{}))
+					closeWaitCh(ch)
 				}
 				return
 			}

@@ -421,7 +421,12 @@ func handleGCSResumableChunk(w http.ResponseWriter, r *http.Request, uploadID st
 			"resumable upload session %q not found", uploadID)
 		return
 	}
-	sess := sv.(*gcsResumableSession)
+	sess, ok := sv.(*gcsResumableSession)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL",
+			"resumable upload session %q has unexpected type %T", uploadID, sv)
+		return
+	}
 	if _, exists := buckets.Get(sess.Bucket); !exists {
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
 			"bucket %q not found", sess.Bucket)

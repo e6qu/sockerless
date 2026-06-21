@@ -153,7 +153,11 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 	// (= no attach happened, run env-baked SOCKERLESS_USER_CMD instead).
 	var capturedStdin []byte
 	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
-		pipe := v.(*stdinPipe)
+		pipe := asStdinPipe(v)
+		if pipe == nil {
+			s.Logger.Error().Str("container", id).Msgf("invokeServiceDefaultCmd: stdinPipe has unexpected type %T", v)
+			return
+		}
 		// Wait for caller to half-close stdin OR timeout. gitlab-runner
 		// pipes the script then CloseWrite()s within milliseconds. 30s
 		// upper bound mirrors backends/ecs/backend_impl.go::launchAfterStdin.
@@ -177,7 +181,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		// in the window between those two steps double-closed it → panic.
 		closed := false
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 			closed = true
 		}
 		s.Logger.Info().Str("container", id).Bool("waitch_closed", closed).Msg("invokeServiceDefaultCmd: defer ran (goroutine exiting)")
@@ -234,7 +238,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 		s.Store.PutInvocationResult(id, inv)
 		// Fan-out failure to attached caller too so it doesn't block.
 		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
 		}
 		return
 	}
@@ -258,7 +262,7 @@ func (s *Server) invokeServiceDefaultCmd(id string, exitCh chan struct{}, skipIf
 
 	// Fan-out stdout+stderr to the attached gitlab-runner (if any).
 	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
+		asAttachStream(v).publishAttachResponse(res.Stdout, res.Stderr)
 	}
 }
 
@@ -304,7 +308,11 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 		s.Logger.Warn().Str("container", id).Msg("invokeRunningRunnerStage: no stdinPipe registered (race)")
 		return
 	}
-	pipe := v.(*stdinPipe)
+	pipe := asStdinPipe(v)
+	if pipe == nil {
+		s.Logger.Error().Str("container", id).Msgf("invokeRunningRunnerStage: stdinPipe has unexpected type %T", v)
+		return
+	}
 	select {
 	case <-pipe.Done():
 	case <-time.After(30 * time.Second):
@@ -323,7 +331,7 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	if !ok || url == "" {
 		s.Logger.Error().Str("container", id).Msg("invokeRunningRunnerStage: no service URL")
 		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte("no service URL"))
+			asAttachStream(v).publishAttachResponse(nil, []byte("no service URL"))
 		}
 		return
 	}
@@ -332,7 +340,7 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: access client")
 		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
 		}
 		return
 	}
@@ -342,14 +350,14 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id).Msg("invokeRunningRunnerStage: envelope POST failed")
 		if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
+			asAttachStream(v).publishAttachResponse(nil, []byte(err.Error()))
 		}
 		return
 	}
 	s.Logger.Info().Str("container", id).Int("exit", res.ExitCode).Int("stdout", len(res.Stdout)).Int("stderr", len(res.Stderr)).Msg("invokeRunningRunnerStage: bootstrap response")
 
 	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
+		asAttachStream(v).publishAttachResponse(res.Stdout, res.Stderr)
 	}
 
 	// Fan-out exit code via WaitChs. gitlab-runner does
@@ -362,7 +370,7 @@ func (s *Server) invokeRunningRunnerStage(id string, c api.Container) {
 	}
 	s.Store.PutInvocationResult(id, inv)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.Store.WaitChs.Store(id, make(chan struct{}))
 }

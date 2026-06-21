@@ -123,7 +123,7 @@ func (s *Server) serviceMembersOfNetwork(netID string) []api.Container {
 	if !ok {
 		return nil
 	}
-	ids := v.([]string)
+	ids := asStringSlice(v)
 	var out []api.Container
 	for _, id := range ids {
 		if c, ok := s.PendingCreates.Get(id); ok {
@@ -236,7 +236,7 @@ func (s *Server) trackNetworkService(netID, containerID string) {
 	defer s.networkServicesMu.Unlock()
 	var existing []string
 	if v, ok := s.networkServices.Load(netID); ok {
-		existing = v.([]string)
+		existing = asStringSlice(v)
 	}
 	for _, id := range existing {
 		if id == containerID {

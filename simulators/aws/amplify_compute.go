@@ -260,7 +260,12 @@ func amplifyFreeLoopbackPort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = ln.Close()
+		return 0, fmt.Errorf("unexpected listener address type %T", ln.Addr())
+	}
+	port := addr.Port
 	_ = ln.Close()
 	return port, nil
 }

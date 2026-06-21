@@ -720,7 +720,9 @@ func handleBatchListJobs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	sort.Slice(result, func(i, j int) bool {
-		return result[i]["jobId"].(string) < result[j]["jobId"].(string)
+		a, _ := result[i]["jobId"].(string)
+		b, _ := result[j]["jobId"].(string)
+		return a < b
 	})
 	if result == nil {
 		result = []map[string]any{}
@@ -750,7 +752,9 @@ func handleBatchCancelJob(w http.ResponseWriter, r *http.Request) {
 	}
 	if job.Status != "SUCCEEDED" && job.Status != "FAILED" {
 		if handleAny, ok := batchJobHandles.Load(req.JobID); ok {
-			handleAny.(*sim.ContainerHandle).Cancel()
+			if handle, ok := handleAny.(*sim.ContainerHandle); ok {
+				handle.Cancel()
+			}
 			batchJobHandles.Delete(req.JobID)
 		}
 		job.Status = "FAILED"

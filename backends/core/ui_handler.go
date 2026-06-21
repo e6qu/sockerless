@@ -48,7 +48,12 @@ func SPAHandler(fsys fs.FS, pathPrefix string) http.Handler {
 			return
 		}
 
-		http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile.(readSeeker))
+		rs, ok := indexFile.(readSeeker)
+		if !ok {
+			http.Error(w, "index.html is not seekable", http.StatusInternalServerError)
+			return
+		}
+		http.ServeContent(w, r, "index.html", stat.ModTime(), rs)
 	})
 }
 

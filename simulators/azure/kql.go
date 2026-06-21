@@ -44,9 +44,13 @@ func parseKQL(query string) kqlQuery {
 				q.Filters = append(q.Filters, f)
 			}
 		} else if strings.HasPrefix(part, "take ") {
-			fmt.Sscanf(strings.TrimPrefix(part, "take "), "%d", &q.Limit)
+			if _, err := fmt.Sscanf(strings.TrimPrefix(part, "take "), "%d", &q.Limit); err != nil {
+				q.Limit = 0
+			}
 		} else if strings.HasPrefix(part, "limit ") {
-			fmt.Sscanf(strings.TrimPrefix(part, "limit "), "%d", &q.Limit)
+			if _, err := fmt.Sscanf(strings.TrimPrefix(part, "limit "), "%d", &q.Limit); err != nil {
+				q.Limit = 0
+			}
 		} else if strings.HasPrefix(part, "project ") {
 			cols := strings.TrimPrefix(part, "project ")
 			for _, col := range strings.Split(cols, ",") {

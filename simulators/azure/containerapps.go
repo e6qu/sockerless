@@ -550,7 +550,9 @@ func registerContainerApps(srv *sim.Server) {
 
 		// Cancel running container if any
 		if v, ok := acaProcessHandles.LoadAndDelete(execID); ok {
-			stopACAExecutionProcesses(v.(*acaExecutionProcesses))
+			if procs, ok := v.(*acaExecutionProcesses); ok {
+				stopACAExecutionProcesses(procs)
+			}
 		}
 
 		ok := executions.Update(execID, func(e *JobExecution) {
@@ -703,7 +705,13 @@ func handleACAJobExec(w http.ResponseWriter, r *http.Request) {
 			"No running execution container for '%s/%s'", jobName, execName)
 		return
 	}
-	handle := v.(*acaExecutionProcesses).Main
+	procs, ok := v.(*acaExecutionProcesses)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"No running execution container for '%s/%s'", jobName, execName)
+		return
+	}
+	handle := procs.Main
 	if handle == nil {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 			"No running execution container for '%s/%s'", jobName, execName)

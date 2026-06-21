@@ -2178,10 +2178,14 @@ func parseIpPermission(r *http.Request, prefix string) EC2IpPermission {
 		IpProtocol: r.FormValue(prefix + ".IpProtocol"),
 	}
 	if v := r.FormValue(prefix + ".FromPort"); v != "" {
-		fmt.Sscanf(v, "%d", &perm.FromPort)
+		if _, err := fmt.Sscanf(v, "%d", &perm.FromPort); err != nil {
+			perm.FromPort = 0
+		}
 	}
 	if v := r.FormValue(prefix + ".ToPort"); v != "" {
-		fmt.Sscanf(v, "%d", &perm.ToPort)
+		if _, err := fmt.Sscanf(v, "%d", &perm.ToPort); err != nil {
+			perm.ToPort = 0
+		}
 	}
 
 	for i := 1; ; i++ {
@@ -2598,10 +2602,14 @@ func handleModifySecurityGroupRules(w http.ResponseWriter, r *http.Request) {
 			rule.IpProtocol = v
 		}
 		if v := r.FormValue(sr + ".FromPort"); v != "" {
-			fmt.Sscanf(v, "%d", &rule.FromPort)
+			if _, err := fmt.Sscanf(v, "%d", &rule.FromPort); err != nil {
+				rule.FromPort = 0
+			}
 		}
 		if v := r.FormValue(sr + ".ToPort"); v != "" {
-			fmt.Sscanf(v, "%d", &rule.ToPort)
+			if _, err := fmt.Sscanf(v, "%d", &rule.ToPort); err != nil {
+				rule.ToPort = 0
+			}
 		}
 		if v := r.FormValue(sr + ".CidrIpv4"); v != "" {
 			rule.CidrIpv4 = v
@@ -2874,7 +2882,9 @@ func runInstancesLaunchTemplate(r *http.Request) (id, name, version string, data
 	case "$Latest":
 		verNum = lt.LatestVersionNumber
 	default:
-		fmt.Sscanf(reqVersion, "%d", &verNum)
+		if _, err := fmt.Sscanf(reqVersion, "%d", &verNum); err != nil {
+			verNum = lt.DefaultVersionNumber
+		}
 	}
 	for _, v := range lt.Versions {
 		if v.VersionNumber == verNum {
@@ -2923,7 +2933,9 @@ func ec2AtoiOr(s string, def int) int {
 		return def
 	}
 	var n int
-	fmt.Sscanf(s, "%d", &n)
+	if _, err := fmt.Sscanf(s, "%d", &n); err != nil {
+		return def
+	}
 	return n
 }
 
@@ -5060,7 +5072,9 @@ func handleAttachNetworkInterface(w http.ResponseWriter, r *http.Request) {
 	eni.AttachmentId = attachID
 	eni.InstanceId = r.FormValue("InstanceId")
 	if di := r.FormValue("DeviceIndex"); di != "" {
-		fmt.Sscanf(di, "%d", &eni.DeviceIndex)
+		if _, err := fmt.Sscanf(di, "%d", &eni.DeviceIndex); err != nil {
+			eni.DeviceIndex = 0
+		}
 	}
 	eni.Status = "in-use"
 	ec2NetworkInterfaces.Put(eniID, eni)
@@ -5135,7 +5149,9 @@ func handleAssignPrivateIpAddresses(w http.ResponseWriter, r *http.Request) {
 	assigned := ec2ParamList(r, "PrivateIpAddress")
 	if n := r.FormValue("SecondaryPrivateIpAddressCount"); n != "" {
 		var count int
-		fmt.Sscanf(n, "%d", &count)
+		if _, err := fmt.Sscanf(n, "%d", &count); err != nil {
+			count = 0
+		}
 		for i := 0; i < count; i++ {
 			ip, err := AllocateSubnetIP(eni.SubnetId)
 			if err != nil {

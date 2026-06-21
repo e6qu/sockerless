@@ -184,7 +184,7 @@ func (s *Server) materializePodFunction(mainContainerID string, containers []api
 		s.Logger.Error().Err(werr).Str("function", funcName).Msg("pod Lambda did not become Active")
 		for _, c := range containers {
 			if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-				close(ch.(chan struct{}))
+				closeWaitCh(ch)
 			}
 		}
 		return &api.ServerError{Message: fmt.Sprintf("pod lambda %s did not become Active: %v", funcName, werr)}
@@ -260,7 +260,7 @@ func (s *Server) invokePodFunction(ctx context.Context, funcName, functionARN st
 	for _, c := range containers {
 		s.Store.PutInvocationResult(c.ID, inv)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 	}
 	// mainExitCh is also drained by the LoadAndDelete loop above.

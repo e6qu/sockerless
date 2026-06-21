@@ -297,6 +297,10 @@ func (s *Server) handleTimelineAttachment(w http.ResponseWriter, r *http.Request
 	name := r.PathValue("name")
 	s.logger.Debug().Str("type", attachType).Str("name", name).Msg("timeline attachment")
 
-	io.ReadAll(r.Body)
+	if _, err := io.ReadAll(r.Body); err != nil {
+		s.logger.Error().Err(err).Str("type", attachType).Str("name", name).Msg("timeline attachment: read body")
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{"status": "error", "message": err.Error()})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{"status": "ok"})
 }

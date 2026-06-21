@@ -282,7 +282,12 @@ func (s *Server) ContainerStart(ref string) error {
 	markRunning := func() chan struct{} {
 		var exitCh chan struct{}
 		if ch, ok := s.Store.WaitChs.Load(id); ok {
-			exitCh = ch.(chan struct{})
+			if wc, isCh := ch.(chan struct{}); isCh {
+				exitCh = wc
+			} else {
+				exitCh = make(chan struct{})
+				s.Store.WaitChs.Store(id, exitCh)
+			}
 		} else {
 			exitCh = make(chan struct{})
 			s.Store.WaitChs.Store(id, exitCh)
@@ -558,7 +563,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	// `docker stop` is SIGTERM → exit 143.
 	stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -611,7 +618,9 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: exitCode})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 
 	return nil
@@ -636,7 +645,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 			s.PendingCreates.Delete(ref)
 			s.ACA.Delete(ref)
 			if ch, ok := s.Store.WaitChs.LoadAndDelete(ref); ok {
-				close(ch.(chan struct{}))
+				if wc, isCh := ch.(chan struct{}); isCh {
+					close(wc)
+				}
 			}
 			s.Store.LogBuffers.Delete(ref)
 			s.Store.StagingDirs.Delete(ref)
@@ -737,15 +748,19 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.PendingCreates.Delete(id)
 	s.ACA.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	s.stdinPipes.Delete(id)
 	s.attachStreams.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
-			os.RemoveAll(d)
+		if dl, isList := dirs.([]string); isList {
+			for _, d := range dl {
+				os.RemoveAll(d)
+			}
 		}
 	}
 	for _, eid := range c.ExecIDs {
@@ -824,7 +839,9 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		// `docker restart` sends SIGTERM → exit 143.
 		stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -890,13 +907,17 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		s.PendingCreates.Delete(c.ID)
 		s.ACA.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.StagingDirs.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
+			if dl, isList := dirs.([]string); isList {
+				for _, d := range dl {
+					os.RemoveAll(d)
+				}
 			}
 		}
 		for _, eid := range c.ExecIDs {

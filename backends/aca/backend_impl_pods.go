@@ -207,7 +207,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if opts.Stdin && s.config.UseApp {
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe := actual.(*stdinPipe)
+		pipe, isPipe := actual.(*stdinPipe)
+		if !isPipe {
+			return nil, &api.ServerError{Message: fmt.Sprintf("ContainerAttach %s: stdin pipe map held unexpected type %T", c.ID, actual)}
+		}
 		pipe.Open()
 		return s.newAttachStream(c.ID, pipe), nil
 	}

@@ -63,7 +63,12 @@ func startRuntimeAPISidecar(inv *lambdaInvocation) (*runtimeAPISidecar, error) {
 	if err != nil {
 		return nil, fmt.Errorf("runtime API listen: %w", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	addr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = ln.Close()
+		return nil, fmt.Errorf("runtime API listen: unexpected address type %T", ln.Addr())
+	}
+	port := addr.Port
 
 	mux := http.NewServeMux()
 	s := &runtimeAPISidecar{

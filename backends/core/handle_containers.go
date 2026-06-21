@@ -243,45 +243,48 @@ func (s *BaseServer) handleContainerWait(w http.ResponseWriter, r *http.Request)
 
 		// If there's a local wait channel, use it then query CloudState for exit code
 		if ch, hasChannel := s.Store.WaitChs.Load(id); hasChannel {
-			select {
-			case <-ch.(chan struct{}):
-				// Prefer InvocationResult over CloudState.GetContainer
-				// here. CloudState.GetContainer for cloudrun's
-				// Service-path containers calls queryServices which
-				// iterates ALL services in the project + filters; with
-				// even ~50 stale services this can take 10+ minutes,
-				// even though WaitCh closes within seconds. The invoke
-				// goroutine that closed WaitCh just stored
-				// InvocationResult — that IS the truth for FaaS / Service
-				// path containers; reading cloud state again wastes the
-				// fast-path the channel signal was meant to provide.
-				if inv, ok := s.Store.GetInvocationResult(id); ok {
-					writeWaitBody(w, inv.ExitCode)
-				} else {
-					cc, found, gerr := s.CloudState.GetContainer(r.Context(), id)
-					if gerr != nil {
-						s.Logger.Warn().Err(gerr).Str("container", id).Msg("ContainerWait: post-exit CloudState.GetContainer failed; falling back to local store")
-					}
-					if found {
-						writeWaitBody(w, cc.State.ExitCode)
-					} else if lc, lok := s.Store.Containers.Get(id); lok {
-						writeWaitBody(w, lc.State.ExitCode)
+			waitCh, isWaitCh := ch.(chan struct{})
+			if isWaitCh {
+				select {
+				case <-waitCh:
+					// Prefer InvocationResult over CloudState.GetContainer
+					// here. CloudState.GetContainer for cloudrun's
+					// Service-path containers calls queryServices which
+					// iterates ALL services in the project + filters; with
+					// even ~50 stale services this can take 10+ minutes,
+					// even though WaitCh closes within seconds. The invoke
+					// goroutine that closed WaitCh just stored
+					// InvocationResult — that IS the truth for FaaS / Service
+					// path containers; reading cloud state again wastes the
+					// fast-path the channel signal was meant to provide.
+					if inv, ok := s.Store.GetInvocationResult(id); ok {
+						writeWaitBody(w, inv.ExitCode)
 					} else {
-						// Last resort: the wait channel closed (container exited)
-						// but no source recorded an exit code. Default to 0, the
-						// graceful-stop result (a SIGTERM-trapping container that
-						// exits cleanly). The proper fix is the backend recording
-						// the real exit code so this branch isn't reached — until
-						// then a unilateral non-zero here misreports a clean exit.
-						writeWaitBody(w, 0)
+						cc, found, gerr := s.CloudState.GetContainer(r.Context(), id)
+						if gerr != nil {
+							s.Logger.Warn().Err(gerr).Str("container", id).Msg("ContainerWait: post-exit CloudState.GetContainer failed; falling back to local store")
+						}
+						if found {
+							writeWaitBody(w, cc.State.ExitCode)
+						} else if lc, lok := s.Store.Containers.Get(id); lok {
+							writeWaitBody(w, lc.State.ExitCode)
+						} else {
+							// Last resort: the wait channel closed (container exited)
+							// but no source recorded an exit code. Default to 0, the
+							// graceful-stop result (a SIGTERM-trapping container that
+							// exits cleanly). The proper fix is the backend recording
+							// the real exit code so this branch isn't reached — until
+							// then a unilateral non-zero here misreports a clean exit.
+							writeWaitBody(w, 0)
+						}
 					}
+				case <-r.Context().Done():
+					// Headers already sent; best we can do is send an
+					// empty body and let the client's body read error.
+					writeWaitBody(w, -1)
 				}
-			case <-r.Context().Done():
-				// Headers already sent; best we can do is send an
-				// empty body and let the client's body read error.
-				writeWaitBody(w, -1)
+				return
 			}
-			return
 		}
 
 		// Cloud-based wait: poll until stopped

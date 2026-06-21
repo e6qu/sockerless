@@ -157,8 +157,15 @@ func (rc *ReverseAgentConn) readLoop() {
 		}
 
 		if ch, ok := rc.sessions.Load(msg.ID); ok {
+			sessionCh, ok := ch.(chan Message)
+			if !ok {
+				if rc.OnDroppedMessage != nil {
+					rc.OnDroppedMessage(msg)
+				}
+				continue
+			}
 			select {
-			case ch.(chan Message) <- msg:
+			case sessionCh <- msg:
 			default:
 				// Session channel full — the bridge consumer fell behind.
 				// Dropping silently corrupts the exec stream, so surface it.

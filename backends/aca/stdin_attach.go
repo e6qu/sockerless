@@ -176,7 +176,10 @@ func (s *Server) captureACAStdin(id string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	pipe := v.(*stdinPipe)
+	pipe, isPipe := v.(*stdinPipe)
+	if !isPipe {
+		return nil, false
+	}
 	select {
 	case <-pipe.Done():
 	case <-time.After(30 * time.Second):
@@ -194,10 +197,14 @@ func (s *Server) finishACAInitialStdinStage(id string, inv core.InvocationResult
 	}
 	s.Store.PutInvocationResult(id, inv)
 	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		v.(*attachStream).publishAttachResponse(stdout, stderr)
+		if as, isStream := v.(*attachStream); isStream {
+			as.publishAttachResponse(stdout, stderr)
+		}
 	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", inv.ExitCode)})
 }

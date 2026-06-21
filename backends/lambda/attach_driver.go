@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -59,7 +60,11 @@ func (d *lambdaStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn
 	if lambdaState.OpenStdin {
 		p := newStdinPipe()
 		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
-		pipe = actual.(*stdinPipe)
+		var ok bool
+		pipe, ok = actual.(*stdinPipe)
+		if !ok {
+			return fmt.Errorf("lambda attach: stdin pipe for %s has unexpected type %T", id, actual)
+		}
 		pipe.Open()
 	}
 

@@ -118,7 +118,10 @@ func (f *s3FS) OpenFile(filename string, flag int, perm os.FileMode) (billy.File
 		return nil, err
 	}
 
-	sf := file.(*s3File)
+	sf, ok := file.(*s3File)
+	if !ok {
+		return nil, fmt.Errorf("s3fs: open %q: expected *s3File, got %T", filename, file)
+	}
 	if flag&os.O_TRUNC != 0 {
 		sf.data = nil
 		sf.dirty = true

@@ -71,15 +71,15 @@ func runpbVolumeFromBackingSpec(name string, spec core.BackingSpec) (*runpb.Volu
 		// Functions Gen2 backs this with EmptyDir Memory medium on
 		// the underlying Cloud Run Service. SizeMB → SizeLimit when
 		// set; zero = container's memory limit.
-		v := &runpb.Volume{
-			Name: name,
-			VolumeType: &runpb.Volume_EmptyDir{EmptyDir: &runpb.EmptyDirVolumeSource{
-				Medium: runpb.EmptyDirVolumeSource_MEMORY,
-			}},
+		emptyDir := &runpb.EmptyDirVolumeSource{
+			Medium: runpb.EmptyDirVolumeSource_MEMORY,
 		}
 		if spec.Memory != nil && spec.Memory.SizeMB > 0 {
-			v.VolumeType.(*runpb.Volume_EmptyDir).EmptyDir.SizeLimit =
-				fmt.Sprintf("%dMi", spec.Memory.SizeMB)
+			emptyDir.SizeLimit = fmt.Sprintf("%dMi", spec.Memory.SizeMB)
+		}
+		v := &runpb.Volume{
+			Name:       name,
+			VolumeType: &runpb.Volume_EmptyDir{EmptyDir: emptyDir},
 		}
 		return v, nil
 

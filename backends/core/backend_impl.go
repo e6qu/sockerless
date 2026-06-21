@@ -106,7 +106,9 @@ func (s *BaseServer) ContainerCreate(req *api.ContainerCreateRequest) (*api.Cont
 
 	if img, ok := s.Store.ResolveImage(config.Image); ok {
 		if ctxDir, ok := s.Store.BuildContexts.Load(img.ID); ok {
-			s.Store.StagingDirs.Store(id, ctxDir.(string))
+			if dir, ok := ctxDir.(string); ok {
+				s.Store.StagingDirs.Store(id, dir)
+			}
 		}
 	}
 
@@ -437,7 +439,9 @@ func (s *BaseServer) ContainerKill(ref string, signal string) error {
 	})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, ok := ch.(chan struct{}); ok {
+			close(wc)
+		}
 	}
 	return nil
 }
@@ -485,13 +489,17 @@ func (s *BaseServer) ContainerRemove(ref string, force bool) error {
 	s.Store.ContainerNames.Delete(c.Name)
 	s.Store.LogBuffers.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, ok := ch.(chan struct{}); ok {
+			close(wc)
+		}
 	}
 	s.Store.StagingDirs.Delete(id)
 	s.Store.PathMappings.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
-			os.RemoveAll(d)
+		if paths, ok := dirs.([]string); ok {
+			for _, d := range paths {
+				os.RemoveAll(d)
+			}
 		}
 	}
 	for _, eid := range c.ExecIDs {
@@ -546,9 +554,8 @@ func (s *BaseServer) ContainerLogs(ref string, opts api.ContainerLogsOptions) (i
 		}
 	}
 	if opts.Tail != "" && opts.Tail != "all" {
-		if n, err := fmt.Sscanf(opts.Tail, "%d", new(int)); err == nil && n > 0 {
-			var tailN int
-			fmt.Sscanf(opts.Tail, "%d", &tailN)
+		var tailN int
+		if n, err := fmt.Sscanf(opts.Tail, "%d", &tailN); err == nil && n > 0 {
 			lines = FilterLogTail(lines, tailN)
 		}
 	}
@@ -646,9 +653,14 @@ func (s *BaseServer) ContainerWaitCtx(ctx context.Context, ref string, condition
 		c, _ = s.ResolveContainerAuto(ctx, id)
 		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
 	}
+	waitCh, ok := ch.(chan struct{})
+	if !ok {
+		c, _ = s.ResolveContainerAuto(ctx, id)
+		return &api.ContainerWaitResponse{StatusCode: c.State.ExitCode}, nil
+	}
 
 	select {
-	case <-ch.(chan struct{}):
+	case <-waitCh:
 	case <-ctx.Done():
 		// Client disconnected (or the request was cancelled) before the
 		// container exited — release the waiter instead of parking the
@@ -731,8 +743,10 @@ func (s *BaseServer) ContainerRestart(ref string, timeout *int) error {
 	c, _ = s.Store.Containers.Get(id)
 
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
-			os.RemoveAll(d)
+		if paths, ok := dirs.([]string); ok {
+			for _, d := range paths {
+				os.RemoveAll(d)
+			}
 		}
 	}
 
@@ -892,7 +906,9 @@ func (s *BaseServer) ContainerPrune(filters map[string][]string) (*api.Container
 		s.Store.ContainerNames.Delete(c.Name)
 		s.Store.LogBuffers.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			if wc, ok := ch.(chan struct{}); ok {
+				close(wc)
+			}
 		}
 		for _, ep := range c.NetworkSettings.Networks {
 			if ep != nil && ep.NetworkID != "" {
@@ -905,8 +921,10 @@ func (s *BaseServer) ContainerPrune(filters map[string][]string) (*api.Container
 		s.Store.StagingDirs.Delete(c.ID)
 		s.Store.PathMappings.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
+			if paths, ok := dirs.([]string); ok {
+				for _, d := range paths {
+					os.RemoveAll(d)
+				}
 			}
 		}
 		for _, eid := range c.ExecIDs {
@@ -966,8 +984,12 @@ func (s *BaseServer) ContainerStats(ref string, stream bool) (io.ReadCloser, err
 			time.Sleep(1 * time.Second)
 			// Check if container has stopped
 			if ch, ok := s.Store.WaitChs.Load(id); ok {
+				wc, ok := ch.(chan struct{})
+				if !ok {
+					continue
+				}
 				select {
-				case <-ch.(chan struct{}):
+				case <-wc:
 					_ = pw.Close()
 					return
 				default:
@@ -1620,7 +1642,9 @@ func (s *BaseServer) ImageRemove(name string, force bool, prune bool) ([]*api.Im
 			s.Store.Images.Delete(short[:19])
 		}
 		if ctxDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-			os.RemoveAll(ctxDir.(string))
+			if dir, ok := ctxDir.(string); ok {
+				os.RemoveAll(dir)
+			}
 		}
 		s.emitEvent("image", "delete", img.ID, map[string]string{"name": name})
 		return result, nil
@@ -1713,7 +1737,10 @@ func (s *BaseServer) ImageHistory(name string) ([]*api.ImageHistoryEntry, error)
 
 	// Check for real history data
 	if histData, ok := s.Store.ImageHistory.Load(img.ID); ok {
-		items := histData.([]ImageHistoryItem)
+		items, ok := histData.([]ImageHistoryItem)
+		if !ok {
+			return nil, fmt.Errorf("image history for %s: unexpected type %T", img.ID, histData)
+		}
 		var result []*api.ImageHistoryEntry
 		layerIdx := len(img.RootFS.Layers) - 1
 		for i := len(items) - 1; i >= 0; i-- {
@@ -1823,7 +1850,9 @@ func (s *BaseServer) ImagePrune(filters map[string][]string) (*api.ImagePruneRes
 		prunedIDs[img.ID] = true
 
 		if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-			os.RemoveAll(stagingDir.(string))
+			if dir, ok := stagingDir.(string); ok {
+				os.RemoveAll(dir)
+			}
 		}
 
 		for _, tag := range img.RepoTags {
@@ -2093,7 +2122,9 @@ func (s *BaseServer) VolumeRemove(name string, force bool) error {
 	vol, _ := s.Store.Volumes.Get(name)
 	s.Store.Volumes.Delete(name)
 	if dir, ok := s.Store.VolumeDirs.LoadAndDelete(name); ok {
-		os.RemoveAll(dir.(string))
+		if path, ok := dir.(string); ok {
+			os.RemoveAll(path)
+		}
 	}
 	s.emitEvent("volume", "destroy", name, map[string]string{"driver": vol.Driver})
 	return nil
@@ -2136,8 +2167,10 @@ func (s *BaseServer) VolumePrune(f map[string][]string) (*api.VolumePruneRespons
 	deleted := make([]string, 0, len(pruned))
 	for _, v := range pruned {
 		if dir, ok := s.Store.VolumeDirs.LoadAndDelete(v.Name); ok {
-			spaceReclaimed += uint64(DirSize(dir.(string)))
-			os.RemoveAll(dir.(string))
+			if path, ok := dir.(string); ok {
+				spaceReclaimed += uint64(DirSize(path))
+				os.RemoveAll(path)
+			}
 		}
 		s.emitEvent("volume", "destroy", v.Name, map[string]string{"driver": v.Driver})
 		deleted = append(deleted, v.Name)
@@ -2345,8 +2378,10 @@ func (s *BaseServer) SystemDf() (*api.DiskUsageResponse, error) {
 		vCopy := v
 		size := int64(-1)
 		if dir, ok := s.Store.VolumeDirs.Load(v.Name); ok {
-			size = DirSize(dir.(string))
-			vCopy.Status = map[string]any{"Size": size}
+			if path, ok := dir.(string); ok {
+				size = DirSize(path)
+				vCopy.Status = map[string]any{"Size": size}
+			}
 		}
 		vCopy.UsageData = &api.VolumeUsageData{
 			RefCount: volRefCount[v.Name],

@@ -2243,7 +2243,11 @@ func registerComputeInstances(srv *sim.Server, networks sim.Store[ComputeNetwork
 				entry = map[string]any{"instances": []ComputeInstance{}}
 				grouped[key] = entry
 			}
-			entry["instances"] = append(entry["instances"].([]ComputeInstance), inst)
+			list, ok := entry["instances"].([]ComputeInstance)
+			if !ok {
+				list = []ComputeInstance{}
+			}
+			entry["instances"] = append(list, inst)
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "compute#instanceAggregatedList", "items": grouped})
 	})
@@ -2541,7 +2545,11 @@ func registerComputeDisks(srv *sim.Server) {
 				entry = map[string]any{"disks": []ComputeDisk{}}
 				grouped[key] = entry
 			}
-			entry["disks"] = append(entry["disks"].([]ComputeDisk), d)
+			list, ok := entry["disks"].([]ComputeDisk)
+			if !ok {
+				list = []ComputeDisk{}
+			}
+			entry["disks"] = append(list, d)
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"kind":  "compute#diskAggregatedList",

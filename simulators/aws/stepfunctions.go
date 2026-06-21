@@ -937,7 +937,9 @@ func handleSFNStopExecution(w http.ResponseWriter, r *http.Request) {
 	exec.StopDate = &now
 	sfnExecutions.Put(req.ExecutionArn, exec)
 	if cancelAny, ok := sfnCancels.LoadAndDelete(req.ExecutionArn); ok {
-		close(cancelAny.(chan struct{}))
+		if cancel, ok := cancelAny.(chan struct{}); ok {
+			close(cancel)
+		}
 	}
 	sfnWriteJSON(w, http.StatusOK, map[string]any{"stopDate": now})
 }

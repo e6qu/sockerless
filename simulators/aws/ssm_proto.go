@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	sim "github.com/sockerless/simulator"
 )
 
 var (
@@ -95,19 +96,22 @@ func buildSSMOutputFrame(payloadType uint32, payload []byte) []byte {
 // compressed input, etc) reaches the process intact, and tar / cat /
 // other readers see EOF when the backend is done sending.
 func decodeSSMInputFrame(b []byte) (payload []byte, messageType string, fin bool, err error) {
-	if len(b) < ssmFixedHeaderLen {
+	// The frame comes off an attacker-controlled WebSocket; FrameReader bounds
+	// every read so a giant/overflowing payload length can't slice past the
+	// buffer (no manual length arithmetic to get wrong).
+	r := sim.NewFrameReader(b)
+	header, herr := r.Take(ssmFixedHeaderLen)
+	if herr != nil {
 		return nil, "", false, errSSMFrameTooShort
 	}
-	mt := strings.TrimRight(string(b[4:4+ssmMessageTypeLen]), " \x00")
-	flags := binary.BigEndian.Uint64(b[56:64])
-	payloadLen := binary.BigEndian.Uint32(b[116:120])
-	// uint64 arithmetic: ssmFixedHeaderLen+payloadLen in uint32 would wrap for
-	// a payloadLen near 0xFFFFFFFF, passing this guard and then slicing past
-	// the buffer (the frame comes off an attacker-controlled WebSocket).
-	if uint64(len(b)) < uint64(ssmFixedHeaderLen)+uint64(payloadLen) {
+	mt := strings.TrimRight(string(header[4:4+ssmMessageTypeLen]), " \x00")
+	flags := binary.BigEndian.Uint64(header[56:64])
+	payloadLen := binary.BigEndian.Uint32(header[116:120])
+	payload, perr := r.Take(int(payloadLen))
+	if perr != nil {
 		return nil, mt, false, errSSMFrameTruncated
 	}
-	return b[ssmFixedHeaderLen : ssmFixedHeaderLen+int(payloadLen)], mt, (flags & 2) != 0, nil
+	return payload, mt, (flags & 2) != 0, nil
 }
 
 // buildSSMChannelClosed builds the channel_closed frame that tells the

@@ -396,7 +396,11 @@ func ListManaged(ctx context.Context, project, region string) ([]Managed, error)
 			continue
 		}
 		var jobID int64
-		fmt.Sscanf(j.Labels[LabelJobID], "%d", &jobID)
+		if v := j.Labels[LabelJobID]; v != "" {
+			if _, err := fmt.Sscanf(v, "%d", &jobID); err != nil {
+				return nil, fmt.Errorf("parse %s label %q on job %s: %w", LabelJobID, v, j.Name, err)
+			}
+		}
 		createTime := time.Time{}
 		if j.CreateTime != nil {
 			createTime = j.CreateTime.AsTime()

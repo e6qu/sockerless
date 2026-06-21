@@ -443,7 +443,9 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 		var handle *sim.ContainerHandle
 		for i := 0; i < 20; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				handle = v.(*ecsTaskProcesses).firstHandle()
+				if procs, ok := v.(*ecsTaskProcesses); ok {
+					handle = procs.firstHandle()
+				}
 				break
 			}
 			time.Sleep(250 * time.Millisecond)
@@ -1732,8 +1734,10 @@ func ecsTaskDefinitionByArn(taskDefinitionArn string) (ECSTaskDefinition, bool) 
 
 func ecsTaskDockerInfo(taskID, containerName string) (dockerID, dockerName string) {
 	if v, ok := ecsProcessHandles.Load(taskID); ok {
-		if h := v.(*ecsTaskProcesses).handleFor(containerName); h != nil {
-			dockerID = h.ContainerID
+		if procs, ok := v.(*ecsTaskProcesses); ok {
+			if h := procs.handleFor(containerName); h != nil {
+				dockerID = h.ContainerID
+			}
 		}
 	}
 	if dockerID == "" {
@@ -1963,7 +1967,9 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 
 	// Stop running container if any
 	if v, ok := ecsProcessHandles.LoadAndDelete(taskID); ok {
-		requestStopECSTaskProcesses(v.(*ecsTaskProcesses))
+		if procs, ok := v.(*ecsTaskProcesses); ok {
+			requestStopECSTaskProcesses(procs)
+		}
 	}
 
 	now := time.Now().Unix()
@@ -2524,7 +2530,11 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		var dockerContainerID string
 		for i := 0; i < 20; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				handle := v.(*ecsTaskProcesses).handleFor(container.Name)
+				procs, ok := v.(*ecsTaskProcesses)
+				if !ok {
+					break
+				}
+				handle := procs.handleFor(container.Name)
 				if handle == nil {
 					break
 				}
@@ -2596,7 +2606,11 @@ func handleECSExecWebSocket(sessionID string) http.HandlerFunc {
 			http.Error(w, "session not found or already used", http.StatusNotFound)
 			return
 		}
-		sess := sessVal.(ecsExecSession)
+		sess, ok := sessVal.(ecsExecSession)
+		if !ok {
+			http.Error(w, "session not found or already used", http.StatusNotFound)
+			return
+		}
 
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {

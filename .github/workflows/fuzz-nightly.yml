@@ -1,0 +1,54 @@
+name: Fuzz (nightly)
+
+# Exploratory fuzzing to discover NEW crashers (the committed seed corpus
+# already runs under the normal `go test` jobs as a regression net). Runs every
+# fuzz target for a fixed time; a crasher fails the job and uploads the failing
+# input so it can be committed as a regression seed + fixed.
+
+on:
+  schedule:
+    # 07:00 UTC daily.
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: 'Seconds per fuzz target'
+        required: false
+        default: '90'
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: fuzz (${{ matrix.group }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - group: aws
+            modules: simulators/aws simulators/aws/shared
+          - group: gcp
+            modules: simulators/gcp simulators/gcp/shared
+          - group: azure
+            modules: simulators/azure simulators/azure/shared
+          - group: core-agent
+            modules: backends/core backends/docker agent bleephub
+    steps:
+      - uses: actions/checkout@v7.0.0
+      - uses: actions/setup-go@v6.4.0
+        with:
+          go-version: '1.25'
+      - name: Fuzz
+        env:
+          FUZZTIME_SECONDS: ${{ github.event.inputs.seconds || '90' }}
+        run: scripts/run-fuzz.sh ${{ matrix.modules }}
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers-${{ matrix.group }}
+          path: '**/testdata/fuzz/**'
+          if-no-files-found: ignore

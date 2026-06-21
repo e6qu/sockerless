@@ -230,7 +230,11 @@ func (st *Store) GetInvocationResult(id string) (InvocationResult, bool) {
 	if !ok {
 		return InvocationResult{}, false
 	}
-	return v.(InvocationResult), true
+	res, ok := v.(InvocationResult)
+	if !ok {
+		return InvocationResult{}, false
+	}
+	return res, true
 }
 
 // DeleteInvocationResult clears the recorded outcome for a container —
@@ -304,14 +308,20 @@ func (st *Store) NextPID() int {
 // distinct locks (no cross-container contention).
 func (st *Store) StartLock(id string) *sync.Mutex {
 	m, _ := st.StartLocks.LoadOrStore(id, &sync.Mutex{})
-	return m.(*sync.Mutex)
+	mu, ok := m.(*sync.Mutex)
+	if !ok {
+		return &sync.Mutex{}
+	}
+	return mu
 }
 
 // ForceStopContainer transitions a container to exited and closes wait channels.
 // Used by explicit stop/kill handlers where the user intends to stop the container.
 func (st *Store) ForceStopContainer(id string, exitCode int) {
 	if cancel, ok := st.HealthChecks.LoadAndDelete(id); ok {
-		cancel.(context.CancelFunc)()
+		if cancelFn, ok := cancel.(context.CancelFunc); ok {
+			cancelFn()
+		}
 	}
 	st.forceStop(id, exitCode)
 }
@@ -327,7 +337,9 @@ func (st *Store) RevertToCreated(id string) {
 		c.State.StartedAt = "0001-01-01T00:00:00Z"
 	})
 	if ch, ok := st.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, ok := ch.(chan struct{}); ok {
+			close(wc)
+		}
 	}
 }
 
@@ -341,6 +353,8 @@ func (st *Store) forceStop(id string, exitCode int) {
 	})
 
 	if ch, ok := st.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, ok := ch.(chan struct{}); ok {
+			close(wc)
+		}
 	}
 }

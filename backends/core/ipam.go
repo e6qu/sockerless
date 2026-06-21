@@ -53,7 +53,9 @@ func (a *IPAllocator) AllocateSubnet(networkID string, requested *api.IPAMConfig
 		base := gateway[:strings.LastIndex(gateway, ".")+1]
 		mask := 16
 		if idx := strings.Index(requested.Subnet, "/"); idx >= 0 {
-			fmt.Sscanf(requested.Subnet[idx+1:], "%d", &mask)
+			if _, err := fmt.Sscanf(requested.Subnet[idx+1:], "%d", &mask); err != nil {
+				mask = 16
+			}
 		}
 		a.subnets[networkID] = &subnetState{
 			base:     base,
@@ -129,7 +131,9 @@ func (a *IPAllocator) ReleaseIP(networkID, ip string) {
 	base := state.base
 	if strings.HasPrefix(ip, base) {
 		var host int
-		fmt.Sscanf(ip[len(base):], "%d", &host)
+		if _, err := fmt.Sscanf(ip[len(base):], "%d", &host); err != nil {
+			return
+		}
 		if host >= 2 {
 			state.released = append(state.released, host)
 		}
@@ -151,8 +155,14 @@ func macFromIP(ip string) string {
 		return "02:42:ac:11:00:02"
 	}
 	var b, c, d int
-	fmt.Sscanf(parts[1], "%d", &b)
-	fmt.Sscanf(parts[2], "%d", &c)
-	fmt.Sscanf(parts[3], "%d", &d)
+	if _, err := fmt.Sscanf(parts[1], "%d", &b); err != nil {
+		return "02:42:ac:11:00:02"
+	}
+	if _, err := fmt.Sscanf(parts[2], "%d", &c); err != nil {
+		return "02:42:ac:11:00:02"
+	}
+	if _, err := fmt.Sscanf(parts[3], "%d", &d); err != nil {
+		return "02:42:ac:11:00:02"
+	}
 	return fmt.Sprintf("02:42:ac:%02x:%02x:%02x", b, c, d)
 }

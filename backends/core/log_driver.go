@@ -61,8 +61,7 @@ func StreamCloudLogs(s *BaseServer, containerID string, opts api.ContainerLogsOp
 	// FaaS backends check in-memory log buffers first.
 	if sopts.CheckLogBuffers {
 		if bufData, bufOK := s.Store.LogBuffers.Load(id); bufOK {
-			buf := bufData.([]byte)
-			if len(buf) > 0 {
+			if buf, ok := bufData.([]byte); ok && len(buf) > 0 {
 				return streamBufferedLogs(params, buf), nil
 			}
 		}
