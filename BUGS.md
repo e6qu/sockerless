@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2100 filed - 2056 fixed - 2 open - 12 false positives.**
+**2103 filed - 2059 fixed - 2 open - 13 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,10 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2103~~ | P2 | AWS sim — CloudWatch Logs Insights `cwParseAggs`/`cwParseSortSpec` panic on multibyte input (fuzz-found) | weak input / DoS | `cwIndexKeyword` returned an index from `strings.ToLower(s)` (which expands invalid-UTF-8 bytes to 3-byte U+FFFD, changing byte length) but callers sliced the ORIGINAL string → `slice bounds out of range [10:8]` panic on a StartQuery with a `stats … as/by …` clause containing non-ASCII bytes. **Fixed:** `cwIndexKeyword` now uses a byte-length-preserving ASCII-only fold (`cwASCIIFold`); keywords are ASCII so matching is unchanged. Crasher committed as a regression corpus seed. |
+| ~~2101~~ | P3 | GCP sim — Cloud Build triggers.patch ignored updateMask | round-trip fidelity | the PATCH handler did `ReadJSON` then `cbTriggers.Put` — a wholesale replace dropping unmasked fields. `updateMask` IS a documented triggers.patch query param (verified in cloudbuild-v1 discovery) and terraform-provider-google sends it. **Fixed:** merge only masked top-level fields into the existing trigger; absent mask = full replace. SDK test. |
+| ~~2102~~ | P3 | Azure sim — storage-account PATCH dropped nested properties | round-trip fidelity | the PATCH read `properties` but applied only sku/kind/tags, silently dropping accessTier / allowBlobPublicAccess / TLS / encryption / networkAcls updates → azurerm drift on the next plan. **Fixed:** merge the updatable nested properties present in the request (key-presence) into the stored account, preserving unlisted ones. SDK test. |
+| FP-13 | P3 | AWS sim — "error responses use HTTP 400 instead of 404/409" (audit agent) | FALSE POSITIVE | an agent flagged ~192 sites where NotFound/AlreadyExists return 400. **Rejected after spec verification:** awsJson1.0/1.1 protocols return HTTP **400** for modeled client exceptions regardless of the model's `@httpError` trait (the existing `TestConformanceCloudMapServiceNotFoundStatus` encodes this). Only REST protocols (restJson1/restXml) and query (via `awsQueryError.httpResponseCode`) honor a non-400 status — and the sim already does so for IAM/SNS/EFS/Route53. No change. |
 | ~~2095~~ | P3 | AWS sim — CloudWatch GetMetricData/PutMetricData (rpc-v2-cbor) emitted awsJson-shaped errors | error-shape fidelity (BUG-2094 class) | `handleCWGetMetricData`/`handleCWPutMetricData` cbor handlers used `sim.AWSError` (no `Smithy-Protocol` header) → Go SDK rejects. The remaining cbor-error sites after BUG-2094. **Fixed:** routed all 4 through `cwWriteCBORError`. SDK test for the cbor error path. |
 | ~~2096~~ | P3 | GCP sim — Cloud Run v2 UpdateService ignored updateMask | round-trip fidelity | the PATCH handler did `sim.ReadJSON` then `services.Put(name, update)` — a wholesale replace, dropping unmasked fields. terraform-provider-google + the gcf backend's image-swap send `update_mask`. **Fixed:** when `updateMask` is present, merge only the named top-level fields into the existing service; absent mask = full replace (real Cloud Run v2 semantics). |
 | ~~2097~~ | P3 | AWS sim — DynamoDB Query silently dropped FilterExpression | accepted-but-ignored | the Query request struct had no `FilterExpression` field, so real-AWS Query's post-key filter was dropped (no error, wrong results). **Fixed:** added FilterExpression + applied it via the existing `ddbMatchesExpression` (mirrors Scan). |

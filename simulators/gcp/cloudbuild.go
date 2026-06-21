@@ -322,6 +322,71 @@ func handleUpdateBuildTrigger(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid trigger body: %v", err)
 		return
 	}
+	// Honor updateMask (a documented triggers.patch query param): real Cloud Build
+	// merges only the masked top-level fields into the existing trigger;
+	// terraform-provider-google always sends one, so without this a masked PATCH
+	// dropped every unlisted field and the next plan showed drift.
+	if mask := r.URL.Query().Get("updateMask"); mask != "" {
+		if prior, ok := cbTriggers.Get(key); ok {
+			fields := strings.Split(mask, ",")
+			has := func(p string) bool {
+				for _, f := range fields {
+					f = strings.TrimSpace(f)
+					if f == p || strings.HasPrefix(f, p+".") {
+						return true
+					}
+				}
+				return false
+			}
+			merged := prior
+			if has("name") {
+				merged.Name = trigger.Name
+			}
+			if has("description") {
+				merged.Description = trigger.Description
+			}
+			if has("filename") {
+				merged.Filename = trigger.Filename
+			}
+			if has("disabled") {
+				merged.Disabled = trigger.Disabled
+			}
+			if has("ignoredFiles") {
+				merged.IgnoredFiles = trigger.IgnoredFiles
+			}
+			if has("includedFiles") {
+				merged.IncludedFiles = trigger.IncludedFiles
+			}
+			if has("substitutions") {
+				merged.Substitutions = trigger.Substitutions
+			}
+			if has("tags") {
+				merged.Tags = trigger.Tags
+			}
+			if has("approvalConfig") {
+				merged.ApprovalConfig = trigger.ApprovalConfig
+			}
+			if has("triggerTemplate") {
+				merged.TriggerTemplate = trigger.TriggerTemplate
+			}
+			if has("gitFileSource") {
+				merged.GitFileSource = trigger.GitFileSource
+			}
+			if has("sourceToBuild") {
+				merged.SourceToBuild = trigger.SourceToBuild
+			}
+			if has("repositoryEventConfig") {
+				merged.RepositoryEventConfig = trigger.RepositoryEventConfig
+			}
+			if has("github") {
+				merged.Github = trigger.Github
+			}
+			if has("build") {
+				merged.Build = trigger.Build
+			}
+			trigger = merged
+		}
+	}
 	trigger.ID = id
 	if prior, ok := cbTriggers.Get(key); ok {
 		trigger.CreateTime = prior.CreateTime
