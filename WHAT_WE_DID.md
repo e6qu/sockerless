@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - DynamoDB SET RHS: strip enclosing parentheses (consumer #648)
+
+Follow-up to #643/#646. The #646 fix made `SET c = if_not_exists(c,:0) - :v`
+compute, but a fully-enclosing `(...)` around the RHS still resolved to null
+(`(if_not_exists(c,:0) - :v)`, and even `(:z)`) because `ddbEvalSetRHS` never
+stripped the wrapping parens — the leading `(` hid the operator from the
+top-level `+`/`-` split. ElectroDB always parenthesizes the arithmetic RHS of
+`.subtract()`/`.add()`, so every ORM-issued atomic counter decrement corrupted
+the attribute to null. Added `ddbStripParens` (removes balanced fully-enclosing
+parentheses repeatedly, while leaving `(a) - (b)` intact) and call it at the top
+of both `ddbEvalSetRHS` and `ddbEvalSetOperand` (BUG-2149). SDK-tested.
+
 ## 2026-06-22 - DynamoDB PartiQL + the remaining actionable tail
 
 Closed out every actionable DynamoDB item in one PR (BUG-2141..2148), leaving only

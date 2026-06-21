@@ -316,8 +316,36 @@ func ddbResolveOperand(token string, item map[string]any, names map[string]strin
 	return item[ddbResolveName(token, names)], nil
 }
 
+// ddbStripParens removes fully-enclosing balanced parentheses from a SET value
+// (repeatedly), so `(if_not_exists(c,:0) - :v)` and `(:z)` evaluate the same as
+// the unparenthesized form — the shape ElectroDB emits for `.subtract()`. Only a
+// pair that wraps the WHOLE string is stripped: `(a) - (b)` is left intact
+// because the first '(' closes before the end.
+func ddbStripParens(s string) string {
+	s = strings.TrimSpace(s)
+	for len(s) >= 2 && s[0] == '(' && s[len(s)-1] == ')' {
+		depth, enclosing := 0, true
+		for i := 0; i < len(s); i++ {
+			switch s[i] {
+			case '(':
+				depth++
+			case ')':
+				depth--
+				if depth == 0 && i != len(s)-1 {
+					enclosing = false
+				}
+			}
+		}
+		if !enclosing || depth != 0 {
+			break
+		}
+		s = strings.TrimSpace(s[1 : len(s)-1])
+	}
+	return s
+}
+
 func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, values map[string]any) (any, error) {
-	rhs = strings.TrimSpace(rhs)
+	rhs = ddbStripParens(rhs)
 	// Binary +/- on numbers, split at the TOP level FIRST so an operand that is
 	// itself an if_not_exists(...) / list_append(...) call (with its own commas
 	// and parens) resolves as a whole — e.g. `if_not_exists(#c,:0) - :1`. Doing
@@ -346,7 +374,7 @@ func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, val
 // ddbEvalSetOperand resolves a single SET operand: an if_not_exists(path,
 // operand) call, a list_append(a, b) call, or a bare :value / #name / path.
 func ddbEvalSetOperand(operand string, item map[string]any, names map[string]string, values map[string]any) (any, error) {
-	operand = strings.TrimSpace(operand)
+	operand = ddbStripParens(operand)
 	// An operand beginning with a known function name MUST be a well-formed,
 	// balanced whole call — `if_not_exists(` with no close paren is malformed and
 	// rejected, not silently treated as a path.

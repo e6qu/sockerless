@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2148 filed - 2104 fixed - 2 open - 13 false positives.**
+**2149 filed - 2105 fixed - 2 open - 13 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -16,6 +16,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2149~~ | P2 | AWS sim — DynamoDB SET RHS doesn't strip enclosing parentheses (consumer #648, follow-up to #643) | wrong results / incomplete | `(if_not_exists(c,:0) - :v)` and even `(:z)` stored null — `ddbEvalSetRHS` never stripped a fully-enclosing `(...)`, so the leading `(` hid the operator from the top-level split. ElectroDB always wraps `.subtract()`/`.add()` RHS in parens → every ORM counter decrement corrupted to null. **Fixed:** new `ddbStripParens` removes balanced fully-enclosing parens (repeatedly) in both `ddbEvalSetRHS` and `ddbEvalSetOperand`, before the arithmetic/operand resolution. SDK-tested. |
 | ~~2141~~ | P3 | AWS sim — DynamoDB doesn't return `ConsumedCapacity` when `ReturnConsumedCapacity` is requested | accepted-but-ignored | **Fixed:** decode `ReturnConsumedCapacity` on Get/Put/Update/Delete/Query/Scan; compute capacity units from a faithful item-size calc (`ddbAttrValueSize`/`ddbItemSizeBytes` → 4KB read / 1KB write blocks, halved for eventually-consistent) and emit `ConsumedCapacity{TableName, CapacityUnits, Table}`. |
 | ~~2142~~ | P3 | AWS sim — DynamoDB PartiQL (`ExecuteStatement`/`ExecuteTransaction`/`BatchExecuteStatement`) unimplemented | missing slice | **Fixed:** new `dynamodb_partiql.go` — a bounds-safe (`sim.Scanner`/`sim.ParseGuard`) PartiQL parser + executor that translates SELECT/INSERT/UPDATE/DELETE onto the existing item engine (WHERE → ConditionExpression via `ddbEvalExpr`; UPDATE SET/REMOVE → UpdateExpression via `ddbApplyUpdateExpression`; point-read vs scan dispatch; ORDER BY; NextToken). Batch = per-statement errors (200); Transaction = all-or-nothing with `CancellationReasons`. SDK + CLI tests + `FuzzDDBPartiQLParse`. Backup/Restore, Global Tables, Kinesis/Export/Import remain niche and unscheduled. |
 | ~~2143~~ | P4 | AWS sim — DynamoDB CreateTable doesn't validate KeySchema attrs appear in AttributeDefinitions | missing validation | real DynamoDB raises ValidationException ("Some index key attributes are not defined in AttributeDefinitions"); also GSI/LSI key attrs. **Fix:** validate every KeySchema (table + index) attr has a matching AttributeDefinition. |
