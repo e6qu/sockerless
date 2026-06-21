@@ -147,6 +147,30 @@ func (n ddbCondFunc) eval(c *ddbEvalCtx) bool {
 				}
 				return false
 			}
+			// Set membership: contains(set, :v) tests whether :v is an element
+			// of a string/number/binary set. Number-set members compare
+			// numerically (canonical form), strings/binary by value.
+			for _, st := range []string{"SS", "NS", "BS"} {
+				if set, isSet := valMap[st].([]any); isSet {
+					target := ddbScalarString(want)
+					if st == "NS" {
+						target = ddbCanonicalNumber(target)
+					}
+					for _, e := range set {
+						s, ok := e.(string)
+						if !ok {
+							continue
+						}
+						if st == "NS" {
+							s = ddbCanonicalNumber(s)
+						}
+						if s == target {
+							return true
+						}
+					}
+					return false
+				}
+			}
 		}
 		return strings.Contains(ddbScalarString(val), ddbScalarString(want))
 	case "attribute_type":

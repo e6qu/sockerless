@@ -34,16 +34,17 @@ func ddbApplyUpdateExpression(item map[string]any, expr string, names map[string
 				if eq < 0 {
 					return fmt.Errorf("invalid SET action %q", strings.TrimSpace(part))
 				}
-				path := ddbResolveName(strings.TrimSpace(part[:eq]), names)
 				val, err := ddbEvalSetRHS(strings.TrimSpace(part[eq+1:]), item, names, values)
 				if err != nil {
 					return err
 				}
-				item[path] = val
+				if err := ddbSetByPath(item, strings.TrimSpace(part[:eq]), names, val); err != nil {
+					return err
+				}
 			}
 		case "REMOVE":
 			for _, p := range ddbSplitTopLevel(body, ',') {
-				delete(item, ddbResolveName(strings.TrimSpace(p), names))
+				ddbRemoveByPath(item, strings.TrimSpace(p), names)
 			}
 		case "ADD":
 			for _, p := range ddbSplitTopLevel(body, ',') {
@@ -51,7 +52,10 @@ func ddbApplyUpdateExpression(item map[string]any, expr string, names map[string
 				if err != nil {
 					return err
 				}
-				item[path] = ddbAddValues(item[path], operand)
+				cur, _ := ddbResolvePath(item, path, names)
+				if err := ddbSetByPath(item, path, names, ddbAddValues(cur, operand)); err != nil {
+					return err
+				}
 			}
 		case "DELETE":
 			for _, p := range ddbSplitTopLevel(body, ',') {
@@ -59,13 +63,145 @@ func ddbApplyUpdateExpression(item map[string]any, expr string, names map[string
 				if err != nil {
 					return err
 				}
-				if cur, ok := item[path]; ok {
-					item[path] = ddbDeleteSetElems(cur, operand)
+				if cur, ok := ddbResolvePath(item, path, names); ok {
+					if err := ddbSetByPath(item, path, names, ddbDeleteSetElems(cur, operand)); err != nil {
+						return err
+					}
 				}
 			}
 		}
 	}
 	return nil
+}
+
+// ddbSetByPath assigns value at a (possibly nested) document path — a top-level
+// attribute or `a.b[0].c` — creating intermediate map (M) / list (L) containers
+// as DynamoDB does. Setting list index == len appends; > len is an error.
+func ddbSetByPath(item map[string]any, path string, names map[string]string, value any) error {
+	segs := ddbSplitPath(path)
+	if len(segs) == 0 {
+		return fmt.Errorf("invalid path %q", path)
+	}
+	top := ddbResolveAttrName(segs[0], names)
+	if len(segs) == 1 {
+		item[top] = value
+		return nil
+	}
+	nc, err := ddbAssignNested(item[top], segs[1:], names, value)
+	if err != nil {
+		return err
+	}
+	item[top] = nc
+	return nil
+}
+
+// ddbAssignNested returns container (an AttributeValue) with value assigned at
+// the nested segs, creating M/L containers as needed.
+func ddbAssignNested(container any, segs []string, names map[string]string, value any) (any, error) {
+	seg := segs[0]
+	last := len(segs) == 1
+	if strings.HasPrefix(seg, "[") {
+		idx, err := strconv.Atoi(strings.Trim(seg, "[]"))
+		if err != nil || idx < 0 {
+			return nil, fmt.Errorf("invalid list index %q", seg)
+		}
+		m, _ := container.(map[string]any)
+		lst, _ := m["L"].([]any)
+		if idx > len(lst) {
+			return nil, fmt.Errorf("list index %d out of range (len %d)", idx, len(lst))
+		}
+		var child any
+		if idx < len(lst) {
+			child = lst[idx]
+		}
+		if last {
+			child = value
+		} else if child, err = ddbAssignNested(child, segs[1:], names, value); err != nil {
+			return nil, err
+		}
+		if idx == len(lst) {
+			lst = append(lst, child)
+		} else {
+			lst[idx] = child
+		}
+		return map[string]any{"L": lst}, nil
+	}
+	m, _ := container.(map[string]any)
+	mm, _ := m["M"].(map[string]any)
+	if mm == nil {
+		mm = map[string]any{}
+	}
+	name := ddbResolveAttrName(seg, names)
+	if last {
+		mm[name] = value
+	} else {
+		nc, err := ddbAssignNested(mm[name], segs[1:], names, value)
+		if err != nil {
+			return nil, err
+		}
+		mm[name] = nc
+	}
+	return map[string]any{"M": mm}, nil
+}
+
+// ddbRemoveByPath deletes the attribute at a (possibly nested) document path.
+func ddbRemoveByPath(item map[string]any, path string, names map[string]string) {
+	segs := ddbSplitPath(path)
+	if len(segs) == 0 {
+		return
+	}
+	top := ddbResolveAttrName(segs[0], names)
+	if len(segs) == 1 {
+		delete(item, top)
+		return
+	}
+	if nc, ok := ddbDeleteNested(item[top], segs[1:], names); ok {
+		item[top] = nc
+	}
+}
+
+// ddbDeleteNested returns container with the attribute at segs removed; ok is
+// false when the path doesn't exist (container left unchanged).
+func ddbDeleteNested(container any, segs []string, names map[string]string) (any, bool) {
+	seg := segs[0]
+	last := len(segs) == 1
+	m, isMap := container.(map[string]any)
+	if !isMap {
+		return container, false
+	}
+	if strings.HasPrefix(seg, "[") {
+		idx, err := strconv.Atoi(strings.Trim(seg, "[]"))
+		lst, _ := m["L"].([]any)
+		if err != nil || idx < 0 || idx >= len(lst) {
+			return container, false
+		}
+		if last {
+			lst = append(lst[:idx:idx], lst[idx+1:]...) // remove + shift
+			return map[string]any{"L": lst}, true
+		}
+		nc, ok := ddbDeleteNested(lst[idx], segs[1:], names)
+		if !ok {
+			return container, false
+		}
+		lst = append([]any(nil), lst...)
+		lst[idx] = nc
+		return map[string]any{"L": lst}, true
+	}
+	mm, _ := m["M"].(map[string]any)
+	name := ddbResolveAttrName(seg, names)
+	if _, present := mm[name]; !present {
+		return container, false
+	}
+	if last {
+		delete(mm, name)
+		return map[string]any{"M": mm}, true
+	}
+	nc, ok := ddbDeleteNested(mm[name], segs[1:], names)
+	if !ok {
+		return container, false
+	}
+	mm[name] = nc
+	return map[string]any{"M": mm}, true
 }
 
 // ddbSplitUpdateClauses splits an UpdateExpression into {KEYWORD: body}. The
@@ -182,29 +318,18 @@ func ddbResolveOperand(token string, item map[string]any, names map[string]strin
 
 func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, values map[string]any) (any, error) {
 	rhs = strings.TrimSpace(rhs)
-	const inpfx = "if_not_exists("
-	if strings.HasPrefix(strings.ToLower(rhs), inpfx) {
-		if !strings.HasSuffix(rhs, ")") || len(rhs) < len(inpfx)+1 {
-			return nil, fmt.Errorf("malformed if_not_exists: %q", rhs)
-		}
-		inner := rhs[len(inpfx) : len(rhs)-1]
-		args := ddbSplitTopLevel(inner, ',')
-		if len(args) != 2 {
-			return nil, fmt.Errorf("if_not_exists expects 2 args: %q", rhs)
-		}
-		if cur, ok := item[ddbResolveName(args[0], names)]; ok {
-			return cur, nil
-		}
-		return ddbResolveOperand(args[1], item, names, values)
-	}
-	// Binary +/- on numbers (split at top level so paths/placeholders are intact).
+	// Binary +/- on numbers, split at the TOP level FIRST so an operand that is
+	// itself an if_not_exists(...) / list_append(...) call (with its own commas
+	// and parens) resolves as a whole — e.g. `if_not_exists(#c,:0) - :1`. Doing
+	// this before the function-call branch is what makes the arithmetic forms
+	// ElectroDB emits for .add()/.subtract() compute instead of storing null.
 	for _, op := range []byte{'+', '-'} {
 		if parts := ddbSplitTopLevel(rhs, op); len(parts) == 2 {
-			a, err := ddbResolveOperand(parts[0], item, names, values)
+			a, err := ddbEvalSetOperand(parts[0], item, names, values)
 			if err != nil {
 				return nil, err
 			}
-			b, err := ddbResolveOperand(parts[1], item, names, values)
+			b, err := ddbEvalSetOperand(parts[1], item, names, values)
 			if err != nil {
 				return nil, err
 			}
@@ -215,7 +340,93 @@ func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, val
 			return ddbNumberValue(an - bn), nil
 		}
 	}
-	return ddbResolveOperand(rhs, item, names, values)
+	return ddbEvalSetOperand(rhs, item, names, values)
+}
+
+// ddbEvalSetOperand resolves a single SET operand: an if_not_exists(path,
+// operand) call, a list_append(a, b) call, or a bare :value / #name / path.
+func ddbEvalSetOperand(operand string, item map[string]any, names map[string]string, values map[string]any) (any, error) {
+	operand = strings.TrimSpace(operand)
+	// An operand beginning with a known function name MUST be a well-formed,
+	// balanced whole call — `if_not_exists(` with no close paren is malformed and
+	// rejected, not silently treated as a path.
+	for _, fn := range []string{"if_not_exists", "list_append"} {
+		if !ddbHasFuncPrefix(operand, fn) {
+			continue
+		}
+		inner, ok := ddbWholeFuncCall(operand, fn)
+		if !ok {
+			return nil, fmt.Errorf("malformed %s call: %q", fn, operand)
+		}
+		args := ddbSplitTopLevel(inner, ',')
+		if len(args) != 2 {
+			return nil, fmt.Errorf("%s expects 2 args: %q", fn, operand)
+		}
+		if fn == "if_not_exists" {
+			if cur, ok := item[ddbResolveName(strings.TrimSpace(args[0]), names)]; ok {
+				return cur, nil
+			}
+			return ddbEvalSetOperand(args[1], item, names, values)
+		}
+		a, err := ddbEvalSetOperand(args[0], item, names, values)
+		if err != nil {
+			return nil, err
+		}
+		b, err := ddbEvalSetOperand(args[1], item, names, values)
+		if err != nil {
+			return nil, err
+		}
+		return ddbListAppend(a, b), nil
+	}
+	return ddbResolveOperand(operand, item, names, values)
+}
+
+// ddbHasFuncPrefix reports whether operand begins with `name(` (case-insensitive).
+func ddbHasFuncPrefix(operand, name string) bool {
+	pfx := name + "("
+	return len(operand) >= len(pfx) && strings.EqualFold(operand[:len(pfx)], pfx)
+}
+
+// ddbWholeFuncCall reports whether operand is exactly a balanced `name(...)`
+// call (case-insensitive name, no trailing top-level operator) and returns the
+// argument text between the outer parens.
+func ddbWholeFuncCall(operand, name string) (string, bool) {
+	pfx := name + "("
+	if len(operand) < len(pfx)+1 || !strings.HasSuffix(operand, ")") {
+		return "", false
+	}
+	if !strings.EqualFold(operand[:len(pfx)], pfx) {
+		return "", false
+	}
+	depth := 0
+	for i := len(pfx) - 1; i < len(operand); i++ {
+		switch operand[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth == 0 {
+				// Whole operand is this single call only when its matching
+				// close paren is the final byte (no trailing top-level op).
+				return operand[len(pfx) : len(operand)-1], i == len(operand)-1
+			}
+		}
+	}
+	return "", false
+}
+
+// ddbListAppend concatenates two L-typed AttributeValues for the list_append()
+// function; a non-list operand contributes nothing (treated as an empty list).
+func ddbListAppend(a, b any) any {
+	out := []any{}
+	for _, v := range []any{a, b} {
+		if m, ok := v.(map[string]any); ok {
+			if l, ok := m["L"].([]any); ok {
+				out = append(out, l...)
+			}
+		}
+	}
+	return map[string]any{"L": out}
 }
 
 func ddbToNumber(v any) float64 {

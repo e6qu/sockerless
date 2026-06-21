@@ -4,6 +4,41 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-21 - DynamoDB: 4 consumer bugs + a completeness/safety sweep
+
+Fixed four consumer-reported DynamoDB defects (#641–#644) and, on the same PR, a
+wide completeness + safety sweep of the AWS sim's DynamoDB slice. Two read-only
+audit agents (completeness against the vendored smithy spec; safety/robustness)
+surfaced the sweep list; every item got a **complete** fix (no workarounds) with
+SDK tests.
+
+**Consumer fixes.** TransactWriteItems honours the `Update` action — it was
+absent from the request struct, so an `Update` member silently fell through and
+its UpdateExpression + ConditionExpression never ran (every transactional
+atomic-counter / version-CAS pattern was wrong); the handler now validates
+exactly-one-op-per-item, evaluates all conditions, and applies Update via the
+single-item engine (BUG-2126). A cancelled transaction returns the per-item
+`CancellationReasons` array (one `{Code}` per item, in order) + the
+service-prefixed `__type` the SDK/ElectroDB read to map a conditional failure to
+a domain conflict (2127). `SET c = if_not_exists(c,:0) - :v` computes instead of
+storing `null` — the evaluator splits top-level `+`/`-` before the function-call
+branch and resolves each operand recursively (2128). DeleteTable purges the
+table's items so they don't reappear on a same-named recreate (2129).
+
+**Completeness/safety sweep.** Query `ScanIndexForward` (descending order) and
+`Select=COUNT`; numeric primary-key canonicalization via exact `big.Rat` so `01`,
+`1`, `1.0` address the same item (full 38-digit precision, not lossy float);
+nested UpdateExpression document paths `a.b[0].c` with real M/L container
+creation across SET/REMOVE/ADD/DELETE; a faithful 32-level item-nesting limit on
+writes (also bounds the clone/marshal recursion); parallel-Scan
+`Segment`/`TotalSegments` disjoint partitioning; `contains()` over S/N/B sets;
+`list_append()` in SET; Batch/Transact 25/100 size limits;
+`ReturnValuesOnConditionCheckFailure` + the `Item` member on
+ConditionalCheckFailedException; ResourceNotFoundException consistency
+(BUG-2130..2140). Added `FuzzDDBItemMarshalRoundtrip` + `FuzzDDBProjectItem`
+(zero crashers). **Staged, filed not rushed:** ConsumedCapacity (2141), DynamoDB
+PartiQL (2142 — its own grammar, a follow-on slice).
+
 ## 2026-06-21 - Systematic prevention of the fuzz-found bug classes
 
 Analyzed the last several fuzz/audit rounds: the recurring crashes cluster into 6
