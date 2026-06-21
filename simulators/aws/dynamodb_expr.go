@@ -3,6 +3,8 @@ package main
 import (
 	"strconv"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // DynamoDB condition / filter / key-condition expression language — a faithful
@@ -34,7 +36,7 @@ func ddbEvalExpr(item map[string]any, exists bool, expr string, names map[string
 	if expr == "" {
 		return true
 	}
-	p := &ddbExprParser{toks: ddbExprTokenize(expr)}
+	p := &ddbExprParser{toks: ddbExprTokenize(expr), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
 	node := p.parseOr()
 	if node == nil || p.peek().kind != ddbTokEOF {
 		// Unparseable / trailing garbage → treat as a non-match.
@@ -211,40 +213,40 @@ type ddbExprTok struct {
 
 func ddbExprTokenize(s string) []ddbExprTok {
 	var toks []ddbExprTok
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Peek()
 		switch c {
 		case ' ', '\t', '\n':
-			i++
+			sc.Next()
 		case '(':
 			toks = append(toks, ddbExprTok{ddbTokLParen, "("})
-			i++
+			sc.Next()
 		case ')':
 			toks = append(toks, ddbExprTok{ddbTokRParen, ")"})
-			i++
+			sc.Next()
 		case ',':
 			toks = append(toks, ddbExprTok{ddbTokComma, ","})
-			i++
+			sc.Next()
 		case '=', '<', '>':
 			op := string(c)
-			if i+1 < len(s) && (s[i+1] == '=' || s[i+1] == '>') {
-				op += string(s[i+1])
-				i++
+			sc.Next()
+			if n := sc.Peek(); n == '=' || n == '>' {
+				op += string(n)
+				sc.Next()
 			}
 			toks = append(toks, ddbExprTok{ddbTokOp, op})
-			i++
 		default:
-			start := i
-			for i < len(s) {
-				ch := s[i]
+			start := sc.Pos()
+			for !sc.Eof() {
+				ch := sc.Peek()
 				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' || ch == ',' ||
 					ch == '=' || ch == '<' || ch == '>' {
 					break
 				}
-				i++
+				sc.Next()
 			}
-			word := s[start:i]
+			word := sc.Slice(start, sc.Pos())
 			switch strings.ToUpper(word) {
 			case "AND":
 				toks = append(toks, ddbExprTok{ddbTokAnd, word})
@@ -269,12 +271,14 @@ func ddbExprTokenize(s string) []ddbExprTok {
 type ddbExprParser struct {
 	toks  []ddbExprTok
 	pos   int
-	depth int
+	guard *sim.ParseGuard
 }
 
 // maxExprParseDepth bounds parenthesis nesting so a pathological expression
 // (thousands of `(`) can't overflow the goroutine stack and crash the whole sim
-// process — a recover() can't catch a Go stack-overflow fatal error.
+// process — a recover() can't catch a Go stack-overflow fatal error. The shared
+// ParseGuard enforces this depth cap (the node cap is left effectively unbounded
+// so only parenthesis depth gates the parse, exactly as before).
 const maxExprParseDepth = 1000
 
 func (p *ddbExprParser) peek() ddbExprTok { return p.toks[p.pos] }
@@ -309,13 +313,12 @@ func (p *ddbExprParser) parseNot() ddbCond {
 func (p *ddbExprParser) parseTerm() ddbCond {
 	if p.peek().kind == ddbTokLParen {
 		p.next()
-		p.depth++
-		if p.depth > maxExprParseDepth {
-			p.depth--
+		if !p.guard.Enter() {
+			p.guard.Leave()
 			return ddbCondFalse{}
 		}
 		inner := p.parseOr()
-		p.depth--
+		p.guard.Leave()
 		if p.peek().kind == ddbTokRParen {
 			p.next()
 		}

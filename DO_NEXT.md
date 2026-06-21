@@ -8,9 +8,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 **Validation note:** `forcetypeassert` + tightened-errcheck now run in the existing `lint (...)` CI jobs — the whole repo must stay 0/0 (any new type assertion needs comma-ok; any new dropped decode/read error must be handled). The nightly fuzz job (`Fuzz (nightly)`) discovers new crashers; the committed seed corpus regresses known ones under `go test`.
 
-**Deferred-by-design (user-flagged):** the full DSL-parser unification (one grammar core for the 6 expression parsers) — large/risky, modest marginal value now the class-prevention is in place; its own focused PR if pursued.
+**Parser-safety core (done, not deferred):** `sim.Scanner` + `sim.ParseGuard` (shared, 3 copies) now back the 5 recursive expression parsers (DynamoDB exprs, CloudWatch Insights filter, CloudWatch filter pattern, GCP AIP-160 filter, Azure OData $filter) — hand-rolled cursors → Scanner, ad-hoc depth limits → ParseGuard, behaviour byte-identical (fuzz + unit validated). New parsers should use `sim.Scanner`/`sim.ParseGuard` + `sim.ASCIIFold`/`FrameReader`. CI golangci-lint bumped to v2.12.2 so the new linters (forcetypeassert + tightened errcheck) run in CI.
 
-**Next candidates:** the live-cloud track (BUG-1075); a fresh fidelity/fuzz round (the method keeps finding real bugs); the DSL-parser unification if desired.
+**Next candidates:** the live-cloud track (BUG-1075); a fresh fidelity/fuzz round (the method keeps finding real bugs).
 
 ### (history) `feat/ecs-express-mode` (MERGED as #634) — full AWS **ECS Express Mode** support in the AWS simulator (the managed Express Gateway service AWS launched 2025-11-21), plus the real upgrades the feature exposed. **CI green.** Highlights:
 - **The feature.** 4 ops `Create/Describe/Update/DeleteExpressGatewayService` (awsJson1.1) with exact shapes/enums/defaults, and **full faithful cloud-slice assembly** — each Express service composes the REAL underlying sim resources (ECS Fargate service + ELBv2 ALB + target group + HTTPS:443 listener + ACM cert + EC2 SG + Application Auto Scaling target/policy), describable via their own APIs, with 25-services-per-ALB consolidation and the DRAINING→INACTIVE teardown cascade. SDK + CLI + Terraform tests; doc `docs/ECS_EXPRESS_MODE.md` cross-linked. **BUG-2088** = 3 issues TF testing surfaced.

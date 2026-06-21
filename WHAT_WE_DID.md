@@ -34,10 +34,23 @@ point-fixing each new instance, put author-time prevention in place.
   known crashers under plain `go test`; this discovers NEW ones automatically rather
   than relying on a human running fuzz each round.
 
-All modules lint-clean (0 forcetypeassert / 0 errcheck), all touched tests green.
-The one remaining option — unifying the 6 hand-rolled expression DSLs under a single
-grammar core — is large/risky and, with the class-prevention now in place, of modest
-marginal value; left as a separate focused PR.
+- **Shared parser-safety core** (`simulators/*/shared/parsecore.go`): `sim.Scanner` (a
+  bounds-safe string cursor — Peek/PeekAt/Next/Slice/SkipSpace/HasPrefixFold all
+  range-checked, never panics on index/slice) + `sim.ParseGuard` (depth + node
+  budget). The 5 recursive expression parsers — DynamoDB expressions, CloudWatch
+  Insights filter, CloudWatch filter pattern, GCP AIP-160 filter, Azure OData
+  `$filter` — were migrated onto it: hand-rolled `s[i]`/`s[i:j]` tokenizer cursors →
+  `Scanner`; ad-hoc per-parser depth limits → `ParseGuard`. Grammar/tokens/AST/eval
+  kept byte-identical; each migration validated by the parser's full unit suite + a
+  40s fuzz run with zero crashers. The expression DSLs are different *languages*, so
+  the unification is of the unsafe *scaffolding* (the bug-prone part), not the
+  grammars.
+- **CI golangci-lint bumped** v2.10.1 → v2.12.2 (latest release, 45 days old — past the
+  1-day supply-chain window; local was already there) so the newly-enabled linters run
+  in CI too.
+
+All modules lint-clean (0 forcetypeassert / 0 errcheck); all touched tests green. Every
+fuzz-class prevention measure is in place and nothing was deferred.
 
 ## 2026-06-21 - Round 20: deferrals cleared + fresh fidelity/fuzz (no deferrals)
 
