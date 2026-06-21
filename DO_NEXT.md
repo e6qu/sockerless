@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/error-path-and-fidelity-audit` — the **error-path fidelity audit + fresh sim fidelity audit, combined into one PR**. Theme 1: handlers whose error paths emit the wrong wire shape for their protocol (the BUG-2094 class), wrong/guessed error codes vs the service model, or have no test exercising the error branch. Theme 2: round-trip fields, list envelopes, filters, pagination, idempotency on load-bearing ops. All verified at file:line; 6 real bugs fixed (BUG-2095..2100), each with a real-client regression test; the agents' false positives (e.g. SSM pagination — already paginates) rejected. Build/lint clean.
+`audit-fuzz-round18` — a **deeper/longer fuzzing + bug / weak-type / fidelity audit sweep** across the simulators, backends, shared libraries, agent, and core (parallel agents + extended fuzz runs over the full target set incl. round-17's additions + new targets). All findings verified at file:line, real ones fixed, no deferrals. In progress.
 
 **Next candidates:** the live-cloud track (BUG-1075); the other ~18 silently-defaulted strconv sites are internal (own pagination cursors / stored values / hashes) — not request-validation gaps.
 

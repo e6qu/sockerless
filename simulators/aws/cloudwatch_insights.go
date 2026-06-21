@@ -446,12 +446,29 @@ func cwStatsOutputFields(spec string) []string {
 
 // cwIndexKeyword finds a whitespace-delimited keyword (case-insensitive).
 func cwIndexKeyword(s, kw string) int {
-	lower := strings.ToLower(s)
+	// ASCII-only fold so the byte length is preserved: callers slice the
+	// ORIGINAL s with the returned index, and strings.ToLower can change the
+	// byte length on multibyte / invalid-UTF-8 input (each bad byte expands to a
+	// 3-byte U+FFFD), shifting the index past len(s) and panicking. The keyword
+	// is ASCII, so ASCII folding matches identically.
+	lower := cwASCIIFold(s)
 	target := " " + kw + " "
 	if i := strings.Index(lower, target); i >= 0 {
 		return i + 1
 	}
 	return -1
+}
+
+// cwASCIIFold lowercases only ASCII A–Z, preserving the byte length so an index
+// into the result is valid in the original string.
+func cwASCIIFold(s string) string {
+	b := []byte(s)
+	for i := range b {
+		if b[i] >= 'A' && b[i] <= 'Z' {
+			b[i] += 'a' - 'A'
+		}
+	}
+	return string(b)
 }
 
 // ── sort / dedup ───────────────────────────────────────────────────────────

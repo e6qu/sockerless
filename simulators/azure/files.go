@@ -334,6 +334,47 @@ func registerAzureFiles(srv *sim.Server) {
 			if req.Tags != nil {
 				acct.Tags = *req.Tags
 			}
+			// Merge the updatable nested properties a PATCH carries (accessTier,
+			// public-access / TLS knobs, encryption, networkAcls, …) into the
+			// stored account — only the keys actually present, preserving the
+			// rest. Without this, real-azurerm property updates were silently
+			// dropped and the next plan showed drift.
+			if req.Properties != nil {
+				pb, _ := json.Marshal(req.Properties)
+				var patch StorageAccountProperties
+				_ = json.Unmarshal(pb, &patch)
+				p := &acct.Properties
+				if _, ok := req.Properties["accessTier"]; ok {
+					p.AccessTier = patch.AccessTier
+				}
+				if _, ok := req.Properties["minimumTlsVersion"]; ok {
+					p.MinimumTLSVersion = patch.MinimumTLSVersion
+				}
+				if _, ok := req.Properties["publicNetworkAccess"]; ok {
+					p.PublicNetworkAccess = patch.PublicNetworkAccess
+				}
+				if _, ok := req.Properties["largeFileSharesState"]; ok {
+					p.LargeFileSharesState = patch.LargeFileSharesState
+				}
+				if _, ok := req.Properties["supportsHttpsTrafficOnly"]; ok {
+					p.SupportsHttpsTrafficOnly = patch.SupportsHttpsTrafficOnly
+				}
+				if _, ok := req.Properties["allowBlobPublicAccess"]; ok {
+					p.AllowBlobPublicAccess = patch.AllowBlobPublicAccess
+				}
+				if _, ok := req.Properties["allowSharedKeyAccess"]; ok {
+					p.AllowSharedKeyAccess = patch.AllowSharedKeyAccess
+				}
+				if _, ok := req.Properties["isHnsEnabled"]; ok {
+					p.IsHnsEnabled = patch.IsHnsEnabled
+				}
+				if _, ok := req.Properties["encryption"]; ok {
+					p.Encryption = patch.Encryption
+				}
+				if _, ok := req.Properties["networkAcls"]; ok {
+					p.NetworkAcls = patch.NetworkAcls
+				}
+			}
 			acct.Properties.ProvisioningState = "Succeeded"
 			applyStorageAccountEndpoints(r, acct)
 		})

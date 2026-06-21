@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-21 - Audit + extended-fuzz round 18
+
+Parallel audit agents (sims/backends/shared/agent/core) + extended fuzzing over the
+full target set. **3 real bugs fixed, 1 notable false positive rejected** — and the
+fuzzing paid off with a genuine DoS panic.
+
+- **BUG-2101:** GCP Cloud Build `triggers.patch` ignored `updateMask` (wholesale
+  replace → terraform drift). `updateMask` is a documented param (verified in the
+  cloudbuild-v1 discovery doc); now merges only masked top-level fields. SDK test.
+- **BUG-2102:** Azure storage-account PATCH read `properties` but applied only
+  sku/kind/tags, dropping accessTier / public-access / TLS / encryption / networkAcls
+  updates → azurerm drift. Now merges the present nested properties. SDK test.
+- **BUG-2103 (fuzz-found, P2 DoS):** CloudWatch Logs Insights `cwIndexKeyword` returned
+  an index from `strings.ToLower(s)` — which expands invalid-UTF-8 bytes to 3-byte
+  U+FFFD, changing the byte length — but callers sliced the ORIGINAL string →
+  `slice bounds out of range [10:8]` panic on a `stats … as/by …` clause with
+  non-ASCII bytes. Fixed with a byte-length-preserving ASCII-only fold; crasher
+  committed as a regression corpus seed.
+- **FALSE POSITIVE (FP-13):** an agent flagged ~192 AWS sites returning HTTP 400 for
+  NotFound/AlreadyExists "instead of 404/409". Rejected after spec verification:
+  awsJson1.0/1.1 protocols return 400 for modeled client exceptions regardless of the
+  Smithy `@httpError` trait (the existing `TestConformanceCloudMapServiceNotFoundStatus`
+  encodes this); only REST / query protocols honor the status, and the sim already does
+  for IAM/SNS/EFS/Route53. The model-based "fix" was reverted before shipping. Lesson
+  saved to memory.
+
+The rest of the fuzz suite (~50 targets) was clean. Build + lint clean across all sims.
+
 ## 2026-06-20 - Error-path fidelity + fresh fidelity audit (combined)
 
 A combined audit — error-path fidelity (the BUG-2094 class: handlers whose error
