@@ -17,6 +17,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"sort"
 	"strconv"
@@ -187,6 +188,20 @@ func writeDDBJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// writeDDBConditionalCheckFailed emits ConditionalCheckFailedException, including
+// the existing item when ReturnValuesOnConditionCheckFailure=ALL_OLD — the `Item`
+// member optimistic-locking libraries read to surface the conflicting record.
+func writeDDBConditionalCheckFailed(w http.ResponseWriter, returnValues string, old map[string]any, exists bool) {
+	body := map[string]any{
+		"__type":  "com.amazonaws.dynamodb.v20120810#ConditionalCheckFailedException",
+		"Message": "The conditional request failed",
+	}
+	if strings.EqualFold(returnValues, "ALL_OLD") && exists && len(old) > 0 {
+		body["Item"] = old
+	}
+	writeDDBJSON(w, http.StatusBadRequest, body)
+}
+
 func ddbTableArn(name string) string {
 	return fmt.Sprintf("arn:aws:dynamodb:%s:%s:table/%s", awsRegion(), awsAccountID(), name)
 }
@@ -260,8 +275,8 @@ func handleDDBUpdateContinuousBackups(w http.ResponseWriter, r *http.Request) {
 	}
 	t, ok := ddbTables.Get(req.TableName)
 	if !ok {
-		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
-			"Table not found: %s", req.TableName)
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
 	status := "DISABLED"
@@ -405,8 +420,8 @@ func handleDDBDescribeContinuousBackups(w http.ResponseWriter, r *http.Request) 
 	}
 	t, ok := ddbTables.Get(req.TableName)
 	if !ok {
-		sim.AWSErrorf(w, "TableNotFoundException", http.StatusBadRequest,
-			"Table not found: %s", req.TableName)
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
 	pitr := t.PITRStatus
@@ -727,6 +742,17 @@ func handleDDBDeleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ddbTables.Delete(req.TableName)
+	// Real DeleteTable deletes the table AND all of its items — purge the
+	// item stores so the rows don't survive into a same-named recreate.
+	// Keys are "<table>/<hash>[|<rng>]"; the trailing "/" prevents a prefix
+	// collision with a differently-named table (e.g. "foo" vs "foobar").
+	prefix := req.TableName + "/"
+	for _, k := range ddbItemNames.List() {
+		if strings.HasPrefix(k, prefix) {
+			ddbItems.Delete(k)
+			ddbItemNames.Delete(k)
+		}
+	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{"TableDescription": t})
 }
 
@@ -787,31 +813,89 @@ func ddbItemKey(table DDBTable, item map[string]any) string {
 	return table.TableName + "/" + hash
 }
 
-// ddbExtractAttrValue pulls the type-tagged value from a DynamoDB
-// AttributeValue map (`{"S": "..."}` / `{"N": "..."}` / `{"B": ...}`).
-// The encoding ignores the type tag for storage-key purposes — two
-// items with the same primary-key value collide regardless of type.
+// ddbExtractAttrValue encodes a key AttributeValue (`{"S"|"N"|"B": ...}`) into
+// the store-key component. The type tag is prefixed so an S value never collides
+// with an equal-looking N/B value, and N values are canonicalized so DynamoDB's
+// numeric equality holds: "01", "1", and "1.0" map to the same key. big.Rat is
+// exact (DynamoDB numbers carry up to 38 digits — float64 would corrupt them).
 func ddbExtractAttrValue(v any) string {
 	m, ok := v.(map[string]any)
 	if !ok {
 		return ""
 	}
-	for _, key := range []string{"S", "N", "B"} {
-		if val, ok := m[key]; ok {
-			return fmt.Sprintf("%v", val)
-		}
+	if s, ok := m["S"]; ok {
+		return "S#" + fmt.Sprintf("%v", s)
+	}
+	if n, ok := m["N"]; ok {
+		return "N#" + ddbCanonicalNumber(fmt.Sprintf("%v", n))
+	}
+	if b, ok := m["B"]; ok {
+		return "B#" + fmt.Sprintf("%v", b)
 	}
 	return ""
 }
 
+// ddbCanonicalNumber returns an exact canonical form of a DynamoDB number string
+// so equal numbers share a store key. Falls back to the trimmed input when it
+// isn't a valid number.
+func ddbCanonicalNumber(s string) string {
+	if r, ok := new(big.Rat).SetString(strings.TrimSpace(s)); ok {
+		return r.RatString()
+	}
+	return strings.TrimSpace(s)
+}
+
+// ddbMaxItemDepth is DynamoDB's attribute nesting limit (32 levels). A top-level
+// attribute is level 1, so its M/L children may descend 31 further levels.
+const ddbMaxItemDepth = 32
+
+// ddbItemTooDeep reports whether any attribute of an item nests beyond the
+// 32-level limit (real DynamoDB returns ValidationException). The walk is
+// bounded to the limit, so a pathologically deep item can't overflow the stack
+// here either.
+func ddbItemTooDeep(item map[string]any) bool {
+	for _, av := range item {
+		if ddbAttrExceedsDepth(av, ddbMaxItemDepth-1) {
+			return true
+		}
+	}
+	return false
+}
+
+func ddbAttrExceedsDepth(v any, remaining int) bool {
+	if remaining < 0 {
+		return true
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return false
+	}
+	if mm, ok := m["M"].(map[string]any); ok {
+		for _, sub := range mm {
+			if ddbAttrExceedsDepth(sub, remaining-1) {
+				return true
+			}
+		}
+	}
+	if ll, ok := m["L"].([]any); ok {
+		for _, sub := range ll {
+			if ddbAttrExceedsDepth(sub, remaining-1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                 string            `json:"TableName"`
-		Item                      map[string]any    `json:"Item"`
-		ConditionExpression       string            `json:"ConditionExpression"`
-		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames,omitempty"`
-		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues,omitempty"`
-		ReturnValues              string            `json:"ReturnValues,omitempty"`
+		TableName                           string            `json:"TableName"`
+		Item                                map[string]any    `json:"Item"`
+		ConditionExpression                 string            `json:"ConditionExpression"`
+		ExpressionAttributeNames            map[string]string `json:"ExpressionAttributeNames,omitempty"`
+		ExpressionAttributeValues           map[string]any    `json:"ExpressionAttributeValues,omitempty"`
+		ReturnValues                        string            `json:"ReturnValues,omitempty"`
+		ReturnValuesOnConditionCheckFailure string            `json:"ReturnValuesOnConditionCheckFailure,omitempty"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -823,6 +907,11 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 			"Requested resource not found: Table: %s not found", req.TableName)
 		return
 	}
+	if ddbItemTooDeep(req.Item) {
+		sim.AWSError(w, "ValidationException",
+			"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
+		return
+	}
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Item)
@@ -832,8 +921,7 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 	// "attribute_not_exists(LockID)") before writing.
 	if req.ConditionExpression != "" &&
 		!ddbEvalCondition(old, exists, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
-		sim.AWSError(w, "ConditionalCheckFailedException",
-			"The conditional request failed", http.StatusBadRequest)
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, old, exists)
 		return
 	}
 	ddbItems.Put(itemKey, req.Item)
@@ -916,8 +1004,9 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 			Action string         `json:"Action"`
 			Value  map[string]any `json:"Value"`
 		} `json:"AttributeUpdates"`
-		ConditionExpression string `json:"ConditionExpression"`
-		ReturnValues        string `json:"ReturnValues"`
+		ConditionExpression                 string `json:"ConditionExpression"`
+		ReturnValues                        string `json:"ReturnValues"`
+		ReturnValuesOnConditionCheckFailure string `json:"ReturnValuesOnConditionCheckFailure"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -935,8 +1024,7 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	item, existed := ddbItems.Get(itemKey)
 	if req.ConditionExpression != "" &&
 		!ddbEvalCondition(item, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
-		sim.AWSError(w, "ConditionalCheckFailedException",
-			"The conditional request failed", http.StatusBadRequest)
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, item, existed)
 		return
 	}
 	oldItem := ddbCloneItem(item)
@@ -1034,12 +1122,13 @@ func ddbAttrEqual(a, b any) bool {
 
 func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TableName                 string            `json:"TableName"`
-		Key                       map[string]any    `json:"Key"`
-		ConditionExpression       string            `json:"ConditionExpression"`
-		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-		ReturnValues              string            `json:"ReturnValues"`
+		TableName                           string            `json:"TableName"`
+		Key                                 map[string]any    `json:"Key"`
+		ConditionExpression                 string            `json:"ConditionExpression"`
+		ExpressionAttributeNames            map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues           map[string]any    `json:"ExpressionAttributeValues"`
+		ReturnValues                        string            `json:"ReturnValues"`
+		ReturnValuesOnConditionCheckFailure string            `json:"ReturnValuesOnConditionCheckFailure"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
@@ -1057,8 +1146,7 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	oldItem, existed := ddbItems.Get(itemKey)
 	if req.ConditionExpression != "" &&
 		!ddbEvalCondition(oldItem, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
-		sim.AWSError(w, "ConditionalCheckFailedException",
-			"The conditional request failed", http.StatusBadRequest)
+		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, oldItem, existed)
 		return
 	}
 	ddbItems.Delete(itemKey)
@@ -1086,6 +1174,8 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
+		ScanIndexForward          *bool             `json:"ScanIndexForward"`
+		Select                    string            `json:"Select"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -1106,16 +1196,16 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	prefix := req.TableName + "/"
-	keys := ddbTableSortedKeys(prefix)
-
-	// Advance past ExclusiveStartKey if provided.
-	startKey := ddbItemKey(t, req.ExclusiveStartKey)
-	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
+	// ScanIndexForward (default true) walks the sort key ascending; false walks
+	// it descending — the basis of every "latest N" access pattern. The
+	// candidate key set is built in the scan direction so ExclusiveStartKey
+	// resume + Limit + LastEvaluatedKey all work in that direction.
+	remaining := ddbQueryCandidateKeys(ddbTableSortedKeys(prefix), t, req.ExclusiveStartKey, prefix,
+		req.ScanIndexForward == nil || *req.ScanIndexForward)
 
 	// Query reads only the items matching the KeyConditionExpression; Limit caps
 	// how many such items are *examined* (ScannedCount), and the optional
 	// FilterExpression is applied to those, so Count <= ScannedCount.
-	remaining := keys[startIdx:]
 	var items []map[string]any
 	scanned := 0
 	var lastScanned map[string]any
@@ -1150,8 +1240,31 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	if !exhausted && lastScanned != nil {
 		out["LastEvaluatedKey"] = ddbExtractKey(t, lastScanned)
 	}
-	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
+	// Select=COUNT returns only Count/ScannedCount and omits Items.
+	if !strings.EqualFold(req.Select, "COUNT") {
+		out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
+	}
 	writeDDBJSON(w, http.StatusOK, out)
+}
+
+// ddbQueryCandidateKeys returns the table's item keys to examine for a Query,
+// resumed past ExclusiveStartKey and ordered for ScanIndexForward (ascending
+// when forward, descending otherwise). keys must be the ascending sorted set.
+func ddbQueryCandidateKeys(keys []string, t DDBTable, exclusiveStart map[string]any, prefix string, forward bool) []string {
+	startKey := ddbItemKey(t, exclusiveStart)
+	if forward {
+		return keys[ddbResumeIndex(keys, startKey, prefix, t.TableName+"/"):]
+	}
+	// Descending: examine keys strictly less than the resume key, reversed.
+	end := len(keys)
+	if startKey != prefix && startKey != t.TableName+"/" {
+		end = sort.Search(len(keys), func(i int) bool { return keys[i] >= startKey })
+	}
+	out := make([]string, end)
+	for i := 0; i < end; i++ {
+		out[i] = keys[end-1-i]
+	}
+	return out
 }
 
 // ddbProjectItems projects every item by a ProjectionExpression (no-op when empty).
@@ -1191,6 +1304,9 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
 		Limit                     int               `json:"Limit"`
 		ExclusiveStartKey         map[string]any    `json:"ExclusiveStartKey"`
+		Select                    string            `json:"Select"`
+		Segment                   *int              `json:"Segment"`
+		TotalSegments             *int              `json:"TotalSegments"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -1207,8 +1323,42 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 			"The table does not have the specified index: %s", req.IndexName)
 		return
 	}
+	// Segment/TotalSegments must be provided together and 0 <= Segment < TotalSegments.
+	if (req.Segment != nil) != (req.TotalSegments != nil) {
+		sim.AWSError(w, "ValidationException",
+			"The Segment and TotalSegments parameters must be provided together", http.StatusBadRequest)
+		return
+	}
+	if req.TotalSegments != nil {
+		seg := 0
+		if req.Segment != nil {
+			seg = *req.Segment
+		}
+		if *req.TotalSegments < 1 || seg < 0 || seg >= *req.TotalSegments {
+			sim.AWSError(w, "ValidationException",
+				"The Segment parameter is zero-based and must be less than the TotalSegments parameter", http.StatusBadRequest)
+			return
+		}
+	}
 	prefix := req.TableName + "/"
 	keys := ddbTableSortedKeys(prefix)
+	// Parallel scan: a TotalSegments=N scan issues N calls, each owning a disjoint
+	// subset of the table's keys — partition by position so the union is the whole
+	// table with no overlap (real DynamoDB hashes; deterministic positional split
+	// gives the same disjoint-coverage contract).
+	if req.TotalSegments != nil {
+		seg := 0
+		if req.Segment != nil {
+			seg = *req.Segment
+		}
+		part := keys[:0:0]
+		for i, k := range keys {
+			if i%*req.TotalSegments == seg {
+				part = append(part, k)
+			}
+		}
+		keys = part
+	}
 
 	startKey := ddbItemKey(t, req.ExclusiveStartKey)
 	startIdx := ddbResumeIndex(keys, startKey, prefix, t.TableName+"/")
@@ -1247,7 +1397,9 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	if !exhausted && lastScanned != nil {
 		out["LastEvaluatedKey"] = ddbExtractKey(t, lastScanned)
 	}
-	out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
+	if !strings.EqualFold(req.Select, "COUNT") {
+		out["Items"] = ddbProjectItems(items, req.ProjectionExpression, req.ExpressionAttributeNames)
+	}
 	writeDDBJSON(w, http.StatusOK, out)
 }
 
@@ -1324,13 +1476,32 @@ func handleDDBBatchWriteItem(w http.ResponseWriter, r *http.Request) {
 	}
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
+	// Validate the whole batch first (real DynamoDB rejects before applying):
+	// 1..25 total requests, every table exists, every put item within depth.
+	total := 0
 	for tableName, ops := range req.RequestItems {
-		t, ok := ddbTables.Get(tableName)
-		if !ok {
+		total += len(ops)
+		if _, ok := ddbTables.Get(tableName); !ok {
 			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 				"Requested resource not found: Table: %s not found", tableName)
 			return
 		}
+		for _, op := range ops {
+			if op.PutRequest != nil && ddbItemTooDeep(op.PutRequest.Item) {
+				sim.AWSError(w, "ValidationException",
+					"Item nesting exceeds the 32-level maximum", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+	if total == 0 || total > 25 {
+		sim.AWSError(w, "ValidationException",
+			"1 validation error detected: Value at 'requestItems' failed to satisfy constraint: Member must have length less than or equal to 25 and at least 1",
+			http.StatusBadRequest)
+		return
+	}
+	for tableName, ops := range req.RequestItems {
+		t, _ := ddbTables.Get(tableName)
 		for _, op := range ops {
 			switch {
 			case op.PutRequest != nil:
@@ -1387,77 +1558,110 @@ func handleDDBBatchGetItem(w http.ResponseWriter, r *http.Request) {
 // atomically: all ConditionExpressions are evaluated first under the item lock;
 // if any fails the whole transaction aborts with TransactionCanceledException.
 func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
+	// One operation shape covers Put/Update/Delete/ConditionCheck — exactly one
+	// is set per item. Put carries Item; the others carry Key; Update also
+	// carries UpdateExpression.
+	type txWrite struct {
+		TableName                 string            `json:"TableName"`
+		Item                      map[string]any    `json:"Item"`
+		Key                       map[string]any    `json:"Key"`
+		UpdateExpression          string            `json:"UpdateExpression"`
+		ConditionExpression       string            `json:"ConditionExpression"`
+		ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
+		ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
+	}
 	var req struct {
 		TransactItems []struct {
-			Put *struct {
-				TableName                 string            `json:"TableName"`
-				Item                      map[string]any    `json:"Item"`
-				ConditionExpression       string            `json:"ConditionExpression"`
-				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-			} `json:"Put"`
-			Delete *struct {
-				TableName                 string            `json:"TableName"`
-				Key                       map[string]any    `json:"Key"`
-				ConditionExpression       string            `json:"ConditionExpression"`
-				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-			} `json:"Delete"`
-			ConditionCheck *struct {
-				TableName                 string            `json:"TableName"`
-				Key                       map[string]any    `json:"Key"`
-				ConditionExpression       string            `json:"ConditionExpression"`
-				ExpressionAttributeNames  map[string]string `json:"ExpressionAttributeNames"`
-				ExpressionAttributeValues map[string]any    `json:"ExpressionAttributeValues"`
-			} `json:"ConditionCheck"`
+			Put            *txWrite `json:"Put"`
+			Update         *txWrite `json:"Update"`
+			Delete         *txWrite `json:"Delete"`
+			ConditionCheck *txWrite `json:"ConditionCheck"`
 		} `json:"TransactItems"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	// Real DynamoDB allows 1..100 actions per transaction.
+	if n := len(req.TransactItems); n == 0 || n > 100 {
+		sim.AWSError(w, "ValidationException",
+			"1 validation error detected: Value at 'transactItems' failed to satisfy constraint: Member must have length less than or equal to 100 and at least 1",
+			http.StatusBadRequest)
+		return
+	}
 	ddbItemsMu.Lock()
 	defer ddbItemsMu.Unlock()
 
-	// Validate every condition before mutating anything.
-	for _, ti := range req.TransactItems {
-		var tableName, condExpr, storeKey string
-		var keyItem map[string]any
-		var names map[string]string
-		var values map[string]any
-		switch {
-		case ti.Put != nil:
-			tableName, condExpr, keyItem, names, values = ti.Put.TableName, ti.Put.ConditionExpression, ti.Put.Item, ti.Put.ExpressionAttributeNames, ti.Put.ExpressionAttributeValues
-		case ti.Delete != nil:
-			tableName, condExpr, keyItem, names, values = ti.Delete.TableName, ti.Delete.ConditionExpression, ti.Delete.Key, ti.Delete.ExpressionAttributeNames, ti.Delete.ExpressionAttributeValues
-		case ti.ConditionCheck != nil:
-			tableName, condExpr, keyItem, names, values = ti.ConditionCheck.TableName, ti.ConditionCheck.ConditionExpression, ti.ConditionCheck.Key, ti.ConditionCheck.ExpressionAttributeNames, ti.ConditionCheck.ExpressionAttributeValues
-		default:
-			continue
+	// Validate exactly-one-op + the table exists, and evaluate EVERY item's
+	// condition so CancellationReasons reflects all items (real DynamoDB returns
+	// one {Code} per item, in order; "None" for items that didn't cause the
+	// cancellation).
+	reasons := make([]map[string]any, len(req.TransactItems))
+	cancelled := false
+	for i, ti := range req.TransactItems {
+		var op *txWrite
+		opCount := 0
+		for _, o := range []*txWrite{ti.Put, ti.Update, ti.Delete, ti.ConditionCheck} {
+			if o != nil {
+				opCount++
+				op = o
+			}
 		}
-		t, ok := ddbTables.Get(tableName)
+		if opCount != 1 {
+			sim.AWSError(w, "ValidationException",
+				"TransactItems can only contain one of Put, Update, Delete, or ConditionCheck", http.StatusBadRequest)
+			return
+		}
+		keyItem := op.Key
+		if ti.Put != nil {
+			keyItem = op.Item
+		}
+		t, ok := ddbTables.Get(op.TableName)
 		if !ok {
 			sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
-				"Requested resource not found: Table: %s not found", tableName)
+				"Requested resource not found: Table: %s not found", op.TableName)
 			return
 		}
-		storeKey = ddbItemKey(t, keyItem)
-		current, exists := ddbItems.Get(storeKey)
-		if condExpr != "" && !ddbEvalCondition(current, exists, condExpr, names, values) {
-			sim.AWSError(w, "TransactionCanceledException",
-				"Transaction cancelled, please refer cancellation reasons for specific reasons [ConditionalCheckFailed]",
-				http.StatusBadRequest)
-			return
+		current, exists := ddbItems.Get(ddbItemKey(t, keyItem))
+		if op.ConditionExpression != "" &&
+			!ddbEvalCondition(current, exists, op.ConditionExpression, op.ExpressionAttributeNames, op.ExpressionAttributeValues) {
+			reasons[i] = map[string]any{"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}
+			cancelled = true
+		} else {
+			reasons[i] = map[string]any{"Code": "None"}
 		}
 	}
+	if cancelled {
+		writeDDBTransactionCancelled(w, reasons)
+		return
+	}
 
-	// Apply mutations.
+	// Apply mutations (every condition passed). ConditionCheck is read-only.
 	for _, ti := range req.TransactItems {
 		switch {
 		case ti.Put != nil:
 			t, _ := ddbTables.Get(ti.Put.TableName)
 			key := ddbItemKey(t, ti.Put.Item)
 			ddbItems.Put(key, ti.Put.Item)
+			ddbItemNames.Put(key, key)
+			ddbBumpKeyGen()
+		case ti.Update != nil:
+			t, _ := ddbTables.Get(ti.Update.TableName)
+			key := ddbItemKey(t, ti.Update.Key)
+			item, _ := ddbItems.Get(key)
+			if item == nil {
+				item = map[string]any{}
+				for k, v := range ti.Update.Key {
+					item[k] = v
+				}
+			}
+			if ti.Update.UpdateExpression != "" {
+				if err := ddbApplyUpdateExpression(item, ti.Update.UpdateExpression, ti.Update.ExpressionAttributeNames, ti.Update.ExpressionAttributeValues); err != nil {
+					sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+					return
+				}
+			}
+			ddbItems.Put(key, item)
 			ddbItemNames.Put(key, key)
 			ddbBumpKeyGen()
 		case ti.Delete != nil:
@@ -1469,6 +1673,22 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeDDBJSON(w, http.StatusOK, map[string]any{})
+}
+
+// writeDDBTransactionCancelled emits TransactionCanceledException with a per-item
+// CancellationReasons array (one entry per TransactItem, in request order) — the
+// shape the AWS SDK / ElectroDB read to map a conditional failure to a domain
+// conflict. The __type carries the service prefix DynamoDB emits.
+func writeDDBTransactionCancelled(w http.ResponseWriter, reasons []map[string]any) {
+	codes := make([]string, len(reasons))
+	for i, rsn := range reasons {
+		codes[i], _ = rsn["Code"].(string)
+	}
+	writeDDBJSON(w, http.StatusBadRequest, map[string]any{
+		"__type":              "com.amazonaws.dynamodb.v20120810#TransactionCanceledException",
+		"Message":             fmt.Sprintf("Transaction cancelled, please refer cancellation reasons for specific reasons [%s]", strings.Join(codes, ", ")),
+		"CancellationReasons": reasons,
+	})
 }
 
 func handleDDBTransactGetItems(w http.ResponseWriter, r *http.Request) {
