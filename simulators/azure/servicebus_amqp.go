@@ -762,9 +762,18 @@ func sbAMQPNamespaceFromHost(host string) string {
 }
 
 func parseAMQPFrame(data []byte) (amqpFrame, error) {
+	// The frame header is 8 bytes (size:4, doff:1, type:1, channel:2);
+	// the size field is attacker-controlled so guard it against a short
+	// buffer and a size that overruns the data before slicing.
+	if len(data) < 8 {
+		return amqpFrame{}, errors.New("short AMQP frame")
+	}
 	size := int(binary.BigEndian.Uint32(data[:4]))
 	if size == 8 {
 		return amqpFrame{}, nil
+	}
+	if size < 8 || size > len(data) {
+		return amqpFrame{}, errors.New("invalid AMQP frame size")
 	}
 	doff := int(data[4]) * 4
 	if doff < 8 || doff > size {
@@ -789,12 +798,35 @@ func parseAMQPFrame(data []byte) (amqpFrame, error) {
 	}, nil
 }
 
+// amqpMaxValues / amqpMaxDepth bound the work a single (attacker-controlled)
+// frame can cause: a wire-encoded list/map/array carries its element count as a
+// u32, and an element can re-trigger decoding, so without a budget a crafted
+// frame loops billions of times (OOM/hang) or nests until the stack overflows.
+// Real Service Bus control frames are tiny, so these caps never bite legitimately.
+const (
+	amqpMaxValues = 100000
+	amqpMaxDepth  = 1024
+)
+
 type amqpValueReader struct {
-	data []byte
-	off  int
+	data   []byte
+	off    int
+	values int
+	depth  int
 }
 
 func (r *amqpValueReader) readValue() (any, error) {
+	r.values++
+	if r.values > amqpMaxValues {
+		return nil, errors.New("AMQP frame has too many values")
+	}
+	r.depth++
+	if r.depth > amqpMaxDepth {
+		r.depth--
+		return nil, errors.New("AMQP frame nesting too deep")
+	}
+	defer func() { r.depth-- }()
+
 	code, err := r.byte()
 	if err != nil {
 		return nil, err
@@ -890,7 +922,10 @@ func (r *amqpValueReader) readValue() (any, error) {
 }
 
 func (r *amqpValueReader) readList(end, count int) ([]any, error) {
-	out := make([]any, 0, count)
+	// count is attacker-controlled (decoded from the wire) — do not
+	// pre-size the slice with it or a huge value OOMs the process; the
+	// loop is bounded by the available data.
+	var out []any
 	for i := 0; i < count && r.off < len(r.data); i++ {
 		v, err := r.readValue()
 		if err != nil {
@@ -904,16 +939,26 @@ func (r *amqpValueReader) readList(end, count int) ([]any, error) {
 	return out, nil
 }
 
-func (r *amqpValueReader) readMap(_ int, count int) (map[any]any, error) {
-	out := map[any]any{}
-	for i := 0; i < count/2; i++ {
-		k, err := r.readValue()
-		if err != nil {
-			return nil, err
+func (r *amqpValueReader) readMap(_ int, count int) (out map[any]any, err error) {
+	out = map[any]any{}
+	// A decoded key can be a composite (list/array → []any, or a described
+	// value wrapping one), which is not a valid Go map key and panics
+	// "hash of unhashable type" on insert. Real AMQP map keys are scalars
+	// (symbols/strings); a composite key means a malformed frame, so
+	// recover the insert panic into an error rather than crashing.
+	defer func() {
+		if recover() != nil {
+			out, err = nil, errors.New("invalid AMQP map key")
 		}
-		v, err := r.readValue()
-		if err != nil {
-			return nil, err
+	}()
+	for i := 0; i < count/2; i++ {
+		k, rerr := r.readValue()
+		if rerr != nil {
+			return nil, rerr
+		}
+		v, rerr := r.readValue()
+		if rerr != nil {
+			return nil, rerr
 		}
 		out[k] = v
 	}
@@ -925,8 +970,14 @@ func (r *amqpValueReader) readArray(_ int, count int) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]any, 0, count)
+	// count is attacker-controlled — don't pre-size with it (OOM). The
+	// per-element re-injection of elemType decrements r.off, so guard
+	// against underflowing below 0 (which would index r.data[-1]).
+	var out []any
 	for i := 0; i < count; i++ {
+		if r.off <= 0 {
+			return nil, io.ErrUnexpectedEOF
+		}
 		r.off--
 		r.data[r.off] = elemType
 		v, err := r.readValue()
@@ -965,12 +1016,18 @@ func (r *amqpValueReader) u16() (uint16, error) {
 }
 
 func (r *amqpValueReader) u32() uint32 {
-	b, _ := r.take(4)
+	b, err := r.take(4)
+	if err != nil {
+		return 0
+	}
 	return binary.BigEndian.Uint32(b)
 }
 
 func (r *amqpValueReader) u64() uint64 {
-	b, _ := r.take(8)
+	b, err := r.take(8)
+	if err != nil {
+		return 0
+	}
 	return binary.BigEndian.Uint64(b)
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -253,7 +254,12 @@ func (p *azfCloudState) queryFunctionApps(ctx context.Context) ([]api.Container,
 			}
 			seen[containerID] = true
 
-			c := siteToContainer(site.Tags, site.Properties, site.Name)
+			c, err := siteToContainer(site.Tags, site.Properties, site.Name)
+			if err != nil {
+				p.server.Logger.Warn().Err(err).Str("site", derefTag(site.Name)).
+					Msg("siteToContainer: skipping inconsistent function app")
+				continue
+			}
 
 			// Overlay recorded invocation outcome. A gitlab-runner-pattern
 			// (OpenStdin) container is re-invoked per stage and must stay
@@ -391,7 +397,7 @@ func (p *azfCloudState) expandPodSite(site *armappservice.Site, membersTag strin
 }
 
 // siteToContainer reconstructs an api.Container from Azure Function App tags and properties.
-func siteToContainer(tags map[string]*string, props interface{}, siteName *string) api.Container {
+func siteToContainer(tags map[string]*string, props interface{}, siteName *string) (api.Container, error) {
 	containerID := derefTag(tags["sockerless-container-id"])
 	name := derefTag(tags["sockerless-name"])
 	if name == "" && containerID != "" {
@@ -410,7 +416,10 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 	if image == "" {
 		image = derefTag(tags["sockerless-image"])
 	}
-	cmd, entrypoint, env := azfSpecFromProps(props)
+	cmd, entrypoint, env, err := azfSpecFromProps(props)
+	if err != nil {
+		return api.Container{}, err
+	}
 
 	// Function Apps that exist in Azure are considered "running" (available for invocation)
 	state := api.ContainerState{
@@ -454,7 +463,7 @@ func siteToContainer(tags map[string]*string, props interface{}, siteName *strin
 		},
 		Platform: "linux",
 		Driver:   "azure-functions",
-	}
+	}, nil
 }
 
 // azureTagsToMap converts Azure ptr-based tags to a plain string map.
@@ -480,10 +489,10 @@ func derefTag(s *string) string {
 // the Function App's site config app-settings. Cmd/Entrypoint are stored exactly
 // (base64-JSON in SOCKERLESS_CMD / SOCKERLESS_ENTRYPOINT by buildAZFAppSettings);
 // the user Env is every app-setting that isn't Azure/sockerless plumbing.
-func azfSpecFromProps(props interface{}) (cmd, entrypoint, env []string) {
+func azfSpecFromProps(props interface{}) (cmd, entrypoint, env []string, err error) {
 	sp, ok := props.(*armappservice.SiteProperties)
 	if !ok || sp == nil || sp.SiteConfig == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	plumbing := func(name string) bool {
 		for _, p := range []string{"FUNCTIONS_", "WEBSITE", "AzureWebJobs", "DOCKER_REGISTRY_", "SOCKERLESS_"} {
@@ -504,12 +513,12 @@ func azfSpecFromProps(props interface{}) (cmd, entrypoint, env []string) {
 		}
 		switch name {
 		case "SOCKERLESS_ENTRYPOINT":
-			if raw, err := base64.StdEncoding.DecodeString(val); err == nil {
-				_ = json.Unmarshal(raw, &entrypoint)
+			if entrypoint, err = decodeAZFStringSlice(val); err != nil {
+				return nil, nil, nil, fmt.Errorf("malformed SOCKERLESS_ENTRYPOINT app-setting: %w", err)
 			}
 		case "SOCKERLESS_CMD":
-			if raw, err := base64.StdEncoding.DecodeString(val); err == nil {
-				_ = json.Unmarshal(raw, &cmd)
+			if cmd, err = decodeAZFStringSlice(val); err != nil {
+				return nil, nil, nil, fmt.Errorf("malformed SOCKERLESS_CMD app-setting: %w", err)
 			}
 		default:
 			if !plumbing(name) {
@@ -517,7 +526,24 @@ func azfSpecFromProps(props interface{}) (cmd, entrypoint, env []string) {
 			}
 		}
 	}
-	return cmd, entrypoint, env
+	return cmd, entrypoint, env, nil
+}
+
+// decodeAZFStringSlice decodes a base64-JSON string slice that
+// buildAZFAppSettings wrote (SOCKERLESS_CMD / SOCKERLESS_ENTRYPOINT).
+// A present-but-undecodable value means the writing backend produced
+// garbage — return the error so the caller surfaces the inconsistent
+// resource rather than reconstructing a container with an empty command.
+func decodeAZFStringSlice(val string) ([]string, error) {
+	raw, err := base64.StdEncoding.DecodeString(val)
+	if err != nil {
+		return nil, fmt.Errorf("base64: %w", err)
+	}
+	var out []string
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return nil, fmt.Errorf("json: %w", err)
+	}
+	return out, nil
 }
 
 // imageFromSiteProps extracts the container image from a Function App's site

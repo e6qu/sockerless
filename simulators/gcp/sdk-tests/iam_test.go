@@ -73,6 +73,30 @@ func TestIAM_ListServiceAccounts(t *testing.T) {
 	assert.GreaterOrEqual(t, len(resp.Accounts), 1)
 }
 
+// TestIAM_ListServiceAccountsPagination covers the pageSize/pageToken support
+// ListServiceAccounts previously dropped (it returned the whole set, no token).
+func TestIAM_ListServiceAccountsPagination(t *testing.T) {
+	svc := iamService(t)
+	const project = "projects/iam-page-project"
+	for _, id := range []string{"sa-a", "sa-b", "sa-c"} {
+		_, err := svc.Projects.ServiceAccounts.Create(project,
+			&iam.CreateServiceAccountRequest{
+				AccountId:      id,
+				ServiceAccount: &iam.ServiceAccount{DisplayName: id},
+			}).Do()
+		require.NoError(t, err)
+	}
+
+	page1, err := svc.Projects.ServiceAccounts.List(project).PageSize(2).Do()
+	require.NoError(t, err)
+	require.Len(t, page1.Accounts, 2)
+	require.NotEmpty(t, page1.NextPageToken, "pageSize=2 over 3 accounts → NextPageToken")
+
+	page2, err := svc.Projects.ServiceAccounts.List(project).PageSize(2).PageToken(page1.NextPageToken).Do()
+	require.NoError(t, err)
+	assert.Len(t, page2.Accounts, 1)
+}
+
 func TestIAM_DeleteServiceAccount(t *testing.T) {
 	svc := iamService(t)
 

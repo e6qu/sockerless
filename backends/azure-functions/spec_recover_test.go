@@ -37,7 +37,10 @@ func TestAZFSpecFromProps(t *testing.T) {
 			},
 		},
 	}
-	cmd, entrypoint, env := azfSpecFromProps(props)
+	cmd, entrypoint, env, err := azfSpecFromProps(props)
+	if err != nil {
+		t.Fatalf("azfSpecFromProps: %v", err)
+	}
 	if len(cmd) != 2 || cmd[0] != "echo" || cmd[1] != "hi" {
 		t.Fatalf("cmd = %v", cmd)
 	}
@@ -46,6 +49,22 @@ func TestAZFSpecFromProps(t *testing.T) {
 	}
 	if len(env) != 1 || env[0] != "APP_ENV=production" {
 		t.Fatalf("env should be only the user var, got %v", env)
+	}
+}
+
+// TestAZFSpecFromProps_CorruptCmdSurfaces asserts that a present-but-undecodable
+// SOCKERLESS_CMD app-setting (the backend's own write) fails loud rather than
+// silently reconstructing an empty command.
+func TestAZFSpecFromProps_CorruptCmdSurfaces(t *testing.T) {
+	props := &armappservice.SiteProperties{
+		SiteConfig: &armappservice.SiteConfig{
+			AppSettings: []*armappservice.NameValuePair{
+				nv("SOCKERLESS_CMD", strPtr("!!!not-base64!!!")),
+			},
+		},
+	}
+	if _, _, _, err := azfSpecFromProps(props); err == nil {
+		t.Fatal("expected error from corrupt SOCKERLESS_CMD, got nil")
 	}
 }
 

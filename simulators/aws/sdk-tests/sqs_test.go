@@ -20,6 +20,38 @@ func sqsClient() *sqs.Client {
 	})
 }
 
+// TestSQS_ReceiveMessageAttributeSubsetMD5 asserts that requesting a subset of
+// message attributes recomputes MD5OfMessageAttributes over exactly the returned
+// set. aws-sdk-go-v2's ValidateMessageChecksums middleware fails the call on a
+// digest mismatch, so a successful subset receive proves the recompute (the sim
+// previously re-emitted the stored full-set digest).
+func TestSQS_ReceiveMessageAttributeSubsetMD5(t *testing.T) {
+	client := sqsClient()
+	create, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("attr-md5-q")})
+	require.NoError(t, err)
+	url := aws.ToString(create.QueueUrl)
+
+	_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:    aws.String(url),
+		MessageBody: aws.String("hello"),
+		MessageAttributes: map[string]sqstypes.MessageAttributeValue{
+			"alpha": {DataType: aws.String("String"), StringValue: aws.String("one")},
+			"beta":  {DataType: aws.String("String"), StringValue: aws.String("two")},
+		},
+	})
+	require.NoError(t, err)
+
+	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:              aws.String(url),
+		MessageAttributeNames: []string{"alpha"},
+	})
+	require.NoError(t, err, "subset MD5 must validate against the returned attribute set")
+	require.Len(t, recv.Messages, 1)
+	assert.Len(t, recv.Messages[0].MessageAttributes, 1)
+	assert.Contains(t, recv.Messages[0].MessageAttributes, "alpha")
+	assert.NotContains(t, recv.Messages[0].MessageAttributes, "beta")
+}
+
 // TestSQS_QueueLifecycle exercises the 90th-percentile produce-
 // consume-ack flow that real consumers run against SQS.
 func TestSQS_QueueLifecycle(t *testing.T) {

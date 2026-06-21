@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 
 	dockerclient "github.com/docker/docker/client"
@@ -212,13 +213,19 @@ func registerArtifactRegistry(srv *sim.Server) {
 			return strings.HasPrefix(repo.Name, prefix)
 		})
 		result = gcpApplyListParams(result, r)
-		if result == nil {
-			result = []Repository{}
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
 		}
-
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"repositories": result,
-		})
+		if page == nil {
+			page = []Repository{}
+		}
+		resp := map[string]any{"repositories": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Delete repository

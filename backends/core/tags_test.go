@@ -193,9 +193,9 @@ func TestAsGCPLabels_JSONBlobGoesToAnnotations(t *testing.T) {
 }
 
 func TestParseLabelFromTags_Simple(t *testing.T) {
-	tags := map[string]string{
-		"sockerless-labels": `{"env":"prod","app":"web"}`,
-	}
+	// Round-trip through the only encoding AsMap writes (base64-JSON under
+	// sockerless-labels-b64); the legacy raw-JSON tag is no longer read.
+	tags := TagSet{Labels: map[string]string{"env": "prod", "app": "web"}}.AsMap()
 	labels := ParseLabelsFromTags(tags)
 	if labels == nil {
 		t.Fatal("expected non-nil labels")
