@@ -62,7 +62,12 @@ func handleCWQueryPutMetricData(w http.ResponseWriter, r *http.Request) {
 		}
 		var value float64
 		if v := r.FormValue(base + ".Value"); v != "" {
-			value, _ = strconv.ParseFloat(v, 64)
+			pv, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				cwQueryError(w, "InvalidParameterValue", fmt.Sprintf("The parameter %s.Value is not a valid number.", base))
+				return
+			}
+			value = pv
 		}
 		datum := CWMetricDatum{
 			Namespace:  namespace,

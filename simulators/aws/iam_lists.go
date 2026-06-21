@@ -92,7 +92,14 @@ func handleIAMListRoles(w http.ResponseWriter, r *http.Request) {
 
 	maxItems := 0
 	if mi := r.FormValue("MaxItems"); mi != "" {
-		maxItems, _ = strconv.Atoi(mi)
+		n, err := strconv.Atoi(mi)
+		if err != nil {
+			iamErrorXML(w, "ValidationError",
+				fmt.Sprintf("Value '%s' at 'maxItems' failed to satisfy constraint: Member must be a valid integer.", mi),
+				http.StatusBadRequest)
+			return
+		}
+		maxItems = n
 	}
 	page, next := awsPage(roles, r.FormValue("Marker"), maxItems, 100)
 

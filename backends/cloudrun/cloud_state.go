@@ -2,8 +2,7 @@ package cloudrun
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -493,19 +492,11 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 		created = job.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Docker labels round-trip via three places, in priority order:
-	//   1. SOCKERLESS_LABELS env var on the main container (robust against
-	//      control-plane or sim-side annotation stripping).
-	//   2. Job.Annotations (GCP annotations for labels whose JSON blob
-	//      fails the label-value charset).
-	//   3. Job.Labels (legacy split-across-chunks fallback).
-	dockerLabels := decodeLabelsFromEnv(env)
-	if len(dockerLabels) == 0 {
-		merged := mergeLabelsAndAnnotations(labels, job.Annotations)
-		gcpTags := gcpLabelsToTags(merged)
-		if parsed := core.ParseLabelsFromTags(gcpTags); parsed != nil {
-			dockerLabels = parsed
-		}
+	// Docker labels round-trip via the single authoritative SOCKERLESS_LABELS
+	// env var (core.LabelsEnvVar) on the main container.
+	dockerLabels, err := core.LabelsFromEnvSlice(env)
+	if err != nil {
+		return api.Container{}, fmt.Errorf("job %q: %w", job.Name, err)
 	}
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)
@@ -670,53 +661,4 @@ func (p *cloudRunCloudState) resolveExecutionState(ctx context.Context, job *run
 	return api.ContainerState{
 		Status: "created",
 	}
-}
-
-// gcpLabelsToTags converts GCP label keys (underscores) back to standard tag keys (dashes).
-func gcpLabelsToTags(labels map[string]string) map[string]string {
-	m := make(map[string]string, len(labels))
-	for k, v := range labels {
-		dashKey := strings.ReplaceAll(k, "_", "-")
-		m[dashKey] = v
-	}
-	return m
-}
-
-// decodeLabelsFromEnv extracts the Docker labels map from the
-// `SOCKERLESS_LABELS` env var (base64-encoded JSON) injected by
-// jobspec.go / servicespec.go. Returns nil if the var is missing or
-// malformed.
-func decodeLabelsFromEnv(env []string) map[string]string {
-	for _, e := range env {
-		if !strings.HasPrefix(e, "SOCKERLESS_LABELS=") {
-			continue
-		}
-		b64 := strings.TrimPrefix(e, "SOCKERLESS_LABELS=")
-		raw, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			return nil
-		}
-		var out map[string]string
-		if err := json.Unmarshal(raw, &out); err != nil {
-			return nil
-		}
-		return out
-	}
-	return nil
-}
-
-// mergeLabelsAndAnnotations combines GCP labels + annotations into a
-// single map (annotations win on key collision since they carry the
-// unmutated full-fidelity values). Needed because Docker labels land
-// in annotations but identity fields land in labels, and
-// ParseLabelsFromTags needs both to reconstruct a container's metadata.
-func mergeLabelsAndAnnotations(labels, annotations map[string]string) map[string]string {
-	out := make(map[string]string, len(labels)+len(annotations))
-	for k, v := range labels {
-		out[k] = v
-	}
-	for k, v := range annotations {
-		out[k] = v
-	}
-	return out
 }

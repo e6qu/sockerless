@@ -100,6 +100,7 @@ func ensureAccessPointRootDir(root string, rd *EFSRootDirectory) {
 type EFSFileSystem struct {
 	FileSystemId         string `json:"FileSystemId"`
 	FileSystemArn        string `json:"FileSystemArn"`
+	CreationToken        string `json:"CreationToken"`
 	CreationTime         int64  `json:"CreationTime"`
 	LifeCycleState       string `json:"LifeCycleState"`
 	Name                 string `json:"Name,omitempty"`
@@ -122,6 +123,7 @@ type EFSMountTarget struct {
 	MountTargetId        string   `json:"MountTargetId"`
 	FileSystemId         string   `json:"FileSystemId"`
 	SubnetId             string   `json:"SubnetId"`
+	VpcId                string   `json:"VpcId,omitempty"`
 	IpAddress            string   `json:"IpAddress"`
 	LifeCycleState       string   `json:"LifeCycleState"`
 	NetworkInterfaceId   string   `json:"NetworkInterfaceId"`
@@ -134,6 +136,7 @@ type EFSMountTarget struct {
 type EFSAccessPoint struct {
 	AccessPointId  string            `json:"AccessPointId"`
 	AccessPointArn string            `json:"AccessPointArn"`
+	ClientToken    string            `json:"ClientToken,omitempty"`
 	FileSystemId   string            `json:"FileSystemId"`
 	LifeCycleState string            `json:"LifeCycleState"`
 	Name           string            `json:"Name,omitempty"`
@@ -240,6 +243,7 @@ func handleEFSCreateFileSystem(w http.ResponseWriter, r *http.Request) {
 	fs := EFSFileSystem{
 		FileSystemId:    fsId,
 		FileSystemArn:   efsArn("file-system", fsId),
+		CreationToken:   req.CreationToken,
 		CreationTime:    time.Now().Unix(),
 		LifeCycleState:  "available",
 		Name:            name,
@@ -255,6 +259,7 @@ func handleEFSCreateFileSystem(w http.ResponseWriter, r *http.Request) {
 
 func handleEFSDescribeFileSystems(w http.ResponseWriter, r *http.Request) {
 	fsId := r.URL.Query().Get("FileSystemId")
+	creationToken := r.URL.Query().Get("CreationToken")
 
 	var fileSystems []EFSFileSystem
 	if fsId != "" {
@@ -284,6 +289,15 @@ func handleEFSDescribeFileSystems(w http.ResponseWriter, r *http.Request) {
 			}
 			fileSystems[i].NumberOfMountTargets = count
 		}
+	}
+	if creationToken != "" {
+		var f []EFSFileSystem
+		for _, fs := range fileSystems {
+			if fs.CreationToken == creationToken {
+				f = append(f, fs)
+			}
+		}
+		fileSystems = f
 	}
 	if fileSystems == nil {
 		fileSystems = []EFSFileSystem{}
@@ -386,10 +400,15 @@ func handleEFSCreateMountTarget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	mtId := "fsmt-" + generateUUID()[:8]
+	vpcId := ""
+	if sn, ok := ec2Subnets.Get(req.SubnetId); ok {
+		vpcId = sn.VpcId
+	}
 	mt := EFSMountTarget{
 		MountTargetId:        mtId,
 		FileSystemId:         req.FileSystemId,
 		SubnetId:             req.SubnetId,
+		VpcId:                vpcId,
 		IpAddress:            req.IpAddress,
 		LifeCycleState:       "available",
 		NetworkInterfaceId:   "eni-" + generateUUID()[:8],
@@ -450,6 +469,7 @@ func handleEFSDescribeMountTargets(w http.ResponseWriter, r *http.Request) {
 func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FileSystemId  string            `json:"FileSystemId"`
+		ClientToken   string            `json:"ClientToken"`
 		PosixUser     *EFSPosixUser     `json:"PosixUser"`
 		RootDirectory *EFSRootDirectory `json:"RootDirectory"`
 		Tags          []EFSTag          `json:"Tags"`
@@ -481,6 +501,7 @@ func handleEFSCreateAccessPoint(w http.ResponseWriter, r *http.Request) {
 	ap := EFSAccessPoint{
 		AccessPointId:  apId,
 		AccessPointArn: efsArn("access-point", apId),
+		ClientToken:    req.ClientToken,
 		FileSystemId:   req.FileSystemId,
 		LifeCycleState: "available",
 		Name:           name,

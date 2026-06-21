@@ -2460,10 +2460,10 @@ type kvDeletedSecretBundle struct {
 
 func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name string) {
 	var body struct {
-		Value       string            `json:"value"`
-		Tags        map[string]string `json:"tags,omitempty"`
-		ContentType string            `json:"contentType,omitempty"`
-		Attributes  *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Value       string              `json:"value"`
+		Tags        map[string]string   `json:"tags,omitempty"`
+		ContentType string              `json:"contentType,omitempty"`
+		Attributes  *kvSecretAttrsPatch `json:"attributes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sim.AzureError(w, "InvalidRequest",
@@ -2481,9 +2481,15 @@ func handleKVSetSecret(w http.ResponseWriter, r *http.Request, vault, name strin
 	version := generateUUID()
 	attrs := KeyVaultAttrs{Enabled: true, Created: now, Updated: now}
 	if body.Attributes != nil {
-		attrs.Enabled = body.Attributes.Enabled
-		attrs.NotBefore = body.Attributes.NotBefore
-		attrs.Expires = body.Attributes.Expires
+		if body.Attributes.Enabled != nil {
+			attrs.Enabled = *body.Attributes.Enabled
+		}
+		if body.Attributes.NotBefore != nil {
+			attrs.NotBefore = *body.Attributes.NotBefore
+		}
+		if body.Attributes.Expires != nil {
+			attrs.Expires = *body.Attributes.Expires
+		}
 	}
 	newVersion := kvSecretVersion{
 		Version:     version,
@@ -2528,6 +2534,16 @@ func handleKVGetSecretVersion(w http.ResponseWriter, r *http.Request, vault, nam
 	sim.WriteJSON(w, http.StatusOK, secretBundle(r, vault, name, v))
 }
 
+// kvSecretAttrsPatch is the PATCH-update shape for SecretAttributes: every
+// field is a pointer so an omitted attribute leaves the stored value unchanged.
+// Real Key Vault UpdateSecret is a partial update — sending only `exp` must not
+// reset `enabled`/`nbf` (a non-pointer decode would zero-fill and disable it).
+type kvSecretAttrsPatch struct {
+	Enabled   *bool  `json:"enabled"`
+	NotBefore *int64 `json:"nbf"`
+	Expires   *int64 `json:"exp"`
+}
+
 // handleKVPatchSecret updates a specific version's attributes /
 // tags / contentType. Value is immutable per version; PATCH on the
 // secret never changes value. Path: `/secrets/{name}/{version}`.
@@ -2539,9 +2555,9 @@ func handleKVPatchSecret(w http.ResponseWriter, r *http.Request, vault, name, ve
 		return
 	}
 	var body struct {
-		Tags        map[string]string `json:"tags,omitempty"`
-		ContentType *string           `json:"contentType,omitempty"`
-		Attributes  *KeyVaultAttrs    `json:"attributes,omitempty"`
+		Tags        map[string]string   `json:"tags,omitempty"`
+		ContentType *string             `json:"contentType,omitempty"`
+		Attributes  *kvSecretAttrsPatch `json:"attributes,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		sim.AzureError(w, "InvalidRequest",
@@ -2559,9 +2575,15 @@ func handleKVPatchSecret(w http.ResponseWriter, r *http.Request, vault, name, ve
 			v.ContentType = *body.ContentType
 		}
 		if body.Attributes != nil {
-			v.Attributes.Enabled = body.Attributes.Enabled
-			v.Attributes.NotBefore = body.Attributes.NotBefore
-			v.Attributes.Expires = body.Attributes.Expires
+			if body.Attributes.Enabled != nil {
+				v.Attributes.Enabled = *body.Attributes.Enabled
+			}
+			if body.Attributes.NotBefore != nil {
+				v.Attributes.NotBefore = *body.Attributes.NotBefore
+			}
+			if body.Attributes.Expires != nil {
+				v.Attributes.Expires = *body.Attributes.Expires
+			}
 			v.Attributes.Updated = time.Now().Unix()
 		}
 		rec.Versions[i] = v

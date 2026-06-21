@@ -101,7 +101,10 @@ func decodeSSMInputFrame(b []byte) (payload []byte, messageType string, fin bool
 	mt := strings.TrimRight(string(b[4:4+ssmMessageTypeLen]), " \x00")
 	flags := binary.BigEndian.Uint64(b[56:64])
 	payloadLen := binary.BigEndian.Uint32(b[116:120])
-	if uint32(len(b)) < uint32(ssmFixedHeaderLen)+payloadLen {
+	// uint64 arithmetic: ssmFixedHeaderLen+payloadLen in uint32 would wrap for
+	// a payloadLen near 0xFFFFFFFF, passing this guard and then slicing past
+	// the buffer (the frame comes off an attacker-controlled WebSocket).
+	if uint64(len(b)) < uint64(ssmFixedHeaderLen)+uint64(payloadLen) {
 		return nil, mt, false, errSSMFrameTruncated
 	}
 	return b[ssmFixedHeaderLen : ssmFixedHeaderLen+int(payloadLen)], mt, (flags & 2) != 0, nil

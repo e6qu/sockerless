@@ -4,7 +4,37 @@ import (
 	"testing"
 
 	functionspb "cloud.google.com/go/functions/apiv2/functionspb"
+	runpb "cloud.google.com/go/run/apiv2/runpb"
+	core "github.com/sockerless/backend-core"
 )
+
+// TestServiceToPodMemberContainer_LabelsFromEnv pins that a pod member's Docker
+// labels reconstruct from the authoritative SOCKERLESS_LABELS env var on the
+// Cloud Run Service's main container, and that a malformed value surfaces.
+func TestServiceToPodMemberContainer_LabelsFromEnv(t *testing.T) {
+	v, _ := core.EncodeLabelsEnvValue(map[string]string{"role": "db"})
+	svc := &runpb.Service{
+		Name: "projects/p/locations/r/services/sockerless-svc-y",
+		Template: &runpb.RevisionTemplate{
+			Containers: []*runpb.Container{{
+				Image: "redis:7",
+				Env:   []*runpb.EnvVar{{Name: core.LabelsEnvVar, Values: &runpb.EnvVar_Value{Value: v}}},
+			}},
+		},
+	}
+	got, err := serviceToPodMemberContainer(svc, "member-1")
+	if err != nil {
+		t.Fatalf("serviceToPodMemberContainer: %v", err)
+	}
+	if got.Config.Labels["role"] != "db" {
+		t.Fatalf("labels not reconstructed: %+v", got.Config.Labels)
+	}
+
+	svc.Template.Containers[0].Env[0].Values = &runpb.EnvVar_Value{Value: "!!!bad"}
+	if _, err := serviceToPodMemberContainer(svc, "member-1"); err == nil {
+		t.Fatal("expected error on malformed SOCKERLESS_LABELS")
+	}
+}
 
 // TestPodMembersFromFunctionRoundtrip verifies that a pod manifest
 // encoded into a Function's SOCKERLESS_POD_CONTAINERS env var decodes

@@ -334,9 +334,12 @@ func handleSSMGetParameters(w http.ResponseWriter, r *http.Request) {
 
 func handleSSMGetParametersByPath(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Path           string `json:"Path"`
-		Recursive      bool   `json:"Recursive"`
-		WithDecryption bool   `json:"WithDecryption"`
+		Path             string               `json:"Path"`
+		Recursive        bool                 `json:"Recursive"`
+		WithDecryption   bool                 `json:"WithDecryption"`
+		MaxResults       int                  `json:"MaxResults"`
+		NextToken        string               `json:"NextToken"`
+		ParameterFilters []ssmParameterFilter `json:"ParameterFilters"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
@@ -358,9 +361,60 @@ func handleSSMGetParametersByPath(w http.ResponseWriter, r *http.Request) {
 				return false
 			}
 		}
-		return true
+		return ssmMatchesParameterFilters(p, req.ParameterFilters)
 	})
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Parameters": ssmParametersWire(all)})
+	sortBy(all, func(p SSMParameter) string { return p.Name })
+	page, next := awsPage(all, req.NextToken, req.MaxResults, 10)
+	resp := map[string]any{"Parameters": ssmParametersWire(page)}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// ssmParameterFilter is a GetParametersByPath ParameterFilters entry.
+type ssmParameterFilter struct {
+	Key    string   `json:"Key"`
+	Option string   `json:"Option"`
+	Values []string `json:"Values"`
+}
+
+// ssmMatchesParameterFilters applies the supported ParameterFilters keys
+// (Type / Tier / DataType / Name) with the Equals (default) or BeginsWith
+// option. An empty filter set matches everything.
+func ssmMatchesParameterFilters(p SSMParameter, filters []ssmParameterFilter) bool {
+	for _, f := range filters {
+		var field string
+		switch f.Key {
+		case "Type":
+			field = p.Type
+		case "Tier":
+			field = p.Tier
+		case "DataType":
+			field = p.DataType
+		case "Name":
+			field = ensureLeadingSlash(p.Name)
+		default:
+			// Unsupported filter key: don't exclude on a key we can't evaluate.
+			continue
+		}
+		matched := false
+		for _, v := range f.Values {
+			if f.Option == "BeginsWith" {
+				if strings.HasPrefix(field, v) {
+					matched = true
+					break
+				}
+			} else if field == v {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
 }
 
 func handleSSMDescribeParameters(w http.ResponseWriter, r *http.Request) {

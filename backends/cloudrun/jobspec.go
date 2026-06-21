@@ -3,9 +3,7 @@ package cloudrun
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -52,16 +50,16 @@ func (s *Server) buildContainerSpec(ci containerInput) (*runpb.Container, []*run
 		}
 	}
 
-	// Carry Docker labels as a base64-JSON env var so they round-trip
-	// through CloudState even if the GCP control-plane strips
-	// annotations (e.g. unsupported storage path or sim behaviour).
-	// cloud_state.go reads this variable back into Container.Config.Labels.
-	if ci.IsMain && len(config.Labels) > 0 {
-		labelsJSON, _ := json.Marshal(config.Labels)
-		envVars = append(envVars, &runpb.EnvVar{
-			Name:   "SOCKERLESS_LABELS",
-			Values: &runpb.EnvVar_Value{Value: base64.StdEncoding.EncodeToString(labelsJSON)},
-		})
+	// Carry Docker labels as the single authoritative SOCKERLESS_LABELS env
+	// var (core.LabelsEnvVar) on the main container; cloud_state.go reads it
+	// back into Container.Config.Labels.
+	if ci.IsMain {
+		if v, ok := core.EncodeLabelsEnvValue(config.Labels); ok {
+			envVars = append(envVars, &runpb.EnvVar{
+				Name:   core.LabelsEnvVar,
+				Values: &runpb.EnvVar_Value{Value: v},
+			})
+		}
 	}
 
 	// Inject reverse-agent callback URL + container ID so the bootstrap

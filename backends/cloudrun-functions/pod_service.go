@@ -132,6 +132,7 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 	}
 	injectPodPersistEnv(specs, persistEntries)
 	injectPodHostAliases(specs, containers, s.userDefinedNetworkIDOrEmpty(containers[0]))
+	injectMainLabelsEnv(specs, containers[0].Config.Labels)
 
 	revTemplate := &runpb.RevisionTemplate{
 		Containers: specs,
@@ -173,7 +174,6 @@ func (s *Server) materializePodService(mainContainerID string, containers []api.
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 		AutoRemove:  false,
-		Labels:      containers[0].Config.Labels,
 	}
 	gcpLabels := tags.AsGCPLabels()
 	gcpLabels["sockerless_managed"] = "true"
@@ -342,6 +342,7 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		volSeen[mp.Name] = struct{}{}
 	}
 	injectPodPersistEnv(specs, persistEntries)
+	injectMainLabelsEnv(specs, container.Config.Labels)
 
 	revTemplate := &runpb.RevisionTemplate{
 		Containers: specs,
@@ -376,7 +377,6 @@ func (s *Server) deployContainerService(ctx context.Context, id string, containe
 		InstanceID:  s.Desc.InstanceID,
 		CreatedAt:   time.Now(),
 		AutoRemove:  container.HostConfig.AutoRemove,
-		Labels:      container.Config.Labels,
 	}
 	gcpLabels := tags.AsGCPLabels()
 	gcpLabels["sockerless_managed"] = "true"
@@ -740,6 +740,21 @@ func injectPodPersistEnv(specs []*runpb.Container, entries []string) {
 		Name:   "SOCKERLESS_PERSIST_VOLUMES",
 		Values: &runpb.EnvVar_Value{Value: strings.Join(entries, ",")},
 	})
+}
+
+// injectMainLabelsEnv carries the main (index 0) container's Docker labels as
+// the single authoritative SOCKERLESS_LABELS env var (core.LabelsEnvVar) so
+// cloud_state reconstructs them — the same carrier cloudrun jobs/services use.
+func injectMainLabelsEnv(specs []*runpb.Container, labels map[string]string) {
+	if len(specs) == 0 {
+		return
+	}
+	if v, ok := core.EncodeLabelsEnvValue(labels); ok {
+		specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+			Name:   core.LabelsEnvVar,
+			Values: &runpb.EnvVar_Value{Value: v},
+		})
+	}
 }
 
 // injectPodHostAliases sets SOCKERLESS_HOST_ALIASES on the main

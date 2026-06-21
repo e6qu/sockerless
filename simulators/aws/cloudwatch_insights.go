@@ -193,23 +193,28 @@ func cwFlattenJSONInto(rec cwInsightsRecord, message string) {
 	if json.Unmarshal([]byte(message), &doc) != nil {
 		return
 	}
-	var walk func(prefix string, v any)
-	walk = func(prefix string, v any) {
-		switch t := v.(type) {
-		case map[string]any:
-			for k, sub := range t {
+	// Bound recursion against a deeply-nested attacker message (planted via
+	// PutLogEvents, parsed here at StartQuery). Go's json.Unmarshal already
+	// caps nesting at 10000, but the walk is hardened so it can never blow the
+	// stack regardless of decode path: past the cap a node is recorded as a
+	// scalar rather than descended.
+	const maxFlattenDepth = 256
+	var walk func(prefix string, v any, depth int)
+	walk = func(prefix string, v any, depth int) {
+		if m, ok := v.(map[string]any); ok && depth < maxFlattenDepth {
+			for k, sub := range m {
 				key := k
 				if prefix != "" {
 					key = prefix + "." + k
 				}
-				walk(key, sub)
+				walk(key, sub, depth+1)
 			}
-		default:
-			rec[prefix] = cwJSONScalar(v)
+			return
 		}
+		rec[prefix] = cwJSONScalar(v)
 	}
 	for k, v := range doc {
-		walk(k, v)
+		walk(k, v, 0)
 	}
 }
 

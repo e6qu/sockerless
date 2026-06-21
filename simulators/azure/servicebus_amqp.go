@@ -717,21 +717,34 @@ func newSBAMQPRawTransport(conn net.Conn) *sbAMQPRawTransport {
 	return &sbAMQPRawTransport{conn: conn, r: bufio.NewReader(conn)}
 }
 
+// sbAMQPMaxFrameSize bounds the length-prefixed frame the raw transport will
+// allocate. The 4-byte size prefix is attacker-controlled (the TLS listener is
+// pre-auth), so without a cap a header declaring 0xFFFFFFFF forces a ~4GB
+// make([]byte, size) → OOM. 16 MiB is far above any real Service Bus control or
+// transfer frame.
+const sbAMQPMaxFrameSize = 16 * 1024 * 1024
+
 func (t *sbAMQPRawTransport) Read(context.Context) ([]byte, error) {
+	return sbAMQPReadFrame(t.r)
+}
+
+// sbAMQPReadFrame reads one length-prefixed AMQP frame (or the 8-byte AMQP
+// protocol-id header) from r, bounding the declared size before allocating.
+func sbAMQPReadFrame(r *bufio.Reader) ([]byte, error) {
 	header := make([]byte, 8)
-	if _, err := io.ReadFull(t.r, header); err != nil {
+	if _, err := io.ReadFull(r, header); err != nil {
 		return nil, err
 	}
 	if bytes.Equal(header[:4], []byte{'A', 'M', 'Q', 'P'}) {
 		return header, nil
 	}
 	size := int(binary.BigEndian.Uint32(header[:4]))
-	if size < 8 {
+	if size < 8 || size > sbAMQPMaxFrameSize {
 		return nil, fmt.Errorf("invalid AMQP frame size %d", size)
 	}
 	frame := make([]byte, size)
 	copy(frame, header)
-	_, err := io.ReadFull(t.r, frame[8:])
+	_, err := io.ReadFull(r, frame[8:])
 	return frame, err
 }
 

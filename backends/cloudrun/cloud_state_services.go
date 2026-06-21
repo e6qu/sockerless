@@ -2,6 +2,7 @@ package cloudrun
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	runpb "cloud.google.com/go/run/apiv2/runpb"
@@ -163,16 +164,11 @@ func (p *cloudRunCloudState) serviceToContainer(svc *runpb.Service) (api.Contain
 		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
 	}
 
-	// Docker labels round-trip via three paths, in priority order:
-	// SOCKERLESS_LABELS env var, GCP annotations, then legacy
-	// labels-split-across-chunks.
-	dockerLabels := decodeLabelsFromEnv(env)
-	if len(dockerLabels) == 0 {
-		merged := mergeLabelsAndAnnotations(labels, svc.Annotations)
-		gcpTags := gcpLabelsToTags(merged)
-		if parsed := core.ParseLabelsFromTags(gcpTags); parsed != nil {
-			dockerLabels = parsed
-		}
+	// Docker labels round-trip via the single authoritative SOCKERLESS_LABELS
+	// env var (core.LabelsEnvVar) on the main container.
+	dockerLabels, err := core.LabelsFromEnvSlice(env)
+	if err != nil {
+		return api.Container{}, fmt.Errorf("service %q: %w", svc.Name, err)
 	}
 	if dockerLabels == nil {
 		dockerLabels = make(map[string]string)

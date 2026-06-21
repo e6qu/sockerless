@@ -276,8 +276,10 @@ func handleKinesisDeleteStream(w http.ResponseWriter, r *http.Request) {
 
 func handleKinesisDescribeStream(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		StreamName string `json:"StreamName"`
-		StreamARN  string `json:"StreamARN"`
+		StreamName            string `json:"StreamName"`
+		StreamARN             string `json:"StreamARN"`
+		Limit                 int    `json:"Limit"`
+		ExclusiveStartShardId string `json:"ExclusiveStartShardId"`
 	}
 	_ = sim.ReadJSON(r, &req)
 	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
@@ -285,7 +287,32 @@ func handleKinesisDescribeStream(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
 		return
 	}
-	writeKinesisJSON(w, http.StatusOK, map[string]any{"StreamDescription": kinesisStreamDescription(stream)})
+	desc := kinesisStreamDescription(stream)
+	// Real DescribeStream paginates shards by Limit (default/max 100/10000) +
+	// ExclusiveStartShardId, and sets HasMoreShards when more remain — mirror
+	// the correct ListShards sibling rather than returning every shard.
+	shards := append([]KinesisShard(nil), stream.Shards...)
+	sort.Slice(shards, func(i, j int) bool { return shards[i].ShardId < shards[j].ShardId })
+	if req.ExclusiveStartShardId != "" {
+		for i, sh := range shards {
+			if sh.ShardId == req.ExclusiveStartShardId {
+				shards = shards[i+1:]
+				break
+			}
+		}
+	}
+	limit := req.Limit
+	if limit <= 0 || limit > 10000 {
+		limit = 100
+	}
+	hasMore := false
+	if len(shards) > limit {
+		shards = shards[:limit]
+		hasMore = true
+	}
+	desc["Shards"] = shards
+	desc["HasMoreShards"] = hasMore
+	writeKinesisJSON(w, http.StatusOK, map[string]any{"StreamDescription": desc})
 }
 
 func handleKinesisDescribeStreamSummary(w http.ResponseWriter, r *http.Request) {

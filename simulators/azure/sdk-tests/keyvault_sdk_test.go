@@ -599,3 +599,32 @@ func TestKV_GetSecret_NotFound_ErrorClassification(t *testing.T) {
 		t.Errorf("ErrorCode must be set (e.g. SecretNotFound), got empty")
 	}
 }
+
+// TestKeyVault_SDK_UpdateSecretPartialPreservesEnabled pins that a PATCH
+// changing only the expiry does not clobber the `enabled` attribute (a
+// non-pointer decode previously zero-filled enabled→false, disabling the
+// secret on a single-field update).
+func TestKeyVault_SDK_UpdateSecretPartialPreservesEnabled(t *testing.T) {
+	rg := "kv-patch-rg"
+	vault := "kv-patch-vault"
+	createKVViaARM(t, rg, vault)
+	client, err := azsecrets.NewClient(kvVaultURL(vault), &fakeCredential{},
+		&azsecrets.ClientOptions{ClientOptions: kvClientOptions(), DisableChallengeResourceVerification: true})
+	require.NoError(t, err)
+
+	_, err = client.SetSecret(ctx, "partial", azsecrets.SetSecretParameters{Value: stringPtr("v1")}, nil)
+	require.NoError(t, err)
+	get, err := client.GetSecret(ctx, "partial", "", nil)
+	require.NoError(t, err)
+	require.NotNil(t, get.Attributes.Enabled)
+	require.True(t, *get.Attributes.Enabled, "new secret is enabled")
+
+	exp := time.Now().Add(24 * time.Hour)
+	upd, err := client.UpdateSecretProperties(ctx, "partial", get.ID.Version(),
+		azsecrets.UpdateSecretPropertiesParameters{
+			SecretAttributes: &azsecrets.SecretAttributes{Expires: &exp},
+		}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, upd.Attributes.Enabled)
+	assert.True(t, *upd.Attributes.Enabled, "partial UpdateSecret must not disable the secret")
+}
