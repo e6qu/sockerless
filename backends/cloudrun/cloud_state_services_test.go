@@ -158,3 +158,35 @@ func TestServiceToContainer_Shape(t *testing.T) {
 		t.Errorf("Env = %v, want [FOO=bar]", got.Config.Env)
 	}
 }
+
+// TestServiceToContainer_LabelsFromEnv pins that Docker labels reconstruct from
+// the single authoritative SOCKERLESS_LABELS env var on the main container, and
+// that a malformed value surfaces (no silent empty reconstruction).
+func TestServiceToContainer_LabelsFromEnv(t *testing.T) {
+	p := &cloudRunCloudState{server: newServerForState(t)}
+	v, _ := core.EncodeLabelsEnvValue(map[string]string{"app": "web", "env": "prod"})
+	svc := &runpb.Service{
+		Name:       "projects/p/locations/us-central1/services/sockerless-svc-x",
+		CreateTime: timestamppb.Now(),
+		Labels:     map[string]string{"sockerless_managed": "true", "sockerless_container_id": "cid00000000000000"},
+		Template: &runpb.RevisionTemplate{
+			Containers: []*runpb.Container{{
+				Image: "img:v1",
+				Env:   []*runpb.EnvVar{{Name: core.LabelsEnvVar, Values: &runpb.EnvVar_Value{Value: v}}},
+			}},
+		},
+		TerminalCondition: &runpb.Condition{State: runpb.Condition_CONDITION_SUCCEEDED},
+	}
+	got, err := p.serviceToContainer(svc)
+	if err != nil {
+		t.Fatalf("serviceToContainer: %v", err)
+	}
+	if got.Config.Labels["app"] != "web" || got.Config.Labels["env"] != "prod" {
+		t.Fatalf("labels not reconstructed from SOCKERLESS_LABELS env: %+v", got.Config.Labels)
+	}
+
+	svc.Template.Containers[0].Env[0].Values = &runpb.EnvVar_Value{Value: "!!!not-base64"}
+	if _, err := p.serviceToContainer(svc); err == nil {
+		t.Fatal("expected error on malformed SOCKERLESS_LABELS")
+	}
+}

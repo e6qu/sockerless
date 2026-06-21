@@ -303,3 +303,36 @@ func TestKinesisSDK_ListStreamsPagination(t *testing.T) {
 		assert.Equal(t, 1, collected[n], "stream %s must appear exactly once across pages", n)
 	}
 }
+
+// TestKinesisSDK_DescribeStreamShardPagination pins that DescribeStream honors
+// Limit + ExclusiveStartShardId and sets HasMoreShards (it previously returned
+// every shard with HasMoreShards hardcoded false).
+func TestKinesisSDK_DescribeStreamShardPagination(t *testing.T) {
+	client := kinesisClient()
+	streamName := "sdk-kinesis-describe-paging"
+	_, err := client.CreateStream(ctx, &kinesis.CreateStreamInput{
+		StreamName: aws.String(streamName),
+		ShardCount: aws.Int32(3),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeleteStream(ctx, &kinesis.DeleteStreamInput{StreamName: aws.String(streamName)})
+	})
+
+	page1, err := client.DescribeStream(ctx, &kinesis.DescribeStreamInput{
+		StreamName: aws.String(streamName),
+		Limit:      aws.Int32(2),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.StreamDescription.Shards, 2)
+	require.True(t, aws.ToBool(page1.StreamDescription.HasMoreShards), "HasMoreShards true when more remain")
+
+	last := page1.StreamDescription.Shards[1].ShardId
+	page2, err := client.DescribeStream(ctx, &kinesis.DescribeStreamInput{
+		StreamName:            aws.String(streamName),
+		ExclusiveStartShardId: last,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.StreamDescription.Shards, 1, "resume after the cursor")
+	assert.False(t, aws.ToBool(page2.StreamDescription.HasMoreShards))
+}

@@ -93,6 +93,18 @@ func (s *Server) buildServiceSpec(ctx context.Context, containers []containerInp
 		}
 	}
 
+	// Carry the main container's Docker labels as the single authoritative
+	// SOCKERLESS_LABELS env var (core.LabelsEnvVar); cloud_state_services.go
+	// reads it back into Container.Config.Labels.
+	if len(specs) > 0 {
+		if v, ok := core.EncodeLabelsEnvValue(containers[0].Container.Config.Labels); ok {
+			specs[0].Env = append(specs[0].Env, &runpb.EnvVar{
+				Name:   core.LabelsEnvVar,
+				Values: &runpb.EnvVar_Value{Value: v},
+			})
+		}
+	}
+
 	revTemplate := &runpb.RevisionTemplate{
 		Containers: specs,
 		Volumes:    volumes,

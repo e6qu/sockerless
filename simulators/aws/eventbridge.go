@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -812,13 +813,115 @@ func deliverEBEvent(bus, source, detailType, detail, eventID string) {
 		}
 		targets, _ := ebTargets.Get(ebRuleKey(rule.EventBusName, rule.Name))
 		for _, target := range targets {
-			body := detail
-			if target.Input != "" {
-				body = target.Input
-			}
+			body := ebApplyInput(target, source, detailType, detail, eventID)
 			deliverEBTarget(target, body, source, detailType, eventID)
 		}
 	}
+}
+
+// ebBuildEvent assembles the full EventBridge event object that a target's
+// InputPath / InputTransformer JSONPaths resolve against.
+func ebBuildEvent(source, detailType, detail, eventID string) map[string]any {
+	var detailObj any
+	if detail != "" {
+		_ = json.Unmarshal([]byte(detail), &detailObj)
+	}
+	return map[string]any{
+		"version":     "0",
+		"id":          eventID,
+		"detail-type": detailType,
+		"source":      source,
+		"account":     awsAccountID(),
+		"time":        time.Now().UTC().Format(time.RFC3339),
+		"region":      awsRegion(),
+		"resources":   []any{},
+		"detail":      detailObj,
+	}
+}
+
+// ebJSONPath resolves a simple EventBridge input-transformer JSONPath
+// ($.a.b, $.a[0].b) against the event object, returning the value + found.
+func ebJSONPath(root any, path string) (any, bool) {
+	if !strings.HasPrefix(path, "$") {
+		return nil, false
+	}
+	cur := root
+	rest := strings.TrimPrefix(path, "$")
+	for rest != "" {
+		switch {
+		case strings.HasPrefix(rest, "."):
+			rest = rest[1:]
+			i := strings.IndexAny(rest, ".[")
+			key := rest
+			if i >= 0 {
+				key, rest = rest[:i], rest[i:]
+			} else {
+				rest = ""
+			}
+			m, ok := cur.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			if cur, ok = m[key]; !ok {
+				return nil, false
+			}
+		case strings.HasPrefix(rest, "["):
+			j := strings.Index(rest, "]")
+			if j < 0 {
+				return nil, false
+			}
+			idx, err := strconv.Atoi(rest[1:j])
+			rest = rest[j+1:]
+			arr, ok := cur.([]any)
+			if err != nil || !ok || idx < 0 || idx >= len(arr) {
+				return nil, false
+			}
+			cur = arr[idx]
+		default:
+			return nil, false
+		}
+	}
+	return cur, true
+}
+
+// ebApplyInput computes the body delivered to a target per its mutually
+// exclusive Input / InputPath / InputTransformer, in real-EventBridge priority.
+func ebApplyInput(target EBTarget, source, detailType, detail, eventID string) string {
+	if target.Input != "" {
+		return target.Input
+	}
+	if target.InputPath == "" && len(target.InputTransformer) == 0 {
+		return detail
+	}
+	event := ebBuildEvent(source, detailType, detail, eventID)
+	if target.InputPath != "" {
+		if v, ok := ebJSONPath(event, target.InputPath); ok {
+			raw, _ := json.Marshal(v)
+			return string(raw)
+		}
+		return "null"
+	}
+	var it struct {
+		InputPathsMap map[string]string `json:"InputPathsMap"`
+		InputTemplate string            `json:"InputTemplate"`
+	}
+	if json.Unmarshal(target.InputTransformer, &it) != nil || it.InputTemplate == "" {
+		return detail
+	}
+	out := it.InputTemplate
+	for varName, jp := range it.InputPathsMap {
+		val := ""
+		if v, ok := ebJSONPath(event, jp); ok {
+			if s, isStr := v.(string); isStr {
+				val = s // unquoted: matches AWS inserting a string into "<var>"
+			} else {
+				raw, _ := json.Marshal(v)
+				val = string(raw)
+			}
+		}
+		out = strings.ReplaceAll(out, "<"+varName+">", val)
+	}
+	return out
 }
 
 func ebRuleMatches(rule EBRule, source, detailType, detail string) bool {

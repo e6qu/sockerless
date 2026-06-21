@@ -97,6 +97,9 @@ func handleECCreate(w http.ResponseWriter, r *http.Request) {
 	if engine == "memcached" {
 		port = 11211
 	}
+	if p := atoiOrZero(r.FormValue("Port")); p > 0 {
+		port = p
+	}
 	num := atoiOrZero(r.FormValue("NumCacheNodes"))
 	if num == 0 {
 		num = 1

@@ -2,8 +2,6 @@ package gcf
 
 import (
 	"context"
-	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -393,7 +391,12 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 				continue
 			}
 			seen[mid] = true
-			c := serviceToPodMemberContainer(svc, mid)
+			c, err := serviceToPodMemberContainer(svc, mid)
+			if err != nil {
+				p.server.Logger.Warn().Err(err).Str("service", svc.Name).Str("member", mid).
+					Msg("serviceToPodMemberContainer: skipping inconsistent pod member")
+				continue
+			}
 			if inv, ok := p.server.Store.GetInvocationResult(mid); ok {
 				if _, hasAgent := p.server.reverseAgents.Resolve(mid); hasAgent && isReverseAgentInvokeTransportError(inv.Error) {
 					c.State = api.ContainerState{Status: "running", Running: true}
@@ -421,7 +424,7 @@ func (p *gcfCloudState) queryPodServiceContainers(ctx context.Context, seen map[
 // fields (image, entrypoint, cmd) are read off the corresponding
 // runpb.Container in the revision template; identity fields come
 // from the Service labels + annotations.
-func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
+func serviceToPodMemberContainer(svc *runpb.Service, mid string) (api.Container, error) {
 	created := ""
 	if svc.CreateTime != nil {
 		created = svc.CreateTime.AsTime().Format(time.RFC3339Nano)
@@ -454,10 +457,12 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 			nanoCPUs = core.DockerNanoCPUs(main.Resources.Limits["cpu"])
 		}
 	}
-	// Decode Docker labels stamped by pod_service via TagSet.AsGCPLabels.
-	// They land under sockerless_labels_b64{,-N} keys (or in Annotations
-	// when too long for label values). Read both, prefer labels.
-	dockerLabels := dockerLabelsFromCloudRunService(svc)
+	// Docker labels round-trip via the single authoritative SOCKERLESS_LABELS
+	// env var (core.LabelsEnvVar) on the main container.
+	dockerLabels, err := core.LabelsFromEnvSlice(env)
+	if err != nil {
+		return api.Container{}, fmt.Errorf("pod service %q: %w", svc.Name, err)
+	}
 	return api.Container{
 		ID:      mid,
 		Name:    name,
@@ -480,30 +485,7 @@ func serviceToPodMemberContainer(svc *runpb.Service, mid string) api.Container {
 		Mounts:   mounts,
 		Platform: "linux",
 		Driver:   "cloud-run-service",
-	}
-}
-
-// dockerLabelsFromCloudRunService re-assembles the Docker label map
-// stamped onto a Cloud Run Service by pod_service via
-// TagSet.AsGCPLabels / AsGCPAnnotations. Labels carry the b64-encoded
-// JSON when it fits inside GCP's 63-char label-value cap; longer blobs
-// land in annotations with the same key naming convention. Returns
-// nil when no Docker labels were carried.
-func dockerLabelsFromCloudRunService(svc *runpb.Service) map[string]string {
-	merged := map[string]string{}
-	for k, v := range svc.Labels {
-		merged[k] = v
-	}
-	for k, v := range svc.Annotations {
-		if _, exists := merged[k]; !exists {
-			merged[k] = v
-		}
-	}
-	hyphen := gcpLabelsToHyphenMap(merged)
-	if parsed := core.ParseLabelsFromTags(hyphen); len(parsed) > 0 {
-		return parsed
-	}
-	return nil
+	}, nil
 }
 
 // podMembersFromFunction extracts the per-member manifest from the
@@ -619,33 +601,18 @@ func functionToContainer(fn *functionspb.Function, labels map[string]string) (ap
 	// Map function state to Docker state
 	state := mapFunctionState(fn)
 
-	// Docker labels are carried as a base64-encoded JSON env var because
-	// GCP's label-value charset rejects the sockerless-labels JSON blob and
-	// Functions v2 has no Annotations field. The env-var source is the
-	// authoritative path; the split-across-labels path is only consulted
-	// when the env var is absent (Functions created before the env-var
-	// fix). A *malformed* env var means the writing backend produced
-	// garbage — return the decode error so the operator sees the
-	// inconsistent resource rather than getting a ghost container with
-	// labels reconstructed from a partial fallback.
+	// Docker labels round-trip via the single authoritative SOCKERLESS_LABELS
+	// env var (core.LabelsEnvVar). A present-but-malformed value means the
+	// writing backend produced garbage — surface it rather than reconstruct
+	// an empty label set.
 	dockerLabels := map[string]string{}
-	var sockerlessLabelsPresent bool
 	if fn.ServiceConfig != nil {
-		if b64, ok := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_LABELS"]; ok && b64 != "" {
-			sockerlessLabelsPresent = true
-			raw, err := base64.StdEncoding.DecodeString(b64)
-			if err != nil {
-				return api.Container{}, fmt.Errorf("malformed SOCKERLESS_LABELS base64 on function %q: %w", fn.Name, err)
-			}
-			if err := json.Unmarshal(raw, &dockerLabels); err != nil {
-				return api.Container{}, fmt.Errorf("malformed SOCKERLESS_LABELS JSON on function %q: %w", fn.Name, err)
-			}
+		decoded, derr := core.DecodeLabelsEnvValue(fn.ServiceConfig.EnvironmentVariables[core.LabelsEnvVar])
+		if derr != nil {
+			return api.Container{}, fmt.Errorf("function %q: %w", fn.Name, derr)
 		}
-	}
-	if !sockerlessLabelsPresent {
-		hyphenLabels := gcpLabelsToHyphenMap(labels)
-		if parsed := core.ParseLabelsFromTags(hyphenLabels); parsed != nil {
-			dockerLabels = parsed
+		if decoded != nil {
+			dockerLabels = decoded
 		}
 	}
 
@@ -728,17 +695,6 @@ func mapFunctionState(fn *functionspb.Function) api.ContainerState {
 			Running: true,
 		}
 	}
-}
-
-// gcpLabelsToHyphenMap converts GCP underscore-based label keys back to hyphen format
-// so that ParseLabelsFromTags can find the sockerless-labels key.
-func gcpLabelsToHyphenMap(labels map[string]string) map[string]string {
-	m := make(map[string]string, len(labels))
-	for k, v := range labels {
-		hyphenKey := strings.ReplaceAll(k, "_", "-")
-		m[hyphenKey] = v
-	}
-	return m
 }
 
 // gcfMounts reconstructs the docker-inspect Mounts list from a Cloud Run

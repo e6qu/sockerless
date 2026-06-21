@@ -298,16 +298,30 @@ func loggingMetricRequestKey(project, metric string) string {
 	return loggingMetricKey(project, metric)
 }
 
-func normalizeLoggingSink(project string, sink LoggingSink) LoggingSink {
+func normalizeLoggingSink(project string, sink LoggingSink, uniqueWriter bool) LoggingSink {
 	short := strings.TrimPrefix(sink.Name, fmt.Sprintf("projects/%s/sinks/", project))
 	if short == "" {
 		short = generateUUID()
 	}
 	sink.Name = loggingSinkKey(project, short)
 	if sink.WriterIdentity == "" {
-		sink.WriterIdentity = fmt.Sprintf("serviceAccount:cloud-logs@%s.iam.gserviceaccount.com", project)
+		if uniqueWriter {
+			// uniqueWriterIdentity=true: real Cloud Logging mints a dedicated
+			// per-sink service account so two sinks never share a writer
+			// identity (terraform-provider-google's unique_writer_identity).
+			sink.WriterIdentity = fmt.Sprintf("serviceAccount:service-%s@gcp-sa-logging.iam.gserviceaccount.com", short)
+		} else {
+			sink.WriterIdentity = fmt.Sprintf("serviceAccount:cloud-logs@%s.iam.gserviceaccount.com", project)
+		}
 	}
 	return sink
+}
+
+// loggingUniqueWriter reads the uniqueWriterIdentity request flag, which real
+// Cloud Logging accepts as a query param on sinks.create / sinks.update (the
+// LogSink body field is a sim convenience fallback).
+func loggingUniqueWriter(r *http.Request, sink LoggingSink) bool {
+	return r.URL.Query().Get("uniqueWriterIdentity") == "true" || sink.UniqueWriterIdentity
 }
 
 func normalizeLoggingMetric(project string, metric LoggingMetric) LoggingMetric {
@@ -342,7 +356,7 @@ func handleCreateLoggingSink(w http.ResponseWriter, r *http.Request) {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid sink body: %v", err)
 		return
 	}
-	sink = normalizeLoggingSink(project, sink)
+	sink = normalizeLoggingSink(project, sink, loggingUniqueWriter(r, sink))
 	logSinks.Put(sink.Name, sink)
 	sim.WriteJSON(w, http.StatusOK, loggingSinkResponse(project, sink))
 }
@@ -387,7 +401,7 @@ func handleUpdateLoggingSink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sink.Name = key
-	sink = normalizeLoggingSink(project, sink)
+	sink = normalizeLoggingSink(project, sink, loggingUniqueWriter(r, sink))
 	logSinks.Put(key, sink)
 	sim.WriteJSON(w, http.StatusOK, loggingSinkResponse(project, sink))
 }

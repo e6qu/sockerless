@@ -723,7 +723,15 @@ func handleCWQueryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		cwQueryError(w, code, msg)
 		return
 	}
-	threshold, _ := strconv.ParseFloat(r.FormValue("Threshold"), 64)
+	var threshold float64
+	if ts := r.FormValue("Threshold"); ts != "" {
+		tv, err := strconv.ParseFloat(ts, 64)
+		if err != nil {
+			cwQueryError(w, "InvalidParameterValue", "The parameter Threshold must be a double.")
+			return
+		}
+		threshold = tv
+	}
 	actionsEnabled := true
 	if v := r.FormValue("ActionsEnabled"); v != "" {
 		actionsEnabled = v == "true"

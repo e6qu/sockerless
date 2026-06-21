@@ -144,8 +144,15 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 			"DB instance already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
 		return
 	}
-	port := rdsDefaultPort(r.FormValue("Engine"))
 	engine := r.FormValue("Engine")
+	port := rdsDefaultPort(engine)
+	if p := atoiOrZero(r.FormValue("Port")); p > 0 {
+		port = p
+	}
+	az := awsRegion() + "a"
+	if v := r.FormValue("AvailabilityZone"); v != "" {
+		az = v
+	}
 	engineVersion := r.FormValue("EngineVersion")
 	if engineVersion == "" {
 		engineVersion = rdsDefaultEngineVersion(engine)
@@ -162,7 +169,7 @@ func handleRDSCreate(w http.ResponseWriter, r *http.Request) {
 		AllocatedStorage:     atoiOrZero(r.FormValue("AllocatedStorage")),
 		Endpoint:             fmt.Sprintf("%s.%s.rds.amazonaws.com", id, awsRegion()),
 		Port:                 port,
-		AvailabilityZone:     awsRegion() + "a",
+		AvailabilityZone:     az,
 		InstanceCreateTime:   time.Now().UTC().Format(time.RFC3339),
 		ARN:                  rdsInstanceARN(id),
 		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),

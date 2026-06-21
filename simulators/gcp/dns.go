@@ -512,18 +512,32 @@ func registerCloudDNS(srv *sim.Server) {
 				out = append(out, stored.Change)
 			}
 		}
+		// Honor sortOrder (ascending default | descending) — real Cloud DNS
+		// changes.list sorts by change id.
+		desc := r.URL.Query().Get("sortOrder") == "descending"
 		sort.Slice(out, func(i, j int) bool {
 			left, _ := strconv.Atoi(out[i].ID)
 			right, _ := strconv.Atoi(out[j].ID)
+			if desc {
+				return left > right
+			}
 			return left < right
 		})
-		if out == nil {
-			out = []DNSChange{}
+		page, next, ok := paginateListCompute(w, r, out)
+		if !ok {
+			return
 		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
+		if page == nil {
+			page = []DNSChange{}
+		}
+		resp := map[string]any{
 			"kind":    "dns#changesListResponse",
-			"changes": out,
-		})
+			"changes": page,
+		}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 }
 

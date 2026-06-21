@@ -4,6 +4,49 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-21 - Round 20: deferrals cleared + fresh fidelity/fuzz (no deferrals)
+
+Per the user directive (fix ALL actionable bugs in the same session/PR — round 19's
+three filed-but-deferred items were not acceptable), this round fixed the 3 deferrals
+**plus** a fresh fidelity + crash-surface + fuzz round, **14 bugs in one PR**.
+
+- **BUG-2112 (headline — gcp-family docker-label single-source refactor).** Backends
+  stay stateless, but docker-label reconstruction now uses ONE reliable carrier instead
+  of a per-resource second-source fallback. New `core` helpers
+  (`LabelsEnvVar`/`EncodeLabelsEnvValue`/`DecodeLabelsEnvValue`/`LabelsFromEnvSlice`)
+  make `SOCKERLESS_LABELS` (an env var on the main container — survives control-plane
+  annotation stripping) the single authoritative carrier on every cloudrun + gcf deploy
+  path: added the writer to cloudrun `servicespec` + gcf `pod_service` (single +
+  multi-container) via `injectMainLabelsEnv`; every reader (cloudrun job/service, gcf
+  pod-member/function) reads it authoritatively + fails loud; deleted all GCP-label
+  reconstruction (`mergeLabelsAndAnnotations`/`gcpLabelsToTags`/
+  `dockerLabelsFromCloudRunService`/`gcpLabelsToHyphenMap`). Round-trip + malformed unit
+  tests on both backends. Edits the stateless reconstruction the cloudrun/gcf runner
+  cells validate — cells are the final gate.
+- **BUG-2113** EventBridge target `InputPath` / `InputTransformer` are now applied on
+  delivery (a focused JSONPath extractor + template substitution); unit-tested.
+- **BUG-2114** present-but-non-numeric request params now error per protocol instead of
+  defaulting to 0 (IAM `MaxItems` → `ValidationError`; CloudWatch PutMetricData `Value`
+  + PutMetricAlarm `Threshold` → `InvalidParameterValue`).
+- **Fuzz-found crashes (round-20 crash-surface map):** **2115** SSM input-frame decoder
+  uint32-overflow → slice panic (reachable from the ECS ExecuteCommand WebSocket);
+  **2116** Service Bus AMQP raw transport unbounded `make([]byte, size)` OOM (pre-auth
+  TLS); **2117** CloudWatch Insights `cwFlattenJSONInto` recursion hardened. New fuzz
+  targets `FuzzDecodeSSMInputFrame`, `FuzzSBAMQPReadFrame`, `FuzzCWFlattenJSONInto`.
+- **Fidelity (round-20 fidelity agent, each verified at file:line vs the vendored
+  spec):** **2118** Azure Key Vault PATCH UpdateSecret clobbered omitted attributes
+  (P2 — disabled a secret on a single-field update; pointer-struct partial-update fix);
+  **2119** EFS dropped required `CreationToken` + access-point `ClientToken` +
+  mount-target `VpcId` on read-back (P2 — terraform drift); **2120** RDS Port/AZ,
+  **2121** ElastiCache Port, **2122** Kinesis DescribeStream Limit/cursor/HasMoreShards,
+  **2123** GCP Logging `uniqueWriterIdentity`, **2124** Cloud DNS `changes.list`
+  sortOrder + pagination, **2125** SSM GetParametersByPath pagination + ParameterFilters.
+
+New SDK tests (Key Vault partial-update, EFS CreationToken+filter, Kinesis
+DescribeStream pagination) + EventBridge engine unit test + core label round-trip tests;
+all sim unit suites, touched SDK families, and core/cloudrun/gcf backends green;
+extended fuzz over 19 targets found zero new crashers.
+
 ## 2026-06-21 - Audit + extended-fuzz + clean-break round 19
 
 Parallel audit agents (sim fidelity / backend error-handling / un-fuzzed parser map)

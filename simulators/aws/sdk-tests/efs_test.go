@@ -39,6 +39,17 @@ func TestEFS_CreateAndDescribeFileSystem(t *testing.T) {
 	require.Len(t, descOut.FileSystems, 1)
 	assert.Equal(t, fsID, *descOut.FileSystems[0].FileSystemId)
 	assert.Equal(t, "test-fs", *descOut.FileSystems[0].Name)
+	// CreationToken (a required FileSystemDescription member) must round-trip,
+	// else terraform aws_efs_file_system drifts/ForceNew.
+	assert.Equal(t, "test-fs-token", aws.ToString(descOut.FileSystems[0].CreationToken))
+
+	// The CreationToken filter narrows the list to the matching file system.
+	byToken, err := client.DescribeFileSystems(ctx, &efs.DescribeFileSystemsInput{
+		CreationToken: aws.String("test-fs-token"),
+	})
+	require.NoError(t, err)
+	require.Len(t, byToken.FileSystems, 1)
+	assert.Equal(t, fsID, *byToken.FileSystems[0].FileSystemId)
 
 	// Cleanup
 	_, err = client.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{
