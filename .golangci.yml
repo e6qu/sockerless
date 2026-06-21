@@ -6,6 +6,7 @@ run:
 linters:
   enable:
     - errcheck
+    - forcetypeassert
     - govet
     - staticcheck
     - unused
@@ -14,11 +15,14 @@ linters:
     - wastedassign
   settings:
     errcheck:
+      # Only genuinely fire-and-forget calls are excluded. Parse/read calls
+      # (json.Unmarshal, io.ReadAll, json.Decoder.Decode, fmt.Sscanf) are NOT
+      # excluded — a dropped decode/read error hides a real fault and is the
+      # class fuzzing keeps surfacing, so it must be handled or surfaced.
       exclude-functions:
         # HTTP response writing — errors indicate client disconnected
         - (net/http.ResponseWriter).Write
         - (*encoding/json.Encoder).Encode
-        - (*encoding/json.Decoder).Decode
         # Streaming / copying
         - io.Copy
         # Writer helpers
@@ -28,7 +32,6 @@ linters:
         - (*bytes.Buffer).WriteString
         # Crypto / formatting
         - (crypto/rand).Read
-        - fmt.Sscanf
         # Shell output — best effort
         - fmt.Fprintf
         - fmt.Fprint
@@ -39,9 +42,6 @@ linters:
         - os.MkdirAll
         - os.WriteFile
         - os.Setenv
-        # JSON/IO — fire and forget in non-critical paths
-        - encoding/json.Unmarshal
-        - io.ReadAll
         # Close / Flush — deferred cleanup, error not actionable
         - (io.Closer).Close
         - (*os.File).Close
@@ -62,6 +62,7 @@ linters:
         linters:
           - errcheck
           - govet
+          - forcetypeassert
       - linters:
           - staticcheck
         text: "SA1019:"

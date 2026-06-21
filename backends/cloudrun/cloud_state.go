@@ -479,7 +479,9 @@ func (p *cloudRunCloudState) jobToContainer(ctx context.Context, job *runpb.Job)
 			nanoCPUs = core.DockerNanoCPUs(mainContainer.Resources.Limits["cpu"])
 		}
 		for _, e := range mainContainer.Env {
-			env = append(env, e.Name+"="+e.Values.(*runpb.EnvVar_Value).Value)
+			if val, ok := e.Values.(*runpb.EnvVar_Value); ok {
+				env = append(env, e.Name+"="+val.Value)
+			}
 		}
 	}
 

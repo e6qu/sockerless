@@ -51,7 +51,10 @@ func (s *Server) initGraphQLSchema() {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					u := p.Source.(map[string]interface{})
+					u, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("user source: unexpected type %T", p.Source)
+					}
 					return u["nodeID"], nil
 				},
 			},

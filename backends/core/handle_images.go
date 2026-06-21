@@ -320,7 +320,9 @@ func (s *BaseServer) handleImageRemove(w http.ResponseWriter, r *http.Request) {
 
 	// Clean up build context staging directory
 	if stagingDir, ok := s.Store.BuildContexts.LoadAndDelete(img.ID); ok {
-		os.RemoveAll(stagingDir.(string))
+		if dir, ok := stagingDir.(string); ok {
+			os.RemoveAll(dir)
+		}
 	}
 
 	s.Store.Images.Delete(img.ID)

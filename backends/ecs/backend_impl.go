@@ -269,7 +269,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// Use existing exitCh if already created, otherwise create new one
 		var exitCh chan struct{}
 		if ch, ok := s.Store.WaitChs.Load(id); ok {
-			exitCh = ch.(chan struct{})
+			exitCh = asWaitCh(ch)
 		} else {
 			exitCh = make(chan struct{})
 			s.Store.WaitChs.Store(id, exitCh)
@@ -385,7 +385,7 @@ func (s *Server) ContainerStart(ref string) error {
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("task failed to reach RUNNING state")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return err
 	}
@@ -402,7 +402,7 @@ func (s *Server) ContainerStart(ref string) error {
 		// reflects the actual STOPPED state).
 		s.PendingCreates.Delete(id)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return nil
 	}
@@ -562,7 +562,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	}
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
 	return nil
@@ -617,7 +617,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 
 	return nil
@@ -734,15 +734,17 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Unblock any deferred-stdin launcher waiting on the pipe so its
 	// goroutine can exit cleanly without launching a phantom task.
 	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
-		_ = v.(*stdinPipe).Close()
+		if p := asStdinPipe(v); p != nil {
+			_ = p.Close()
+		}
 	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
+		for _, d := range asStringSlice(dirs) {
 			os.RemoveAll(d)
 		}
 	}
@@ -827,7 +829,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		// `docker restart` sends SIGTERM → exit 143.
 		stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -904,12 +906,12 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 		s.ECS.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.StagingDirs.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
+			for _, d := range asStringSlice(dirs) {
 				os.RemoveAll(d)
 			}
 		}
@@ -1176,8 +1178,9 @@ func (s *Server) ContainerInspect(ref string) (*api.Container, error) {
 	// the Store), force Status="running" so the cloud-logs follower
 	// keeps polling until the new task actually exits.
 	if ch, ok := s.Store.WaitChs.Load(c.ID); ok {
+		waitCh := asWaitCh(ch)
 		select {
-		case <-ch.(chan struct{}):
+		case <-waitCh:
 			// Channel already closed — task ran and stopped; let
 			// CloudState's view stand.
 		default:
@@ -1302,7 +1305,7 @@ func (s *Server) waitForOpenStdinPipe(id string, timeout time.Duration) *stdinPi
 	defer tick.Stop()
 	for {
 		if v, ok := s.stdinPipes.Load(id); ok {
-			if p := v.(*stdinPipe); p.IsOpen() {
+			if p := asStdinPipe(v); p != nil && p.IsOpen() {
 				return p
 			}
 		}
@@ -1339,7 +1342,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	case <-s.ctx().Done():
 		s.Logger.Warn().Str("container", id[:12]).Msg("stdin-pipe wait cancelled before EOF")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return
 	}
@@ -1380,7 +1383,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	if err != nil {
 		s.Logger.Error().Err(err).Str("container", id[:12]).Msg("deferred-stdin: failed to register task definition")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return
 	}
@@ -1393,7 +1396,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 			TaskDefinition: aws.String(taskDefARN),
 		})
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return
 	}
@@ -1406,7 +1409,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 	if err != nil {
 		s.Logger.Error().Err(err).Str("task", taskARN).Msg("deferred-stdin: task failed to reach RUNNING state")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return
 	}
@@ -1422,7 +1425,7 @@ func (s *Server) launchAfterStdin(id string, c *api.Container, pipe *stdinPipe, 
 		// hangs indefinitely waiting for the container to "exit".
 		s.PendingCreates.Delete(id)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return
 	}

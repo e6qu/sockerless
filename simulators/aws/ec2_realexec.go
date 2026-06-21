@@ -42,12 +42,22 @@ var (
 
 func ec2RealVMStartLock(instanceID string) *sync.Mutex {
 	m, _ := ec2RealVMStartLocks.LoadOrStore(instanceID, &sync.Mutex{})
-	return m.(*sync.Mutex)
+	mu, ok := m.(*sync.Mutex)
+	if !ok {
+		mu = &sync.Mutex{}
+		ec2RealVMStartLocks.Store(instanceID, mu)
+	}
+	return mu
 }
 
 func ec2RealVPCLock(vpcID string) *sync.RWMutex {
 	m, _ := ec2RealVPCLocks.LoadOrStore(vpcID, &sync.RWMutex{})
-	return m.(*sync.RWMutex)
+	mu, ok := m.(*sync.RWMutex)
+	if !ok {
+		mu = &sync.RWMutex{}
+		ec2RealVPCLocks.Store(vpcID, mu)
+	}
+	return mu
 }
 
 // ec2ECSRealNetAvailable reports whether ECS tasks can be plumbed into real VPC

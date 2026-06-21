@@ -19,7 +19,11 @@ func (s *Server) azureLogsFetch(table, whereClause, messageColumn string) core.C
 
 		var lastTS time.Time
 		if cursor != nil {
-			lastTS = cursor.(time.Time)
+			ts, ok := cursor.(time.Time)
+			if !ok {
+				return nil, cursor, fmt.Errorf("azure logs cursor held unexpected type %T", cursor)
+			}
+			lastTS = ts
 		}
 
 		query := fmt.Sprintf(`%s | where %s`, table, whereClause)

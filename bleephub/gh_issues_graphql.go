@@ -19,7 +19,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					l := p.Source.(map[string]interface{})
+					l, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("label source: unexpected type %T", p.Source)
+					}
 					return l["nodeID"], nil
 				},
 			},
@@ -55,7 +58,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					m := p.Source.(map[string]interface{})
+					m, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("milestone source: unexpected type %T", p.Source)
+					}
 					return m["nodeID"], nil
 				},
 			},
@@ -109,7 +115,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["nodeID"], nil
 				},
 			},
@@ -120,7 +129,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["author"], nil
 				},
 			},
@@ -130,42 +142,60 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"includesCreatedEdit": &graphql.Field{
 				Type: graphql.Boolean,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["includesCreatedEdit"], nil
 				},
 			},
 			"lastEditedAt": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["lastEditedAt"], nil
 				},
 			},
 			"editor": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["editor"], nil
 				},
 			},
 			"isMinimized": &graphql.Field{
 				Type: graphql.Boolean,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["isMinimized"], nil
 				},
 			},
 			"minimizedReason": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["minimizedReason"], nil
 				},
 			},
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(reactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return c["reactionGroups"], nil
 				},
 			},
@@ -174,7 +204,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"viewerDidAuthor": &graphql.Field{
 				Type: graphql.Boolean,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					c := p.Source.(map[string]interface{})
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					viewer := ghUserFromContext(p.Context)
 					authorID, _ := c["authorID"].(int)
 					return viewer != nil && authorID == viewer.ID, nil
@@ -279,7 +312,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return i["nodeID"], nil
 				},
 			},
@@ -293,7 +329,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"closed": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					state, _ := i["state"].(string)
 					return state == "CLOSED", nil
 				},
@@ -308,7 +347,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return i["author"], nil
 				},
 			},
@@ -319,7 +361,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return repaginateConnection(i["labels"], p.Args), nil
 				},
 			},
@@ -330,14 +375,20 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return repaginateConnection(i["assignees"], p.Args), nil
 				},
 			},
 			"milestone": &graphql.Field{
 				Type: issueMilestoneType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					m, ok := i["milestone"].(map[string]interface{})
 					if !ok || m == nil {
 						// graphql-go's NonNull checks fire even on a nil-valued
@@ -358,7 +409,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					issueID, _ := i["databaseId"].(int)
 					return projectItemsConnectionForIssue(s.store, issueID), nil
 				},
@@ -372,14 +426,20 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					"before": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return repaginateConnection(i["comments"], p.Args), nil
 				},
 			},
 			"reactionGroups": &graphql.Field{
 				Type: graphql.NewList(reactionGroupType),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					i := p.Source.(map[string]interface{})
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return i["reactionGroups"], nil
 				},
 			},
@@ -586,7 +646,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			})},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 
 			issues := s.store.ListIssues(repoID, "")
@@ -661,7 +724,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"number": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.Int)},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 			number, _ := p.Args["number"].(int)
 
@@ -712,7 +778,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			})},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 
 			labels := s.store.ListLabels(repoID)
@@ -747,7 +816,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"query":  &graphql.ArgumentConfig{Type: graphql.String},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			repo := p.Source.(map[string]interface{})
+			repo, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			repoID, _ := repo["databaseId"].(int)
 
 			state := ""
@@ -1451,7 +1523,11 @@ func projectV2GraphQLTypes() *graphql.Object {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["nodeID"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["nodeID"], nil
 				},
 			},
 			"number": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
@@ -1475,13 +1551,21 @@ func projectV2ItemConnectionType() *graphql.Object {
 			"optionId": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["optionId"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["optionId"], nil
 				},
 			},
 			"name": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["name"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["name"], nil
 				},
 			},
 		},
@@ -1499,13 +1583,21 @@ func projectV2ItemConnectionType() *graphql.Object {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["nodeID"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["nodeID"], nil
 				},
 			},
 			"project": &graphql.Field{
 				Type: projectV2Type,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return p.Source.(map[string]interface{})["project"], nil
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["project"], nil
 				},
 			},
 			// fieldValueByName — looks up the named field on the item's
@@ -1516,7 +1608,10 @@ func projectV2ItemConnectionType() *graphql.Object {
 					"name": &graphql.ArgumentConfig{Type: graphql.NewNonNull(graphql.String)},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					src := p.Source.(map[string]interface{})
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					name, _ := p.Args["name"].(string)
 					byName, _ := src["fieldValuesByName"].(map[string]interface{})
 					if byName == nil {

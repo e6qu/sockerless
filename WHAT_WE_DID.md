@@ -4,6 +4,54 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-21 - Systematic prevention of the fuzz-found bug classes
+
+Analyzed the last several fuzz/audit rounds: the recurring crashes cluster into 6
+classes, almost all in hand-rolled parsing of untrusted input. Instead of
+point-fixing each new instance, put author-time prevention in place.
+
+- **Shared safe primitives** in the `sim` library (`simulators/*/shared/safeparse.go`,
+  3 copies): `ASCIIFold`/`ASCIIFoldUpper`/`CaseInsensitiveIndex` — byte-length-
+  preserving, so an index from the folded copy is valid in the original (kills the
+  case-fold-then-slice class behind 2103/2084/2085/2068); and `FrameReader` — a
+  bounds-checked byte cursor (`Take`/`Uint16/32/64` return errors, no over-long or
+  overflowing read) for binary wire decoders (the slice/overflow/OOM class behind
+  2110/2115/2116). Migrated the 3 divergent local fold helpers (CloudWatch
+  `cwIndexKeyword`, DynamoDB `ddbASCIIUpper`, Cosmos `caseInsensitiveIndex`) and the
+  SSM input-frame decoder onto them.
+- **`forcetypeassert` linter enabled** + the entire backlog fixed: every single-value
+  `x.(T)` across the sims, core, agent, and bleephub now uses comma-ok with a
+  fail-loud fallback (HTTP/cloud error, skip, or safe default — never panic/silence).
+  Kills the unchecked-type-assertion class (2069/2087/2070).
+- **errcheck tightened** (user directive): removed the `json.Unmarshal` / `io.ReadAll`
+  / `json.Decoder.Decode` / `fmt.Sscanf` exclusions from `.golangci.yml` and handled
+  every resulting site — a dropped decode/read error is now surfaced, not swallowed.
+- **`scripts/check-casefold-slice.sh`** pre-commit guard: bans the inline
+  `(strings|bytes).Index(...To{Lower,Upper}(...)` form and points at the helpers.
+- **Nightly exploratory-fuzz CI**: `scripts/run-fuzz.sh` (enumerates + runs every
+  `FuzzX` target for a fixed time) + `.github/workflows/fuzz-nightly.yml` (cron +
+  dispatch, uploads any new crasher). The committed seed corpus already regresses
+  known crashers under plain `go test`; this discovers NEW ones automatically rather
+  than relying on a human running fuzz each round.
+
+- **Shared parser-safety core** (`simulators/*/shared/parsecore.go`): `sim.Scanner` (a
+  bounds-safe string cursor — Peek/PeekAt/Next/Slice/SkipSpace/HasPrefixFold all
+  range-checked, never panics on index/slice) + `sim.ParseGuard` (depth + node
+  budget). The 5 recursive expression parsers — DynamoDB expressions, CloudWatch
+  Insights filter, CloudWatch filter pattern, GCP AIP-160 filter, Azure OData
+  `$filter` — were migrated onto it: hand-rolled `s[i]`/`s[i:j]` tokenizer cursors →
+  `Scanner`; ad-hoc per-parser depth limits → `ParseGuard`. Grammar/tokens/AST/eval
+  kept byte-identical; each migration validated by the parser's full unit suite + a
+  40s fuzz run with zero crashers. The expression DSLs are different *languages*, so
+  the unification is of the unsafe *scaffolding* (the bug-prone part), not the
+  grammars.
+- **CI golangci-lint bumped** v2.10.1 → v2.12.2 (latest release, 45 days old — past the
+  1-day supply-chain window; local was already there) so the newly-enabled linters run
+  in CI too.
+
+All modules lint-clean (0 forcetypeassert / 0 errcheck); all touched tests green. Every
+fuzz-class prevention measure is in place and nothing was deferred.
+
 ## 2026-06-21 - Round 20: deferrals cleared + fresh fidelity/fuzz (no deferrals)
 
 Per the user directive (fix ALL actionable bugs in the same session/PR — round 19's

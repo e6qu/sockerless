@@ -3,6 +3,8 @@ package main
 import (
 	"regexp"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // CloudWatch Logs Insights `filter` expression grammar:
@@ -102,67 +104,67 @@ type cwInsTok struct {
 
 func cwInsTokenize(s string) []cwInsTok {
 	var toks []cwInsTok
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Peek()
 		switch c {
 		case ' ', '\t', '\n':
-			i++
+			sc.Next()
 		case '(':
 			toks = append(toks, cwInsTok{cwInsLParen, "("})
-			i++
+			sc.Next()
 		case ')':
 			toks = append(toks, cwInsTok{cwInsRParen, ")"})
-			i++
+			sc.Next()
 		case '[':
 			toks = append(toks, cwInsTok{cwInsLBracket, "["})
-			i++
+			sc.Next()
 		case ']':
 			toks = append(toks, cwInsTok{cwInsRBracket, "]"})
-			i++
+			sc.Next()
 		case ',':
 			toks = append(toks, cwInsTok{cwInsComma, ","})
-			i++
+			sc.Next()
 		case '=', '!', '<', '>':
 			op := string(c)
-			if i+1 < len(s) && s[i+1] == '=' {
+			sc.Next()
+			if sc.Peek() == '=' {
 				op += "="
-				i++
+				sc.Next()
 			}
 			toks = append(toks, cwInsTok{cwInsOp, op})
-			i++
 		case '"', '\'':
 			q := c
-			i++
-			start := i
-			for i < len(s) && s[i] != q {
-				i++
+			sc.Next()
+			start := sc.Pos()
+			for !sc.Eof() && sc.Peek() != q {
+				sc.Next()
 			}
-			toks = append(toks, cwInsTok{cwInsString, s[start:i]})
-			if i < len(s) {
-				i++
+			toks = append(toks, cwInsTok{cwInsString, sc.Slice(start, sc.Pos())})
+			if !sc.Eof() {
+				sc.Next()
 			}
 		case '/':
-			i++
-			start := i
-			for i < len(s) && s[i] != '/' {
-				i++
+			sc.Next()
+			start := sc.Pos()
+			for !sc.Eof() && sc.Peek() != '/' {
+				sc.Next()
 			}
-			toks = append(toks, cwInsTok{cwInsRegex, s[start:i]})
-			if i < len(s) {
-				i++
+			toks = append(toks, cwInsTok{cwInsRegex, sc.Slice(start, sc.Pos())})
+			if !sc.Eof() {
+				sc.Next()
 			}
 		default:
-			start := i
-			for i < len(s) {
-				ch := s[i]
+			start := sc.Pos()
+			for !sc.Eof() {
+				ch := sc.Peek()
 				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' ||
 					ch == '[' || ch == ']' || ch == ',' || ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '/' {
 					break
 				}
-				i++
+				sc.Next()
 			}
-			word := s[start:i]
+			word := sc.Slice(start, sc.Pos())
 			switch strings.ToLower(word) {
 			case "and":
 				toks = append(toks, cwInsTok{cwInsAndKw, word})
@@ -187,7 +189,7 @@ func cwInsTokenize(s string) []cwInsTok {
 type cwInsParser struct {
 	toks  []cwInsTok
 	pos   int
-	depth int
+	guard *sim.ParseGuard
 }
 
 func cwParseInsightsFilter(s string) cwInsightsNode {
@@ -195,7 +197,7 @@ func cwParseInsightsFilter(s string) cwInsightsNode {
 	if s == "" {
 		return cwInsTrue{}
 	}
-	p := &cwInsParser{toks: cwInsTokenize(s)}
+	p := &cwInsParser{toks: cwInsTokenize(s), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
 	node := p.parseOr()
 	if node == nil {
 		return cwInsTrue{}
@@ -235,13 +237,12 @@ func (p *cwInsParser) parseNot() cwInsightsNode {
 func (p *cwInsParser) parseTerm() cwInsightsNode {
 	if p.peek().kind == cwInsLParen {
 		p.next()
-		p.depth++
-		if p.depth > maxExprParseDepth {
-			p.depth--
+		if !p.guard.Enter() {
+			p.guard.Leave()
 			return cwInsTrue{}
 		}
 		inner := p.parseOr()
-		p.depth--
+		p.guard.Leave()
 		if p.peek().kind == cwInsRParen {
 			p.next()
 		}

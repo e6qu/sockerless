@@ -33,7 +33,10 @@ func withTableLock(tableName string, fn func() error) error {
 // `defer lockTable(name)()` at the top of a long-bodied configure function.
 func lockTable(tableName string) func() {
 	lkAny, _ := nftTableLocks.LoadOrStore(tableName, &sync.Mutex{})
-	lk := lkAny.(*sync.Mutex)
+	lk, ok := lkAny.(*sync.Mutex)
+	if !ok {
+		panic(fmt.Sprintf("nftTableLocks holds unexpected type %T for table %q", lkAny, tableName))
+	}
 	lk.Lock()
 	return lk.Unlock
 }

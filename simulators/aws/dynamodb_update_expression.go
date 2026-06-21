@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // DynamoDB UpdateExpression evaluator.
@@ -79,7 +81,7 @@ func ddbSplitUpdateClauses(expr string) map[string]string {
 	// computed against `upper` remain valid offsets into the original `expr`.
 	// strings.ToUpper can change the byte length of non-ASCII / invalid-UTF-8
 	// input, which would make the slice offsets below out-of-range for expr.
-	upper := ddbASCIIUpper(expr)
+	upper := sim.ASCIIFoldUpper(expr)
 	for _, kw := range keywords {
 		for i := 0; i+len(kw) <= len(upper); i++ {
 			if upper[i:i+len(kw)] != kw {
@@ -112,19 +114,6 @@ func ddbSplitUpdateClauses(expr string) map[string]string {
 		out[m.kw] = strings.TrimSpace(expr[m.end:bodyEnd])
 	}
 	return out
-}
-
-// ddbASCIIUpper uppercases only ASCII letters, byte-for-byte, leaving every
-// other byte (including invalid-UTF-8 bytes) untouched so the result has the
-// same byte length and indexing as the input.
-func ddbASCIIUpper(s string) string {
-	b := []byte(s)
-	for i := range b {
-		if b[i] >= 'a' && b[i] <= 'z' {
-			b[i] -= 'a' - 'A'
-		}
-	}
-	return string(b)
 }
 
 func isWordChar(b byte) bool {

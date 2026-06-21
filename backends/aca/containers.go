@@ -44,7 +44,9 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 						armappcontainers.JobExecutionRunningStateStopped:
 						// Close wait channel so ContainerWait unblocks
 						if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-							close(ch.(chan struct{}))
+							if wc, isCh := ch.(chan struct{}); isCh {
+								close(wc)
+							}
 						}
 						return
 					}
@@ -60,7 +62,9 @@ func (s *Server) pollExecutionExit(containerID, jobName, executionName string, e
 				// instead of polling forever.
 				if gone++; gone >= pollGoneThreshold {
 					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-						close(ch.(chan struct{}))
+						if wc, isCh := ch.(chan struct{}); isCh {
+							close(wc)
+						}
 					}
 					return
 				}

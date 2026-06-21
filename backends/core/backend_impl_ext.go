@@ -418,7 +418,9 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 			cfgBlob := imageConfigFromAPI(img.Config)
 			var manifestLayers []ManifestLayerEntry
 			if v, ok := s.Store.ImageManifestLayers.Load(img.ID); ok {
-				manifestLayers = v.([]ManifestLayerEntry)
+				if ml, ok := v.([]ManifestLayerEntry); ok {
+					manifestLayers = ml
+				}
 			}
 			opts := OCIPushOptions{
 				Registry:       registry,
@@ -432,7 +434,9 @@ func (s *BaseServer) ImagePush(name string, tag string, auth string) (io.ReadClo
 				Config:         cfgBlob,
 				LayerContent: func(digest string) ([]byte, bool) {
 					if v, ok := s.Store.LayerContent.Load(digest); ok {
-						return v.([]byte), true
+						if b, ok := v.([]byte); ok {
+							return b, true
+						}
 					}
 					return nil, false
 				},

@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"time"
 
@@ -57,7 +58,11 @@ func (d *ecsStdinAttachDriver) Attach(dctx core.DriverContext, tty bool, conn io
 	if ecsState.OpenStdin {
 		p := newStdinPipe()
 		actual, _ := d.s.stdinPipes.LoadOrStore(id, p)
-		pipe = actual.(*stdinPipe)
+		var ok bool
+		pipe, ok = actual.(*stdinPipe)
+		if !ok {
+			return fmt.Errorf("ecs attach: stdin pipe for %s has unexpected type %T", id, actual)
+		}
 		pipe.Open()
 	}
 

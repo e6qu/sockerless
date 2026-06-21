@@ -256,8 +256,10 @@ func ListManaged(ctx context.Context, subscriptionID, resourceGroup string) ([]M
 				continue
 			}
 			var jobID int64
-			if j.Tags[TagJobID] != nil {
-				fmt.Sscanf(*j.Tags[TagJobID], "%d", &jobID)
+			if j.Tags[TagJobID] != nil && *j.Tags[TagJobID] != "" {
+				if _, err := fmt.Sscanf(*j.Tags[TagJobID], "%d", &jobID); err != nil {
+					return managed, fmt.Errorf("parse %s tag %q: %w", TagJobID, *j.Tags[TagJobID], err)
+				}
 			}
 			runnerName := ""
 			if j.Tags[TagRunnerName] != nil {

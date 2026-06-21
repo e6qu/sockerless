@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // Azure ARM `$filter` (OData) support + the `$top`/`$skiptoken` and `$orderby`
@@ -156,50 +158,50 @@ type odataTok struct {
 
 func azureODataTokenize(s string) []odataTok {
 	var toks []odataTok
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Peek()
 		switch c {
 		case ' ', '\t', '\n':
-			i++
+			sc.Next()
 		case '(':
 			toks = append(toks, odataTok{odataLParen, "("})
-			i++
+			sc.Next()
 		case ')':
 			toks = append(toks, odataTok{odataRParen, ")"})
-			i++
+			sc.Next()
 		case ',':
 			toks = append(toks, odataTok{odataComma, ","})
-			i++
+			sc.Next()
 		case '\'':
-			i++
+			sc.Next()
 			var b strings.Builder
-			for i < len(s) {
-				if s[i] == '\'' {
-					if i+1 < len(s) && s[i+1] == '\'' { // '' escape
+			for !sc.Eof() {
+				if sc.Peek() == '\'' {
+					if sc.PeekAt(1) == '\'' { // '' escape
 						b.WriteByte('\'')
-						i += 2
+						sc.Next()
+						sc.Next()
 						continue
 					}
 					break
 				}
-				b.WriteByte(s[i])
-				i++
+				b.WriteByte(sc.Next())
 			}
-			if i < len(s) {
-				i++
+			if !sc.Eof() {
+				sc.Next()
 			}
 			toks = append(toks, odataTok{odataString, b.String()})
 		default:
-			start := i
-			for i < len(s) {
-				ch := s[i]
+			start := sc.Pos()
+			for !sc.Eof() {
+				ch := sc.Peek()
 				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' || ch == ',' || ch == '\'' {
 					break
 				}
-				i++
+				sc.Next()
 			}
-			toks = append(toks, odataTok{odataWord, s[start:i]})
+			toks = append(toks, odataTok{odataWord, sc.Slice(start, sc.Pos())})
 		}
 	}
 	return append(toks, odataTok{odataEOF, ""})
@@ -210,7 +212,7 @@ func azureODataTokenize(s string) []odataTok {
 type odataParser struct {
 	toks  []odataTok
 	pos   int
-	depth int
+	guard *sim.ParseGuard
 }
 
 // maxODataParseDepth bounds parenthesis nesting so a pathological $filter can't
@@ -223,7 +225,7 @@ func azureParseODataFilter(s string) odataNode {
 	if s == "" {
 		return odataTrue{}
 	}
-	p := &odataParser{toks: azureODataTokenize(s)}
+	p := &odataParser{toks: azureODataTokenize(s), guard: sim.NewParseGuard(maxODataParseDepth, -1)}
 	node := p.parseOr()
 	if node == nil {
 		return odataTrue{}
@@ -267,13 +269,12 @@ func (p *odataParser) parseNot() odataNode {
 func (p *odataParser) parseTerm() odataNode {
 	if p.peek().kind == odataLParen {
 		p.next()
-		p.depth++
-		if p.depth > maxODataParseDepth {
-			p.depth--
+		if !p.guard.Enter() {
+			p.guard.Leave()
 			return odataTrue{}
 		}
 		inner := p.parseOr()
-		p.depth--
+		p.guard.Leave()
 		if p.peek().kind == odataRParen {
 			p.next()
 		}

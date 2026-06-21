@@ -447,18 +447,22 @@ func aciSetGroupState(group *ACIContainerGroup, state ACIContainerState) {
 	containers := aciContainers(group)
 	for i, c := range containers {
 		c = aciNormalizeContainer(c)
-		props := c["properties"].(map[string]any)
+		props, ok := c["properties"].(map[string]any)
+		if !ok {
+			continue
+		}
 		name, _ := c["name"].(string)
+		currentState := map[string]any{
+			"state":        state,
+			"startTime":    time.Now().UTC().Format(time.RFC3339Nano),
+			"detailStatus": state,
+		}
 		props["instanceView"] = map[string]any{
-			"currentState": map[string]any{
-				"state":        state,
-				"startTime":    time.Now().UTC().Format(time.RFC3339Nano),
-				"detailStatus": state,
-			},
+			"currentState": currentState,
 		}
 		if name != "" {
 			if rec, ok := aciRuntimeRecords.Get(aciRuntimeKey(group.ID, name)); ok && rec.ExitCode != 0 {
-				props["instanceView"].(map[string]any)["currentState"].(map[string]any)["exitCode"] = rec.ExitCode
+				currentState["exitCode"] = rec.ExitCode
 			}
 		}
 		c["properties"] = props

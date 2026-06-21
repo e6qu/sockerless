@@ -69,7 +69,9 @@ func (s *Server) PodStop(name string, timeout *int) (*api.PodActionResponse, err
 		s.StopHealthCheck(cid)
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		// `pod stop` sends SIGTERM → exit 143.
 		stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -114,7 +116,9 @@ func (s *Server) PodKill(name string, signal string) (*api.PodActionResponse, er
 		})
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 	}
 
@@ -161,7 +165,9 @@ func (s *Server) PodRemove(name string, force bool) error {
 				"name":     strings.TrimPrefix(c.Name, "/"),
 			})
 			if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-				close(ch.(chan struct{}))
+				if wc, isCh := ch.(chan struct{}); isCh {
+					close(wc)
+				}
 			}
 		}
 
@@ -189,13 +195,17 @@ func (s *Server) PodRemove(name string, force bool) error {
 		s.PendingCreates.Delete(cid)
 		s.AZF.Delete(cid)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		s.Store.LogBuffers.Delete(cid)
 		s.Store.StagingDirs.Delete(cid)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(cid); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
+			if dl, isList := dirs.([]string); isList {
+				for _, d := range dl {
+					os.RemoveAll(d)
+				}
 			}
 		}
 		for _, eid := range c.ExecIDs {

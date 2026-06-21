@@ -1388,7 +1388,12 @@ func pickFreeTCPPort() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	port := l.Addr().(*net.TCPAddr).Port
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		_ = l.Close()
+		return 0, fmt.Errorf("listener address is not a *net.TCPAddr: %T", l.Addr())
+	}
+	port := addr.Port
 	_ = l.Close()
 	return port, nil
 }

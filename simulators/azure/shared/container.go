@@ -177,7 +177,10 @@ func CleanupContainers() {
 	defer cancel()
 
 	managedContainers.Range(func(key, _ any) bool {
-		id := key.(string)
+		id, ok := key.(string)
+		if !ok {
+			return true
+		}
 		timeout := 5
 		_ = dockerClient.ContainerStop(ctx, id, container.StopOptions{Timeout: &timeout})
 		_ = dockerClient.ContainerRemove(ctx, id, container.RemoveOptions{Force: true})

@@ -267,12 +267,16 @@ func (s *BaseServer) removePodContainers(ctx context.Context, pod *PodContext, f
 		s.Store.ContainerNames.Delete(c.Name)
 		s.Store.LogBuffers.Delete(cid)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(cid); ok {
-			close(ch.(chan struct{}))
+			if wc, ok := ch.(chan struct{}); ok {
+				close(wc)
+			}
 		}
 		s.Store.StagingDirs.Delete(cid)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(cid); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
+			if paths, ok := dirs.([]string); ok {
+				for _, d := range paths {
+					os.RemoveAll(d)
+				}
 			}
 		}
 		for _, eid := range c.ExecIDs {

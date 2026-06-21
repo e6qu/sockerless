@@ -151,9 +151,10 @@ func (s *BaseServer) buildStatsEntry(containerID string, now time.Time, preread 
 	// Load previous CPU reading for precpu_stats
 	var prevCPU, prevSys int64
 	if prev, ok := s.Store.PrevCPUStats.Load(containerID); ok {
-		p := prev.(*prevCPUStats)
-		prevCPU = p.CPUNanos
-		prevSys = p.SystemCPUNanos
+		if p, ok := prev.(*prevCPUStats); ok {
+			prevCPU = p.CPUNanos
+			prevSys = p.SystemCPUNanos
+		}
 	}
 	s.Store.PrevCPUStats.Store(containerID, &prevCPUStats{
 		CPUNanos:       cpuNanos,

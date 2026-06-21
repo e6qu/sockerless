@@ -648,7 +648,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	// `docker stop` is SIGTERM → exit 143.
 	stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -703,7 +703,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 
 	return nil
@@ -822,12 +822,12 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	s.PendingCreates.Delete(id)
 	s.CloudRun.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
+		for _, d := range asStringSlice(dirs) {
 			os.RemoveAll(d)
 		}
 	}
@@ -985,7 +985,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 			s.Registry.MarkCleanedUp(crState.JobName)
 		}
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		// `docker restart` sends SIGTERM → exit 143.
 		stopExitCode := core.SignalToExitCode("SIGTERM")
@@ -1052,12 +1052,12 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		s.PendingCreates.Delete(c.ID)
 		s.CloudRun.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.StagingDirs.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
+			for _, d := range asStringSlice(dirs) {
 				os.RemoveAll(d)
 			}
 		}
@@ -1523,7 +1523,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 	if opts.Stdin && hasSockerlessOverlayRepo(c.Config.Image) {
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe := actual.(*stdinPipe)
+		pipe := asStdinPipe(actual)
+		if pipe == nil {
+			return nil, fmt.Errorf("cloudrun attach: stdin pipe for %s has unexpected type %T", c.ID, actual)
+		}
 		pipe.Open()
 		return s.newAttachStream(c.ID, pipe), nil
 	}

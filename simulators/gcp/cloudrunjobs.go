@@ -655,7 +655,9 @@ func registerCloudRunJobs(srv *sim.Server) {
 
 		// Cancel running container if any
 		if v, ok := crjProcessHandles.LoadAndDelete(name); ok {
-			stopCloudRunJobProcesses(v.(*cloudRunJobProcesses))
+			if procs, ok := v.(*cloudRunJobProcesses); ok {
+				stopCloudRunJobProcesses(procs)
+			}
 		}
 
 		ok := executions.Update(name, func(e *Execution) {

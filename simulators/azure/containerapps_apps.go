@@ -533,7 +533,8 @@ func stopACAAppReplicas(resourceID string) {
 
 func replaceACAAppReplicas(resourceID string, handles []*sim.ContainerHandle) {
 	if v, ok := acaAppReplicaHandles.Swap(resourceID, handles); ok {
-		for _, handle := range v.([]*sim.ContainerHandle) {
+		prev, _ := v.([]*sim.ContainerHandle)
+		for _, handle := range prev {
 			handle.Cancel()
 			if handle.ContainerID != "" {
 				sim.StopAndRemoveContainer(handle.ContainerID)

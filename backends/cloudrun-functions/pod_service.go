@@ -827,7 +827,11 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		}
 	}
 	if v, ok := s.stdinPipes.LoadAndDelete(mainID); ok {
-		pipe := v.(*stdinPipe)
+		pipe, isPipe := v.(*stdinPipe)
+		if !isPipe {
+			s.Logger.Error().Str("main", mainID).Msgf("invokePodServiceMain: stdin pipe map held unexpected type %T", v)
+			return
+		}
 		s.Logger.Info().Str("main", mainID).Msg("invokePodServiceMain: stdinPipe registered, waiting for stdin EOF")
 		// 30s upper bound mirrors cloudrun's invokeServiceDefaultCmd.
 		select {
@@ -969,16 +973,16 @@ func (s *Server) invokePodServiceMain(ctx context.Context, svc *runpb.Service, c
 		}
 		s.Store.PutInvocationResult(c.ID, inv)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 	}
 
 	// Fan-out stdout+stderr to the attached gitlab-runner's
 	// attachStream (if any) — the hijacked attach connection's Read
 	// blocks until publishAttachResponse fires.
-	if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
-		v.(*attachStream).publishAttachResponse(stdoutResp, stderrResp)
-	}
+	s.publishGCFAttachResponse(mainID, stdoutResp, stderrResp)
 }
 
 // invokeRunningRunnerStage handles the per-stage attach+start pattern
@@ -1004,7 +1008,11 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 		s.Logger.Warn().Str("main", mainID).Msg("invokeRunningRunnerStage: no stdinPipe registered (race)")
 		return
 	}
-	pipe := v.(*stdinPipe)
+	pipe, isPipe := v.(*stdinPipe)
+	if !isPipe {
+		s.Logger.Error().Str("main", mainID).Msgf("invokeRunningRunnerStage: stdin pipe map held unexpected type %T", v)
+		return
+	}
 	select {
 	case <-pipe.Done():
 	case <-time.After(30 * time.Second):
@@ -1022,9 +1030,7 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	state, ok := s.resolveGCFFromCloud(ctx, mainID)
 	if !ok || state.FunctionURL == "" {
 		s.Logger.Error().Str("main", mainID).Msg("invokeRunningRunnerStage: no service URL")
-		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte("no service URL"))
-		}
+		s.publishGCFAttachResponse(mainID, nil, []byte("no service URL"))
 		return
 	}
 	url := state.FunctionURL
@@ -1032,9 +1038,7 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	client, err := s.Access.AuthenticatedClient(ctx, url)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: access client")
-		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
-		}
+		s.publishGCFAttachResponse(mainID, nil, []byte(err.Error()))
 		return
 	}
 	client.Timeout = 10 * time.Minute
@@ -1048,16 +1052,12 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	res, err := gcpcommon.PostExecEnvelope(ctx, client, url, "", envelope)
 	if err != nil {
 		s.Logger.Error().Err(err).Str("main", mainID).Msg("invokeRunningRunnerStage: envelope POST failed")
-		if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
-			v.(*attachStream).publishAttachResponse(nil, []byte(err.Error()))
-		}
+		s.publishGCFAttachResponse(mainID, nil, []byte(err.Error()))
 		return
 	}
 	s.Logger.Info().Str("main", mainID).Int("exit", res.ExitCode).Int("stdout_bytes", len(res.Stdout)).Int("stderr_bytes", len(res.Stderr)).Msg("invokeRunningRunnerStage: bootstrap response")
 
-	if v, ok := s.attachStreams.LoadAndDelete(mainID); ok {
-		v.(*attachStream).publishAttachResponse(res.Stdout, res.Stderr)
-	}
+	s.publishGCFAttachResponse(mainID, res.Stdout, res.Stderr)
 
 	// Fan-out exit code via WaitChs. gitlab-runner does
 	// /containers/{id}/wait?condition=not-running between stages — we
@@ -1070,7 +1070,9 @@ func (s *Server) invokeRunningRunnerStage(mainID string, mainContainer api.Conta
 	}
 	s.Store.PutInvocationResult(mainID, inv)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(mainID); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	// Re-register a fresh WaitCh for the next stage's wait/stop cycle.
 	s.Store.WaitChs.Store(mainID, make(chan struct{}))

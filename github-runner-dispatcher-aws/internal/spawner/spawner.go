@@ -193,7 +193,9 @@ func ListManaged(ctx context.Context, dockerHost string) ([]Managed, error) {
 		}
 		var jobID int64
 		if v := strings.TrimSpace(parts[3]); v != "" {
-			fmt.Sscanf(v, "%d", &jobID)
+			if _, err := fmt.Sscanf(v, "%d", &jobID); err != nil {
+				return nil, fmt.Errorf("parse %s label %q on container %s: %w", LabelJobID, v, parts[0], err)
+			}
 		}
 		createdAt, parseErr := time.Parse(dockerCreatedAtLayout, strings.TrimSpace(parts[2]))
 		if parseErr != nil {

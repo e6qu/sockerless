@@ -592,7 +592,9 @@ func (s *Server) ContainerStart(ref string) error {
 
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 	}()
 
@@ -631,7 +633,10 @@ func (s *Server) captureGCFStdin(id string) ([]byte, bool) {
 	if !ok {
 		return nil, false
 	}
-	pipe := v.(*stdinPipe)
+	pipe, isPipe := v.(*stdinPipe)
+	if !isPipe {
+		return nil, false
+	}
 	select {
 	case <-pipe.Done():
 	case <-time.After(30 * time.Second):
@@ -644,7 +649,9 @@ func (s *Server) captureGCFStdin(id string) ([]byte, bool) {
 
 func (s *Server) publishGCFAttachResponse(id string, stdout, stderr []byte) {
 	if v, ok := s.attachStreams.LoadAndDelete(id); ok {
-		v.(*attachStream).publishAttachResponse(stdout, stderr)
+		if as, isStream := v.(*attachStream); isStream {
+			as.publishAttachResponse(stdout, stderr)
+		}
 	}
 }
 
@@ -673,7 +680,9 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 	// Close wait channel so ContainerWait unblocks
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "137", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -703,7 +712,9 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 
 	return nil
@@ -742,7 +753,9 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 		// returns 137 rather than the channel-close failure sentinel.
 		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: killExitCode})
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 	}
 
@@ -797,14 +810,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 
 	s.PendingCreates.Delete(id)
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		if wc, isCh := ch.(chan struct{}); isCh {
+			close(wc)
+		}
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	s.Store.DeleteInvocationResult(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
-			os.RemoveAll(d)
+		if dl, isList := dirs.([]string); isList {
+			for _, d := range dl {
+				os.RemoveAll(d)
+			}
 		}
 	}
 	for _, eid := range c.ExecIDs {
@@ -920,7 +937,9 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: stopExitCode})
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": fmt.Sprintf("%d", stopExitCode),
@@ -987,13 +1006,17 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		}
 		s.PendingCreates.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			if wc, isCh := ch.(chan struct{}); isCh {
+				close(wc)
+			}
 		}
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.StagingDirs.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
-				os.RemoveAll(d)
+			if dl, isList := dirs.([]string); isList {
+				for _, d := range dl {
+					os.RemoveAll(d)
+				}
 			}
 		}
 		for _, eid := range c.ExecIDs {
@@ -1157,7 +1180,10 @@ func (s *Server) ContainerAttach(id string, opts api.ContainerAttachOptions) (io
 		s.Logger.Info().Str("container", c.ID).Str("image", c.Config.Image).Msg("ContainerAttach: registering stdinPipe + attachStream")
 		p := newStdinPipe()
 		actual, _ := s.stdinPipes.LoadOrStore(c.ID, p)
-		pipe := actual.(*stdinPipe)
+		pipe, isPipe := actual.(*stdinPipe)
+		if !isPipe {
+			return nil, &api.ServerError{Message: fmt.Sprintf("ContainerAttach %s: stdin pipe map held unexpected type %T", c.ID, actual)}
+		}
 		pipe.Open()
 		return s.newAttachStream(c.ID, pipe), nil
 	}

@@ -375,7 +375,8 @@ func handleWAFDeleteWebACL(w http.ResponseWriter, r *http.Request) {
 	}
 	// Refuse delete when associated. Mirrors real AWS.
 	wafAssociations.Range(func(k, v any) bool {
-		if v.(string) == stored.WebACL.ARN {
+		arn, isStr := v.(string)
+		if isStr && arn == stored.WebACL.ARN {
 			wafWriteError(w, "WAFAssociatedItemException", "WebACL is still associated with one or more resources")
 			ok = false
 			return false
@@ -497,9 +498,15 @@ func handleWAFListResourcesForWebACL(w http.ResponseWriter, r *http.Request) {
 	}
 	arns := []string{}
 	wafAssociations.Range(func(k, v any) bool {
-		if v.(string) == req.WebACLArn {
-			arns = append(arns, k.(string))
+		arn, ok := v.(string)
+		if !ok || arn != req.WebACLArn {
+			return true
 		}
+		resource, ok := k.(string)
+		if !ok {
+			return true
+		}
+		arns = append(arns, resource)
 		return true
 	})
 	wafWriteJSON(w, map[string]any{"ResourceArns": arns})

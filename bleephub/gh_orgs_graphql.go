@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -15,7 +16,10 @@ func (s *Server) addOrgFieldsToSchema(userType, queryType *graphql.Object) {
 			"id": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.ID),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					o := p.Source.(map[string]interface{})
+					o, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
 					return o["nodeID"], nil
 				},
 			},
@@ -67,7 +71,10 @@ func (s *Server) addOrgFieldsToSchema(userType, queryType *graphql.Object) {
 			"after": &graphql.ArgumentConfig{Type: graphql.String},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			u := p.Source.(map[string]interface{})
+			u, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
 			dbID, _ := u["databaseId"].(int)
 
 			orgs := s.store.ListOrgsByUser(dbID)

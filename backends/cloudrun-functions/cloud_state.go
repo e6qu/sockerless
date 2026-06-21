@@ -100,10 +100,14 @@ func (p *gcfCloudState) WaitForExit(ctx context.Context, containerID string) (in
 	}
 	// Check WaitChs — FaaS containers use exit channels
 	if ch, ok := p.server.Store.WaitChs.Load(containerID); ok {
+		wc, isCh := ch.(chan struct{})
+		if !isCh {
+			return -1, fmt.Errorf("wait channel for %s held unexpected type %T", containerID, ch)
+		}
 		select {
 		case <-ctx.Done():
 			return -1, ctx.Err()
-		case <-ch.(chan struct{}):
+		case <-wc:
 			if inv, ok := p.server.Store.GetInvocationResult(containerID); ok {
 				return inv.ExitCode, nil
 			}

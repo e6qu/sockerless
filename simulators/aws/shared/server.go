@@ -279,10 +279,15 @@ func spaHandler(fsys fs.FS, pathPrefix string) http.Handler {
 			return
 		}
 
-		http.ServeContent(w, r, "index.html", stat.ModTime(), indexFile.(interface {
+		readSeeker, ok := indexFile.(interface {
 			Read([]byte) (int, error)
 			Seek(int64, int) (int64, error)
-		}))
+		})
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		http.ServeContent(w, r, "index.html", stat.ModTime(), readSeeker)
 	})
 }
 

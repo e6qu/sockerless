@@ -607,7 +607,7 @@ func (s *Server) ContainerStart(ref string) error {
 	}, 5*time.Minute); werr != nil {
 		s.Logger.Error().Err(werr).Str("function", lambdaState.FunctionName).Msg("Lambda function did not become Active")
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		return &api.ServerError{Message: fmt.Sprintf("lambda function %s did not become Active: %v", lambdaState.FunctionName, werr)}
 	}
@@ -642,7 +642,7 @@ func (s *Server) ContainerStart(ref string) error {
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				if v, ok := s.stdinPipes.Load(id); ok {
-					if pipe := v.(*stdinPipe); pipe.IsOpen() {
+					if pipe := asStdinPipe(v); pipe != nil && pipe.IsOpen() {
 						stdinP = pipe
 						break
 					}
@@ -690,7 +690,7 @@ func (s *Server) ContainerStart(ref string) error {
 				} else {
 					s.Logger.Error().Err(err).Msg("lambda-stdin: marshal exec envelope failed")
 					if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-						close(ch.(chan struct{}))
+						closeWaitCh(ch)
 					}
 					return
 				}
@@ -745,7 +745,7 @@ func (s *Server) ContainerStart(ref string) error {
 		s.persistInvocationResultToTags(s.ctx(), lambdaState.FunctionARN, inv)
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 	}()
 
@@ -828,7 +828,7 @@ func (s *Server) ContainerStop(ref string, timeout *int) error {
 	s.Store.PutInvocationResult(id, core.InvocationResult{ExitCode: 137})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": "137", "name": strings.TrimPrefix(c.Name, "/")})
 	s.EmitEvent("container", "stop", id, map[string]string{"name": strings.TrimPrefix(c.Name, "/")})
@@ -882,7 +882,7 @@ func (s *Server) ContainerKill(ref string, signal string) error {
 	s.EmitEvent("container", "die", id, map[string]string{"exitCode": fmt.Sprintf("%d", exitCode), "name": strings.TrimPrefix(c.Name, "/")})
 
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 
 	return nil
@@ -969,16 +969,18 @@ func (s *Server) ContainerRemove(ref string, force bool) error {
 	// Unblock any deferred-stdin Invoke goroutine waiting on the pipe
 	// so it can exit cleanly without firing a phantom invocation.
 	if v, ok := s.stdinPipes.LoadAndDelete(id); ok {
-		_ = v.(*stdinPipe).Close()
+		if p := asStdinPipe(v); p != nil {
+			_ = p.Close()
+		}
 	}
 	if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-		close(ch.(chan struct{}))
+		closeWaitCh(ch)
 	}
 	s.Store.LogBuffers.Delete(id)
 	s.Store.StagingDirs.Delete(id)
 	s.Store.DeleteInvocationResult(id)
 	if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(id); ok {
-		for _, d := range dirs.([]string) {
+		for _, d := range asStringSlice(dirs) {
 			os.RemoveAll(d)
 		}
 	}
@@ -1057,7 +1059,11 @@ func (s *Server) buildCloudWatchFetcher(ref string) core.CloudLogFetchFunc {
 		}
 
 		if cursor != nil {
-			input.NextToken = cursor.(*string)
+			tok, ok := cursor.(*string)
+			if !ok {
+				return nil, cursor, fmt.Errorf("lambda cloudwatch log cursor: unexpected type %T", cursor)
+			}
+			input.NextToken = tok
 		} else {
 			input.StartFromHead = aws.Bool(params.CloudLogTailInt32() == nil)
 			if limit := params.CloudLogTailInt32(); limit != nil {
@@ -1103,7 +1109,7 @@ func (s *Server) ContainerRestart(ref string, timeout *int) error {
 		s.StopHealthCheck(id)
 
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(id); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		s.EmitEvent("container", "die", id, map[string]string{
 			"exitCode": "0",
@@ -1177,12 +1183,12 @@ func (s *Server) ContainerPrune(filters map[string][]string) (*api.ContainerPrun
 		s.PendingCreates.Delete(c.ID)
 		s.Lambda.Delete(c.ID)
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(c.ID); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 		s.Store.LogBuffers.Delete(c.ID)
 		s.Store.StagingDirs.Delete(c.ID)
 		if dirs, ok := s.Store.TmpfsDirs.LoadAndDelete(c.ID); ok {
-			for _, d := range dirs.([]string) {
+			for _, d := range asStringSlice(dirs) {
 				os.RemoveAll(d)
 			}
 		}

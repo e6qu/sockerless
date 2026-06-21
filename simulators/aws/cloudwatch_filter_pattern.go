@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // CloudWatch Logs metric-filter pattern language (FilterLogEvents filterPattern),
@@ -74,8 +76,9 @@ func cwSplitPatternTerms(s string) []string {
 	var terms []string
 	var cur strings.Builder
 	inQuote := false
-	for i := 0; i < len(s); i++ {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Next()
 		switch {
 		case c == '"':
 			inQuote = !inQuote
@@ -102,7 +105,7 @@ func cwStructuredPatternMatch(message, expr string) bool {
 	if err := json.Unmarshal([]byte(message), &doc); err != nil {
 		return false // a structured pattern only matches JSON events
 	}
-	p := &cwPatParser{toks: cwPatTokenize(expr)}
+	p := &cwPatParser{toks: cwPatTokenize(expr), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
 	node := p.parseOr()
 	if node == nil || p.peek().kind != cwPatEOF {
 		return false
@@ -190,62 +193,64 @@ type cwPatTok struct {
 
 func cwPatTokenize(s string) []cwPatTok {
 	var toks []cwPatTok
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Peek()
 		switch {
 		case c == ' ' || c == '\t' || c == '\n':
-			i++
+			sc.Next()
 		case c == '(':
 			toks = append(toks, cwPatTok{cwPatLParen, "("})
-			i++
+			sc.Next()
 		case c == ')':
 			toks = append(toks, cwPatTok{cwPatRParen, ")"})
-			i++
-		case c == '&' && i+1 < len(s) && s[i+1] == '&':
+			sc.Next()
+		case c == '&' && sc.PeekAt(1) == '&':
 			toks = append(toks, cwPatTok{cwPatAndOp, "&&"})
-			i += 2
-		case c == '|' && i+1 < len(s) && s[i+1] == '|':
+			sc.Next()
+			sc.Next()
+		case c == '|' && sc.PeekAt(1) == '|':
 			toks = append(toks, cwPatTok{cwPatOrOp, "||"})
-			i += 2
+			sc.Next()
+			sc.Next()
 		case c == '=' || c == '!' || c == '<' || c == '>':
 			op := string(c)
-			if i+1 < len(s) && s[i+1] == '=' {
+			sc.Next()
+			if sc.Peek() == '=' {
 				op += "="
-				i++
+				sc.Next()
 			}
 			toks = append(toks, cwPatTok{cwPatOp, op})
-			i++
 		case c == '"':
-			i++
-			start := i
-			for i < len(s) && s[i] != '"' {
-				i++
+			sc.Next()
+			start := sc.Pos()
+			for !sc.Eof() && sc.Peek() != '"' {
+				sc.Next()
 			}
-			toks = append(toks, cwPatTok{cwPatWord, s[start:i]})
-			if i < len(s) {
-				i++
+			toks = append(toks, cwPatTok{cwPatWord, sc.Slice(start, sc.Pos())})
+			if !sc.Eof() {
+				sc.Next()
 			}
 		default:
-			start := i
-			for i < len(s) {
-				ch := s[i]
+			start := sc.Pos()
+			for !sc.Eof() {
+				ch := sc.Peek()
 				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' ||
 					ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '&' || ch == '|' {
 					break
 				}
-				i++
+				sc.Next()
 			}
-			if i == start {
+			if sc.Pos() == start {
 				// A lone '&' / '|' (not doubled into && / ||) reaches here: it is
 				// a delimiter for the word scanner but matches no operator case, so
 				// it would be consumed zero times — an infinite loop. Emit the stray
 				// byte as a word token and advance to guarantee forward progress.
-				toks = append(toks, cwPatTok{cwPatWord, s[i : i+1]})
-				i++
+				toks = append(toks, cwPatTok{cwPatWord, sc.Slice(start, start+1)})
+				sc.Next()
 				continue
 			}
-			toks = append(toks, cwPatTok{cwPatWord, s[start:i]})
+			toks = append(toks, cwPatTok{cwPatWord, sc.Slice(start, sc.Pos())})
 		}
 	}
 	return append(toks, cwPatTok{cwPatEOF, ""})
@@ -254,7 +259,7 @@ func cwPatTokenize(s string) []cwPatTok {
 type cwPatParser struct {
 	toks  []cwPatTok
 	pos   int
-	depth int
+	guard *sim.ParseGuard
 }
 
 func (p *cwPatParser) peek() cwPatTok { return p.toks[p.pos] }
@@ -281,13 +286,12 @@ func (p *cwPatParser) parseAnd() cwPatNode {
 func (p *cwPatParser) parseTerm() cwPatNode {
 	if p.peek().kind == cwPatLParen {
 		p.next()
-		p.depth++
-		if p.depth > maxExprParseDepth {
-			p.depth--
+		if !p.guard.Enter() {
+			p.guard.Leave()
 			return cwPatTrue{}
 		}
 		inner := p.parseOr()
-		p.depth--
+		p.guard.Leave()
 		if p.peek().kind == cwPatRParen {
 			p.next()
 		}

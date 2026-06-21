@@ -254,7 +254,7 @@ func (s *Server) pollTaskExit(containerID, taskARN string, exitCh chan struct{})
 				// polling forever.
 				if gone++; gone >= pollGoneThreshold {
 					if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-						close(ch.(chan struct{}))
+						closeWaitCh(ch)
 					}
 					return
 				}
@@ -288,7 +288,7 @@ func (s *Server) applyTaskStatus(containerID string, task ecstypes.Task) {
 	case "STOPPED":
 		// Close wait channel so ContainerWait unblocks
 		if ch, ok := s.Store.WaitChs.LoadAndDelete(containerID); ok {
-			close(ch.(chan struct{}))
+			closeWaitCh(ch)
 		}
 	case "RUNNING":
 		// No-op: cloud is the source of truth for IP/MAC.

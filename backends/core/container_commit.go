@@ -204,7 +204,9 @@ func CommitContainerViaAgent(ctx context.Context, store *Store, reg *ReverseAgen
 	// registry served them under.
 	var parentManifestLayers []ManifestLayerEntry
 	if v, ok := store.ImageManifestLayers.Load(spec.SourceImage.ID); ok {
-		parentManifestLayers = v.([]ManifestLayerEntry)
+		if ml, ok := v.([]ManifestLayerEntry); ok {
+			parentManifestLayers = ml
+		}
 	}
 	combined := make([]ManifestLayerEntry, 0, len(parentManifestLayers)+1)
 	combined = append(combined, parentManifestLayers...)

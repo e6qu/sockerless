@@ -3,6 +3,8 @@ package main
 import (
 	"strconv"
 	"strings"
+
+	sim "github.com/sockerless/simulator"
 )
 
 // GCP list `filter` expression language — a faithful subset of AIP-160 / the
@@ -89,57 +91,54 @@ type gcpTok struct {
 
 func gcpTokenize(s string) []gcpTok {
 	var toks []gcpTok
-	i := 0
-	for i < len(s) {
-		c := s[i]
+	sc := sim.NewScanner(s)
+	for !sc.Eof() {
+		c := sc.Peek()
 		switch {
 		case c == ' ' || c == '\t' || c == '\n':
-			i++
+			sc.Next()
 		case c == '(':
 			toks = append(toks, gcpTok{tokLParen, "("})
-			i++
+			sc.Next()
 		case c == ')':
 			toks = append(toks, gcpTok{tokRParen, ")"})
-			i++
+			sc.Next()
 		case c == '-' && (len(toks) == 0 || toks[len(toks)-1].kind == tokLParen || toks[len(toks)-1].kind == tokAnd || toks[len(toks)-1].kind == tokOr || toks[len(toks)-1].kind == tokNot):
 			toks = append(toks, gcpTok{tokNot, "-"})
-			i++
+			sc.Next()
 		case c == '=' || c == '!' || c == '<' || c == '>' || c == ':':
+			sc.Next()
 			op := string(c)
-			if c != ':' && i+1 < len(s) && s[i+1] == '=' {
+			if c != ':' && sc.Peek() == '=' {
 				op += "="
-				i++
+				sc.Next()
 			}
 			toks = append(toks, gcpTok{tokOp, op})
-			i++
 		case c == '"' || c == '\'':
 			quote := c
-			i++
-			start := i
+			sc.Next()
 			var b strings.Builder
-			for i < len(s) && s[i] != quote {
-				if s[i] == '\\' && i+1 < len(s) {
-					i++
+			for !sc.Eof() && sc.Peek() != quote {
+				if sc.Peek() == '\\' && sc.Pos()+1 < sc.Len() {
+					sc.Next()
 				}
-				b.WriteByte(s[i])
-				i++
+				b.WriteByte(sc.Next())
 			}
-			_ = start
-			if i < len(s) {
-				i++ // closing quote
+			if !sc.Eof() {
+				sc.Next() // closing quote
 			}
 			toks = append(toks, gcpTok{tokString, b.String()})
 		default:
-			start := i
-			for i < len(s) {
-				ch := s[i]
+			start := sc.Pos()
+			for !sc.Eof() {
+				ch := sc.Peek()
 				if ch == ' ' || ch == '\t' || ch == '\n' || ch == '(' || ch == ')' ||
 					ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == ':' {
 					break
 				}
-				i++
+				sc.Next()
 			}
-			word := s[start:i]
+			word := sc.Slice(start, sc.Pos())
 			switch strings.ToUpper(word) {
 			case "AND":
 				toks = append(toks, gcpTok{tokAnd, word})
@@ -161,7 +160,7 @@ func gcpTokenize(s string) []gcpTok {
 type gcpFilterParser struct {
 	toks  []gcpTok
 	pos   int
-	depth int
+	guard *sim.ParseGuard
 }
 
 // maxFilterParseDepth bounds parenthesis nesting so a pathological filter can't
@@ -174,7 +173,7 @@ func gcpParseFilterExpr(s string) gcpFilterNode {
 	if s == "" {
 		return gcpFilterTrue{}
 	}
-	p := &gcpFilterParser{toks: gcpTokenize(s)}
+	p := &gcpFilterParser{toks: gcpTokenize(s), guard: sim.NewParseGuard(maxFilterParseDepth, -1)}
 	node := p.parseOr()
 	if node == nil {
 		return gcpFilterTrue{}
@@ -221,13 +220,12 @@ func (p *gcpFilterParser) parseFactor() gcpFilterNode {
 	}
 	if p.peek().kind == tokLParen {
 		p.next()
-		p.depth++
-		if p.depth > maxFilterParseDepth {
-			p.depth--
+		if !p.guard.Enter() {
+			p.guard.Leave()
 			return gcpFilterTrue{}
 		}
 		inner := p.parseOr()
-		p.depth--
+		p.guard.Leave()
 		if p.peek().kind == tokRParen {
 			p.next()
 		}
