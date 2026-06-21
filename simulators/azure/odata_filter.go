@@ -201,10 +201,71 @@ func azureODataTokenize(s string) []odataTok {
 				}
 				sc.Next()
 			}
-			toks = append(toks, odataTok{odataWord, sc.Slice(start, sc.Pos())})
+			word := sc.Slice(start, sc.Pos())
+			// Typed-literal prefix: datetime'…' / guid'…' / X'…' / binary'…'.
+			// Real OData wraps a typed value in `<type>'<value>'`; the inner
+			// value is what the filter compares against. Recognise the prefix
+			// (case-insensitive) immediately followed by a quote and emit a
+			// single string token carrying the unwrapped value.
+			if sc.Peek() == '\'' && odataIsTypedLiteralPrefix(word) {
+				sc.Next() // opening quote
+				var b strings.Builder
+				for !sc.Eof() {
+					if sc.Peek() == '\'' {
+						if sc.PeekAt(1) == '\'' {
+							b.WriteByte('\'')
+							sc.Next()
+							sc.Next()
+							continue
+						}
+						break
+					}
+					b.WriteByte(sc.Next())
+				}
+				if !sc.Eof() {
+					sc.Next() // closing quote
+				}
+				toks = append(toks, odataTok{odataString, b.String()})
+				continue
+			}
+			// Numeric type suffix: 123L / 1.5f / 2.0d / 9.99m. Strip the suffix
+			// and emit the bare number as a word (numeric comparison unwraps it).
+			if stripped, ok := odataStripNumericSuffix(word); ok {
+				word = stripped
+			}
+			toks = append(toks, odataTok{odataWord, word})
 		}
 	}
 	return append(toks, odataTok{odataEOF, ""})
+}
+
+// odataIsTypedLiteralPrefix reports whether word is one of the OData typed-value
+// prefixes that wrap their payload in quotes.
+func odataIsTypedLiteralPrefix(word string) bool {
+	switch strings.ToLower(word) {
+	case "datetime", "datetimeoffset", "guid", "binary", "x", "time", "duration":
+		return true
+	}
+	return false
+}
+
+// odataStripNumericSuffix removes a single OData numeric type suffix (L/f/d/m,
+// case-insensitive) from an otherwise-numeric literal, returning the bare number.
+func odataStripNumericSuffix(word string) (string, bool) {
+	if len(word) < 2 {
+		return word, false
+	}
+	last := word[len(word)-1]
+	switch last {
+	case 'L', 'l', 'f', 'F', 'd', 'D', 'm', 'M':
+	default:
+		return word, false
+	}
+	bare := word[:len(word)-1]
+	if _, err := strconv.ParseFloat(bare, 64); err != nil {
+		return word, false
+	}
+	return bare, true
 }
 
 // ── parser ─────────────────────────────────────────────────────────────────

@@ -4,6 +4,96 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - Cross-cloud NoSQL "silent-wrong evaluator" sweep (consumer #648, BUG-2149..2166)
+
+Started from consumer #648 — a follow-up to #643/#646: the #646 fix made
+`SET c = if_not_exists(c,:0) - :v` compute, but a fully-enclosing `(...)` around
+the RHS (and even `(:z)`) still resolved to null, because `ddbEvalSetRHS` never
+stripped the wrapping parens. ElectroDB always parenthesizes the arithmetic RHS
+of `.subtract()`/`.add()`, so every ORM counter decrement corrupted the attribute
+to null. Fixed with `ddbStripParens` (removes balanced fully-enclosing parens
+repeatedly, leaving `(a) - (b)` intact) in `ddbEvalSetRHS`/`ddbEvalSetOperand`
+(BUG-2149). Then audited every cloud sim's DynamoDB-like service for the same
+class — an expression/query evaluator that silently returns null/empty/all
+instead of computing — and fixed what it found.
+
+**AWS DynamoDB (BUG-2150..2153).** `if_not_exists(path)` and a bare-path SET copy
+now resolve NESTED document paths via `ddbResolvePath` (were top-level only, so
+`SET #a.#b = if_not_exists(#a.#b,:z)-:v` always took the default and `SET x = a.b`
+stored null); number `=`/`<>`/`IN` canonicalize in the condition/filter engine so
+`{N:5} == {N:5.0}`; SET arithmetic and relational comparison use exact `big.Rat`
+instead of float64 (a counter past 2^53 or a 38-digit number no longer corrupts);
+`+`/`-` on a non-numeric operand raises ValidationException instead of silently
+using 0.
+
+**GCP Firestore (BUG-2154..2157).** Field transforms (`increment`, `arrayUnion`/
+`arrayRemove`, `serverTimestamp`) were decoded into nothing — a high-level-client
+`Increment(1)` returned 200 and stored nothing; now decoded and applied with
+`transformResults`. `currentDocument` preconditions are enforced (a missing-doc
+Update returns NOT_FOUND, an existing-doc Create ALREADY_EXISTS, instead of
+silently upserting). Value-equality is typed (integer 1 == double 1.0; arrays/maps
+recurse) so `EQUAL`/`IN`/`ARRAY_CONTAINS` match. Query cursors (`startAt`/`endAt`)
+and `select` projection are applied. Driving the tests through the high-level
+`firestore.NewRESTClient` surfaced two more real fidelity bugs — the gax REST
+transport marshals enums as numbers (now decoded), and a transform-only update's
+present-but-empty updateMask was collapsing to "replace" and wiping fields (the
+mask is now a `*[]string`: nil = replace, non-nil = merge). Firestore transactions
+(2158) and the entirely-absent Bigtable data plane (2159) are filed as staged.
+
+**Azure Cosmos DB + Table Storage (BUG-2160..2166).**
+
+**Cosmos DB SQL query engine (BUG-2160, P2 — the headline).** The data plane's
+query path used `cosmosParseEqualityQuery`, which split the WHERE clause on a
+single `=` and, for everything else (`AND`/`OR`, ordering comparisons, `IN`,
+string functions, nested paths, `ORDER BY`, aggregates), silently returned the
+*entire* collection. New `cosmos_sql.go` is a real recursive-descent
+parser+evaluator (bounds-safe via the shared `sim.Scanner`/`sim.ParseGuard`)
+over the SQL subset the azcosmos SDK + runner workloads issue: `SELECT *`,
+projection (`SELECT c.a, c.b`), `SELECT VALUE COUNT(1)`; `WHERE` with
+`=`/`!=`/`<>`/`<`/`<=`/`>`/`>=`, `AND`/`OR`/`NOT`, parens, `IN (...)`,
+`CONTAINS`/`STARTSWITH`/`ENDSWITH`; nested `c.a.b` doc traversal; `@param`
+binding compared by VALUE with numeric unification (`5` int == `5.0`,
+typed bool/null); `ORDER BY [ASC|DESC]`, `OFFSET n LIMIT m`, `TOP n`. A query
+the parser can't handle returns a Cosmos `BadRequest`, never all docs. JOIN /
+subqueries / GROUP BY / non-COUNT aggregates are out of scope and fail loudly.
+
+**Cosmos upsert + 409 (BUG-2161).** The `/docs` create handler now honors
+`x-ms-documentdb-is-upsert` (upsert → replace existing, returns 200, honors
+If-Match) and returns 409 Conflict on a plain (non-upsert) create of an
+existing id, matching real Cosmos.
+
+**Cosmos PATCH (BUG-2162).** New `PATCH /dbs/{db}/colls/{coll}/docs/{doc}`
+applies the `{operations:[{op,path,value}]}` list (set/add/replace/remove/incr,
+JSON-pointer `/a/b` paths) to a deep-copied `Body` (all-or-nothing), honoring
+If-Match.
+
+**Table MERGE vs PUT (BUG-2163).** `handleEntityUpsert` previously treated
+PUT/MERGE/PATCH identically (full replace), so a MERGE that omitted a property
+dropped it. Split by method: PUT replaces wholesale; MERGE/PATCH overlay only
+the supplied properties onto the existing entity.
+
+**Table `$filter` typed literals (BUG-2164).** The OData tokenizer recognizes
+typed-literal prefixes (`datetime`/`datetimeoffset`/`guid`/`binary`/`x`/`time`/
+`duration`) immediately followed by a quote, emitting one string token with the
+unwrapped inner value, and strips OData numeric suffixes (`L`/`f`/`d`/`m`) — so
+`Created gt datetime'2025-…'` compares by the date, not the literal word.
+
+**Table `$batch` (BUG-2165).** New `storage_table_batch.go` — `POST /$batch`
+parses the `multipart/mixed` change-set (each part a full inner HTTP request),
+replays each insert/merge/replace/delete against the existing entity handlers
+via an in-memory recorder, rolls the whole batch back on any op failure, and
+emits the multipart batch response the aztables `SubmitTransaction` parses.
+
+**Table `$select` (BUG-2166).** `handleEntityQuery` projects the returned
+property map to the `$select` columns (always retaining PartitionKey/RowKey/
+Timestamp) when present.
+
+Tests: 7 new SDK tests (`cosmos_query_sdk_test.go` raw-HTTP at azcosmos's exact
+wire shape — Shared-Key auth + endpoint discovery don't fit the single-port
+sim, matching the existing `cosmos_test.go` pattern; `table_merge_batch_test.go`
+via the real aztables SDK) plus a rewritten Cosmos-SQL fuzz target and unit
+suite — all green; module + sdk-tests build/lint/test clean.
+
 ## 2026-06-22 - DynamoDB PartiQL + the remaining actionable tail
 
 Closed out every actionable DynamoDB item in one PR (BUG-2141..2148), leaving only

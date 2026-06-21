@@ -131,6 +131,41 @@ func TestDDBIssue643_IfNotExistsArithmetic(t *testing.T) {
 	assert.Equal(t, "1", got2.Item["c"].(*ddbtypes.AttributeValueMemberN).Value)
 }
 
+// TestDDBIssue648_ParenthesizedSetRHS — a fully-enclosed SET RHS must be stripped
+// of its parentheses and evaluate as the unparenthesized form (ElectroDB always
+// wraps the arithmetic RHS of .subtract()/.add() in parens).
+func TestDDBIssue648_ParenthesizedSetRHS(t *testing.T) {
+	c := ddbClient()
+	tbl := "paren-rhs-648"
+	ddbSimpleTable(t, c, tbl)
+
+	// (if_not_exists(c,:z) - :v) on a fresh item = -1.
+	_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tbl),
+		Key:                       map[string]ddbtypes.AttributeValue{"pk": sS("dec")},
+		UpdateExpression:          aws.String("SET #c = (if_not_exists(#c, :z) - :v)"),
+		ExpressionAttributeNames:  map[string]string{"#c": "c"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":z": sN("0"), ":v": sN("1")},
+	})
+	require.NoError(t, err)
+	got, _ := c.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tbl), Key: map[string]ddbtypes.AttributeValue{"pk": sS("dec")}})
+	cv, ok := got.Item["c"].(*ddbtypes.AttributeValueMemberN)
+	require.True(t, ok, "c must be a number, not null: %#v", got.Item["c"])
+	assert.Equal(t, "-1", cv.Value)
+
+	// A plain parenthesized value (:z) must also resolve.
+	_, err = c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tbl),
+		Key:                       map[string]ddbtypes.AttributeValue{"pk": sS("plain")},
+		UpdateExpression:          aws.String("SET #c = (:z)"),
+		ExpressionAttributeNames:  map[string]string{"#c": "c"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":z": sN("7")},
+	})
+	require.NoError(t, err)
+	got2, _ := c.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tbl), Key: map[string]ddbtypes.AttributeValue{"pk": sS("plain")}})
+	assert.Equal(t, "7", got2.Item["c"].(*ddbtypes.AttributeValueMemberN).Value)
+}
+
 // TestDDBIssue644_DeleteTablePurgesItems — items must not survive a drop+recreate.
 func TestDDBIssue644_DeleteTablePurgesItems(t *testing.T) {
 	c := ddbClient()
