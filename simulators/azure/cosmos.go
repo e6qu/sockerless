@@ -142,6 +142,7 @@ func registerCosmosDB(srv *sim.Server) {
 	srv.HandleFunc("GET /dbs/{database}/colls/{container}/docs", handleCosmosDataListDocs)
 	srv.HandleFunc("GET /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataGetDoc)
 	srv.HandleFunc("PUT /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataReplaceDoc)
+	srv.HandleFunc("PATCH /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataPatchDoc)
 	srv.HandleFunc("DELETE /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataDeleteDoc)
 }
 
@@ -820,8 +821,31 @@ func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
 		id = generateUUID()
 		body["id"] = id
 	}
+	upsert := strings.EqualFold(r.Header.Get("x-ms-documentdb-is-upsert"), "true")
+	existing, exists := cosmosDocs.Get(cosmosDocKey(account, db, coll, id))
+	if exists && !upsert {
+		// Real Cosmos: a plain create (no upsert header) of an existing id is
+		// a 409 Conflict.
+		cosmosDataError(w, "Conflict",
+			"Resource with specified id or name already exists.", http.StatusConflict)
+		return
+	}
+	if exists && upsert {
+		// Upsert of an existing id honors an If-Match precondition like Replace.
+		if !cosmosIfMatchOK(r, existing.ETag) {
+			cosmosDataError(w, "PreconditionFailed",
+				"Operation cannot be performed because one of the specified precondition is not met.",
+				http.StatusPreconditionFailed)
+			return
+		}
+	}
 	doc := cosmosStoreDoc(account, db, coll, id, body)
-	cosmosWriteData(w, http.StatusCreated, cosmosDocBody(doc))
+	status := http.StatusCreated
+	if exists && upsert {
+		// An upsert that replaced an existing document returns 200, not 201.
+		status = http.StatusOK
+	}
+	cosmosWriteData(w, status, cosmosDocBody(doc))
 }
 
 func handleCosmosDataListDocs(w http.ResponseWriter, r *http.Request) {
@@ -891,21 +915,140 @@ func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 		cosmosDataError(w, "BadRequest", "invalid query body", http.StatusBadRequest)
 		return
 	}
+	plan, err := cosmosParseQuery(req.Query)
+	if err != nil {
+		cosmosDataError(w, "BadRequest",
+			"Syntax error, message: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	docs := cosmosDocsFor(account, db, coll)
-	if field, value, ok := cosmosParseEqualityQuery(req.Query, req.Parameters); ok {
-		filtered := docs[:0]
-		for _, d := range docs {
-			if fmt.Sprint(d.Body[field]) == value {
-				filtered = append(filtered, d)
+	out := cosmosRunQuery(plan, docs, cosmosBindParams(req.Parameters))
+	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": out, "_count": len(out)})
+}
+
+// handleCosmosDataPatchDoc applies a Cosmos partial-document patch (the
+// `{operations:[{op,path,value}]}` body) to a stored document. op ∈
+// set/add/replace/remove/incr; path is a JSON-pointer-ish `/a/b`.
+func handleCosmosDataPatchDoc(w http.ResponseWriter, r *http.Request) {
+	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	if !ok {
+		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
+		return
+	}
+	if !cosmosIfMatchOK(r, existing.ETag) {
+		cosmosDataError(w, "PreconditionFailed",
+			"Operation cannot be performed because one of the specified precondition is not met.",
+			http.StatusPreconditionFailed)
+		return
+	}
+	var req struct {
+		Operations []struct {
+			Op    string `json:"op"`
+			Path  string `json:"path"`
+			Value any    `json:"value"`
+		} `json:"operations"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		cosmosDataError(w, "BadRequest", "invalid patch body", http.StatusBadRequest)
+		return
+	}
+	// Operate on a deep copy so a mid-list failure doesn't leave a partial write.
+	body := cosmosCloneBody(existing.Body)
+	for _, op := range req.Operations {
+		if err := cosmosApplyPatchOp(body, op.Op, op.Path, op.Value); err != nil {
+			cosmosDataError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	body["id"] = docID
+	doc := cosmosStoreDoc(account, db, coll, docID, body)
+	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+}
+
+// cosmosApplyPatchOp mutates body per a single patch operation. The path is the
+// Cosmos JSON-pointer form (`/a/b`); the final segment is the property to act
+// on within its parent object.
+func cosmosApplyPatchOp(body map[string]any, op, path string, value any) error {
+	segs := cosmosSplitPatchPath(path)
+	if len(segs) == 0 {
+		return fmt.Errorf("patch op %q has an empty path", op)
+	}
+	parent := body
+	for _, seg := range segs[:len(segs)-1] {
+		next, ok := parent[seg].(map[string]any)
+		if !ok {
+			// set/add create intermediate objects; others fail on a missing path.
+			switch strings.ToLower(op) {
+			case "set", "add":
+				next = map[string]any{}
+				parent[seg] = next
+			default:
+				return fmt.Errorf("patch op %q: path %q does not exist", op, path)
 			}
 		}
-		docs = filtered
+		parent = next
 	}
-	out := make([]map[string]any, 0, len(docs))
-	for _, d := range docs {
-		out = append(out, cosmosDocBody(d))
+	last := segs[len(segs)-1]
+	switch strings.ToLower(op) {
+	case "set", "add", "replace":
+		if strings.ToLower(op) == "replace" {
+			if _, ok := parent[last]; !ok {
+				return fmt.Errorf("patch replace: path %q does not exist", path)
+			}
+		}
+		parent[last] = value
+	case "remove":
+		if _, ok := parent[last]; !ok {
+			return fmt.Errorf("patch remove: path %q does not exist", path)
+		}
+		delete(parent, last)
+	case "incr", "increment":
+		cur, _ := cosmosNumberOf(parent[last])
+		delta, ok := cosmosNumberOf(value)
+		if !ok {
+			return fmt.Errorf("patch incr: value is not numeric")
+		}
+		parent[last] = cur + delta
+	default:
+		return fmt.Errorf("unsupported patch op %q", op)
 	}
-	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": out, "_count": len(out)})
+	return nil
+}
+
+func cosmosSplitPatchPath(path string) []string {
+	path = strings.TrimPrefix(path, "/")
+	if path == "" {
+		return nil
+	}
+	return strings.Split(path, "/")
+}
+
+func cosmosNumberOf(v any) (float64, bool) {
+	switch t := v.(type) {
+	case float64:
+		return t, true
+	case int:
+		return float64(t), true
+	case int64:
+		return float64(t), true
+	case json.Number:
+		f, err := t.Float64()
+		return f, err == nil
+	}
+	return 0, false
+}
+
+func cosmosCloneBody(in map[string]any) map[string]any {
+	b, err := json.Marshal(in)
+	if err != nil {
+		return map[string]any{}
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return map[string]any{}
+	}
+	return out
 }
 
 func cosmosStoreDoc(account, db, coll, id string, body map[string]any) CosmosDocument {
@@ -966,36 +1109,6 @@ func cosmosDataError(w http.ResponseWriter, code, message string, status int) {
 	w.Header().Set("x-ms-activity-id", generateUUID())
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message})
-}
-
-func cosmosParseEqualityQuery(query string, params []map[string]any) (string, string, bool) {
-	// Locate "where" case-insensitively over the ORIGINAL string. Indexing a
-	// strings.ToLower copy is unsafe: Unicode case-folding can change byte
-	// length, so an offset from the lowercased string can fall outside the
-	// original and panic the slice. caseInsensitiveIndex returns an offset
-	// that is always valid for query.
-	idx := sim.CaseInsensitiveIndex(query, "where")
-	if idx < 0 {
-		return "", "", false
-	}
-	cond := strings.TrimSpace(query[idx+len("where"):])
-	parts := strings.Split(cond, "=")
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	field := strings.TrimSpace(parts[0])
-	field = strings.TrimPrefix(field, "c.")
-	field = strings.Trim(field, "[]`\" ")
-	value := strings.TrimSpace(parts[1])
-	value = strings.Trim(value, "'\" ")
-	if strings.HasPrefix(value, "@") {
-		for _, p := range params {
-			if p["name"] == value {
-				return field, fmt.Sprint(p["value"]), true
-			}
-		}
-	}
-	return field, value, true
 }
 
 func cosmosARMIDNames(id string) (account, db, coll string, ok bool) {

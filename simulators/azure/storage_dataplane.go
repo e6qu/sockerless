@@ -842,6 +842,12 @@ func deleteTableDataPlaneProjection(account, table string) {
 func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account string) {
 	path := strings.TrimPrefix(r.URL.Path, "/")
 
+	// Transactional batch: POST /$batch (multipart/mixed change-set).
+	if path == "$batch" && r.Method == http.MethodPost {
+		handleTableBatch(w, r, account)
+		return
+	}
+
 	// Tables CRUD path: POST /Tables, DELETE /Tables('name')
 	if path == "Tables" && r.Method == http.MethodPost {
 		handleTableCreate(w, r, account)
@@ -886,10 +892,13 @@ func handleTablesDataPlane(w http.ResponseWriter, r *http.Request, account strin
 		switch r.Method {
 		case http.MethodGet:
 			handleEntityGet(w, r, account, table, pk, rk)
-		case http.MethodPut, http.MethodPatch, "MERGE":
-			// MERGE is non-standard but real Azure Tables accepts it
-			// for partial-update semantics. Handle the same as PATCH.
-			handleEntityUpsert(w, r, account, table, pk, rk)
+		case http.MethodPut:
+			// PUT = Update Entity = wholesale replace.
+			handleEntityUpsert(w, r, account, table, pk, rk, false)
+		case http.MethodPatch, "MERGE":
+			// MERGE / PATCH = Merge Entity = overlay only the supplied
+			// properties onto the existing entity, preserving omitted ones.
+			handleEntityUpsert(w, r, account, table, pk, rk, true)
 		case http.MethodDelete:
 			handleEntityDelete(w, r, account, table, pk, rk)
 		default:
@@ -1064,7 +1073,11 @@ func handleEntityGet(w http.ResponseWriter, r *http.Request, account, table, pk,
 	sim.WriteJSON(w, http.StatusOK, out)
 }
 
-func handleEntityUpsert(w http.ResponseWriter, r *http.Request, account, table, pk, rk string) {
+// handleEntityUpsert handles Update Entity (PUT, full replace) and Merge Entity
+// (MERGE/PATCH, partial overlay). When merge is true the supplied properties are
+// overlaid onto the existing entity, preserving any omitted ones; otherwise the
+// entity is replaced wholesale. Both upsert when the entity doesn't yet exist.
+func handleEntityUpsert(w http.ResponseWriter, r *http.Request, account, table, pk, rk string, merge bool) {
 	if _, ok := tableData.Get(tableKey(account, table)); !ok {
 		writeTableODataError(w, "TableNotFound", "The table specified does not exist.", http.StatusNotFound)
 		return
@@ -1073,6 +1086,18 @@ func handleEntityUpsert(w http.ResponseWriter, r *http.Request, account, table, 
 	if err := json.NewDecoder(r.Body).Decode(&props); err != nil {
 		writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
 		return
+	}
+	if merge {
+		if existing, ok := tableEntities.Get(tableEntityKey(account, table, pk, rk)); ok {
+			merged := make(map[string]json.RawMessage, len(existing.Properties)+len(props))
+			for k, v := range existing.Properties {
+				merged[k] = v
+			}
+			for k, v := range props {
+				merged[k] = v
+			}
+			props = merged
+		}
 	}
 	props["PartitionKey"], _ = json.Marshal(pk)
 	props["RowKey"], _ = json.Marshal(rk)
@@ -1145,6 +1170,11 @@ func handleEntityQuery(w http.ResponseWriter, r *http.Request, account, table st
 		}
 	}
 
+	// $select — project the returned property map to the named columns. Real
+	// Tables always includes the system keys the SDK relies on (PartitionKey /
+	// RowKey / Timestamp) plus whatever the caller selected.
+	selectSet := parseTableSelect(r.URL.Query().Get("$select"))
+
 	entries := []map[string]json.RawMessage{}
 	idx := 0
 	nextToken := ""
@@ -1162,6 +1192,9 @@ func handleEntityQuery(w http.ResponseWriter, r *http.Request, account, table st
 		}
 		out := map[string]json.RawMessage{}
 		for k, v := range e.Properties {
+			if selectSet != nil && !selectSet[k] {
+				continue
+			}
 			out[k] = v
 		}
 		out["Timestamp"], _ = json.Marshal(e.Timestamp)
@@ -1193,6 +1226,23 @@ func tableEntityFilterMap(e TableEntity) map[string]any {
 	m["RowKey"] = e.RowKey
 	m["Timestamp"] = e.Timestamp
 	return m
+}
+
+// parseTableSelect builds the set of property names a $select restricts to, or
+// nil when $select is absent (= return all properties). The system keys
+// PartitionKey/RowKey are always retained so the SDK can address the entity.
+func parseTableSelect(raw string) map[string]bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	set := map[string]bool{"PartitionKey": true, "RowKey": true}
+	for _, col := range strings.Split(raw, ",") {
+		if c := strings.TrimSpace(col); c != "" {
+			set[c] = true
+		}
+	}
+	return set
 }
 
 func jsonString(raw json.RawMessage) string {

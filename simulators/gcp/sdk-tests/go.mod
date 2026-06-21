@@ -5,6 +5,7 @@ go 1.25.8
 require (
 	cloud.google.com/go/compute/metadata v0.9.0
 	cloud.google.com/go/eventarc v1.23.0
+	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.24.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0

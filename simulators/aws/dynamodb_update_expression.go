@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -313,7 +314,12 @@ func ddbResolveOperand(token string, item map[string]any, names map[string]strin
 		}
 		return v, nil
 	}
-	return item[ddbResolveName(token, names)], nil
+	// A bare path operand (copy-attribute) may be a nested document path
+	// (a.b[0].c), not just a top-level attribute.
+	if v, ok := ddbResolvePath(item, token, names); ok {
+		return v, nil
+	}
+	return nil, nil
 }
 
 // ddbStripParens removes fully-enclosing balanced parentheses from a SET value
@@ -361,11 +367,15 @@ func ddbEvalSetRHS(rhs string, item map[string]any, names map[string]string, val
 			if err != nil {
 				return nil, err
 			}
-			an, bn := ddbToNumber(a), ddbToNumber(b)
-			if op == '+' {
-				return ddbNumberValue(an + bn), nil
+			an, aok := ddbToNumber(a)
+			bn, bok := ddbToNumber(b)
+			if !aok || !bok {
+				return nil, fmt.Errorf("incorrect operand type for operator or function %c; expected a number", op)
 			}
-			return ddbNumberValue(an - bn), nil
+			if op == '+' {
+				return ddbNumberValue(new(big.Rat).Add(an, bn)), nil
+			}
+			return ddbNumberValue(new(big.Rat).Sub(an, bn)), nil
 		}
 	}
 	return ddbEvalSetOperand(rhs, item, names, values)
@@ -391,7 +401,7 @@ func ddbEvalSetOperand(operand string, item map[string]any, names map[string]str
 			return nil, fmt.Errorf("%s expects 2 args: %q", fn, operand)
 		}
 		if fn == "if_not_exists" {
-			if cur, ok := item[ddbResolveName(strings.TrimSpace(args[0]), names)]; ok {
+			if cur, ok := ddbResolvePath(item, strings.TrimSpace(args[0]), names); ok {
 				return cur, nil
 			}
 			return ddbEvalSetOperand(args[1], item, names, values)
@@ -457,18 +467,32 @@ func ddbListAppend(a, b any) any {
 	return map[string]any{"L": out}
 }
 
-func ddbToNumber(v any) float64 {
+// ddbToNumber parses a numeric AttributeValue into an exact rational (DynamoDB
+// carries up to 38 significant digits — float64 would corrupt large/precise
+// numbers). ok is false when v isn't a number.
+func ddbToNumber(v any) (*big.Rat, bool) {
 	if m, ok := v.(map[string]any); ok {
 		if n, ok := m["N"].(string); ok {
-			f, _ := strconv.ParseFloat(n, 64)
-			return f
+			if r, ok := new(big.Rat).SetString(n); ok {
+				return r, true
+			}
 		}
 	}
-	return 0
+	return nil, false
 }
 
-func ddbNumberValue(f float64) map[string]any {
-	return map[string]any{"N": strconv.FormatFloat(f, 'f', -1, 64)}
+// ddbNumberValue formats an exact rational back into a DynamoDB number string:
+// integers print exactly at any magnitude; fractional results print as a decimal
+// trimmed to DynamoDB's 38-digit precision.
+func ddbNumberValue(r *big.Rat) map[string]any {
+	var s string
+	if r.IsInt() {
+		s = r.Num().String()
+	} else {
+		s = strings.TrimRight(r.FloatString(38), "0")
+		s = strings.TrimRight(s, ".")
+	}
+	return map[string]any{"N": s}
 }
 
 // ddbAddValues implements ADD: numeric increment, or string/number-set union.
@@ -499,7 +523,15 @@ func ddbAddValues(cur, operand any) any {
 		}
 	}
 	// number increment (ADD on a missing attribute starts from 0)
-	return ddbNumberValue(ddbToNumber(cur) + ddbToNumber(operand))
+	cn, _ := ddbToNumber(cur)
+	if cn == nil {
+		cn = new(big.Rat)
+	}
+	on, _ := ddbToNumber(operand)
+	if on == nil {
+		on = new(big.Rat)
+	}
+	return ddbNumberValue(new(big.Rat).Add(cn, on))
 }
 
 // ddbDeleteSetElems implements DELETE: remove the operand's elements from a set.

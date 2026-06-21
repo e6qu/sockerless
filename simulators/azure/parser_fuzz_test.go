@@ -68,15 +68,21 @@ func FuzzAzureStorageAddressParsers(f *testing.F) {
 	})
 }
 
-// FuzzCosmosEqualityQuery fuzzes the Cosmos SQL equality-query parser, which
-// runs over an untrusted SQL query string from the Cosmos data plane. It must
-// never panic regardless of how malformed the WHERE clause is.
-func FuzzCosmosEqualityQuery(f *testing.F) {
+// FuzzCosmosSQLQuery fuzzes the Cosmos SQL-subset parser + evaluator, which run
+// over an untrusted SQL query string from the Cosmos data plane. Neither parsing
+// nor evaluation may panic regardless of how malformed the query is.
+func FuzzCosmosSQLQuery(f *testing.F) {
 	seeds := []string{
 		"",
 		"SELECT * FROM c",
+		"SELECT c.a, c.b FROM c",
+		"SELECT VALUE COUNT(1) FROM c",
 		"SELECT * FROM c WHERE c.id = 'x'",
 		"SELECT * FROM c WHERE c.id = @id",
+		"SELECT * FROM c WHERE c.a > 1 AND c.b <= 2 OR NOT c.c = 'z'",
+		"SELECT * FROM c WHERE c.tags IN ('a','b') AND CONTAINS(c.name, 'foo')",
+		"SELECT * FROM c WHERE STARTSWITH(c.x,'a') ORDER BY c.n DESC OFFSET 1 LIMIT 2",
+		"SELECT TOP 3 * FROM c",
 		"where",
 		"where =",
 		"where ===",
@@ -84,12 +90,21 @@ func FuzzCosmosEqualityQuery(f *testing.F) {
 		"where c.id=",
 		"\x00where\x00=\x00",
 		"WhErE   c.[`x`]   =   'v'",
+		"SELECT ( ( ( ( ( ( c.a",
 	}
 	for _, s := range seeds {
 		f.Add(s)
 	}
+	params := map[string]any{"@id": "x", "@n": float64(1)}
+	docs := []CosmosDocument{
+		{ID: "1", Body: map[string]any{"id": "1", "a": float64(2), "name": "foobar", "tags": "a"}},
+		{ID: "2", Body: map[string]any{"id": "2", "a": float64(0), "n": float64(5)}},
+	}
 	f.Fuzz(func(t *testing.T, query string) {
-		params := []map[string]any{{"name": "@id", "value": "x"}}
-		_, _, _ = cosmosParseEqualityQuery(query, params)
+		plan, err := cosmosParseQuery(query)
+		if err != nil {
+			return
+		}
+		_ = cosmosRunQuery(plan, docs, params)
 	})
 }

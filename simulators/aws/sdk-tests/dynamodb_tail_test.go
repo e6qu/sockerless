@@ -278,3 +278,80 @@ func TestDDBConsistentReadOnGSI(t *testing.T) {
 	require.Error(t, err, "ConsistentRead on a GSI must be rejected")
 	assert.True(t, strings.Contains(err.Error(), "ValidationException") || strings.Contains(err.Error(), "onsistent"))
 }
+
+// ── AWS DynamoDB expression-engine fixes (BUG-2150..2153) ─────────────────────
+
+// TestDDBNestedIfNotExists — if_not_exists() and a bare-path copy resolve NESTED
+// document paths, not just top-level attrs (BUG-2150, follow-on to #648).
+func TestDDBNestedIfNotExists(t *testing.T) {
+	c := ddbClient()
+	tbl := "nested-ine"
+	ddbSimpleTable(t, c, tbl)
+	_, err := c.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(tbl), Item: map[string]ddbtypes.AttributeValue{
+		"pk": sS("x"),
+		"a":  &ddbtypes.AttributeValueMemberM{Value: map[string]ddbtypes.AttributeValue{"b": sN("7")}},
+	}})
+	require.NoError(t, err)
+	// if_not_exists(a.b, :z) must find the EXISTING nested 7, so 7 - 1 = 6.
+	_, err = c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tbl),
+		Key:                       map[string]ddbtypes.AttributeValue{"pk": sS("x")},
+		UpdateExpression:          aws.String("SET #a.#b = if_not_exists(#a.#b, :z) - :v"),
+		ExpressionAttributeNames:  map[string]string{"#a": "a", "#b": "b"},
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":z": sN("0"), ":v": sN("1")},
+	})
+	require.NoError(t, err)
+	got, _ := c.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tbl), Key: map[string]ddbtypes.AttributeValue{"pk": sS("x")}})
+	m := got.Item["a"].(*ddbtypes.AttributeValueMemberM)
+	assert.Equal(t, "6", m.Value["b"].(*ddbtypes.AttributeValueMemberN).Value, "nested if_not_exists must use the existing value")
+}
+
+// TestDDBNumberEqualityCanonical — N equality compares by value (5 == 5.0) in a
+// FilterExpression (BUG-2151).
+func TestDDBNumberEqualityCanonical(t *testing.T) {
+	c := ddbClient()
+	tbl := "num-eq"
+	ddbSimpleTable(t, c, tbl)
+	_, err := c.PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String(tbl),
+		Item: map[string]ddbtypes.AttributeValue{"pk": sS("x"), "n": sN("5.0")}})
+	require.NoError(t, err)
+	out, err := c.Scan(ctx, &dynamodb.ScanInput{
+		TableName:                 aws.String(tbl),
+		FilterExpression:          aws.String("n = :p"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":p": sN("5")},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), out.Count, "{N:5.0} must equal {N:5}")
+}
+
+// TestDDBBigNumberArithmetic — arithmetic SET keeps full integer precision past
+// 2^53 (BUG-2152).
+func TestDDBBigNumberArithmetic(t *testing.T) {
+	c := ddbClient()
+	tbl := "big-num"
+	ddbSimpleTable(t, c, tbl)
+	_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tbl),
+		Key:                       map[string]ddbtypes.AttributeValue{"pk": sS("x")},
+		UpdateExpression:          aws.String("SET n = if_not_exists(n, :start) + :one"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":start": sN("9007199254740993"), ":one": sN("1")},
+	})
+	require.NoError(t, err)
+	got, _ := c.GetItem(ctx, &dynamodb.GetItemInput{TableName: aws.String(tbl), Key: map[string]ddbtypes.AttributeValue{"pk": sS("x")}})
+	assert.Equal(t, "9007199254740994", got.Item["n"].(*ddbtypes.AttributeValueMemberN).Value, "no float64 rounding")
+}
+
+// TestDDBArithmeticNonNumericRejected — +/- on a non-numeric operand errors
+// instead of silently storing 0 (BUG-2153).
+func TestDDBArithmeticNonNumericRejected(t *testing.T) {
+	c := ddbClient()
+	tbl := "arith-type"
+	ddbSimpleTable(t, c, tbl)
+	_, err := c.UpdateItem(ctx, &dynamodb.UpdateItemInput{
+		TableName:                 aws.String(tbl),
+		Key:                       map[string]ddbtypes.AttributeValue{"pk": sS("x")},
+		UpdateExpression:          aws.String("SET n = :s + :one"),
+		ExpressionAttributeValues: map[string]ddbtypes.AttributeValue{":s": sS("hello"), ":one": sN("1")},
+	})
+	require.Error(t, err, "arithmetic on a string operand must be rejected")
+}

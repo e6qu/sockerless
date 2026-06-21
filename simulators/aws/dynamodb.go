@@ -1762,17 +1762,20 @@ func ddbCompare(a, b any, op string) bool {
 	}
 	// Numeric comparison when both sides are N; lexicographic otherwise.
 	as, bs := ddbScalarString(a), ddbScalarString(b)
-	if af, aerr := strconv.ParseFloat(as, 64); aerr == nil {
-		if bf, berr := strconv.ParseFloat(bs, 64); berr == nil {
+	// Exact rational comparison when both sides are numbers (DynamoDB carries 38
+	// digits — float64 would mis-order large/precise numbers); lexicographic else.
+	if ar, aok := new(big.Rat).SetString(as); aok {
+		if br, bok := new(big.Rat).SetString(bs); bok {
+			c := ar.Cmp(br)
 			switch op {
 			case "<":
-				return af < bf
+				return c < 0
 			case "<=":
-				return af <= bf
+				return c <= 0
 			case ">":
-				return af > bf
+				return c > 0
 			case ">=":
-				return af >= bf
+				return c >= 0
 			}
 		}
 	}
@@ -2159,7 +2162,15 @@ func ddbAttrValuesEqual(a, b any) bool {
 	if !aok || !bok {
 		return fmt.Sprint(a) == fmt.Sprint(b)
 	}
-	for _, key := range []string{"S", "N", "B", "BOOL", "NULL"} {
+	// Numbers compare by value, not text: {N:"5"} == {N:"5.0"} == {N:"1e1"}.
+	if an, ok := av["N"]; ok {
+		bn, ok2 := bv["N"]
+		return ok2 && ddbCanonicalNumber(fmt.Sprint(an)) == ddbCanonicalNumber(fmt.Sprint(bn))
+	}
+	if _, ok := bv["N"]; ok {
+		return false
+	}
+	for _, key := range []string{"S", "B", "BOOL", "NULL"} {
 		if fmt.Sprint(av[key]) != fmt.Sprint(bv[key]) {
 			return false
 		}
