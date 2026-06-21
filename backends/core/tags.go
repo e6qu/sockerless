@@ -93,11 +93,13 @@ func (ts TagSet) AsMap() map[string]string {
 	return m
 }
 
-// ParseLabelsFromTags reconstructs Docker labels from tag map.
-// Handles both the current base64(JSON) encoding and the legacy
-// raw-JSON encoding for backward compatibility during rollout.
+// ParseLabelsFromTags reconstructs Docker labels from a tag map. Labels
+// round-trip as URL-safe-base64-encoded JSON under `sockerless-labels-b64`
+// (a single key when the blob is ≤256 chars) or split across
+// `sockerless-labels-b64-<i>` for longer blobs — the only encoding AsMap
+// writes.
 func ParseLabelsFromTags(tags map[string]string) map[string]string {
-	// URL-safe-base64-encoded JSON (current format).
+	// URL-safe-base64-encoded JSON in a single key.
 	if s, ok := tags["sockerless-labels-b64"]; ok {
 		if raw, err := base64.RawURLEncoding.DecodeString(s); err == nil {
 			var labels map[string]string
@@ -106,7 +108,7 @@ func ParseLabelsFromTags(tags map[string]string) map[string]string {
 			}
 		}
 	}
-	// Split base64.
+	// Base64 split across sockerless-labels-b64-<i>.
 	var b64Parts []string
 	for i := 0; ; i++ {
 		key := "sockerless-labels-b64-" + strconv.Itoa(i)
@@ -122,28 +124,6 @@ func ParseLabelsFromTags(tags map[string]string) map[string]string {
 			if json.Unmarshal(raw, &labels) == nil {
 				return labels
 			}
-		}
-	}
-	// Legacy raw JSON.
-	if s, ok := tags["sockerless-labels"]; ok {
-		var labels map[string]string
-		if json.Unmarshal([]byte(s), &labels) == nil {
-			return labels
-		}
-	}
-	var parts []string
-	for i := 0; ; i++ {
-		key := "sockerless-labels-" + string(rune('0'+i))
-		s, ok := tags[key]
-		if !ok {
-			break
-		}
-		parts = append(parts, s)
-	}
-	if len(parts) > 0 {
-		var labels map[string]string
-		if json.Unmarshal([]byte(strings.Join(parts, "")), &labels) == nil {
-			return labels
 		}
 	}
 	return nil

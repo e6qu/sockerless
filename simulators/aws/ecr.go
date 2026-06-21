@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -463,6 +464,11 @@ func ecrRepoImages(repo string) []ECRImageDetail {
 func handleECRListImages(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RepositoryName string `json:"repositoryName"`
+		NextToken      string `json:"nextToken"`
+		MaxResults     int    `json:"maxResults"`
+		Filter         struct {
+			TagStatus string `json:"tagStatus"`
+		} `json:"filter"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -472,17 +478,37 @@ func handleECRListImages(w http.ResponseWriter, r *http.Request) {
 		sim.AWSErrorf(w, "RepositoryNotFoundException", http.StatusBadRequest, "The repository with name '%s' does not exist", req.RepositoryName)
 		return
 	}
+	// filter.tagStatus ∈ TAGGED | UNTAGGED | ANY (default ANY). Real ECR
+	// restricts the returned imageIds to the requested tag presence.
+	tagStatus := strings.ToUpper(req.Filter.TagStatus)
 	imageIds := []map[string]string{}
 	for _, img := range ecrRepoImages(req.RepositoryName) {
 		if len(img.ImageTags) == 0 {
+			if tagStatus == "TAGGED" {
+				continue
+			}
 			imageIds = append(imageIds, map[string]string{"imageDigest": img.ImageDigest})
+			continue
+		}
+		if tagStatus == "UNTAGGED" {
 			continue
 		}
 		for _, tag := range img.ImageTags {
 			imageIds = append(imageIds, map[string]string{"imageDigest": img.ImageDigest, "imageTag": tag})
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"imageIds": imageIds})
+	sort.Slice(imageIds, func(i, j int) bool {
+		if imageIds[i]["imageDigest"] != imageIds[j]["imageDigest"] {
+			return imageIds[i]["imageDigest"] < imageIds[j]["imageDigest"]
+		}
+		return imageIds[i]["imageTag"] < imageIds[j]["imageTag"]
+	})
+	page, next := awsPageExplicit(imageIds, req.NextToken, req.MaxResults)
+	resp := map[string]any{"imageIds": page}
+	if next != "" {
+		resp["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleECRDescribeImages(w http.ResponseWriter, r *http.Request) {
@@ -492,6 +518,11 @@ func handleECRDescribeImages(w http.ResponseWriter, r *http.Request) {
 			ImageTag    string `json:"imageTag"`
 			ImageDigest string `json:"imageDigest"`
 		} `json:"imageIds"`
+		NextToken  string `json:"nextToken"`
+		MaxResults int    `json:"maxResults"`
+		Filter     struct {
+			TagStatus string `json:"tagStatus"`
+		} `json:"filter"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -517,8 +548,21 @@ func handleECRDescribeImages(w http.ResponseWriter, r *http.Request) {
 		images = ecrRepoImages(req.RepositoryName)
 	}
 
-	details := make([]map[string]any, 0, len(images))
-	for _, img := range images {
+	// filter.tagStatus ∈ TAGGED | UNTAGGED | ANY (default ANY).
+	if tagStatus := strings.ToUpper(req.Filter.TagStatus); tagStatus == "TAGGED" || tagStatus == "UNTAGGED" {
+		var f []ECRImageDetail
+		for _, img := range images {
+			if (len(img.ImageTags) > 0) == (tagStatus == "TAGGED") {
+				f = append(f, img)
+			}
+		}
+		images = f
+	}
+	sort.Slice(images, func(i, j int) bool { return images[i].ImageDigest < images[j].ImageDigest })
+	page, next := awsPageExplicit(images, req.NextToken, req.MaxResults)
+
+	details := make([]map[string]any, 0, len(page))
+	for _, img := range page {
 		tags := img.ImageTags
 		if tags == nil {
 			tags = []string{}
@@ -532,7 +576,11 @@ func handleECRDescribeImages(w http.ResponseWriter, r *http.Request) {
 			"imagePushedAt":    img.PushedAt,
 		})
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"imageDetails": details})
+	resp := map[string]any{"imageDetails": details}
+	if next != "" {
+		resp["nextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
 }
 
 func handleECRBatchGetImage(w http.ResponseWriter, r *http.Request) {

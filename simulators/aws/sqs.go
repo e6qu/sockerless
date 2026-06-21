@@ -116,9 +116,12 @@ func sqsMessageAttributeMD5(attrs map[string]SQSMessageAttribute) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sqsSelectMessageAttributes filters the stored attributes by the requested
-// names ("All" / ".*" select everything), the way ReceiveMessage scopes them.
-func sqsSelectMessageAttributes(attrs map[string]SQSMessageAttribute, requested []string) map[string]any {
+// sqsSelectMessageAttributeSubset returns the stored attributes restricted to
+// the requested names ("All" / ".*" select everything), the way ReceiveMessage
+// scopes them. Returns nil when none match. The typed subset lets the caller
+// both render it and recompute MD5OfMessageAttributes over exactly the returned
+// set.
+func sqsSelectMessageAttributeSubset(attrs map[string]SQSMessageAttribute, requested []string) map[string]SQSMessageAttribute {
 	if len(attrs) == 0 || len(requested) == 0 {
 		return nil
 	}
@@ -130,11 +133,23 @@ func sqsSelectMessageAttributes(attrs map[string]SQSMessageAttribute, requested 
 		}
 		want[n] = true
 	}
+	out := map[string]SQSMessageAttribute{}
+	for name, a := range attrs {
+		if all || want[name] {
+			out[name] = a
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// sqsRenderMessageAttributes renders an attribute set into the ReceiveMessage
+// JSON response shape.
+func sqsRenderMessageAttributes(attrs map[string]SQSMessageAttribute) map[string]any {
 	out := map[string]any{}
 	for name, a := range attrs {
-		if !all && !want[name] {
-			continue
-		}
 		entry := map[string]any{"DataType": a.DataType}
 		if strings.HasPrefix(a.DataType, "Binary") {
 			entry["BinaryValue"] = a.BinaryValue
@@ -142,9 +157,6 @@ func sqsSelectMessageAttributes(attrs map[string]SQSMessageAttribute, requested 
 			entry["StringValue"] = a.StringValue
 		}
 		out[name] = entry
-	}
-	if len(out) == 0 {
-		return nil
 	}
 	return out
 }
@@ -680,11 +692,13 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 				"ApproximateFirstReceiveTimestamp": strconv.FormatInt(m.FirstReceivedAt, 10),
 			},
 		}
-		if attrs := sqsSelectMessageAttributes(m.MessageAttributes, req.MessageAttributeNames); attrs != nil {
-			msg["MessageAttributes"] = attrs
-			if m.MD5OfMessageAttributes != "" {
-				msg["MD5OfMessageAttributes"] = m.MD5OfMessageAttributes
-			}
+		if subset := sqsSelectMessageAttributeSubset(m.MessageAttributes, req.MessageAttributeNames); subset != nil {
+			msg["MessageAttributes"] = sqsRenderMessageAttributes(subset)
+			// The MD5 must cover exactly the returned subset: aws-sdk-go-v2's
+			// ValidateMessageChecksums recomputes MD5OfMessageAttributes over the
+			// received attributes and rejects the message on mismatch, so a
+			// partial selection cannot reuse the stored full-set digest.
+			msg["MD5OfMessageAttributes"] = sqsMessageAttributeMD5(subset)
 		}
 		out = append(out, msg)
 	}

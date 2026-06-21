@@ -37,7 +37,10 @@ func TestPodMembersFromFunctionRoundtrip(t *testing.T) {
 			},
 		},
 	}
-	got := podMembersFromFunction(fn)
+	got, err := podMembersFromFunction(fn)
+	if err != nil {
+		t.Fatalf("podMembersFromFunction: %v", err)
+	}
 	if len(got) != 2 {
 		t.Fatalf("len: got %d want 2", len(got))
 	}
@@ -53,8 +56,9 @@ func TestPodMembersFromFunctionRoundtrip(t *testing.T) {
 }
 
 func TestPodMembersFromFunctionEmpty(t *testing.T) {
-	if got := podMembersFromFunction(&functionspb.Function{}); got != nil {
-		t.Errorf("expected nil from empty function, got %+v", got)
+	// Absent manifest → (nil, nil): the function is simply not a pod.
+	if got, err := podMembersFromFunction(&functionspb.Function{}); got != nil || err != nil {
+		t.Errorf("expected (nil,nil) from empty function, got %+v err=%v", got, err)
 	}
 	fn := &functionspb.Function{
 		ServiceConfig: &functionspb.ServiceConfig{
@@ -63,8 +67,10 @@ func TestPodMembersFromFunctionEmpty(t *testing.T) {
 			},
 		},
 	}
-	if got := podMembersFromFunction(fn); got != nil {
-		t.Errorf("expected nil from bad encoding, got %+v", got)
+	// Present-but-undecodable manifest → surface the error, not silently
+	// drop every pod member from `docker ps`.
+	if got, err := podMembersFromFunction(fn); err == nil {
+		t.Errorf("expected error from bad encoding, got members=%+v nil err", got)
 	}
 }
 

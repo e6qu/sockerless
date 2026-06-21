@@ -57,6 +57,65 @@ func TestECR_ListAndDescribeAndDeleteImages(t *testing.T) {
 	assert.Empty(t, listAfter.ImageIds)
 }
 
+// TestECR_ListImagesFilterAndPagination covers the filter.tagStatus + maxResults
+// /nextToken support that ListImages/DescribeImages silently dropped (a TAGGED/
+// UNTAGGED filter previously returned every image).
+func TestECR_ListImagesFilterAndPagination(t *testing.T) {
+	c := ecrClient()
+	_, err := c.CreateRepository(ctx, &ecr.CreateRepositoryInput{RepositoryName: aws.String("cov-filter")})
+	require.NoError(t, err)
+	// Two distinct manifests (different config digests → different image
+	// digests) so each tag is a separate image and pagination has 2 entries.
+	imgs := []struct{ tag, manifest string }{
+		{"v1", `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","size":7,"digest":"sha256:covimg1"},"layers":[]}`},
+		{"v2", `{"schemaVersion":2,"mediaType":"application/vnd.docker.distribution.manifest.v2+json","config":{"mediaType":"application/vnd.docker.container.image.v1+json","size":7,"digest":"sha256:covimg2"},"layers":[]}`},
+	}
+	for _, m := range imgs {
+		_, err = c.PutImage(ctx, &ecr.PutImageInput{
+			RepositoryName: aws.String("cov-filter"), ImageTag: aws.String(m.tag), ImageManifest: aws.String(m.manifest),
+		})
+		require.NoError(t, err)
+	}
+
+	tagged, err := c.ListImages(ctx, &ecr.ListImagesInput{
+		RepositoryName: aws.String("cov-filter"),
+		Filter:         &ecrtypes.ListImagesFilter{TagStatus: ecrtypes.TagStatusTagged},
+	})
+	require.NoError(t, err)
+	assert.Len(t, tagged.ImageIds, 2, "TAGGED returns both tags")
+
+	untagged, err := c.ListImages(ctx, &ecr.ListImagesInput{
+		RepositoryName: aws.String("cov-filter"),
+		Filter:         &ecrtypes.ListImagesFilter{TagStatus: ecrtypes.TagStatusUntagged},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, untagged.ImageIds, "UNTAGGED must exclude tagged images (filter was ignored before)")
+
+	page1, err := c.ListImages(ctx, &ecr.ListImagesInput{
+		RepositoryName: aws.String("cov-filter"), MaxResults: aws.Int32(1),
+	})
+	require.NoError(t, err)
+	require.Len(t, page1.ImageIds, 1)
+	require.NotNil(t, page1.NextToken, "maxResults=1 truncates → NextToken")
+	page2, err := c.ListImages(ctx, &ecr.ListImagesInput{
+		RepositoryName: aws.String("cov-filter"), MaxResults: aws.Int32(1), NextToken: page1.NextToken,
+	})
+	require.NoError(t, err)
+	require.Len(t, page2.ImageIds, 1)
+	assert.NotEqual(t,
+		aws.ToString(page1.ImageIds[0].ImageDigest)+aws.ToString(page1.ImageIds[0].ImageTag),
+		aws.ToString(page2.ImageIds[0].ImageDigest)+aws.ToString(page2.ImageIds[0].ImageTag),
+		"each page returns a distinct imageId")
+
+	// DescribeImages honors the same UNTAGGED filter.
+	descUntagged, err := c.DescribeImages(ctx, &ecr.DescribeImagesInput{
+		RepositoryName: aws.String("cov-filter"),
+		Filter:         &ecrtypes.DescribeImagesFilter{TagStatus: ecrtypes.TagStatusUntagged},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, descUntagged.ImageDetails, "DescribeImages UNTAGGED excludes tagged images")
+}
+
 // TestECR_LifecyclePolicyLifecycle covers Put/Get/DeleteLifecyclePolicy.
 func TestECR_LifecyclePolicyLifecycle(t *testing.T) {
 	c := ecrClient()

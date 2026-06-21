@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	core "github.com/sockerless/backend-core"
 )
 
 func TestMapTaskStatus_Running(t *testing.T) {
@@ -135,12 +136,13 @@ func TestTaskToContainer_LabelsFromTags(t *testing.T) {
 			{Name: aws.String("main"), Image: aws.String("alpine")},
 		},
 	}
-	tags := map[string]string{
-		"sockerless-managed":      "true",
-		"sockerless-container-id": "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
-		"sockerless-name":         "/test",
-		"sockerless-labels":       `{"app":"web","env":"prod"}`,
-	}
+	// Build tags via the real writer so labels carry the current base64-JSON
+	// encoding (sockerless-labels-b64), the only form AsMap writes.
+	tags := core.TagSet{
+		ContainerID: "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+		Name:        "/test",
+		Labels:      map[string]string{"app": "web", "env": "prod"},
+	}.AsMap()
 
 	c := taskToContainer(task, tags, ecstypes.TaskDefinition{})
 

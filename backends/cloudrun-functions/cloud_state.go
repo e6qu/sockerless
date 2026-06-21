@@ -266,7 +266,12 @@ func (p *gcfCloudState) queryFunctions(ctx context.Context) ([]api.Container, er
 		// through to single-container handling when the function is
 		// not pod-managed.
 		if labels["sockerless_pod"] != "" {
-			members := podMembersFromFunction(fn)
+			members, err := podMembersFromFunction(fn)
+			if err != nil {
+				p.server.Logger.Warn().Err(err).Str("function", fn.Name).
+					Msg("podMembersFromFunction: skipping pod function with undecodable manifest")
+				continue
+			}
 			for _, m := range members {
 				if m.ContainerID == "" || seen[m.ContainerID] {
 					continue
@@ -502,22 +507,24 @@ func dockerLabelsFromCloudRunService(svc *runpb.Service) map[string]string {
 }
 
 // podMembersFromFunction extracts the per-member manifest from the
-// Function's SOCKERLESS_POD_CONTAINERS env var. Returns nil if the
-// env is missing or undecodable — the caller treats the Function as
-// non-pod in that case.
-func podMembersFromFunction(fn *functionspb.Function) []PodMemberJSON {
+// Function's SOCKERLESS_POD_CONTAINERS env var. Returns (nil, nil) when
+// the env is absent (the Function is not a pod). A present-but-undecodable
+// manifest means the writing backend produced garbage — return the decode
+// error so the caller surfaces the inconsistency rather than silently
+// dropping every pod member from `docker ps`.
+func podMembersFromFunction(fn *functionspb.Function) ([]PodMemberJSON, error) {
 	if fn.ServiceConfig == nil {
-		return nil
+		return nil, nil
 	}
 	enc := fn.ServiceConfig.EnvironmentVariables["SOCKERLESS_POD_CONTAINERS"]
 	if enc == "" {
-		return nil
+		return nil, nil
 	}
 	members, err := DecodePodManifest(enc)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("malformed SOCKERLESS_POD_CONTAINERS on function %q: %w", fn.Name, err)
 	}
-	return members
+	return members, nil
 }
 
 // podMemberToContainer builds a `docker ps` row for one pod member.

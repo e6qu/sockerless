@@ -4,6 +4,56 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-21 - Audit + extended-fuzz + clean-break round 19
+
+Parallel audit agents (sim fidelity / backend error-handling / un-fuzzed parser map)
++ extended fuzzing. **8 real bugs fixed; zero crashers from the existing 16-target
+corpus (it's solid) — the two new crash bugs came from un-fuzzed surfaces.** Also
+established two standing directives (no backward-compat affordances / clean breaks
+since the project isn't launched; one reliable uniform metadata-reconstruction
+carrier per resource, no second-source fallback) and filed the larger work they imply.
+
+- **BUG-2104 (ECR filter, wrong results):** ListImages/DescribeImages dropped
+  `filter.tagStatus` + `maxResults`/`nextToken` — a TAGGED/UNTAGGED filter returned the
+  full image set. Verified the fields in `ecr.smithy.json.gz`; filter by tag presence +
+  paginate. SDK test.
+- **BUG-2105 (SQS MD5):** ReceiveMessage with a `MessageAttributeNames` subset re-emitted
+  the stored full-set `MD5OfMessageAttributes`; aws-sdk-go-v2's `ValidateMessageChecksums`
+  fails the call on mismatch → partial reads broke. Recompute over exactly the returned
+  subset. SDK test (the SDK auto-validates, so a green subset receive proves it).
+- **BUG-2106 / 2107 (GCP pagination):** IAM ListServiceAccounts + Artifact Registry
+  ListRepositories returned the full set with no `nextPageToken`; routed through the
+  existing `paginateList` helper. SDK tests.
+- **BUG-2108 (fail-loud, azf/gcf):** stateless cloud_state reconstruction silently
+  swallowed a corrupt decode of sockerless's own data — azf `azfSpecFromProps`
+  (SOCKERLESS_CMD/ENTRYPOINT) → fake empty command; gcf `podMembersFromFunction`
+  (SOCKERLESS_POD_CONTAINERS) → pod containers vanish from `docker ps`. Now surface the
+  error to a loud `Logger.Warn` (matching gcf's existing `functionToContainer`
+  convention), distinct from the legit *absent* case. Corrupt-input regression tests.
+- **BUG-2109 (clean break):** core `ParseLabelsFromTags` carried `sockerless-labels`
+  raw-JSON + `sockerless-labels-<i>` raw-split read paths that **no current writer
+  produces** (AsMap only writes `sockerless-labels-b64`). Deleted both + the legacy test
+  per the not-launched clean-break directive.
+- **BUG-2110 (fuzz-found, P2 DoS):** the Service Bus AMQP wire-frame decoder
+  (`parseAMQPFrame` + `amqpValueReader`, reachable from raw WebSocket binary frames)
+  panicked on malformed input in several ways — short-frame `binary.BigEndian` index,
+  `u32`/`u64` ignoring `take`'s error, `readArray` `r.off--` underflow to index -1, an
+  unhashable `[]any` map key, and a huge wire count → billions of iterations / OOM.
+  Hardened with frame/size bounds, safe `u32`/`u64`, an underflow guard, a scoped
+  recover for unhashable keys, and total-value + recursion-depth budgets. New
+  `FuzzAMQPParseFrame` + `FuzzAMQPReadValue`; 3 regression seeds committed.
+- **BUG-2111 (fuzz-found DoS):** IAM `iamSLRName` did `parts[0][:1]` on a leading-dot
+  `AWSServiceName` (`SplitN` returns `parts[0]==""`) → slice panic. Rune-aware
+  title-case guarded on non-empty. New `FuzzIAMSLRName`.
+
+**Filed for follow-up (not silently deferred):** BUG-2112 the gcp-family docker-label
+**single-source refactor** — make `SOCKERLESS_LABELS` the one authoritative carrier on
+every deploy path, fail loud, delete the GCP-label reconstruction fallback + dead
+helpers; it edits the stateless reconstruction the cloudrun/gcf runner cells validate,
+so it's its own cell-gated PR. BUG-2113 EventBridge InputPath/InputTransformer (needs a
+JSONPath + template engine). BUG-2114 a few marginal default-on-invalid numeric params
+(verify the spec error shape before fixing).
+
 ## 2026-06-21 - Audit + extended-fuzz round 18
 
 Parallel audit agents (sims/backends/shared/agent/core) + extended fuzzing over the

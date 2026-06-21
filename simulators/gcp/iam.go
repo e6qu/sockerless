@@ -9,6 +9,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -301,10 +302,16 @@ func registerIAM(srv *sim.Server) {
 		accounts := serviceAccounts.Filter(func(sa GCPServiceAccount) bool {
 			return strings.HasPrefix(sa.Name, prefix)
 		})
-
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"accounts": accounts,
-		})
+		sort.Slice(accounts, func(i, j int) bool { return accounts[i].Name < accounts[j].Name })
+		page, next, ok := paginateList(w, r, accounts)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"accounts": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
 	// Project IAM - getIamPolicy / setIamPolicy

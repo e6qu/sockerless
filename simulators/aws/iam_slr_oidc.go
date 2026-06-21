@@ -96,10 +96,15 @@ func iamSLRName(servicePrincipal, customSuffix string) string {
 	}
 	suffix := known[servicePrincipal]
 	if suffix == "" {
-		// Fallback: take the leading service token + PascalCase
+		// Fallback: take the leading service token + PascalCase.
+		// SplitN always returns ≥1 element but the first can be empty
+		// (e.g. principal ".foo"), so guard the leading character and
+		// title-case rune-aware (a multibyte first rune must not be
+		// sliced mid-byte).
 		parts := strings.SplitN(servicePrincipal, ".", 2)
-		if len(parts) > 0 {
-			suffix = strings.ToUpper(parts[0][:1]) + parts[0][1:]
+		if parts[0] != "" {
+			rs := []rune(parts[0])
+			suffix = strings.ToUpper(string(rs[0])) + string(rs[1:])
 		}
 	}
 	name := "AWSServiceRoleFor" + suffix
