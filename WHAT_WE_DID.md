@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - Cosmos DB compliance: the real azcosmos SDK against the sim + a differential vs Microsoft's emulator
+
+The Cosmos slice's data plane had only ever been reached through a sim-special raw-HTTP `x-ms-cosmos-account` routing shortcut — itself a fidelity violation of the project's "a real client works against the sim differing only in coordinates" rule. This PR makes the **official `azcosmos` Go SDK** (`NewClientWithKey`) perform the full document lifecycle against the sim — create database/container, create/read/replace/upsert/patch/delete items, and parameterized queries — driven exactly as it would be against real Azure Cosmos, differing only in the endpoint.
+
+Three things were required, found by reading the azcosmos SDK and running it against the sim:
+
+1. **Account discovery.** azcosmos's global-endpoint-manager GETs the account root (`GET /`) on its first request and *fails that request* if it errors, so the sim must serve account properties. The new handler returns a single read/write region whose `databaseAccountEndpoint` echoes the client's own endpoint, so the SDK keeps routing every request to the sim.
+
+2. **Cosmos vs storage routing.** The storage data plane has an Azurite-compatible path-style fallback (`blob.go`) that claims any request carrying a "storage signal" — including `x-ms-version`, which azcosmos *also* sends. The raw-HTTP tests didn't send it, so the collision was invisible; the real SDK tripped it (CreateContainer → a 405 from the blob handler). The fix is a precise `cosmosIsDataPlaneRequest` discriminator (master-key `type=master` Authorization, documentdb headers, or the test account header — deliberately *not* bare `x-ms-version`), which both the account-discovery handler and the storage fallback consult so Cosmos traffic is never misrouted.
+
+3. **Response fidelity.** azcosmos reads the item ETag from the HTTP `ETag` header, so the sim now surfaces it (it previously lived only in the body `_etag`), and every document carries the `_attachments: "attachments/"` system field real Cosmos always returns.
+
+The compliance is proven two ways. `TestCosmos_RealSDKDataPlane` drives the lifecycle with the real SDK against the sim and runs in CI without any emulator. `TestCosmos_DifferentialVsEmulator` runs the **same azcosmos client code** against the sim and Microsoft's vNext Cosmos emulator (`--protocol http`, no TLS) — create/read, upsert-replaces, create-conflict-409, read-missing-404, patch-increment, delete-then-404, and a `WHERE … ORDER BY` query — and all seven scenarios agree. As with the DynamoDB-Local and Firestore differentials, the emulator is a reference, not a ceiling: a `cosmosDiffKnownDivergences` registry holds documented sim-superiority cases (empty today). It's Docker-gated and skips when the image is absent; CI pre-pulls the emulator and the azure SDK step's budget is raised to accommodate its startup.
+
+This is compliance phase 1 — the core document lifecycle + query at SDK fidelity, verified against the real emulator. The deeper surface (partition-key isolation, query pagination/continuation, a realistic RU model + autoscale offers, stored procedures, change feed + conflicts, consistency/session semantics) is staged as BUG-2175, with the differential harness as the standing guard that will gate each as it lands.
+
 ## 2026-06-22 - GCP NoSQL slices (Firestore transactions + Bigtable data plane), a Firestore differential, and a fresh 3-cloud audit
 
 One large PR that drains the actionable backlog and extends the differential-testing guard to a second cloud.

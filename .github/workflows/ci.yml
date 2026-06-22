@@ -330,6 +330,13 @@ jobs:
         timeout-minutes: 3
         env:
           GOWORK: "off"
+      # Pre-pull the Cosmos DB emulator (the differential-test oracle for
+      # TestCosmos_DifferentialVsEmulator). The differential checks the local
+      # image store before running, so this is what makes it run for real.
+      - name: Pull Cosmos DB emulator (differential oracle)
+        if: matrix.cloud == 'azure'
+        run: docker pull mcr.microsoft.com/cosmosdb/linux/azure-cosmos-emulator:vnext-preview
+        timeout-minutes: 8
       - name: Run SDK tests
         run: |
           cd simulators/${{ matrix.cloud }} && go mod download
@@ -337,7 +344,7 @@ jobs:
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
             make sdk-test
-        timeout-minutes: 5
+        timeout-minutes: 12
         env:
           GOWORK: "off"
       - name: Run CLI tests
