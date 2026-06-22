@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -221,7 +222,10 @@ func handleCBListProjects(w http.ResponseWriter, r *http.Request) {
 		SortOrder string `json:"sortOrder"`
 		NextToken string `json:"nextToken"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
 
 	all := cbProjects.List()
 	names := make([]string, 0, len(all))
@@ -501,7 +505,10 @@ func handleCBListBuilds(w http.ResponseWriter, r *http.Request) {
 		SortOrder string `json:"sortOrder"`
 		NextToken string `json:"nextToken"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
 
 	all := cbBuilds.List()
 	ids := cbSortBuildIDs(all, req.SortOrder)

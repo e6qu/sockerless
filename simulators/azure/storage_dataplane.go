@@ -1029,8 +1029,12 @@ func handleEntityInsert(w http.ResponseWriter, r *http.Request, account, table s
 		writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
 		return
 	}
-	pk := jsonString(props["PartitionKey"])
-	rk := jsonString(props["RowKey"])
+	pk, pkErr := jsonStringField(props["PartitionKey"])
+	rk, rkErr := jsonStringField(props["RowKey"])
+	if pkErr != nil || rkErr != nil {
+		writeTableODataError(w, "InvalidInput", "PartitionKey and RowKey must be string values", http.StatusBadRequest)
+		return
+	}
 	if pk == "" || rk == "" {
 		writeTableODataError(w, "InvalidInput", "PartitionKey and RowKey are required", http.StatusBadRequest)
 		return
@@ -1151,7 +1155,12 @@ func handleEntityQuery(w http.ResponseWriter, r *http.Request, account, table st
 	// returns wrong results.
 	var filterNode odataNode
 	if f := strings.TrimSpace(r.URL.Query().Get("$filter")); f != "" {
-		filterNode = azureParseODataFilter(f)
+		node, err := azureParseODataFilter(f)
+		if err != nil {
+			writeTableODataError(w, "InvalidInput", err.Error(), http.StatusBadRequest)
+			return
+		}
+		filterNode = node
 	}
 
 	// $skiptoken — the sim pages by entity offset (encoded in the
@@ -1245,10 +1254,19 @@ func parseTableSelect(raw string) map[string]bool {
 	return set
 }
 
-func jsonString(raw json.RawMessage) string {
+// jsonStringField decodes a JSON value that is expected to be a string. An
+// absent field (nil/empty raw) decodes to "" with no error — the caller treats
+// that as "missing" and raises the required-field error. A field that is present
+// but is NOT a JSON string (e.g. an object or number where a key is expected) is
+// corrupt input and returns an error, so a malformed value is never silently
+// indistinguishable from an absent one.
+func jsonStringField(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {
-		return ""
+		return "", fmt.Errorf("expected a JSON string: %w", err)
 	}
-	return s
+	return s, nil
 }

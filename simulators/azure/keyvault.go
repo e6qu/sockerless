@@ -441,7 +441,12 @@ func registerKeyVault(srv *sim.Server) {
 			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-		all = azureApplyListQuery(all, r)
+		filtered, err := azureApplyListQuery(all, r)
+		if err != nil {
+			sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		all = filtered
 		page, next := armPage(r, all)
 		if page == nil {
 			page = []KeyVault{}
@@ -470,7 +475,12 @@ func registerKeyVault(srv *sim.Server) {
 			all[i].Properties.VaultURI = azureKeyVaultEndpointURL(r, all[i].Name)
 		}
 		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-		all = azureApplyListQuery(all, r)
+		filtered, err := azureApplyListQuery(all, r)
+		if err != nil {
+			sim.AzureError(w, "BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		all = filtered
 		page, next := armPage(r, all)
 		if page == nil {
 			page = []KeyVault{}

@@ -111,7 +111,10 @@ func parseTableBatch(body []byte, outerBoundary string) ([]tableBatchOp, string,
 		}
 		ct := part.Header.Get("Content-Type")
 		mediaType, params, perr := mime.ParseMediaType(ct)
-		partBytes, _ := io.ReadAll(part)
+		partBytes, rerr := io.ReadAll(part)
+		if rerr != nil {
+			return nil, "", fmt.Errorf("truncated batch part: %v", rerr)
+		}
 		if perr == nil && strings.HasPrefix(mediaType, "multipart/") {
 			changesetBoundary = params["boundary"]
 			csOps, err := parseTableChangeset(partBytes, changesetBoundary)
@@ -147,7 +150,10 @@ func parseTableChangeset(body []byte, boundary string) ([]tableBatchOp, error) {
 		if err != nil {
 			return nil, fmt.Errorf("malformed batch change-set: %v", err)
 		}
-		partBytes, _ := io.ReadAll(part)
+		partBytes, rerr := io.ReadAll(part)
+		if rerr != nil {
+			return nil, fmt.Errorf("truncated batch change-set part: %v", rerr)
+		}
 		op, err := parseTableBatchRequest(partBytes)
 		if err != nil {
 			return nil, err
@@ -199,7 +205,10 @@ func parseTableBatchRequest(part []byte) (tableBatchOp, error) {
 	if err != nil && err != io.EOF {
 		return tableBatchOp{}, fmt.Errorf("malformed batch sub-request headers: %v", err)
 	}
-	bodyBytes, _ := io.ReadAll(tp.R)
+	bodyBytes, rerr := io.ReadAll(tp.R)
+	if rerr != nil {
+		return tableBatchOp{}, fmt.Errorf("truncated batch sub-request body: %v", rerr)
+	}
 	return tableBatchOp{
 		method:  method,
 		url:     rawURL,

@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -178,7 +179,10 @@ func handleGlueGetDatabases(w http.ResponseWriter, r *http.Request) {
 		NextToken  string `json:"NextToken"`
 		MaxResults *int   `json:"MaxResults"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
 
 	all := glueDatabases.List()
 	maxR := 0
@@ -427,7 +431,10 @@ func handleGlueGetJobs(w http.ResponseWriter, r *http.Request) {
 		NextToken  string `json:"NextToken"`
 		MaxResults *int   `json:"MaxResults"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
 
 	all := glueJobs.List()
 	maxR := 0

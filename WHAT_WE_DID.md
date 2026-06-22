@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - GCP NoSQL slices (Firestore transactions + Bigtable data plane), a Firestore differential, and a fresh 3-cloud audit
+
+One large PR that drains the actionable backlog and extends the differential-testing guard to a second cloud.
+
+**Firestore transactions (BUG-2158).** `firestore_transactions.go` adds `beginTransaction` (issues an opaque token pinning a read snapshot), transactional `batchGet`/`runQuery` (report the snapshot readTime), `commit` carrying a token (applies its writes atomically and retires the token — a transaction commits at most once), and `rollback`. An unknown or already-retired token is a loud INVALID_ARGUMENT, never silently accepted. The high-level `client.RunTransaction` read-modify-write pattern, which previously 404'd, now works end-to-end.
+
+**Bigtable data plane (BUG-2159).** The Cloud Bigtable data API is gRPC-only; the GCP sim already runs a gRPC server (admin services + Cloud Logging), so `bigtable_data.go` mounts the `google.bigtable.v2.Bigtable` data service alongside them. It adds an in-memory per-table cell store and all six data RPCs — ReadRows (streamed as cell chunks), MutateRow, MutateRows, CheckAndMutateRow, ReadModifyWriteRow (increment/append), SampleRowKeys — plus a faithful recursive RowFilter evaluator (chain/interleave/condition, family/qualifier/value regex, row-key regex, column/timestamp/value ranges, cells-per-column/-row limits and offset, strip-value, apply-label, deterministic row-sample). A data op against a table admin never created is a loud NotFound; an unsupported RowFilter or mutation is a loud Unimplemented — never a silent wrong result. Exercised through the canonical `cloud.google.com/go/bigtable` client over `BIGTABLE_EMULATOR_HOST`.
+
+**Firestore differential (the cross-cloud arm of #652 lever 5b).** `firestore_differential_test.go` runs the same SDK operations against the sim (REST transport) and Google's own Firestore emulator (gRPC, launched via gcloud), asserting the observable documents match (numbers canonicalized, timestamps reduced to a presence sentinel). As with the DynamoDB-Local differential, the emulator is a reference, not a ceiling: `fsDiffKnownDivergences` records the one legitimate divergence — the REST transport maps a create-on-existing 409 to `Aborted` while the gRPC emulator returns `AlreadyExists` (the same underlying condition) — and asserts it exactly, so the sim is never regressed to match the oracle. CI installs the `cloud-firestore-emulator` component so it runs for real.
+
+**Fresh 3-cloud audit (BUG-2171 AWS / 2172 Azure / 2173 GCP).** Three parallel audits surfaced the recurring banned patterns; the fixes: AWS — SQS/EventBridge reject malformed/invalid input instead of silently defaulting or forwarding null, and the ignored request-body decode error across ~25 handlers (Kinesis, ECS-service, KMS, CodeBuild, Batch, Glue, ACM, CloudWatch) now rejects malformed JSON (empty bodies still tolerated). Azure — **the #652 silent-incompleteness class turned up again**: a malformed OData `$filter` degraded to match-all; it now fails loud with 400 across all five ARM list callers and the storage-table query, plus the batch/dataplane read-swallow fixes. GCP — secretmanager version-ID parse, the list-filter marshal round-trip, the shared spec-validate body read (all 3 copies), and a dead-param silencer in the quota helper.
+
+**Staged:** the Cosmos differential (BUG-2174) — the official Cosmos emulator is large (~1.5GB), slow to start (~2min), serves self-signed HTTPS, and requires full Cosmos master-key HMAC signing on the oracle (the sim uses a simplified routing shortcut), so it needs its own gated CI job rather than the shared 5-minute `sim (azure)` step. The plan is recorded in BUGS.md.
+
 ## 2026-06-22 - Closing #652: differential testing vs DynamoDB Local + CloudWatch fail-loud
 
 This PR closes the consumer's #652 "silent incompleteness" meta-issue by landing

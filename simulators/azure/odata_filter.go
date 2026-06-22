@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -28,17 +29,20 @@ import (
 //	comparison = field (eq|ne|gt|ge|lt|le) value
 //	field      = name { "/" name }                 (nested via '/')
 //	value      = 'string' | number | true | false | null
-func azureApplyListQuery[T any](items []T, r *http.Request) []T {
+func azureApplyListQuery[T any](items []T, r *http.Request) ([]T, error) {
 	filter := strings.TrimSpace(r.URL.Query().Get("$filter"))
 	orderby := strings.TrimSpace(r.URL.Query().Get("$orderby"))
 
 	if filter != "" {
-		node := azureParseODataFilter(filter)
+		node, err := azureParseODataFilter(filter)
+		if err != nil {
+			return nil, err
+		}
 		kept := make([]T, 0, len(items))
 		for _, it := range items {
-			var m map[string]any
-			if b, err := json.Marshal(it); err == nil {
-				_ = json.Unmarshal(b, &m)
+			m, err := azureItemToMap(it)
+			if err != nil {
+				return nil, err
 			}
 			if node.eval(m) {
 				kept = append(kept, it)
@@ -50,9 +54,11 @@ func azureApplyListQuery[T any](items []T, r *http.Request) []T {
 		field, desc := azureParseOrderBy(orderby)
 		maps := make([]map[string]any, len(items))
 		for i, it := range items {
-			if b, err := json.Marshal(it); err == nil {
-				_ = json.Unmarshal(b, &maps[i])
+			m, err := azureItemToMap(it)
+			if err != nil {
+				return nil, err
 			}
+			maps[i] = m
 		}
 		idx := make([]int, len(items))
 		for i := range idx {
@@ -71,7 +77,24 @@ func azureApplyListQuery[T any](items []T, r *http.Request) []T {
 		}
 		items = out
 	}
-	return items
+	return items, nil
+}
+
+// azureItemToMap round-trips a list item through JSON into a generic map so the
+// OData filter/orderby evaluator can read its fields. A round-trip failure means
+// the sim's own resource value is corrupt — surface it loudly rather than
+// evaluating the filter against an empty map (which would silently match or
+// mis-sort).
+func azureItemToMap[T any](it T) (map[string]any, error) {
+	b, err := json.Marshal(it)
+	if err != nil {
+		return nil, fmt.Errorf("marshal list item for $filter/$orderby: %w", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, fmt.Errorf("unmarshal list item for $filter/$orderby: %w", err)
+	}
+	return m, nil
 }
 
 func azureParseOrderBy(s string) (field string, desc bool) {
@@ -274,6 +297,15 @@ type odataParser struct {
 	toks  []odataTok
 	pos   int
 	guard *sim.ParseGuard
+	err   error
+}
+
+// fail records the first parse error. Subsequent calls are no-ops so the
+// earliest, most specific diagnostic survives.
+func (p *odataParser) fail(format string, args ...any) {
+	if p.err == nil {
+		p.err = fmt.Errorf(format, args...)
+	}
 }
 
 // maxODataParseDepth bounds parenthesis nesting so a pathological $filter can't
@@ -281,17 +313,25 @@ type odataParser struct {
 // fatal error is not recoverable).
 const maxODataParseDepth = 1000
 
-func azureParseODataFilter(s string) odataNode {
+// azureParseODataFilter parses an ARM/OData `$filter` expression. A malformed
+// filter is a client error: real Azure rejects it with HTTP 400 ("Invalid
+// $filter") rather than matching every item, so this returns an error the
+// callers surface as 400 BadRequest. An empty filter is the documented
+// "no filter" case and matches everything.
+func azureParseODataFilter(s string) (odataNode, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return odataTrue{}
+		return odataTrue{}, nil
 	}
 	p := &odataParser{toks: azureODataTokenize(s), guard: sim.NewParseGuard(maxODataParseDepth, -1)}
 	node := p.parseOr()
-	if node == nil {
-		return odataTrue{}
+	if p.err == nil && p.peek().kind != odataEOF {
+		p.fail("Invalid syntax in $filter: unexpected token %q", p.peek().text)
 	}
-	return node
+	if p.err != nil {
+		return nil, p.err
+	}
+	return node, nil
 }
 
 func (p *odataParser) peek() odataTok { return p.toks[p.pos] }
@@ -328,16 +368,22 @@ func (p *odataParser) parseNot() odataNode {
 }
 
 func (p *odataParser) parseTerm() odataNode {
+	if p.err != nil {
+		return odataTrue{}
+	}
 	if p.peek().kind == odataLParen {
 		p.next()
 		if !p.guard.Enter() {
 			p.guard.Leave()
+			p.fail("Invalid syntax in $filter: expression nesting too deep")
 			return odataTrue{}
 		}
 		inner := p.parseOr()
 		p.guard.Leave()
 		if p.peek().kind == odataRParen {
 			p.next()
+		} else {
+			p.fail("Invalid syntax in $filter: missing ')'")
 		}
 		return inner
 	}
@@ -357,58 +403,92 @@ func (p *odataParser) parseTerm() odataNode {
 	}
 	// comparison: field op value
 	if p.peek().kind != odataWord {
-		if p.peek().kind != odataEOF {
-			p.next()
-		}
+		p.fail("Invalid syntax in $filter: expected a field name, got %q", p.peek().text)
 		return odataTrue{}
 	}
 	field := p.next().text
-	op := ""
-	if p.peek().kind == odataWord {
-		op = strings.ToLower(p.next().text)
+	if p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a comparison operator after %q", field)
+		return odataTrue{}
 	}
-	value := ""
-	if p.peek().kind == odataString || p.peek().kind == odataWord {
-		value = p.next().text
+	op := strings.ToLower(p.next().text)
+	if !odataIsComparisonOp(op) {
+		p.fail("Invalid syntax in $filter: unknown operator %q", op)
+		return odataTrue{}
 	}
+	if p.peek().kind != odataString && p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a value after %q %s", field, op)
+		return odataTrue{}
+	}
+	value := p.next().text
 	return odataCmp{field: field, op: op, value: value}
 }
 
+// odataIsComparisonOp reports whether op is one of the OData scalar comparison
+// operators the filter grammar accepts.
+func odataIsComparisonOp(op string) bool {
+	switch op {
+	case "eq", "ne", "gt", "ge", "lt", "le":
+		return true
+	}
+	return false
+}
+
 func (p *odataParser) parseFuncFieldValue() (field, value string) {
-	if p.peek().kind == odataLParen {
-		p.next()
+	if p.peek().kind != odataLParen {
+		p.fail("Invalid syntax in $filter: expected '(' after function name")
+		return "", ""
 	}
-	if p.peek().kind == odataWord {
-		field = p.next().text
+	p.next()
+	if p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a field name in function argument")
+		return "", ""
 	}
-	if p.peek().kind == odataComma {
-		p.next()
+	field = p.next().text
+	if p.peek().kind != odataComma {
+		p.fail("Invalid syntax in $filter: expected ',' in function arguments")
+		return field, ""
 	}
-	if p.peek().kind == odataString || p.peek().kind == odataWord {
-		value = p.next().text
+	p.next()
+	if p.peek().kind != odataString && p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a value in function argument")
+		return field, ""
 	}
-	if p.peek().kind == odataRParen {
-		p.next()
+	value = p.next().text
+	if p.peek().kind != odataRParen {
+		p.fail("Invalid syntax in $filter: missing ')' in function call")
+		return field, value
 	}
+	p.next()
 	return field, value
 }
 
 func (p *odataParser) parseFuncValueField() (value, field string) {
-	if p.peek().kind == odataLParen {
-		p.next()
+	if p.peek().kind != odataLParen {
+		p.fail("Invalid syntax in $filter: expected '(' after function name")
+		return "", ""
 	}
-	if p.peek().kind == odataString || p.peek().kind == odataWord {
-		value = p.next().text
+	p.next()
+	if p.peek().kind != odataString && p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a value in function argument")
+		return "", ""
 	}
-	if p.peek().kind == odataComma {
-		p.next()
+	value = p.next().text
+	if p.peek().kind != odataComma {
+		p.fail("Invalid syntax in $filter: expected ',' in function arguments")
+		return value, ""
 	}
-	if p.peek().kind == odataWord {
-		field = p.next().text
+	p.next()
+	if p.peek().kind != odataWord {
+		p.fail("Invalid syntax in $filter: expected a field name in function argument")
+		return value, ""
 	}
-	if p.peek().kind == odataRParen {
-		p.next()
+	field = p.next().text
+	if p.peek().kind != odataRParen {
+		p.fail("Invalid syntax in $filter: missing ')' in function call")
+		return value, field
 	}
+	p.next()
 	return value, field
 }
 

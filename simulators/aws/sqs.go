@@ -222,6 +222,33 @@ func sqsQueueDoesNotExist(w http.ResponseWriter) {
 	sqsErrorJSON(w, "QueueDoesNotExist", "The specified queue does not exist.", http.StatusBadRequest)
 }
 
+// sqsNumericAttributes are the queue attributes whose values must be
+// integer-valued. Real SQS rejects a non-numeric value for any of these
+// with InvalidParameterValue at CreateQueue / SetQueueAttributes time.
+var sqsNumericAttributes = []string{
+	"VisibilityTimeout",
+	"DelaySeconds",
+	"MessageRetentionPeriod",
+	"MaximumMessageSize",
+	"ReceiveMessageWaitTimeSeconds",
+}
+
+// sqsValidateNumericAttributes returns the first numeric attribute whose
+// value is present but not parseable as an integer, mirroring real SQS's
+// InvalidParameterValue rejection. ok is false when a value is invalid.
+func sqsValidateNumericAttributes(attrs map[string]string) (msg string, ok bool) {
+	for _, k := range sqsNumericAttributes {
+		v, present := attrs[k]
+		if !present {
+			continue
+		}
+		if _, err := strconv.Atoi(v); err != nil {
+			return fmt.Sprintf("Invalid value for the parameter %s.", k), false
+		}
+	}
+	return "", true
+}
+
 func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueName  string            `json:"QueueName"`
@@ -237,6 +264,10 @@ func handleSQSCreateQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if msg, ok := sqsFifoNameAttrMismatch(req.QueueName, req.Attributes); !ok {
+		sqsErrorJSON(w, "InvalidParameterValue", msg, http.StatusBadRequest)
+		return
+	}
+	if msg, ok := sqsValidateNumericAttributes(req.Attributes); !ok {
 		sqsErrorJSON(w, "InvalidParameterValue", msg, http.StatusBadRequest)
 		return
 	}
@@ -438,6 +469,10 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 	name := queueNameFromURL(req.QueueUrl)
 	if _, ok := sqsQueues.Get(name); !ok {
 		sqsQueueDoesNotExist(w)
+		return
+	}
+	if msg, ok := sqsValidateNumericAttributes(req.Attributes); !ok {
+		sqsErrorJSON(w, "InvalidParameterValue", msg, http.StatusBadRequest)
 		return
 	}
 	sqsQueues.Update(name, func(q *SQSQueue) {

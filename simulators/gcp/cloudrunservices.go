@@ -529,7 +529,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		// deterministically — the live cloud rejects with this same
 		// error when the regional cpu_allocation quota is exhausted.
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(svc)) {
-			regionalCPUQuotaErrorJSON(w, project, location, name)
+			regionalCPUQuotaErrorJSON(w, name)
 			return
 		}
 
@@ -665,7 +665,7 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		// behind (the gcf overlay-and-swap path issues an Update
 		// to flip the stub Buildpacks image to the real overlay).
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(update)) {
-			regionalCPUQuotaErrorJSON(w, project, location, name)
+			regionalCPUQuotaErrorJSON(w, name)
 			return
 		}
 

@@ -348,6 +348,11 @@ func handleEBPutPermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Policy != "" {
+		var doc map[string]any
+		if err := json.Unmarshal([]byte(req.Policy), &doc); err != nil {
+			sim.AWSError(w, "ValidationException", "Policy is not valid JSON: "+err.Error(), http.StatusBadRequest)
+			return
+		}
 		bus.Policy = req.Policy
 		ebPutBus(bus)
 		writeEBJSON(w, http.StatusOK, map[string]any{})
@@ -357,7 +362,11 @@ func handleEBPutPermission(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "StatementId, Action, and Principal are required", http.StatusBadRequest)
 		return
 	}
-	policy := ebPolicyDocument(bus.Policy)
+	policy, err := ebPolicyDocument(bus.Policy)
+	if err != nil {
+		sim.AWSError(w, "InternalException", "Stored resource policy is not valid JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	statements := ebPolicyStatements(policy)
 	statement := map[string]any{
 		"Sid":       req.StatementID,
@@ -408,7 +417,11 @@ func handleEBRemovePermission(w http.ResponseWriter, r *http.Request) {
 		writeEBJSON(w, http.StatusOK, map[string]any{})
 		return
 	}
-	policy := ebPolicyDocument(bus.Policy)
+	policy, err := ebPolicyDocument(bus.Policy)
+	if err != nil {
+		sim.AWSError(w, "InternalException", "Stored resource policy is not valid JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 	filtered := make([]map[string]any, 0)
 	for _, statement := range ebPolicyStatements(policy) {
 		if statement["Sid"] != req.StatementID {
@@ -426,19 +439,21 @@ func handleEBRemovePermission(w http.ResponseWriter, r *http.Request) {
 	writeEBJSON(w, http.StatusOK, map[string]any{})
 }
 
-func ebPolicyDocument(raw string) map[string]any {
+func ebPolicyDocument(raw string) (map[string]any, error) {
 	policy := map[string]any{
 		"Version":   "2012-10-17",
 		"Statement": []map[string]any{},
 	}
 	if raw == "" {
-		return policy
+		return policy, nil
 	}
-	_ = json.Unmarshal([]byte(raw), &policy)
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return nil, err
+	}
 	if _, ok := policy["Statement"]; !ok {
 		policy["Statement"] = []map[string]any{}
 	}
-	return policy
+	return policy, nil
 }
 
 func ebPolicyStatements(policy map[string]any) []map[string]any {
@@ -721,6 +736,20 @@ func handleEBPutEvents(w http.ResponseWriter, r *http.Request) {
 	entries := make([]map[string]string, 0, len(req.Entries))
 	failed := 0
 	for _, entry := range req.Entries {
+		// Real EventBridge requires each entry's Detail to be a valid JSON
+		// object; a malformed Detail fails that single entry (the rest of the
+		// batch still succeeds) with a MalformedDetail per-entry error.
+		if entry.Detail != "" {
+			var detailObj any
+			if err := json.Unmarshal([]byte(entry.Detail), &detailObj); err != nil {
+				failed++
+				entries = append(entries, map[string]string{
+					"ErrorCode":    "MalformedDetail",
+					"ErrorMessage": "Detail is malformed.",
+				})
+				continue
+			}
+		}
 		eventID := generateUUID()
 		now := time.Now().Unix()
 		record := EBEventRecord{

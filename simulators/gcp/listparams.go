@@ -17,6 +17,23 @@ import (
 // filter.go (OR / AND / NOT, parentheses, all comparison operators, nested field
 // paths); `orderBy` is `field [asc|desc]`.
 
+// gcpResourceToMap renders a stored resource as a generic map for filter/orderBy
+// evaluation. Marshaling an own stored struct to JSON and back into a map cannot
+// fail in practice; if it ever does, that's corrupt own-state, so fail loud
+// (net/http recovers the panic into a 500) rather than silently evaluating the
+// filter against an empty map.
+func gcpResourceToMap(it any) map[string]any {
+	b, err := json.Marshal(it)
+	if err != nil {
+		panic("gcp list: marshal resource: " + err.Error())
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		panic("gcp list: unmarshal resource: " + err.Error())
+	}
+	return m
+}
+
 func gcpApplyListParams[T any](items []T, r *http.Request) []T {
 	filter := strings.TrimSpace(r.URL.Query().Get("filter"))
 	orderBy := strings.TrimSpace(r.URL.Query().Get("orderBy"))
@@ -29,11 +46,7 @@ func gcpApplyListParams[T any](items []T, r *http.Request) []T {
 	}
 	pairs := make([]pair, 0, len(items))
 	for _, it := range items {
-		var m map[string]any
-		if b, err := json.Marshal(it); err == nil {
-			_ = json.Unmarshal(b, &m)
-		}
-		pairs = append(pairs, pair{it, m})
+		pairs = append(pairs, pair{it, gcpResourceToMap(it)})
 	}
 
 	if filter != "" {
@@ -73,9 +86,7 @@ func gcpApplyOrderBy[T any](items []T, r *http.Request) []T {
 	field, desc := gcpParseOrderBy(orderBy)
 	maps := make([]map[string]any, len(items))
 	for i, it := range items {
-		if b, err := json.Marshal(it); err == nil {
-			_ = json.Unmarshal(b, &maps[i])
-		}
+		maps[i] = gcpResourceToMap(it)
 	}
 	idx := make([]int, len(items))
 	for i := range idx {

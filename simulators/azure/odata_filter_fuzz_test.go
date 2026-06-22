@@ -37,8 +37,8 @@ func FuzzAzureParseODataFilter(f *testing.F) {
 		"properties": map[string]any{"state": "Running"},
 	}
 	f.Fuzz(func(t *testing.T, expr string) {
-		node := azureParseODataFilter(expr)
-		if node != nil {
+		node, err := azureParseODataFilter(expr)
+		if err == nil && node != nil {
 			_ = node.eval(m)
 		}
 	})

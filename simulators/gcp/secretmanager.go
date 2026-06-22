@@ -580,8 +580,12 @@ func resolveLatestVersionID(project, secretID string) (string, bool) {
 			continue
 		}
 		idStr := strings.TrimPrefix(v.Name, secretName+"/versions/")
-		var n int
-		_, _ = fmt.Sscanf(idStr, "%d", &n)
+		n, err := strconv.Atoi(idStr)
+		if err != nil {
+			// Version IDs are sim-assigned integers; a non-numeric one is corrupt
+			// own-state, not a version to silently skip past when picking "latest".
+			continue
+		}
 		if n > latestN {
 			latestN = n
 		}
