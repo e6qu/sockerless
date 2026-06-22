@@ -229,6 +229,12 @@ func ddbTableByArn(arn string) (string, DDBTable, bool) {
 }
 
 func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
+	// Item-level ops are CloudTrail DATA events (excluded from LookupEvents); the
+	// table-level ops registered below are management events.
+	cloudTrailDeclareDataEvents("dynamodb.amazonaws.com",
+		"GetItem", "PutItem", "UpdateItem", "DeleteItem", "Query", "Scan",
+		"BatchGetItem", "BatchWriteItem", "TransactWriteItems", "TransactGetItems",
+		"ExecuteStatement", "ExecuteTransaction", "BatchExecuteStatement")
 	ddbTables = sim.MakeStore[DDBTable](srv.DB(), "ddb_tables")
 	ddbItems = sim.MakeStore[map[string]any](srv.DB(), "ddb_items")
 	ddbItemNames = sim.MakeStore[string](srv.DB(), "ddb_item_names")

@@ -592,6 +592,9 @@ func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, s
 			Msg("cloudtrail: no eventSource mapping for service slice; event not recorded")
 		return
 	}
+	if !cloudTrailShouldRecord(r, source, eventName) {
+		return
+	}
 	errorCode, errorMessage := cloudTrailErrorFields(status, respHeaders, respBody)
 	cloudTrailRecord(CloudTrailEvent{
 		EventName:    eventName,
@@ -626,6 +629,9 @@ func cloudTrailRecordedRESTDynamic(eventName cloudTrailRESTEventNameFunc, source
 		}
 		name := eventName(r, body)
 		if name == "" {
+			return
+		}
+		if !cloudTrailShouldRecord(r, source, name) {
 			return
 		}
 		errorCode, errorMessage := cloudTrailErrorFields(rec.statusCode(), rec.Header(), rec.body.Bytes())
@@ -773,6 +779,54 @@ func cloudTrailReadOnly(eventName string) bool {
 		}
 	}
 	return false
+}
+
+// cloudTrailDataEventOps is the registry of data-plane (item / object / message /
+// record / function-invocation level) operations that CloudTrail classifies as
+// DATA events. Real AWS does NOT log data events by default and NEVER returns
+// them from LookupEvents (they require explicit data-event selectors and are
+// delivered separately), so the sim must not record them into the trail it
+// serves. Every service's ops route through the same central recorder, so without
+// this classification they all leak into the management-event trail. Data events
+// are the enumerated exception, exactly as AWS defines them — everything unlisted
+// is a management event, recorded normally.
+//
+// The registry is populated by cloudTrailDeclareDataEvents, called from each
+// service slice's register function (registration-time classification), so the
+// data-event list lives WITH the handlers it describes rather than in a far-away
+// table a service author editing that slice would never see.
+var cloudTrailDataEventOps = map[string]map[string]bool{}
+
+// cloudTrailDeclareDataEvents marks (source, ops...) as data events. Call it from
+// a service's register function, alongside its r.Register(...) calls, so a new
+// high-volume data-plane op is classified where it's added.
+func cloudTrailDeclareDataEvents(source string, ops ...string) {
+	m := cloudTrailDataEventOps[source]
+	if m == nil {
+		m = map[string]bool{}
+		cloudTrailDataEventOps[source] = m
+	}
+	for _, op := range ops {
+		m[op] = true
+	}
+}
+
+// cloudTrailIsDataEvent reports whether (source, eventName) is a data-plane event.
+func cloudTrailIsDataEvent(source, eventName string) bool {
+	return cloudTrailDataEventOps[source][eventName]
+}
+
+// cloudTrailShouldRecord reports whether an API call belongs in the trail that
+// LookupEvents serves. Real CloudTrail records only AUTHENTICATED MANAGEMENT
+// events there: an unauthenticated request (e.g. the container healthcheck's
+// bare `GET /`, which the S3 slice routes to ListBuckets) isn't a real API call
+// and must not generate phantom events, and data-plane events are never returned
+// by LookupEvents.
+func cloudTrailShouldRecord(r *http.Request, source, eventName string) bool {
+	if cloudTrailAccessKeyID(r) == "" {
+		return false
+	}
+	return !cloudTrailIsDataEvent(source, eventName)
 }
 
 func awsRequestOperationName(r *http.Request) string {

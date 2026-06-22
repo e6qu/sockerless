@@ -4,6 +4,39 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - CloudTrail: data plane leaking into the control plane (consumer #650/#651/#652)
+
+The consumer reported CloudTrail returning DynamoDB item-level events from
+`LookupEvents` (#651) and phantom `ListBuckets` events (#650), then filed a
+meta-issue (#652) on the recurring "silent incompleteness" failure mode. The root
+was architectural, not DynamoDB-specific: the central recorder logged *every*
+operation across ~28 services as a management event with **no data-vs-management
+classification**, so high-volume data-plane events from all data-event services
+(DynamoDB items, S3 objects, Lambda Invoke, SQS messages, SNS Publish, Kinesis
+records) leaked into the management-events-only `LookupEvents`. And the
+unauthenticated container healthcheck (`GET /`, which the S3 slice routes to
+ListBuckets) was being recorded, growing the trail with no client involved.
+
+**Fix (BUG-2167/2168).** Phantom events: `cloudTrailShouldRecord` no longer
+records unauthenticated requests (real CloudTrail logs authenticated activity);
+service-initiated events use a separate `invokedBy` path and are unaffected. The
+systemic leak: a **registration-time** data/management classification — each
+service's register function declares its data events via
+`cloudTrailDeclareDataEvents(source, ops…)`, co-located with the handlers it
+describes rather than in a far-away allowlist, and consulted centrally by the one
+recorder all events flow through. Data events are now excluded on both the
+client-initiated path and the service-initiated (scheduler-fired) path; the
+scheduler-fired-SQS test was rewritten to verify firing by reading the message
+off the queue (the faithful observation point), and a cross-service SDK
+conformance guard was added.
+
+**#652 architecture — started.** Adopted lever 4 (model the cross-cutting concern
+at registration, not ad hoc) and lever 5 (a conformance guard asserting no data
+event reaches LookupEvents). The larger levers — spec→struct/validation codegen +
+a completeness test, fail-loud-by-default for unimplemented constructs, replacing
+the remaining string-munging Condition/Filter evaluators with lexer→AST, and
+differential testing vs DynamoDB Local — are staged as BUG-2169.
+
 ## 2026-06-22 - Cross-cloud NoSQL "silent-wrong evaluator" sweep (consumer #648, BUG-2149..2166)
 
 Started from consumer #648 — a follow-up to #643/#646: the #646 fix made

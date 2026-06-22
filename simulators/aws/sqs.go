@@ -180,6 +180,11 @@ func sqsQueueARN(name string) string {
 }
 
 func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
+	// Message-level ops are CloudTrail DATA events (excluded from LookupEvents);
+	// queue-management ops are management events.
+	cloudTrailDeclareDataEvents("sqs.amazonaws.com",
+		"SendMessage", "SendMessageBatch", "ReceiveMessage", "DeleteMessage",
+		"DeleteMessageBatch", "ChangeMessageVisibility", "ChangeMessageVisibilityBatch")
 	sqsQueues = sim.MakeStore[SQSQueue](srv.DB(), "sqs_queues")
 
 	r.Register("AmazonSQS.CreateQueue", handleSQSCreateQueue)

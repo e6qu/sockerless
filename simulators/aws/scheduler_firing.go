@@ -348,6 +348,13 @@ func cloudTrailRecordSchedulerFire(eventName, source, resourceType, resourceName
 // cloudTrailRecordSchedulerFireErr records a scheduler-fired target invocation,
 // carrying errorCode/errorMessage when the downstream call failed.
 func cloudTrailRecordSchedulerFireErr(eventName, source, resourceType, resourceName, errorCode, errorMessage string) {
+	// A service-initiated DATA event (e.g. a scheduler-fired SQS SendMessage / SNS
+	// Publish / Lambda Invoke) is still a data event — LookupEvents never returns
+	// it, just as for a client-initiated one. Management targets (e.g. ECS
+	// RunTask) are recorded with invokedBy=scheduler.amazonaws.com.
+	if cloudTrailIsDataEvent(source, eventName) {
+		return
+	}
 	var resources []CloudTrailResource
 	if resourceName != "" {
 		resources = []CloudTrailResource{{ResourceType: resourceType, ResourceName: resourceName}}

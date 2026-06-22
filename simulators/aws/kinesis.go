@@ -61,6 +61,9 @@ var (
 )
 
 func registerKinesis(r *sim.AWSRouter, srv *sim.Server) {
+	// Record-level ops are CloudTrail DATA events (excluded from LookupEvents).
+	cloudTrailDeclareDataEvents("kinesis.amazonaws.com",
+		"PutRecord", "PutRecords", "GetRecords", "GetShardIterator", "SubscribeToShard")
 	kinesisStreams = sim.MakeStore[KinesisStream](srv.DB(), "kinesis_streams")
 	kinesisRecords = sim.MakeStore[[]kinesisRecord](srv.DB(), "kinesis_records")
 	kinesisIterators = sim.MakeStore[kinesisIterator](srv.DB(), "kinesis_iterators")

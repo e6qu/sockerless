@@ -134,12 +134,12 @@ func TestCloudTrailRecordsSchedulerAPICallsSDK(t *testing.T) {
 		"the CreateSchedule event must carry the schedule as a ResourceName")
 }
 
-// TestCloudTrailRecordsSchedulerFiredTargetSDK verifies scheduler-fired targets
-// are recorded in CloudTrail. When the Scheduler firing loop invokes a target it
-// calls the target handler directly, bypassing the POST / recording middleware.
-// The downstream call (here SQS SendMessage) must be recorded with
-// userIdentity.invokedBy = scheduler.amazonaws.com, as real CloudTrail records
-// scheduler-driven calls.
+// TestCloudTrailRecordsSchedulerFiredTargetSDK verifies a scheduler-fired SQS
+// target actually delivers (the message lands in the queue) AND that the
+// resulting SQS SendMessage — a CloudTrail DATA event — does NOT appear in
+// LookupEvents, matching real AWS (data events aren't returned there).
+// Service-initiated MANAGEMENT targets (e.g. ECS RunTask) are still recorded with
+// invokedBy=scheduler.amazonaws.com; that path is covered by the RunTask tests.
 func TestCloudTrailRecordsSchedulerFiredTargetSDK(t *testing.T) {
 	ct := cloudTrailClient()
 	sched := schedulerClient()
@@ -166,23 +166,29 @@ func TestCloudTrailRecordsSchedulerFiredTargetSDK(t *testing.T) {
 		_, _ = sched.DeleteSchedule(ctx, &scheduler.DeleteScheduleInput{Name: aws.String("ct-fire-sqs")})
 	})
 
+	// The scheduler really delivers: the message lands in the queue. Verify the
+	// firing by reading it off the queue — the faithful observation point.
 	require.Eventually(t, func() bool {
-		events := ctLookup(t, ct, cttypes.LookupAttributeKeyEventName, "SendMessage")
-		for _, e := range events {
-			if aws.ToString(e.EventName) != "SendMessage" {
-				continue
-			}
-			if aws.ToString(e.EventSource) != "sqs.amazonaws.com" {
-				continue
-			}
-			// invokedBy lives in the embedded full event record.
-			if strings.Contains(aws.ToString(e.CloudTrailEvent), "scheduler.amazonaws.com") {
+		out, err := sqsc.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl: cq.QueueUrl, MaxNumberOfMessages: 10, WaitTimeSeconds: 1,
+		})
+		if err != nil {
+			return false
+		}
+		for _, m := range out.Messages {
+			if aws.ToString(m.Body) == "scheduled-payload" {
 				return true
 			}
 		}
 		return false
-	}, 20*time.Second, 1*time.Second,
-		"scheduler-fired SendMessage must be recorded with invokedBy=scheduler.amazonaws.com")
+	}, 20*time.Second, 1*time.Second, "scheduler must deliver the SendMessage to the queue")
+
+	// SQS SendMessage is a CloudTrail DATA event — it must NOT appear in
+	// LookupEvents, whether client- or scheduler-initiated.
+	for _, e := range ctLookup(t, ct, cttypes.LookupAttributeKeyEventName, "SendMessage") {
+		assert.NotEqual(t, "sqs.amazonaws.com", aws.ToString(e.EventSource),
+			"SQS SendMessage is a data event and must not appear in LookupEvents")
+	}
 }
 
 func TestCloudTrailRecordsRESTServiceAPICallsSDK(t *testing.T) {
