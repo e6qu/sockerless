@@ -387,6 +387,13 @@ jobs:
         timeout-minutes: 6
         env:
           GOWORK: "off"
+      # Pre-pull the DynamoDB Local differential oracle so the timed test run
+      # below doesn't spend its budget on the image fetch (the differential test
+      # checks the local image store before pulling). DynamoDB Local is the
+      # reference oracle for the TestDynamoDB_DifferentialVsLocal sweep.
+      - name: Pull DynamoDB Local (differential oracle)
+        run: docker pull amazon/dynamodb-local:latest
+        timeout-minutes: 4
       - name: Run AWS SDK tests
         run: |
           cd simulators/aws

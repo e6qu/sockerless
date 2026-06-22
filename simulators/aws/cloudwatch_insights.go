@@ -61,7 +61,13 @@ func handleCWStartQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	// Insights times are epoch SECONDS.
 	records, scanned := cwGatherRecords(groups, req.StartTime, req.EndTime)
-	results := cwRunInsightsQuery(req.QueryString, records, req.Limit)
+	results, err := cwRunInsightsQuery(req.QueryString, records, req.Limit)
+	if err != nil {
+		// A malformed query string is a MalformedQueryException in real
+		// CloudWatch Logs, not a silently empty (or all-rows) result.
+		sim.AWSError(w, "MalformedQueryException", err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	qid := generateUUID()
 	cwQueries.Put(qid, CWQuery{
@@ -220,7 +226,7 @@ func cwFlattenJSONInto(rec cwInsightsRecord, message string) {
 
 // ── query execution ────────────────────────────────────────────────────────
 
-func cwRunInsightsQuery(query string, records []cwInsightsRecord, reqLimit int) [][]map[string]any {
+func cwRunInsightsQuery(query string, records []cwInsightsRecord, reqLimit int) ([][]map[string]any, error) {
 	stages := strings.Split(query, "|")
 	outputFields := []string{"@timestamp", "@message"}
 	limit := 0
@@ -239,7 +245,10 @@ func cwRunInsightsQuery(query string, records []cwInsightsRecord, reqLimit int) 
 		case "fields", "display":
 			outputFields = cwSplitCommaList(rest)
 		case "filter", "where":
-			node := cwParseInsightsFilter(rest)
+			node, err := cwParseInsightsFilter(rest)
+			if err != nil {
+				return nil, err
+			}
 			records = cwFilterRecords(records, node)
 		case "stats":
 			records = cwRunStats(rest, records)
@@ -273,7 +282,7 @@ func cwRunInsightsQuery(query string, records []cwInsightsRecord, reqLimit int) 
 		}
 		out = append(out, row)
 	}
-	return out
+	return out, nil
 }
 
 func cwRecTS(rec cwInsightsRecord) int64 {

@@ -4,6 +4,54 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - Closing #652: differential testing vs DynamoDB Local + CloudWatch fail-loud
+
+This PR closes the consumer's #652 "silent incompleteness" meta-issue by landing
+the two remaining prevention levers, so all five are now in place: lever 4 +
+5a (#653), levers 1 + 2 for DynamoDB (#654), lever 3 (already present), and now
+lever 5b + the CloudWatch arm of lever 2.
+
+**Lever 5b — differential testing against a reference oracle.** New
+`simulators/aws/sdk-tests/dynamodb_differential_test.go` boots Amazon's own
+`amazon/dynamodb-local` in a throwaway container and replays every #652 bug-class
+scenario — put/get round-trip, `SET n = n + :v`, the ElectroDB parenthesized
+`SET c = (if_not_exists(c, :z) - :v)` decrement, `attribute_not_exists`
+put-if-absent, scan/query filter + `begins_with`, TransactWriteItems with an
+Update action, delete-then-absent, and the malformed-expression / undefined-ref
+fail-loud cases — against BOTH the sim and the oracle, asserting the observable
+outcome is identical (numbers canonicalized via `big.Rat`, set members sorted,
+errors compared by AWS error code). All ten scenarios agree with DynamoDB Local.
+
+Crucially, per the project's direction, **DynamoDB Local is a reference, not a
+ceiling.** The sockerless sim may legitimately become *more* faithful to real
+AWS than DynamoDB Local is, and where it does we must not regress the sim to
+match the oracle. That case is modeled by a `diffKnownDivergences` registry: a
+documented divergence records the expected sim result, the expected oracle
+result, and a justification, and the test asserts the observed results match that
+documented shape exactly (so a regression on either side still fails). The
+registry is empty today; the mechanism is ready for the first real divergence.
+The test is Docker-gated — it skips when Docker is absent, and fails loud if
+Docker is present but the oracle can't start — and CI pre-pulls the image so it
+runs for real in the `sim (aws sdk)` job.
+
+**BUG-2170 — CloudWatch fail-loud (the CloudWatch arm of lever 2).** The Logs
+filter-pattern and Insights `filter` evaluators previously degraded a malformed
+pattern to a silent non-match. `cwCompileLogPattern` (FilterLogEvents
+filterPattern) and `cwParseInsightsFilter` (StartQuery query string) now return
+errors on a malformed pattern/query; `handleCWFilterLogEvents` surfaces
+`InvalidParameterException` and `handleCWStartQuery` surfaces
+`MalformedQueryException`, exactly as real CloudWatch Logs — never an empty
+result that reads as "no matching logs". The pattern is compiled once before the
+event loop. SDK + CLI tests cover both, and both parser fuzzers were updated to
+treat a malformed input as a loud error rather than a crash.
+
+With fail-loud killing the silent-wrong class, the differential sweep catching
+divergences against the real oracle, the spec-derived completeness test catching
+under-validation, real parsers replacing string-munging, and CloudTrail
+classification fixing the cross-cutting concern, the conformance-bug classes
+#652 named are now impossible-or-harder across the board. #394 remains the only
+open consumer issue (blocked upstream).
+
 ## 2026-06-22 - DynamoDB: fail-loud expressions + spec-derived required fields (#652 levers 2 + 1)
 
 Continuing the consumer's #652 "silent incompleteness" meta-issue after #653
