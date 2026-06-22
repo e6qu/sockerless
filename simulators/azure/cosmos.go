@@ -90,6 +90,7 @@ var (
 	cosmosTables      sim.Store[CosmosTable]
 	cosmosThroughputs sim.Store[CosmosThroughput]
 	cosmosDocs        sim.Store[CosmosDocument]
+	cosmosDataColls   sim.Store[CosmosDataColl]
 )
 
 func registerCosmosDB(srv *sim.Server) {
@@ -99,6 +100,7 @@ func registerCosmosDB(srv *sim.Server) {
 	cosmosTables = sim.MakeStore[CosmosTable](srv.DB(), "cosmos_tables")
 	cosmosThroughputs = sim.MakeStore[CosmosThroughput](srv.DB(), "cosmos_throughputs")
 	cosmosDocs = sim.MakeStore[CosmosDocument](srv.DB(), "cosmos_documents")
+	cosmosDataColls = sim.MakeStore[CosmosDataColl](srv.DB(), "cosmos_data_collections")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.DocumentDB/databaseAccounts"
 	srv.HandleFunc("PUT "+armBase+"/{account}", handleCosmosCreateAccount)
@@ -764,7 +766,7 @@ func handleCosmosDataDeleteDB(w http.ResponseWriter, r *http.Request) {
 	account, db := cosmosDataAccount(r), sim.PathParam(r, "database")
 	for _, d := range cosmosDocs.List() {
 		if d.Account == account && d.DB == db {
-			cosmosDocs.Delete(cosmosDocKey(account, d.DB, d.Coll, d.ID))
+			cosmosDocs.Delete(cosmosStoredDocKey(d))
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -782,6 +784,15 @@ func handleCosmosDataCreateColl(w http.ResponseWriter, r *http.Request) {
 		cosmosDataError(w, "BadRequest", "id is required", http.StatusBadRequest)
 		return
 	}
+	// Persist the declared partition-key path so the data plane can scope items
+	// by (partition key, id) — the SDK declares it here, not via ARM.
+	pkPath := ""
+	if pk, ok := body["partitionKey"].(map[string]any); ok {
+		if paths, ok := pk["paths"].([]any); ok && len(paths) > 0 {
+			pkPath, _ = paths[0].(string)
+		}
+	}
+	cosmosDataColls.Put(cosmosDataCollKey(account, db, id), CosmosDataColl{Account: account, DB: db, Coll: id, PKPath: pkPath})
 	cosmosWriteData(w, http.StatusCreated, cosmosDataColl(account, db, id))
 }
 
@@ -808,7 +819,7 @@ func handleCosmosDataDeleteColl(w http.ResponseWriter, r *http.Request) {
 	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
 	for _, d := range cosmosDocs.List() {
 		if d.Account == account && d.DB == db && d.Coll == coll {
-			cosmosDocs.Delete(cosmosDocKey(account, db, coll, d.ID))
+			cosmosDocs.Delete(cosmosStoredDocKey(d))
 		}
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -831,8 +842,14 @@ func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
 		id = generateUUID()
 		body["id"] = id
 	}
+	pkComponent, werr := cosmosResolvePKForWrite(r, account, db, coll, body)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
 	upsert := strings.EqualFold(r.Header.Get("x-ms-documentdb-is-upsert"), "true")
-	existing, exists := cosmosDocs.Get(cosmosDocKey(account, db, coll, id))
+	key := cosmosDocKeyPK(account, db, coll, pkComponent, id)
+	existing, exists := cosmosDocs.Get(key)
 	if exists && !upsert {
 		// Real Cosmos: a plain create (no upsert header) of an existing id is
 		// a 409 Conflict.
@@ -849,7 +866,7 @@ func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	doc := cosmosStoreDoc(account, db, coll, id, body)
+	doc := cosmosStoreDocKey(key, account, db, coll, id, body)
 	status := http.StatusCreated
 	if exists && upsert {
 		// An upsert that replaced an existing document returns 200, not 201.
@@ -870,12 +887,38 @@ func handleCosmosDataListDocs(w http.ResponseWriter, r *http.Request) {
 
 func handleCosmosDataGetDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
-	doc, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	doc, _, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
 	if !ok {
 		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
 		return
 	}
 	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+}
+
+// cosmosResolvePointDoc looks up a single document addressed by (partition key,
+// id). When the SDK sends the partition-key header the lookup is an exact,
+// partition-scoped store-key read; without the header (legacy raw-HTTP) it falls
+// back to an id scan within the collection. It returns the document, its store
+// key, whether it was found, and any header-parse error.
+func cosmosResolvePointDoc(r *http.Request, account, db, coll, docID string) (CosmosDocument, string, bool, *cosmosWriteError) {
+	pkComponent, hasHeader, werr := cosmosResolvePKForPoint(r, account, db, coll)
+	if werr != nil {
+		return CosmosDocument{}, "", false, werr
+	}
+	if hasHeader {
+		key := cosmosDocKeyPK(account, db, coll, pkComponent, docID)
+		doc, ok := cosmosDocs.Get(key)
+		return doc, key, ok, nil
+	}
+	doc, ok := cosmosFindDocByID(account, db, coll, docID)
+	if !ok {
+		return CosmosDocument{}, "", false, nil
+	}
+	return doc, cosmosDocKeyPK(account, db, coll, cosmosDocPKComponent(account, db, coll, doc), docID), true, nil
 }
 
 func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
@@ -886,7 +929,13 @@ func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	body["id"] = docID
-	if existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID)); ok {
+	pkComponent, werr := cosmosResolvePKForWrite(r, account, db, coll, body)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
+	key := cosmosDocKeyPK(account, db, coll, pkComponent, docID)
+	if existing, ok := cosmosDocs.Get(key); ok {
 		if !cosmosIfMatchOK(r, existing.ETag) {
 			cosmosDataError(w, "PreconditionFailed",
 				"Operation cannot be performed because one of the specified precondition is not met.",
@@ -894,13 +943,17 @@ func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	doc := cosmosStoreDoc(account, db, coll, docID, body)
+	doc := cosmosStoreDocKey(key, account, db, coll, docID, body)
 	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
 }
 
 func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
-	existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	existing, key, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
 	if !ok {
 		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
 		return
@@ -911,7 +964,7 @@ func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
 			http.StatusPreconditionFailed)
 		return
 	}
-	cosmosDocs.Delete(cosmosDocKey(account, db, coll, docID))
+	cosmosDocs.Delete(key)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -932,8 +985,52 @@ func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	docs := cosmosDocsFor(account, db, coll)
+
+	// Partition scoping: a pk header scopes the query to that single partition
+	// even when the SDK also sets enablecrosspartition=true (which it does by
+	// default), matching real Cosmos's single-partition routing.
+	pkComponent, scoped, werr := cosmosResolvePKForPoint(r, account, db, coll)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
+	if scoped {
+		filtered := docs[:0:0]
+		for _, d := range docs {
+			if cosmosDocPKComponent(account, db, coll, d) == pkComponent {
+				filtered = append(filtered, d)
+			}
+		}
+		docs = filtered
+	}
+
 	out := cosmosRunQuery(plan, docs, cosmosBindParams(req.Parameters))
-	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": out, "_count": len(out)})
+
+	// Pagination: honor x-ms-max-item-count + x-ms-continuation. A COUNT
+	// aggregate is a single scalar row and is never paged.
+	offset, oerr := cosmosContinuationOffset(r)
+	if oerr != nil {
+		cosmosDataError(w, "BadRequest", oerr.Error(), http.StatusBadRequest)
+		return
+	}
+	maxItems := cosmosMaxItemCount(r)
+	page := out
+	var continuation string
+	if !plan.countAll {
+		if offset > len(out) {
+			offset = len(out)
+		}
+		page = out[offset:]
+		if maxItems >= 0 && maxItems < len(page) {
+			page = page[:maxItems]
+			continuation = cosmosEncodeContinuation(offset + maxItems)
+		}
+	}
+	if continuation != "" {
+		w.Header().Set("x-ms-continuation", continuation)
+	}
+	w.Header().Set("x-ms-item-count", fmt.Sprintf("%d", len(page)))
+	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": page, "_count": len(page)})
 }
 
 // handleCosmosDataPatchDoc applies a Cosmos partial-document patch (the
@@ -941,7 +1038,11 @@ func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 // set/add/replace/remove/incr; path is a JSON-pointer-ish `/a/b`.
 func handleCosmosDataPatchDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
-	existing, ok := cosmosDocs.Get(cosmosDocKey(account, db, coll, docID))
+	existing, key, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
+	if werr != nil {
+		cosmosDataError(w, werr.code, werr.msg, werr.status)
+		return
+	}
 	if !ok {
 		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
 		return
@@ -972,7 +1073,7 @@ func handleCosmosDataPatchDoc(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	body["id"] = docID
-	doc := cosmosStoreDoc(account, db, coll, docID, body)
+	doc := cosmosStoreDocKey(key, account, db, coll, docID, body)
 	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
 }
 
@@ -1061,7 +1162,10 @@ func cosmosCloneBody(in map[string]any) map[string]any {
 	return out
 }
 
-func cosmosStoreDoc(account, db, coll, id string, body map[string]any) CosmosDocument {
+// cosmosStoreDocKey stores a document under an explicit, partition-scoped store
+// key (built by cosmosDocKeyPK) so two docs with the same id in different
+// partitions remain distinct items.
+func cosmosStoreDocKey(key, account, db, coll, id string, body map[string]any) CosmosDocument {
 	now := time.Now().UTC().Unix()
 	doc := CosmosDocument{
 		ID:      id,
@@ -1074,7 +1178,7 @@ func cosmosStoreDoc(account, db, coll, id string, body map[string]any) CosmosDoc
 		Self:    "dbs/" + db + "/colls/" + coll + "/docs/" + id + "/",
 		TS:      now,
 	}
-	cosmosDocs.Put(cosmosDocKey(account, db, coll, id), doc)
+	cosmosDocs.Put(key, doc)
 	return doc
 }
 

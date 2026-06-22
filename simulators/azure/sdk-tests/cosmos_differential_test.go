@@ -180,6 +180,93 @@ func cosmosDiffScenarios() []cosmosDiffScenario {
 			_, err := cc.ReadItem(ctx, pk, "x", nil)
 			return nil, err
 		}},
+		{"same-id-different-partition-distinct", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			p1, p2 := azcosmos.NewPartitionKeyString("p1"), azcosmos.NewPartitionKeyString("p2")
+			r1, _ := json.Marshal(map[string]any{"id": "x", "pk": "p1", "v": 1})
+			if _, err := cc.CreateItem(ctx, p1, r1, nil); err != nil {
+				return nil, err
+			}
+			// Same id "x" but a different partition — a DISTINCT item, not a 409.
+			r2, _ := json.Marshal(map[string]any{"id": "x", "pk": "p2", "v": 2})
+			if _, err := cc.CreateItem(ctx, p2, r2, nil); err != nil {
+				return nil, err
+			}
+			g1, err := cc.ReadItem(ctx, p1, "x", nil)
+			if err != nil {
+				return nil, err
+			}
+			g2, err := cc.ReadItem(ctx, p2, "x", nil)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"p1": cosmosUnmarshal(g1.Value)["v"],
+				"p2": cosmosUnmarshal(g2.Value)["v"],
+			}, nil // distinct items → {p1:1, p2:2}
+		}},
+		{"create-pk-mismatch-400", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			// Header says partition "p" but the document's /pk value is "other".
+			raw, _ := json.Marshal(map[string]any{"id": "x", "pk": "other", "v": 1})
+			_, err := cc.CreateItem(ctx, azcosmos.NewPartitionKeyString("p"), raw, nil)
+			return nil, err // real Cosmos → 400 BadRequest
+		}},
+		{"single-partition-query-scopes", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			p1, p2 := azcosmos.NewPartitionKeyString("p1"), azcosmos.NewPartitionKeyString("p2")
+			for _, d := range []struct {
+				pk  azcosmos.PartitionKey
+				doc map[string]any
+			}{
+				{p1, map[string]any{"id": "a", "pk": "p1"}},
+				{p1, map[string]any{"id": "b", "pk": "p1"}},
+				{p2, map[string]any{"id": "c", "pk": "p2"}},
+			} {
+				raw, _ := json.Marshal(d.doc)
+				if _, err := cc.CreateItem(ctx, d.pk, raw, nil); err != nil {
+					return nil, err
+				}
+			}
+			// A query scoped to partition p1 returns only p1's docs.
+			pager := cc.NewQueryItemsPager("SELECT c.id FROM c ORDER BY c.id ASC", p1, nil)
+			var ids []any
+			for pager.More() {
+				page, err := pager.NextPage(ctx)
+				if err != nil {
+					return nil, err
+				}
+				for _, it := range page.Items {
+					ids = append(ids, cosmosUnmarshal(it)["id"])
+				}
+			}
+			return map[string]any{"ids": ids}, nil // only [a, b]
+		}},
+		{"query-pagination-max-item-count", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			for _, id := range []string{"a", "b", "c", "d", "e"} {
+				raw, _ := json.Marshal(map[string]any{"id": id, "pk": "p", "n": id})
+				if _, err := cc.CreateItem(ctx, pk, raw, nil); err != nil {
+					return nil, err
+				}
+			}
+			// PageSizeHint=1 sets x-ms-max-item-count=1; the pager must walk every
+			// page (via x-ms-continuation) and return the full ordered set.
+			pager := cc.NewQueryItemsPager("SELECT c.id FROM c ORDER BY c.id ASC", pk,
+				&azcosmos.QueryOptions{PageSizeHint: 1})
+			var ids []any
+			for pager.More() {
+				page, err := pager.NextPage(ctx)
+				if err != nil {
+					return nil, err
+				}
+				for _, it := range page.Items {
+					ids = append(ids, cosmosUnmarshal(it)["id"])
+				}
+			}
+			// The full ordered set must come back across pages (paged 1-at-a-time).
+			return map[string]any{"ids": ids}, nil // [a, b, c, d, e]
+		}},
 		{"query-where-and-order", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
 			cc := makeContainer(t, c, dbID)
 			for i, d := range []map[string]any{
@@ -278,9 +365,20 @@ func startCosmosEmulator(t *testing.T) (endpoint string, stop func()) {
 		t.Skipf("Cosmos emulator image %s not present locally (CI pre-pulls it); skipping", image)
 	}
 
-	port := freeTCPPort(t)
+	// The emulator advertises its data-plane endpoint as a hardcoded
+	// http://127.0.0.1:8081/ in the account-discovery response; the azcosmos
+	// global endpoint manager then routes every data-plane request there. So the
+	// host MUST publish the container on port 8081 (a random host port would let
+	// discovery succeed but every subsequent request would route to an unmapped
+	// 8081 and hang). Skip cleanly if 8081 is already taken.
+	const hostPort = 8081
+	if ln, lerr := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", hostPort)); lerr != nil {
+		t.Skipf("host port %d is in use (the Cosmos emulator advertises 127.0.0.1:%d for its data plane and requires it); skipping differential", hostPort, hostPort)
+	} else {
+		_ = ln.Close()
+	}
 	runOut, err := exec.Command("docker", "run", "-d", "--rm",
-		"-p", fmt.Sprintf("127.0.0.1:%d:8081", port),
+		"-p", fmt.Sprintf("127.0.0.1:%d:8081", hostPort),
 		image, "--protocol", "http").CombinedOutput()
 	if err != nil {
 		t.Skipf("could not start Cosmos emulator (skipping differential): %v\n%s", err, runOut)
@@ -288,12 +386,14 @@ func startCosmosEmulator(t *testing.T) (endpoint string, stop func()) {
 	id := trimSpace(string(runOut))
 	stop = func() { _ = exec.Command("docker", "rm", "-f", id).Run() }
 
-	endpoint = fmt.Sprintf("http://127.0.0.1:%d/", port)
+	endpoint = fmt.Sprintf("http://127.0.0.1:%d/", hostPort)
 	probe := newCosmosSDKClient(t, endpoint)
-	deadline := time.Now().Add(150 * time.Second)
-	for time.Now().Before(deadline) {
+	deadline := time.Now().Add(280 * time.Second)
+	for i := 0; time.Now().Before(deadline); i++ {
 		cctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		_, perr := probe.CreateDatabase(cctx, azcosmos.DatabaseProperties{ID: "readyprobe"}, nil)
+		// A unique db id per attempt so a successful create on a slow first
+		// attempt isn't masked by a 409 "already exists" on the retry.
+		_, perr := probe.CreateDatabase(cctx, azcosmos.DatabaseProperties{ID: fmt.Sprintf("readyprobe%d", i)}, nil)
 		cancel()
 		if perr == nil {
 			return endpoint, stop
@@ -304,16 +404,6 @@ func startCosmosEmulator(t *testing.T) (endpoint string, stop func()) {
 	stop()
 	t.Skipf("Cosmos emulator did not become ready at %s (skipping differential)\n%s", endpoint, logs)
 	return "", func() {}
-}
-
-func freeTCPPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("free port: %v", err)
-	}
-	defer ln.Close()
-	return ln.Addr().(*net.TCPAddr).Port
 }
 
 func trimSpace(s string) string {
