@@ -4,7 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/iam-fidelity-audit` — **a 3-cloud IAM/identity fidelity sweep (BUG-2177..2184), one PR.** A per-cloud audit found and fixed a broad set of IAM/identity fidelity gaps, each with SDK/CLI tests, faithful to the real cloud.
+`feat/iam-resource-condition-keys` — **IAM enforcement: resource-scoped condition keys (consumer #661, BUG-2185).**
+
+- The enforcement gate (`iamAuthorize`) populated only global condition keys, so a least-privilege grant conditioned on a resource's tags / cluster could never match. `iam_condition_context.go` (`iamPopulateResourceConditionKeys`) now resolves the request's target resource and feeds `aws:ResourceTag/<k>` + `ec2:ResourceTag/<k>` (the targeted EC2 volume/snapshot/instance/ENI's tags), `ecs:cluster` (the cluster ARN, parsed from the awsJson body and restored), and `aws:RequestTag/<k>` + `aws:TagKeys` (tag-on-create) into the condition context before `iamEvalDecision`. The #660 operator support already covered the matching.
+- Tests: SDK (`TestIAM_ResourceTagCondition`, `TestIAM_ECSClusterCondition`) + CLI (`TestIAM_ResourceTagConditionCLI`) reproduce #661 — DeleteVolume gated on `aws:ResourceTag/edd:managed=true` flips deny→allow when the tag is added; StopTask scoped to one cluster denies another. aws sim/sdk/cli build/lint(0)/unit green.
+
+**Next candidates:** **BUG-2175 remaining** — Cosmos RU model / autoscale, stored procedures, change feed + conflicts, consistency/session semantics. Per-service resource-ARN derivation for the remaining AWS query/json services (beyond S3/SNS/SQS/EC2). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+
+### (history) `feat/iam-fidelity-audit` (MERGED as #660) — a 3-cloud IAM/identity fidelity sweep (BUG-2177..2184). A per-cloud audit found and fixed a broad set of IAM/identity fidelity gaps, each with SDK/CLI tests, faithful to the real cloud.
 
 - **AWS** (`iam_policy_sim.go`/`sts.go`/`iam_groups.go`/`iam_enforcement.go`/`s3.go` + the `iam_resource_policies.go` resolver): full condition operators (Numeric/Date/IpAddress/Null/…), `ForAllValues`/`ForAnyValue`, policy variables, `Principal`/`NotPrincipal` (2178); STS `AssumeRole`/`AssumeRoleWithWebIdentity`/`GetSessionToken` + faithful `GetCallerIdentity` + assumed-role (`ASIA…`) enforcement (2179); IAM groups + inheritance, permission boundaries, `ListUsers` (2180); resource-based policies (S3/Lambda/SNS/SQS) evaluated by the gate + **S3 REST data-plane enforcement** (2181); resource-ARN derivation closing #657 phase 2 (2177).
 - **GCP** (`iam.go`): bucket-IAM etag validation+persistence, member validation, numeric SA uniqueId, predefined + **custom roles** CRUD, SA-as-resource IAM, SA enable/disable/patch (2182).

@@ -77,6 +77,9 @@ func iamAuthorize(r *http.Request, action, resource string) (allowed bool, princ
 	if region := iamRequestedRegion(r); region != "" {
 		ctx["aws:RequestedRegion"] = []string{region}
 	}
+	// Resource-scoped / service-specific keys (aws:ResourceTag/*, ecs:cluster,
+	// aws:RequestTag/*, aws:TagKeys) from the request's target resource.
+	iamPopulateResourceConditionKeys(r, action, ctx)
 
 	decision, _ := iamEvalDecision(docs, action, resource, ctx)
 	if decision == "explicitDeny" {

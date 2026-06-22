@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - IAM enforcement: resource-scoped condition keys (#661, BUG-2185)
+
+Follow-up to the IAM enforcement work (#657/#659) and the full condition-operator evaluator (#660). The gate could evaluate conditions but only fed **global** condition keys (`aws:username`/`userid`/`SourceIp`/`RequestedRegion`) into the request context, so a least-privilege grant conditioned on a resource's tags or an ECS cluster could never match — a tag-scoped Allow behaved as a blanket Deny.
+
+`iam_condition_context.go` (`iamPopulateResourceConditionKeys`, called from `iamAuthorize` before `iamEvalDecision`) resolves the request's target resource and populates the resource-scoped / service-specific keys: `aws:ResourceTag/<k>` and the service-prefixed `ec2:ResourceTag/<k>` from the targeted EC2 resource's tags (volume / snapshot / instance / network interface, looked up by the request's id parameter); `ecs:cluster` (the targeted cluster's ARN — ECS is awsJson, so the body is read and restored so the downstream handler still sees it); and `aws:RequestTag/<k>` + `aws:TagKeys` from a tag-on-create / CreateTags request. The operator support from #660 already handled the matching — this just feeds the resource context to it. SDK + CLI tests reproduce #661 exactly: `ec2:DeleteVolume` conditioned on `aws:ResourceTag/edd:managed=true` is denied on an untagged volume and allowed once `CreateTags` adds the tag, and `ecs:StopTask` scoped to one cluster denies a call targeting another.
+
 ## 2026-06-22 - 3-cloud IAM/identity fidelity sweep (BUG-2177..2184)
 
 A per-cloud audit of every simulator's IAM/identity surface (AWS IAM/STS, GCP IAM, Azure RBAC + Entra + managed identity) against the real cloud APIs, and a broad set of faithful fixes — each shipped with SDK + CLI tests, no fakes/fallbacks.
