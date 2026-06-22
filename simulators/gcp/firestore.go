@@ -164,6 +164,10 @@ var fsDocuments sim.Store[FSDocument]
 func registerFirestore(srv *sim.Server) {
 	fsDocuments = sim.MakeStore[FSDocument](srv.DB(), "firestore_documents")
 
+	fsTransactions = sim.MakeStore[fsTxn](srv.DB(), "firestore_transactions")
+
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/documents:beginTransaction", handleFSBeginTransaction)
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/documents:rollback", handleFSRollback)
 	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/documents:commit", handleFSCommit)
 	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/documents:batchGet", handleFSBatchGet)
 	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/documents:batchWrite", handleFSBatchWrite)
@@ -577,11 +581,22 @@ func fsApplyWrite(wr fsWrite) (map[string]any, *fsWriteError) {
 
 func handleFSCommit(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Writes []fsWrite `json:"writes"`
+		Writes      []fsWrite `json:"writes"`
+		Transaction string    `json:"transaction"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid commit body: %v", err)
 		return
+	}
+	// A transactional commit consumes the transaction: an unknown or
+	// already-consumed token is rejected, and committing always retires the
+	// token (a transaction can be committed at most once, success or failure).
+	if req.Transaction != "" {
+		if _, ok := fsTransactions.Get(req.Transaction); !ok {
+			sim.GCPError(w, http.StatusBadRequest, "Invalid transaction.", "INVALID_ARGUMENT")
+			return
+		}
+		fsTransactions.Delete(req.Transaction)
 	}
 	writeResults := make([]map[string]any, 0, len(req.Writes))
 	for _, wr := range req.Writes {
@@ -624,14 +639,19 @@ func handleFSBatchWrite(w http.ResponseWriter, r *http.Request) {
 
 func handleFSBatchGet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Documents []string `json:"documents"`
+		Documents   []string `json:"documents"`
+		Transaction string   `json:"transaction"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid batchGet body: %v", err)
 		return
 	}
+	readTime, ok := fsReadTimeForTxn(req.Transaction)
+	if !ok {
+		sim.GCPError(w, http.StatusBadRequest, "Invalid transaction.", "INVALID_ARGUMENT")
+		return
+	}
 	out := make([]map[string]any, 0, len(req.Documents))
-	readTime := fsNow()
 	for _, name := range req.Documents {
 		if doc, ok := fsDocuments.Get(name); ok {
 			out = append(out, map[string]any{"found": doc, "readTime": readTime})
@@ -651,9 +671,15 @@ func handleFSRunQuery(w http.ResponseWriter, r *http.Request, parentPath string)
 	parent := fsFullName(project, database, strings.Trim(parentPath, "/"))
 	var req struct {
 		StructuredQuery fsStructuredQuery `json:"structuredQuery"`
+		Transaction     string            `json:"transaction"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid runQuery body: %v", err)
+		return
+	}
+	readTime, ok := fsReadTimeForTxn(req.Transaction)
+	if !ok {
+		sim.GCPError(w, http.StatusBadRequest, "Invalid transaction.", "INVALID_ARGUMENT")
 		return
 	}
 	q := req.StructuredQuery
@@ -710,10 +736,10 @@ func handleFSRunQuery(w http.ResponseWriter, r *http.Request, parentPath string)
 
 	out := make([]map[string]any, 0, len(docs)+1)
 	for _, d := range docs {
-		out = append(out, map[string]any{"document": fsProjectDocument(d, q.Select), "readTime": fsNow()})
+		out = append(out, map[string]any{"document": fsProjectDocument(d, q.Select), "readTime": readTime})
 	}
 	if len(out) == 0 {
-		out = append(out, map[string]any{"readTime": fsNow(), "done": true})
+		out = append(out, map[string]any{"readTime": readTime, "done": true})
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }

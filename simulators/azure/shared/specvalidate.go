@@ -77,8 +77,15 @@ func (s *Server) SetSpecValidator(v SpecValidator) {
 				// rejected loudly rather than silently truncated (a truncated
 				// body fed to the handler would corrupt the exchange).
 				lr := io.LimitReader(r.Body, specCaptureBodyLimit+1)
-				reqBody, _ = io.ReadAll(lr)
+				var readErr error
+				reqBody, readErr = io.ReadAll(lr)
 				_ = r.Body.Close()
+				if readErr != nil {
+					// A failed body read (e.g. a client disconnect mid-upload) must
+					// not feed a truncated body silently to the handler.
+					http.Error(w, "failed to read request body: "+readErr.Error(), http.StatusBadRequest)
+					return
+				}
 				if int64(len(reqBody)) > specCaptureBodyLimit {
 					http.Error(w, "request body exceeds spec-validate capture limit", http.StatusRequestEntityTooLarge)
 					return

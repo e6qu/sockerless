@@ -116,7 +116,10 @@ func handleECSDescribeCapacityProviders(w http.ResponseWriter, r *http.Request) 
 	var req struct {
 		CapacityProviders []string `json:"capacityProviders"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
 	known := map[string]bool{}
 	for _, name := range ecsBuiltInCapacityProviders {
@@ -181,7 +184,10 @@ func handleECSListTaskDefinitionFamilies(w http.ResponseWriter, r *http.Request)
 		MaxResults   int    `json:"maxResults"`
 		NextToken    string `json:"nextToken"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 
 	status := req.Status
 	if status == "" {
@@ -449,7 +455,10 @@ func handleECSListClusters(w http.ResponseWriter, r *http.Request) {
 		MaxResults int    `json:"maxResults"`
 		NextToken  string `json:"nextToken"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	all := make([]string, 0)
 	for _, c := range ecsClusters.List() {
 		all = append(all, c.ClusterArn)
@@ -471,7 +480,10 @@ func handleECSListTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 		MaxResults   int    `json:"maxResults"`
 		NextToken    string `json:"nextToken"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	// status selects the lifecycle state; real AWS defaults to ACTIVE (INACTIVE
 	// revisions are excluded unless INACTIVE or ALL is requested explicitly).
 	status := strings.ToUpper(req.Status)

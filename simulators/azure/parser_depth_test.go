@@ -7,5 +7,5 @@ import (
 
 // TestODataDepthGuard: deeply-nested parens must not overflow the stack.
 func TestODataDepthGuard(t *testing.T) {
-	_ = azureParseODataFilter(strings.Repeat("(", 2000000) + "a eq 'b'")
+	_, _ = azureParseODataFilter(strings.Repeat("(", 2000000) + "a eq 'b'")
 }

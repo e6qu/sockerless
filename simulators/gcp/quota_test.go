@@ -121,7 +121,7 @@ func TestServiceCPULoad_SumsAcrossContainers(t *testing.T) {
 // region"). Drift here would mask backend-side regressions.
 func TestRegionalCPUQuotaErrorJSON_Format(t *testing.T) {
 	rec := httptest.NewRecorder()
-	regionalCPUQuotaErrorJSON(rec, "p", "us-central1", "projects/p/locations/us-central1/services/foo")
+	regionalCPUQuotaErrorJSON(rec, "projects/p/locations/us-central1/services/foo")
 	body := rec.Body.String()
 	if rec.Code != 400 {
 		t.Errorf("status = %d, want 400", rec.Code)

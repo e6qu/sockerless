@@ -173,7 +173,7 @@ func registerCloudFunctions(srv *sim.Server) {
 			},
 		}, r.Host, project, location, functionID)
 		if !regionalCPUQuotaInstance.tryDebit(project, location, serviceCPULoad(backingService)) {
-			regionalCPUQuotaErrorJSON(w, project, location, backingService.Name)
+			regionalCPUQuotaErrorJSON(w, backingService.Name)
 			return
 		}
 		fn.ServiceConfig.Service = backingService.Name

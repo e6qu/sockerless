@@ -198,7 +198,10 @@ func handleCWCBORListDashboards(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DashboardNamePrefix string `cbor:"DashboardNamePrefix"`
 	}
-	_ = cbor.Unmarshal(raw, &req)
+	if err := cbor.Unmarshal(raw, &req); err != nil {
+		cwWriteCBORError(w, "InvalidParameterValue", "Invalid CBOR request", http.StatusBadRequest)
+		return
+	}
 	cwWriteCBOR(w, map[string]any{"DashboardEntries": cwListDashboardEntries(req.DashboardNamePrefix)})
 }
 

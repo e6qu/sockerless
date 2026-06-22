@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"runtime"
 	"sort"
@@ -200,7 +201,10 @@ func handleBatchDescribeComputeEnvironments(w http.ResponseWriter, r *http.Reque
 		MaxResults          *int32   `json:"maxResults"`
 		NextToken           string   `json:"nextToken"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		batchWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
 
 	var result []BatchComputeEnvironment
 	if len(req.ComputeEnvironments) > 0 {

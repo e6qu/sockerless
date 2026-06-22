@@ -21,7 +21,11 @@ func TestAzureODataFilter(t *testing.T) {
 	apply := func(filter string) []odItem {
 		q := url.Values{"$filter": {filter}}
 		r := httptest.NewRequest("GET", "/x?"+q.Encode(), nil)
-		return azureApplyListQuery(items, r)
+		got, err := azureApplyListQuery(items, r)
+		if err != nil {
+			t.Fatalf("$filter=%q returned unexpected error: %v", filter, err)
+		}
+		return got
 	}
 
 	cases := []struct {
@@ -46,11 +50,46 @@ func TestAzureODataFilter(t *testing.T) {
 		}
 	}
 
+	// A valid filter that simply matches nothing returns zero items, not an error.
+	if got := apply("name eq 'nonexistent'"); len(got) != 0 {
+		t.Errorf("$filter matching nothing → %d items, want 0", len(got))
+	}
+
 	// $orderby
 	q := url.Values{"$orderby": {"tier desc"}}
 	r := httptest.NewRequest("GET", "/x?"+q.Encode(), nil)
-	got := azureApplyListQuery(items, r)
+	got, err := azureApplyListQuery(items, r)
+	if err != nil {
+		t.Fatalf("$orderby returned unexpected error: %v", err)
+	}
 	if got[0].Tier != 3 || got[2].Tier != 1 {
 		t.Errorf("$orderby=tier desc → %v", got)
+	}
+}
+
+// TestAzureODataFilterMalformed: a malformed $filter is a client error — real
+// Azure rejects it (HTTP 400) rather than matching every item. azureApplyListQuery
+// must return an error so the list handlers surface BadRequest.
+func TestAzureODataFilterMalformed(t *testing.T) {
+	items := []odItem{
+		{Name: "alpha", State: "ACTIVE", Tier: 1},
+		{Name: "beta", State: "STOPPED", Tier: 3},
+	}
+	bad := []string{
+		"name eq",             // missing value
+		"name",                // missing operator + value
+		"name foo 'x'",        // unknown operator
+		"startswith(name",     // truncated function
+		"((name eq 'alpha'",   // unbalanced parens
+		"contains('x')",       // missing function field arg
+		"and name eq 'alpha'", // leading binary operator
+	}
+	for _, f := range bad {
+		q := url.Values{"$filter": {f}}
+		r := httptest.NewRequest("GET", "/x?"+q.Encode(), nil)
+		got, err := azureApplyListQuery(items, r)
+		if err == nil {
+			t.Errorf("$filter=%q: want parse error, got %d items (matched all without failing)", f, len(got))
+		}
 	}
 }

@@ -119,14 +119,12 @@ const regionalCPUQuotaErrorMessage = "Container Healthcheck failed. Quota exceed
 // the live cloud produces when CPU quota is exhausted. Status 400 +
 // status="INVALID_ARGUMENT" matches the wire format the Cloud Functions
 // + Cloud Run APIs return on this condition.
-func regionalCPUQuotaErrorJSON(w http.ResponseWriter, project, region, resourceName string) {
+func regionalCPUQuotaErrorJSON(w http.ResponseWriter, resourceName string) {
 	msg := regionalCPUQuotaErrorMessage
 	if resourceName != "" {
 		msg = "Could not create or update Cloud Run service " + resourceName + ", " + msg
 	}
 	sim.GCPError(w, http.StatusBadRequest, msg, "INVALID_ARGUMENT")
-	_ = project
-	_ = region
 }
 
 // containerCPULoad parses a Container resource limit (e.g. "1", "0.5",

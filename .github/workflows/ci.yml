@@ -314,6 +314,9 @@ jobs:
         run: |
           curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C "$HOME"
           echo "$HOME/google-cloud-sdk/bin" >> "$GITHUB_PATH"
+          # The Firestore-emulator component is the differential-test oracle for
+          # TestFirestore_DifferentialVsEmulator (the runner ships a JRE).
+          "$HOME/google-cloud-sdk/bin/gcloud" components install cloud-firestore-emulator beta --quiet
       - name: Install Azure CLI
         if: matrix.cloud == 'azure'
         run: curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash

@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -343,8 +344,12 @@ func handleACMListCertificates(w http.ResponseWriter, r *http.Request) {
 		MaxItems            int      `json:"MaxItems"`
 		NextToken           string   `json:"NextToken"`
 	}
-	// Body is optional for ListCertificates; ignore decode errors on an empty body.
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	// Body is optional for ListCertificates; an empty body is tolerated, but a
+	// malformed body is rejected rather than silently treated as no filter.
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
 
 	statusFilter := map[string]bool{}
 	for _, s := range req.CertificateStatuses {

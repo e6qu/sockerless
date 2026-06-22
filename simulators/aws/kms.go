@@ -686,7 +686,10 @@ func handleKMSListAliases(w http.ResponseWriter, r *http.Request) {
 		Limit  int    `json:"Limit"`
 		Marker string `json:"Marker"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
 	// When KeyId is set, resolve it (it may be an ARN or key id) so aliases
 	// filter to that one key, matching the real ListAliases KeyId parameter.
 	var filterKeyID string
