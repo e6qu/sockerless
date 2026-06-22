@@ -168,6 +168,9 @@ func lambdaArn(name string) string {
 }
 
 func registerLambda(srv *sim.Server) {
+	// Invoke is a CloudTrail DATA event (excluded from LookupEvents); the
+	// function-management ops are management events.
+	cloudTrailDeclareDataEvents("lambda.amazonaws.com", "Invoke")
 	lambdaFunctions = sim.MakeStore[LambdaFunction](srv.DB(), "lambda_functions")
 
 	mux := srv

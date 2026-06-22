@@ -72,6 +72,8 @@ func snsSubscriptionARN(topicName string) string {
 const snsAPIVersion = "2010-03-31"
 
 func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
+	// Publish is a CloudTrail DATA event (excluded from LookupEvents).
+	cloudTrailDeclareDataEvents("sns.amazonaws.com", "Publish", "PublishBatch")
 	snsTopics = sim.MakeStore[SNSTopic](srv.DB(), "sns_topics")
 	snsSubscriptions = sim.MakeStore[SNSSubscription](srv.DB(), "sns_subscriptions")
 

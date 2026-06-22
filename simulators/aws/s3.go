@@ -87,6 +87,13 @@ func s3ObjectKey(bucket, key string) string {
 }
 
 func registerS3(srv *sim.Server) {
+	// Object-level ops are CloudTrail DATA events (excluded from LookupEvents);
+	// bucket-level ops (ListBuckets, CreateBucket, …) are management events.
+	cloudTrailDeclareDataEvents("s3.amazonaws.com",
+		"GetObject", "PutObject", "DeleteObject", "HeadObject", "CopyObject",
+		"DeleteObjects", "GetObjectTagging", "PutObjectTagging", "DeleteObjectTagging",
+		"ListParts", "UploadPart", "CreateMultipartUpload", "CompleteMultipartUpload",
+		"AbortMultipartUpload")
 	s3Buckets_ = sim.MakeStore[S3Bucket](srv.DB(), "s3_buckets")
 	s3Objects = sim.MakeStore[S3Object](srv.DB(), "s3_objects")
 
