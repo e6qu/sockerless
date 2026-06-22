@@ -713,6 +713,12 @@ func armSpecValidator(srv *sim.Server) error {
 		if azureNonSpecRequestPath(req.URL.Path) {
 			return nil // documented non-spec surface; no swagger shape exists
 		}
+		if cosmosIsDataPlaneRequest(req) {
+			// The Cosmos DB SQL data plane (incl. the account-discovery GET /)
+			// has no vendored Azure swagger; without this its account-properties
+			// response is mis-matched to the storage account-root operation.
+			return nil
+		}
 		cands := idx.match(req.Method, req.URL.Path)
 		if len(cands) == 0 {
 			return nil // non-spec surface; the static route gate owns it
