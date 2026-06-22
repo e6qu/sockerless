@@ -32,7 +32,10 @@ func FuzzCWInsightsFilter(f *testing.F) {
 	}
 	rec := cwInsightsRecord{"status": "200", "level": "error", "msg": "error: boom"}
 	f.Fuzz(func(t *testing.T, expr string) {
-		node := cwParseInsightsFilter(expr)
+		node, err := cwParseInsightsFilter(expr)
+		if err != nil {
+			return
+		}
 		if node != nil {
 			_ = node.eval(rec)
 		}

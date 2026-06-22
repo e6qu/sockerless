@@ -38,8 +38,14 @@ func FuzzCWLogPatternMatches(f *testing.F) {
 		`not json {`,
 	}
 	f.Fuzz(func(t *testing.T, pattern string) {
+		// A malformed pattern returns a loud error (not a crash); a well-formed
+		// one compiles and matches without panicking on any event.
+		c, err := cwCompileLogPattern(pattern)
+		if err != nil {
+			return
+		}
 		for _, m := range messages {
-			_ = cwLogPatternMatches(m, pattern)
+			_ = c.match(m)
 		}
 	})
 }

@@ -31,8 +31,34 @@ func TestCWLogPatternMatches(t *testing.T) {
 		{`not json`, `{ $.x = "y" }`, false},              // structured on non-JSON
 	}
 	for _, tc := range cases {
-		if got := cwLogPatternMatches(tc.msg, tc.pat); got != tc.want {
-			t.Errorf("cwLogPatternMatches(%q, %q) = %v, want %v", tc.msg, tc.pat, got, tc.want)
+		c, err := cwCompileLogPattern(tc.pat)
+		if err != nil {
+			t.Errorf("cwCompileLogPattern(%q) unexpected error: %v", tc.pat, err)
+			continue
 		}
+		if got := c.match(tc.msg); got != tc.want {
+			t.Errorf("pattern %q on %q = %v, want %v", tc.pat, tc.msg, got, tc.want)
+		}
+	}
+}
+
+// TestCWLogPatternFailsLoud asserts a malformed structured pattern is a loud
+// error (the handler turns it into InvalidParameterException), never a silent
+// "matches nothing".
+func TestCWLogPatternFailsLoud(t *testing.T) {
+	bad := []string{
+		`{ $.a = }`,      // comparison missing its value
+		`{ $.a = 1 && }`, // trailing operator
+		`{ ($.a = 1 }`,   // unbalanced parenthesis
+		`{ = 1 }`,        // missing selector
+	}
+	for _, pat := range bad {
+		if _, err := cwCompileLogPattern(pat); err == nil {
+			t.Errorf("cwCompileLogPattern(%q) = nil error, want a malformed-pattern error", pat)
+		}
+	}
+	// A well-formed pattern that simply matches nothing is not an error.
+	if _, err := cwCompileLogPattern(`{ $.a = "z" }`); err != nil {
+		t.Errorf("well-formed pattern errored: %v", err)
 	}
 }

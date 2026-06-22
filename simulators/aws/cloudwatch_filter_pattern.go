@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -19,22 +20,56 @@ import (
 //     comparison operators = != < <= > >= (string equality supports a trailing
 //     `*` wildcard), combined with && / || and parentheses.
 //
+// A malformed structured pattern is a loud error (the FilterLogEvents handler
+// surfaces it as InvalidParameterException, exactly as real CloudWatch Logs),
+// never a silent "matches nothing".
+//
 // https://docs.aws.amazon.com/AmazonCloudWatch/latest/logs/FilterAndPatternSyntax.html
-func cwLogPatternMatches(message, pattern string) bool {
+
+// cwCompiledPattern is a parsed, validated filter pattern ready to test against
+// many log events. A nil *cwCompiledPattern matches every event (empty pattern).
+type cwCompiledPattern struct {
+	structured cwPatNode // non-nil for a {…} JSON pattern
+	terms      []string  // unstructured terms (raw, incl. -/? prefixes & quotes)
+}
+
+// cwCompileLogPattern parses a filterPattern. A malformed structured pattern
+// returns an error; an unstructured pattern (space-separated terms) is always
+// well-formed.
+func cwCompileLogPattern(pattern string) (*cwCompiledPattern, error) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
-		return true
+		return nil, nil
 	}
 	if strings.HasPrefix(pattern, "{") && strings.HasSuffix(pattern, "}") {
-		return cwStructuredPatternMatch(message, pattern[1:len(pattern)-1])
+		node, err := cwParseStructuredPattern(pattern[1 : len(pattern)-1])
+		if err != nil {
+			return nil, err
+		}
+		return &cwCompiledPattern{structured: node}, nil
 	}
-	return cwUnstructuredPatternMatch(message, pattern)
+	return &cwCompiledPattern{terms: cwSplitPatternTerms(pattern)}, nil
+}
+
+// match reports whether the compiled pattern matches the event message. A nil
+// receiver (empty pattern) matches every event.
+func (c *cwCompiledPattern) match(message string) bool {
+	if c == nil {
+		return true
+	}
+	if c.structured != nil {
+		var doc any
+		if err := json.Unmarshal([]byte(message), &doc); err != nil {
+			return false // a structured pattern only matches JSON events
+		}
+		return c.structured.eval(doc)
+	}
+	return cwMatchUnstructuredTerms(message, c.terms)
 }
 
 // ── unstructured ───────────────────────────────────────────────────────────
 
-func cwUnstructuredPatternMatch(message, pattern string) bool {
-	terms := cwSplitPatternTerms(pattern)
+func cwMatchUnstructuredTerms(message string, terms []string) bool {
 	anyOptional, optionalMatched := false, false
 	for _, raw := range terms {
 		neg, opt := false, false
@@ -100,17 +135,20 @@ func cwSplitPatternTerms(s string) []string {
 
 // ── structured (JSON) ──────────────────────────────────────────────────────
 
-func cwStructuredPatternMatch(message, expr string) bool {
-	var doc any
-	if err := json.Unmarshal([]byte(message), &doc); err != nil {
-		return false // a structured pattern only matches JSON events
-	}
+// cwParseStructuredPattern parses the body of a {…} structured pattern into an
+// evaluable node, returning an error for a malformed pattern (unbalanced
+// parentheses, a comparison missing its operator/value, trailing garbage, or
+// nesting too deep) instead of silently matching nothing.
+func cwParseStructuredPattern(expr string) (cwPatNode, error) {
 	p := &cwPatParser{toks: cwPatTokenize(expr), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
 	node := p.parseOr()
-	if node == nil || p.peek().kind != cwPatEOF {
-		return false
+	if p.err == nil && p.peek().kind != cwPatEOF {
+		p.fail("invalid filter pattern: unexpected token %q", p.peek().text)
 	}
-	return node.eval(doc)
+	if p.err != nil {
+		return nil, p.err
+	}
+	return node, nil
 }
 
 type cwPatNode interface{ eval(doc any) bool }
@@ -260,6 +298,13 @@ type cwPatParser struct {
 	toks  []cwPatTok
 	pos   int
 	guard *sim.ParseGuard
+	err   error
+}
+
+func (p *cwPatParser) fail(format string, args ...any) {
+	if p.err == nil {
+		p.err = fmt.Errorf(format, args...)
+	}
 }
 
 func (p *cwPatParser) peek() cwPatTok { return p.toks[p.pos] }
@@ -288,17 +333,23 @@ func (p *cwPatParser) parseTerm() cwPatNode {
 		p.next()
 		if !p.guard.Enter() {
 			p.guard.Leave()
+			p.fail("invalid filter pattern: nesting too deep")
 			return cwPatTrue{}
 		}
 		inner := p.parseOr()
 		p.guard.Leave()
 		if p.peek().kind == cwPatRParen {
 			p.next()
+		} else {
+			p.fail("invalid filter pattern: expected ')'")
 		}
 		return inner
 	}
 	if p.peek().kind != cwPatWord {
-		if p.peek().kind != cwPatEOF {
+		if p.peek().kind == cwPatEOF {
+			p.fail("invalid filter pattern: unexpected end of pattern")
+		} else {
+			p.fail("invalid filter pattern: unexpected token %q", p.peek().text)
 			p.next()
 		}
 		return cwPatCmp{op: "="}
@@ -309,6 +360,8 @@ func (p *cwPatParser) parseTerm() cwPatNode {
 		op = p.next().text
 		if p.peek().kind == cwPatWord {
 			value = p.next().text
+		} else {
+			p.fail("invalid filter pattern: comparison on %q is missing its value", selector)
 		}
 	}
 	return cwPatCmp{selector: selector, op: op, value: value}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -190,19 +191,29 @@ type cwInsParser struct {
 	toks  []cwInsTok
 	pos   int
 	guard *sim.ParseGuard
+	err   error
 }
 
-func cwParseInsightsFilter(s string) cwInsightsNode {
+func (p *cwInsParser) fail(format string, args ...any) {
+	if p.err == nil {
+		p.err = fmt.Errorf(format, args...)
+	}
+}
+
+func cwParseInsightsFilter(s string) (cwInsightsNode, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
-		return cwInsTrue{}
+		return cwInsTrue{}, nil
 	}
 	p := &cwInsParser{toks: cwInsTokenize(s), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
 	node := p.parseOr()
-	if node == nil {
-		return cwInsTrue{}
+	if p.err == nil && p.peek().kind != cwInsEOF {
+		p.fail("malformed query: unexpected token %q in filter", p.peek().text)
 	}
-	return node
+	if p.err != nil {
+		return nil, p.err
+	}
+	return node, nil
 }
 
 func (p *cwInsParser) peek() cwInsTok { return p.toks[p.pos] }
@@ -239,17 +250,23 @@ func (p *cwInsParser) parseTerm() cwInsightsNode {
 		p.next()
 		if !p.guard.Enter() {
 			p.guard.Leave()
+			p.fail("malformed query: filter nesting too deep")
 			return cwInsTrue{}
 		}
 		inner := p.parseOr()
 		p.guard.Leave()
 		if p.peek().kind == cwInsRParen {
 			p.next()
+		} else {
+			p.fail("malformed query: expected ')'")
 		}
 		return inner
 	}
 	if p.peek().kind != cwInsWord {
-		if p.peek().kind != cwInsEOF {
+		if p.peek().kind == cwInsEOF {
+			p.fail("malformed query: unexpected end of filter")
+		} else {
+			p.fail("malformed query: unexpected token %q in filter", p.peek().text)
 			p.next()
 		}
 		return cwInsTrue{}
@@ -264,6 +281,7 @@ func (p *cwInsParser) parseTerm() cwInsightsNode {
 		if p.peek().kind == cwInsRegex {
 			re, err := regexp.Compile(p.next().text)
 			if err != nil {
+				p.fail("malformed query: invalid regex in like: %v", err)
 				return cwInsCmp{field: field, op: "like", value: ""}
 			}
 			return cwInsCmp{field: field, op: "like", re: re}
@@ -282,10 +300,16 @@ func (p *cwInsParser) parseTerm() cwInsightsNode {
 			}
 			if p.peek().kind == cwInsRBracket {
 				p.next()
+			} else {
+				p.fail("malformed query: expected ']' to close in [...]")
 			}
+		} else {
+			p.fail("malformed query: expected '[' after in")
 		}
 		return cwInsCmp{field: field, op: "in", list: list}
 	}
+	// A bare field with no operator is a valid Insights filter (presence/truthy
+	// test), so this is not an error.
 	return cwInsCmp{field: field, op: ""}
 }
 

@@ -14,8 +14,8 @@ func TestParserDepthGuards(t *testing.T) {
 	// rather than a stack overflow; either way the process must not crash).
 	_, _ = ddbEvalCondition(map[string]any{}, true, deep, nil, map[string]any{":v": map[string]any{"S": "x"}})
 	// CloudWatch Logs Insights filter
-	_ = cwParseInsightsFilter(strings.Repeat("(", 500000) + "level = ERROR")
+	_, _ = cwParseInsightsFilter(strings.Repeat("(", 500000) + "level = ERROR")
 	// CloudWatch metric-filter pattern (structured JSON)
-	_ = cwLogPatternMatches(`{"a":1}`, "{"+strings.Repeat("(", 500000)+"$.a = 1"+strings.Repeat(")", 500000)+"}")
+	_, _ = cwCompileLogPattern("{" + strings.Repeat("(", 500000) + "$.a = 1" + strings.Repeat(")", 500000) + "}")
 	// reaching here without a crash is the assertion
 }

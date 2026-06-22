@@ -523,6 +523,15 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Compile the filter pattern once. A malformed pattern is an
+	// InvalidParameterException (as real CloudWatch Logs returns), not a silent
+	// empty result set.
+	pattern, err := cwCompileLogPattern(req.FilterPattern)
+	if err != nil {
+		sim.AWSError(w, "InvalidParameterException", err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	// Find all streams for this group
 	streams := cwLogStreams.Filter(func(s CWLogStream) bool {
 		if s.LogGroupName != req.LogGroupName {
@@ -557,7 +566,7 @@ func handleCWFilterLogEvents(w http.ResponseWriter, r *http.Request) {
 			if req.EndTime > 0 && e.Timestamp > req.EndTime {
 				continue
 			}
-			if req.FilterPattern != "" && !cwLogPatternMatches(e.Message, req.FilterPattern) {
+			if !pattern.match(e.Message) {
 				continue
 			}
 			results = append(results, map[string]any{
