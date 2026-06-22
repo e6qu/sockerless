@@ -143,6 +143,12 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
+		// Call-time IAM enforcement: deny before dispatch when the caller's
+		// registered credential lacks the action (#657). No-op for unsigned /
+		// unregistered (test) credentials.
+		if !iamEnforce(rec, r) {
+			return
+		}
 		if r.Header.Get("X-Amz-Target") != "" {
 			awsRouter.ServeHTTP(rec, r)
 			cloudTrailRecordAPICall(srv, r, body, rec.statusCode(), rec.Header(), rec.body.Bytes())
