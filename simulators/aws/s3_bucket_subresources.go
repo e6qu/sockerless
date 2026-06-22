@@ -173,6 +173,11 @@ func handleS3PutBucketSubresource(w http.ResponseWriter, r *http.Request, sub st
 		Headers:     headers,
 	}
 	s3BucketConfigsMu.Unlock()
+	// Mirror the bucket policy into the central resource-policy store so the
+	// IAM enforcement gate can resolve it by the bucket ARN.
+	if sub == "policy" {
+		iamPutResourcePolicy(s3BucketARN(bucket), string(body))
+	}
 	setResponseHeaders(w, headers)
 	w.WriteHeader(spec.putStatus)
 }
@@ -190,6 +195,9 @@ func handleS3DeleteBucketSubresource(w http.ResponseWriter, r *http.Request, sub
 	s3BucketConfigsMu.Lock()
 	delete(s3BucketConfigs, s3BucketConfigKeyID(bucket, sub, r.URL.Query().Get("id")))
 	s3BucketConfigsMu.Unlock()
+	if sub == "policy" {
+		iamDeleteResourcePolicy(s3BucketARN(bucket))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

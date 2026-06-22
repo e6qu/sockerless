@@ -399,7 +399,9 @@ func handleLambdaAddPermission(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	lambdaPolicies[name] = append(lambdaPolicies[name], stmt)
+	stmts := append([]LambdaPolicyStatement(nil), lambdaPolicies[name]...)
 	lambdaPoliciesMu.Unlock()
+	lambdaMirrorResourcePolicy(fn.FunctionArn, stmts)
 	stmtJSON, err := json.Marshal(stmt)
 	if err != nil {
 		sim.AWSError(w, "InternalServerError",
@@ -449,7 +451,6 @@ func handleLambdaRemovePermission(w http.ResponseWriter, r *http.Request) {
 	name := sim.PathParam(r, "name")
 	sid := sim.PathParam(r, "statement")
 	lambdaPoliciesMu.Lock()
-	defer lambdaPoliciesMu.Unlock()
 	stmts := lambdaPolicies[name]
 	out := stmts[:0]
 	found := false
@@ -461,12 +462,38 @@ func handleLambdaRemovePermission(w http.ResponseWriter, r *http.Request) {
 		out = append(out, s)
 	}
 	if !found {
+		lambdaPoliciesMu.Unlock()
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusNotFound,
 			"Statement %s not found on function %s", sid, name)
 		return
 	}
 	lambdaPolicies[name] = out
+	remaining := append([]LambdaPolicyStatement(nil), out...)
+	lambdaPoliciesMu.Unlock()
+	if fn, ok := lambdaFunctions.Get(name); ok {
+		lambdaMirrorResourcePolicy(fn.FunctionArn, remaining)
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// lambdaMirrorResourcePolicy mirrors the assembled function policy into the
+// central resource-policy store keyed by the function ARN, so the IAM
+// enforcement gate can resolve it. Clears the entry when no statements remain.
+func lambdaMirrorResourcePolicy(functionArn string, stmts []LambdaPolicyStatement) {
+	if len(stmts) == 0 {
+		iamDeleteResourcePolicy(functionArn)
+		return
+	}
+	doc := map[string]any{
+		"Version":   "2012-10-17",
+		"Id":        "default",
+		"Statement": stmts,
+	}
+	docJSON, err := json.Marshal(doc)
+	if err != nil {
+		return
+	}
+	iamPutResourcePolicy(functionArn, string(docJSON))
 }
 
 func handleLambdaCreateFunctionUrlConfig(w http.ResponseWriter, r *http.Request) {

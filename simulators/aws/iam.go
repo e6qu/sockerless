@@ -114,6 +114,7 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerIAMSLRandOIDC(r, srv)
 	registerIAMLists(r)
 	registerIAMUsers(r, srv)
+	registerIAMGroups(r, srv)
 }
 
 // iamRoleFieldsXML emits the inner role fields without the `<Role>`

@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -43,13 +46,117 @@ func (s *iamStringOrList) UnmarshalJSON(b []byte) error {
 }
 
 type iamStatement struct {
-	Sid         string                                `json:"Sid"`
-	Effect      string                                `json:"Effect"`
-	Action      iamStringOrList                       `json:"Action"`
-	NotAction   iamStringOrList                       `json:"NotAction"`
-	Resource    iamStringOrList                       `json:"Resource"`
-	NotResource iamStringOrList                       `json:"NotResource"`
-	Condition   map[string]map[string]iamStringOrList `json:"Condition"`
+	Sid          string                                `json:"Sid"`
+	Effect       string                                `json:"Effect"`
+	Action       iamStringOrList                       `json:"Action"`
+	NotAction    iamStringOrList                       `json:"NotAction"`
+	Resource     iamStringOrList                       `json:"Resource"`
+	NotResource  iamStringOrList                       `json:"NotResource"`
+	Principal    iamPrincipal                          `json:"Principal"`
+	NotPrincipal iamPrincipal                          `json:"NotPrincipal"`
+	Condition    map[string]map[string]iamStringOrList `json:"Condition"`
+}
+
+// iamPrincipal models a resource-based / trust policy Principal: either the
+// wildcard string "*" or an object mapping a type (AWS, Service, Federated, …)
+// to one or more values.
+type iamPrincipal struct {
+	Wildcard bool
+	AWS      []string
+	Service  []string
+	Other    []string
+	set      bool
+}
+
+func (p *iamPrincipal) UnmarshalJSON(b []byte) error {
+	b = []byte(strings.TrimSpace(string(b)))
+	if len(b) == 0 || string(b) == "null" {
+		return nil
+	}
+	p.set = true
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		if s == "*" {
+			p.Wildcard = true
+		} else {
+			p.AWS = []string{s}
+		}
+		return nil
+	}
+	var obj map[string]iamStringOrList
+	if err := json.Unmarshal(b, &obj); err != nil {
+		return err
+	}
+	for k, v := range obj {
+		switch k {
+		case "AWS":
+			p.AWS = append(p.AWS, v...)
+		case "Service":
+			p.Service = append(p.Service, v...)
+		default:
+			p.Other = append(p.Other, v...)
+		}
+	}
+	return nil
+}
+
+// iamPrincipalMatches reports whether a statement's Principal admits the calling
+// principal ARN. A statement with no Principal (identity-based) always matches;
+// "*" matches everyone; an AWS principal matches by ARN glob or by the account
+// id of an account-root principal.
+func iamPrincipalMatches(stmt iamStatement, callerArn string) bool {
+	matchOne := func(p iamPrincipal) bool {
+		if p.Wildcard {
+			return true
+		}
+		for _, want := range p.AWS {
+			if want == "*" || iamGlobMatch(want, callerArn) {
+				return true
+			}
+			if acct := iamAccountFromArn(want); acct != "" && strings.Contains(callerArn, ":"+acct+":") {
+				return true
+			}
+			// A role principal (…:role/NAME) matches a session assumed from
+			// that role (…:assumed-role/NAME/SESSION).
+			if strings.Contains(want, ":role/") {
+				if rn := iamRoleNameFromArn(want); rn != "" && strings.Contains(callerArn, ":assumed-role/"+rn+"/") {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if stmt.NotPrincipal.set && matchOne(stmt.NotPrincipal) {
+		return false
+	}
+	if !stmt.Principal.set {
+		return true
+	}
+	return matchOne(stmt.Principal)
+}
+
+// iamAccountFromArn returns the account id of an account-principal — a bare
+// 12-digit account id or an arn:aws:iam::ACCT:root ARN — and "" for any
+// resource-specific principal (a role/user ARN binds only that principal, not
+// the whole account).
+func iamAccountFromArn(s string) string {
+	if !strings.Contains(s, ":") {
+		if len(s) == 12 && strings.Trim(s, "0123456789") == "" {
+			return s
+		}
+		return ""
+	}
+	if !strings.HasSuffix(s, ":root") {
+		return ""
+	}
+	parts := strings.Split(s, ":")
+	if len(parts) >= 5 && len(parts[4]) == 12 {
+		return parts[4]
+	}
+	return ""
 }
 
 type iamPolicyDoc struct {
@@ -164,36 +271,165 @@ func iamAnyMatch(ctxVals, wantVals []string, eq func(ctx, want string) bool) boo
 	return false
 }
 
-// iamEvalConditionOp evaluates one condition operator. Unsupported operators
-// return false (the gated statement does not apply) so an Allow can't
-// spuriously grant on a condition the sim doesn't model.
+// iamEvalConditionOp evaluates one (base) condition operator against a set of
+// context values and a set of wanted values, with the default ForAnyValue
+// semantics (the condition holds if any context value satisfies the operator
+// against any wanted value). The full real-AWS operator set is implemented;
+// genuinely unknown operators return false (the gated statement doesn't apply)
+// so an Allow can't spuriously grant on a condition the sim can't evaluate.
 func iamEvalConditionOp(op string, ctxVals, wantVals []string) bool {
 	switch op {
 	case "StringEquals", "ArnEquals":
 		return iamAnyMatch(ctxVals, wantVals, func(c, w string) bool { return c == w })
-	case "StringNotEquals":
+	case "StringNotEquals", "ArnNotEquals":
 		return !iamAnyMatch(ctxVals, wantVals, func(c, w string) bool { return c == w })
 	case "StringEqualsIgnoreCase":
 		return iamAnyMatch(ctxVals, wantVals, strings.EqualFold)
+	case "StringNotEqualsIgnoreCase":
+		return !iamAnyMatch(ctxVals, wantVals, strings.EqualFold)
 	case "StringLike", "ArnLike":
 		return iamAnyMatch(ctxVals, wantVals, func(c, w string) bool { return iamGlobMatch(w, c) })
-	case "StringNotLike":
+	case "StringNotLike", "ArnNotLike":
 		return !iamAnyMatch(ctxVals, wantVals, func(c, w string) bool { return iamGlobMatch(w, c) })
 	case "Bool":
 		return iamAnyMatch(ctxVals, wantVals, strings.EqualFold)
+	case "NumericEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamNumCmp("=="))
+	case "NumericNotEquals":
+		return !iamAnyMatch(ctxVals, wantVals, iamNumCmp("=="))
+	case "NumericLessThan":
+		return iamAnyMatch(ctxVals, wantVals, iamNumCmp("<"))
+	case "NumericLessThanEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamNumCmp("<="))
+	case "NumericGreaterThan":
+		return iamAnyMatch(ctxVals, wantVals, iamNumCmp(">"))
+	case "NumericGreaterThanEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamNumCmp(">="))
+	case "DateEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamDateCmp("=="))
+	case "DateNotEquals":
+		return !iamAnyMatch(ctxVals, wantVals, iamDateCmp("=="))
+	case "DateLessThan":
+		return iamAnyMatch(ctxVals, wantVals, iamDateCmp("<"))
+	case "DateLessThanEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamDateCmp("<="))
+	case "DateGreaterThan":
+		return iamAnyMatch(ctxVals, wantVals, iamDateCmp(">"))
+	case "DateGreaterThanEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamDateCmp(">="))
+	case "IpAddress":
+		return iamAnyMatch(ctxVals, wantVals, iamIPInCIDR)
+	case "NotIpAddress":
+		return !iamAnyMatch(ctxVals, wantVals, iamIPInCIDR)
 	default:
 		return false
 	}
 }
 
-// iamConditionMatches evaluates a statement's Condition block. Returns whether
-// it is satisfied plus any context keys that were referenced but not supplied.
+// iamNumCmp returns an equality/ordering comparator for the numeric operators.
+func iamNumCmp(cmp string) func(c, w string) bool {
+	return func(c, w string) bool {
+		cf, err1 := strconv.ParseFloat(strings.TrimSpace(c), 64)
+		wf, err2 := strconv.ParseFloat(strings.TrimSpace(w), 64)
+		if err1 != nil || err2 != nil {
+			return false
+		}
+		switch cmp {
+		case "==":
+			return cf == wf
+		case "<":
+			return cf < wf
+		case "<=":
+			return cf <= wf
+		case ">":
+			return cf > wf
+		case ">=":
+			return cf >= wf
+		}
+		return false
+	}
+}
+
+func iamParseDate(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, true
+	}
+	// Epoch seconds are also accepted by IAM date conditions.
+	if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+		return time.Unix(n, 0).UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func iamDateCmp(cmp string) func(c, w string) bool {
+	return func(c, w string) bool {
+		ct, ok1 := iamParseDate(c)
+		wt, ok2 := iamParseDate(w)
+		if !ok1 || !ok2 {
+			return false
+		}
+		switch cmp {
+		case "==":
+			return ct.Equal(wt)
+		case "<":
+			return ct.Before(wt)
+		case "<=":
+			return !ct.After(wt)
+		case ">":
+			return ct.After(wt)
+		case ">=":
+			return !ct.Before(wt)
+		}
+		return false
+	}
+}
+
+// iamIPInCIDR reports whether the context IP falls within the wanted CIDR (or
+// equals a bare IP).
+func iamIPInCIDR(c, w string) bool {
+	ip := net.ParseIP(strings.TrimSpace(c))
+	if ip == nil {
+		return false
+	}
+	w = strings.TrimSpace(w)
+	if !strings.Contains(w, "/") {
+		return ip.Equal(net.ParseIP(w))
+	}
+	_, cidr, err := net.ParseCIDR(w)
+	if err != nil {
+		return false
+	}
+	return cidr.Contains(ip)
+}
+
+// iamConditionMatches evaluates a statement's Condition block, honoring the
+// IfExists suffix, the ForAllValues/ForAnyValue set qualifiers, and the Null
+// operator. Returns whether it is satisfied plus any context keys referenced
+// but not supplied.
 func iamConditionMatches(stmt iamStatement, ctx map[string][]string) (bool, []string) {
 	var missing []string
 	for op, kv := range stmt.Condition {
-		ifExists := strings.HasSuffix(op, "IfExists")
-		baseOp := strings.TrimSuffix(op, "IfExists")
+		setOp := ""
+		base := op
+		if strings.HasPrefix(base, "ForAllValues:") {
+			setOp, base = "all", strings.TrimPrefix(base, "ForAllValues:")
+		} else if strings.HasPrefix(base, "ForAnyValue:") {
+			setOp, base = "any", strings.TrimPrefix(base, "ForAnyValue:")
+		}
+		ifExists := strings.HasSuffix(base, "IfExists")
+		base = strings.TrimSuffix(base, "IfExists")
 		for key, wantVals := range kv {
+			if base == "Null" {
+				// {"Null":{"key":"true"}} requires the key be ABSENT; "false"
+				// requires it be present.
+				_, present := ctx[key]
+				wantAbsent := len(wantVals) > 0 && strings.EqualFold(wantVals[0], "true")
+				if wantAbsent == present {
+					return false, missing
+				}
+				continue
+			}
 			ctxVals, present := ctx[key]
 			if !present {
 				if ifExists {
@@ -202,7 +438,7 @@ func iamConditionMatches(stmt iamStatement, ctx map[string][]string) (bool, []st
 				missing = append(missing, key)
 				return false, missing
 			}
-			if !iamEvalConditionOp(baseOp, ctxVals, wantVals) {
+			if !iamEvalConditionSet(setOp, base, ctxVals, wantVals) {
 				return false, missing
 			}
 		}
@@ -210,14 +446,83 @@ func iamConditionMatches(stmt iamStatement, ctx map[string][]string) (bool, []st
 	return true, missing
 }
 
+// iamEvalConditionSet applies the ForAllValues / ForAnyValue (default) set
+// semantics around a base operator.
+func iamEvalConditionSet(setOp, base string, ctxVals, wantVals []string) bool {
+	if setOp == "all" {
+		for _, c := range ctxVals {
+			if !iamEvalConditionOp(base, []string{c}, wantVals) {
+				return false
+			}
+		}
+		return true
+	}
+	return iamEvalConditionOp(base, ctxVals, wantVals)
+}
+
+// iamSubstituteVars replaces IAM policy variables (e.g. ${aws:username}) in a
+// string with the first value of the matching condition-context key, so a
+// resource like arn:aws:s3:::bucket/${aws:username}/* scopes to the caller.
+func iamSubstituteVars(s string, ctx map[string][]string) string {
+	if !strings.Contains(s, "${") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if strings.HasPrefix(s[i:], "${") {
+			end := strings.Index(s[i:], "}")
+			if end > 0 {
+				key := s[i+2 : i+end]
+				if vals, ok := ctx[key]; ok && len(vals) > 0 {
+					b.WriteString(vals[0])
+				} else if key == "*" || key == "?" || key == "$" {
+					b.WriteString(key) // ${*}/${?}/${$} are literal escapes
+				}
+				i += end + 1
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
+}
+
+// iamSubstituteVarsStmt returns a copy of stmt with policy variables in its
+// Resource/NotResource patterns resolved against the request context.
+func iamSubstituteVarsStmt(stmt iamStatement, ctx map[string][]string) iamStatement {
+	subst := func(in iamStringOrList) iamStringOrList {
+		if len(in) == 0 {
+			return in
+		}
+		out := make(iamStringOrList, len(in))
+		for i, p := range in {
+			out[i] = iamSubstituteVars(p, ctx)
+		}
+		return out
+	}
+	stmt.Resource = subst(stmt.Resource)
+	stmt.NotResource = subst(stmt.NotResource)
+	return stmt
+}
+
 // iamEvalDecision evaluates an action/resource against the policies. Explicit
 // deny always wins; otherwise any matching allow grants; otherwise implicit
 // deny.
 func iamEvalDecision(docs []iamPolicyDoc, action, resource string, ctx map[string][]string) (decision string, missing []string) {
+	return iamEvalDecisionForPrincipal(docs, action, resource, "", ctx)
+}
+
+// iamEvalDecisionForPrincipal is iamEvalDecision plus a calling-principal ARN,
+// used to evaluate the Principal element of resource-based / trust policies.
+func iamEvalDecisionForPrincipal(docs []iamPolicyDoc, action, resource, callerArn string, ctx map[string][]string) (decision string, missing []string) {
 	allowed := false
 	for _, doc := range docs {
 		for _, stmt := range doc.Statement {
-			if !iamActionMatches(stmt, action) || !iamResourceMatches(stmt, resource) {
+			if !iamPrincipalMatches(stmt, callerArn) {
+				continue
+			}
+			if !iamActionMatches(stmt, action) || !iamResourceMatches(iamSubstituteVarsStmt(stmt, ctx), resource) {
 				continue
 			}
 			ok, miss := iamConditionMatches(stmt, ctx)

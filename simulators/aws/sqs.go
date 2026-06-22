@@ -475,6 +475,7 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		sqsErrorJSON(w, "InvalidParameterValue", msg, http.StatusBadRequest)
 		return
 	}
+	var queueARN string
 	sqsQueues.Update(name, func(q *SQSQueue) {
 		if q.Attributes == nil {
 			q.Attributes = map[string]string{}
@@ -487,7 +488,17 @@ func handleSQSSetQueueAttributes(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		queueARN = q.ARN
 	})
+	// Mirror the queue policy into the central resource-policy store so the IAM
+	// enforcement gate can resolve it by the queue ARN.
+	if policy, ok := req.Attributes["Policy"]; ok {
+		if policy == "" {
+			iamDeleteResourcePolicy(queueARN)
+		} else {
+			iamPutResourcePolicy(queueARN, policy)
+		}
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

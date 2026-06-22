@@ -244,6 +244,111 @@ func TestEntra_DuplicateUPNRejectedAndROPCClaimsStayDeterministicCLI(t *testing.
 	assert.Contains(t, groups, groupID)
 }
 
+// TestEntra_ApplicationServicePrincipalAndUserPatch provisions an application +
+// service principal via the standard Graph endpoints (endpoint-only, swappable
+// with real cloud), then PATCHes a user — covering the new Graph surface.
+func TestEntra_ApplicationServicePrincipalAndUserPatch(t *testing.T) {
+	// Create an application.
+	appBody, _ := json.Marshal(map[string]any{"displayName": "CLI-App", "signInAudience": "AzureADMyOrg"})
+	appReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications", bytes.NewReader(appBody))
+	require.NoError(t, err)
+	appReq.Header.Set("Content-Type", "application/json")
+	appResp, err := http.DefaultClient.Do(appReq)
+	require.NoError(t, err)
+	defer appResp.Body.Close()
+	require.Equal(t, http.StatusCreated, appResp.StatusCode)
+	var app struct {
+		ID    string `json:"id"`
+		AppID string `json:"appId"`
+	}
+	require.NoError(t, json.NewDecoder(appResp.Body).Decode(&app))
+	require.NotEmpty(t, app.AppID)
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/applications/"+app.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+
+	// Create a service principal for the application.
+	spBody, _ := json.Marshal(map[string]any{"appId": app.AppID, "displayName": "CLI-App"})
+	spReq, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/servicePrincipals", bytes.NewReader(spBody))
+	require.NoError(t, err)
+	spReq.Header.Set("Content-Type", "application/json")
+	spResp, err := http.DefaultClient.Do(spReq)
+	require.NoError(t, err)
+	defer spResp.Body.Close()
+	require.Equal(t, http.StatusCreated, spResp.StatusCode)
+	var sp struct {
+		ID                   string `json:"id"`
+		ServicePrincipalType string `json:"servicePrincipalType"`
+	}
+	require.NoError(t, json.NewDecoder(spResp.Body).Decode(&sp))
+	require.NotEmpty(t, sp.ID)
+	assert.Equal(t, "Application", sp.ServicePrincipalType)
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/servicePrincipals/"+sp.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+
+	// GET the SP back by object ID.
+	getSP, err := http.Get(baseURL + "/v1.0/servicePrincipals/" + sp.ID)
+	require.NoError(t, err)
+	getSP.Body.Close()
+	require.Equal(t, http.StatusOK, getSP.StatusCode)
+
+	// PATCH a user incrementally.
+	userID := createEntraUser(t, "CLI Patch User", "cli-patch@example.com")
+	patch, _ := json.Marshal(map[string]any{"displayName": "CLI Patched"})
+	patchReq, err := http.NewRequest(http.MethodPatch, baseURL+"/v1.0/users/"+userID, bytes.NewReader(patch))
+	require.NoError(t, err)
+	patchReq.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(patchReq)
+	require.NoError(t, err)
+	patchResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, patchResp.StatusCode)
+
+	getUser, err := http.Get(baseURL + "/v1.0/users/" + userID)
+	require.NoError(t, err)
+	defer getUser.Body.Close()
+	var gotUser struct {
+		DisplayName string `json:"displayName"`
+	}
+	require.NoError(t, json.NewDecoder(getUser.Body).Decode(&gotUser))
+	assert.Equal(t, "CLI Patched", gotUser.DisplayName)
+}
+
+// TestMSI_TokenIsSignedJWT verifies the IMDS/MSI token endpoint returns a real
+// signed JWT carrying the identity's oid/aud claims, not a synthetic string.
+func TestMSI_TokenIsSignedJWT(t *testing.T) {
+	resp, err := http.Get(baseURL + "/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https%3A%2F%2Fmanagement.azure.com%2F")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var payload struct {
+		AccessToken string `json:"access_token"`
+		TokenType   string `json:"token_type"`
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	require.NoError(t, json.Unmarshal(raw, &payload), string(raw))
+	assert.Equal(t, "Bearer", payload.TokenType)
+
+	parts := strings.Split(payload.AccessToken, ".")
+	require.Len(t, parts, 3, "MSI access_token must be a 3-part JWT")
+	claimsJSON, err := base64.RawURLEncoding.DecodeString(parts[1])
+	require.NoError(t, err)
+	var claims map[string]any
+	require.NoError(t, json.Unmarshal(claimsJSON, &claims))
+	assert.Equal(t, "https://management.azure.com/", claims["aud"])
+	assert.NotEmpty(t, claims["oid"])
+	assert.Equal(t, claims["oid"], claims["sub"])
+	assert.NotEmpty(t, claims["tid"])
+}
+
 // TestEntra_IDTokenGroupsViaAuthCodeFlow provisions a user+group via standard Graph
 // endpoints, seeds that user as the sim-active user via the auth code flow's
 // auto-issue mechanism, then verifies the id_token carries groups from the

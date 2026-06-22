@@ -86,6 +86,12 @@ func s3ObjectKey(bucket, key string) string {
 	return bucket + "/" + key
 }
 
+// s3BucketARN returns the canonical S3 bucket ARN (no account/region — S3
+// bucket ARNs are global: arn:aws:s3:::bucket-name).
+func s3BucketARN(bucket string) string {
+	return "arn:aws:s3:::" + bucket
+}
+
 func registerS3(srv *sim.Server) {
 	// Object-level ops are CloudTrail DATA events (excluded from LookupEvents);
 	// bucket-level ops (ListBuckets, CreateBucket, …) are management events.
@@ -130,19 +136,22 @@ func registerS3(srv *sim.Server) {
 	//     edge case rather than rejecting such bucket names.
 	s3BucketResource := cloudTrailRESTResource("AWS::S3::Bucket", "bucket")
 	s3ObjectResource := cloudTrailRESTResource("AWS::S3::Object", "key", "bucket")
-	mux.HandleFunc("GET /{$}", cloudTrailRecordedREST("ListBuckets", "s3.amazonaws.com", nil, handleS3ListBuckets))
-	mux.HandleFunc("PUT /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3PutBucketDispatch))
-	mux.HandleFunc("DELETE /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3DeleteBucketDispatch))
-	mux.HandleFunc("GET /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3GetOrHeadBucket))
-	mux.HandleFunc("PUT /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3PutObjectDispatch))
-	mux.HandleFunc("GET /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3GetOrHeadObjectDispatch))
-	mux.HandleFunc("DELETE /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3DeleteObjectDispatch))
+	staticOp := func(name string) func(*http.Request, []byte) string {
+		return func(*http.Request, []byte) string { return name }
+	}
+	mux.HandleFunc("GET /{$}", cloudTrailRecordedREST("ListBuckets", "s3.amazonaws.com", nil, s3Enforced(staticOp("ListBuckets"), handleS3ListBuckets)))
+	mux.HandleFunc("PUT /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3PutBucketDispatch)))
+	mux.HandleFunc("DELETE /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3DeleteBucketDispatch)))
+	mux.HandleFunc("GET /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3GetOrHeadBucket)))
+	mux.HandleFunc("PUT /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, s3Enforced(s3ObjectOperationName, handleS3PutObjectDispatch)))
+	mux.HandleFunc("GET /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, s3Enforced(s3ObjectOperationName, handleS3GetOrHeadObjectDispatch)))
+	mux.HandleFunc("DELETE /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, s3Enforced(s3ObjectOperationName, handleS3DeleteObjectDispatch)))
 	// POST routes for S3 subresource families. Without these, the
 	// catch-all `POST /` in main.go dispatches the request as awsQuery
 	// (looks for an `Action` parameter), which returns the wrong-
 	// protocol `MissingAction` envelope.
-	mux.HandleFunc("POST /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, handleS3PostObjectDispatch))
-	mux.HandleFunc("POST /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, handleS3PostBucketDispatch))
+	mux.HandleFunc("POST /{bucket}/{key...}", cloudTrailRecordedRESTDynamic(s3ObjectOperationName, "s3.amazonaws.com", s3ObjectResource, s3Enforced(s3ObjectOperationName, handleS3PostObjectDispatch)))
+	mux.HandleFunc("POST /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3PostBucketDispatch)))
 	// HEAD routes intentionally NOT registered: Go's net/http mux
 	// auto-routes HEAD requests to the matching GET handler when no
 	// HEAD-specific handler exists. Registering both forms together
@@ -150,6 +159,40 @@ func registerS3(srv *sim.Server) {
 	// existing literal routes (e.g., `GET /health`). The dispatch
 	// to HeadBucket / HeadObject happens by method check inside the
 	// GET handler.
+}
+
+// s3Enforced applies call-time IAM enforcement to an S3 REST handler. The IAM
+// action is "s3:" + the request's S3 operation name; the resource is the
+// bucket/object ARN. Enforcement is a no-op for unregistered/test credentials
+// (the permissive default), so existing S3 tests keep working — only a caller
+// with a registered restricted key, or a bucket policy that denies, is blocked.
+func s3Enforced(opName func(*http.Request, []byte) string, h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if op := opName(r, nil); op != "" {
+			if !iamEnforceREST(w, r, "s3:"+op, s3RequestResourceARN(r), s3WriteIAMDeny) {
+				return
+			}
+		}
+		h(w, r)
+	}
+}
+
+func s3RequestResourceARN(r *http.Request) string {
+	bucket := sim.PathParam(r, "bucket")
+	if bucket == "" {
+		return "*"
+	}
+	if key := sim.PathParam(r, "key"); key != "" {
+		return "arn:aws:s3:::" + bucket + "/" + key
+	}
+	return "arn:aws:s3:::" + bucket
+}
+
+func s3WriteIAMDeny(w http.ResponseWriter, r *http.Request, principalArn, action string) {
+	sim.S3ErrorXML(w, "AccessDenied",
+		"User: "+principalArn+" is not authorized to perform: "+action+
+			" because no identity-based policy or resource-based policy allows the "+action+" action",
+		strings.TrimPrefix(r.URL.Path, "/"), generateUUID(), http.StatusForbidden)
 }
 
 func s3BucketOperationName(r *http.Request, _ []byte) string {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const authAPIVersion = "2022-04-01"
@@ -14,12 +15,13 @@ func TestRoleAssignment_CreateAndShow(t *testing.T) {
 	url := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",
 		baseURL, subscriptionID, resourceGroup, raName, authAPIVersion)
 
+	principalID := "00000000-0000-0000-0000-0000000000aa"
 	body := fmt.Sprintf(`{
 		"properties": {
 			"roleDefinitionId": "/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
-			"principalId": "test-principal-id"
+			"principalId": "%s"
 		}
-	}`, subscriptionID)
+	}`, subscriptionID, principalID)
 
 	out := runCLI(t, azRest("PUT", url, body))
 
@@ -32,7 +34,7 @@ func TestRoleAssignment_CreateAndShow(t *testing.T) {
 	}
 	parseJSON(t, out, &result)
 	assert.Equal(t, raName, result.Name)
-	assert.Equal(t, "test-principal-id", result.Properties.PrincipalId)
+	assert.Equal(t, principalID, result.Properties.PrincipalId)
 
 	// GET
 	out = runCLI(t, azRest("GET", url, ""))
@@ -51,7 +53,7 @@ func TestRoleAssignment_Delete(t *testing.T) {
 	body := fmt.Sprintf(`{
 		"properties": {
 			"roleDefinitionId": "/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
-			"principalId": "delete-test-principal"
+			"principalId": "00000000-0000-0000-0000-0000000000bb"
 		}
 	}`, subscriptionID)
 
@@ -62,4 +64,104 @@ func TestRoleAssignment_Delete(t *testing.T) {
 	cmd := azRest("GET", url, "")
 	_, err := cmd.CombinedOutput()
 	assert.Error(t, err, "Expected GET to fail after deletion")
+}
+
+// TestRoleAssignment_RejectsUnknownRoleDefinition pins that a role assignment
+// referencing a role definition GUID that isn't a known built-in is rejected
+// with 400, as real Azure does (RoleDefinitionDoesNotExist).
+func TestRoleAssignment_RejectsUnknownRoleDefinition(t *testing.T) {
+	raName := "00000000-0000-0000-0000-000000000097"
+	url := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",
+		baseURL, subscriptionID, resourceGroup, raName, authAPIVersion)
+
+	body := fmt.Sprintf(`{
+		"properties": {
+			"roleDefinitionId": "/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/deadbeef-0000-0000-0000-000000000000",
+			"principalId": "00000000-0000-0000-0000-0000000000cc"
+		}
+	}`, subscriptionID)
+
+	out, err := azRest("PUT", url, body).CombinedOutput()
+	assert.Error(t, err, "PUT with unknown roleDefinitionId must fail")
+	assert.Contains(t, string(out), "RoleDefinitionDoesNotExist")
+}
+
+// TestRoleAssignment_RejectsNonGUIDName pins that a role assignment whose name
+// is not a GUID is rejected with 400 (real Azure requires the name be a GUID).
+func TestRoleAssignment_RejectsNonGUIDName(t *testing.T) {
+	url := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments/not-a-guid?api-version=%s",
+		baseURL, subscriptionID, resourceGroup, authAPIVersion)
+
+	body := fmt.Sprintf(`{
+		"properties": {
+			"roleDefinitionId": "/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+			"principalId": "00000000-0000-0000-0000-0000000000dd"
+		}
+	}`, subscriptionID)
+
+	out, err := azRest("PUT", url, body).CombinedOutput()
+	assert.Error(t, err, "PUT with non-GUID name must fail")
+	assert.Contains(t, string(out), "InvalidRoleAssignmentName")
+}
+
+// TestRoleAssignment_List exercises the collection list endpoint, including the
+// $filter=principalId eq 'X' OData filter.
+func TestRoleAssignment_List(t *testing.T) {
+	principalID := "00000000-0000-0000-0000-0000000000ee"
+	raName := "00000000-0000-0000-0000-000000000096"
+	url := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",
+		baseURL, subscriptionID, resourceGroup, raName, authAPIVersion)
+	body := fmt.Sprintf(`{
+		"properties": {
+			"roleDefinitionId": "/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7",
+			"principalId": "%s"
+		}
+	}`, subscriptionID, principalID)
+	runCLI(t, azRest("PUT", url, body))
+	defer runCLI(t, azRest("DELETE", url, ""))
+
+	listURL := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments?api-version=%s&$filter=principalId+eq+'%s'",
+		baseURL, subscriptionID, resourceGroup, authAPIVersion, principalID)
+	out := runCLI(t, azRest("GET", listURL, ""))
+
+	var list struct {
+		Value []struct {
+			Name       string `json:"name"`
+			Properties struct {
+				PrincipalId string `json:"principalId"`
+			} `json:"properties"`
+		} `json:"value"`
+	}
+	parseJSON(t, out, &list)
+	require.NotEmpty(t, list.Value, "list must return the created assignment")
+	found := false
+	for _, ra := range list.Value {
+		assert.Equal(t, principalID, ra.Properties.PrincipalId, "$filter=principalId must only return matching assignments")
+		if ra.Name == raName {
+			found = true
+		}
+	}
+	assert.True(t, found, "created assignment must appear in the filtered list")
+}
+
+// TestRoleDefinition_ReaderHasReadOnlyPermissions pins that the Reader built-in
+// role returns its real granular permission (*/read), not a wildcard.
+func TestRoleDefinition_ReaderHasReadOnlyPermissions(t *testing.T) {
+	url := fmt.Sprintf("%s/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/acdd72a7-3385-48ef-bd42-f606fba81ae7?api-version=%s",
+		baseURL, subscriptionID, authAPIVersion)
+	out := runCLI(t, azRest("GET", url, ""))
+
+	var def struct {
+		Properties struct {
+			RoleName    string `json:"roleName"`
+			Permissions []struct {
+				Actions []string `json:"actions"`
+			} `json:"permissions"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &def)
+	assert.Equal(t, "Reader", def.Properties.RoleName)
+	require.NotEmpty(t, def.Properties.Permissions)
+	assert.Equal(t, []string{"*/read"}, def.Properties.Permissions[0].Actions,
+		"Reader must carry */read, not the fake wildcard *")
 }

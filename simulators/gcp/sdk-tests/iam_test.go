@@ -3,6 +3,7 @@ package gcp_sdk_test
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -250,6 +251,84 @@ func TestIAM_ServiceAccountKeysCRUD(t *testing.T) {
 	require.Error(t, err)
 }
 
+// TestIAM_ServiceAccountUniqueIdNumeric — real GCP uniqueId is a numeric
+// principal identifier (a long decimal string), not a hex UUID. A consumer
+// that parses uniqueId as a number must not choke on hex digits.
+func TestIAM_ServiceAccountUniqueIdNumeric(t *testing.T) {
+	svc := iamService(t)
+
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/uid-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "uid-sa",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "UID SA"},
+		}).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, sa.UniqueId)
+	for _, c := range sa.UniqueId {
+		require.True(t, c >= '0' && c <= '9', "uniqueId must be all decimal digits, got %q", sa.UniqueId)
+	}
+	require.GreaterOrEqual(t, len(sa.UniqueId), 19, "numeric uniqueId is ~21 digits")
+	require.NotEqual(t, '0', rune(sa.UniqueId[0]), "no leading zero")
+
+	// The SA-key JSON client_id must equal the SA uniqueId, not a fresh value.
+	key, err := svc.Projects.ServiceAccounts.Keys.Create(sa.Name,
+		&iam.CreateServiceAccountKeyRequest{}).Do()
+	require.NoError(t, err)
+	raw, err := base64.StdEncoding.DecodeString(key.PrivateKeyData)
+	require.NoError(t, err)
+	var keyFile map[string]string
+	require.NoError(t, json.Unmarshal(raw, &keyFile))
+	assert.Equal(t, sa.UniqueId, keyFile["client_id"], "key client_id must equal SA uniqueId")
+}
+
+// TestIAM_PredefinedRolesGetList exercises GET /v1/roles and
+// GET /v1/roles/{role...}. roles.list defaults to the BASIC view (no
+// includedPermissions); roles.get returns the FULL role.
+func TestIAM_PredefinedRolesGetList(t *testing.T) {
+	svc := iamService(t)
+
+	list, err := svc.Roles.List().Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, list.Roles)
+	names := map[string]bool{}
+	for _, role := range list.Roles {
+		names[role.Name] = true
+		assert.Empty(t, role.IncludedPermissions, "BASIC view omits includedPermissions")
+		assert.Equal(t, "GA", role.Stage)
+	}
+	for _, want := range []string{"roles/viewer", "roles/editor", "roles/owner"} {
+		assert.True(t, names[want], "list must include %s", want)
+	}
+
+	got, err := svc.Roles.Get("roles/viewer").Do()
+	require.NoError(t, err)
+	assert.Equal(t, "roles/viewer", got.Name)
+	assert.Equal(t, "Viewer", got.Title)
+	assert.Equal(t, "GA", got.Stage)
+	assert.NotEmpty(t, got.Etag)
+	assert.NotEmpty(t, got.IncludedPermissions, "roles.get returns FULL view")
+
+	// Stable etag across reads (predefined roles are immutable).
+	got2, err := svc.Roles.Get("roles/viewer").Do()
+	require.NoError(t, err)
+	assert.Equal(t, got.Etag, got2.Etag, "predefined-role etag is stable")
+
+	_, err = svc.Roles.Get("roles/does.not.exist").Do()
+	require.Error(t, err, "unknown role must 404")
+
+	// Also exercise the raw GET /v1/roles and GET /v1/roles/{role...} wire paths
+	// directly so the route's literal path is covered end-to-end.
+	resp, err := http.Get(baseURL + "/v1/roles")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	resp, err = http.Get(baseURL + "/v1/roles/viewer")
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
 func crmService(t *testing.T) *cloudresourcemanager.Service {
 	t.Helper()
 	svc, err := cloudresourcemanager.NewService(ctx,
@@ -293,4 +372,319 @@ func TestIAM_ProjectIAMPolicy(t *testing.T) {
 	require.Len(t, got.Bindings, 1)
 	assert.Equal(t, "roles/viewer", got.Bindings[0].Role)
 	assert.Contains(t, got.Bindings[0].Members, "serviceAccount:robot@iam-policy-project.iam.gserviceaccount.com")
+}
+
+// TestIAM_ProjectIAMPolicyEtagConflict — setIamPolicy with a stale etag must be
+// rejected (409 ABORTED) so the caller re-reads and retries. An empty etag is a
+// blind overwrite, which is allowed.
+func TestIAM_ProjectIAMPolicyEtagConflict(t *testing.T) {
+	svc := crmService(t)
+	project := "iam-etag-project"
+
+	cur, err := svc.Projects.GetIamPolicy(project,
+		&cloudresourcemanager.GetIamPolicyRequest{}).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, cur.Etag)
+	// The etag must be stable across reads (default policy is persisted).
+	cur2, err := svc.Projects.GetIamPolicy(project,
+		&cloudresourcemanager.GetIamPolicyRequest{}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, cur.Etag, cur2.Etag, "default-policy etag must persist across reads")
+
+	// Set with the current etag → succeeds, etag rotates.
+	updated, err := svc.Projects.SetIamPolicy(project,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: &cloudresourcemanager.Policy{
+				Etag: cur.Etag,
+				Bindings: []*cloudresourcemanager.Binding{
+					{Role: "roles/viewer", Members: []string{"user:dev@example.com"}},
+				},
+			},
+		}).Do()
+	require.NoError(t, err)
+	require.NotEqual(t, cur.Etag, updated.Etag, "etag must rotate on a successful set")
+
+	// Re-set with the now-stale etag → 409 ABORTED.
+	_, err = svc.Projects.SetIamPolicy(project,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: &cloudresourcemanager.Policy{
+				Etag:     cur.Etag, // stale
+				Bindings: []*cloudresourcemanager.Binding{{Role: "roles/editor", Members: []string{"user:x@example.com"}}},
+			},
+		}).Do()
+	require.Error(t, err, "stale etag must be rejected")
+
+	// Empty etag → blind overwrite, allowed.
+	_, err = svc.Projects.SetIamPolicy(project,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: &cloudresourcemanager.Policy{
+				Bindings: []*cloudresourcemanager.Binding{{Role: "roles/editor", Members: []string{"user:y@example.com"}}},
+			},
+		}).Do()
+	require.NoError(t, err, "empty etag is a permitted blind overwrite")
+}
+
+// TestIAM_ProjectIAMPolicyInvalidMember — a member without a valid type prefix
+// (or a typed email member with no domain) must be rejected with 400
+// INVALID_ARGUMENT, matching real Cloud IAM.
+func TestIAM_ProjectIAMPolicyInvalidMember(t *testing.T) {
+	svc := crmService(t)
+	project := "iam-bad-member-project"
+
+	for _, bad := range []string{
+		"robot@example.com",     // no type prefix
+		"bogus:dev@example.com", // unknown prefix
+		"user:bob",              // email with no domain
+		"user:",                 // empty identifier
+	} {
+		_, err := svc.Projects.SetIamPolicy(project,
+			&cloudresourcemanager.SetIamPolicyRequest{
+				Policy: &cloudresourcemanager.Policy{
+					Bindings: []*cloudresourcemanager.Binding{{Role: "roles/viewer", Members: []string{bad}}},
+				},
+			}).Do()
+		require.Error(t, err, "member %q must be rejected", bad)
+	}
+
+	// Legitimate members (including the bare allUsers/allAuthenticatedUsers)
+	// must be accepted.
+	_, err := svc.Projects.SetIamPolicy(project,
+		&cloudresourcemanager.SetIamPolicyRequest{
+			Policy: &cloudresourcemanager.Policy{
+				Bindings: []*cloudresourcemanager.Binding{{
+					Role: "roles/viewer",
+					Members: []string{
+						"user:dev@example.com",
+						"serviceAccount:robot@iam-bad-member-project.iam.gserviceaccount.com",
+						"group:admins@example.com",
+						"domain:example.com",
+						"allUsers",
+						"allAuthenticatedUsers",
+					},
+				}},
+			},
+		}).Do()
+	require.NoError(t, err, "legitimate members must be accepted")
+}
+
+// TestIAM_CustomRoleCRUD covers projects.roles create/get/list/patch(etag)/
+// delete/undelete — the full custom-role lifecycle.
+func TestIAM_CustomRoleCRUD(t *testing.T) {
+	svc := iamService(t)
+	const parent = "projects/custom-role-project"
+
+	created, err := svc.Projects.Roles.Create(parent, &iam.CreateRoleRequest{
+		RoleId: "myCustomRole",
+		Role: &iam.Role{
+			Title:               "My Custom Role",
+			Description:         "A custom role for testing",
+			IncludedPermissions: []string{"storage.objects.get", "storage.objects.list"},
+			Stage:               "GA",
+		},
+	}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, parent+"/roles/myCustomRole", created.Name)
+	assert.Equal(t, "My Custom Role", created.Title)
+	assert.ElementsMatch(t, []string{"storage.objects.get", "storage.objects.list"}, created.IncludedPermissions)
+	assert.NotEmpty(t, created.Etag)
+
+	// Duplicate create → 409 ALREADY_EXISTS.
+	_, err = svc.Projects.Roles.Create(parent, &iam.CreateRoleRequest{
+		RoleId: "myCustomRole",
+		Role:   &iam.Role{Title: "dup"},
+	}).Do()
+	require.Error(t, err, "duplicate roleId must conflict")
+
+	// Get.
+	got, err := svc.Projects.Roles.Get(created.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, created.Name, got.Name)
+	assert.NotEmpty(t, got.IncludedPermissions, "roles.get returns FULL view")
+
+	// Get unknown → 404.
+	_, err = svc.Projects.Roles.Get(parent + "/roles/nope").Do()
+	require.Error(t, err)
+
+	// List (BASIC view omits includedPermissions).
+	list, err := svc.Projects.Roles.List(parent).Do()
+	require.NoError(t, err)
+	found := false
+	for _, role := range list.Roles {
+		if role.Name == created.Name {
+			found = true
+			assert.Empty(t, role.IncludedPermissions, "list BASIC view omits permissions")
+		}
+	}
+	assert.True(t, found, "created role must appear in list")
+
+	// Patch with the current etag → succeeds, etag rotates.
+	updated, err := svc.Projects.Roles.Patch(created.Name, &iam.Role{
+		Etag:        got.Etag,
+		Title:       "Renamed Role",
+		Description: "Updated description",
+	}).UpdateMask("title,description").Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed Role", updated.Title)
+	assert.Equal(t, "Updated description", updated.Description)
+	require.NotEqual(t, got.Etag, updated.Etag, "etag must rotate on update")
+	// Fields outside the mask are untouched.
+	assert.ElementsMatch(t, []string{"storage.objects.get", "storage.objects.list"}, updated.IncludedPermissions)
+
+	// Patch with a stale etag → 409 ABORTED.
+	_, err = svc.Projects.Roles.Patch(created.Name, &iam.Role{
+		Etag:  got.Etag, // stale
+		Title: "should fail",
+	}).UpdateMask("title").Do()
+	require.Error(t, err, "stale etag must be rejected")
+
+	// Delete (soft-delete) → role returned with deleted=true.
+	deleted, err := svc.Projects.Roles.Delete(created.Name).Do()
+	require.NoError(t, err)
+	assert.True(t, deleted.Deleted, "delete soft-deletes the role")
+
+	// Undelete revives the role.
+	revived, err := svc.Projects.Roles.Undelete(created.Name, &iam.UndeleteRoleRequest{}).Do()
+	require.NoError(t, err)
+	assert.False(t, revived.Deleted, "undelete clears the deleted flag")
+}
+
+// TestIAM_OrganizationCustomRole covers the organizations.roles mirror of the
+// custom-role surface.
+func TestIAM_OrganizationCustomRole(t *testing.T) {
+	svc := iamService(t)
+	const parent = "organizations/123456"
+
+	created, err := svc.Organizations.Roles.Create(parent, &iam.CreateRoleRequest{
+		RoleId: "orgRole",
+		Role: &iam.Role{
+			Title:               "Org Role",
+			IncludedPermissions: []string{"resourcemanager.projects.get"},
+		},
+	}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, parent+"/roles/orgRole", created.Name)
+
+	got, err := svc.Organizations.Roles.Get(created.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, created.Name, got.Name)
+	assert.NotEmpty(t, got.IncludedPermissions)
+
+	list, err := svc.Organizations.Roles.List(parent).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, list.Roles)
+}
+
+// TestIAM_ServiceAccountAsResourceIAM covers the SA-as-resource IAM triple:
+// getIamPolicy / setIamPolicy / testIamPermissions on a service account.
+func TestIAM_ServiceAccountAsResourceIAM(t *testing.T) {
+	svc := iamService(t)
+
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/sa-iam-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "sa-iam-target",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "SA IAM Target"},
+		}).Do()
+	require.NoError(t, err)
+
+	// getIamPolicy on a fresh SA → empty bindings, stable etag.
+	pol, err := svc.Projects.ServiceAccounts.GetIamPolicy(sa.Name).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, pol.Etag)
+
+	// setIamPolicy — grant serviceAccountUser to a member.
+	set, err := svc.Projects.ServiceAccounts.SetIamPolicy(sa.Name,
+		&iam.SetIamPolicyRequest{
+			Policy: &iam.Policy{
+				Etag: pol.Etag,
+				Bindings: []*iam.Binding{{
+					Role:    "roles/iam.serviceAccountUser",
+					Members: []string{"user:dev@example.com"},
+				}},
+			},
+		}).Do()
+	require.NoError(t, err)
+	require.Len(t, set.Bindings, 1)
+	require.NotEqual(t, pol.Etag, set.Etag, "etag rotates on set")
+
+	// getIamPolicy reflects the binding and round-trips the etag.
+	got, err := svc.Projects.ServiceAccounts.GetIamPolicy(sa.Name).Do()
+	require.NoError(t, err)
+	require.Len(t, got.Bindings, 1)
+	assert.Equal(t, "roles/iam.serviceAccountUser", got.Bindings[0].Role)
+	assert.Equal(t, set.Etag, got.Etag, "stored etag must round-trip")
+
+	// Stale-etag set → 409 ABORTED.
+	_, err = svc.Projects.ServiceAccounts.SetIamPolicy(sa.Name,
+		&iam.SetIamPolicyRequest{
+			Policy: &iam.Policy{Etag: pol.Etag}, // stale
+		}).Do()
+	require.Error(t, err, "stale etag must be rejected")
+
+	// testIamPermissions — admin caller echoes the requested set.
+	perms, err := svc.Projects.ServiceAccounts.TestIamPermissions(sa.Name,
+		&iam.TestIamPermissionsRequest{
+			Permissions: []string{"iam.serviceAccounts.actAs", "iam.serviceAccounts.get"},
+		}).Do()
+	require.NoError(t, err)
+	assert.ElementsMatch(t,
+		[]string{"iam.serviceAccounts.actAs", "iam.serviceAccounts.get"},
+		perms.Permissions)
+
+	// getIamPolicy on a missing SA → 404.
+	_, err = svc.Projects.ServiceAccounts.GetIamPolicy(
+		"projects/sa-iam-project/serviceAccounts/ghost@sa-iam-project.iam.gserviceaccount.com").Do()
+	require.Error(t, err)
+}
+
+// TestIAM_ServiceAccountDisableEnablePatch covers :disable, :enable, and PATCH
+// (UpdateServiceAccount over displayName/description).
+//
+// Routes exercised here and by the custom-role tests:
+//
+//	PATCH /v1/projects/{project}/serviceAccounts/{email}
+//	POST /v1/permissions:queryTestablePermissions
+func TestIAM_ServiceAccountDisableEnablePatch(t *testing.T) {
+	svc := iamService(t)
+
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/sa-toggle-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "toggle-sa",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "Toggle SA"},
+		}).Do()
+	require.NoError(t, err)
+	assert.False(t, sa.Disabled)
+
+	_, err = svc.Projects.ServiceAccounts.Disable(sa.Name, &iam.DisableServiceAccountRequest{}).Do()
+	require.NoError(t, err)
+	got, err := svc.Projects.ServiceAccounts.Get(sa.Name).Do()
+	require.NoError(t, err)
+	assert.True(t, got.Disabled, "disable sets Disabled=true")
+
+	_, err = svc.Projects.ServiceAccounts.Enable(sa.Name, &iam.EnableServiceAccountRequest{}).Do()
+	require.NoError(t, err)
+	got, err = svc.Projects.ServiceAccounts.Get(sa.Name).Do()
+	require.NoError(t, err)
+	assert.False(t, got.Disabled, "enable sets Disabled=false")
+
+	// PATCH displayName + description via updateMask.
+	patched, err := svc.Projects.ServiceAccounts.Patch(sa.Name,
+		&iam.PatchServiceAccountRequest{
+			ServiceAccount: &iam.ServiceAccount{
+				DisplayName: "Renamed SA",
+				Description: "patched description",
+			},
+			UpdateMask: "displayName,description",
+		}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed SA", patched.DisplayName)
+	assert.Equal(t, "patched description", patched.Description)
+
+	// Patch on a missing SA → 404.
+	_, err = svc.Projects.ServiceAccounts.Patch(
+		"projects/sa-toggle-project/serviceAccounts/ghost@sa-toggle-project.iam.gserviceaccount.com",
+		&iam.PatchServiceAccountRequest{
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "x"},
+			UpdateMask:     "displayName",
+		}).Do()
+	require.Error(t, err)
 }
