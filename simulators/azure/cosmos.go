@@ -130,6 +130,11 @@ func registerCosmosDB(srv *sim.Server) {
 	srv.HandleFunc("GET "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}/throughputSettings/default", handleCosmosGetThroughput)
 	srv.HandleFunc("PUT "+armBase+"/{account}/sqlDatabases/{database}/containers/{container}/throughputSettings/default", handleCosmosPutThroughput)
 
+	// Account discovery: the azcosmos SDK's global-endpoint-manager GETs the
+	// account root on its first request and fails if it errors, so this is
+	// required for the real SDK to talk to the sim at all.
+	srv.HandleFunc("GET /{$}", handleCosmosAccountProperties)
+
 	srv.HandleFunc("POST /dbs", handleCosmosDataCreateDB)
 	srv.HandleFunc("GET /dbs", handleCosmosDataListDBs)
 	srv.HandleFunc("GET /dbs/{database}", handleCosmosDataGetDB)
@@ -1082,6 +1087,7 @@ func cosmosDocBody(doc CosmosDocument) map[string]any {
 	body["_self"] = doc.Self
 	body["_etag"] = doc.ETag
 	body["_ts"] = doc.TS
+	body["_attachments"] = "attachments/"
 	return body
 }
 
@@ -1101,10 +1107,59 @@ func cosmosDataColl(account, db, id string) map[string]any {
 	return map[string]any{"id": id, "_rid": account + "-" + db + "-" + id, "_self": "dbs/" + db + "/colls/" + id + "/", "_etag": `"coll"`, "_ts": time.Now().UTC().Unix()}
 }
 
+// cosmosIsDataPlaneRequest reports whether a request is a Cosmos data-plane call.
+// It uses Cosmos-SPECIFIC signals — the master-key Authorization (`type=master`,
+// which the azcosmos SDK URL-encodes), a documentdb header, or the test
+// account-routing header — and deliberately NOT the bare `x-ms-version` header,
+// which storage requests also send. Both the account-discovery root GET and the
+// path-style storage fallback use this to avoid misrouting Cosmos traffic.
+func cosmosIsDataPlaneRequest(r *http.Request) bool {
+	if r.Header.Get("x-ms-cosmos-account") != "" {
+		return true
+	}
+	auth := strings.ToLower(r.Header.Get("Authorization"))
+	if strings.Contains(auth, "type=master") || strings.Contains(auth, "type%3dmaster") {
+		return true
+	}
+	for k := range r.Header {
+		if strings.HasPrefix(strings.ToLower(k), "x-ms-documentdb") {
+			return true
+		}
+	}
+	return false
+}
+
+// handleCosmosAccountProperties serves the Cosmos account root the SDK's global
+// endpoint manager reads. The single read/write region echoes back the client's
+// own endpoint so the SDK keeps routing every request to the sim.
+func handleCosmosAccountProperties(w http.ResponseWriter, r *http.Request) {
+	if !cosmosIsDataPlaneRequest(r) {
+		http.NotFound(w, r)
+		return
+	}
+	endpoint := azureRequestScheme(r) + "://" + r.Host + "/"
+	region := []map[string]any{{"name": "South Central US", "databaseAccountEndpoint": endpoint}}
+	cosmosWriteData(w, http.StatusOK, map[string]any{
+		"id":                           cosmosDataAccount(r),
+		"writableLocations":            region,
+		"readableLocations":            region,
+		"enableMultipleWriteLocations": false,
+		"userConsistencyPolicy":        map[string]any{"defaultConsistencyLevel": "Session"},
+	})
+}
+
 func cosmosWriteData(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-ms-activity-id", generateUUID())
 	w.Header().Set("x-ms-request-charge", "1")
+	// Real Cosmos returns the resource ETag in the HTTP ETag header (the azcosmos
+	// SDK reads it from there, not the body); surface it for any single-resource
+	// response that carries an `_etag`.
+	if m, ok := v.(map[string]any); ok {
+		if et, ok := m["_etag"].(string); ok && et != "" {
+			w.Header().Set("Etag", et)
+		}
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
 }

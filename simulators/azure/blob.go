@@ -237,6 +237,14 @@ func registerBlobDataPlane(srv *sim.Server) {
 				handleBlobDataPlane(w, r, parts[0])
 				return
 			}
+			// A Cosmos data-plane request (master-key auth / documentdb headers)
+			// shares the sim port but must never be misrouted to blob by the
+			// path-style fallback below — Cosmos also sends x-ms-version, which is
+			// a storage signal.
+			if cosmosIsDataPlaneRequest(r) {
+				next.ServeHTTP(w, r)
+				return
+			}
 			// Path-style fallback (Azurite-compatible). When the
 			// host carries NO service-specific Azure subdomain
 			// AND the URL path starts with `/{account}/...` AND
