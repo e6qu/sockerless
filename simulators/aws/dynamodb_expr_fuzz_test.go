@@ -69,8 +69,10 @@ func FuzzDDBEvalExpr(f *testing.F) {
 	values := map[string]any{":v": map[string]any{"S": "hello"}, ":p": map[string]any{"S": "he"}, ":n": map[string]any{"N": "0"}}
 	f.Fuzz(func(t *testing.T, expr string) {
 		for _, item := range items {
-			_ = ddbEvalExpr(item, true, expr, names, values)
-			_ = ddbEvalExpr(item, false, expr, names, values)
+			// A malformed expression returns a loud error (not a crash, not a
+			// silent non-match); the goal here is that it never panics.
+			_, _ = ddbEvalExpr(item, true, expr, names, values)
+			_, _ = ddbEvalExpr(item, false, expr, names, values)
 		}
 	})
 }
