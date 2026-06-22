@@ -290,6 +290,15 @@ func handleSNSSetTopicAttributes(w http.ResponseWriter, r *http.Request) {
 		t.Attributes[attrName] = attrValue
 	}
 	snsTopics.Put(name, t)
+	// Mirror the topic policy into the central resource-policy store so the IAM
+	// enforcement gate can resolve it by the topic ARN.
+	if attrName == "Policy" {
+		if attrValue == "" {
+			iamDeleteResourcePolicy(t.ARN)
+		} else {
+			iamPutResourcePolicy(t.ARN, attrValue)
+		}
+	}
 	snsXMLResponse(w, "SetTopicAttributes", "", sim.RequestID(r.Context()))
 }
 

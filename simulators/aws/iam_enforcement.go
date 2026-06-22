@@ -15,42 +15,61 @@ import (
 // the user's effective policies for the request's action, and denies with the
 // correct per-service error shape when the action isn't allowed.
 //
-// Enforcement applies ONLY to access keys that resolve to a registered IAM user
-// (created via CreateUser + CreateAccessKey). Unknown / static test credentials
+// Enforcement applies ONLY to credentials that resolve to a registered IAM
+// principal: a long-term user access key (AKIA…) or a temporary STS credential
+// (ASIA… from AssumeRole / GetSessionToken). Unknown / static test credentials
 // are treated as permissive (the sim's existing default) — so a consumer proving
-// least-privilege mints a real restricted key, while every other test keeps
-// working unchanged.
+// least-privilege mints a real key, while every other test keeps working.
 //
-// Scope (phase 1): action-level Allow/Deny with the request-derivable condition
-// context (aws:username/userid/SourceIp/RequestedRegion). Resource-ARN scoping
-// and per-resource condition keys (aws:ResourceTag/*, ecs:cluster) are staged —
-// the resource is evaluated as "*" today, so an explicit Deny or a missing Allow
-// is caught, which is the issue's primary case.
+// The decision is the full identity-based evaluation (the principal's own
+// policies, its group policies, and — for assumed roles — the role's policies),
+// combined with any resource-based policy on the target resource (S3 bucket /
+// Lambda / SNS / SQS) and capped by the user's permission boundary. The request
+// condition context carries aws:username/userid/SourceIp/RequestedRegion. The
+// target resource ARN is derived where the request makes it unambiguous (e.g.
+// sns:TopicArn, sqs:QueueUrl) and is "*" otherwise.
 
 // iamEnforce returns true if the request is authorized (the handler should run)
 // and false if it was denied (a response has already been written).
 func iamEnforce(w http.ResponseWriter, r *http.Request) bool {
-	akid := iamAccessKeyIDFromRequest(r)
-	if akid == "" {
+	if iamAccessKeyIDFromRequest(r) == "" {
 		return true // unsigned request — permissive (matches AuthPassthrough)
-	}
-	key, ok := iamAccessKeys.Get(akid)
-	if !ok {
-		return true // not a registered IAM credential — permissive test default
-	}
-	user, ok := iamUsers.Get(key.UserName)
-	if !ok {
-		return true // dangling key (user deleted) — don't block
 	}
 	action, ok := iamActionForRequest(r)
 	if !ok {
 		return true // operation we can't classify — don't block on an unknown
 	}
+	if iamPermissionlessAction(action) {
+		return true // calls AWS authorizes for every caller regardless of policy
+	}
+	allowed, principalArn, registered := iamAuthorize(r, action, iamResourceARNForRequest(r, action))
+	if !registered || allowed {
+		return true // unknown/test credential (permissive) or an allowed action
+	}
+	iamWriteDeny(w, r, principalArn, action)
+	return false
+}
 
-	docs := iamPolicyDocsForUser(user.UserName)
-	ctx := map[string][]string{
-		"aws:username": {user.UserName},
-		"aws:userid":   {user.UserId},
+// iamAuthorize is the shared authorization core used by both the control-plane
+// (POST /) gate and the S3 REST gate. It resolves the caller, evaluates the
+// identity-based policies (own + group + assumed-role), combines them with any
+// resource-based policy on the target resource (granting if either allows,
+// denying on an explicit Deny in either), and caps the result by the user's
+// permission boundary. registered is false for unknown/test credentials (the
+// permissive default — the caller should allow).
+func iamAuthorize(r *http.Request, action, resource string) (allowed bool, principalArn string, registered bool) {
+	akid := iamAccessKeyIDFromRequest(r)
+	principalArn, docs, userName, ok := iamPrincipalForAccessKey(akid)
+	if !ok {
+		return false, "", false
+	}
+
+	ctx := map[string][]string{}
+	if userName != "" {
+		ctx["aws:username"] = []string{userName}
+		if u, uok := iamUsers.Get(userName); uok {
+			ctx["aws:userid"] = []string{u.UserId}
+		}
 	}
 	if ip := iamSourceIP(r); ip != "" {
 		ctx["aws:SourceIp"] = []string{ip}
@@ -59,11 +78,53 @@ func iamEnforce(w http.ResponseWriter, r *http.Request) bool {
 		ctx["aws:RequestedRegion"] = []string{region}
 	}
 
-	decision, _ := iamEvalDecision(docs, action, "*", ctx)
-	if decision == "allowed" {
+	decision, _ := iamEvalDecision(docs, action, resource, ctx)
+	if decision == "explicitDeny" {
+		return false, principalArn, true
+	}
+	allowed = decision == "allowed"
+
+	if resource != "*" {
+		// An S3 bucket policy is attached at the bucket and governs its objects,
+		// so look the policy up under the bucket ARN while still evaluating it
+		// against the object ARN.
+		policyARN := resource
+		if strings.HasPrefix(resource, "arn:aws:s3:::") {
+			if i := strings.IndexByte(resource[len("arn:aws:s3:::"):], '/'); i >= 0 {
+				policyARN = resource[:len("arn:aws:s3:::")+i]
+			}
+		}
+		if rdocs := iamResourcePolicyDocsForARN(policyARN); len(rdocs) > 0 {
+			rdec, _ := iamEvalDecisionForPrincipal(rdocs, action, resource, principalArn, ctx)
+			if rdec == "explicitDeny" {
+				return false, principalArn, true
+			}
+			if rdec == "allowed" {
+				allowed = true
+			}
+		}
+	}
+
+	if bdocs := iamPermissionBoundaryDocs(userName); len(bdocs) > 0 {
+		if bdec, _ := iamEvalDecision(bdocs, action, resource, ctx); bdec != "allowed" {
+			allowed = false
+		}
+	}
+	return allowed, principalArn, true
+}
+
+// iamEnforceREST gates a non-POST-/ (REST) service request: it authorizes the
+// pre-derived action + resource ARN and, on denial, writes the service-specific
+// error via deny. Returns true when the handler should run.
+func iamEnforceREST(w http.ResponseWriter, r *http.Request, action, resource string, deny func(http.ResponseWriter, *http.Request, string, string)) bool {
+	if action == "" {
 		return true
 	}
-	iamWriteDeny(w, r, user.Arn, action)
+	allowed, principalArn, registered := iamAuthorize(r, action, resource)
+	if !registered || allowed {
+		return true
+	}
+	deny(w, r, principalArn, action)
 	return false
 }
 
@@ -127,6 +188,39 @@ func iamActionForRequest(r *http.Request) (string, bool) {
 		return "", false
 	}
 	return service + ":" + op, true
+}
+
+// iamPermissionlessAction reports whether an action is one AWS authorizes for
+// every caller regardless of policy (e.g. STS identity self-inspection and the
+// web-identity/SAML assume-role calls, which carry their own token-based trust).
+func iamPermissionlessAction(action string) bool {
+	switch action {
+	case "sts:GetCallerIdentity", "sts:GetSessionToken",
+		"sts:AssumeRoleWithWebIdentity", "sts:AssumeRoleWithSAML":
+		return true
+	}
+	return false
+}
+
+// iamResourceARNForRequest derives the request's target resource ARN where it
+// is unambiguously available from the request parameters (so resource-scoped
+// policies and resource-based policies evaluate against the real resource). It
+// returns "*" when the resource can't be determined from the request alone —
+// the conservative default that never over-denies.
+func iamResourceARNForRequest(r *http.Request, action string) string {
+	switch {
+	case strings.HasPrefix(action, "sns:"):
+		if arn := r.FormValue("TopicArn"); arn != "" {
+			return arn
+		}
+	case strings.HasPrefix(action, "sqs:"):
+		if u := r.FormValue("QueueUrl"); u != "" {
+			if i := strings.LastIndex(u, "/"); i >= 0 {
+				return "arn:aws:sqs:" + iamRequestedRegion(r) + ":" + awsAccountID() + ":" + u[i+1:]
+			}
+		}
+	}
+	return "*"
 }
 
 // iamWriteDeny emits the deny error in the shape the calling service uses: EC2's

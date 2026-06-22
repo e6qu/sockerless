@@ -259,6 +259,86 @@ func TestGCS_BucketIAMPolicyShape(t *testing.T) {
 	require.NoError(t, err, "IAM etag must be base64, not raw hex")
 }
 
+// bucketIAMGet / bucketIAMSet drive the bucket IAM data plane via raw REST.
+func bucketIAMGet(t *testing.T, bucket string) map[string]any {
+	t.Helper()
+	req, _ := http.NewRequest("GET", baseURL+"/storage/v1/b/"+bucket+"/iam", nil)
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var policy map[string]any
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&policy))
+	return policy
+}
+
+func bucketIAMSet(t *testing.T, bucket string, policy map[string]any) int {
+	t.Helper()
+	b, _ := json.Marshal(policy)
+	req, _ := http.NewRequest("PUT", baseURL+"/storage/v1/b/"+bucket+"/iam", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+	return resp.StatusCode
+}
+
+// TestGCS_BucketIAMEtagConflict — the bucket setIamPolicy enforces the same
+// optimistic-concurrency contract as project IAM: a stale etag is rejected
+// (409), an empty etag is a blind overwrite, and the default-policy etag is
+// stable across reads.
+func TestGCS_BucketIAMEtagConflict(t *testing.T) {
+	bucket := "iam-etag-bucket"
+	gcsRESTCreate(t, bucket)
+
+	p1 := bucketIAMGet(t, bucket)
+	etag1, _ := p1["etag"].(string)
+	require.NotEmpty(t, etag1)
+	p2 := bucketIAMGet(t, bucket)
+	assert.Equal(t, etag1, p2["etag"], "default bucket-policy etag must persist across reads")
+
+	// Set with the current etag → succeeds.
+	code := bucketIAMSet(t, bucket, map[string]any{
+		"etag": etag1,
+		"bindings": []map[string]any{
+			{"role": "roles/storage.objectViewer", "members": []string{"user:dev@example.com"}},
+		},
+	})
+	require.Equal(t, http.StatusOK, code)
+
+	// Re-set with the stale etag → 409.
+	code = bucketIAMSet(t, bucket, map[string]any{
+		"etag": etag1, // stale
+		"bindings": []map[string]any{
+			{"role": "roles/storage.objectViewer", "members": []string{"user:other@example.com"}},
+		},
+	})
+	require.Equal(t, http.StatusConflict, code, "stale etag must be rejected with 409")
+
+	// Empty etag → blind overwrite, allowed.
+	code = bucketIAMSet(t, bucket, map[string]any{
+		"bindings": []map[string]any{
+			{"role": "roles/storage.objectViewer", "members": []string{"user:blind@example.com"}},
+		},
+	})
+	require.Equal(t, http.StatusOK, code, "empty etag is a permitted blind overwrite")
+}
+
+// TestGCS_BucketIAMInvalidMember — bucket setIamPolicy rejects a malformed
+// member with 400 INVALID_ARGUMENT.
+func TestGCS_BucketIAMInvalidMember(t *testing.T) {
+	bucket := "iam-bad-member-bucket"
+	gcsRESTCreate(t, bucket)
+
+	code := bucketIAMSet(t, bucket, map[string]any{
+		"bindings": []map[string]any{
+			{"role": "roles/storage.objectViewer", "members": []string{"robot@example.com"}},
+		},
+	})
+	require.Equal(t, http.StatusBadRequest, code, "member with no type prefix must 400")
+}
+
 func TestGCS_ObjectsCopyToAndSortedPrefixes(t *testing.T) {
 	bucket := "copyto-bucket"
 	gcsRESTCreate(t, bucket)

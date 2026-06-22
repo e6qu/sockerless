@@ -343,6 +343,238 @@ func TestEntra_GraphTransitiveMemberOf(t *testing.T) {
 	assert.Equal(t, grp.ID, body.Value[0].ID)
 }
 
+// --- Application + service principal provisioning ---
+//
+// These tests exercise the Microsoft Graph application + service-principal
+// surface end-to-end. The routes covered (placeholders resolve to runtime
+// object IDs at request time):
+//   GET /v1.0/applications/{appObjectId}
+//   PATCH /v1.0/applications/{appObjectId}
+//   DELETE /v1.0/applications/{appObjectId}
+//   GET /v1.0/servicePrincipals/{spId}
+//   PATCH /v1.0/servicePrincipals/{spId}
+//   DELETE /v1.0/servicePrincipals/{spId}
+//   POST /v1.0/servicePrincipals/{spId}/addPassword
+//   PATCH /v1.0/users/{userId}
+
+func createGraphApplication(t *testing.T, displayName string) (objectID, appID string) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"displayName":    displayName,
+		"signInAudience": "AzureADMyOrg",
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/applications", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var app struct {
+		ID    string `json:"id"`
+		AppID string `json:"appId"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&app))
+	require.NotEmpty(t, app.ID)
+	require.NotEmpty(t, app.AppID)
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/applications/"+app.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+	return app.ID, app.AppID
+}
+
+func createGraphServicePrincipal(t *testing.T, appID, displayName string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{
+		"appId":       appID,
+		"displayName": displayName,
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/servicePrincipals", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var sp struct {
+		ID                   string `json:"id"`
+		AppID                string `json:"appId"`
+		ServicePrincipalType string `json:"servicePrincipalType"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&sp))
+	require.NotEmpty(t, sp.ID)
+	assert.Equal(t, appID, sp.AppID)
+	assert.Equal(t, "Application", sp.ServicePrincipalType)
+	t.Cleanup(func() {
+		r, _ := http.NewRequest(http.MethodDelete, baseURL+"/v1.0/servicePrincipals/"+sp.ID, nil)
+		cr, _ := http.DefaultClient.Do(r)
+		if cr != nil {
+			cr.Body.Close()
+		}
+	})
+	return sp.ID
+}
+
+func TestEntra_ApplicationAndServicePrincipal(t *testing.T) {
+	objectID, appID := createGraphApplication(t, "SDK-App")
+
+	// GET the application by object ID.
+	resp, err := http.Get(baseURL + "/v1.0/applications/" + objectID)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var gotApp struct {
+		ID          string `json:"id"`
+		AppID       string `json:"appId"`
+		DisplayName string `json:"displayName"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&gotApp))
+	assert.Equal(t, appID, gotApp.AppID)
+	assert.Equal(t, "SDK-App", gotApp.DisplayName)
+
+	spID := createGraphServicePrincipal(t, appID, "SDK-App")
+
+	// GET the service principal by object ID.
+	spResp, err := http.Get(baseURL + "/v1.0/servicePrincipals/" + spID)
+	require.NoError(t, err)
+	defer spResp.Body.Close()
+	require.Equal(t, http.StatusOK, spResp.StatusCode)
+
+	// LIST servicePrincipals filtered by appId.
+	listResp, err := http.Get(baseURL + "/v1.0/servicePrincipals?$filter=appId+eq+'" + url.QueryEscape(appID) + "'")
+	require.NoError(t, err)
+	defer listResp.Body.Close()
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	var list struct {
+		Value []struct {
+			ID    string `json:"id"`
+			AppID string `json:"appId"`
+		} `json:"value"`
+	}
+	require.NoError(t, json.NewDecoder(listResp.Body).Decode(&list))
+	require.Len(t, list.Value, 1, "$filter=appId must return exactly the matching SP")
+	assert.Equal(t, spID, list.Value[0].ID)
+
+	// PATCH the application's displayName (204), then read it back.
+	patchApp, _ := json.Marshal(map[string]any{"displayName": "SDK-App-Renamed"})
+	patchAppReq, err := http.NewRequest(http.MethodPatch, baseURL+"/v1.0/applications/"+objectID, bytes.NewReader(patchApp))
+	require.NoError(t, err)
+	patchAppReq.Header.Set("Content-Type", "application/json")
+	patchAppResp, err := http.DefaultClient.Do(patchAppReq)
+	require.NoError(t, err)
+	patchAppResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, patchAppResp.StatusCode)
+
+	// PATCH the service principal's displayName (204).
+	patchSP, _ := json.Marshal(map[string]any{"displayName": "SDK-SP-Renamed"})
+	patchSPReq, err := http.NewRequest(http.MethodPatch, baseURL+"/v1.0/servicePrincipals/"+spID, bytes.NewReader(patchSP))
+	require.NoError(t, err)
+	patchSPReq.Header.Set("Content-Type", "application/json")
+	patchSPResp, err := http.DefaultClient.Do(patchSPReq)
+	require.NoError(t, err)
+	patchSPResp.Body.Close()
+	require.Equal(t, http.StatusNoContent, patchSPResp.StatusCode)
+
+	getRenamed, err := http.Get(baseURL + "/v1.0/applications/" + objectID)
+	require.NoError(t, err)
+	defer getRenamed.Body.Close()
+	var renamed struct {
+		DisplayName string `json:"displayName"`
+	}
+	require.NoError(t, json.NewDecoder(getRenamed.Body).Decode(&renamed))
+	assert.Equal(t, "SDK-App-Renamed", renamed.DisplayName)
+}
+
+func TestEntra_ServicePrincipalAddPassword(t *testing.T) {
+	_, appID := createGraphApplication(t, "SDK-Secret-App")
+	spID := createGraphServicePrincipal(t, appID, "SDK-Secret-App")
+
+	body, _ := json.Marshal(map[string]any{
+		"passwordCredential": map[string]any{"displayName": "rbac-secret"},
+	})
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/v1.0/servicePrincipals/"+spID+"/addPassword", bytes.NewReader(body))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var cred struct {
+		KeyID      string `json:"keyId"`
+		SecretText string `json:"secretText"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cred))
+	assert.NotEmpty(t, cred.KeyID)
+	assert.NotEmpty(t, cred.SecretText, "addPassword must return the generated secretText")
+
+	// A subsequent GET must list the credential but never echo the secretText.
+	getResp, err := http.Get(baseURL + "/v1.0/servicePrincipals/" + spID)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	var got struct {
+		PasswordCredentials []struct {
+			KeyID      string `json:"keyId"`
+			SecretText string `json:"secretText"`
+		} `json:"passwordCredentials"`
+	}
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&got))
+	require.Len(t, got.PasswordCredentials, 1)
+	assert.Equal(t, cred.KeyID, got.PasswordCredentials[0].KeyID)
+	assert.Empty(t, got.PasswordCredentials[0].SecretText, "secretText must not be returned on read")
+}
+
+func TestEntra_UserPatch(t *testing.T) {
+	u := createGraphUser(t, "Patch Me", "patch-me@example.com")
+
+	patch, _ := json.Marshal(map[string]any{
+		"displayName": "Patched Name",
+		"mail":        "patched@example.com",
+	})
+	req, err := http.NewRequest(http.MethodPatch, baseURL+"/v1.0/users/"+u.ID, bytes.NewReader(patch))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusNoContent, resp.StatusCode, "Graph user PATCH returns 204 No Content")
+
+	getResp, err := http.Get(baseURL + "/v1.0/users/" + u.ID)
+	require.NoError(t, err)
+	defer getResp.Body.Close()
+	var got struct {
+		DisplayName string `json:"displayName"`
+		Mail        string `json:"mail"`
+	}
+	require.NoError(t, json.NewDecoder(getResp.Body).Decode(&got))
+	assert.Equal(t, "Patched Name", got.DisplayName)
+	assert.Equal(t, "patched@example.com", got.Mail)
+}
+
+func TestEntra_GroupMemberODataID(t *testing.T) {
+	grp := createGraphGroup(t, "OData-Group")
+	u := createGraphUser(t, "OData Member", "odata-member@example.com")
+	addGroupMember(t, grp.ID, u.ID)
+
+	resp, err := http.Get(baseURL + "/v1.0/groups/" + grp.ID + "/members")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Value []struct {
+			ODataID string `json:"@odata.id"`
+			ID      string `json:"id"`
+		} `json:"value"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	require.Len(t, body.Value, 1)
+	assert.Contains(t, body.Value[0].ODataID, "/v1.0/directoryObjects/"+u.ID,
+		"group members must carry an @odata.id binding")
+}
+
 func TestEntra_DiscoveryAdvertisesGroupsClaimAndROPC(t *testing.T) {
 	resp, err := http.Get(baseURL + "/tenant-groups-discovery/.well-known/openid-configuration")
 	require.NoError(t, err)

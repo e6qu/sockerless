@@ -4,10 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -44,6 +47,37 @@ type entraGroupMembership struct {
 	UserID  string
 }
 
+// EntraApplication is an Entra (Azure AD) application registration created via
+// POST /v1.0/applications. The application's appId is the client identifier a
+// service principal references.
+type EntraApplication struct {
+	ID             string `json:"id"`
+	AppID          string `json:"appId"`
+	DisplayName    string `json:"displayName"`
+	SignInAudience string `json:"signInAudience,omitempty"`
+}
+
+// EntraServicePrincipal is the directory object that materializes an
+// application (or managed identity) into a tenant. Its id is the principal's
+// object ID (OID) — the value RBAC role assignments reference.
+type EntraServicePrincipal struct {
+	ID                   string                    `json:"id"`
+	AppID                string                    `json:"appId"`
+	DisplayName          string                    `json:"displayName"`
+	ServicePrincipalType string                    `json:"servicePrincipalType"`
+	PasswordCredentials  []EntraPasswordCredential `json:"passwordCredentials,omitempty"`
+}
+
+// EntraPasswordCredential is one client secret minted via addPassword. Real
+// Graph returns the secretText only on creation; subsequent reads omit it.
+type EntraPasswordCredential struct {
+	KeyID         string `json:"keyId"`
+	DisplayName   string `json:"displayName,omitempty"`
+	SecretText    string `json:"secretText,omitempty"`
+	StartDateTime string `json:"startDateTime,omitempty"`
+	EndDateTime   string `json:"endDateTime,omitempty"`
+}
+
 var (
 	entraUsersStore = sim.NewStateStore[EntraUser]()
 
@@ -52,7 +86,30 @@ var (
 
 	entraGraphGroupStore      = sim.NewStateStore[EntraGraphGroup]()
 	entraGroupMembershipStore = sim.NewStateStore[entraGroupMembership]()
+
+	entraApplicationStore      = sim.NewStateStore[EntraApplication]()
+	entraServicePrincipalStore = sim.NewStateStore[EntraServicePrincipal]()
 )
+
+// entraRegisterServicePrincipal records a service principal in the directory.
+// It is the single registration point for both application-backed principals
+// (POST /v1.0/servicePrincipals) and managed-identity-backed principals
+// (managedidentity.go calls this when a user-assigned identity is created), so
+// GET /v1.0/servicePrincipals/{id} resolves either by the principal's object ID.
+func entraRegisterServicePrincipal(id, appID, displayName, spType string) {
+	entraServicePrincipalStore.Put(id, EntraServicePrincipal{
+		ID:                   id,
+		AppID:                appID,
+		DisplayName:          displayName,
+		ServicePrincipalType: spType,
+	})
+}
+
+// entraUnregisterServicePrincipal removes a service principal — used when a
+// managed identity backing one is deleted.
+func entraUnregisterServicePrincipal(id string) {
+	entraServicePrincipalStore.Delete(id)
+}
 
 // entraDefaultUser is the identity returned when no seed has been applied.
 var entraDefaultUser = EntraUser{
@@ -249,11 +306,13 @@ func registerEntra(srv *sim.Server) {
 		memberships := entraGroupMembershipStore.Filter(func(m entraGroupMembership) bool {
 			return m.GroupID == groupID
 		})
+		baseURL := azureAuthBaseURL(r)
 		values := make([]map[string]any, 0, len(memberships))
 		for _, m := range memberships {
 			u := getEntraSimUser(m.UserID)
 			values = append(values, map[string]any{
 				"@odata.type":       "#microsoft.graph.user",
+				"@odata.id":         fmt.Sprintf("%s/v1.0/directoryObjects/%s", baseURL, m.UserID),
 				"id":                m.UserID,
 				"displayName":       u.Name,
 				"userPrincipalName": u.PreferredUsername,
@@ -320,6 +379,36 @@ func registerEntra(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, entraGraphUserJSON(u.OID, u.Name, u.PreferredUsername, u.Email, true))
 	})
 
+	// PATCH applies an incremental update to a user. Real Graph PATCH only
+	// touches the fields present in the body and returns 204 No Content.
+	srv.HandleFunc("PATCH /v1.0/users/{userId}", func(w http.ResponseWriter, r *http.Request) {
+		userID := sim.PathParam(r, "userId")
+		var req map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.AzureError(w, "Request_BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated := entraUsersStore.Update(userID, func(u *EntraUser) {
+			if raw, ok := req["displayName"]; ok {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					u.Name = v
+				}
+			}
+			if raw, ok := req["mail"]; ok {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					u.Email = v
+				}
+			}
+		})
+		if !updated {
+			sim.AzureError(w, "Request_ResourceNotFound", "user not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
 	srv.HandleFunc("DELETE /v1.0/users/{userId}", func(w http.ResponseWriter, r *http.Request) {
 		userID := sim.PathParam(r, "userId")
 		if !entraUsersStore.Delete(userID) {
@@ -328,6 +417,9 @@ func registerEntra(srv *sim.Server) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	registerEntraApplications(srv)
+	registerEntraServicePrincipals(srv)
 
 	// Microsoft Graph delegated read endpoints.
 	// Real URL: https://graph.microsoft.com/v1.0/me/memberOf
@@ -339,14 +431,293 @@ func registerEntra(srv *sim.Server) {
 	srv.HandleFunc("GET /v1.0/me/transitiveMemberOf", handleGraphMemberOf)
 }
 
+// registerEntraApplications mounts the Microsoft Graph application-registration
+// CRUD surface. Real URL base: https://graph.microsoft.com/v1.0/applications
+func registerEntraApplications(srv *sim.Server) {
+	srv.HandleFunc("POST /v1.0/applications", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			DisplayName    string `json:"displayName"`
+			SignInAudience string `json:"signInAudience"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.AzureError(w, "Request_BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.DisplayName == "" {
+			sim.AzureError(w, "Request_BadRequest", "displayName is required", http.StatusBadRequest)
+			return
+		}
+		app := EntraApplication{
+			ID:             newGraphID(),
+			AppID:          newGraphID(),
+			DisplayName:    req.DisplayName,
+			SignInAudience: req.SignInAudience,
+		}
+		entraApplicationStore.Put(app.ID, app)
+		sim.WriteJSON(w, http.StatusCreated, entraApplicationJSON(app))
+	})
+
+	srv.HandleFunc("GET /v1.0/applications", func(w http.ResponseWriter, r *http.Request) {
+		apps := entraApplicationStore.List()
+		values := make([]map[string]any, 0, len(apps))
+		for _, a := range apps {
+			values = append(values, entraApplicationJSON(a))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"@odata.context": "$metadata#applications",
+			"value":          values,
+		})
+	})
+
+	srv.HandleFunc("GET /v1.0/applications/{appObjectId}", func(w http.ResponseWriter, r *http.Request) {
+		app, ok := entraApplicationStore.Get(sim.PathParam(r, "appObjectId"))
+		if !ok {
+			sim.AzureError(w, "Request_ResourceNotFound", "application not found", http.StatusNotFound)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, entraApplicationJSON(app))
+	})
+
+	srv.HandleFunc("PATCH /v1.0/applications/{appObjectId}", func(w http.ResponseWriter, r *http.Request) {
+		id := sim.PathParam(r, "appObjectId")
+		var req map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.AzureError(w, "Request_BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated := entraApplicationStore.Update(id, func(a *EntraApplication) {
+			if raw, ok := req["displayName"]; ok {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					a.DisplayName = v
+				}
+			}
+			if raw, ok := req["signInAudience"]; ok {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					a.SignInAudience = v
+				}
+			}
+		})
+		if !updated {
+			sim.AzureError(w, "Request_ResourceNotFound", "application not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv.HandleFunc("DELETE /v1.0/applications/{appObjectId}", func(w http.ResponseWriter, r *http.Request) {
+		if !entraApplicationStore.Delete(sim.PathParam(r, "appObjectId")) {
+			sim.AzureError(w, "Request_ResourceNotFound", "application not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// registerEntraServicePrincipals mounts the Microsoft Graph service-principal
+// CRUD + addPassword surface. Real URL base:
+// https://graph.microsoft.com/v1.0/servicePrincipals
+func registerEntraServicePrincipals(srv *sim.Server) {
+	srv.HandleFunc("POST /v1.0/servicePrincipals", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			AppID       string `json:"appId"`
+			DisplayName string `json:"displayName"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.AzureError(w, "Request_BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.AppID == "" {
+			sim.AzureError(w, "Request_BadRequest", "appId is required", http.StatusBadRequest)
+			return
+		}
+		displayName := req.DisplayName
+		// Graph resolves displayName from the backing application when omitted.
+		if displayName == "" {
+			apps := entraApplicationStore.Filter(func(a EntraApplication) bool {
+				return strings.EqualFold(a.AppID, req.AppID)
+			})
+			if len(apps) > 0 {
+				displayName = apps[0].DisplayName
+			}
+		}
+		sp := EntraServicePrincipal{
+			ID:                   newGraphID(),
+			AppID:                req.AppID,
+			DisplayName:          displayName,
+			ServicePrincipalType: "Application",
+		}
+		entraServicePrincipalStore.Put(sp.ID, sp)
+		sim.WriteJSON(w, http.StatusCreated, entraServicePrincipalJSON(sp))
+	})
+
+	srv.HandleFunc("GET /v1.0/servicePrincipals", func(w http.ResponseWriter, r *http.Request) {
+		appIDFilter := parseGraphEqFilter(r.URL.Query().Get("$filter"), "appId")
+		var sps []EntraServicePrincipal
+		if appIDFilter != "" {
+			sps = entraServicePrincipalStore.Filter(func(sp EntraServicePrincipal) bool {
+				return strings.EqualFold(sp.AppID, appIDFilter)
+			})
+		} else {
+			sps = entraServicePrincipalStore.List()
+		}
+		values := make([]map[string]any, 0, len(sps))
+		for _, sp := range sps {
+			values = append(values, entraServicePrincipalJSON(sp))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"@odata.context": "$metadata#servicePrincipals",
+			"value":          values,
+		})
+	})
+
+	srv.HandleFunc("GET /v1.0/servicePrincipals/{spId}", func(w http.ResponseWriter, r *http.Request) {
+		sp, ok := entraServicePrincipalStore.Get(sim.PathParam(r, "spId"))
+		if !ok {
+			sim.AzureError(w, "Request_ResourceNotFound", "service principal not found", http.StatusNotFound)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, entraServicePrincipalJSON(sp))
+	})
+
+	srv.HandleFunc("PATCH /v1.0/servicePrincipals/{spId}", func(w http.ResponseWriter, r *http.Request) {
+		id := sim.PathParam(r, "spId")
+		var req map[string]json.RawMessage
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			sim.AzureError(w, "Request_BadRequest", err.Error(), http.StatusBadRequest)
+			return
+		}
+		updated := entraServicePrincipalStore.Update(id, func(sp *EntraServicePrincipal) {
+			if raw, ok := req["displayName"]; ok {
+				var v string
+				if json.Unmarshal(raw, &v) == nil {
+					sp.DisplayName = v
+				}
+			}
+		})
+		if !updated {
+			sim.AzureError(w, "Request_ResourceNotFound", "service principal not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv.HandleFunc("DELETE /v1.0/servicePrincipals/{spId}", func(w http.ResponseWriter, r *http.Request) {
+		if !entraServicePrincipalStore.Delete(sim.PathParam(r, "spId")) {
+			sim.AzureError(w, "Request_ResourceNotFound", "service principal not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	srv.HandleFunc("POST /v1.0/servicePrincipals/{spId}/addPassword", func(w http.ResponseWriter, r *http.Request) {
+		id := sim.PathParam(r, "spId")
+		var req struct {
+			PasswordCredential struct {
+				DisplayName string `json:"displayName"`
+			} `json:"passwordCredential"`
+		}
+		// addPassword accepts an empty body (EOF); a non-empty malformed body is
+		// a 400, not silently ignored.
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			sim.AzureError(w, "Request_BadRequest", "invalid request body", http.StatusBadRequest)
+			return
+		}
+
+		now := time.Now().UTC()
+		secret := make([]byte, 32)
+		_, _ = rand.Read(secret)
+		cred := EntraPasswordCredential{
+			KeyID:         newGraphID(),
+			DisplayName:   req.PasswordCredential.DisplayName,
+			SecretText:    base64.RawURLEncoding.EncodeToString(secret),
+			StartDateTime: now.Format(time.RFC3339),
+			EndDateTime:   now.AddDate(2, 0, 0).Format(time.RFC3339),
+		}
+		// Persist the credential without its secretText — Graph only returns
+		// secretText on the addPassword response, never on later reads.
+		stored := cred
+		stored.SecretText = ""
+		updated := entraServicePrincipalStore.Update(id, func(sp *EntraServicePrincipal) {
+			sp.PasswordCredentials = append(sp.PasswordCredentials, stored)
+		})
+		if !updated {
+			sim.AzureError(w, "Request_ResourceNotFound", "service principal not found", http.StatusNotFound)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"keyId":         cred.KeyID,
+			"displayName":   cred.DisplayName,
+			"secretText":    cred.SecretText,
+			"startDateTime": cred.StartDateTime,
+			"endDateTime":   cred.EndDateTime,
+		})
+	})
+}
+
+// parseGraphEqFilter extracts the value from a Graph OData filter of the form
+// "<field> eq 'value'". Returns "" when the filter doesn't target field.
+func parseGraphEqFilter(filter, field string) string {
+	if !strings.Contains(strings.ToLower(filter), strings.ToLower(field)) {
+		return ""
+	}
+	if idx := strings.Index(filter, "'"); idx >= 0 {
+		if end := strings.IndexByte(filter[idx+1:], '\''); end >= 0 {
+			return filter[idx+1 : idx+1+end]
+		}
+	}
+	return ""
+}
+
+func entraApplicationJSON(a EntraApplication) map[string]any {
+	return map[string]any{
+		"@odata.context": "$metadata#applications/$entity",
+		"id":             a.ID,
+		"appId":          a.AppID,
+		"displayName":    a.DisplayName,
+		"signInAudience": a.SignInAudience,
+	}
+}
+
+func entraServicePrincipalJSON(sp EntraServicePrincipal) map[string]any {
+	creds := make([]map[string]any, 0, len(sp.PasswordCredentials))
+	for _, c := range sp.PasswordCredentials {
+		creds = append(creds, map[string]any{
+			"keyId":         c.KeyID,
+			"displayName":   c.DisplayName,
+			"startDateTime": c.StartDateTime,
+			"endDateTime":   c.EndDateTime,
+		})
+	}
+	return map[string]any{
+		"@odata.context":       "$metadata#servicePrincipals/$entity",
+		"id":                   sp.ID,
+		"appId":                sp.AppID,
+		"displayName":          sp.DisplayName,
+		"servicePrincipalType": sp.ServicePrincipalType,
+		"passwordCredentials":  creds,
+	}
+}
+
 func handleGraphMemberOf(w http.ResponseWriter, r *http.Request) {
 	oid, ok := parseOIDFromBearer(r)
 	if !ok {
 		oid = entraDefaultUser.OID
 	}
 
+	baseURL := azureAuthBaseURL(r)
 	seen := map[string]bool{}
 	values := []map[string]any{}
+
+	groupValue := func(id, displayName string) map[string]any {
+		return map[string]any{
+			"@odata.type": "#microsoft.graph.group",
+			"@odata.id":   fmt.Sprintf("%s/v1.0/directoryObjects/%s", baseURL, id),
+			"id":          id,
+			"displayName": displayName,
+		}
+	}
 
 	// Standard provisioning path: look up groups from the membership store.
 	memberships := entraGroupMembershipStore.Filter(func(m entraGroupMembership) bool {
@@ -361,11 +732,7 @@ func handleGraphMemberOf(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			continue
 		}
-		values = append(values, map[string]any{
-			"@odata.type": "#microsoft.graph.group",
-			"id":          grp.ID,
-			"displayName": grp.DisplayName,
-		})
+		values = append(values, groupValue(grp.ID, grp.DisplayName))
 	}
 
 	// Sim-seed path: inline groups on the EntraUser (backward compat).
@@ -375,11 +742,7 @@ func handleGraphMemberOf(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		seen[g.ID] = true
-		values = append(values, map[string]any{
-			"@odata.type": "#microsoft.graph.group",
-			"id":          g.ID,
-			"displayName": g.DisplayName,
-		})
+		values = append(values, groupValue(g.ID, g.DisplayName))
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{

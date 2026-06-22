@@ -26,6 +26,21 @@ type GCPServiceAccount struct {
 	Disabled    bool   `json:"disabled"`
 }
 
+// GCPCustomRole mirrors the iam#Role resource for project- and
+// organization-scoped custom roles. Name is the fully-qualified resource path
+// (projects/{p}/roles/{id} or organizations/{o}/roles/{id}). Deleted roles are
+// soft-deleted (Deleted=true) and can be undeleted within GCP's retention
+// window; the sim keeps them in the store so UndeleteRole can revive them.
+type GCPCustomRole struct {
+	Name                string   `json:"name"`
+	Title               string   `json:"title,omitempty"`
+	Description         string   `json:"description,omitempty"`
+	IncludedPermissions []string `json:"includedPermissions,omitempty"`
+	Stage               string   `json:"stage,omitempty"`
+	Etag                string   `json:"etag"`
+	Deleted             bool     `json:"deleted,omitempty"`
+}
+
 type IAMPolicy struct {
 	Kind       string       `json:"kind,omitempty"`
 	ResourceId string       `json:"resourceId,omitempty"`
@@ -66,6 +81,7 @@ func registerIAM(srv *sim.Server) {
 	projectPolicies := sim.MakeStore[IAMPolicy](srv.DB(), "iam_project_policies")
 	gcpResourcePolicies = sim.MakeStore[IAMPolicy](srv.DB(), "iam_resource_policies")
 	resourcePolicies := gcpResourcePolicies
+	customRoles := sim.MakeStore[GCPCustomRole](srv.DB(), "iam_custom_roles")
 
 	// CRM GetProject (v1) — used by google_project_service to verify project exists
 	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
@@ -111,7 +127,7 @@ func registerIAM(srv *sim.Server) {
 		sa := GCPServiceAccount{
 			Name:        name,
 			ProjectId:   project,
-			UniqueId:    generateUUID()[:20],
+			UniqueId:    gcpNumericID(21),
 			Email:       email,
 			DisplayName: req.ServiceAccount.DisplayName,
 			Description: req.ServiceAccount.Description,
@@ -125,6 +141,9 @@ func registerIAM(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/serviceAccounts/{email}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 
 		sa, ok := serviceAccounts.Get(name)
@@ -132,6 +151,50 @@ func registerIAM(srv *sim.Server) {
 			sim.GCPErrorf(w, 404, "NOT_FOUND", "Service account %s not found", email)
 			return
 		}
+		sim.WriteJSON(w, http.StatusOK, sa)
+	})
+
+	// Update service account — PATCH with an updateMask over the mutable
+	// fields (displayName / description). Real GCP's UpdateServiceAccount
+	// wraps the account under a `serviceAccount` envelope alongside the mask.
+	srv.HandleFunc("PATCH /v1/projects/{project}/serviceAccounts/{email}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		email := sim.PathParam(r, "email")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
+		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
+		sa, ok := serviceAccounts.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
+			return
+		}
+		var req struct {
+			ServiceAccount struct {
+				DisplayName string `json:"displayName"`
+				Description string `json:"description"`
+			} `json:"serviceAccount"`
+			UpdateMask string `json:"updateMask"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		// The mask also rides as a query param in some client paths; prefer
+		// the body mask, fall back to the query.
+		mask := req.UpdateMask
+		if mask == "" {
+			mask = r.URL.Query().Get("updateMask")
+		}
+		for _, field := range strings.Split(mask, ",") {
+			switch strings.TrimSpace(field) {
+			case "displayName":
+				sa.DisplayName = req.ServiceAccount.DisplayName
+			case "description":
+				sa.Description = req.ServiceAccount.Description
+			}
+		}
+		serviceAccounts.Put(name, sa)
 		sim.WriteJSON(w, http.StatusOK, sa)
 	})
 
@@ -155,7 +218,8 @@ func registerIAM(srv *sim.Server) {
 			project = gcpProjectFromEmail(email)
 		}
 		saName := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
-		if _, ok := serviceAccounts.Get(saName); !ok {
+		sa, ok := serviceAccounts.Get(saName)
+		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
 			return
 		}
@@ -172,7 +236,7 @@ func registerIAM(srv *sim.Server) {
 		// Generate the key material before persisting metadata: if generation
 		// fails, the store must not retain a key that never had private-key
 		// material (a subsequent Get would return a phantom key).
-		privateKeyData, err := gcpMakeSAKeyJSON(project, keyID, email, key.ValidAfterTime, key.ValidBeforeTime)
+		privateKeyData, err := gcpMakeSAKeyJSON(project, keyID, email, sa.UniqueId, key.ValidAfterTime, key.ValidBeforeTime)
 		if err != nil {
 			sim.GCPErrorf(w, http.StatusInternalServerError, "INTERNAL", "generate key: %v", err)
 			return
@@ -251,9 +315,34 @@ func registerIAM(srv *sim.Server) {
 		project := sim.PathParam(r, "project")
 		emailAction := sim.PathParam(r, "emailAction")
 		email, action, _ := strings.Cut(emailAction, ":")
+		if project == "-" {
+			project = gcpProjectFromEmail(email)
+		}
 		name := fmt.Sprintf("projects/%s/serviceAccounts/%s", project, email)
 		if _, ok := serviceAccounts.Get(name); !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Service account %s not found", email)
+			return
+		}
+		switch action {
+		case "disable":
+			sa, _ := serviceAccounts.Get(name)
+			sa.Disabled = true
+			serviceAccounts.Put(name, sa)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{})
+			return
+		case "enable":
+			sa, _ := serviceAccounts.Get(name)
+			sa.Disabled = false
+			serviceAccounts.Put(name, sa)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{})
+			return
+		case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+			// The service account is itself a resource that carries an IAM
+			// policy (e.g. granting roles/iam.serviceAccountUser to a member).
+			// Reuse the shared resource-IAM store so the etag / member-
+			// validation / optimistic-concurrency behavior matches buckets
+			// and projects.
+			handleResourceIAM(w, r, resourcePolicies, "serviceAccount/"+email, action)
 			return
 		}
 		switch action {
@@ -343,6 +432,10 @@ func registerIAM(srv *sim.Server) {
 				return
 			}
 
+			if err := validateIAMMembers(req.Policy.Bindings); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+				return
+			}
 			current, present := projectPolicies.Get(project)
 			if gcpIAMETagConflict(w, req.Policy.Etag, current.Etag, present) {
 				return
@@ -380,6 +473,74 @@ func registerIAM(srv *sim.Server) {
 		handleResourceIAM(w, r, resourcePolicies, resource, action)
 	})
 
+	// QueryTestablePermissions — the catalog of permissions that can be tested
+	// (and thus included in a custom role) on a given resource. `gcloud iam
+	// roles create/update` calls this to validate the --permissions flag before
+	// issuing CreateRole/UpdateRole. Real GCP returns a paginated list scoped to
+	// the resource's service surface; the sim returns the representative catalog
+	// it knows about (the union of permissions its predefined roles reference,
+	// plus the common service-prefixed permissions the repo exercises).
+	srv.HandleFunc("POST /v1/permissions:queryTestablePermissions", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			FullResourceName string `json:"fullResourceName"`
+			PageSize         int    `json:"pageSize"`
+			PageToken        string `json:"pageToken"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		perms := gcpTestablePermissions()
+		out := make([]map[string]any, 0, len(perms))
+		for _, p := range perms {
+			out = append(out, map[string]any{
+				"name":                    p,
+				"stage":                   "GA",
+				"customRolesSupportLevel": "SUPPORTED",
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"permissions": out})
+	})
+
+	// Custom roles — projects.roles.* and organizations.roles.*. A custom
+	// role is a tenant-defined IAM role with its own includedPermissions; the
+	// two scopes share identical CRUD semantics, differing only in the parent
+	// prefix (projects/{p} vs organizations/{o}).
+	registerCustomRoles(srv, customRoles, "project", "GET /v1/projects/{parent}/roles", "GET /v1/projects/{parent}/roles/{role}",
+		"POST /v1/projects/{parent}/roles", "POST /v1/projects/{parent}/roles/{roleAction}",
+		"PATCH /v1/projects/{parent}/roles/{role}", "DELETE /v1/projects/{parent}/roles/{role}")
+	registerCustomRoles(srv, customRoles, "organization", "GET /v1/organizations/{parent}/roles", "GET /v1/organizations/{parent}/roles/{role}",
+		"POST /v1/organizations/{parent}/roles", "POST /v1/organizations/{parent}/roles/{roleAction}",
+		"PATCH /v1/organizations/{parent}/roles/{role}", "DELETE /v1/organizations/{parent}/roles/{role}")
+
+	// Predefined roles — roles.list / roles.get. The catalog of curated
+	// (Google-managed) roles. The sim carries a bounded representative set
+	// (the basic roles plus the IAM/storage roles the repo references), not
+	// the full ~1500-role catalog. Custom-role CRUD is a staged epic and is
+	// not handled here.
+	srv.HandleFunc("GET /v1/roles", func(w http.ResponseWriter, r *http.Request) {
+		roles := gcpPredefinedRoles()
+		// roles.list omits includedPermissions unless view=FULL.
+		full := r.URL.Query().Get("view") == "FULL"
+		out := make([]map[string]any, 0, len(roles))
+		for _, role := range roles {
+			out = append(out, gcpRoleJSON(role, full))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"roles": out})
+	})
+
+	srv.HandleFunc("GET /v1/roles/{role...}", func(w http.ResponseWriter, r *http.Request) {
+		name := "roles/" + sim.PathParam(r, "role")
+		for _, role := range gcpPredefinedRoles() {
+			if role.Name == name {
+				// roles.get returns the full role including includedPermissions.
+				sim.WriteJSON(w, http.StatusOK, gcpRoleJSON(role, true))
+				return
+			}
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The role named %s was not found.", name)
+	})
+
 	// Bucket IAM - getIamPolicy
 	srv.HandleFunc("GET /storage/v1/b/{bucket}/iam", func(w http.ResponseWriter, r *http.Request) {
 		bucket := sim.PathParam(r, "bucket")
@@ -391,6 +552,10 @@ func registerIAM(srv *sim.Server) {
 				Etag:     gcpPolicyETag(),
 				Version:  1,
 			}
+			// Persist the synthesized default so its etag is stable across
+			// reads — the optimistic-concurrency check on setIamPolicy
+			// validates against the etag a prior getIamPolicy returned.
+			resourcePolicies.Put("bucket/"+bucket, policy)
 		}
 		policy.Kind = "storage#policy"
 		policy.ResourceId = "projects/_/buckets/" + bucket
@@ -406,7 +571,15 @@ func registerIAM(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		if err := validateIAMMembers(policy.Bindings); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+			return
+		}
 
+		current, present := resourcePolicies.Get("bucket/" + bucket)
+		if gcpIAMETagConflict(w, policy.Etag, current.Etag, present) {
+			return
+		}
 		policy.Etag = gcpPolicyETag()
 		if policy.Version == 0 {
 			policy.Version = 1
@@ -417,6 +590,250 @@ func registerIAM(srv *sim.Server) {
 
 		sim.WriteJSON(w, http.StatusOK, policy)
 	})
+}
+
+// registerCustomRoles mounts the custom-role CRUD surface for one scope
+// (projects or organizations). The route patterns differ only in the parent
+// segment, so both scopes share these handlers. `scope` is "project" or
+// "organization"; `parentPrefix` derives the resource-name prefix
+// (projects/{p} / organizations/{o}).
+func registerCustomRoles(srv *sim.Server, store sim.Store[GCPCustomRole], scope, listPat, getPat, createPat, actionPat, patchPat, deletePat string) {
+	parentPrefix := func(parent string) string {
+		if scope == "organization" {
+			return "organizations/" + parent
+		}
+		return "projects/" + parent
+	}
+
+	// ListRoles
+	srv.HandleFunc(listPat, func(w http.ResponseWriter, r *http.Request) {
+		prefix := parentPrefix(sim.PathParam(r, "parent")) + "/roles/"
+		// roles.list defaults to BASIC view (no includedPermissions);
+		// view=FULL returns permissions. showDeleted controls whether
+		// soft-deleted roles are returned.
+		full := r.URL.Query().Get("view") == "FULL"
+		showDeleted := r.URL.Query().Get("showDeleted") == "true"
+		roles := store.Filter(func(role GCPCustomRole) bool {
+			if !strings.HasPrefix(role.Name, prefix) {
+				return false
+			}
+			return showDeleted || !role.Deleted
+		})
+		sort.Slice(roles, func(i, j int) bool { return roles[i].Name < roles[j].Name })
+		out := make([]map[string]any, 0, len(roles))
+		for _, role := range roles {
+			out = append(out, gcpCustomRoleJSON(role, full))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"roles": out})
+	})
+
+	// GetRole
+	srv.HandleFunc(getPat, func(w http.ResponseWriter, r *http.Request) {
+		name := parentPrefix(sim.PathParam(r, "parent")) + "/roles/" + sim.PathParam(r, "role")
+		role, ok := store.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The role named %s was not found.", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, gcpCustomRoleJSON(role, true))
+	})
+
+	// CreateRole
+	srv.HandleFunc(createPat, func(w http.ResponseWriter, r *http.Request) {
+		parent := parentPrefix(sim.PathParam(r, "parent"))
+		var req struct {
+			RoleId string `json:"roleId"`
+			Role   struct {
+				Title               string   `json:"title"`
+				Description         string   `json:"description"`
+				IncludedPermissions []string `json:"includedPermissions"`
+				Stage               string   `json:"stage"`
+			} `json:"role"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if req.RoleId == "" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "roleId is required")
+			return
+		}
+		name := parent + "/roles/" + req.RoleId
+		if _, exists := store.Get(name); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "A role named %s already exists.", name)
+			return
+		}
+		stage := req.Role.Stage
+		if stage == "" {
+			stage = "ALPHA"
+		}
+		role := GCPCustomRole{
+			Name:                name,
+			Title:               req.Role.Title,
+			Description:         req.Role.Description,
+			IncludedPermissions: req.Role.IncludedPermissions,
+			Stage:               stage,
+			Etag:                gcpPolicyETag(),
+		}
+		store.Put(name, role)
+		sim.WriteJSON(w, http.StatusOK, gcpCustomRoleJSON(role, true))
+	})
+
+	// UndeleteRole — POST .../roles/{role}:undelete
+	srv.HandleFunc(actionPat, func(w http.ResponseWriter, r *http.Request) {
+		roleAction := sim.PathParam(r, "roleAction")
+		roleID, action, found := strings.Cut(roleAction, ":")
+		if !found || action != "undelete" {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported role action %q", roleAction)
+			return
+		}
+		name := parentPrefix(sim.PathParam(r, "parent")) + "/roles/" + roleID
+		role, ok := store.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The role named %s was not found.", name)
+			return
+		}
+		role.Deleted = false
+		role.Etag = gcpPolicyETag()
+		store.Put(name, role)
+		sim.WriteJSON(w, http.StatusOK, gcpCustomRoleJSON(role, true))
+	})
+
+	// UpdateRole — PATCH with an updateMask over the mutable fields.
+	srv.HandleFunc(patchPat, func(w http.ResponseWriter, r *http.Request) {
+		name := parentPrefix(sim.PathParam(r, "parent")) + "/roles/" + sim.PathParam(r, "role")
+		role, ok := store.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The role named %s was not found.", name)
+			return
+		}
+		var req GCPCustomRole
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		// Honor optimistic concurrency: a stale etag on the request body is
+		// rejected with 409 ABORTED (same contract as setIamPolicy).
+		if gcpIAMETagConflict(w, req.Etag, role.Etag, true) {
+			return
+		}
+		// An empty updateMask updates every mutable field present in the body
+		// (matches real GCP, which treats a missing mask as "full update").
+		mask := r.URL.Query().Get("updateMask")
+		fields := strings.Split(mask, ",")
+		if mask == "" {
+			fields = []string{"title", "description", "includedPermissions", "stage"}
+		}
+		for _, field := range fields {
+			switch strings.TrimSpace(field) {
+			case "title":
+				role.Title = req.Title
+			case "description":
+				role.Description = req.Description
+			case "includedPermissions":
+				role.IncludedPermissions = req.IncludedPermissions
+			case "stage":
+				role.Stage = req.Stage
+			}
+		}
+		role.Etag = gcpPolicyETag()
+		store.Put(name, role)
+		sim.WriteJSON(w, http.StatusOK, gcpCustomRoleJSON(role, true))
+	})
+
+	// DeleteRole — soft-delete: set deleted=true and return the role.
+	srv.HandleFunc(deletePat, func(w http.ResponseWriter, r *http.Request) {
+		name := parentPrefix(sim.PathParam(r, "parent")) + "/roles/" + sim.PathParam(r, "role")
+		role, ok := store.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "The role named %s was not found.", name)
+			return
+		}
+		role.Deleted = true
+		role.Etag = gcpPolicyETag()
+		store.Put(name, role)
+		sim.WriteJSON(w, http.StatusOK, gcpCustomRoleJSON(role, true))
+	})
+}
+
+// gcpTestablePermissions returns the representative catalog of permissions the
+// sim advertises as testable (includable in a custom role). It's the union of
+// every permission referenced by the predefined roles plus the common
+// service-prefixed permissions the repo's tests exercise. This bounds the
+// catalog to what the sim can faithfully model rather than GCP's full ~7000.
+func gcpTestablePermissions() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, role := range gcpPredefinedRoles() {
+		for _, p := range role.IncludedPermissions {
+			add(p)
+		}
+	}
+	for _, p := range []string{
+		"resourcemanager.projects.get",
+		"resourcemanager.projects.update",
+		"resourcemanager.projects.list",
+		"resourcemanager.projects.setIamPolicy",
+		"resourcemanager.projects.getIamPolicy",
+		"storage.buckets.get",
+		"storage.buckets.list",
+		"storage.buckets.create",
+		"storage.buckets.update",
+		"storage.buckets.delete",
+		"storage.buckets.getIamPolicy",
+		"storage.buckets.setIamPolicy",
+		"storage.objects.get",
+		"storage.objects.list",
+		"storage.objects.create",
+		"storage.objects.delete",
+		"storage.objects.update",
+		"iam.serviceAccounts.actAs",
+		"iam.serviceAccounts.get",
+		"iam.serviceAccounts.list",
+		"iam.serviceAccounts.create",
+		"iam.serviceAccounts.delete",
+		"iam.serviceAccounts.getIamPolicy",
+		"iam.serviceAccounts.setIamPolicy",
+		"iam.roles.get",
+		"iam.roles.list",
+		"iam.roles.create",
+		"iam.roles.update",
+		"iam.roles.delete",
+	} {
+		add(p)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// gcpCustomRoleJSON renders a custom role into the roles.get / roles.list wire
+// shape. includedPermissions is omitted unless full (roles.list BASIC view
+// carries no permissions; roles.get and create/update return FULL).
+func gcpCustomRoleJSON(role GCPCustomRole, full bool) map[string]any {
+	out := map[string]any{
+		"name":  role.Name,
+		"title": role.Title,
+		"etag":  role.Etag,
+	}
+	if role.Description != "" {
+		out["description"] = role.Description
+	}
+	if role.Stage != "" {
+		out["stage"] = role.Stage
+	}
+	if role.Deleted {
+		out["deleted"] = true
+	}
+	if full {
+		out["includedPermissions"] = role.IncludedPermissions
+	}
+	return out
 }
 
 // gcpIAMETagConflict enforces the optimistic-concurrency contract real Cloud
@@ -434,6 +851,51 @@ func gcpIAMETagConflict(w http.ResponseWriter, reqEtag, currentEtag string, pres
 		return true
 	}
 	return false
+}
+
+// validateIAMMembers checks every member in every binding against the member
+// syntax real Cloud IAM accepts, rejecting malformed members with an error the
+// caller surfaces as 400 INVALID_ARGUMENT — matching real GCP, which rejects a
+// setIamPolicy carrying a member like "robot@x.com" (no type prefix) or an
+// unknown prefix. Typed members ("user:", "serviceAccount:", "group:",
+// "domain:", "principal:", "principalSet:") must carry a non-empty identifier;
+// "allUsers" and "allAuthenticatedUsers" are the only bare (untyped) members.
+func validateIAMMembers(bindings []IAMBinding) error {
+	typedPrefixes := []string{"user:", "serviceAccount:", "group:", "domain:", "principal:", "principalSet:"}
+	for _, b := range bindings {
+		for _, m := range b.Members {
+			if m == "allUsers" || m == "allAuthenticatedUsers" {
+				continue
+			}
+			matched := false
+			for _, p := range typedPrefixes {
+				if strings.HasPrefix(m, p) {
+					id := strings.TrimPrefix(m, p)
+					if id == "" {
+						return fmt.Errorf("invalid member: %s", m)
+					}
+					// user:/serviceAccount:/group:/domain: carry an email or
+					// domain; principal:/principalSet: carry an IAM resource
+					// path. Require a structurally-plausible identifier for the
+					// email/domain forms (a dot, e.g. "@example.com" or
+					// "example.com") so a bare token like "user:bob" is rejected
+					// as real GCP rejects it.
+					switch p {
+					case "user:", "serviceAccount:", "group:", "domain:":
+						if !strings.Contains(id, ".") {
+							return fmt.Errorf("invalid member: %s", m)
+						}
+					}
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf("invalid member: %s", m)
+			}
+		}
+	}
+	return nil
 }
 
 // handleResourceIAM processes the three AIP-141 IAM verbs against a named
@@ -464,6 +926,10 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
 			return
 		}
+		if err := validateIAMMembers(req.Policy.Bindings); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+			return
+		}
 		current, present := store.Get(resource)
 		if gcpIAMETagConflict(w, req.Policy.Etag, current.Etag, present) {
 			return
@@ -485,7 +951,9 @@ func handleResourceIAM(w http.ResponseWriter, r *http.Request, store sim.Store[I
 		// Sim doesn't model authorization; echo the requested set as
 		// allowed. Real GCP filters to the subset the caller actually
 		// has — but every caller in the sim is effectively a project
-		// admin, so the full echo is the truthful response.
+		// admin, so the full echo is the truthful response. A real-subset
+		// evaluation against an authz model is a staged epic; the
+		// admin-echo behavior is intentionally unchanged here.
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"permissions": req.Permissions})
 	default:
 		http.NotFound(w, r)
@@ -510,10 +978,126 @@ func gcpProjectFromEmail(email string) string {
 	return strings.TrimSuffix(host, ".iam.gserviceaccount.com")
 }
 
+// gcpPredefinedRole is a curated (Google-managed) IAM role as returned by
+// roles.get / roles.list.
+type gcpPredefinedRole struct {
+	Name                string
+	Title               string
+	Description         string
+	IncludedPermissions []string
+}
+
+// gcpPredefinedRoles returns the bounded representative set of predefined roles
+// the sim serves. Etag is deterministic per-role (these roles are immutable),
+// so a roles.get round-trips a stable etag. This is intentionally a handful of
+// roles, not the full GCP catalog.
+func gcpPredefinedRoles() []gcpPredefinedRole {
+	return []gcpPredefinedRole{
+		{
+			Name:        "roles/viewer",
+			Title:       "Viewer",
+			Description: "Read access to all resources.",
+			IncludedPermissions: []string{
+				"resourcemanager.projects.get",
+				"storage.buckets.get",
+				"storage.objects.get",
+				"storage.objects.list",
+			},
+		},
+		{
+			Name:        "roles/editor",
+			Title:       "Editor",
+			Description: "Edit access to all resources.",
+			IncludedPermissions: []string{
+				"resourcemanager.projects.get",
+				"storage.buckets.get",
+				"storage.buckets.update",
+				"storage.objects.create",
+				"storage.objects.delete",
+				"storage.objects.get",
+				"storage.objects.list",
+			},
+		},
+		{
+			Name:        "roles/owner",
+			Title:       "Owner",
+			Description: "Full access to all resources.",
+			IncludedPermissions: []string{
+				"resourcemanager.projects.get",
+				"resourcemanager.projects.setIamPolicy",
+				"iam.serviceAccounts.create",
+				"iam.serviceAccounts.delete",
+				"storage.buckets.setIamPolicy",
+			},
+		},
+		{
+			Name:        "roles/iam.serviceAccountUser",
+			Title:       "Service Account User",
+			Description: "Run operations as the service account.",
+			IncludedPermissions: []string{
+				"iam.serviceAccounts.actAs",
+				"iam.serviceAccounts.get",
+				"iam.serviceAccounts.list",
+			},
+		},
+		{
+			Name:        "roles/storage.objectViewer",
+			Title:       "Storage Object Viewer",
+			Description: "Read access to GCS objects.",
+			IncludedPermissions: []string{
+				"storage.objects.get",
+				"storage.objects.list",
+			},
+		},
+	}
+}
+
+// gcpRoleJSON renders a predefined role into the roles.get / roles.list wire
+// shape. includedPermissions is omitted unless full (roles.list defaults to
+// BASIC view, which carries no permissions; roles.get returns FULL).
+func gcpRoleJSON(role gcpPredefinedRole, full bool) map[string]any {
+	out := map[string]any{
+		"name":        role.Name,
+		"title":       role.Title,
+		"description": role.Description,
+		"stage":       "GA",
+		// Predefined roles are immutable; a deterministic etag keeps
+		// roles.get idempotent across reads.
+		"etag": base64.StdEncoding.EncodeToString([]byte(role.Name)),
+	}
+	if full {
+		out["includedPermissions"] = role.IncludedPermissions
+	}
+	return out
+}
+
+// gcpNumericID returns a random decimal string of the given length, matching
+// the shape of GCP's service-account uniqueId / client_id (a ~21-digit numeric
+// principal identifier, not a hex UUID). The first digit is 1-9 so the value
+// is a full-length number with no leading zero.
+func gcpNumericID(digits int) string {
+	if digits <= 0 {
+		digits = 21
+	}
+	b := make([]byte, digits)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand on a healthy host does not fail; if it does the
+		// process is in an unrecoverable state. Panic rather than emit a
+		// predictable or zero-valued identifier.
+		panic(fmt.Sprintf("gcpNumericID: read random: %v", err))
+	}
+	out := make([]byte, digits)
+	out[0] = byte('1' + int(b[0])%9)
+	for i := 1; i < digits; i++ {
+		out[i] = byte('0' + int(b[i])%10)
+	}
+	return string(out)
+}
+
 // gcpMakeSAKeyJSON generates a real RSA-2048 key pair and returns it encoded
 // as a base64 GCP service-account JSON credential file — matching the exact
 // shape real GCP returns for CreateServiceAccountKey.
-func gcpMakeSAKeyJSON(project, keyID, email, validAfter, validBefore string) (string, error) {
+func gcpMakeSAKeyJSON(project, keyID, email, clientID, validAfter, validBefore string) (string, error) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return "", fmt.Errorf("generate RSA key: %w", err)
@@ -530,7 +1114,7 @@ func gcpMakeSAKeyJSON(project, keyID, email, validAfter, validBefore string) (st
 		"private_key_id":              keyID,
 		"private_key":                 string(privPEM),
 		"client_email":                email,
-		"client_id":                   generateUUID()[:20],
+		"client_id":                   clientID,
 		"auth_uri":                    "https://accounts.google.com/o/oauth2/auth",
 		"token_uri":                   "https://oauth2.googleapis.com/token",
 		"auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
