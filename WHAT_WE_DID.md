@@ -4,6 +4,59 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-22 - DynamoDB: fail-loud expressions + spec-derived required fields (#652 levers 2 + 1)
+
+Continuing the consumer's #652 "silent incompleteness" meta-issue after #653
+landed levers 4 + 5a, this branch implements **lever 2 (fail-loud-by-default)**
+and **lever 1 (spec→completeness)** for the service where every reported bug
+clustered — DynamoDB. The unifying failure mode the consumer named is "the sim
+succeeds with a plausible-but-wrong result instead of computing the right one or
+failing loudly." Both changes flip that posture.
+
+**Lever 2 — fail-loud expression evaluator.** `ddbEvalExpr` previously returned a
+bare `bool` and degraded any unparseable condition/filter/key-condition
+expression to a silent non-match — so a `FilterExpression` the sim couldn't parse
+returned `Count: 0` (reads as "no data") and a `ConditionExpression` it couldn't
+parse silently failed the condition. `dynamodb_expr.go` now carries an
+error-tracking recursive-descent parser: every structural failure point calls
+`fail(...)` instead of returning a sentinel, the parse records every `:value` and
+`#name` reference, and a new `ddbCompileExpr(kind, expr, names, values)` returns
+`(*ddbCompiledExpr, error)` — an error for a syntax error, an invalid comparator
+(the greedy tokenizer can yield `==`/`>>`, now rejected), or a reference to an
+undefined `#name`/`:value`. The caller surfaces it as a `ValidationException`,
+exactly as real DynamoDB. Wired through PutItem / UpdateItem / DeleteItem /
+TransactWriteItems conditions, Query (key + filter), Scan filter, and PartiQL
+`WHERE` — each compiled once up front so a malformed expression errors even
+against an empty table (matching AWS, which validates before scanning).
+`ddbMatchesExpression` was removed; the loops call `compiled.match(item, exists)`.
+
+**Lever 1 — spec-derived required-field validation.** New `dynamodb_validate.go`:
+a `ddbRequire` registration decorator consults a `ddbRequiredMembers` registry and
+rejects an absent/null `@required` input member with the coral-framework
+`ValidationException` message *before* any handler logic — so a missing
+`TableName` is a validation error, not the phantom `ResourceNotFoundException` the
+table-lookup path produced. The registry is not trusted on faith:
+`dynamodb_required_fields_test.go` reads the `@required` members straight from the
+vendored Smithy model, and `TestDDBRequiredMembersMatchSpec` fails CI if AWS marks
+a new member required or the registry drifts, while `TestDDBRequiredMembersEnforced`
+drives every registered DynamoDB op with each required member omitted and asserts
+the `ValidationException`. This is the "completeness test that fails CI" the
+consumer asked for, scoped to the slice the sim implements.
+
+**Lever 3** (lexer→AST evaluators) was already in place for DynamoDB
+(condition/filter/update/PartiQL all parse to ASTs), so this branch only had to
+make the existing parser fail loud rather than rewrite it. **Remaining under
+BUG-2169:** lever 5b (differential testing vs DynamoDB Local). The same
+fail-loud gap in CloudWatch's Logs filter-pattern + Insights evaluators is filed
+as **BUG-2170** (same class, different service and error semantics — scoped out
+of this DynamoDB-focused PR).
+
+Tests: aws sim build / lint(0) / unit green; DynamoDB SDK + CLI green, including
+new `TestDynamoDB_ExpressionsFailLoud` (SDK), `TestDynamoDBCLI_ExpressionsFailLoud`
+(CLI), and the two spec-completeness tests; `FuzzDDBEvalExpr` clean (it now
+exercises the new error paths). #652 is advanced, not closed — it's a multi-PR
+program; #394 stays blocked upstream.
+
 ## 2026-06-22 - CloudTrail: data plane leaking into the control plane (consumer #650/#651/#652)
 
 The consumer reported CloudTrail returning DynamoDB item-level events from

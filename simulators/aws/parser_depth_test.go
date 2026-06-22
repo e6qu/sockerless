@@ -10,8 +10,9 @@ import (
 // error that would kill this test process — so reaching the asserts = fixed).
 func TestParserDepthGuards(t *testing.T) {
 	deep := strings.Repeat("(", 500000) + "a = :v"
-	// DynamoDB condition expression
-	_ = ddbEvalCondition(map[string]any{}, true, deep, nil, map[string]any{":v": map[string]any{"S": "x"}})
+	// DynamoDB condition expression (the depth guard makes this a loud error
+	// rather than a stack overflow; either way the process must not crash).
+	_, _ = ddbEvalCondition(map[string]any{}, true, deep, nil, map[string]any{":v": map[string]any{"S": "x"}})
 	// CloudWatch Logs Insights filter
 	_ = cwParseInsightsFilter(strings.Repeat("(", 500000) + "level = ERROR")
 	// CloudWatch metric-filter pattern (structured JSON)

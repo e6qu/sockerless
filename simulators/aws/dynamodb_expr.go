@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -8,7 +9,7 @@ import (
 )
 
 // DynamoDB condition / filter / key-condition expression language — a faithful
-// implementation of the real grammar, replacing the earlier "=/AND-only" subset:
+// implementation of the real grammar:
 //
 //	expr     = or
 //	or       = and { OR and }
@@ -25,25 +26,67 @@ import (
 //	path     = name { "." name | "[" index "]" }       (names may be #aliases)
 //
 // Operands resolve to DynamoDB attribute values ({"S":…}/{"N":…}/{"M":…}/…);
-// conditions resolve to bool. A parse error degrades to a non-match (the safe
-// default for a filter/condition), surfaced via the bool return of ddbEvalExpr.
+// conditions resolve to bool. A malformed expression — or one that references a
+// #name / :value not present in ExpressionAttributeNames / -Values — is a loud
+// error (the caller surfaces it as a ValidationException, exactly as real
+// DynamoDB does), never a silent non-match that returns plausible-wrong data.
 
-// ddbEvalExpr evaluates a condition/filter expression against an item.
-// `exists` reports whether the item currently exists (for attribute_exists /
-// attribute_not_exists on a Put condition where item may be empty).
-func ddbEvalExpr(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
+// ddbCompiledExpr is a parsed, validated condition/filter expression ready to be
+// evaluated against many items. A nil *ddbCompiledExpr matches every item (the
+// empty-expression case).
+type ddbCompiledExpr struct {
+	node   ddbCond
+	names  map[string]string
+	values map[string]any
+}
+
+// ddbCompileExpr parses and validates a DynamoDB condition/filter/key-condition
+// expression. kind names the expression for the error message (e.g.
+// "ConditionExpression", "FilterExpression"). An empty expression compiles to a
+// nil *ddbCompiledExpr (matches everything). A syntax error, or a reference to
+// an undefined #name / :value, returns an error — never a silent non-match.
+func ddbCompileExpr(kind, expr string, names map[string]string, values map[string]any) (*ddbCompiledExpr, error) {
 	expr = strings.TrimSpace(expr)
 	if expr == "" {
+		return nil, nil
+	}
+	p := &ddbExprParser{
+		toks:      ddbExprTokenize(expr),
+		guard:     sim.NewParseGuard(maxExprParseDepth, 1<<62),
+		valueRefs: map[string]bool{},
+	}
+	node := p.parseOr()
+	if p.err == nil && p.peek().kind != ddbTokEOF {
+		p.fail("syntax error; unexpected token %q", p.peek().text)
+	}
+	if p.err != nil {
+		return nil, fmt.Errorf("invalid %s: %v", kind, p.err)
+	}
+	if err := p.checkRefs(names, values); err != nil {
+		return nil, fmt.Errorf("invalid %s: %v", kind, err)
+	}
+	return &ddbCompiledExpr{node: node, names: names, values: values}, nil
+}
+
+// match reports whether the compiled expression holds for item. `exists`
+// reports whether the item currently exists (for attribute_exists /
+// attribute_not_exists on a Put condition where item may be empty). A nil
+// receiver (empty expression) matches every item.
+func (e *ddbCompiledExpr) match(item map[string]any, exists bool) bool {
+	if e == nil {
 		return true
 	}
-	p := &ddbExprParser{toks: ddbExprTokenize(expr), guard: sim.NewParseGuard(maxExprParseDepth, 1<<62)}
-	node := p.parseOr()
-	if node == nil || p.peek().kind != ddbTokEOF {
-		// Unparseable / trailing garbage → treat as a non-match.
-		return false
+	return e.node.eval(&ddbEvalCtx{item: item, exists: exists, names: e.names, values: e.values})
+}
+
+// ddbEvalExpr compiles and evaluates an expression against a single item. It is
+// the one-shot convenience form used where there is exactly one item to test.
+func ddbEvalExpr(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) (bool, error) {
+	c, err := ddbCompileExpr("expression", expr, names, values)
+	if err != nil {
+		return false, err
 	}
-	ev := &ddbEvalCtx{item: item, exists: exists, names: names, values: values}
-	return node.eval(ev)
+	return c.match(item, exists), nil
 }
 
 type ddbEvalCtx struct {
@@ -296,6 +339,68 @@ type ddbExprParser struct {
 	toks  []ddbExprTok
 	pos   int
 	guard *sim.ParseGuard
+
+	// err holds the first structural parse error. Once set, the remaining parse
+	// produces sentinel nodes that are never evaluated (the caller checks err
+	// before eval), so the first error is the one reported.
+	err error
+	// valueRefs / paths record every :value reference and attribute path the
+	// parse encountered, so checkRefs can verify each resolves against the
+	// supplied ExpressionAttributeValues / -Names maps.
+	valueRefs map[string]bool
+	paths     []string
+}
+
+// ddbValidComparator reports whether op is one of DynamoDB's six comparison
+// operators. The tokenizer greedily combines '=' '<' '>' runs, so it can yield
+// non-operators like "==" or ">>"; those are syntax errors, not silent
+// always-false comparisons.
+func ddbValidComparator(op string) bool {
+	switch op {
+	case "=", "<>", "<", "<=", ">", ">=":
+		return true
+	}
+	return false
+}
+
+// fail records the first structural parse error.
+func (p *ddbExprParser) fail(format string, args ...any) {
+	if p.err == nil {
+		p.err = fmt.Errorf(format, args...)
+	}
+}
+
+func (p *ddbExprParser) recordValueRef(ref string) {
+	if p.valueRefs == nil {
+		p.valueRefs = map[string]bool{}
+	}
+	p.valueRefs[ref] = true
+}
+
+func (p *ddbExprParser) recordPath(path string) {
+	if path != "" {
+		p.paths = append(p.paths, path)
+	}
+}
+
+// checkRefs verifies every :value and #name the expression uses is defined.
+// Real DynamoDB rejects an undefined reference with a ValidationException rather
+// than silently treating the operand as absent (which would skew a filter or
+// flip a condition).
+func (p *ddbExprParser) checkRefs(names map[string]string, values map[string]any) error {
+	for ref := range p.valueRefs {
+		if _, ok := values[ref]; !ok {
+			return fmt.Errorf("an expression attribute value used in expression is not defined; attribute value: %s", ref)
+		}
+	}
+	for _, path := range p.paths {
+		for _, seg := range ddbSplitPath(path) {
+			if strings.HasPrefix(seg, "#") && names[seg] == "" {
+				return fmt.Errorf("an expression attribute name used in the document path is not defined; attribute name: %s", seg)
+			}
+		}
+	}
+	return nil
 }
 
 // maxExprParseDepth bounds parenthesis nesting so a pathological expression
@@ -339,12 +444,15 @@ func (p *ddbExprParser) parseTerm() ddbCond {
 		p.next()
 		if !p.guard.Enter() {
 			p.guard.Leave()
+			p.fail("expression nesting too deep")
 			return ddbCondFalse{}
 		}
 		inner := p.parseOr()
 		p.guard.Leave()
 		if p.peek().kind == ddbTokRParen {
 			p.next()
+		} else {
+			p.fail("syntax error; expected ')'")
 		}
 		return inner
 	}
@@ -366,6 +474,9 @@ func (p *ddbExprParser) parseTerm() ddbCond {
 	switch p.peek().kind {
 	case ddbTokOp:
 		op := p.next().text
+		if !ddbValidComparator(op) {
+			p.fail("syntax error; invalid comparator %q", op)
+		}
 		return ddbCondCompare{l: left, r: p.parseOperand(), op: op}
 	case ddbTokBetween:
 		p.next()
@@ -388,10 +499,15 @@ func (p *ddbExprParser) parseTerm() ddbCond {
 			}
 			if p.peek().kind == ddbTokRParen {
 				p.next()
+			} else {
+				p.fail("syntax error; expected ')' to close IN list")
 			}
+		} else {
+			p.fail("syntax error; expected '(' after IN")
 		}
 		return ddbCondIn{v: left, list: list}
 	}
+	p.fail("syntax error; expected a comparator, BETWEEN, or IN")
 	return ddbCondFalse{}
 }
 
@@ -403,15 +519,20 @@ func (p *ddbExprParser) parseOperand() ddbOperand {
 		return ddbOperandSize{path: path}
 	}
 	if p.peek().kind != ddbTokWord {
-		if p.peek().kind != ddbTokEOF {
+		if p.peek().kind == ddbTokEOF {
+			p.fail("syntax error; unexpected end of expression")
+		} else {
+			p.fail("syntax error; unexpected token %q", p.peek().text)
 			p.next()
 		}
 		return ddbOperandValue{ref: ""}
 	}
 	w := p.next().text
 	if strings.HasPrefix(w, ":") {
+		p.recordValueRef(w)
 		return ddbOperandValue{ref: w}
 	}
+	p.recordPath(w)
 	return ddbOperandPath{path: w}
 }
 
@@ -419,13 +540,20 @@ func (p *ddbExprParser) parseOperand() ddbOperand {
 func (p *ddbExprParser) parseParenPath() string {
 	if p.peek().kind == ddbTokLParen {
 		p.next()
+	} else {
+		p.fail("syntax error; expected '(' after function name")
 	}
 	path := ""
 	if p.peek().kind == ddbTokWord {
 		path = p.next().text
+		p.recordPath(path)
+	} else {
+		p.fail("syntax error; expected an attribute path")
 	}
 	if p.peek().kind == ddbTokRParen {
 		p.next()
+	} else {
+		p.fail("syntax error; expected ')'")
 	}
 	return path
 }
@@ -434,17 +562,26 @@ func (p *ddbExprParser) parseParenPath() string {
 func (p *ddbExprParser) parseParenPathArg() (string, ddbOperand) {
 	if p.peek().kind == ddbTokLParen {
 		p.next()
+	} else {
+		p.fail("syntax error; expected '(' after function name")
 	}
 	path := ""
 	if p.peek().kind == ddbTokWord {
 		path = p.next().text
+		p.recordPath(path)
+	} else {
+		p.fail("syntax error; expected an attribute path")
 	}
 	if p.peek().kind == ddbTokComma {
 		p.next()
+	} else {
+		p.fail("syntax error; expected ',' between function arguments")
 	}
 	arg := p.parseOperand()
 	if p.peek().kind == ddbTokRParen {
 		p.next()
+	} else {
+		p.fail("syntax error; expected ')'")
 	}
 	return path, arg
 }

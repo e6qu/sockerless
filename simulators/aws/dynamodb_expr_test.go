@@ -50,14 +50,53 @@ func TestDDBEvalExpr_FullGrammar(t *testing.T) {
 		{`age > :over AND name = :n`, false},               // AND short-circuit false
 	}
 	for _, tc := range cases {
-		if got := ddbEvalExpr(item, true, tc.expr, names, values); got != tc.want {
+		got, err := ddbEvalExpr(item, true, tc.expr, names, values)
+		if err != nil {
+			t.Errorf("ddbEvalExpr(%q) unexpected error: %v", tc.expr, err)
+			continue
+		}
+		if got != tc.want {
 			t.Errorf("ddbEvalExpr(%q) = %v, want %v", tc.expr, got, tc.want)
 		}
 	}
 
 	// Condition on a not-yet-existing item: attribute_not_exists(PK) is the
 	// classic put-if-absent guard.
-	if !ddbEvalExpr(map[string]any{}, false, "attribute_not_exists(PK)", nil, nil) {
-		t.Error("attribute_not_exists(PK) must hold for a new item")
+	if got, err := ddbEvalExpr(map[string]any{}, false, "attribute_not_exists(PK)", nil, nil); err != nil || !got {
+		t.Errorf("attribute_not_exists(PK) must hold for a new item (got %v, err %v)", got, err)
+	}
+}
+
+// TestDDBEvalExpr_FailsLoud asserts that a malformed expression, or one
+// referencing an undefined #name / :value, is a loud error — never a silent
+// non-match returning plausible-wrong data.
+func TestDDBEvalExpr_FailsLoud(t *testing.T) {
+	item := map[string]any{"PK": map[string]any{"S": "row1"}}
+	names := map[string]string{"#n": "name"}
+	values := map[string]any{":v": map[string]any{"S": "x"}}
+
+	bad := []string{
+		`PK =`,                    // dangling comparator
+		`PK == :v`,                // not a real operator (trailing token)
+		`attribute_exists(`,       // unterminated function
+		`begins_with(PK)`,         // missing second argument
+		`PK IN :v`,                // IN without parentheses
+		`PK IN (:v`,               // unterminated IN list
+		`(PK = :v`,                // unbalanced parenthesis
+		`PK`,                      // bare path, no comparison
+		`PK = :missing`,           // undefined :value reference
+		`#undef = :v`,             // undefined #name reference
+		`begins_with(#undef, :v)`, // undefined #name inside a function
+	}
+	for _, expr := range bad {
+		if _, err := ddbEvalExpr(item, true, expr, names, values); err == nil {
+			t.Errorf("ddbEvalExpr(%q) = nil error, want a loud ValidationException", expr)
+		}
+	}
+
+	// A well-formed expression whose defined references simply don't match the
+	// item is NOT an error — it's a legitimate non-match.
+	if got, err := ddbEvalExpr(item, true, `#n = :v`, names, values); err != nil || got {
+		t.Errorf("defined-but-non-matching expr: got %v, err %v; want false, nil", got, err)
 	}
 }

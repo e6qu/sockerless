@@ -239,29 +239,33 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	ddbItems = sim.MakeStore[map[string]any](srv.DB(), "ddb_items")
 	ddbItemNames = sim.MakeStore[string](srv.DB(), "ddb_item_names")
 
-	r.Register("DynamoDB_20120810.CreateTable", handleDDBCreateTable)
-	r.Register("DynamoDB_20120810.DescribeTable", handleDDBDescribeTable)
-	r.Register("DynamoDB_20120810.UpdateTable", handleDDBUpdateTable)
-	r.Register("DynamoDB_20120810.DeleteTable", handleDDBDeleteTable)
-	r.Register("DynamoDB_20120810.ListTables", handleDDBListTables)
-	r.Register("DynamoDB_20120810.PutItem", handleDDBPutItem)
-	r.Register("DynamoDB_20120810.GetItem", handleDDBGetItem)
-	r.Register("DynamoDB_20120810.UpdateItem", handleDDBUpdateItem)
-	r.Register("DynamoDB_20120810.DeleteItem", handleDDBDeleteItem)
-	r.Register("DynamoDB_20120810.Query", handleDDBQuery)
-	r.Register("DynamoDB_20120810.Scan", handleDDBScan)
-	r.Register("DynamoDB_20120810.BatchWriteItem", handleDDBBatchWriteItem)
-	r.Register("DynamoDB_20120810.BatchGetItem", handleDDBBatchGetItem)
-	r.Register("DynamoDB_20120810.TransactWriteItems", handleDDBTransactWriteItems)
-	r.Register("DynamoDB_20120810.TransactGetItems", handleDDBTransactGetItems)
-	r.Register("DynamoDB_20120810.DescribeContinuousBackups", handleDDBDescribeContinuousBackups)
-	r.Register("DynamoDB_20120810.UpdateContinuousBackups", handleDDBUpdateContinuousBackups)
-	r.Register("DynamoDB_20120810.DescribeTimeToLive", handleDDBDescribeTimeToLive)
-	r.Register("DynamoDB_20120810.UpdateTimeToLive", handleDDBUpdateTimeToLive)
-	r.Register("DynamoDB_20120810.ListTagsOfResource", handleDDBListTagsOfResource)
-	r.Register("DynamoDB_20120810.TagResource", handleDDBTagResource)
-	r.Register("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
-	r.Register("DynamoDB_20120810.DescribeLimits", handleDDBDescribeLimits)
+	reg := func(target string, h http.HandlerFunc) {
+		op := strings.TrimPrefix(target, "DynamoDB_20120810.")
+		r.Register(target, ddbRequire(ddbRequiredMembers[op], h))
+	}
+	reg("DynamoDB_20120810.CreateTable", handleDDBCreateTable)
+	reg("DynamoDB_20120810.DescribeTable", handleDDBDescribeTable)
+	reg("DynamoDB_20120810.UpdateTable", handleDDBUpdateTable)
+	reg("DynamoDB_20120810.DeleteTable", handleDDBDeleteTable)
+	reg("DynamoDB_20120810.ListTables", handleDDBListTables)
+	reg("DynamoDB_20120810.PutItem", handleDDBPutItem)
+	reg("DynamoDB_20120810.GetItem", handleDDBGetItem)
+	reg("DynamoDB_20120810.UpdateItem", handleDDBUpdateItem)
+	reg("DynamoDB_20120810.DeleteItem", handleDDBDeleteItem)
+	reg("DynamoDB_20120810.Query", handleDDBQuery)
+	reg("DynamoDB_20120810.Scan", handleDDBScan)
+	reg("DynamoDB_20120810.BatchWriteItem", handleDDBBatchWriteItem)
+	reg("DynamoDB_20120810.BatchGetItem", handleDDBBatchGetItem)
+	reg("DynamoDB_20120810.TransactWriteItems", handleDDBTransactWriteItems)
+	reg("DynamoDB_20120810.TransactGetItems", handleDDBTransactGetItems)
+	reg("DynamoDB_20120810.DescribeContinuousBackups", handleDDBDescribeContinuousBackups)
+	reg("DynamoDB_20120810.UpdateContinuousBackups", handleDDBUpdateContinuousBackups)
+	reg("DynamoDB_20120810.DescribeTimeToLive", handleDDBDescribeTimeToLive)
+	reg("DynamoDB_20120810.UpdateTimeToLive", handleDDBUpdateTimeToLive)
+	reg("DynamoDB_20120810.ListTagsOfResource", handleDDBListTagsOfResource)
+	reg("DynamoDB_20120810.TagResource", handleDDBTagResource)
+	reg("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
+	reg("DynamoDB_20120810.DescribeLimits", handleDDBDescribeLimits)
 	registerDDBPartiQL(r)
 }
 
@@ -1060,8 +1064,10 @@ func handleDDBPutItem(w http.ResponseWriter, r *http.Request) {
 
 	// Atomically evaluate the ConditionExpression (e.g. terraform's state-lock
 	// "attribute_not_exists(LockID)") before writing.
-	if req.ConditionExpression != "" &&
-		!ddbEvalCondition(old, exists, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+	if condOK, err := ddbEvalCondition(old, exists, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !condOK {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, old, exists)
 		return
 	}
@@ -1176,8 +1182,10 @@ func handleDDBUpdateItem(w http.ResponseWriter, r *http.Request) {
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Key)
 	item, existed := ddbItems.Get(itemKey)
-	if req.ConditionExpression != "" &&
-		!ddbEvalCondition(item, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+	if condOK, err := ddbEvalCondition(item, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !condOK {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, item, existed)
 		return
 	}
@@ -1320,8 +1328,10 @@ func handleDDBDeleteItem(w http.ResponseWriter, r *http.Request) {
 	defer ddbItemsMu.Unlock()
 	itemKey := ddbItemKey(t, req.Key)
 	oldItem, existed := ddbItems.Get(itemKey)
-	if req.ConditionExpression != "" &&
-		!ddbEvalCondition(oldItem, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+	if condOK, err := ddbEvalCondition(oldItem, existed, req.ConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues); err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	} else if !condOK {
 		writeDDBConditionalCheckFailed(w, req.ReturnValuesOnConditionCheckFailure, oldItem, existed)
 		return
 	}
@@ -1388,6 +1398,20 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 			"Consistent reads are not supported on global secondary indexes", http.StatusBadRequest)
 		return
 	}
+	// Compile the key + filter expressions once, up front: a malformed
+	// expression (or an undefined #name/:value) is a ValidationException
+	// regardless of whether any item is examined — never a silent empty result.
+	keyExpr, err := ddbCompileExpr("KeyConditionExpression", req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
+	if err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	filterExpr, err := ddbCompileExpr("FilterExpression", req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
+	if err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	}
+
 	prefix := req.TableName + "/"
 	// ScanIndexForward (default true) walks the sort key ascending; false walks
 	// it descending — the basis of every "latest N" access pattern. The
@@ -1408,12 +1432,12 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 		if !ok2 {
 			continue
 		}
-		if !ddbMatchesExpression(t, it, req.KeyConditionExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		if !keyExpr.match(it, true) {
 			continue
 		}
 		scanned++
 		lastScanned = it
-		if req.FilterExpression == "" || ddbMatchesExpression(t, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		if filterExpr.match(it, true) {
 			items = append(items, it)
 		}
 		if req.Limit > 0 && scanned >= req.Limit {
@@ -1561,6 +1585,13 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Compile the filter once: a malformed FilterExpression (or an undefined
+	// #name/:value) is a ValidationException, not a silently emptied result.
+	filterExpr, err := ddbCompileExpr("FilterExpression", req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues)
+	if err != nil {
+		sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+		return
+	}
 	prefix := req.TableName + "/"
 	keys := ddbTableSortedKeys(prefix)
 	// Parallel scan: a TotalSegments=N scan issues N calls, each owning a disjoint
@@ -1600,7 +1631,7 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 		}
 		scanned++
 		lastScanned = it
-		if ddbMatchesExpression(DDBTable{}, it, req.FilterExpression, req.ExpressionAttributeNames, req.ExpressionAttributeValues) {
+		if filterExpr.match(it, true) {
 			items = append(items, it)
 		}
 		if req.Limit > 0 && scanned >= req.Limit {
@@ -1635,9 +1666,15 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 // item. `exists` is whether the item is currently present. Supports the common
 // ConditionExpression via the full expression grammar in dynamodb_expr.go
 // (functions, comparators, BETWEEN/IN, AND/OR/NOT, parentheses, nested paths).
-// An empty expression always holds.
-func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) bool {
-	return ddbEvalExpr(item, exists, expr, names, values)
+// An empty expression always holds. A malformed expression, or one referencing
+// an undefined #name / :value, returns an error (surfaced as a
+// ValidationException) rather than a silent non-match.
+func ddbEvalCondition(item map[string]any, exists bool, expr string, names map[string]string, values map[string]any) (bool, error) {
+	c, err := ddbCompileExpr("ConditionExpression", expr, names, values)
+	if err != nil {
+		return false, err
+	}
+	return c.match(item, exists), nil
 }
 
 // ddbExpectedEntry is one entry of the legacy Expected map.
@@ -1745,7 +1782,7 @@ func ddbCheckExpected(item map[string]any, exists bool, expected map[string]ddbE
 	if err != nil {
 		return false, err
 	}
-	return ddbEvalExpr(item, exists, expr, names, values), nil
+	return ddbEvalExpr(item, exists, expr, names, values)
 }
 
 func ddbScalarString(v any) string {
@@ -1962,8 +1999,12 @@ func handleDDBTransactWriteItems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		current, exists := ddbItems.Get(ddbItemKey(t, keyItem))
-		if op.ConditionExpression != "" &&
-			!ddbEvalCondition(current, exists, op.ConditionExpression, op.ExpressionAttributeNames, op.ExpressionAttributeValues) {
+		condOK, err := ddbEvalCondition(current, exists, op.ConditionExpression, op.ExpressionAttributeNames, op.ExpressionAttributeValues)
+		if err != nil {
+			sim.AWSError(w, "ValidationException", err.Error(), http.StatusBadRequest)
+			return
+		}
+		if !condOK {
 			reasons[i] = map[string]any{"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}
 			cancelled = true
 		} else {
@@ -2143,13 +2184,6 @@ func ddbResumeIndex(keys []string, startKey, prefix, tablePrefix string) int {
 		return i + 1
 	}
 	return 0
-}
-
-// ddbMatchesExpression evaluates a KeyConditionExpression / FilterExpression
-// against a stored item via the full expression grammar (dynamodb_expr.go).
-func ddbMatchesExpression(table DDBTable, item map[string]any, expr string, names map[string]string, values map[string]any) bool {
-	_ = table
-	return ddbEvalExpr(item, true, expr, names, values)
 }
 
 func ddbResolveAttrName(name string, aliases map[string]string) string {

@@ -32,9 +32,13 @@ import (
 // registerDDBPartiQL mounts the three PartiQL operations on the shared awsJson
 // router. The parent adds the single registerDDBPartiQL(awsRouter) call.
 func registerDDBPartiQL(r *sim.AWSRouter) {
-	r.Register("DynamoDB_20120810.ExecuteStatement", handleDDBExecuteStatement)
-	r.Register("DynamoDB_20120810.BatchExecuteStatement", handleDDBBatchExecuteStatement)
-	r.Register("DynamoDB_20120810.ExecuteTransaction", handleDDBExecuteTransaction)
+	reg := func(target string, h http.HandlerFunc) {
+		op := strings.TrimPrefix(target, "DynamoDB_20120810.")
+		r.Register(target, ddbRequire(ddbRequiredMembers[op], h))
+	}
+	reg("DynamoDB_20120810.ExecuteStatement", handleDDBExecuteStatement)
+	reg("DynamoDB_20120810.BatchExecuteStatement", handleDDBBatchExecuteStatement)
+	reg("DynamoDB_20120810.ExecuteTransaction", handleDDBExecuteTransaction)
 }
 
 // ── parse budget ─────────────────────────────────────────────────────────────
@@ -1112,6 +1116,10 @@ func pqlExecSelect(t DDBTable, st *partiQLStmt, limit int, nextToken string) (*p
 	}
 
 	// Otherwise scan all of the table's items applying the predicate as a filter.
+	filterExpr, cerr := ddbCompileExpr("WHERE clause", expr, names, values)
+	if cerr != nil {
+		return nil, pqlErrf("ValidationException", "%v", cerr)
+	}
 	prefix := st.Table + "/"
 	keys := ddbTableSortedKeys(prefix)
 	var matched []map[string]any
@@ -1120,7 +1128,7 @@ func pqlExecSelect(t DDBTable, st *partiQLStmt, limit int, nextToken string) (*p
 		if !ok {
 			continue
 		}
-		if expr != "" && !ddbEvalExpr(it, true, expr, names, values) {
+		if !filterExpr.match(it, true) {
 			continue
 		}
 		matched = append(matched, it)
