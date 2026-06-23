@@ -102,6 +102,65 @@ func s3ImplementedOps() map[string]bool {
 // so they are measured by their own enumeration harness instead — S3 via
 // s3ImplementedOps + TestServiceConformance_S3Ratchet.
 var serviceConformanceCatalog = map[string][]string{
+	// CloudWatch monitoring: the dataset/KMS, OTel-enrichment, managed-insight-rule,
+	// and metric-widget-image surfaces remain.
+	"GraniteServiceVersion20100801": {
+		"AssociateDatasetKmsKey", "DescribeAlarmContributors", "DisassociateDatasetKmsKey",
+		"GetDataset", "GetInsightRuleReport", "GetMetricWidgetImage", "GetOTelEnrichment",
+		"ListManagedInsightRules", "PutManagedInsightRules", "StartOTelEnrichment",
+		"StopOTelEnrichment",
+	},
+	// Organizations: the GovCloud account, responsibility-transfer, and
+	// effective-policy-validation surfaces remain.
+	"AWSOrganizationsV20161128": {
+		"CreateGovCloudAccount", "DescribeResponsibilityTransfer",
+		"InviteOrganizationToTransferResponsibility", "LeaveOrganization",
+		"ListAccountsWithInvalidEffectivePolicy", "ListEffectivePolicyValidationErrors",
+		"ListInboundResponsibilityTransfers", "ListOutboundResponsibilityTransfers",
+		"TerminateResponsibilityTransfer", "UpdateResponsibilityTransfer",
+	},
+	// SSM: Parameter Store + documents + maintenance windows + patch baselines +
+	// service settings + resource data sync are implemented; the run/automation/
+	// session/inventory/compliance/ops-item/association execution subsystems remain.
+	"AmazonSSM": {
+		"AssociateOpsItemRelatedItem", "CancelCommand", "CancelMaintenanceWindowExecution",
+		"CreateActivation", "CreateAssociation", "CreateAssociationBatch", "CreateOpsItem",
+		"CreateOpsMetadata", "DeleteActivation", "DeleteAssociation", "DeleteInventory",
+		"DeleteOpsItem", "DeleteOpsMetadata", "DeleteResourcePolicy",
+		"DeregisterManagedInstance", "DeregisterPatchBaselineForPatchGroup",
+		"DescribeActivations", "DescribeAssociation", "DescribeAssociationExecutionTargets",
+		"DescribeAssociationExecutions", "DescribeAutomationExecutions",
+		"DescribeAutomationStepExecutions", "DescribeAvailablePatches",
+		"DescribeDocumentPermission", "DescribeEffectiveInstanceAssociations",
+		"DescribeEffectivePatchesForPatchBaseline", "DescribeInstanceAssociationsStatus",
+		"DescribeInstanceInformation", "DescribeInstancePatchStates",
+		"DescribeInstancePatchStatesForPatchGroup", "DescribeInstancePatches",
+		"DescribeInstanceProperties", "DescribeInventoryDeletions",
+		"DescribeMaintenanceWindowExecutionTaskInvocations",
+		"DescribeMaintenanceWindowExecutionTasks", "DescribeMaintenanceWindowExecutions",
+		"DescribeMaintenanceWindowSchedule", "DescribeMaintenanceWindowsForTarget",
+		"DescribeOpsItems", "DescribePatchGroupState", "DescribePatchGroups",
+		"DescribePatchProperties", "DescribeSessions", "DisassociateOpsItemRelatedItem",
+		"GetAccessToken", "GetAutomationExecution", "GetCalendarState", "GetCommandInvocation",
+		"GetConnectionStatus", "GetDeployablePatchSnapshotForInstance", "GetExecutionPreview",
+		"GetInventory", "GetInventorySchema", "GetMaintenanceWindowExecution",
+		"GetMaintenanceWindowExecutionTask", "GetMaintenanceWindowExecutionTaskInvocation",
+		"GetMaintenanceWindowTask", "GetOpsItem", "GetOpsMetadata", "GetOpsSummary",
+		"GetParameterHistory", "GetPatchBaselineForPatchGroup", "GetResourcePolicies",
+		"LabelParameterVersion", "ListAssociationVersions", "ListAssociations",
+		"ListCommandInvocations", "ListCommands", "ListComplianceItems",
+		"ListComplianceSummaries", "ListDocumentMetadataHistory", "ListInventoryEntries",
+		"ListNodes", "ListNodesSummary", "ListOpsItemEvents", "ListOpsItemRelatedItems",
+		"ListOpsMetadata", "ListResourceComplianceSummaries", "ModifyDocumentPermission",
+		"PutComplianceItems", "PutInventory", "PutResourcePolicy",
+		"RegisterPatchBaselineForPatchGroup", "ResumeSession", "SendAutomationSignal",
+		"SendCommand", "StartAccessRequest", "StartAssociationsOnce", "StartAutomationExecution",
+		"StartChangeRequestExecution", "StartExecutionPreview", "StartSession",
+		"StopAutomationExecution", "TerminateSession", "UnlabelParameterVersion",
+		"UpdateAssociation", "UpdateAssociationStatus", "UpdateDocumentMetadata",
+		"UpdateMaintenanceWindowTarget", "UpdateMaintenanceWindowTask",
+		"UpdateManagedInstanceRole", "UpdateOpsItem", "UpdateOpsMetadata",
+	},
 	// Step Functions / ACM / Secrets Manager / Application Auto Scaling: all
 	// operations implemented (conformance-complete).
 	"AWSStepFunctions":        {},
