@@ -610,7 +610,24 @@ func cloudTrailRecordAPICall(srv *sim.Server, r *http.Request, reqBody []byte, s
 type cloudTrailRESTEventNameFunc func(*http.Request, []byte) string
 type cloudTrailRESTResourceFunc func(*http.Request, []byte) []CloudTrailResource
 
+// restRegisteredOps records, per CloudTrail event source, the static REST
+// operation names registered through cloudTrailRecordedREST. REST services (S3
+// aside, which composes its op name dynamically) name their operation as a
+// constant at registration, so this registry lets the service-conformance gate
+// measure their operation coverage the way it reads the awsJson/awsQuery routers
+// for the RPC services. (Operations registered via cloudTrailRecordedRESTDynamic
+// carry a per-request name and are not captured here.)
+var restRegisteredOps = map[string]map[string]bool{}
+
+func restRegisterOp(source, op string) {
+	if restRegisteredOps[source] == nil {
+		restRegisteredOps[source] = map[string]bool{}
+	}
+	restRegisteredOps[source][op] = true
+}
+
 func cloudTrailRecordedREST(eventName, source string, resources cloudTrailRESTResourceFunc, handler http.HandlerFunc) http.HandlerFunc {
+	restRegisterOp(source, eventName)
 	return cloudTrailRecordedRESTDynamic(func(*http.Request, []byte) string { return eventName }, source, resources, handler)
 }
 

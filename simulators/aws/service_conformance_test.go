@@ -213,8 +213,15 @@ func serviceRegisteredOps(m *smithyService, jsonTargets []string, versioned map[
 			out[op] = true
 		}
 	}
+	for _, a := range versioned[m.Version] {
+		out[a] = true
+	}
+	// The query router's legacy bucket (version "") holds actions registered
+	// without an explicit API version — EC2, STS, and other services use the
+	// unversioned r.Register. Intersecting it with the model's own op set (in
+	// serviceCoverage) attributes those actions to the right service.
 	if m.Version != "" {
-		for _, a := range versioned[m.Version] {
+		for _, a := range versioned[""] {
 			out[a] = true
 		}
 	}
@@ -235,6 +242,70 @@ func serviceCoverage(m *smithyService, jsonTargets []string, versioned map[strin
 	sort.Strings(registered)
 	sort.Strings(missing)
 	return registered, missing
+}
+
+// restConformanceSources maps a REST service's Smithy shape to its CloudTrail
+// event source, so the gate reads restRegisteredOps (populated at registration
+// by cloudTrailRecordedREST) for its operation coverage — the REST analogue of
+// reading the awsJson/awsQuery routers.
+var restConformanceSources = map[string]string{
+	"AWSDnsV20130401":              "route53.amazonaws.com",           // Amazon Route 53
+	"MagnolioAPIService_v20150201": "elasticfilesystem.amazonaws.com", // Amazon EFS
+}
+
+// serviceImplementedCount returns how many of a model's operations the sim
+// implements — from restRegisteredOps for a REST service, else from the routers.
+func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned map[string][]string) int {
+	if src, ok := restConformanceSources[m.ShapeName]; ok {
+		n := 0
+		for op := range m.Ops {
+			if restRegisteredOps[src][op] {
+				n++
+			}
+		}
+		return n
+	}
+	registered, _ := serviceCoverage(m, jsonTargets, versioned)
+	return len(registered)
+}
+
+// serviceCoverageFloor locks the implemented-operation COUNT for services tracked
+// by coverage rather than an exact missing-list: the awsQuery/ec2Query giants
+// (Amazon EC2, RDS, Glue, …) whose hundreds of unimplemented ops would bloat the
+// catalog, and the REST services (Route 53, EFS) measured via restRegisteredOps.
+// The count must EQUAL the floor — a drop is a regression; implementing more ops
+// must bump the floor (the ratchet ratchets up).
+var serviceCoverageFloor = map[string]int{
+	"AmazonEC2":                            88, // ec2Query
+	"AWSSecurityTokenServiceV20110615":     4,  // STS (awsQuery, unversioned)
+	"AmazonEC2ContainerRegistry_V20150921": 26, // ECR
+	"AmazonElastiCacheV9":                  13,
+	"AmazonRDSv19":                         13,
+	"AutoScaling_2011_01_01":               13,
+	"AWSGlue":                              19,
+	"AWSWAF_20190729":                      28,
+	"CloudTrail_20131101":                  16,
+	"CodeBuild_20161006":                   9,
+	"Logs_20140328":                        18, // CloudWatch Logs
+	"Route53AutoNaming_v20170314":          16, // Cloud Map / ServiceDiscovery
+	"AWSDnsV20130401":                      10, // Route 53 (REST)
+	"MagnolioAPIService_v20150201":         13, // EFS (REST)
+}
+
+// TestServiceConformance_CoverageFloor locks the implemented-op count for the
+// coverage-tracked services (see serviceCoverageFloor).
+func TestServiceConformance_CoverageFloor(t *testing.T) {
+	models := loadSmithyModels(t)
+	_, jsonRouter, queryRouter := buildConformanceSimulator(t)
+	jsonTargets := jsonRouter.Targets()
+	versioned := queryRouter.VersionedActions()
+	for shape, floor := range serviceCoverageFloor {
+		m := serviceModel(t, models, shape)
+		impl := serviceImplementedCount(m, jsonTargets, versioned)
+		if impl != floor {
+			t.Errorf("%s: coverage %d/%d != floor %d — update serviceCoverageFloor (a drop is a regression; more is a ratchet-up).", shape, impl, len(m.Ops), floor)
+		}
+	}
 }
 
 func serviceModel(t *testing.T, models []*smithyService, shapeName string) *smithyService {

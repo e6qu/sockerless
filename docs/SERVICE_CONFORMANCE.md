@@ -64,6 +64,35 @@ oracle** — are the backbone here. The AWS Identity and Access Management (IAM)
 8. **Honest language.** Retire "100%/complete". Say "covers X; not yet: Y (listed in
    the registry, ratcheted)". The number is the claim.
 
+## Measuring AWS service operation coverage
+
+`simulators/aws/service_conformance_test.go` measures every AWS service against its
+vendored Smithy model. How a service's *implemented* op set is read depends on its
+wire protocol:
+
+- **awsJson (`X-Amz-Target`)** — read from the JSON router's registered targets.
+- **awsQuery / ec2Query (`Action=…`)** — read from the query router. Services
+  registered with the *unversioned* `Register` (Amazon EC2, STS, …) land in the
+  router's legacy `""` bucket, which is intersected with the model's own op set so
+  those actions attribute to the right service.
+- **REST (path + method)** — the op name is a constant passed to
+  `cloudTrailRecordedREST("Op", "<source>.amazonaws.com", …)` at registration, so it
+  is captured in the `restRegisteredOps` registry (keyed by CloudTrail event source)
+  and read back via `restConformanceSources`. Amazon S3 is the exception: its op name
+  is composed dynamically from method + path + subresource, so it has a bespoke
+  enumeration harness (`s3ImplementedOps`).
+
+Two ratchet shapes lock the result:
+
+- **Exact missing-list** (`serviceConformanceCatalog`, `TestServiceConformance_Ratchet`)
+  — the precise set of unimplemented ops, for services tracked op-by-op. Implement one
+  → remove it; the model grows → it's flagged as newly-missing.
+- **Coverage floor** (`serviceCoverageFloor`, `TestServiceConformance_CoverageFloor`)
+  — the implemented-op *count*, for the awsQuery/ec2Query giants (EC2 769 ops, RDS,
+  Glue, …) and the REST services, where an exact list of hundreds of gaps would bloat
+  the catalog. The count must *equal* the floor: a drop is a regression; implementing
+  more ratchets the floor up.
+
 ## Applying it to a new service
 
 - Add `simulators/<cloud>/<svc>_conformance_test.go` with the catalog(s) + the three
