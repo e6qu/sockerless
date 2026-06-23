@@ -42,3 +42,4 @@ matching `scripts/fetch-*-spec.sh` script, which rewrites this table.
 | `wafv2.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/wafv2.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T08:51:11Z |
 | `cloudfront.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/cloudfront.json` | Apache-2.0 | `0016334f314179e3bb1d63ac7a5dbcb2ee7b3ee1` | 2026-06-11T09:04:27Z |
 | `ecs.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/ecs.json` | Apache-2.0 | `dfa27a6c6ef442e9e27034e9b4992c7c3a3e9092` | 2026-06-20T14:58:16Z |
+| `organizations.smithy.json.gz` | `aws/aws-sdk-go-v2` | `codegen/sdk-codegen/aws-models/organizations.json` | Apache-2.0 | `2c5e1db937e05b3d8137ffb80035130060f06515` | 2026-06-23T06:10:32Z |

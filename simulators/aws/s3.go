@@ -814,6 +814,8 @@ func handleS3PutObject(w http.ResponseWriter, r *http.Request) {
 	storeKey := s3ObjectKey(bucket, key)
 	s3Objects.Put(storeKey, obj)
 
+	s3FireObjectNotifications(bucket, key, "ObjectCreated:Put", etag, obj.Size)
+
 	w.Header().Set("ETag", etag)
 	w.WriteHeader(http.StatusOK)
 }
@@ -870,7 +872,12 @@ func handleS3DeleteObject(w http.ResponseWriter, r *http.Request) {
 	key := sim.PathParam(r, "key")
 
 	storeKey := s3ObjectKey(bucket, key)
+	existing, existed := s3Objects.Get(storeKey)
 	s3Objects.Delete(storeKey)
+
+	if existed {
+		s3FireObjectNotifications(bucket, key, "ObjectRemoved:Delete", existing.ETag, existing.Size)
+	}
 
 	// S3 returns 204 even if the object didn't exist
 	w.WriteHeader(http.StatusNoContent)

@@ -34,9 +34,13 @@ func TestEventBridgeCLI_RuleTargetPutEvents(t *testing.T) {
 	queueARN := attrs.Attributes["QueueArn"]
 	require.NotEmpty(t, queueARN)
 
-	runCLI(t, awsCLI("events", "put-rule",
+	ruleOut := runCLI(t, awsCLI("events", "put-rule",
 		"--name", "eb-cli-rule",
 		"--event-pattern", `{"source":["sockerless.cli"]}`))
+	var rule struct {
+		RuleArn string `json:"RuleArn"`
+	}
+	parseJSON(t, ruleOut, &rule)
 	t.Cleanup(func() {
 		runCLI(t, awsCLI("events", "remove-targets", "--rule", "eb-cli-rule", "--ids", "queue"))
 		runCLI(t, awsCLI("events", "delete-rule", "--name", "eb-cli-rule"))
@@ -45,6 +49,8 @@ func TestEventBridgeCLI_RuleTargetPutEvents(t *testing.T) {
 	runCLI(t, awsCLI("events", "put-targets",
 		"--rule", "eb-cli-rule",
 		"--targets", `[{"Id":"queue","Arn":"`+queueARN+`"}]`))
+	// EventBridge → SQS delivery is authorized by the queue's resource policy.
+	setEBQueuePolicyCLI(t, q.QueueUrl, queueARN, rule.RuleArn)
 
 	out = runCLI(t, awsCLI("events", "list-targets-by-rule", "--rule", "eb-cli-rule"))
 	var targets struct {
@@ -214,9 +220,13 @@ func TestEventBridgeCLI_ContentFilterPattern(t *testing.T) {
 
 	// detail.state prefix "run" AND detail.code numeric > 200.
 	pattern := `{"source":["sockerless.cli.content"],"detail":{"state":[{"prefix":"run"}],"code":[{"numeric":[">",200]}]}}`
-	runCLI(t, awsCLI("events", "put-rule",
+	ruleOut := runCLI(t, awsCLI("events", "put-rule",
 		"--name", "eb-cli-content-rule",
 		"--event-pattern", pattern))
+	var rule struct {
+		RuleArn string `json:"RuleArn"`
+	}
+	parseJSON(t, ruleOut, &rule)
 	t.Cleanup(func() {
 		runCLI(t, awsCLI("events", "remove-targets", "--rule", "eb-cli-content-rule", "--ids", "queue"))
 		runCLI(t, awsCLI("events", "delete-rule", "--name", "eb-cli-content-rule"))
@@ -224,6 +234,7 @@ func TestEventBridgeCLI_ContentFilterPattern(t *testing.T) {
 	runCLI(t, awsCLI("events", "put-targets",
 		"--rule", "eb-cli-content-rule",
 		"--targets", `[{"Id":"queue","Arn":"`+queueARN+`"}]`))
+	setEBQueuePolicyCLI(t, q.QueueUrl, queueARN, rule.RuleArn)
 
 	entries, err := json.Marshal([]map[string]string{
 		{"Source": "sockerless.cli.content", "DetailType": "job", "Detail": `{"state":"running","code":500}`},
@@ -244,4 +255,15 @@ func TestEventBridgeCLI_ContentFilterPattern(t *testing.T) {
 	parseJSON(t, out, &recv)
 	require.Len(t, recv.Messages, 1, "only the matching event must be delivered")
 	assert.JSONEq(t, `{"state":"running","code":500}`, recv.Messages[0].Body)
+}
+
+// setEBQueuePolicyCLI attaches a queue policy authorizing EventBridge to deliver
+// from the given rule, so EventBridge → SQS delivery is admitted.
+func setEBQueuePolicyCLI(t *testing.T, queueURL, queueARN, ruleArn string) {
+	t.Helper()
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow",` +
+		`"Principal":{"Service":"events.amazonaws.com"},"Action":"sqs:SendMessage","Resource":"` + queueARN + `",` +
+		`"Condition":{"ArnEquals":{"aws:SourceArn":"` + ruleArn + `"}}}]}`
+	attrs, _ := json.Marshal(map[string]string{"Policy": policy})
+	runCLI(t, awsCLI("sqs", "set-queue-attributes", "--queue-url", queueURL, "--attributes", string(attrs)))
 }

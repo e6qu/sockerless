@@ -1,8 +1,7 @@
 package main
 
 import (
-	"crypto/md5"
-	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"net/http"
@@ -421,33 +420,114 @@ func snsValidatePublish(t SNSTopic, e snsPublishEntry) (string, string) {
 	return "", ""
 }
 
-// snsFanout delivers one published message to the topic's SQS
-// subscribers in-process, wrapping it in SNS's canonical Notification
-// envelope so SQS consumers parse it like real SNS→SQS fan-out.
-func snsFanout(topicARN, msgID, subject, message string) {
-	for _, sub := range snsSubscriptions.List() {
-		if sub.TopicARN != topicARN || sub.Protocol != "sqs" {
-			continue
-		}
-		// Subscription Endpoint for an SQS subscriber is the queue ARN
-		// (arn:aws:sqs:<region>:<account>:<queue-name>).
-		queueName := snsTopicNameFromARN(sub.Endpoint)
-		if _, ok := sqsQueues.Get(queueName); !ok {
-			continue
-		}
-		envelope := fmt.Sprintf(
-			`{"Type":"Notification","MessageId":%q,"TopicArn":%q,"Subject":%q,"Message":%q}`,
-			msgID, topicARN, subject, message)
-		envHash := md5.Sum([]byte(envelope))
-		sqsQueues.Update(queueName, func(q *SQSQueue) {
-			q.Messages = append(q.Messages, SQSMessage{
-				MessageId:     generateUUID(),
-				Body:          envelope,
-				MD5OfBody:     hex.EncodeToString(envHash[:]),
-				SentTimestamp: nowUnix(),
-			})
-		})
+// snsARNAccount extracts the account-id field (the 5th colon-delimited
+// segment) from an ARN — arn:aws:<service>:<region>:<account>:<resource>.
+// Returns the empty string when the ARN is malformed.
+func snsARNAccount(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) >= 5 {
+		return parts[4]
 	}
+	return ""
+}
+
+// snsNotificationEnvelope renders SNS's canonical Notification JSON, the
+// body an SQS subscriber receives and the inner record of a Lambda SNS
+// event.
+func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
+	return fmt.Sprintf(
+		`{"Type":"Notification","MessageId":%q,"TopicArn":%q,"Subject":%q,"Message":%q}`,
+		msgID, topicARN, subject, message)
+}
+
+// snsFanout delivers one published message to the topic's subscribers
+// in-process. Each delivery is gated by the TARGET resource's
+// resource-based policy under the AWS-service-initiated IAM context
+// (sns.amazonaws.com originating from the topic ARN): a target that
+// doesn't admit SNS is skipped, exactly as real AWS drops an
+// unauthorized delivery. SQS subscribers get the Notification envelope
+// enqueued; Lambda subscribers get a real in-process invoke with the
+// SNS event payload.
+func snsFanout(topicARN, msgID, subject, message string) {
+	srcAccount := snsARNAccount(topicARN)
+	for _, sub := range snsSubscriptions.List() {
+		if sub.TopicARN != topicARN {
+			continue
+		}
+		src := iamServiceSource{
+			Service:       "sns.amazonaws.com",
+			SourceArn:     topicARN,
+			SourceAccount: srcAccount,
+		}
+		switch sub.Protocol {
+		case "sqs":
+			snsDeliverToSQS(sub.Endpoint, topicARN, msgID, subject, message, src)
+		case "lambda":
+			snsDeliverToLambda(sub.Endpoint, topicARN, msgID, subject, message, src)
+		}
+	}
+}
+
+// snsDeliverToSQS enqueues the SNS Notification envelope into the
+// subscriber queue — but only when the queue's resource policy admits
+// sns:SendMessage from this topic. Endpoint is the queue ARN
+// (arn:aws:sqs:<region>:<account>:<queue-name>).
+func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iamServiceSource) {
+	if !iamAuthorizeServiceDelivery(queueARN, "sqs:SendMessage", src) {
+		return
+	}
+	queueName := snsTopicNameFromARN(queueARN)
+	if _, ok := sqsQueues.Get(queueName); !ok {
+		return
+	}
+	envelope := snsNotificationEnvelope(topicARN, msgID, subject, message)
+	sqsEnqueueBody(queueName, envelope)
+}
+
+// snsDeliverToLambda performs a real in-process Lambda invoke with the
+// SNS event payload — but only when the function's resource policy
+// admits lambda:InvokeFunction from this topic. SNS→Lambda is an async
+// (Event) delivery, so the invoke runs in the background. Endpoint is
+// the function ARN (arn:aws:lambda:<region>:<account>:function:<name>).
+func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, src iamServiceSource) {
+	if !iamAuthorizeServiceDelivery(functionARN, "lambda:InvokeFunction", src) {
+		return
+	}
+	name := snsTopicNameFromARN(functionARN)
+	fn, ok := lambdaFunctions.Get(name)
+	if !ok {
+		return
+	}
+	payload := snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message)
+	go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
+}
+
+// snsLambdaEventPayload builds the SNS event a Lambda subscriber
+// receives — a Records array with one Sns record carrying the
+// Notification message — matching the real SNS→Lambda event shape.
+func snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message string) []byte {
+	subscriptionARN := functionARN
+	for _, sub := range snsSubscriptions.List() {
+		if sub.TopicARN == topicARN && sub.Protocol == "lambda" && sub.Endpoint == functionARN {
+			subscriptionARN = sub.ARN
+			break
+		}
+	}
+	rec := map[string]any{
+		"EventSource":          "aws:sns",
+		"EventVersion":         "1.0",
+		"EventSubscriptionArn": subscriptionARN,
+		"Sns": map[string]any{
+			"Type":      "Notification",
+			"MessageId": msgID,
+			"TopicArn":  topicARN,
+			"Subject":   subject,
+			"Message":   message,
+			"Timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		},
+	}
+	out, _ := json.Marshal(map[string]any{"Records": []any{rec}})
+	return out
 }
 
 func handleSNSPublish(w http.ResponseWriter, r *http.Request) {
@@ -596,7 +676,9 @@ func handleSNSTagResource(w http.ResponseWriter, r *http.Request) {
 			t.Tags[k] = v
 		}
 	})
-	snsXMLResponse(w, "TagResource", "", sim.RequestID(r.Context()))
+	// Real SNS wraps the (empty) result in a <TagResourceResult/> node; the SDK
+	// deserializer requires it to be present.
+	snsXMLResponse(w, "TagResource", "<TagResourceResult/>", sim.RequestID(r.Context()))
 }
 
 func handleSNSUntagResource(w http.ResponseWriter, r *http.Request) {
@@ -615,7 +697,7 @@ func handleSNSUntagResource(w http.ResponseWriter, r *http.Request) {
 			delete(t.Tags, k)
 		}
 	})
-	snsXMLResponse(w, "UntagResource", "", sim.RequestID(r.Context()))
+	snsXMLResponse(w, "UntagResource", "<UntagResourceResult/>", sim.RequestID(r.Context()))
 }
 
 func handleSNSListTagsForResource(w http.ResponseWriter, r *http.Request) {
@@ -634,9 +716,4 @@ func handleSNSListTagsForResource(w http.ResponseWriter, r *http.Request) {
 	}
 	b.WriteString("</Tags></ListTagsForResourceResult>")
 	snsXMLResponse(w, "ListTagsForResource", b.String(), sim.RequestID(r.Context()))
-}
-
-// nowUnix returns the current Unix-second timestamp.
-func nowUnix() int64 {
-	return time.Now().Unix()
 }

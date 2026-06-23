@@ -843,7 +843,7 @@ func deliverEBEvent(bus, source, detailType, detail, eventID string) {
 		targets, _ := ebTargets.Get(ebRuleKey(rule.EventBusName, rule.Name))
 		for _, target := range targets {
 			body := ebApplyInput(target, source, detailType, detail, eventID)
-			deliverEBTarget(target, body, source, detailType, eventID)
+			deliverEBTarget(rule.Arn, target, body, source, detailType, eventID)
 		}
 	}
 }
@@ -1186,18 +1186,57 @@ func ebMatchCIDR(cidr, ip string) bool {
 	return network.Contains(addr)
 }
 
-func deliverEBTarget(target EBTarget, body, source, detailType, eventID string) {
+// ebLambdaNameFromARN extracts the function name from a Lambda function ARN
+// (arn:aws:lambda:<region>:<acct>:function:<name>[:<qualifier>]). The sim keys
+// lambdaFunctions by unqualified name, so any qualifier is dropped.
+func ebLambdaNameFromARN(arn string) string {
+	const marker = ":function:"
+	i := strings.Index(arn, marker)
+	if i < 0 {
+		return ""
+	}
+	name := arn[i+len(marker):]
+	if j := strings.Index(name, ":"); j >= 0 {
+		name = name[:j]
+	}
+	return name
+}
+
+// deliverEBTarget delivers one matched event to one rule target. EventBridge
+// delivers as the events.amazonaws.com service on the rule's behalf, so each
+// delivery is authorized against the TARGET's resource-based policy with the
+// service-initiation condition context (aws:SourceArn = the matched rule's ARN,
+// aws:SourceAccount = this account). A target whose resource policy does not
+// admit events.amazonaws.com for that source rule receives nothing — exactly as
+// real AWS, which silently drops the delivery rather than enqueuing it.
+func deliverEBTarget(ruleArn string, target EBTarget, body, source, detailType, eventID string) {
+	src := iamServiceSource{
+		Service:       "events.amazonaws.com",
+		SourceArn:     ruleArn,
+		SourceAccount: awsAccountID(),
+	}
 	if strings.HasPrefix(target.Arn, "arn:aws:sqs:") {
+		if !iamAuthorizeServiceDelivery(target.Arn, "sqs:SendMessage", src) {
+			return
+		}
 		queue := snsTopicNameFromARN(target.Arn)
-		hash := md5.Sum([]byte(body))
-		sqsQueues.Update(queue, func(q *SQSQueue) {
-			q.Messages = append(q.Messages, SQSMessage{
-				MessageId:     eventID,
-				Body:          body,
-				MD5OfBody:     hex.EncodeToString(hash[:]),
-				SentTimestamp: time.Now().Unix(),
-			})
-		})
+		sqsEnqueue(queue, sqsSendEntry{MessageBody: body})
+		return
+	}
+	if strings.HasPrefix(target.Arn, "arn:aws:lambda:") {
+		if !iamAuthorizeServiceDelivery(target.Arn, "lambda:InvokeFunction", src) {
+			return
+		}
+		name := ebLambdaNameFromARN(target.Arn)
+		fn, ok := lambdaFunctions.Get(name)
+		if !ok {
+			return
+		}
+		// Real in-process invoke. EventBridge invokes asynchronously (an
+		// "Event" invocation): the rule delivery does not wait on the function
+		// result, so run the invoke in the background exactly as the async
+		// Lambda Invoke path does.
+		go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, []byte(body)) }()
 		return
 	}
 	if strings.HasPrefix(target.Arn, "arn:aws:sns:") {

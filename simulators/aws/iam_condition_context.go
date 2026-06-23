@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // Resource-scoped + service-specific IAM condition keys (#661). The evaluator
@@ -21,6 +23,69 @@ import (
 //   - aws:RequestTag/<k> + aws:TagKeys — the tags supplied on a tag-on-create /
 //     CreateTags request.
 
+// iamPopulateGlobalConditionKeys adds the global (`aws:`) condition keys that
+// derive from the request envelope and the calling principal: the request time,
+// transport, user-agent, the principal ARN + its tags, the resource account, and
+// MFA state. Service-to-service keys (aws:SourceArn/SourceAccount/CalledVia/
+// ViaAWSService) are intentionally absent — the sim originates direct client
+// calls, not service-initiated ones, so in real AWS those keys are absent here
+// too. aws:PrincipalOrgID is absent because the sim models a single account with
+// no Organizations slice.
+func iamPopulateGlobalConditionKeys(r *http.Request, akid, principalArn, userName string, ctx map[string][]string) {
+	now := time.Now().UTC()
+	ctx["aws:CurrentTime"] = []string{now.Format(time.RFC3339)}
+	ctx["aws:EpochTime"] = []string{strconv.FormatInt(now.Unix(), 10)}
+	ctx["aws:SecureTransport"] = []string{strconv.FormatBool(r.TLS != nil)}
+	if ua := r.Header.Get("User-Agent"); ua != "" {
+		ctx["aws:UserAgent"] = []string{ua}
+	}
+	if principalArn != "" {
+		ctx["aws:PrincipalArn"] = []string{principalArn}
+	}
+	ctx["aws:ResourceAccount"] = []string{awsAccountID()}
+
+	// Principal tags (a user's tags, or an assumed role's tags).
+	for _, t := range iamPrincipalTags(akid, userName) {
+		ctx["aws:PrincipalTag/"+t.Key] = []string{t.Value}
+	}
+
+	// MFA: present only for an MFA-authenticated temporary session.
+	mfa, age := iamSessionMFA(akid)
+	ctx["aws:MultiFactorAuthPresent"] = []string{strconv.FormatBool(mfa)}
+	if mfa {
+		ctx["aws:MultiFactorAuthAge"] = []string{strconv.FormatInt(age, 10)}
+	}
+}
+
+// iamPrincipalTags returns the calling principal's tags (user tags for an AKIA
+// key; the assumed role's tags for an ASIA session).
+func iamPrincipalTags(akid, userName string) []IAMTag {
+	if userName != "" {
+		if u, ok := iamUsers.Get(userName); ok {
+			return u.Tags
+		}
+	}
+	if tc, ok := iamTempCreds.Get(akid); ok && tc.RoleName != "" {
+		if role, rok := iamRoles.Get(tc.RoleName); rok {
+			return role.Tags
+		}
+	}
+	return nil
+}
+
+// iamSessionMFA reports whether the credential is an MFA-authenticated session
+// and, if so, its age in seconds.
+func iamSessionMFA(akid string) (present bool, ageSeconds int64) {
+	tc, ok := iamTempCreds.Get(akid)
+	if !ok || !tc.MFA {
+		return false, 0
+	}
+	if created, err := time.Parse(time.RFC3339, tc.CreatedAt); err == nil {
+		return true, int64(time.Since(created).Seconds())
+	}
+	return true, 0
+}
+
 // iamPopulateResourceConditionKeys augments ctx with the resource-scoped and
 // service-specific condition keys implied by the request.
 func iamPopulateResourceConditionKeys(r *http.Request, action string, ctx map[string][]string) {
@@ -30,6 +95,10 @@ func iamPopulateResourceConditionKeys(r *http.Request, action string, ctx map[st
 		iamPopulateEC2ResourceTags(r, ctx)
 	case "ecs":
 		iamPopulateECSCluster(r, ctx)
+	default:
+		// Every other tag-storing sim service resolves the request's target
+		// resource into aws:ResourceTag/<k> + <service>:ResourceTag/<k>.
+		iamPopulateServiceResourceTags(r, service, ctx)
 	}
 	iamPopulateRequestTags(r, ctx)
 }

@@ -77,6 +77,12 @@ func iamAuthorize(r *http.Request, action, resource string) (allowed bool, princ
 	if region := iamRequestedRegion(r); region != "" {
 		ctx["aws:RequestedRegion"] = []string{region}
 	}
+	ctx["aws:PrincipalOrgID"] = []string{awsOrgID()}
+	// Global keys from the request envelope + principal (time, transport,
+	// user-agent, principal ARN + tags, resource account, MFA).
+	iamPopulateGlobalConditionKeys(r, akid, principalArn, userName, ctx)
+	// Service-initiation keys (aws:ViaAWSService=false for a direct client call).
+	iamPopulateServiceContext(r, ctx)
 	// Resource-scoped / service-specific keys (aws:ResourceTag/*, ecs:cluster,
 	// aws:RequestTag/*, aws:TagKeys) from the request's target resource.
 	iamPopulateResourceConditionKeys(r, action, ctx)
