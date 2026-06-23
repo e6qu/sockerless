@@ -78,7 +78,12 @@ func cosmosOfferFor(account, rid string) (cosmosOffer, bool) {
 	return cosmosOffers.Get(cosmosOfferKey(account, rid))
 }
 
-func cosmosOfferKey(account, rid string) string { return account + "/" + rid }
+// cosmosOfferKey keys an offer by the owning resource's `_rid` alone. A `_rid`
+// is globally unique (it embeds account+database+container), so the offer is
+// addressable without the account — which matters because the SDK GETs/PUTs an
+// offer at the account-less `/offers/{id}` path, where the account can't be
+// recovered from the request when more than one Cosmos account exists.
+func cosmosOfferKey(_ /*account*/, rid string) string { return rid }
 
 // cosmosProvisionOfferFromHeaders creates the dedicated throughput offer for a
 // just-created database or container whose create request carried a throughput
@@ -225,8 +230,10 @@ func handleCosmosReplaceOffer(w http.ResponseWriter, r *http.Request) {
 // cosmosOfferByID finds an offer for an account by its offer id (the rid-based
 // id the SDK GETs/PUTs after the feed query).
 func cosmosOfferByID(account, offerID string) (cosmosOffer, bool) {
+	// Match by the globally-unique offer id / rid alone; the account isn't
+	// recoverable from the account-less /offers/{id} path (see cosmosOfferKey).
 	for _, o := range cosmosOffers.List() {
-		if o.Account == account && (o.OfferID == offerID || o.RID == offerID) {
+		if o.OfferID == offerID || o.RID == offerID {
 			return o, true
 		}
 	}

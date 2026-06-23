@@ -183,8 +183,21 @@ func cosmosDataAccount(r *http.Request) string {
 	if account := r.Header.Get("x-ms-cosmos-account"); account != "" {
 		return account
 	}
+	// The azcosmos SDK addresses the sim by an IP endpoint, so a data-plane
+	// request carries no account in its host or path. Resolve it deterministically
+	// (the lexicographically-first account) so a request resolves to the SAME
+	// account every time — a resource's `_rid` (`<account>-<db>-<coll>`) is
+	// recomputed per request, and a non-deterministic choice would make the rid
+	// (and anything keyed on it, e.g. throughput offers) differ between writes
+	// and reads once a second account exists.
+	first := ""
 	for _, a := range cosmosAccounts.List() {
-		return a.Name
+		if first == "" || a.Name < first {
+			first = a.Name
+		}
+	}
+	if first != "" {
+		return first
 	}
 	return "local-cosmos"
 }
