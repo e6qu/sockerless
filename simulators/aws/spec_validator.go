@@ -107,6 +107,13 @@ type restXMLOp struct {
 	// request for the operation carries them, so they disambiguate
 	// candidates sharing a path (ListParts/UploadPart vs Get/PutObject).
 	requiredQuery []string
+	// requiredHeader lists the input members bound to a request header
+	// (smithy.api#httpHeader) that are smithy.api#required — the
+	// header-borne analogue of requiredQuery. Disambiguates candidates
+	// that share a path AND the same required query members but differ
+	// by a required header (UploadPart vs UploadPartCopy, the latter
+	// requiring x-amz-copy-source).
+	requiredHeader []string
 	// staticContext marks operations carrying
 	// smithy.rules#staticContextParams — endpoint-rule variants served
 	// from dedicated endpoints (S3 Express ListDirectoryBuckets), never
@@ -207,11 +214,12 @@ func loadSmithySpecSet(dir string) (*smithySpecSet, error) {
 				opShape := opShapes[name]
 				key := def.httpMethod + " " + normalizeAWSPath(def.httpURI)
 				set.restXMLOps[key] = append(set.restXMLOps[key], restXMLOp{
-					idx:           idx,
-					name:          name,
-					literals:      parseURIQueryLiterals(def.httpURI),
-					requiredQuery: requiredQueryMembers(doc.Shapes, opShape),
-					staticContext: hasTrait(opShape.Traits, "smithy.rules#staticContextParams"),
+					idx:            idx,
+					name:           name,
+					literals:       parseURIQueryLiterals(def.httpURI),
+					requiredQuery:  requiredQueryMembers(doc.Shapes, opShape),
+					requiredHeader: requiredHeaderMembers(doc.Shapes, opShape),
+					staticContext:  hasTrait(opShape.Traits, "smithy.rules#staticContextParams"),
 				})
 			}
 		}
@@ -237,6 +245,29 @@ func requiredQueryMembers(shapes map[string]smithyShapeDef, op smithyShapeDef) [
 		}
 		if q := traitString(ref.Traits, "smithy.api#httpQuery"); q != "" {
 			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// requiredHeaderMembers lists an operation input's required
+// header-bound member names (smithy.api#httpHeader +
+// smithy.api#required), each normalized to its lowercase header name.
+func requiredHeaderMembers(shapes map[string]smithyShapeDef, op smithyShapeDef) []string {
+	if op.Input == nil {
+		return nil
+	}
+	input, ok := shapes[op.Input.Target]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, ref := range input.Members {
+		if !hasTrait(ref.Traits, "smithy.api#required") {
+			continue
+		}
+		if h := traitString(ref.Traits, "smithy.api#httpHeader"); h != "" {
+			out = append(out, strings.ToLower(h))
 		}
 	}
 	return out

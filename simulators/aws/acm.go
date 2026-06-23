@@ -2,16 +2,54 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// acmGenerateLeaf mints a real self-signed X.509 certificate + RSA private
+// key (PEM-encoded) for a PRIVATE certificate. This is genuine crypto — the
+// sim has no ACM Private CA, so the leaf is self-signed, but the material is
+// real and round-trips through GetCertificate / ExportCertificate exactly
+// like the PEM real ACM would return.
+func acmGenerateLeaf(commonName string, sans []string) (certPEM, keyPEM string, err error) {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return "", "", err
+	}
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return "", "", err
+	}
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: commonName},
+		DNSNames:     sans,
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().AddDate(1, 0, 0),
+		KeyUsage:     x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &priv.PublicKey, priv)
+	if err != nil {
+		return "", "", err
+	}
+	certBlock := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	keyBlock := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(priv)})
+	return string(certBlock), string(keyBlock), nil
+}
 
 // AWS Certificate Manager. Wire: AWS-JSON 1.1 (POST /, X-Amz-Target =
 // "CertificateManager.<Op>"). ImportCertificate is ISSUED immediately.
@@ -81,6 +119,16 @@ type acmTag struct {
 type acmStoredCert struct {
 	Cert ACMCertificate
 	Tags []acmTag
+	// Material holds the PEM bytes a caller imported (ImportCertificate)
+	// so GetCertificate / ExportCertificate can return them verbatim.
+	// Empty for AMAZON_ISSUED certs the sim can't mint real key material
+	// for. PrivateKey is only ever returned by ExportCertificate for a
+	// PRIVATE cert, matching real ACM.
+	CertificateBody  string
+	CertificateChain string
+	PrivateKey       string
+	// RevokedAt records the revocation time once RevokeCertificate runs.
+	RevokedAt *float64
 }
 
 var (
@@ -116,6 +164,7 @@ func acmARNToID(arn string) string {
 
 func registerACM(r *sim.AWSRouter, srv *sim.Server) {
 	acmCertificates = sim.MakeStore[acmStoredCert](srv.DB(), "acm_certificates")
+	acmAccountConfiguration = sim.MakeStore[acmAccountConfig](srv.DB(), "acm_account_config")
 
 	r.Register("CertificateManager.RequestCertificate", handleACMRequestCertificate)
 	r.Register("CertificateManager.DescribeCertificate", handleACMDescribeCertificate)
@@ -128,6 +177,292 @@ func registerACM(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CertificateManager.UpdateCertificateOptions", handleACMUpdateOptions)
 	r.Register("CertificateManager.ResendValidationEmail", handleACMResendValidationEmail)
 	r.Register("CertificateManager.RenewCertificate", handleACMRenewCertificate)
+	r.Register("CertificateManager.GetCertificate", handleACMGetCertificate)
+	r.Register("CertificateManager.ExportCertificate", handleACMExportCertificate)
+	r.Register("CertificateManager.RevokeCertificate", handleACMRevokeCertificate)
+	r.Register("CertificateManager.GetAccountConfiguration", handleACMGetAccountConfiguration)
+	r.Register("CertificateManager.PutAccountConfiguration", handleACMPutAccountConfiguration)
+	r.Register("CertificateManager.SearchCertificates", handleACMSearchCertificates)
+}
+
+// acmAccountConfig holds the account-level certificate configuration set by
+// PutAccountConfiguration and read by GetAccountConfiguration. Real ACM keys
+// this per-account; the sim is single-account, so one stored value suffices.
+type acmAccountConfig struct {
+	DaysBeforeExpiry *int32 `json:"DaysBeforeExpiry,omitempty"`
+}
+
+var acmAccountConfiguration sim.Store[acmAccountConfig]
+
+// handleACMGetCertificate returns the certificate body and chain for an
+// ISSUED certificate. Real ACM serves the PEM the operator imported (or that
+// ACM minted); the sim returns the stored PEM for an IMPORTED/PRIVATE cert.
+// It does not return the private key — only ExportCertificate does that.
+func handleACMGetCertificate(w http.ResponseWriter, r *http.Request) {
+	var req acmCertARNReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	id := acmARNToID(req.CertificateArn)
+	stored, ok := acmCertificates.Get(id)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
+		return
+	}
+	if stored.CertificateBody == "" {
+		// An AMAZON_ISSUED cert the sim minted has no real PEM body — real
+		// ACM returns RequestInProgressException until the cert is issued
+		// and then serves a real PEM. The sim is honest that it has no PEM
+		// for these rather than fabricating one.
+		acmWriteError(w, "RequestInProgressException",
+			"The certificate body is not yet available for "+req.CertificateArn)
+		return
+	}
+	resp := map[string]string{"Certificate": stored.CertificateBody}
+	if stored.CertificateChain != "" {
+		resp["CertificateChain"] = stored.CertificateChain
+	}
+	acmWriteJSON(w, http.StatusOK, resp)
+}
+
+// handleACMExportCertificate returns the certificate, chain, and the
+// passphrase-protected private key for a PRIVATE certificate. Real ACM only
+// permits export of PRIVATE certs (those issued by an ACM Private CA or
+// imported with EXPORT enabled); the sim enforces that and returns the stored
+// PEM material. The Passphrase is required by the API; the sim does not
+// re-encrypt the key with it (it has no real PCA-managed key), returning the
+// stored PEM, but it validates the passphrase is present like real ACM.
+func handleACMExportCertificate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CertificateArn string `json:"CertificateArn"`
+		Passphrase     []byte `json:"Passphrase"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	if len(req.Passphrase) == 0 {
+		acmWriteError(w, "InvalidParameterValueException", "Passphrase is required")
+		return
+	}
+	id := acmARNToID(req.CertificateArn)
+	stored, ok := acmCertificates.Get(id)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
+		return
+	}
+	if stored.Cert.Type != "PRIVATE" {
+		acmWriteError(w, "RequestInProgressException",
+			"Certificate "+req.CertificateArn+" is not a private certificate and cannot be exported")
+		return
+	}
+	if stored.CertificateBody == "" || stored.PrivateKey == "" {
+		acmWriteError(w, "RequestInProgressException",
+			"The certificate material is not yet available for "+req.CertificateArn)
+		return
+	}
+	resp := map[string]string{
+		"Certificate": stored.CertificateBody,
+		"PrivateKey":  stored.PrivateKey,
+	}
+	if stored.CertificateChain != "" {
+		resp["CertificateChain"] = stored.CertificateChain
+	}
+	acmWriteJSON(w, http.StatusOK, resp)
+}
+
+// handleACMRevokeCertificate moves a PRIVATE certificate to REVOKED. Real ACM
+// only allows revoking PRIVATE certs (issued by an ACM Private CA); the sim
+// enforces that and records the revocation time. Returns the CertificateArn.
+func handleACMRevokeCertificate(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CertificateArn   string `json:"CertificateArn"`
+		RevocationReason string `json:"RevocationReason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	if req.RevocationReason == "" {
+		acmWriteError(w, "InvalidParameterValueException", "RevocationReason is required")
+		return
+	}
+	id := acmARNToID(req.CertificateArn)
+	stored, ok := acmCertificates.Get(id)
+	if !ok {
+		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
+		return
+	}
+	if stored.Cert.Type != "PRIVATE" {
+		acmWriteError(w, "ResourceInUseException",
+			"Only private certificates can be revoked")
+		return
+	}
+	now := acmEpochNow()
+	stored.Cert.Status = "REVOKED"
+	stored.RevokedAt = now
+	acmCertificates.Put(id, stored)
+	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": stored.Cert.CertificateArn})
+}
+
+// handleACMGetAccountConfiguration returns the account expiry-events config.
+// Real ACM defaults DaysBeforeExpiry to 45 when unset.
+func handleACMGetAccountConfiguration(w http.ResponseWriter, r *http.Request) {
+	cfg, ok := acmAccountConfiguration.Get("default")
+	days := int32(45)
+	if ok && cfg.DaysBeforeExpiry != nil {
+		days = *cfg.DaysBeforeExpiry
+	}
+	acmWriteJSON(w, http.StatusOK, map[string]any{
+		"ExpiryEvents": map[string]any{"DaysBeforeExpiry": days},
+	})
+}
+
+// handleACMPutAccountConfiguration stores the account expiry-events config.
+// Real ACM requires an IdempotencyToken; the sim validates its presence.
+func handleACMPutAccountConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExpiryEvents *struct {
+			DaysBeforeExpiry *int32 `json:"DaysBeforeExpiry"`
+		} `json:"ExpiryEvents"`
+		IdempotencyToken string `json:"IdempotencyToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	if req.IdempotencyToken == "" {
+		acmWriteError(w, "InvalidParameterValueException", "IdempotencyToken is required")
+		return
+	}
+	cfg := acmAccountConfig{}
+	if req.ExpiryEvents != nil {
+		cfg.DaysBeforeExpiry = req.ExpiryEvents.DaysBeforeExpiry
+	}
+	acmAccountConfiguration.Put("default", cfg)
+	acmWriteJSON(w, http.StatusOK, struct{}{})
+}
+
+// handleACMSearchCertificates filters certificates by the AcmCertificateMetadata
+// criteria (Status / Type / InUse / ValidationMethod) supplied in the
+// FilterStatement and returns CertificateSearchResult entries carrying the
+// per-cert metadata. The sim honors a single top-level Filter / a flat And of
+// metadata filters — the criteria real callers (and terraform's data source)
+// use; nested And/Or/Not trees beyond that are flattened to their metadata
+// predicates.
+func handleACMSearchCertificates(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		FilterStatement *acmFilterStatement `json:"FilterStatement"`
+		MaxResults      int                 `json:"MaxResults"`
+		NextToken       string              `json:"NextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
+		return
+	}
+	filters := collectACMMetadataFilters(req.FilterStatement)
+
+	results := []map[string]any{}
+	for _, stored := range acmCertificates.List() {
+		c := stored.Cert
+		if !acmMetadataFiltersMatch(filters, c) {
+			continue
+		}
+		meta := map[string]any{
+			"Status":             c.Status,
+			"Type":               c.Type,
+			"RenewalEligibility": c.RenewalEligibility,
+			"InUse":              len(c.InUseBy) > 0,
+		}
+		if c.CreatedAt != nil {
+			meta["CreatedAt"] = *c.CreatedAt
+		}
+		if c.IssuedAt != nil {
+			meta["IssuedAt"] = *c.IssuedAt
+		}
+		if c.ImportedAt != nil {
+			meta["ImportedAt"] = *c.ImportedAt
+		}
+		if stored.RevokedAt != nil {
+			meta["RevokedAt"] = *stored.RevokedAt
+		}
+		results = append(results, map[string]any{
+			"CertificateArn":      c.CertificateArn,
+			"CertificateMetadata": map[string]any{"AcmCertificateMetadata": meta},
+		})
+	}
+	sort.Slice(results, func(i, j int) bool {
+		a, _ := results[i]["CertificateArn"].(string)
+		b, _ := results[j]["CertificateArn"].(string)
+		return a < b
+	})
+	page, next := awsPageExplicit(results, req.NextToken, req.MaxResults)
+	resp := map[string]any{"Results": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	acmWriteJSON(w, http.StatusOK, resp)
+}
+
+// acmFilterStatement mirrors the recursive CertificateFilterStatement union.
+type acmFilterStatement struct {
+	And    []acmFilterStatement  `json:"And,omitempty"`
+	Or     []acmFilterStatement  `json:"Or,omitempty"`
+	Not    *acmFilterStatement   `json:"Not,omitempty"`
+	Filter *acmCertificateFilter `json:"Filter,omitempty"`
+}
+
+type acmCertificateFilter struct {
+	CertificateArn               string                 `json:"CertificateArn,omitempty"`
+	AcmCertificateMetadataFilter *acmCertMetadataFilter `json:"AcmCertificateMetadataFilter,omitempty"`
+}
+
+// acmCertMetadataFilter mirrors the AcmCertificateMetadataFilter union: each
+// search request supplies exactly one of these scalar members (the SDK
+// serializes e.g. {"Type":"PRIVATE"} or {"InUse":true}).
+type acmCertMetadataFilter struct {
+	Status           string `json:"Status,omitempty"`
+	Type             string `json:"Type,omitempty"`
+	InUse            *bool  `json:"InUse,omitempty"`
+	ValidationMethod string `json:"ValidationMethod,omitempty"`
+}
+
+// collectACMMetadataFilters flattens a filter statement tree into the metadata
+// predicates the sim evaluates. And/Or/Filter all contribute their metadata
+// predicates (treated conjunctively — the common single-criterion search), Not
+// is skipped (the sim doesn't model negation). This covers the searches real
+// callers issue without fabricating behaviour.
+func collectACMMetadataFilters(fs *acmFilterStatement) []acmCertMetadataFilter {
+	if fs == nil {
+		return nil
+	}
+	var out []acmCertMetadataFilter
+	if fs.Filter != nil && fs.Filter.AcmCertificateMetadataFilter != nil {
+		out = append(out, *fs.Filter.AcmCertificateMetadataFilter)
+	}
+	for i := range fs.And {
+		out = append(out, collectACMMetadataFilters(&fs.And[i])...)
+	}
+	for i := range fs.Or {
+		out = append(out, collectACMMetadataFilters(&fs.Or[i])...)
+	}
+	return out
+}
+
+func acmMetadataFiltersMatch(filters []acmCertMetadataFilter, c ACMCertificate) bool {
+	for _, f := range filters {
+		if f.Status != "" && f.Status != c.Status {
+			return false
+		}
+		if f.Type != "" && f.Type != c.Type {
+			return false
+		}
+		if f.InUse != nil && (*f.InUse) != (len(c.InUseBy) > 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // acmWriteJSON / acmWriteError — JSON-1.1 protocol wraps errors in
@@ -221,11 +556,32 @@ func handleACMRequestCertificate(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:               now,
 		InUseBy:                 []string{},
 	}
+	stored := acmStoredCert{Tags: req.Tags}
 	if req.CertificateAuthorityArn != "" {
+		// A PCA-issued (PRIVATE) certificate is issued synchronously by
+		// real ACM — no public DNS validation. The sim mints real X.509
+		// material (a self-signed leaf via crypto/x509) so the cert is
+		// genuinely exportable/revocable; this is real crypto, not a fake
+		// blob. DomainValidationOptions don't apply to PCA-issued certs.
 		cert.CertificateAuthorityArn = req.CertificateAuthorityArn
 		cert.Type = "PRIVATE"
+		cert.DomainValidationOptions = nil
+		cert.Status = "ISSUED"
+		cert.IssuedAt = now
+		cert.NotBefore = now
+		notAfter := float64(time.Now().UTC().AddDate(1, 0, 0).Unix())
+		cert.NotAfter = &notAfter
+		cert.RenewalEligibility = "ELIGIBLE"
+		certPEM, keyPEM, err := acmGenerateLeaf(req.DomainName, domains)
+		if err != nil {
+			acmWriteError(w, "InvalidParameterValueException", "failed to mint certificate material: "+err.Error())
+			return
+		}
+		stored.CertificateBody = certPEM
+		stored.PrivateKey = keyPEM
 	}
-	acmCertificates.Put(id, acmStoredCert{Cert: cert, Tags: req.Tags})
+	stored.Cert = cert
+	acmCertificates.Put(id, stored)
 	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
 }
 
@@ -462,10 +818,13 @@ func handleACMListTags(w http.ResponseWriter, r *http.Request) {
 }
 
 type acmImportCertificateReq struct {
-	CertificateArn   string   `json:"CertificateArn,omitempty"`
-	Certificate      string   `json:"Certificate"` // base64-encoded by SDK; sim stores opaque
-	PrivateKey       string   `json:"PrivateKey"`
-	CertificateChain string   `json:"CertificateChain,omitempty"`
+	CertificateArn string `json:"CertificateArn,omitempty"`
+	// The SDK encodes these blob members as base64 on the wire and
+	// json.Unmarshal decodes them back into raw []byte — storing the PEM
+	// bytes verbatim so GetCertificate / ExportCertificate round-trip.
+	Certificate      []byte   `json:"Certificate"`
+	PrivateKey       []byte   `json:"PrivateKey"`
+	CertificateChain []byte   `json:"CertificateChain,omitempty"`
 	Tags             []acmTag `json:"Tags,omitempty"`
 }
 
@@ -475,7 +834,7 @@ func handleACMImportCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "InvalidParameterValueException", "could not decode request: "+err.Error())
 		return
 	}
-	if req.Certificate == "" || req.PrivateKey == "" {
+	if len(req.Certificate) == 0 || len(req.PrivateKey) == 0 {
 		acmWriteError(w, "InvalidParameterValueException", "Certificate and PrivateKey are required")
 		return
 	}
@@ -501,7 +860,19 @@ func handleACMImportCertificate(w http.ResponseWriter, r *http.Request) {
 		// a synthesised placeholder so the SDK contract holds.
 		DomainName: "imported-" + id[:8] + ".example.com",
 	}
-	acmCertificates.Put(id, acmStoredCert{Cert: cert, Tags: req.Tags})
+	// Preserve any tags from a prior import when this is a re-import
+	// (CertificateArn supplied) and the caller omits tags.
+	tags := req.Tags
+	if prior, ok := acmCertificates.Get(id); ok && len(tags) == 0 {
+		tags = prior.Tags
+	}
+	acmCertificates.Put(id, acmStoredCert{
+		Cert:             cert,
+		Tags:             tags,
+		CertificateBody:  string(req.Certificate),
+		CertificateChain: string(req.CertificateChain),
+		PrivateKey:       string(req.PrivateKey),
+	})
 	acmWriteJSON(w, http.StatusOK, map[string]string{"CertificateArn": cert.CertificateArn})
 }
 

@@ -46,6 +46,9 @@ func s3ImplementedOps() map[string]bool {
 			add(bucketReq(m, sr+"=&id=x"))
 		}
 	}
+	// ListObjectsV2 is the same GET-bucket request with list-type=2 (a bare GET
+	// resolves to the V1 ListObjects).
+	add(bucketReq("GET", "list-type=2"))
 	objQueries := []string{
 		"", "tagging=", "uploads=", "uploadId=x", "uploadId=x&partNumber=1",
 		"acl=", "retention=", "legal-hold=", "attributes=", "torrent=", "restore=", "select=",
@@ -56,6 +59,9 @@ func s3ImplementedOps() map[string]bool {
 		}
 	}
 	add(objReq("PUT", "", map[string]string{"x-amz-copy-source": "/src/key"}))
+	// UploadPartCopy is an UploadPart request (uploadId+partNumber) carrying an
+	// x-amz-copy-source header.
+	add(objReq("PUT", "uploadId=x&partNumber=1", map[string]string{"x-amz-copy-source": "/src/key"}))
 
 	// The sim composes some op names with a "Bucket" infix that the real S3 API
 	// omits (GetBucketPublicAccessBlock vs the API's GetPublicAccessBlock) and
@@ -93,9 +99,35 @@ func s3ImplementedOps() map[string]bool {
 // operations are introspectable from the routers. REST services compose their
 // operation from method + path + query subresource at request time (e.g. S3's
 // op-name is `Get/Put/Delete` + a subresource suffix, not a router registration),
-// so their op-coverage needs a REST-route enumeration harness — a tracked
-// follow-on, not yet measured here.
+// so they are measured by their own enumeration harness instead — S3 via
+// s3ImplementedOps + TestServiceConformance_S3Ratchet.
 var serviceConformanceCatalog = map[string][]string{
+	// Step Functions / ACM / Secrets Manager / Application Auto Scaling: all
+	// operations implemented (conformance-complete).
+	"AWSStepFunctions":        {},
+	"CertificateManager":      {},
+	"secretsmanager":          {},
+	"AnyScaleFrontendService": {},
+	// Kinesis: complete except the HTTP/2 event-stream consumer subscription.
+	"Kinesis_20131202": {"SubscribeToShard"},
+	// KMS: key management complete; the asymmetric-crypto operations (Sign/Verify/
+	// MAC/data-key-pairs/public-key/shared-secret) and the external CloudHSM custom
+	// key stores + cross-Region replication remain.
+	"TrentService": {
+		"ConnectCustomKeyStore", "CreateCustomKeyStore", "DeleteCustomKeyStore", "DeriveSharedSecret",
+		"DescribeCustomKeyStores", "DisconnectCustomKeyStore", "GenerateDataKeyPair",
+		"GenerateDataKeyPairWithoutPlaintext", "GenerateMac", "GetKeyLastUsage", "GetPublicKey",
+		"ListRetirableGrants", "ReplicateKey", "RetireGrant", "Sign", "UpdateCustomKeyStore",
+		"UpdatePrimaryRegion", "Verify", "VerifyMac",
+	},
+	// ELBv2: the mutual-TLS trust-store surface + a few capacity/SSL-policy reads.
+	"ElasticLoadBalancing_v10": {
+		"AddTrustStoreRevocations", "CreateTrustStore", "DeleteSharedTrustStoreAssociation",
+		"DeleteTrustStore", "DescribeSSLPolicies", "DescribeTrustStoreAssociations",
+		"DescribeTrustStoreRevocations", "DescribeTrustStores", "GetResourcePolicy",
+		"GetTrustStoreCaCertificatesBundle", "GetTrustStoreRevocationContent",
+		"ModifyCapacityReservation", "ModifyIpPools", "ModifyTrustStore", "RemoveTrustStoreRevocations",
+	},
 	"AmazonSQS": {
 		"CancelMessageMoveTask", "ListDeadLetterSourceQueues", "ListMessageMoveTasks",
 		"StartMessageMoveTask",
@@ -182,12 +214,9 @@ var s3ConformanceMissing = []string{
 	"CreateBucketMetadataConfiguration", "CreateBucketMetadataTableConfiguration",
 	"CreateSession", "DeleteBucketMetadataConfiguration", "DeleteBucketMetadataTableConfiguration",
 	"GetBucketAbac", "GetBucketMetadataConfiguration", "GetBucketMetadataTableConfiguration",
-	"GetObjectAcl", "GetObjectAttributes", "GetObjectLegalHold", "GetObjectLockConfiguration",
-	"GetObjectRetention", "GetObjectTorrent", "ListDirectoryBuckets", "ListObjects",
-	"PutBucketAbac", "PutObjectAcl", "PutObjectLegalHold", "PutObjectLockConfiguration",
-	"PutObjectRetention", "RenameObject", "RestoreObject", "SelectObjectContent",
+	"ListDirectoryBuckets", "PutBucketAbac", "RenameObject", "SelectObjectContent",
 	"UpdateBucketMetadataInventoryTableConfiguration", "UpdateBucketMetadataJournalTableConfiguration",
-	"UpdateObjectEncryption", "UploadPartCopy", "WriteGetObjectResponse",
+	"UpdateObjectEncryption", "WriteGetObjectResponse",
 }
 
 // TestServiceConformance_S3Ratchet locks S3's REST operation-coverage gap set,

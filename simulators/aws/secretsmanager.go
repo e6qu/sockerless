@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -51,11 +52,41 @@ type SMSecret struct {
 	CreatedDate      float64           `json:"CreatedDate,omitempty"`
 	LastChangedDate  float64           `json:"LastChangedDate,omitempty"`
 	LastAccessedDate float64           `json:"LastAccessedDate,omitempty"`
+	DeletedDate      float64           `json:"DeletedDate,omitempty"`
 	VersionId        string            `json:"VersionId"` // mirror of the AWSCURRENT version's ID
 	SecretString     string            `json:"SecretString,omitempty"`
 	SecretBinary     []byte            `json:"SecretBinary,omitempty"`
 	Tags             []SMTag           `json:"Tags,omitempty"`
 	Versions         []SMSecretVersion `json:"Versions,omitempty"`
+	// ResourcePolicy is the raw policy JSON attached via PutResourcePolicy
+	// (and mirrored into the central IAM resource-policy store).
+	ResourcePolicy string `json:"ResourcePolicy,omitempty"`
+	// Rotation state. RotationEnabled flips on RotateSecret with rules and
+	// off on CancelRotateSecret; the rule fields drive DescribeSecret.
+	RotationEnabled   bool            `json:"RotationEnabled,omitempty"`
+	RotationLambdaARN string          `json:"RotationLambdaARN,omitempty"`
+	RotationRules     SMRotationRules `json:"RotationRules,omitempty"`
+	NextRotationDate  float64         `json:"NextRotationDate,omitempty"`
+	LastRotatedDate   float64         `json:"LastRotatedDate,omitempty"`
+	// Replicas is the per-secret replication-status list managed by the
+	// ReplicateSecretToRegions / RemoveRegionsFromReplication ops.
+	Replicas []SMReplicationStatus `json:"Replicas,omitempty"`
+}
+
+// SMRotationRules mirrors the RotationRulesType structure.
+type SMRotationRules struct {
+	AutomaticallyAfterDays int64  `json:"AutomaticallyAfterDays,omitempty"`
+	Duration               string `json:"Duration,omitempty"`
+	ScheduleExpression     string `json:"ScheduleExpression,omitempty"`
+}
+
+// SMReplicationStatus mirrors one ReplicationStatusType entry.
+type SMReplicationStatus struct {
+	Region           string  `json:"Region,omitempty"`
+	KmsKeyId         string  `json:"KmsKeyId,omitempty"`
+	Status           string  `json:"Status,omitempty"`
+	StatusMessage    string  `json:"StatusMessage,omitempty"`
+	LastAccessedDate float64 `json:"LastAccessedDate,omitempty"`
 }
 
 // SMSecretVersion is one entry in the per-secret version history.
@@ -166,6 +197,17 @@ func registerSecretsManager(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("secretsmanager.UntagResource", handleSMUntagResource)
 	r.Register("secretsmanager.GetResourcePolicy", handleSMGetResourcePolicy)
 	r.Register("secretsmanager.GetRandomPassword", handleSMGetRandomPassword)
+	r.Register("secretsmanager.PutResourcePolicy", handleSMPutResourcePolicy)
+	r.Register("secretsmanager.DeleteResourcePolicy", handleSMDeleteResourcePolicy)
+	r.Register("secretsmanager.ValidateResourcePolicy", handleSMValidateResourcePolicy)
+	r.Register("secretsmanager.RestoreSecret", handleSMRestoreSecret)
+	r.Register("secretsmanager.RotateSecret", handleSMRotateSecret)
+	r.Register("secretsmanager.CancelRotateSecret", handleSMCancelRotateSecret)
+	r.Register("secretsmanager.BatchGetSecretValue", handleSMBatchGetSecretValue)
+	r.Register("secretsmanager.UpdateSecretVersionStage", handleSMUpdateSecretVersionStage)
+	r.Register("secretsmanager.ReplicateSecretToRegions", handleSMReplicateSecretToRegions)
+	r.Register("secretsmanager.RemoveRegionsFromReplication", handleSMRemoveRegionsFromReplication)
+	r.Register("secretsmanager.StopReplicationToReplica", handleSMStopReplicationToReplica)
 }
 
 // handleSMGetResourcePolicy returns the resource policy attached to a
@@ -196,6 +238,9 @@ func handleSMGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"ARN":  secret.ARN,
 		"Name": secret.Name,
+	}
+	if secret.ResourcePolicy != "" {
+		resp["ResourcePolicy"] = secret.ResourcePolicy
 	}
 	sim.WriteJSON(w, http.StatusOK, resp)
 }
@@ -283,6 +328,13 @@ func handleSMGetSecretValue(w http.ResponseWriter, r *http.Request) {
 			"Secrets Manager can't find the specified secret.")
 		return
 	}
+	if secret.DeletedDate != 0 {
+		// A secret scheduled for deletion can't have its value read until
+		// it is restored. Real AWS returns InvalidRequestException.
+		sim.AWSErrorf(w, "InvalidRequestException", http.StatusBadRequest,
+			"You can't perform this operation on the secret because it was marked for deletion.")
+		return
+	}
 	version, found := secret.versionByIDOrStage(req.VersionId, req.VersionStage)
 	if !found {
 		// Real AWS returns this exact code/message on a miss.
@@ -336,7 +388,7 @@ func handleSMDescribeSecret(w http.ResponseWriter, r *http.Request) {
 			versionStages[v.VersionId] = append([]string(nil), v.Stages...)
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"ARN":                secret.ARN,
 		"Name":               secret.Name,
 		"Description":        secret.Description,
@@ -346,7 +398,65 @@ func handleSMDescribeSecret(w http.ResponseWriter, r *http.Request) {
 		"LastAccessedDate":   secret.LastAccessedDate,
 		"VersionIdsToStages": versionStages,
 		"Tags":               secret.Tags,
-	})
+		"RotationEnabled":    secret.RotationEnabled,
+	}
+	if secret.DeletedDate != 0 {
+		resp["DeletedDate"] = secret.DeletedDate
+	}
+	if secret.RotationLambdaARN != "" {
+		resp["RotationLambdaARN"] = secret.RotationLambdaARN
+	}
+	if secret.NextRotationDate != 0 {
+		resp["NextRotationDate"] = secret.NextRotationDate
+	}
+	if secret.LastRotatedDate != 0 {
+		resp["LastRotatedDate"] = secret.LastRotatedDate
+	}
+	if secret.RotationRules != (SMRotationRules{}) {
+		resp["RotationRules"] = smRotationRulesToJSON(secret.RotationRules)
+	}
+	if len(secret.Replicas) > 0 {
+		resp["ReplicationStatus"] = smReplicationStatusToJSON(secret.Replicas)
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// smRotationRulesToJSON renders RotationRules to the spec's member shape.
+func smRotationRulesToJSON(rr SMRotationRules) map[string]any {
+	m := map[string]any{}
+	if rr.AutomaticallyAfterDays != 0 {
+		m["AutomaticallyAfterDays"] = rr.AutomaticallyAfterDays
+	}
+	if rr.Duration != "" {
+		m["Duration"] = rr.Duration
+	}
+	if rr.ScheduleExpression != "" {
+		m["ScheduleExpression"] = rr.ScheduleExpression
+	}
+	return m
+}
+
+// smReplicationStatusToJSON renders the replication-status list to the
+// spec's ReplicationStatusType member shape.
+func smReplicationStatusToJSON(reps []SMReplicationStatus) []map[string]any {
+	out := make([]map[string]any, 0, len(reps))
+	for _, rep := range reps {
+		entry := map[string]any{
+			"Region": rep.Region,
+			"Status": rep.Status,
+		}
+		if rep.KmsKeyId != "" {
+			entry["KmsKeyId"] = rep.KmsKeyId
+		}
+		if rep.StatusMessage != "" {
+			entry["StatusMessage"] = rep.StatusMessage
+		}
+		if rep.LastAccessedDate != 0 {
+			entry["LastAccessedDate"] = rep.LastAccessedDate
+		}
+		out = append(out, entry)
+	}
+	return out
 }
 
 func handleSMUpdateSecret(w http.ResponseWriter, r *http.Request) {
@@ -431,6 +541,7 @@ func handleSMPutSecretValue(w http.ResponseWriter, r *http.Request) {
 func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		SecretId                   string `json:"SecretId"`
+		RecoveryWindowInDays       int64  `json:"RecoveryWindowInDays"`
 		ForceDeleteWithoutRecovery bool   `json:"ForceDeleteWithoutRecovery"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -444,11 +555,35 @@ func handleSMDeleteSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	secret, _ := smSecrets.Get(name)
-	smSecrets.Delete(name)
+	now := time.Now()
+	if req.ForceDeleteWithoutRecovery {
+		// Hard delete: the secret is removed immediately and is not
+		// recoverable. DeletionDate is "now" in this case.
+		iamDeleteResourcePolicy(secret.ARN)
+		smSecrets.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"ARN":          secret.ARN,
+			"Name":         secret.Name,
+			"DeletionDate": float64(now.Unix()),
+		})
+		return
+	}
+	// Soft delete: schedule the secret for deletion after a recovery
+	// window (default 30 days, real-AWS bounds 7..30). The secret stays
+	// in the store, marked with DeletedDate, until RestoreSecret clears
+	// it or the window elapses. GetSecretValue rejects it meanwhile.
+	window := req.RecoveryWindowInDays
+	if window == 0 {
+		window = 30
+	}
+	deletionDate := now.Add(time.Duration(window) * 24 * time.Hour)
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.DeletedDate = float64(now.Unix())
+	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"ARN":          secret.ARN,
 		"Name":         secret.Name,
-		"DeletionDate": float64(time.Now().Unix()),
+		"DeletionDate": float64(deletionDate.Unix()),
 	})
 }
 
@@ -767,6 +902,504 @@ func handleSMGetRandomPassword(w http.ResponseWriter, r *http.Request) {
 		req.IncludeSpace, req.RequireEachIncludedType)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"RandomPassword": pw,
+	})
+}
+
+// handleSMPutResourcePolicy attaches a resource-based policy to a secret.
+// The policy JSON is stored on the secret AND mirrored into the central IAM
+// resource-policy store (like SNS/SQS/Lambda) so the enforcement gate sees it.
+func handleSMPutResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId          string `json:"SecretId"`
+		ResourcePolicy    string `json:"ResourcePolicy"`
+		BlockPublicPolicy bool   `json:"BlockPublicPolicy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	if req.ResourcePolicy == "" {
+		sim.AWSError(w, "InvalidParameterException",
+			"ResourcePolicy must not be empty", http.StatusBadRequest)
+		return
+	}
+	secret, _ := smSecrets.Get(name)
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.ResourcePolicy = req.ResourcePolicy
+	})
+	iamPutResourcePolicy(secret.ARN, req.ResourcePolicy)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":  secret.ARN,
+		"Name": secret.Name,
+	})
+}
+
+// handleSMDeleteResourcePolicy removes the resource-based policy from a secret.
+func handleSMDeleteResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId string `json:"SecretId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	secret, _ := smSecrets.Get(name)
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.ResourcePolicy = ""
+	})
+	iamDeleteResourcePolicy(secret.ARN)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":  secret.ARN,
+		"Name": secret.Name,
+	})
+}
+
+// handleSMValidateResourcePolicy checks a candidate policy for syntactic
+// validity. Real Secrets Manager returns PolicyValidationPassed plus a list of
+// per-check ValidationErrors. The sim validates that the document is parseable
+// JSON; a malformed document fails validation with a SYNTAX error entry.
+func handleSMValidateResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId       string `json:"SecretId"`
+		ResourcePolicy string `json:"ResourcePolicy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourcePolicy == "" {
+		sim.AWSError(w, "InvalidParameterException",
+			"ResourcePolicy must not be empty", http.StatusBadRequest)
+		return
+	}
+	var probe any
+	passed := json.Unmarshal([]byte(req.ResourcePolicy), &probe) == nil
+	validationErrors := []map[string]any{}
+	if !passed {
+		validationErrors = append(validationErrors, map[string]any{
+			"CheckName":    "SYNTAX",
+			"ErrorMessage": "The resource policy is not valid JSON.",
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"PolicyValidationPassed": passed,
+		"ValidationErrors":       validationErrors,
+	})
+}
+
+// handleSMRestoreSecret cancels a scheduled deletion, returning the secret to
+// active use. Clears DeletedDate. Real AWS errors if the secret isn't scheduled
+// for deletion only in that there's nothing to restore — it returns 200 either
+// way, so the sim is permissive and just clears the flag.
+func handleSMRestoreSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId string `json:"SecretId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	secret, _ := smSecrets.Get(name)
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.DeletedDate = 0
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":  secret.ARN,
+		"Name": secret.Name,
+	})
+}
+
+// handleSMRotateSecret turns on rotation for a secret. With RotateImmediately
+// (the default), it mints a fresh AWSCURRENT version — mirroring how the real
+// service invokes the rotation Lambda which calls PutSecretValue. The returned
+// VersionId is the new version (or AWSCURRENT if rotation was deferred).
+func handleSMRotateSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId           string          `json:"SecretId"`
+		ClientRequestToken string          `json:"ClientRequestToken"`
+		RotationLambdaARN  string          `json:"RotationLambdaARN"`
+		RotationRules      SMRotationRules `json:"RotationRules"`
+		RotateImmediately  *bool           `json:"RotateImmediately"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	rotateNow := req.RotateImmediately == nil || *req.RotateImmediately
+	now := time.Now()
+	var newVersionID string
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.RotationEnabled = true
+		if req.RotationLambdaARN != "" {
+			s.RotationLambdaARN = req.RotationLambdaARN
+		}
+		if req.RotationRules != (SMRotationRules{}) {
+			s.RotationRules = req.RotationRules
+		}
+		if rotateNow {
+			// Rotation produces a new version of the secret value. The
+			// real flow runs the rotation Lambda which calls
+			// PutSecretValue; the sim re-stores the current value under a
+			// fresh version to model the version-id change rotation causes.
+			newVersionID = s.addNewVersion(s.SecretString, s.SecretBinary)
+			s.LastRotatedDate = float64(now.Unix())
+			s.LastChangedDate = float64(now.Unix())
+		}
+		if s.RotationRules.AutomaticallyAfterDays > 0 {
+			s.NextRotationDate = float64(now.Add(time.Duration(s.RotationRules.AutomaticallyAfterDays) * 24 * time.Hour).Unix())
+		}
+	})
+	updated, _ := smSecrets.Get(name)
+	if newVersionID == "" {
+		newVersionID = updated.VersionId
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":       updated.ARN,
+		"Name":      updated.Name,
+		"VersionId": newVersionID,
+	})
+}
+
+// handleSMCancelRotateSecret turns off scheduled rotation. Returns the secret's
+// current AWSCURRENT VersionId.
+func handleSMCancelRotateSecret(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId string `json:"SecretId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.RotationEnabled = false
+		s.NextRotationDate = 0
+	})
+	updated, _ := smSecrets.Get(name)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":       updated.ARN,
+		"Name":      updated.Name,
+		"VersionId": updated.VersionId,
+	})
+}
+
+// handleSMBatchGetSecretValue returns the AWSCURRENT value for each secret named
+// in SecretIdList (or matched by Filters). Secrets that can't be found or read
+// are reported in Errors rather than failing the whole call, matching real AWS.
+func handleSMBatchGetSecretValue(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretIdList []string   `json:"SecretIdList"`
+		Filters      []smFilter `json:"Filters"`
+		MaxResults   int        `json:"MaxResults"`
+		NextToken    string     `json:"NextToken"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	// Real AWS rejects mixing SecretIdList and Filters.
+	if len(req.SecretIdList) > 0 && len(req.Filters) > 0 {
+		sim.AWSError(w, "InvalidParameterException",
+			"Either 'SecretIdList' or 'Filters' must be provided, but not both.", http.StatusBadRequest)
+		return
+	}
+	now := float64(time.Now().Unix())
+	secretValues := []map[string]any{}
+	apiErrors := []map[string]any{}
+
+	emit := func(secret SMSecret) {
+		if secret.DeletedDate != 0 {
+			apiErrors = append(apiErrors, map[string]any{
+				"SecretId":  secret.ARN,
+				"ErrorCode": "ResourceNotFoundException",
+				"Message":   "Secrets Manager can't find the specified secret value because it was marked for deletion.",
+			})
+			return
+		}
+		version, found := secret.versionByIDOrStage("", "AWSCURRENT")
+		if !found {
+			apiErrors = append(apiErrors, map[string]any{
+				"SecretId":  secret.ARN,
+				"ErrorCode": "ResourceNotFoundException",
+				"Message":   "Secrets Manager can't find the AWSCURRENT version of the specified secret.",
+			})
+			return
+		}
+		entry := map[string]any{
+			"ARN":           secret.ARN,
+			"Name":          secret.Name,
+			"VersionId":     version.VersionId,
+			"VersionStages": version.Stages,
+			"CreatedDate":   version.CreatedDate,
+		}
+		if version.SecretString != "" {
+			entry["SecretString"] = version.SecretString
+		}
+		if len(version.SecretBinary) > 0 {
+			entry["SecretBinary"] = base64.StdEncoding.EncodeToString(version.SecretBinary)
+		}
+		secretValues = append(secretValues, entry)
+		smSecrets.Update(secret.Name, func(s *SMSecret) {
+			s.LastAccessedDate = now
+		})
+	}
+
+	if len(req.SecretIdList) > 0 {
+		for _, id := range req.SecretIdList {
+			secret, ok := resolveSMSecret(id)
+			if !ok {
+				apiErrors = append(apiErrors, map[string]any{
+					"SecretId":  id,
+					"ErrorCode": "ResourceNotFoundException",
+					"Message":   "Secrets Manager can't find the specified secret.",
+				})
+				continue
+			}
+			emit(secret)
+		}
+	} else {
+		all := smSecrets.List()
+		sortBy(all, func(s SMSecret) string { return s.Name })
+		for _, secret := range all {
+			if len(req.Filters) > 0 && !smSecretMatchesFilters(secret, req.Filters) {
+				continue
+			}
+			emit(secret)
+		}
+	}
+
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"SecretValues": secretValues,
+		"Errors":       apiErrors,
+	})
+}
+
+// handleSMUpdateSecretVersionStage moves a staging label between versions. With
+// MoveToVersionId set it attaches the label there; with RemoveFromVersionId it
+// detaches it. This is how AWSCURRENT/AWSPREVIOUS are repositioned during a
+// rotation finalize step.
+func handleSMUpdateSecretVersionStage(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId            string `json:"SecretId"`
+		VersionStage        string `json:"VersionStage"`
+		RemoveFromVersionId string `json:"RemoveFromVersionId"`
+		MoveToVersionId     string `json:"MoveToVersionId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	if req.VersionStage == "" {
+		sim.AWSError(w, "InvalidParameterException",
+			"VersionStage must be provided.", http.StatusBadRequest)
+		return
+	}
+	secret, _ := smSecrets.Get(name)
+	versionExists := func(id string) bool {
+		for _, v := range secret.Versions {
+			if v.VersionId == id {
+				return true
+			}
+		}
+		return false
+	}
+	if req.MoveToVersionId != "" && !versionExists(req.MoveToVersionId) {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"The version %s is not in the secret.", req.MoveToVersionId)
+		return
+	}
+	if req.RemoveFromVersionId != "" && !versionExists(req.RemoveFromVersionId) {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"The version %s is not in the secret.", req.RemoveFromVersionId)
+		return
+	}
+	smSecrets.Update(name, func(s *SMSecret) {
+		for i := range s.Versions {
+			v := &s.Versions[i]
+			if req.RemoveFromVersionId != "" && v.VersionId == req.RemoveFromVersionId {
+				var kept []string
+				for _, stg := range v.Stages {
+					if stg != req.VersionStage {
+						kept = append(kept, stg)
+					}
+				}
+				v.Stages = kept
+			}
+			if req.MoveToVersionId != "" && v.VersionId == req.MoveToVersionId {
+				has := false
+				for _, stg := range v.Stages {
+					if stg == req.VersionStage {
+						has = true
+						break
+					}
+				}
+				if !has {
+					v.Stages = append(v.Stages, req.VersionStage)
+				}
+			}
+		}
+		// Keep the top-level VersionId mirror pointing at AWSCURRENT.
+		for _, v := range s.Versions {
+			for _, stg := range v.Stages {
+				if stg == "AWSCURRENT" {
+					s.VersionId = v.VersionId
+				}
+			}
+		}
+	})
+	updated, _ := smSecrets.Get(name)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":  updated.ARN,
+		"Name": updated.Name,
+	})
+}
+
+// handleSMReplicateSecretToRegions adds replica regions to a secret, returning
+// the resulting replication-status list. Each new region is marked InSync.
+func handleSMReplicateSecretToRegions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId          string `json:"SecretId"`
+		AddReplicaRegions []struct {
+			Region   string `json:"Region"`
+			KmsKeyId string `json:"KmsKeyId"`
+		} `json:"AddReplicaRegions"`
+		ForceOverwriteReplicaSecret bool `json:"ForceOverwriteReplicaSecret"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	now := float64(time.Now().Unix())
+	smSecrets.Update(name, func(s *SMSecret) {
+		for _, add := range req.AddReplicaRegions {
+			found := false
+			for i := range s.Replicas {
+				if s.Replicas[i].Region == add.Region {
+					found = true
+					s.Replicas[i].KmsKeyId = add.KmsKeyId
+					s.Replicas[i].Status = "InSync"
+					s.Replicas[i].LastAccessedDate = now
+				}
+			}
+			if !found {
+				s.Replicas = append(s.Replicas, SMReplicationStatus{
+					Region:           add.Region,
+					KmsKeyId:         add.KmsKeyId,
+					Status:           "InSync",
+					LastAccessedDate: now,
+				})
+			}
+		}
+	})
+	updated, _ := smSecrets.Get(name)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":               updated.ARN,
+		"ReplicationStatus": smReplicationStatusToJSON(updated.Replicas),
+	})
+}
+
+// handleSMRemoveRegionsFromReplication drops replica regions, returning the
+// remaining replication-status list.
+func handleSMRemoveRegionsFromReplication(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId             string   `json:"SecretId"`
+		RemoveReplicaRegions []string `json:"RemoveReplicaRegions"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	drop := make(map[string]bool, len(req.RemoveReplicaRegions))
+	for _, region := range req.RemoveReplicaRegions {
+		drop[region] = true
+	}
+	smSecrets.Update(name, func(s *SMSecret) {
+		var kept []SMReplicationStatus
+		for _, rep := range s.Replicas {
+			if !drop[rep.Region] {
+				kept = append(kept, rep)
+			}
+		}
+		s.Replicas = kept
+	})
+	updated, _ := smSecrets.Get(name)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN":               updated.ARN,
+		"ReplicationStatus": smReplicationStatusToJSON(updated.Replicas),
+	})
+}
+
+// handleSMStopReplicationToReplica is called against a replica secret to
+// promote it to a standalone primary, removing the replication relationship.
+// Run against a primary in the sim, it simply clears the replica list and
+// returns the secret's ARN, matching the single-field response shape.
+func handleSMStopReplicationToReplica(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SecretId string `json:"SecretId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequestException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	name, ok := resolveSecretName(req.SecretId)
+	if !ok {
+		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
+			"Secrets Manager can't find the specified secret.")
+		return
+	}
+	secret, _ := smSecrets.Get(name)
+	smSecrets.Update(name, func(s *SMSecret) {
+		s.Replicas = nil
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ARN": secret.ARN,
 	})
 }
 

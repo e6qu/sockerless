@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -56,11 +58,39 @@ type KMSKey struct {
 	// via GetKeyRotationStatus.
 	RotationEnabled      bool `json:"RotationEnabled,omitempty"`
 	RotationPeriodInDays int  `json:"RotationPeriodInDays,omitempty"`
+	// Rotations records each completed key rotation (automatic or
+	// on-demand) so ListKeyRotations can report them. Real KMS surfaces a
+	// RotationsListEntry per rotation event.
+	Rotations []KMSRotation `json:"Rotations,omitempty"`
+	// HasImportedMaterial tracks whether EXTERNAL-origin key material has
+	// been imported (ImportKeyMaterial) and not subsequently deleted
+	// (DeleteImportedKeyMaterial). A freshly-created EXTERNAL key starts
+	// PendingImport with no material.
+	HasImportedMaterial bool `json:"HasImportedMaterial,omitempty"`
+}
+
+// KMSRotation is one entry in the key's rotation history (ListKeyRotations).
+type KMSRotation struct {
+	KeyId        string  `json:"KeyId"`
+	RotationDate float64 `json:"RotationDate"`
+	RotationType string  `json:"RotationType"` // AUTOMATIC | ON_DEMAND
+}
+
+// kmsImportParams holds the per-request wrapping keypair handed out by
+// GetParametersForImport. ImportKeyMaterial echoes the same ImportToken
+// back, so the sim records the token to validate the round-trip. The
+// wrapping public key is a real RSA key (DER-encoded), exactly what a
+// real client encrypts the key material against — no fakery.
+type kmsImportParams struct {
+	KeyId       string
+	ImportToken string // base64 token
+	ValidTo     float64
 }
 
 var (
-	kmsKeys    sim.Store[KMSKey]
-	kmsAliases sim.Store[string] // alias -> keyId
+	kmsKeys         sim.Store[KMSKey]
+	kmsAliases      sim.Store[string]          // alias -> keyId
+	kmsImportTokens sim.Store[kmsImportParams] // importToken -> params
 )
 
 func kmsKeyArn(keyId string) string {
@@ -71,6 +101,7 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	kmsKeys = sim.MakeStore[KMSKey](srv.DB(), "kms_keys")
 	kmsAliases = sim.MakeStore[string](srv.DB(), "kms_aliases")
 	kmsAliasNames = sim.MakeStore[string](srv.DB(), "kms_alias_names")
+	kmsImportTokens = sim.MakeStore[kmsImportParams](srv.DB(), "kms_import_tokens")
 
 	r.Register("TrentService.CreateKey", handleKMSCreateKey)
 	r.Register("TrentService.DescribeKey", handleKMSDescribeKey)
@@ -90,6 +121,19 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.GetKeyRotationStatus", handleKMSGetKeyRotationStatus)
 	r.Register("TrentService.EnableKeyRotation", handleKMSEnableKeyRotation)
 	r.Register("TrentService.DisableKeyRotation", handleKMSDisableKeyRotation)
+
+	r.Register("TrentService.EnableKey", handleKMSEnableKey)
+	r.Register("TrentService.DisableKey", handleKMSDisableKey)
+	r.Register("TrentService.CancelKeyDeletion", handleKMSCancelKeyDeletion)
+	r.Register("TrentService.UpdateKeyDescription", handleKMSUpdateKeyDescription)
+	r.Register("TrentService.UpdateAlias", handleKMSUpdateAlias)
+	r.Register("TrentService.GenerateRandom", handleKMSGenerateRandom)
+	r.Register("TrentService.ListKeyPolicies", handleKMSListKeyPolicies)
+	r.Register("TrentService.ListKeyRotations", handleKMSListKeyRotations)
+	r.Register("TrentService.RotateKeyOnDemand", handleKMSRotateKeyOnDemand)
+	r.Register("TrentService.GetParametersForImport", handleKMSGetParametersForImport)
+	r.Register("TrentService.ImportKeyMaterial", handleKMSImportKeyMaterial)
+	r.Register("TrentService.DeleteImportedKeyMaterial", handleKMSDeleteImportedKeyMaterial)
 
 	registerKMSGrants(r, srv)
 }
@@ -394,11 +438,17 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 	if req.KeySpec == "" {
 		req.KeySpec = "SYMMETRIC_DEFAULT"
 	}
+	// An EXTERNAL-origin key has no key material at creation; real KMS
+	// puts it in PendingImport until ImportKeyMaterial runs.
+	keyState := "Enabled"
+	if req.Origin == "EXTERNAL" {
+		keyState = "PendingImport"
+	}
 	key := KMSKey{
 		KeyId:        keyId,
 		Arn:          kmsKeyArn(keyId),
 		Description:  req.Description,
-		KeyState:     "Enabled",
+		KeyState:     keyState,
 		KeyUsage:     req.KeyUsage,
 		KeyManager:   "CUSTOMER",
 		Origin:       req.Origin,
@@ -421,7 +471,7 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 			"KeyManager":   key.KeyManager,
 			"Origin":       key.Origin,
 			"KeySpec":      key.Spec,
-			"Enabled":      true,
+			"Enabled":      key.KeyState == "Enabled",
 		},
 	})
 }
@@ -753,3 +803,353 @@ func listAliasesForKey(keyId string) []string {
 // kmsAliasNames holds the alias names for iteration. Real KMS exposes
 // `ListAliases` paginated; the sim returns all at once.
 var kmsAliasNames sim.Store[string]
+
+// kmsResolveOr404 decodes a single-KeyId request body and resolves the
+// key, writing the canonical KMS NotFoundException on miss. Returns the
+// resolved KeyId and ok=false (after writing the error) when not found.
+func kmsResolveOr404(w http.ResponseWriter, r *http.Request, keyIdRef string) (string, bool) {
+	keyId, ok := resolveKMSKey(keyIdRef)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Key %q does not exist", keyIdRef)
+		return "", false
+	}
+	return keyId, true
+}
+
+// handleKMSEnableKey moves a key to the Enabled state. terraform-provider-aws
+// calls this for `aws_kms_key { is_enabled = true }`.
+func handleKMSEnableKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) { k.KeyState = "Enabled" })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSDisableKey moves a key to the Disabled state.
+func handleKMSDisableKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) { k.KeyState = "Disabled" })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSCancelKeyDeletion cancels a scheduled deletion, returning the key
+// to the Disabled state (real KMS disables a key whose deletion is cancelled).
+// Returns the KeyId.
+func handleKMSCancelKeyDeletion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	if key.KeyState != "PendingDeletion" {
+		sim.AWSErrorf(w, "KMSInvalidStateException", http.StatusBadRequest,
+			"%s is not pending deletion.", kmsKeyArn(keyId))
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) { k.KeyState = "Disabled" })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyId": keyId,
+	})
+}
+
+// handleKMSUpdateKeyDescription updates the free-text description.
+func handleKMSUpdateKeyDescription(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId       string `json:"KeyId"`
+		Description string `json:"Description"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) { k.Description = req.Description })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSUpdateAlias re-points an existing alias at a different key.
+// Real KMS requires the alias to already exist and the target key to exist.
+func handleKMSUpdateAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		AliasName   string `json:"AliasName"`
+		TargetKeyId string `json:"TargetKeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, exists := kmsAliases.Get(req.AliasName); !exists {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"Alias %q does not exist", req.AliasName)
+		return
+	}
+	keyId, ok := resolveKMSKey(req.TargetKeyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
+			"TargetKeyId %q does not exist", req.TargetKeyId)
+		return
+	}
+	kmsAliases.Put(req.AliasName, keyId)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleKMSGenerateRandom returns NumberOfBytes of cryptographically random
+// data. Real KMS sources this from its HSM; the sim uses crypto/rand, which
+// is real randomness — no fakery. The CustomKeyStoreId / Recipient
+// (enclave-attestation) paths aren't modeled; a plain request is honored.
+func handleKMSGenerateRandom(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NumberOfBytes int `json:"NumberOfBytes"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.NumberOfBytes < 1 || req.NumberOfBytes > 1024 {
+		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+			"NumberOfBytes must be between 1 and 1024, got %d", req.NumberOfBytes)
+		return
+	}
+	buf := make([]byte, req.NumberOfBytes)
+	if _, err := rand.Read(buf); err != nil {
+		sim.AWSError(w, "KMSInternalException", "failed to generate random bytes", http.StatusInternalServerError)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Plaintext": buf, // SDK base64-encodes on the wire
+	})
+}
+
+// handleKMSListKeyPolicies returns the policy names attached to a key. Real
+// KMS supports exactly one policy name ("default"); terraform/SDK callers
+// enumerate via this op.
+func handleKMSListKeyPolicies(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if _, ok := kmsResolveOr404(w, r, req.KeyId); !ok {
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"PolicyNames": []string{"default"},
+		"Truncated":   false,
+	})
+}
+
+// handleKMSListKeyRotations returns the rotation history of a key (each
+// automatic or on-demand rotation recorded so far). A key that has never
+// rotated returns an empty list, matching real KMS.
+func handleKMSListKeyRotations(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId  string `json:"KeyId"`
+		Limit  int    `json:"Limit"`
+		Marker string `json:"Marker"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	rotations := make([]map[string]any, 0, len(key.Rotations))
+	for _, rot := range key.Rotations {
+		rotations = append(rotations, map[string]any{
+			"KeyId":        rot.KeyId,
+			"RotationDate": rot.RotationDate,
+			"RotationType": rot.RotationType,
+		})
+	}
+	page, next := awsPageExplicit(rotations, req.Marker, req.Limit)
+	resp := map[string]any{"Rotations": page, "Truncated": next != ""}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// handleKMSRotateKeyOnDemand performs an immediate rotation of a symmetric
+// key, recording an ON_DEMAND rotation entry. Real KMS rotates the backing
+// key material and returns the KeyId.
+func handleKMSRotateKeyOnDemand(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.Rotations = append(k.Rotations, KMSRotation{
+			KeyId:        keyId,
+			RotationDate: float64(time.Now().Unix()),
+			RotationType: "ON_DEMAND",
+		})
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyId": keyId,
+	})
+}
+
+// handleKMSGetParametersForImport hands back a real RSA wrapping public key
+// (DER-encoded) plus an opaque import token. A real client encrypts its key
+// material against this public key; the sim records the token so
+// ImportKeyMaterial can validate the round-trip. The wrapping key is genuine
+// RSA — no fakery — only the HSM custody is simulated.
+func handleKMSGetParametersForImport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId             string `json:"KeyId"`
+		WrappingAlgorithm string `json:"WrappingAlgorithm"`
+		WrappingKeySpec   string `json:"WrappingKeySpec"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	key, _ := kmsKeys.Get(keyId)
+	if key.Origin != "EXTERNAL" {
+		sim.AWSErrorf(w, "UnsupportedOperationException", http.StatusBadRequest,
+			"%s origin is not EXTERNAL; import is not supported.", kmsKeyArn(keyId))
+		return
+	}
+	bits := 2048
+	switch req.WrappingKeySpec {
+	case "RSA_3072":
+		bits = 3072
+	case "RSA_4096":
+		bits = 4096
+	}
+	priv, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		sim.AWSError(w, "KMSInternalException", "failed to generate wrapping key", http.StatusInternalServerError)
+		return
+	}
+	pubDER, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
+	if err != nil {
+		sim.AWSError(w, "KMSInternalException", "failed to marshal wrapping key", http.StatusInternalServerError)
+		return
+	}
+	tokenBytes := make([]byte, 32)
+	_, _ = rand.Read(tokenBytes)
+	importToken := base64.StdEncoding.EncodeToString(tokenBytes)
+	validTo := float64(time.Now().Add(24 * time.Hour).Unix())
+	kmsImportTokens.Put(importToken, kmsImportParams{
+		KeyId:       keyId,
+		ImportToken: importToken,
+		ValidTo:     validTo,
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyId":             keyId,
+		"ImportToken":       []byte(importToken), // SDK base64-encodes on the wire
+		"PublicKey":         pubDER,              // SDK base64-encodes on the wire
+		"ParametersValidTo": validTo,
+	})
+}
+
+// handleKMSImportKeyMaterial accepts wrapped key material for an EXTERNAL key.
+// The import token must match one previously issued by
+// GetParametersForImport. The sim doesn't unwrap the material (it has no HSM
+// custody to bind it to) but validates the token round-trip and marks the key
+// as having material, moving it to Enabled. Returns the KeyId.
+func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId                string `json:"KeyId"`
+		ImportToken          []byte `json:"ImportToken"`
+		EncryptedKeyMaterial []byte `json:"EncryptedKeyMaterial"`
+		ExpirationModel      string `json:"ExpirationModel"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	if len(req.EncryptedKeyMaterial) == 0 {
+		sim.AWSError(w, "ValidationException", "EncryptedKeyMaterial is required", http.StatusBadRequest)
+		return
+	}
+	params, ok := kmsImportTokens.Get(string(req.ImportToken))
+	if !ok || params.KeyId != keyId {
+		sim.AWSErrorf(w, "InvalidImportTokenException", http.StatusBadRequest,
+			"The import token is expired or does not match the key.")
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.HasImportedMaterial = true
+		k.KeyState = "Enabled"
+	})
+	kmsImportTokens.Delete(string(req.ImportToken))
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyId": keyId,
+	})
+}
+
+// handleKMSDeleteImportedKeyMaterial deletes the imported key material,
+// returning the key to PendingImport. Real KMS makes the key unusable until
+// material is re-imported. Returns the KeyId.
+func handleKMSDeleteImportedKeyMaterial(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		KeyId string `json:"KeyId"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	keyId, ok := kmsResolveOr404(w, r, req.KeyId)
+	if !ok {
+		return
+	}
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.HasImportedMaterial = false
+		k.KeyState = "PendingImport"
+	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"KeyId": keyId,
+	})
+}

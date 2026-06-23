@@ -38,6 +38,7 @@ func testSpecState(t *testing.T) *specValidatorState {
 	mux.HandleFunc("GET /{$}", noop)
 	mux.HandleFunc("GET /{bucket}", noop)
 	mux.HandleFunc("GET /{bucket}/{key...}", noop)
+	mux.HandleFunc("PUT /{bucket}/{key...}", noop)
 	mux.HandleFunc("POST /{bucket}", noop)
 	mux.HandleFunc("GET /2020-05-31/distribution/{id}", noop)
 	mux.HandleFunc("GET /2013-04-01/hostedzone", noop)
@@ -359,25 +360,37 @@ func TestXMLValidatorRestXML(t *testing.T) {
 	}
 }
 
-// TestXMLValidatorRestXMLOpSelection pins the query-literal
-// disambiguation: shared mux patterns resolve to distinct operations by
-// the smithy URI's query literals, with x-id required only when sent.
+// TestXMLValidatorRestXMLOpSelection pins the query-literal and
+// required-header disambiguation: shared mux patterns resolve to distinct
+// operations by the smithy URI's query literals (x-id required only when
+// sent) and by required header-bound members (x-amz-copy-source separates
+// UploadPartCopy from UploadPart).
 func TestXMLValidatorRestXMLOpSelection(t *testing.T) {
 	st := testSpecState(t)
 	cases := []struct {
 		method, url, wantOp string
+		headers             map[string]string
 	}{
-		{"GET", "/my-bucket?list-type=2", "ListObjectsV2"},
-		{"GET", "/my-bucket?list-type=2&x-id=ListObjectsV2", "ListObjectsV2"},
-		{"GET", "/my-bucket", "ListObjects"},
-		{"GET", "/my-bucket?location", "GetBucketLocation"},
-		{"GET", "/my-bucket?tagging", "GetBucketTagging"},
-		{"POST", "/my-bucket?delete", "DeleteObjects"},
-		{"GET", "/", "ListBuckets"},
-		{"GET", "/my-bucket/some/key.txt", "GetObject"},
+		{"GET", "/my-bucket?list-type=2", "ListObjectsV2", nil},
+		{"GET", "/my-bucket?list-type=2&x-id=ListObjectsV2", "ListObjectsV2", nil},
+		{"GET", "/my-bucket", "ListObjects", nil},
+		{"GET", "/my-bucket?location", "GetBucketLocation", nil},
+		{"GET", "/my-bucket?tagging", "GetBucketTagging", nil},
+		{"POST", "/my-bucket?delete", "DeleteObjects", nil},
+		{"GET", "/", "ListBuckets", nil},
+		{"GET", "/my-bucket/some/key.txt", "GetObject", nil},
+		// UploadPart vs UploadPartCopy share PUT /{bucket}/{key+} and the
+		// same required query (uploadId, partNumber); the required
+		// x-amz-copy-source header selects the copy variant.
+		{"PUT", "/my-bucket/key.txt?uploadId=u&partNumber=1", "UploadPart", nil},
+		{"PUT", "/my-bucket/key.txt?uploadId=u&partNumber=1", "UploadPartCopy",
+			map[string]string{"x-amz-copy-source": "/src-bucket/src-key"}},
 	}
 	for _, tc := range cases {
 		req := httptest.NewRequest(tc.method, tc.url, nil)
+		for k, v := range tc.headers {
+			req.Header.Set(k, v)
+		}
 		_, pattern := st.mux.Handler(req)
 		method, path, _ := strings.Cut(pattern, " ")
 		key := method + " " + normalizeAWSPath(strings.TrimSuffix(path, "{$}"))
@@ -385,7 +398,7 @@ func TestXMLValidatorRestXMLOpSelection(t *testing.T) {
 		if len(cands) == 0 {
 			cands = st.spec.restXMLOps[strings.ReplaceAll(key, "{+}", "{}")]
 		}
-		op := selectRestXMLOp(cands, req.URL.Query())
+		op := selectRestXMLOp(cands, req.URL.Query(), req.Header)
 		if op == nil {
 			t.Errorf("%s %s: no operation selected (pattern %q, key %q)", tc.method, tc.url, pattern, key)
 			continue

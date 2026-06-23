@@ -4,15 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/ecs-op-completeness` — **ECS op completeness (the 47-op surface) + a fully-qualified-naming rule (BUG-2190).**
+`feat/s3-ops-and-conformance-expansion` — **S3 op completeness + conformance-ratchet expansion to 11 AWS services + S3 (BUG-2191).**
 
-- **ECS op completeness.** Closed ECS's entire remaining operation surface (47 ops) as faithful control-plane CRUD on real stores: capacity providers, task sets (+ UpdateServicePrimaryTaskSet), container instances (register/deregister/describe/list/update-state/update-agent + Submit*StateChange + DiscoverPollEndpoint), account settings, attributes, task protection, daemons (+ deployments/revisions/daemon task definitions), service deployments (describe/list/stop/continue + DescribeServiceRevisions + ListServicesByNamespace). New files `ecs_capacity.go`/`ecs_container_instances.go`/`ecs_daemons.go`/`ecs_service_deployments.go`/`ecs_tasksets.go`/`ecs_account.go`/`ecs_attributes.go`/`ecs_task_protection.go`/`ecs_taskdef_delete.go`/`ecs_start_task.go`. ECS's ratchet drops to 0.
-- **Tests.** Every op has an SDK test; ops with a public `aws` CLI surface also have a CLI test. The daemon ops + stop/continue-service-deployment are preview-only (no public CLI command) → SDK-tested only; the contract hook is satisfied by SDK coverage.
-- **Naming rule.** `AGENTS.md` § "Use proper, fully-qualified service and feature names": the feature is **Amazon ECS Express Mode**, not "ExpressGateway"; renamed sockerless's feature-label test/helper names while keeping AWS's real API/SDK spelling (`CreateExpressGatewayService`, `ExpressGatewayServiceConfiguration`, `create-express-gateway-service`) as the wire contract.
-- **In progress on this branch:** a doc naming sweep applying the rule across the prose docs (docs/, specs/, READMEs).
-- Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard guards pass.
+- **S3 (REST):** closed 13 high-value ops — object ACL (get/put), object lock-config/retention/legal-hold (get/put), GetObjectAttributes, GetObjectTorrent, the V1 ListObjects, RestoreObject, UploadPartCopy (new `s3_object_subresources.go` + op-name composition in s3.go). The restXML spec-validator gained required-header disambiguation (UploadPartCopy vs UploadPart). Coverage 78→**91/107**; the 16 niche gaps (S3 Express directory buckets, Metadata tables, ABAC, Object Lambda, S3 Select) ratcheted. The harness (`s3ImplementedOps`) now drives `list-type=2` and uploadId+copy-source to detect ListObjectsV2/UploadPartCopy.
+- **Conformance-complete (0 gaps):** Step Functions (37/37), ACM (17/17), Secrets Manager (23/23 — resource policy mirrored into the IAM gate), Application Auto Scaling (14/14).
+- **Near-complete (locked remainder):** Kinesis 38/39 (only the HTTP/2 SubscribeToShard event-stream), KMS 35/54 (key management complete; asymmetric-crypto + CloudHSM custom key stores locked). ELBv2 (36/51) added to lock its trust-store gaps.
+- **Catalog:** `serviceConformanceCatalog` now covers 11 awsJson/query services (SQS/SNS/EventBridge/DynamoDB/ECS/SFN/ACM/SecretsManager/AppAutoScaling/Kinesis/KMS/ELBv2) + S3 via its own harness.
+- Tests: each op has SDK + CLI tests; runtime spec-shape validator 0 violations across all new ops. aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard + both ratchets pass. **6 CLI tests need CI's newer `aws` CLI** (ACM revoke/search, Kinesis tag-resource/account-settings/max-record-size/warm-throughput — local 2.26.6 lacks the commands; SDK-verified + confirmed against CLI 2.35.11).
 
-**Next candidates:** finish the doc naming sweep. Close more S3 ops (object ACL/lock, ListObjects, UploadPartCopy) if a consumer needs them. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** lock the low-coverage services (CloudWatch 10/49, Organizations 2/63, SSM 10/146) in the ratchet, or implement their high-value ops. Close more KMS crypto ops or the S3 niche surfaces if a consumer needs them. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 
