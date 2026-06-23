@@ -1,10 +1,76 @@
 package main
 
 import (
+	"net/http/httptest"
 	"sort"
 	"strings"
 	"testing"
 )
+
+// s3ImplementedOps enumerates the S3 operations the sim implements. S3 is REST:
+// its operation isn't a router registration but is composed at request time from
+// method + path + the query subresource (s3BucketOperationName /
+// s3ObjectOperationName). So we drive those functions over the method ×
+// subresource matrix and collect the operation names they yield — the REST
+// analogue of reading the awsJson/query routers.
+func s3ImplementedOps() map[string]bool {
+	ops := map[string]bool{"ListBuckets": true}
+	bucketReq := func(method, rawquery string) string {
+		r := httptest.NewRequest(method, "/bucket?"+rawquery, nil)
+		return s3BucketOperationName(r, nil)
+	}
+	objReq := func(method, rawquery string, hdr map[string]string) string {
+		r := httptest.NewRequest(method, "/bucket/key?"+rawquery, nil)
+		for k, v := range hdr {
+			r.Header.Set(k, v)
+		}
+		return s3ObjectOperationName(r, nil)
+	}
+	add := func(op string) {
+		if op != "" {
+			ops[op] = true
+		}
+	}
+
+	bucketSubresources := []string{
+		"acl", "cors", "lifecycle", "policy", "versioning", "website", "logging",
+		"requestPayment", "accelerate", "replication", "encryption", "tagging",
+		"notification", "publicAccessBlock", "object-lock", "ownershipControls",
+		"intelligent-tiering", "inventory", "analytics", "metrics",
+		"uploads", "versions", "location", "policyStatus", "delete",
+	}
+	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
+		add(bucketReq(m, ""))
+		for _, sr := range bucketSubresources {
+			add(bucketReq(m, sr+"="))
+			add(bucketReq(m, sr+"=&id=x"))
+		}
+	}
+	objQueries := []string{
+		"", "tagging=", "uploads=", "uploadId=x", "uploadId=x&partNumber=1",
+		"acl=", "retention=", "legal-hold=", "attributes=", "torrent=", "restore=", "select=",
+	}
+	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
+		for _, q := range objQueries {
+			add(objReq(m, q, nil))
+		}
+	}
+	add(objReq("PUT", "", map[string]string{"x-amz-copy-source": "/src/key"}))
+
+	// The sim composes some op names with a "Bucket" infix that the real S3 API
+	// omits (GetBucketPublicAccessBlock vs the API's GetPublicAccessBlock) and
+	// names a couple of subresources more verbosely; expose the API-canonical
+	// aliases so functional coverage isn't undercounted by a naming difference.
+	for op := range ops {
+		if alias := strings.Replace(op, "BucketPublicAccessBlock", "PublicAccessBlock", 1); alias != op {
+			ops[alias] = true
+		}
+	}
+	if ops["DeleteBucketLifecycleConfiguration"] {
+		ops["DeleteBucketLifecycle"] = true
+	}
+	return ops
+}
 
 // Service API conformance: a spec-derived, mechanical measure of how completely a
 // sim service implements its real AWS operation surface, so gaps are *measured*
@@ -34,38 +100,13 @@ var serviceConformanceCatalog = map[string][]string{
 		"CancelMessageMoveTask", "ListDeadLetterSourceQueues", "ListMessageMoveTasks",
 		"StartMessageMoveTask",
 	},
-	"AmazonSimpleNotificationService": {
-		"CheckIfPhoneNumberIsOptedOut", "CreatePlatformApplication", "CreatePlatformEndpoint",
-		"CreateSMSSandboxPhoneNumber", "DeleteEndpoint", "DeletePlatformApplication",
-		"DeleteSMSSandboxPhoneNumber", "GetDataProtectionPolicy", "GetEndpointAttributes",
-		"GetPlatformApplicationAttributes", "GetSMSAttributes", "GetSMSSandboxAccountStatus",
-		"ListEndpointsByPlatformApplication", "ListOriginationNumbers", "ListPhoneNumbersOptedOut",
-		"ListPlatformApplications", "ListSMSSandboxPhoneNumbers", "OptInPhoneNumber",
-		"PutDataProtectionPolicy", "SetEndpointAttributes", "SetPlatformApplicationAttributes",
-		"SetSMSAttributes", "VerifySMSSandboxPhoneNumber",
-	},
-	"AWSEvents": {
-		"ActivateEventSource", "CancelReplay", "CreateApiDestination", "CreateConnection",
-		"CreateEndpoint", "CreatePartnerEventSource", "DeactivateEventSource", "DeauthorizeConnection",
-		"DeleteApiDestination", "DeleteConnection", "DeleteEndpoint", "DeletePartnerEventSource",
-		"DescribeApiDestination", "DescribeConnection", "DescribeEndpoint", "DescribeEventSource",
-		"DescribePartnerEventSource", "ListApiDestinations", "ListConnections", "ListEndpoints",
-		"ListEventSources", "ListPartnerEventSourceAccounts", "ListPartnerEventSources",
-		"PutPartnerEvents", "UpdateApiDestination", "UpdateArchive", "UpdateConnection",
-		"UpdateEndpoint",
-	},
-	"DynamoDB_20120810": {
-		"CreateBackup", "CreateGlobalTable", "DeleteBackup", "DeleteResourcePolicy",
-		"DescribeBackup", "DescribeContributorInsights", "DescribeEndpoints", "DescribeExport",
-		"DescribeGlobalTable", "DescribeGlobalTableSettings", "DescribeImport",
-		"DescribeKinesisStreamingDestination", "DescribeTableReplicaAutoScaling",
-		"DisableKinesisStreamingDestination", "EnableKinesisStreamingDestination",
-		"ExportTableToPointInTime", "GetResourcePolicy", "ImportTable", "ListBackups",
-		"ListContributorInsights", "ListExports", "ListGlobalTables", "ListImports",
-		"PutResourcePolicy", "RestoreTableFromBackup", "RestoreTableToPointInTime",
-		"UpdateContributorInsights", "UpdateGlobalTable", "UpdateGlobalTableSettings",
-		"UpdateKinesisStreamingDestination", "UpdateTableReplicaAutoScaling",
-	},
+	// SNS / EventBridge / DynamoDB: all remaining operations are implemented.
+	"AmazonSimpleNotificationService": {},
+	"AWSEvents":                       {},
+	"DynamoDB_20120810":               {},
+	// ECS: the larger surface (capacity providers, task sets, container instances,
+	// account settings, attributes, daemons, service deployments, task protection)
+	// is tracked here for a focused follow-on.
 	"AmazonEC2ContainerServiceV20141113": {
 		"ContinueServiceDeployment", "CreateCapacityProvider", "CreateDaemon", "CreateTaskSet",
 		"DeleteAccountSetting", "DeleteAttributes", "DeleteCapacityProvider", "DeleteDaemon",
@@ -147,6 +188,71 @@ func TestServiceConformance_Coverage(t *testing.T) {
 		t.Logf("%s: %d/%d operations implemented; missing (%d): %v",
 			shape, len(registered), len(m.Ops), len(missing), missing)
 	}
+}
+
+// s3ConformanceMissing is S3's ratchet — the real S3 operations the REST sim does
+// not implement (mostly newer/niche surfaces: S3 Express directory buckets, the
+// bucket Metadata-table feature, ABAC, Object Lambda, S3 Select, Glacier restore,
+// and object ACL/lock/retention/legal-hold). The list is locked by
+// TestServiceConformance_S3Ratchet; implement one → remove it here.
+var s3ConformanceMissing = []string{
+	"CreateBucketMetadataConfiguration", "CreateBucketMetadataTableConfiguration",
+	"CreateSession", "DeleteBucketMetadataConfiguration", "DeleteBucketMetadataTableConfiguration",
+	"GetBucketAbac", "GetBucketMetadataConfiguration", "GetBucketMetadataTableConfiguration",
+	"GetObjectAcl", "GetObjectAttributes", "GetObjectLegalHold", "GetObjectLockConfiguration",
+	"GetObjectRetention", "GetObjectTorrent", "ListDirectoryBuckets", "ListObjects",
+	"PutBucketAbac", "PutObjectAcl", "PutObjectLegalHold", "PutObjectLockConfiguration",
+	"PutObjectRetention", "RenameObject", "RestoreObject", "SelectObjectContent",
+	"UpdateBucketMetadataInventoryTableConfiguration", "UpdateBucketMetadataJournalTableConfiguration",
+	"UpdateObjectEncryption", "UploadPartCopy", "WriteGetObjectResponse",
+}
+
+// TestServiceConformance_S3Ratchet locks S3's REST operation-coverage gap set,
+// measured by driving the request→operation-name composition over the method ×
+// subresource matrix (s3ImplementedOps).
+func TestServiceConformance_S3Ratchet(t *testing.T) {
+	models := loadSmithyModels(t)
+	m := serviceModel(t, models, "AmazonS3")
+	impl := s3ImplementedOps()
+	want := map[string]bool{}
+	for _, op := range s3ConformanceMissing {
+		want[op] = true
+	}
+	var newlyMissing, nowImplemented []string
+	for op := range m.Ops {
+		if !impl[op] && !want[op] {
+			newlyMissing = append(newlyMissing, op)
+		}
+	}
+	for op := range want {
+		if impl[op] {
+			nowImplemented = append(nowImplemented, op)
+		}
+	}
+	sort.Strings(newlyMissing)
+	sort.Strings(nowImplemented)
+	if len(newlyMissing) > 0 {
+		t.Errorf("AmazonS3: %d op(s) missing that the ratchet doesn't list — classify in s3ConformanceMissing: %v", len(newlyMissing), newlyMissing)
+	}
+	if len(nowImplemented) > 0 {
+		t.Errorf("AmazonS3: %d op(s) now implemented — remove from s3ConformanceMissing: %v", len(nowImplemented), nowImplemented)
+	}
+}
+
+// TestServiceConformance_S3Coverage reports S3's REST operation coverage.
+func TestServiceConformance_S3Coverage(t *testing.T) {
+	models := loadSmithyModels(t)
+	m := serviceModel(t, models, "AmazonS3")
+	impl := s3ImplementedOps()
+	var missing []string
+	for op := range m.Ops {
+		if !impl[op] {
+			missing = append(missing, op)
+		}
+	}
+	sort.Strings(missing)
+	t.Logf("AmazonS3: %d/%d operations implemented; missing (%d): %v",
+		len(m.Ops)-len(missing), len(m.Ops), len(missing), missing)
 }
 
 // TestServiceConformance_Ratchet locks each catalogued service's set of

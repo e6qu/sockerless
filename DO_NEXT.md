@@ -4,13 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/cosmos-and-service-conformance` — **Cosmos remaining phases (BUG-2175, closed) + the conformance process applied to AWS pub-sub/services (BUG-2188).**
+`feat/service-op-completeness` — **S3/REST op-coverage harness + DynamoDB/EventBridge/SNS op completeness + IAM resource-ARN derivation (BUG-2189).**
 
-- **Cosmos (2175 → closed).** Every remaining phase, each verified by the emulator differential: RU `x-ms-request-charge` model + throughput offers (`cosmos_throughput.go`), consistency-level + session tokens (`cosmos_consistency.go`), stored procedures/UDFs/triggers + a faithful sproc-execution subset (`cosmos_scripts.go`), change feed + conflict feed (`cosmos_changefeed.go`). `TestCosmos_DifferentialVsEmulator` + `TestCosmosScripts_DifferentialVsEmulator` agree with the emulator (sproc-execution + missing-sproc-404 are documented sim-superiority divergences).
-- **Service conformance (2188).** `simulators/aws/service_conformance_test.go` applies the process to the awsJson/query services: loads each vendored Smithy model, measures operation coverage, and ratchets the per-service gap set (SQS/SNS/EventBridge/DynamoDB/ECS). Closed the high-value pub-sub gaps (SQS Change/DeleteMessageBatch + Add/RemovePermission; SNS Confirm/Get/SetSubscriptionAttributes + Add/RemovePermission; EventBridge TestEventPattern/ListRuleNamesByTarget/UpdateEventBus), each SDK+CLI tested.
-- Tests: aws + azure sims/sdk/cli build/lint(0)/unit green; Cosmos differentials pass; contract + cli-shard guards pass.
+- **S3/REST harness.** `s3ImplementedOps` drives the request→op-name composition (`s3BucketOperationName`/`s3ObjectOperationName`) over the method×subresource matrix to enumerate S3's implemented ops vs the vendored Smithy model; `TestServiceConformance_S3Ratchet` locks the gap set (78/107; the 29 gaps are S3 Express, Metadata tables, ABAC, Object Lambda, S3 Select, object ACL/lock).
+- **Op completeness.** Every remaining DynamoDB (31), EventBridge (28), and SNS (23) operation implemented as faithful control-plane CRUD with SDK+CLI tests; each service ratchets to 0. (DynamoDB resource policy mirrors into the IAM gate; SNS SMS sandbox has a real Pending→Verified state.)
+- **IAM resource-ARN derivation.** The gate derives the request resource ARN for EC2/DynamoDB/Lambda/KMS/SecretsManager/StepFunctions/Kinesis so resource-scoped policies enforce (SDK test: `dynamodb:PutItem` allowed on the granted table ARN, denied on another).
+- **ECS deferred.** The 47-op ECS surface was attempted by an agent but the run was cut off by rate-limiting before its tests landed; reverted rather than shipped untested, and tracked in the conformance ratchet for a focused follow-on.
+- Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard guards pass.
 
-**Next candidates:** **S3/REST op-coverage harness** (the service_conformance follow-on — enumerate REST routes → ops). Close more DynamoDB/ECS ops if a consumer needs them (tracked in the ratchet). Apply the conformance process to further slices. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** **ECS op completeness** (the 47-op surface — the ratchet tracks it; best run as its own focused PR with isolated agent worktrees). Close more S3 ops (object ACL/lock, ListObjects, UploadPartCopy) if a consumer needs them. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 

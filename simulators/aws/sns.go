@@ -100,6 +100,9 @@ func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(snsAPIVersion, "TagResource", handleSNSTagResource)
 	r.RegisterVersioned(snsAPIVersion, "UntagResource", handleSNSUntagResource)
 	r.RegisterVersioned(snsAPIVersion, "ListTagsForResource", handleSNSListTagsForResource)
+
+	// Mobile-push, SMS, and data-protection control-plane slices.
+	registerSNSMobileSMS(r, srv)
 }
 
 func snsXMLResponse(w http.ResponseWriter, op string, body string, requestID string) {

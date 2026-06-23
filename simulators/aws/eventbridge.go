@@ -152,6 +152,10 @@ func registerEventBridge(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSEvents.StartReplay", handleEBStartReplay)
 	r.Register("AWSEvents.DescribeReplay", handleEBDescribeReplay)
 	r.Register("AWSEvents.ListReplays", handleEBListReplays)
+	r.Register("AWSEvents.UpdateArchive", handleEBUpdateArchive)
+	r.Register("AWSEvents.CancelReplay", handleEBCancelReplay)
+
+	registerEventBridgeConnectivity(r, srv)
 }
 
 func ebRuleArn(name string) string {
@@ -1560,6 +1564,62 @@ func handleEBDeleteArchive(w http.ResponseWriter, r *http.Request) {
 	writeEBJSON(w, http.StatusOK, map[string]any{})
 }
 
+// handleEBUpdateArchive mutates an existing archive's Description, EventPattern,
+// RetentionDays, and KmsKeyIdentifier. Only the fields supplied in the request
+// are changed (each is a pointer so the absent/null case leaves the stored value
+// intact), matching UpdateArchive. A malformed EventPattern is rejected with
+// InvalidEventPatternException, the same way CreateArchive validates patterns.
+func handleEBUpdateArchive(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ArchiveName      string  `json:"ArchiveName"`
+		Description      *string `json:"Description"`
+		EventPattern     *string `json:"EventPattern"`
+		RetentionDays    *int32  `json:"RetentionDays"`
+		KmsKeyIdentifier *string `json:"KmsKeyIdentifier"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ArchiveName == "" {
+		sim.AWSError(w, "ValidationException", "ArchiveName is required", http.StatusBadRequest)
+		return
+	}
+	if req.EventPattern != nil && *req.EventPattern != "" {
+		if err := ebValidateEventPattern(*req.EventPattern); err != nil {
+			sim.AWSError(w, "InvalidEventPatternException", "Event pattern is not valid. Reason: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	archive, ok := ebArchives.Get(req.ArchiveName)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Archive does not exist", http.StatusNotFound)
+		return
+	}
+	if req.Description != nil {
+		archive.Description = *req.Description
+	}
+	if req.EventPattern != nil {
+		archive.EventPattern = *req.EventPattern
+	}
+	if req.RetentionDays != nil {
+		archive.RetentionDays = req.RetentionDays
+	}
+	if req.KmsKeyIdentifier != nil {
+		archive.KmsKeyIdentifier = *req.KmsKeyIdentifier
+	}
+	ebArchives.Put(archive.ArchiveName, archive)
+	out := map[string]any{
+		"ArchiveArn":   archive.ArchiveArn,
+		"CreationTime": archive.CreationTime,
+		"State":        archive.State,
+	}
+	if archive.StateReason != "" {
+		out["StateReason"] = archive.StateReason
+	}
+	writeEBJSON(w, http.StatusOK, out)
+}
+
 func handleEBStartReplay(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ReplayName     string          `json:"ReplayName"`
@@ -1662,6 +1722,43 @@ func handleEBListReplays(w http.ResponseWriter, r *http.Request) {
 		out["NextToken"] = next
 	}
 	writeEBJSON(w, http.StatusOK, out)
+}
+
+// handleEBCancelReplay transitions a replay out of an in-progress state. Per the
+// real CancelReplay state machine, a replay that is STARTING or RUNNING moves to
+// CANCELLED (real AWS reports the intermediate CANCELLING state while it drains;
+// the sim's in-process replay leaves nothing to drain, so it lands directly on
+// CANCELLED). A replay already in a terminal state (COMPLETED, CANCELLED, FAILED)
+// cannot be cancelled and yields IllegalStatusException, exactly as real AWS.
+func handleEBCancelReplay(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReplayName string `json:"ReplayName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	replay, ok := ebReplays.Get(req.ReplayName)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Replay does not exist", http.StatusNotFound)
+		return
+	}
+	switch replay.State {
+	case "STARTING", "RUNNING":
+		replay.State = "CANCELLED"
+		replay.StateReason = "Replay was cancelled."
+		replay.ReplayEndTime = time.Now().Unix()
+		ebReplays.Put(replay.ReplayName, replay)
+		writeEBJSON(w, http.StatusOK, map[string]any{
+			"ReplayArn":   replay.ReplayArn,
+			"State":       replay.State,
+			"StateReason": replay.StateReason,
+		})
+	default:
+		sim.AWSError(w, "IllegalStatusException",
+			fmt.Sprintf("Replay %s is not in a state from which it can be cancelled.", replay.ReplayName),
+			http.StatusBadRequest)
+	}
 }
 
 // ebReplaySummary projects a replay onto the list-shape Replay members;

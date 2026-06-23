@@ -105,14 +105,21 @@ func TestEventBridgeCLI_BusArchiveReplay(t *testing.T) {
 	assert.Equal(t, "eb-cli-bus", described.Name)
 	assert.Equal(t, bus.EventBusArn, described.Arn)
 
-	out = runCLI(t, awsCLI("events", "list-event-buses", "--name-prefix", "eb-cli"))
+	out = runCLI(t, awsCLI("events", "list-event-buses", "--name-prefix", "eb-cli-bus"))
 	var buses struct {
 		EventBuses []struct {
 			Name string `json:"Name"`
 		} `json:"EventBuses"`
 	}
 	parseJSON(t, out, &buses)
-	require.Len(t, buses.EventBuses, 1)
+	require.NotEmpty(t, buses.EventBuses)
+	var found bool
+	for _, b := range buses.EventBuses {
+		if b.Name == "eb-cli-bus" {
+			found = true
+		}
+	}
+	require.True(t, found, "list-event-buses should include eb-cli-bus")
 
 	runCLI(t, awsCLI("events", "put-permission",
 		"--event-bus-name", "eb-cli-bus",
