@@ -23,6 +23,14 @@ type IAMTempCred struct {
 	RoleName     string // set for AssumeRole / AssumeRoleWithWebIdentity
 	PrincipalArn string // the caller-facing ARN (assumed-role/… or user/…)
 	Expiration   string
+	MFA          bool   // the session was authenticated with MFA
+	CreatedAt    string // RFC3339, for aws:MultiFactorAuthAge
+}
+
+// stsRequestMFA reports whether the request presented an MFA device + code,
+// which sets aws:MultiFactorAuthPresent on the resulting session.
+func stsRequestMFA(r *http.Request) bool {
+	return r.FormValue("SerialNumber") != "" && r.FormValue("TokenCode") != ""
 }
 
 var iamTempCreds sim.Store[IAMTempCred]
@@ -116,6 +124,7 @@ func handleSTSAssumeRole(w http.ResponseWriter, r *http.Request) {
 	iamTempCreds.Put(akid, IAMTempCred{
 		AccessKeyID: akid, RoleName: role.RoleName, PrincipalArn: assumedArn,
 		Expiration: exp.Format(time.RFC3339),
+		MFA:        stsRequestMFA(r), CreatedAt: time.Now().UTC().Format(time.RFC3339),
 	})
 	assumedRoleID := role.RoleId + ":" + sessionName
 	w.Header().Set("Content-Type", "text/xml")
@@ -171,7 +180,8 @@ func handleSTSGetSessionToken(w http.ResponseWriter, r *http.Request) {
 	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
 	// Bind the session token to the caller's user (if registered) so it inherits
 	// the user's policies under enforcement.
-	tc := IAMTempCred{AccessKeyID: akid, Expiration: exp.Format(time.RFC3339)}
+	tc := IAMTempCred{AccessKeyID: akid, Expiration: exp.Format(time.RFC3339),
+		MFA: stsRequestMFA(r), CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 	if _, _, userName, ok := iamPrincipalForAccessKey(iamAccessKeyIDFromRequest(r)); ok && userName != "" {
 		if u, uok := iamUsers.Get(userName); uok {
 			tc.UserName = userName

@@ -294,10 +294,15 @@ func TestSNS_PublishBatch(t *testing.T) {
 		AttributeNames: []sqstypes.QueueAttributeName{"QueueArn"},
 	})
 	require.NoError(t, err)
+	queueARN := qAttrs.Attributes["QueueArn"]
+
+	// Real SNS→SQS delivery is gated by the queue's resource policy.
+	setQueuePolicyAllowingSNS(t, sqsC, aws.ToString(q.QueueUrl), queueARN, aws.ToString(tpc.TopicArn))
+
 	_, err = snsC.Subscribe(ctx, &sns.SubscribeInput{
 		TopicArn: tpc.TopicArn,
 		Protocol: aws.String("sqs"),
-		Endpoint: aws.String(qAttrs.Attributes["QueueArn"]),
+		Endpoint: aws.String(queueARN),
 	})
 	require.NoError(t, err)
 

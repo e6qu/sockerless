@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -109,12 +110,13 @@ func TestEventBridge_BusArchiveReplaySDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	queueARN := attrs.Attributes["QueueArn"]
-	_, err = eb.PutRule(ctx, &eventbridge.PutRuleInput{
+	replayRule, err := eb.PutRule(ctx, &eventbridge.PutRuleInput{
 		Name:         aws.String("eb-sdk-replay-rule"),
 		EventBusName: aws.String(busName),
 		EventPattern: aws.String(`{"source":["sockerless.archive"]}`),
 	})
 	require.NoError(t, err)
+	setEBQueuePolicy(t, sqsC, q.QueueUrl, queueARN, aws.ToString(replayRule.RuleArn))
 	t.Cleanup(func() {
 		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
 			EventBusName: aws.String(busName),
@@ -220,6 +222,11 @@ func TestEventBridge_RuleTargetPutEventsSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotEmpty(t, aws.ToString(putRule.RuleArn))
+
+	// EventBridge delivers as the events.amazonaws.com service on the rule's
+	// behalf; the target queue must grant that service sqs:SendMessage for this
+	// rule's ARN, exactly as required against real AWS.
+	setEBQueuePolicy(t, sqsC, q.QueueUrl, queueARN, aws.ToString(putRule.RuleArn))
 	t.Cleanup(func() {
 		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
 			Rule: aws.String("eb-sdk-rule"),
@@ -347,7 +354,7 @@ func TestEventBridge_ContentFilterPatternSDK(t *testing.T) {
 			"code": [{"numeric": [">", 200]}]
 		}
 	}`
-	_, err = eb.PutRule(ctx, &eventbridge.PutRuleInput{
+	contentRule, err := eb.PutRule(ctx, &eventbridge.PutRuleInput{
 		Name:         aws.String("eb-sdk-content-rule"),
 		EventPattern: aws.String(pattern),
 	})
@@ -359,6 +366,7 @@ func TestEventBridge_ContentFilterPatternSDK(t *testing.T) {
 		})
 		_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: aws.String("eb-sdk-content-rule")})
 	})
+	setEBQueuePolicy(t, sqsC, q.QueueUrl, queueARN, aws.ToString(contentRule.RuleArn))
 	_, err = eb.PutTargets(ctx, &eventbridge.PutTargetsInput{
 		Rule: aws.String("eb-sdk-content-rule"),
 		Targets: []ebtypes.Target{{
@@ -410,4 +418,120 @@ func TestEventBridge_ContentFilterPatternSDK(t *testing.T) {
 
 	require.Len(t, bodies, 1, "only the matching event must be delivered")
 	assert.JSONEq(t, matchDetail, bodies[0])
+}
+
+// setEBQueuePolicy attaches an SQS queue policy granting events.amazonaws.com
+// sqs:SendMessage on the queue, conditioned on aws:SourceArn == ruleArn — the
+// exact resource policy real AWS requires before EventBridge will deliver a
+// matched event to the queue.
+func setEBQueuePolicy(t *testing.T, sqsC *sqs.Client, queueURL *string, queueARN, ruleArn string) {
+	t.Helper()
+	policy := fmt.Sprintf(`{
+		"Version": "2012-10-17",
+		"Statement": [{
+			"Sid": "AllowEventBridge",
+			"Effect": "Allow",
+			"Principal": {"Service": "events.amazonaws.com"},
+			"Action": "sqs:SendMessage",
+			"Resource": %q,
+			"Condition": {"ArnEquals": {"aws:SourceArn": %q}}
+		}]
+	}`, queueARN, ruleArn)
+	_, err := sqsC.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl:   queueURL,
+		Attributes: map[string]string{"Policy": policy},
+	})
+	require.NoError(t, err)
+}
+
+// TestEventBridge_SQSDeliveryAuthorizationSDK proves the resource-policy gate on
+// EventBridge → SQS delivery end-to-end: a queue whose policy admits
+// events.amazonaws.com for the matched rule's ARN receives the event, while a
+// queue with no policy (and a queue whose policy names the WRONG SourceArn)
+// receives nothing — matching real AWS, which silently drops an unauthorized
+// delivery rather than enqueuing it.
+func TestEventBridge_SQSDeliveryAuthorizationSDK(t *testing.T) {
+	eb := eventbridgeClient()
+	sqsC := sqsClient()
+
+	queueARNOf := func(t *testing.T, name string) (*string, string) {
+		t.Helper()
+		q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String(name)})
+		require.NoError(t, err)
+		t.Cleanup(func() { _, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl}) })
+		attrs, err := sqsC.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+			QueueUrl:       q.QueueUrl,
+			AttributeNames: []sqstypes.QueueAttributeName{"QueueArn"},
+		})
+		require.NoError(t, err)
+		arn := attrs.Attributes["QueueArn"]
+		require.NotEmpty(t, arn)
+		return q.QueueUrl, arn
+	}
+
+	allowedURL, allowedARN := queueARNOf(t, "eb-auth-allowed-q")
+	noPolicyURL, noPolicyARN := queueARNOf(t, "eb-auth-nopolicy-q")
+	wrongURL, wrongARN := queueARNOf(t, "eb-auth-wrongarn-q")
+
+	pattern := `{"source":["sockerless.auth"],"detail-type":["example"]}`
+	putRule, err := eb.PutRule(ctx, &eventbridge.PutRuleInput{
+		Name:         aws.String("eb-auth-rule"),
+		EventPattern: aws.String(pattern),
+	})
+	require.NoError(t, err)
+	ruleArn := aws.ToString(putRule.RuleArn)
+	require.NotEmpty(t, ruleArn)
+	t.Cleanup(func() {
+		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
+			Rule: aws.String("eb-auth-rule"),
+			Ids:  []string{"allowed", "nopolicy", "wrong"},
+		})
+		_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: aws.String("eb-auth-rule")})
+	})
+
+	// allowed: correct policy. nopolicy: no policy at all. wrong: a policy that
+	// names a different SourceArn, so the condition does not match this rule.
+	setEBQueuePolicy(t, sqsC, allowedURL, allowedARN, ruleArn)
+	setEBQueuePolicy(t, sqsC, wrongURL, wrongARN, ruleArn+"-different")
+
+	_, err = eb.PutTargets(ctx, &eventbridge.PutTargetsInput{
+		Rule: aws.String("eb-auth-rule"),
+		Targets: []ebtypes.Target{
+			{Id: aws.String("allowed"), Arn: aws.String(allowedARN)},
+			{Id: aws.String("nopolicy"), Arn: aws.String(noPolicyARN)},
+			{Id: aws.String("wrong"), Arn: aws.String(wrongARN)},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = eb.PutEvents(ctx, &eventbridge.PutEventsInput{
+		Entries: []ebtypes.PutEventsRequestEntry{{
+			Source:     aws.String("sockerless.auth"),
+			DetailType: aws.String("example"),
+			Detail:     aws.String(`{"ok":true}`),
+		}},
+	})
+	require.NoError(t, err)
+
+	// The authorized queue receives the event.
+	received, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            allowedURL,
+		MaxNumberOfMessages: 1,
+		WaitTimeSeconds:     1,
+	})
+	require.NoError(t, err)
+	require.Len(t, received.Messages, 1)
+	assert.JSONEq(t, `{"ok":true}`, aws.ToString(received.Messages[0].Body))
+
+	// The unauthorized queues receive nothing — neither the no-policy queue nor
+	// the wrong-SourceArn queue.
+	for name, url := range map[string]*string{"nopolicy": noPolicyURL, "wrong": wrongURL} {
+		out, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+			QueueUrl:            url,
+			MaxNumberOfMessages: 1,
+			WaitTimeSeconds:     1,
+		})
+		require.NoError(t, err)
+		assert.Empty(t, out.Messages, "queue %q must not receive an unauthorized delivery", name)
+	}
 }

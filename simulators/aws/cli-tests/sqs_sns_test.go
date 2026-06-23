@@ -1,12 +1,27 @@
 package aws_cli_test
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// setQueuePolicyAllowingSNSCLI attaches, via `aws sqs set-queue-attributes`, a
+// resource policy granting sns.amazonaws.com sqs:SendMessage scoped to the
+// topic — the policy real SNS→SQS delivery requires on the subscriber queue.
+func setQueuePolicyAllowingSNSCLI(t *testing.T, queueURL, queueARN, topicARN string) {
+	t.Helper()
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"sns.amazonaws.com"},"Action":"sqs:SendMessage","Resource":%q,"Condition":{"ArnEquals":{"aws:SourceArn":%q}}}]}`, queueARN, topicARN)
+	attrs, err := json.Marshal(map[string]string{"Policy": policy})
+	require.NoError(t, err)
+	runCLI(t, awsCLI("sqs", "set-queue-attributes",
+		"--queue-url", queueURL,
+		"--attributes", string(attrs)))
+}
 
 func TestSQSCLI_QueueLifecycle(t *testing.T) {
 	out := runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "cli-sqs-q"))
@@ -78,6 +93,8 @@ func TestSNSCLI_TopicSQSFanout(t *testing.T) {
 	parseJSON(t, out, &attrs)
 	queueARN := attrs.Attributes["QueueArn"]
 	require.NotEmpty(t, queueARN)
+
+	setQueuePolicyAllowingSNSCLI(t, queue.QueueUrl, queueARN, topic.TopicArn)
 
 	out = runCLI(t, awsCLI("sns", "subscribe",
 		"--topic-arn", topic.TopicArn,
@@ -253,6 +270,7 @@ func TestSNSCLI_PublishBatch(t *testing.T) {
 	parseJSON(t, out, &attrs)
 	queueARN := attrs.Attributes["QueueArn"]
 	require.NotEmpty(t, queueARN)
+	setQueuePolicyAllowingSNSCLI(t, queue.QueueUrl, queueARN, topic.TopicArn)
 	runCLI(t, awsCLI("sns", "subscribe",
 		"--topic-arn", topic.TopicArn,
 		"--protocol", "sqs",

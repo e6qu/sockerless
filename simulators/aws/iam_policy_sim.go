@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -103,11 +105,13 @@ func (p *iamPrincipal) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// iamPrincipalMatches reports whether a statement's Principal admits the calling
-// principal ARN. A statement with no Principal (identity-based) always matches;
-// "*" matches everyone; an AWS principal matches by ARN glob or by the account
-// id of an account-root principal.
-func iamPrincipalMatches(stmt iamStatement, callerArn string) bool {
+// iamPrincipalMatches reports whether a statement's Principal admits the caller.
+// A statement with no Principal (identity-based) always matches; "*" matches
+// everyone; an AWS principal matches by ARN glob or by the account id of an
+// account-root principal; a Service principal matches when an AWS service made
+// the call on the principal's behalf (the calling services arrive via
+// ctx["aws:CalledVia"]).
+func iamPrincipalMatches(stmt iamStatement, callerArn string, ctx map[string][]string) bool {
 	matchOne := func(p iamPrincipal) bool {
 		if p.Wildcard {
 			return true
@@ -123,6 +127,13 @@ func iamPrincipalMatches(stmt iamStatement, callerArn string) bool {
 			// that role (…:assumed-role/NAME/SESSION).
 			if strings.Contains(want, ":role/") {
 				if rn := iamRoleNameFromArn(want); rn != "" && strings.Contains(callerArn, ":assumed-role/"+rn+"/") {
+					return true
+				}
+			}
+		}
+		for _, want := range p.Service {
+			for _, svc := range ctx["aws:CalledVia"] {
+				if want == svc {
 					return true
 				}
 			}
@@ -321,9 +332,21 @@ func iamEvalConditionOp(op string, ctxVals, wantVals []string) bool {
 		return iamAnyMatch(ctxVals, wantVals, iamIPInCIDR)
 	case "NotIpAddress":
 		return !iamAnyMatch(ctxVals, wantVals, iamIPInCIDR)
+	case "BinaryEquals":
+		return iamAnyMatch(ctxVals, wantVals, iamBinaryEqual)
 	default:
 		return false
 	}
+}
+
+// iamBinaryEqual compares two base64-encoded binary values byte-for-byte.
+func iamBinaryEqual(c, w string) bool {
+	cb, err1 := base64.StdEncoding.DecodeString(strings.TrimSpace(c))
+	wb, err2 := base64.StdEncoding.DecodeString(strings.TrimSpace(w))
+	if err1 != nil || err2 != nil {
+		return false
+	}
+	return bytes.Equal(cb, wb)
 }
 
 // iamNumCmp returns an equality/ordering comparator for the numeric operators.
@@ -403,6 +426,21 @@ func iamIPInCIDR(c, w string) bool {
 	return cidr.Contains(ip)
 }
 
+// iamCtxLookup resolves a condition-context key, case-insensitively on the key
+// NAME — IAM condition key names are not case-sensitive, so a policy written
+// with AWS:SourceArn matches the gate's aws:SourceArn (and vice versa).
+func iamCtxLookup(ctx map[string][]string, key string) ([]string, bool) {
+	if v, ok := ctx[key]; ok {
+		return v, true
+	}
+	for k, v := range ctx {
+		if strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
 // iamConditionMatches evaluates a statement's Condition block, honoring the
 // IfExists suffix, the ForAllValues/ForAnyValue set qualifiers, and the Null
 // operator. Returns whether it is satisfied plus any context keys referenced
@@ -423,14 +461,14 @@ func iamConditionMatches(stmt iamStatement, ctx map[string][]string) (bool, []st
 			if base == "Null" {
 				// {"Null":{"key":"true"}} requires the key be ABSENT; "false"
 				// requires it be present.
-				_, present := ctx[key]
+				_, present := iamCtxLookup(ctx, key)
 				wantAbsent := len(wantVals) > 0 && strings.EqualFold(wantVals[0], "true")
 				if wantAbsent == present {
 					return false, missing
 				}
 				continue
 			}
-			ctxVals, present := ctx[key]
+			ctxVals, present := iamCtxLookup(ctx, key)
 			if !present {
 				if ifExists {
 					continue
@@ -519,7 +557,7 @@ func iamEvalDecisionForPrincipal(docs []iamPolicyDoc, action, resource, callerAr
 	allowed := false
 	for _, doc := range docs {
 		for _, stmt := range doc.Statement {
-			if !iamPrincipalMatches(stmt, callerArn) {
+			if !iamPrincipalMatches(stmt, callerArn, ctx) {
 				continue
 			}
 			if !iamActionMatches(stmt, action) || !iamResourceMatches(iamSubstituteVarsStmt(stmt, ctx), resource) {

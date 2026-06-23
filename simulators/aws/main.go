@@ -131,6 +131,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
 	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).
 	registerSQS(awsRouter, srv)
+	registerOrganizations(awsRouter, srv)
 
 	// POST / handler: check X-Amz-Target first (JSON protocol),
 	// fall back to Action parameter (Query Protocol)

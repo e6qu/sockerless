@@ -179,6 +179,22 @@ func sqsQueueARN(name string) string {
 		awsRegion(), awsAccountID(), name)
 }
 
+// sqsEnqueueByARN delivers a plain-body message into the queue named by its ARN,
+// reporting whether the queue exists. The sim's internal event delivery (SNS /
+// EventBridge → SQS) calls this after the delivery has been authorized against
+// the queue's resource policy.
+func sqsEnqueueByARN(queueARN, body string) bool {
+	name := queueARN
+	if i := strings.LastIndex(queueARN, ":"); i >= 0 {
+		name = queueARN[i+1:]
+	}
+	if _, ok := sqsQueues.Get(name); !ok {
+		return false
+	}
+	sqsEnqueue(name, sqsSendEntry{MessageBody: body})
+	return true
+}
+
 func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
 	// Message-level ops are CloudTrail DATA events (excluded from LookupEvents);
 	// queue-management ops are management events.
@@ -557,6 +573,22 @@ func sqsEnqueue(name string, e sqsSendEntry) (msgID, md5OfBody, md5OfAttrs strin
 		})
 	})
 	return msgID, md5OfBody, md5OfAttrs
+}
+
+// sqsEnqueueBody appends a raw message body to a queue with the MD5 and
+// timestamp a real delivery sets, the same store mutation a SendMessage
+// performs. It is the in-process enqueue path SNS→SQS fan-out uses to
+// deliver a Notification envelope; a subsequent ReceiveMessage returns it.
+func sqsEnqueueBody(queueName, body string) {
+	hash := md5.Sum([]byte(body))
+	sqsQueues.Update(queueName, func(q *SQSQueue) {
+		q.Messages = append(q.Messages, SQSMessage{
+			MessageId:     generateUUID(),
+			Body:          body,
+			MD5OfBody:     hex.EncodeToString(hash[:]),
+			SentTimestamp: time.Now().Unix(),
+		})
+	})
 }
 
 func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
