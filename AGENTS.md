@@ -157,6 +157,17 @@ Bad: `// BUG-625: Podman's libpod API sends "reference" instead of "fromImage"`
 
 Bug tracking belongs in `BUGS.md`, `STATUS.md`, and task files. Code comments describe intent and behavior.
 
+## Use proper, fully-qualified service and feature names
+
+Call every cloud service, product, and feature by its **real, fully-qualified name** in prose — code comments, docs, test names, and any user-facing string. Never an invented shorthand or a half-name. The feature AWS launched on 2025-11-21 is **"Amazon ECS Express Mode"**, not "ExpressGateway"; refer to it as *ECS Express Mode* (the feature/mode) — reserving *Express Gateway service* for the AWS API resource the feature exposes. The same rule governs every service: write *Amazon Elastic Container Service (ECS)*, *Google Cloud Run*, *Azure Container Apps* — expand an acronym on first use in a document, then use the short form.
+
+The line between "name we choose" and "name the wire dictates":
+
+- **Prose, doc titles, test/helper names, log lines, comments** — use the proper fully-qualified product/feature name. This is where the rule bites: a test named `…ExpressGateway…` for the ECS Express Mode feature is wrong; name it `…ECSExpressMode…`.
+- **Real API operation names, SDK types, wire fields, CLI command names, package names** — keep verbatim, exactly as the cloud's SDK/CLI/API spells them (`CreateExpressGatewayService`, `ExpressGatewayServiceConfiguration`, `create-express-gateway-service`, the `ecs` package). These are the contract; renaming them diverges from the SDK and is a bug. A sim type that deliberately mirrors an SDK type keeps the SDK's spelling (say so in a comment).
+
+The only exceptions are the two above (wire identifiers) and identifiers that would become absurdly long if expanded (you do not rename the `ecs` package to `elasticcontainerservice`). When in doubt, expand it.
+
 ## Assemble Docker abstractions from cloud primitives — on every backend
 
 Sockerless backends are **providers of the Docker + Podman REST API assembled out of cloud primitives**. The north-star is **experiential parity**: a user's experience with containers, pods, networks, and volumes inside any backend must be *the same* as with regular local Docker / Podman — the cloud is the implementation, never a visible seam. Networks, multi-container pods, and volumes are *composed*, on *every* backend, FaaS included — each backend executing inside its own model (**ECS in ECS, Lambda in Lambda, Cloud Run in Cloud Run, Cloud Run Functions in CRF, ACA in ACA, Azure Functions in AZF** — see "Backend ↔ host primitive must match"). There is no "this Docker concept has no cloud analog." If a cloud lacks a first-class equivalent, build one from the primitives it *does* have (Private DNS / Cloud Map / Cloud DNS for networks; multi-container Service revisions / ACA Apps / Fargate tasks, or per-member functions + DNS for pods; EFS / GCS / Azure-Files for volumes) plus the sockerless **agent** (direct or reverse). The agent fills gaps in a cloud's API surface — but it must **never break or bypass** the abstractions sockerless establishes (stateless, cloud-is-source-of-truth, Docker-API-faithful).

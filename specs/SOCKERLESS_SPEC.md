@@ -6,7 +6,7 @@
 >
 > **Status:** Core specification. Written at Phase 35, updated at Phase 85+. For implementation details, see the companion specs below.
 >
-> **Mission:** A Docker-compatible REST API daemon that executes containers on cloud serverless backends (AWS ECS, Google Cloud Run, Azure Container Apps, and others) instead of a local Docker Engine.
+> **Mission:** A Docker-compatible REST API daemon that executes containers on cloud serverless backends (Amazon Elastic Container Service (ECS), Google Cloud Run, Azure Container Apps, and others) instead of a local Docker Engine.
 
 ## Companion Specifications
 

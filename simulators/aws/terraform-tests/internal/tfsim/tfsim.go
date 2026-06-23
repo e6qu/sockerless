@@ -58,7 +58,11 @@ func Start(t *testing.T, configDir string) *Env {
 	if err != nil {
 		t.Fatalf("find free port: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("free-port listener address is not TCP: %T", ln.Addr())
+	}
+	port := tcpAddr.Port
 	if err := ln.Close(); err != nil {
 		t.Fatalf("close free-port listener: %v", err)
 	}
@@ -287,7 +291,11 @@ func freeTCPPort(t *testing.T) int {
 	if err != nil {
 		t.Fatalf("find free port: %v", err)
 	}
-	port := ln.Addr().(*net.TCPAddr).Port
+	tcpAddr, ok := ln.Addr().(*net.TCPAddr)
+	if !ok {
+		t.Fatalf("free-port listener address is not TCP: %T", ln.Addr())
+	}
+	port := tcpAddr.Port
 	if err := ln.Close(); err != nil {
 		t.Fatalf("close free-port listener: %v", err)
 	}

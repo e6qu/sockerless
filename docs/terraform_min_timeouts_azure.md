@@ -12,8 +12,8 @@ do not generally tune Azure ARM long-running-operation poll cadence.
 
 ## AzureRM Provider
 
-AzureRM wraps resource operations in timeout contexts and delegates most ARM
-long-running operations to the vendored Azure SDK pollers:
+AzureRM wraps resource operations in timeout contexts and delegates most Azure
+Resource Manager (ARM) long-running operations to the vendored Azure SDK pollers:
 
 - [`internal/timeouts/determine.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/internal/timeouts/determine.go#L13-L58) wraps create/read/update/delete contexts with the configured operation timeout.
 - [`vendor/.../resourcemanager/poller_provisioning_state.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/resourcemanager/poller_provisioning_state.go#L21-L67) sets the default ARM provisioning-state polling interval to `10s`.

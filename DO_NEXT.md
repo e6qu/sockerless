@@ -4,15 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/service-op-completeness` — **S3/REST op-coverage harness + DynamoDB/EventBridge/SNS op completeness + IAM resource-ARN derivation (BUG-2189).**
+`feat/ecs-op-completeness` — **ECS op completeness (the 47-op surface) + a fully-qualified-naming rule (BUG-2190).**
 
-- **S3/REST harness.** `s3ImplementedOps` drives the request→op-name composition (`s3BucketOperationName`/`s3ObjectOperationName`) over the method×subresource matrix to enumerate S3's implemented ops vs the vendored Smithy model; `TestServiceConformance_S3Ratchet` locks the gap set (78/107; the 29 gaps are S3 Express, Metadata tables, ABAC, Object Lambda, S3 Select, object ACL/lock).
-- **Op completeness.** Every remaining DynamoDB (31), EventBridge (28), and SNS (23) operation implemented as faithful control-plane CRUD with SDK+CLI tests; each service ratchets to 0. (DynamoDB resource policy mirrors into the IAM gate; SNS SMS sandbox has a real Pending→Verified state.)
-- **IAM resource-ARN derivation.** The gate derives the request resource ARN for EC2/DynamoDB/Lambda/KMS/SecretsManager/StepFunctions/Kinesis so resource-scoped policies enforce (SDK test: `dynamodb:PutItem` allowed on the granted table ARN, denied on another).
-- **ECS deferred.** The 47-op ECS surface was attempted by an agent but the run was cut off by rate-limiting before its tests landed; reverted rather than shipped untested, and tracked in the conformance ratchet for a focused follow-on.
+- **ECS op completeness.** Closed ECS's entire remaining operation surface (47 ops) as faithful control-plane CRUD on real stores: capacity providers, task sets (+ UpdateServicePrimaryTaskSet), container instances (register/deregister/describe/list/update-state/update-agent + Submit*StateChange + DiscoverPollEndpoint), account settings, attributes, task protection, daemons (+ deployments/revisions/daemon task definitions), service deployments (describe/list/stop/continue + DescribeServiceRevisions + ListServicesByNamespace). New files `ecs_capacity.go`/`ecs_container_instances.go`/`ecs_daemons.go`/`ecs_service_deployments.go`/`ecs_tasksets.go`/`ecs_account.go`/`ecs_attributes.go`/`ecs_task_protection.go`/`ecs_taskdef_delete.go`/`ecs_start_task.go`. ECS's ratchet drops to 0.
+- **Tests.** Every op has an SDK test; ops with a public `aws` CLI surface also have a CLI test. The daemon ops + stop/continue-service-deployment are preview-only (no public CLI command) → SDK-tested only; the contract hook is satisfied by SDK coverage.
+- **Naming rule.** `AGENTS.md` § "Use proper, fully-qualified service and feature names": the feature is **Amazon ECS Express Mode**, not "ExpressGateway"; renamed sockerless's feature-label test/helper names while keeping AWS's real API/SDK spelling (`CreateExpressGatewayService`, `ExpressGatewayServiceConfiguration`, `create-express-gateway-service`) as the wire contract.
+- **In progress on this branch:** a doc naming sweep applying the rule across the prose docs (docs/, specs/, READMEs).
 - Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard guards pass.
 
-**Next candidates:** **ECS op completeness** (the 47-op surface — the ratchet tracks it; best run as its own focused PR with isolated agent worktrees). Close more S3 ops (object ACL/lock, ListObjects, UploadPartCopy) if a consumer needs them. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** finish the doc naming sweep. Close more S3 ops (object ACL/lock, ListObjects, UploadPartCopy) if a consumer needs them. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 

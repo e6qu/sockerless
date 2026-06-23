@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-266.2k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-268.5k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
 [![TypeScript](https://img.shields.io/badge/TypeScript-25.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-157.6k_lines-brightgreen)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-158.4k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -24,7 +24,7 @@
 >
 > **However** — opening issues, contributing fixes, or running it for your own testing/learning is all welcome. The repo is built in the open and reviews / pull requests / bug reports help it mature.
 
-A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
+A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on Amazon Elastic Container Service (ECS), Google Cloud Run, Azure Container Apps, and more.
 
 ## Why
 
@@ -112,7 +112,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
 ![bleephub](https://img.shields.io/badge/bleephub-40.6k-00ADD8)
-![sim/aws](https://img.shields.io/badge/sim%2Faws-69.2k-00ADD8)
+![sim/aws](https://img.shields.io/badge/sim%2Faws-71.5k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-37.5k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-25.6k-00ADD8)
 ![admin](https://img.shields.io/badge/admin-3.3k-00ADD8)

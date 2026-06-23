@@ -4,7 +4,7 @@
 >
 > **Purpose:** Per-operation comparison of what Docker does natively vs. what each Sockerless backend uses to achieve the same result. For current per-backend coverage, see [FEATURE_MATRIX.md](../FEATURE_MATRIX.md).
 >
-> **Note:** Cloud backends derive state from cloud-native tags/labels (the cloud is the source of truth) and call cloud APIs for container lifecycle, logs, networking, and service discovery. ECS uses VPC Security Groups + Cloud Map, CloudRun uses Cloud DNS, and ACA uses NSG + in-process DNS. ECS and ACA also have cloud-native exec drivers.
+> **Note:** Cloud backends derive state from cloud-native tags/labels (the cloud is the source of truth) and call cloud APIs for container lifecycle, logs, networking, and service discovery. Amazon Elastic Container Service (ECS) uses VPC Security Groups + Cloud Map, Google Cloud Run uses Cloud DNS, and Azure Container Apps (ACA) uses NSG + in-process DNS. ECS and ACA also have cloud-native exec drivers.
 
 ---
 

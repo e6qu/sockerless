@@ -2,7 +2,7 @@
 
 How backends track containers, pods, networks, and volumes using cloud-native tags/labels as the single source of truth.
 
-> **See also:** [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) — per-cloud authoritative mapping table (ECS task → docker container/pod, sockerless-tagged SG + Cloud Map namespace → docker network, etc.), state-derivation rules per backend, stateless recovery contract.
+> **See also:** [CLOUD_RESOURCE_MAPPING.md](CLOUD_RESOURCE_MAPPING.md) — per-cloud authoritative mapping table (Amazon Elastic Container Service (ECS) task → docker container/pod, sockerless-tagged SG + Cloud Map namespace → docker network, etc.), state-derivation rules per backend, stateless recovery contract.
 
 ## Principle: Stateless Backends
 
@@ -30,7 +30,7 @@ Two backends pointing at the same ECS cluster with the same config see the same 
 
 ## Resource Tagging
 
-### Containers (ECS tasks, Lambda functions, Cloud Run executions, ACA jobs)
+### Containers (ECS tasks, AWS Lambda functions, Cloud Run executions, Azure Container Apps (ACA) jobs)
 
 ```
 Tags (minimal — only what has no cloud-native equivalent):

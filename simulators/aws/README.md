@@ -1,6 +1,6 @@
 # simulator-aws
 
-Local reimplementation of the AWS slice that sockerless touches. Not a mock — workloads execute through real Docker, ECS / Lambda tasks run with real exit semantics, ECR stores real image manifests, and the broader CDN / DNS / cert / WAF / Amplify / IAM surfaces respond on the real wire shapes that the AWS SDK v2 + AWS CLI + Terraform `aws` provider expect.
+Local reimplementation of the AWS slice that sockerless touches. Not a mock — workloads execute through real Docker, Amazon Elastic Container Service (ECS) / AWS Lambda tasks run with real exit semantics, Amazon Elastic Container Registry (ECR) stores real image manifests, and the broader CDN / DNS / cert / AWS WAF / AWS Amplify / AWS Identity and Access Management (IAM) surfaces respond on the real wire shapes that the AWS SDK v2 + AWS CLI + Terraform `aws` provider expect.
 
 ## Reference adaptor
 

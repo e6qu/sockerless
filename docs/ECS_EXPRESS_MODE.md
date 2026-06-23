@@ -8,7 +8,7 @@ ECS Express Mode service compares to a hand-assembled vanilla ECS service, and h
 simulator composes the real underlying AWS resources to back it faithfully.
 
 Cross-references: the per-cloud resource mapping lives in
-[`specs/CLOUD_RESOURCE_MAPPING.md` § AWS ECS](../specs/CLOUD_RESOURCE_MAPPING.md#aws-ecs-backend-ecs);
+[`specs/CLOUD_RESOURCE_MAPPING.md` § Amazon ECS](../specs/CLOUD_RESOURCE_MAPPING.md#amazon-elastic-container-service-ecs-backend-ecs);
 the simulator's ECS operation table lives in
 [`specs/SIM_SURFACE_TABLES/aws-ecs.md`](../specs/SIM_SURFACE_TABLES/aws-ecs.md).
 
@@ -249,7 +249,7 @@ resource "aws_ecs_express_gateway_service" "web" {
 
 ## See also
 
-- [`specs/CLOUD_RESOURCE_MAPPING.md` § AWS ECS](../specs/CLOUD_RESOURCE_MAPPING.md#aws-ecs-backend-ecs) — the authoritative per-cloud Docker-concept → AWS-resource mapping.
+- [`specs/CLOUD_RESOURCE_MAPPING.md` § Amazon ECS](../specs/CLOUD_RESOURCE_MAPPING.md#amazon-elastic-container-service-ecs-backend-ecs) — the authoritative per-cloud Docker-concept → AWS-resource mapping.
 - [`specs/SIM_SURFACE_TABLES/aws-ecs.md`](../specs/SIM_SURFACE_TABLES/aws-ecs.md) — the simulator's ECS operation surface table.
 - [`docs/ECS_SERVICES_DESIGN.md`](ECS_SERVICES_DESIGN.md) — cross-container DNS for ECS via Cloud Map.
 - [`docs/ECS_LIVE_SETUP.md`](ECS_LIVE_SETUP.md) — standing up the ECS backend against a real AWS account.

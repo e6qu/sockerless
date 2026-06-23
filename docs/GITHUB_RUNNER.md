@@ -1,6 +1,6 @@
 # GitHub Actions Runner E2E Tests
 
-End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through the Sockerless Docker frontend, which delegates container execution to the selected backend (ECS, Lambda, Cloud Run, GCF, ACA, Azure Functions, or Docker).
+End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through the Sockerless Docker frontend, which delegates container execution to the selected backend (Amazon Elastic Container Service (ECS), AWS Lambda, Google Cloud Run, Google Cloud Functions (GCF), Azure Container Apps (ACA), Azure Functions, or Docker).
 
 > **Looking for real github.com + `actions/runner`?** See [`GITHUB_RUNNER_SAAS.md`](./GITHUB_RUNNER_SAAS.md) for the SaaS flow, or [`RUNNERS.md`](./RUNNERS.md) for the cross-platform canonical guide. This doc covers only the `act`-based simulator harness.
 

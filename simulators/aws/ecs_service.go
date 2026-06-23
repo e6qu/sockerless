@@ -130,6 +130,13 @@ func handleECSDescribeCapacityProviders(w http.ResponseWriter, r *http.Request) 
 			known[ecsCapacityProviderName(cp)] = true
 		}
 	}
+	// Custom providers created via CreateCapacityProvider carry their full
+	// config (autoScalingGroupProvider, status, type, tags); echo them verbatim.
+	custom := map[string]ECSCapacityProvider{}
+	for _, cp := range ecsCapacityProviders.List() {
+		known[cp.Name] = true
+		custom[cp.Name] = cp
+	}
 
 	requested := req.CapacityProviders
 	if len(requested) == 0 {
@@ -139,7 +146,7 @@ func handleECSDescribeCapacityProviders(w http.ResponseWriter, r *http.Request) 
 		sort.Strings(requested)
 	}
 
-	providers := make([]map[string]any, 0, len(requested))
+	providers := make([]any, 0, len(requested))
 	failures := make([]map[string]any, 0)
 	for _, ref := range requested {
 		name := ecsCapacityProviderName(ref)
@@ -148,6 +155,10 @@ func handleECSDescribeCapacityProviders(w http.ResponseWriter, r *http.Request) 
 				"arn":    ecsArn("capacity-provider", name),
 				"reason": "MISSING",
 			})
+			continue
+		}
+		if cp, ok := custom[name]; ok {
+			providers = append(providers, cp)
 			continue
 		}
 		providers = append(providers, map[string]any{
@@ -367,7 +378,24 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 	}
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
+	ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
+}
+
+// ecsServiceConnectNamespace extracts the Cloud Map namespace from a service's
+// serviceConnectConfiguration JSON, for ListServicesByNamespace. Returns "" when
+// no namespace is configured.
+func ecsServiceConnectNamespace(scc []byte) string {
+	if len(scc) == 0 {
+		return ""
+	}
+	var cfg struct {
+		Namespace string `json:"namespace"`
+	}
+	if err := json.Unmarshal(scc, &cfg); err != nil {
+		return ""
+	}
+	return cfg.Namespace
 }
 
 // ecsServiceDeployment builds the service's single PRIMARY deployment. The
@@ -632,6 +660,7 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	now := float64(time.Now().Unix())
 	svc.Deployments = []ECSDeployment{ecsServiceDeployment(svc, now)}
 	ecsServices.Put(key, svc)
+	ecsRecordServiceDeployment(svc, ecsServiceConnectNamespace(svc.ServiceConnectConfiguration))
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"service": svc})
 }
 

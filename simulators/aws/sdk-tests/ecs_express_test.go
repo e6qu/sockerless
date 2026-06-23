@@ -23,7 +23,7 @@ func expressCreateCluster(t *testing.T, c *ecs.Client, name string) string {
 	return name
 }
 
-// TestECSExpress_CreateAssemblyAndLifecycle drives the full Express Gateway
+// TestECSExpress_CreateAssemblyAndLifecycle drives the full ECS Express Mode
 // service lifecycle (Create/Describe/Update/Delete) through the ECS SDK and
 // asserts both the control-plane response shape and the faithful assembly: the
 // underlying ALB, scalable target, and Fargate service all exist via their own

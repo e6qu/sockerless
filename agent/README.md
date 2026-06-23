@@ -6,7 +6,7 @@ A WebSocket-based remote execution agent for Sockerless. It runs inside containe
 
 The agent operates in two modes:
 
-- **Server mode** — Listens on a port for incoming WebSocket connections from a Sockerless backend. Used by long-running container backends (ECS, Cloud Run, ACA).
+- **Server mode** — Listens on a port for incoming WebSocket connections from a Sockerless backend. Used by long-running container backends (Amazon Elastic Container Service (ECS), Cloud Run, Azure Container Apps (ACA)).
 - **Reverse mode** — Dials out to a backend-provided callback URL. Used by FaaS backends (Lambda, Cloud Functions, Azure Functions) where the container cannot accept inbound connections.
 
 In both modes the agent supports:

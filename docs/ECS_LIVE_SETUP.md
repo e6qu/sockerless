@@ -1,6 +1,6 @@
 # Running sockerless ECS backend against real AWS
 
-How to stand up the sockerless ECS backend against a real AWS account and expose its Docker API so external runners or clients can use it. This is the prerequisite for `docs/GITHUB_RUNNER_SAAS.md` and `docs/GITLAB_RUNNER_SAAS.md`.
+How to stand up the sockerless Amazon Elastic Container Service (ECS) backend against a real Amazon Web Services (AWS) account and expose its Docker API so external runners or clients can use it. This is the prerequisite for `docs/GITHUB_RUNNER_SAAS.md` and `docs/GITLAB_RUNNER_SAAS.md`.
 
 ## Prerequisites
 

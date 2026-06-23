@@ -26,7 +26,7 @@ ECS Fargate (or Lambda) task — your actual job
 Jobs flow:
 1. A workflow triggers on `github.com`. GitHub enqueues the job.
 2. The `actions/runner` binary long-polls GitHub, picks up the job, receives the manifest.
-3. For each step, the runner creates a container via the Docker API (which reaches sockerless). sockerless launches the task on ECS / Lambda.
+3. For each step, the runner creates a container via the Docker API (which reaches sockerless). sockerless launches the task on Amazon Elastic Container Service (ECS) / AWS Lambda.
 4. The runner uses `docker exec` to inject per-step scripts, collects stdout/stderr, and uploads the results back to `github.com`.
 
 ## Prerequisites
@@ -114,7 +114,7 @@ jobs:
       - run: PGPASSWORD=test psql -h postgres -U postgres -c 'SELECT 1'
 ```
 
-Push a commit. The runner should pick up all three jobs. The `with-services` job validates that cross-container DNS (per-hostname Cloud Map services, added in P86-003) works end-to-end.
+Push a commit. The runner should pick up all three jobs. The `with-services` job validates that cross-container DNS (per-hostname AWS Cloud Map services, added in P86-003) works end-to-end.
 
 ## What works, what doesn't
 
@@ -127,7 +127,7 @@ Push a commit. The runner should pick up all three jobs. The `with-services` job
 | Container actions (`uses: docker://…`) | works | Treated as a one-shot container. |
 | `actions/checkout@v4` | works | Same as on any runner. Code lands in the Fargate task's ephemeral disk. |
 | JavaScript actions (`uses: org/repo@vN`) | works | Downloaded inside the Fargate task via Node.js. |
-| `docker build` in a job | partial | Requires the CodeBuild delegation (`SOCKERLESS_AWS_CODEBUILD_PROJECT`). DinD inside Fargate is not supported. |
+| `docker build` in a job | partial | Requires the AWS CodeBuild delegation (`SOCKERLESS_AWS_CODEBUILD_PROJECT`). DinD inside Fargate is not supported. |
 | Artifact upload/download | works | Artifacts upload to github.com over HTTPS from the job container. |
 | GITHUB_TOKEN | works | GitHub injects as env var; the runner forwards. |
 | Cache (`actions/cache@v4`) | works | Cache round-trips over HTTPS to GitHub's storage. |
@@ -137,7 +137,7 @@ Push a commit. The runner should pick up all three jobs. The `with-services` job
 - **"unable to connect to docker daemon"** — runner can't reach sockerless. Verify `DOCKER_HOST` from the runner host: `curl -sf http://<sockerless-host>:3375/_ping`.
 - **Services resolve to wrong IP or fail DNS** — see `docs/ECS_SERVICES_DESIGN.md`. Private DNS on the VPC must be enabled.
 - **Jobs take 90+ seconds to start** — that's ECS cold-start for a new task definition. Warm pools aren't implemented; consider a runner-level pool or longer-running containers.
-- **`docker login` required** — runner steps that pull from private registries need credentials. Set them as GitHub secrets and pass them through a `docker login` step; sockerless forwards to ECR / wherever.
+- **`docker login` required** — runner steps that pull from private registries need credentials. Set them as GitHub secrets and pass them through a `docker login` step; sockerless forwards to Amazon Elastic Container Registry (ECR) / wherever.
 
 ## Live-cloud validation
 

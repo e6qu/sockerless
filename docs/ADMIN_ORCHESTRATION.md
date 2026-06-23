@@ -137,7 +137,7 @@ What it shows:
 - **Project tree.** One card per project; expanding a project shows every instance with kind / cloud / backend / port / sim-ref summary.
 - **Per-instance status.** Each row polls `GET /api/v1/topology/projects/{p}/instances/{i}/status` every 2 s while the page is open. The status badge shows `ok` (running + `/v1/health` 2xx), `unhealthy` (running + non-2xx or timeout, with the failure reason), `unknown` (running but no health probe answered), or `stopped` (no live PID).
 - **Topology file and recovery commands.** The top card shows the active `sockerless.yaml` path plus `make stack-status` / `make stack-down`.
-- **Default contexts.** When there are no projects, the page offers one-click local Azure ACA, AWS ECS, and GCP Cloud Run topology presets and shows the equivalent `make stack-*` command for each.
+- **Default contexts.** When there are no projects, the page offers one-click local Azure Container Apps (ACA), Amazon Elastic Container Service (ECS), and Google Cloud Run topology presets and shows the equivalent `make stack-*` command for each.
 - **Port registry.** A side card lists configured `ports.ranges[<kind>]` next to every claimed port across all projects (sorted by port number) so you can see at a glance what's free.
 
 What it can do:

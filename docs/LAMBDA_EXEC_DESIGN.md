@@ -1,6 +1,6 @@
 # Lambda reverse-agent exec design
 
-Lambda-backed containers support `docker exec` through the same mandatory reverse-agent model used by the other FaaS-style backends. There is no invoke-per-exec path and no local simulator-only agent path for cloud backends.
+AWS Lambda-backed containers support `docker exec` through the same mandatory reverse-agent model used by the other FaaS-style backends. There is no invoke-per-exec path and no local simulator-only agent path for cloud backends.
 
 ## Runtime shape
 
