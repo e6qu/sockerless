@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -217,19 +220,124 @@ func iamPermissionlessAction(action string) bool {
 // returns "*" when the resource can't be determined from the request alone —
 // the conservative default that never over-denies.
 func iamResourceARNForRequest(r *http.Request, action string) string {
-	switch {
-	case strings.HasPrefix(action, "sns:"):
-		if arn := r.FormValue("TopicArn"); arn != "" {
-			return arn
+	service := strings.SplitN(action, ":", 2)[0]
+	region := iamRequestedRegion(r)
+	if region == "" {
+		region = awsRegion()
+	}
+	acct := awsAccountID()
+	arn := func(svc, resource string) string {
+		return "arn:aws:" + svc + ":" + region + ":" + acct + ":" + resource
+	}
+	switch service {
+	case "sns":
+		if a := r.FormValue("TopicArn"); a != "" {
+			return a
 		}
-	case strings.HasPrefix(action, "sqs:"):
+	case "sqs":
 		if u := r.FormValue("QueueUrl"); u != "" {
 			if i := strings.LastIndex(u, "/"); i >= 0 {
-				return "arn:aws:sqs:" + iamRequestedRegion(r) + ":" + awsAccountID() + ":" + u[i+1:]
+				return arn("sqs", u[i+1:])
 			}
+		}
+	case "ec2":
+		// EC2 resource ids come as request parameters (query protocol).
+		for param, kind := range map[string]string{"VolumeId": "volume", "SnapshotId": "snapshot", "InstanceId": "instance", "NetworkInterfaceId": "network-interface"} {
+			if id := iamFirstFormValue(r, param); id != "" {
+				return arn("ec2", kind+"/"+id)
+			}
+		}
+	case "dynamodb":
+		if name := iamJSONBodyField(r, "TableName"); name != "" {
+			return arn("dynamodb", "table/"+name)
+		}
+	case "lambda":
+		if name := iamLambdaResourceName(r); name != "" {
+			if strings.HasPrefix(name, "arn:") {
+				return name
+			}
+			return arn("lambda", "function:"+name)
+		}
+	case "kms":
+		if id := iamJSONBodyField(r, "KeyId"); id != "" {
+			if strings.HasPrefix(id, "arn:") {
+				return id
+			}
+			return arn("kms", "key/"+id)
+		}
+	case "secretsmanager":
+		if id := iamJSONBodyField(r, "SecretId"); id != "" {
+			if strings.HasPrefix(id, "arn:") {
+				return id
+			}
+			return arn("secretsmanager", "secret:"+id)
+		}
+	case "states":
+		if a := iamJSONBodyField(r, "stateMachineArn"); a != "" {
+			return a
+		}
+	case "kinesis":
+		if name := iamJSONBodyField(r, "StreamName"); name != "" {
+			return arn("kinesis", "stream/"+name)
+		}
+		if a := iamJSONBodyField(r, "StreamARN"); a != "" {
+			return a
 		}
 	}
 	return "*"
+}
+
+// iamFirstFormValue returns a request parameter, also trying the `.1`-indexed
+// form EC2 uses for list parameters (InstanceId.1).
+func iamFirstFormValue(r *http.Request, param string) string {
+	if v := r.FormValue(param); v != "" {
+		return v
+	}
+	return r.FormValue(param + ".1")
+}
+
+// iamLambdaResourceName extracts the Lambda function name/ARN from the REST path
+// (/2015-03-31/functions/{name}/...) or the request body (FunctionName).
+func iamLambdaResourceName(r *http.Request) string {
+	if name := iamJSONBodyField(r, "FunctionName"); name != "" {
+		return name
+	}
+	const marker = "/functions/"
+	if i := strings.Index(r.URL.Path, marker); i >= 0 {
+		rest := r.URL.Path[i+len(marker):]
+		if j := strings.IndexByte(rest, '/'); j >= 0 {
+			return rest[:j]
+		}
+		return rest
+	}
+	return ""
+}
+
+// iamJSONBodyField reads a top-level string field from an awsJson request body,
+// restoring the body so the downstream handler still sees it.
+func iamJSONBodyField(r *http.Request, field string) string {
+	if r.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	if err != nil || len(body) == 0 {
+		return ""
+	}
+	var m map[string]json.RawMessage
+	if json.Unmarshal(body, &m) != nil {
+		return ""
+	}
+	raw, ok := m[field]
+	if !ok {
+		return ""
+	}
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return ""
+	}
+	return s
 }
 
 // iamWriteDeny emits the deny error in the shape the calling service uses: EC2's

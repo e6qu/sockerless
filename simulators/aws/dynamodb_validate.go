@@ -42,7 +42,40 @@ var ddbRequiredMembers = map[string][]string{
 	"ExecuteStatement":          {"Statement"},
 	"BatchExecuteStatement":     {"Statements"},
 	"ExecuteTransaction":        {"TransactStatements"},
-	// ListTables and DescribeLimits have no required input members.
+	// Backups.
+	"CreateBackup":              {"BackupName", "TableName"},
+	"DescribeBackup":            {"BackupArn"},
+	"DeleteBackup":              {"BackupArn"},
+	"RestoreTableFromBackup":    {"BackupArn", "TargetTableName"},
+	"RestoreTableToPointInTime": {"TargetTableName"},
+	// Global tables.
+	"CreateGlobalTable":               {"GlobalTableName", "ReplicationGroup"},
+	"DescribeGlobalTable":             {"GlobalTableName"},
+	"UpdateGlobalTable":               {"GlobalTableName", "ReplicaUpdates"},
+	"DescribeGlobalTableSettings":     {"GlobalTableName"},
+	"UpdateGlobalTableSettings":       {"GlobalTableName"},
+	"UpdateTableReplicaAutoScaling":   {"TableName"},
+	"DescribeTableReplicaAutoScaling": {"TableName"},
+	// Resource-based policy.
+	"PutResourcePolicy":    {"Policy", "ResourceArn"},
+	"GetResourcePolicy":    {"ResourceArn"},
+	"DeleteResourcePolicy": {"ResourceArn"},
+	// Kinesis streaming destinations.
+	"EnableKinesisStreamingDestination":   {"StreamArn", "TableName"},
+	"DisableKinesisStreamingDestination":  {"StreamArn", "TableName"},
+	"DescribeKinesisStreamingDestination": {"TableName"},
+	"UpdateKinesisStreamingDestination":   {"StreamArn", "TableName"},
+	// Exports / imports.
+	"ExportTableToPointInTime": {"S3Bucket", "TableArn"},
+	"DescribeExport":           {"ExportArn"},
+	"ImportTable":              {"InputFormat", "S3BucketSource", "TableCreationParameters"},
+	"DescribeImport":           {"ImportArn"},
+	// Contributor insights.
+	"UpdateContributorInsights":   {"ContributorInsightsAction", "TableName"},
+	"DescribeContributorInsights": {"TableName"},
+	// ListTables, DescribeLimits, ListBackups, ListGlobalTables, ListExports,
+	// ListImports, ListContributorInsights and DescribeEndpoints have no
+	// required input members.
 }
 
 // ddbRequire wraps a handler so that any required input member that is absent or

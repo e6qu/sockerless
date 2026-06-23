@@ -267,6 +267,7 @@ func registerDynamoDB(r *sim.AWSRouter, srv *sim.Server) {
 	reg("DynamoDB_20120810.UntagResource", handleDDBUntagResource)
 	reg("DynamoDB_20120810.DescribeLimits", handleDDBDescribeLimits)
 	registerDDBPartiQL(r)
+	registerDynamoDBExtended(r, srv)
 }
 
 // handleDDBDescribeLimits returns the account/table capacity maximums.
