@@ -1,3 +1,4 @@
 AWSStepFunctions.ValidateStateMachineDefinition
 AWSStepFunctions.ListStateMachineVersions
 AWSGlue.GetPartitionIndexes
+POST /service/GraniteServiceVersion20100801/operation/
