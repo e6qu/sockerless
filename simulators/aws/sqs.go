@@ -5,6 +5,7 @@ import (
 	"crypto/md5"
 	"encoding/binary"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
@@ -213,6 +214,11 @@ func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonSQS.SendMessageBatch", handleSQSSendMessageBatch)
 	r.Register("AmazonSQS.ReceiveMessage", handleSQSReceiveMessage)
 	r.Register("AmazonSQS.DeleteMessage", handleSQSDeleteMessage)
+	r.Register("AmazonSQS.DeleteMessageBatch", handleSQSDeleteMessageBatch)
+	r.Register("AmazonSQS.ChangeMessageVisibility", handleSQSChangeMessageVisibility)
+	r.Register("AmazonSQS.ChangeMessageVisibilityBatch", handleSQSChangeMessageVisibilityBatch)
+	r.Register("AmazonSQS.AddPermission", handleSQSAddPermission)
+	r.Register("AmazonSQS.RemovePermission", handleSQSRemovePermission)
 	r.Register("AmazonSQS.TagQueue", handleSQSTagQueue)
 	r.Register("AmazonSQS.UntagQueue", handleSQSUntagQueue)
 	r.Register("AmazonSQS.ListQueueTags", handleSQSListQueueTags)
@@ -812,6 +818,401 @@ func handleSQSDeleteMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		qq.Messages = out
 	})
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// sqsReceiptHandleInvalid reports the canonical ReceiptHandleIsInvalid error
+// real SQS raises when a receipt handle doesn't correspond to any message
+// currently held by the queue.
+func sqsReceiptHandleInvalid(w http.ResponseWriter, handle string) {
+	w.Header().Set("x-amzn-query-error", "ReceiptHandleIsInvalid;Sender")
+	sqsErrorJSON(w, "ReceiptHandleIsInvalid",
+		`The input receipt handle "`+handle+`" is not a valid receipt handle.`,
+		http.StatusBadRequest)
+}
+
+// handleSQSDeleteMessageBatch deletes up to 10 messages by receipt handle in a
+// single call, reporting per-entry success/failure the way real SQS does. The
+// batch-level failures (empty list, >10 entries, duplicate Ids) are top-level
+// errors; a per-entry receipt handle that matches no in-flight message lands in
+// the Failed array with HTTP 200.
+func handleSQSDeleteMessageBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl string `json:"QueueUrl"`
+		Entries  []struct {
+			Id            string `json:"Id"`
+			ReceiptHandle string `json:"ReceiptHandle"`
+		} `json:"Entries"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	if _, ok := sqsQueues.Get(name); !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if len(req.Entries) == 0 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.EmptyBatchRequest",
+			"There should be at least one DeleteMessageBatchRequestEntry in the request.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(req.Entries) > 10 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.TooManyEntriesInBatchRequest",
+			"Maximum number of entries per request are 10. You have sent "+strconv.Itoa(len(req.Entries))+".",
+			http.StatusBadRequest)
+		return
+	}
+	seen := map[string]bool{}
+	for _, e := range req.Entries {
+		if seen[e.Id] {
+			sqsErrorJSON(w, "AWS.SimpleQueueService.BatchEntryIdsNotDistinct",
+				"Id "+e.Id+" repeated.", http.StatusBadRequest)
+			return
+		}
+		seen[e.Id] = true
+	}
+
+	successful := make([]map[string]string, 0, len(req.Entries))
+	failed := make([]map[string]any, 0)
+	for _, e := range req.Entries {
+		var found bool
+		sqsQueues.Update(name, func(qq *SQSQueue) {
+			out := qq.Messages[:0]
+			for _, m := range qq.Messages {
+				if m.ReceiptHandle != "" && m.ReceiptHandle == e.ReceiptHandle {
+					found = true
+					continue
+				}
+				out = append(out, m)
+			}
+			qq.Messages = out
+		})
+		if found {
+			successful = append(successful, map[string]string{"Id": e.Id})
+		} else {
+			failed = append(failed, map[string]any{
+				"Id":          e.Id,
+				"Code":        "ReceiptHandleIsInvalid",
+				"Message":     `The input receipt handle "` + e.ReceiptHandle + `" is not a valid receipt handle.`,
+				"SenderFault": true,
+			})
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Successful": successful,
+		"Failed":     failed,
+	})
+}
+
+// sqsApplyVisibility resets the VisibleAt of the message identified by the
+// receipt handle to now+timeout, mirroring ChangeMessageVisibility. It reports
+// whether the handle matched a message and whether that message was in flight
+// (a handle that matches a message no longer hidden is MessageNotInflight on
+// real SQS). A negative timeout is rejected by the caller before this runs.
+func sqsApplyVisibility(name, handle string, timeout int) (matched, inflight bool) {
+	now := time.Now().Unix()
+	sqsQueues.Update(name, func(qq *SQSQueue) {
+		for i := range qq.Messages {
+			if qq.Messages[i].ReceiptHandle != "" && qq.Messages[i].ReceiptHandle == handle {
+				matched = true
+				inflight = qq.Messages[i].VisibleAt > now
+				qq.Messages[i].VisibleAt = now + int64(timeout)
+				return
+			}
+		}
+	})
+	return matched, inflight
+}
+
+func handleSQSChangeMessageVisibility(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl          string `json:"QueueUrl"`
+		ReceiptHandle     string `json:"ReceiptHandle"`
+		VisibilityTimeout int    `json:"VisibilityTimeout"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	if _, ok := sqsQueues.Get(name); !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if req.VisibilityTimeout < 0 || req.VisibilityTimeout > 43200 {
+		sqsErrorJSON(w, "InvalidParameterValue",
+			fmt.Sprintf("Value %d for parameter VisibilityTimeout is invalid. Reason: must be between 0 and 43200.", req.VisibilityTimeout),
+			http.StatusBadRequest)
+		return
+	}
+	matched, inflight := sqsApplyVisibility(name, req.ReceiptHandle, req.VisibilityTimeout)
+	if !matched {
+		sqsReceiptHandleInvalid(w, req.ReceiptHandle)
+		return
+	}
+	if !inflight {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.MessageNotInflight",
+			"The message referred to is not in flight.", http.StatusBadRequest)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleSQSChangeMessageVisibilityBatch changes visibility for up to 10
+// in-flight messages in one call, reporting per-entry success/failure. The
+// batch-level failures (empty list, >10 entries, duplicate Ids) are top-level
+// errors; per-entry failures (invalid handle, not in flight, out-of-range
+// timeout) land in the Failed array with HTTP 200.
+func handleSQSChangeMessageVisibilityBatch(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl string `json:"QueueUrl"`
+		Entries  []struct {
+			Id                string `json:"Id"`
+			ReceiptHandle     string `json:"ReceiptHandle"`
+			VisibilityTimeout int    `json:"VisibilityTimeout"`
+		} `json:"Entries"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	if _, ok := sqsQueues.Get(name); !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if len(req.Entries) == 0 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.EmptyBatchRequest",
+			"There should be at least one ChangeMessageVisibilityBatchRequestEntry in the request.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(req.Entries) > 10 {
+		sqsErrorJSON(w, "AWS.SimpleQueueService.TooManyEntriesInBatchRequest",
+			"Maximum number of entries per request are 10. You have sent "+strconv.Itoa(len(req.Entries))+".",
+			http.StatusBadRequest)
+		return
+	}
+	seen := map[string]bool{}
+	for _, e := range req.Entries {
+		if seen[e.Id] {
+			sqsErrorJSON(w, "AWS.SimpleQueueService.BatchEntryIdsNotDistinct",
+				"Id "+e.Id+" repeated.", http.StatusBadRequest)
+			return
+		}
+		seen[e.Id] = true
+	}
+
+	successful := make([]map[string]string, 0, len(req.Entries))
+	failed := make([]map[string]any, 0)
+	for _, e := range req.Entries {
+		if e.VisibilityTimeout < 0 || e.VisibilityTimeout > 43200 {
+			failed = append(failed, map[string]any{
+				"Id":          e.Id,
+				"Code":        "InvalidParameterValue",
+				"Message":     fmt.Sprintf("Value %d for parameter VisibilityTimeout is invalid. Reason: must be between 0 and 43200.", e.VisibilityTimeout),
+				"SenderFault": true,
+			})
+			continue
+		}
+		matched, inflight := sqsApplyVisibility(name, e.ReceiptHandle, e.VisibilityTimeout)
+		switch {
+		case !matched:
+			failed = append(failed, map[string]any{
+				"Id":          e.Id,
+				"Code":        "ReceiptHandleIsInvalid",
+				"Message":     `The input receipt handle "` + e.ReceiptHandle + `" is not a valid receipt handle.`,
+				"SenderFault": true,
+			})
+		case !inflight:
+			failed = append(failed, map[string]any{
+				"Id":          e.Id,
+				"Code":        "AWS.SimpleQueueService.MessageNotInflight",
+				"Message":     "The message referred to is not in flight.",
+				"SenderFault": true,
+			})
+		default:
+			successful = append(successful, map[string]string{"Id": e.Id})
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"Successful": successful,
+		"Failed":     failed,
+	})
+}
+
+// sqsPolicyDocument parses the queue's stored Policy attribute into a mutable
+// document, returning a fresh empty document (Version 2012-10-17, no
+// statements) when none is stored yet.
+func sqsPolicyDocument(raw string) (map[string]any, []map[string]any, error) {
+	policy := map[string]any{
+		"Version":   "2012-10-17",
+		"Statement": []map[string]any{},
+	}
+	if raw == "" {
+		return policy, []map[string]any{}, nil
+	}
+	if err := json.Unmarshal([]byte(raw), &policy); err != nil {
+		return nil, nil, err
+	}
+	statements := []map[string]any{}
+	if raw, ok := policy["Statement"]; ok {
+		if arr, ok := raw.([]any); ok {
+			for _, s := range arr {
+				if m, ok := s.(map[string]any); ok {
+					statements = append(statements, m)
+				}
+			}
+		}
+	}
+	return policy, statements, nil
+}
+
+// sqsStoreQueuePolicy persists a queue policy document into both the queue's
+// Attributes["Policy"] (the GetQueueAttributes read-back source) and the central
+// IAM resource-policy mirror (the enforcement-gate read source) — the same two
+// destinations SetQueueAttributes(Policy) writes. An empty policy clears both.
+func sqsStoreQueuePolicy(name, queueARN, policyJSON string) {
+	sqsQueues.Update(name, func(q *SQSQueue) {
+		if q.Attributes == nil {
+			q.Attributes = map[string]string{}
+		}
+		if policyJSON == "" {
+			delete(q.Attributes, "Policy")
+		} else {
+			q.Attributes["Policy"] = policyJSON
+		}
+	})
+	if policyJSON == "" {
+		iamDeleteResourcePolicy(queueARN)
+	} else {
+		iamPutResourcePolicy(queueARN, policyJSON)
+	}
+}
+
+// handleSQSAddPermission appends an Allow statement (Sid=Label) to the queue's
+// resource policy granting the named AWS accounts the named SQS actions, the way
+// real SQS's AddPermission does. The actions are stored prefixed with "SQS:" and
+// the principals as the account-root ARNs SQS canonicalizes bare account IDs to.
+func handleSQSAddPermission(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl      string   `json:"QueueUrl"`
+		Label         string   `json:"Label"`
+		AWSAccountIds []string `json:"AWSAccountIds"`
+		Actions       []string `json:"Actions"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	q, ok := sqsQueues.Get(name)
+	if !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if req.Label == "" {
+		sqsErrorJSON(w, "MissingParameter", "Label is required", http.StatusBadRequest)
+		return
+	}
+	if len(req.AWSAccountIds) == 0 || len(req.Actions) == 0 {
+		sqsErrorJSON(w, "MissingParameter",
+			"AWSAccountIds and Actions are required", http.StatusBadRequest)
+		return
+	}
+	policy, statements, err := sqsPolicyDocument(q.Attributes["Policy"])
+	if err != nil {
+		sqsErrorJSON(w, "InternalError",
+			"Stored queue policy is not valid JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	for _, s := range statements {
+		if sid, _ := s["Sid"].(string); sid == req.Label {
+			// Real SQS rejects a duplicate label.
+			sqsErrorJSON(w, "InvalidParameterValue",
+				"Value "+req.Label+" for parameter Label is invalid. Reason: Already exists.",
+				http.StatusBadRequest)
+			return
+		}
+	}
+	principals := make([]string, 0, len(req.AWSAccountIds))
+	for _, acct := range req.AWSAccountIds {
+		principals = append(principals, "arn:aws:iam::"+acct+":root")
+	}
+	actions := make([]string, 0, len(req.Actions))
+	for _, a := range req.Actions {
+		if strings.Contains(a, ":") {
+			actions = append(actions, a)
+		} else {
+			actions = append(actions, "SQS:"+a)
+		}
+	}
+	statements = append(statements, map[string]any{
+		"Sid":       req.Label,
+		"Effect":    "Allow",
+		"Principal": map[string]any{"AWS": principals},
+		"Action":    actions,
+		"Resource":  q.ARN,
+	})
+	policy["Statement"] = statements
+	body, _ := json.Marshal(policy)
+	sqsStoreQueuePolicy(name, q.ARN, string(body))
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleSQSRemovePermission removes the statement with Sid=Label from the
+// queue's resource policy. Removing the last statement clears the policy
+// entirely, the way real SQS's RemovePermission does.
+func handleSQSRemovePermission(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		QueueUrl string `json:"QueueUrl"`
+		Label    string `json:"Label"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sqsErrorJSON(w, "MalformedInputException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	name := queueNameFromURL(req.QueueUrl)
+	q, ok := sqsQueues.Get(name)
+	if !ok {
+		sqsQueueDoesNotExist(w)
+		return
+	}
+	if req.Label == "" {
+		sqsErrorJSON(w, "MissingParameter", "Label is required", http.StatusBadRequest)
+		return
+	}
+	policy, statements, err := sqsPolicyDocument(q.Attributes["Policy"])
+	if err != nil {
+		sqsErrorJSON(w, "InternalError",
+			"Stored queue policy is not valid JSON: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	filtered := make([]map[string]any, 0, len(statements))
+	found := false
+	for _, s := range statements {
+		if sid, _ := s["Sid"].(string); sid == req.Label {
+			found = true
+			continue
+		}
+		filtered = append(filtered, s)
+	}
+	if !found {
+		sqsErrorJSON(w, "InvalidParameterValue",
+			"Value "+req.Label+" for parameter Label is invalid. Reason: can't find label on existing policy.",
+			http.StatusBadRequest)
+		return
+	}
+	if len(filtered) == 0 {
+		sqsStoreQueuePolicy(name, q.ARN, "")
+	} else {
+		policy["Statement"] = filtered
+		body, _ := json.Marshal(policy)
+		sqsStoreQueuePolicy(name, q.ARN, string(body))
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

@@ -48,6 +48,11 @@ type SNSSubscription struct {
 	Protocol  string // "sqs", "http", "https", "email", "sms", "lambda"
 	Endpoint  string // queue ARN for sqs, URL for http(s), email addr, etc.
 	Confirmed bool
+	// Attributes holds the mutable subscription settings set via
+	// SetSubscriptionAttributes — RawMessageDelivery, FilterPolicy,
+	// FilterPolicyScope, DeliveryPolicy, RedrivePolicy — surfaced by
+	// GetSubscriptionAttributes alongside the fixed read-only fields.
+	Attributes map[string]string
 }
 
 var (
@@ -83,8 +88,13 @@ func registerSNS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(snsAPIVersion, "SetTopicAttributes", handleSNSSetTopicAttributes)
 	r.RegisterVersioned(snsAPIVersion, "Subscribe", handleSNSSubscribe)
 	r.RegisterVersioned(snsAPIVersion, "Unsubscribe", handleSNSUnsubscribe)
+	r.RegisterVersioned(snsAPIVersion, "ConfirmSubscription", handleSNSConfirmSubscription)
+	r.RegisterVersioned(snsAPIVersion, "GetSubscriptionAttributes", handleSNSGetSubscriptionAttributes)
+	r.RegisterVersioned(snsAPIVersion, "SetSubscriptionAttributes", handleSNSSetSubscriptionAttributes)
 	r.RegisterVersioned(snsAPIVersion, "ListSubscriptions", handleSNSListSubscriptions)
 	r.RegisterVersioned(snsAPIVersion, "ListSubscriptionsByTopic", handleSNSListSubscriptionsByTopic)
+	r.RegisterVersioned(snsAPIVersion, "AddPermission", handleSNSAddPermission)
+	r.RegisterVersioned(snsAPIVersion, "RemovePermission", handleSNSRemovePermission)
 	r.RegisterVersioned(snsAPIVersion, "Publish", handleSNSPublish)
 	r.RegisterVersioned(snsAPIVersion, "PublishBatch", handleSNSPublishBatch)
 	r.RegisterVersioned(snsAPIVersion, "TagResource", handleSNSTagResource)
@@ -349,6 +359,131 @@ func handleSNSUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("SubscriptionArn")
 	snsSubscriptions.Delete(arn)
 	snsXMLResponse(w, "Unsubscribe", "", sim.RequestID(r.Context()))
+}
+
+// handleSNSConfirmSubscription confirms a pending subscription. Real SNS
+// auto-confirms sqs/lambda/application/firehose subscriptions at Subscribe
+// time; HTTP(S)/email subscribers receive a token they echo back here to
+// flip the subscription to confirmed. The sim issues a deterministic token
+// per (topic, subscription) at Subscribe time (snsConfirmationToken); a
+// ConfirmSubscription call resolves that token to its subscription, marks it
+// confirmed, and returns the ARN — and is idempotent on already-confirmed
+// subscriptions, matching real SNS.
+func handleSNSConfirmSubscription(w http.ResponseWriter, r *http.Request) {
+	topicARN := r.FormValue("TopicArn")
+	token := r.FormValue("Token")
+	if topicARN == "" || token == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"TopicArn and Token are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	name := snsTopicNameFromARN(topicARN)
+	if _, ok := snsTopics.Get(name); !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	var found *SNSSubscription
+	for _, sub := range snsSubscriptions.List() {
+		if sub.TopicARN == topicARN && snsConfirmationToken(sub) == token {
+			s := sub
+			found = &s
+			break
+		}
+	}
+	if found == nil {
+		snsErrorXML(w, "InvalidParameter",
+			"Invalid token", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if !found.Confirmed {
+		found.Confirmed = true
+		snsSubscriptions.Put(found.ARN, *found)
+	}
+	body := fmt.Sprintf("<ConfirmSubscriptionResult><SubscriptionArn>%s</SubscriptionArn></ConfirmSubscriptionResult>",
+		xmlEscape(found.ARN))
+	snsXMLResponse(w, "ConfirmSubscription", body, sim.RequestID(r.Context()))
+}
+
+// snsConfirmationToken derives the deterministic confirmation token a
+// subscription's confirmation message carries. Keying it off the
+// subscription ARN means the Subscribe path issues it implicitly (the ARN is
+// returned to the subscriber) and ConfirmSubscription can resolve it without
+// extra stored state.
+func snsConfirmationToken(sub SNSSubscription) string {
+	return strings.ReplaceAll(sub.ARN, ":", "")
+}
+
+// handleSNSGetSubscriptionAttributes returns a subscription's attributes —
+// the fixed read-only fields (SubscriptionArn, TopicArn, Protocol, Endpoint,
+// Owner, ConfirmationWasAuthenticated, PendingConfirmation, RawMessageDelivery)
+// plus any FilterPolicy / DeliveryPolicy / RedrivePolicy set via
+// SetSubscriptionAttributes.
+func handleSNSGetSubscriptionAttributes(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("SubscriptionArn")
+	sub, ok := snsSubscriptions.Get(arn)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Subscription does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	pending := "false"
+	if !sub.Confirmed {
+		pending = "true"
+	}
+	attrs := map[string]string{
+		"SubscriptionArn":              sub.ARN,
+		"TopicArn":                     sub.TopicARN,
+		"Protocol":                     sub.Protocol,
+		"Endpoint":                     sub.Endpoint,
+		"Owner":                        awsAccountID(),
+		"ConfirmationWasAuthenticated": "false",
+		"PendingConfirmation":          pending,
+		"RawMessageDelivery":           "false",
+	}
+	// Attributes set via SetSubscriptionAttributes override the defaults
+	// (e.g. RawMessageDelivery=true) and add the optional policy documents.
+	for k, v := range sub.Attributes {
+		attrs[k] = v
+	}
+	var b strings.Builder
+	b.WriteString("<GetSubscriptionAttributesResult><Attributes>")
+	for k, v := range attrs {
+		fmt.Fprintf(&b, "<entry><key>%s</key><value>%s</value></entry>",
+			xmlEscape(k), xmlEscape(v))
+	}
+	b.WriteString("</Attributes></GetSubscriptionAttributesResult>")
+	snsXMLResponse(w, "GetSubscriptionAttributes", b.String(), sim.RequestID(r.Context()))
+}
+
+// handleSNSSetSubscriptionAttributes stores a single (AttributeName,
+// AttributeValue) pair on a subscription — RawMessageDelivery, FilterPolicy,
+// FilterPolicyScope, DeliveryPolicy, RedrivePolicy. terraform-provider-aws
+// emits this on aws_sns_topic_subscription.
+func handleSNSSetSubscriptionAttributes(w http.ResponseWriter, r *http.Request) {
+	arn := r.FormValue("SubscriptionArn")
+	sub, ok := snsSubscriptions.Get(arn)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Subscription does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	attrName := r.FormValue("AttributeName")
+	if attrName == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"AttributeName is required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	attrValue := r.FormValue("AttributeValue")
+	if sub.Attributes == nil {
+		sub.Attributes = map[string]string{}
+	}
+	if attrValue == "" {
+		delete(sub.Attributes, attrName)
+	} else {
+		sub.Attributes[attrName] = attrValue
+	}
+	snsSubscriptions.Put(arn, sub)
+	snsXMLResponse(w, "SetSubscriptionAttributes", "", sim.RequestID(r.Context()))
 }
 
 func handleSNSListSubscriptions(w http.ResponseWriter, r *http.Request) {
@@ -654,6 +789,168 @@ func snsPublishBatchEntries(r *http.Request) []snsPublishEntry {
 		})
 	}
 	return out
+}
+
+// snsPolicyStatement is the wire shape of one statement in an SNS topic
+// resource policy, matching what AWS's AddPermission produces: an allow with
+// an AWS-principal list, an SNS:<action> list, and the topic ARN as Resource.
+type snsPolicyStatement struct {
+	Sid       string         `json:"Sid"`
+	Effect    string         `json:"Effect"`
+	Principal map[string]any `json:"Principal"`
+	Action    []string       `json:"Action"`
+	Resource  string         `json:"Resource"`
+}
+
+type snsPolicyDoc struct {
+	Version   string               `json:"Version"`
+	Id        string               `json:"Id,omitempty"`
+	Statement []snsPolicyStatement `json:"Statement"`
+}
+
+// snsLoadTopicPolicy parses the topic's current Policy attribute into a
+// statement list. A topic with no Policy yet starts from an empty default
+// document.
+func snsLoadTopicPolicy(t SNSTopic) snsPolicyDoc {
+	doc := snsPolicyDoc{Version: "2008-10-17", Id: snsTopicNameFromARN(t.ARN) + "/SNSDefaultPolicy"}
+	raw := t.Attributes["Policy"]
+	if raw == "" {
+		return doc
+	}
+	var parsed snsPolicyDoc
+	if err := json.Unmarshal([]byte(raw), &parsed); err != nil {
+		// A topic policy the sim itself can't parse is corrupt own-data;
+		// surface it loudly rather than silently dropping statements.
+		panic(fmt.Sprintf("sns: unparseable topic Policy attribute: %v", err))
+	}
+	if parsed.Version == "" {
+		parsed.Version = doc.Version
+	}
+	return parsed
+}
+
+// snsStoreTopicPolicy serializes the policy doc back onto the topic's Policy
+// attribute and mirrors it into the central resource-policy store (the same
+// path SetTopicAttributes(Policy) uses) so iamResourcePolicyDocsForARN
+// resolves it.
+func snsStoreTopicPolicy(name string, t SNSTopic, doc snsPolicyDoc) {
+	out, err := json.Marshal(doc)
+	if err != nil {
+		panic(fmt.Sprintf("sns: marshal topic Policy: %v", err))
+	}
+	if t.Attributes == nil {
+		t.Attributes = map[string]string{}
+	}
+	t.Attributes["Policy"] = string(out)
+	snsTopics.Put(name, t)
+	iamPutResourcePolicy(t.ARN, string(out))
+}
+
+// snsListMembers pulls a query-flattened <prefix>.member.N list (the wire
+// shape of AddPermission's AWSAccountId and ActionName lists) into a slice.
+func snsListMembers(r *http.Request, prefix string) []string {
+	var out []string
+	for i := 1; ; i++ {
+		v := r.FormValue(fmt.Sprintf("%s.member.%d", prefix, i))
+		if v == "" {
+			break
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+// handleSNSAddPermission appends a statement (Sid=Label, Effect=Allow,
+// Principal={AWS:[<account-root>...]}, Action=[SNS:<action>...],
+// Resource=<topicArn>) to the topic's resource policy. A second AddPermission
+// with the same Label is rejected, matching real SNS.
+func handleSNSAddPermission(w http.ResponseWriter, r *http.Request) {
+	topicARN := r.FormValue("TopicArn")
+	label := r.FormValue("Label")
+	if topicARN == "" || label == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"TopicArn and Label are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	name := snsTopicNameFromARN(topicARN)
+	t, ok := snsTopics.Get(name)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	accounts := snsListMembers(r, "AWSAccountId")
+	actions := snsListMembers(r, "ActionName")
+	if len(accounts) == 0 || len(actions) == 0 {
+		snsErrorXML(w, "InvalidParameter",
+			"AWSAccountId and ActionName are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	doc := snsLoadTopicPolicy(t)
+	for _, st := range doc.Statement {
+		if st.Sid == label {
+			snsErrorXML(w, "InvalidParameter",
+				fmt.Sprintf("Statement already exists with Sid %s", label),
+				http.StatusBadRequest, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	principals := make([]string, 0, len(accounts))
+	for _, acct := range accounts {
+		principals = append(principals, fmt.Sprintf("arn:aws:iam::%s:root", acct))
+	}
+	snsActions := make([]string, 0, len(actions))
+	for _, a := range actions {
+		snsActions = append(snsActions, "SNS:"+a)
+	}
+	doc.Statement = append(doc.Statement, snsPolicyStatement{
+		Sid:       label,
+		Effect:    "Allow",
+		Principal: map[string]any{"AWS": principals},
+		Action:    snsActions,
+		Resource:  t.ARN,
+	})
+	snsStoreTopicPolicy(name, t, doc)
+	snsXMLResponse(w, "AddPermission", "", sim.RequestID(r.Context()))
+}
+
+// handleSNSRemovePermission removes the statement whose Sid matches Label.
+// Real SNS raises NotFound when no statement carries the label.
+func handleSNSRemovePermission(w http.ResponseWriter, r *http.Request) {
+	topicARN := r.FormValue("TopicArn")
+	label := r.FormValue("Label")
+	if topicARN == "" || label == "" {
+		snsErrorXML(w, "InvalidParameter",
+			"TopicArn and Label are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	name := snsTopicNameFromARN(topicARN)
+	t, ok := snsTopics.Get(name)
+	if !ok {
+		snsErrorXML(w, "NotFound", "Topic does not exist", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	doc := snsLoadTopicPolicy(t)
+	kept := doc.Statement[:0]
+	removed := false
+	for _, st := range doc.Statement {
+		if st.Sid == label {
+			removed = true
+			continue
+		}
+		kept = append(kept, st)
+	}
+	if !removed {
+		snsErrorXML(w, "NotFound",
+			fmt.Sprintf("No statement was found with Sid %s", label),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	doc.Statement = kept
+	snsStoreTopicPolicy(name, t, doc)
+	snsXMLResponse(w, "RemovePermission", "", sim.RequestID(r.Context()))
 }
 
 func handleSNSTagResource(w http.ResponseWriter, r *http.Request) {

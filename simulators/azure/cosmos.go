@@ -151,6 +151,8 @@ func registerCosmosDB(srv *sim.Server) {
 	srv.HandleFunc("PUT /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataReplaceDoc)
 	srv.HandleFunc("PATCH /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataPatchDoc)
 	srv.HandleFunc("DELETE /dbs/{database}/colls/{container}/docs/{doc}", handleCosmosDataDeleteDoc)
+
+	registerCosmosThroughput(srv)
 }
 
 func cosmosAccountID(sub, rg, account string) string {
@@ -735,6 +737,9 @@ func handleCosmosDataCreateDB(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	db := cosmosDataDB(account, id)
+	if rid, ok := db["_rid"].(string); ok {
+		cosmosProvisionOfferFromHeaders(r, account, rid)
+	}
 	cosmosWriteData(w, http.StatusCreated, db)
 }
 
@@ -793,7 +798,11 @@ func handleCosmosDataCreateColl(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cosmosDataColls.Put(cosmosDataCollKey(account, db, id), CosmosDataColl{Account: account, DB: db, Coll: id, PKPath: pkPath})
-	cosmosWriteData(w, http.StatusCreated, cosmosDataColl(account, db, id))
+	coll := cosmosDataColl(account, db, id)
+	if rid, ok := coll["_rid"].(string); ok {
+		cosmosProvisionOfferFromHeaders(r, account, rid)
+	}
+	cosmosWriteData(w, http.StatusCreated, coll)
 }
 
 func handleCosmosDataListColls(w http.ResponseWriter, r *http.Request) {
@@ -832,6 +841,9 @@ func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	var body map[string]any
 	if err := sim.ReadJSON(r, &body); err != nil {
 		cosmosDataError(w, "BadRequest", "invalid document body", http.StatusBadRequest)
@@ -872,10 +884,18 @@ func handleCosmosDataCreateOrQueryDoc(w http.ResponseWriter, r *http.Request) {
 		// An upsert that replaced an existing document returns 200, not 201.
 		status = http.StatusOK
 	}
-	cosmosWriteData(w, status, cosmosDocBody(doc))
+	out := cosmosDocBody(doc)
+	cosmosSetWriteSession(w, account, db, coll, pkComponent)
+	cosmosWriteDataCharge(w, status, out, cosmosWriteCharge(out))
 }
 
 func handleCosmosDataListDocs(w http.ResponseWriter, r *http.Request) {
+	// A `A-IM: Incremental feed` request switches the documents read into
+	// change-feed mode (same route, as in real Cosmos).
+	if cosmosIsChangeFeedRequest(r) {
+		handleCosmosChangeFeed(w, r)
+		return
+	}
 	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
 	items := cosmosDocsFor(account, db, coll)
 	docs := make([]map[string]any, 0, len(items))
@@ -887,6 +907,9 @@ func handleCosmosDataListDocs(w http.ResponseWriter, r *http.Request) {
 
 func handleCosmosDataGetDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	doc, _, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
 	if werr != nil {
 		cosmosDataError(w, werr.code, werr.msg, werr.status)
@@ -896,7 +919,9 @@ func handleCosmosDataGetDoc(w http.ResponseWriter, r *http.Request) {
 		cosmosDataError(w, "NotFound", "Entity with the specified id does not exist", http.StatusNotFound)
 		return
 	}
-	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+	out := cosmosDocBody(doc)
+	cosmosEchoReadSession(w, r, account, db, coll, cosmosDocPKComponent(account, db, coll, doc))
+	cosmosWriteDataCharge(w, http.StatusOK, out, cosmosReadCharge(out))
 }
 
 // cosmosResolvePointDoc looks up a single document addressed by (partition key,
@@ -923,6 +948,9 @@ func cosmosResolvePointDoc(r *http.Request, account, db, coll, docID string) (Co
 
 func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	var body map[string]any
 	if err := sim.ReadJSON(r, &body); err != nil {
 		cosmosDataError(w, "BadRequest", "invalid document body", http.StatusBadRequest)
@@ -944,11 +972,16 @@ func handleCosmosDataReplaceDoc(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	doc := cosmosStoreDocKey(key, account, db, coll, docID, body)
-	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+	out := cosmosDocBody(doc)
+	cosmosSetWriteSession(w, account, db, coll, pkComponent)
+	cosmosWriteDataCharge(w, http.StatusOK, out, cosmosWriteCharge(out))
 }
 
 func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	existing, key, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
 	if werr != nil {
 		cosmosDataError(w, werr.code, werr.msg, werr.status)
@@ -965,11 +998,16 @@ func handleCosmosDataDeleteDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cosmosDocs.Delete(key)
+	w.Header().Set("x-ms-request-charge", cosmosFormatCharge(cosmosDeleteCharge()))
+	cosmosSetWriteSession(w, account, db, coll, cosmosDocPKComponent(account, db, coll, existing))
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 	account, db, coll := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	var req struct {
 		Query      string           `json:"query"`
 		Parameters []map[string]any `json:"parameters,omitempty"`
@@ -1030,7 +1068,7 @@ func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("x-ms-continuation", continuation)
 	}
 	w.Header().Set("x-ms-item-count", fmt.Sprintf("%d", len(page)))
-	cosmosWriteData(w, http.StatusOK, map[string]any{"Documents": page, "_count": len(page)})
+	cosmosWriteDataCharge(w, http.StatusOK, map[string]any{"Documents": page, "_count": len(page)}, cosmosQueryCharge(len(page)))
 }
 
 // handleCosmosDataPatchDoc applies a Cosmos partial-document patch (the
@@ -1038,6 +1076,9 @@ func handleCosmosDataQueryDocs(w http.ResponseWriter, r *http.Request) {
 // set/add/replace/remove/incr; path is a JSON-pointer-ish `/a/b`.
 func handleCosmosDataPatchDoc(w http.ResponseWriter, r *http.Request) {
 	account, db, coll, docID := cosmosDataAccount(r), sim.PathParam(r, "database"), sim.PathParam(r, "container"), sim.PathParam(r, "doc")
+	if cosmosGuardConsistency(w, r, account) {
+		return
+	}
 	existing, key, ok, werr := cosmosResolvePointDoc(r, account, db, coll, docID)
 	if werr != nil {
 		cosmosDataError(w, werr.code, werr.msg, werr.status)
@@ -1074,7 +1115,9 @@ func handleCosmosDataPatchDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	body["id"] = docID
 	doc := cosmosStoreDocKey(key, account, db, coll, docID, body)
-	cosmosWriteData(w, http.StatusOK, cosmosDocBody(doc))
+	out := cosmosDocBody(doc)
+	cosmosSetWriteSession(w, account, db, coll, cosmosDocPKComponent(account, db, coll, doc))
+	cosmosWriteDataCharge(w, http.StatusOK, out, cosmosWriteCharge(out))
 }
 
 // cosmosApplyPatchOp mutates body per a single patch operation. The path is the
@@ -1253,9 +1296,18 @@ func handleCosmosAccountProperties(w http.ResponseWriter, r *http.Request) {
 }
 
 func cosmosWriteData(w http.ResponseWriter, status int, v any) {
+	cosmosWriteDataCharge(w, status, v, cosmosMetadataCharge)
+}
+
+// cosmosWriteDataCharge is the shared Cosmos data-plane response writer. Every
+// data-plane response carries a realistic per-operation `x-ms-request-charge`
+// (the RU cost): metadata reads default to a flat ~1 RU, while item and query
+// handlers pass the size/result-scaled charge from the RU model in
+// cosmos_throughput.go.
+func cosmosWriteDataCharge(w http.ResponseWriter, status int, v any, charge float64) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("x-ms-activity-id", generateUUID())
-	w.Header().Set("x-ms-request-charge", "1")
+	w.Header().Set("x-ms-request-charge", cosmosFormatCharge(charge))
 	// Real Cosmos returns the resource ETag in the HTTP ETag header (the azcosmos
 	// SDK reads it from there, not the body); surface it for any single-resource
 	// response that carries an `_etag`.

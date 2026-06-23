@@ -209,6 +209,143 @@ func TestSQSCLI_SendMessageBatch(t *testing.T) {
 	assert.Contains(t, errOut, "BatchEntryIdsNotDistinct")
 }
 
+// TestSQSCLI_ChangeMessageVisibility asserts that resetting an in-flight
+// message's visibility to 0 returns it to the visible pool, and that a bogus
+// receipt handle is rejected.
+func TestSQSCLI_ChangeMessageVisibility(t *testing.T) {
+	out := runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "cli-cmv-q"))
+	var created struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	parseJSON(t, out, &created)
+	t.Cleanup(func() {
+		_ = awsCLI("sqs", "delete-queue", "--queue-url", created.QueueUrl).Run()
+	})
+
+	runCLI(t, awsCLI("sqs", "send-message",
+		"--queue-url", created.QueueUrl, "--message-body", "cmv-cli"))
+
+	out = runCLI(t, awsCLI("sqs", "receive-message", "--queue-url", created.QueueUrl))
+	var recv struct {
+		Messages []struct {
+			ReceiptHandle string `json:"ReceiptHandle"`
+		} `json:"Messages"`
+	}
+	parseJSON(t, out, &recv)
+	require.Len(t, recv.Messages, 1)
+
+	runCLI(t, awsCLI("sqs", "change-message-visibility",
+		"--queue-url", created.QueueUrl,
+		"--receipt-handle", recv.Messages[0].ReceiptHandle,
+		"--visibility-timeout", "0"))
+
+	out = runCLI(t, awsCLI("sqs", "receive-message", "--queue-url", created.QueueUrl))
+	var recv2 struct {
+		Messages []struct {
+			Body string `json:"Body"`
+		} `json:"Messages"`
+	}
+	parseJSON(t, out, &recv2)
+	require.Len(t, recv2.Messages, 1, "message should be visible after visibility reset to 0")
+
+	errOut := runCLIExpectError(t, awsCLI("sqs", "change-message-visibility",
+		"--queue-url", created.QueueUrl,
+		"--receipt-handle", "not-a-handle",
+		"--visibility-timeout", "10"))
+	assert.Contains(t, errOut, "ReceiptHandleIsInvalid")
+}
+
+// TestSQSCLI_DeleteMessageBatch sends two messages, receives them, batch-deletes
+// them by receipt handle, and asserts the queue is empty.
+func TestSQSCLI_DeleteMessageBatch(t *testing.T) {
+	out := runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "cli-dmb-q"))
+	var created struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	parseJSON(t, out, &created)
+	t.Cleanup(func() {
+		_ = awsCLI("sqs", "delete-queue", "--queue-url", created.QueueUrl).Run()
+	})
+
+	for _, b := range []string{"db1", "db2"} {
+		runCLI(t, awsCLI("sqs", "send-message", "--queue-url", created.QueueUrl, "--message-body", b))
+	}
+	out = runCLI(t, awsCLI("sqs", "receive-message",
+		"--queue-url", created.QueueUrl, "--max-number-of-messages", "10"))
+	var recv struct {
+		Messages []struct {
+			ReceiptHandle string `json:"ReceiptHandle"`
+		} `json:"Messages"`
+	}
+	parseJSON(t, out, &recv)
+	require.Len(t, recv.Messages, 2)
+
+	entries, err := json.Marshal([]map[string]string{
+		{"Id": "e0", "ReceiptHandle": recv.Messages[0].ReceiptHandle},
+		{"Id": "e1", "ReceiptHandle": recv.Messages[1].ReceiptHandle},
+	})
+	require.NoError(t, err)
+	out = runCLI(t, awsCLI("sqs", "delete-message-batch",
+		"--queue-url", created.QueueUrl, "--entries", string(entries)))
+	var batch struct {
+		Successful []struct {
+			Id string `json:"Id"`
+		} `json:"Successful"`
+		Failed []any `json:"Failed"`
+	}
+	parseJSON(t, out, &batch)
+	require.Len(t, batch.Successful, 2)
+	assert.Empty(t, batch.Failed)
+
+	out = runCLI(t, awsCLI("sqs", "get-queue-attributes",
+		"--queue-url", created.QueueUrl, "--attribute-names", "ApproximateNumberOfMessagesNotVisible"))
+	var attrs struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	parseJSON(t, out, &attrs)
+	assert.Equal(t, "0", attrs.Attributes["ApproximateNumberOfMessagesNotVisible"])
+}
+
+// TestSQSCLI_AddRemovePermission asserts add-permission writes a labelled
+// statement into the Policy attribute and remove-permission strips it.
+func TestSQSCLI_AddRemovePermission(t *testing.T) {
+	out := runCLI(t, awsCLI("sqs", "create-queue", "--queue-name", "cli-perm-q"))
+	var created struct {
+		QueueUrl string `json:"QueueUrl"`
+	}
+	parseJSON(t, out, &created)
+	t.Cleanup(func() {
+		_ = awsCLI("sqs", "delete-queue", "--queue-url", created.QueueUrl).Run()
+	})
+
+	runCLI(t, awsCLI("sqs", "add-permission",
+		"--queue-url", created.QueueUrl,
+		"--label", "cli-grant",
+		"--aws-account-ids", "123456789012",
+		"--actions", "SendMessage"))
+
+	out = runCLI(t, awsCLI("sqs", "get-queue-attributes",
+		"--queue-url", created.QueueUrl, "--attribute-names", "Policy"))
+	var attrs struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	parseJSON(t, out, &attrs)
+	require.NotEmpty(t, attrs.Attributes["Policy"])
+	assert.Contains(t, attrs.Attributes["Policy"], "cli-grant")
+	assert.Contains(t, attrs.Attributes["Policy"], "arn:aws:iam::123456789012:root")
+
+	runCLI(t, awsCLI("sqs", "remove-permission",
+		"--queue-url", created.QueueUrl, "--label", "cli-grant"))
+
+	out = runCLI(t, awsCLI("sqs", "get-queue-attributes",
+		"--queue-url", created.QueueUrl, "--attribute-names", "Policy"))
+	var attrs2 struct {
+		Attributes map[string]string `json:"Attributes"`
+	}
+	parseJSON(t, out, &attrs2)
+	assert.Empty(t, attrs2.Attributes["Policy"], "remove-permission must clear the last statement")
+}
+
 // TestSNSCLI_FifoCouplingAndGroupId asserts the SNS FIFO name↔attribute
 // coupling at create-topic and the MessageGroupId requirement on publish.
 func TestSNSCLI_FifoCouplingAndGroupId(t *testing.T) {

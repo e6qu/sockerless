@@ -134,6 +134,8 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
 	registerCosmosDB(srv)
+	registerCosmosScripts(srv)
+	registerCosmosChangeFeed(srv)
 	registerServiceBus(srv)
 	registerServiceBusDataPlane(srv)
 	registerEventHubs(srv)

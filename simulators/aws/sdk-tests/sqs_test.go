@@ -2,6 +2,7 @@ package aws_sdk_test
 
 import (
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -241,6 +242,212 @@ func TestSQS_VisibilityTimeoutExpiry(t *testing.T) {
 	require.Len(t, recv.Messages, 1,
 		"message should be visible again after the visibility-timeout window elapsed")
 	assert.Equal(t, "vt", aws.ToString(recv.Messages[0].Body))
+}
+
+// TestSQS_ChangeMessageVisibility asserts that resetting an in-flight message's
+// visibility timeout to 0 makes it immediately receivable again. The message is
+// invisible right after the first receive (default 30s timeout); a
+// ChangeMessageVisibility to 0 returns it to the visible pool.
+func TestSQS_ChangeMessageVisibility(t *testing.T) {
+	client := sqsClient()
+	create, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("cmv-q")})
+	require.NoError(t, err)
+	url := aws.ToString(create.QueueUrl)
+	t.Cleanup(func() { _, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) })
+
+	_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl: aws.String(url), MessageBody: aws.String("cmv-body"),
+	})
+	require.NoError(t, err)
+
+	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(url)})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 1)
+	handle := aws.ToString(recv.Messages[0].ReceiptHandle)
+
+	// Invisible immediately (30s default timeout).
+	recv2, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(url)})
+	require.NoError(t, err)
+	assert.Empty(t, recv2.Messages)
+
+	// Reset visibility to 0 → immediately visible again.
+	_, err = client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String(url),
+		ReceiptHandle:     aws.String(handle),
+		VisibilityTimeout: 0,
+	})
+	require.NoError(t, err)
+
+	recv3, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(url)})
+	require.NoError(t, err)
+	require.Len(t, recv3.Messages, 1, "message should be visible after timeout reset to 0")
+	assert.Equal(t, "cmv-body", aws.ToString(recv3.Messages[0].Body))
+
+	// An unknown receipt handle is ReceiptHandleIsInvalid.
+	_, err = client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String(url),
+		ReceiptHandle:     aws.String("not-a-handle"),
+		VisibilityTimeout: 10,
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr))
+	assert.Equal(t, "ReceiptHandleIsInvalid", apiErr.ErrorCode())
+}
+
+// TestSQS_ChangeMessageVisibilityBatch asserts per-entry success/failure for a
+// batch visibility change: a valid in-flight handle succeeds, an unknown handle
+// fails with ReceiptHandleIsInvalid.
+func TestSQS_ChangeMessageVisibilityBatch(t *testing.T) {
+	client := sqsClient()
+	create, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("cmvb-q")})
+	require.NoError(t, err)
+	url := aws.ToString(create.QueueUrl)
+	t.Cleanup(func() { _, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) })
+
+	_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl: aws.String(url), MessageBody: aws.String("b1"),
+	})
+	require.NoError(t, err)
+	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(url)})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 1)
+	handle := aws.ToString(recv.Messages[0].ReceiptHandle)
+
+	out, err := client.ChangeMessageVisibilityBatch(ctx, &sqs.ChangeMessageVisibilityBatchInput{
+		QueueUrl: aws.String(url),
+		Entries: []sqstypes.ChangeMessageVisibilityBatchRequestEntry{
+			{Id: aws.String("ok"), ReceiptHandle: aws.String(handle), VisibilityTimeout: 0},
+			{Id: aws.String("bad"), ReceiptHandle: aws.String("nope"), VisibilityTimeout: 10},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, out.Successful, 1)
+	assert.Equal(t, "ok", aws.ToString(out.Successful[0].Id))
+	require.Len(t, out.Failed, 1)
+	assert.Equal(t, "bad", aws.ToString(out.Failed[0].Id))
+	assert.Equal(t, "ReceiptHandleIsInvalid", aws.ToString(out.Failed[0].Code))
+
+	// The "ok" entry reset visibility to 0 → b1 is receivable again.
+	recv2, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: aws.String(url)})
+	require.NoError(t, err)
+	require.Len(t, recv2.Messages, 1)
+}
+
+// TestSQS_DeleteMessageBatch asserts batch delete by receipt handle: two
+// messages received then batch-deleted leave the queue empty.
+func TestSQS_DeleteMessageBatch(t *testing.T) {
+	client := sqsClient()
+	create, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("dmb-q")})
+	require.NoError(t, err)
+	url := aws.ToString(create.QueueUrl)
+	t.Cleanup(func() { _, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) })
+
+	for _, b := range []string{"d1", "d2"} {
+		_, err = client.SendMessage(ctx, &sqs.SendMessageInput{
+			QueueUrl: aws.String(url), MessageBody: aws.String(b),
+		})
+		require.NoError(t, err)
+	}
+	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl: aws.String(url), MaxNumberOfMessages: 10,
+	})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 2)
+
+	entries := make([]sqstypes.DeleteMessageBatchRequestEntry, 0, 2)
+	for i, m := range recv.Messages {
+		entries = append(entries, sqstypes.DeleteMessageBatchRequestEntry{
+			Id:            aws.String("e" + strconv.Itoa(i)),
+			ReceiptHandle: m.ReceiptHandle,
+		})
+	}
+	// Append a bogus entry to exercise the Failed path.
+	entries = append(entries, sqstypes.DeleteMessageBatchRequestEntry{
+		Id: aws.String("bad"), ReceiptHandle: aws.String("nope"),
+	})
+	out, err := client.DeleteMessageBatch(ctx, &sqs.DeleteMessageBatchInput{
+		QueueUrl: aws.String(url), Entries: entries,
+	})
+	require.NoError(t, err)
+	assert.Len(t, out.Successful, 2)
+	require.Len(t, out.Failed, 1)
+	assert.Equal(t, "bad", aws.ToString(out.Failed[0].Id))
+
+	// Make the in-flight messages visible again to confirm they're gone.
+	for _, m := range recv.Messages {
+		_, _ = client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+			QueueUrl: aws.String(url), ReceiptHandle: m.ReceiptHandle, VisibilityTimeout: 0,
+		})
+	}
+	attrs, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{"All"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "0", attrs.Attributes["ApproximateNumberOfMessages"])
+}
+
+// TestSQS_AddRemovePermission asserts AddPermission writes a labelled Allow
+// statement into the queue's Policy attribute (readable via GetQueueAttributes)
+// and RemovePermission strips it back out.
+func TestSQS_AddRemovePermission(t *testing.T) {
+	client := sqsClient()
+	create, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("perm-q")})
+	require.NoError(t, err)
+	url := aws.ToString(create.QueueUrl)
+	t.Cleanup(func() { _, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(url)}) })
+
+	_, err = client.AddPermission(ctx, &sqs.AddPermissionInput{
+		QueueUrl:      aws.String(url),
+		Label:         aws.String("grant-send"),
+		AWSAccountIds: []string{"123456789012"},
+		Actions:       []string{"SendMessage", "ReceiveMessage"},
+	})
+	require.NoError(t, err)
+
+	attrs, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNamePolicy},
+	})
+	require.NoError(t, err)
+	policy := attrs.Attributes["Policy"]
+	require.NotEmpty(t, policy, "AddPermission must populate the Policy attribute")
+	assert.Contains(t, policy, "grant-send")
+	assert.Contains(t, policy, "arn:aws:iam::123456789012:root")
+	assert.Contains(t, policy, "SQS:SendMessage")
+
+	// A duplicate label is rejected.
+	_, err = client.AddPermission(ctx, &sqs.AddPermissionInput{
+		QueueUrl:      aws.String(url),
+		Label:         aws.String("grant-send"),
+		AWSAccountIds: []string{"123456789012"},
+		Actions:       []string{"SendMessage"},
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr))
+	assert.Equal(t, "InvalidParameterValue", apiErr.ErrorCode())
+
+	_, err = client.RemovePermission(ctx, &sqs.RemovePermissionInput{
+		QueueUrl: aws.String(url),
+		Label:    aws.String("grant-send"),
+	})
+	require.NoError(t, err)
+
+	attrs2, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(url),
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNamePolicy},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, attrs2.Attributes["Policy"], "RemovePermission must clear the last statement")
+
+	// Removing a non-existent label is rejected.
+	_, err = client.RemovePermission(ctx, &sqs.RemovePermissionInput{
+		QueueUrl: aws.String(url),
+		Label:    aws.String("does-not-exist"),
+	})
+	require.Error(t, err)
 }
 
 func TestSQS_ListQueues_Pagination(t *testing.T) {

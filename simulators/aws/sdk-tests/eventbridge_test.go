@@ -325,6 +325,112 @@ func TestEventBridge_RuleTargetPutEventsSDK(t *testing.T) {
 	assert.JSONEq(t, `{"ok":true}`, aws.ToString(received.Messages[0].Body))
 }
 
+// TestEventBridge_TestEventPatternSDK exercises TestEventPattern over a
+// content-filtering pattern: a matching event returns Result=true and a
+// near-miss (right source, detail value out of range) returns Result=false,
+// using the same evaluator a live rule fires on.
+func TestEventBridge_TestEventPatternSDK(t *testing.T) {
+	eb := eventbridgeClient()
+
+	pattern := `{"source":["sockerless.tep"],"detail":{"code":[{"numeric":[">",200]}]}}`
+
+	match, err := eb.TestEventPattern(ctx, &eventbridge.TestEventPatternInput{
+		EventPattern: aws.String(pattern),
+		Event:        aws.String(`{"id":"1","account":"000000000000","source":"sockerless.tep","detail-type":"job","detail":{"code":500}}`),
+	})
+	require.NoError(t, err)
+	assert.True(t, match.Result)
+
+	noMatch, err := eb.TestEventPattern(ctx, &eventbridge.TestEventPatternInput{
+		EventPattern: aws.String(pattern),
+		Event:        aws.String(`{"id":"2","account":"000000000000","source":"sockerless.tep","detail-type":"job","detail":{"code":100}}`),
+	})
+	require.NoError(t, err)
+	assert.False(t, noMatch.Result)
+
+	// A structurally invalid pattern (scalar value instead of an array) is
+	// rejected, matching real EventBridge.
+	_, err = eb.TestEventPattern(ctx, &eventbridge.TestEventPatternInput{
+		EventPattern: aws.String(`{"source":"sockerless.tep"}`),
+		Event:        aws.String(`{"id":"3","account":"000000000000","source":"sockerless.tep"}`),
+	})
+	require.Error(t, err)
+}
+
+// TestEventBridge_ListRuleNamesByTargetSDK creates a rule with a target and
+// asserts ListRuleNamesByTarget returns that rule's name for the target ARN,
+// and nothing for an unrelated ARN.
+func TestEventBridge_ListRuleNamesByTargetSDK(t *testing.T) {
+	eb := eventbridgeClient()
+
+	targetARN := "arn:aws:sqs:us-east-1:000000000000:eb-sdk-lrnbt-target"
+	_, err := eb.PutRule(ctx, &eventbridge.PutRuleInput{
+		Name:         aws.String("eb-sdk-lrnbt-rule"),
+		EventPattern: aws.String(`{"source":["sockerless.lrnbt"]}`),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = eb.RemoveTargets(ctx, &eventbridge.RemoveTargetsInput{
+			Rule: aws.String("eb-sdk-lrnbt-rule"),
+			Ids:  []string{"target"},
+		})
+		_, _ = eb.DeleteRule(ctx, &eventbridge.DeleteRuleInput{Name: aws.String("eb-sdk-lrnbt-rule")})
+	})
+	_, err = eb.PutTargets(ctx, &eventbridge.PutTargetsInput{
+		Rule: aws.String("eb-sdk-lrnbt-rule"),
+		Targets: []ebtypes.Target{{
+			Id:  aws.String("target"),
+			Arn: aws.String(targetARN),
+		}},
+	})
+	require.NoError(t, err)
+
+	out, err := eb.ListRuleNamesByTarget(ctx, &eventbridge.ListRuleNamesByTargetInput{
+		TargetArn: aws.String(targetARN),
+	})
+	require.NoError(t, err)
+	require.Contains(t, out.RuleNames, "eb-sdk-lrnbt-rule")
+
+	none, err := eb.ListRuleNamesByTarget(ctx, &eventbridge.ListRuleNamesByTargetInput{
+		TargetArn: aws.String(targetARN + "-unrelated"),
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, none.RuleNames, "eb-sdk-lrnbt-rule")
+}
+
+// TestEventBridge_UpdateEventBusSDK creates a custom bus and asserts
+// UpdateEventBus mutates its Description and DeadLetterConfig, and that the
+// change is observable via DescribeEventBus.
+func TestEventBridge_UpdateEventBusSDK(t *testing.T) {
+	eb := eventbridgeClient()
+
+	busName := "eb-sdk-update-bus"
+	created, err := eb.CreateEventBus(ctx, &eventbridge.CreateEventBusInput{
+		Name:        aws.String(busName),
+		Description: aws.String("initial"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = eb.DeleteEventBus(ctx, &eventbridge.DeleteEventBusInput{Name: aws.String(busName)})
+	})
+
+	dlqARN := "arn:aws:sqs:us-east-1:000000000000:eb-sdk-update-dlq"
+	updated, err := eb.UpdateEventBus(ctx, &eventbridge.UpdateEventBusInput{
+		Name:             aws.String(busName),
+		Description:      aws.String("updated description"),
+		DeadLetterConfig: &ebtypes.DeadLetterConfig{Arn: aws.String(dlqARN)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(created.EventBusArn), aws.ToString(updated.Arn))
+	assert.Equal(t, "updated description", aws.ToString(updated.Description))
+	require.NotNil(t, updated.DeadLetterConfig)
+	assert.Equal(t, dlqARN, aws.ToString(updated.DeadLetterConfig.Arn))
+
+	describe, err := eb.DescribeEventBus(ctx, &eventbridge.DescribeEventBusInput{Name: aws.String(busName)})
+	require.NoError(t, err)
+	assert.Equal(t, "updated description", aws.ToString(describe.Description))
+}
+
 // TestEventBridge_ContentFilterPatternSDK exercises the content-filtering event
 // pattern features beyond plain string-array equality: matching on the nested
 // "detail" object, the {"prefix":...} matcher, and the {"numeric":[...]} matcher.
