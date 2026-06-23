@@ -193,6 +193,82 @@ func TestEventBridgeCLI_BusArchiveReplay(t *testing.T) {
 	require.Len(t, replays.Replays, 1)
 }
 
+// TestEventBridgeCLI_TestEventPattern exercises the test-event-pattern verb:
+// a matching event returns Result=true and a near-miss returns Result=false.
+func TestEventBridgeCLI_TestEventPattern(t *testing.T) {
+	pattern := `{"source":["sockerless.cli.tep"],"detail":{"code":[{"numeric":[">",200]}]}}`
+
+	out := runCLI(t, awsCLI("events", "test-event-pattern",
+		"--event-pattern", pattern,
+		"--event", `{"id":"1","account":"000000000000","source":"sockerless.cli.tep","detail-type":"job","detail":{"code":500}}`))
+	var match struct {
+		Result bool `json:"Result"`
+	}
+	parseJSON(t, out, &match)
+	assert.True(t, match.Result)
+
+	out = runCLI(t, awsCLI("events", "test-event-pattern",
+		"--event-pattern", pattern,
+		"--event", `{"id":"2","account":"000000000000","source":"sockerless.cli.tep","detail-type":"job","detail":{"code":100}}`))
+	var noMatch struct {
+		Result bool `json:"Result"`
+	}
+	parseJSON(t, out, &noMatch)
+	assert.False(t, noMatch.Result)
+}
+
+// TestEventBridgeCLI_ListRuleNamesByTarget creates a rule with a target and
+// asserts list-rule-names-by-target returns that rule's name for the ARN.
+func TestEventBridgeCLI_ListRuleNamesByTarget(t *testing.T) {
+	targetARN := "arn:aws:sqs:us-east-1:000000000000:eb-cli-lrnbt-target"
+	runCLI(t, awsCLI("events", "put-rule",
+		"--name", "eb-cli-lrnbt-rule",
+		"--event-pattern", `{"source":["sockerless.cli.lrnbt"]}`))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("events", "remove-targets", "--rule", "eb-cli-lrnbt-rule", "--ids", "target"))
+		runCLI(t, awsCLI("events", "delete-rule", "--name", "eb-cli-lrnbt-rule"))
+	})
+	runCLI(t, awsCLI("events", "put-targets",
+		"--rule", "eb-cli-lrnbt-rule",
+		"--targets", `[{"Id":"target","Arn":"`+targetARN+`"}]`))
+
+	out := runCLI(t, awsCLI("events", "list-rule-names-by-target", "--target-arn", targetARN))
+	var names struct {
+		RuleNames []string `json:"RuleNames"`
+	}
+	parseJSON(t, out, &names)
+	require.Contains(t, names.RuleNames, "eb-cli-lrnbt-rule")
+}
+
+// TestEventBridgeCLI_UpdateEventBus creates a custom bus and asserts
+// update-event-bus mutates its description, observable via describe-event-bus.
+func TestEventBridgeCLI_UpdateEventBus(t *testing.T) {
+	runCLI(t, awsCLI("events", "create-event-bus",
+		"--name", "eb-cli-update-bus",
+		"--description", "initial"))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("events", "delete-event-bus", "--name", "eb-cli-update-bus"))
+	})
+
+	out := runCLI(t, awsCLI("events", "update-event-bus",
+		"--name", "eb-cli-update-bus",
+		"--description", "updated description"))
+	var updated struct {
+		Name        string `json:"Name"`
+		Description string `json:"Description"`
+	}
+	parseJSON(t, out, &updated)
+	assert.Equal(t, "eb-cli-update-bus", updated.Name)
+	assert.Equal(t, "updated description", updated.Description)
+
+	out = runCLI(t, awsCLI("events", "describe-event-bus", "--name", "eb-cli-update-bus"))
+	var described struct {
+		Description string `json:"Description"`
+	}
+	parseJSON(t, out, &described)
+	assert.Equal(t, "updated description", described.Description)
+}
+
 // TestEventBridgeCLI_ContentFilterPattern exercises a content-filtering event
 // pattern over the CLI: nested detail-object matching plus the prefix and
 // numeric matchers. It asserts a matching event is delivered and a near-miss

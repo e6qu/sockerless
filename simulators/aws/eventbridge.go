@@ -37,6 +37,7 @@ type EBEventBus struct {
 	Arn              string            `json:"Arn"`
 	Description      string            `json:"Description,omitempty"`
 	KmsKeyIdentifier string            `json:"KmsKeyIdentifier,omitempty"`
+	DeadLetterConfig json.RawMessage   `json:"DeadLetterConfig,omitempty"`
 	Policy           string            `json:"Policy,omitempty"`
 	CreationTime     int64             `json:"CreationTime,omitempty"`
 	LastModifiedTime int64             `json:"LastModifiedTime,omitempty"`
@@ -131,6 +132,9 @@ func registerEventBridge(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSEvents.PutRule", handleEBPutRule)
 	r.Register("AWSEvents.DescribeRule", handleEBDescribeRule)
 	r.Register("AWSEvents.ListRules", handleEBListRules)
+	r.Register("AWSEvents.ListRuleNamesByTarget", handleEBListRuleNamesByTarget)
+	r.Register("AWSEvents.TestEventPattern", handleEBTestEventPattern)
+	r.Register("AWSEvents.UpdateEventBus", handleEBUpdateEventBus)
 	r.Register("AWSEvents.DeleteRule", handleEBDeleteRule)
 	r.Register("AWSEvents.EnableRule", handleEBEnableRule)
 	r.Register("AWSEvents.DisableRule", handleEBDisableRule)
@@ -573,6 +577,165 @@ func handleEBListRules(w http.ResponseWriter, r *http.Request) {
 	out := map[string]any{"Rules": page}
 	if next != "" {
 		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
+}
+
+// handleEBListRuleNamesByTarget returns the names of rules on the given bus that
+// have a target with the supplied ARN. EventBridge scans every rule's target
+// list for the ARN; a rule with multiple targets sharing the ARN is reported
+// once.
+func handleEBListRuleNamesByTarget(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TargetArn    string `json:"TargetArn"`
+		EventBusName string `json:"EventBusName"`
+		Limit        int    `json:"Limit"`
+		NextToken    string `json:"NextToken"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.TargetArn == "" {
+		sim.AWSError(w, "ValidationException", "TargetArn is required", http.StatusBadRequest)
+		return
+	}
+	bus := ebBusName(req.EventBusName)
+	names := make([]string, 0)
+	for _, rule := range ebRules.List() {
+		if rule.EventBusName != bus {
+			continue
+		}
+		targets, _ := ebTargets.Get(ebRuleKey(rule.EventBusName, rule.Name))
+		for _, target := range targets {
+			if target.Arn == req.TargetArn {
+				names = append(names, rule.Name)
+				break
+			}
+		}
+	}
+	sort.Strings(names)
+	page, next := awsPageExplicit(names, req.NextToken, req.Limit)
+	out := map[string]any{"RuleNames": page}
+	if next != "" {
+		out["NextToken"] = next
+	}
+	writeEBJSON(w, http.StatusOK, out)
+}
+
+// handleEBTestEventPattern reports whether the supplied Event matches the
+// supplied EventPattern. It reuses ebEventPatternMatches — the same evaluator
+// PutEvents delivery uses — so a "Result":true here is exactly a rule that
+// would fire on the event. A malformed pattern yields InvalidEventPatternException.
+func handleEBTestEventPattern(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EventPattern string `json:"EventPattern"`
+		Event        string `json:"Event"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.EventPattern == "" {
+		sim.AWSError(w, "ValidationException", "EventPattern is required", http.StatusBadRequest)
+		return
+	}
+	if req.Event == "" {
+		sim.AWSError(w, "ValidationException", "Event is required", http.StatusBadRequest)
+		return
+	}
+	if err := ebValidateEventPattern(req.EventPattern); err != nil {
+		sim.AWSError(w, "InvalidEventPatternException", "Event pattern is not valid. Reason: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	var event struct {
+		Source     string          `json:"source"`
+		DetailType string          `json:"detail-type"`
+		Detail     json.RawMessage `json:"detail"`
+	}
+	if err := json.Unmarshal([]byte(req.Event), &event); err != nil {
+		sim.AWSError(w, "InvalidEventPatternException", "Event is not valid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	result := ebEventPatternMatches(req.EventPattern, event.Source, event.DetailType, string(event.Detail))
+	writeEBJSON(w, http.StatusOK, map[string]any{"Result": result})
+}
+
+// ebValidateEventPattern reports whether a pattern is structurally valid per
+// EventBridge's content-filtering grammar: the pattern is a JSON object whose
+// every value is either an OR array of leaf matchers or a nested pattern object
+// (which recurses). A scalar pattern value (e.g. {"source":"x"} instead of
+// {"source":["x"]}) is invalid, matching real EventBridge.
+func ebValidateEventPattern(patternJSON string) error {
+	var pattern map[string]any
+	if err := json.Unmarshal([]byte(patternJSON), &pattern); err != nil {
+		return fmt.Errorf("event pattern is not valid JSON: %w", err)
+	}
+	return ebValidatePatternObject(pattern)
+}
+
+func ebValidatePatternObject(pattern map[string]any) error {
+	if len(pattern) == 0 {
+		return fmt.Errorf(`"%s" must be an object or an array`, "pattern")
+	}
+	for key, val := range pattern {
+		switch v := val.(type) {
+		case map[string]any:
+			if err := ebValidatePatternObject(v); err != nil {
+				return err
+			}
+		case []any:
+			if len(v) == 0 {
+				return fmt.Errorf(`"%s" must be a non-empty array`, key)
+			}
+		default:
+			return fmt.Errorf(`"%s" must be an object or an array`, key)
+		}
+	}
+	return nil
+}
+
+// handleEBUpdateEventBus updates a named (or default) event bus's mutable
+// fields — Description, KmsKeyIdentifier, and DeadLetterConfig — and returns the
+// bus's identity plus the updated fields, matching the UpdateEventBus response.
+func handleEBUpdateEventBus(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name             string          `json:"Name"`
+		Description      *string         `json:"Description"`
+		KmsKeyIdentifier *string         `json:"KmsKeyIdentifier"`
+		DeadLetterConfig json.RawMessage `json:"DeadLetterConfig"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	bus, ok := ebGetBus(req.Name)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Event bus does not exist", http.StatusNotFound)
+		return
+	}
+	if req.Description != nil {
+		bus.Description = *req.Description
+	}
+	if req.KmsKeyIdentifier != nil {
+		bus.KmsKeyIdentifier = *req.KmsKeyIdentifier
+	}
+	if len(req.DeadLetterConfig) > 0 {
+		bus.DeadLetterConfig = req.DeadLetterConfig
+	}
+	ebPutBus(bus)
+	out := map[string]any{
+		"Arn":  bus.Arn,
+		"Name": bus.Name,
+	}
+	if bus.Description != "" {
+		out["Description"] = bus.Description
+	}
+	if bus.KmsKeyIdentifier != "" {
+		out["KmsKeyIdentifier"] = bus.KmsKeyIdentifier
+	}
+	if len(bus.DeadLetterConfig) > 0 {
+		out["DeadLetterConfig"] = bus.DeadLetterConfig
 	}
 	writeEBJSON(w, http.StatusOK, out)
 }

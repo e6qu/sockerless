@@ -267,6 +267,96 @@ func cosmosDiffScenarios() []cosmosDiffScenario {
 			// The full ordered set must come back across pages (paged 1-at-a-time).
 			return map[string]any{"ids": ids}, nil // [a, b, c, d, e]
 		}},
+		{"request-charge-present-on-write-and-read", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			raw, _ := json.Marshal(map[string]any{"id": "x", "pk": "p", "name": "alice"})
+			createResp, err := cc.CreateItem(ctx, pk, raw, nil)
+			if err != nil {
+				return nil, err
+			}
+			readResp, err := cc.ReadItem(ctx, pk, "x", nil)
+			if err != nil {
+				return nil, err
+			}
+			// The emulator and the sim both report a non-zero RU charge on writes
+			// and reads, and a write costs at least as much as a point read of the
+			// same item. The exact RU value legitimately differs between the two, so
+			// the agreed observable is the presence + the write≥read ordering — not
+			// the magnitude.
+			return map[string]any{
+				"createChargePositive": createResp.RequestCharge > 0,
+				"readChargePositive":   readResp.RequestCharge > 0,
+				"writeGEread":          createResp.RequestCharge >= readResp.RequestCharge,
+			}, nil
+		}},
+		{"session-token-issued-on-write", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			cc := makeContainer(t, c, dbID)
+			raw, _ := json.Marshal(map[string]any{"id": "x", "pk": "p", "v": 1})
+			w, err := cc.CreateItem(ctx, pk, raw, nil)
+			if err != nil {
+				return nil, err
+			}
+			// Both the emulator and the sim issue an x-ms-session-token on a write
+			// under the default Session consistency; a Session read that sends it
+			// back observes the write (read-your-writes).
+			session := azcosmos.ConsistencyLevelSession.ToPtr()
+			rd, err := cc.ReadItem(ctx, pk, "x", &azcosmos.ItemOptions{
+				ConsistencyLevel: session,
+				SessionToken:     w.SessionToken,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{
+				"writeTokenNonEmpty": w.SessionToken != nil && *w.SessionToken != "",
+				"readTokenNonEmpty":  rd.SessionToken != nil && *rd.SessionToken != "",
+				"v":                  cosmosUnmarshal(rd.Value)["v"],
+			}, nil
+		}},
+		{"throughput-offer-roundtrip", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			// A container created WITH dedicated throughput has its own offer;
+			// ReadThroughput/ReplaceThroughput must round-trip a manual value on both
+			// the emulator and the sim. (A container WITHOUT dedicated throughput has
+			// no offer → 404; covered by throughput-offer-shared-404 below.)
+			if _, err := c.CreateDatabase(ctx, azcosmos.DatabaseProperties{ID: dbID}, nil); err != nil {
+				return nil, err
+			}
+			db, _ := c.NewDatabase(dbID)
+			start := azcosmos.NewManualThroughputProperties(400)
+			if _, err := db.CreateContainer(ctx, azcosmos.ContainerProperties{
+				ID:                     "c",
+				PartitionKeyDefinition: azcosmos.PartitionKeyDefinition{Paths: []string{"/pk"}},
+			}, &azcosmos.CreateContainerOptions{ThroughputProperties: &start}); err != nil {
+				return nil, err
+			}
+			cc, _ := c.NewContainer(dbID, "c")
+			read, err := cc.ReadThroughput(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			startManual, hadManual := read.ThroughputProperties.ManualThroughput()
+			if _, err := cc.ReplaceThroughput(ctx, azcosmos.NewManualThroughputProperties(1000), nil); err != nil {
+				return nil, err
+			}
+			after, err := cc.ReadThroughput(ctx, nil)
+			if err != nil {
+				return nil, err
+			}
+			gotManual, ok := after.ThroughputProperties.ManualThroughput()
+			return map[string]any{
+				"hadManualOffer":   hadManual && startManual == 400,
+				"replacedToManual": ok,
+				"manualAfter":      gotManual,
+			}, nil
+		}},
+		{"throughput-offer-shared-404", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
+			// A container created WITHOUT dedicated throughput shares throughput and
+			// has no offer; ReadThroughput returns 404 on both the emulator and the
+			// sim. This guards that the sim does NOT fabricate a default offer.
+			cc := makeContainer(t, c, dbID)
+			_, err := cc.ReadThroughput(ctx, nil)
+			return nil, err
+		}},
 		{"query-where-and-order", func(t *testing.T, c *azcosmos.Client, dbID string) (map[string]any, error) {
 			cc := makeContainer(t, c, dbID)
 			for i, d := range []map[string]any{
