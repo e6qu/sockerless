@@ -9,14 +9,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestECSExpressGatewayTerraform exercises the ECS Express Gateway service
+// TestECSExpressModeTerraform exercises ECS Express Mode (the Express Gateway service API)
 // (aws_ecs_express_gateway_service) through terraform-provider-aws:
 // CreateExpressGatewayService on apply, DescribeExpressGatewayService on refresh,
 // DeleteExpressGatewayService on destroy. The resource provisions the managed
 // bundle (Fargate service + ALB + ACM + auto-scaling); apply asserts the
 // computed service ARN and HTTPS ingress endpoint round-trip into TF state, and
 // destroy tears it down cleanly.
-func TestECSExpressGatewayTerraform(t *testing.T) {
+func TestECSExpressModeTerraform(t *testing.T) {
 	env := tfsim.Start(t, ".")
 	env.Terraform(t, "init")
 	env.Terraform(t, "apply", "-auto-approve")

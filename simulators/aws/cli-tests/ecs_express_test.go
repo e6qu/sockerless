@@ -5,14 +5,14 @@ import (
 	"testing"
 )
 
-// TestECS_CLI_ExpressGatewayLifecycle drives the Express Gateway service
+// TestECS_CLI_ExpressModeLifecycle drives the ECS Express Mode (Express Gateway service)
 // lifecycle through the aws CLI:
 //
 //	aws ecs create-express-gateway-service
 //	aws ecs describe-express-gateway-service
 //	aws ecs update-express-gateway-service
 //	aws ecs delete-express-gateway-service
-func TestECS_CLI_ExpressGatewayLifecycle(t *testing.T) {
+func TestECS_CLI_ExpressModeLifecycle(t *testing.T) {
 	cluster := "cli-express-cluster"
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })
@@ -115,9 +115,9 @@ func TestECS_CLI_ExpressGatewayLifecycle(t *testing.T) {
 	}
 }
 
-// TestECS_CLI_ExpressGatewayErrors covers the documented Create error cases via
+// TestECS_CLI_ExpressModeErrors covers the documented Create error cases via
 // the CLI.
-func TestECS_CLI_ExpressGatewayErrors(t *testing.T) {
+func TestECS_CLI_ExpressModeErrors(t *testing.T) {
 	cluster := "cli-express-err-cluster"
 	runCLI(t, awsCLI("ecs", "create-cluster", "--cluster-name", cluster))
 	t.Cleanup(func() { _ = awsCLI("ecs", "delete-cluster", "--cluster", cluster).Run() })

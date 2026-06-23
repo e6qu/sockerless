@@ -104,25 +104,8 @@ var serviceConformanceCatalog = map[string][]string{
 	"AmazonSimpleNotificationService": {},
 	"AWSEvents":                       {},
 	"DynamoDB_20120810":               {},
-	// ECS: the larger surface (capacity providers, task sets, container instances,
-	// account settings, attributes, daemons, service deployments, task protection)
-	// is tracked here for a focused follow-on.
-	"AmazonEC2ContainerServiceV20141113": {
-		"ContinueServiceDeployment", "CreateCapacityProvider", "CreateDaemon", "CreateTaskSet",
-		"DeleteAccountSetting", "DeleteAttributes", "DeleteCapacityProvider", "DeleteDaemon",
-		"DeleteDaemonTaskDefinition", "DeleteTaskDefinitions", "DeleteTaskSet",
-		"DeregisterContainerInstance", "DescribeContainerInstances", "DescribeDaemon",
-		"DescribeDaemonDeployments", "DescribeDaemonRevisions", "DescribeDaemonTaskDefinition",
-		"DescribeServiceDeployments", "DescribeServiceRevisions", "DescribeTaskSets",
-		"DiscoverPollEndpoint", "GetTaskProtection", "ListAccountSettings", "ListAttributes",
-		"ListContainerInstances", "ListDaemonDeployments", "ListDaemonTaskDefinitions",
-		"ListDaemons", "ListServiceDeployments", "ListServicesByNamespace", "PutAccountSetting",
-		"PutAccountSettingDefault", "PutAttributes", "RegisterContainerInstance",
-		"RegisterDaemonTaskDefinition", "StartTask", "StopServiceDeployment",
-		"SubmitAttachmentStateChanges", "SubmitContainerStateChange", "SubmitTaskStateChange",
-		"UpdateCapacityProvider", "UpdateContainerAgent", "UpdateContainerInstancesState",
-		"UpdateDaemon", "UpdateServicePrimaryTaskSet", "UpdateTaskProtection", "UpdateTaskSet",
-	},
+	// ECS: all real operations are implemented.
+	"AmazonEC2ContainerServiceV20141113": {},
 }
 
 // serviceRegisteredOps returns the set of operations the sim registers for the

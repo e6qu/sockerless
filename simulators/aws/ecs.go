@@ -276,6 +276,8 @@ type ECSTask struct {
 	Overrides            *ECSTaskOverride      `json:"overrides,omitempty"`
 	EnableExecuteCommand bool                  `json:"enableExecuteCommand,omitempty"`
 	NetworkConfiguration *ECSTaskNetworkConfig `json:"networkConfiguration,omitempty"`
+	StartedBy            string                `json:"startedBy,omitempty"`
+	ContainerInstanceArn string                `json:"containerInstanceArn,omitempty"`
 }
 
 type ECSTaskNetworkConfig struct {
@@ -422,6 +424,20 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	// ECS Service family + cluster capacity providers (aws_ecs_service /
 	// aws_ecs_cluster_capacity_providers).
 	registerECSServices(r, srv)
+
+	// The wider ECS control-plane surface: capacity providers, blue/green task
+	// sets, container instances, account settings, attributes, task protection,
+	// daemons, and service deployments.
+	registerECSCapacity(r, srv)
+	registerECSTaskSets(r, srv)
+	registerECSContainerInstances(r, srv)
+	registerECSAccount(r, srv)
+	registerECSAttributes(r, srv)
+	registerECSTaskProtection(r, srv)
+	registerECSDaemons(r, srv)
+	registerECSServiceDeployments(r, srv)
+	registerECSStartTask(r, srv)
+	r.Register("AmazonEC2ContainerServiceV20141113.DeleteTaskDefinitions", handleECSDeleteTaskDefinitions)
 
 	// Static WebSocket route for ECS exec sessions (session ID is a path param)
 	srv.HandleFunc("GET /ecs-exec/{sessionId}", func(w http.ResponseWriter, r *http.Request) {
