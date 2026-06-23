@@ -94,6 +94,7 @@ func registerScheduler(srv *sim.Server) {
 // so real CloudTrail-style lookup surfaces Scheduler API calls against
 // scheduler.amazonaws.com.
 func schedulerRecorded(eventName string, h http.HandlerFunc) http.HandlerFunc {
+	restRegisterOp("scheduler.amazonaws.com", eventName)
 	return func(w http.ResponseWriter, r *http.Request) {
 		rec := &cloudTrailStatusRecorder{ResponseWriter: w}
 		h(rec, r)

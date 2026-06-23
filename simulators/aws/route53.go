@@ -319,6 +319,8 @@ func registerRoute53(srv *sim.Server) {
 	// Tagging — path /2013-04-01/tags/{ResourceType}/{ResourceId}
 	mux.HandleFunc("GET /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", cloudTrailRecordedREST("ListTagsForResource", "route53.amazonaws.com", hostedZoneResource, handleR53ListTagsForResource))
 	mux.HandleFunc("POST /"+r53APIVersion+"/tags/{resourceType}/{resourceId}", cloudTrailRecordedREST("ChangeTagsForResource", "route53.amazonaws.com", hostedZoneResource, handleR53ChangeTagsForResource))
+
+	registerRoute53Extra(mux)
 }
 
 // ---------- Tag types ----------

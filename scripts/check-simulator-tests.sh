@@ -149,7 +149,10 @@ op_referenced_in_tests() {
 # OR — for routes whose final path segment is a CamelCase operation name (the
 # SDK-op-in-path form, e.g. /operation/PutDashboard, where the SDK/CLI client
 # invokes the op by name rather than POSTing the literal wire path) — when that
-# op is referenced in a call/assertion (.PutDashboard( / "put-dashboard").
+# op is referenced in a call/assertion (.PutDashboard( / "put-dashboard"),
+# OR — for a REST route mounted via cloudTrailRecordedREST("Op", …) (where the
+# wire path is a lowercase subresource like /policy but the SDK/CLI invokes the
+# named operation) — when that named operation is referenced.
 route_referenced_in_tests() {
     local route tests_changed path last_seg tf
     route="$1"; shift; tests_changed="$*"
@@ -167,6 +170,19 @@ route_referenced_in_tests() {
     if printf '%s' "$last_seg" | grep -qE '^[A-Z][a-zA-Z0-9]+$'; then
         op_referenced_in_tests "$last_seg" "$tests_changed" && return 0
     fi
+    # cloudTrailRecordedREST("Op", …) names the operation at the route mount;
+    # accept a call/assertion reference to that named op.
+    local esc_route ctop f
+    esc_route="$(regex_escape "$route")"
+    for f in $changed_sim_files; do
+        ctop=$(git diff "$staged_range" -- "$f" 2>/dev/null | grep -E '^\+[^+]' \
+                | grep -E "HandleFunc\s*\(\s*\"${esc_route}\"" \
+                | sed -nE 's/.*cloudTrailRecordedREST(Dynamic)?\s*\(\s*"([A-Za-z0-9]+)".*/\2/p' \
+                | head -1)
+        if [[ -n "$ctop" ]]; then
+            op_referenced_in_tests "$ctop" "$tests_changed" && return 0
+        fi
+    done
     return 1
 }
 

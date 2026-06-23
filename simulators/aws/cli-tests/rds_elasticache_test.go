@@ -217,6 +217,169 @@ func TestElastiCacheCLI_ClusterLifecycle(t *testing.T) {
 	assert.Equal(t, "cli", tagMap(tags.TagList)["phase"])
 }
 
+func TestElastiCacheCLI_ReplicationGroupAndReboot(t *testing.T) {
+	// Reboot a standalone cluster.
+	clusterID := "cli-reboot-cache"
+	runCLI(t, awsCLI("elasticache", "create-cache-cluster",
+		"--cache-cluster-id", clusterID,
+		"--cache-node-type", "cache.t3.micro",
+		"--engine", "redis",
+		"--num-cache-nodes", "1"))
+	t.Cleanup(func() {
+		_ = awsCLI("elasticache", "delete-cache-cluster",
+			"--cache-cluster-id", clusterID).Run()
+	})
+	out := runCLI(t, awsCLI("elasticache", "reboot-cache-cluster",
+		"--cache-cluster-id", clusterID,
+		"--cache-node-ids-to-reboot", "0001"))
+	var rebooted struct {
+		CacheCluster struct {
+			CacheClusterStatus string `json:"CacheClusterStatus"`
+		} `json:"CacheCluster"`
+	}
+	parseJSON(t, out, &rebooted)
+	assert.Equal(t, "rebooting cache cluster nodes", rebooted.CacheCluster.CacheClusterStatus)
+
+	// Replication group lifecycle.
+	rgID := "cli-repl-group"
+	out = runCLI(t, awsCLI("elasticache", "create-replication-group",
+		"--replication-group-id", rgID,
+		"--replication-group-description", "cli repl group",
+		"--cache-node-type", "cache.t3.micro",
+		"--engine", "redis",
+		"--num-cache-clusters", "2",
+		"--automatic-failover-enabled"))
+	var rgCreated struct {
+		ReplicationGroup struct {
+			ReplicationGroupId string   `json:"ReplicationGroupId"`
+			Status             string   `json:"Status"`
+			AutomaticFailover  string   `json:"AutomaticFailover"`
+			MemberClusters     []string `json:"MemberClusters"`
+			ARN                string   `json:"ARN"`
+		} `json:"ReplicationGroup"`
+	}
+	parseJSON(t, out, &rgCreated)
+	require.Equal(t, rgID, rgCreated.ReplicationGroup.ReplicationGroupId)
+	assert.Equal(t, "available", rgCreated.ReplicationGroup.Status)
+	assert.Equal(t, "enabled", rgCreated.ReplicationGroup.AutomaticFailover)
+	require.Len(t, rgCreated.ReplicationGroup.MemberClusters, 2)
+	rgARN := rgCreated.ReplicationGroup.ARN
+	t.Cleanup(func() {
+		_ = awsCLI("elasticache", "delete-replication-group",
+			"--replication-group-id", rgID).Run()
+	})
+
+	out = runCLI(t, awsCLI("elasticache", "describe-replication-groups",
+		"--replication-group-id", rgID))
+	var rgDesc struct {
+		ReplicationGroups []struct {
+			Description string `json:"Description"`
+		} `json:"ReplicationGroups"`
+	}
+	parseJSON(t, out, &rgDesc)
+	require.Len(t, rgDesc.ReplicationGroups, 1)
+	assert.Equal(t, "cli repl group", rgDesc.ReplicationGroups[0].Description)
+
+	runCLI(t, awsCLI("elasticache", "modify-replication-group",
+		"--replication-group-id", rgID,
+		"--replication-group-description", "modified",
+		"--apply-immediately"))
+
+	runCLI(t, awsCLI("elasticache", "add-tags-to-resource",
+		"--resource-name", rgARN,
+		"--tags", "Key=tier,Value=cache"))
+	out = runCLI(t, awsCLI("elasticache", "list-tags-for-resource",
+		"--resource-name", rgARN))
+	var rgTags struct {
+		TagList []cliTag `json:"TagList"`
+	}
+	parseJSON(t, out, &rgTags)
+	assert.Equal(t, "cache", tagMap(rgTags.TagList)["tier"])
+
+	runCLI(t, awsCLI("elasticache", "remove-tags-from-resource",
+		"--resource-name", rgARN,
+		"--tag-keys", "tier"))
+
+	runCLI(t, awsCLI("elasticache", "delete-replication-group",
+		"--replication-group-id", rgID))
+}
+
+func TestElastiCacheCLI_SubnetAndParameterGroups(t *testing.T) {
+	// Cache subnet group lifecycle.
+	sgName := "cli-cache-subnet-group"
+	out := runCLI(t, awsCLI("elasticache", "create-cache-subnet-group",
+		"--cache-subnet-group-name", sgName,
+		"--cache-subnet-group-description", "cli subnet group",
+		"--subnet-ids", "subnet-aaaa1111", "subnet-bbbb2222"))
+	var sgCreated struct {
+		CacheSubnetGroup struct {
+			CacheSubnetGroupName string `json:"CacheSubnetGroupName"`
+			Subnets              []struct {
+				SubnetIdentifier string `json:"SubnetIdentifier"`
+			} `json:"Subnets"`
+		} `json:"CacheSubnetGroup"`
+	}
+	parseJSON(t, out, &sgCreated)
+	require.Equal(t, sgName, sgCreated.CacheSubnetGroup.CacheSubnetGroupName)
+	require.Len(t, sgCreated.CacheSubnetGroup.Subnets, 2)
+	t.Cleanup(func() {
+		_ = awsCLI("elasticache", "delete-cache-subnet-group",
+			"--cache-subnet-group-name", sgName).Run()
+	})
+
+	out = runCLI(t, awsCLI("elasticache", "describe-cache-subnet-groups",
+		"--cache-subnet-group-name", sgName))
+	var sgDesc struct {
+		CacheSubnetGroups []struct {
+			CacheSubnetGroupDescription string `json:"CacheSubnetGroupDescription"`
+		} `json:"CacheSubnetGroups"`
+	}
+	parseJSON(t, out, &sgDesc)
+	require.Len(t, sgDesc.CacheSubnetGroups, 1)
+	assert.Equal(t, "cli subnet group", sgDesc.CacheSubnetGroups[0].CacheSubnetGroupDescription)
+
+	runCLI(t, awsCLI("elasticache", "modify-cache-subnet-group",
+		"--cache-subnet-group-name", sgName,
+		"--cache-subnet-group-description", "modified subnet"))
+
+	runCLI(t, awsCLI("elasticache", "delete-cache-subnet-group",
+		"--cache-subnet-group-name", sgName))
+
+	// Cache parameter group lifecycle.
+	pgName := "cli-cache-param-group"
+	out = runCLI(t, awsCLI("elasticache", "create-cache-parameter-group",
+		"--cache-parameter-group-name", pgName,
+		"--cache-parameter-group-family", "redis7",
+		"--description", "cli param group"))
+	var pgCreated struct {
+		CacheParameterGroup struct {
+			CacheParameterGroupName   string `json:"CacheParameterGroupName"`
+			CacheParameterGroupFamily string `json:"CacheParameterGroupFamily"`
+		} `json:"CacheParameterGroup"`
+	}
+	parseJSON(t, out, &pgCreated)
+	require.Equal(t, pgName, pgCreated.CacheParameterGroup.CacheParameterGroupName)
+	assert.Equal(t, "redis7", pgCreated.CacheParameterGroup.CacheParameterGroupFamily)
+	t.Cleanup(func() {
+		_ = awsCLI("elasticache", "delete-cache-parameter-group",
+			"--cache-parameter-group-name", pgName).Run()
+	})
+
+	out = runCLI(t, awsCLI("elasticache", "describe-cache-parameter-groups",
+		"--cache-parameter-group-name", pgName))
+	var pgDesc struct {
+		CacheParameterGroups []struct {
+			Description string `json:"Description"`
+		} `json:"CacheParameterGroups"`
+	}
+	parseJSON(t, out, &pgDesc)
+	require.Len(t, pgDesc.CacheParameterGroups, 1)
+	assert.Equal(t, "cli param group", pgDesc.CacheParameterGroups[0].Description)
+
+	runCLI(t, awsCLI("elasticache", "delete-cache-parameter-group",
+		"--cache-parameter-group-name", pgName))
+}
+
 type cliTag struct {
 	Key   string `json:"Key"`
 	Value string `json:"Value"`

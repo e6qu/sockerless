@@ -319,6 +319,7 @@ var (
 	ec2Subnets            sim.Store[EC2Subnet]
 	ec2InternetGateways   sim.Store[EC2InternetGateway]
 	ec2NatGateways        sim.Store[EC2NatGateway]
+	ec2VpcEndpoints       sim.Store[EC2VpcEndpoint]
 	ec2ElasticIPs         sim.Store[EC2ElasticIP]
 	ec2RouteTables        sim.Store[EC2RouteTable]
 	ec2SecurityGroups     sim.Store[EC2SecurityGroup]
@@ -441,6 +442,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2Subnets = sim.MakeStore[EC2Subnet](srv.DB(), "ec2_subnets")
 	ec2InternetGateways = sim.MakeStore[EC2InternetGateway](srv.DB(), "ec2_internet_gateways")
 	ec2NatGateways = sim.MakeStore[EC2NatGateway](srv.DB(), "ec2_nat_gateways")
+	ec2VpcEndpoints = sim.MakeStore[EC2VpcEndpoint](srv.DB(), "ec2_vpc_endpoints")
 	ec2ElasticIPs = sim.MakeStore[EC2ElasticIP](srv.DB(), "ec2_elastic_ips")
 	ec2RouteTables = sim.MakeStore[EC2RouteTable](srv.DB(), "ec2_route_tables")
 	ec2SecurityGroups = sim.MakeStore[EC2SecurityGroup](srv.DB(), "ec2_security_groups")
@@ -487,6 +489,11 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("CreateNatGateway", handleCreateNatGateway)
 	r.Register("DescribeNatGateways", handleDescribeNatGateways)
 	r.Register("DeleteNatGateway", handleDeleteNatGateway)
+
+	// VPC Endpoint
+	r.Register("CreateVpcEndpoint", handleCreateVpcEndpoint)
+	r.Register("DescribeVpcEndpoints", handleDescribeVpcEndpoints)
+	r.Register("DeleteVpcEndpoints", handleDeleteVpcEndpoints)
 
 	// Route Table
 	r.Register("CreateRouteTable", handleCreateRouteTable)

@@ -166,3 +166,174 @@ func TestElastiCache_ClusterLifecycle(t *testing.T) {
 	})
 	assertAWSAPIErrorCode(t, err, "CacheClusterNotFound")
 }
+
+func TestElastiCache_ReplicationGroupAndReboot(t *testing.T) {
+	c := ecClient()
+
+	// RebootCacheCluster on a standalone cluster.
+	clusterID := "test-reboot-cluster"
+	_, err := c.CreateCacheCluster(ctx, &elasticache.CreateCacheClusterInput{
+		CacheClusterId: aws.String(clusterID),
+		CacheNodeType:  aws.String("cache.t3.micro"),
+		Engine:         aws.String("redis"),
+		NumCacheNodes:  aws.Int32(1),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteCacheCluster(ctx, &elasticache.DeleteCacheClusterInput{
+			CacheClusterId: aws.String(clusterID),
+		})
+	})
+	reboot, err := c.RebootCacheCluster(ctx, &elasticache.RebootCacheClusterInput{
+		CacheClusterId:       aws.String(clusterID),
+		CacheNodeIdsToReboot: []string{"0001"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, reboot.CacheCluster)
+	assert.Equal(t, "rebooting cache cluster nodes", aws.ToString(reboot.CacheCluster.CacheClusterStatus))
+
+	// Replication group lifecycle.
+	rgID := "test-repl-group"
+	create, err := c.CreateReplicationGroup(ctx, &elasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String(rgID),
+		ReplicationGroupDescription: aws.String("sdk repl group"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+		NumCacheClusters:            aws.Int32(2),
+		AutomaticFailoverEnabled:    aws.Bool(true),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, create.ReplicationGroup)
+	t.Cleanup(func() {
+		_, _ = c.DeleteReplicationGroup(ctx, &elasticache.DeleteReplicationGroupInput{
+			ReplicationGroupId: aws.String(rgID),
+		})
+	})
+	assert.Equal(t, rgID, aws.ToString(create.ReplicationGroup.ReplicationGroupId))
+	assert.Equal(t, "available", aws.ToString(create.ReplicationGroup.Status))
+	assert.Equal(t, ectypes.AutomaticFailoverStatusEnabled, create.ReplicationGroup.AutomaticFailover)
+	require.Len(t, create.ReplicationGroup.MemberClusters, 2)
+
+	desc, err := c.DescribeReplicationGroups(ctx, &elasticache.DescribeReplicationGroupsInput{
+		ReplicationGroupId: aws.String(rgID),
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.ReplicationGroups, 1)
+	assert.Equal(t, "sdk repl group", aws.ToString(desc.ReplicationGroups[0].Description))
+
+	mod, err := c.ModifyReplicationGroup(ctx, &elasticache.ModifyReplicationGroupInput{
+		ReplicationGroupId:          aws.String(rgID),
+		ReplicationGroupDescription: aws.String("modified description"),
+		SnapshotRetentionLimit:      aws.Int32(7),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "modified description", aws.ToString(mod.ReplicationGroup.Description))
+	assert.Equal(t, int32(7), aws.ToInt32(mod.ReplicationGroup.SnapshotRetentionLimit))
+
+	// Tagging a replication group ARN.
+	rgARN := "arn:aws:elasticache:us-east-1:123456789012:replicationgroup:" + rgID
+	_, err = c.AddTagsToResource(ctx, &elasticache.AddTagsToResourceInput{
+		ResourceName: aws.String(rgARN),
+		Tags:         []ectypes.Tag{{Key: aws.String("tier"), Value: aws.String("cache")}},
+	})
+	require.NoError(t, err)
+	rgTags, err := c.ListTagsForResource(ctx, &elasticache.ListTagsForResourceInput{
+		ResourceName: aws.String(rgARN),
+	})
+	require.NoError(t, err)
+	rgTagMap := map[string]string{}
+	for _, tag := range rgTags.TagList {
+		rgTagMap[aws.ToString(tag.Key)] = aws.ToString(tag.Value)
+	}
+	assert.Equal(t, "cache", rgTagMap["tier"])
+
+	_, err = c.DeleteReplicationGroup(ctx, &elasticache.DeleteReplicationGroupInput{
+		ReplicationGroupId: aws.String(rgID),
+	})
+	require.NoError(t, err)
+	_, err = c.DescribeReplicationGroups(ctx, &elasticache.DescribeReplicationGroupsInput{
+		ReplicationGroupId: aws.String(rgID),
+	})
+	assertAWSAPIErrorCode(t, err, "ReplicationGroupNotFoundFault")
+}
+
+func TestElastiCache_SubnetAndParameterGroups(t *testing.T) {
+	c := ecClient()
+
+	// Cache subnet group lifecycle.
+	sgName := "test-cache-subnet-group"
+	csg, err := c.CreateCacheSubnetGroup(ctx, &elasticache.CreateCacheSubnetGroupInput{
+		CacheSubnetGroupName:        aws.String(sgName),
+		CacheSubnetGroupDescription: aws.String("sdk subnet group"),
+		SubnetIds:                   []string{"subnet-aaaa1111", "subnet-bbbb2222"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, csg.CacheSubnetGroup)
+	t.Cleanup(func() {
+		_, _ = c.DeleteCacheSubnetGroup(ctx, &elasticache.DeleteCacheSubnetGroupInput{
+			CacheSubnetGroupName: aws.String(sgName),
+		})
+	})
+	assert.Equal(t, sgName, aws.ToString(csg.CacheSubnetGroup.CacheSubnetGroupName))
+	require.Len(t, csg.CacheSubnetGroup.Subnets, 2)
+
+	descSG, err := c.DescribeCacheSubnetGroups(ctx, &elasticache.DescribeCacheSubnetGroupsInput{
+		CacheSubnetGroupName: aws.String(sgName),
+	})
+	require.NoError(t, err)
+	require.Len(t, descSG.CacheSubnetGroups, 1)
+	assert.Equal(t, "sdk subnet group", aws.ToString(descSG.CacheSubnetGroups[0].CacheSubnetGroupDescription))
+
+	_, err = c.ModifyCacheSubnetGroup(ctx, &elasticache.ModifyCacheSubnetGroupInput{
+		CacheSubnetGroupName:        aws.String(sgName),
+		CacheSubnetGroupDescription: aws.String("modified subnet desc"),
+	})
+	require.NoError(t, err)
+	descSG2, err := c.DescribeCacheSubnetGroups(ctx, &elasticache.DescribeCacheSubnetGroupsInput{
+		CacheSubnetGroupName: aws.String(sgName),
+	})
+	require.NoError(t, err)
+	require.Len(t, descSG2.CacheSubnetGroups, 1)
+	assert.Equal(t, "modified subnet desc", aws.ToString(descSG2.CacheSubnetGroups[0].CacheSubnetGroupDescription))
+
+	_, err = c.DeleteCacheSubnetGroup(ctx, &elasticache.DeleteCacheSubnetGroupInput{
+		CacheSubnetGroupName: aws.String(sgName),
+	})
+	require.NoError(t, err)
+	_, err = c.DescribeCacheSubnetGroups(ctx, &elasticache.DescribeCacheSubnetGroupsInput{
+		CacheSubnetGroupName: aws.String(sgName),
+	})
+	assertAWSAPIErrorCode(t, err, "CacheSubnetGroupNotFoundFault")
+
+	// Cache parameter group lifecycle.
+	pgName := "test-cache-param-group"
+	cpg, err := c.CreateCacheParameterGroup(ctx, &elasticache.CreateCacheParameterGroupInput{
+		CacheParameterGroupName:   aws.String(pgName),
+		CacheParameterGroupFamily: aws.String("redis7"),
+		Description:               aws.String("sdk param group"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, cpg.CacheParameterGroup)
+	t.Cleanup(func() {
+		_, _ = c.DeleteCacheParameterGroup(ctx, &elasticache.DeleteCacheParameterGroupInput{
+			CacheParameterGroupName: aws.String(pgName),
+		})
+	})
+	assert.Equal(t, "redis7", aws.ToString(cpg.CacheParameterGroup.CacheParameterGroupFamily))
+
+	descPG, err := c.DescribeCacheParameterGroups(ctx, &elasticache.DescribeCacheParameterGroupsInput{
+		CacheParameterGroupName: aws.String(pgName),
+	})
+	require.NoError(t, err)
+	require.Len(t, descPG.CacheParameterGroups, 1)
+	assert.Equal(t, "sdk param group", aws.ToString(descPG.CacheParameterGroups[0].Description))
+
+	_, err = c.DeleteCacheParameterGroup(ctx, &elasticache.DeleteCacheParameterGroupInput{
+		CacheParameterGroupName: aws.String(pgName),
+	})
+	require.NoError(t, err)
+	_, err = c.DescribeCacheParameterGroups(ctx, &elasticache.DescribeCacheParameterGroupsInput{
+		CacheParameterGroupName: aws.String(pgName),
+	})
+	assertAWSAPIErrorCode(t, err, "CacheParameterGroupNotFoundFault")
+}

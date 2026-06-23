@@ -249,6 +249,12 @@ func serviceCoverage(m *smithyService, jsonTargets []string, versioned map[strin
 // by cloudTrailRecordedREST) for its operation coverage — the REST analogue of
 // reading the awsJson/awsQuery routers.
 var restConformanceSources = map[string]string{
+	"ApiGatewayV2":                 "apigateway.amazonaws.com", // Amazon API Gateway v2
+	"AWSGirApiService":             "lambda.amazonaws.com",     // AWS Lambda
+	"AWSBatchV20160810":            "batch.amazonaws.com",      // AWS Batch
+	"BackplaneControlService":      "apigateway.amazonaws.com", // Amazon API Gateway
+	"Amplify":                      "amplify.amazonaws.com",
+	"AWSChronosService":            "scheduler.amazonaws.com",         // EventBridge Scheduler
 	"AWSDnsV20130401":              "route53.amazonaws.com",           // Amazon Route 53
 	"MagnolioAPIService_v20150201": "elasticfilesystem.amazonaws.com", // Amazon EFS
 }
@@ -276,20 +282,28 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
 // must bump the floor (the ratchet ratchets up).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            88, // ec2Query
+	"AmazonEC2":                            91, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     4,  // STS (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 26, // ECR
-	"AmazonElastiCacheV9":                  13,
-	"AmazonRDSv19":                         13,
+	"AmazonElastiCacheV9":                  25,
+	"AmazonRDSv19":                         25,
 	"AutoScaling_2011_01_01":               13,
-	"AWSGlue":                              19,
+	"AWSGlue":                              30,
 	"AWSWAF_20190729":                      28,
 	"CloudTrail_20131101":                  16,
 	"CodeBuild_20161006":                   9,
 	"Logs_20140328":                        18, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          16, // Cloud Map / ServiceDiscovery
-	"AWSDnsV20130401":                      10, // Route 53 (REST)
-	"MagnolioAPIService_v20150201":         13, // EFS (REST)
+	"AWSDnsV20130401":                      33, // Route 53 (REST)
+	"MagnolioAPIService_v20150201":         29, // EFS (REST)
+	// restJson1 services measured via the REST registry (Part B).
+	"AWSGirApiService":        23, // AWS Lambda
+	"AWSBatchV20160810":       19, // AWS Batch
+	"BackplaneControlService": 28, // Amazon API Gateway
+	"Amplify":                 37,
+	"AWSChronosService":       9,  // EventBridge Scheduler
+	"ApiGatewayV2":            22, // Amazon API Gateway v2
+
 }
 
 // TestServiceConformance_CoverageFloor locks the implemented-op count for the

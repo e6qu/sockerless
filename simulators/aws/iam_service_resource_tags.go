@@ -405,8 +405,8 @@ func iamELBv2ResourceTags(r *http.Request) (map[string]string, bool) {
 // ops carry ResourceName (an ARN); the cluster-scoped ops carry CacheClusterId.
 func iamElastiCacheResourceTags(r *http.Request) (map[string]string, bool) {
 	if arn := r.FormValue("ResourceName"); arn != "" {
-		if c, ok := findECByARN(arn); ok {
-			return c.Tags, true
+		if tags, ok := ecLookupTags(arn); ok {
+			return tags, true
 		}
 		return nil, false
 	}
