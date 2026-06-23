@@ -324,8 +324,11 @@ func handleECSDescribeDaemonDeployments(w http.ResponseWriter, r *http.Request) 
 			"daemonDeploymentArn": dep.DaemonDeploymentArn,
 			"clusterArn":          dep.ClusterArn,
 			"status":              dep.Status,
+			// targetDaemonRevision is a DaemonDeploymentRevisionDetail (arn +
+			// instance counts), not a DaemonRevision (whose ARN field is
+			// daemonRevisionArn).
 			"targetDaemonRevision": map[string]any{
-				"daemonRevisionArn": dep.TargetDaemonRevisionArn,
+				"arn": dep.TargetDaemonRevisionArn,
 			},
 			"createdAt":  dep.CreatedAt,
 			"startedAt":  dep.StartedAt,
