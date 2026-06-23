@@ -36,6 +36,8 @@ type SFNExecution struct {
 	StopDate        *float64 `json:"stopDate,omitempty"`
 	Input           string   `json:"input,omitempty"`
 	Output          string   `json:"output,omitempty"`
+	RedriveCount    int      `json:"redriveCount"`
+	RedriveDate     *float64 `json:"redriveDate,omitempty"`
 }
 
 type SFNTag struct {
@@ -69,6 +71,43 @@ func registerStepFunctions(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSStepFunctions.GetExecutionHistory", handleSFNGetExecutionHistory)
 	r.Register("AWSStepFunctions.ListExecutions", handleSFNListExecutions)
 	r.Register("AWSStepFunctions.StopExecution", handleSFNStopExecution)
+
+	// Activities — named task-poll resources with an ARN, plus the
+	// task-token lifecycle GetActivityTask/SendTask* manage.
+	sfnActivities = sim.MakeStore[SFNActivity](srv.DB(), "sfn_activities")
+	sfnActivityTasks = sim.MakeStore[SFNActivityTask](srv.DB(), "sfn_activity_tasks")
+	r.Register("AWSStepFunctions.CreateActivity", handleSFNCreateActivity)
+	r.Register("AWSStepFunctions.DeleteActivity", handleSFNDeleteActivity)
+	r.Register("AWSStepFunctions.DescribeActivity", handleSFNDescribeActivity)
+	r.Register("AWSStepFunctions.ListActivities", handleSFNListActivities)
+	r.Register("AWSStepFunctions.GetActivityTask", handleSFNGetActivityTask)
+	r.Register("AWSStepFunctions.SendTaskSuccess", handleSFNSendTaskSuccess)
+	r.Register("AWSStepFunctions.SendTaskFailure", handleSFNSendTaskFailure)
+	r.Register("AWSStepFunctions.SendTaskHeartbeat", handleSFNSendTaskHeartbeat)
+
+	// State-machine versions (numbered immutable snapshots) + aliases
+	// (named pointers with a routingConfiguration to versions).
+	sfnVersions = sim.MakeStore[SFNStateMachineVersion](srv.DB(), "sfn_sm_versions")
+	sfnAliases = sim.MakeStore[SFNStateMachineAlias](srv.DB(), "sfn_sm_aliases")
+	r.Register("AWSStepFunctions.PublishStateMachineVersion", handleSFNPublishStateMachineVersion)
+	r.Register("AWSStepFunctions.DeleteStateMachineVersion", handleSFNDeleteStateMachineVersion)
+	r.Register("AWSStepFunctions.CreateStateMachineAlias", handleSFNCreateStateMachineAlias)
+	r.Register("AWSStepFunctions.DeleteStateMachineAlias", handleSFNDeleteStateMachineAlias)
+	r.Register("AWSStepFunctions.DescribeStateMachineAlias", handleSFNDescribeStateMachineAlias)
+	r.Register("AWSStepFunctions.ListStateMachineAliases", handleSFNListStateMachineAliases)
+	r.Register("AWSStepFunctions.UpdateStateMachineAlias", handleSFNUpdateStateMachineAlias)
+
+	// Execution-scoped read/redrive + Map Run aggregation.
+	r.Register("AWSStepFunctions.DescribeStateMachineForExecution", handleSFNDescribeStateMachineForExecution)
+	r.Register("AWSStepFunctions.RedriveExecution", handleSFNRedriveExecution)
+	sfnMapRuns = sim.MakeStore[SFNMapRun](srv.DB(), "sfn_map_runs")
+	r.Register("AWSStepFunctions.DescribeMapRun", handleSFNDescribeMapRun)
+	r.Register("AWSStepFunctions.ListMapRuns", handleSFNListMapRuns)
+	r.Register("AWSStepFunctions.UpdateMapRun", handleSFNUpdateMapRun)
+
+	// Synchronous state / state-machine evaluation.
+	r.Register("AWSStepFunctions.TestState", handleSFNTestState)
+	r.Register("AWSStepFunctions.StartSyncExecution", handleSFNStartSyncExecution)
 }
 
 func sfnARN(resource string) string {
@@ -968,4 +1007,880 @@ func sfnMapToTags(m map[string]string) []SFNTag {
 		tags = append(tags, SFNTag{Key: k, Value: v})
 	}
 	return tags
+}
+
+// ── Activities ────────────────────────────────────────────────────────────
+//
+// An activity is a named task-poll resource: a worker polls GetActivityTask
+// for work and reports back via SendTaskSuccess/SendTaskFailure/
+// SendTaskHeartbeat. A Task state with `Resource: arn:...:activity:NAME`
+// schedules a task token onto the activity's queue; the worker drains it.
+
+type SFNActivity struct {
+	ActivityArn  string  `json:"activityArn"`
+	Name         string  `json:"name"`
+	CreationDate float64 `json:"creationDate"`
+}
+
+// SFNActivityTask is one scheduled-but-not-yet-completed activity task,
+// keyed by its opaque task token.
+type SFNActivityTask struct {
+	TaskToken   string  `json:"taskToken"`
+	ActivityArn string  `json:"activityArn"`
+	Input       string  `json:"input"`
+	Status      string  `json:"status"` // SCHEDULED, RUNNING, SUCCEEDED, FAILED
+	Output      string  `json:"output"`
+	Error       string  `json:"error"`
+	Cause       string  `json:"cause"`
+	LastHB      float64 `json:"lastHeartbeat"`
+}
+
+var (
+	sfnActivities    sim.Store[SFNActivity]
+	sfnActivityTasks sim.Store[SFNActivityTask]
+)
+
+func handleSFNCreateActivity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string   `json:"name"`
+		Tags []SFNTag `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		sfnWriteError(w, "InvalidName", "name is required")
+		return
+	}
+
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	arn := sfnARN("activity:" + req.Name)
+	// CreateActivity is idempotent on (name) — re-creating returns the
+	// existing ARN and original creation date.
+	if existing, ok := sfnActivities.Get(req.Name); ok {
+		sfnWriteJSON(w, http.StatusOK, map[string]any{
+			"activityArn":  existing.ActivityArn,
+			"creationDate": existing.CreationDate,
+		})
+		return
+	}
+	act := SFNActivity{
+		ActivityArn:  arn,
+		Name:         req.Name,
+		CreationDate: sfnEpochNow(),
+	}
+	sfnActivities.Put(req.Name, act)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"activityArn":  arn,
+		"creationDate": act.CreationDate,
+	})
+}
+
+func handleSFNDeleteActivity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActivityArn string `json:"activityArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	sfnActivities.Delete(sfnNameFromARN(req.ActivityArn))
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSFNDescribeActivity(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActivityArn string `json:"activityArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	act, ok := sfnActivities.Get(sfnNameFromARN(req.ActivityArn))
+	if !ok {
+		sfnWriteError(w, "ActivityDoesNotExist", "Activity does not exist: "+req.ActivityArn)
+		return
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"activityArn":  act.ActivityArn,
+		"name":         act.Name,
+		"creationDate": act.CreationDate,
+	})
+}
+
+func handleSFNListActivities(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxResults *int   `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	all := sfnActivities.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 100)
+	items := make([]map[string]any, 0, len(page))
+	for _, a := range page {
+		items = append(items, map[string]any{
+			"activityArn":  a.ActivityArn,
+			"name":         a.Name,
+			"creationDate": a.CreationDate,
+		})
+	}
+	resp := map[string]any{"activities": items}
+	if nextTok != "" {
+		resp["nextToken"] = nextTok
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleSFNGetActivityTask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ActivityArn string `json:"activityArn"`
+		WorkerName  string `json:"workerName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	if _, ok := sfnActivities.Get(sfnNameFromARN(req.ActivityArn)); !ok {
+		sfnWriteError(w, "ActivityDoesNotExist", "Activity does not exist: "+req.ActivityArn)
+		return
+	}
+
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	// Dequeue the oldest SCHEDULED task for this activity, marking it RUNNING.
+	for _, task := range sfnActivityTasks.List() {
+		if task.ActivityArn == req.ActivityArn && task.Status == "SCHEDULED" {
+			task.Status = "RUNNING"
+			task.LastHB = sfnEpochNow()
+			sfnActivityTasks.Put(task.TaskToken, task)
+			sfnWriteJSON(w, http.StatusOK, map[string]any{
+				"taskToken": task.TaskToken,
+				"input":     task.Input,
+			})
+			return
+		}
+	}
+	// No work available: the real API long-polls up to 60s then returns an
+	// empty taskToken. We return immediately with an empty token (the
+	// faithful no-work response shape).
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"taskToken": ""})
+}
+
+func handleSFNSendTaskSuccess(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TaskToken string `json:"taskToken"`
+		Output    string `json:"output"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	task, ok := sfnActivityTasks.Get(req.TaskToken)
+	if !ok {
+		sfnWriteError(w, "TaskDoesNotExist", "Task Token does not exist")
+		return
+	}
+	if task.Status != "RUNNING" {
+		sfnWriteError(w, "TaskTimedOut", "Task Timed Out")
+		return
+	}
+	task.Status = "SUCCEEDED"
+	task.Output = req.Output
+	sfnActivityTasks.Put(req.TaskToken, task)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSFNSendTaskFailure(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TaskToken string `json:"taskToken"`
+		Error     string `json:"error"`
+		Cause     string `json:"cause"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	task, ok := sfnActivityTasks.Get(req.TaskToken)
+	if !ok {
+		sfnWriteError(w, "TaskDoesNotExist", "Task Token does not exist")
+		return
+	}
+	task.Status = "FAILED"
+	task.Error = req.Error
+	task.Cause = req.Cause
+	sfnActivityTasks.Put(req.TaskToken, task)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSFNSendTaskHeartbeat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TaskToken string `json:"taskToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	task, ok := sfnActivityTasks.Get(req.TaskToken)
+	if !ok {
+		sfnWriteError(w, "TaskDoesNotExist", "Task Token does not exist")
+		return
+	}
+	if task.Status != "RUNNING" {
+		sfnWriteError(w, "TaskTimedOut", "Task Timed Out")
+		return
+	}
+	task.LastHB = sfnEpochNow()
+	sfnActivityTasks.Put(req.TaskToken, task)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ── State machine versions + aliases ──────────────────────────────────────
+//
+// PublishStateMachineVersion snapshots the current definition+role into a
+// numbered, immutable version (arn:...:stateMachine:Name:N). An alias is a
+// named pointer (arn:...:stateMachine:Name:aliasName) whose
+// routingConfiguration weights traffic across one or two versions.
+
+type SFNStateMachineVersion struct {
+	StateMachineVersionArn string  `json:"stateMachineVersionArn"`
+	StateMachineName       string  `json:"stateMachineName"`
+	Version                int     `json:"version"`
+	Definition             string  `json:"definition"`
+	RoleArn                string  `json:"roleArn"`
+	Description            string  `json:"description"`
+	CreationDate           float64 `json:"creationDate"`
+}
+
+type SFNRoutingConfig struct {
+	StateMachineVersionArn string `json:"stateMachineVersionArn"`
+	Weight                 int    `json:"weight"`
+}
+
+type SFNStateMachineAlias struct {
+	StateMachineAliasArn string             `json:"stateMachineAliasArn"`
+	Name                 string             `json:"name"`
+	Description          string             `json:"description"`
+	RoutingConfiguration []SFNRoutingConfig `json:"routingConfiguration"`
+	CreationDate         float64            `json:"creationDate"`
+	UpdateDate           float64            `json:"updateDate"`
+}
+
+var (
+	sfnVersions sim.Store[SFNStateMachineVersion]
+	sfnAliases  sim.Store[SFNStateMachineAlias]
+)
+
+// sfnNextVersionNumber returns 1 + the highest existing version number for a
+// state machine.
+func sfnNextVersionNumber(smName string) int {
+	max := 0
+	for _, v := range sfnVersions.List() {
+		if v.StateMachineName == smName && v.Version > max {
+			max = v.Version
+		}
+	}
+	return max + 1
+}
+
+func handleSFNPublishStateMachineVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineArn string `json:"stateMachineArn"`
+		Description     string `json:"description"`
+		RevisionId      string `json:"revisionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	smName := sfnNameFromARN(req.StateMachineArn)
+	sm, ok := sfnStateMachines.Get(smName)
+	if !ok {
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+req.StateMachineArn)
+		return
+	}
+	n := sfnNextVersionNumber(smName)
+	arn := fmt.Sprintf("%s:%d", sm.StateMachineArn, n)
+	ver := SFNStateMachineVersion{
+		StateMachineVersionArn: arn,
+		StateMachineName:       smName,
+		Version:                n,
+		Definition:             sm.Definition,
+		RoleArn:                sm.RoleArn,
+		Description:            req.Description,
+		CreationDate:           sfnEpochNow(),
+	}
+	sfnVersions.Put(arn, ver)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"stateMachineVersionArn": arn,
+		"creationDate":           ver.CreationDate,
+	})
+}
+
+func handleSFNDeleteStateMachineVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineVersionArn string `json:"stateMachineVersionArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	sfnVersions.Delete(req.StateMachineVersionArn)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// sfnAliasKey is the store key for an alias: the state-machine name joined
+// with the alias name, so aliases are unique per state machine.
+func sfnAliasKey(smName, aliasName string) string {
+	return smName + "/" + aliasName
+}
+
+// sfnSMNameFromVersionArn pulls the state-machine name out of a version ARN
+// (arn:...:stateMachine:Name:N).
+func sfnSMNameFromVersionArn(arn string) string {
+	parts := strings.Split(arn, ":")
+	if len(parts) >= 7 {
+		return parts[6]
+	}
+	return arn
+}
+
+func handleSFNCreateStateMachineAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name                 string             `json:"name"`
+		Description          string             `json:"description"`
+		RoutingConfiguration []SFNRoutingConfig `json:"routingConfiguration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		sfnWriteError(w, "InvalidName", "name is required")
+		return
+	}
+	if len(req.RoutingConfiguration) == 0 {
+		sfnWriteError(w, "ValidationException", "routingConfiguration is required")
+		return
+	}
+
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	// The alias belongs to the state machine that owns the version(s) it
+	// routes to.
+	smName := sfnSMNameFromVersionArn(req.RoutingConfiguration[0].StateMachineVersionArn)
+	if _, ok := sfnStateMachines.Get(smName); !ok {
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist for version: "+req.RoutingConfiguration[0].StateMachineVersionArn)
+		return
+	}
+	aliasArn := fmt.Sprintf("%s:%s", sfnARN("stateMachine:"+smName), req.Name)
+	now := sfnEpochNow()
+	alias := SFNStateMachineAlias{
+		StateMachineAliasArn: aliasArn,
+		Name:                 req.Name,
+		Description:          req.Description,
+		RoutingConfiguration: req.RoutingConfiguration,
+		CreationDate:         now,
+		UpdateDate:           now,
+	}
+	sfnAliases.Put(sfnAliasKey(smName, req.Name), alias)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"stateMachineAliasArn": aliasArn,
+		"creationDate":         now,
+	})
+}
+
+// sfnAliasByArn resolves an alias by its full ARN
+// (arn:...:stateMachine:Name:aliasName).
+func sfnAliasByArn(arn string) (SFNStateMachineAlias, bool) {
+	for _, a := range sfnAliases.List() {
+		if a.StateMachineAliasArn == arn {
+			return a, true
+		}
+	}
+	return SFNStateMachineAlias{}, false
+}
+
+func handleSFNDescribeStateMachineAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineAliasArn string `json:"stateMachineAliasArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	alias, ok := sfnAliasByArn(req.StateMachineAliasArn)
+	if !ok {
+		sfnWriteError(w, "ResourceNotFound", "State machine alias does not exist: "+req.StateMachineAliasArn)
+		return
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"stateMachineAliasArn": alias.StateMachineAliasArn,
+		"name":                 alias.Name,
+		"description":          alias.Description,
+		"routingConfiguration": alias.RoutingConfiguration,
+		"creationDate":         alias.CreationDate,
+		"updateDate":           alias.UpdateDate,
+	})
+}
+
+func handleSFNListStateMachineAliases(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineArn string `json:"stateMachineArn"`
+		MaxResults      *int   `json:"maxResults"`
+		NextToken       string `json:"nextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	smName := sfnNameFromARN(req.StateMachineArn)
+	if _, ok := sfnStateMachines.Get(smName); !ok {
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+req.StateMachineArn)
+		return
+	}
+	var owned []SFNStateMachineAlias
+	smArn := sfnARN("stateMachine:" + smName)
+	for _, a := range sfnAliases.List() {
+		if strings.HasPrefix(a.StateMachineAliasArn, smArn+":") {
+			owned = append(owned, a)
+		}
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(owned, req.NextToken, maxR, 100)
+	items := make([]map[string]any, 0, len(page))
+	for _, a := range page {
+		items = append(items, map[string]any{
+			"stateMachineAliasArn": a.StateMachineAliasArn,
+			"creationDate":         a.CreationDate,
+		})
+	}
+	resp := map[string]any{"stateMachineAliases": items}
+	if nextTok != "" {
+		resp["nextToken"] = nextTok
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleSFNUpdateStateMachineAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineAliasArn string             `json:"stateMachineAliasArn"`
+		Description          *string            `json:"description"`
+		RoutingConfiguration []SFNRoutingConfig `json:"routingConfiguration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+
+	alias, ok := sfnAliasByArn(req.StateMachineAliasArn)
+	if !ok {
+		sfnWriteError(w, "ResourceNotFound", "State machine alias does not exist: "+req.StateMachineAliasArn)
+		return
+	}
+	if req.Description != nil {
+		alias.Description = *req.Description
+	}
+	if len(req.RoutingConfiguration) > 0 {
+		alias.RoutingConfiguration = req.RoutingConfiguration
+	}
+	alias.UpdateDate = sfnEpochNow()
+	smName := sfnSMNameFromVersionArn(alias.RoutingConfiguration[0].StateMachineVersionArn)
+	sfnAliases.Put(sfnAliasKey(smName, alias.Name), alias)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"updateDate": alias.UpdateDate})
+}
+
+func handleSFNDeleteStateMachineAlias(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineAliasArn string `json:"stateMachineAliasArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	if alias, ok := sfnAliasByArn(req.StateMachineAliasArn); ok {
+		smName := sfnSMNameFromVersionArn(alias.RoutingConfiguration[0].StateMachineVersionArn)
+		sfnAliases.Delete(sfnAliasKey(smName, alias.Name))
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ── DescribeStateMachineForExecution + RedriveExecution ───────────────────
+
+func handleSFNDescribeStateMachineForExecution(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExecutionArn string `json:"executionArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	exec, ok := sfnExecutions.Get(req.ExecutionArn)
+	if !ok {
+		sfnWriteError(w, "ExecutionDoesNotExist", "Execution does not exist: "+req.ExecutionArn)
+		return
+	}
+	sm, ok := sfnStateMachines.Get(sfnNameFromARN(exec.StateMachineArn))
+	if !ok {
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+exec.StateMachineArn)
+		return
+	}
+	sfnWriteJSON(w, http.StatusOK, map[string]any{
+		"stateMachineArn": sm.StateMachineArn,
+		"name":            sm.Name,
+		"definition":      sm.Definition,
+		"roleArn":         sm.RoleArn,
+		"updateDate":      sm.CreationDate,
+	})
+}
+
+func handleSFNRedriveExecution(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExecutionArn string `json:"executionArn"`
+		ClientToken  string `json:"clientToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+
+	sfnMu.Lock()
+	exec, ok := sfnExecutions.Get(req.ExecutionArn)
+	if !ok {
+		sfnMu.Unlock()
+		sfnWriteError(w, "ExecutionDoesNotExist", "Execution does not exist: "+req.ExecutionArn)
+		return
+	}
+	// Redrive only applies to a terminal, non-successful execution
+	// (FAILED/ABORTED/TIMED_OUT). A RUNNING or SUCCEEDED execution is not
+	// redrivable.
+	if exec.Status == "RUNNING" || exec.Status == "SUCCEEDED" {
+		sfnMu.Unlock()
+		sfnWriteError(w, "ExecutionNotRedrivable", "Execution is not redrivable: "+req.ExecutionArn)
+		return
+	}
+	sm, ok := sfnStateMachines.Get(sfnNameFromARN(exec.StateMachineArn))
+	if !ok {
+		sfnMu.Unlock()
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+exec.StateMachineArn)
+		return
+	}
+	now := sfnEpochNow()
+	exec.Status = "RUNNING"
+	exec.StopDate = nil
+	exec.Output = ""
+	exec.RedriveCount++
+	exec.RedriveDate = &now
+	sfnExecutions.Put(req.ExecutionArn, exec)
+	input := exec.Input
+	cancel := make(chan struct{})
+	sfnCancels.Store(req.ExecutionArn, cancel)
+	sfnMu.Unlock()
+
+	go sfnRunExecution(req.ExecutionArn, sm.Definition, input, cancel)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{"redriveDate": now})
+}
+
+// ── Map Runs ──────────────────────────────────────────────────────────────
+//
+// A Map Run aggregates the child workflow executions a Distributed Map state
+// launches. It is keyed by its mapRunArn and tied to the parent execution.
+
+type SFNMapRun struct {
+	MapRunArn                  string   `json:"mapRunArn"`
+	ExecutionArn               string   `json:"executionArn"`
+	StateMachineArn            string   `json:"stateMachineArn"`
+	Status                     string   `json:"status"`
+	StartDate                  float64  `json:"startDate"`
+	StopDate                   *float64 `json:"stopDate"`
+	MaxConcurrency             int      `json:"maxConcurrency"`
+	ToleratedFailurePercentage float64  `json:"toleratedFailurePercentage"`
+	ToleratedFailureCount      int      `json:"toleratedFailureCount"`
+	Total                      int      `json:"total"`
+	Succeeded                  int      `json:"succeeded"`
+	Failed                     int      `json:"failed"`
+	RedriveCount               int      `json:"redriveCount"`
+}
+
+var sfnMapRuns sim.Store[SFNMapRun]
+
+func handleSFNDescribeMapRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MapRunArn string `json:"mapRunArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	mr, ok := sfnMapRuns.Get(req.MapRunArn)
+	if !ok {
+		sfnWriteError(w, "ResourceNotFound", "Map Run does not exist: "+req.MapRunArn)
+		return
+	}
+	resp := map[string]any{
+		"mapRunArn":                  mr.MapRunArn,
+		"executionArn":               mr.ExecutionArn,
+		"status":                     mr.Status,
+		"startDate":                  mr.StartDate,
+		"maxConcurrency":             mr.MaxConcurrency,
+		"toleratedFailurePercentage": mr.ToleratedFailurePercentage,
+		"toleratedFailureCount":      mr.ToleratedFailureCount,
+		"itemCounts": map[string]any{
+			"pending":        0,
+			"running":        0,
+			"succeeded":      mr.Succeeded,
+			"failed":         mr.Failed,
+			"timedOut":       0,
+			"aborted":        0,
+			"total":          mr.Total,
+			"resultsWritten": mr.Succeeded,
+		},
+		"executionCounts": map[string]any{
+			"pending":        0,
+			"running":        0,
+			"succeeded":      mr.Succeeded,
+			"failed":         mr.Failed,
+			"timedOut":       0,
+			"aborted":        0,
+			"total":          mr.Total,
+			"resultsWritten": mr.Succeeded,
+		},
+		"redriveCount": mr.RedriveCount,
+	}
+	if mr.StopDate != nil {
+		resp["stopDate"] = *mr.StopDate
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleSFNListMapRuns(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ExecutionArn string `json:"executionArn"`
+		MaxResults   *int   `json:"maxResults"`
+		NextToken    string `json:"nextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	var owned []SFNMapRun
+	for _, mr := range sfnMapRuns.List() {
+		if mr.ExecutionArn == req.ExecutionArn {
+			owned = append(owned, mr)
+		}
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(owned, req.NextToken, maxR, 100)
+	items := make([]map[string]any, 0, len(page))
+	for _, mr := range page {
+		item := map[string]any{
+			"executionArn":    mr.ExecutionArn,
+			"mapRunArn":       mr.MapRunArn,
+			"stateMachineArn": mr.StateMachineArn,
+			"startDate":       mr.StartDate,
+		}
+		if mr.StopDate != nil {
+			item["stopDate"] = *mr.StopDate
+		}
+		items = append(items, item)
+	}
+	resp := map[string]any{"mapRuns": items}
+	if nextTok != "" {
+		resp["nextToken"] = nextTok
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleSFNUpdateMapRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MapRunArn                  string   `json:"mapRunArn"`
+		MaxConcurrency             *int     `json:"maxConcurrency"`
+		ToleratedFailurePercentage *float64 `json:"toleratedFailurePercentage"`
+		ToleratedFailureCount      *int     `json:"toleratedFailureCount"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	sfnMu.Lock()
+	defer sfnMu.Unlock()
+	mr, ok := sfnMapRuns.Get(req.MapRunArn)
+	if !ok {
+		sfnWriteError(w, "ResourceNotFound", "Map Run does not exist: "+req.MapRunArn)
+		return
+	}
+	if req.MaxConcurrency != nil {
+		mr.MaxConcurrency = *req.MaxConcurrency
+	}
+	if req.ToleratedFailurePercentage != nil {
+		mr.ToleratedFailurePercentage = *req.ToleratedFailurePercentage
+	}
+	if req.ToleratedFailureCount != nil {
+		mr.ToleratedFailureCount = *req.ToleratedFailureCount
+	}
+	sfnMapRuns.Put(req.MapRunArn, mr)
+	sfnWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ── TestState + StartSyncExecution ────────────────────────────────────────
+//
+// TestState runs a single state synchronously; StartSyncExecution runs the
+// whole state machine synchronously and returns the terminal result. Both
+// reuse the same ASL interpreter that backs StartExecution.
+
+func handleSFNTestState(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Definition string `json:"definition"`
+		Input      string `json:"input"`
+		StateName  string `json:"stateName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	if req.Definition == "" {
+		sfnWriteError(w, "ValidationException", "definition is required")
+		return
+	}
+	// TestState's definition is a single ASL *state* object (not a full
+	// state machine). Wrap it in a one-state machine and run it through the
+	// interpreter so the result is a real evaluation, not a fabricated one.
+	var state sfnState
+	if err := json.Unmarshal([]byte(req.Definition), &state); err != nil {
+		sfnWriteError(w, "InvalidDefinition", "invalid state definition: "+err.Error())
+		return
+	}
+	stateName := req.StateName
+	if stateName == "" {
+		stateName = "TestState"
+	}
+	// Force the single state to be terminal so the interpreter returns its
+	// result rather than chasing a Next that isn't in the wrapper.
+	nextState := state.Next
+	state.Next = ""
+	state.End = true
+	wrapped := sfnDefinition{
+		StartAt: stateName,
+		States:  map[string]sfnState{stateName: state},
+	}
+	input := req.Input
+	if input == "" {
+		input = "{}"
+	}
+	wrappedJSON, _ := json.Marshal(wrapped)
+	output, status, err := sfnExecute(string(wrappedJSON), input, nil)
+
+	resp := map[string]any{
+		"inspectionData": map[string]any{"input": input},
+	}
+	if err != nil || status == "FAILED" {
+		resp["status"] = "FAILED"
+		resp["error"] = "States.Runtime"
+		if err != nil {
+			resp["cause"] = err.Error()
+		}
+	} else {
+		resp["status"] = "SUCCEEDED"
+		resp["output"] = output
+		if nextState != "" {
+			resp["nextState"] = nextState
+		}
+		if id, ok := resp["inspectionData"].(map[string]any); ok {
+			id["result"] = output
+		}
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleSFNStartSyncExecution(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StateMachineArn string `json:"stateMachineArn"`
+		Name            string `json:"name"`
+		Input           string `json:"input"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		sfnWriteError(w, "InvalidRequest", "invalid JSON")
+		return
+	}
+	smName := sfnNameFromARN(req.StateMachineArn)
+	sm, ok := sfnStateMachines.Get(smName)
+	if !ok {
+		sfnWriteError(w, "StateMachineDoesNotExist", "State machine does not exist: "+req.StateMachineArn)
+		return
+	}
+	if err := sfnValidateDefinition(sm.Definition); err != nil {
+		sfnWriteError(w, "InvalidDefinition", err.Error())
+		return
+	}
+
+	execName := req.Name
+	if execName == "" {
+		execName = uuid.New().String()
+	}
+	execARN := sfnARN("express:" + smName + ":" + execName + ":" + uuid.New().String())
+	input := req.Input
+	if input == "" {
+		input = "{}"
+	}
+	startDate := sfnEpochNow()
+	output, status, err := sfnExecute(sm.Definition, input, nil)
+	stopDate := sfnEpochNow()
+
+	resp := map[string]any{
+		"executionArn":    execARN,
+		"stateMachineArn": req.StateMachineArn,
+		"name":            execName,
+		"startDate":       startDate,
+		"stopDate":        stopDate,
+		"input":           input,
+		"inputDetails":    map[string]any{"included": true},
+		"outputDetails":   map[string]any{"included": true},
+		"billingDetails": map[string]any{
+			"billedMemoryUsedInMB":         64,
+			"billedDurationInMilliseconds": 100,
+		},
+	}
+	if err != nil || status == "FAILED" {
+		resp["status"] = "FAILED"
+		resp["error"] = "States.Runtime"
+		if err != nil {
+			resp["cause"] = err.Error()
+		}
+	} else {
+		resp["status"] = "SUCCEEDED"
+		resp["output"] = output
+	}
+	sfnWriteJSON(w, http.StatusOK, resp)
 }

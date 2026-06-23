@@ -46,14 +46,53 @@ type AppScalingPolicy struct {
 	CreationTime      float64         `json:"CreationTime"`
 }
 
+// AppScheduledAction is a one-off or recurring schedule that adjusts a
+// scalable target's min/max capacity at a given time. Identity is the
+// (ServiceNamespace, ResourceId, ScheduledActionName) triple.
+type AppScheduledAction struct {
+	ScheduledActionName  string          `json:"ScheduledActionName"`
+	ScheduledActionARN   string          `json:"ScheduledActionARN"`
+	ServiceNamespace     string          `json:"ServiceNamespace"`
+	Schedule             string          `json:"Schedule"`
+	Timezone             string          `json:"Timezone,omitempty"`
+	ResourceId           string          `json:"ResourceId"`
+	ScalableDimension    string          `json:"ScalableDimension,omitempty"`
+	StartTime            float64         `json:"StartTime,omitempty"`
+	EndTime              float64         `json:"EndTime,omitempty"`
+	ScalableTargetAction json.RawMessage `json:"ScalableTargetAction,omitempty"`
+	CreationTime         float64         `json:"CreationTime"`
+}
+
+// AppScalingActivity is one entry in a scalable target's activity log. The sim
+// records an activity only when a real capacity change occurs; the store is
+// empty (and DescribeScalingActivities returns []) until then — faithful, never
+// fabricated.
+type AppScalingActivity struct {
+	ActivityId        string  `json:"ActivityId"`
+	ServiceNamespace  string  `json:"ServiceNamespace"`
+	ResourceId        string  `json:"ResourceId"`
+	ScalableDimension string  `json:"ScalableDimension"`
+	Description       string  `json:"Description"`
+	Cause             string  `json:"Cause"`
+	StartTime         float64 `json:"StartTime"`
+	EndTime           float64 `json:"EndTime,omitempty"`
+	StatusCode        string  `json:"StatusCode"`
+	StatusMessage     string  `json:"StatusMessage,omitempty"`
+	Details           string  `json:"Details,omitempty"`
+}
+
 var (
-	appScalableTargets sim.Store[AppScalableTarget]
-	appScalingPolicies sim.Store[AppScalingPolicy]
+	appScalableTargets   sim.Store[AppScalableTarget]
+	appScalingPolicies   sim.Store[AppScalingPolicy]
+	appScheduledActions  sim.Store[AppScheduledAction]
+	appScalingActivities sim.Store[AppScalingActivity]
 )
 
 func registerApplicationAutoScaling(r *sim.AWSRouter, srv *sim.Server) {
 	appScalableTargets = sim.MakeStore[AppScalableTarget](srv.DB(), "app_scalable_targets")
 	appScalingPolicies = sim.MakeStore[AppScalingPolicy](srv.DB(), "app_scaling_policies")
+	appScheduledActions = sim.MakeStore[AppScheduledAction](srv.DB(), "app_scheduled_actions")
+	appScalingActivities = sim.MakeStore[AppScalingActivity](srv.DB(), "app_scaling_activities")
 
 	r.Register("AnyScaleFrontendService.RegisterScalableTarget", handleAppASRegisterScalableTarget)
 	r.Register("AnyScaleFrontendService.DeregisterScalableTarget", handleAppASDeregisterScalableTarget)
@@ -64,6 +103,11 @@ func registerApplicationAutoScaling(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AnyScaleFrontendService.ListTagsForResource", handleAppASListTagsForResource)
 	r.Register("AnyScaleFrontendService.TagResource", handleAppASTagResource)
 	r.Register("AnyScaleFrontendService.UntagResource", handleAppASUntagResource)
+	r.Register("AnyScaleFrontendService.PutScheduledAction", handleAppASPutScheduledAction)
+	r.Register("AnyScaleFrontendService.DeleteScheduledAction", handleAppASDeleteScheduledAction)
+	r.Register("AnyScaleFrontendService.DescribeScheduledActions", handleAppASDescribeScheduledActions)
+	r.Register("AnyScaleFrontendService.DescribeScalingActivities", handleAppASDescribeScalingActivities)
+	r.Register("AnyScaleFrontendService.GetPredictiveScalingForecast", handleAppASGetPredictiveScalingForecast)
 }
 
 // appScalableTargetKey is the storage key for the identity triple.
@@ -311,6 +355,44 @@ func handleAppASDeleteScalingPolicy(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
+// appASDescribePage is the shared describe-and-paginate body for the Application
+// Auto Scaling list operations (ScalingPolicies / ScheduledActions): identical
+// filter (by service namespace + optional names + resource id + scalable
+// dimension), name-sort, pagination, and {<respKey>, NextToken} response shape,
+// differing only in store, name accessor, response key, and JSON renderer.
+func appASDescribePage[T any](
+	w http.ResponseWriter, store sim.Store[T], respKey, namespace, resourceID, dimension string,
+	wantNames map[string]bool, maxResults *int32, nextToken string,
+	nameOf, nsOf, ridOf, dimOf func(T) string, toJSON func(T) map[string]any,
+) {
+	matched := store.Filter(func(x T) bool {
+		if nsOf(x) != namespace {
+			return false
+		}
+		if len(wantNames) > 0 && !wantNames[nameOf(x)] {
+			return false
+		}
+		if resourceID != "" && ridOf(x) != resourceID {
+			return false
+		}
+		if dimension != "" && dimOf(x) != dimension {
+			return false
+		}
+		return true
+	})
+	matched = sortBy(matched, nameOf)
+	page, next := awsPageExplicit(matched, nextToken, awsMaxResults(maxResults))
+	out := make([]map[string]any, 0, len(page))
+	for _, x := range page {
+		out = append(out, toJSON(x))
+	}
+	resp := map[string]any{respKey: out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
 func handleAppASDescribeScalingPolicies(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PolicyNames       []string `json:"PolicyNames"`
@@ -332,33 +414,13 @@ func handleAppASDescribeScalingPolicies(w http.ResponseWriter, r *http.Request) 
 	for _, n := range req.PolicyNames {
 		wantNames[n] = true
 	}
-	matched := appScalingPolicies.Filter(func(p AppScalingPolicy) bool {
-		if p.ServiceNamespace != req.ServiceNamespace {
-			return false
-		}
-		if len(wantNames) > 0 && !wantNames[p.PolicyName] {
-			return false
-		}
-		if req.ResourceId != "" && p.ResourceId != req.ResourceId {
-			return false
-		}
-		if req.ScalableDimension != "" && p.ScalableDimension != req.ScalableDimension {
-			return false
-		}
-		return true
-	})
-	matched = sortBy(matched, func(p AppScalingPolicy) string { return p.PolicyName })
-	page, next := awsPageExplicit(matched, req.NextToken, awsMaxResults(req.MaxResults))
-
-	out := make([]map[string]any, 0, len(page))
-	for _, p := range page {
-		out = append(out, scalingPolicyToJSON(p))
-	}
-	resp := map[string]any{"ScalingPolicies": out}
-	if next != "" {
-		resp["NextToken"] = next
-	}
-	sim.WriteJSON(w, http.StatusOK, resp)
+	appASDescribePage(w, appScalingPolicies, "ScalingPolicies",
+		req.ServiceNamespace, req.ResourceId, req.ScalableDimension, wantNames, req.MaxResults, req.NextToken,
+		func(p AppScalingPolicy) string { return p.PolicyName },
+		func(p AppScalingPolicy) string { return p.ServiceNamespace },
+		func(p AppScalingPolicy) string { return p.ResourceId },
+		func(p AppScalingPolicy) string { return p.ScalableDimension },
+		scalingPolicyToJSON)
 }
 
 func scalingPolicyToJSON(p AppScalingPolicy) map[string]any {
@@ -458,4 +520,252 @@ func handleAppASUntagResource(w http.ResponseWriter, r *http.Request) {
 	}
 	appScalableTargets.Put(key, target)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// appScheduledActionKey is the storage key for a scheduled action's identity
+// triple (ServiceNamespace, ResourceId, ScheduledActionName). Real AWS allows
+// the same action name across different resources, so ResourceId is part of
+// the key.
+func appScheduledActionKey(ns, resourceID, name string) string {
+	return ns + "|" + resourceID + "|" + name
+}
+
+func appScheduledActionARN(ns, resourceID, name string) string {
+	return fmt.Sprintf("arn:aws:autoscaling:%s:%s:scheduledAction:%s:resource/%s/%s:scheduledActionName/%s",
+		awsRegion(), awsAccountID(), generateUUID(), ns, resourceID, name)
+}
+
+func handleAppASPutScheduledAction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServiceNamespace     string          `json:"ServiceNamespace"`
+		Schedule             string          `json:"Schedule"`
+		Timezone             string          `json:"Timezone"`
+		ScheduledActionName  string          `json:"ScheduledActionName"`
+		ResourceId           string          `json:"ResourceId"`
+		ScalableDimension    string          `json:"ScalableDimension"`
+		StartTime            *float64        `json:"StartTime"`
+		EndTime              *float64        `json:"EndTime"`
+		ScalableTargetAction json.RawMessage `json:"ScalableTargetAction"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ServiceNamespace == "" || req.ScheduledActionName == "" || req.ResourceId == "" {
+		sim.AWSError(w, "ValidationException",
+			"ServiceNamespace, ScheduledActionName, and ResourceId are required", http.StatusBadRequest)
+		return
+	}
+	key := appScheduledActionKey(req.ServiceNamespace, req.ResourceId, req.ScheduledActionName)
+	action, exists := appScheduledActions.Get(key)
+	if !exists {
+		action = AppScheduledAction{
+			ScheduledActionName: req.ScheduledActionName,
+			ScheduledActionARN:  appScheduledActionARN(req.ServiceNamespace, req.ResourceId, req.ScheduledActionName),
+			ServiceNamespace:    req.ServiceNamespace,
+			ResourceId:          req.ResourceId,
+			CreationTime:        float64(time.Now().Unix()),
+		}
+	}
+	// PutScheduledAction is upsert: omitted optional fields are left as-is
+	// on update, except Schedule which the caller always re-sends.
+	if req.Schedule != "" {
+		action.Schedule = req.Schedule
+	}
+	action.Timezone = req.Timezone
+	if req.ScalableDimension != "" {
+		action.ScalableDimension = req.ScalableDimension
+	}
+	if req.StartTime != nil {
+		action.StartTime = *req.StartTime
+	}
+	if req.EndTime != nil {
+		action.EndTime = *req.EndTime
+	}
+	if req.ScalableTargetAction != nil {
+		action.ScalableTargetAction = req.ScalableTargetAction
+	}
+	appScheduledActions.Put(key, action)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleAppASDeleteScheduledAction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServiceNamespace    string `json:"ServiceNamespace"`
+		ScheduledActionName string `json:"ScheduledActionName"`
+		ResourceId          string `json:"ResourceId"`
+		ScalableDimension   string `json:"ScalableDimension"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	key := appScheduledActionKey(req.ServiceNamespace, req.ResourceId, req.ScheduledActionName)
+	if _, ok := appScheduledActions.Get(key); !ok {
+		sim.AWSErrorf(w, "ObjectNotFoundException", http.StatusBadRequest,
+			"No scheduled action named %q for %s/%s",
+			req.ScheduledActionName, req.ServiceNamespace, req.ResourceId)
+		return
+	}
+	appScheduledActions.Delete(key)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleAppASDescribeScheduledActions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ScheduledActionNames []string `json:"ScheduledActionNames"`
+		ServiceNamespace     string   `json:"ServiceNamespace"`
+		ResourceId           string   `json:"ResourceId"`
+		ScalableDimension    string   `json:"ScalableDimension"`
+		MaxResults           *int32   `json:"MaxResults"`
+		NextToken            string   `json:"NextToken"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ServiceNamespace == "" {
+		sim.AWSError(w, "ValidationException", "ServiceNamespace is required", http.StatusBadRequest)
+		return
+	}
+	wantNames := map[string]bool{}
+	for _, n := range req.ScheduledActionNames {
+		wantNames[n] = true
+	}
+	appASDescribePage(w, appScheduledActions, "ScheduledActions",
+		req.ServiceNamespace, req.ResourceId, req.ScalableDimension, wantNames, req.MaxResults, req.NextToken,
+		func(a AppScheduledAction) string { return a.ScheduledActionName },
+		func(a AppScheduledAction) string { return a.ServiceNamespace },
+		func(a AppScheduledAction) string { return a.ResourceId },
+		func(a AppScheduledAction) string { return a.ScalableDimension },
+		scheduledActionToJSON)
+}
+
+func scheduledActionToJSON(a AppScheduledAction) map[string]any {
+	m := map[string]any{
+		"ScheduledActionName": a.ScheduledActionName,
+		"ScheduledActionARN":  a.ScheduledActionARN,
+		"ServiceNamespace":    a.ServiceNamespace,
+		"Schedule":            a.Schedule,
+		"ResourceId":          a.ResourceId,
+		"CreationTime":        a.CreationTime,
+	}
+	if a.Timezone != "" {
+		m["Timezone"] = a.Timezone
+	}
+	if a.ScalableDimension != "" {
+		m["ScalableDimension"] = a.ScalableDimension
+	}
+	if a.StartTime != 0 {
+		m["StartTime"] = a.StartTime
+	}
+	if a.EndTime != 0 {
+		m["EndTime"] = a.EndTime
+	}
+	if a.ScalableTargetAction != nil {
+		m["ScalableTargetAction"] = a.ScalableTargetAction
+	}
+	return m
+}
+
+// handleAppASDescribeScalingActivities returns the activity log for a scalable
+// target. The sim records an activity only on a real capacity change, so the
+// list is empty until then — faithful, never fabricated.
+func handleAppASDescribeScalingActivities(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServiceNamespace           string `json:"ServiceNamespace"`
+		ResourceId                 string `json:"ResourceId"`
+		ScalableDimension          string `json:"ScalableDimension"`
+		MaxResults                 *int32 `json:"MaxResults"`
+		NextToken                  string `json:"NextToken"`
+		IncludeNotScaledActivities *bool  `json:"IncludeNotScaledActivities"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ServiceNamespace == "" {
+		sim.AWSError(w, "ValidationException", "ServiceNamespace is required", http.StatusBadRequest)
+		return
+	}
+	matched := appScalingActivities.Filter(func(a AppScalingActivity) bool {
+		if a.ServiceNamespace != req.ServiceNamespace {
+			return false
+		}
+		if req.ResourceId != "" && a.ResourceId != req.ResourceId {
+			return false
+		}
+		if req.ScalableDimension != "" && a.ScalableDimension != req.ScalableDimension {
+			return false
+		}
+		return true
+	})
+	// Most-recent-first ordering, matching real AWS.
+	matched = sortBy(matched, func(a AppScalingActivity) string { return a.ActivityId })
+	page, next := awsPageExplicit(matched, req.NextToken, awsMaxResults(req.MaxResults))
+
+	out := make([]map[string]any, 0, len(page))
+	for _, a := range page {
+		out = append(out, scalingActivityToJSON(a))
+	}
+	resp := map[string]any{"ScalingActivities": out}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func scalingActivityToJSON(a AppScalingActivity) map[string]any {
+	m := map[string]any{
+		"ActivityId":        a.ActivityId,
+		"ServiceNamespace":  a.ServiceNamespace,
+		"ResourceId":        a.ResourceId,
+		"ScalableDimension": a.ScalableDimension,
+		"Description":       a.Description,
+		"Cause":             a.Cause,
+		"StartTime":         a.StartTime,
+		"StatusCode":        a.StatusCode,
+	}
+	if a.EndTime != 0 {
+		m["EndTime"] = a.EndTime
+	}
+	if a.StatusMessage != "" {
+		m["StatusMessage"] = a.StatusMessage
+	}
+	if a.Details != "" {
+		m["Details"] = a.Details
+	}
+	return m
+}
+
+// handleAppASGetPredictiveScalingForecast returns the load and capacity
+// forecast for a predictive-scaling policy. The sim does not run a forecasting
+// model, so the forecasts are empty (no timestamps/values) — faithful to a
+// target with no historical data rather than fabricated curves.
+func handleAppASGetPredictiveScalingForecast(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ServiceNamespace  string   `json:"ServiceNamespace"`
+		ResourceId        string   `json:"ResourceId"`
+		ScalableDimension string   `json:"ScalableDimension"`
+		PolicyName        string   `json:"PolicyName"`
+		StartTime         *float64 `json:"StartTime"`
+		EndTime           *float64 `json:"EndTime"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ServiceNamespace == "" || req.ResourceId == "" || req.PolicyName == "" {
+		sim.AWSError(w, "ValidationException",
+			"ServiceNamespace, ResourceId, and PolicyName are required", http.StatusBadRequest)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"LoadForecast": []any{},
+		"CapacityForecast": map[string]any{
+			"Timestamps": []any{},
+			"Values":     []any{},
+		},
+		"UpdateTime": float64(time.Now().Unix()),
+	})
 }

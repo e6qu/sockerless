@@ -29,6 +29,24 @@ type S3Object struct {
 	LastModified time.Time
 	Size         int64
 	Metadata     map[string]string
+
+	// ACL holds the raw <AccessControlPolicy> XML body set by
+	// PutObjectAcl (empty until set; GetObjectAcl synthesizes the
+	// canonical owner-FULL_CONTROL ACL when empty).
+	ACL []byte
+	// LegalHoldStatus is the Object Lock legal-hold status ("ON"/"OFF"),
+	// empty when never set.
+	LegalHoldStatus string
+	// RetentionMode / RetainUntilDate hold the Object Lock retention set
+	// by PutObjectRetention. Mode is "GOVERNANCE"/"COMPLIANCE"; empty
+	// when no retention is configured.
+	RetentionMode   string
+	RetainUntilDate string
+	// RestoreInProgress / RestoreExpiryDate track an in-flight or
+	// completed RestoreObject request (Glacier-class restore lifecycle).
+	RestoreRequested  bool
+	RestoreInProgress bool
+	RestoreExpiryDate string
 }
 
 // XML response types for S3
@@ -201,6 +219,12 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 	case http.MethodHead:
 		return "HeadBucket"
 	case http.MethodPut:
+		if q.Has("object-lock") {
+			// The Object Lock configuration's API operation name has no
+			// "Bucket" infix (PutObjectLockConfiguration), unlike the
+			// generic PutBucket<Subresource> family.
+			return "PutObjectLockConfiguration"
+		}
 		if name, _, ok := firstBucketSubresource(q); ok {
 			return "PutBucket" + s3SubresourceOperationSuffix(name)
 		}
@@ -246,11 +270,21 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 				return "GetBucketMetricsConfiguration"
 			}
 			return "ListBucketMetricsConfigurations"
+		case q.Has("object-lock"):
+			// GetObjectLockConfiguration — no "Bucket" infix, unlike the
+			// generic GetBucket<Subresource> family.
+			return "GetObjectLockConfiguration"
 		}
 		if name, _, ok := firstBucketSubresource(q); ok {
 			return "GetBucket" + s3SubresourceOperationSuffix(name)
 		}
-		return "ListObjectsV2"
+		// The legacy V1 list (ListObjects) is selected by the absence of
+		// `list-type=2`; ListObjectsV2 sets it. Both share GET /{bucket}
+		// with no subresource selector.
+		if q.Get("list-type") == "2" {
+			return "ListObjectsV2"
+		}
+		return "ListObjects"
 	}
 	return ""
 }
@@ -262,12 +296,20 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 		return "HeadObject"
 	case http.MethodPut:
 		switch {
+		case r.Header.Get("x-amz-copy-source") != "" && q.Has("uploadId") && q.Has("partNumber"):
+			return "UploadPartCopy"
 		case r.Header.Get("x-amz-copy-source") != "":
 			return "CopyObject"
 		case q.Has("uploadId") && q.Has("partNumber"):
 			return "UploadPart"
 		case q.Has("tagging"):
 			return "PutObjectTagging"
+		case q.Has("acl"):
+			return "PutObjectAcl"
+		case q.Has("legal-hold"):
+			return "PutObjectLegalHold"
+		case q.Has("retention"):
+			return "PutObjectRetention"
 		default:
 			return "PutObject"
 		}
@@ -277,6 +319,16 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 			return "ListParts"
 		case q.Has("tagging"):
 			return "GetObjectTagging"
+		case q.Has("acl"):
+			return "GetObjectAcl"
+		case q.Has("attributes"):
+			return "GetObjectAttributes"
+		case q.Has("legal-hold"):
+			return "GetObjectLegalHold"
+		case q.Has("retention"):
+			return "GetObjectRetention"
+		case q.Has("torrent"):
+			return "GetObjectTorrent"
 		default:
 			return "GetObject"
 		}
@@ -286,6 +338,8 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 			return "CreateMultipartUpload"
 		case q.Has("uploadId"):
 			return "CompleteMultipartUpload"
+		case q.Has("restore"):
+			return "RestoreObject"
 		}
 	case http.MethodDelete:
 		switch {
@@ -611,7 +665,15 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// No sub-resource → ListObjects(V2). Falls through to the existing path below.
+	// No sub-resource → list operation. ListObjectsV2 sets `list-type=2`;
+	// the legacy V1 ListObjects omits it and carries a distinct response
+	// shape (Marker / NextMarker instead of ContinuationToken).
+	if r.URL.Query().Get("list-type") != "2" {
+		handleS3ListObjectsV1(w, r, bucket)
+		return
+	}
+
+	// ListObjectsV2.
 	prefix := r.URL.Query().Get("prefix")
 	delimiter := r.URL.Query().Get("delimiter")
 	continuationToken := r.URL.Query().Get("continuation-token")

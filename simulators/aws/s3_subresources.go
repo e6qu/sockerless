@@ -61,9 +61,11 @@ func handleS3PostObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		handleS3InitiateMultipart(w, r)
 	case q.Has("uploadId"):
 		handleS3CompleteMultipart(w, r)
+	case q.Has("restore"):
+		handleS3RestoreObject(w, r)
 	default:
 		sim.S3ErrorXML(w, "InvalidRequest",
-			"POST on an object requires ?uploads (InitiateMultipartUpload) or ?uploadId (CompleteMultipartUpload)",
+			"POST on an object requires ?uploads (InitiateMultipartUpload), ?uploadId (CompleteMultipartUpload), or ?restore (RestoreObject)",
 			"", sim.RequestID(r.Context()), http.StatusBadRequest)
 	}
 }
@@ -99,6 +101,10 @@ func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if r.Header.Get("x-amz-copy-source") != "" && q.Has("uploadId") && q.Has("partNumber") {
+		handleS3UploadPartCopy(w, r)
+		return
+	}
 	if r.Header.Get("x-amz-copy-source") != "" {
 		handleS3CopyObject(w, r)
 		return
@@ -108,6 +114,12 @@ func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		handleS3UploadPart(w, r)
 	case q.Has("tagging"):
 		handleS3PutObjectTagging(w, r)
+	case q.Has("acl"):
+		handleS3PutObjectAcl(w, r)
+	case q.Has("legal-hold"):
+		handleS3PutObjectLegalHold(w, r)
+	case q.Has("retention"):
+		handleS3PutObjectRetention(w, r)
 	default:
 		handleS3PutObject(w, r)
 	}
@@ -127,6 +139,16 @@ func handleS3GetOrHeadObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		handleS3ListParts(w, r)
 	case q.Has("tagging"):
 		handleS3GetObjectTagging(w, r)
+	case q.Has("acl"):
+		handleS3GetObjectAcl(w, r)
+	case q.Has("attributes"):
+		handleS3GetObjectAttributes(w, r)
+	case q.Has("legal-hold"):
+		handleS3GetObjectLegalHold(w, r)
+	case q.Has("retention"):
+		handleS3GetObjectRetention(w, r)
+	case q.Has("torrent"):
+		handleS3GetObjectTorrent(w, r)
 	default:
 		handleS3GetOrHeadObject(w, r)
 	}
@@ -301,7 +323,10 @@ func handleS3CompleteMultipart(w http.ResponseWriter, r *http.Request) {
 				bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
 			return
 		}
-		if p.ETag != "" && p.ETag != part.ETag {
+		// Real S3 compares part ETags ignoring the surrounding quotes — the
+		// `aws s3api` CLI's shorthand parser strips them, while the SDK
+		// preserves them; both must validate against the stored quoted ETag.
+		if p.ETag != "" && strings.Trim(p.ETag, `"`) != strings.Trim(part.ETag, `"`) {
 			sim.S3ErrorXML(w, "InvalidPart",
 				fmt.Sprintf("ETag mismatch for part %d: got %s want %s", p.PartNumber, p.ETag, part.ETag),
 				bucket, sim.RequestID(r.Context()), http.StatusBadRequest)

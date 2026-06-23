@@ -30,6 +30,8 @@ type KinesisStream struct {
 	CreationTimestamp    float64           `json:"-"`
 	Tags                 map[string]string `json:"-"`
 	OpenShardCount       int64             `json:"-"`
+	MaxRecordSizeInKiB   int64             `json:"-"`
+	WarmThroughputMiBps  int64             `json:"-"`
 }
 
 type KinesisShard struct {
@@ -53,10 +55,34 @@ type kinesisIterator struct {
 	Index      int
 }
 
+// KinesisConsumer is an enhanced fan-out consumer registered against a stream
+// ARN. Its ARN embeds the creation timestamp
+// (arn:...:stream/Name/consumer/CName:<ts>) exactly as real Kinesis does, so
+// re-registering after a delete yields a distinct ARN.
+type KinesisConsumer struct {
+	ConsumerName              string  `json:"ConsumerName"`
+	ConsumerARN               string  `json:"ConsumerARN"`
+	ConsumerStatus            string  `json:"ConsumerStatus"`
+	ConsumerCreationTimestamp float64 `json:"ConsumerCreationTimestamp"`
+	StreamARN                 string  `json:"StreamARN"`
+}
+
+// KinesisAccountSettings holds the account-level minimum-throughput billing
+// commitment (DescribeAccountSettings / UpdateAccountSettings). A single row
+// keyed by the account id.
+type KinesisAccountSettings struct {
+	Status               string  `json:"Status"`
+	StartedAt            float64 `json:"StartedAt"`
+	EarliestAllowedEndAt float64 `json:"EarliestAllowedEndAt"`
+	EndedAt              float64 `json:"EndedAt"`
+}
+
 var (
 	kinesisStreams   sim.Store[KinesisStream]
 	kinesisRecords   sim.Store[[]kinesisRecord]
 	kinesisIterators sim.Store[kinesisIterator]
+	kinesisConsumers sim.Store[KinesisConsumer]
+	kinesisAccount   sim.Store[KinesisAccountSettings]
 	kinesisMu        sync.Mutex
 )
 
@@ -67,6 +93,8 @@ func registerKinesis(r *sim.AWSRouter, srv *sim.Server) {
 	kinesisStreams = sim.MakeStore[KinesisStream](srv.DB(), "kinesis_streams")
 	kinesisRecords = sim.MakeStore[[]kinesisRecord](srv.DB(), "kinesis_records")
 	kinesisIterators = sim.MakeStore[kinesisIterator](srv.DB(), "kinesis_iterators")
+	kinesisConsumers = sim.MakeStore[KinesisConsumer](srv.DB(), "kinesis_consumers")
+	kinesisAccount = sim.MakeStore[KinesisAccountSettings](srv.DB(), "kinesis_account_settings")
 
 	r.Register("Kinesis_20131202.CreateStream", handleKinesisCreateStream)
 	r.Register("Kinesis_20131202.DeleteStream", handleKinesisDeleteStream)
@@ -89,6 +117,23 @@ func registerKinesis(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("Kinesis_20131202.StopStreamEncryption", handleKinesisStopStreamEncryption)
 	r.Register("Kinesis_20131202.UpdateShardCount", handleKinesisUpdateShardCount)
 	r.Register("Kinesis_20131202.DescribeLimits", handleKinesisDescribeLimits)
+	r.Register("Kinesis_20131202.RegisterStreamConsumer", handleKinesisRegisterStreamConsumer)
+	r.Register("Kinesis_20131202.DeregisterStreamConsumer", handleKinesisDeregisterStreamConsumer)
+	r.Register("Kinesis_20131202.DescribeStreamConsumer", handleKinesisDescribeStreamConsumer)
+	r.Register("Kinesis_20131202.ListStreamConsumers", handleKinesisListStreamConsumers)
+	r.Register("Kinesis_20131202.PutResourcePolicy", handleKinesisPutResourcePolicy)
+	r.Register("Kinesis_20131202.GetResourcePolicy", handleKinesisGetResourcePolicy)
+	r.Register("Kinesis_20131202.DeleteResourcePolicy", handleKinesisDeleteResourcePolicy)
+	r.Register("Kinesis_20131202.MergeShards", handleKinesisMergeShards)
+	r.Register("Kinesis_20131202.SplitShard", handleKinesisSplitShard)
+	r.Register("Kinesis_20131202.TagResource", handleKinesisTagResource)
+	r.Register("Kinesis_20131202.UntagResource", handleKinesisUntagResource)
+	r.Register("Kinesis_20131202.ListTagsForResource", handleKinesisListTagsForResource)
+	r.Register("Kinesis_20131202.UpdateStreamMode", handleKinesisUpdateStreamMode)
+	r.Register("Kinesis_20131202.DescribeAccountSettings", handleKinesisDescribeAccountSettings)
+	r.Register("Kinesis_20131202.UpdateAccountSettings", handleKinesisUpdateAccountSettings)
+	r.Register("Kinesis_20131202.UpdateMaxRecordSize", handleKinesisUpdateMaxRecordSize)
+	r.Register("Kinesis_20131202.UpdateStreamWarmThroughput", handleKinesisUpdateStreamWarmThroughput)
 }
 
 func writeKinesisJSON(w http.ResponseWriter, status int, v any) {
@@ -943,5 +988,697 @@ func handleKinesisDescribeLimits(w http.ResponseWriter, r *http.Request) {
 		"OpenShardCount":           open,
 		"OnDemandStreamCount":      0,
 		"OnDemandStreamCountLimit": 50,
+	})
+}
+
+// --- Enhanced fan-out consumers ---
+
+func kinesisStreamByARN(streamARN string) (KinesisStream, bool) {
+	const sep = ":stream/"
+	idx := strings.Index(streamARN, sep)
+	if idx < 0 {
+		return KinesisStream{}, false
+	}
+	name := streamARN[idx+len(sep):]
+	// A stream ARN ends at the stream name; never the consumer suffix.
+	if slash := strings.IndexByte(name, '/'); slash >= 0 {
+		name = name[:slash]
+	}
+	return kinesisStreams.Get(name)
+}
+
+// kinesisConsumerKey is the store key for a consumer: its ARN, which is unique
+// per registration (carries the creation timestamp).
+func kinesisConsumerKey(consumerARN string) string { return consumerARN }
+
+func kinesisConsumerByStreamAndName(streamARN, consumerName string) (KinesisConsumer, bool) {
+	for _, c := range kinesisConsumers.List() {
+		if c.StreamARN == streamARN && c.ConsumerName == consumerName {
+			return c, true
+		}
+	}
+	return KinesisConsumer{}, false
+}
+
+func handleKinesisRegisterStreamConsumer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN    string            `json:"StreamARN"`
+		ConsumerName string            `json:"ConsumerName"`
+		Tags         map[string]string `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.StreamARN == "" || req.ConsumerName == "" {
+		sim.AWSError(w, "InvalidArgumentException", "StreamARN and ConsumerName are required", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisStreamByARN(req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	if _, exists := kinesisConsumerByStreamAndName(req.StreamARN, req.ConsumerName); exists {
+		sim.AWSError(w, "ResourceInUseException", "Consumer already exists", http.StatusBadRequest)
+		return
+	}
+	ts := time.Now().Unix()
+	consumerARN := fmt.Sprintf("%s/consumer/%s:%d", stream.StreamARN, req.ConsumerName, ts)
+	consumer := KinesisConsumer{
+		ConsumerName:              req.ConsumerName,
+		ConsumerARN:               consumerARN,
+		ConsumerStatus:            "ACTIVE",
+		ConsumerCreationTimestamp: float64(ts),
+		StreamARN:                 stream.StreamARN,
+	}
+	kinesisConsumers.Put(kinesisConsumerKey(consumerARN), consumer)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{
+		"Consumer": map[string]any{
+			"ConsumerName":              consumer.ConsumerName,
+			"ConsumerARN":               consumer.ConsumerARN,
+			"ConsumerStatus":            consumer.ConsumerStatus,
+			"ConsumerCreationTimestamp": consumer.ConsumerCreationTimestamp,
+		},
+	})
+}
+
+func handleKinesisDeregisterStreamConsumer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN    string `json:"StreamARN"`
+		ConsumerName string `json:"ConsumerName"`
+		ConsumerARN  string `json:"ConsumerARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	consumer, ok := kinesisResolveConsumer(req.StreamARN, req.ConsumerName, req.ConsumerARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Consumer not found", http.StatusBadRequest)
+		return
+	}
+	kinesisConsumers.Delete(kinesisConsumerKey(consumer.ConsumerARN))
+	iamDeleteResourcePolicy(consumer.ConsumerARN)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+// kinesisResolveConsumer locates a consumer either by its ARN (preferred) or by
+// the (StreamARN, ConsumerName) pair — the two addressing modes the API accepts.
+func kinesisResolveConsumer(streamARN, consumerName, consumerARN string) (KinesisConsumer, bool) {
+	if consumerARN != "" {
+		return kinesisConsumers.Get(kinesisConsumerKey(consumerARN))
+	}
+	if streamARN != "" && consumerName != "" {
+		return kinesisConsumerByStreamAndName(streamARN, consumerName)
+	}
+	return KinesisConsumer{}, false
+}
+
+func handleKinesisDescribeStreamConsumer(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN    string `json:"StreamARN"`
+		ConsumerName string `json:"ConsumerName"`
+		ConsumerARN  string `json:"ConsumerARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	consumer, ok := kinesisResolveConsumer(req.StreamARN, req.ConsumerName, req.ConsumerARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Consumer not found", http.StatusBadRequest)
+		return
+	}
+	writeKinesisJSON(w, http.StatusOK, map[string]any{
+		"ConsumerDescription": map[string]any{
+			"ConsumerName":              consumer.ConsumerName,
+			"ConsumerARN":               consumer.ConsumerARN,
+			"ConsumerStatus":            consumer.ConsumerStatus,
+			"ConsumerCreationTimestamp": consumer.ConsumerCreationTimestamp,
+			"StreamARN":                 consumer.StreamARN,
+		},
+	})
+}
+
+func handleKinesisListStreamConsumers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN  string `json:"StreamARN"`
+		NextToken  string `json:"NextToken"`
+		MaxResults int    `json:"MaxResults"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// NextToken is opaque and (per the API) unambiguously identifies the stream,
+	// so a paginating client omits StreamARN when supplying it. Decode it to
+	// recover the stream ARN and the resume position (last-returned consumer ARN).
+	streamARN, start := req.StreamARN, ""
+	if req.NextToken != "" {
+		tokStream, tokConsumer, ok := kinesisDecodeShardToken(req.NextToken)
+		if !ok {
+			sim.AWSError(w, "InvalidArgumentException", "Invalid NextToken", http.StatusBadRequest)
+			return
+		}
+		streamARN, start = tokStream, tokConsumer
+	}
+	if streamARN == "" {
+		sim.AWSError(w, "InvalidArgumentException", "StreamARN is required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := kinesisStreamByARN(streamARN); !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+
+	var consumers []KinesisConsumer
+	for _, c := range kinesisConsumers.List() {
+		if c.StreamARN == streamARN {
+			consumers = append(consumers, c)
+		}
+	}
+	sort.Slice(consumers, func(i, j int) bool { return consumers[i].ConsumerARN < consumers[j].ConsumerARN })
+
+	if start != "" {
+		idx := 0
+		for idx < len(consumers) && consumers[idx].ConsumerARN <= start {
+			idx++
+		}
+		consumers = consumers[idx:]
+	}
+
+	maxResults := req.MaxResults
+	if maxResults <= 0 || maxResults > 100 {
+		maxResults = 100
+	}
+	var nextToken string
+	if len(consumers) > maxResults {
+		consumers = consumers[:maxResults]
+		nextToken = kinesisEncodeShardToken(streamARN, consumers[len(consumers)-1].ConsumerARN)
+	}
+
+	out := make([]map[string]any, 0, len(consumers))
+	for _, c := range consumers {
+		out = append(out, map[string]any{
+			"ConsumerName":              c.ConsumerName,
+			"ConsumerARN":               c.ConsumerARN,
+			"ConsumerStatus":            c.ConsumerStatus,
+			"ConsumerCreationTimestamp": c.ConsumerCreationTimestamp,
+		})
+	}
+	resp := map[string]any{"Consumers": out}
+	if nextToken != "" {
+		resp["NextToken"] = nextToken
+	}
+	writeKinesisJSON(w, http.StatusOK, resp)
+}
+
+// --- Resource policy ---
+
+// kinesisResolveResourceARN validates that the policy ARN names an existing
+// Kinesis stream or consumer, returning the canonical ARN to key the policy on.
+func kinesisResolveResourceARN(resourceARN string) (string, bool) {
+	if resourceARN == "" {
+		return "", false
+	}
+	if strings.Contains(resourceARN, "/consumer/") {
+		if _, ok := kinesisConsumers.Get(kinesisConsumerKey(resourceARN)); ok {
+			return resourceARN, true
+		}
+		return "", false
+	}
+	if stream, ok := kinesisStreamByARN(resourceARN); ok {
+		return stream.StreamARN, true
+	}
+	return "", false
+}
+
+func handleKinesisPutResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+		Policy      string `json:"Policy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Policy == "" {
+		sim.AWSError(w, "InvalidArgumentException", "Policy is required", http.StatusBadRequest)
+		return
+	}
+	arn, ok := kinesisResolveResourceARN(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	iamPutResourcePolicy(arn, req.Policy)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleKinesisGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	arn, ok := kinesisResolveResourceARN(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	policy, ok := iamGetResourcePolicy(arn)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "No resource policy attached", http.StatusBadRequest)
+		return
+	}
+	writeKinesisJSON(w, http.StatusOK, map[string]any{"Policy": policy})
+}
+
+func handleKinesisDeleteResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	arn, ok := kinesisResolveResourceARN(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	iamDeleteResourcePolicy(arn)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+// --- MergeShards / SplitShard ---
+
+func handleKinesisMergeShards(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamName           string `json:"StreamName"`
+		StreamARN            string `json:"StreamARN"`
+		ShardToMerge         string `json:"ShardToMerge"`
+		AdjacentShardToMerge string `json:"AdjacentShardToMerge"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	kinesisMu.Lock()
+	defer kinesisMu.Unlock()
+	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	left, lok := kinesisFindShard(stream, req.ShardToMerge)
+	right, rok := kinesisFindShard(stream, req.AdjacentShardToMerge)
+	if !lok || !rok {
+		sim.AWSError(w, "ResourceNotFoundException", "Shard not found", http.StatusBadRequest)
+		return
+	}
+	// Adjacency: the two shards' hash-key ranges must be contiguous. Order them
+	// so left precedes right, then require left.End+1 == right.Start.
+	lStart, _ := new(big.Int).SetString(left.HashKeyRange["StartingHashKey"], 10)
+	rStart, _ := new(big.Int).SetString(right.HashKeyRange["StartingHashKey"], 10)
+	if lStart.Cmp(rStart) > 0 {
+		left, right = right, left
+	}
+	lEnd, _ := new(big.Int).SetString(left.HashKeyRange["EndingHashKey"], 10)
+	rStart, _ = new(big.Int).SetString(right.HashKeyRange["StartingHashKey"], 10)
+	if new(big.Int).Add(lEnd, big.NewInt(1)).Cmp(rStart) != 0 {
+		sim.AWSError(w, "InvalidArgumentException", "Shards are not adjacent", http.StatusBadRequest)
+		return
+	}
+
+	// The merged child spans both parents' ranges; both parents close (their
+	// SequenceNumberRange gets an EndingSequenceNumber) and name the child via no
+	// further records. The child's ParentShardId/AdjacentParentShardId record the
+	// lineage exactly as real Kinesis does.
+	childID := kinesisNextShardID(stream)
+	child := KinesisShard{
+		ShardId: childID,
+		HashKeyRange: map[string]string{
+			"StartingHashKey": left.HashKeyRange["StartingHashKey"],
+			"EndingHashKey":   right.HashKeyRange["EndingHashKey"],
+		},
+		SequenceNumberRange: map[string]string{"StartingSequenceNumber": "1"},
+		ParentShardId:       left.ShardId,
+	}
+	stream.Shards = kinesisCloseParents(stream.Shards, left.ShardId, right.ShardId)
+	stream.Shards = append(stream.Shards, child)
+	stream.OpenShardCount = kinesisOpenShardCount(stream.Shards)
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleKinesisSplitShard(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamName         string `json:"StreamName"`
+		StreamARN          string `json:"StreamARN"`
+		ShardToSplit       string `json:"ShardToSplit"`
+		NewStartingHashKey string `json:"NewStartingHashKey"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	kinesisMu.Lock()
+	defer kinesisMu.Unlock()
+	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	parent, ok := kinesisFindShard(stream, req.ShardToSplit)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Shard not found", http.StatusBadRequest)
+		return
+	}
+	newStart, valid := new(big.Int).SetString(req.NewStartingHashKey, 10)
+	if !valid {
+		sim.AWSError(w, "InvalidArgumentException", "NewStartingHashKey must be a valid integer", http.StatusBadRequest)
+		return
+	}
+	start, _ := new(big.Int).SetString(parent.HashKeyRange["StartingHashKey"], 10)
+	end, _ := new(big.Int).SetString(parent.HashKeyRange["EndingHashKey"], 10)
+	// NewStartingHashKey must fall strictly inside (start, end].
+	if newStart.Cmp(start) <= 0 || newStart.Cmp(end) > 0 {
+		sim.AWSError(w, "InvalidArgumentException", "NewStartingHashKey is out of range for the shard", http.StatusBadRequest)
+		return
+	}
+
+	lowID := kinesisNextShardID(stream)
+	low := KinesisShard{
+		ShardId: lowID,
+		HashKeyRange: map[string]string{
+			"StartingHashKey": parent.HashKeyRange["StartingHashKey"],
+			"EndingHashKey":   new(big.Int).Sub(newStart, big.NewInt(1)).String(),
+		},
+		SequenceNumberRange: map[string]string{"StartingSequenceNumber": "1"},
+		ParentShardId:       parent.ShardId,
+	}
+	stream.Shards = append(stream.Shards, low)
+	highID := kinesisNextShardID(stream)
+	high := KinesisShard{
+		ShardId: highID,
+		HashKeyRange: map[string]string{
+			"StartingHashKey": newStart.String(),
+			"EndingHashKey":   parent.HashKeyRange["EndingHashKey"],
+		},
+		SequenceNumberRange: map[string]string{"StartingSequenceNumber": "1"},
+		ParentShardId:       parent.ShardId,
+	}
+	stream.Shards = kinesisCloseParents(stream.Shards, parent.ShardId)
+	stream.Shards = append(stream.Shards, high)
+	stream.OpenShardCount = kinesisOpenShardCount(stream.Shards)
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func kinesisFindShard(stream KinesisStream, shardID string) (KinesisShard, bool) {
+	for _, sh := range stream.Shards {
+		if sh.ShardId == shardID {
+			return sh, true
+		}
+	}
+	return KinesisShard{}, false
+}
+
+// kinesisNextShardID returns the next sequential shardId-NNNNNNNNNNNN, one past
+// the highest currently present, so merge/split children get fresh ids.
+func kinesisNextShardID(stream KinesisStream) string {
+	maxN := int64(-1)
+	for _, sh := range stream.Shards {
+		if n, err := strconv.ParseInt(strings.TrimPrefix(sh.ShardId, "shardId-"), 10, 64); err == nil && n > maxN {
+			maxN = n
+		}
+	}
+	return fmt.Sprintf("shardId-%012d", maxN+1)
+}
+
+// kinesisCloseParents marks the named parent shards closed by stamping an
+// EndingSequenceNumber on their SequenceNumberRange. A closed shard remains in
+// the shard list (lineage is queryable) but is no longer open.
+func kinesisCloseParents(shards []KinesisShard, parentIDs ...string) []KinesisShard {
+	closed := map[string]bool{}
+	for _, id := range parentIDs {
+		closed[id] = true
+	}
+	for i := range shards {
+		if closed[shards[i].ShardId] {
+			if shards[i].SequenceNumberRange == nil {
+				shards[i].SequenceNumberRange = map[string]string{}
+			}
+			if _, has := shards[i].SequenceNumberRange["EndingSequenceNumber"]; !has {
+				shards[i].SequenceNumberRange["EndingSequenceNumber"] = strconv.FormatInt(time.Now().UnixNano(), 10)
+			}
+		}
+	}
+	return shards
+}
+
+// kinesisOpenShardCount counts shards with no EndingSequenceNumber (still open).
+func kinesisOpenShardCount(shards []KinesisShard) int64 {
+	var open int64
+	for _, sh := range shards {
+		if sh.SequenceNumberRange == nil {
+			open++
+			continue
+		}
+		if _, closed := sh.SequenceNumberRange["EndingSequenceNumber"]; !closed {
+			open++
+		}
+	}
+	return open
+}
+
+// --- Tagging (resource-ARN form) ---
+
+// kinesisTagTarget resolves a resource ARN to the stream that owns the tags.
+// Kinesis tag operations address a stream (consumers are not separately
+// taggable through TagResource in this slice), so the ARN must name a stream.
+func kinesisTagStream(resourceARN string) (KinesisStream, bool) {
+	if resourceARN == "" || strings.Contains(resourceARN, "/consumer/") {
+		return KinesisStream{}, false
+	}
+	return kinesisStreamByARN(resourceARN)
+}
+
+func handleKinesisTagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string            `json:"ResourceARN"`
+		Tags        map[string]string `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisTagStream(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	if stream.Tags == nil {
+		stream.Tags = map[string]string{}
+	}
+	for k, v := range req.Tags {
+		stream.Tags[k] = v
+	}
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleKinesisUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string   `json:"ResourceARN"`
+		TagKeys     []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisTagStream(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	for _, key := range req.TagKeys {
+		delete(stream.Tags, key)
+	}
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleKinesisListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceARN string `json:"ResourceARN"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisTagStream(req.ResourceARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Resource not found", http.StatusBadRequest)
+		return
+	}
+	keys := make([]string, 0, len(stream.Tags))
+	for key := range stream.Tags {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	tags := make([]map[string]string, 0, len(keys))
+	for _, key := range keys {
+		tags = append(tags, map[string]string{"Key": key, "Value": stream.Tags[key]})
+	}
+	writeKinesisJSON(w, http.StatusOK, map[string]any{"Tags": tags})
+}
+
+// --- UpdateStreamMode ---
+
+func handleKinesisUpdateStreamMode(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN         string            `json:"StreamARN"`
+		StreamModeDetails map[string]string `json:"StreamModeDetails"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.StreamModeDetails == nil {
+		sim.AWSError(w, "InvalidArgumentException", "StreamModeDetails is required", http.StatusBadRequest)
+		return
+	}
+	mode := req.StreamModeDetails["StreamMode"]
+	if mode != "PROVISIONED" && mode != "ON_DEMAND" {
+		sim.AWSError(w, "InvalidArgumentException", "StreamMode must be PROVISIONED or ON_DEMAND", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisStreamByARN(req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	stream.StreamModeDetails = map[string]string{"StreamMode": mode}
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+// --- Account settings ---
+
+const kinesisAccountSettingsKey = "account"
+
+func handleKinesisDescribeAccountSettings(w http.ResponseWriter, r *http.Request) {
+	settings, ok := kinesisAccount.Get(kinesisAccountSettingsKey)
+	if !ok {
+		// A never-configured account reports the disabled commitment.
+		settings = KinesisAccountSettings{Status: "DISABLED"}
+	}
+	writeKinesisJSON(w, http.StatusOK, map[string]any{
+		"MinimumThroughputBillingCommitment": kinesisAccountSettingsBody(settings),
+	})
+}
+
+func handleKinesisUpdateAccountSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MinimumThroughputBillingCommitment struct {
+			Status string `json:"Status"`
+		} `json:"MinimumThroughputBillingCommitment"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	status := req.MinimumThroughputBillingCommitment.Status
+	if status != "ENABLED" && status != "DISABLED" {
+		sim.AWSError(w, "InvalidArgumentException", "Status must be ENABLED or DISABLED", http.StatusBadRequest)
+		return
+	}
+	settings := KinesisAccountSettings{Status: status}
+	if status == "ENABLED" {
+		now := time.Now()
+		settings.StartedAt = float64(now.Unix())
+		// The commitment has a 24h minimum before it may be disabled.
+		settings.EarliestAllowedEndAt = float64(now.Add(24 * time.Hour).Unix())
+	}
+	kinesisAccount.Put(kinesisAccountSettingsKey, settings)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{
+		"MinimumThroughputBillingCommitment": kinesisAccountSettingsBody(settings),
+	})
+}
+
+func kinesisAccountSettingsBody(s KinesisAccountSettings) map[string]any {
+	out := map[string]any{"Status": s.Status}
+	if s.StartedAt != 0 {
+		out["StartedAt"] = s.StartedAt
+	}
+	if s.EarliestAllowedEndAt != 0 {
+		out["EarliestAllowedEndAt"] = s.EarliestAllowedEndAt
+	}
+	if s.EndedAt != 0 {
+		out["EndedAt"] = s.EndedAt
+	}
+	return out
+}
+
+// --- UpdateMaxRecordSize / UpdateStreamWarmThroughput ---
+
+func handleKinesisUpdateMaxRecordSize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN          string `json:"StreamARN"`
+		StreamName         string `json:"StreamName"`
+		MaxRecordSizeInKiB int64  `json:"MaxRecordSizeInKiB"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.MaxRecordSizeInKiB < 1024 || req.MaxRecordSizeInKiB > 10240 {
+		sim.AWSError(w, "ValidationException", "MaxRecordSizeInKiB must be between 1024 and 10240", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	stream.MaxRecordSizeInKiB = req.MaxRecordSizeInKiB
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleKinesisUpdateStreamWarmThroughput(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		StreamARN           string `json:"StreamARN"`
+		StreamName          string `json:"StreamName"`
+		WarmThroughputMiBps int64  `json:"WarmThroughputMiBps"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidArgumentException", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.WarmThroughputMiBps < 0 {
+		sim.AWSError(w, "InvalidArgumentException", "WarmThroughputMiBps must be non-negative", http.StatusBadRequest)
+		return
+	}
+	stream, ok := kinesisStreamByNameOrARN(req.StreamName, req.StreamARN)
+	if !ok {
+		sim.AWSError(w, "ResourceNotFoundException", "Stream not found", http.StatusBadRequest)
+		return
+	}
+	stream.WarmThroughputMiBps = req.WarmThroughputMiBps
+	kinesisStreams.Put(stream.StreamName, stream)
+	writeKinesisJSON(w, http.StatusOK, map[string]any{
+		"StreamARN":  stream.StreamARN,
+		"StreamName": stream.StreamName,
+		"WarmThroughput": map[string]any{
+			"TargetMiBps":  req.WarmThroughputMiBps,
+			"CurrentMiBps": req.WarmThroughputMiBps,
+		},
 	})
 }

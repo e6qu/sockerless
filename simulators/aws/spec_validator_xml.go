@@ -192,7 +192,7 @@ func (st *specValidatorState) validateRestXML(req *http.Request, respHeader http
 	if len(cands) == 0 {
 		return nil
 	}
-	op := selectRestXMLOp(cands, req.URL.Query())
+	op := selectRestXMLOp(cands, req.URL.Query(), req.Header)
 	if op == nil {
 		st.skip(key, "$", "request query disambiguates none (or several) of the candidate restXml operations")
 		return nil
@@ -203,13 +203,15 @@ func (st *specValidatorState) validateRestXML(req *http.Request, respHeader http
 }
 
 // selectRestXMLOp picks the candidate whose URI query literals and
-// required query-bound input members the request satisfies, preferring
-// the most matches. The x-id disambiguator is only required when the
-// client sent one (the Go SDK does, botocore doesn't). Endpoint-rule
+// required query-/header-bound input members the request satisfies,
+// preferring the most matches. The x-id disambiguator is only required
+// when the client sent one (the Go SDK does, botocore doesn't); a
+// required header (e.g. x-amz-copy-source for UploadPartCopy) separates
+// candidates that share a path and the same required query. Endpoint-rule
 // variants (staticContextParams — S3 Express) lose ties to the plain
 // regional operation. A remaining tie means the request genuinely fits
 // two operations — the caller skips rather than guesses.
-func selectRestXMLOp(cands []restXMLOp, query url.Values) *restXMLOp {
+func selectRestXMLOp(cands []restXMLOp, query url.Values, header http.Header) *restXMLOp {
 	best := -1
 	var won *restXMLOp
 	ambiguous := false
@@ -226,6 +228,15 @@ func selectRestXMLOp(cands []restXMLOp, query url.Values) *restXMLOp {
 		}
 		for _, q := range c.requiredQuery {
 			if !query.Has(q) {
+				return 0, false
+			}
+			n++
+		}
+		// Required header-bound members (e.g. x-amz-copy-source for
+		// UploadPartCopy) separate candidates that share a path and the
+		// same required query members.
+		for _, h := range c.requiredHeader {
+			if header.Get(h) == "" {
 				return 0, false
 			}
 			n++
