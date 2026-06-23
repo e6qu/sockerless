@@ -12,7 +12,7 @@ A sockerless pod is valid only when every container in the pod can reach the oth
 |---|---|---|
 | Lambda | Image-mode Lambda plus the implemented overlay/reverse-agent path for supported workloads. Lambda has no native multi-container function primitive. | Supported only within the implemented Lambda overlay limits. |
 | Cloud Functions Gen2 (`gcf`) | Cloud Function resource plus an update to the function's underlying Cloud Run Service template so pod members become real Cloud Run sidecars sharing localhost. | Supported through the Function-owned Cloud Run Service path. |
-| Azure Functions (`azf`) | Linux Function App custom container. Azure Functions exposes one custom-container slot to this backend. | Multi-container pods are not supported; use ACA Apps for Azure sidecar workloads. |
+| Azure Functions (`azf`) | Linux Function App custom container. Azure Functions exposes one custom-container slot to this backend. | Multi-container pods are not supported; use Azure Container Apps (ACA) Apps for Azure sidecar workloads. |
 
 ## Non-Goals
 

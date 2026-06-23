@@ -8,7 +8,7 @@ It exists because "100% coverage" claims kept being wrong: audits read the *code
 (and inherited its blind spots) and graded themselves, with no authoritative
 checklist and no external oracle. The two techniques that actually work — an
 **enumerated checklist from spec** and a **differential against an external
-oracle** — are the backbone here. The IAM policy engine is the worked example
+oracle** — are the backbone here. The AWS Identity and Access Management (IAM) policy engine is the worked example
 (`simulators/aws/iam_conformance_test.go`, `testdata/iam_conformance_vectors.json`,
 `sdk-tests/iam_conformance_differential_test.go`).
 

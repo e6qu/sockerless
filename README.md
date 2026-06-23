@@ -24,7 +24,7 @@
 >
 > **However** — opening issues, contributing fixes, or running it for your own testing/learning is all welcome. The repo is built in the open and reviews / pull requests / bug reports help it mature.
 
-A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on AWS ECS, Google Cloud Run, Azure Container Apps, and more.
+A Docker-compatible REST API daemon that executes containers on cloud serverless backends instead of a local Docker Engine. Standard Docker clients (`docker run`, Docker SDK, CI runners) connect to Sockerless exactly as they would to a real Docker daemon — but containers run on Amazon Elastic Container Service (ECS), Google Cloud Run, Azure Container Apps, and more.
 
 ## Why
 

@@ -162,11 +162,11 @@ type CodeBuildService struct {
 ```
 
 **Flow:**
-1. Upload context tar to S3
+1. Upload context tar to Amazon Simple Storage Service (S3)
 2. `codebuild.StartBuild` with inline buildspec
 3. Poll `codebuild.BatchGetBuilds` for status
 4. Stream build logs from CloudWatch Logs
-5. Image lands in ECR
+5. Image lands in Amazon Elastic Container Registry (ECR)
 
 **Config:**
 - `SOCKERLESS_AWS_CODEBUILD_PROJECT` — CodeBuild project name
@@ -201,7 +201,7 @@ type GCPBuildService struct {
 ```
 
 **Flow:**
-1. Upload context tar to GCS
+1. Upload context tar to Google Cloud Storage (GCS)
 2. `cloudbuild.CreateBuild` with docker build step
 3. Poll operation until complete
 4. Stream build logs from Cloud Logging
@@ -227,7 +227,7 @@ type ACRBuildService struct {
 1. Upload context tar to blob storage with SAS URL
 2. `ScheduleRun` with DockerBuildRequest
 3. Poll run status
-4. Stream build logs from ACR run logs
+4. Stream build logs from Azure Container Registry (ACR) run logs
 5. Image lands in ACR
 
 **Config:**

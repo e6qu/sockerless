@@ -33,7 +33,7 @@ Each CI job:
 
 ## Prerequisites
 
-- Sockerless ECS backend reachable from the runner host (see [`ECS_LIVE_SETUP.md`](./ECS_LIVE_SETUP.md)).
+- Sockerless Amazon Elastic Container Service (ECS) backend reachable from the runner host (see [`ECS_LIVE_SETUP.md`](./ECS_LIVE_SETUP.md)).
 - A gitlab.com project / group; you need an admin-level token or a project access token with `ci:write`.
 - A Linux host with `gitlab-runner` installed and network access to both the sockerless endpoint and `gitlab.com`.
 - **Do not install Docker on the runner host.** The executor uses `runners.docker.host`, which reaches sockerless directly.
@@ -120,7 +120,7 @@ service-job:
     - PGPASSWORD=test psql -h db -U postgres -c 'SELECT 1'
 ```
 
-Push; the pipeline should run all three jobs against sockerless-backed Fargate tasks. The `service-job` exercises per-hostname Cloud Map DNS (P86-003).
+Push; the pipeline should run all three jobs against sockerless-backed Fargate tasks. The `service-job` exercises per-hostname AWS Cloud Map DNS (P86-003).
 
 ## Step 4: Run as a service
 
@@ -136,13 +136,13 @@ sudo gitlab-runner run --working-directory /home/gitlab-runner --config /etc/git
 
 | Feature | Status | Notes |
 |---|---|---|
-| `image:` per job | works | Fargate task uses the declared image via ECR pull-through. |
+| `image:` per job | works | Fargate task uses the declared image via Amazon Elastic Container Registry (ECR) pull-through. |
 | `services:` per job | works (after P86-003) | Each service = its own task on the same sockerless network. |
 | `script:` multi-line | works | Injected via `docker exec` in the build container. |
 | `before_script:` / `after_script:` | works | Runs sequentially, same exec path. |
 | `artifacts:` upload | works | Helper container uploads over HTTPS to gitlab.com. |
 | `cache:` | works | Helper uploads cache tarball to gitlab.com's cache store. |
-| `docker build` in a job | partial | Use CodeBuild delegation; DinD inside Fargate is unsupported. |
+| `docker build` in a job | partial | Use AWS CodeBuild delegation; DinD inside Fargate is unsupported. |
 | `parallel:` / `matrix:` | works | Each leg is a separate task. |
 | `timeout:` | works | Runner enforces; backend accepts stop. |
 | `retry:` | works | Runner retries at job level; sockerless launches a new task. |

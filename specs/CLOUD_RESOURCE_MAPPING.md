@@ -1,6 +1,6 @@
 # Cloud Resource Mapping
 
-Authoritative mapping between Docker / Podman concepts and the cloud resources that back them in each Sockerless backend. The corollary: **state derives from cloud actuals**. After a backend restart, every list / inspect / stop / exec call must reproduce the same answer by querying the cloud APIs of its configured environment — no in-memory map, on-disk JSON, S3 object, or DynamoDB row may be consulted as the source of truth.
+Authoritative mapping between Docker / Podman concepts and the cloud resources that back them in each Sockerless backend. The corollary: **state derives from cloud actuals**. After a backend restart, every list / inspect / stop / exec call must reproduce the same answer by querying the cloud APIs of its configured environment — no in-memory map, on-disk JSON, Amazon Simple Storage Service (S3) object, or DynamoDB row may be consulted as the source of truth.
 
 This document is the source of truth for the stateless-backend invariant.
 
@@ -319,7 +319,7 @@ Tekton + Argo are k8s-native — they talk to the k8s API directly, never Docker
 
 ## Mapping per cloud
 
-### AWS ECS (backend `ecs`)
+### Amazon Elastic Container Service (ECS) (backend `ecs`)
 
 | Docker concept | Cloud resource | Identifier(s) | Tag(s) for discovery |
 |---|---|---|---|

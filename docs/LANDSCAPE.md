@@ -23,7 +23,7 @@ Three properties, none of which the alternatives combine:
    moto is AWS-only; the official Google/Microsoft emulators are per-service and
    data-plane-only.
 2. **Runs real workloads.** ECS tasks, Lambda invocations, Cloud Run
-   services/jobs, ACA apps, Azure Functions — executed as real containers on the
+   services/jobs, Azure Container Apps (ACA) apps, Azure Functions — executed as real containers on the
    host engine, free. LocalStack runs real Lambda/ECS too, **but ECS/ECR are
    paid (Base+, ~$39/mo)** and the free Community edition that used to include
    them was discontinued 2026-03-23. moto and the official GCP/Azure emulators
@@ -39,7 +39,7 @@ The management/control plane is the universal blind spot of the ecosystem: GCP
 and Azure officially emulate only stateful **data-plane** services (Pub/Sub,
 Firestore, Bigtable, Spanner; Azurite, Cosmos data plane, Service Bus/Event Hubs)
 and leave Cloud Run / Compute / Cloud Build / Artifact Registry / Functions /
-IAM / Container Apps / App Service / ACR / Key Vault / APIM / Monitor with **no
+IAM / Container Apps / App Service / Azure Container Registry (ACR) / Key Vault / Azure API Management (APIM) / Monitor with **no
 official emulator**. Sockerless implements those control planes.
 
 ## Spec-fidelity audit baseline (2026-06-19)

@@ -1,6 +1,6 @@
 # simulator-azure
 
-Local reimplementation of the Azure slice that sockerless touches. Not a mock — Container Apps job executions respect `replicaTimeout` for completion, Azure Functions invoke and produce real AppTraces entries, KQL queries parse and filter against real log data, and ACR stores real OCI manifests with chunked upload support.
+Local reimplementation of the Azure slice that sockerless touches. Not a mock — Container Apps job executions respect `replicaTimeout` for completion, Azure Functions invoke and produce real AppTraces entries, Kusto Query Language (KQL) queries parse and filter against real log data, and Azure Container Registry (ACR) stores real OCI manifests with chunked upload support.
 
 ## Reference adaptor
 

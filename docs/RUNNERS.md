@@ -1,6 +1,6 @@
 # CI runners on Sockerless — wiring guide
 
-Sockerless serves the Docker REST API, so any CI runner that talks Docker (GitHub Actions `actions/runner`, GitLab Runner with the `docker` executor) can use Sockerless as its container runtime. Set the runner's `DOCKER_HOST` (or `[runners.docker].host`) to a Sockerless daemon and every job container, service container, and `uses: docker://…` action lands on the configured cloud backend (ECS Fargate, AWS Lambda, etc.) instead of a local Docker daemon.
+Sockerless serves the Docker REST API, so any CI runner that talks Docker (GitHub Actions `actions/runner`, GitLab Runner with the `docker` executor) can use Sockerless as its container runtime. Set the runner's `DOCKER_HOST` (or `[runners.docker].host`) to a Sockerless daemon and every job container, service container, and `uses: docker://…` action lands on the configured cloud backend (Amazon Elastic Container Service (ECS) Fargate, AWS Lambda, etc.) instead of a local Docker daemon.
 
 This is the canonical wiring guide. Per-flow detail and historical harnesses:
 

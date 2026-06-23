@@ -1,8 +1,8 @@
-# ECS services: cross-container DNS via Cloud Map
+# Amazon ECS services: cross-container DNS via AWS Cloud Map
 
 ## Problem
 
-CI runners — GitLab's docker-executor, GitHub Actions with `services:` or `container:` directives — express service containers as N parallel `docker container create` calls on the same `docker network`. The build container then reaches the services by short name (`postgres:5432`, `redis:6379`). On the ECS backend running against live Fargate, each container is an ENI-isolated task; DNS resolution across tasks must go through AWS Cloud Map.
+CI runners — GitLab's docker-executor, GitHub Actions with `services:` or `container:` directives — express service containers as N parallel `docker container create` calls on the same `docker network`. The build container then reaches the services by short name (`postgres:5432`, `redis:6379`). On the Amazon Elastic Container Service (ECS) backend running against live AWS Fargate, each container is an Elastic Network Interface (ENI)-isolated task; Domain Name System (DNS) resolution across tasks must go through AWS Cloud Map.
 
 Before this change, `backends/ecs/service_discovery_cloud.go` created one Cloud Map service named `containers` per namespace and registered every container there. That gives a single DNS name (`containers.skls-<net>.local`) resolving to all IPs — useless for per-service lookup. The piping compiled and ran, so nothing screamed, but cross-container DNS by hostname would have failed on real Fargate.
 

@@ -36,7 +36,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **Library / tool.** Stdlib only for the newtype variant. For the generic-phantom variant, see `go.jetpack.io/typeid/typed` and Encore's pattern.
 
-**Where it'd apply in sockerless.** Everywhere `string` flows through `api.Backend` for resource identity — `ContainerStart(id string)`, `ImageInspect(ref string)`, `NetworkConnect(net, container string)`, the Cloud Map / ECS task ARN strings inside the per-backend cloud-state code, and the `bleephub` repo / installation / run IDs. Especially valuable on the cloud-state side, where ARN-vs-task-ID-vs-container-name mismatches are a real ongoing source of confusion.
+**Where it'd apply in sockerless.** Everywhere `string` flows through `api.Backend` for resource identity — `ContainerStart(id string)`, `ImageInspect(ref string)`, `NetworkConnect(net, container string)`, the AWS Cloud Map / Amazon Elastic Container Service (ECS) task ARN strings inside the per-backend cloud-state code, and the `bleephub` repo / installation / run IDs. Especially valuable on the cloud-state side, where ARN-vs-task-ID-vs-container-name mismatches are a real ongoing source of confusion.
 
 **Cost.** Mechanical refactor; touches probably every file in `backends/`. Conversions at JSON boundaries (`json.Unmarshal` into a `ContainerID`) just work because the underlying type is `string`. Go's `type T1 T2` form (not `type T1 = T2`) is what's needed — aliases don't create a distinct type ([source](https://perfects.engineering/blog/go_alias_vs_new_types/)).
 
@@ -52,7 +52,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **Library / tool.** [`github.com/nishanths/exhaustive`](https://github.com/nishanths/exhaustive) — integrated in `golangci-lint` as the `exhaustive` linter.
 
-**Where it'd apply in sockerless.** `core.WaitCondition` (`not-running` / `next-exit` / `removed`), the cloud-state lifecycle enums per backend (Lambda InvocationState, ECS LastStatus, Cloud Run Job Execution phase), HTTP method / status code dispatch in the docker handlers, and the `filters` enum in `container_list.go`. Especially useful for the per-backend cloud-state-mapper code where each backend translates a cloud-specific enum into a normalised Docker container state.
+**Where it'd apply in sockerless.** `core.WaitCondition` (`not-running` / `next-exit` / `removed`), the cloud-state lifecycle enums per backend (AWS Lambda InvocationState, ECS LastStatus, Google Cloud Run Job Execution phase), HTTP method / status code dispatch in the docker handlers, and the `filters` enum in `container_list.go`. Especially useful for the per-backend cloud-state-mapper code where each backend translates a cloud-specific enum into a normalised Docker container state.
 
 **Cost.** Zero generator config. Add to `golangci-lint` config and watch the warnings. Tag the linter on relevant types via `//exhaustive:enforce` comments or rely on package-level defaults.
 

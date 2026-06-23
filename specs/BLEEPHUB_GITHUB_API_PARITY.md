@@ -6,7 +6,7 @@ History:
 - Phase 153 — initial parity sweep (PR #153, merged 2026-05-12 as `fadf851f`).
 - Phase 154 — broad API sweep covering Reactions, Releases, Deployments, Environments, PR review comments, OIDC, Pages, Branch protection, Org audit log, Marketplace (PR #154, merged 2026-05-12 as `9e03621c`).
 
-> **Goal:** every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. A client built against GitHub or GHES should round-trip against bleephub by swapping the base URL only.
+> **Goal:** every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. A client built against GitHub or GitHub Enterprise Server (GHES) should round-trip against bleephub by swapping the base URL only.
 
 This doc is the audit artifact + acceptance criteria. Don't re-audit; pick up from the gap list.
 
