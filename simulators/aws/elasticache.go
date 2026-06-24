@@ -185,6 +185,7 @@ func registerElastiCache(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(ecAPIVersion, "DescribeReservedCacheNodesOfferings", handleECDescribeReservedCacheNodesOfferings)
 	r.RegisterVersioned(ecAPIVersion, "DescribeServiceUpdates", handleECDescribeServiceUpdates)
 	r.RegisterVersioned(ecAPIVersion, "DescribeCacheSecurityGroups", handleECDescribeCacheSecurityGroups)
+	registerElastiCacheServerless(r, srv)
 }
 
 func ecClusterARN(id string) string {
