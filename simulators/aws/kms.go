@@ -67,6 +67,28 @@ type KMSKey struct {
 	// (DeleteImportedKeyMaterial). A freshly-created EXTERNAL key starts
 	// PendingImport with no material.
 	HasImportedMaterial bool `json:"HasImportedMaterial,omitempty"`
+	// MultiRegion marks a multi-region key (CreateKey MultiRegion=true).
+	// PrimaryRegion is the region currently holding the primary; Replicas
+	// records the regions ReplicateKey has produced replicas in. The KeyId
+	// of a multi-region key is shared across all its regional replicas
+	// (real KMS prefixes such IDs with "mrk-").
+	MultiRegion   bool     `json:"MultiRegion,omitempty"`
+	PrimaryRegion string   `json:"PrimaryRegion,omitempty"`
+	Replicas      []string `json:"Replicas,omitempty"`
+	// LastUsedOperation / LastUsedDate record the most recent successful
+	// cryptographic operation against this key, surfaced by GetKeyLastUsage.
+	// Empty until the key is first used for crypto.
+	LastUsedOperation string  `json:"LastUsedOperation,omitempty"`
+	LastUsedDate      float64 `json:"LastUsedDate,omitempty"`
+}
+
+// kmsRecordUsage stamps the last successful cryptographic operation on a key
+// so GetKeyLastUsage can report it. Called from the crypto handlers.
+func kmsRecordUsage(keyId, operation string) {
+	kmsKeys.Update(keyId, func(k *KMSKey) {
+		k.LastUsedOperation = operation
+		k.LastUsedDate = float64(time.Now().Unix())
+	})
 }
 
 // KMSRotation is one entry in the key's rotation history (ListKeyRotations).
@@ -136,6 +158,47 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.DeleteImportedKeyMaterial", handleKMSDeleteImportedKeyMaterial)
 
 	registerKMSGrants(r, srv)
+	registerKMSCrypto(r, srv)
+	registerKMSCustomKeyStores(r, srv)
+	registerKMSMultiRegion(r, srv)
+}
+
+// kmsKeyMetadata builds the KeyMetadata map real KMS returns from CreateKey /
+// DescribeKey / ReplicateKey. For asymmetric and HMAC keys it surfaces the
+// algorithm lists (SigningAlgorithms / EncryptionAlgorithms /
+// KeyAgreementAlgorithms / MacAlgorithms) the real API attaches, so SDK and
+// terraform callers see the same shape.
+func kmsKeyMetadata(key KMSKey) map[string]any {
+	md := map[string]any{
+		"KeyId":        key.KeyId,
+		"Arn":          key.Arn,
+		"AWSAccountId": awsAccountID(),
+		"CreationDate": key.CreationDate,
+		"Description":  key.Description,
+		"KeyState":     key.KeyState,
+		"KeyUsage":     key.KeyUsage,
+		"KeyManager":   key.KeyManager,
+		"Origin":       key.Origin,
+		"KeySpec":      key.Spec,
+		"Enabled":      key.KeyState == "Enabled",
+		"MultiRegion":  key.MultiRegion,
+	}
+	if algs := kmsSigningAlgorithmsFor(key.Spec); len(algs) > 0 && key.KeyUsage == "SIGN_VERIFY" {
+		md["SigningAlgorithms"] = algs
+	}
+	if algs := kmsEncryptionAlgorithmsFor(key.Spec, key.KeyUsage); len(algs) > 0 {
+		md["EncryptionAlgorithms"] = algs
+	}
+	if algs := kmsKeyAgreementAlgorithmsFor(key.Spec, key.KeyUsage); len(algs) > 0 {
+		md["KeyAgreementAlgorithms"] = algs
+	}
+	if algs := kmsMacAlgorithmsFor(key.Spec); len(algs) > 0 {
+		md["MacAlgorithms"] = algs
+	}
+	if key.MultiRegion {
+		md["MultiRegionConfiguration"] = kmsMultiRegionConfig(key)
+	}
+	return md
 }
 
 // kmsDefaultKeyPolicyJSON returns the default key policy that real AWS KMS
@@ -416,12 +479,14 @@ func handleKMSDisableKeyRotation(w http.ResponseWriter, r *http.Request) {
 
 func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Description string   `json:"Description"`
-		KeyUsage    string   `json:"KeyUsage"`
-		Origin      string   `json:"Origin"`
-		KeySpec     string   `json:"KeySpec"`
-		Policy      string   `json:"Policy"`
-		Tags        []KMSTag `json:"Tags"`
+		Description           string   `json:"Description"`
+		KeyUsage              string   `json:"KeyUsage"`
+		Origin                string   `json:"Origin"`
+		KeySpec               string   `json:"KeySpec"`
+		CustomerMasterKeySpec string   `json:"CustomerMasterKeySpec"`
+		Policy                string   `json:"Policy"`
+		Tags                  []KMSTag `json:"Tags"`
+		MultiRegion           bool     `json:"MultiRegion"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSErrorf(w, "InvalidParameterValue", http.StatusBadRequest, "invalid request body: %v", err)
@@ -429,6 +494,16 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 
 	keyId := generateUUID()
+	if req.MultiRegion {
+		// Real KMS gives multi-region keys an ID prefixed with "mrk-"; the
+		// same ID is shared across every regional replica.
+		keyId = "mrk-" + strings.ReplaceAll(keyId, "-", "")
+	}
+	// CustomerMasterKeySpec is the legacy name for KeySpec; honor it when
+	// KeySpec is absent (older SDKs / terraform versions still send it).
+	if req.KeySpec == "" && req.CustomerMasterKeySpec != "" {
+		req.KeySpec = req.CustomerMasterKeySpec
+	}
 	if req.KeyUsage == "" {
 		req.KeyUsage = "ENCRYPT_DECRYPT"
 	}
@@ -456,23 +531,15 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 		CreationDate: float64(time.Now().Unix()),
 		Tags:         req.Tags,
 		PolicyJSON:   req.Policy,
+		MultiRegion:  req.MultiRegion,
+	}
+	if req.MultiRegion {
+		key.PrimaryRegion = awsRegion()
 	}
 	kmsKeys.Put(keyId, key)
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"KeyMetadata": map[string]any{
-			"KeyId":        key.KeyId,
-			"Arn":          key.Arn,
-			"AWSAccountId": awsAccountID(),
-			"CreationDate": key.CreationDate,
-			"Description":  key.Description,
-			"KeyState":     key.KeyState,
-			"KeyUsage":     key.KeyUsage,
-			"KeyManager":   key.KeyManager,
-			"Origin":       key.Origin,
-			"KeySpec":      key.Spec,
-			"Enabled":      key.KeyState == "Enabled",
-		},
+		"KeyMetadata": kmsKeyMetadata(key),
 	})
 }
 
@@ -512,19 +579,7 @@ func handleKMSDescribeKey(w http.ResponseWriter, r *http.Request) {
 	}
 	key, _ := kmsKeys.Get(keyId)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"KeyMetadata": map[string]any{
-			"KeyId":        key.KeyId,
-			"Arn":          key.Arn,
-			"AWSAccountId": awsAccountID(),
-			"CreationDate": key.CreationDate,
-			"Description":  key.Description,
-			"KeyState":     key.KeyState,
-			"KeyUsage":     key.KeyUsage,
-			"KeyManager":   key.KeyManager,
-			"Origin":       key.Origin,
-			"KeySpec":      key.Spec,
-			"Enabled":      key.KeyState == "Enabled",
-		},
+		"KeyMetadata": kmsKeyMetadata(key),
 	})
 }
 

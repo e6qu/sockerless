@@ -71,8 +71,13 @@ type RDSSnapshot struct {
 	// SourceDBSnapshotIdentifier is the ARN of the snapshot this one was
 	// copied from (CopyDBSnapshot); empty for snapshots created directly.
 	SourceDBSnapshotIdentifier string
-	ARN                        string
-	Tags                       map[string]string
+	// RestoreAttributeValues holds the AWS account IDs (or "all") granted
+	// the "restore" snapshot attribute via ModifyDBSnapshotAttribute.
+	// DescribeDBSnapshotAttributes returns these under the "restore"
+	// attribute.
+	RestoreAttributeValues []string
+	ARN                    string
+	Tags                   map[string]string
 }
 
 // RDSCluster models a (control-plane only) Aurora/Multi-AZ DB cluster.
@@ -116,24 +121,28 @@ type RDSSubnetGroup struct {
 	Tags                     map[string]string
 }
 
-// RDSParamGroup models a DB parameter group. Individual parameters are
-// not simulated (ModifyDBParameterGroup is out of the supported
-// surface); the group itself is a faithful control-plane row.
+// RDSParamGroup models a DB parameter group. The default engine
+// parameters are not stored; Parameters holds the user-set overrides
+// applied via ModifyDBParameterGroup, which DescribeDBParameters
+// reflects on top of the engine-default set.
 type RDSParamGroup struct {
 	DBParameterGroupName   string
 	DBParameterGroupFamily string
 	Description            string
+	Parameters             map[string]string
 	ARN                    string
 	Tags                   map[string]string
 }
 
-// RDSClusterParamGroup models a DB cluster parameter group. Individual
-// parameters are not simulated; the group itself is a faithful
-// control-plane row.
+// RDSClusterParamGroup models a DB cluster parameter group. Parameters
+// holds the user-set overrides applied via
+// ModifyDBClusterParameterGroup, which DescribeDBClusterParameters
+// reflects on top of the engine-default set.
 type RDSClusterParamGroup struct {
 	DBClusterParameterGroupName string
 	DBParameterGroupFamily      string
 	Description                 string
+	Parameters                  map[string]string
 	ARN                         string
 	Tags                        map[string]string
 }
@@ -177,6 +186,60 @@ type RDSOptionGroup struct {
 	Tags                                  map[string]string
 }
 
+// RDSGlobalCluster models an Aurora global database cluster — a single
+// control-plane row that links one or more regional DB clusters. The
+// engine is not simulated; Status settles to "available" inline on
+// Create, matching the sim's instance/cluster convention.
+type RDSGlobalCluster struct {
+	GlobalClusterIdentifier string
+	GlobalClusterResourceId string
+	Engine                  string
+	EngineVersion           string
+	Status                  string
+	DatabaseName            string
+	DeletionProtection      bool
+	StorageEncrypted        bool
+	// Members holds the ARNs of regional DB clusters attached to this
+	// global cluster (the first is the writer).
+	Members []string
+	ARN     string
+	Tags    map[string]string
+}
+
+// RDSEventSubscription models an RDS event notification subscription
+// (a named SNS-topic binding filtered by source type / source IDs /
+// event categories). Status settles to "active" inline on Create.
+type RDSEventSubscription struct {
+	SubscriptionName       string
+	CustomerAwsId          string
+	SnsTopicArn            string
+	Status                 string
+	SubscriptionCreateTime string
+	SourceType             string
+	Enabled                bool
+	SourceIds              []string
+	EventCategories        []string
+	ARN                    string
+	Tags                   map[string]string
+}
+
+// RDSClusterEndpoint models a custom DB cluster endpoint (a named
+// reader/any endpoint scoped to a static or excluded member list).
+// Status settles to "available" inline on Create.
+type RDSClusterEndpoint struct {
+	DBClusterEndpointIdentifier         string
+	DBClusterIdentifier                 string
+	DBClusterEndpointResourceIdentifier string
+	Endpoint                            string
+	Status                              string
+	EndpointType                        string
+	CustomEndpointType                  string
+	StaticMembers                       []string
+	ExcludedMembers                     []string
+	ARN                                 string
+	Tags                                map[string]string
+}
+
 var (
 	rdsInstances          sim.Store[RDSInstance]
 	rdsSnapshots          sim.Store[RDSSnapshot]
@@ -186,6 +249,9 @@ var (
 	rdsParamGroups        sim.Store[RDSParamGroup]
 	rdsClusterParamGroups sim.Store[RDSClusterParamGroup]
 	rdsOptionGroups       sim.Store[RDSOptionGroup]
+	rdsGlobalClusters     sim.Store[RDSGlobalCluster]
+	rdsEventSubscriptions sim.Store[RDSEventSubscription]
+	rdsClusterEndpoints   sim.Store[RDSClusterEndpoint]
 )
 
 // rdsAPIVersion is the canonical AWS RDS API version (Query
@@ -211,17 +277,47 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(rdsAPIVersion, "CopyDBSnapshot", handleRDSCopySnapshot)
 	r.RegisterVersioned(rdsAPIVersion, "RebootDBInstance", handleRDSReboot)
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBInstanceReadReplica", handleRDSCreateReadReplica)
+	r.RegisterVersioned(rdsAPIVersion, "StartDBInstance", handleRDSStartInstance)
+	r.RegisterVersioned(rdsAPIVersion, "StopDBInstance", handleRDSStopInstance)
+	r.RegisterVersioned(rdsAPIVersion, "PromoteReadReplica", handleRDSPromoteReadReplica)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBSnapshotAttribute", handleRDSModifySnapshotAttribute)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBParameters", handleRDSDescribeParameters)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBParameterGroup", handleRDSModifyParameterGroup)
+	r.RegisterVersioned(rdsAPIVersion, "ResetDBParameterGroup", handleRDSResetParameterGroup)
 
 	rdsClusters = sim.MakeStore[RDSCluster](srv.DB(), "rds_clusters")
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBCluster", handleRDSCreateCluster)
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBClusters", handleRDSDescribeClusters)
 	r.RegisterVersioned(rdsAPIVersion, "ModifyDBCluster", handleRDSModifyCluster)
 	r.RegisterVersioned(rdsAPIVersion, "DeleteDBCluster", handleRDSDeleteCluster)
+	r.RegisterVersioned(rdsAPIVersion, "StartDBCluster", handleRDSStartCluster)
+	r.RegisterVersioned(rdsAPIVersion, "StopDBCluster", handleRDSStopCluster)
+	r.RegisterVersioned(rdsAPIVersion, "FailoverDBCluster", handleRDSFailoverCluster)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBClusterParameters", handleRDSDescribeClusterParameters)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBClusterParameterGroup", handleRDSModifyClusterParameterGroup)
+
+	rdsGlobalClusters = sim.MakeStore[RDSGlobalCluster](srv.DB(), "rds_global_clusters")
+	r.RegisterVersioned(rdsAPIVersion, "CreateGlobalCluster", handleRDSCreateGlobalCluster)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeGlobalClusters", handleRDSDescribeGlobalClusters)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyGlobalCluster", handleRDSModifyGlobalCluster)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteGlobalCluster", handleRDSDeleteGlobalCluster)
+
+	rdsEventSubscriptions = sim.MakeStore[RDSEventSubscription](srv.DB(), "rds_event_subscriptions")
+	r.RegisterVersioned(rdsAPIVersion, "CreateEventSubscription", handleRDSCreateEventSubscription)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeEventSubscriptions", handleRDSDescribeEventSubscriptions)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyEventSubscription", handleRDSModifyEventSubscription)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteEventSubscription", handleRDSDeleteEventSubscription)
+
+	rdsClusterEndpoints = sim.MakeStore[RDSClusterEndpoint](srv.DB(), "rds_cluster_endpoints")
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBClusterEndpoint", handleRDSCreateClusterEndpoint)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBClusterEndpoints", handleRDSDescribeClusterEndpoints)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBClusterEndpoint", handleRDSDeleteClusterEndpoint)
 
 	rdsClusterSnapshots = sim.MakeStore[RDSClusterSnapshot](srv.DB(), "rds_cluster_snapshots")
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBClusterSnapshot", handleRDSCreateClusterSnapshot)
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBClusterSnapshots", handleRDSDescribeClusterSnapshots)
 	r.RegisterVersioned(rdsAPIVersion, "DeleteDBClusterSnapshot", handleRDSDeleteClusterSnapshot)
+	r.RegisterVersioned(rdsAPIVersion, "CopyDBClusterSnapshot", handleRDSCopyClusterSnapshot)
 
 	rdsClusterParamGroups = sim.MakeStore[RDSClusterParamGroup](srv.DB(), "rds_cluster_param_groups")
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBClusterParameterGroup", handleRDSCreateClusterParamGroup)
@@ -847,16 +943,7 @@ func handleRDSDescribeSnapshotAttributes(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	body := fmt.Sprintf(
-		"<DBSnapshotAttributesResult>"+
-			"<DBSnapshotIdentifier>%s</DBSnapshotIdentifier>"+
-			"<DBSnapshotAttributes>"+
-			"<DBSnapshotAttribute><AttributeName>restore</AttributeName><AttributeValues></AttributeValues></DBSnapshotAttribute>"+
-			"</DBSnapshotAttributes>"+
-			"</DBSnapshotAttributesResult>",
-		xmlEscape(snap.DBSnapshotIdentifier),
-	)
-	rdsXMLResponse(w, "DescribeDBSnapshotAttributes", body, sim.RequestID(r.Context()))
+	rdsXMLResponse(w, "DescribeDBSnapshotAttributes", renderRDSSnapshotAttributesResult(snap), sim.RequestID(r.Context()))
 }
 
 func handleRDSDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -1921,4 +2008,797 @@ func handleRDSDescribeOrderableOptions(w http.ResponseWriter, r *http.Request) {
 	}
 	b.WriteString("</OrderableDBInstanceOptions>")
 	rdsXMLResponse(w, "DescribeOrderableDBInstanceOptions", b.String(), sim.RequestID(r.Context()))
+}
+
+// ----- Instance/cluster state transitions -----
+
+// Real RDS transitions an instance through starting→available and
+// stopping→stopped; with no engine to start/stop the sim flips the
+// stored status to the steady state and returns the full DBInstance.
+
+func handleRDSStartInstance(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBInstanceIdentifier")
+	if _, ok := rdsInstances.Get(id); !ok {
+		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsInstances.Update(id, func(i *RDSInstance) { i.DBInstanceStatus = "available" })
+	updated, _ := rdsInstances.Get(id)
+	rdsXMLResponse(w, "StartDBInstance", renderRDSInstance(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSStopInstance(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBInstanceIdentifier")
+	if _, ok := rdsInstances.Get(id); !ok {
+		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsInstances.Update(id, func(i *RDSInstance) { i.DBInstanceStatus = "stopped" })
+	updated, _ := rdsInstances.Get(id)
+	rdsXMLResponse(w, "StopDBInstance", renderRDSInstance(updated), sim.RequestID(r.Context()))
+}
+
+// handleRDSPromoteReadReplica detaches a read replica from its source,
+// turning it into a standalone primary (clears ReadReplicaSource and
+// unlinks it from the source's ReadReplicas list).
+func handleRDSPromoteReadReplica(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBInstanceIdentifier")
+	inst, ok := rdsInstances.Get(id)
+	if !ok {
+		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	src := inst.ReadReplicaSource
+	rdsInstances.Update(id, func(i *RDSInstance) {
+		i.ReadReplicaSource = ""
+		i.DBInstanceStatus = "available"
+	})
+	if src != "" {
+		if _, ok := rdsInstances.Get(src); ok {
+			rdsInstances.Update(src, func(i *RDSInstance) {
+				kept := i.ReadReplicas[:0]
+				for _, rep := range i.ReadReplicas {
+					if rep != id {
+						kept = append(kept, rep)
+					}
+				}
+				i.ReadReplicas = kept
+			})
+		}
+	}
+	updated, _ := rdsInstances.Get(id)
+	rdsXMLResponse(w, "PromoteReadReplica", renderRDSInstance(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSStartCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	if _, ok := rdsClusters.Get(id); !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault", "DB cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsClusters.Update(id, func(c *RDSCluster) { c.Status = "available" })
+	updated, _ := rdsClusters.Get(id)
+	rdsXMLResponse(w, "StartDBCluster", renderRDSCluster(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSStopCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	if _, ok := rdsClusters.Get(id); !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault", "DB cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsClusters.Update(id, func(c *RDSCluster) { c.Status = "stopped" })
+	updated, _ := rdsClusters.Get(id)
+	rdsXMLResponse(w, "StopDBCluster", renderRDSCluster(updated), sim.RequestID(r.Context()))
+}
+
+// handleRDSFailoverCluster simulates an Aurora failover. With no engine
+// the cluster stays "available"; the response carries the full
+// DBCluster, which is what waiters and SDK consumers read.
+func handleRDSFailoverCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	cl, ok := rdsClusters.Get(id)
+	if !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault", "DB cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsXMLResponse(w, "FailoverDBCluster", renderRDSCluster(cl), sim.RequestID(r.Context()))
+}
+
+// ----- DB snapshot attributes -----
+
+func parseRDSIndexedStringList(r *http.Request, prefix string) []string {
+	var out []string
+	for n := 1; n <= 200; n++ {
+		v := r.FormValue(fmt.Sprintf("%s.%d", prefix, n))
+		if v == "" {
+			break
+		}
+		out = append(out, v)
+	}
+	return out
+}
+
+func renderRDSSnapshotAttributesResult(snap RDSSnapshot) string {
+	var b strings.Builder
+	b.WriteString("<DBSnapshotAttributesResult>")
+	fmt.Fprintf(&b, "<DBSnapshotIdentifier>%s</DBSnapshotIdentifier>", xmlEscape(snap.DBSnapshotIdentifier))
+	b.WriteString("<DBSnapshotAttributes>")
+	b.WriteString("<DBSnapshotAttribute><AttributeName>restore</AttributeName><AttributeValues>")
+	for _, v := range snap.RestoreAttributeValues {
+		fmt.Fprintf(&b, "<AttributeValue>%s</AttributeValue>", xmlEscape(v))
+	}
+	b.WriteString("</AttributeValues></DBSnapshotAttribute>")
+	b.WriteString("</DBSnapshotAttributes>")
+	b.WriteString("</DBSnapshotAttributesResult>")
+	return b.String()
+}
+
+// handleRDSModifySnapshotAttribute adds/removes values for the "restore"
+// snapshot attribute (the only attribute RDS supports). The updated
+// attribute set is persisted so DescribeDBSnapshotAttributes reads back
+// the change.
+func handleRDSModifySnapshotAttribute(w http.ResponseWriter, r *http.Request) {
+	snapID := r.FormValue("DBSnapshotIdentifier")
+	snap, ok := rdsSnapshots.Get(snapID)
+	if !ok {
+		snap, ok = findRDSSnapshotByARN(snapID)
+		if !ok {
+			rdsErrorXML(w, "DBSnapshotNotFound",
+				fmt.Sprintf("DBSnapshot %q not found", snapID),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	attrName := r.FormValue("AttributeName")
+	if attrName != "restore" {
+		rdsErrorXML(w, "InvalidParameterValue",
+			"AttributeName must be 'restore'", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	toAdd := parseRDSIndexedStringList(r, "ValuesToAdd.AttributeValue")
+	toRemove := parseRDSIndexedStringList(r, "ValuesToRemove.AttributeValue")
+	rdsSnapshots.Update(snap.DBSnapshotIdentifier, func(s *RDSSnapshot) {
+		s.RestoreAttributeValues = applyAttributeValueDelta(s.RestoreAttributeValues, toAdd, toRemove)
+	})
+	updated, _ := rdsSnapshots.Get(snap.DBSnapshotIdentifier)
+	rdsXMLResponse(w, "ModifyDBSnapshotAttribute", renderRDSSnapshotAttributesResult(updated), sim.RequestID(r.Context()))
+}
+
+func applyAttributeValueDelta(cur, add, remove []string) []string {
+	set := map[string]bool{}
+	for _, v := range cur {
+		set[v] = true
+	}
+	for _, v := range add {
+		set[v] = true
+	}
+	for _, v := range remove {
+		delete(set, v)
+	}
+	var out []string
+	// Preserve insertion order: existing values first (still present),
+	// then newly added ones.
+	for _, v := range cur {
+		if set[v] {
+			out = append(out, v)
+			delete(set, v)
+		}
+	}
+	for _, v := range add {
+		if set[v] {
+			out = append(out, v)
+			delete(set, v)
+		}
+	}
+	return out
+}
+
+// ----- Parameter detail -----
+
+// rdsDefaultParameters returns a representative slice of engine
+// parameters. RDS exposes hundreds; the sim returns a small faithful
+// set (correct Parameter shape) so DescribeDBParameters/Cluster
+// round-trips and the CLI/SDK parse a non-empty list.
+func rdsDefaultParameters() []struct {
+	Name, Value, ApplyType, DataType, Source, ApplyMethod string
+	IsModifiable                                          bool
+} {
+	return []struct {
+		Name, Value, ApplyType, DataType, Source, ApplyMethod string
+		IsModifiable                                          bool
+	}{
+		{"max_connections", "LEAST({DBInstanceClassMemory/9531392},5000)", "dynamic", "integer", "engine-default", "pending-reboot", true},
+		{"character_set_server", "utf8", "dynamic", "string", "engine-default", "immediate", true},
+		{"autocommit", "1", "dynamic", "boolean", "engine-default", "immediate", true},
+	}
+}
+
+func renderRDSParameter(name, value, applyType, dataType, source, applyMethod string, modifiable bool, override map[string]string) string {
+	if v, ok := override[name]; ok {
+		value = v
+	}
+	var b strings.Builder
+	b.WriteString("<Parameter>")
+	fmt.Fprintf(&b, "<ParameterName>%s</ParameterName>", xmlEscape(name))
+	if value != "" {
+		fmt.Fprintf(&b, "<ParameterValue>%s</ParameterValue>", xmlEscape(value))
+	}
+	fmt.Fprintf(&b, "<ApplyType>%s</ApplyType>", xmlEscape(applyType))
+	fmt.Fprintf(&b, "<DataType>%s</DataType>", xmlEscape(dataType))
+	fmt.Fprintf(&b, "<Source>%s</Source>", xmlEscape(source))
+	fmt.Fprintf(&b, "<ApplyMethod>%s</ApplyMethod>", xmlEscape(applyMethod))
+	fmt.Fprintf(&b, "<IsModifiable>%t</IsModifiable>", modifiable)
+	b.WriteString("</Parameter>")
+	return b.String()
+}
+
+func renderRDSParametersList(override map[string]string) string {
+	var b strings.Builder
+	b.WriteString("<Parameters>")
+	for _, p := range rdsDefaultParameters() {
+		src := p.Source
+		if _, ok := override[p.Name]; ok {
+			src = "user"
+		}
+		b.WriteString(renderRDSParameter(p.Name, p.Value, p.ApplyType, p.DataType, src, p.ApplyMethod, p.IsModifiable, override))
+	}
+	b.WriteString("</Parameters>")
+	return b.String()
+}
+
+func handleRDSDescribeParameters(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBParameterGroupName")
+	g, ok := rdsParamGroups.Get(name)
+	if !ok {
+		g, ok = findRDSParamGroupByARN(name)
+		if !ok {
+			rdsErrorXML(w, "DBParameterGroupNotFound",
+				fmt.Sprintf("DBParameterGroup %q not found", name),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	rdsXMLResponse(w, "DescribeDBParameters", renderRDSParametersList(g.Parameters), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeClusterParameters(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBClusterParameterGroupName")
+	g, ok := rdsClusterParamGroups.Get(name)
+	if !ok {
+		g, ok = findRDSClusterParamGroupByARN(name)
+		if !ok {
+			rdsErrorXML(w, "DBParameterGroupNotFound",
+				fmt.Sprintf("DBClusterParameterGroup %q not found", name),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	rdsXMLResponse(w, "DescribeDBClusterParameters", renderRDSParametersList(g.Parameters), sim.RequestID(r.Context()))
+}
+
+func parseRDSParameterOverrides(r *http.Request) map[string]string {
+	out := map[string]string{}
+	for n := 1; n <= 200; n++ {
+		name := r.FormValue(fmt.Sprintf("Parameters.Parameter.%d.ParameterName", n))
+		if name == "" {
+			break
+		}
+		out[name] = r.FormValue(fmt.Sprintf("Parameters.Parameter.%d.ParameterValue", n))
+	}
+	return out
+}
+
+func handleRDSModifyParameterGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBParameterGroupName")
+	if _, ok := rdsParamGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBParameterGroupNotFound", "DB parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	override := parseRDSParameterOverrides(r)
+	rdsParamGroups.Update(name, func(g *RDSParamGroup) {
+		if g.Parameters == nil {
+			g.Parameters = map[string]string{}
+		}
+		for k, v := range override {
+			g.Parameters[k] = v
+		}
+	})
+	body := fmt.Sprintf("<DBParameterGroupName>%s</DBParameterGroupName>", xmlEscape(name))
+	rdsXMLResponse(w, "ModifyDBParameterGroup", body, sim.RequestID(r.Context()))
+}
+
+func handleRDSResetParameterGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBParameterGroupName")
+	if _, ok := rdsParamGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBParameterGroupNotFound", "DB parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	resetAll := r.FormValue("ResetAllParameters") == "true"
+	toReset := parseRDSParameterOverrides(r)
+	rdsParamGroups.Update(name, func(g *RDSParamGroup) {
+		if resetAll {
+			g.Parameters = map[string]string{}
+			return
+		}
+		for k := range toReset {
+			delete(g.Parameters, k)
+		}
+	})
+	body := fmt.Sprintf("<DBParameterGroupName>%s</DBParameterGroupName>", xmlEscape(name))
+	rdsXMLResponse(w, "ResetDBParameterGroup", body, sim.RequestID(r.Context()))
+}
+
+func handleRDSModifyClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBClusterParameterGroupName")
+	if _, ok := rdsClusterParamGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBParameterGroupNotFound", "DB cluster parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	override := parseRDSParameterOverrides(r)
+	rdsClusterParamGroups.Update(name, func(g *RDSClusterParamGroup) {
+		if g.Parameters == nil {
+			g.Parameters = map[string]string{}
+		}
+		for k, v := range override {
+			g.Parameters[k] = v
+		}
+	})
+	body := fmt.Sprintf("<DBClusterParameterGroupName>%s</DBClusterParameterGroupName>", xmlEscape(name))
+	rdsXMLResponse(w, "ModifyDBClusterParameterGroup", body, sim.RequestID(r.Context()))
+}
+
+// ----- CopyDBClusterSnapshot -----
+
+func handleRDSCopyClusterSnapshot(w http.ResponseWriter, r *http.Request) {
+	srcID := r.FormValue("SourceDBClusterSnapshotIdentifier")
+	targetID := r.FormValue("TargetDBClusterSnapshotIdentifier")
+	if srcID == "" || targetID == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"SourceDBClusterSnapshotIdentifier and TargetDBClusterSnapshotIdentifier are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	src, ok := rdsClusterSnapshots.Get(srcID)
+	if !ok {
+		src, ok = findRDSClusterSnapshotByARN(srcID)
+		if !ok {
+			rdsErrorXML(w, "DBClusterSnapshotNotFoundFault",
+				fmt.Sprintf("DBClusterSnapshot %q not found", srcID),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	if _, exists := rdsClusterSnapshots.Get(targetID); exists {
+		rdsErrorXML(w, "DBClusterSnapshotAlreadyExistsFault",
+			fmt.Sprintf("DBClusterSnapshot %q already exists", targetID),
+			http.StatusConflict, sim.RequestID(r.Context()))
+		return
+	}
+	tags := parseAWSQueryTagMap(r, "Tags.Tag")
+	if r.FormValue("CopyTags") == "true" {
+		tags = mergeTags(tags, src.Tags)
+	}
+	cp := src
+	cp.DBClusterSnapshotIdentifier = targetID
+	cp.Status = "available"
+	cp.SnapshotType = "manual"
+	cp.PercentProgress = 100
+	cp.SnapshotCreateTime = time.Now().UTC().Format(time.RFC3339)
+	cp.ARN = rdsClusterSnapshotARN(targetID)
+	cp.Tags = tags
+	rdsClusterSnapshots.Put(targetID, cp)
+	rdsXMLResponse(w, "CopyDBClusterSnapshot", renderRDSClusterSnapshot(cp), sim.RequestID(r.Context()))
+}
+
+// ----- Global clusters -----
+
+func rdsGlobalClusterARN(id string) string {
+	return fmt.Sprintf("arn:aws:rds::%s:global-cluster:%s", awsAccountID(), id)
+}
+
+func rdsGlobalClusterResourceID() string {
+	return "cluster-" + strings.ToUpper(strings.ReplaceAll(generateUUID(), "-", ""))[:26]
+}
+
+// renderRDSGlobalCluster renders a global cluster wrapped in the given
+// element name. CreateGlobalCluster et al. return a single
+// <GlobalCluster> member, while the DescribeGlobalClusters list element
+// is named <GlobalClusterMember> (per the GlobalClusterList xmlName in
+// the RDS model).
+func renderRDSGlobalCluster(g RDSGlobalCluster, elem string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<%s>", elem)
+	fmt.Fprintf(&b, "<GlobalClusterIdentifier>%s</GlobalClusterIdentifier>", xmlEscape(g.GlobalClusterIdentifier))
+	fmt.Fprintf(&b, "<GlobalClusterResourceId>%s</GlobalClusterResourceId>", xmlEscape(g.GlobalClusterResourceId))
+	fmt.Fprintf(&b, "<GlobalClusterArn>%s</GlobalClusterArn>", xmlEscape(g.ARN))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(g.Status))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(g.Engine))
+	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(g.EngineVersion))
+	fmt.Fprintf(&b, "<DatabaseName>%s</DatabaseName>", xmlEscape(g.DatabaseName))
+	fmt.Fprintf(&b, "<DeletionProtection>%t</DeletionProtection>", g.DeletionProtection)
+	fmt.Fprintf(&b, "<StorageEncrypted>%t</StorageEncrypted>", g.StorageEncrypted)
+	b.WriteString("<GlobalClusterMembers>")
+	for i, arn := range g.Members {
+		b.WriteString("<GlobalClusterMember>")
+		fmt.Fprintf(&b, "<DBClusterArn>%s</DBClusterArn>", xmlEscape(arn))
+		fmt.Fprintf(&b, "<IsWriter>%t</IsWriter>", i == 0)
+		b.WriteString("<Readers></Readers>")
+		b.WriteString("</GlobalClusterMember>")
+	}
+	b.WriteString("</GlobalClusterMembers>")
+	fmt.Fprintf(&b, "</%s>", elem)
+	return b.String()
+}
+
+func handleRDSCreateGlobalCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("GlobalClusterIdentifier")
+	if id == "" {
+		rdsErrorXML(w, "MissingParameter", "GlobalClusterIdentifier is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsGlobalClusters.Get(id); ok {
+		rdsErrorXML(w, "GlobalClusterAlreadyExistsFault", "Global cluster already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	engine := r.FormValue("Engine")
+	engineVersion := r.FormValue("EngineVersion")
+	var members []string
+	// CreateGlobalCluster can adopt an existing regional cluster as the
+	// primary via SourceDBClusterIdentifier.
+	if src := r.FormValue("SourceDBClusterIdentifier"); src != "" {
+		if cl, ok := findRDSClusterByARN(src); ok {
+			members = append(members, cl.ARN)
+			if engine == "" {
+				engine = cl.Engine
+			}
+			if engineVersion == "" {
+				engineVersion = cl.EngineVersion
+			}
+		}
+	}
+	if engine == "" {
+		engine = "aurora-mysql"
+	}
+	g := RDSGlobalCluster{
+		GlobalClusterIdentifier: id,
+		GlobalClusterResourceId: rdsGlobalClusterResourceID(),
+		Engine:                  engine,
+		EngineVersion:           engineVersion,
+		Status:                  "available",
+		DatabaseName:            r.FormValue("DatabaseName"),
+		DeletionProtection:      r.FormValue("DeletionProtection") == "true",
+		StorageEncrypted:        r.FormValue("StorageEncrypted") == "true",
+		Members:                 members,
+		ARN:                     rdsGlobalClusterARN(id),
+		Tags:                    parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsGlobalClusters.Put(id, g)
+	rdsXMLResponse(w, "CreateGlobalCluster", renderRDSGlobalCluster(g, "GlobalCluster"), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeGlobalClusters(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("GlobalClusterIdentifier")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<GlobalClusters>")
+	for _, g := range rdsGlobalClusters.List() {
+		if wanted != "" && g.GlobalClusterIdentifier != wanted && g.ARN != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString(renderRDSGlobalCluster(g, "GlobalClusterMember"))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "GlobalClusterNotFoundFault",
+			fmt.Sprintf("GlobalCluster %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</GlobalClusters>")
+	rdsXMLResponse(w, "DescribeGlobalClusters", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSModifyGlobalCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("GlobalClusterIdentifier")
+	if _, ok := rdsGlobalClusters.Get(id); !ok {
+		rdsErrorXML(w, "GlobalClusterNotFoundFault", "Global cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	newID := r.FormValue("NewGlobalClusterIdentifier")
+	rdsGlobalClusters.Update(id, func(g *RDSGlobalCluster) {
+		if v := r.FormValue("EngineVersion"); v != "" {
+			g.EngineVersion = v
+		}
+		if v := r.FormValue("DeletionProtection"); v != "" {
+			g.DeletionProtection = v == "true"
+		}
+		if newID != "" {
+			g.GlobalClusterIdentifier = newID
+			g.ARN = rdsGlobalClusterARN(newID)
+		}
+	})
+	updated, _ := rdsGlobalClusters.Get(id)
+	if newID != "" && newID != id {
+		rdsGlobalClusters.Delete(id)
+		rdsGlobalClusters.Put(newID, updated)
+	}
+	rdsXMLResponse(w, "ModifyGlobalCluster", renderRDSGlobalCluster(updated, "GlobalCluster"), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteGlobalCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("GlobalClusterIdentifier")
+	g, ok := rdsGlobalClusters.Get(id)
+	if !ok {
+		rdsErrorXML(w, "GlobalClusterNotFoundFault", "Global cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsGlobalClusters.Delete(id)
+	g.Status = "deleting"
+	rdsXMLResponse(w, "DeleteGlobalCluster", renderRDSGlobalCluster(g, "GlobalCluster"), sim.RequestID(r.Context()))
+}
+
+// ----- Event subscriptions -----
+
+func rdsEventSubscriptionARN(name string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:es:%s", awsRegion(), awsAccountID(), name)
+}
+
+func findRDSEventSubscriptionByARN(arn string) (RDSEventSubscription, bool) {
+	for _, s := range rdsEventSubscriptions.List() {
+		if s.ARN == arn {
+			return s, true
+		}
+	}
+	if s, ok := rdsEventSubscriptions.Get(arn); ok {
+		return s, true
+	}
+	return RDSEventSubscription{}, false
+}
+
+func renderRDSEventSubscription(s RDSEventSubscription) string {
+	var b strings.Builder
+	b.WriteString("<EventSubscription>")
+	fmt.Fprintf(&b, "<CustomerAwsId>%s</CustomerAwsId>", xmlEscape(s.CustomerAwsId))
+	fmt.Fprintf(&b, "<CustSubscriptionId>%s</CustSubscriptionId>", xmlEscape(s.SubscriptionName))
+	fmt.Fprintf(&b, "<SnsTopicArn>%s</SnsTopicArn>", xmlEscape(s.SnsTopicArn))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(s.Status))
+	fmt.Fprintf(&b, "<SubscriptionCreationTime>%s</SubscriptionCreationTime>", xmlEscape(s.SubscriptionCreateTime))
+	fmt.Fprintf(&b, "<SourceType>%s</SourceType>", xmlEscape(s.SourceType))
+	fmt.Fprintf(&b, "<Enabled>%t</Enabled>", s.Enabled)
+	fmt.Fprintf(&b, "<EventSubscriptionArn>%s</EventSubscriptionArn>", xmlEscape(s.ARN))
+	b.WriteString("<SourceIdsList>")
+	for _, id := range s.SourceIds {
+		fmt.Fprintf(&b, "<SourceId>%s</SourceId>", xmlEscape(id))
+	}
+	b.WriteString("</SourceIdsList>")
+	b.WriteString("<EventCategoriesList>")
+	for _, c := range s.EventCategories {
+		fmt.Fprintf(&b, "<EventCategory>%s</EventCategory>", xmlEscape(c))
+	}
+	b.WriteString("</EventCategoriesList>")
+	b.WriteString("</EventSubscription>")
+	return b.String()
+}
+
+func handleRDSCreateEventSubscription(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("SubscriptionName")
+	topic := r.FormValue("SnsTopicArn")
+	if name == "" || topic == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"SubscriptionName and SnsTopicArn are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsEventSubscriptions.Get(name); ok {
+		rdsErrorXML(w, "SubscriptionAlreadyExistFault", "Event subscription already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	enabled := true
+	if v := r.FormValue("Enabled"); v != "" {
+		enabled = v == "true"
+	}
+	s := RDSEventSubscription{
+		SubscriptionName:       name,
+		CustomerAwsId:          awsAccountID(),
+		SnsTopicArn:            topic,
+		Status:                 "active",
+		SubscriptionCreateTime: time.Now().UTC().Format(time.RFC3339),
+		SourceType:             r.FormValue("SourceType"),
+		Enabled:                enabled,
+		SourceIds:              parseRDSIndexedStringList(r, "SourceIds.SourceId"),
+		EventCategories:        parseRDSIndexedStringList(r, "EventCategories.EventCategory"),
+		ARN:                    rdsEventSubscriptionARN(name),
+		Tags:                   parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsEventSubscriptions.Put(name, s)
+	rdsXMLResponse(w, "CreateEventSubscription", renderRDSEventSubscription(s), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeEventSubscriptions(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("SubscriptionName")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<EventSubscriptionsList>")
+	for _, s := range rdsEventSubscriptions.List() {
+		if wanted != "" && s.SubscriptionName != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString(renderRDSEventSubscription(s))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "SubscriptionNotFoundFault",
+			fmt.Sprintf("EventSubscription %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</EventSubscriptionsList>")
+	rdsXMLResponse(w, "DescribeEventSubscriptions", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSModifyEventSubscription(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("SubscriptionName")
+	if _, ok := rdsEventSubscriptions.Get(name); !ok {
+		rdsErrorXML(w, "SubscriptionNotFoundFault", "Event subscription not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsEventSubscriptions.Update(name, func(s *RDSEventSubscription) {
+		if v := r.FormValue("SnsTopicArn"); v != "" {
+			s.SnsTopicArn = v
+		}
+		if v := r.FormValue("SourceType"); v != "" {
+			s.SourceType = v
+		}
+		if v := r.FormValue("Enabled"); v != "" {
+			s.Enabled = v == "true"
+		}
+		if cats := parseRDSIndexedStringList(r, "EventCategories.EventCategory"); len(cats) > 0 {
+			s.EventCategories = cats
+		}
+	})
+	updated, _ := rdsEventSubscriptions.Get(name)
+	rdsXMLResponse(w, "ModifyEventSubscription", renderRDSEventSubscription(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteEventSubscription(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("SubscriptionName")
+	s, ok := rdsEventSubscriptions.Get(name)
+	if !ok {
+		s, ok = findRDSEventSubscriptionByARN(name)
+		if !ok {
+			rdsErrorXML(w, "SubscriptionNotFoundFault", "Event subscription not found", http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	rdsEventSubscriptions.Delete(s.SubscriptionName)
+	s.Status = "deleting"
+	rdsXMLResponse(w, "DeleteEventSubscription", renderRDSEventSubscription(s), sim.RequestID(r.Context()))
+}
+
+// ----- DB cluster endpoints -----
+
+func rdsClusterEndpointARN(id string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:cluster-endpoint:%s", awsRegion(), awsAccountID(), id)
+}
+
+func findRDSClusterEndpointByARN(arn string) (RDSClusterEndpoint, bool) {
+	for _, e := range rdsClusterEndpoints.List() {
+		if e.ARN == arn {
+			return e, true
+		}
+	}
+	if e, ok := rdsClusterEndpoints.Get(arn); ok {
+		return e, true
+	}
+	return RDSClusterEndpoint{}, false
+}
+
+func renderRDSClusterEndpoint(e RDSClusterEndpoint) string {
+	var b strings.Builder
+	b.WriteString("<DBClusterEndpointIdentifier>")
+	b.WriteString(xmlEscape(e.DBClusterEndpointIdentifier))
+	b.WriteString("</DBClusterEndpointIdentifier>")
+	fmt.Fprintf(&b, "<DBClusterIdentifier>%s</DBClusterIdentifier>", xmlEscape(e.DBClusterIdentifier))
+	fmt.Fprintf(&b, "<DBClusterEndpointResourceIdentifier>%s</DBClusterEndpointResourceIdentifier>", xmlEscape(e.DBClusterEndpointResourceIdentifier))
+	fmt.Fprintf(&b, "<Endpoint>%s</Endpoint>", xmlEscape(e.Endpoint))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(e.Status))
+	fmt.Fprintf(&b, "<EndpointType>%s</EndpointType>", xmlEscape(e.EndpointType))
+	fmt.Fprintf(&b, "<CustomEndpointType>%s</CustomEndpointType>", xmlEscape(e.CustomEndpointType))
+	fmt.Fprintf(&b, "<DBClusterEndpointArn>%s</DBClusterEndpointArn>", xmlEscape(e.ARN))
+	b.WriteString("<StaticMembers>")
+	for _, m := range e.StaticMembers {
+		fmt.Fprintf(&b, "<member>%s</member>", xmlEscape(m))
+	}
+	b.WriteString("</StaticMembers>")
+	b.WriteString("<ExcludedMembers>")
+	for _, m := range e.ExcludedMembers {
+		fmt.Fprintf(&b, "<member>%s</member>", xmlEscape(m))
+	}
+	b.WriteString("</ExcludedMembers>")
+	return b.String()
+}
+
+func handleRDSCreateClusterEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterEndpointIdentifier")
+	clusterID := r.FormValue("DBClusterIdentifier")
+	endpointType := r.FormValue("EndpointType")
+	if id == "" || clusterID == "" || endpointType == "" {
+		rdsErrorXML(w, "MissingParameter",
+			"DBClusterEndpointIdentifier, DBClusterIdentifier and EndpointType are required",
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsClusters.Get(clusterID); !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault",
+			fmt.Sprintf("DBCluster %q not found", clusterID),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsClusterEndpoints.Get(id); ok {
+		rdsErrorXML(w, "DBClusterEndpointAlreadyExistsFault",
+			fmt.Sprintf("DBClusterEndpoint %q already exists", id),
+			http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	e := RDSClusterEndpoint{
+		DBClusterEndpointIdentifier:         id,
+		DBClusterIdentifier:                 clusterID,
+		DBClusterEndpointResourceIdentifier: rdsGlobalClusterResourceID(),
+		Endpoint:                            fmt.Sprintf("%s.cluster-custom-sim.%s.rds.amazonaws.com", id, awsRegion()),
+		Status:                              "available",
+		EndpointType:                        "CUSTOM",
+		CustomEndpointType:                  endpointType,
+		StaticMembers:                       parseRDSIndexedStringList(r, "StaticMembers.member"),
+		ExcludedMembers:                     parseRDSIndexedStringList(r, "ExcludedMembers.member"),
+		ARN:                                 rdsClusterEndpointARN(id),
+		Tags:                                parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsClusterEndpoints.Put(id, e)
+	rdsXMLResponse(w, "CreateDBClusterEndpoint", renderRDSClusterEndpoint(e), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeClusterEndpoints(w http.ResponseWriter, r *http.Request) {
+	wantedEndpoint := r.FormValue("DBClusterEndpointIdentifier")
+	wantedCluster := r.FormValue("DBClusterIdentifier")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<DBClusterEndpoints>")
+	for _, e := range rdsClusterEndpoints.List() {
+		if wantedEndpoint != "" && e.DBClusterEndpointIdentifier != wantedEndpoint {
+			continue
+		}
+		if wantedCluster != "" && e.DBClusterIdentifier != wantedCluster {
+			continue
+		}
+		matched = true
+		b.WriteString("<DBClusterEndpointList>")
+		b.WriteString(renderRDSClusterEndpoint(e))
+		b.WriteString("</DBClusterEndpointList>")
+	}
+	if wantedEndpoint != "" && !matched {
+		rdsErrorXML(w, "DBClusterEndpointNotFoundFault",
+			fmt.Sprintf("DBClusterEndpoint %q not found", wantedEndpoint),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</DBClusterEndpoints>")
+	rdsXMLResponse(w, "DescribeDBClusterEndpoints", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteClusterEndpoint(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterEndpointIdentifier")
+	e, ok := rdsClusterEndpoints.Get(id)
+	if !ok {
+		e, ok = findRDSClusterEndpointByARN(id)
+		if !ok {
+			rdsErrorXML(w, "DBClusterEndpointNotFoundFault",
+				fmt.Sprintf("DBClusterEndpoint %q not found", id),
+				http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+	}
+	rdsClusterEndpoints.Delete(e.DBClusterEndpointIdentifier)
+	e.Status = "deleting"
+	rdsXMLResponse(w, "DeleteDBClusterEndpoint", renderRDSClusterEndpoint(e), sim.RequestID(r.Context()))
 }

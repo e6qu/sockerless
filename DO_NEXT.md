@@ -4,16 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/ratchet-up-4` — **ratchet up EC2/ECR/AutoScaling/CloudWatch Logs (BUG-2197).** ~62 ops, all spec-validated against the vendored `aws-sdk-go-v2` Smithy models (0 divergences) + real SDK/CLI round-trips.
+`feat/ratchet-up-5` — **ratchet up RDS/Glue/Lambda/API Gateway/CloudFront/ElastiCache; complete KMS + ELBv2 (BUG-2198).** ~165 ops, all spec-validated against the vendored `aws-sdk-go-v2` Smithy models (0 divergences) + real SDK/CLI round-trips.
 
-- **EC2** 102→122 (network ACLs + entries, VPC peering with the pending→active transition, managed prefix lists, flow logs, egress-only internet gateways).
-- **ECR** 26→38 (lifecycle-policy previews, repository/registry policies, image scanning with honest empty findings, replication config, image tag mutability, tags).
-- **Auto Scaling** 13→25 (scaling policies with real capacity adjustment, scheduled actions, lifecycle hooks, instance health/termination).
-- **CloudWatch Logs** 18→36 (metric filters + TestMetricFilter, subscription filters, export tasks, data-protection policy, legacy + ARN tagging, DeleteLogStream/DeleteRetentionPolicy).
-- **Process:** 4-agent fan-out over disjoint files (no cutoffs). Agents were told explicitly not to create `zz_*.go` stub files (the issue from #672).
+- **Floors bumped:** RDS 40→64 (instance/cluster state, global clusters, event subscriptions, cluster endpoints, parameter detail), Glue 78→102 (table versions, real partition indexes, column statistics, resource policy→IAM gate, schema versions), Lambda 37→62 (event-invoke config, provisioned concurrency, code-signing configs, runtime management, layer permissions), API Gateway v1 28→62 + v2 23→44 (API keys, usage plans, models, authorizers, domain names, VPC links), CloudFront 52→67 (origin access identities, continuous deployment policies, monitoring subscriptions), ElastiCache 25→41 (snapshots, users/user-groups, parameter detail).
+- **Now COMPLETE (catalogs emptied):** **KMS 54/54** — the asymmetric-crypto surface via **real Go stdlib crypto** (Sign/Verify with RSA-PSS/PKCS1v15 + ECDSA, GenerateMac/VerifyMac with HMAC, GenerateDataKeyPair, DeriveSharedSecret with ECDH; a real Sign round-trips through Verify, a tampered message fails) + custom key stores + grants + multi-region keys; **ELBv2 51/51** — mutual-TLS trust stores + the real predefined SSL-policy set.
+- **Kinesis** stays 38/39 — the only gap is the HTTP/2 event-stream `SubscribeToShard`, deliberately not faked.
+- **Process:** two rounds (5 then 3 agents) over disjoint files, no cutoffs. The KMS agent's transient compile-stub was deleted before commit; one cross-file `wastedassign` was fixed at integration.
 - Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard + all conformance tests pass; spec-shape validator 0 divergences.
 
-**Next candidates:** keep ratcheting up the floored services (more ops for any of EC2/RDS/Glue/Lambda/Batch/API Gateway/CloudFront/CloudTrail/CodeBuild/WAFv2/ElastiCache/Kinesis/KMS/ELBv2/AutoScaling/Logs — each bumps its floor). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** keep ratcheting the floored services (RDS/Glue/Lambda/API Gateway/CloudFront/ElastiCache still have headroom, as do EC2/Batch/CloudTrail/CodeBuild/WAFv2/CloudWatch). Pick the next services to *complete* (drive a floor to its model max like KMS/ELBv2). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 

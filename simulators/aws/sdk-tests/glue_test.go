@@ -351,6 +351,43 @@ func TestGlue_GetPartitionIndexes_SDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, indexes.PartitionIndexDescriptorList)
 	assert.Empty(t, indexes.PartitionIndexDescriptorList)
+
+	// CreatePartitionIndex over the table's partition key.
+	_, err = c.CreatePartitionIndex(ctx, &glue.CreatePartitionIndexInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableName:    aws.String("glue-sdk-index-table"),
+		PartitionIndex: &gluetypes.PartitionIndex{
+			IndexName: aws.String("dt-index"),
+			Keys:      []string{"dt"},
+		},
+	})
+	require.NoError(t, err)
+
+	indexes, err = c.GetPartitionIndexes(ctx, &glue.GetPartitionIndexesInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableName:    aws.String("glue-sdk-index-table"),
+	})
+	require.NoError(t, err)
+	require.Len(t, indexes.PartitionIndexDescriptorList, 1)
+	assert.Equal(t, "dt-index", aws.ToString(indexes.PartitionIndexDescriptorList[0].IndexName))
+	assert.Equal(t, gluetypes.PartitionIndexStatusActive, indexes.PartitionIndexDescriptorList[0].IndexStatus)
+	require.Len(t, indexes.PartitionIndexDescriptorList[0].Keys, 1)
+	assert.Equal(t, "dt", aws.ToString(indexes.PartitionIndexDescriptorList[0].Keys[0].Name))
+	assert.Equal(t, "string", aws.ToString(indexes.PartitionIndexDescriptorList[0].Keys[0].Type))
+
+	_, err = c.DeletePartitionIndex(ctx, &glue.DeletePartitionIndexInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableName:    aws.String("glue-sdk-index-table"),
+		IndexName:    aws.String("dt-index"),
+	})
+	require.NoError(t, err)
+
+	indexes, err = c.GetPartitionIndexes(ctx, &glue.GetPartitionIndexesInput{
+		DatabaseName: aws.String("glue-sdk-index-db"),
+		TableName:    aws.String("glue-sdk-index-table"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, indexes.PartitionIndexDescriptorList)
 }
 
 func TestGlue_JobCRUD_SDK(t *testing.T) {
@@ -986,4 +1023,362 @@ func TestGlue_SchemaRegistry_SDK(t *testing.T) {
 	assert.Equal(t, "glue-sdk-schema", aws.ToString(getSchema.SchemaName))
 	assert.Equal(t, gluetypes.DataFormatAvro, getSchema.DataFormat)
 	assert.Equal(t, gluetypes.CompatibilityBackward, getSchema.Compatibility)
+}
+
+func TestGlue_TableVersions_SDK(t *testing.T) {
+	c := glueClient()
+	db := "glue-sdk-ver-db"
+	tbl := "glue-sdk-ver-tbl"
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String(db)},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &glue.DeleteTableInput{DatabaseName: aws.String(db), Name: aws.String(tbl)})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String(db)})
+	})
+
+	_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+		DatabaseName: aws.String(db),
+		TableInput: &gluetypes.TableInput{
+			Name:              aws.String(tbl),
+			StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/v1/")},
+		},
+	})
+	require.NoError(t, err)
+
+	// Two updates produce versions 2 and 3.
+	for _, loc := range []string{"s3://bucket/v2/", "s3://bucket/v3/"} {
+		_, err = c.UpdateTable(ctx, &glue.UpdateTableInput{
+			DatabaseName: aws.String(db),
+			TableInput: &gluetypes.TableInput{
+				Name:              aws.String(tbl),
+				StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String(loc)},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	vers, err := c.GetTableVersions(ctx, &glue.GetTableVersionsInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+	})
+	require.NoError(t, err)
+	require.Len(t, vers.TableVersions, 3)
+	assert.Equal(t, "1", aws.ToString(vers.TableVersions[0].VersionId))
+	assert.Equal(t, "3", aws.ToString(vers.TableVersions[2].VersionId))
+
+	// GetTableVersion latest (no VersionId) returns version 3's location.
+	gv, err := c.GetTableVersion(ctx, &glue.GetTableVersionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "3", aws.ToString(gv.TableVersion.VersionId))
+	assert.Equal(t, "s3://bucket/v3/", aws.ToString(gv.TableVersion.Table.StorageDescriptor.Location))
+
+	// GetTableVersion explicit version 1.
+	gv1, err := c.GetTableVersion(ctx, &glue.GetTableVersionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		VersionId:    aws.String("1"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "s3://bucket/v1/", aws.ToString(gv1.TableVersion.Table.StorageDescriptor.Location))
+
+	// DeleteTableVersion (single).
+	_, err = c.DeleteTableVersion(ctx, &glue.DeleteTableVersionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		VersionId:    aws.String("1"),
+	})
+	require.NoError(t, err)
+
+	// BatchDeleteTableVersion (one present, one missing).
+	bd, err := c.BatchDeleteTableVersion(ctx, &glue.BatchDeleteTableVersionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		VersionIds:   []string{"2", "999"},
+	})
+	require.NoError(t, err)
+	require.Len(t, bd.Errors, 1)
+	assert.Equal(t, "999", aws.ToString(bd.Errors[0].VersionId))
+
+	vers, err = c.GetTableVersions(ctx, &glue.GetTableVersionsInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+	})
+	require.NoError(t, err)
+	require.Len(t, vers.TableVersions, 1)
+	assert.Equal(t, "3", aws.ToString(vers.TableVersions[0].VersionId))
+}
+
+func TestGlue_ColumnStatistics_SDK(t *testing.T) {
+	c := glueClient()
+	db := "glue-sdk-stats-db"
+	tbl := "glue-sdk-stats-tbl"
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String(db)},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &glue.DeleteTableInput{DatabaseName: aws.String(db), Name: aws.String(tbl)})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String(db)})
+	})
+
+	_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+		DatabaseName: aws.String(db),
+		TableInput: &gluetypes.TableInput{
+			Name: aws.String(tbl),
+			StorageDescriptor: &gluetypes.StorageDescriptor{
+				Location: aws.String("s3://bucket/stats/"),
+				Columns:  []gluetypes.Column{{Name: aws.String("id"), Type: aws.String("bigint")}},
+			},
+			PartitionKeys: []gluetypes.Column{{Name: aws.String("dt"), Type: aws.String("string")}},
+		},
+	})
+	require.NoError(t, err)
+
+	now := time.Now()
+	tableStat := gluetypes.ColumnStatistics{
+		ColumnName:   aws.String("id"),
+		ColumnType:   aws.String("bigint"),
+		AnalyzedTime: &now,
+		StatisticsData: &gluetypes.ColumnStatisticsData{
+			Type: gluetypes.ColumnStatisticsTypeLong,
+			LongColumnStatisticsData: &gluetypes.LongColumnStatisticsData{
+				MinimumValue:           1,
+				MaximumValue:           100,
+				NumberOfNulls:          0,
+				NumberOfDistinctValues: 100,
+			},
+		},
+	}
+
+	// Table-scoped column statistics.
+	upd, err := c.UpdateColumnStatisticsForTable(ctx, &glue.UpdateColumnStatisticsForTableInput{
+		DatabaseName:         aws.String(db),
+		TableName:            aws.String(tbl),
+		ColumnStatisticsList: []gluetypes.ColumnStatistics{tableStat},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, upd.Errors)
+
+	get, err := c.GetColumnStatisticsForTable(ctx, &glue.GetColumnStatisticsForTableInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		ColumnNames:  []string{"id"},
+	})
+	require.NoError(t, err)
+	require.Len(t, get.ColumnStatisticsList, 1)
+	assert.Equal(t, "id", aws.ToString(get.ColumnStatisticsList[0].ColumnName))
+	require.NotNil(t, get.ColumnStatisticsList[0].StatisticsData.LongColumnStatisticsData)
+	assert.Equal(t, int64(100), get.ColumnStatisticsList[0].StatisticsData.LongColumnStatisticsData.MaximumValue)
+
+	_, err = c.DeleteColumnStatisticsForTable(ctx, &glue.DeleteColumnStatisticsForTableInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		ColumnName:   aws.String("id"),
+	})
+	require.NoError(t, err)
+	get, err = c.GetColumnStatisticsForTable(ctx, &glue.GetColumnStatisticsForTableInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		ColumnNames:  []string{"id"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, get.ColumnStatisticsList)
+
+	// Partition-scoped column statistics.
+	_, err = c.CreatePartition(ctx, &glue.CreatePartitionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		PartitionInput: &gluetypes.PartitionInput{
+			Values:            []string{"2024-01-01"},
+			StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/stats/dt=2024-01-01/")},
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = c.UpdateColumnStatisticsForPartition(ctx, &glue.UpdateColumnStatisticsForPartitionInput{
+		DatabaseName:         aws.String(db),
+		TableName:            aws.String(tbl),
+		PartitionValues:      []string{"2024-01-01"},
+		ColumnStatisticsList: []gluetypes.ColumnStatistics{tableStat},
+	})
+	require.NoError(t, err)
+
+	getP, err := c.GetColumnStatisticsForPartition(ctx, &glue.GetColumnStatisticsForPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+		ColumnNames:     []string{"id"},
+	})
+	require.NoError(t, err)
+	require.Len(t, getP.ColumnStatisticsList, 1)
+	assert.Equal(t, "id", aws.ToString(getP.ColumnStatisticsList[0].ColumnName))
+
+	_, err = c.DeleteColumnStatisticsForPartition(ctx, &glue.DeleteColumnStatisticsForPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+		ColumnName:      aws.String("id"),
+	})
+	require.NoError(t, err)
+	getP, err = c.GetColumnStatisticsForPartition(ctx, &glue.GetColumnStatisticsForPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+		ColumnNames:     []string{"id"},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, getP.ColumnStatisticsList)
+}
+
+func TestGlue_ResourcePolicy_SDK(t *testing.T) {
+	c := glueClient()
+
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":"glue:GetTable","Resource":"*"}]}`
+	put, err := c.PutResourcePolicy(ctx, &glue.PutResourcePolicyInput{
+		PolicyInJson: aws.String(policy),
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, aws.ToString(put.PolicyHash))
+	t.Cleanup(func() {
+		_, _ = c.DeleteResourcePolicy(ctx, &glue.DeleteResourcePolicyInput{})
+	})
+
+	get, err := c.GetResourcePolicy(ctx, &glue.GetResourcePolicyInput{})
+	require.NoError(t, err)
+	assert.Equal(t, policy, aws.ToString(get.PolicyInJson))
+	assert.NotEmpty(t, aws.ToString(get.PolicyHash))
+
+	_, err = c.DeleteResourcePolicy(ctx, &glue.DeleteResourcePolicyInput{})
+	require.NoError(t, err)
+
+	_, err = c.GetResourcePolicy(ctx, &glue.GetResourcePolicyInput{})
+	require.Error(t, err)
+	var notFound *gluetypes.EntityNotFoundException
+	assert.ErrorAs(t, err, &notFound)
+}
+
+func TestGlue_DataCatalogEncryptionAndImport_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.PutDataCatalogEncryptionSettings(ctx, &glue.PutDataCatalogEncryptionSettingsInput{
+		DataCatalogEncryptionSettings: &gluetypes.DataCatalogEncryptionSettings{
+			EncryptionAtRest: &gluetypes.EncryptionAtRest{
+				CatalogEncryptionMode: gluetypes.CatalogEncryptionModeSsekms,
+				SseAwsKmsKeyId:        aws.String("arn:aws:kms:us-east-1:123456789012:key/abc"),
+			},
+			ConnectionPasswordEncryption: &gluetypes.ConnectionPasswordEncryption{
+				ReturnConnectionPasswordEncrypted: true,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	get, err := c.GetDataCatalogEncryptionSettings(ctx, &glue.GetDataCatalogEncryptionSettingsInput{})
+	require.NoError(t, err)
+	require.NotNil(t, get.DataCatalogEncryptionSettings)
+	require.NotNil(t, get.DataCatalogEncryptionSettings.EncryptionAtRest)
+	assert.Equal(t, gluetypes.CatalogEncryptionModeSsekms, get.DataCatalogEncryptionSettings.EncryptionAtRest.CatalogEncryptionMode)
+
+	// Catalog import status starts not-completed, then completes.
+	status, err := c.GetCatalogImportStatus(ctx, &glue.GetCatalogImportStatusInput{})
+	require.NoError(t, err)
+	require.NotNil(t, status.ImportStatus)
+
+	_, err = c.ImportCatalogToGlue(ctx, &glue.ImportCatalogToGlueInput{})
+	require.NoError(t, err)
+
+	status, err = c.GetCatalogImportStatus(ctx, &glue.GetCatalogImportStatusInput{})
+	require.NoError(t, err)
+	assert.True(t, status.ImportStatus.ImportCompleted)
+}
+
+func TestGlue_SchemaVersions_SDK(t *testing.T) {
+	c := glueClient()
+	reg := "glue-sdk-sv-registry"
+	sch := "glue-sdk-sv-schema"
+
+	_, err := c.CreateRegistry(ctx, &glue.CreateRegistryInput{RegistryName: aws.String(reg)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSchema(ctx, &glue.DeleteSchemaInput{
+			SchemaId: &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+		})
+		_, _ = c.DeleteRegistry(ctx, &glue.DeleteRegistryInput{
+			RegistryId: &gluetypes.RegistryId{RegistryName: aws.String(reg)},
+		})
+	})
+
+	def1 := `{"type":"record","name":"r","fields":[{"name":"a","type":"int"}]}`
+	def2 := `{"type":"record","name":"r","fields":[{"name":"a","type":"int"},{"name":"b","type":["null","string"],"default":null}]}`
+
+	_, err = c.CreateSchema(ctx, &glue.CreateSchemaInput{
+		RegistryId:       &gluetypes.RegistryId{RegistryName: aws.String(reg)},
+		SchemaName:       aws.String(sch),
+		DataFormat:       gluetypes.DataFormatAvro,
+		Compatibility:    gluetypes.CompatibilityBackward,
+		SchemaDefinition: aws.String(def1),
+	})
+	require.NoError(t, err)
+
+	// RegisterSchemaVersion adds version 2.
+	reg2, err := c.RegisterSchemaVersion(ctx, &glue.RegisterSchemaVersionInput{
+		SchemaId:         &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+		SchemaDefinition: aws.String(def2),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), aws.ToInt64(reg2.VersionNumber))
+	assert.NotEmpty(t, aws.ToString(reg2.SchemaVersionId))
+
+	list, err := c.ListSchemaVersions(ctx, &glue.ListSchemaVersionsInput{
+		SchemaId: &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+	})
+	require.NoError(t, err)
+	require.Len(t, list.Schemas, 2)
+	assert.Equal(t, int64(1), aws.ToInt64(list.Schemas[0].VersionNumber))
+	assert.Equal(t, int64(2), aws.ToInt64(list.Schemas[1].VersionNumber))
+
+	// GetSchemaVersion by explicit version number.
+	gv1, err := c.GetSchemaVersion(ctx, &glue.GetSchemaVersionInput{
+		SchemaId:            &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+		SchemaVersionNumber: &gluetypes.SchemaVersionNumber{VersionNumber: aws.Int64(1)},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, def1, aws.ToString(gv1.SchemaDefinition))
+	assert.Equal(t, int64(1), aws.ToInt64(gv1.VersionNumber))
+
+	// GetSchemaVersion by SchemaVersionId.
+	gvByID, err := c.GetSchemaVersion(ctx, &glue.GetSchemaVersionInput{
+		SchemaVersionId: reg2.SchemaVersionId,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, def2, aws.ToString(gvByID.SchemaDefinition))
+
+	// GetSchemaByDefinition resolves the version carrying def2.
+	byDef, err := c.GetSchemaByDefinition(ctx, &glue.GetSchemaByDefinitionInput{
+		SchemaId:         &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+		SchemaDefinition: aws.String(def2),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, aws.ToString(reg2.SchemaVersionId), aws.ToString(byDef.SchemaVersionId))
+
+	// DeleteSchemaVersions for version 2.
+	_, err = c.DeleteSchemaVersions(ctx, &glue.DeleteSchemaVersionsInput{
+		SchemaId: &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+		Versions: aws.String("2"),
+	})
+	require.NoError(t, err)
+
+	list, err = c.ListSchemaVersions(ctx, &glue.ListSchemaVersionsInput{
+		SchemaId: &gluetypes.SchemaId{RegistryName: aws.String(reg), SchemaName: aws.String(sch)},
+	})
+	require.NoError(t, err)
+	require.Len(t, list.Schemas, 1)
+	assert.Equal(t, int64(1), aws.ToInt64(list.Schemas[0].VersionNumber))
 }

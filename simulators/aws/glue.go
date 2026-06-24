@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -208,29 +209,106 @@ type GlueSchema struct {
 	Tags                map[string]string `json:"Tags,omitempty"`
 }
 
+// GlueTableVersion captures one immutable snapshot of a table at a version.
+// VersionId is the string form of a monotonically increasing integer.
+type GlueTableVersion struct {
+	DatabaseName string    `json:"DatabaseName"`
+	TableName    string    `json:"TableName"`
+	VersionId    string    `json:"VersionId"`
+	Table        GlueTable `json:"Table"`
+}
+
+// GluePartitionIndex models a partition index attached to a table. Keys mirror
+// the KeySchemaElementList descriptor shape (Name + Type).
+type GluePartitionIndex struct {
+	DatabaseName string           `json:"DatabaseName"`
+	TableName    string           `json:"TableName"`
+	IndexName    string           `json:"IndexName"`
+	Keys         []map[string]any `json:"Keys"`
+	IndexStatus  string           `json:"IndexStatus"`
+}
+
+// GlueColumnStatisticsRecord stores the verbatim ColumnStatistics object for one
+// column, scoped to a table (PartitionValues empty) or a partition.
+type GlueColumnStatisticsRecord struct {
+	DatabaseName    string         `json:"DatabaseName"`
+	TableName       string         `json:"TableName"`
+	PartitionValues []string       `json:"PartitionValues,omitempty"`
+	ColumnName      string         `json:"ColumnName"`
+	Statistics      map[string]any `json:"Statistics"`
+}
+
+// GlueResourcePolicy holds the Data Catalog resource policy. The Glue catalog
+// has a single resource policy per account/region, so this store carries at most
+// one row under glueResourcePolicyKey.
+type GlueResourcePolicy struct {
+	PolicyInJson string  `json:"PolicyInJson"`
+	PolicyHash   string  `json:"PolicyHash"`
+	CreateTime   float64 `json:"CreateTime"`
+	UpdateTime   float64 `json:"UpdateTime"`
+}
+
+// GlueCatalogSettings holds the Data Catalog encryption settings (one row per
+// catalog) plus the catalog import status.
+type GlueCatalogSettings struct {
+	DataCatalogEncryptionSettings map[string]any `json:"DataCatalogEncryptionSettings,omitempty"`
+	ImportCompleted               bool           `json:"ImportCompleted"`
+	ImportTime                    *float64       `json:"ImportTime,omitempty"`
+	ImportedBy                    string         `json:"ImportedBy,omitempty"`
+}
+
+// GlueSchemaVersion models one registered version of a schema, keyed by its
+// SchemaVersionId.
+type GlueSchemaVersion struct {
+	SchemaVersionId  string `json:"SchemaVersionId"`
+	SchemaArn        string `json:"SchemaArn"`
+	RegistryName     string `json:"RegistryName"`
+	SchemaName       string `json:"SchemaName"`
+	VersionNumber    int64  `json:"VersionNumber"`
+	SchemaDefinition string `json:"SchemaDefinition"`
+	DataFormat       string `json:"DataFormat"`
+	Status           string `json:"Status"`
+	CreatedTime      string `json:"CreatedTime"`
+}
+
 var (
-	glueDatabases   sim.Store[GlueDatabase]
-	glueTables      sim.Store[GlueTable]
-	gluePartitions  sim.Store[GluePartition]
-	glueJobs        sim.Store[GlueJob]
-	glueJobRuns     sim.Store[GlueJobRun]
-	glueCrawlers    sim.Store[GlueCrawler]
-	glueTriggers    sim.Store[GlueTrigger]
-	glueConnections sim.Store[GlueConnection]
-	glueSecConfigs  sim.Store[GlueSecurityConfiguration]
-	glueWorkflows   sim.Store[GlueWorkflow]
-	glueWfRuns      sim.Store[GlueWorkflowRun]
-	glueClassifiers sim.Store[GlueClassifier]
-	glueUDFs        sim.Store[GlueUserDefinedFunction]
-	glueRegistries  sim.Store[GlueRegistry]
-	glueSchemas     sim.Store[GlueSchema]
-	glueMu          sync.Mutex
+	glueDatabases     sim.Store[GlueDatabase]
+	glueTables        sim.Store[GlueTable]
+	glueTableVersions sim.Store[GlueTableVersion]
+	gluePartitions    sim.Store[GluePartition]
+	gluePartIndexes   sim.Store[GluePartitionIndex]
+	glueColumnStats   sim.Store[GlueColumnStatisticsRecord]
+	glueJobs          sim.Store[GlueJob]
+	glueJobRuns       sim.Store[GlueJobRun]
+	glueCrawlers      sim.Store[GlueCrawler]
+	glueTriggers      sim.Store[GlueTrigger]
+	glueConnections   sim.Store[GlueConnection]
+	glueSecConfigs    sim.Store[GlueSecurityConfiguration]
+	glueWorkflows     sim.Store[GlueWorkflow]
+	glueWfRuns        sim.Store[GlueWorkflowRun]
+	glueClassifiers   sim.Store[GlueClassifier]
+	glueUDFs          sim.Store[GlueUserDefinedFunction]
+	glueRegistries    sim.Store[GlueRegistry]
+	glueSchemas       sim.Store[GlueSchema]
+	glueSchemaVers    sim.Store[GlueSchemaVersion]
+	glueResourcePols  sim.Store[GlueResourcePolicy]
+	glueCatalogSettgs sim.Store[GlueCatalogSettings]
+	glueMu            sync.Mutex
 )
+
+// glueResourcePolicyKey is the single store key for the catalog resource policy.
+const glueResourcePolicyKey = "catalog"
+
+// glueCatalogSettingsKey is the single store key for catalog-wide settings.
+const glueCatalogSettingsKey = "catalog"
 
 func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	glueDatabases = sim.MakeStore[GlueDatabase](srv.DB(), "glue_databases")
 	glueTables = sim.MakeStore[GlueTable](srv.DB(), "glue_tables")
+	glueTableVersions = sim.MakeStore[GlueTableVersion](srv.DB(), "glue_table_versions")
 	gluePartitions = sim.MakeStore[GluePartition](srv.DB(), "glue_partitions")
+	gluePartIndexes = sim.MakeStore[GluePartitionIndex](srv.DB(), "glue_partition_indexes")
+	glueColumnStats = sim.MakeStore[GlueColumnStatisticsRecord](srv.DB(), "glue_column_statistics")
 	glueJobs = sim.MakeStore[GlueJob](srv.DB(), "glue_jobs")
 	glueJobRuns = sim.MakeStore[GlueJobRun](srv.DB(), "glue_job_runs")
 	glueCrawlers = sim.MakeStore[GlueCrawler](srv.DB(), "glue_crawlers")
@@ -243,6 +321,9 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	glueUDFs = sim.MakeStore[GlueUserDefinedFunction](srv.DB(), "glue_user_defined_functions")
 	glueRegistries = sim.MakeStore[GlueRegistry](srv.DB(), "glue_registries")
 	glueSchemas = sim.MakeStore[GlueSchema](srv.DB(), "glue_schemas")
+	glueSchemaVers = sim.MakeStore[GlueSchemaVersion](srv.DB(), "glue_schema_versions")
+	glueResourcePols = sim.MakeStore[GlueResourcePolicy](srv.DB(), "glue_resource_policies")
+	glueCatalogSettgs = sim.MakeStore[GlueCatalogSettings](srv.DB(), "glue_catalog_settings")
 
 	r.Register("AWSGlue.CreateDatabase", handleGlueCreateDatabase)
 	r.Register("AWSGlue.GetDatabase", handleGlueGetDatabase)
@@ -322,6 +403,30 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSGlue.CreateSchema", handleGlueCreateSchema)
 	r.Register("AWSGlue.GetSchema", handleGlueGetSchema)
 	r.Register("AWSGlue.DeleteSchema", handleGlueDeleteSchema)
+	r.Register("AWSGlue.GetTableVersion", handleGlueGetTableVersion)
+	r.Register("AWSGlue.GetTableVersions", handleGlueGetTableVersions)
+	r.Register("AWSGlue.DeleteTableVersion", handleGlueDeleteTableVersion)
+	r.Register("AWSGlue.BatchDeleteTableVersion", handleGlueBatchDeleteTableVersion)
+	r.Register("AWSGlue.CreatePartitionIndex", handleGlueCreatePartitionIndex)
+	r.Register("AWSGlue.DeletePartitionIndex", handleGlueDeletePartitionIndex)
+	r.Register("AWSGlue.UpdateColumnStatisticsForTable", handleGlueUpdateColumnStatisticsForTable)
+	r.Register("AWSGlue.GetColumnStatisticsForTable", handleGlueGetColumnStatisticsForTable)
+	r.Register("AWSGlue.DeleteColumnStatisticsForTable", handleGlueDeleteColumnStatisticsForTable)
+	r.Register("AWSGlue.UpdateColumnStatisticsForPartition", handleGlueUpdateColumnStatisticsForPartition)
+	r.Register("AWSGlue.GetColumnStatisticsForPartition", handleGlueGetColumnStatisticsForPartition)
+	r.Register("AWSGlue.DeleteColumnStatisticsForPartition", handleGlueDeleteColumnStatisticsForPartition)
+	r.Register("AWSGlue.PutResourcePolicy", handleGluePutResourcePolicy)
+	r.Register("AWSGlue.GetResourcePolicy", handleGlueGetResourcePolicy)
+	r.Register("AWSGlue.DeleteResourcePolicy", handleGlueDeleteResourcePolicy)
+	r.Register("AWSGlue.PutDataCatalogEncryptionSettings", handleGluePutDataCatalogEncryptionSettings)
+	r.Register("AWSGlue.GetDataCatalogEncryptionSettings", handleGlueGetDataCatalogEncryptionSettings)
+	r.Register("AWSGlue.GetCatalogImportStatus", handleGlueGetCatalogImportStatus)
+	r.Register("AWSGlue.ImportCatalogToGlue", handleGlueImportCatalogToGlue)
+	r.Register("AWSGlue.RegisterSchemaVersion", handleGlueRegisterSchemaVersion)
+	r.Register("AWSGlue.GetSchemaVersion", handleGlueGetSchemaVersion)
+	r.Register("AWSGlue.ListSchemaVersions", handleGlueListSchemaVersions)
+	r.Register("AWSGlue.DeleteSchemaVersions", handleGlueDeleteSchemaVersions)
+	r.Register("AWSGlue.GetSchemaByDefinition", handleGlueGetSchemaByDefinition)
 }
 
 func glueEpochNow() float64 {
@@ -493,6 +598,37 @@ func glueTableKey(database, table string) string {
 	return database + "/" + table
 }
 
+// glueTableVersionKey is the store key for one (database, table, versionId)
+// snapshot.
+func glueTableVersionKey(database, table, versionID string) string {
+	return database + "/" + table + "/" + versionID
+}
+
+// glueLatestTableVersion returns the highest VersionId recorded for a table as
+// an integer (0 if none). Caller holds glueMu.
+func glueLatestTableVersion(database, table string) int {
+	latest := 0
+	for _, v := range glueTableVersions.List() {
+		if v.DatabaseName == database && v.TableName == table {
+			if n, err := strconv.Atoi(v.VersionId); err == nil && n > latest {
+				latest = n
+			}
+		}
+	}
+	return latest
+}
+
+// glueRecordTableVersion snapshots a table under the given version id. Caller
+// holds glueMu.
+func glueRecordTableVersion(database, table, versionID string, t GlueTable) {
+	glueTableVersions.Put(glueTableVersionKey(database, table, versionID), GlueTableVersion{
+		DatabaseName: database,
+		TableName:    table,
+		VersionId:    versionID,
+		Table:        t,
+	})
+}
+
 func handleGlueCreateTable(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DatabaseName string `json:"DatabaseName"`
@@ -537,6 +673,7 @@ func handleGlueCreateTable(w http.ResponseWriter, r *http.Request) {
 		UpdateTime:        now,
 	}
 	glueTables.Put(key, t)
+	glueRecordTableVersion(req.DatabaseName, req.TableInput.Name, "1", t)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -606,7 +743,18 @@ func handleGlueDeleteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	glueTables.Delete(key)
+	glueDeleteTableVersions(req.DatabaseName, req.Name)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// glueDeleteTableVersions removes all recorded versions for a table. Caller
+// holds glueMu.
+func glueDeleteTableVersions(database, table string) {
+	for _, v := range glueTableVersions.List() {
+		if v.DatabaseName == database && v.TableName == table {
+			glueTableVersions.Delete(glueTableVersionKey(database, table, v.VersionId))
+		}
+	}
 }
 
 func handleGlueUpdateTable(w http.ResponseWriter, r *http.Request) {
@@ -649,6 +797,8 @@ func handleGlueUpdateTable(w http.ResponseWriter, r *http.Request) {
 		UpdateTime:        glueEpochNow(),
 	}
 	glueTables.Put(key, updated)
+	nextVer := strconv.Itoa(glueLatestTableVersion(req.DatabaseName, req.TableInput.Name) + 1)
+	glueRecordTableVersion(req.DatabaseName, req.TableInput.Name, nextVer, updated)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -683,6 +833,7 @@ func handleGlueBatchDeleteTable(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		glueTables.Delete(key)
+		glueDeleteTableVersions(req.DatabaseName, name)
 		// Cascade-delete the table's partitions.
 		for _, p := range gluePartitions.List() {
 			if p.DatabaseName == req.DatabaseName && p.TableName == name {
@@ -2013,10 +2164,122 @@ func handleGlueDeleteConnection(w http.ResponseWriter, r *http.Request) {
 
 // ---------- Partition indexes ----------
 
+// gluePartitionIndexKey is the store key for one (database, table, indexName)
+// partition index.
+func gluePartitionIndexKey(database, table, index string) string {
+	return database + "/" + table + "/" + index
+}
+
+func handleGlueCreatePartitionIndex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName   string `json:"DatabaseName"`
+		TableName      string `json:"TableName"`
+		PartitionIndex struct {
+			Keys      []string `json:"Keys"`
+			IndexName string   `json:"IndexName"`
+		} `json:"PartitionIndex"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.TableName == "" || req.PartitionIndex.IndexName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName, TableName and PartitionIndex.IndexName are required")
+		return
+	}
+	if len(req.PartitionIndex.Keys) == 0 {
+		glueWriteError(w, "InvalidInputException", "PartitionIndex.Keys is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	tbl, ok := glueTables.Get(glueTableKey(req.DatabaseName, req.TableName))
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table not found: "+req.TableName)
+		return
+	}
+	idxKey := gluePartitionIndexKey(req.DatabaseName, req.TableName, req.PartitionIndex.IndexName)
+	if _, exists := gluePartIndexes.Get(idxKey); exists {
+		glueWriteError(w, "AlreadyExistsException", "Partition index already exists: "+req.PartitionIndex.IndexName)
+		return
+	}
+	// Resolve each key name to a KeySchemaElement (Name + Type) from the table's
+	// partition keys, matching the real PartitionIndexDescriptor read-back shape.
+	keyType := func(name string) string {
+		for _, pk := range tbl.PartitionKeys {
+			if glueString(pk["Name"]) == name {
+				return glueString(pk["Type"])
+			}
+		}
+		return "string"
+	}
+	keys := make([]map[string]any, 0, len(req.PartitionIndex.Keys))
+	for _, name := range req.PartitionIndex.Keys {
+		keys = append(keys, map[string]any{"Name": name, "Type": keyType(name)})
+	}
+	gluePartIndexes.Put(idxKey, GluePartitionIndex{
+		DatabaseName: req.DatabaseName,
+		TableName:    req.TableName,
+		IndexName:    req.PartitionIndex.IndexName,
+		Keys:         keys,
+		IndexStatus:  "ACTIVE",
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
 func handleGlueGetPartitionIndexes(w http.ResponseWriter, r *http.Request) {
-	// TF provider reads partition indexes on table refresh; sim has none.
-	_ = r.Body
-	glueWriteJSON(w, http.StatusOK, map[string]any{"PartitionIndexDescriptorList": []any{}})
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		NextToken    string `json:"NextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	descriptors := []map[string]any{}
+	for _, idx := range gluePartIndexes.List() {
+		if idx.DatabaseName == req.DatabaseName && idx.TableName == req.TableName {
+			descriptors = append(descriptors, map[string]any{
+				"IndexName":   idx.IndexName,
+				"Keys":        idx.Keys,
+				"IndexStatus": idx.IndexStatus,
+			})
+		}
+	}
+	sort.Slice(descriptors, func(i, j int) bool {
+		return glueString(descriptors[i]["IndexName"]) < glueString(descriptors[j]["IndexName"])
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{"PartitionIndexDescriptorList": descriptors})
+}
+
+func handleGlueDeletePartitionIndex(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		IndexName    string `json:"IndexName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	idxKey := gluePartitionIndexKey(req.DatabaseName, req.TableName, req.IndexName)
+	if _, ok := gluePartIndexes.Get(idxKey); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition index not found: "+req.IndexName)
+		return
+	}
+	gluePartIndexes.Delete(idxKey)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
 // ---------- Tags ----------
@@ -2992,6 +3255,17 @@ func handleGlueCreateSchema(w http.ResponseWriter, r *http.Request) {
 		Tags:                req.Tags,
 	}
 	glueSchemas.Put(key, sc)
+	glueSchemaVers.Put(sc.SchemaVersionId, GlueSchemaVersion{
+		SchemaVersionId:  sc.SchemaVersionId,
+		SchemaArn:        schemaArn,
+		RegistryName:     registryName,
+		SchemaName:       req.SchemaName,
+		VersionNumber:    1,
+		SchemaDefinition: req.SchemaDefinition,
+		DataFormat:       req.DataFormat,
+		Status:           "AVAILABLE",
+		CreatedTime:      now,
+	})
 	resp := map[string]any{
 		"RegistryName":        registryName,
 		"RegistryArn":         registryArn,
@@ -3086,9 +3360,783 @@ func handleGlueDeleteSchema(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	glueSchemas.Delete(glueSchemaKey(sc.RegistryName, sc.SchemaName))
+	for _, v := range glueSchemaVers.List() {
+		if v.SchemaArn == sc.SchemaArn {
+			glueSchemaVers.Delete(v.SchemaVersionId)
+		}
+	}
 	glueWriteJSON(w, http.StatusOK, map[string]any{
 		"SchemaArn":  sc.SchemaArn,
 		"SchemaName": sc.SchemaName,
 		"Status":     "DELETING",
 	})
+}
+
+// ---------- Table versions ----------
+
+// glueResolveTableVersion returns the version id to read for a request: an
+// explicit VersionId if given, otherwise the latest recorded version.
+// Returns ("", false) if the table has no recorded versions.
+func glueResolveTableVersion(database, table, versionID string) (string, bool) {
+	if versionID != "" {
+		if _, ok := glueTableVersions.Get(glueTableVersionKey(database, table, versionID)); ok {
+			return versionID, true
+		}
+		return "", false
+	}
+	latest := glueLatestTableVersion(database, table)
+	if latest == 0 {
+		return "", false
+	}
+	return strconv.Itoa(latest), true
+}
+
+func handleGlueGetTableVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		VersionId    string `json:"VersionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueTables.Get(glueTableKey(req.DatabaseName, req.TableName)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table not found: "+req.TableName)
+		return
+	}
+	verID, ok := glueResolveTableVersion(req.DatabaseName, req.TableName, req.VersionId)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table version not found")
+		return
+	}
+	tv, _ := glueTableVersions.Get(glueTableVersionKey(req.DatabaseName, req.TableName, verID))
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"TableVersion": map[string]any{
+			"Table":     tv.Table,
+			"VersionId": tv.VersionId,
+		},
+	})
+}
+
+func handleGlueGetTableVersions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		NextToken    string `json:"NextToken"`
+		MaxResults   *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueTables.Get(glueTableKey(req.DatabaseName, req.TableName)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table not found: "+req.TableName)
+		return
+	}
+	var versions []GlueTableVersion
+	for _, v := range glueTableVersions.List() {
+		if v.DatabaseName == req.DatabaseName && v.TableName == req.TableName {
+			versions = append(versions, v)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		a, _ := strconv.Atoi(versions[i].VersionId)
+		b, _ := strconv.Atoi(versions[j].VersionId)
+		return a < b
+	})
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(versions, req.NextToken, maxR, 100)
+	out := make([]map[string]any, 0, len(page))
+	for _, v := range page {
+		out = append(out, map[string]any{
+			"Table":     v.Table,
+			"VersionId": v.VersionId,
+		})
+	}
+	resp := map[string]any{"TableVersions": out}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteTableVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		VersionId    string `json:"VersionId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	key := glueTableVersionKey(req.DatabaseName, req.TableName, req.VersionId)
+	if _, ok := glueTableVersions.Get(key); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table version not found: "+req.VersionId)
+		return
+	}
+	glueTableVersions.Delete(key)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueBatchDeleteTableVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string   `json:"DatabaseName"`
+		TableName    string   `json:"TableName"`
+		VersionIds   []string `json:"VersionIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	var errs []map[string]any
+	for _, vid := range req.VersionIds {
+		key := glueTableVersionKey(req.DatabaseName, req.TableName, vid)
+		if _, ok := glueTableVersions.Get(key); !ok {
+			errs = append(errs, map[string]any{
+				"TableName": req.TableName,
+				"VersionId": vid,
+				"ErrorDetail": map[string]any{
+					"ErrorCode":    "EntityNotFoundException",
+					"ErrorMessage": "Table version not found: " + vid,
+				},
+			})
+			continue
+		}
+		glueTableVersions.Delete(key)
+	}
+	resp := map[string]any{}
+	if len(errs) > 0 {
+		resp["Errors"] = errs
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// ---------- Column statistics ----------
+
+// glueColumnStatKey is the store key for one column's statistics, scoped to a
+// table (empty values) or a partition.
+func glueColumnStatKey(database, table string, values []string, column string) string {
+	return database + "\x00" + table + "\x00" + strings.Join(values, "\x1f") + "\x00" + column
+}
+
+func handleGlueUpdateColumnStatisticsForTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName         string           `json:"DatabaseName"`
+		TableName            string           `json:"TableName"`
+		ColumnStatisticsList []map[string]any `json:"ColumnStatisticsList"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if !glueRequirePartitionTable(w, req.DatabaseName, req.TableName) {
+		return
+	}
+	for _, cs := range req.ColumnStatisticsList {
+		col := glueString(cs["ColumnName"])
+		if col == "" {
+			continue
+		}
+		glueColumnStats.Put(glueColumnStatKey(req.DatabaseName, req.TableName, nil, col), GlueColumnStatisticsRecord{
+			DatabaseName: req.DatabaseName,
+			TableName:    req.TableName,
+			ColumnName:   col,
+			Statistics:   cs,
+		})
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetColumnStatisticsForTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string   `json:"DatabaseName"`
+		TableName    string   `json:"TableName"`
+		ColumnNames  []string `json:"ColumnNames"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if !glueRequirePartitionTable(w, req.DatabaseName, req.TableName) {
+		return
+	}
+	list := []map[string]any{}
+	for _, col := range req.ColumnNames {
+		rec, ok := glueColumnStats.Get(glueColumnStatKey(req.DatabaseName, req.TableName, nil, col))
+		if ok {
+			list = append(list, rec.Statistics)
+		}
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"ColumnStatisticsList": list})
+}
+
+func handleGlueDeleteColumnStatisticsForTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		ColumnName   string `json:"ColumnName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if !glueRequirePartitionTable(w, req.DatabaseName, req.TableName) {
+		return
+	}
+	glueColumnStats.Delete(glueColumnStatKey(req.DatabaseName, req.TableName, nil, req.ColumnName))
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueUpdateColumnStatisticsForPartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName         string           `json:"DatabaseName"`
+		TableName            string           `json:"TableName"`
+		PartitionValues      []string         `json:"PartitionValues"`
+		ColumnStatisticsList []map[string]any `json:"ColumnStatisticsList"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := gluePartitions.Get(gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValues)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	for _, cs := range req.ColumnStatisticsList {
+		col := glueString(cs["ColumnName"])
+		if col == "" {
+			continue
+		}
+		glueColumnStats.Put(glueColumnStatKey(req.DatabaseName, req.TableName, req.PartitionValues, col), GlueColumnStatisticsRecord{
+			DatabaseName:    req.DatabaseName,
+			TableName:       req.TableName,
+			PartitionValues: req.PartitionValues,
+			ColumnName:      col,
+			Statistics:      cs,
+		})
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetColumnStatisticsForPartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName    string   `json:"DatabaseName"`
+		TableName       string   `json:"TableName"`
+		PartitionValues []string `json:"PartitionValues"`
+		ColumnNames     []string `json:"ColumnNames"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := gluePartitions.Get(gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValues)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	list := []map[string]any{}
+	for _, col := range req.ColumnNames {
+		rec, ok := glueColumnStats.Get(glueColumnStatKey(req.DatabaseName, req.TableName, req.PartitionValues, col))
+		if ok {
+			list = append(list, rec.Statistics)
+		}
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"ColumnStatisticsList": list})
+}
+
+func handleGlueDeleteColumnStatisticsForPartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName    string   `json:"DatabaseName"`
+		TableName       string   `json:"TableName"`
+		PartitionValues []string `json:"PartitionValues"`
+		ColumnName      string   `json:"ColumnName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := gluePartitions.Get(gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValues)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	glueColumnStats.Delete(glueColumnStatKey(req.DatabaseName, req.TableName, req.PartitionValues, req.ColumnName))
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ---------- Resource policy ----------
+
+func handleGluePutResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		PolicyInJson string `json:"PolicyInJson"`
+		ResourceArn  string `json:"ResourceArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.PolicyInJson == "" {
+		glueWriteError(w, "InvalidInputException", "PolicyInJson is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	now := glueEpochNow()
+	create := now
+	if existing, ok := glueResourcePols.Get(glueResourcePolicyKey); ok {
+		create = existing.CreateTime
+	}
+	hash := fmt.Sprintf("%x", uuid.NewSHA1(uuid.Nil, []byte(req.PolicyInJson)))
+	glueResourcePols.Put(glueResourcePolicyKey, GlueResourcePolicy{
+		PolicyInJson: req.PolicyInJson,
+		PolicyHash:   hash,
+		CreateTime:   create,
+		UpdateTime:   now,
+	})
+	arn := req.ResourceArn
+	if arn == "" {
+		arn = glueGlueArn("catalog")
+	}
+	iamPutResourcePolicy(arn, req.PolicyInJson)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"PolicyHash": hash})
+}
+
+func handleGlueGetResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	rp, ok := glueResourcePols.Get(glueResourcePolicyKey)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "No resource policy exists")
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"PolicyInJson": rp.PolicyInJson,
+		"PolicyHash":   rp.PolicyHash,
+		"CreateTime":   rp.CreateTime,
+		"UpdateTime":   rp.UpdateTime,
+	})
+}
+
+func handleGlueDeleteResourcePolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceArn string `json:"ResourceArn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueResourcePols.Get(glueResourcePolicyKey); !ok {
+		glueWriteError(w, "EntityNotFoundException", "No resource policy exists")
+		return
+	}
+	glueResourcePols.Delete(glueResourcePolicyKey)
+	arn := req.ResourceArn
+	if arn == "" {
+		arn = glueGlueArn("catalog")
+	}
+	iamDeleteResourcePolicy(arn)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ---------- Data Catalog encryption settings ----------
+
+func handleGluePutDataCatalogEncryptionSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DataCatalogEncryptionSettings map[string]any `json:"DataCatalogEncryptionSettings"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	settings, _ := glueCatalogSettgs.Get(glueCatalogSettingsKey)
+	settings.DataCatalogEncryptionSettings = req.DataCatalogEncryptionSettings
+	glueCatalogSettgs.Put(glueCatalogSettingsKey, settings)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetDataCatalogEncryptionSettings(w http.ResponseWriter, r *http.Request) {
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	settings, _ := glueCatalogSettgs.Get(glueCatalogSettingsKey)
+	dcs := settings.DataCatalogEncryptionSettings
+	if dcs == nil {
+		// AWS returns an empty (default-disabled) settings object when none set.
+		dcs = map[string]any{
+			"EncryptionAtRest":             map[string]any{"CatalogEncryptionMode": "DISABLED"},
+			"ConnectionPasswordEncryption": map[string]any{"ReturnConnectionPasswordEncrypted": false},
+		}
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"DataCatalogEncryptionSettings": dcs})
+}
+
+// ---------- Catalog import ----------
+
+func handleGlueImportCatalogToGlue(w http.ResponseWriter, r *http.Request) {
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	settings, _ := glueCatalogSettgs.Get(glueCatalogSettingsKey)
+	now := glueEpochNow()
+	settings.ImportCompleted = true
+	settings.ImportTime = &now
+	settings.ImportedBy = "arn:aws:iam::123456789012:root"
+	glueCatalogSettgs.Put(glueCatalogSettingsKey, settings)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetCatalogImportStatus(w http.ResponseWriter, r *http.Request) {
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	settings, _ := glueCatalogSettgs.Get(glueCatalogSettingsKey)
+	status := map[string]any{"ImportCompleted": settings.ImportCompleted}
+	if settings.ImportTime != nil {
+		status["ImportTime"] = *settings.ImportTime
+	}
+	if settings.ImportedBy != "" {
+		status["ImportedBy"] = settings.ImportedBy
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"ImportStatus": status})
+}
+
+// ---------- Schema versions ----------
+
+// glueSchemaVersionsFor returns all versions belonging to a schema ARN, sorted
+// ascending by VersionNumber.
+func glueSchemaVersionsFor(schemaArn string) []GlueSchemaVersion {
+	var out []GlueSchemaVersion
+	for _, v := range glueSchemaVers.List() {
+		if v.SchemaArn == schemaArn {
+			out = append(out, v)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].VersionNumber < out[j].VersionNumber })
+	return out
+}
+
+func handleGlueRegisterSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+		SchemaDefinition string `json:"SchemaDefinition"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.SchemaDefinition == "" {
+		glueWriteError(w, "InvalidInputException", "SchemaDefinition is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	// If an existing version carries the identical definition, return it
+	// idempotently (matching the real registry's de-dup behavior).
+	for _, v := range glueSchemaVersionsFor(sc.SchemaArn) {
+		if v.SchemaDefinition == req.SchemaDefinition {
+			glueWriteJSON(w, http.StatusOK, map[string]any{
+				"SchemaVersionId": v.SchemaVersionId,
+				"VersionNumber":   v.VersionNumber,
+				"Status":          v.Status,
+			})
+			return
+		}
+	}
+	newVer := sc.LatestSchemaVersion + 1
+	versionID := uuid.NewString()
+	glueSchemaVers.Put(versionID, GlueSchemaVersion{
+		SchemaVersionId:  versionID,
+		SchemaArn:        sc.SchemaArn,
+		RegistryName:     sc.RegistryName,
+		SchemaName:       sc.SchemaName,
+		VersionNumber:    newVer,
+		SchemaDefinition: req.SchemaDefinition,
+		DataFormat:       sc.DataFormat,
+		Status:           "AVAILABLE",
+		CreatedTime:      glueRFC3339(),
+	})
+	sc.LatestSchemaVersion = newVer
+	sc.NextSchemaVersion = newVer + 1
+	sc.UpdatedTime = glueRFC3339()
+	glueSchemas.Put(glueSchemaKey(sc.RegistryName, sc.SchemaName), sc)
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"SchemaVersionId": versionID,
+		"VersionNumber":   newVer,
+		"Status":          "AVAILABLE",
+	})
+}
+
+func handleGlueGetSchemaVersion(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+		SchemaVersionId     string `json:"SchemaVersionId"`
+		SchemaVersionNumber struct {
+			LatestVersion bool  `json:"LatestVersion"`
+			VersionNumber int64 `json:"VersionNumber"`
+		} `json:"SchemaVersionNumber"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	var ver GlueSchemaVersion
+	found := false
+	if req.SchemaVersionId != "" {
+		ver, found = glueSchemaVers.Get(req.SchemaVersionId)
+	} else {
+		sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Schema not found")
+			return
+		}
+		versions := glueSchemaVersionsFor(sc.SchemaArn)
+		if len(versions) == 0 {
+			glueWriteError(w, "EntityNotFoundException", "Schema version not found")
+			return
+		}
+		if req.SchemaVersionNumber.VersionNumber > 0 && !req.SchemaVersionNumber.LatestVersion {
+			for _, v := range versions {
+				if v.VersionNumber == req.SchemaVersionNumber.VersionNumber {
+					ver, found = v, true
+					break
+				}
+			}
+		} else {
+			ver, found = versions[len(versions)-1], true
+		}
+	}
+	if !found {
+		glueWriteError(w, "EntityNotFoundException", "Schema version not found")
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"SchemaVersionId":  ver.SchemaVersionId,
+		"SchemaDefinition": ver.SchemaDefinition,
+		"DataFormat":       ver.DataFormat,
+		"SchemaArn":        ver.SchemaArn,
+		"VersionNumber":    ver.VersionNumber,
+		"Status":           ver.Status,
+		"CreatedTime":      ver.CreatedTime,
+	})
+}
+
+func handleGlueListSchemaVersions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	versions := glueSchemaVersionsFor(sc.SchemaArn)
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(versions, req.NextToken, maxR, 25)
+	out := make([]map[string]any, 0, len(page))
+	for _, v := range page {
+		out = append(out, map[string]any{
+			"SchemaArn":       v.SchemaArn,
+			"SchemaVersionId": v.SchemaVersionId,
+			"VersionNumber":   v.VersionNumber,
+			"Status":          v.Status,
+			"CreatedTime":     v.CreatedTime,
+		})
+	}
+	resp := map[string]any{"Schemas": out}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueGetSchemaByDefinition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+		SchemaDefinition string `json:"SchemaDefinition"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	for _, v := range glueSchemaVersionsFor(sc.SchemaArn) {
+		if v.SchemaDefinition == req.SchemaDefinition {
+			glueWriteJSON(w, http.StatusOK, map[string]any{
+				"SchemaVersionId": v.SchemaVersionId,
+				"SchemaArn":       v.SchemaArn,
+				"DataFormat":      v.DataFormat,
+				"Status":          v.Status,
+				"CreatedTime":     v.CreatedTime,
+			})
+			return
+		}
+	}
+	glueWriteError(w, "EntityNotFoundException", "No schema version found for the given definition")
+}
+
+func handleGlueDeleteSchemaVersions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+		Versions string `json:"Versions"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	lo, hi, ok := glueParseVersionRange(req.Versions)
+	if !ok {
+		glueWriteError(w, "InvalidInputException", "Invalid Versions range: "+req.Versions)
+		return
+	}
+	var errs []map[string]any
+	for _, v := range glueSchemaVersionsFor(sc.SchemaArn) {
+		if v.VersionNumber >= lo && v.VersionNumber <= hi {
+			glueSchemaVers.Delete(v.SchemaVersionId)
+		}
+	}
+	resp := map[string]any{}
+	if len(errs) > 0 {
+		resp["SchemaVersionErrors"] = errs
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// glueParseVersionRange parses a single version ("5") or an inclusive range
+// ("5-8") into (lo, hi).
+func glueParseVersionRange(s string) (lo, hi int64, ok bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, 0, false
+	}
+	if i := strings.Index(s, "-"); i >= 0 {
+		a, err1 := strconv.ParseInt(strings.TrimSpace(s[:i]), 10, 64)
+		b, err2 := strconv.ParseInt(strings.TrimSpace(s[i+1:]), 10, 64)
+		if err1 != nil || err2 != nil {
+			return 0, 0, false
+		}
+		if a > b {
+			a, b = b, a
+		}
+		return a, b, true
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, 0, false
+	}
+	return n, n, true
 }

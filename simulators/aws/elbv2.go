@@ -30,6 +30,11 @@ type ELBv2LoadBalancer struct {
 	CreatedTime               string
 	Tags                      map[string]string
 	Attributes                map[string]string
+	// MinimumCapacityUnits is the reserved minimum capacity configured via
+	// ModifyCapacityReservation (empty = none reserved).
+	MinimumCapacityUnits string
+	// Ipv4IpamPoolId is the IPAM pool assigned via ModifyIpPools.
+	Ipv4IpamPoolId string
 }
 
 type ELBv2TargetGroup struct {
@@ -199,6 +204,7 @@ func registerELBv2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(elbv2APIVersion, "DescribeAccountLimits", handleELBv2DescribeAccountLimits)
 
 	registerELBv2Rules(r, srv)
+	registerELBv2TrustStores(r, srv)
 }
 
 func elbv2XMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
