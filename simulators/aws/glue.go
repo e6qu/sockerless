@@ -126,6 +126,88 @@ type GlueConnection struct {
 	LastUpdatedTime                float64           `json:"LastUpdatedTime"`
 }
 
+// GlueSecurityConfiguration models a security configuration keyed by name.
+// EncryptionConfiguration is stored verbatim to preserve the (nested) wire shape.
+type GlueSecurityConfiguration struct {
+	Name                    string         `json:"Name"`
+	CreatedTimeStamp        float64        `json:"CreatedTimeStamp"`
+	EncryptionConfiguration map[string]any `json:"EncryptionConfiguration,omitempty"`
+}
+
+// GlueWorkflow models a workflow keyed by name.
+type GlueWorkflow struct {
+	Name                 string            `json:"Name"`
+	Description          string            `json:"Description,omitempty"`
+	DefaultRunProperties map[string]string `json:"DefaultRunProperties,omitempty"`
+	CreatedOn            float64           `json:"CreatedOn"`
+	LastModifiedOn       float64           `json:"LastModifiedOn"`
+	MaxConcurrentRuns    *int              `json:"MaxConcurrentRuns,omitempty"`
+	Tags                 map[string]string `json:"Tags,omitempty"`
+}
+
+// GlueWorkflowRun models a single execution of a workflow.
+type GlueWorkflowRun struct {
+	Name                  string            `json:"Name"`
+	WorkflowRunId         string            `json:"WorkflowRunId"`
+	WorkflowRunProperties map[string]string `json:"WorkflowRunProperties,omitempty"`
+	StartedOn             float64           `json:"StartedOn"`
+	CompletedOn           float64           `json:"CompletedOn"`
+	Status                string            `json:"Status"`
+}
+
+// GlueClassifier models a classifier. Exactly one of the four sub-objects is set,
+// matching the Classifier union shape; each sub-object is stored verbatim.
+type GlueClassifier struct {
+	GrokClassifier map[string]any `json:"GrokClassifier,omitempty"`
+	XMLClassifier  map[string]any `json:"XMLClassifier,omitempty"`
+	JsonClassifier map[string]any `json:"JsonClassifier,omitempty"`
+	CsvClassifier  map[string]any `json:"CsvClassifier,omitempty"`
+}
+
+// GlueUserDefinedFunction models a Data Catalog user-defined function,
+// keyed by database name + function name.
+type GlueUserDefinedFunction struct {
+	FunctionName string           `json:"FunctionName"`
+	DatabaseName string           `json:"DatabaseName"`
+	ClassName    string           `json:"ClassName,omitempty"`
+	OwnerName    string           `json:"OwnerName,omitempty"`
+	OwnerType    string           `json:"OwnerType,omitempty"`
+	FunctionType string           `json:"FunctionType,omitempty"`
+	CreateTime   float64          `json:"CreateTime"`
+	ResourceUris []map[string]any `json:"ResourceUris,omitempty"`
+	CatalogId    string           `json:"CatalogId,omitempty"`
+}
+
+// GlueRegistry models a schema registry keyed by name.
+type GlueRegistry struct {
+	RegistryName string            `json:"RegistryName"`
+	RegistryArn  string            `json:"RegistryArn"`
+	Description  string            `json:"Description,omitempty"`
+	Status       string            `json:"Status"`
+	CreatedTime  string            `json:"CreatedTime"`
+	UpdatedTime  string            `json:"UpdatedTime"`
+	Tags         map[string]string `json:"Tags,omitempty"`
+}
+
+// GlueSchema models a schema keyed by registry name + schema name.
+type GlueSchema struct {
+	RegistryName        string            `json:"RegistryName"`
+	RegistryArn         string            `json:"RegistryArn"`
+	SchemaName          string            `json:"SchemaName"`
+	SchemaArn           string            `json:"SchemaArn"`
+	Description         string            `json:"Description,omitempty"`
+	DataFormat          string            `json:"DataFormat"`
+	Compatibility       string            `json:"Compatibility,omitempty"`
+	SchemaCheckpoint    int64             `json:"SchemaCheckpoint"`
+	LatestSchemaVersion int64             `json:"LatestSchemaVersion"`
+	NextSchemaVersion   int64             `json:"NextSchemaVersion"`
+	SchemaStatus        string            `json:"SchemaStatus"`
+	CreatedTime         string            `json:"CreatedTime"`
+	UpdatedTime         string            `json:"UpdatedTime"`
+	SchemaVersionId     string            `json:"SchemaVersionId,omitempty"`
+	Tags                map[string]string `json:"Tags,omitempty"`
+}
+
 var (
 	glueDatabases   sim.Store[GlueDatabase]
 	glueTables      sim.Store[GlueTable]
@@ -135,6 +217,13 @@ var (
 	glueCrawlers    sim.Store[GlueCrawler]
 	glueTriggers    sim.Store[GlueTrigger]
 	glueConnections sim.Store[GlueConnection]
+	glueSecConfigs  sim.Store[GlueSecurityConfiguration]
+	glueWorkflows   sim.Store[GlueWorkflow]
+	glueWfRuns      sim.Store[GlueWorkflowRun]
+	glueClassifiers sim.Store[GlueClassifier]
+	glueUDFs        sim.Store[GlueUserDefinedFunction]
+	glueRegistries  sim.Store[GlueRegistry]
+	glueSchemas     sim.Store[GlueSchema]
 	glueMu          sync.Mutex
 )
 
@@ -147,6 +236,13 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	glueCrawlers = sim.MakeStore[GlueCrawler](srv.DB(), "glue_crawlers")
 	glueTriggers = sim.MakeStore[GlueTrigger](srv.DB(), "glue_triggers")
 	glueConnections = sim.MakeStore[GlueConnection](srv.DB(), "glue_connections")
+	glueSecConfigs = sim.MakeStore[GlueSecurityConfiguration](srv.DB(), "glue_security_configs")
+	glueWorkflows = sim.MakeStore[GlueWorkflow](srv.DB(), "glue_workflows")
+	glueWfRuns = sim.MakeStore[GlueWorkflowRun](srv.DB(), "glue_workflow_runs")
+	glueClassifiers = sim.MakeStore[GlueClassifier](srv.DB(), "glue_classifiers")
+	glueUDFs = sim.MakeStore[GlueUserDefinedFunction](srv.DB(), "glue_user_defined_functions")
+	glueRegistries = sim.MakeStore[GlueRegistry](srv.DB(), "glue_registries")
+	glueSchemas = sim.MakeStore[GlueSchema](srv.DB(), "glue_schemas")
 
 	r.Register("AWSGlue.CreateDatabase", handleGlueCreateDatabase)
 	r.Register("AWSGlue.GetDatabase", handleGlueGetDatabase)
@@ -200,6 +296,32 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSGlue.TagResource", handleGlueTagResource)
 	r.Register("AWSGlue.UntagResource", handleGlueUntagResource)
 	r.Register("AWSGlue.GetTags", handleGlueGetTags)
+	r.Register("AWSGlue.CreateSecurityConfiguration", handleGlueCreateSecurityConfiguration)
+	r.Register("AWSGlue.GetSecurityConfiguration", handleGlueGetSecurityConfiguration)
+	r.Register("AWSGlue.GetSecurityConfigurations", handleGlueGetSecurityConfigurations)
+	r.Register("AWSGlue.DeleteSecurityConfiguration", handleGlueDeleteSecurityConfiguration)
+	r.Register("AWSGlue.CreateWorkflow", handleGlueCreateWorkflow)
+	r.Register("AWSGlue.GetWorkflow", handleGlueGetWorkflow)
+	r.Register("AWSGlue.ListWorkflows", handleGlueListWorkflows)
+	r.Register("AWSGlue.DeleteWorkflow", handleGlueDeleteWorkflow)
+	r.Register("AWSGlue.StartWorkflowRun", handleGlueStartWorkflowRun)
+	r.Register("AWSGlue.GetWorkflowRun", handleGlueGetWorkflowRun)
+	r.Register("AWSGlue.CreateClassifier", handleGlueCreateClassifier)
+	r.Register("AWSGlue.GetClassifier", handleGlueGetClassifier)
+	r.Register("AWSGlue.GetClassifiers", handleGlueGetClassifiers)
+	r.Register("AWSGlue.UpdateClassifier", handleGlueUpdateClassifier)
+	r.Register("AWSGlue.DeleteClassifier", handleGlueDeleteClassifier)
+	r.Register("AWSGlue.CreateUserDefinedFunction", handleGlueCreateUserDefinedFunction)
+	r.Register("AWSGlue.GetUserDefinedFunction", handleGlueGetUserDefinedFunction)
+	r.Register("AWSGlue.GetUserDefinedFunctions", handleGlueGetUserDefinedFunctions)
+	r.Register("AWSGlue.DeleteUserDefinedFunction", handleGlueDeleteUserDefinedFunction)
+	r.Register("AWSGlue.CreateRegistry", handleGlueCreateRegistry)
+	r.Register("AWSGlue.GetRegistry", handleGlueGetRegistry)
+	r.Register("AWSGlue.ListRegistries", handleGlueListRegistries)
+	r.Register("AWSGlue.DeleteRegistry", handleGlueDeleteRegistry)
+	r.Register("AWSGlue.CreateSchema", handleGlueCreateSchema)
+	r.Register("AWSGlue.GetSchema", handleGlueGetSchema)
+	r.Register("AWSGlue.DeleteSchema", handleGlueDeleteSchema)
 }
 
 func glueEpochNow() float64 {
@@ -2071,4 +2193,902 @@ func handleGlueGetTags(w http.ResponseWriter, r *http.Request) {
 		tags = map[string]string{}
 	}
 	glueWriteJSON(w, http.StatusOK, map[string]any{"Tags": tags})
+}
+
+// glueRFC3339 formats a timestamp the way Glue schema-registry shapes return
+// CreatedTime/UpdatedTime (an ISO-8601/RFC3339 string, not an epoch number).
+func glueRFC3339() string {
+	return time.Now().UTC().Format(time.RFC3339)
+}
+
+// glueGlueArn builds an arn:aws:glue ARN for the given resource path.
+func glueGlueArn(resource string) string {
+	return "arn:aws:glue:us-east-1:123456789012:" + resource
+}
+
+// ---------- Security configuration ----------
+
+func handleGlueCreateSecurityConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name                    string         `json:"Name"`
+		EncryptionConfiguration map[string]any `json:"EncryptionConfiguration"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueSecConfigs.Get(req.Name); ok {
+		glueWriteError(w, "AlreadyExistsException", "Security configuration already exists: "+req.Name)
+		return
+	}
+	now := glueEpochNow()
+	glueSecConfigs.Put(req.Name, GlueSecurityConfiguration{
+		Name:                    req.Name,
+		CreatedTimeStamp:        now,
+		EncryptionConfiguration: req.EncryptionConfiguration,
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"Name":             req.Name,
+		"CreatedTimestamp": now,
+	})
+}
+
+func handleGlueGetSecurityConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	sc, ok := glueSecConfigs.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Security configuration not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"SecurityConfiguration": sc})
+}
+
+func handleGlueGetSecurityConfigurations(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	all := glueSecConfigs.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 100)
+	resp := map[string]any{"SecurityConfigurations": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteSecurityConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	if _, ok := glueSecConfigs.Get(req.Name); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Security configuration not found: "+req.Name)
+		return
+	}
+	glueSecConfigs.Delete(req.Name)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ---------- Workflow ----------
+
+func handleGlueCreateWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name                 string            `json:"Name"`
+		Description          string            `json:"Description"`
+		DefaultRunProperties map[string]string `json:"DefaultRunProperties"`
+		Tags                 map[string]string `json:"Tags"`
+		MaxConcurrentRuns    *int              `json:"MaxConcurrentRuns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueWorkflows.Get(req.Name); ok {
+		glueWriteError(w, "AlreadyExistsException", "Workflow already exists: "+req.Name)
+		return
+	}
+	now := glueEpochNow()
+	glueWorkflows.Put(req.Name, GlueWorkflow{
+		Name:                 req.Name,
+		Description:          req.Description,
+		DefaultRunProperties: req.DefaultRunProperties,
+		MaxConcurrentRuns:    req.MaxConcurrentRuns,
+		Tags:                 req.Tags,
+		CreatedOn:            now,
+		LastModifiedOn:       now,
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+func handleGlueGetWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	wf, ok := glueWorkflows.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Workflow not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Workflow": wf})
+}
+
+func handleGlueListWorkflows(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	all := glueWorkflows.List()
+	names := make([]string, 0, len(all))
+	for _, wf := range all {
+		names = append(names, wf.Name)
+	}
+	sort.Strings(names)
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(names, req.NextToken, maxR, 25)
+	resp := map[string]any{"Workflows": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteWorkflow(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	if _, ok := glueWorkflows.Get(req.Name); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Workflow not found: "+req.Name)
+		return
+	}
+	glueWorkflows.Delete(req.Name)
+	// DeleteWorkflow returns the deleted workflow's name.
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+func handleGlueStartWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string            `json:"Name"`
+		RunProperties map[string]string `json:"RunProperties"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueWorkflows.Get(req.Name); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Workflow not found: "+req.Name)
+		return
+	}
+	runID := "wr_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+	now := glueEpochNow()
+	// The simulator settles the run synchronously (no native async backend).
+	glueWfRuns.Put(req.Name+"\x00"+runID, GlueWorkflowRun{
+		Name:                  req.Name,
+		WorkflowRunId:         runID,
+		WorkflowRunProperties: req.RunProperties,
+		StartedOn:             now,
+		CompletedOn:           now,
+		Status:                "COMPLETED",
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{"RunId": runID})
+}
+
+func handleGlueGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name  string `json:"Name"`
+		RunId string `json:"RunId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	run, ok := glueWfRuns.Get(req.Name + "\x00" + req.RunId)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Workflow run not found: "+req.RunId)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Run": run})
+}
+
+// ---------- Classifier ----------
+
+// glueClassifierName extracts the classifier name from the single set sub-object.
+func glueClassifierName(c GlueClassifier) string {
+	for _, m := range []map[string]any{c.GrokClassifier, c.XMLClassifier, c.JsonClassifier, c.CsvClassifier} {
+		if m != nil {
+			if n, ok := m["Name"].(string); ok {
+				return n
+			}
+		}
+	}
+	return ""
+}
+
+// glueClassifierFromCreate maps a CreateClassifier/UpdateClassifier request body
+// (which carries the trimmed Create*ClassifierRequest sub-objects) into the
+// stored Classifier shape, stamping server-managed timestamp/version fields.
+func glueClassifierFromCreate(req map[string]json.RawMessage, prior *GlueClassifier) (GlueClassifier, string, bool) {
+	var out GlueClassifier
+	now := glueEpochNow()
+	set := func(raw json.RawMessage, priorObj map[string]any) (map[string]any, bool) {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err != nil {
+			return nil, false
+		}
+		if priorObj != nil {
+			m["CreationTime"] = priorObj["CreationTime"]
+			ver := 1.0
+			if v, ok := priorObj["Version"].(float64); ok {
+				ver = v + 1
+			}
+			m["Version"] = ver
+		} else {
+			m["CreationTime"] = now
+			m["Version"] = float64(1)
+		}
+		m["LastUpdated"] = now
+		return m, true
+	}
+	for key, raw := range req {
+		if raw == nil {
+			continue
+		}
+		var priorObj map[string]any
+		switch key {
+		case "GrokClassifier":
+			if prior != nil {
+				priorObj = prior.GrokClassifier
+			}
+			m, ok := set(raw, priorObj)
+			if !ok {
+				return out, "", false
+			}
+			out.GrokClassifier = m
+		case "XMLClassifier":
+			if prior != nil {
+				priorObj = prior.XMLClassifier
+			}
+			m, ok := set(raw, priorObj)
+			if !ok {
+				return out, "", false
+			}
+			out.XMLClassifier = m
+		case "JsonClassifier":
+			if prior != nil {
+				priorObj = prior.JsonClassifier
+			}
+			m, ok := set(raw, priorObj)
+			if !ok {
+				return out, "", false
+			}
+			out.JsonClassifier = m
+		case "CsvClassifier":
+			if prior != nil {
+				priorObj = prior.CsvClassifier
+			}
+			m, ok := set(raw, priorObj)
+			if !ok {
+				return out, "", false
+			}
+			out.CsvClassifier = m
+		}
+	}
+	return out, glueClassifierName(out), true
+}
+
+func handleGlueCreateClassifier(w http.ResponseWriter, r *http.Request) {
+	var req map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	cls, name, ok := glueClassifierFromCreate(req, nil)
+	if !ok || name == "" {
+		glueWriteError(w, "InvalidInputException", "classifier Name is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, exists := glueClassifiers.Get(name); exists {
+		glueWriteError(w, "AlreadyExistsException", "Classifier already exists: "+name)
+		return
+	}
+	glueClassifiers.Put(name, cls)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetClassifier(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	cls, ok := glueClassifiers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Classifier not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Classifier": cls})
+}
+
+func handleGlueGetClassifiers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	all := glueClassifiers.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 100)
+	resp := map[string]any{"Classifiers": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueUpdateClassifier(w http.ResponseWriter, r *http.Request) {
+	var req map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	// The classifier name comes from the single set sub-object's Name field.
+	var name string
+	for _, raw := range req {
+		var m map[string]any
+		if err := json.Unmarshal(raw, &m); err == nil {
+			if n, ok := m["Name"].(string); ok {
+				name = n
+				break
+			}
+		}
+	}
+	if name == "" {
+		glueWriteError(w, "InvalidInputException", "classifier Name is required")
+		return
+	}
+	prior, ok := glueClassifiers.Get(name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Classifier not found: "+name)
+		return
+	}
+	cls, _, ok := glueClassifierFromCreate(req, &prior)
+	if !ok {
+		glueWriteError(w, "InvalidInputException", "invalid classifier input")
+		return
+	}
+	glueClassifiers.Put(name, cls)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueDeleteClassifier(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	if _, ok := glueClassifiers.Get(req.Name); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Classifier not found: "+req.Name)
+		return
+	}
+	glueClassifiers.Delete(req.Name)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ---------- User-defined function ----------
+
+// glueUDFKey keys a UDF by its database + function name.
+func glueUDFKey(db, fn string) string { return db + "\x00" + fn }
+
+func handleGlueCreateUserDefinedFunction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		CatalogId     string `json:"CatalogId"`
+		DatabaseName  string `json:"DatabaseName"`
+		FunctionInput struct {
+			FunctionName string           `json:"FunctionName"`
+			ClassName    string           `json:"ClassName"`
+			OwnerName    string           `json:"OwnerName"`
+			OwnerType    string           `json:"OwnerType"`
+			FunctionType string           `json:"FunctionType"`
+			ResourceUris []map[string]any `json:"ResourceUris"`
+		} `json:"FunctionInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.FunctionInput.FunctionName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName and FunctionInput.FunctionName are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueDatabases.Get(req.DatabaseName); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Database not found: "+req.DatabaseName)
+		return
+	}
+	key := glueUDFKey(req.DatabaseName, req.FunctionInput.FunctionName)
+	if _, ok := glueUDFs.Get(key); ok {
+		glueWriteError(w, "AlreadyExistsException", "Function already exists: "+req.FunctionInput.FunctionName)
+		return
+	}
+	glueUDFs.Put(key, GlueUserDefinedFunction{
+		FunctionName: req.FunctionInput.FunctionName,
+		DatabaseName: req.DatabaseName,
+		ClassName:    req.FunctionInput.ClassName,
+		OwnerName:    req.FunctionInput.OwnerName,
+		OwnerType:    req.FunctionInput.OwnerType,
+		FunctionType: req.FunctionInput.FunctionType,
+		ResourceUris: req.FunctionInput.ResourceUris,
+		CatalogId:    req.CatalogId,
+		CreateTime:   glueEpochNow(),
+	})
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueGetUserDefinedFunction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		FunctionName string `json:"FunctionName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	udf, ok := glueUDFs.Get(glueUDFKey(req.DatabaseName, req.FunctionName))
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Function not found: "+req.FunctionName)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"UserDefinedFunction": udf})
+}
+
+func handleGlueGetUserDefinedFunctions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		Pattern      string `json:"Pattern"`
+		NextToken    string `json:"NextToken"`
+		MaxResults   *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	all := glueUDFs.List()
+	filtered := make([]GlueUserDefinedFunction, 0, len(all))
+	for _, udf := range all {
+		if req.DatabaseName != "" && udf.DatabaseName != req.DatabaseName {
+			continue
+		}
+		filtered = append(filtered, udf)
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(filtered, req.NextToken, maxR, 100)
+	resp := map[string]any{"UserDefinedFunctions": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteUserDefinedFunction(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		FunctionName string `json:"FunctionName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	key := glueUDFKey(req.DatabaseName, req.FunctionName)
+	if _, ok := glueUDFs.Get(key); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Function not found: "+req.FunctionName)
+		return
+	}
+	glueUDFs.Delete(key)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// ---------- Schema registry ----------
+
+func handleGlueCreateRegistry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RegistryName string            `json:"RegistryName"`
+		Description  string            `json:"Description"`
+		Tags         map[string]string `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.RegistryName == "" {
+		glueWriteError(w, "InvalidInputException", "RegistryName is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueRegistries.Get(req.RegistryName); ok {
+		glueWriteError(w, "AlreadyExistsException", "Registry already exists: "+req.RegistryName)
+		return
+	}
+	arn := glueGlueArn("registry/" + req.RegistryName)
+	now := glueRFC3339()
+	glueRegistries.Put(req.RegistryName, GlueRegistry{
+		RegistryName: req.RegistryName,
+		RegistryArn:  arn,
+		Description:  req.Description,
+		Status:       "AVAILABLE",
+		CreatedTime:  now,
+		UpdatedTime:  now,
+		Tags:         req.Tags,
+	})
+	resp := map[string]any{
+		"RegistryArn":  arn,
+		"RegistryName": req.RegistryName,
+	}
+	if req.Description != "" {
+		resp["Description"] = req.Description
+	}
+	if len(req.Tags) > 0 {
+		resp["Tags"] = req.Tags
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// glueRegistryName resolves a RegistryId wrapper to the registry name (by name or ARN).
+func glueRegistryName(name, arn string) string {
+	if name != "" {
+		return name
+	}
+	if i := strings.LastIndex(arn, "registry/"); i >= 0 {
+		return arn[i+len("registry/"):]
+	}
+	return ""
+}
+
+func handleGlueGetRegistry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RegistryId struct {
+			RegistryName string `json:"RegistryName"`
+			RegistryArn  string `json:"RegistryArn"`
+		} `json:"RegistryId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	name := glueRegistryName(req.RegistryId.RegistryName, req.RegistryId.RegistryArn)
+	reg, ok := glueRegistries.Get(name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Registry not found: "+name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"RegistryName": reg.RegistryName,
+		"RegistryArn":  reg.RegistryArn,
+		"Description":  reg.Description,
+		"Status":       reg.Status,
+		"CreatedTime":  reg.CreatedTime,
+		"UpdatedTime":  reg.UpdatedTime,
+	})
+}
+
+func handleGlueListRegistries(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	all := glueRegistries.List()
+	items := make([]map[string]any, 0, len(all))
+	for _, reg := range all {
+		items = append(items, map[string]any{
+			"RegistryName": reg.RegistryName,
+			"RegistryArn":  reg.RegistryArn,
+			"Description":  reg.Description,
+			"Status":       reg.Status,
+			"CreatedTime":  reg.CreatedTime,
+			"UpdatedTime":  reg.UpdatedTime,
+		})
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(items, req.NextToken, maxR, 100)
+	resp := map[string]any{"Registries": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteRegistry(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RegistryId struct {
+			RegistryName string `json:"RegistryName"`
+			RegistryArn  string `json:"RegistryArn"`
+		} `json:"RegistryId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	name := glueRegistryName(req.RegistryId.RegistryName, req.RegistryId.RegistryArn)
+	reg, ok := glueRegistries.Get(name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Registry not found: "+name)
+		return
+	}
+	// Delete the registry and any schemas it contains.
+	for _, sc := range glueSchemas.List() {
+		if sc.RegistryName == name {
+			glueSchemas.Delete(glueSchemaKey(name, sc.SchemaName))
+		}
+	}
+	glueRegistries.Delete(name)
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"RegistryName": reg.RegistryName,
+		"RegistryArn":  reg.RegistryArn,
+		"Status":       "DELETING",
+	})
+}
+
+// glueSchemaKey keys a schema by its registry + schema name.
+func glueSchemaKey(registry, schema string) string { return registry + "\x00" + schema }
+
+func handleGlueCreateSchema(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RegistryId struct {
+			RegistryName string `json:"RegistryName"`
+			RegistryArn  string `json:"RegistryArn"`
+		} `json:"RegistryId"`
+		SchemaName       string            `json:"SchemaName"`
+		DataFormat       string            `json:"DataFormat"`
+		Compatibility    string            `json:"Compatibility"`
+		Description      string            `json:"Description"`
+		SchemaDefinition string            `json:"SchemaDefinition"`
+		Tags             map[string]string `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.SchemaName == "" || req.DataFormat == "" {
+		glueWriteError(w, "InvalidInputException", "SchemaName and DataFormat are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	registryName := glueRegistryName(req.RegistryId.RegistryName, req.RegistryId.RegistryArn)
+	if registryName == "" {
+		registryName = "default-registry"
+	}
+	registryArn := glueGlueArn("registry/" + registryName)
+	if reg, ok := glueRegistries.Get(registryName); ok {
+		registryArn = reg.RegistryArn
+	} else if registryName != "default-registry" {
+		glueWriteError(w, "EntityNotFoundException", "Registry not found: "+registryName)
+		return
+	}
+
+	key := glueSchemaKey(registryName, req.SchemaName)
+	if _, ok := glueSchemas.Get(key); ok {
+		glueWriteError(w, "AlreadyExistsException", "Schema already exists: "+req.SchemaName)
+		return
+	}
+	compat := req.Compatibility
+	if compat == "" {
+		compat = "BACKWARD"
+	}
+	schemaArn := glueGlueArn("schema/" + registryName + "/" + req.SchemaName)
+	now := glueRFC3339()
+	sc := GlueSchema{
+		RegistryName:        registryName,
+		RegistryArn:         registryArn,
+		SchemaName:          req.SchemaName,
+		SchemaArn:           schemaArn,
+		Description:         req.Description,
+		DataFormat:          req.DataFormat,
+		Compatibility:       compat,
+		SchemaCheckpoint:    1,
+		LatestSchemaVersion: 1,
+		NextSchemaVersion:   2,
+		SchemaStatus:        "AVAILABLE",
+		CreatedTime:         now,
+		UpdatedTime:         now,
+		SchemaVersionId:     uuid.NewString(),
+		Tags:                req.Tags,
+	}
+	glueSchemas.Put(key, sc)
+	resp := map[string]any{
+		"RegistryName":        registryName,
+		"RegistryArn":         registryArn,
+		"SchemaName":          req.SchemaName,
+		"SchemaArn":           schemaArn,
+		"DataFormat":          req.DataFormat,
+		"Compatibility":       compat,
+		"SchemaCheckpoint":    sc.SchemaCheckpoint,
+		"LatestSchemaVersion": sc.LatestSchemaVersion,
+		"NextSchemaVersion":   sc.NextSchemaVersion,
+		"SchemaStatus":        sc.SchemaStatus,
+		"SchemaVersionId":     sc.SchemaVersionId,
+		"SchemaVersionStatus": "AVAILABLE",
+	}
+	if req.Description != "" {
+		resp["Description"] = req.Description
+	}
+	if len(req.Tags) > 0 {
+		resp["Tags"] = req.Tags
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// glueResolveSchema locates a schema from a SchemaId wrapper (by ARN, or by
+// registry name + schema name).
+func glueResolveSchema(schemaArn, schemaName, registryName string) (GlueSchema, bool) {
+	if schemaArn != "" {
+		for _, sc := range glueSchemas.List() {
+			if sc.SchemaArn == schemaArn {
+				return sc, true
+			}
+		}
+		return GlueSchema{}, false
+	}
+	if registryName == "" {
+		registryName = "default-registry"
+	}
+	return glueSchemas.Get(glueSchemaKey(registryName, schemaName))
+}
+
+func handleGlueGetSchema(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"RegistryName":        sc.RegistryName,
+		"RegistryArn":         sc.RegistryArn,
+		"SchemaName":          sc.SchemaName,
+		"SchemaArn":           sc.SchemaArn,
+		"Description":         sc.Description,
+		"DataFormat":          sc.DataFormat,
+		"Compatibility":       sc.Compatibility,
+		"SchemaCheckpoint":    sc.SchemaCheckpoint,
+		"LatestSchemaVersion": sc.LatestSchemaVersion,
+		"NextSchemaVersion":   sc.NextSchemaVersion,
+		"SchemaStatus":        sc.SchemaStatus,
+		"CreatedTime":         sc.CreatedTime,
+		"UpdatedTime":         sc.UpdatedTime,
+	})
+}
+
+func handleGlueDeleteSchema(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SchemaId struct {
+			SchemaArn    string `json:"SchemaArn"`
+			SchemaName   string `json:"SchemaName"`
+			RegistryName string `json:"RegistryName"`
+		} `json:"SchemaId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	glueMu.Lock()
+	defer glueMu.Unlock()
+	sc, ok := glueResolveSchema(req.SchemaId.SchemaArn, req.SchemaId.SchemaName, req.SchemaId.RegistryName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Schema not found")
+		return
+	}
+	glueSchemas.Delete(glueSchemaKey(sc.RegistryName, sc.SchemaName))
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"SchemaArn":  sc.SchemaArn,
+		"SchemaName": sc.SchemaName,
+		"Status":     "DELETING",
+	})
 }

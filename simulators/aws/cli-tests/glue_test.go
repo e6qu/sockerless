@@ -565,3 +565,255 @@ func TestGlue_ConnectionCRUD_CLI(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+func TestGlue_SecurityConfigurationCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-security-configuration",
+		"--name", "glue-cli-secconf",
+		"--encryption-configuration", `{"S3Encryption":[{"S3EncryptionMode":"SSE-S3"}]}`,
+	))
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-security-configuration", "--name", "glue-cli-secconf"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-security-configuration", "--name", "glue-cli-secconf"))
+	var get struct {
+		SecurityConfiguration struct {
+			Name                    string `json:"Name"`
+			EncryptionConfiguration struct {
+				S3Encryption []struct {
+					S3EncryptionMode string `json:"S3EncryptionMode"`
+				} `json:"S3Encryption"`
+			} `json:"EncryptionConfiguration"`
+		} `json:"SecurityConfiguration"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-secconf", get.SecurityConfiguration.Name)
+	require.Len(t, get.SecurityConfiguration.EncryptionConfiguration.S3Encryption, 1)
+	assert.Equal(t, "SSE-S3", get.SecurityConfiguration.EncryptionConfiguration.S3Encryption[0].S3EncryptionMode)
+
+	out = runCLI(t, awsCLI("glue", "get-security-configurations"))
+	var list struct {
+		SecurityConfigurations []struct {
+			Name string `json:"Name"`
+		} `json:"SecurityConfigurations"`
+	}
+	parseJSON(t, out, &list)
+	found := false
+	for _, sc := range list.SecurityConfigurations {
+		if sc.Name == "glue-cli-secconf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_WorkflowLifecycle_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-workflow",
+		"--name", "glue-cli-wf",
+		"--description", "cli workflow",
+		"--default-run-properties", `{"env":"test"}`,
+	))
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-workflow", "--name", "glue-cli-wf"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-workflow", "--name", "glue-cli-wf"))
+	var get struct {
+		Workflow struct {
+			Name                 string            `json:"Name"`
+			Description          string            `json:"Description"`
+			DefaultRunProperties map[string]string `json:"DefaultRunProperties"`
+		} `json:"Workflow"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-wf", get.Workflow.Name)
+	assert.Equal(t, "cli workflow", get.Workflow.Description)
+	assert.Equal(t, "test", get.Workflow.DefaultRunProperties["env"])
+
+	out = runCLI(t, awsCLI("glue", "list-workflows"))
+	var list struct {
+		Workflows []string `json:"Workflows"`
+	}
+	parseJSON(t, out, &list)
+	found := false
+	for _, n := range list.Workflows {
+		if n == "glue-cli-wf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	out = runCLI(t, awsCLI("glue", "start-workflow-run", "--name", "glue-cli-wf"))
+	var start struct {
+		RunId string `json:"RunId"`
+	}
+	parseJSON(t, out, &start)
+	require.NotEmpty(t, start.RunId)
+
+	out = runCLI(t, awsCLI("glue", "get-workflow-run", "--name", "glue-cli-wf", "--run-id", start.RunId))
+	var run struct {
+		Run struct {
+			WorkflowRunId string `json:"WorkflowRunId"`
+			Status        string `json:"Status"`
+		} `json:"Run"`
+	}
+	parseJSON(t, out, &run)
+	assert.Equal(t, start.RunId, run.Run.WorkflowRunId)
+	assert.Equal(t, "COMPLETED", run.Run.Status)
+}
+
+func TestGlue_ClassifierCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-classifier",
+		"--csv-classifier", `{"Name":"glue-cli-classifier","Delimiter":",","ContainsHeader":"PRESENT","Header":["a","b"]}`,
+	))
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-classifier", "--name", "glue-cli-classifier"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-classifier", "--name", "glue-cli-classifier"))
+	var get struct {
+		Classifier struct {
+			CsvClassifier struct {
+				Name      string `json:"Name"`
+				Delimiter string `json:"Delimiter"`
+			} `json:"CsvClassifier"`
+		} `json:"Classifier"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-classifier", get.Classifier.CsvClassifier.Name)
+	assert.Equal(t, ",", get.Classifier.CsvClassifier.Delimiter)
+
+	runCLI(t, awsCLI("glue", "update-classifier",
+		"--csv-classifier", `{"Name":"glue-cli-classifier","Delimiter":";"}`,
+	))
+	out = runCLI(t, awsCLI("glue", "get-classifier", "--name", "glue-cli-classifier"))
+	parseJSON(t, out, &get)
+	assert.Equal(t, ";", get.Classifier.CsvClassifier.Delimiter)
+
+	out = runCLI(t, awsCLI("glue", "get-classifiers"))
+	var list struct {
+		Classifiers []struct {
+			CsvClassifier struct {
+				Name string `json:"Name"`
+			} `json:"CsvClassifier"`
+		} `json:"Classifiers"`
+	}
+	parseJSON(t, out, &list)
+	found := false
+	for _, cl := range list.Classifiers {
+		if cl.CsvClassifier.Name == "glue-cli-classifier" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_UserDefinedFunctionCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-database", "--database-input", `{"Name":"glue-cli-udf-db"}`))
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-user-defined-function",
+			"--database-name", "glue-cli-udf-db", "--function-name", "glue-cli-udf"))
+		runCLIIgnore(awsCLI("glue", "delete-database", "--name", "glue-cli-udf-db"))
+	})
+
+	runCLI(t, awsCLI("glue", "create-user-defined-function",
+		"--database-name", "glue-cli-udf-db",
+		"--function-input", `{"FunctionName":"glue-cli-udf","ClassName":"com.example.MyUDF","OwnerName":"owner","OwnerType":"USER","ResourceUris":[{"ResourceType":"JAR","Uri":"s3://bucket/udf.jar"}]}`,
+	))
+
+	out := runCLI(t, awsCLI("glue", "get-user-defined-function",
+		"--database-name", "glue-cli-udf-db", "--function-name", "glue-cli-udf"))
+	var get struct {
+		UserDefinedFunction struct {
+			FunctionName string `json:"FunctionName"`
+			ClassName    string `json:"ClassName"`
+			ResourceUris []struct {
+				Uri string `json:"Uri"`
+			} `json:"ResourceUris"`
+		} `json:"UserDefinedFunction"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-udf", get.UserDefinedFunction.FunctionName)
+	assert.Equal(t, "com.example.MyUDF", get.UserDefinedFunction.ClassName)
+	require.Len(t, get.UserDefinedFunction.ResourceUris, 1)
+	assert.Equal(t, "s3://bucket/udf.jar", get.UserDefinedFunction.ResourceUris[0].Uri)
+
+	out = runCLI(t, awsCLI("glue", "get-user-defined-functions",
+		"--database-name", "glue-cli-udf-db", "--pattern", "*"))
+	var list struct {
+		UserDefinedFunctions []struct {
+			FunctionName string `json:"FunctionName"`
+		} `json:"UserDefinedFunctions"`
+	}
+	parseJSON(t, out, &list)
+	found := false
+	for _, f := range list.UserDefinedFunctions {
+		if f.FunctionName == "glue-cli-udf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_SchemaRegistry_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-registry",
+		"--registry-name", "glue-cli-registry", "--description", "cli registry"))
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-schema",
+			"--schema-id", `{"RegistryName":"glue-cli-registry","SchemaName":"glue-cli-schema"}`))
+		runCLIIgnore(awsCLI("glue", "delete-registry",
+			"--registry-id", `{"RegistryName":"glue-cli-registry"}`))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-registry",
+		"--registry-id", `{"RegistryName":"glue-cli-registry"}`))
+	var getReg struct {
+		RegistryName string `json:"RegistryName"`
+		RegistryArn  string `json:"RegistryArn"`
+	}
+	parseJSON(t, out, &getReg)
+	assert.Equal(t, "glue-cli-registry", getReg.RegistryName)
+	assert.NotEmpty(t, getReg.RegistryArn)
+
+	out = runCLI(t, awsCLI("glue", "list-registries"))
+	var listReg struct {
+		Registries []struct {
+			RegistryName string `json:"RegistryName"`
+		} `json:"Registries"`
+	}
+	parseJSON(t, out, &listReg)
+	foundReg := false
+	for _, r := range listReg.Registries {
+		if r.RegistryName == "glue-cli-registry" {
+			foundReg = true
+		}
+	}
+	assert.True(t, foundReg)
+
+	out = runCLI(t, awsCLI("glue", "create-schema",
+		"--registry-id", `{"RegistryName":"glue-cli-registry"}`,
+		"--schema-name", "glue-cli-schema",
+		"--data-format", "AVRO",
+		"--compatibility", "BACKWARD",
+		"--schema-definition", `{"type":"record","name":"r","fields":[]}`,
+	))
+	var createSchema struct {
+		SchemaName string `json:"SchemaName"`
+		SchemaArn  string `json:"SchemaArn"`
+	}
+	parseJSON(t, out, &createSchema)
+	assert.Equal(t, "glue-cli-schema", createSchema.SchemaName)
+	assert.NotEmpty(t, createSchema.SchemaArn)
+
+	out = runCLI(t, awsCLI("glue", "get-schema",
+		"--schema-id", `{"RegistryName":"glue-cli-registry","SchemaName":"glue-cli-schema"}`))
+	var getSchema struct {
+		SchemaName    string `json:"SchemaName"`
+		DataFormat    string `json:"DataFormat"`
+		Compatibility string `json:"Compatibility"`
+	}
+	parseJSON(t, out, &getSchema)
+	assert.Equal(t, "glue-cli-schema", getSchema.SchemaName)
+	assert.Equal(t, "AVRO", getSchema.DataFormat)
+	assert.Equal(t, "BACKWARD", getSchema.Compatibility)
+}

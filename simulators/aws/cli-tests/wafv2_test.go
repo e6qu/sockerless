@@ -78,3 +78,61 @@ func TestWAFv2_IPSet_Lifecycle(t *testing.T) {
 		"--lock-token", lock,
 	))
 }
+
+func TestWAFv2_LoggingConfiguration_Lifecycle(t *testing.T) {
+	name := "cli-log-" + time.Now().Format("150405.000000")
+	out := runCLI(t, awsCLI("wafv2", "create-web-acl",
+		"--name", name,
+		"--scope", "CLOUDFRONT",
+		"--default-action", `{"Allow":{}}`,
+		"--visibility-config", fmt.Sprintf(`{"SampledRequestsEnabled":true,"CloudWatchMetricsEnabled":true,"MetricName":"%s-metric"}`, name),
+		"--output", "json",
+	))
+	var createResult struct {
+		Summary struct {
+			Id        string `json:"Id"`
+			ARN       string `json:"ARN"`
+			LockToken string `json:"LockToken"`
+		} `json:"Summary"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(out), &createResult))
+	aclARN := createResult.Summary.ARN
+	require.NotEmpty(t, aclARN)
+	id := createResult.Summary.Id
+	lock := createResult.Summary.LockToken
+	t.Cleanup(func() {
+		_ = awsCLI("wafv2", "delete-web-acl",
+			"--name", name, "--scope", "CLOUDFRONT", "--id", id, "--lock-token", lock).Run()
+	})
+
+	logDest := "arn:aws:logs:us-east-1:123456789012:log-group:aws-waf-logs-" + name
+	loggingConfig := fmt.Sprintf(`{"ResourceArn":"%s","LogDestinationConfigs":["%s"]}`, aclARN, logDest)
+
+	putOut := runCLI(t, awsCLI("wafv2", "put-logging-configuration",
+		"--logging-configuration", loggingConfig, "--output", "json"))
+	var putResult struct {
+		LoggingConfiguration struct {
+			ResourceArn           string   `json:"ResourceArn"`
+			LogDestinationConfigs []string `json:"LogDestinationConfigs"`
+		} `json:"LoggingConfiguration"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(putOut), &putResult))
+	require.Equal(t, aclARN, putResult.LoggingConfiguration.ResourceArn)
+	require.Equal(t, []string{logDest}, putResult.LoggingConfiguration.LogDestinationConfigs)
+
+	getOut := runCLI(t, awsCLI("wafv2", "get-logging-configuration",
+		"--resource-arn", aclARN, "--output", "json"))
+	var getResult struct {
+		LoggingConfiguration struct {
+			ResourceArn string `json:"ResourceArn"`
+		} `json:"LoggingConfiguration"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(getOut), &getResult))
+	require.Equal(t, aclARN, getResult.LoggingConfiguration.ResourceArn)
+
+	runCLI(t, awsCLI("wafv2", "list-logging-configurations",
+		"--scope", "CLOUDFRONT", "--output", "json"))
+
+	runCLI(t, awsCLI("wafv2", "delete-logging-configuration",
+		"--resource-arn", aclARN, "--output", "json"))
+}

@@ -19,16 +19,28 @@ import (
 )
 
 type CloudTrailTrail struct {
-	Name           string
-	S3BucketName   string
-	S3KeyPrefix    string
-	ARN            string
-	HomeRegion     string
-	Logging        bool
-	CreatedAt      string
-	LatestDelivery string
-	Tags           []EC2Tag
-	EventSelectors []map[string]any
+	Name             string
+	S3BucketName     string
+	S3KeyPrefix      string
+	ARN              string
+	HomeRegion       string
+	Logging          bool
+	CreatedAt        string
+	LatestDelivery   string
+	Tags             []EC2Tag
+	EventSelectors   []map[string]any
+	InsightSelectors []map[string]any
+}
+
+// CloudTrailChannel is a CloudTrail Lake channel — a named resource with an ARN
+// (arn:aws:cloudtrail:region:acct:channel/UUID) routing events from a partner or
+// custom Source into one or more event-data-store Destinations.
+type CloudTrailChannel struct {
+	ARN          string
+	Name         string
+	Source       string
+	Destinations []map[string]any
+	Tags         []EC2Tag
 }
 
 type CloudTrailEvent struct {
@@ -51,8 +63,9 @@ type CloudTrailResource struct {
 }
 
 var (
-	cloudTrailTrails sim.Store[CloudTrailTrail]
-	cloudTrailEvents sim.Store[CloudTrailEvent]
+	cloudTrailTrails   sim.Store[CloudTrailTrail]
+	cloudTrailEvents   sim.Store[CloudTrailEvent]
+	cloudTrailChannels sim.Store[CloudTrailChannel]
 )
 
 type cloudTrailStatusRecorder struct {
@@ -84,11 +97,14 @@ func (w *cloudTrailStatusRecorder) statusCode() int {
 func registerCloudTrail(r *sim.AWSRouter, srv *sim.Server) {
 	cloudTrailTrails = sim.MakeStore[CloudTrailTrail](srv.DB(), "cloudtrail_trails")
 	cloudTrailEvents = sim.MakeStore[CloudTrailEvent](srv.DB(), "cloudtrail_events")
+	cloudTrailChannels = sim.MakeStore[CloudTrailChannel](srv.DB(), "cloudtrail_channels")
 
 	for _, op := range []string{
 		"CreateTrail", "DescribeTrails", "GetTrail", "UpdateTrail", "GetTrailStatus",
-		"StartLogging", "StopLogging", "LookupEvents", "DeleteTrail",
+		"StartLogging", "StopLogging", "LookupEvents", "DeleteTrail", "ListTrails",
 		"AddTags", "RemoveTags", "ListTags", "PutEventSelectors", "GetEventSelectors",
+		"PutInsightSelectors", "GetInsightSelectors",
+		"CreateChannel", "GetChannel", "ListChannels", "DeleteChannel",
 	} {
 		handler := handleCloudTrail(op)
 		r.Register("CloudTrail_20131101."+op, handler)
@@ -117,6 +133,20 @@ func handleCloudTrail(op string) http.HandlerFunc {
 			handleCloudTrailLookupEvents(w, r)
 		case "DeleteTrail":
 			handleCloudTrailDeleteTrail(w, r)
+		case "ListTrails":
+			handleCloudTrailListTrails(w, r)
+		case "PutInsightSelectors":
+			handleCloudTrailPutInsightSelectors(w, r)
+		case "GetInsightSelectors":
+			handleCloudTrailGetInsightSelectors(w, r)
+		case "CreateChannel":
+			handleCloudTrailCreateChannel(w, r)
+		case "GetChannel":
+			handleCloudTrailGetChannel(w, r)
+		case "ListChannels":
+			handleCloudTrailListChannels(w, r)
+		case "DeleteChannel":
+			handleCloudTrailDeleteChannel(w, r)
 		case "AddTags":
 			handleCloudTrailAddTags(w, r)
 		case "RemoveTags":
@@ -220,7 +250,14 @@ func handleCloudTrailUpdateTrail(w http.ResponseWriter, r *http.Request) {
 		trail.S3KeyPrefix = strings.Trim(req.S3KeyPrefix, "/")
 	}
 	cloudTrailTrails.Put(trail.Name, trail)
-	writeAWSJSON(w, http.StatusOK, cloudTrailSummary(trail))
+	// UpdateTrailResponse (unlike the Trail shape DescribeTrails/GetTrail return)
+	// has no HomeRegion member — emit the response shape's fields only.
+	writeAWSJSON(w, http.StatusOK, map[string]any{
+		"Name":         trail.Name,
+		"S3BucketName": trail.S3BucketName,
+		"S3KeyPrefix":  trail.S3KeyPrefix,
+		"TrailARN":     trail.ARN,
+	})
 }
 
 func handleCloudTrailGetTrailStatus(w http.ResponseWriter, r *http.Request) {
@@ -408,6 +445,177 @@ func handleCloudTrailDeleteTrail(w http.ResponseWriter, r *http.Request) {
 	writeAWSJSON(w, http.StatusOK, map[string]any{})
 }
 
+// handleCloudTrailListTrails returns the name, ARN, and home Region of every
+// trail in the account (the lightweight ListTrails view, distinct from the fuller
+// DescribeTrails summary).
+func handleCloudTrailListTrails(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken string
+	}
+	_ = readAWSJSONAllowEmpty(r, &req)
+	trails := make([]map[string]any, 0)
+	for _, trail := range cloudTrailTrails.List() {
+		trails = append(trails, map[string]any{
+			"TrailARN":   trail.ARN,
+			"Name":       trail.Name,
+			"HomeRegion": trail.HomeRegion,
+		})
+	}
+	writeAWSJSON(w, http.StatusOK, map[string]any{"Trails": trails})
+}
+
+func handleCloudTrailPutInsightSelectors(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		TrailName        string
+		InsightSelectors []map[string]any
+	}
+	if !readAWSJSON(w, r, &req) {
+		return
+	}
+	trail, ok := findCloudTrail(req.TrailName)
+	if !ok {
+		cloudTrailError(w, "TrailNotFoundException", "Trail not found", http.StatusNotFound)
+		return
+	}
+	for _, sel := range req.InsightSelectors {
+		insightType, _ := sel["InsightType"].(string)
+		if insightType != "ApiCallRateInsight" && insightType != "ApiErrorRateInsight" {
+			cloudTrailError(w, "InvalidInsightSelectorsException",
+				"Invalid InsightType: "+insightType, http.StatusBadRequest)
+			return
+		}
+	}
+	trail.InsightSelectors = req.InsightSelectors
+	cloudTrailTrails.Put(trail.Name, trail)
+	writeAWSJSON(w, http.StatusOK, map[string]any{
+		"TrailARN":         trail.ARN,
+		"InsightSelectors": trail.InsightSelectors,
+	})
+}
+
+func handleCloudTrailGetInsightSelectors(w http.ResponseWriter, r *http.Request) {
+	trail, ok := cloudTrailTrailByTrailName(w, r)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"TrailARN": trail.ARN}
+	if len(trail.InsightSelectors) > 0 {
+		resp["InsightSelectors"] = trail.InsightSelectors
+	}
+	writeAWSJSON(w, http.StatusOK, resp)
+}
+
+func handleCloudTrailCreateChannel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string
+		Source       string
+		Destinations []map[string]any
+		Tags         []EC2Tag
+	}
+	if !readAWSJSON(w, r, &req) {
+		return
+	}
+	if req.Name == "" || req.Source == "" || len(req.Destinations) == 0 {
+		cloudTrailError(w, "InvalidParameterException",
+			"Name, Source, and Destinations are required", http.StatusBadRequest)
+		return
+	}
+	for _, ch := range cloudTrailChannels.List() {
+		if ch.Name == req.Name {
+			cloudTrailError(w, "ChannelAlreadyExistsException",
+				"A channel with the specified name already exists", http.StatusBadRequest)
+			return
+		}
+	}
+	channel := CloudTrailChannel{
+		ARN:          cloudTrailChannelARN(generateUUID()),
+		Name:         req.Name,
+		Source:       req.Source,
+		Destinations: req.Destinations,
+		Tags:         req.Tags,
+	}
+	cloudTrailChannels.Put(channel.ARN, channel)
+	resp := map[string]any{
+		"ChannelArn":   channel.ARN,
+		"Name":         channel.Name,
+		"Source":       channel.Source,
+		"Destinations": channel.Destinations,
+	}
+	if len(channel.Tags) > 0 {
+		resp["Tags"] = channel.Tags
+	}
+	writeAWSJSON(w, http.StatusOK, resp)
+}
+
+func handleCloudTrailGetChannel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Channel string
+	}
+	if !readAWSJSON(w, r, &req) {
+		return
+	}
+	channel, ok := findCloudTrailChannel(req.Channel)
+	if !ok {
+		cloudTrailError(w, "ChannelNotFoundException", "Channel not found", http.StatusNotFound)
+		return
+	}
+	writeAWSJSON(w, http.StatusOK, map[string]any{
+		"ChannelArn":   channel.ARN,
+		"Name":         channel.Name,
+		"Source":       channel.Source,
+		"Destinations": channel.Destinations,
+		"SourceConfig": map[string]any{"ApplyToAllRegions": true},
+	})
+}
+
+func handleCloudTrailListChannels(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxResults int
+		NextToken  string
+	}
+	_ = readAWSJSONAllowEmpty(r, &req)
+	channels := make([]map[string]any, 0)
+	for _, ch := range cloudTrailChannels.List() {
+		channels = append(channels, map[string]any{
+			"ChannelArn": ch.ARN,
+			"Name":       ch.Name,
+		})
+	}
+	writeAWSJSON(w, http.StatusOK, map[string]any{"Channels": channels})
+}
+
+func handleCloudTrailDeleteChannel(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Channel string
+	}
+	if !readAWSJSON(w, r, &req) {
+		return
+	}
+	channel, ok := findCloudTrailChannel(req.Channel)
+	if !ok {
+		cloudTrailError(w, "ChannelNotFoundException", "Channel not found", http.StatusNotFound)
+		return
+	}
+	cloudTrailChannels.Delete(channel.ARN)
+	writeAWSJSON(w, http.StatusOK, map[string]any{})
+}
+
+func findCloudTrailChannel(nameOrARN string) (CloudTrailChannel, bool) {
+	if ch, ok := cloudTrailChannels.Get(nameOrARN); ok {
+		return ch, true
+	}
+	for _, ch := range cloudTrailChannels.List() {
+		if ch.Name == nameOrARN {
+			return ch, true
+		}
+	}
+	return CloudTrailChannel{}, false
+}
+
+func cloudTrailChannelARN(id string) string {
+	return fmt.Sprintf("arn:aws:cloudtrail:%s:%s:channel/%s", awsRegion(), awsAccountID(), id)
+}
+
 func handleCloudTrailAddTags(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ResourceId string
@@ -507,7 +715,7 @@ func handleCloudTrailPutEventSelectors(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleCloudTrailGetEventSelectors(w http.ResponseWriter, r *http.Request) {
-	trail, ok := cloudTrailTrailFromJSON(w, r)
+	trail, ok := cloudTrailTrailByTrailName(w, r)
 	if !ok {
 		return
 	}
@@ -515,6 +723,25 @@ func handleCloudTrailGetEventSelectors(w http.ResponseWriter, r *http.Request) {
 		"TrailARN":       trail.ARN,
 		"EventSelectors": trail.EventSelectors,
 	})
+}
+
+// cloudTrailTrailByTrailName resolves the trail named by the request's TrailName
+// field — the request-shape key the *EventSelectors / *InsightSelectors
+// operations use (distinct from the Name key used by GetTrail / StartLogging
+// etc.).
+func cloudTrailTrailByTrailName(w http.ResponseWriter, r *http.Request) (CloudTrailTrail, bool) {
+	var req struct {
+		TrailName string
+	}
+	if !readAWSJSON(w, r, &req) {
+		return CloudTrailTrail{}, false
+	}
+	trail, ok := findCloudTrail(req.TrailName)
+	if !ok {
+		cloudTrailError(w, "TrailNotFoundException", "Trail not found", http.StatusNotFound)
+		return CloudTrailTrail{}, false
+	}
+	return trail, true
 }
 
 func cloudTrailTrailFromJSON(w http.ResponseWriter, r *http.Request) (CloudTrailTrail, bool) {
