@@ -264,8 +264,15 @@ func TestEC2_InstanceLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, tagged.Reservations, 1)
 	assert.Equal(t, instanceID, aws.ToString(tagged.Reservations[0].Instances[0].InstanceId))
+	// Scope the state filter to this test's own (tagged) instance — the shared
+	// instance store also holds instances other tests launch (fleets, spot), so
+	// a bare instance-state-name filter is not account-empty. The intent here is
+	// that this running instance does not appear under a stopped filter.
 	stoppedFiltered, err := client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		Filters: []types.Filter{{Name: aws.String("instance-state-name"), Values: []string{"stopped"}}},
+		Filters: []types.Filter{
+			{Name: aws.String("instance-state-name"), Values: []string{"stopped"}},
+			{Name: aws.String("tag:phase"), Values: []string{"sdk"}},
+		},
 	})
 	require.NoError(t, err)
 	assert.Empty(t, stoppedFiltered.Reservations)
