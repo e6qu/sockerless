@@ -4,16 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/ratchet-up-3` — **raise CloudTrail/CodeBuild/WAFv2 + ratchet up Glue (BUG-2196).** ~50 ops, all spec-validated against the vendored `aws-sdk-go-v2` Smithy models (0 divergences) + real SDK/CLI round-trips.
+`feat/ratchet-up-4` — **ratchet up EC2/ECR/AutoScaling/CloudWatch Logs (BUG-2197).** ~62 ops, all spec-validated against the vendored `aws-sdk-go-v2` Smithy models (0 divergences) + real SDK/CLI round-trips.
 
-- **CloudTrail** 16→23 (ListTrails, insight selectors, CloudTrail Lake channels) — plus 2 pre-existing bug fixes the new tests surfaced (UpdateTrail emitted a non-spec `HomeRegion`; GetEventSelectors/GetInsightSelectors read `Name` instead of the wire `TrailName`).
-- **CodeBuild** 9→22 (stop/retry build, report groups, reports produced for real from the buildspec `reports:` section, source credentials).
-- **WAFv2** 28→32 (logging-configuration ops, scope-keyed).
-- **Glue** 52→78 (security configurations, workflows + runs, classifiers, user-defined functions, schema registry).
-- **Process:** 4-agent fan-out (smaller batch after the #671 weekly-limit halt — no cutoffs this time). A stale `zz_tmp_glue_stubs.go` build-stub was removed (it redeclared the now-real Glue handlers).
+- **EC2** 102→122 (network ACLs + entries, VPC peering with the pending→active transition, managed prefix lists, flow logs, egress-only internet gateways).
+- **ECR** 26→38 (lifecycle-policy previews, repository/registry policies, image scanning with honest empty findings, replication config, image tag mutability, tags).
+- **Auto Scaling** 13→25 (scaling policies with real capacity adjustment, scheduled actions, lifecycle hooks, instance health/termination).
+- **CloudWatch Logs** 18→36 (metric filters + TestMetricFilter, subscription filters, export tasks, data-protection policy, legacy + ARN tagging, DeleteLogStream/DeleteRetentionPolicy).
+- **Process:** 4-agent fan-out over disjoint files (no cutoffs). Agents were told explicitly not to create `zz_*.go` stub files (the issue from #672).
 - Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard + all conformance tests pass; spec-shape validator 0 divergences.
 
-**Next candidates:** keep ratcheting up the floored services (more ops for any of EC2/RDS/Glue/Lambda/Batch/API Gateway/CloudFront/CloudTrail/CodeBuild/WAFv2/Kinesis/KMS/ELBv2/ECR/AutoScaling/Logs — each bumps its floor). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** keep ratcheting up the floored services (more ops for any of EC2/RDS/Glue/Lambda/Batch/API Gateway/CloudFront/CloudTrail/CodeBuild/WAFv2/ElastiCache/Kinesis/KMS/ELBv2/AutoScaling/Logs — each bumps its floor). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 

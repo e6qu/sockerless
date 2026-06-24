@@ -42,7 +42,11 @@ type ECRRepository struct {
 	ImageTagMutability         string                        `json:"imageTagMutability"`
 	EncryptionConfiguration    ECREncryptionConfiguration    `json:"encryptionConfiguration"`
 	ImageScanningConfiguration ECRImageScanningConfiguration `json:"imageScanningConfiguration"`
-	Tags                       []SMTag                       `json:"-"`
+	// imageTagMutabilityExclusionFilters round-trips through the
+	// aws_ecr_repository Terraform provider and PutImageTagMutability;
+	// omitted from DescribeRepositories when unset (AWS does the same).
+	ImageTagMutabilityExclusionFilters []ECRImageTagMutabilityExclusionFilter `json:"imageTagMutabilityExclusionFilters,omitempty"`
+	Tags                               []SMTag                                `json:"-"`
 }
 
 type ECREncryptionConfiguration struct {
@@ -142,6 +146,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DescribePullThroughCacheRules", handleECRDescribePullThroughCacheRules)
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule", handleECRDeletePullThroughCacheRule)
 
+	registerECRRegistry(r, srv)
 	registerECRLayers(r, srv)
 	registerECROCI(srv)
 }

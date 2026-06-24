@@ -567,6 +567,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	registerEC2LaunchTemplates(r, srv)
 	registerEC2AmiPlacementDhcp(r, srv)
+	registerEC2AclPeeringPrefix(r, srv)
 }
 
 // Tag helpers
@@ -3734,6 +3735,21 @@ func handleCreateTags(w http.ResponseWriter, r *http.Request) {
 		}
 		if strings.HasPrefix(id, "snap-") {
 			ec2Snapshots.Update(id, func(snap *EC2Snapshot) { snap.Tags = mergeEC2Tags(snap.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "acl-") {
+			ec2NetworkAcls.Update(id, func(acl *EC2NetworkAcl) { acl.Tags = mergeEC2Tags(acl.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "pcx-") {
+			ec2VpcPeerings.Update(id, func(pcx *EC2VpcPeeringConnection) { pcx.Tags = mergeEC2Tags(pcx.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "pl-") {
+			ec2ManagedPrefixLists.Update(id, func(pl *EC2ManagedPrefixList) { pl.Tags = mergeEC2Tags(pl.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "fl-") {
+			ec2FlowLogs.Update(id, func(fl *EC2FlowLog) { fl.Tags = mergeEC2Tags(fl.Tags, tags) })
+		}
+		if strings.HasPrefix(id, "eigw-") {
+			ec2EgressOnlyGateways.Update(id, func(eigw *EC2EgressOnlyInternetGateway) { eigw.Tags = mergeEC2Tags(eigw.Tags, tags) })
 		}
 	}
 	w.Header().Set("Content-Type", "text/xml")

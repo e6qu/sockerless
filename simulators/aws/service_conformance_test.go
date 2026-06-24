@@ -283,17 +283,17 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
 // must bump the floor (the ratchet ratchets up).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            102, // ec2Query
+	"AmazonEC2":                            122, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     4,   // STS (awsQuery, unversioned)
-	"AmazonEC2ContainerRegistry_V20150921": 26,  // ECR
+	"AmazonEC2ContainerRegistry_V20150921": 38,  // ECR
 	"AmazonElastiCacheV9":                  25,
 	"AmazonRDSv19":                         40,
-	"AutoScaling_2011_01_01":               13,
+	"AutoScaling_2011_01_01":               25,
 	"AWSGlue":                              78,
 	"AWSWAF_20190729":                      32,
 	"CloudTrail_20131101":                  23,
 	"CodeBuild_20161006":                   22,
-	"Logs_20140328":                        18, // CloudWatch Logs
+	"Logs_20140328":                        36, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          16, // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      33, // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         29, // EFS (REST)
