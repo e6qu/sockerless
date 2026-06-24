@@ -286,6 +286,8 @@ func registerAPIGateway(srv *sim.Server) {
 	mux.HandleFunc("GET /restapis/{restApiId}/authorizers", cloudTrailRecordedREST("GetAuthorizers", "apigateway.amazonaws.com", apiResource, handleAPIGWListAuthorizers))
 	mux.HandleFunc("GET /restapis/{restApiId}/authorizers/{authorizerId}", cloudTrailRecordedREST("GetAuthorizer", "apigateway.amazonaws.com", apiResource, handleAPIGWGetAuthorizer))
 	mux.HandleFunc("DELETE /restapis/{restApiId}/authorizers/{authorizerId}", cloudTrailRecordedREST("DeleteAuthorizer", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteAuthorizer))
+
+	registerAPIGatewayExtras(srv)
 }
 
 func handleAPIGWCreateRestApi(w http.ResponseWriter, r *http.Request) {

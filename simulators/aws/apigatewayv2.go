@@ -227,6 +227,8 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	mux.HandleFunc("GET /v2/vpclinks", cloudTrailRecordedREST("GetVpcLinks", "apigateway.amazonaws.com", nil, handleAPIGWv2ListVpcLinks))
 	mux.HandleFunc("GET /v2/vpclinks/{vpcLinkId}", cloudTrailRecordedREST("GetVpcLink", "apigateway.amazonaws.com", vpcLinkResource, handleAPIGWv2GetVpcLink))
 	mux.HandleFunc("DELETE /v2/vpclinks/{vpcLinkId}", cloudTrailRecordedREST("DeleteVpcLink", "apigateway.amazonaws.com", vpcLinkResource, handleAPIGWv2DeleteVpcLink))
+
+	registerAPIGatewayV2Extras(srv)
 }
 
 func apigwv2StoreKey(apiId, resource string) string { return apiId + "/" + resource }

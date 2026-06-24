@@ -344,6 +344,8 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(rdsAPIVersion, "CreateDBParameterGroup", handleRDSCreateParamGroup)
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBParameterGroups", handleRDSDescribeParamGroups)
 	r.RegisterVersioned(rdsAPIVersion, "DeleteDBParameterGroup", handleRDSDeleteParamGroup)
+
+	registerRDSProxiesRoles(r, srv)
 }
 
 func rdsInstanceARN(id string) string {

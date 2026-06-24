@@ -70,6 +70,7 @@ func registerCloudWatchLogs(r *sim.AWSRouter, srv *sim.Server) {
 	cwSeqCounter = 1
 	registerCloudWatchInsights(r)
 	registerCloudWatchLogsOps(r, srv)
+	registerCloudWatchLogsExtra2(r, srv)
 
 	r.Register("Logs_20140328.CreateLogGroup", handleCWCreateLogGroup)
 	r.Register("Logs_20140328.DescribeLogGroups", handleCWDescribeLogGroups)

@@ -128,6 +128,8 @@ func registerAutoScaling(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned("2011-01-01", "DescribeAutoScalingInstances", handleASDescribeAutoScalingInstances)
 	r.RegisterVersioned("2011-01-01", "SetInstanceHealth", handleASSetInstanceHealth)
 	r.RegisterVersioned("2011-01-01", "TerminateInstanceInAutoScalingGroup", handleASTerminateInstanceInAutoScalingGroup)
+
+	registerAutoScalingExtra(r, srv)
 }
 
 func handleASCreateLaunchConfiguration(w http.ResponseWriter, r *http.Request) {
