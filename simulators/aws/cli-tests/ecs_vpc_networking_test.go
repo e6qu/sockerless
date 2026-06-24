@@ -368,7 +368,10 @@ func waitRunning(t *testing.T, q func(...string) string, taskArn string) {
 
 func waitTaskContainersGone(t *testing.T, taskArns ...string) {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	// Generous deadline: after stop-task the container takes the SIGTERM grace +
+	// Docker stop to disappear, which on a loaded CI runner can exceed a tight
+	// 30s window (the failure was an intermittent "still running" under load).
+	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		allGone := true
 		for _, taskArn := range taskArns {

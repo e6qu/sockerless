@@ -423,7 +423,7 @@ jobs:
   sim-aws-cli:
     name: sim (aws cli ${{ matrix.suite }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -432,10 +432,14 @@ jobs:
             run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
             timeout: 1200s
             timeout_minutes: 20
-          - suite: compute
-            run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECR|ECS|EFS|Logs)'
+          - suite: ec2
+            run: '^Test(EC2)'
             timeout: 1500s
             timeout_minutes: 27
+          - suite: compute
+            run: '^Test(CloudMap|DynamoDB|CLI_ECR|ECR|ECS|EFS|Logs)'
+            timeout: 1200s
+            timeout_minutes: 20
           - suite: appdata
             run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|RDS|ResourceTags|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s
