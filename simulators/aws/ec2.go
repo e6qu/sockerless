@@ -568,6 +568,10 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerEC2LaunchTemplates(r, srv)
 	registerEC2AmiPlacementDhcp(r, srv)
 	registerEC2AclPeeringPrefix(r, srv)
+	registerEC2TransitGateway(r, srv)
+	registerEC2IPAM(r, srv)
+	registerEC2VPN(r, srv)
+	registerEC2VerifiedAccess(r, srv)
 }
 
 // Tag helpers

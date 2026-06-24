@@ -427,6 +427,10 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSGlue.ListSchemaVersions", handleGlueListSchemaVersions)
 	r.Register("AWSGlue.DeleteSchemaVersions", handleGlueDeleteSchemaVersions)
 	r.Register("AWSGlue.GetSchemaByDefinition", handleGlueGetSchemaByDefinition)
+
+	registerGlueMLDataQuality(r, srv)
+	registerGlueSessionsBlueprints(r, srv)
+	registerGlueCatalogOptimizer(r, srv)
 }
 
 func glueEpochNow() float64 {

@@ -387,17 +387,23 @@ func validateSmithyValue(idx *smithyModelIndex, op, shapeID, path string, v any,
 			*out = append(*out, sim.SpecViolation{Op: op, Kind: "type-mismatch", Field: path, Detail: fmt.Sprintf("spec %s is a %s, response has %T", shapeID, shape.Type, v)})
 			return
 		}
-		// JSON member name = member name unless overridden by jsonName.
+		// A response field is valid under either the member name or its
+		// jsonName. The `jsonName` trait only governs the wire key for the
+		// REST protocols (restJson1/restXml); awsJson1.0/1.1 codegen ignores
+		// it and uses the member name verbatim — verified against the
+		// aws-sdk-go-v2 Glue deserializer, which reads `case "SparkConnect"`
+		// for the `GetSessionEndpointResponse.SparkConnect` member despite its
+		// `jsonName: "SPARK_CONNECT"`. Accepting both keys validates either
+		// protocol's wire form while still flagging genuinely-unknown fields.
 		byJSONName := make(map[string]smithyMemberRef, len(shape.Members))
 		for name, ref := range shape.Members {
-			jsonName := name
+			byJSONName[name] = ref
 			if raw, ok := ref.Traits["smithy.api#jsonName"]; ok {
 				var s string
 				if json.Unmarshal(raw, &s) == nil && s != "" {
-					jsonName = s
+					byJSONName[s] = ref
 				}
 			}
-			byJSONName[jsonName] = ref
 		}
 		for key, val := range obj {
 			ref, ok := byJSONName[key]
