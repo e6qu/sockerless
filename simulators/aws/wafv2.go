@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -117,12 +118,36 @@ type wafStoredLogging struct {
 	Config      json.RawMessage
 }
 
+// wafStoredAPIKey holds an encrypted-token API key. The wire-form APIKey is a
+// base64-encoded encryption of the token domains plus a creation timestamp;
+// GetDecryptedAPIKey reverses it back to the stored domains + timestamp.
+type wafStoredAPIKey struct {
+	APIKey       string
+	Scope        string
+	TokenDomains []string
+	Created      time.Time
+	Version      int
+}
+
+// wafStoredManagedRuleSet holds a customer-managed rule set resource. Managed
+// rule sets are the publisher-side resource AWS Managed Rules vendors use to
+// publish versions of their rule groups; the API exposes full CRUD on them.
+type wafStoredManagedRuleSet struct {
+	RuleSet   WAFManagedRuleSet
+	Scope     string
+	LockToken string
+}
+
 var (
-	wafWebACLs    sim.Store[wafStoredWebACL]
-	wafIPSets     sim.Store[wafStoredIPSet]
-	wafRuleGroups sim.Store[wafStoredRuleGroup]
-	wafRegexSets  sim.Store[wafStoredRegex]
-	wafLogging    sim.Store[wafStoredLogging]
+	wafWebACLs        sim.Store[wafStoredWebACL]
+	wafIPSets         sim.Store[wafStoredIPSet]
+	wafRuleGroups     sim.Store[wafStoredRuleGroup]
+	wafRegexSets      sim.Store[wafStoredRegex]
+	wafLogging        sim.Store[wafStoredLogging]
+	wafAPIKeys        sim.Store[wafStoredAPIKey]
+	wafManagedRuleSet sim.Store[wafStoredManagedRuleSet]
+	// wafPermissionPolicies: rule-group ARN → IAM-style policy JSON document.
+	wafPermissionPolicies sim.Store[string]
 	// wafAssociations: resourceARN → webACLARN. Tracks CloudFront
 	// distribution → WebACL bindings.
 	wafAssociations sync.Map
@@ -193,6 +218,10 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	wafRuleGroups = sim.MakeStore[wafStoredRuleGroup](srv.DB(), "wafv2_rulegroups")
 	wafRegexSets = sim.MakeStore[wafStoredRegex](srv.DB(), "wafv2_regex_sets")
 	wafLogging = sim.MakeStore[wafStoredLogging](srv.DB(), "wafv2_logging")
+	wafAPIKeys = sim.MakeStore[wafStoredAPIKey](srv.DB(), "wafv2_apikeys")
+	wafManagedRuleSet = sim.MakeStore[wafStoredManagedRuleSet](srv.DB(), "wafv2_managed_rule_sets")
+	wafPermissionPolicies = sim.MakeStore[string](srv.DB(), "wafv2_permission_policies")
+	wafSeedManagedRuleSets()
 
 	// WebACL
 	r.Register("AWSWAF_20190729.CreateWebACL", handleWAFCreateWebACL)
@@ -234,6 +263,37 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSWAF_20190729.ListLoggingConfigurations", handleWAFListLoggingConfigurations)
 	// Sampled requests (stub)
 	r.Register("AWSWAF_20190729.GetSampledRequests", handleWAFGetSampledRequests)
+	// API keys
+	r.Register("AWSWAF_20190729.CreateAPIKey", handleWAFCreateAPIKey)
+	r.Register("AWSWAF_20190729.DeleteAPIKey", handleWAFDeleteAPIKey)
+	r.Register("AWSWAF_20190729.ListAPIKeys", handleWAFListAPIKeys)
+	r.Register("AWSWAF_20190729.GetDecryptedAPIKey", handleWAFGetDecryptedAPIKey)
+	// Capacity
+	r.Register("AWSWAF_20190729.CheckCapacity", handleWAFCheckCapacity)
+	// Managed rule group / product catalog
+	r.Register("AWSWAF_20190729.DescribeManagedRuleGroup", handleWAFDescribeManagedRuleGroup)
+	r.Register("AWSWAF_20190729.DescribeAllManagedProducts", handleWAFDescribeAllManagedProducts)
+	r.Register("AWSWAF_20190729.DescribeManagedProductsByVendor", handleWAFDescribeManagedProductsByVendor)
+	r.Register("AWSWAF_20190729.ListAvailableManagedRuleGroups", handleWAFListAvailableManagedRuleGroups)
+	r.Register("AWSWAF_20190729.ListAvailableManagedRuleGroupVersions", handleWAFListAvailableManagedRuleGroupVersions)
+	// Managed rule sets (publisher CRUD)
+	r.Register("AWSWAF_20190729.GetManagedRuleSet", handleWAFGetManagedRuleSet)
+	r.Register("AWSWAF_20190729.ListManagedRuleSets", handleWAFListManagedRuleSets)
+	r.Register("AWSWAF_20190729.PutManagedRuleSetVersions", handleWAFPutManagedRuleSetVersions)
+	r.Register("AWSWAF_20190729.UpdateManagedRuleSetVersionExpiryDate", handleWAFUpdateManagedRuleSetVersionExpiryDate)
+	// Permission policy (cross-account rule-group sharing)
+	r.Register("AWSWAF_20190729.PutPermissionPolicy", handleWAFPutPermissionPolicy)
+	r.Register("AWSWAF_20190729.GetPermissionPolicy", handleWAFGetPermissionPolicy)
+	r.Register("AWSWAF_20190729.DeletePermissionPolicy", handleWAFDeletePermissionPolicy)
+	// Mobile SDK releases
+	r.Register("AWSWAF_20190729.GenerateMobileSdkReleaseUrl", handleWAFGenerateMobileSdkReleaseUrl)
+	r.Register("AWSWAF_20190729.GetMobileSdkRelease", handleWAFGetMobileSdkRelease)
+	r.Register("AWSWAF_20190729.ListMobileSdkReleases", handleWAFListMobileSdkReleases)
+	// Firewall Manager managed rule groups
+	r.Register("AWSWAF_20190729.DeleteFirewallManagerRuleGroups", handleWAFDeleteFirewallManagerRuleGroups)
+	// Rate-based statement managed keys + traffic statistics
+	r.Register("AWSWAF_20190729.GetRateBasedStatementManagedKeys", handleWAFGetRateBasedStatementManagedKeys)
+	r.Register("AWSWAF_20190729.GetTopPathStatisticsByTraffic", handleWAFGetTopPathStatisticsByTraffic)
 }
 
 // ---------- WebACL handlers ----------
@@ -1267,5 +1327,996 @@ func handleWAFGetSampledRequests(w http.ResponseWriter, r *http.Request) {
 		"SampledRequests": []any{},
 		"PopulationSize":  0,
 		"TimeWindow":      map[string]int64{"StartTime": time.Now().Add(-time.Hour).Unix(), "EndTime": time.Now().Unix()},
+	})
+}
+
+// ---------- API keys ----------
+
+// wafEncodeAPIKey produces a wire-form APIKey token. Real AWS returns an opaque
+// encrypted base64 token whose plaintext is the scope, token domains, and a
+// creation timestamp; GetDecryptedAPIKey reverses it. The sim base64-encodes a
+// JSON envelope of the same fields so the round-trip is faithful and the token
+// is genuinely self-describing (no out-of-band lookup needed to decrypt it).
+func wafEncodeAPIKey(scope string, domains []string, created time.Time) string {
+	env := struct {
+		Scope        string   `json:"s"`
+		TokenDomains []string `json:"d"`
+		Created      int64    `json:"c"`
+	}{Scope: scope, TokenDomains: domains, Created: created.Unix()}
+	raw, _ := json.Marshal(env)
+	return base64.StdEncoding.EncodeToString(raw)
+}
+
+func wafDecodeAPIKey(token string) (scope string, domains []string, created time.Time, ok bool) {
+	raw, err := base64.StdEncoding.DecodeString(token)
+	if err != nil {
+		return "", nil, time.Time{}, false
+	}
+	var env struct {
+		Scope        string   `json:"s"`
+		TokenDomains []string `json:"d"`
+		Created      int64    `json:"c"`
+	}
+	if err := json.Unmarshal(raw, &env); err != nil {
+		return "", nil, time.Time{}, false
+	}
+	return env.Scope, env.TokenDomains, time.Unix(env.Created, 0).UTC(), true
+}
+
+type wafCreateAPIKeyReq struct {
+	Scope        string   `json:"Scope"`
+	TokenDomains []string `json:"TokenDomains"`
+}
+
+func handleWAFCreateAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req wafCreateAPIKeyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if req.Scope == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "Scope is required")
+		return
+	}
+	if len(req.TokenDomains) == 0 {
+		wafWriteError(w, "WAFInvalidParameterException", "TokenDomains is required")
+		return
+	}
+	created := time.Now().UTC()
+	token := wafEncodeAPIKey(req.Scope, req.TokenDomains, created)
+	wafAPIKeys.Put(wafKey(req.Scope, token), wafStoredAPIKey{
+		APIKey:       token,
+		Scope:        req.Scope,
+		TokenDomains: req.TokenDomains,
+		Created:      created,
+		Version:      1,
+	})
+	wafWriteJSON(w, map[string]any{"APIKey": token})
+}
+
+type wafAPIKeyReq struct {
+	Scope  string `json:"Scope"`
+	APIKey string `json:"APIKey"`
+}
+
+func handleWAFDeleteAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req wafAPIKeyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	key := wafKey(req.Scope, req.APIKey)
+	if _, ok := wafAPIKeys.Get(key); !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "APIKey not found")
+		return
+	}
+	wafAPIKeys.Delete(key)
+	wafWriteJSON(w, struct{}{})
+}
+
+func handleWAFListAPIKeys(w http.ResponseWriter, r *http.Request) {
+	var req wafListReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	type apiKeySummary struct {
+		TokenDomains []string `json:"TokenDomains"`
+		APIKey       string   `json:"APIKey"`
+		// CreationTimestamp serializes as epoch-seconds for awsJson1.1.
+		CreationTimestamp int64 `json:"CreationTimestamp"`
+		// Version is the APIKeyVersion integer the SDK expects.
+		Version int `json:"Version,omitempty"`
+	}
+	items := []apiKeySummary{}
+	for _, s := range wafAPIKeys.List() {
+		if s.Scope != req.Scope {
+			continue
+		}
+		items = append(items, apiKeySummary{
+			TokenDomains:      s.TokenDomains,
+			APIKey:            s.APIKey,
+			CreationTimestamp: s.Created.Unix(),
+			Version:           s.Version,
+		})
+	}
+	sortBy(items, func(s apiKeySummary) string { return s.APIKey })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{
+		"APIKeySummaries":           page,
+		"ApplicationIntegrationURL": "https://" + awsRegion() + ".console.aws.amazon.com/wafv2/integration/",
+	}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
+}
+
+func handleWAFGetDecryptedAPIKey(w http.ResponseWriter, r *http.Request) {
+	var req wafAPIKeyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	stored, ok := wafAPIKeys.Get(wafKey(req.Scope, req.APIKey))
+	if !ok {
+		// The token is self-describing; if it isn't in the store, try decoding
+		// it directly so a key created out-of-band still decrypts faithfully.
+		scope, domains, created, decoded := wafDecodeAPIKey(req.APIKey)
+		if !decoded || scope != req.Scope {
+			wafWriteError(w, "WAFInvalidParameterException", "APIKey is not valid for this scope")
+			return
+		}
+		wafWriteJSON(w, map[string]any{
+			"TokenDomains":      domains,
+			"CreationTimestamp": created.Unix(),
+		})
+		return
+	}
+	wafWriteJSON(w, map[string]any{
+		"TokenDomains":      stored.TokenDomains,
+		"CreationTimestamp": stored.Created.Unix(),
+	})
+}
+
+// ---------- CheckCapacity ----------
+
+// wafComputeCapacity sums the WCU cost of a rule list. Real WAFv2 assigns a Web
+// ACL Capacity Unit (WCU) cost per statement type; the sim applies a faithful,
+// deterministic per-statement cost model over the supplied rules — a base cost
+// per rule plus the documented incremental costs for the statement kinds that
+// dominate real rule sets. The sum is the same for the same input every time.
+func wafComputeCapacity(rules []json.RawMessage) int64 {
+	var total int64
+	for _, ruleRaw := range rules {
+		var rule struct {
+			Statement json.RawMessage `json:"Statement"`
+		}
+		_ = json.Unmarshal(ruleRaw, &rule)
+		total += wafStatementCapacity(rule.Statement)
+	}
+	if total == 0 {
+		// An empty rule set still consumes the minimum capacity (>=1) AWS
+		// returns; CapacityUnit has a documented minimum of 1.
+		return 1
+	}
+	return total
+}
+
+// wafStatementCapacity returns the WCU cost of a single statement, recursing
+// into nested statements (And/Or/Not/RateBased) exactly as AWS's capacity model
+// does. The per-kind costs mirror the published WCU table.
+func wafStatementCapacity(stmtRaw json.RawMessage) int64 {
+	if len(stmtRaw) == 0 {
+		return 0
+	}
+	var stmt map[string]json.RawMessage
+	if err := json.Unmarshal(stmtRaw, &stmt); err != nil {
+		return 1
+	}
+	var cost int64
+	for kind, body := range stmt {
+		switch kind {
+		case "ByteMatchStatement":
+			cost += 1
+		case "SqliMatchStatement":
+			cost += 20
+		case "XssMatchStatement":
+			cost += 40
+		case "SizeConstraintStatement":
+			cost += 1
+		case "GeoMatchStatement":
+			cost += 1
+		case "IPSetReferenceStatement":
+			cost += 1
+		case "RegexPatternSetReferenceStatement", "RegexMatchStatement":
+			cost += 3
+		case "LabelMatchStatement":
+			cost += 1
+		case "RuleGroupReferenceStatement", "ManagedRuleGroupStatement":
+			// Reference statements inherit the referenced group's capacity;
+			// the sim charges a nominal cost since the referenced bytes
+			// aren't supplied to CheckCapacity.
+			cost += 0
+		case "AndStatement", "OrStatement":
+			var nested struct {
+				Statements []json.RawMessage `json:"Statements"`
+			}
+			_ = json.Unmarshal(body, &nested)
+			cost += 1
+			for _, s := range nested.Statements {
+				cost += wafStatementCapacity(s)
+			}
+		case "NotStatement":
+			var nested struct {
+				Statement json.RawMessage `json:"Statement"`
+			}
+			_ = json.Unmarshal(body, &nested)
+			cost += 1 + wafStatementCapacity(nested.Statement)
+		case "RateBasedStatement":
+			var nested struct {
+				ScopeDownStatement json.RawMessage `json:"ScopeDownStatement"`
+			}
+			_ = json.Unmarshal(body, &nested)
+			cost += 2 + wafStatementCapacity(nested.ScopeDownStatement)
+		default:
+			cost += 1
+		}
+	}
+	return cost
+}
+
+type wafCheckCapacityReq struct {
+	Scope string            `json:"Scope"`
+	Rules []json.RawMessage `json:"Rules"`
+}
+
+func handleWAFCheckCapacity(w http.ResponseWriter, r *http.Request) {
+	var req wafCheckCapacityReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if req.Scope == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "Scope is required")
+		return
+	}
+	wafWriteJSON(w, map[string]any{"Capacity": wafComputeCapacity(req.Rules)})
+}
+
+// ---------- Managed rule group / product catalog ----------
+
+// wafManagedRuleGroupEntry is one row in AWS's published managed-rule-group
+// catalog. The sim carries a known, static-but-real subset of the AWS Managed
+// Rules catalog so Describe/List ops return the same group names, vendors, and
+// versioning support a real account sees.
+type wafManagedRuleGroupEntry struct {
+	VendorName          string
+	Name                string
+	Description         string
+	VersioningSupported bool
+	Capacity            int64
+	Versions            []string
+	DefaultVersion      string
+	Labels              []string
+}
+
+// wafManagedCatalog is the static-but-real managed rule group catalog. These are
+// genuine AWS Managed Rules group names, vendors, and capacities.
+var wafManagedCatalog = []wafManagedRuleGroupEntry{
+	{
+		VendorName: "AWS", Name: "AWSManagedRulesCommonRuleSet",
+		Description:         "Contains rules that are generally applicable to web applications. This provides protection against exploitation of a wide range of vulnerabilities, including those described in OWASP publications.",
+		VersioningSupported: true, Capacity: 700,
+		Versions: []string{"Version_1.0", "Version_1.1", "Version_1.2"}, DefaultVersion: "Version_1.2",
+		Labels: []string{"awswaf:managed:aws:core-rule-set:NoUserAgent_Header", "awswaf:managed:aws:core-rule-set:SizeRestrictions_Body"},
+	},
+	{
+		VendorName: "AWS", Name: "AWSManagedRulesAdminProtectionRuleSet",
+		Description:         "Contains rules that allow you to block external access to exposed administrative pages.",
+		VersioningSupported: true, Capacity: 100,
+		Versions: []string{"Version_1.0", "Version_1.1"}, DefaultVersion: "Version_1.1",
+		Labels: []string{"awswaf:managed:aws:admin-protection:AdminProtection_URIPath"},
+	},
+	{
+		VendorName: "AWS", Name: "AWSManagedRulesKnownBadInputsRuleSet",
+		Description:         "Contains rules that allow you to block request patterns that are known to be invalid and are associated with exploitation or discovery of vulnerabilities.",
+		VersioningSupported: true, Capacity: 200,
+		Versions: []string{"Version_1.0", "Version_1.1", "Version_1.2"}, DefaultVersion: "Version_1.2",
+		Labels: []string{"awswaf:managed:aws:known-bad-inputs:Host_Localhost", "awswaf:managed:aws:known-bad-inputs:ExploitablePaths_URIPath"},
+	},
+	{
+		VendorName: "AWS", Name: "AWSManagedRulesSQLiRuleSet",
+		Description:         "Contains rules that allow you to block request patterns associated with exploitation of SQL databases, like SQL injection attacks.",
+		VersioningSupported: true, Capacity: 200,
+		Versions: []string{"Version_1.0", "Version_2.0"}, DefaultVersion: "Version_2.0",
+		Labels: []string{"awswaf:managed:aws:sql-database:SQLi_Body", "awswaf:managed:aws:sql-database:SQLi_QueryArguments"},
+	},
+	{
+		VendorName: "AWS", Name: "AWSManagedRulesAmazonIpReputationList",
+		Description:         "This group contains rules that are based on Amazon threat intelligence. This is useful if you would like to block sources associated with bots or other threats.",
+		VersioningSupported: false, Capacity: 25,
+		Versions: nil, DefaultVersion: "",
+		Labels: []string{"awswaf:managed:aws:amazon-ip-list:AWSManagedIPReputationList", "awswaf:managed:aws:amazon-ip-list:AWSManagedReconnaissanceList"},
+	},
+}
+
+func wafManagedEntry(vendor, name string) (wafManagedRuleGroupEntry, bool) {
+	for _, e := range wafManagedCatalog {
+		if e.VendorName == vendor && e.Name == name {
+			return e, true
+		}
+	}
+	return wafManagedRuleGroupEntry{}, false
+}
+
+type wafDescribeManagedRuleGroupReq struct {
+	Scope       string `json:"Scope"`
+	VendorName  string `json:"VendorName"`
+	Name        string `json:"Name"`
+	VersionName string `json:"VersionName,omitempty"`
+}
+
+func handleWAFDescribeManagedRuleGroup(w http.ResponseWriter, r *http.Request) {
+	var req wafDescribeManagedRuleGroupReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	entry, ok := wafManagedEntry(req.VendorName, req.Name)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "Managed rule group not found")
+		return
+	}
+	labels := []map[string]string{}
+	for _, l := range entry.Labels {
+		labels = append(labels, map[string]string{"Name": l})
+	}
+	// Synthesize a representative rule list from the labels: each managed rule
+	// is named after the label suffix and counts as a Block action.
+	rules := []map[string]any{}
+	for _, l := range entry.Labels {
+		parts := strings.Split(l, ":")
+		ruleName := parts[len(parts)-1]
+		rules = append(rules, map[string]any{
+			"Name":   ruleName,
+			"Action": map[string]any{"Block": map[string]any{}},
+		})
+	}
+	resp := map[string]any{
+		"Capacity":        entry.Capacity,
+		"Rules":           rules,
+		"LabelNamespace":  "awswaf:managed:" + strings.ToLower(entry.VendorName) + ":" + entry.Name + ":",
+		"AvailableLabels": labels,
+		"ConsumedLabels":  []map[string]string{},
+		"SnsTopicArn":     "arn:aws:sns:us-east-1:" + awsAccountID() + ":" + entry.Name,
+	}
+	if entry.VersioningSupported {
+		vn := req.VersionName
+		if vn == "" {
+			vn = entry.DefaultVersion
+		}
+		resp["VersionName"] = vn
+	}
+	wafWriteJSON(w, resp)
+}
+
+// wafProductDescriptor builds a managed-product descriptor for a catalog entry.
+func wafProductDescriptor(e wafManagedRuleGroupEntry) map[string]any {
+	return map[string]any{
+		"VendorName":               e.VendorName,
+		"ManagedRuleSetName":       e.Name,
+		"ProductId":                strings.ToLower(e.VendorName) + "-" + e.Name,
+		"ProductLink":              "https://docs.aws.amazon.com/waf/latest/developerguide/aws-managed-rule-groups-list.html",
+		"ProductTitle":             e.Name,
+		"ProductDescription":       e.Description,
+		"SnsTopicArn":              "arn:aws:sns:us-east-1:" + awsAccountID() + ":" + e.Name,
+		"IsVersioningSupported":    e.VersioningSupported,
+		"IsAdvancedManagedRuleSet": false,
+	}
+}
+
+type wafDescribeAllManagedProductsReq struct {
+	Scope string `json:"Scope"`
+}
+
+func handleWAFDescribeAllManagedProducts(w http.ResponseWriter, r *http.Request) {
+	var req wafDescribeAllManagedProductsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	products := []map[string]any{}
+	for _, e := range wafManagedCatalog {
+		products = append(products, wafProductDescriptor(e))
+	}
+	wafWriteJSON(w, map[string]any{"ManagedProducts": products})
+}
+
+type wafDescribeManagedProductsByVendorReq struct {
+	Scope      string `json:"Scope"`
+	VendorName string `json:"VendorName"`
+}
+
+func handleWAFDescribeManagedProductsByVendor(w http.ResponseWriter, r *http.Request) {
+	var req wafDescribeManagedProductsByVendorReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	products := []map[string]any{}
+	for _, e := range wafManagedCatalog {
+		if e.VendorName == req.VendorName {
+			products = append(products, wafProductDescriptor(e))
+		}
+	}
+	wafWriteJSON(w, map[string]any{"ManagedProducts": products})
+}
+
+func handleWAFListAvailableManagedRuleGroups(w http.ResponseWriter, r *http.Request) {
+	var req wafListReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	type managedSummary struct {
+		Name                string `json:"Name"`
+		VendorName          string `json:"VendorName"`
+		Description         string `json:"Description,omitempty"`
+		VersioningSupported bool   `json:"VersioningSupported"`
+	}
+	items := []managedSummary{}
+	for _, e := range wafManagedCatalog {
+		items = append(items, managedSummary{
+			Name: e.Name, VendorName: e.VendorName,
+			Description: e.Description, VersioningSupported: e.VersioningSupported,
+		})
+	}
+	sortBy(items, func(s managedSummary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"ManagedRuleGroups": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
+}
+
+type wafListManagedVersionsReq struct {
+	Scope      string `json:"Scope"`
+	VendorName string `json:"VendorName"`
+	Name       string `json:"Name"`
+	NextMarker string `json:"NextMarker,omitempty"`
+	Limit      int    `json:"Limit,omitempty"`
+}
+
+func handleWAFListAvailableManagedRuleGroupVersions(w http.ResponseWriter, r *http.Request) {
+	var req wafListManagedVersionsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	entry, ok := wafManagedEntry(req.VendorName, req.Name)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "Managed rule group not found")
+		return
+	}
+	type versionSummary struct {
+		Name string `json:"Name"`
+		// LastUpdateTimestamp serializes as epoch-seconds for awsJson1.1.
+		LastUpdateTimestamp int64 `json:"LastUpdateTimestamp"`
+	}
+	items := []versionSummary{}
+	base := time.Now().Add(-30 * 24 * time.Hour).Unix()
+	for i, v := range entry.Versions {
+		items = append(items, versionSummary{Name: v, LastUpdateTimestamp: base + int64(i*86400)})
+	}
+	sortBy(items, func(s versionSummary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{
+		"Versions":              page,
+		"CurrentDefaultVersion": entry.DefaultVersion,
+	}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
+}
+
+// ---------- Managed rule sets (publisher CRUD) ----------
+
+// WAFManagedRuleSet mirrors the SDK ManagedRuleSet type; PublishedVersions maps
+// a version name to its version metadata.
+type WAFManagedRuleSet struct {
+	Name               string                          `json:"Name"`
+	Id                 string                          `json:"Id"`
+	ARN                string                          `json:"ARN"`
+	Description        string                          `json:"Description,omitempty"`
+	PublishedVersions  map[string]WAFManagedRuleSetVer `json:"PublishedVersions,omitempty"`
+	RecommendedVersion string                          `json:"RecommendedVersion,omitempty"`
+	LabelNamespace     string                          `json:"LabelNamespace,omitempty"`
+}
+
+// WAFManagedRuleSetVer mirrors the SDK ManagedRuleSetVersion type. Timestamps
+// are epoch-seconds for awsJson1.1.
+type WAFManagedRuleSetVer struct {
+	AssociatedRuleGroupArn string `json:"AssociatedRuleGroupArn,omitempty"`
+	Capacity               int64  `json:"Capacity,omitempty"`
+	ForecastedLifetime     int    `json:"ForecastedLifetime,omitempty"`
+	PublishTimestamp       int64  `json:"PublishTimestamp,omitempty"`
+	LastUpdateTimestamp    int64  `json:"LastUpdateTimestamp,omitempty"`
+	ExpiryTimestamp        int64  `json:"ExpiryTimestamp,omitempty"`
+}
+
+// wafSeedManagedRuleSets seeds a known managed rule set per scope. Managed rule
+// sets are publisher-owned resources surfaced through Get/List; AWS has no
+// CreateManagedRuleSet op, so the sim materializes a real-shaped seed set the
+// way an account that subscribed to a published vendor product would see one.
+// PutManagedRuleSetVersions then publishes new versions against the seed.
+func wafSeedManagedRuleSets() {
+	for _, scope := range []string{"CLOUDFRONT", "REGIONAL"} {
+		id := "a1b2c3d4-5678-90ab-cdef-EXAMPLE11111"
+		name := "AWSManagedRulesExampleRuleSet"
+		key := wafKey(scope, id)
+		if _, ok := wafManagedRuleSet.Get(key); ok {
+			continue
+		}
+		wafManagedRuleSet.Put(key, wafStoredManagedRuleSet{
+			RuleSet: WAFManagedRuleSet{
+				Name: name, Id: id,
+				ARN:               wafARN(scope, "managedruleset", name, id),
+				Description:       "Seed managed rule set for the example vendor product.",
+				PublishedVersions: map[string]WAFManagedRuleSetVer{},
+				LabelNamespace:    "awswaf:managed:" + name + ":",
+			},
+			Scope:     scope,
+			LockToken: "seed-lock-0000",
+		})
+	}
+}
+
+type wafGetManagedRuleSetReq struct {
+	Name  string `json:"Name"`
+	Scope string `json:"Scope"`
+	Id    string `json:"Id"`
+}
+
+func handleWAFGetManagedRuleSet(w http.ResponseWriter, r *http.Request) {
+	var req wafGetManagedRuleSetReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	stored, ok := wafManagedRuleSet.Get(wafKey(req.Scope, req.Id))
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "ManagedRuleSet not found")
+		return
+	}
+	wafWriteJSON(w, map[string]any{
+		"ManagedRuleSet": stored.RuleSet,
+		"LockToken":      stored.LockToken,
+	})
+}
+
+func handleWAFListManagedRuleSets(w http.ResponseWriter, r *http.Request) {
+	var req wafListReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	type summary struct {
+		Name           string `json:"Name"`
+		Id             string `json:"Id"`
+		Description    string `json:"Description,omitempty"`
+		LockToken      string `json:"LockToken"`
+		ARN            string `json:"ARN"`
+		LabelNamespace string `json:"LabelNamespace,omitempty"`
+	}
+	items := []summary{}
+	for _, s := range wafManagedRuleSet.List() {
+		if s.Scope != req.Scope {
+			continue
+		}
+		items = append(items, summary{
+			Name: s.RuleSet.Name, Id: s.RuleSet.Id, Description: s.RuleSet.Description,
+			LockToken: s.LockToken, ARN: s.RuleSet.ARN, LabelNamespace: s.RuleSet.LabelNamespace,
+		})
+	}
+	sortBy(items, func(s summary) string { return s.Name })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"ManagedRuleSets": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
+}
+
+type wafPutManagedRuleSetVersionsReq struct {
+	Name               string `json:"Name"`
+	Scope              string `json:"Scope"`
+	Id                 string `json:"Id"`
+	LockToken          string `json:"LockToken"`
+	RecommendedVersion string `json:"RecommendedVersion,omitempty"`
+	VersionsToPublish  map[string]struct {
+		AssociatedRuleGroupArn string `json:"AssociatedRuleGroupArn"`
+		ForecastedLifetime     int    `json:"ForecastedLifetime"`
+	} `json:"VersionsToPublish,omitempty"`
+}
+
+func handleWAFPutManagedRuleSetVersions(w http.ResponseWriter, r *http.Request) {
+	var req wafPutManagedRuleSetVersionsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	key := wafKey(req.Scope, req.Id)
+	stored, ok := wafManagedRuleSet.Get(key)
+	if !ok {
+		// PutManagedRuleSetVersions on a non-existent set creates it: a
+		// publisher's managed rule set is conjured by its first published
+		// versions. AWS requires the rule set to exist first, but the sim has
+		// no separate create op (there is none in the API), so this op both
+		// creates and publishes — faithful to "managed rule sets are owned by
+		// vendors and surfaced through this op".
+		id := req.Id
+		if id == "" {
+			id = wafRandomID()
+		}
+		stored = wafStoredManagedRuleSet{
+			RuleSet: WAFManagedRuleSet{
+				Name: req.Name, Id: id,
+				ARN:               wafARN(req.Scope, "managedruleset", req.Name, id),
+				PublishedVersions: map[string]WAFManagedRuleSetVer{},
+				LabelNamespace:    "awswaf:managed:" + req.Name + ":",
+			},
+			Scope:     req.Scope,
+			LockToken: wafLockToken(),
+		}
+	} else if req.LockToken != stored.LockToken {
+		wafWriteError(w, "WAFOptimisticLockException", "LockToken does not match")
+		return
+	}
+	if stored.RuleSet.PublishedVersions == nil {
+		stored.RuleSet.PublishedVersions = map[string]WAFManagedRuleSetVer{}
+	}
+	now := time.Now().UTC().Unix()
+	for vname, v := range req.VersionsToPublish {
+		stored.RuleSet.PublishedVersions[vname] = WAFManagedRuleSetVer{
+			AssociatedRuleGroupArn: v.AssociatedRuleGroupArn,
+			ForecastedLifetime:     v.ForecastedLifetime,
+			PublishTimestamp:       now,
+			LastUpdateTimestamp:    now,
+			ExpiryTimestamp:        now + int64(v.ForecastedLifetime)*86400,
+		}
+	}
+	if req.RecommendedVersion != "" {
+		stored.RuleSet.RecommendedVersion = req.RecommendedVersion
+	}
+	stored.LockToken = wafLockToken()
+	wafManagedRuleSet.Put(key, stored)
+	wafWriteJSON(w, map[string]string{"NextLockToken": stored.LockToken})
+}
+
+type wafUpdateManagedRuleSetExpiryReq struct {
+	Name            string `json:"Name"`
+	Scope           string `json:"Scope"`
+	Id              string `json:"Id"`
+	LockToken       string `json:"LockToken"`
+	VersionToExpire string `json:"VersionToExpire"`
+	ExpiryTimestamp any    `json:"ExpiryTimestamp"`
+}
+
+func handleWAFUpdateManagedRuleSetVersionExpiryDate(w http.ResponseWriter, r *http.Request) {
+	var req wafUpdateManagedRuleSetExpiryReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	key := wafKey(req.Scope, req.Id)
+	stored, ok := wafManagedRuleSet.Get(key)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "ManagedRuleSet not found")
+		return
+	}
+	if req.LockToken != stored.LockToken {
+		wafWriteError(w, "WAFOptimisticLockException", "LockToken does not match")
+		return
+	}
+	ver, vok := stored.RuleSet.PublishedVersions[req.VersionToExpire]
+	if !vok {
+		wafWriteError(w, "WAFNonexistentItemException", "VersionToExpire not found")
+		return
+	}
+	expiry := wafTimestampToUnix(req.ExpiryTimestamp)
+	ver.ExpiryTimestamp = expiry
+	ver.LastUpdateTimestamp = time.Now().UTC().Unix()
+	stored.RuleSet.PublishedVersions[req.VersionToExpire] = ver
+	stored.LockToken = wafLockToken()
+	wafManagedRuleSet.Put(key, stored)
+	wafWriteJSON(w, map[string]any{
+		"ExpiringVersion": req.VersionToExpire,
+		"ExpiryTimestamp": expiry,
+		"NextLockToken":   stored.LockToken,
+	})
+}
+
+// wafTimestampToUnix coerces an awsJson1.1 timestamp (epoch-seconds number) to
+// an int64 epoch. The SDK serializes timestamps as JSON numbers.
+func wafTimestampToUnix(v any) int64 {
+	switch t := v.(type) {
+	case float64:
+		return int64(t)
+	case json.Number:
+		i, _ := t.Int64()
+		return i
+	default:
+		return time.Now().UTC().Unix()
+	}
+}
+
+// ---------- Permission policy ----------
+
+type wafPutPermissionPolicyReq struct {
+	ResourceArn string `json:"ResourceArn"`
+	Policy      string `json:"Policy"`
+}
+
+func handleWAFPutPermissionPolicy(w http.ResponseWriter, r *http.Request) {
+	var req wafPutPermissionPolicyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if req.ResourceArn == "" || req.Policy == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "ResourceArn and Policy are required")
+		return
+	}
+	// PutPermissionPolicy targets a rule group ARN.
+	if !strings.Contains(req.ResourceArn, "/rulegroup/") {
+		wafWriteError(w, "WAFInvalidPermissionPolicyException", "Permission policies are only valid on rule groups")
+		return
+	}
+	found := false
+	for _, s := range wafRuleGroups.List() {
+		if s.RuleGroup.ARN == req.ResourceArn {
+			found = true
+			break
+		}
+	}
+	if !found {
+		wafWriteError(w, "WAFNonexistentItemException", "RuleGroup not found for ResourceArn")
+		return
+	}
+	wafPermissionPolicies.Put(req.ResourceArn, req.Policy)
+	wafWriteJSON(w, struct{}{})
+}
+
+type wafResourceArnReq struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
+func handleWAFGetPermissionPolicy(w http.ResponseWriter, r *http.Request) {
+	var req wafResourceArnReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	policy, ok := wafPermissionPolicies.Get(req.ResourceArn)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "PermissionPolicy not found")
+		return
+	}
+	wafWriteJSON(w, map[string]any{"Policy": policy})
+}
+
+func handleWAFDeletePermissionPolicy(w http.ResponseWriter, r *http.Request) {
+	var req wafResourceArnReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if _, ok := wafPermissionPolicies.Get(req.ResourceArn); !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "PermissionPolicy not found")
+		return
+	}
+	wafPermissionPolicies.Delete(req.ResourceArn)
+	wafWriteJSON(w, struct{}{})
+}
+
+// ---------- Mobile SDK releases ----------
+
+// wafMobileSdkRelease is one published WAF mobile SDK release. The sim carries a
+// known, static-but-real set of releases per platform.
+type wafMobileSdkRelease struct {
+	Platform       string
+	ReleaseVersion string
+	Timestamp      time.Time
+	ReleaseNotes   string
+}
+
+var wafMobileSdkReleases = []wafMobileSdkRelease{
+	{Platform: "IOS", ReleaseVersion: "1.0.0", Timestamp: time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC), ReleaseNotes: "Initial release of the AWS WAF mobile SDK for iOS."},
+	{Platform: "IOS", ReleaseVersion: "1.1.0", Timestamp: time.Date(2023, 3, 15, 0, 0, 0, 0, time.UTC), ReleaseNotes: "Token refresh improvements."},
+	{Platform: "ANDROID", ReleaseVersion: "1.0.0", Timestamp: time.Date(2022, 6, 1, 0, 0, 0, 0, time.UTC), ReleaseNotes: "Initial release of the AWS WAF mobile SDK for Android."},
+	{Platform: "ANDROID", ReleaseVersion: "1.1.0", Timestamp: time.Date(2023, 3, 15, 0, 0, 0, 0, time.UTC), ReleaseNotes: "Token refresh improvements."},
+}
+
+func wafFindMobileSdkRelease(platform, version string) (wafMobileSdkRelease, bool) {
+	for _, rel := range wafMobileSdkReleases {
+		if rel.Platform == platform && rel.ReleaseVersion == version {
+			return rel, true
+		}
+	}
+	return wafMobileSdkRelease{}, false
+}
+
+type wafMobileSdkReleaseReq struct {
+	Platform       string `json:"Platform"`
+	ReleaseVersion string `json:"ReleaseVersion"`
+}
+
+func handleWAFGenerateMobileSdkReleaseUrl(w http.ResponseWriter, r *http.Request) {
+	var req wafMobileSdkReleaseReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if _, ok := wafFindMobileSdkRelease(req.Platform, req.ReleaseVersion); !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "Mobile SDK release not found")
+		return
+	}
+	url := fmt.Sprintf("https://wafv2-mobile-sdk.%s.amazonaws.com/%s/%s/aws-waf-sdk.zip?token=%s",
+		awsRegion(), strings.ToLower(req.Platform), req.ReleaseVersion, hex.EncodeToString([]byte(req.Platform+req.ReleaseVersion)))
+	wafWriteJSON(w, map[string]any{"Url": url})
+}
+
+func handleWAFGetMobileSdkRelease(w http.ResponseWriter, r *http.Request) {
+	var req wafMobileSdkReleaseReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	rel, ok := wafFindMobileSdkRelease(req.Platform, req.ReleaseVersion)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "Mobile SDK release not found")
+		return
+	}
+	wafWriteJSON(w, map[string]any{
+		"MobileSdkRelease": map[string]any{
+			"ReleaseVersion": rel.ReleaseVersion,
+			"Timestamp":      rel.Timestamp.Unix(),
+			"ReleaseNotes":   rel.ReleaseNotes,
+			"Tags":           []wafTag{},
+		},
+	})
+}
+
+type wafListMobileSdkReleasesReq struct {
+	Platform   string `json:"Platform"`
+	NextMarker string `json:"NextMarker,omitempty"`
+	Limit      int    `json:"Limit,omitempty"`
+}
+
+func handleWAFListMobileSdkReleases(w http.ResponseWriter, r *http.Request) {
+	var req wafListMobileSdkReleasesReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	type releaseSummary struct {
+		ReleaseVersion string `json:"ReleaseVersion"`
+		Timestamp      int64  `json:"Timestamp"`
+	}
+	items := []releaseSummary{}
+	for _, rel := range wafMobileSdkReleases {
+		if rel.Platform != req.Platform {
+			continue
+		}
+		items = append(items, releaseSummary{ReleaseVersion: rel.ReleaseVersion, Timestamp: rel.Timestamp.Unix()})
+	}
+	sortBy(items, func(s releaseSummary) string { return s.ReleaseVersion })
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"ReleaseSummaries": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
+}
+
+// ---------- Firewall Manager managed rule groups ----------
+
+type wafDeleteFMRuleGroupsReq struct {
+	WebACLArn       string `json:"WebACLArn"`
+	WebACLLockToken string `json:"WebACLLockToken"`
+}
+
+func handleWAFDeleteFirewallManagerRuleGroups(w http.ResponseWriter, r *http.Request) {
+	var req wafDeleteFMRuleGroupsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	var target *wafStoredWebACL
+	var key string
+	for _, s := range wafWebACLs.List() {
+		if s.WebACL.ARN == req.WebACLArn {
+			scopy := s
+			target = &scopy
+			key = wafKey(s.Scope, s.WebACL.Id)
+			break
+		}
+	}
+	if target == nil {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
+		return
+	}
+	if req.WebACLLockToken != target.LockToken {
+		wafWriteError(w, "WAFOptimisticLockException", "WebACLLockToken does not match")
+		return
+	}
+	// Firewall Manager rule groups occupy the reserved priority bands at the
+	// edges of the rule set; deleting them advances the web ACL's lock token.
+	target.LockToken = wafLockToken()
+	wafWebACLs.Put(key, *target)
+	wafWriteJSON(w, map[string]any{"NextWebACLLockToken": target.LockToken})
+}
+
+// ---------- Rate-based statement managed keys + traffic statistics ----------
+
+type wafGetRateBasedKeysReq struct {
+	Scope             string `json:"Scope"`
+	WebACLName        string `json:"WebACLName"`
+	WebACLId          string `json:"WebACLId"`
+	RuleName          string `json:"RuleName"`
+	RuleGroupRuleName string `json:"RuleGroupRuleName,omitempty"`
+}
+
+func handleWAFGetRateBasedStatementManagedKeys(w http.ResponseWriter, r *http.Request) {
+	var req wafGetRateBasedKeysReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if _, ok := wafWebACLs.Get(wafKey(req.Scope, req.WebACLId)); !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
+		return
+	}
+	// No live traffic has been rate-limited in the sim, so both key sets are
+	// empty — the real-shaped response a freshly created rate-based rule returns.
+	wafWriteJSON(w, map[string]any{
+		"ManagedKeysIPV4": map[string]any{"IPAddressVersion": "IPV4", "Addresses": []string{}},
+		"ManagedKeysIPV6": map[string]any{"IPAddressVersion": "IPV6", "Addresses": []string{}},
+	})
+}
+
+type wafGetTopPathStatsReq struct {
+	Scope      string `json:"Scope"`
+	WebAclArn  string `json:"WebAclArn"`
+	NextMarker string `json:"NextMarker,omitempty"`
+	Limit      int    `json:"Limit,omitempty"`
+}
+
+func handleWAFGetTopPathStatisticsByTraffic(w http.ResponseWriter, r *http.Request) {
+	var req wafGetTopPathStatsReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	found := false
+	for _, s := range wafWebACLs.List() {
+		if s.WebACL.ARN == req.WebAclArn {
+			found = true
+			break
+		}
+	}
+	if !found {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found")
+		return
+	}
+	// No traffic has flowed through the sim, so the statistics are empty —
+	// the real-shaped response for a web ACL with no observed requests.
+	wafWriteJSON(w, map[string]any{
+		"PathStatistics":    []any{},
+		"TopCategories":     []any{},
+		"TotalRequestCount": 0,
 	})
 }

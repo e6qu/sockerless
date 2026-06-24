@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -55,7 +56,16 @@ type CloudTrailEvent struct {
 	Resources    []CloudTrailResource
 	ErrorCode    string
 	ErrorMessage string
+	// Seq is a monotonic record-order sequence used as the total-order
+	// tiebreaker among events that share a (second-granularity) EventTime, so
+	// LookupEvents pages them newest-first deterministically rather than by a
+	// random EventId. Internal only — cloudTrailEventJSON projects the wire
+	// fields explicitly, so Seq never leaks to a client.
+	Seq int64
 }
+
+// cloudTrailSeq is the monotonic source for CloudTrailEvent.Seq.
+var cloudTrailSeq int64
 
 type CloudTrailResource struct {
 	ResourceName string
@@ -323,10 +333,10 @@ func handleCloudTrailLookupEvents(w http.ResponseWriter, r *http.Request) {
 
 	start := 0
 	if req.NextToken != "" {
-		if curTime, curID, ok := cloudTrailDecodeToken(req.NextToken); ok {
+		if curTime, curSeq, ok := cloudTrailDecodeToken(req.NextToken); ok {
 			start = len(matched) // token past the end → empty page
 			for i, ev := range matched {
-				if cloudTrailAfterCursor(ev, curTime, curID) {
+				if cloudTrailAfterCursor(ev, curTime, curSeq) {
 					start = i
 					break
 				}
@@ -369,7 +379,10 @@ func cloudTrailMatchedOrdered(events []CloudTrailEvent, attrs []cloudTrailLookup
 		if ordered[i].EventTime != ordered[j].EventTime {
 			return ordered[i].EventTime > ordered[j].EventTime
 		}
-		return ordered[i].EventId > ordered[j].EventId
+		// Same second: order by record sequence (newest first), a deterministic
+		// chronological tiebreaker — not the random EventId, which buried a
+		// just-recorded event among same-second events under heavy volume.
+		return ordered[i].Seq > ordered[j].Seq
 	})
 	matched := make([]CloudTrailEvent, 0, len(ordered))
 	for _, ev := range ordered {
@@ -412,28 +425,32 @@ func cloudTrailFilterTimeWindow(events []CloudTrailEvent, start, end *float64) [
 // newer (sort before the cursor) and so are never revisited, and none are
 // skipped — each matching event is returned exactly once.
 func cloudTrailEncodeToken(ev CloudTrailEvent) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(ev.EventTime + "\x00" + ev.EventId))
+	return base64.RawURLEncoding.EncodeToString([]byte(ev.EventTime + "\x00" + strconv.FormatInt(ev.Seq, 10)))
 }
 
-func cloudTrailDecodeToken(token string) (eventTime, eventID string, ok bool) {
+func cloudTrailDecodeToken(token string) (eventTime string, seq int64, ok bool) {
 	raw, err := base64.RawURLEncoding.DecodeString(token)
 	if err != nil {
-		return "", "", false
+		return "", 0, false
 	}
 	parts := strings.SplitN(string(raw), "\x00", 2)
 	if len(parts) != 2 {
-		return "", "", false
+		return "", 0, false
 	}
-	return parts[0], parts[1], true
+	seq, err = strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return "", 0, false
+	}
+	return parts[0], seq, true
 }
 
 // cloudTrailAfterCursor reports whether ev sorts strictly after the cursor in
 // the descending (EventTime, EventId) order — i.e. ev belongs on a later page.
-func cloudTrailAfterCursor(ev CloudTrailEvent, curTime, curID string) bool {
+func cloudTrailAfterCursor(ev CloudTrailEvent, curTime string, curSeq int64) bool {
 	if ev.EventTime != curTime {
 		return ev.EventTime < curTime // descending by time: later page = older event
 	}
-	return ev.EventId < curID // same second: descending by id
+	return ev.Seq < curSeq // same second: descending by record sequence
 }
 
 func handleCloudTrailDeleteTrail(w http.ResponseWriter, r *http.Request) {
@@ -986,6 +1003,7 @@ func cloudTrailRecord(ev CloudTrailEvent) {
 	}
 	ev.EventId = generateUUID()
 	ev.EventTime = time.Now().UTC().Format(time.RFC3339)
+	ev.Seq = atomic.AddInt64(&cloudTrailSeq, 1)
 	if ev.Username == "" && ev.InvokedBy == "" {
 		ev.Username = "sockerless"
 	}

@@ -13,6 +13,8 @@ GO_ENV         := GOWORK=off CGO_ENABLED=0
 GO_LDFLAGS      := -s -w
 RUN_ENV        := SIM_LISTEN_ADDR=:4566
 RUN_FLAGS      :=
+SDK_TEST_TIMEOUT ?= 600s
+SDK_TEST_ARGS    ?= ./...
 CLI_TEST_TIMEOUT ?= 600s
 CLI_TEST_ARGS    ?= ./...
 TERRAFORM_TEST_TIMEOUT ?= 300s
@@ -38,7 +40,7 @@ shared-test: ## go test the shared/ helper module
 	cd shared && $(GO_ENV) go test -v -count=1 ./...
 
 sdk-test: build ## go test the SDK-driven sim tests
-	cd sdk-tests && $(GO_ENV) go test -v -count=1 ./...
+	cd sdk-tests && $(GO_ENV) go test -v -count=1 -timeout $(SDK_TEST_TIMEOUT) $(SDK_TEST_ARGS)
 
 cli-test: build ## go test the CLI-driven sim tests
 	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout $(CLI_TEST_TIMEOUT) $(CLI_TEST_ARGS)
