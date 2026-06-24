@@ -94,6 +94,14 @@ func TestAPIGateway_RestApiLifecycle(t *testing.T) {
 		"--stage-name", "cli",
 	)), `"stageName": "cli"`)
 
+	// List endpoints: the deployment + stage just created appear.
+	assert.Contains(t, runCLI(t, awsCLI("apigateway", "get-deployments",
+		"--rest-api-id", created.ID,
+	)), deployment.ID)
+	assert.Contains(t, runCLI(t, awsCLI("apigateway", "get-stages",
+		"--rest-api-id", created.ID,
+	)), `"stageName": "cli"`)
+
 	runCLI(t, awsCLI("apigateway", "delete-stage",
 		"--rest-api-id", created.ID,
 		"--stage-name", "cli",
@@ -165,6 +173,17 @@ func TestAPIGatewayV2_HttpApiLifecycle(t *testing.T) {
 		"--api-id", api.APIID,
 		"--route-id", route.RouteID,
 	)), route.RouteID)
+
+	// UpdateRoute (PATCH) changes the route key; GetRoute reflects it.
+	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "update-route",
+		"--api-id", api.APIID,
+		"--route-id", route.RouteID,
+		"--route-key", "POST /cli-updated",
+	)), `"RouteKey": "POST /cli-updated"`)
+	assert.Contains(t, runCLI(t, awsCLI("apigatewayv2", "get-route",
+		"--api-id", api.APIID,
+		"--route-id", route.RouteID,
+	)), `"RouteKey": "POST /cli-updated"`)
 
 	deploymentOut := runCLI(t, awsCLI("apigatewayv2", "create-deployment",
 		"--api-id", api.APIID,

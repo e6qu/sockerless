@@ -249,6 +249,7 @@ func serviceCoverage(m *smithyService, jsonTargets []string, versioned map[strin
 // by cloudTrailRecordedREST) for its operation coverage — the REST analogue of
 // reading the awsJson/awsQuery routers.
 var restConformanceSources = map[string]string{
+	"Cloudfront2020_05_31":         "cloudfront.amazonaws.com", // Amazon CloudFront
 	"ApiGatewayV2":                 "apigateway.amazonaws.com", // Amazon API Gateway v2
 	"AWSGirApiService":             "lambda.amazonaws.com",     // AWS Lambda
 	"AWSBatchV20160810":            "batch.amazonaws.com",      // AWS Batch
@@ -282,13 +283,13 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
 // must bump the floor (the ratchet ratchets up).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            91, // ec2Query
-	"AWSSecurityTokenServiceV20110615":     4,  // STS (awsQuery, unversioned)
-	"AmazonEC2ContainerRegistry_V20150921": 26, // ECR
+	"AmazonEC2":                            102, // ec2Query
+	"AWSSecurityTokenServiceV20110615":     4,   // STS (awsQuery, unversioned)
+	"AmazonEC2ContainerRegistry_V20150921": 26,  // ECR
 	"AmazonElastiCacheV9":                  25,
-	"AmazonRDSv19":                         25,
+	"AmazonRDSv19":                         40,
 	"AutoScaling_2011_01_01":               13,
-	"AWSGlue":                              30,
+	"AWSGlue":                              52,
 	"AWSWAF_20190729":                      28,
 	"CloudTrail_20131101":                  16,
 	"CodeBuild_20161006":                   9,
@@ -297,12 +298,13 @@ var serviceCoverageFloor = map[string]int{
 	"AWSDnsV20130401":                      33, // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         29, // EFS (REST)
 	// restJson1 services measured via the REST registry (Part B).
-	"AWSGirApiService":        23, // AWS Lambda
-	"AWSBatchV20160810":       19, // AWS Batch
+	"AWSGirApiService":        37, // AWS Lambda
+	"AWSBatchV20160810":       24, // AWS Batch
 	"BackplaneControlService": 28, // Amazon API Gateway
 	"Amplify":                 37,
 	"AWSChronosService":       9,  // EventBridge Scheduler
-	"ApiGatewayV2":            22, // Amazon API Gateway v2
+	"ApiGatewayV2":            23, // Amazon API Gateway v2
+	"Cloudfront2020_05_31":    52, // Amazon CloudFront (restXml)
 
 }
 

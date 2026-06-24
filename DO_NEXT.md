@@ -4,15 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194).** Every op grounded in AWS's `aws-sdk-go-v2` Smithy models + verified by the spec-shape validator (0 divergences) + real SDK/CLI round-trips — no guessing.
+`feat/ratchet-up-2` — **ratchet up EC2/RDS/Glue/Lambda/Batch/API Gateway + add CloudFront (BUG-2195).** All ops spec-validated against the vendored `aws-sdk-go-v2` Smithy models (0 divergences) + real SDK/CLI round-trips.
 
-- **Part A — ratcheted up 6 floored services (+77 ops, floors bumped):** EC2 88→91 (VPC endpoints — the other ~33 target networking ops were already present), RDS 13→25 (DB clusters, subnet/parameter groups, reboot, tags across all resource types), ElastiCache 13→25 (replication groups, subnet/parameter groups, reboot, tag rework), Glue 19→30 (Data Catalog database/table/partition CRUD + batch), Route 53 10→33 (health checks, traffic policies, VPC associations, query logging, geo), EFS 13→29 (fs/backup policies, replication, account preferences, resource + legacy tagging).
-- **Part B — measured the restJson1 services** via `restConformanceSources` + floors: Lambda (23/85), Batch (19/45), API Gateway v1 (28/124) + v2 (22/103), Amplify (37/37, complete), EventBridge Scheduler (9/12 — `schedulerRecorded` now records into `restRegisteredOps`).
-- **Gate now measures ~36 AWS services** (15 exact-list + S3 + 20 coverage-floor).
-- **Hook improvement:** `scripts/check-simulator-tests.sh` now maps a `cloudTrailRecordedREST("Op",…)` REST route to its named op (lowercase subresource paths like `/policy` are exercised by the SDK op, not the literal path).
+- **Ratcheted up 6 floored services:** EC2 91→102 (VPC endpoints, AMI/placement-group/DHCP-options), RDS 25→40 (DB cluster snapshots, cluster param/option groups, read replicas, events, engine metadata), Glue 30→52 (crawlers, jobs+runs, triggers, connections), Lambda 23→37 (versions/aliases, event-source-mappings, layers, concurrency, function URLs), Batch 19→24 (job queues, job definitions, jobs), API Gateway v1/v2 (deployments/stages, UpdateRoute).
+- **Added CloudFront** (52/167) to the conformance gate via the REST registry.
+- **Gate now measures ~37 AWS services.**
+- **Note:** 5/6 implementation agents were cut off by a weekly usage limit; their compiling work was completed by hand (Lambda tests written + 4 cut-off test bugs fixed). The lesson: a single weekly-limit event can halt a 6-agent fan-out mid-flight — favour fewer/smaller agents or commit partial green state sooner.
 - Tests: aws sim/sdk/cli build/lint(0)/unit green; contract + cli-shard + all conformance tests pass; spec-shape validator 0 divergences.
 
-**Next candidates:** keep ratcheting up the floored services (more EC2/RDS/ElastiCache/Glue/Lambda/Batch/API Gateway ops — each bumps its floor); add restXml CloudFront + the remaining awsJson services (CloudTrail, CodeBuild, WAFv2) to higher coverage. Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
+**Next candidates:** keep ratcheting up the floored services (more EC2/RDS/Glue/Lambda/Batch/API Gateway/CloudFront ops — each bumps its floor); raise the remaining awsJson services (CloudTrail, CodeBuild, WAFv2). Then live-cloud (1075). Open GitHub issues: #394 (azuread upstream-blocked).
 
 ### (history) `feat/iam-conformance-eventing` (MERGED as #663) — IAM policy-engine conformance system + completeness + service-initiated event delivery (BUG-2186/2187): the conformance gate drove the IAM engine to 26/26 operators + 24/24 condition keys, and SNS/EventBridge/S3 now actually deliver events to SQS/Lambda authorized via the target resource policy.
 

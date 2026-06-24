@@ -335,3 +335,233 @@ func TestGlue_JobCRUD_CLI(t *testing.T) {
 	errOut := runCLIExpectError(t, awsCLI("glue", "get-job-runs", "--job-name", "glue-cli-no-such-job"))
 	assert.Contains(t, errOut, "EntityNotFoundException")
 }
+
+func TestGlue_JobUpdateListBatchStop_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-job",
+		"--name", "glue-cli-upd-job",
+		"--role", "arn:aws:iam::123456789012:role/glue-role",
+		"--command", `{"Name":"glueetl","ScriptLocation":"s3://bucket/script.py"}`,
+		"--description", "before",
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-job", "--job-name", "glue-cli-upd-job"))
+	})
+
+	runCLI(t, awsCLI("glue", "update-job",
+		"--job-name", "glue-cli-upd-job",
+		"--job-update", `{"Role":"arn:aws:iam::123456789012:role/glue-role","Command":{"Name":"glueetl","ScriptLocation":"s3://bucket/updated.py"},"Description":"after"}`,
+	))
+
+	out := runCLI(t, awsCLI("glue", "get-job", "--job-name", "glue-cli-upd-job"))
+	var get struct {
+		Job struct {
+			Description string `json:"Description"`
+			Command     struct {
+				ScriptLocation string `json:"ScriptLocation"`
+			} `json:"Command"`
+		} `json:"Job"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "after", get.Job.Description)
+	assert.Equal(t, "s3://bucket/updated.py", get.Job.Command.ScriptLocation)
+
+	out = runCLI(t, awsCLI("glue", "list-jobs"))
+	var list struct {
+		JobNames []string `json:"JobNames"`
+	}
+	parseJSON(t, out, &list)
+	assert.Contains(t, list.JobNames, "glue-cli-upd-job")
+
+	out = runCLI(t, awsCLI("glue", "batch-stop-job-run",
+		"--job-name", "glue-cli-upd-job",
+		"--job-run-ids", "jr_nope"))
+	var stop struct {
+		Errors []struct {
+			JobRunID string `json:"JobRunId"`
+		} `json:"Errors"`
+	}
+	parseJSON(t, out, &stop)
+	require.Len(t, stop.Errors, 1)
+	assert.Equal(t, "jr_nope", stop.Errors[0].JobRunID)
+}
+
+func TestGlue_CrawlerCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-crawler",
+		"--name", "glue-cli-crawler",
+		"--role", "arn:aws:iam::123456789012:role/glue-crawler-role",
+		"--database-name", "glue-cli-crawler-db",
+		"--targets", `{"S3Targets":[{"Path":"s3://bucket/data/"}]}`,
+		"--description", "cli crawler",
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-crawler", "--name", "glue-cli-crawler"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-crawler", "--name", "glue-cli-crawler"))
+	var get struct {
+		Crawler struct {
+			Name         string `json:"Name"`
+			DatabaseName string `json:"DatabaseName"`
+			Description  string `json:"Description"`
+			State        string `json:"State"`
+			Targets      struct {
+				S3Targets []struct {
+					Path string `json:"Path"`
+				} `json:"S3Targets"`
+			} `json:"Targets"`
+		} `json:"Crawler"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-crawler", get.Crawler.Name)
+	assert.Equal(t, "glue-cli-crawler-db", get.Crawler.DatabaseName)
+	require.Len(t, get.Crawler.Targets.S3Targets, 1)
+	assert.Equal(t, "s3://bucket/data/", get.Crawler.Targets.S3Targets[0].Path)
+
+	runCLI(t, awsCLI("glue", "update-crawler",
+		"--name", "glue-cli-crawler",
+		"--role", "arn:aws:iam::123456789012:role/glue-crawler-role",
+		"--description", "updated crawler",
+	))
+	out = runCLI(t, awsCLI("glue", "get-crawler", "--name", "glue-cli-crawler"))
+	parseJSON(t, out, &get)
+	assert.Equal(t, "updated crawler", get.Crawler.Description)
+
+	runCLI(t, awsCLI("glue", "start-crawler", "--name", "glue-cli-crawler"))
+	out = runCLI(t, awsCLI("glue", "get-crawler", "--name", "glue-cli-crawler"))
+	parseJSON(t, out, &get)
+	assert.Equal(t, "RUNNING", get.Crawler.State)
+
+	runCLI(t, awsCLI("glue", "stop-crawler", "--name", "glue-cli-crawler"))
+
+	out = runCLI(t, awsCLI("glue", "get-crawlers"))
+	var gcs struct {
+		Crawlers []struct {
+			Name string `json:"Name"`
+		} `json:"Crawlers"`
+	}
+	parseJSON(t, out, &gcs)
+	found := false
+	for _, cr := range gcs.Crawlers {
+		if cr.Name == "glue-cli-crawler" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	out = runCLI(t, awsCLI("glue", "list-crawlers"))
+	var lcs struct {
+		CrawlerNames []string `json:"CrawlerNames"`
+	}
+	parseJSON(t, out, &lcs)
+	assert.Contains(t, lcs.CrawlerNames, "glue-cli-crawler")
+}
+
+func TestGlue_TriggerCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-job",
+		"--name", "glue-cli-trigger-job",
+		"--role", "arn:aws:iam::123456789012:role/glue-role",
+		"--command", `{"Name":"glueetl","ScriptLocation":"s3://bucket/script.py"}`,
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-job", "--job-name", "glue-cli-trigger-job"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "create-trigger",
+		"--name", "glue-cli-trigger",
+		"--type", "SCHEDULED",
+		"--schedule", "cron(15 12 * * ? *)",
+		"--actions", `[{"JobName":"glue-cli-trigger-job"}]`,
+		"--description", "cli trigger",
+	))
+	var created struct {
+		Name string `json:"Name"`
+	}
+	parseJSON(t, out, &created)
+	assert.Equal(t, "glue-cli-trigger", created.Name)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-trigger", "--name", "glue-cli-trigger"))
+	})
+
+	out = runCLI(t, awsCLI("glue", "get-trigger", "--name", "glue-cli-trigger"))
+	var get struct {
+		Trigger struct {
+			Name    string `json:"Name"`
+			Type    string `json:"Type"`
+			State   string `json:"State"`
+			Actions []struct {
+				JobName string `json:"JobName"`
+			} `json:"Actions"`
+		} `json:"Trigger"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "SCHEDULED", get.Trigger.Type)
+	require.Len(t, get.Trigger.Actions, 1)
+	assert.Equal(t, "glue-cli-trigger-job", get.Trigger.Actions[0].JobName)
+
+	runCLI(t, awsCLI("glue", "start-trigger", "--name", "glue-cli-trigger"))
+	out = runCLI(t, awsCLI("glue", "get-trigger", "--name", "glue-cli-trigger"))
+	parseJSON(t, out, &get)
+	assert.Equal(t, "ACTIVATED", get.Trigger.State)
+
+	runCLI(t, awsCLI("glue", "stop-trigger", "--name", "glue-cli-trigger"))
+
+	out = runCLI(t, awsCLI("glue", "get-triggers"))
+	var gts struct {
+		Triggers []struct {
+			Name string `json:"Name"`
+		} `json:"Triggers"`
+	}
+	parseJSON(t, out, &gts)
+	found := false
+	for _, tr := range gts.Triggers {
+		if tr.Name == "glue-cli-trigger" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_ConnectionCRUD_CLI(t *testing.T) {
+	runCLI(t, awsCLI("glue", "create-connection",
+		"--connection-input", `{"Name":"glue-cli-conn","Description":"cli connection","ConnectionType":"JDBC","ConnectionProperties":{"JDBC_CONNECTION_URL":"jdbc:mysql://host:3306/db","USERNAME":"admin"}}`,
+	))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-connection", "--connection-name", "glue-cli-conn"))
+	})
+
+	out := runCLI(t, awsCLI("glue", "get-connection", "--name", "glue-cli-conn"))
+	var get struct {
+		Connection struct {
+			Name                 string            `json:"Name"`
+			ConnectionType       string            `json:"ConnectionType"`
+			ConnectionProperties map[string]string `json:"ConnectionProperties"`
+		} `json:"Connection"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, "glue-cli-conn", get.Connection.Name)
+	assert.Equal(t, "JDBC", get.Connection.ConnectionType)
+	assert.Equal(t, "admin", get.Connection.ConnectionProperties["USERNAME"])
+
+	runCLI(t, awsCLI("glue", "update-connection",
+		"--name", "glue-cli-conn",
+		"--connection-input", `{"Name":"glue-cli-conn","Description":"updated connection","ConnectionType":"JDBC","ConnectionProperties":{"JDBC_CONNECTION_URL":"jdbc:mysql://host:3306/db2","USERNAME":"root"}}`,
+	))
+	out = runCLI(t, awsCLI("glue", "get-connection", "--name", "glue-cli-conn"))
+	parseJSON(t, out, &get)
+	assert.Equal(t, "root", get.Connection.ConnectionProperties["USERNAME"])
+
+	out = runCLI(t, awsCLI("glue", "get-connections"))
+	var gcs struct {
+		ConnectionList []struct {
+			Name string `json:"Name"`
+		} `json:"ConnectionList"`
+	}
+	parseJSON(t, out, &gcs)
+	found := false
+	for _, cn := range gcs.ConnectionList {
+		if cn.Name == "glue-cli-conn" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}

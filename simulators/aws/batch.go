@@ -38,6 +38,7 @@ type BatchJobQueue struct {
 	Status                  string            `json:"status"`
 	StatusReason            string            `json:"statusReason,omitempty"`
 	Priority                int               `json:"priority"`
+	SchedulingPolicyArn     string            `json:"schedulingPolicyArn,omitempty"`
 	ComputeEnvironmentOrder []map[string]any  `json:"computeEnvironmentOrder"`
 	Tags                    map[string]string `json:"tags,omitempty"`
 }
@@ -52,6 +53,14 @@ type BatchJobDefinition struct {
 	RetryStrategy       map[string]any    `json:"retryStrategy,omitempty"`
 	Timeout             map[string]any    `json:"timeout,omitempty"`
 	Tags                map[string]string `json:"tags,omitempty"`
+}
+
+type BatchSchedulingPolicy struct {
+	Name             string            `json:"name"`
+	Arn              string            `json:"arn"`
+	FairsharePolicy  map[string]any    `json:"fairsharePolicy,omitempty"`
+	QuotaSharePolicy map[string]any    `json:"quotaSharePolicy,omitempty"`
+	Tags             map[string]string `json:"tags,omitempty"`
 }
 
 type BatchJob struct {
@@ -74,6 +83,7 @@ var (
 	batchJobQueues    sim.Store[BatchJobQueue]
 	batchJobDefs      sim.Store[BatchJobDefinition]
 	batchJobs         sim.Store[BatchJob]
+	batchSchedPols    sim.Store[BatchSchedulingPolicy]
 	batchJobRevisions sim.Store[int]
 	batchJobHandles   sync.Map
 	batchMu           sync.Mutex
@@ -84,6 +94,7 @@ func registerBatch(srv *sim.Server) {
 	batchJobQueues = sim.MakeStore[BatchJobQueue](srv.DB(), "batch_job_queues")
 	batchJobDefs = sim.MakeStore[BatchJobDefinition](srv.DB(), "batch_job_definitions")
 	batchJobs = sim.MakeStore[BatchJob](srv.DB(), "batch_jobs")
+	batchSchedPols = sim.MakeStore[BatchSchedulingPolicy](srv.DB(), "batch_scheduling_policies")
 	batchJobRevisions = sim.MakeStore[int](srv.DB(), "batch_job_revisions")
 
 	batchResource := cloudTrailRESTResource("AWS::Batch::Resource", "resourceArn")
@@ -107,6 +118,12 @@ func registerBatch(srv *sim.Server) {
 	srv.HandleFunc("POST /v1/listjobs", cloudTrailRecordedREST("ListJobs", "batch.amazonaws.com", nil, handleBatchListJobs))
 	srv.HandleFunc("POST /v1/canceljob", cloudTrailRecordedREST("CancelJob", "batch.amazonaws.com", nil, handleBatchCancelJob))
 	srv.HandleFunc("POST /v1/terminatejob", cloudTrailRecordedREST("TerminateJob", "batch.amazonaws.com", nil, handleBatchTerminateJob))
+
+	srv.HandleFunc("POST /v1/createschedulingpolicy", cloudTrailRecordedREST("CreateSchedulingPolicy", "batch.amazonaws.com", nil, handleBatchCreateSchedulingPolicy))
+	srv.HandleFunc("POST /v1/describeschedulingpolicies", cloudTrailRecordedREST("DescribeSchedulingPolicies", "batch.amazonaws.com", nil, handleBatchDescribeSchedulingPolicies))
+	srv.HandleFunc("POST /v1/listschedulingpolicies", cloudTrailRecordedREST("ListSchedulingPolicies", "batch.amazonaws.com", nil, handleBatchListSchedulingPolicies))
+	srv.HandleFunc("POST /v1/updateschedulingpolicy", cloudTrailRecordedREST("UpdateSchedulingPolicy", "batch.amazonaws.com", nil, handleBatchUpdateSchedulingPolicy))
+	srv.HandleFunc("POST /v1/deleteschedulingpolicy", cloudTrailRecordedREST("DeleteSchedulingPolicy", "batch.amazonaws.com", nil, handleBatchDeleteSchedulingPolicy))
 
 	// Resource-level tags
 	srv.HandleFunc("GET /v1/tags/{resourceArn}", cloudTrailRecordedREST("ListTagsForResource", "batch.amazonaws.com", batchResource, handleBatchListTagsForResource))
@@ -289,6 +306,7 @@ func handleBatchCreateJobQueue(w http.ResponseWriter, r *http.Request) {
 		JobQueueName            string            `json:"jobQueueName"`
 		State                   string            `json:"state"`
 		Priority                int               `json:"priority"`
+		SchedulingPolicyArn     string            `json:"schedulingPolicyArn"`
 		ComputeEnvironmentOrder []map[string]any  `json:"computeEnvironmentOrder"`
 		Tags                    map[string]string `json:"tags"`
 	}
@@ -322,6 +340,7 @@ func handleBatchCreateJobQueue(w http.ResponseWriter, r *http.Request) {
 		State:                   state,
 		Status:                  "VALID",
 		Priority:                req.Priority,
+		SchedulingPolicyArn:     req.SchedulingPolicyArn,
 		ComputeEnvironmentOrder: ceOrder,
 		Tags:                    req.Tags,
 	}
@@ -368,6 +387,7 @@ func handleBatchUpdateJobQueue(w http.ResponseWriter, r *http.Request) {
 		JobQueue                string           `json:"jobQueue"`
 		State                   string           `json:"state"`
 		Priority                *int             `json:"priority"`
+		SchedulingPolicyArn     string           `json:"schedulingPolicyArn"`
 		ComputeEnvironmentOrder []map[string]any `json:"computeEnvironmentOrder"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -389,6 +409,9 @@ func handleBatchUpdateJobQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Priority != nil {
 		q.Priority = *req.Priority
+	}
+	if req.SchedulingPolicyArn != "" {
+		q.SchedulingPolicyArn = req.SchedulingPolicyArn
 	}
 	if req.ComputeEnvironmentOrder != nil {
 		q.ComputeEnvironmentOrder = req.ComputeEnvironmentOrder
@@ -774,6 +797,131 @@ func handleBatchTerminateJob(w http.ResponseWriter, r *http.Request) {
 	handleBatchCancelJob(w, r)
 }
 
+// ---------- Scheduling Policies ----------
+
+func handleBatchCreateSchedulingPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name             string            `json:"name"`
+		FairsharePolicy  map[string]any    `json:"fairsharePolicy"`
+		QuotaSharePolicy map[string]any    `json:"quotaSharePolicy"`
+		Tags             map[string]string `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		batchWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		batchWriteError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	batchMu.Lock()
+	defer batchMu.Unlock()
+
+	if _, ok := batchSchedPols.Get(req.Name); ok {
+		batchWriteError(w, http.StatusBadRequest, "Scheduling policy already exists: "+req.Name)
+		return
+	}
+	sp := BatchSchedulingPolicy{
+		Name:             req.Name,
+		Arn:              batchARN("scheduling-policy/" + req.Name),
+		FairsharePolicy:  req.FairsharePolicy,
+		QuotaSharePolicy: req.QuotaSharePolicy,
+		Tags:             req.Tags,
+	}
+	batchSchedPols.Put(req.Name, sp)
+	batchWriteJSON(w, http.StatusOK, map[string]any{
+		"name": sp.Name,
+		"arn":  sp.Arn,
+	})
+}
+
+func handleBatchDescribeSchedulingPolicies(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arns []string `json:"arns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		batchWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	result := []BatchSchedulingPolicy{}
+	for _, arn := range req.Arns {
+		name := batchNameFromARN(arn)
+		if sp, ok := batchSchedPols.Get(name); ok {
+			result = append(result, sp)
+		}
+	}
+	batchWriteJSON(w, http.StatusOK, map[string]any{"schedulingPolicies": result})
+}
+
+func handleBatchListSchedulingPolicies(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxResults *int32 `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	all := batchSchedPols.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Arn < all[j].Arn })
+	result := make([]map[string]any, 0, len(all))
+	for _, sp := range all {
+		result = append(result, map[string]any{"arn": sp.Arn})
+	}
+	page, next := awsPageExplicit(result, req.NextToken, awsMaxResults(req.MaxResults))
+	out := map[string]any{"schedulingPolicies": page}
+	if next != "" {
+		out["nextToken"] = next
+	}
+	batchWriteJSON(w, http.StatusOK, out)
+}
+
+func handleBatchUpdateSchedulingPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arn              string         `json:"arn"`
+		FairsharePolicy  map[string]any `json:"fairsharePolicy"`
+		QuotaSharePolicy map[string]any `json:"quotaSharePolicy"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		batchWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	batchMu.Lock()
+	defer batchMu.Unlock()
+
+	name := batchNameFromARN(req.Arn)
+	sp, ok := batchSchedPols.Get(name)
+	if !ok {
+		batchWriteError(w, http.StatusBadRequest, "Scheduling policy not found: "+req.Arn)
+		return
+	}
+	if req.FairsharePolicy != nil {
+		sp.FairsharePolicy = req.FairsharePolicy
+	}
+	if req.QuotaSharePolicy != nil {
+		sp.QuotaSharePolicy = req.QuotaSharePolicy
+	}
+	batchSchedPols.Put(name, sp)
+	batchWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleBatchDeleteSchedulingPolicy(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arn string `json:"arn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		batchWriteError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+
+	batchMu.Lock()
+	defer batchMu.Unlock()
+
+	batchSchedPols.Delete(batchNameFromARN(req.Arn))
+	batchWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
 // ---------- Tags (resource-level) ----------
 
 func handleBatchListTagsForResource(w http.ResponseWriter, r *http.Request) {
@@ -817,6 +965,11 @@ func batchTagsForARN(arn string) map[string]string {
 		if q, ok := batchJobQueues.Get(name); ok && q.Tags != nil {
 			return q.Tags
 		}
+	} else if strings.Contains(arn, ":scheduling-policy/") {
+		name := batchNameFromARN(arn)
+		if sp, ok := batchSchedPols.Get(name); ok && sp.Tags != nil {
+			return sp.Tags
+		}
 	}
 	return map[string]string{}
 }
@@ -844,6 +997,17 @@ func batchApplyTags(arn string, tags map[string]string) {
 			}
 			batchJobQueues.Put(name, q)
 		}
+	} else if strings.Contains(arn, ":scheduling-policy/") {
+		name := batchNameFromARN(arn)
+		if sp, ok := batchSchedPols.Get(name); ok {
+			if sp.Tags == nil {
+				sp.Tags = make(map[string]string)
+			}
+			for k, v := range tags {
+				sp.Tags[k] = v
+			}
+			batchSchedPols.Put(name, sp)
+		}
 	}
 }
 
@@ -863,6 +1027,14 @@ func batchRemoveTags(arn string, keys []string) {
 				delete(q.Tags, k)
 			}
 			batchJobQueues.Put(name, q)
+		}
+	} else if strings.Contains(arn, ":scheduling-policy/") {
+		name := batchNameFromARN(arn)
+		if sp, ok := batchSchedPols.Get(name); ok {
+			for _, k := range keys {
+				delete(sp.Tags, k)
+			}
+			batchSchedPols.Put(name, sp)
 		}
 	}
 }

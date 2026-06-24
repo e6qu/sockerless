@@ -223,3 +223,94 @@ func TestBatch_SubmitJob_CLI(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+func TestBatch_SchedulingPolicy_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-scheduling-policy",
+		"--name", "batch-cli-sp",
+		"--fairshare-policy", `{"shareDecaySeconds":3600,"computeReservation":50,"shareDistribution":[{"shareIdentifier":"teamA","weightFactor":0.5}]}`,
+		"--tags", "env=cli",
+	))
+	var created struct {
+		Name string `json:"name"`
+		Arn  string `json:"arn"`
+	}
+	parseJSON(t, out, &created)
+	require.NotEmpty(t, created.Arn)
+	require.Equal(t, "batch-cli-sp", created.Name)
+	arn := created.Arn
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-scheduling-policy", "--arn", arn))
+	})
+
+	out = runCLI(t, awsCLI("batch", "describe-scheduling-policies", "--arns", arn))
+	var described struct {
+		SchedulingPolicies []struct {
+			Name            string `json:"name"`
+			Arn             string `json:"arn"`
+			FairsharePolicy struct {
+				ShareDecaySeconds  int `json:"shareDecaySeconds"`
+				ComputeReservation int `json:"computeReservation"`
+				ShareDistribution  []struct {
+					ShareIdentifier string  `json:"shareIdentifier"`
+					WeightFactor    float64 `json:"weightFactor"`
+				} `json:"shareDistribution"`
+			} `json:"fairsharePolicy"`
+		} `json:"schedulingPolicies"`
+	}
+	parseJSON(t, out, &described)
+	require.Len(t, described.SchedulingPolicies, 1)
+	sp := described.SchedulingPolicies[0]
+	assert.Equal(t, "batch-cli-sp", sp.Name)
+	assert.Equal(t, 3600, sp.FairsharePolicy.ShareDecaySeconds)
+	assert.Equal(t, 50, sp.FairsharePolicy.ComputeReservation)
+	require.Len(t, sp.FairsharePolicy.ShareDistribution, 1)
+	assert.Equal(t, "teamA", sp.FairsharePolicy.ShareDistribution[0].ShareIdentifier)
+
+	out = runCLI(t, awsCLI("batch", "list-scheduling-policies"))
+	var listed struct {
+		SchedulingPolicies []struct {
+			Arn string `json:"arn"`
+		} `json:"schedulingPolicies"`
+	}
+	parseJSON(t, out, &listed)
+	found := false
+	for _, lp := range listed.SchedulingPolicies {
+		if lp.Arn == arn {
+			found = true
+		}
+	}
+	assert.True(t, found, "created scheduling policy should appear in list")
+
+	runCLI(t, awsCLI("batch", "update-scheduling-policy",
+		"--arn", arn,
+		"--fairshare-policy", `{"shareDecaySeconds":7200,"computeReservation":25}`,
+	))
+	out = runCLI(t, awsCLI("batch", "describe-scheduling-policies", "--arns", arn))
+	parseJSON(t, out, &described)
+	require.Len(t, described.SchedulingPolicies, 1)
+	assert.Equal(t, 7200, described.SchedulingPolicies[0].FairsharePolicy.ShareDecaySeconds)
+
+	runCLI(t, awsCLI("batch", "tag-resource", "--resource-arn", arn, "--tags", "team=platform"))
+	out = runCLI(t, awsCLI("batch", "list-tags-for-resource", "--resource-arn", arn))
+	var tagged struct {
+		Tags map[string]string `json:"tags"`
+	}
+	parseJSON(t, out, &tagged)
+	assert.Equal(t, "platform", tagged.Tags["team"])
+	assert.Equal(t, "cli", tagged.Tags["env"])
+
+	runCLI(t, awsCLI("batch", "untag-resource", "--resource-arn", arn, "--tag-keys", "team"))
+	out = runCLI(t, awsCLI("batch", "list-tags-for-resource", "--resource-arn", arn))
+	var afterUntag struct {
+		Tags map[string]string `json:"tags"`
+	}
+	parseJSON(t, out, &afterUntag)
+	_, has := afterUntag.Tags["team"]
+	assert.False(t, has)
+	assert.Equal(t, "cli", afterUntag.Tags["env"])
+
+	runCLI(t, awsCLI("batch", "delete-scheduling-policy", "--arn", arn))
+	out = runCLI(t, awsCLI("batch", "describe-scheduling-policies", "--arns", arn))
+	parseJSON(t, out, &described)
+	assert.Empty(t, described.SchedulingPolicies)
+}

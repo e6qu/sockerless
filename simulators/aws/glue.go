@@ -77,13 +77,65 @@ type GluePartition struct {
 	LastAnalyzedTime  *float64          `json:"LastAnalyzedTime,omitempty"`
 }
 
+// GlueCrawler models a Data Catalog crawler keyed by name.
+type GlueCrawler struct {
+	Name         string            `json:"Name"`
+	Role         string            `json:"Role"`
+	Targets      map[string]any    `json:"Targets,omitempty"`
+	DatabaseName string            `json:"DatabaseName,omitempty"`
+	Description  string            `json:"Description,omitempty"`
+	Classifiers  []string          `json:"Classifiers,omitempty"`
+	TablePrefix  string            `json:"TablePrefix,omitempty"`
+	Schedule     *GlueSchedule     `json:"Schedule,omitempty"`
+	State        string            `json:"State"`
+	CreationTime float64           `json:"CreationTime"`
+	LastUpdated  float64           `json:"LastUpdated"`
+	Version      int               `json:"Version"`
+	Tags         map[string]string `json:"Tags,omitempty"`
+}
+
+// GlueSchedule mirrors the Glue Schedule structure returned in a Crawler.
+type GlueSchedule struct {
+	ScheduleExpression string `json:"ScheduleExpression,omitempty"`
+	State              string `json:"State,omitempty"`
+}
+
+// GlueTrigger models a Glue workflow trigger keyed by name.
+type GlueTrigger struct {
+	ID           string            `json:"Id,omitempty"`
+	Name         string            `json:"Name"`
+	WorkflowName string            `json:"WorkflowName,omitempty"`
+	Type         string            `json:"Type"`
+	State        string            `json:"State"`
+	Description  string            `json:"Description,omitempty"`
+	Schedule     string            `json:"Schedule,omitempty"`
+	Actions      []map[string]any  `json:"Actions,omitempty"`
+	Predicate    map[string]any    `json:"Predicate,omitempty"`
+	Tags         map[string]string `json:"Tags,omitempty"`
+}
+
+// GlueConnection models a Data Catalog connection keyed by name.
+type GlueConnection struct {
+	Name                           string            `json:"Name"`
+	Description                    string            `json:"Description,omitempty"`
+	ConnectionType                 string            `json:"ConnectionType,omitempty"`
+	MatchCriteria                  []string          `json:"MatchCriteria,omitempty"`
+	ConnectionProperties           map[string]string `json:"ConnectionProperties,omitempty"`
+	PhysicalConnectionRequirements map[string]any    `json:"PhysicalConnectionRequirements,omitempty"`
+	CreationTime                   float64           `json:"CreationTime"`
+	LastUpdatedTime                float64           `json:"LastUpdatedTime"`
+}
+
 var (
-	glueDatabases  sim.Store[GlueDatabase]
-	glueTables     sim.Store[GlueTable]
-	gluePartitions sim.Store[GluePartition]
-	glueJobs       sim.Store[GlueJob]
-	glueJobRuns    sim.Store[GlueJobRun]
-	glueMu         sync.Mutex
+	glueDatabases   sim.Store[GlueDatabase]
+	glueTables      sim.Store[GlueTable]
+	gluePartitions  sim.Store[GluePartition]
+	glueJobs        sim.Store[GlueJob]
+	glueJobRuns     sim.Store[GlueJobRun]
+	glueCrawlers    sim.Store[GlueCrawler]
+	glueTriggers    sim.Store[GlueTrigger]
+	glueConnections sim.Store[GlueConnection]
+	glueMu          sync.Mutex
 )
 
 func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
@@ -92,6 +144,9 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	gluePartitions = sim.MakeStore[GluePartition](srv.DB(), "glue_partitions")
 	glueJobs = sim.MakeStore[GlueJob](srv.DB(), "glue_jobs")
 	glueJobRuns = sim.MakeStore[GlueJobRun](srv.DB(), "glue_job_runs")
+	glueCrawlers = sim.MakeStore[GlueCrawler](srv.DB(), "glue_crawlers")
+	glueTriggers = sim.MakeStore[GlueTrigger](srv.DB(), "glue_triggers")
+	glueConnections = sim.MakeStore[GlueConnection](srv.DB(), "glue_connections")
 
 	r.Register("AWSGlue.CreateDatabase", handleGlueCreateDatabase)
 	r.Register("AWSGlue.GetDatabase", handleGlueGetDatabase)
@@ -115,10 +170,32 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSGlue.CreateJob", handleGlueCreateJob)
 	r.Register("AWSGlue.GetJob", handleGlueGetJob)
 	r.Register("AWSGlue.GetJobs", handleGlueGetJobs)
+	r.Register("AWSGlue.UpdateJob", handleGlueUpdateJob)
 	r.Register("AWSGlue.DeleteJob", handleGlueDeleteJob)
+	r.Register("AWSGlue.ListJobs", handleGlueListJobs)
 	r.Register("AWSGlue.StartJobRun", handleGlueStartJobRun)
 	r.Register("AWSGlue.GetJobRun", handleGlueGetJobRun)
 	r.Register("AWSGlue.GetJobRuns", handleGlueGetJobRuns)
+	r.Register("AWSGlue.BatchStopJobRun", handleGlueBatchStopJobRun)
+	r.Register("AWSGlue.CreateCrawler", handleGlueCreateCrawler)
+	r.Register("AWSGlue.GetCrawler", handleGlueGetCrawler)
+	r.Register("AWSGlue.GetCrawlers", handleGlueGetCrawlers)
+	r.Register("AWSGlue.UpdateCrawler", handleGlueUpdateCrawler)
+	r.Register("AWSGlue.DeleteCrawler", handleGlueDeleteCrawler)
+	r.Register("AWSGlue.StartCrawler", handleGlueStartCrawler)
+	r.Register("AWSGlue.StopCrawler", handleGlueStopCrawler)
+	r.Register("AWSGlue.ListCrawlers", handleGlueListCrawlers)
+	r.Register("AWSGlue.CreateTrigger", handleGlueCreateTrigger)
+	r.Register("AWSGlue.GetTrigger", handleGlueGetTrigger)
+	r.Register("AWSGlue.GetTriggers", handleGlueGetTriggers)
+	r.Register("AWSGlue.DeleteTrigger", handleGlueDeleteTrigger)
+	r.Register("AWSGlue.StartTrigger", handleGlueStartTrigger)
+	r.Register("AWSGlue.StopTrigger", handleGlueStopTrigger)
+	r.Register("AWSGlue.CreateConnection", handleGlueCreateConnection)
+	r.Register("AWSGlue.GetConnection", handleGlueGetConnection)
+	r.Register("AWSGlue.GetConnections", handleGlueGetConnections)
+	r.Register("AWSGlue.UpdateConnection", handleGlueUpdateConnection)
+	r.Register("AWSGlue.DeleteConnection", handleGlueDeleteConnection)
 	r.Register("AWSGlue.GetPartitionIndexes", handleGlueGetPartitionIndexes)
 	r.Register("AWSGlue.TagResource", handleGlueTagResource)
 	r.Register("AWSGlue.UntagResource", handleGlueUntagResource)
@@ -1115,6 +1192,703 @@ func handleGlueGetJobRuns(w http.ResponseWriter, r *http.Request) {
 	glueWriteJSON(w, http.StatusOK, resp)
 }
 
+func handleGlueUpdateJob(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		JobName   string `json:"JobName"`
+		JobUpdate struct {
+			Description      string            `json:"Description"`
+			Role             string            `json:"Role"`
+			Command          map[string]any    `json:"Command"`
+			DefaultArguments map[string]string `json:"DefaultArguments"`
+			GlueVersion      string            `json:"GlueVersion"`
+			MaxCapacity      *float64          `json:"MaxCapacity"`
+			WorkerType       string            `json:"WorkerType"`
+			NumberOfWorkers  *int              `json:"NumberOfWorkers"`
+		} `json:"JobUpdate"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	job, ok := glueJobs.Get(req.JobName)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Job not found: "+req.JobName)
+		return
+	}
+	// JobUpdate replaces the configuration; tags are preserved (they ride GetTags).
+	upd := req.JobUpdate
+	job.Description = upd.Description
+	job.Role = upd.Role
+	job.Command = upd.Command
+	job.DefaultArguments = upd.DefaultArguments
+	job.GlueVersion = upd.GlueVersion
+	job.MaxCapacity = upd.MaxCapacity
+	job.WorkerType = upd.WorkerType
+	job.NumberOfWorkers = upd.NumberOfWorkers
+	job.LastModifiedOn = glueEpochNow()
+	glueJobs.Put(req.JobName, job)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"JobName": req.JobName})
+}
+
+func handleGlueListJobs(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := glueJobs.List()
+	names := make([]string, 0, len(all))
+	for _, job := range all {
+		names = append(names, job.Name)
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(names, req.NextToken, maxR, 25)
+	resp := map[string]any{"JobNames": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueBatchStopJobRun(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		JobName   string   `json:"JobName"`
+		JobRunIds []string `json:"JobRunIds"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	successes := make([]map[string]any, 0, len(req.JobRunIds))
+	errs := make([]map[string]any, 0)
+	for _, id := range req.JobRunIds {
+		key := req.JobName + "/" + id
+		run, ok := glueJobRuns.Get(key)
+		if !ok {
+			errs = append(errs, map[string]any{
+				"JobName":  req.JobName,
+				"JobRunId": id,
+				"ErrorDetail": map[string]any{
+					"ErrorCode":    "EntityNotFoundException",
+					"ErrorMessage": "Job run not found: " + id,
+				},
+			})
+			continue
+		}
+		if run.JobRunState == "RUNNING" || run.JobRunState == "STARTING" {
+			run.JobRunState = "STOPPING"
+			glueJobRuns.Put(key, run)
+		}
+		successes = append(successes, map[string]any{
+			"JobName":  req.JobName,
+			"JobRunId": id,
+		})
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{
+		"SuccessfulSubmissions": successes,
+		"Errors":                errs,
+	})
+}
+
+// ---------- Crawlers ----------
+
+func handleGlueCreateCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string            `json:"Name"`
+		Role         string            `json:"Role"`
+		Targets      map[string]any    `json:"Targets"`
+		DatabaseName string            `json:"DatabaseName"`
+		Description  string            `json:"Description"`
+		Classifiers  []string          `json:"Classifiers"`
+		TablePrefix  string            `json:"TablePrefix"`
+		Schedule     string            `json:"Schedule"`
+		Tags         map[string]string `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueCrawlers.Get(req.Name); ok {
+		glueWriteError(w, "AlreadyExistsException", "Crawler already exists: "+req.Name)
+		return
+	}
+	now := glueEpochNow()
+	crawler := GlueCrawler{
+		Name:         req.Name,
+		Role:         req.Role,
+		Targets:      req.Targets,
+		DatabaseName: req.DatabaseName,
+		Description:  req.Description,
+		Classifiers:  req.Classifiers,
+		TablePrefix:  req.TablePrefix,
+		State:        "READY",
+		CreationTime: now,
+		LastUpdated:  now,
+		Version:      1,
+		Tags:         req.Tags,
+	}
+	if req.Schedule != "" {
+		crawler.Schedule = &GlueSchedule{ScheduleExpression: req.Schedule, State: "SCHEDULED"}
+	}
+	glueCrawlers.Put(req.Name, crawler)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// glueCrawlerWire strips the persistence-only Tags member from the wire shape;
+// the real Crawler structure has no Tags field (tags ride GetTags).
+type glueCrawlerWire struct {
+	GlueCrawler
+}
+
+func (c glueCrawlerWire) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(c.GlueCrawler)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "Tags")
+	return json.Marshal(m)
+}
+
+func handleGlueGetCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	crawler, ok := glueCrawlers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Crawler not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Crawler": glueCrawlerWire{crawler}})
+}
+
+func handleGlueGetCrawlers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := glueCrawlers.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 25)
+	crawlers := make([]glueCrawlerWire, 0, len(page))
+	for _, c := range page {
+		crawlers = append(crawlers, glueCrawlerWire{c})
+	}
+	resp := map[string]any{"Crawlers": crawlers}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueUpdateCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string         `json:"Name"`
+		Role         string         `json:"Role"`
+		Targets      map[string]any `json:"Targets"`
+		DatabaseName string         `json:"DatabaseName"`
+		Description  string         `json:"Description"`
+		Classifiers  []string       `json:"Classifiers"`
+		TablePrefix  string         `json:"TablePrefix"`
+		Schedule     string         `json:"Schedule"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	crawler, ok := glueCrawlers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Crawler not found: "+req.Name)
+		return
+	}
+	if req.Role != "" {
+		crawler.Role = req.Role
+	}
+	if req.Targets != nil {
+		crawler.Targets = req.Targets
+	}
+	if req.DatabaseName != "" {
+		crawler.DatabaseName = req.DatabaseName
+	}
+	crawler.Description = req.Description
+	if req.Classifiers != nil {
+		crawler.Classifiers = req.Classifiers
+	}
+	if req.TablePrefix != "" {
+		crawler.TablePrefix = req.TablePrefix
+	}
+	if req.Schedule != "" {
+		crawler.Schedule = &GlueSchedule{ScheduleExpression: req.Schedule, State: "SCHEDULED"}
+	}
+	crawler.LastUpdated = glueEpochNow()
+	crawler.Version++
+	glueCrawlers.Put(req.Name, crawler)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueDeleteCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	crawler, ok := glueCrawlers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Crawler not found: "+req.Name)
+		return
+	}
+	if crawler.State == "RUNNING" {
+		glueWriteError(w, "CrawlerRunningException", "Cannot delete crawler while running: "+req.Name)
+		return
+	}
+	glueCrawlers.Delete(req.Name)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueStartCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	crawler, ok := glueCrawlers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Crawler not found: "+req.Name)
+		return
+	}
+	if crawler.State == "RUNNING" {
+		glueWriteError(w, "CrawlerRunningException", "Crawler is already running: "+req.Name)
+		return
+	}
+	crawler.State = "RUNNING"
+	crawler.LastUpdated = glueEpochNow()
+	glueCrawlers.Put(req.Name, crawler)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueStopCrawler(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	crawler, ok := glueCrawlers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Crawler not found: "+req.Name)
+		return
+	}
+	if crawler.State != "RUNNING" {
+		glueWriteError(w, "CrawlerNotRunningException", "Crawler is not running: "+req.Name)
+		return
+	}
+	crawler.State = "STOPPING"
+	crawler.LastUpdated = glueEpochNow()
+	glueCrawlers.Put(req.Name, crawler)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueListCrawlers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := glueCrawlers.List()
+	names := make([]string, 0, len(all))
+	for _, c := range all {
+		names = append(names, c.Name)
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(names, req.NextToken, maxR, 25)
+	resp := map[string]any{"CrawlerNames": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// ---------- Triggers ----------
+
+func handleGlueCreateTrigger(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name            string            `json:"Name"`
+		WorkflowName    string            `json:"WorkflowName"`
+		Type            string            `json:"Type"`
+		Schedule        string            `json:"Schedule"`
+		Predicate       map[string]any    `json:"Predicate"`
+		Actions         []map[string]any  `json:"Actions"`
+		Description     string            `json:"Description"`
+		StartOnCreation bool              `json:"StartOnCreation"`
+		Tags            map[string]string `json:"Tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name is required")
+		return
+	}
+	if req.Type == "" {
+		glueWriteError(w, "InvalidInputException", "Type is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueTriggers.Get(req.Name); ok {
+		glueWriteError(w, "AlreadyExistsException", "Trigger already exists: "+req.Name)
+		return
+	}
+	state := "CREATED"
+	if req.Type == "ON_DEMAND" {
+		state = "CREATED"
+	} else if req.StartOnCreation {
+		state = "ACTIVATED"
+	}
+	trigger := GlueTrigger{
+		ID:           strings.ReplaceAll(uuid.New().String(), "-", ""),
+		Name:         req.Name,
+		WorkflowName: req.WorkflowName,
+		Type:         req.Type,
+		State:        state,
+		Description:  req.Description,
+		Schedule:     req.Schedule,
+		Actions:      req.Actions,
+		Predicate:    req.Predicate,
+		Tags:         req.Tags,
+	}
+	glueTriggers.Put(req.Name, trigger)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+// glueTriggerWire strips the persistence-only Tags member from the wire shape;
+// the real Trigger structure has no Tags field (tags ride GetTags).
+type glueTriggerWire struct {
+	GlueTrigger
+}
+
+func (t glueTriggerWire) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(t.GlueTrigger)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "Tags")
+	return json.Marshal(m)
+}
+
+func handleGlueGetTrigger(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	trigger, ok := glueTriggers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Trigger not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Trigger": glueTriggerWire{trigger}})
+}
+
+func handleGlueGetTriggers(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken        string `json:"NextToken"`
+		DependentJobName string `json:"DependentJobName"`
+		MaxResults       *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := glueTriggers.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 25)
+	triggers := make([]glueTriggerWire, 0, len(page))
+	for _, t := range page {
+		triggers = append(triggers, glueTriggerWire{t})
+	}
+	resp := map[string]any{"Triggers": triggers}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueDeleteTrigger(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	glueTriggers.Delete(req.Name)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+func handleGlueStartTrigger(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	trigger, ok := glueTriggers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Trigger not found: "+req.Name)
+		return
+	}
+	trigger.State = "ACTIVATED"
+	glueTriggers.Put(req.Name, trigger)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+func handleGlueStopTrigger(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	trigger, ok := glueTriggers.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Trigger not found: "+req.Name)
+		return
+	}
+	trigger.State = "DEACTIVATED"
+	glueTriggers.Put(req.Name, trigger)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Name": req.Name})
+}
+
+// ---------- Connections ----------
+
+func handleGlueCreateConnection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConnectionInput struct {
+			Name                           string            `json:"Name"`
+			Description                    string            `json:"Description"`
+			ConnectionType                 string            `json:"ConnectionType"`
+			MatchCriteria                  []string          `json:"MatchCriteria"`
+			ConnectionProperties           map[string]string `json:"ConnectionProperties"`
+			PhysicalConnectionRequirements map[string]any    `json:"PhysicalConnectionRequirements"`
+		} `json:"ConnectionInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.ConnectionInput.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if _, ok := glueConnections.Get(req.ConnectionInput.Name); ok {
+		glueWriteError(w, "AlreadyExistsException", "Connection already exists: "+req.ConnectionInput.Name)
+		return
+	}
+	now := glueEpochNow()
+	in := req.ConnectionInput
+	conn := GlueConnection{
+		Name:                           in.Name,
+		Description:                    in.Description,
+		ConnectionType:                 in.ConnectionType,
+		MatchCriteria:                  in.MatchCriteria,
+		ConnectionProperties:           in.ConnectionProperties,
+		PhysicalConnectionRequirements: in.PhysicalConnectionRequirements,
+		CreationTime:                   now,
+		LastUpdatedTime:                now,
+	}
+	glueConnections.Put(in.Name, conn)
+	glueWriteJSON(w, http.StatusOK, map[string]any{"CreateConnectionStatus": "READY"})
+}
+
+func handleGlueGetConnection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name string `json:"Name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	conn, ok := glueConnections.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Connection not found: "+req.Name)
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Connection": conn})
+}
+
+func handleGlueGetConnections(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		NextToken  string `json:"NextToken"`
+		MaxResults *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := glueConnections.List()
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(all, req.NextToken, maxR, 25)
+	resp := map[string]any{"ConnectionList": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueUpdateConnection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name            string `json:"Name"`
+		ConnectionInput struct {
+			Name                           string            `json:"Name"`
+			Description                    string            `json:"Description"`
+			ConnectionType                 string            `json:"ConnectionType"`
+			MatchCriteria                  []string          `json:"MatchCriteria"`
+			ConnectionProperties           map[string]string `json:"ConnectionProperties"`
+			PhysicalConnectionRequirements map[string]any    `json:"PhysicalConnectionRequirements"`
+		} `json:"ConnectionInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	conn, ok := glueConnections.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Connection not found: "+req.Name)
+		return
+	}
+	in := req.ConnectionInput
+	conn.Description = in.Description
+	conn.ConnectionType = in.ConnectionType
+	conn.MatchCriteria = in.MatchCriteria
+	conn.ConnectionProperties = in.ConnectionProperties
+	conn.PhysicalConnectionRequirements = in.PhysicalConnectionRequirements
+	conn.LastUpdatedTime = glueEpochNow()
+	glueConnections.Put(req.Name, conn)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueDeleteConnection(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ConnectionName string `json:"ConnectionName"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	glueConnections.Delete(req.ConnectionName)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
 // ---------- Partition indexes ----------
 
 func handleGlueGetPartitionIndexes(w http.ResponseWriter, r *http.Request) {
@@ -1271,6 +2045,20 @@ func handleGlueGetTags(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		tags = db.Tags
+	case "crawler":
+		cr, ok := glueCrawlers.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		tags = cr.Tags
+	case "trigger":
+		tr, ok := glueTriggers.Get(name)
+		if !ok {
+			glueWriteError(w, "EntityNotFoundException", "Resource not found: "+req.ResourceArn)
+			return
+		}
+		tags = tr.Tags
 	default:
 		job, ok := glueJobs.Get(name)
 		if !ok {

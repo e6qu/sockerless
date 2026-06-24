@@ -94,6 +94,7 @@ func registerAPIGatewayV2(srv *sim.Server) {
 	mux.HandleFunc("POST /v2/apis/{apiId}/routes", cloudTrailRecordedREST("CreateRoute", "apigateway.amazonaws.com", apiResource, handleAPIGWv2CreateRoute))
 	mux.HandleFunc("GET /v2/apis/{apiId}/routes", cloudTrailRecordedREST("GetRoutes", "apigateway.amazonaws.com", apiResource, handleAPIGWv2ListRoutes))
 	mux.HandleFunc("GET /v2/apis/{apiId}/routes/{routeId}", cloudTrailRecordedREST("GetRoute", "apigateway.amazonaws.com", apiResource, handleAPIGWv2GetRoute))
+	mux.HandleFunc("PATCH /v2/apis/{apiId}/routes/{routeId}", cloudTrailRecordedREST("UpdateRoute", "apigateway.amazonaws.com", apiResource, handleAPIGWv2UpdateRoute))
 	mux.HandleFunc("DELETE /v2/apis/{apiId}/routes/{routeId}", cloudTrailRecordedREST("DeleteRoute", "apigateway.amazonaws.com", apiResource, handleAPIGWv2DeleteRoute))
 	mux.HandleFunc("POST /v2/apis/{apiId}/integrations", cloudTrailRecordedREST("CreateIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWv2CreateIntegration))
 	mux.HandleFunc("GET /v2/apis/{apiId}/integrations", cloudTrailRecordedREST("GetIntegrations", "apigateway.amazonaws.com", apiResource, handleAPIGWv2ListIntegrations))
@@ -239,6 +240,47 @@ func handleAPIGWv2GetRoute(w http.ResponseWriter, r *http.Request) {
 			"Invalid Route identifier specified %s", routeId)
 		return
 	}
+	sim.WriteJSON(w, http.StatusOK, route)
+}
+
+func handleAPIGWv2UpdateRoute(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "apiId")
+	routeId := sim.PathParam(r, "routeId")
+	route, ok := apigwv2Routes.Get(apigwv2StoreKey(apiId, routeId))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound,
+			"Invalid Route identifier specified %s", routeId)
+		return
+	}
+	// PATCH is a partial update: pointer fields distinguish absent from empty,
+	// so an omitted field leaves the stored value unchanged.
+	var req struct {
+		RouteKey          *string `json:"RouteKey"`
+		Target            *string `json:"Target"`
+		AuthorizationType *string `json:"AuthorizationType"`
+		ApiKeyRequired    *bool   `json:"ApiKeyRequired"`
+		OperationName     *string `json:"OperationName"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.RouteKey != nil {
+		route.RouteKey = *req.RouteKey
+	}
+	if req.Target != nil {
+		route.Target = *req.Target
+	}
+	if req.AuthorizationType != nil {
+		route.AuthorizationType = *req.AuthorizationType
+	}
+	if req.ApiKeyRequired != nil {
+		route.ApiKeyRequired = *req.ApiKeyRequired
+	}
+	if req.OperationName != nil {
+		route.OperationName = *req.OperationName
+	}
+	apigwv2Routes.Put(apigwv2StoreKey(apiId, routeId), route)
 	sim.WriteJSON(w, http.StatusOK, route)
 }
 

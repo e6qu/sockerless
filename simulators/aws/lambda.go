@@ -202,6 +202,32 @@ func registerLambda(srv *sim.Server) {
 	mux.HandleFunc("GET /2021-10-31/functions/{name}/url", cloudTrailRecordedREST("GetFunctionUrlConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionUrlConfig))
 	mux.HandleFunc("PUT /2021-10-31/functions/{name}/url", cloudTrailRecordedREST("UpdateFunctionUrlConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaUpdateFunctionUrlConfig))
 	mux.HandleFunc("DELETE /2021-10-31/functions/{name}/url", cloudTrailRecordedREST("DeleteFunctionUrlConfig", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteFunctionUrlConfig))
+	mux.HandleFunc("GET /2021-10-31/functions/{name}/urls", cloudTrailRecordedREST("ListFunctionUrlConfigs", "lambda.amazonaws.com", lambdaResource, handleLambdaListFunctionUrlConfigs))
+
+	// Event source mappings.
+	mux.HandleFunc("POST /2015-03-31/event-source-mappings", cloudTrailRecordedREST("CreateEventSourceMapping", "lambda.amazonaws.com", nil, handleLambdaCreateEventSourceMapping))
+	mux.HandleFunc("GET /2015-03-31/event-source-mappings", cloudTrailRecordedREST("ListEventSourceMappings", "lambda.amazonaws.com", nil, handleLambdaListEventSourceMappings))
+	mux.HandleFunc("GET /2015-03-31/event-source-mappings/{uuid}", cloudTrailRecordedREST("GetEventSourceMapping", "lambda.amazonaws.com", nil, handleLambdaGetEventSourceMapping))
+	mux.HandleFunc("PUT /2015-03-31/event-source-mappings/{uuid}", cloudTrailRecordedREST("UpdateEventSourceMapping", "lambda.amazonaws.com", nil, handleLambdaUpdateEventSourceMapping))
+	mux.HandleFunc("DELETE /2015-03-31/event-source-mappings/{uuid}", cloudTrailRecordedREST("DeleteEventSourceMapping", "lambda.amazonaws.com", nil, handleLambdaDeleteEventSourceMapping))
+
+	// Layers + layer versions. ListLayers and GetLayerVersionByArn share
+	// GET /2018-10-31/layers; the latter is keyed on ?find=LayerVersion&Arn=…
+	// and dispatched inside handleLambdaListLayers.
+	mux.HandleFunc("POST /2018-10-31/layers/{layer}/versions", cloudTrailRecordedREST("PublishLayerVersion", "lambda.amazonaws.com", nil, handleLambdaPublishLayerVersion))
+	mux.HandleFunc("GET /2018-10-31/layers/{layer}/versions", cloudTrailRecordedREST("ListLayerVersions", "lambda.amazonaws.com", nil, handleLambdaListLayerVersions))
+	mux.HandleFunc("GET /2018-10-31/layers/{layer}/versions/{version}", cloudTrailRecordedREST("GetLayerVersion", "lambda.amazonaws.com", nil, handleLambdaGetLayerVersion))
+	mux.HandleFunc("DELETE /2018-10-31/layers/{layer}/versions/{version}", cloudTrailRecordedREST("DeleteLayerVersion", "lambda.amazonaws.com", nil, handleLambdaDeleteLayerVersion))
+	// GetLayerVersionByArn shares this path (?find=LayerVersion&Arn=…); the
+	// event name is composed per-request so both ops land in the CloudTrail
+	// log and the conformance REST registry.
+	restRegisterOp("lambda.amazonaws.com", "GetLayerVersionByArn")
+	mux.HandleFunc("GET /2018-10-31/layers", cloudTrailRecordedRESTDynamic(lambdaLayersEventName, "lambda.amazonaws.com", nil, handleLambdaListLayers))
+
+	// Reserved concurrency.
+	mux.HandleFunc("PUT /2017-10-31/functions/{name}/concurrency", cloudTrailRecordedREST("PutFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionConcurrency))
+	mux.HandleFunc("GET /2019-09-30/functions/{name}/concurrency", cloudTrailRecordedREST("GetFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionConcurrency))
+	mux.HandleFunc("DELETE /2017-10-31/functions/{name}/concurrency", cloudTrailRecordedREST("DeleteFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteFunctionConcurrency))
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {
