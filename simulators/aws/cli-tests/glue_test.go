@@ -817,3 +817,282 @@ func TestGlue_SchemaRegistry_CLI(t *testing.T) {
 	assert.Equal(t, "AVRO", getSchema.DataFormat)
 	assert.Equal(t, "BACKWARD", getSchema.Compatibility)
 }
+
+func TestGlue_TableVersionsAndIndexes_CLI(t *testing.T) {
+	db := "glue-cli-ver-db"
+	tbl := "glue-cli-ver-tbl"
+	runCLI(t, awsCLI("glue", "create-database", "--database-input", `{"Name":"`+db+`"}`))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-table", "--database-name", db, "--name", tbl))
+		runCLI(t, awsCLI("glue", "delete-database", "--name", db))
+	})
+	runCLI(t, awsCLI("glue", "create-table",
+		"--database-name", db,
+		"--table-input", `{"Name":"`+tbl+`","StorageDescriptor":{"Location":"s3://bucket/v1/"},"PartitionKeys":[{"Name":"dt","Type":"string"}]}`,
+	))
+	runCLI(t, awsCLI("glue", "update-table",
+		"--database-name", db,
+		"--table-input", `{"Name":"`+tbl+`","StorageDescriptor":{"Location":"s3://bucket/v2/"}}`,
+	))
+
+	out := runCLI(t, awsCLI("glue", "get-table-versions", "--database-name", db, "--table-name", tbl))
+	var vers struct {
+		TableVersions []struct {
+			VersionId string `json:"VersionId"`
+		} `json:"TableVersions"`
+	}
+	parseJSON(t, out, &vers)
+	require.Len(t, vers.TableVersions, 2)
+	assert.Equal(t, "1", vers.TableVersions[0].VersionId)
+	assert.Equal(t, "2", vers.TableVersions[1].VersionId)
+
+	out = runCLI(t, awsCLI("glue", "get-table-version",
+		"--database-name", db, "--table-name", tbl, "--version-id", "1"))
+	var gv struct {
+		TableVersion struct {
+			VersionId string `json:"VersionId"`
+			Table     struct {
+				StorageDescriptor struct {
+					Location string `json:"Location"`
+				} `json:"StorageDescriptor"`
+			} `json:"Table"`
+		} `json:"TableVersion"`
+	}
+	parseJSON(t, out, &gv)
+	assert.Equal(t, "1", gv.TableVersion.VersionId)
+	assert.Equal(t, "s3://bucket/v1/", gv.TableVersion.Table.StorageDescriptor.Location)
+
+	runCLI(t, awsCLI("glue", "delete-table-version",
+		"--database-name", db, "--table-name", tbl, "--version-id", "1"))
+
+	out = runCLI(t, awsCLI("glue", "batch-delete-table-version",
+		"--database-name", db, "--table-name", tbl, "--version-ids", "999"))
+	var bd struct {
+		Errors []struct {
+			VersionId string `json:"VersionId"`
+		} `json:"Errors"`
+	}
+	parseJSON(t, out, &bd)
+	require.Len(t, bd.Errors, 1)
+	assert.Equal(t, "999", bd.Errors[0].VersionId)
+
+	// Partition index lifecycle.
+	runCLI(t, awsCLI("glue", "create-partition-index",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-index", `{"IndexName":"dt-index","Keys":["dt"]}`))
+
+	out = runCLI(t, awsCLI("glue", "get-partition-indexes", "--database-name", db, "--table-name", tbl))
+	var idx struct {
+		PartitionIndexDescriptorList []struct {
+			IndexName   string `json:"IndexName"`
+			IndexStatus string `json:"IndexStatus"`
+			Keys        []struct {
+				Name string `json:"Name"`
+				Type string `json:"Type"`
+			} `json:"Keys"`
+		} `json:"PartitionIndexDescriptorList"`
+	}
+	parseJSON(t, out, &idx)
+	require.Len(t, idx.PartitionIndexDescriptorList, 1)
+	assert.Equal(t, "dt-index", idx.PartitionIndexDescriptorList[0].IndexName)
+	assert.Equal(t, "ACTIVE", idx.PartitionIndexDescriptorList[0].IndexStatus)
+	require.Len(t, idx.PartitionIndexDescriptorList[0].Keys, 1)
+	assert.Equal(t, "dt", idx.PartitionIndexDescriptorList[0].Keys[0].Name)
+
+	runCLI(t, awsCLI("glue", "delete-partition-index",
+		"--database-name", db, "--table-name", tbl, "--index-name", "dt-index"))
+	out = runCLI(t, awsCLI("glue", "get-partition-indexes", "--database-name", db, "--table-name", tbl))
+	parseJSON(t, out, &idx)
+	assert.Empty(t, idx.PartitionIndexDescriptorList)
+}
+
+func TestGlue_ColumnStatistics_CLI(t *testing.T) {
+	db := "glue-cli-stats-db"
+	tbl := "glue-cli-stats-tbl"
+	runCLI(t, awsCLI("glue", "create-database", "--database-input", `{"Name":"`+db+`"}`))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-table", "--database-name", db, "--name", tbl))
+		runCLI(t, awsCLI("glue", "delete-database", "--name", db))
+	})
+	runCLI(t, awsCLI("glue", "create-table",
+		"--database-name", db,
+		"--table-input", `{"Name":"`+tbl+`","StorageDescriptor":{"Location":"s3://bucket/stats/","Columns":[{"Name":"id","Type":"bigint"}]},"PartitionKeys":[{"Name":"dt","Type":"string"}]}`,
+	))
+
+	statsList := `[{"ColumnName":"id","ColumnType":"bigint","AnalyzedTime":1700000000,"StatisticsData":{"Type":"LONG","LongColumnStatisticsData":{"MinimumValue":1,"MaximumValue":100,"NumberOfNulls":0,"NumberOfDistinctValues":100}}}]`
+
+	runCLI(t, awsCLI("glue", "update-column-statistics-for-table",
+		"--database-name", db, "--table-name", tbl,
+		"--column-statistics-list", statsList))
+
+	out := runCLI(t, awsCLI("glue", "get-column-statistics-for-table",
+		"--database-name", db, "--table-name", tbl, "--column-names", "id"))
+	var gcs struct {
+		ColumnStatisticsList []struct {
+			ColumnName     string `json:"ColumnName"`
+			StatisticsData struct {
+				LongColumnStatisticsData struct {
+					MaximumValue int64 `json:"MaximumValue"`
+				} `json:"LongColumnStatisticsData"`
+			} `json:"StatisticsData"`
+		} `json:"ColumnStatisticsList"`
+	}
+	parseJSON(t, out, &gcs)
+	require.Len(t, gcs.ColumnStatisticsList, 1)
+	assert.Equal(t, "id", gcs.ColumnStatisticsList[0].ColumnName)
+	assert.Equal(t, int64(100), gcs.ColumnStatisticsList[0].StatisticsData.LongColumnStatisticsData.MaximumValue)
+
+	runCLI(t, awsCLI("glue", "delete-column-statistics-for-table",
+		"--database-name", db, "--table-name", tbl, "--column-name", "id"))
+	out = runCLI(t, awsCLI("glue", "get-column-statistics-for-table",
+		"--database-name", db, "--table-name", tbl, "--column-names", "id"))
+	parseJSON(t, out, &gcs)
+	assert.Empty(t, gcs.ColumnStatisticsList)
+
+	// Partition-scoped statistics.
+	runCLI(t, awsCLI("glue", "create-partition",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-input", `{"Values":["2024-01-01"],"StorageDescriptor":{"Location":"s3://bucket/stats/dt=2024-01-01/"}}`))
+
+	runCLI(t, awsCLI("glue", "update-column-statistics-for-partition",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-values", "2024-01-01",
+		"--column-statistics-list", statsList))
+
+	out = runCLI(t, awsCLI("glue", "get-column-statistics-for-partition",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-values", "2024-01-01", "--column-names", "id"))
+	parseJSON(t, out, &gcs)
+	require.Len(t, gcs.ColumnStatisticsList, 1)
+	assert.Equal(t, "id", gcs.ColumnStatisticsList[0].ColumnName)
+
+	runCLI(t, awsCLI("glue", "delete-column-statistics-for-partition",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-values", "2024-01-01", "--column-name", "id"))
+	out = runCLI(t, awsCLI("glue", "get-column-statistics-for-partition",
+		"--database-name", db, "--table-name", tbl,
+		"--partition-values", "2024-01-01", "--column-names", "id"))
+	parseJSON(t, out, &gcs)
+	assert.Empty(t, gcs.ColumnStatisticsList)
+}
+
+func TestGlue_ResourcePolicyAndCatalog_CLI(t *testing.T) {
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":"glue:GetTable","Resource":"*"}]}`
+	out := runCLI(t, awsCLI("glue", "put-resource-policy", "--policy-in-json", policy))
+	var put struct {
+		PolicyHash string `json:"PolicyHash"`
+	}
+	parseJSON(t, out, &put)
+	assert.NotEmpty(t, put.PolicyHash)
+	t.Cleanup(func() {
+		runCLIIgnore(awsCLI("glue", "delete-resource-policy"))
+	})
+
+	out = runCLI(t, awsCLI("glue", "get-resource-policy"))
+	var get struct {
+		PolicyInJson string `json:"PolicyInJson"`
+		PolicyHash   string `json:"PolicyHash"`
+	}
+	parseJSON(t, out, &get)
+	assert.Equal(t, policy, get.PolicyInJson)
+	assert.NotEmpty(t, get.PolicyHash)
+
+	runCLI(t, awsCLI("glue", "delete-resource-policy"))
+
+	// Data catalog encryption + catalog import status.
+	runCLI(t, awsCLI("glue", "put-data-catalog-encryption-settings",
+		"--data-catalog-encryption-settings",
+		`{"EncryptionAtRest":{"CatalogEncryptionMode":"SSE-KMS","SseAwsKmsKeyId":"arn:aws:kms:us-east-1:123456789012:key/abc"},"ConnectionPasswordEncryption":{"ReturnConnectionPasswordEncrypted":true}}`))
+
+	out = runCLI(t, awsCLI("glue", "get-data-catalog-encryption-settings"))
+	var enc struct {
+		DataCatalogEncryptionSettings struct {
+			EncryptionAtRest struct {
+				CatalogEncryptionMode string `json:"CatalogEncryptionMode"`
+			} `json:"EncryptionAtRest"`
+		} `json:"DataCatalogEncryptionSettings"`
+	}
+	parseJSON(t, out, &enc)
+	assert.Equal(t, "SSE-KMS", enc.DataCatalogEncryptionSettings.EncryptionAtRest.CatalogEncryptionMode)
+
+	runCLI(t, awsCLI("glue", "import-catalog-to-glue"))
+	out = runCLI(t, awsCLI("glue", "get-catalog-import-status"))
+	var status struct {
+		ImportStatus struct {
+			ImportCompleted bool `json:"ImportCompleted"`
+		} `json:"ImportStatus"`
+	}
+	parseJSON(t, out, &status)
+	assert.True(t, status.ImportStatus.ImportCompleted)
+}
+
+func TestGlue_SchemaVersions_CLI(t *testing.T) {
+	reg := "glue-cli-sv-registry"
+	sch := "glue-cli-sv-schema"
+	runCLI(t, awsCLI("glue", "create-registry", "--registry-name", reg))
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("glue", "delete-schema",
+			"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`))
+		runCLI(t, awsCLI("glue", "delete-registry",
+			"--registry-id", `{"RegistryName":"`+reg+`"}`))
+	})
+
+	def1 := `{"type":"record","name":"r","fields":[{"name":"a","type":"int"}]}`
+	def2 := `{"type":"record","name":"r","fields":[{"name":"a","type":"int"},{"name":"b","type":["null","string"],"default":null}]}`
+
+	runCLI(t, awsCLI("glue", "create-schema",
+		"--registry-id", `{"RegistryName":"`+reg+`"}`,
+		"--schema-name", sch,
+		"--data-format", "AVRO",
+		"--compatibility", "BACKWARD",
+		"--schema-definition", def1))
+
+	out := runCLI(t, awsCLI("glue", "register-schema-version",
+		"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`,
+		"--schema-definition", def2))
+	var rv struct {
+		SchemaVersionId string `json:"SchemaVersionId"`
+		VersionNumber   int64  `json:"VersionNumber"`
+	}
+	parseJSON(t, out, &rv)
+	assert.Equal(t, int64(2), rv.VersionNumber)
+	assert.NotEmpty(t, rv.SchemaVersionId)
+
+	out = runCLI(t, awsCLI("glue", "list-schema-versions",
+		"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`))
+	var ls struct {
+		Schemas []struct {
+			VersionNumber int64 `json:"VersionNumber"`
+		} `json:"Schemas"`
+	}
+	parseJSON(t, out, &ls)
+	require.Len(t, ls.Schemas, 2)
+
+	out = runCLI(t, awsCLI("glue", "get-schema-version",
+		"--schema-version-id", rv.SchemaVersionId))
+	var gsv struct {
+		SchemaDefinition string `json:"SchemaDefinition"`
+		VersionNumber    int64  `json:"VersionNumber"`
+	}
+	parseJSON(t, out, &gsv)
+	assert.Equal(t, def2, gsv.SchemaDefinition)
+	assert.Equal(t, int64(2), gsv.VersionNumber)
+
+	out = runCLI(t, awsCLI("glue", "get-schema-by-definition",
+		"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`,
+		"--schema-definition", def2))
+	var gbd struct {
+		SchemaVersionId string `json:"SchemaVersionId"`
+	}
+	parseJSON(t, out, &gbd)
+	assert.Equal(t, rv.SchemaVersionId, gbd.SchemaVersionId)
+
+	runCLI(t, awsCLI("glue", "delete-schema-versions",
+		"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`,
+		"--versions", "2"))
+	out = runCLI(t, awsCLI("glue", "list-schema-versions",
+		"--schema-id", `{"RegistryName":"`+reg+`","SchemaName":"`+sch+`"}`))
+	parseJSON(t, out, &ls)
+	require.Len(t, ls.Schemas, 1)
+	assert.Equal(t, int64(1), ls.Schemas[0].VersionNumber)
+}

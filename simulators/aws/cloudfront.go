@@ -596,6 +596,9 @@ func registerCloudFront(srv *sim.Server) {
 	// KeyGroups + PublicKeys
 	registerCloudFrontKeys(srv)
 
+	// OriginAccessIdentities + ContinuousDeploymentPolicies + MonitoringSubscriptions
+	registerCloudFrontExtras(srv)
+
 	// OriginAccessControl
 	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("CreateOriginAccessControl", "cloudfront.amazonaws.com", nil, handleCFCreateOAC))
 	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("ListOriginAccessControls", "cloudfront.amazonaws.com", nil, handleCFListOACs))

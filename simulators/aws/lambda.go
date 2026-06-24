@@ -228,6 +228,12 @@ func registerLambda(srv *sim.Server) {
 	mux.HandleFunc("PUT /2017-10-31/functions/{name}/concurrency", cloudTrailRecordedREST("PutFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaPutFunctionConcurrency))
 	mux.HandleFunc("GET /2019-09-30/functions/{name}/concurrency", cloudTrailRecordedREST("GetFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaGetFunctionConcurrency))
 	mux.HandleFunc("DELETE /2017-10-31/functions/{name}/concurrency", cloudTrailRecordedREST("DeleteFunctionConcurrency", "lambda.amazonaws.com", lambdaResource, handleLambdaDeleteFunctionConcurrency))
+
+	// Event-invoke config, provisioned concurrency, code-signing configs,
+	// runtime management, account settings, recursion config, and
+	// layer-version permissions.
+	lambdaCSCStore = sim.MakeStore[LambdaCodeSigningConfig](srv.DB(), "lambda_code_signing_configs")
+	registerLambdaExtras2(srv)
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {

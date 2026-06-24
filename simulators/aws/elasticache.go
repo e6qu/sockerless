@@ -60,13 +60,65 @@ type ECSubnetGroup struct {
 	Tags        map[string]string
 }
 
-// ECParameterGroup models the CacheParameterGroup shape.
+// ECParameterGroup models the CacheParameterGroup shape. Params holds
+// the user-modified parameter values (DescribeCacheParameters returns
+// these merged over the engine defaults; ResetCacheParameterGroup
+// clears them).
 type ECParameterGroup struct {
 	Name        string
 	Family      string
 	Description string
 	ARN         string
+	Params      map[string]string
 	Tags        map[string]string
+}
+
+// ECSnapshot models the Snapshot shape created from a cache cluster or
+// replication group. NodeSnapshots carry the per-node backup metadata
+// the SDK + CLI read back.
+type ECSnapshot struct {
+	SnapshotName           string
+	ReplicationGroupId     string
+	CacheClusterId         string
+	SnapshotStatus         string
+	SnapshotSource         string
+	CacheNodeType          string
+	Engine                 string
+	EngineVersion          string
+	NumCacheNodes          int
+	Port                   int
+	SnapshotRetentionLimit int
+	SnapshotWindow         string
+	ARN                    string
+	CacheClusterCreateTime string
+	Tags                   map[string]string
+}
+
+// ECUser models the User shape (ElastiCache RBAC for Redis/Valkey).
+type ECUser struct {
+	UserId               string
+	UserName             string
+	Status               string
+	Engine               string
+	MinimumEngineVersion string
+	AccessString         string
+	NoPasswordRequired   bool
+	PasswordCount        int
+	UserGroupIds         []string
+	ARN                  string
+	Tags                 map[string]string
+}
+
+// ECUserGroup models the UserGroup shape.
+type ECUserGroup struct {
+	UserGroupId          string
+	Status               string
+	Engine               string
+	MinimumEngineVersion string
+	UserIds              []string
+	ReplicationGroups    []string
+	ARN                  string
+	Tags                 map[string]string
 }
 
 var (
@@ -74,6 +126,9 @@ var (
 	ecReplGroups  sim.Store[ECReplicationGroup]
 	ecSubnetGrps  sim.Store[ECSubnetGroup]
 	ecParamGroups sim.Store[ECParameterGroup]
+	ecSnapshots   sim.Store[ECSnapshot]
+	ecUsers       sim.Store[ECUser]
+	ecUserGroups  sim.Store[ECUserGroup]
 )
 
 // ecAPIVersion is the canonical AWS ElastiCache API version (Query
@@ -105,6 +160,31 @@ func registerElastiCache(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(ecAPIVersion, "AddTagsToResource", handleECAddTags)
 	r.RegisterVersioned(ecAPIVersion, "ListTagsForResource", handleECListTags)
 	r.RegisterVersioned(ecAPIVersion, "RemoveTagsFromResource", handleECRemoveTags)
+	ecSnapshots = sim.MakeStore[ECSnapshot](srv.DB(), "elasticache_snapshots")
+	ecUsers = sim.MakeStore[ECUser](srv.DB(), "elasticache_users")
+	ecUserGroups = sim.MakeStore[ECUserGroup](srv.DB(), "elasticache_user_groups")
+	r.RegisterVersioned(ecAPIVersion, "CreateSnapshot", handleECCreateSnapshot)
+	r.RegisterVersioned(ecAPIVersion, "DescribeSnapshots", handleECDescribeSnapshots)
+	r.RegisterVersioned(ecAPIVersion, "DeleteSnapshot", handleECDeleteSnapshot)
+	r.RegisterVersioned(ecAPIVersion, "CopySnapshot", handleECCopySnapshot)
+	r.RegisterVersioned(ecAPIVersion, "CreateUser", handleECCreateUser)
+	r.RegisterVersioned(ecAPIVersion, "DescribeUsers", handleECDescribeUsers)
+	r.RegisterVersioned(ecAPIVersion, "ModifyUser", handleECModifyUser)
+	r.RegisterVersioned(ecAPIVersion, "DeleteUser", handleECDeleteUser)
+	r.RegisterVersioned(ecAPIVersion, "CreateUserGroup", handleECCreateUserGroup)
+	r.RegisterVersioned(ecAPIVersion, "DescribeUserGroups", handleECDescribeUserGroups)
+	r.RegisterVersioned(ecAPIVersion, "ModifyUserGroup", handleECModifyUserGroup)
+	r.RegisterVersioned(ecAPIVersion, "DeleteUserGroup", handleECDeleteUserGroup)
+	r.RegisterVersioned(ecAPIVersion, "DescribeCacheParameters", handleECDescribeParameters)
+	r.RegisterVersioned(ecAPIVersion, "ModifyCacheParameterGroup", handleECModifyParameters)
+	r.RegisterVersioned(ecAPIVersion, "ResetCacheParameterGroup", handleECResetParameters)
+	r.RegisterVersioned(ecAPIVersion, "DescribeEngineDefaultParameters", handleECDescribeEngineDefaultParameters)
+	r.RegisterVersioned(ecAPIVersion, "DescribeEvents", handleECDescribeEvents)
+	r.RegisterVersioned(ecAPIVersion, "DescribeCacheEngineVersions", handleECDescribeCacheEngineVersions)
+	r.RegisterVersioned(ecAPIVersion, "DescribeReservedCacheNodes", handleECDescribeReservedCacheNodes)
+	r.RegisterVersioned(ecAPIVersion, "DescribeReservedCacheNodesOfferings", handleECDescribeReservedCacheNodesOfferings)
+	r.RegisterVersioned(ecAPIVersion, "DescribeServiceUpdates", handleECDescribeServiceUpdates)
+	r.RegisterVersioned(ecAPIVersion, "DescribeCacheSecurityGroups", handleECDescribeCacheSecurityGroups)
 }
 
 func ecClusterARN(id string) string {
@@ -121,6 +201,18 @@ func ecSubnetGroupARN(name string) string {
 
 func ecParamGroupARN(name string) string {
 	return fmt.Sprintf("arn:aws:elasticache:%s:%s:parametergroup:%s", awsRegion(), awsAccountID(), name)
+}
+
+func ecSnapshotARN(name string) string {
+	return fmt.Sprintf("arn:aws:elasticache:%s:%s:snapshot:%s", awsRegion(), awsAccountID(), name)
+}
+
+func ecUserARN(id string) string {
+	return fmt.Sprintf("arn:aws:elasticache:%s:%s:user:%s", awsRegion(), awsAccountID(), id)
+}
+
+func ecUserGroupARN(id string) string {
+	return fmt.Sprintf("arn:aws:elasticache:%s:%s:usergroup:%s", awsRegion(), awsAccountID(), id)
 }
 
 func ecXMLResponse(w http.ResponseWriter, op string, body string, requestID string) {
@@ -633,6 +725,42 @@ func ecMutateTags(arn string, fn func(map[string]string)) (map[string]string, bo
 			return updated.Tags, true
 		}
 	}
+	for _, s := range ecSnapshots.List() {
+		if s.ARN == arn {
+			ecSnapshots.Update(s.SnapshotName, func(ss *ECSnapshot) {
+				if ss.Tags == nil {
+					ss.Tags = map[string]string{}
+				}
+				fn(ss.Tags)
+			})
+			updated, _ := ecSnapshots.Get(s.SnapshotName)
+			return updated.Tags, true
+		}
+	}
+	for _, u := range ecUsers.List() {
+		if u.ARN == arn {
+			ecUsers.Update(u.UserId, func(uu *ECUser) {
+				if uu.Tags == nil {
+					uu.Tags = map[string]string{}
+				}
+				fn(uu.Tags)
+			})
+			updated, _ := ecUsers.Get(u.UserId)
+			return updated.Tags, true
+		}
+	}
+	for _, g := range ecUserGroups.List() {
+		if g.ARN == arn {
+			ecUserGroups.Update(g.UserGroupId, func(gg *ECUserGroup) {
+				if gg.Tags == nil {
+					gg.Tags = map[string]string{}
+				}
+				fn(gg.Tags)
+			})
+			updated, _ := ecUserGroups.Get(g.UserGroupId)
+			return updated.Tags, true
+		}
+	}
 	return nil, false
 }
 
@@ -698,6 +826,21 @@ func ecLookupTags(arn string) (map[string]string, bool) {
 			return g.Tags, true
 		}
 	}
+	for _, s := range ecSnapshots.List() {
+		if s.ARN == arn {
+			return s.Tags, true
+		}
+	}
+	for _, u := range ecUsers.List() {
+		if u.ARN == arn {
+			return u.Tags, true
+		}
+	}
+	for _, g := range ecUserGroups.List() {
+		if g.ARN == arn {
+			return g.Tags, true
+		}
+	}
 	return nil, false
 }
 
@@ -734,4 +877,705 @@ func ecDefaultEngineVersion(engine string) string {
 		return "1.6.22"
 	}
 	return ""
+}
+
+// ---------------------------------------------------------------------------
+// Snapshots
+// ---------------------------------------------------------------------------
+
+func renderECSnapshot(s ECSnapshot) string {
+	var b strings.Builder
+	b.WriteString("<Snapshot>")
+	fmt.Fprintf(&b, "<SnapshotName>%s</SnapshotName>", xmlEscape(s.SnapshotName))
+	if s.ReplicationGroupId != "" {
+		fmt.Fprintf(&b, "<ReplicationGroupId>%s</ReplicationGroupId>", xmlEscape(s.ReplicationGroupId))
+	}
+	if s.CacheClusterId != "" {
+		fmt.Fprintf(&b, "<CacheClusterId>%s</CacheClusterId>", xmlEscape(s.CacheClusterId))
+	}
+	fmt.Fprintf(&b, "<SnapshotStatus>%s</SnapshotStatus>", xmlEscape(s.SnapshotStatus))
+	fmt.Fprintf(&b, "<SnapshotSource>%s</SnapshotSource>", xmlEscape(s.SnapshotSource))
+	fmt.Fprintf(&b, "<CacheNodeType>%s</CacheNodeType>", xmlEscape(s.CacheNodeType))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(s.Engine))
+	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(s.EngineVersion))
+	fmt.Fprintf(&b, "<NumCacheNodes>%d</NumCacheNodes>", s.NumCacheNodes)
+	fmt.Fprintf(&b, "<Port>%d</Port>", s.Port)
+	fmt.Fprintf(&b, "<SnapshotRetentionLimit>%d</SnapshotRetentionLimit>", s.SnapshotRetentionLimit)
+	if s.SnapshotWindow != "" {
+		fmt.Fprintf(&b, "<SnapshotWindow>%s</SnapshotWindow>", xmlEscape(s.SnapshotWindow))
+	}
+	if s.CacheClusterCreateTime != "" {
+		fmt.Fprintf(&b, "<CacheClusterCreateTime>%s</CacheClusterCreateTime>", xmlEscape(s.CacheClusterCreateTime))
+	}
+	fmt.Fprintf(&b, "<ARN>%s</ARN>", xmlEscape(s.ARN))
+	b.WriteString("<NodeSnapshots>")
+	fmt.Fprintf(&b, "<NodeSnapshot><CacheNodeId>0001</CacheNodeId><CacheSize></CacheSize><SnapshotCreateTime>%s</SnapshotCreateTime></NodeSnapshot>",
+		xmlEscape(time.Now().UTC().Format(time.RFC3339)))
+	b.WriteString("</NodeSnapshots>")
+	b.WriteString("</Snapshot>")
+	return b.String()
+}
+
+func handleECCreateSnapshot(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("SnapshotName")
+	if name == "" {
+		ecErrorXML(w, "MissingParameter", "SnapshotName is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := ecSnapshots.Get(name); ok {
+		ecErrorXML(w, "SnapshotAlreadyExistsFault", "Snapshot already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	s := ECSnapshot{
+		SnapshotName:   name,
+		SnapshotStatus: "available",
+		SnapshotSource: "manual",
+		Port:           6379,
+		Tags:           parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	if cid := r.FormValue("CacheClusterId"); cid != "" {
+		c, ok := ecClusters.Get(cid)
+		if !ok {
+			ecErrorXML(w, "CacheClusterNotFound", fmt.Sprintf("Cache cluster %q not found", cid), http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+		s.CacheClusterId = cid
+		s.CacheNodeType = c.CacheNodeType
+		s.Engine = c.Engine
+		s.EngineVersion = c.EngineVersion
+		s.NumCacheNodes = c.NumCacheNodes
+		s.Port = c.Port
+		s.CacheClusterCreateTime = c.CacheClusterCreateTime
+	} else if rgid := r.FormValue("ReplicationGroupId"); rgid != "" {
+		g, ok := ecReplGroups.Get(rgid)
+		if !ok {
+			ecErrorXML(w, "ReplicationGroupNotFoundFault", fmt.Sprintf("Replication group %q not found", rgid), http.StatusNotFound, sim.RequestID(r.Context()))
+			return
+		}
+		s.ReplicationGroupId = rgid
+		s.CacheNodeType = g.CacheNodeType
+		s.Engine = g.Engine
+		s.NumCacheNodes = len(g.MemberClusters)
+		s.Port = g.ConfigEndpointPort
+		s.SnapshotRetentionLimit = g.SnapshotRetentionLimit
+		s.SnapshotWindow = g.SnapshotWindow
+		s.CacheClusterCreateTime = g.CreateTime
+	} else {
+		ecErrorXML(w, "InvalidParameterCombination", "CacheClusterId or ReplicationGroupId is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if s.EngineVersion == "" {
+		s.EngineVersion = ecDefaultEngineVersion(s.Engine)
+	}
+	s.ARN = ecSnapshotARN(name)
+	ecSnapshots.Put(name, s)
+	ecXMLResponse(w, "CreateSnapshot", renderECSnapshot(s), sim.RequestID(r.Context()))
+}
+
+func handleECDescribeSnapshots(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("SnapshotName")
+	wantCluster := r.FormValue("CacheClusterId")
+	wantRG := r.FormValue("ReplicationGroupId")
+	var b strings.Builder
+	b.WriteString("<Snapshots>")
+	matched := false
+	for _, s := range ecSnapshots.List() {
+		if wanted != "" && s.SnapshotName != wanted {
+			continue
+		}
+		if wantCluster != "" && s.CacheClusterId != wantCluster {
+			continue
+		}
+		if wantRG != "" && s.ReplicationGroupId != wantRG {
+			continue
+		}
+		matched = true
+		b.WriteString(renderECSnapshot(s))
+	}
+	if wanted != "" && !matched {
+		ecErrorXML(w, "SnapshotNotFoundFault", fmt.Sprintf("Snapshot %q not found", wanted), http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</Snapshots>")
+	ecXMLResponse(w, "DescribeSnapshots", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleECDeleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("SnapshotName")
+	s, ok := ecSnapshots.Get(name)
+	if !ok {
+		ecErrorXML(w, "SnapshotNotFoundFault", "Snapshot not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	s.SnapshotStatus = "deleting"
+	ecSnapshots.Delete(name)
+	ecXMLResponse(w, "DeleteSnapshot", renderECSnapshot(s), sim.RequestID(r.Context()))
+}
+
+func handleECCopySnapshot(w http.ResponseWriter, r *http.Request) {
+	src := r.FormValue("SourceSnapshotName")
+	target := r.FormValue("TargetSnapshotName")
+	if target == "" {
+		ecErrorXML(w, "MissingParameter", "TargetSnapshotName is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	s, ok := ecSnapshots.Get(src)
+	if !ok {
+		ecErrorXML(w, "SnapshotNotFoundFault", fmt.Sprintf("Snapshot %q not found", src), http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := ecSnapshots.Get(target); ok {
+		ecErrorXML(w, "SnapshotAlreadyExistsFault", "Snapshot already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	s.SnapshotName = target
+	s.ARN = ecSnapshotARN(target)
+	s.SnapshotStatus = "available"
+	s.Tags = parseAWSQueryTagMap(r, "Tags.Tag")
+	ecSnapshots.Put(target, s)
+	ecXMLResponse(w, "CopySnapshot", renderECSnapshot(s), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Users + User Groups (ElastiCache RBAC)
+// ---------------------------------------------------------------------------
+
+// renderECUserBody emits the User shape's members without any wrapper
+// element. CreateUser / ModifyUser / DeleteUser return the User shape
+// flattened directly into their Result; DescribeUsers wraps each entry
+// in a UserList <member> element.
+func renderECUserBody(u ECUser) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<UserId>%s</UserId>", xmlEscape(u.UserId))
+	fmt.Fprintf(&b, "<UserName>%s</UserName>", xmlEscape(u.UserName))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(u.Status))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(u.Engine))
+	if u.MinimumEngineVersion != "" {
+		fmt.Fprintf(&b, "<MinimumEngineVersion>%s</MinimumEngineVersion>", xmlEscape(u.MinimumEngineVersion))
+	}
+	fmt.Fprintf(&b, "<AccessString>%s</AccessString>", xmlEscape(u.AccessString))
+	fmt.Fprintf(&b, "<ARN>%s</ARN>", xmlEscape(u.ARN))
+	b.WriteString("<UserGroupIds>")
+	for _, id := range u.UserGroupIds {
+		fmt.Fprintf(&b, "<member>%s</member>", xmlEscape(id))
+	}
+	b.WriteString("</UserGroupIds>")
+	authType := "password"
+	if u.NoPasswordRequired {
+		authType = "no-password"
+	}
+	fmt.Fprintf(&b, "<Authentication><Type>%s</Type><PasswordCount>%d</PasswordCount></Authentication>", authType, u.PasswordCount)
+	return b.String()
+}
+
+func ecParsePasswordCount(r *http.Request) int {
+	n := 0
+	for i := 1; i <= 2; i++ {
+		if r.FormValue(fmt.Sprintf("Passwords.member.%d", i)) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func handleECCreateUser(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserId")
+	if id == "" {
+		ecErrorXML(w, "MissingParameter", "UserId is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := ecUsers.Get(id); ok {
+		ecErrorXML(w, "UserAlreadyExistsFault", "User already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	engine := strings.ToLower(r.FormValue("Engine"))
+	if engine == "" {
+		engine = "redis"
+	}
+	u := ECUser{
+		UserId:               id,
+		UserName:             r.FormValue("UserName"),
+		Status:               "active",
+		Engine:               engine,
+		MinimumEngineVersion: "6.0",
+		AccessString:         r.FormValue("AccessString"),
+		NoPasswordRequired:   strings.EqualFold(r.FormValue("NoPasswordRequired"), "true"),
+		PasswordCount:        ecParsePasswordCount(r),
+		ARN:                  ecUserARN(id),
+		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	ecUsers.Put(id, u)
+	ecXMLResponse(w, "CreateUser", renderECUserBody(u), sim.RequestID(r.Context()))
+}
+
+func handleECDescribeUsers(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("UserId")
+	var b strings.Builder
+	b.WriteString("<Users>")
+	matched := false
+	for _, u := range ecUsers.List() {
+		if wanted != "" && u.UserId != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString("<member>")
+		b.WriteString(renderECUserBody(u))
+		b.WriteString("</member>")
+	}
+	if wanted != "" && !matched {
+		ecErrorXML(w, "UserNotFoundFault", fmt.Sprintf("User %q not found", wanted), http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</Users>")
+	ecXMLResponse(w, "DescribeUsers", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleECModifyUser(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserId")
+	if _, ok := ecUsers.Get(id); !ok {
+		ecErrorXML(w, "UserNotFoundFault", "User not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	ecUsers.Update(id, func(u *ECUser) {
+		if v := r.FormValue("AccessString"); v != "" {
+			u.AccessString = v
+		}
+		if v := r.FormValue("AppendAccessString"); v != "" {
+			u.AccessString = strings.TrimSpace(u.AccessString + " " + v)
+		}
+		if v := r.FormValue("NoPasswordRequired"); v != "" {
+			u.NoPasswordRequired = strings.EqualFold(v, "true")
+		}
+		if n := ecParsePasswordCount(r); n > 0 {
+			u.PasswordCount = n
+		}
+	})
+	updated, _ := ecUsers.Get(id)
+	ecXMLResponse(w, "ModifyUser", renderECUserBody(updated), sim.RequestID(r.Context()))
+}
+
+func handleECDeleteUser(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserId")
+	u, ok := ecUsers.Get(id)
+	if !ok {
+		ecErrorXML(w, "UserNotFoundFault", "User not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	u.Status = "deleting"
+	ecUsers.Delete(id)
+	ecXMLResponse(w, "DeleteUser", renderECUserBody(u), sim.RequestID(r.Context()))
+}
+
+// renderECUserGroupBody emits the UserGroup shape's members without any
+// wrapper. CreateUserGroup / ModifyUserGroup / DeleteUserGroup return
+// the UserGroup shape flattened directly into their Result;
+// DescribeUserGroups wraps each entry in a UserGroupList <member>.
+func renderECUserGroupBody(g ECUserGroup) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "<UserGroupId>%s</UserGroupId>", xmlEscape(g.UserGroupId))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(g.Status))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(g.Engine))
+	if g.MinimumEngineVersion != "" {
+		fmt.Fprintf(&b, "<MinimumEngineVersion>%s</MinimumEngineVersion>", xmlEscape(g.MinimumEngineVersion))
+	}
+	b.WriteString("<UserIds>")
+	for _, id := range g.UserIds {
+		fmt.Fprintf(&b, "<member>%s</member>", xmlEscape(id))
+	}
+	b.WriteString("</UserIds>")
+	b.WriteString("<ReplicationGroups>")
+	for _, id := range g.ReplicationGroups {
+		fmt.Fprintf(&b, "<member>%s</member>", xmlEscape(id))
+	}
+	b.WriteString("</ReplicationGroups>")
+	fmt.Fprintf(&b, "<ARN>%s</ARN>", xmlEscape(g.ARN))
+	return b.String()
+}
+
+func ecParseUserIds(r *http.Request, field string) []string {
+	var ids []string
+	for n := 1; n <= 100; n++ {
+		v := r.FormValue(fmt.Sprintf("%s.member.%d", field, n))
+		if v == "" {
+			break
+		}
+		ids = append(ids, v)
+	}
+	return ids
+}
+
+func handleECCreateUserGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserGroupId")
+	if id == "" {
+		ecErrorXML(w, "MissingParameter", "UserGroupId is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := ecUserGroups.Get(id); ok {
+		ecErrorXML(w, "UserGroupAlreadyExistsFault", "User group already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	engine := strings.ToLower(r.FormValue("Engine"))
+	if engine == "" {
+		engine = "redis"
+	}
+	g := ECUserGroup{
+		UserGroupId:          id,
+		Status:               "active",
+		Engine:               engine,
+		MinimumEngineVersion: "6.0",
+		UserIds:              ecParseUserIds(r, "UserIds"),
+		ARN:                  ecUserGroupARN(id),
+		Tags:                 parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	ecUserGroups.Put(id, g)
+	ecXMLResponse(w, "CreateUserGroup", renderECUserGroupBody(g), sim.RequestID(r.Context()))
+}
+
+func handleECDescribeUserGroups(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("UserGroupId")
+	var b strings.Builder
+	b.WriteString("<UserGroups>")
+	matched := false
+	for _, g := range ecUserGroups.List() {
+		if wanted != "" && g.UserGroupId != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString("<member>")
+		b.WriteString(renderECUserGroupBody(g))
+		b.WriteString("</member>")
+	}
+	if wanted != "" && !matched {
+		ecErrorXML(w, "UserGroupNotFoundFault", fmt.Sprintf("User group %q not found", wanted), http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</UserGroups>")
+	ecXMLResponse(w, "DescribeUserGroups", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleECModifyUserGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserGroupId")
+	if _, ok := ecUserGroups.Get(id); !ok {
+		ecErrorXML(w, "UserGroupNotFoundFault", "User group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	add := ecParseUserIds(r, "UserIdsToAdd")
+	remove := ecParseUserIds(r, "UserIdsToRemove")
+	ecUserGroups.Update(id, func(g *ECUserGroup) {
+		for _, a := range add {
+			found := false
+			for _, e := range g.UserIds {
+				if e == a {
+					found = true
+					break
+				}
+			}
+			if !found {
+				g.UserIds = append(g.UserIds, a)
+			}
+		}
+		if len(remove) > 0 {
+			kept := g.UserIds[:0:0]
+			for _, e := range g.UserIds {
+				drop := false
+				for _, rm := range remove {
+					if e == rm {
+						drop = true
+						break
+					}
+				}
+				if !drop {
+					kept = append(kept, e)
+				}
+			}
+			g.UserIds = kept
+		}
+	})
+	updated, _ := ecUserGroups.Get(id)
+	ecXMLResponse(w, "ModifyUserGroup", renderECUserGroupBody(updated), sim.RequestID(r.Context()))
+}
+
+func handleECDeleteUserGroup(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("UserGroupId")
+	g, ok := ecUserGroups.Get(id)
+	if !ok {
+		ecErrorXML(w, "UserGroupNotFoundFault", "User group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	g.Status = "deleting"
+	ecUserGroups.Delete(id)
+	ecXMLResponse(w, "DeleteUserGroup", renderECUserGroupBody(g), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Parameter detail
+// ---------------------------------------------------------------------------
+
+// ecDefaultParameters returns a representative slice of engine-default
+// parameters keyed by name. Real ElastiCache exposes hundreds; the sim
+// returns the small, stable subset clients commonly read back.
+func ecDefaultParameters() []struct {
+	Name, Value, DataType, Description, Source, ChangeType string
+} {
+	return []struct {
+		Name, Value, DataType, Description, Source, ChangeType string
+	}{
+		{"maxmemory-policy", "volatile-lru", "string", "Max memory policy", "system", "immediate"},
+		{"timeout", "0", "integer", "Close connection after a client is idle for N seconds", "system", "immediate"},
+		{"databases", "16", "integer", "Set the number of databases", "system", "requires-reboot"},
+	}
+}
+
+func renderECParameter(name, value, dataType, description, source, changeType string) string {
+	var b strings.Builder
+	b.WriteString("<Parameter>")
+	fmt.Fprintf(&b, "<ParameterName>%s</ParameterName>", xmlEscape(name))
+	fmt.Fprintf(&b, "<ParameterValue>%s</ParameterValue>", xmlEscape(value))
+	fmt.Fprintf(&b, "<Description>%s</Description>", xmlEscape(description))
+	fmt.Fprintf(&b, "<Source>%s</Source>", xmlEscape(source))
+	fmt.Fprintf(&b, "<DataType>%s</DataType>", xmlEscape(dataType))
+	fmt.Fprintf(&b, "<IsModifiable>%t</IsModifiable>", true)
+	fmt.Fprintf(&b, "<MinimumEngineVersion>%s</MinimumEngineVersion>", "6.0")
+	fmt.Fprintf(&b, "<ChangeType>%s</ChangeType>", xmlEscape(changeType))
+	b.WriteString("</Parameter>")
+	return b.String()
+}
+
+func handleECDescribeParameters(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("CacheParameterGroupName")
+	g, ok := ecParamGroups.Get(name)
+	if !ok {
+		ecErrorXML(w, "CacheParameterGroupNotFoundFault", "Cache parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	var b strings.Builder
+	b.WriteString("<Parameters>")
+	for _, p := range ecDefaultParameters() {
+		value := p.Value
+		source := p.Source
+		if g.Params != nil {
+			if v, ok := g.Params[p.Name]; ok {
+				value = v
+				source = "user"
+			}
+		}
+		b.WriteString(renderECParameter(p.Name, value, p.DataType, p.Description, source, p.ChangeType))
+	}
+	b.WriteString("</Parameters>")
+	b.WriteString("<CacheNodeTypeSpecificParameters></CacheNodeTypeSpecificParameters>")
+	ecXMLResponse(w, "DescribeCacheParameters", b.String(), sim.RequestID(r.Context()))
+}
+
+func ecParseParameterNameValues(r *http.Request) map[string]string {
+	out := map[string]string{}
+	for n := 1; n <= 100; n++ {
+		k := r.FormValue(fmt.Sprintf("ParameterNameValues.ParameterNameValue.%d.ParameterName", n))
+		if k == "" {
+			k = r.FormValue(fmt.Sprintf("ParameterNameValues.member.%d.ParameterName", n))
+		}
+		if k == "" {
+			break
+		}
+		v := r.FormValue(fmt.Sprintf("ParameterNameValues.ParameterNameValue.%d.ParameterValue", n))
+		if v == "" {
+			v = r.FormValue(fmt.Sprintf("ParameterNameValues.member.%d.ParameterValue", n))
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func handleECModifyParameters(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("CacheParameterGroupName")
+	if _, ok := ecParamGroups.Get(name); !ok {
+		ecErrorXML(w, "CacheParameterGroupNotFoundFault", "Cache parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	updates := ecParseParameterNameValues(r)
+	ecParamGroups.Update(name, func(g *ECParameterGroup) {
+		if g.Params == nil {
+			g.Params = map[string]string{}
+		}
+		for k, v := range updates {
+			g.Params[k] = v
+		}
+	})
+	ecXMLResponse(w, "ModifyCacheParameterGroup",
+		fmt.Sprintf("<CacheParameterGroupName>%s</CacheParameterGroupName>", xmlEscape(name)),
+		sim.RequestID(r.Context()))
+}
+
+func handleECResetParameters(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("CacheParameterGroupName")
+	if _, ok := ecParamGroups.Get(name); !ok {
+		ecErrorXML(w, "CacheParameterGroupNotFoundFault", "Cache parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	resetAll := strings.EqualFold(r.FormValue("ResetAllParameters"), "true")
+	reset := ecParseParameterNameValues(r)
+	ecParamGroups.Update(name, func(g *ECParameterGroup) {
+		if resetAll {
+			g.Params = map[string]string{}
+			return
+		}
+		if g.Params == nil {
+			return
+		}
+		for k := range reset {
+			delete(g.Params, k)
+		}
+	})
+	ecXMLResponse(w, "ResetCacheParameterGroup",
+		fmt.Sprintf("<CacheParameterGroupName>%s</CacheParameterGroupName>", xmlEscape(name)),
+		sim.RequestID(r.Context()))
+}
+
+func handleECDescribeEngineDefaultParameters(w http.ResponseWriter, r *http.Request) {
+	family := r.FormValue("CacheParameterGroupFamily")
+	if family == "" {
+		family = "redis7"
+	}
+	var b strings.Builder
+	b.WriteString("<EngineDefaults>")
+	fmt.Fprintf(&b, "<CacheParameterGroupFamily>%s</CacheParameterGroupFamily>", xmlEscape(family))
+	b.WriteString("<Parameters>")
+	for _, p := range ecDefaultParameters() {
+		b.WriteString(renderECParameter(p.Name, p.Value, p.DataType, p.Description, "system", p.ChangeType))
+	}
+	b.WriteString("</Parameters>")
+	b.WriteString("<CacheNodeTypeSpecificParameters></CacheNodeTypeSpecificParameters>")
+	b.WriteString("</EngineDefaults>")
+	ecXMLResponse(w, "DescribeEngineDefaultParameters", b.String(), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+func handleECDescribeEvents(w http.ResponseWriter, r *http.Request) {
+	sourceType := r.FormValue("SourceType")
+	if sourceType == "" {
+		sourceType = "cache-cluster"
+	}
+	srcID := r.FormValue("SourceIdentifier")
+	var b strings.Builder
+	b.WriteString("<Events>")
+	now := time.Now().UTC().Format(time.RFC3339)
+	emit := func(id, msg string) {
+		b.WriteString("<Event>")
+		fmt.Fprintf(&b, "<SourceIdentifier>%s</SourceIdentifier>", xmlEscape(id))
+		fmt.Fprintf(&b, "<SourceType>%s</SourceType>", xmlEscape(sourceType))
+		fmt.Fprintf(&b, "<Message>%s</Message>", xmlEscape(msg))
+		fmt.Fprintf(&b, "<Date>%s</Date>", xmlEscape(now))
+		b.WriteString("</Event>")
+	}
+	switch sourceType {
+	case "cache-cluster":
+		for _, c := range ecClusters.List() {
+			if srcID != "" && c.CacheClusterId != srcID {
+				continue
+			}
+			emit(c.CacheClusterId, "Cache cluster created")
+		}
+	case "replication-group":
+		for _, g := range ecReplGroups.List() {
+			if srcID != "" && g.ReplicationGroupId != srcID {
+				continue
+			}
+			emit(g.ReplicationGroupId, "Replication group created")
+		}
+	}
+	b.WriteString("</Events>")
+	ecXMLResponse(w, "DescribeEvents", b.String(), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Cache engine versions
+// ---------------------------------------------------------------------------
+
+func handleECDescribeCacheEngineVersions(w http.ResponseWriter, r *http.Request) {
+	wantEngine := strings.ToLower(r.FormValue("Engine"))
+	versions := []struct {
+		Engine, Version, Family, Desc string
+	}{
+		{"redis", "7.1", "redis7", "Redis"},
+		{"redis", "6.2", "redis6.x", "Redis"},
+		{"valkey", "8.0", "valkey8", "Valkey"},
+		{"memcached", "1.6.22", "memcached1.6", "memcached"},
+	}
+	var b strings.Builder
+	b.WriteString("<CacheEngineVersions>")
+	for _, v := range versions {
+		if wantEngine != "" && v.Engine != wantEngine {
+			continue
+		}
+		b.WriteString("<CacheEngineVersion>")
+		fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(v.Engine))
+		fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(v.Version))
+		fmt.Fprintf(&b, "<CacheParameterGroupFamily>%s</CacheParameterGroupFamily>", xmlEscape(v.Family))
+		fmt.Fprintf(&b, "<CacheEngineDescription>%s</CacheEngineDescription>", xmlEscape(v.Desc))
+		fmt.Fprintf(&b, "<CacheEngineVersionDescription>%s %s</CacheEngineVersionDescription>", xmlEscape(v.Desc), xmlEscape(v.Version))
+		b.WriteString("</CacheEngineVersion>")
+	}
+	b.WriteString("</CacheEngineVersions>")
+	ecXMLResponse(w, "DescribeCacheEngineVersions", b.String(), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Reserved cache nodes + offerings
+// ---------------------------------------------------------------------------
+
+func handleECDescribeReservedCacheNodes(w http.ResponseWriter, r *http.Request) {
+	// No reservations are purchased in the sim; AWS returns an empty
+	// list (not an error) when the account holds no reserved nodes.
+	ecXMLResponse(w, "DescribeReservedCacheNodes", "<ReservedCacheNodes></ReservedCacheNodes>", sim.RequestID(r.Context()))
+}
+
+func handleECDescribeReservedCacheNodesOfferings(w http.ResponseWriter, r *http.Request) {
+	var b strings.Builder
+	b.WriteString("<ReservedCacheNodesOfferings>")
+	b.WriteString("<ReservedCacheNodesOffering>")
+	b.WriteString("<ReservedCacheNodesOfferingId>649fd0c8-cf6d-47a0-bfa6-060f8e75e95f</ReservedCacheNodesOfferingId>")
+	b.WriteString("<CacheNodeType>cache.t3.micro</CacheNodeType>")
+	b.WriteString("<Duration>31536000</Duration>")
+	b.WriteString("<FixedPrice>0.0</FixedPrice>")
+	b.WriteString("<UsagePrice>0.0</UsagePrice>")
+	b.WriteString("<ProductDescription>redis</ProductDescription>")
+	b.WriteString("<OfferingType>No Upfront</OfferingType>")
+	b.WriteString("<RecurringCharges><RecurringCharge><RecurringChargeAmount>0.018</RecurringChargeAmount><RecurringChargeFrequency>Hourly</RecurringChargeFrequency></RecurringCharge></RecurringCharges>")
+	b.WriteString("</ReservedCacheNodesOffering>")
+	b.WriteString("</ReservedCacheNodesOfferings>")
+	ecXMLResponse(w, "DescribeReservedCacheNodesOfferings", b.String(), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Service updates
+// ---------------------------------------------------------------------------
+
+func handleECDescribeServiceUpdates(w http.ResponseWriter, r *http.Request) {
+	var b strings.Builder
+	b.WriteString("<ServiceUpdates>")
+	b.WriteString("<ServiceUpdate>")
+	b.WriteString("<ServiceUpdateName>elasticache-20240101-001</ServiceUpdateName>")
+	fmt.Fprintf(&b, "<ServiceUpdateReleaseDate>%s</ServiceUpdateReleaseDate>", time.Now().UTC().Add(-720*time.Hour).Format(time.RFC3339))
+	fmt.Fprintf(&b, "<ServiceUpdateEndDate>%s</ServiceUpdateEndDate>", time.Now().UTC().Add(720*time.Hour).Format(time.RFC3339))
+	b.WriteString("<ServiceUpdateSeverity>important</ServiceUpdateSeverity>")
+	b.WriteString("<ServiceUpdateStatus>available</ServiceUpdateStatus>")
+	b.WriteString("<ServiceUpdateDescription>Security and reliability update</ServiceUpdateDescription>")
+	b.WriteString("<ServiceUpdateType>security-update</ServiceUpdateType>")
+	b.WriteString("<Engine>redis</Engine>")
+	b.WriteString("<AutoUpdateAfterRecommendedApplyByDate>true</AutoUpdateAfterRecommendedApplyByDate>")
+	b.WriteString("</ServiceUpdate>")
+	b.WriteString("</ServiceUpdates>")
+	ecXMLResponse(w, "DescribeServiceUpdates", b.String(), sim.RequestID(r.Context()))
+}
+
+// ---------------------------------------------------------------------------
+// Cache security groups (EC2-Classic; empty in a VPC-only sim)
+// ---------------------------------------------------------------------------
+
+func handleECDescribeCacheSecurityGroups(w http.ResponseWriter, r *http.Request) {
+	// CacheSecurityGroups are an EC2-Classic concept. New accounts are
+	// VPC-only and hold none; AWS returns an empty list.
+	ecXMLResponse(w, "DescribeCacheSecurityGroups", "<CacheSecurityGroups></CacheSecurityGroups>", sim.RequestID(r.Context()))
 }

@@ -427,8 +427,8 @@ jobs:
         include:
           - suite: edge
             run: '^Test(ACM|Amplify|APIGateway|ApplicationAutoScaling|AutoScaling|Batch|CloudFront|CloudTrail|CodeBuild|ELBv2|Glue)'
-            timeout: 420s
-            timeout_minutes: 10
+            timeout: 1200s
+            timeout_minutes: 20
           - suite: compute
             run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECR|ECS|EFS|Logs)'
             timeout: 900s

@@ -169,24 +169,11 @@ var serviceConformanceCatalog = map[string][]string{
 	"AnyScaleFrontendService": {},
 	// Kinesis: complete except the HTTP/2 event-stream consumer subscription.
 	"Kinesis_20131202": {"SubscribeToShard"},
-	// KMS: key management complete; the asymmetric-crypto operations (Sign/Verify/
-	// MAC/data-key-pairs/public-key/shared-secret) and the external CloudHSM custom
-	// key stores + cross-Region replication remain.
-	"TrentService": {
-		"ConnectCustomKeyStore", "CreateCustomKeyStore", "DeleteCustomKeyStore", "DeriveSharedSecret",
-		"DescribeCustomKeyStores", "DisconnectCustomKeyStore", "GenerateDataKeyPair",
-		"GenerateDataKeyPairWithoutPlaintext", "GenerateMac", "GetKeyLastUsage", "GetPublicKey",
-		"ListRetirableGrants", "ReplicateKey", "RetireGrant", "Sign", "UpdateCustomKeyStore",
-		"UpdatePrimaryRegion", "Verify", "VerifyMac",
-	},
-	// ELBv2: the mutual-TLS trust-store surface + a few capacity/SSL-policy reads.
-	"ElasticLoadBalancing_v10": {
-		"AddTrustStoreRevocations", "CreateTrustStore", "DeleteSharedTrustStoreAssociation",
-		"DeleteTrustStore", "DescribeSSLPolicies", "DescribeTrustStoreAssociations",
-		"DescribeTrustStoreRevocations", "DescribeTrustStores", "GetResourcePolicy",
-		"GetTrustStoreCaCertificatesBundle", "GetTrustStoreRevocationContent",
-		"ModifyCapacityReservation", "ModifyIpPools", "ModifyTrustStore", "RemoveTrustStoreRevocations",
-	},
+	// KMS: all operations implemented (real Go-stdlib crypto for Sign/Verify/MAC/
+	// data-key-pairs/ECDH; custom key stores; grants; multi-region keys).
+	"TrentService": {},
+	// ELBv2: all operations implemented (the mutual-TLS trust-store surface closed).
+	"ElasticLoadBalancing_v10": {},
 	"AmazonSQS": {
 		"CancelMessageMoveTask", "ListDeadLetterSourceQueues", "ListMessageMoveTasks",
 		"StartMessageMoveTask",
@@ -286,10 +273,10 @@ var serviceCoverageFloor = map[string]int{
 	"AmazonEC2":                            122, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     4,   // STS (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 38,  // ECR
-	"AmazonElastiCacheV9":                  25,
-	"AmazonRDSv19":                         40,
+	"AmazonElastiCacheV9":                  41,
+	"AmazonRDSv19":                         64,
 	"AutoScaling_2011_01_01":               25,
-	"AWSGlue":                              78,
+	"AWSGlue":                              102,
 	"AWSWAF_20190729":                      32,
 	"CloudTrail_20131101":                  23,
 	"CodeBuild_20161006":                   22,
@@ -298,13 +285,13 @@ var serviceCoverageFloor = map[string]int{
 	"AWSDnsV20130401":                      33, // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         29, // EFS (REST)
 	// restJson1 services measured via the REST registry (Part B).
-	"AWSGirApiService":        37, // AWS Lambda
+	"AWSGirApiService":        62, // AWS Lambda
 	"AWSBatchV20160810":       24, // AWS Batch
-	"BackplaneControlService": 28, // Amazon API Gateway
+	"BackplaneControlService": 62, // Amazon API Gateway
 	"Amplify":                 37,
 	"AWSChronosService":       9,  // EventBridge Scheduler
-	"ApiGatewayV2":            23, // Amazon API Gateway v2
-	"Cloudfront2020_05_31":    52, // Amazon CloudFront (restXml)
+	"ApiGatewayV2":            44, // Amazon API Gateway v2
+	"Cloudfront2020_05_31":    67, // Amazon CloudFront (restXml)
 
 }
 

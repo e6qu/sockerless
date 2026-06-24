@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -93,6 +94,96 @@ type APIGWStage struct {
 	CreatedDate  int64  `json:"createdDate"`
 }
 
+// APIGWApiKey mirrors aws_api_gateway_api_key. Keyed by its own id.
+type APIGWApiKey struct {
+	Id              string            `json:"id"`
+	Value           string            `json:"value,omitempty"`
+	Name            string            `json:"name,omitempty"`
+	CustomerId      string            `json:"customerId,omitempty"`
+	Description     string            `json:"description,omitempty"`
+	Enabled         bool              `json:"enabled"`
+	CreatedDate     int64             `json:"createdDate"`
+	LastUpdatedDate int64             `json:"lastUpdatedDate"`
+	StageKeys       []string          `json:"stageKeys,omitempty"`
+	Tags            map[string]string `json:"tags,omitempty"`
+}
+
+// APIGWThrottleSettings / APIGWQuotaSettings / APIGWApiStage mirror the
+// nested usage-plan shapes the SDK serializes.
+type APIGWThrottleSettings struct {
+	BurstLimit int     `json:"burstLimit,omitempty"`
+	RateLimit  float64 `json:"rateLimit,omitempty"`
+}
+
+type APIGWQuotaSettings struct {
+	Limit  int    `json:"limit,omitempty"`
+	Offset int    `json:"offset,omitempty"`
+	Period string `json:"period,omitempty"`
+}
+
+type APIGWApiStage struct {
+	ApiId string `json:"apiId,omitempty"`
+	Stage string `json:"stage,omitempty"`
+}
+
+// APIGWUsagePlan mirrors aws_api_gateway_usage_plan. Keyed by its own id.
+type APIGWUsagePlan struct {
+	Id          string                 `json:"id"`
+	Name        string                 `json:"name,omitempty"`
+	Description string                 `json:"description,omitempty"`
+	ApiStages   []APIGWApiStage        `json:"apiStages,omitempty"`
+	Throttle    *APIGWThrottleSettings `json:"throttle,omitempty"`
+	Quota       *APIGWQuotaSettings    `json:"quota,omitempty"`
+	ProductCode string                 `json:"productCode,omitempty"`
+	Tags        map[string]string      `json:"tags,omitempty"`
+}
+
+// APIGWUsagePlanKey mirrors aws_api_gateway_usage_plan_key. Keyed by
+// `<usagePlanId>/<keyId>`; the parent ref rides `usagePlanIdRef`.
+type APIGWUsagePlanKey struct {
+	Id          string `json:"id"`
+	Type        string `json:"type,omitempty"`
+	Value       string `json:"value,omitempty"`
+	Name        string `json:"name,omitempty"`
+	UsagePlanId string `json:"usagePlanIdRef,omitempty"`
+}
+
+// APIGWModel mirrors aws_api_gateway_model. Keyed by `<restApiId>/<name>`.
+type APIGWModel struct {
+	Id          string `json:"id"`
+	Name        string `json:"name,omitempty"`
+	Description string `json:"description,omitempty"`
+	Schema      string `json:"schema,omitempty"`
+	ContentType string `json:"contentType,omitempty"`
+	RestApiId   string `json:"restApiIdRef,omitempty"`
+}
+
+// APIGWRequestValidator mirrors aws_api_gateway_request_validator. Keyed
+// by `<restApiId>/<id>`.
+type APIGWRequestValidator struct {
+	Id                        string `json:"id"`
+	Name                      string `json:"name,omitempty"`
+	ValidateRequestBody       bool   `json:"validateRequestBody,omitempty"`
+	ValidateRequestParameters bool   `json:"validateRequestParameters,omitempty"`
+	RestApiId                 string `json:"restApiIdRef,omitempty"`
+}
+
+// APIGWAuthorizer mirrors aws_api_gateway_authorizer. Keyed by
+// `<restApiId>/<id>`.
+type APIGWAuthorizer struct {
+	Id                           string   `json:"id"`
+	Name                         string   `json:"name,omitempty"`
+	Type                         string   `json:"type,omitempty"`
+	ProviderARNs                 []string `json:"providerARNs,omitempty"`
+	AuthType                     string   `json:"authType,omitempty"`
+	AuthorizerUri                string   `json:"authorizerUri,omitempty"`
+	AuthorizerCredentials        string   `json:"authorizerCredentials,omitempty"`
+	IdentitySource               string   `json:"identitySource,omitempty"`
+	IdentityValidationExpression string   `json:"identityValidationExpression,omitempty"`
+	AuthorizerResultTtlInSeconds *int     `json:"authorizerResultTtlInSeconds,omitempty"`
+	RestApiId                    string   `json:"restApiIdRef,omitempty"`
+}
+
 var (
 	apigwRestApis             sim.Store[APIGWRestApi]
 	apigwResources            sim.Store[APIGWResource]
@@ -102,6 +193,12 @@ var (
 	apigwStages               sim.Store[APIGWStage]
 	apigwMethodResponses      sim.Store[APIGWMethodResponse]
 	apigwIntegrationResponses sim.Store[APIGWIntegrationResponse]
+	apigwApiKeys              sim.Store[APIGWApiKey]
+	apigwUsagePlans           sim.Store[APIGWUsagePlan]
+	apigwUsagePlanKeys        sim.Store[APIGWUsagePlanKey]
+	apigwModels               sim.Store[APIGWModel]
+	apigwRequestValidators    sim.Store[APIGWRequestValidator]
+	apigwAuthorizers          sim.Store[APIGWAuthorizer]
 )
 
 func registerAPIGateway(srv *sim.Server) {
@@ -113,6 +210,12 @@ func registerAPIGateway(srv *sim.Server) {
 	apigwStages = sim.MakeStore[APIGWStage](srv.DB(), "apigw_stages")
 	apigwMethodResponses = sim.MakeStore[APIGWMethodResponse](srv.DB(), "apigw_method_responses")
 	apigwIntegrationResponses = sim.MakeStore[APIGWIntegrationResponse](srv.DB(), "apigw_integration_responses")
+	apigwApiKeys = sim.MakeStore[APIGWApiKey](srv.DB(), "apigw_apikeys")
+	apigwUsagePlans = sim.MakeStore[APIGWUsagePlan](srv.DB(), "apigw_usageplans")
+	apigwUsagePlanKeys = sim.MakeStore[APIGWUsagePlanKey](srv.DB(), "apigw_usageplan_keys")
+	apigwModels = sim.MakeStore[APIGWModel](srv.DB(), "apigw_models")
+	apigwRequestValidators = sim.MakeStore[APIGWRequestValidator](srv.DB(), "apigw_request_validators")
+	apigwAuthorizers = sim.MakeStore[APIGWAuthorizer](srv.DB(), "apigw_authorizers")
 
 	mux := srv
 	apiResource := cloudTrailRESTResource("AWS::ApiGateway::RestApi", "restApiId")
@@ -150,6 +253,39 @@ func registerAPIGateway(srv *sim.Server) {
 	mux.HandleFunc("PUT /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}", cloudTrailRecordedREST("PutIntegrationResponse", "apigateway.amazonaws.com", apiResource, handleAPIGWPutIntegrationResponse))
 	mux.HandleFunc("GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}", cloudTrailRecordedREST("GetIntegrationResponse", "apigateway.amazonaws.com", apiResource, handleAPIGWGetIntegrationResponse))
 	mux.HandleFunc("DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration/responses/{statusCode}", cloudTrailRecordedREST("DeleteIntegrationResponse", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteIntegrationResponse))
+
+	// API keys — top-level resources keyed by their own id.
+	keyResource := cloudTrailRESTResource("AWS::ApiGateway::ApiKey", "apiKey")
+	mux.HandleFunc("POST /apikeys", cloudTrailRecordedREST("CreateApiKey", "apigateway.amazonaws.com", nil, handleAPIGWCreateApiKey))
+	mux.HandleFunc("GET /apikeys", cloudTrailRecordedREST("GetApiKeys", "apigateway.amazonaws.com", nil, handleAPIGWListApiKeys))
+	mux.HandleFunc("GET /apikeys/{apiKey}", cloudTrailRecordedREST("GetApiKey", "apigateway.amazonaws.com", keyResource, handleAPIGWGetApiKey))
+	mux.HandleFunc("PATCH /apikeys/{apiKey}", cloudTrailRecordedREST("UpdateApiKey", "apigateway.amazonaws.com", keyResource, handleAPIGWUpdateApiKey))
+	mux.HandleFunc("DELETE /apikeys/{apiKey}", cloudTrailRecordedREST("DeleteApiKey", "apigateway.amazonaws.com", keyResource, handleAPIGWDeleteApiKey))
+
+	// Usage plans + usage-plan keys.
+	upResource := cloudTrailRESTResource("AWS::ApiGateway::UsagePlan", "usagePlanId")
+	mux.HandleFunc("POST /usageplans", cloudTrailRecordedREST("CreateUsagePlan", "apigateway.amazonaws.com", nil, handleAPIGWCreateUsagePlan))
+	mux.HandleFunc("GET /usageplans", cloudTrailRecordedREST("GetUsagePlans", "apigateway.amazonaws.com", nil, handleAPIGWListUsagePlans))
+	mux.HandleFunc("GET /usageplans/{usagePlanId}", cloudTrailRecordedREST("GetUsagePlan", "apigateway.amazonaws.com", upResource, handleAPIGWGetUsagePlan))
+	mux.HandleFunc("PATCH /usageplans/{usagePlanId}", cloudTrailRecordedREST("UpdateUsagePlan", "apigateway.amazonaws.com", upResource, handleAPIGWUpdateUsagePlan))
+	mux.HandleFunc("DELETE /usageplans/{usagePlanId}", cloudTrailRecordedREST("DeleteUsagePlan", "apigateway.amazonaws.com", upResource, handleAPIGWDeleteUsagePlan))
+	mux.HandleFunc("POST /usageplans/{usagePlanId}/keys", cloudTrailRecordedREST("CreateUsagePlanKey", "apigateway.amazonaws.com", upResource, handleAPIGWCreateUsagePlanKey))
+	mux.HandleFunc("GET /usageplans/{usagePlanId}/keys", cloudTrailRecordedREST("GetUsagePlanKeys", "apigateway.amazonaws.com", upResource, handleAPIGWListUsagePlanKeys))
+	mux.HandleFunc("GET /usageplans/{usagePlanId}/keys/{keyId}", cloudTrailRecordedREST("GetUsagePlanKey", "apigateway.amazonaws.com", upResource, handleAPIGWGetUsagePlanKey))
+	mux.HandleFunc("DELETE /usageplans/{usagePlanId}/keys/{keyId}", cloudTrailRecordedREST("DeleteUsagePlanKey", "apigateway.amazonaws.com", upResource, handleAPIGWDeleteUsagePlanKey))
+
+	// Models, request validators, authorizers — all scoped to a REST API.
+	mux.HandleFunc("POST /restapis/{restApiId}/models", cloudTrailRecordedREST("CreateModel", "apigateway.amazonaws.com", apiResource, handleAPIGWCreateModel))
+	mux.HandleFunc("GET /restapis/{restApiId}/models", cloudTrailRecordedREST("GetModels", "apigateway.amazonaws.com", apiResource, handleAPIGWListModels))
+	mux.HandleFunc("GET /restapis/{restApiId}/models/{modelName}", cloudTrailRecordedREST("GetModel", "apigateway.amazonaws.com", apiResource, handleAPIGWGetModel))
+	mux.HandleFunc("DELETE /restapis/{restApiId}/models/{modelName}", cloudTrailRecordedREST("DeleteModel", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteModel))
+	mux.HandleFunc("POST /restapis/{restApiId}/requestvalidators", cloudTrailRecordedREST("CreateRequestValidator", "apigateway.amazonaws.com", apiResource, handleAPIGWCreateRequestValidator))
+	mux.HandleFunc("GET /restapis/{restApiId}/requestvalidators", cloudTrailRecordedREST("GetRequestValidators", "apigateway.amazonaws.com", apiResource, handleAPIGWListRequestValidators))
+	mux.HandleFunc("DELETE /restapis/{restApiId}/requestvalidators/{requestValidatorId}", cloudTrailRecordedREST("DeleteRequestValidator", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteRequestValidator))
+	mux.HandleFunc("POST /restapis/{restApiId}/authorizers", cloudTrailRecordedREST("CreateAuthorizer", "apigateway.amazonaws.com", apiResource, handleAPIGWCreateAuthorizer))
+	mux.HandleFunc("GET /restapis/{restApiId}/authorizers", cloudTrailRecordedREST("GetAuthorizers", "apigateway.amazonaws.com", apiResource, handleAPIGWListAuthorizers))
+	mux.HandleFunc("GET /restapis/{restApiId}/authorizers/{authorizerId}", cloudTrailRecordedREST("GetAuthorizer", "apigateway.amazonaws.com", apiResource, handleAPIGWGetAuthorizer))
+	mux.HandleFunc("DELETE /restapis/{restApiId}/authorizers/{authorizerId}", cloudTrailRecordedREST("DeleteAuthorizer", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteAuthorizer))
 }
 
 func handleAPIGWCreateRestApi(w http.ResponseWriter, r *http.Request) {
@@ -627,6 +763,495 @@ func handleAPIGWDeleteIntegrationResponse(w http.ResponseWriter, r *http.Request
 	key := apigwMethodResponseKey(sim.PathParam(r, "restApiId"), sim.PathParam(r, "resourceId"), sim.PathParam(r, "httpMethod"), sim.PathParam(r, "statusCode"))
 	if !apigwIntegrationResponses.Delete(key) {
 		sim.WriteJSON(w, http.StatusNotFound, map[string]string{"message": "integration response not found"})
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// apigwPatchOp is one JSON-Patch-style operation an API Gateway PATCH
+// (Update*) request carries. Only "replace"/"add" on a "/<field>" path
+// is honored — the shape the canonical SDK + CLI update flows produce.
+type apigwPatchOp struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value string `json:"value"`
+	From  string `json:"from"`
+}
+
+func handleAPIGWCreateApiKey(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Enabled     bool   `json:"enabled"`
+		Value       string `json:"value"`
+		CustomerId  string `json:"customerId"`
+		StageKeys   []struct {
+			RestApiId string `json:"restApiId"`
+			StageName string `json:"stageName"`
+		} `json:"stageKeys"`
+		Tags map[string]string `json:"tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	now := time.Now().Unix()
+	value := req.Value
+	if value == "" {
+		value = generateUUID() + generateUUID()[:8]
+	}
+	var stageKeys []string
+	for _, sk := range req.StageKeys {
+		stageKeys = append(stageKeys, sk.RestApiId+"/"+sk.StageName)
+	}
+	key := APIGWApiKey{
+		Id:              generateUUID()[:10],
+		Value:           value,
+		Name:            req.Name,
+		Description:     req.Description,
+		Enabled:         req.Enabled,
+		CustomerId:      req.CustomerId,
+		CreatedDate:     now,
+		LastUpdatedDate: now,
+		StageKeys:       stageKeys,
+		Tags:            req.Tags,
+	}
+	apigwApiKeys.Put(key.Id, key)
+	sim.WriteJSON(w, http.StatusCreated, key)
+}
+
+func handleAPIGWListApiKeys(w http.ResponseWriter, r *http.Request) {
+	all := apigwApiKeys.List()
+	if all == nil {
+		all = []APIGWApiKey{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": all})
+}
+
+func handleAPIGWGetApiKey(w http.ResponseWriter, r *http.Request) {
+	key, ok := apigwApiKeys.Get(sim.PathParam(r, "apiKey"))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid API Key identifier specified")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, key)
+}
+
+func handleAPIGWUpdateApiKey(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "apiKey")
+	key, ok := apigwApiKeys.Get(id)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid API Key identifier specified")
+		return
+	}
+	var req struct {
+		PatchOperations []apigwPatchOp `json:"patchOperations"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, op := range req.PatchOperations {
+		if op.Op != "replace" && op.Op != "add" {
+			continue
+		}
+		switch strings.TrimPrefix(op.Path, "/") {
+		case "name":
+			key.Name = op.Value
+		case "description":
+			key.Description = op.Value
+		case "customerId":
+			key.CustomerId = op.Value
+		case "enabled":
+			key.Enabled = op.Value == "true"
+		}
+	}
+	key.LastUpdatedDate = time.Now().Unix()
+	apigwApiKeys.Put(id, key)
+	sim.WriteJSON(w, http.StatusOK, key)
+}
+
+func handleAPIGWDeleteApiKey(w http.ResponseWriter, r *http.Request) {
+	if !apigwApiKeys.Delete(sim.PathParam(r, "apiKey")) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid API Key identifier specified")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleAPIGWCreateUsagePlan(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name        string                 `json:"name"`
+		Description string                 `json:"description"`
+		ApiStages   []APIGWApiStage        `json:"apiStages"`
+		Throttle    *APIGWThrottleSettings `json:"throttle"`
+		Quota       *APIGWQuotaSettings    `json:"quota"`
+		Tags        map[string]string      `json:"tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	up := APIGWUsagePlan{
+		Id:          generateUUID()[:10],
+		Name:        req.Name,
+		Description: req.Description,
+		ApiStages:   req.ApiStages,
+		Throttle:    req.Throttle,
+		Quota:       req.Quota,
+		Tags:        req.Tags,
+	}
+	apigwUsagePlans.Put(up.Id, up)
+	sim.WriteJSON(w, http.StatusCreated, up)
+}
+
+func handleAPIGWListUsagePlans(w http.ResponseWriter, r *http.Request) {
+	all := apigwUsagePlans.List()
+	if all == nil {
+		all = []APIGWUsagePlan{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": all})
+}
+
+func handleAPIGWGetUsagePlan(w http.ResponseWriter, r *http.Request) {
+	up, ok := apigwUsagePlans.Get(sim.PathParam(r, "usagePlanId"))
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan ID specified")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, up)
+}
+
+func handleAPIGWUpdateUsagePlan(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "usagePlanId")
+	up, ok := apigwUsagePlans.Get(id)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan ID specified")
+		return
+	}
+	var req struct {
+		PatchOperations []apigwPatchOp `json:"patchOperations"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	for _, op := range req.PatchOperations {
+		if op.Op != "replace" && op.Op != "add" {
+			continue
+		}
+		switch strings.TrimPrefix(op.Path, "/") {
+		case "name":
+			up.Name = op.Value
+		case "description":
+			up.Description = op.Value
+		case "productCode":
+			up.ProductCode = op.Value
+		case "throttle/rateLimit":
+			if up.Throttle == nil {
+				up.Throttle = &APIGWThrottleSettings{}
+			}
+			if f, err := strconv.ParseFloat(op.Value, 64); err == nil {
+				up.Throttle.RateLimit = f
+			}
+		case "throttle/burstLimit":
+			if up.Throttle == nil {
+				up.Throttle = &APIGWThrottleSettings{}
+			}
+			if n, err := strconv.Atoi(op.Value); err == nil {
+				up.Throttle.BurstLimit = n
+			}
+		case "quota/limit":
+			if up.Quota == nil {
+				up.Quota = &APIGWQuotaSettings{}
+			}
+			if n, err := strconv.Atoi(op.Value); err == nil {
+				up.Quota.Limit = n
+			}
+		}
+	}
+	apigwUsagePlans.Put(id, up)
+	sim.WriteJSON(w, http.StatusOK, up)
+}
+
+func handleAPIGWDeleteUsagePlan(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "usagePlanId")
+	if !apigwUsagePlans.Delete(id) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan ID specified")
+		return
+	}
+	for _, k := range apigwUsagePlanKeys.List() {
+		if k.UsagePlanId == id {
+			apigwUsagePlanKeys.Delete(id + "/" + k.Id)
+		}
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleAPIGWCreateUsagePlanKey(w http.ResponseWriter, r *http.Request) {
+	usagePlanId := sim.PathParam(r, "usagePlanId")
+	if _, ok := apigwUsagePlans.Get(usagePlanId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan ID specified")
+		return
+	}
+	var req struct {
+		KeyId   string `json:"keyId"`
+		KeyType string `json:"keyType"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	// The usage-plan key surfaces the referenced API key's id/name/value.
+	name := ""
+	value := ""
+	if ak, ok := apigwApiKeys.Get(req.KeyId); ok {
+		name = ak.Name
+		value = ak.Value
+	}
+	k := APIGWUsagePlanKey{
+		Id:          req.KeyId,
+		Type:        req.KeyType,
+		Value:       value,
+		Name:        name,
+		UsagePlanId: usagePlanId,
+	}
+	apigwUsagePlanKeys.Put(usagePlanId+"/"+k.Id, k)
+	sim.WriteJSON(w, http.StatusCreated, k)
+}
+
+func handleAPIGWListUsagePlanKeys(w http.ResponseWriter, r *http.Request) {
+	usagePlanId := sim.PathParam(r, "usagePlanId")
+	if _, ok := apigwUsagePlans.Get(usagePlanId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan ID specified")
+		return
+	}
+	var out []APIGWUsagePlanKey
+	for _, k := range apigwUsagePlanKeys.List() {
+		if k.UsagePlanId == usagePlanId {
+			out = append(out, k)
+		}
+	}
+	if out == nil {
+		out = []APIGWUsagePlanKey{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
+}
+
+func handleAPIGWGetUsagePlanKey(w http.ResponseWriter, r *http.Request) {
+	usagePlanId := sim.PathParam(r, "usagePlanId")
+	keyId := sim.PathParam(r, "keyId")
+	k, ok := apigwUsagePlanKeys.Get(usagePlanId + "/" + keyId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan Key identifier specified")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, k)
+}
+
+func handleAPIGWDeleteUsagePlanKey(w http.ResponseWriter, r *http.Request) {
+	usagePlanId := sim.PathParam(r, "usagePlanId")
+	keyId := sim.PathParam(r, "keyId")
+	if !apigwUsagePlanKeys.Delete(usagePlanId + "/" + keyId) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Usage Plan Key identifier specified")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleAPIGWCreateModel(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Schema      string `json:"schema"`
+		ContentType string `json:"contentType"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	m := APIGWModel{
+		Id:          generateUUID()[:10],
+		Name:        req.Name,
+		Description: req.Description,
+		Schema:      req.Schema,
+		ContentType: req.ContentType,
+		RestApiId:   restApiId,
+	}
+	apigwModels.Put(restApiId+"/"+m.Name, m)
+	sim.WriteJSON(w, http.StatusCreated, m)
+}
+
+func handleAPIGWListModels(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var out []APIGWModel
+	for _, m := range apigwModels.List() {
+		if m.RestApiId == restApiId {
+			out = append(out, m)
+		}
+	}
+	if out == nil {
+		out = []APIGWModel{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
+}
+
+func handleAPIGWGetModel(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	modelName := sim.PathParam(r, "modelName")
+	m, ok := apigwModels.Get(restApiId + "/" + modelName)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Model Name specified")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, m)
+}
+
+func handleAPIGWDeleteModel(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	modelName := sim.PathParam(r, "modelName")
+	if !apigwModels.Delete(restApiId + "/" + modelName) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Model Name specified")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleAPIGWCreateRequestValidator(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var req struct {
+		Name                      string `json:"name"`
+		ValidateRequestBody       bool   `json:"validateRequestBody"`
+		ValidateRequestParameters bool   `json:"validateRequestParameters"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	rv := APIGWRequestValidator{
+		Id:                        generateUUID()[:10],
+		Name:                      req.Name,
+		ValidateRequestBody:       req.ValidateRequestBody,
+		ValidateRequestParameters: req.ValidateRequestParameters,
+		RestApiId:                 restApiId,
+	}
+	apigwRequestValidators.Put(restApiId+"/"+rv.Id, rv)
+	sim.WriteJSON(w, http.StatusCreated, rv)
+}
+
+func handleAPIGWListRequestValidators(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var out []APIGWRequestValidator
+	for _, rv := range apigwRequestValidators.List() {
+		if rv.RestApiId == restApiId {
+			out = append(out, rv)
+		}
+	}
+	if out == nil {
+		out = []APIGWRequestValidator{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
+}
+
+func handleAPIGWDeleteRequestValidator(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	requestValidatorId := sim.PathParam(r, "requestValidatorId")
+	if !apigwRequestValidators.Delete(restApiId + "/" + requestValidatorId) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Request Validator Id specified")
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func handleAPIGWCreateAuthorizer(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var req struct {
+		Name                         string   `json:"name"`
+		Type                         string   `json:"type"`
+		ProviderARNs                 []string `json:"providerARNs"`
+		AuthType                     string   `json:"authType"`
+		AuthorizerUri                string   `json:"authorizerUri"`
+		AuthorizerCredentials        string   `json:"authorizerCredentials"`
+		IdentitySource               string   `json:"identitySource"`
+		IdentityValidationExpression string   `json:"identityValidationExpression"`
+		AuthorizerResultTtlInSeconds *int     `json:"authorizerResultTtlInSeconds"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequestException", err.Error(), http.StatusBadRequest)
+		return
+	}
+	a := APIGWAuthorizer{
+		Id:                           generateUUID()[:10],
+		Name:                         req.Name,
+		Type:                         req.Type,
+		ProviderARNs:                 req.ProviderARNs,
+		AuthType:                     req.AuthType,
+		AuthorizerUri:                req.AuthorizerUri,
+		AuthorizerCredentials:        req.AuthorizerCredentials,
+		IdentitySource:               req.IdentitySource,
+		IdentityValidationExpression: req.IdentityValidationExpression,
+		AuthorizerResultTtlInSeconds: req.AuthorizerResultTtlInSeconds,
+		RestApiId:                    restApiId,
+	}
+	apigwAuthorizers.Put(restApiId+"/"+a.Id, a)
+	sim.WriteJSON(w, http.StatusCreated, a)
+}
+
+func handleAPIGWListAuthorizers(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(restApiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var out []APIGWAuthorizer
+	for _, a := range apigwAuthorizers.List() {
+		if a.RestApiId == restApiId {
+			out = append(out, a)
+		}
+	}
+	if out == nil {
+		out = []APIGWAuthorizer{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
+}
+
+func handleAPIGWGetAuthorizer(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	authorizerId := sim.PathParam(r, "authorizerId")
+	a, ok := apigwAuthorizers.Get(restApiId + "/" + authorizerId)
+	if !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Authorizer identifier specified")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, a)
+}
+
+func handleAPIGWDeleteAuthorizer(w http.ResponseWriter, r *http.Request) {
+	restApiId := sim.PathParam(r, "restApiId")
+	authorizerId := sim.PathParam(r, "authorizerId")
+	if !apigwAuthorizers.Delete(restApiId + "/" + authorizerId) {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Authorizer identifier specified")
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
