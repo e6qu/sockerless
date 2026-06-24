@@ -65,28 +65,53 @@ type GlueJobRun struct {
 	ErrorMessage  string            `json:"ErrorMessage,omitempty"`
 }
 
+// GluePartition models a Data Catalog partition belonging to a table.
+type GluePartition struct {
+	Values            []string          `json:"Values,omitempty"`
+	DatabaseName      string            `json:"DatabaseName"`
+	TableName         string            `json:"TableName"`
+	StorageDescriptor map[string]any    `json:"StorageDescriptor,omitempty"`
+	Parameters        map[string]string `json:"Parameters,omitempty"`
+	CreationTime      float64           `json:"CreationTime"`
+	LastAccessTime    *float64          `json:"LastAccessTime,omitempty"`
+	LastAnalyzedTime  *float64          `json:"LastAnalyzedTime,omitempty"`
+}
+
 var (
-	glueDatabases sim.Store[GlueDatabase]
-	glueTables    sim.Store[GlueTable]
-	glueJobs      sim.Store[GlueJob]
-	glueJobRuns   sim.Store[GlueJobRun]
-	glueMu        sync.Mutex
+	glueDatabases  sim.Store[GlueDatabase]
+	glueTables     sim.Store[GlueTable]
+	gluePartitions sim.Store[GluePartition]
+	glueJobs       sim.Store[GlueJob]
+	glueJobRuns    sim.Store[GlueJobRun]
+	glueMu         sync.Mutex
 )
 
 func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	glueDatabases = sim.MakeStore[GlueDatabase](srv.DB(), "glue_databases")
 	glueTables = sim.MakeStore[GlueTable](srv.DB(), "glue_tables")
+	gluePartitions = sim.MakeStore[GluePartition](srv.DB(), "glue_partitions")
 	glueJobs = sim.MakeStore[GlueJob](srv.DB(), "glue_jobs")
 	glueJobRuns = sim.MakeStore[GlueJobRun](srv.DB(), "glue_job_runs")
 
 	r.Register("AWSGlue.CreateDatabase", handleGlueCreateDatabase)
 	r.Register("AWSGlue.GetDatabase", handleGlueGetDatabase)
 	r.Register("AWSGlue.GetDatabases", handleGlueGetDatabases)
+	r.Register("AWSGlue.UpdateDatabase", handleGlueUpdateDatabase)
 	r.Register("AWSGlue.DeleteDatabase", handleGlueDeleteDatabase)
 	r.Register("AWSGlue.CreateTable", handleGlueCreateTable)
 	r.Register("AWSGlue.GetTable", handleGlueGetTable)
 	r.Register("AWSGlue.GetTables", handleGlueGetTables)
+	r.Register("AWSGlue.UpdateTable", handleGlueUpdateTable)
 	r.Register("AWSGlue.DeleteTable", handleGlueDeleteTable)
+	r.Register("AWSGlue.BatchDeleteTable", handleGlueBatchDeleteTable)
+	r.Register("AWSGlue.CreatePartition", handleGlueCreatePartition)
+	r.Register("AWSGlue.BatchCreatePartition", handleGlueBatchCreatePartition)
+	r.Register("AWSGlue.GetPartition", handleGlueGetPartition)
+	r.Register("AWSGlue.GetPartitions", handleGlueGetPartitions)
+	r.Register("AWSGlue.BatchGetPartition", handleGlueBatchGetPartition)
+	r.Register("AWSGlue.UpdatePartition", handleGlueUpdatePartition)
+	r.Register("AWSGlue.DeletePartition", handleGlueDeletePartition)
+	r.Register("AWSGlue.BatchDeletePartition", handleGlueBatchDeletePartition)
 	r.Register("AWSGlue.CreateJob", handleGlueCreateJob)
 	r.Register("AWSGlue.GetJob", handleGlueGetJob)
 	r.Register("AWSGlue.GetJobs", handleGlueGetJobs)
@@ -217,6 +242,52 @@ func handleGlueDeleteDatabase(w http.ResponseWriter, r *http.Request) {
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
 }
 
+func handleGlueUpdateDatabase(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name          string `json:"Name"`
+		DatabaseInput struct {
+			Name        string            `json:"Name"`
+			Parameters  map[string]string `json:"Parameters"`
+			LocationUri string            `json:"LocationUri"`
+			Description string            `json:"Description"`
+		} `json:"DatabaseInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" || req.DatabaseInput.Name == "" {
+		glueWriteError(w, "InvalidInputException", "Name and DatabaseInput.Name are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	existing, ok := glueDatabases.Get(req.Name)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Database not found: "+req.Name)
+		return
+	}
+	updated := GlueDatabase{
+		Name:        req.DatabaseInput.Name,
+		Parameters:  req.DatabaseInput.Parameters,
+		LocationUri: req.DatabaseInput.LocationUri,
+		Description: req.DatabaseInput.Description,
+		CreateTime:  existing.CreateTime,
+	}
+	// A rename moves the row; otherwise overwrite in place.
+	if req.DatabaseInput.Name != req.Name {
+		if _, clash := glueDatabases.Get(req.DatabaseInput.Name); clash {
+			glueWriteError(w, "AlreadyExistsException", "Database already exists: "+req.DatabaseInput.Name)
+			return
+		}
+		glueDatabases.Delete(req.Name)
+	}
+	glueDatabases.Put(req.DatabaseInput.Name, updated)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
 // ---------- Table ----------
 
 func glueTableKey(database, table string) string {
@@ -337,6 +408,410 @@ func handleGlueDeleteTable(w http.ResponseWriter, r *http.Request) {
 	}
 	glueTables.Delete(key)
 	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueUpdateTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableInput   struct {
+			Name              string            `json:"Name"`
+			StorageDescriptor map[string]any    `json:"StorageDescriptor"`
+			PartitionKeys     []map[string]any  `json:"PartitionKeys"`
+			Parameters        map[string]string `json:"Parameters"`
+			TableType         string            `json:"TableType"`
+		} `json:"TableInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.TableInput.Name == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName and TableInput.Name are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	key := glueTableKey(req.DatabaseName, req.TableInput.Name)
+	existing, ok := glueTables.Get(key)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table not found: "+req.TableInput.Name)
+		return
+	}
+	updated := GlueTable{
+		Name:              req.TableInput.Name,
+		DatabaseName:      req.DatabaseName,
+		StorageDescriptor: req.TableInput.StorageDescriptor,
+		PartitionKeys:     req.TableInput.PartitionKeys,
+		Parameters:        req.TableInput.Parameters,
+		TableType:         req.TableInput.TableType,
+		CreateTime:        existing.CreateTime,
+		UpdateTime:        glueEpochNow(),
+	}
+	glueTables.Put(key, updated)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueBatchDeleteTable(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName   string   `json:"DatabaseName"`
+		TablesToDelete []string `json:"TablesToDelete"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	var errs []map[string]any
+	for _, name := range req.TablesToDelete {
+		key := glueTableKey(req.DatabaseName, name)
+		if _, ok := glueTables.Get(key); !ok {
+			errs = append(errs, map[string]any{
+				"TableName": name,
+				"ErrorDetail": map[string]any{
+					"ErrorCode":    "EntityNotFoundException",
+					"ErrorMessage": "Table not found: " + name,
+				},
+			})
+			continue
+		}
+		glueTables.Delete(key)
+		// Cascade-delete the table's partitions.
+		for _, p := range gluePartitions.List() {
+			if p.DatabaseName == req.DatabaseName && p.TableName == name {
+				gluePartitions.Delete(gluePartitionKey(req.DatabaseName, name, p.Values))
+			}
+		}
+	}
+	resp := map[string]any{}
+	if len(errs) > 0 {
+		resp["Errors"] = errs
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+// ---------- Partition ----------
+
+// gluePartitionKey is the store key for a partition; partition values are
+// ordered and joined under a key that also scopes them to (database, table).
+func gluePartitionKey(database, table string, values []string) string {
+	return database + "/" + table + "/" + strings.Join(values, "\x1f")
+}
+
+func glueValuesEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// glueRequirePartitionTable validates the (database, table) parent exists.
+// Caller holds glueMu. Returns false and writes the error if missing.
+func glueRequirePartitionTable(w http.ResponseWriter, database, table string) bool {
+	if _, ok := glueDatabases.Get(database); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Database not found: "+database)
+		return false
+	}
+	if _, ok := glueTables.Get(glueTableKey(database, table)); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Table not found: "+table)
+		return false
+	}
+	return true
+}
+
+type gluePartitionInput struct {
+	Values            []string          `json:"Values"`
+	StorageDescriptor map[string]any    `json:"StorageDescriptor"`
+	Parameters        map[string]string `json:"Parameters"`
+	LastAccessTime    *float64          `json:"LastAccessTime"`
+	LastAnalyzedTime  *float64          `json:"LastAnalyzedTime"`
+}
+
+func gluePartitionFromInput(database, table string, in gluePartitionInput, creationTime float64) GluePartition {
+	return GluePartition{
+		Values:            in.Values,
+		DatabaseName:      database,
+		TableName:         table,
+		StorageDescriptor: in.StorageDescriptor,
+		Parameters:        in.Parameters,
+		CreationTime:      creationTime,
+		LastAccessTime:    in.LastAccessTime,
+		LastAnalyzedTime:  in.LastAnalyzedTime,
+	}
+}
+
+func handleGlueCreatePartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName   string             `json:"DatabaseName"`
+		TableName      string             `json:"TableName"`
+		PartitionInput gluePartitionInput `json:"PartitionInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.TableName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName and TableName are required")
+		return
+	}
+	if len(req.PartitionInput.Values) == 0 {
+		glueWriteError(w, "InvalidInputException", "PartitionInput.Values is required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if !glueRequirePartitionTable(w, req.DatabaseName, req.TableName) {
+		return
+	}
+	key := gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionInput.Values)
+	if _, ok := gluePartitions.Get(key); ok {
+		glueWriteError(w, "AlreadyExistsException", "Partition already exists")
+		return
+	}
+	gluePartitions.Put(key, gluePartitionFromInput(req.DatabaseName, req.TableName, req.PartitionInput, glueEpochNow()))
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueBatchCreatePartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName       string               `json:"DatabaseName"`
+		TableName          string               `json:"TableName"`
+		PartitionInputList []gluePartitionInput `json:"PartitionInputList"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.TableName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName and TableName are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	if !glueRequirePartitionTable(w, req.DatabaseName, req.TableName) {
+		return
+	}
+	now := glueEpochNow()
+	var errs []map[string]any
+	for _, in := range req.PartitionInputList {
+		key := gluePartitionKey(req.DatabaseName, req.TableName, in.Values)
+		if _, ok := gluePartitions.Get(key); ok {
+			errs = append(errs, map[string]any{
+				"PartitionValues": in.Values,
+				"ErrorDetail": map[string]any{
+					"ErrorCode":    "AlreadyExistsException",
+					"ErrorMessage": "Partition already exists",
+				},
+			})
+			continue
+		}
+		gluePartitions.Put(key, gluePartitionFromInput(req.DatabaseName, req.TableName, in, now))
+	}
+	resp := map[string]any{}
+	if len(errs) > 0 {
+		resp["Errors"] = errs
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueGetPartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName    string   `json:"DatabaseName"`
+		TableName       string   `json:"TableName"`
+		PartitionValues []string `json:"PartitionValues"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	p, ok := gluePartitions.Get(gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValues))
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{"Partition": p})
+}
+
+func handleGlueGetPartitions(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName string `json:"DatabaseName"`
+		TableName    string `json:"TableName"`
+		NextToken    string `json:"NextToken"`
+		MaxResults   *int   `json:"MaxResults"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	var filtered []GluePartition
+	for _, p := range gluePartitions.List() {
+		if p.DatabaseName == req.DatabaseName && p.TableName == req.TableName {
+			filtered = append(filtered, p)
+		}
+	}
+	maxR := 0
+	if req.MaxResults != nil {
+		maxR = *req.MaxResults
+	}
+	page, nextTok := awsPage(filtered, req.NextToken, maxR, 100)
+	resp := map[string]any{"Partitions": page}
+	if nextTok != "" {
+		resp["NextToken"] = nextTok
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueBatchGetPartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName    string `json:"DatabaseName"`
+		TableName       string `json:"TableName"`
+		PartitionsToGet []struct {
+			Values []string `json:"Values"`
+		} `json:"PartitionsToGet"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	var found []GluePartition
+	var unprocessed []map[string]any
+	for _, pk := range req.PartitionsToGet {
+		p, ok := gluePartitions.Get(gluePartitionKey(req.DatabaseName, req.TableName, pk.Values))
+		if ok {
+			found = append(found, p)
+		} else {
+			unprocessed = append(unprocessed, map[string]any{"Values": pk.Values})
+		}
+	}
+	resp := map[string]any{}
+	if len(found) > 0 {
+		resp["Partitions"] = found
+	}
+	if len(unprocessed) > 0 {
+		resp["UnprocessedKeys"] = unprocessed
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleGlueUpdatePartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName       string             `json:"DatabaseName"`
+		TableName          string             `json:"TableName"`
+		PartitionValueList []string           `json:"PartitionValueList"`
+		PartitionInput     gluePartitionInput `json:"PartitionInput"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.DatabaseName == "" || req.TableName == "" {
+		glueWriteError(w, "InvalidInputException", "DatabaseName and TableName are required")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	oldKey := gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValueList)
+	existing, ok := gluePartitions.Get(oldKey)
+	if !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	updated := gluePartitionFromInput(req.DatabaseName, req.TableName, req.PartitionInput, existing.CreationTime)
+	// UpdatePartition may move the partition to new values.
+	if !glueValuesEqual(req.PartitionInput.Values, req.PartitionValueList) {
+		newKey := gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionInput.Values)
+		if _, clash := gluePartitions.Get(newKey); clash {
+			glueWriteError(w, "AlreadyExistsException", "Partition already exists")
+			return
+		}
+		gluePartitions.Delete(oldKey)
+		gluePartitions.Put(newKey, updated)
+	} else {
+		gluePartitions.Put(oldKey, updated)
+	}
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueDeletePartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName    string   `json:"DatabaseName"`
+		TableName       string   `json:"TableName"`
+		PartitionValues []string `json:"PartitionValues"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	key := gluePartitionKey(req.DatabaseName, req.TableName, req.PartitionValues)
+	if _, ok := gluePartitions.Get(key); !ok {
+		glueWriteError(w, "EntityNotFoundException", "Partition not found")
+		return
+	}
+	gluePartitions.Delete(key)
+	glueWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleGlueBatchDeletePartition(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		DatabaseName       string `json:"DatabaseName"`
+		TableName          string `json:"TableName"`
+		PartitionsToDelete []struct {
+			Values []string `json:"Values"`
+		} `json:"PartitionsToDelete"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		glueWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	glueMu.Lock()
+	defer glueMu.Unlock()
+
+	var errs []map[string]any
+	for _, pk := range req.PartitionsToDelete {
+		key := gluePartitionKey(req.DatabaseName, req.TableName, pk.Values)
+		if _, ok := gluePartitions.Get(key); !ok {
+			errs = append(errs, map[string]any{
+				"PartitionValues": pk.Values,
+				"ErrorDetail": map[string]any{
+					"ErrorCode":    "EntityNotFoundException",
+					"ErrorMessage": "Partition not found",
+				},
+			})
+			continue
+		}
+		gluePartitions.Delete(key)
+	}
+	resp := map[string]any{}
+	if len(errs) > 0 {
+		resp["Errors"] = errs
+	}
+	glueWriteJSON(w, http.StatusOK, resp)
 }
 
 // ---------- Job ----------

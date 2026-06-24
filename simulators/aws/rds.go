@@ -63,9 +63,64 @@ type RDSSnapshot struct {
 	Tags                 map[string]string
 }
 
+// RDSCluster models a (control-plane only) Aurora/Multi-AZ DB cluster.
+// The database engine is not simulated; Status settles to "available"
+// inline on Create, matching the sim's instance/snapshot convention.
+type RDSCluster struct {
+	DBClusterIdentifier        string
+	DbClusterResourceId        string
+	Engine                     string
+	EngineVersion              string
+	EngineMode                 string
+	Status                     string
+	DatabaseName               string
+	MasterUsername             string
+	Port                       int
+	Endpoint                   string
+	ReaderEndpoint             string
+	DBClusterParameterGroup    string
+	DBSubnetGroup              string
+	AllocatedStorage           int
+	BackupRetentionPeriod      int
+	StorageEncrypted           bool
+	DeletionProtection         bool
+	ClusterCreateTime          string
+	AvailabilityZones          []string
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	ARN                        string
+	Tags                       map[string]string
+}
+
+// RDSSubnetGroup models a DB subnet group (a named set of VPC subnets
+// RDS places DB instances into).
+type RDSSubnetGroup struct {
+	DBSubnetGroupName        string
+	DBSubnetGroupDescription string
+	VpcId                    string
+	SubnetGroupStatus        string
+	SubnetIds                []string
+	ARN                      string
+	Tags                     map[string]string
+}
+
+// RDSParamGroup models a DB parameter group. Individual parameters are
+// not simulated (ModifyDBParameterGroup is out of the supported
+// surface); the group itself is a faithful control-plane row.
+type RDSParamGroup struct {
+	DBParameterGroupName   string
+	DBParameterGroupFamily string
+	Description            string
+	ARN                    string
+	Tags                   map[string]string
+}
+
 var (
-	rdsInstances sim.Store[RDSInstance]
-	rdsSnapshots sim.Store[RDSSnapshot]
+	rdsInstances    sim.Store[RDSInstance]
+	rdsSnapshots    sim.Store[RDSSnapshot]
+	rdsClusters     sim.Store[RDSCluster]
+	rdsSubnetGroups sim.Store[RDSSubnetGroup]
+	rdsParamGroups  sim.Store[RDSParamGroup]
 )
 
 // rdsAPIVersion is the canonical AWS RDS API version (Query
@@ -88,6 +143,24 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned(rdsAPIVersion, "DescribeDBSnapshotAttributes", handleRDSDescribeSnapshotAttributes)
 	r.RegisterVersioned(rdsAPIVersion, "DeleteDBSnapshot", handleRDSDeleteSnapshot)
 	r.RegisterVersioned(rdsAPIVersion, "RestoreDBInstanceFromDBSnapshot", handleRDSRestoreFromSnapshot)
+	r.RegisterVersioned(rdsAPIVersion, "RebootDBInstance", handleRDSReboot)
+
+	rdsClusters = sim.MakeStore[RDSCluster](srv.DB(), "rds_clusters")
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBCluster", handleRDSCreateCluster)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBClusters", handleRDSDescribeClusters)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBCluster", handleRDSModifyCluster)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBCluster", handleRDSDeleteCluster)
+
+	rdsSubnetGroups = sim.MakeStore[RDSSubnetGroup](srv.DB(), "rds_subnet_groups")
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBSubnetGroup", handleRDSCreateSubnetGroup)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBSubnetGroups", handleRDSDescribeSubnetGroups)
+	r.RegisterVersioned(rdsAPIVersion, "ModifyDBSubnetGroup", handleRDSModifySubnetGroup)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBSubnetGroup", handleRDSDeleteSubnetGroup)
+
+	rdsParamGroups = sim.MakeStore[RDSParamGroup](srv.DB(), "rds_param_groups")
+	r.RegisterVersioned(rdsAPIVersion, "CreateDBParameterGroup", handleRDSCreateParamGroup)
+	r.RegisterVersioned(rdsAPIVersion, "DescribeDBParameterGroups", handleRDSDescribeParamGroups)
+	r.RegisterVersioned(rdsAPIVersion, "DeleteDBParameterGroup", handleRDSDeleteParamGroup)
 }
 
 func rdsInstanceARN(id string) string {
@@ -255,6 +328,27 @@ func handleRDSAddTags(w http.ResponseWriter, r *http.Request) {
 		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
 		return
 	}
+	if cl, ok := findRDSClusterByARN(arn); ok {
+		rdsClusters.Update(cl.DBClusterIdentifier, func(c *RDSCluster) {
+			c.Tags = mergeTags(c.Tags, parseAWSQueryTagMap(r, "Tags.Tag"))
+		})
+		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	if sg, ok := findRDSSubnetGroupByARN(arn); ok {
+		rdsSubnetGroups.Update(sg.DBSubnetGroupName, func(g *RDSSubnetGroup) {
+			g.Tags = mergeTags(g.Tags, parseAWSQueryTagMap(r, "Tags.Tag"))
+		})
+		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	if pg, ok := findRDSParamGroupByARN(arn); ok {
+		rdsParamGroups.Update(pg.DBParameterGroupName, func(g *RDSParamGroup) {
+			g.Tags = mergeTags(g.Tags, parseAWSQueryTagMap(r, "Tags.Tag"))
+		})
+		rdsXMLResponse(w, "AddTagsToResource", "", sim.RequestID(r.Context()))
+		return
+	}
 	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
 }
 
@@ -268,6 +362,18 @@ func handleRDSListTags(w http.ResponseWriter, r *http.Request) {
 	snap, ok := findRDSSnapshotByARN(arn)
 	if ok {
 		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(snap.Tags), sim.RequestID(r.Context()))
+		return
+	}
+	if cl, ok := findRDSClusterByARN(arn); ok {
+		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(cl.Tags), sim.RequestID(r.Context()))
+		return
+	}
+	if sg, ok := findRDSSubnetGroupByARN(arn); ok {
+		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(sg.Tags), sim.RequestID(r.Context()))
+		return
+	}
+	if pg, ok := findRDSParamGroupByARN(arn); ok {
+		rdsXMLResponse(w, "ListTagsForResource", renderRDSTagList(pg.Tags), sim.RequestID(r.Context()))
 		return
 	}
 	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
@@ -301,6 +407,27 @@ func handleRDSRemoveTags(w http.ResponseWriter, r *http.Request) {
 		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
 		return
 	}
+	if cl, ok := findRDSClusterByARN(arn); ok {
+		rdsClusters.Update(cl.DBClusterIdentifier, func(c *RDSCluster) {
+			removeAWSQueryTags(c.Tags, r)
+		})
+		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	if sg, ok := findRDSSubnetGroupByARN(arn); ok {
+		rdsSubnetGroups.Update(sg.DBSubnetGroupName, func(g *RDSSubnetGroup) {
+			removeAWSQueryTags(g.Tags, r)
+		})
+		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
+		return
+	}
+	if pg, ok := findRDSParamGroupByARN(arn); ok {
+		rdsParamGroups.Update(pg.DBParameterGroupName, func(g *RDSParamGroup) {
+			removeAWSQueryTags(g.Tags, r)
+		})
+		rdsXMLResponse(w, "RemoveTagsFromResource", "", sim.RequestID(r.Context()))
+		return
+	}
 	rdsErrorXML(w, rdsTagResourceNotFoundCode(arn), "Resource not found", http.StatusNotFound, sim.RequestID(r.Context()))
 }
 
@@ -330,8 +457,15 @@ func findRDSSnapshotByARN(arn string) (RDSSnapshot, bool) {
 }
 
 func rdsTagResourceNotFoundCode(arn string) string {
-	if strings.Contains(arn, ":snapshot:") {
+	switch {
+	case strings.Contains(arn, ":snapshot:"):
 		return "DBSnapshotNotFound"
+	case strings.Contains(arn, ":cluster:"):
+		return "DBClusterNotFoundFault"
+	case strings.Contains(arn, ":subgrp:"):
+		return "DBSubnetGroupNotFoundFault"
+	case strings.Contains(arn, ":pg:"):
+		return "DBParameterGroupNotFound"
 	}
 	return "DBInstanceNotFound"
 }
@@ -627,4 +761,413 @@ func handleRDSRestoreFromSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	rdsInstances.Put(newInstID, inst)
 	rdsXMLResponse(w, "RestoreDBInstanceFromDBSnapshot", renderRDSInstance(inst), sim.RequestID(r.Context()))
+}
+
+func handleRDSReboot(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBInstanceIdentifier")
+	inst, ok := rdsInstances.Get(id)
+	if !ok {
+		rdsErrorXML(w, "DBInstanceNotFound", "DB instance not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	// Real RDS transitions creating→rebooting→available; with no
+	// engine to restart, the sim returns the steady-state instance
+	// (Status stays "available"). The response carries the full
+	// DBInstance, which is what the waiter and SDK consumers read.
+	rdsXMLResponse(w, "RebootDBInstance", renderRDSInstance(inst), sim.RequestID(r.Context()))
+}
+
+// ----- DB clusters -----
+
+func rdsClusterARN(id string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:cluster:%s", awsRegion(), awsAccountID(), id)
+}
+
+func rdsClusterResourceID() string {
+	return "cluster-" + strings.ToUpper(strings.ReplaceAll(generateUUID(), "-", ""))[:26]
+}
+
+func findRDSClusterByARN(arn string) (RDSCluster, bool) {
+	for _, c := range rdsClusters.List() {
+		if c.ARN == arn {
+			return c, true
+		}
+	}
+	if c, ok := rdsClusters.Get(arn); ok {
+		return c, true
+	}
+	return RDSCluster{}, false
+}
+
+func renderRDSCluster(c RDSCluster) string {
+	var b strings.Builder
+	b.WriteString("<DBCluster>")
+	fmt.Fprintf(&b, "<DBClusterIdentifier>%s</DBClusterIdentifier>", xmlEscape(c.DBClusterIdentifier))
+	fmt.Fprintf(&b, "<DbClusterResourceId>%s</DbClusterResourceId>", xmlEscape(c.DbClusterResourceId))
+	fmt.Fprintf(&b, "<DBClusterArn>%s</DBClusterArn>", xmlEscape(c.ARN))
+	fmt.Fprintf(&b, "<Engine>%s</Engine>", xmlEscape(c.Engine))
+	fmt.Fprintf(&b, "<EngineVersion>%s</EngineVersion>", xmlEscape(c.EngineVersion))
+	fmt.Fprintf(&b, "<EngineMode>%s</EngineMode>", xmlEscape(c.EngineMode))
+	fmt.Fprintf(&b, "<Status>%s</Status>", xmlEscape(c.Status))
+	fmt.Fprintf(&b, "<DatabaseName>%s</DatabaseName>", xmlEscape(c.DatabaseName))
+	fmt.Fprintf(&b, "<MasterUsername>%s</MasterUsername>", xmlEscape(c.MasterUsername))
+	fmt.Fprintf(&b, "<Port>%d</Port>", c.Port)
+	fmt.Fprintf(&b, "<Endpoint>%s</Endpoint>", xmlEscape(c.Endpoint))
+	fmt.Fprintf(&b, "<ReaderEndpoint>%s</ReaderEndpoint>", xmlEscape(c.ReaderEndpoint))
+	fmt.Fprintf(&b, "<DBClusterParameterGroup>%s</DBClusterParameterGroup>", xmlEscape(c.DBClusterParameterGroup))
+	fmt.Fprintf(&b, "<DBSubnetGroup>%s</DBSubnetGroup>", xmlEscape(c.DBSubnetGroup))
+	fmt.Fprintf(&b, "<AllocatedStorage>%d</AllocatedStorage>", c.AllocatedStorage)
+	fmt.Fprintf(&b, "<BackupRetentionPeriod>%d</BackupRetentionPeriod>", c.BackupRetentionPeriod)
+	fmt.Fprintf(&b, "<StorageEncrypted>%t</StorageEncrypted>", c.StorageEncrypted)
+	fmt.Fprintf(&b, "<DeletionProtection>%t</DeletionProtection>", c.DeletionProtection)
+	fmt.Fprintf(&b, "<ClusterCreateTime>%s</ClusterCreateTime>", xmlEscape(c.ClusterCreateTime))
+	fmt.Fprintf(&b, "<PreferredBackupWindow>%s</PreferredBackupWindow>", xmlEscape(c.PreferredBackupWindow))
+	fmt.Fprintf(&b, "<PreferredMaintenanceWindow>%s</PreferredMaintenanceWindow>", xmlEscape(c.PreferredMaintenanceWindow))
+	b.WriteString("<AvailabilityZones>")
+	for _, az := range c.AvailabilityZones {
+		fmt.Fprintf(&b, "<AvailabilityZone>%s</AvailabilityZone>", xmlEscape(az))
+	}
+	b.WriteString("</AvailabilityZones>")
+	b.WriteString("</DBCluster>")
+	return b.String()
+}
+
+func handleRDSCreateCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	if id == "" {
+		rdsErrorXML(w, "MissingParameter", "DBClusterIdentifier is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsClusters.Get(id); ok {
+		rdsErrorXML(w, "DBClusterAlreadyExistsFault", "DB cluster already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	engine := r.FormValue("Engine")
+	port := rdsDefaultPort(engine)
+	if p := atoiOrZero(r.FormValue("Port")); p > 0 {
+		port = p
+	}
+	engineVersion := r.FormValue("EngineVersion")
+	if engineVersion == "" {
+		engineVersion = rdsDefaultEngineVersion(engine)
+	}
+	engineMode := r.FormValue("EngineMode")
+	if engineMode == "" {
+		engineMode = "provisioned"
+	}
+	paramGroup := r.FormValue("DBClusterParameterGroupName")
+	if paramGroup == "" {
+		paramGroup = "default." + engine
+	}
+	backupRetention := 1
+	if v := r.FormValue("BackupRetentionPeriod"); v != "" {
+		backupRetention = atoiOrZero(v)
+	}
+	cl := RDSCluster{
+		DBClusterIdentifier:        id,
+		DbClusterResourceId:        rdsClusterResourceID(),
+		Engine:                     engine,
+		EngineVersion:              engineVersion,
+		EngineMode:                 engineMode,
+		Status:                     "available",
+		DatabaseName:               r.FormValue("DatabaseName"),
+		MasterUsername:             r.FormValue("MasterUsername"),
+		Port:                       port,
+		Endpoint:                   fmt.Sprintf("%s.cluster-%s.%s.rds.amazonaws.com", id, "sim", awsRegion()),
+		ReaderEndpoint:             fmt.Sprintf("%s.cluster-ro-%s.%s.rds.amazonaws.com", id, "sim", awsRegion()),
+		DBClusterParameterGroup:    paramGroup,
+		DBSubnetGroup:              r.FormValue("DBSubnetGroupName"),
+		AllocatedStorage:           atoiOrZero(r.FormValue("AllocatedStorage")),
+		BackupRetentionPeriod:      backupRetention,
+		StorageEncrypted:           r.FormValue("StorageEncrypted") == "true",
+		DeletionProtection:         r.FormValue("DeletionProtection") == "true",
+		ClusterCreateTime:          time.Now().UTC().Format(time.RFC3339),
+		AvailabilityZones:          []string{awsRegion() + "a", awsRegion() + "b", awsRegion() + "c"},
+		PreferredBackupWindow:      "07:00-09:00",
+		PreferredMaintenanceWindow: "mon:00:00-mon:03:00",
+		ARN:                        rdsClusterARN(id),
+		Tags:                       parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsClusters.Put(id, cl)
+	rdsXMLResponse(w, "CreateDBCluster", renderRDSCluster(cl), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeClusters(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("DBClusterIdentifier")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<DBClusters>")
+	for _, c := range rdsClusters.List() {
+		if wanted != "" && c.DBClusterIdentifier != wanted && c.ARN != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString(renderRDSCluster(c))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "DBClusterNotFoundFault",
+			fmt.Sprintf("DBCluster %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</DBClusters>")
+	rdsXMLResponse(w, "DescribeDBClusters", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSModifyCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	if _, ok := rdsClusters.Get(id); !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault", "DB cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsClusters.Update(id, func(c *RDSCluster) {
+		if v := r.FormValue("EngineVersion"); v != "" {
+			c.EngineVersion = v
+		}
+		if v := r.FormValue("BackupRetentionPeriod"); v != "" {
+			c.BackupRetentionPeriod = atoiOrZero(v)
+		}
+		if v := r.FormValue("PreferredBackupWindow"); v != "" {
+			c.PreferredBackupWindow = v
+		}
+		if v := r.FormValue("PreferredMaintenanceWindow"); v != "" {
+			c.PreferredMaintenanceWindow = v
+		}
+		if v := r.FormValue("DeletionProtection"); v != "" {
+			c.DeletionProtection = v == "true"
+		}
+		if v := r.FormValue("Port"); v != "" {
+			if p := atoiOrZero(v); p > 0 {
+				c.Port = p
+			}
+		}
+	})
+	updated, _ := rdsClusters.Get(id)
+	rdsXMLResponse(w, "ModifyDBCluster", renderRDSCluster(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteCluster(w http.ResponseWriter, r *http.Request) {
+	id := r.FormValue("DBClusterIdentifier")
+	cl, ok := rdsClusters.Get(id)
+	if !ok {
+		rdsErrorXML(w, "DBClusterNotFoundFault", "DB cluster not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsClusters.Delete(id)
+	cl.Status = "deleting"
+	rdsXMLResponse(w, "DeleteDBCluster", renderRDSCluster(cl), sim.RequestID(r.Context()))
+}
+
+// ----- DB subnet groups -----
+
+func rdsSubnetGroupARN(name string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:subgrp:%s", awsRegion(), awsAccountID(), name)
+}
+
+func findRDSSubnetGroupByARN(arn string) (RDSSubnetGroup, bool) {
+	for _, g := range rdsSubnetGroups.List() {
+		if g.ARN == arn {
+			return g, true
+		}
+	}
+	if g, ok := rdsSubnetGroups.Get(arn); ok {
+		return g, true
+	}
+	return RDSSubnetGroup{}, false
+}
+
+func parseRDSSubnetIDs(r *http.Request) []string {
+	var ids []string
+	for n := 1; n <= 50; n++ {
+		v := r.FormValue(fmt.Sprintf("SubnetIds.SubnetIdentifier.%d", n))
+		if v == "" {
+			break
+		}
+		ids = append(ids, v)
+	}
+	return ids
+}
+
+func renderRDSSubnetGroup(g RDSSubnetGroup) string {
+	var b strings.Builder
+	b.WriteString("<DBSubnetGroup>")
+	fmt.Fprintf(&b, "<DBSubnetGroupName>%s</DBSubnetGroupName>", xmlEscape(g.DBSubnetGroupName))
+	fmt.Fprintf(&b, "<DBSubnetGroupDescription>%s</DBSubnetGroupDescription>", xmlEscape(g.DBSubnetGroupDescription))
+	fmt.Fprintf(&b, "<VpcId>%s</VpcId>", xmlEscape(g.VpcId))
+	fmt.Fprintf(&b, "<SubnetGroupStatus>%s</SubnetGroupStatus>", xmlEscape(g.SubnetGroupStatus))
+	fmt.Fprintf(&b, "<DBSubnetGroupArn>%s</DBSubnetGroupArn>", xmlEscape(g.ARN))
+	b.WriteString("<Subnets>")
+	for i, sid := range g.SubnetIds {
+		az := awsRegion() + string(rune('a'+i%3))
+		b.WriteString("<Subnet>")
+		fmt.Fprintf(&b, "<SubnetIdentifier>%s</SubnetIdentifier>", xmlEscape(sid))
+		fmt.Fprintf(&b, "<SubnetAvailabilityZone><Name>%s</Name></SubnetAvailabilityZone>", xmlEscape(az))
+		b.WriteString("<SubnetStatus>Active</SubnetStatus>")
+		b.WriteString("</Subnet>")
+	}
+	b.WriteString("</Subnets>")
+	b.WriteString("</DBSubnetGroup>")
+	return b.String()
+}
+
+func handleRDSCreateSubnetGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBSubnetGroupName")
+	if name == "" {
+		rdsErrorXML(w, "MissingParameter", "DBSubnetGroupName is required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsSubnetGroups.Get(name); ok {
+		rdsErrorXML(w, "DBSubnetGroupAlreadyExists", "DB subnet group already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	vpcID := r.FormValue("VpcId")
+	if vpcID == "" {
+		vpcID = "vpc-" + strings.ReplaceAll(generateUUID(), "-", "")[:17]
+	}
+	g := RDSSubnetGroup{
+		DBSubnetGroupName:        name,
+		DBSubnetGroupDescription: r.FormValue("DBSubnetGroupDescription"),
+		VpcId:                    vpcID,
+		SubnetGroupStatus:        "Complete",
+		SubnetIds:                parseRDSSubnetIDs(r),
+		ARN:                      rdsSubnetGroupARN(name),
+		Tags:                     parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsSubnetGroups.Put(name, g)
+	rdsXMLResponse(w, "CreateDBSubnetGroup", renderRDSSubnetGroup(g), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeSubnetGroups(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("DBSubnetGroupName")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<DBSubnetGroups>")
+	for _, g := range rdsSubnetGroups.List() {
+		if wanted != "" && g.DBSubnetGroupName != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString(renderRDSSubnetGroup(g))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "DBSubnetGroupNotFoundFault",
+			fmt.Sprintf("DBSubnetGroup %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</DBSubnetGroups>")
+	rdsXMLResponse(w, "DescribeDBSubnetGroups", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSModifySubnetGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBSubnetGroupName")
+	if _, ok := rdsSubnetGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBSubnetGroupNotFoundFault", "DB subnet group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsSubnetGroups.Update(name, func(g *RDSSubnetGroup) {
+		if v := r.FormValue("DBSubnetGroupDescription"); v != "" {
+			g.DBSubnetGroupDescription = v
+		}
+		if ids := parseRDSSubnetIDs(r); len(ids) > 0 {
+			g.SubnetIds = ids
+		}
+	})
+	updated, _ := rdsSubnetGroups.Get(name)
+	rdsXMLResponse(w, "ModifyDBSubnetGroup", renderRDSSubnetGroup(updated), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteSubnetGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBSubnetGroupName")
+	if _, ok := rdsSubnetGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBSubnetGroupNotFoundFault", "DB subnet group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsSubnetGroups.Delete(name)
+	// DeleteDBSubnetGroup has an empty result body on real RDS.
+	rdsXMLResponse(w, "DeleteDBSubnetGroup", "", sim.RequestID(r.Context()))
+}
+
+// ----- DB parameter groups -----
+
+func rdsParamGroupARN(name string) string {
+	return fmt.Sprintf("arn:aws:rds:%s:%s:pg:%s", awsRegion(), awsAccountID(), name)
+}
+
+func findRDSParamGroupByARN(arn string) (RDSParamGroup, bool) {
+	for _, g := range rdsParamGroups.List() {
+		if g.ARN == arn {
+			return g, true
+		}
+	}
+	if g, ok := rdsParamGroups.Get(arn); ok {
+		return g, true
+	}
+	return RDSParamGroup{}, false
+}
+
+func renderRDSParamGroup(g RDSParamGroup) string {
+	var b strings.Builder
+	b.WriteString("<DBParameterGroup>")
+	fmt.Fprintf(&b, "<DBParameterGroupName>%s</DBParameterGroupName>", xmlEscape(g.DBParameterGroupName))
+	fmt.Fprintf(&b, "<DBParameterGroupFamily>%s</DBParameterGroupFamily>", xmlEscape(g.DBParameterGroupFamily))
+	fmt.Fprintf(&b, "<Description>%s</Description>", xmlEscape(g.Description))
+	fmt.Fprintf(&b, "<DBParameterGroupArn>%s</DBParameterGroupArn>", xmlEscape(g.ARN))
+	b.WriteString("</DBParameterGroup>")
+	return b.String()
+}
+
+func handleRDSCreateParamGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBParameterGroupName")
+	family := r.FormValue("DBParameterGroupFamily")
+	if name == "" || family == "" {
+		rdsErrorXML(w, "MissingParameter", "DBParameterGroupName and DBParameterGroupFamily are required", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	if _, ok := rdsParamGroups.Get(name); ok {
+		rdsErrorXML(w, "DBParameterGroupAlreadyExists", "DB parameter group already exists", http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
+	g := RDSParamGroup{
+		DBParameterGroupName:   name,
+		DBParameterGroupFamily: family,
+		Description:            r.FormValue("Description"),
+		ARN:                    rdsParamGroupARN(name),
+		Tags:                   parseAWSQueryTagMap(r, "Tags.Tag"),
+	}
+	rdsParamGroups.Put(name, g)
+	rdsXMLResponse(w, "CreateDBParameterGroup", renderRDSParamGroup(g), sim.RequestID(r.Context()))
+}
+
+func handleRDSDescribeParamGroups(w http.ResponseWriter, r *http.Request) {
+	wanted := r.FormValue("DBParameterGroupName")
+	matched := false
+	var b strings.Builder
+	b.WriteString("<DBParameterGroups>")
+	for _, g := range rdsParamGroups.List() {
+		if wanted != "" && g.DBParameterGroupName != wanted {
+			continue
+		}
+		matched = true
+		b.WriteString(renderRDSParamGroup(g))
+	}
+	if wanted != "" && !matched {
+		rdsErrorXML(w, "DBParameterGroupNotFound",
+			fmt.Sprintf("DBParameterGroup %q not found", wanted),
+			http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	b.WriteString("</DBParameterGroups>")
+	rdsXMLResponse(w, "DescribeDBParameterGroups", b.String(), sim.RequestID(r.Context()))
+}
+
+func handleRDSDeleteParamGroup(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("DBParameterGroupName")
+	if _, ok := rdsParamGroups.Get(name); !ok {
+		rdsErrorXML(w, "DBParameterGroupNotFound", "DB parameter group not found", http.StatusNotFound, sim.RequestID(r.Context()))
+		return
+	}
+	rdsParamGroups.Delete(name)
+	// DeleteDBParameterGroup has an empty result body on real RDS.
+	rdsXMLResponse(w, "DeleteDBParameterGroup", "", sim.RequestID(r.Context()))
 }

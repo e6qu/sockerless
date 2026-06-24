@@ -94,6 +94,229 @@ func TestGlue_TableCRUD_SDK(t *testing.T) {
 	assert.Equal(t, "glue-sdk-table", aws.ToString(tables.TableList[0].Name))
 }
 
+func TestGlue_DatabaseUpdate_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{
+			Name:        aws.String("glue-sdk-updb"),
+			Description: aws.String("before"),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-updb")})
+	})
+
+	_, err = c.UpdateDatabase(ctx, &glue.UpdateDatabaseInput{
+		Name: aws.String("glue-sdk-updb"),
+		DatabaseInput: &gluetypes.DatabaseInput{
+			Name:        aws.String("glue-sdk-updb"),
+			Description: aws.String("after"),
+			Parameters:  map[string]string{"owner": "data-eng"},
+		},
+	})
+	require.NoError(t, err)
+
+	get, err := c.GetDatabase(ctx, &glue.GetDatabaseInput{Name: aws.String("glue-sdk-updb")})
+	require.NoError(t, err)
+	assert.Equal(t, "after", aws.ToString(get.Database.Description))
+	assert.Equal(t, "data-eng", get.Database.Parameters["owner"])
+}
+
+func TestGlue_TableUpdateAndBatchDelete_SDK(t *testing.T) {
+	c := glueClient()
+	db := "glue-sdk-tblupd-db"
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String(db)},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.BatchDeleteTable(ctx, &glue.BatchDeleteTableInput{
+			DatabaseName:   aws.String(db),
+			TablesToDelete: []string{"t1", "t2"},
+		})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String(db)})
+	})
+
+	for _, name := range []string{"t1", "t2"} {
+		_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+			DatabaseName: aws.String(db),
+			TableInput: &gluetypes.TableInput{
+				Name:              aws.String(name),
+				StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/" + name + "/")},
+			},
+		})
+		require.NoError(t, err)
+	}
+
+	_, err = c.UpdateTable(ctx, &glue.UpdateTableInput{
+		DatabaseName: aws.String(db),
+		TableInput: &gluetypes.TableInput{
+			Name:              aws.String("t1"),
+			TableType:         aws.String("EXTERNAL_TABLE"),
+			StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/t1-new/")},
+		},
+	})
+	require.NoError(t, err)
+
+	get, err := c.GetTable(ctx, &glue.GetTableInput{DatabaseName: aws.String(db), Name: aws.String("t1")})
+	require.NoError(t, err)
+	assert.Equal(t, "EXTERNAL_TABLE", aws.ToString(get.Table.TableType))
+	assert.Equal(t, "s3://bucket/t1-new/", aws.ToString(get.Table.StorageDescriptor.Location))
+
+	bd, err := c.BatchDeleteTable(ctx, &glue.BatchDeleteTableInput{
+		DatabaseName:   aws.String(db),
+		TablesToDelete: []string{"t1", "t2", "missing"},
+	})
+	require.NoError(t, err)
+	require.Len(t, bd.Errors, 1)
+	assert.Equal(t, "missing", aws.ToString(bd.Errors[0].TableName))
+
+	tables, err := c.GetTables(ctx, &glue.GetTablesInput{DatabaseName: aws.String(db)})
+	require.NoError(t, err)
+	assert.Empty(t, tables.TableList)
+}
+
+func TestGlue_PartitionLifecycle_SDK(t *testing.T) {
+	c := glueClient()
+	db := "glue-sdk-part-db"
+	tbl := "glue-sdk-part-tbl"
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String(db)},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteTable(ctx, &glue.DeleteTableInput{DatabaseName: aws.String(db), Name: aws.String(tbl)})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String(db)})
+	})
+
+	_, err = c.CreateTable(ctx, &glue.CreateTableInput{
+		DatabaseName: aws.String(db),
+		TableInput: &gluetypes.TableInput{
+			Name:              aws.String(tbl),
+			StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/part/")},
+			PartitionKeys:     []gluetypes.Column{{Name: aws.String("dt"), Type: aws.String("string")}},
+		},
+	})
+	require.NoError(t, err)
+
+	// CreatePartition (single).
+	_, err = c.CreatePartition(ctx, &glue.CreatePartitionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		PartitionInput: &gluetypes.PartitionInput{
+			Values:            []string{"2024-01-01"},
+			StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/part/dt=2024-01-01/")},
+		},
+	})
+	require.NoError(t, err)
+
+	// BatchCreatePartition (multiple).
+	bcp, err := c.BatchCreatePartition(ctx, &glue.BatchCreatePartitionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		PartitionInputList: []gluetypes.PartitionInput{
+			{Values: []string{"2024-01-02"}, StorageDescriptor: &gluetypes.StorageDescriptor{Location: aws.String("s3://bucket/part/dt=2024-01-02/")}},
+			{Values: []string{"2024-01-01"}}, // already exists -> Errors entry
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, bcp.Errors, 1)
+	assert.Equal(t, []string{"2024-01-01"}, bcp.Errors[0].PartitionValues)
+
+	// GetPartition.
+	gp, err := c.GetPartition(ctx, &glue.GetPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"2024-01-01"}, gp.Partition.Values)
+	assert.Equal(t, db, aws.ToString(gp.Partition.DatabaseName))
+	assert.Equal(t, tbl, aws.ToString(gp.Partition.TableName))
+
+	// GetPartitions.
+	gps, err := c.GetPartitions(ctx, &glue.GetPartitionsInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+	})
+	require.NoError(t, err)
+	assert.Len(t, gps.Partitions, 2)
+
+	// BatchGetPartition (one present, one missing).
+	bgp, err := c.BatchGetPartition(ctx, &glue.BatchGetPartitionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		PartitionsToGet: []gluetypes.PartitionValueList{
+			{Values: []string{"2024-01-02"}},
+			{Values: []string{"2099-12-31"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, bgp.Partitions, 1)
+	assert.Equal(t, []string{"2024-01-02"}, bgp.Partitions[0].Values)
+	require.Len(t, bgp.UnprocessedKeys, 1)
+	assert.Equal(t, []string{"2099-12-31"}, bgp.UnprocessedKeys[0].Values)
+
+	// UpdatePartition (in place).
+	_, err = c.UpdatePartition(ctx, &glue.UpdatePartitionInput{
+		DatabaseName:       aws.String(db),
+		TableName:          aws.String(tbl),
+		PartitionValueList: []string{"2024-01-01"},
+		PartitionInput: &gluetypes.PartitionInput{
+			Values:     []string{"2024-01-01"},
+			Parameters: map[string]string{"rows": "100"},
+		},
+	})
+	require.NoError(t, err)
+	gp, err = c.GetPartition(ctx, &glue.GetPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "100", gp.Partition.Parameters["rows"])
+
+	// DeletePartition (single).
+	_, err = c.DeletePartition(ctx, &glue.DeletePartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+	})
+	require.NoError(t, err)
+	_, err = c.GetPartition(ctx, &glue.GetPartitionInput{
+		DatabaseName:    aws.String(db),
+		TableName:       aws.String(tbl),
+		PartitionValues: []string{"2024-01-01"},
+	})
+	require.Error(t, err)
+	var notFound *gluetypes.EntityNotFoundException
+	assert.ErrorAs(t, err, &notFound)
+
+	// BatchDeletePartition (one present, one missing).
+	bdp, err := c.BatchDeletePartition(ctx, &glue.BatchDeletePartitionInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+		PartitionsToDelete: []gluetypes.PartitionValueList{
+			{Values: []string{"2024-01-02"}},
+			{Values: []string{"2099-12-31"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, bdp.Errors, 1)
+	assert.Equal(t, []string{"2099-12-31"}, bdp.Errors[0].PartitionValues)
+
+	gps, err = c.GetPartitions(ctx, &glue.GetPartitionsInput{
+		DatabaseName: aws.String(db),
+		TableName:    aws.String(tbl),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, gps.Partitions)
+}
+
 func TestGlue_GetPartitionIndexes_SDK(t *testing.T) {
 	c := glueClient()
 

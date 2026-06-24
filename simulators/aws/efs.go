@@ -169,12 +169,38 @@ type EFSLifecyclePolicy struct {
 	TransitionToArchive             string `json:"TransitionToArchive,omitempty"`
 }
 
+// EFSReplicationConfig is the stored form of a replication configuration,
+// keyed by source file-system id. It mirrors the wire
+// ReplicationConfigurationDescription the SDK reads back.
+type EFSReplicationConfig struct {
+	SourceFileSystemId          string               `json:"SourceFileSystemId"`
+	SourceFileSystemRegion      string               `json:"SourceFileSystemRegion"`
+	SourceFileSystemArn         string               `json:"SourceFileSystemArn"`
+	OriginalSourceFileSystemArn string               `json:"OriginalSourceFileSystemArn"`
+	SourceFileSystemOwnerId     string               `json:"SourceFileSystemOwnerId"`
+	CreationTime                int64                `json:"CreationTime"`
+	Destinations                []EFSReplicationDest `json:"Destinations"`
+}
+
+type EFSReplicationDest struct {
+	Status                  string `json:"Status"`
+	FileSystemId            string `json:"FileSystemId"`
+	Region                  string `json:"Region"`
+	LastReplicatedTimestamp int64  `json:"LastReplicatedTimestamp,omitempty"`
+	OwnerId                 string `json:"OwnerId,omitempty"`
+	RoleArn                 string `json:"RoleArn,omitempty"`
+}
+
 // State stores
 var (
-	efsFileSystems       sim.Store[EFSFileSystem]
-	efsMountTargets      sim.Store[EFSMountTarget]
-	efsAccessPoints      sim.Store[EFSAccessPoint]
-	efsLifecyclePolicies sim.Store[[]EFSLifecyclePolicy]
+	efsFileSystems        sim.Store[EFSFileSystem]
+	efsMountTargets       sim.Store[EFSMountTarget]
+	efsAccessPoints       sim.Store[EFSAccessPoint]
+	efsLifecyclePolicies  sim.Store[[]EFSLifecyclePolicy]
+	efsFileSystemPolicies sim.Store[string]               // fsID -> JSON policy
+	efsBackupPolicies     sim.Store[string]               // fsID -> backup status
+	efsReplications       sim.Store[EFSReplicationConfig] // source fsID -> config
+	efsAccountPref        sim.Store[string]               // account -> ResourceIdType
 )
 
 func efsArn(resourceType, id string) string {
@@ -186,6 +212,10 @@ func registerEFS(srv *sim.Server) {
 	efsMountTargets = sim.MakeStore[EFSMountTarget](srv.DB(), "efs_mount_targets")
 	efsAccessPoints = sim.MakeStore[EFSAccessPoint](srv.DB(), "efs_access_points")
 	efsLifecyclePolicies = sim.MakeStore[[]EFSLifecyclePolicy](srv.DB(), "efs_lifecycle_policies")
+	efsFileSystemPolicies = sim.MakeStore[string](srv.DB(), "efs_file_system_policies")
+	efsBackupPolicies = sim.MakeStore[string](srv.DB(), "efs_backup_policies")
+	efsReplications = sim.MakeStore[EFSReplicationConfig](srv.DB(), "efs_replications")
+	efsAccountPref = sim.MakeStore[string](srv.DB(), "efs_account_preferences")
 
 	mux := srv
 
@@ -207,6 +237,471 @@ func registerEFS(srv *sim.Server) {
 	mux.HandleFunc("POST /2015-02-01/access-points", cloudTrailRecordedREST("CreateAccessPoint", "elasticfilesystem.amazonaws.com", nil, handleEFSCreateAccessPoint))
 	mux.HandleFunc("GET /2015-02-01/access-points", cloudTrailRecordedREST("DescribeAccessPoints", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeAccessPoints))
 	mux.HandleFunc("DELETE /2015-02-01/access-points/{id}", cloudTrailRecordedREST("DeleteAccessPoint", "elasticfilesystem.amazonaws.com", apResource, handleEFSDeleteAccessPoint))
+
+	// File system policy
+	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/policy", cloudTrailRecordedREST("PutFileSystemPolicy", "elasticfilesystem.amazonaws.com", fsResource, handleEFSPutFileSystemPolicy))
+	mux.HandleFunc("GET /2015-02-01/file-systems/{id}/policy", cloudTrailRecordedREST("DescribeFileSystemPolicy", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeFileSystemPolicy))
+	mux.HandleFunc("DELETE /2015-02-01/file-systems/{id}/policy", cloudTrailRecordedREST("DeleteFileSystemPolicy", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDeleteFileSystemPolicy))
+
+	// Backup policy
+	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/backup-policy", cloudTrailRecordedREST("PutBackupPolicy", "elasticfilesystem.amazonaws.com", fsResource, handleEFSPutBackupPolicy))
+	mux.HandleFunc("GET /2015-02-01/file-systems/{id}/backup-policy", cloudTrailRecordedREST("DescribeBackupPolicy", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeBackupPolicy))
+
+	// Replication. The list route must register before the {id} route so
+	// "/file-systems/replication-configurations" doesn't bind {id}.
+	mux.HandleFunc("GET /2015-02-01/file-systems/replication-configurations", cloudTrailRecordedREST("DescribeReplicationConfigurations", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeReplicationConfigurations))
+	mux.HandleFunc("POST /2015-02-01/file-systems/{id}/replication-configuration", cloudTrailRecordedREST("CreateReplicationConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSCreateReplicationConfiguration))
+	mux.HandleFunc("DELETE /2015-02-01/file-systems/{id}/replication-configuration", cloudTrailRecordedREST("DeleteReplicationConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDeleteReplicationConfiguration))
+
+	// Account preferences
+	mux.HandleFunc("PUT /2015-02-01/account-preferences", cloudTrailRecordedREST("PutAccountPreferences", "elasticfilesystem.amazonaws.com", nil, handleEFSPutAccountPreferences))
+	mux.HandleFunc("GET /2015-02-01/account-preferences", cloudTrailRecordedREST("DescribeAccountPreferences", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeAccountPreferences))
+
+	// Resource-ARN tagging API (file systems + access points)
+	apTagResource := cloudTrailRESTResource("AWS::EFS::FileSystem", "id")
+	mux.HandleFunc("POST /2015-02-01/resource-tags/{id}", cloudTrailRecordedREST("TagResource", "elasticfilesystem.amazonaws.com", apTagResource, handleEFSTagResource))
+	mux.HandleFunc("GET /2015-02-01/resource-tags/{id}", cloudTrailRecordedREST("ListTagsForResource", "elasticfilesystem.amazonaws.com", apTagResource, handleEFSListTagsForResource))
+	mux.HandleFunc("DELETE /2015-02-01/resource-tags/{id}", cloudTrailRecordedREST("UntagResource", "elasticfilesystem.amazonaws.com", apTagResource, handleEFSUntagResource))
+
+	// Legacy file-system tagging API
+	mux.HandleFunc("POST /2015-02-01/create-tags/{id}", cloudTrailRecordedREST("CreateTags", "elasticfilesystem.amazonaws.com", fsResource, handleEFSCreateTags))
+	mux.HandleFunc("GET /2015-02-01/tags/{id}", cloudTrailRecordedREST("DescribeTags", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeTags))
+	mux.HandleFunc("GET /2015-02-01/tags/{id}/", cloudTrailRecordedREST("DescribeTags", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeTags)) // CLI appends a trailing slash
+	mux.HandleFunc("POST /2015-02-01/delete-tags/{id}", cloudTrailRecordedREST("DeleteTags", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDeleteTags))
+}
+
+// efsResourceTags returns a pointer-style accessor for the tags of a
+// resource-tags ResourceId (a file system OR an access point id), so the
+// resource-ARN tagging API can mutate whichever store owns the resource.
+// Returns (getTags, setTags, true) when the id resolves; (_,_,false) otherwise.
+func efsResourceTags(id string) (func() []EFSTag, func([]EFSTag), bool) {
+	if _, ok := efsFileSystems.Get(id); ok {
+		get := func() []EFSTag {
+			fs, _ := efsFileSystems.Get(id)
+			return fs.Tags
+		}
+		set := func(tags []EFSTag) {
+			efsFileSystems.Update(id, func(fs *EFSFileSystem) { fs.Tags = tags })
+		}
+		return get, set, true
+	}
+	if _, ok := efsAccessPoints.Get(id); ok {
+		get := func() []EFSTag {
+			ap, _ := efsAccessPoints.Get(id)
+			return ap.Tags
+		}
+		set := func(tags []EFSTag) {
+			efsAccessPoints.Update(id, func(ap *EFSAccessPoint) { ap.Tags = tags })
+		}
+		return get, set, true
+	}
+	return nil, nil, false
+}
+
+// efsMergeTags upserts the given tags into the existing slice by key (real EFS
+// TagResource/CreateTags overwrite the value of an existing key).
+func efsMergeTags(existing, incoming []EFSTag) []EFSTag {
+	idx := map[string]int{}
+	out := append([]EFSTag(nil), existing...)
+	for i, t := range out {
+		idx[t.Key] = i
+	}
+	for _, t := range incoming {
+		if i, ok := idx[t.Key]; ok {
+			out[i].Value = t.Value
+		} else {
+			idx[t.Key] = len(out)
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+func handleEFSPutFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		Policy                         string `json:"Policy"`
+		BypassPolicyLockoutSafetyCheck bool   `json:"BypassPolicyLockoutSafetyCheck"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.Policy == "" {
+		sim.AWSError(w, "InvalidPolicyException", "Policy is required", http.StatusBadRequest)
+		return
+	}
+	efsFileSystemPolicies.Put(fsId, req.Policy)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"FileSystemId": fsId,
+		"Policy":       req.Policy,
+	})
+}
+
+func handleEFSDescribeFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	policy, ok := efsFileSystemPolicies.Get(fsId)
+	if !ok {
+		sim.AWSErrorf(w, "PolicyNotFound", http.StatusNotFound,
+			"Policy not found for file system '%s'", fsId)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"FileSystemId": fsId,
+		"Policy":       policy,
+	})
+}
+
+func handleEFSDeleteFileSystemPolicy(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	efsFileSystemPolicies.Delete(fsId)
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleEFSPutBackupPolicy(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		BackupPolicy struct {
+			Status string `json:"Status"`
+		} `json:"BackupPolicy"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.BackupPolicy.Status == "" {
+		sim.AWSError(w, "BadRequest", "BackupPolicy.Status is required", http.StatusBadRequest)
+		return
+	}
+	efsBackupPolicies.Put(fsId, req.BackupPolicy.Status)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"BackupPolicy": map[string]any{"Status": req.BackupPolicy.Status},
+	})
+}
+
+func handleEFSDescribeBackupPolicy(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	status, ok := efsBackupPolicies.Get(fsId)
+	if !ok {
+		// EFS returns DISABLED when no policy has been set on the file system.
+		status = "DISABLED"
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"BackupPolicy": map[string]any{"Status": status},
+	})
+}
+
+func handleEFSCreateReplicationConfiguration(w http.ResponseWriter, r *http.Request) {
+	srcId := sim.PathParam(r, "id")
+	src, ok := efsFileSystems.Get(srcId)
+	if !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", srcId)
+		return
+	}
+	if _, exists := efsReplications.Get(srcId); exists {
+		sim.AWSErrorf(w, "ReplicationAlreadyExists", http.StatusConflict,
+			"File system '%s' already has a replication configuration", srcId)
+		return
+	}
+	var req struct {
+		Destinations []struct {
+			Region               string `json:"Region"`
+			AvailabilityZoneName string `json:"AvailabilityZoneName"`
+			KmsKeyId             string `json:"KmsKeyId"`
+			FileSystemId         string `json:"FileSystemId"`
+			RoleArn              string `json:"RoleArn"`
+		} `json:"Destinations"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.Destinations) == 0 {
+		sim.AWSError(w, "BadRequest", "Destinations is required", http.StatusBadRequest)
+		return
+	}
+
+	now := time.Now().Unix()
+	var dests []EFSReplicationDest
+	for _, d := range req.Destinations {
+		region := d.Region
+		if region == "" {
+			region = awsRegion()
+		}
+		destFsId := d.FileSystemId
+		if destFsId == "" {
+			// No destination specified: EFS creates a new destination file system.
+			destFsId = "fs-" + generateUUID()[:8]
+			destFs := EFSFileSystem{
+				FileSystemId:    destFsId,
+				FileSystemArn:   efsArn("file-system", destFsId),
+				CreationToken:   generateUUID(),
+				CreationTime:    now,
+				LifeCycleState:  "available",
+				OwnerId:         awsAccountID(),
+				PerformanceMode: "generalPurpose",
+				ThroughputMode:  "bursting",
+			}
+			efsFileSystems.Put(destFsId, destFs)
+		}
+		dests = append(dests, EFSReplicationDest{
+			Status:       "ENABLED",
+			FileSystemId: destFsId,
+			Region:       region,
+			OwnerId:      awsAccountID(),
+			RoleArn:      d.RoleArn,
+		})
+	}
+
+	cfg := EFSReplicationConfig{
+		SourceFileSystemId:          srcId,
+		SourceFileSystemRegion:      awsRegion(),
+		SourceFileSystemArn:         src.FileSystemArn,
+		OriginalSourceFileSystemArn: src.FileSystemArn,
+		SourceFileSystemOwnerId:     awsAccountID(),
+		CreationTime:                now,
+		Destinations:                dests,
+	}
+	efsReplications.Put(srcId, cfg)
+	sim.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func handleEFSDescribeReplicationConfigurations(w http.ResponseWriter, r *http.Request) {
+	fsId := r.URL.Query().Get("FileSystemId")
+	var reps []EFSReplicationConfig
+	if fsId != "" {
+		// EFS matches when the id is either the source or a destination.
+		for _, c := range efsReplications.List() {
+			if c.SourceFileSystemId == fsId {
+				reps = append(reps, c)
+				continue
+			}
+			for _, d := range c.Destinations {
+				if d.FileSystemId == fsId {
+					reps = append(reps, c)
+					break
+				}
+			}
+		}
+	} else {
+		reps = efsReplications.List()
+	}
+	sort.Slice(reps, func(i, j int) bool { return reps[i].SourceFileSystemId < reps[j].SourceFileSystemId })
+	if reps == nil {
+		reps = []EFSReplicationConfig{}
+	}
+	page, next := awsPageExplicit(reps, r.URL.Query().Get("NextToken"), atoiDefault(r.URL.Query().Get("MaxResults"), 0))
+	resp := map[string]any{"Replications": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleEFSDeleteReplicationConfiguration(w http.ResponseWriter, r *http.Request) {
+	srcId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(srcId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", srcId)
+		return
+	}
+	if !efsReplications.Delete(srcId) {
+		sim.AWSErrorf(w, "ReplicationNotFound", http.StatusNotFound,
+			"File system '%s' does not have a replication configuration", srcId)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleEFSPutAccountPreferences(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ResourceIdType string `json:"ResourceIdType"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ResourceIdType != "LONG_ID" && req.ResourceIdType != "SHORT_ID" {
+		sim.AWSError(w, "BadRequest", "ResourceIdType must be LONG_ID or SHORT_ID", http.StatusBadRequest)
+		return
+	}
+	efsAccountPref.Put(awsAccountID(), req.ResourceIdType)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ResourceIdPreference": map[string]any{
+			"ResourceIdType": req.ResourceIdType,
+			"Resources":      []string{"FILE_SYSTEM", "MOUNT_TARGET"},
+		},
+	})
+}
+
+func handleEFSDescribeAccountPreferences(w http.ResponseWriter, r *http.Request) {
+	idType, ok := efsAccountPref.Get(awsAccountID())
+	if !ok {
+		idType = "LONG_ID"
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"ResourceIdPreference": map[string]any{
+			"ResourceIdType": idType,
+			"Resources":      []string{"FILE_SYSTEM", "MOUNT_TARGET"},
+		},
+	})
+}
+
+func handleEFSTagResource(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "id")
+	get, set, ok := efsResourceTags(id)
+	if !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"Resource '%s' does not exist", id)
+		return
+	}
+	var req struct {
+		Tags []EFSTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	set(efsMergeTags(get(), req.Tags))
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleEFSListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "id")
+	get, _, ok := efsResourceTags(id)
+	if !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"Resource '%s' does not exist", id)
+		return
+	}
+	tags := get()
+	if tags == nil {
+		tags = []EFSTag{}
+	}
+	page, next := awsPageExplicit(tags, r.URL.Query().Get("NextToken"), atoiDefault(r.URL.Query().Get("MaxResults"), 0))
+	resp := map[string]any{"Tags": page}
+	if next != "" {
+		resp["NextToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleEFSUntagResource(w http.ResponseWriter, r *http.Request) {
+	id := sim.PathParam(r, "id")
+	get, set, ok := efsResourceTags(id)
+	if !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"Resource '%s' does not exist", id)
+		return
+	}
+	remove := map[string]bool{}
+	for _, k := range r.URL.Query()["tagKeys"] {
+		remove[k] = true
+	}
+	var kept []EFSTag
+	for _, t := range get() {
+		if !remove[t.Key] {
+			kept = append(kept, t)
+		}
+	}
+	set(kept)
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleEFSCreateTags(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		Tags []EFSTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	efsFileSystems.Update(fsId, func(fs *EFSFileSystem) {
+		fs.Tags = efsMergeTags(fs.Tags, req.Tags)
+	})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleEFSDescribeTags(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	fs, ok := efsFileSystems.Get(fsId)
+	if !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	tags := fs.Tags
+	if tags == nil {
+		tags = []EFSTag{}
+	}
+	page, next := awsPageExplicit(tags, r.URL.Query().Get("Marker"), atoiDefault(r.URL.Query().Get("MaxItems"), 0))
+	resp := map[string]any{"Tags": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleEFSDeleteTags(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		TagKeys []string `json:"TagKeys"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	remove := map[string]bool{}
+	for _, k := range req.TagKeys {
+		remove[k] = true
+	}
+	efsFileSystems.Update(fsId, func(fs *EFSFileSystem) {
+		var kept []EFSTag
+		for _, t := range fs.Tags {
+			if !remove[t.Key] {
+				kept = append(kept, t)
+			}
+		}
+		fs.Tags = kept
+	})
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func handleEFSCreateFileSystem(w http.ResponseWriter, r *http.Request) {

@@ -386,3 +386,229 @@ func TestRoute53AliasTargetForCloudFront(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+// helper: a hosted zone for tests that need one. Returns the bare zone id.
+func r53MakeZone(t *testing.T, c *route53.Client, ctx context.Context) string {
+	t.Helper()
+	caller := "sdk-r53x-" + time.Now().Format("150405.000000000")
+	out, err := c.CreateHostedZone(ctx, &route53.CreateHostedZoneInput{
+		Name:            aws.String("sdk-r53x-" + time.Now().Format("150405") + ".local"),
+		CallerReference: aws.String(caller),
+	})
+	require.NoError(t, err)
+	id := strings.TrimPrefix(aws.ToString(out.HostedZone.Id), "/hostedzone/")
+	require.NotEmpty(t, id)
+	return id
+}
+
+func TestRoute53_HealthChecks(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	caller := "sdk-hc-" + time.Now().Format("150405.000000000")
+	createOut, err := c.CreateHealthCheck(ctx, &route53.CreateHealthCheckInput{
+		CallerReference: aws.String(caller),
+		HealthCheckConfig: &r53types.HealthCheckConfig{
+			Type:                     r53types.HealthCheckTypeHttps,
+			FullyQualifiedDomainName: aws.String("example.com"),
+			Port:                     aws.Int32(443),
+			ResourcePath:             aws.String("/health"),
+			RequestInterval:          aws.Int32(30),
+			FailureThreshold:         aws.Int32(3),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.HealthCheck)
+	hcID := aws.ToString(createOut.HealthCheck.Id)
+	require.NotEmpty(t, hcID)
+	assert.Equal(t, r53types.HealthCheckTypeHttps, createOut.HealthCheck.HealthCheckConfig.Type)
+	defer func() {
+		_, _ = c.DeleteHealthCheck(ctx, &route53.DeleteHealthCheckInput{HealthCheckId: aws.String(hcID)})
+	}()
+
+	getOut, err := c.GetHealthCheck(ctx, &route53.GetHealthCheckInput{HealthCheckId: aws.String(hcID)})
+	require.NoError(t, err)
+	assert.Equal(t, "example.com", aws.ToString(getOut.HealthCheck.HealthCheckConfig.FullyQualifiedDomainName))
+	assert.Equal(t, int32(443), aws.ToInt32(getOut.HealthCheck.HealthCheckConfig.Port))
+
+	updOut, err := c.UpdateHealthCheck(ctx, &route53.UpdateHealthCheckInput{
+		HealthCheckId:    aws.String(hcID),
+		FailureThreshold: aws.Int32(5),
+		ResourcePath:     aws.String("/healthz"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(5), aws.ToInt32(updOut.HealthCheck.HealthCheckConfig.FailureThreshold))
+	assert.Equal(t, "/healthz", aws.ToString(updOut.HealthCheck.HealthCheckConfig.ResourcePath))
+	assert.Greater(t, aws.ToInt64(updOut.HealthCheck.HealthCheckVersion), int64(1))
+
+	listOut, err := c.ListHealthChecks(ctx, &route53.ListHealthChecksInput{})
+	require.NoError(t, err)
+	found := false
+	for _, hc := range listOut.HealthChecks {
+		if aws.ToString(hc.Id) == hcID {
+			found = true
+		}
+	}
+	assert.True(t, found, "new health check must appear in list")
+
+	countOut, err := c.GetHealthCheckCount(ctx, &route53.GetHealthCheckCountInput{})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, aws.ToInt64(countOut.HealthCheckCount), int64(1))
+
+	statusOut, err := c.GetHealthCheckStatus(ctx, &route53.GetHealthCheckStatusInput{HealthCheckId: aws.String(hcID)})
+	require.NoError(t, err)
+	require.NotEmpty(t, statusOut.HealthCheckObservations)
+	require.NotNil(t, statusOut.HealthCheckObservations[0].StatusReport)
+	assert.NotEmpty(t, aws.ToString(statusOut.HealthCheckObservations[0].StatusReport.Status))
+}
+
+func TestRoute53_TrafficPolicies(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	doc := `{"AWSPolicyFormatVersion":"2015-10-01","RecordType":"A","Endpoints":{"e1":{"Type":"value","Value":"203.0.113.1"}},"StartEndpoint":"e1"}`
+	name := "sdk-tp-" + time.Now().Format("150405.000000")
+	createOut, err := c.CreateTrafficPolicy(ctx, &route53.CreateTrafficPolicyInput{
+		Name:     aws.String(name),
+		Document: aws.String(doc),
+		Comment:  aws.String("sdk traffic policy"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, createOut.TrafficPolicy)
+	tpID := aws.ToString(createOut.TrafficPolicy.Id)
+	require.NotEmpty(t, tpID)
+	assert.Equal(t, int32(1), aws.ToInt32(createOut.TrafficPolicy.Version))
+	assert.Equal(t, r53types.RRTypeA, createOut.TrafficPolicy.Type)
+	defer func() {
+		_, _ = c.DeleteTrafficPolicy(ctx, &route53.DeleteTrafficPolicyInput{Id: aws.String(tpID), Version: aws.Int32(1)})
+		_, _ = c.DeleteTrafficPolicy(ctx, &route53.DeleteTrafficPolicyInput{Id: aws.String(tpID), Version: aws.Int32(2)})
+	}()
+
+	getOut, err := c.GetTrafficPolicy(ctx, &route53.GetTrafficPolicyInput{Id: aws.String(tpID), Version: aws.Int32(1)})
+	require.NoError(t, err)
+	assert.Equal(t, name, aws.ToString(getOut.TrafficPolicy.Name))
+	assert.Equal(t, doc, aws.ToString(getOut.TrafficPolicy.Document))
+
+	verOut, err := c.CreateTrafficPolicyVersion(ctx, &route53.CreateTrafficPolicyVersionInput{
+		Id:       aws.String(tpID),
+		Document: aws.String(doc),
+		Comment:  aws.String("v2"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int32(2), aws.ToInt32(verOut.TrafficPolicy.Version))
+
+	listVerOut, err := c.ListTrafficPolicyVersions(ctx, &route53.ListTrafficPolicyVersionsInput{Id: aws.String(tpID)})
+	require.NoError(t, err)
+	assert.Len(t, listVerOut.TrafficPolicies, 2)
+
+	listOut, err := c.ListTrafficPolicies(ctx, &route53.ListTrafficPoliciesInput{})
+	require.NoError(t, err)
+	found := false
+	for _, s := range listOut.TrafficPolicySummaries {
+		if aws.ToString(s.Id) == tpID {
+			found = true
+			assert.Equal(t, int32(2), aws.ToInt32(s.LatestVersion))
+		}
+	}
+	assert.True(t, found, "traffic policy must appear in ListTrafficPolicies")
+}
+
+func TestRoute53_VPCAndQueryLogging(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+
+	zoneID := r53MakeZone(t, c, ctx)
+	defer func() {
+		_, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)})
+	}()
+
+	vpcID := "vpc-" + time.Now().Format("150405")
+	assocOut, err := c.AssociateVPCWithHostedZone(ctx, &route53.AssociateVPCWithHostedZoneInput{
+		HostedZoneId: aws.String(zoneID),
+		VPC:          &r53types.VPC{VPCId: aws.String(vpcID), VPCRegion: r53types.VPCRegionUsEast1},
+		Comment:      aws.String("assoc"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, assocOut.ChangeInfo)
+	assert.Equal(t, r53types.ChangeStatusInsync, assocOut.ChangeInfo.Status)
+
+	byVPCOut, err := c.ListHostedZonesByVPC(ctx, &route53.ListHostedZonesByVPCInput{
+		VPCId:     aws.String(vpcID),
+		VPCRegion: r53types.VPCRegionUsEast1,
+	})
+	require.NoError(t, err)
+	foundZone := false
+	for _, s := range byVPCOut.HostedZoneSummaries {
+		if aws.ToString(s.HostedZoneId) == zoneID {
+			foundZone = true
+		}
+	}
+	assert.True(t, foundZone, "zone must be listed by associated VPC")
+
+	disOut, err := c.DisassociateVPCFromHostedZone(ctx, &route53.DisassociateVPCFromHostedZoneInput{
+		HostedZoneId: aws.String(zoneID),
+		VPC:          &r53types.VPC{VPCId: aws.String(vpcID), VPCRegion: r53types.VPCRegionUsEast1},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, r53types.ChangeStatusInsync, disOut.ChangeInfo.Status)
+
+	// Query logging config.
+	logArn := "arn:aws:logs:us-east-1:123456789012:log-group:/aws/route53/test"
+	qlOut, err := c.CreateQueryLoggingConfig(ctx, &route53.CreateQueryLoggingConfigInput{
+		HostedZoneId:              aws.String(zoneID),
+		CloudWatchLogsLogGroupArn: aws.String(logArn),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, qlOut.QueryLoggingConfig)
+	qlID := aws.ToString(qlOut.QueryLoggingConfig.Id)
+	require.NotEmpty(t, qlID)
+	defer func() {
+		_, _ = c.DeleteQueryLoggingConfig(ctx, &route53.DeleteQueryLoggingConfigInput{Id: aws.String(qlID)})
+	}()
+
+	qlGet, err := c.GetQueryLoggingConfig(ctx, &route53.GetQueryLoggingConfigInput{Id: aws.String(qlID)})
+	require.NoError(t, err)
+	assert.Equal(t, logArn, aws.ToString(qlGet.QueryLoggingConfig.CloudWatchLogsLogGroupArn))
+
+	qlList, err := c.ListQueryLoggingConfigs(ctx, &route53.ListQueryLoggingConfigsInput{HostedZoneId: aws.String(zoneID)})
+	require.NoError(t, err)
+	require.Len(t, qlList.QueryLoggingConfigs, 1)
+	assert.Equal(t, qlID, aws.ToString(qlList.QueryLoggingConfigs[0].Id))
+}
+
+func TestRoute53_CountsAndGeo(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	zoneID := r53MakeZone(t, c, ctx)
+	defer func() {
+		_, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)})
+	}()
+
+	countOut, err := c.GetHostedZoneCount(ctx, &route53.GetHostedZoneCountInput{})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, aws.ToInt64(countOut.HostedZoneCount), int64(1))
+
+	// GetChange returns INSYNC.
+	changeOut, err := c.GetChange(ctx, &route53.GetChangeInput{Id: aws.String("C1234567890")})
+	require.NoError(t, err)
+	assert.Equal(t, r53types.ChangeStatusInsync, changeOut.ChangeInfo.Status)
+
+	geoOut, err := c.GetGeoLocation(ctx, &route53.GetGeoLocationInput{ContinentCode: aws.String("EU")})
+	require.NoError(t, err)
+	require.NotNil(t, geoOut.GeoLocationDetails)
+	assert.Equal(t, "EU", aws.ToString(geoOut.GeoLocationDetails.ContinentCode))
+	assert.Equal(t, "Europe", aws.ToString(geoOut.GeoLocationDetails.ContinentName))
+
+	geoCountry, err := c.GetGeoLocation(ctx, &route53.GetGeoLocationInput{CountryCode: aws.String("US")})
+	require.NoError(t, err)
+	assert.Equal(t, "United States", aws.ToString(geoCountry.GeoLocationDetails.CountryName))
+
+	listGeo, err := c.ListGeoLocations(ctx, &route53.ListGeoLocationsInput{})
+	require.NoError(t, err)
+	assert.NotEmpty(t, listGeo.GeoLocationDetailsList)
+}

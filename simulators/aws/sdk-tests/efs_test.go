@@ -179,6 +179,184 @@ func TestEFS_CreateAndDescribeAccessPoints(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestEFS_PoliciesAndBackup(t *testing.T) {
+	client := efsClient()
+
+	createOut, err := client.CreateFileSystem(ctx, &efs.CreateFileSystemInput{
+		CreationToken: aws.String("policy-test-fs"),
+	})
+	require.NoError(t, err)
+	fsID := *createOut.FileSystemId
+	t.Cleanup(func() {
+		_, _ = client.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)})
+	})
+
+	// File system policy: describe before put -> PolicyNotFound.
+	_, err = client.DescribeFileSystemPolicy(ctx, &efs.DescribeFileSystemPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.Error(t, err)
+
+	policyDoc := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"*"},"Action":"elasticfilesystem:ClientMount","Resource":"*"}]}`
+	putPol, err := client.PutFileSystemPolicy(ctx, &efs.PutFileSystemPolicyInput{
+		FileSystemId: aws.String(fsID),
+		Policy:       aws.String(policyDoc),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, fsID, aws.ToString(putPol.FileSystemId))
+	assert.Equal(t, policyDoc, aws.ToString(putPol.Policy))
+
+	descPol, err := client.DescribeFileSystemPolicy(ctx, &efs.DescribeFileSystemPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, policyDoc, aws.ToString(descPol.Policy))
+
+	_, err = client.DeleteFileSystemPolicy(ctx, &efs.DeleteFileSystemPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	_, err = client.DescribeFileSystemPolicy(ctx, &efs.DescribeFileSystemPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.Error(t, err)
+
+	// Backup policy: default DISABLED, then enable, then read back.
+	descBak, err := client.DescribeBackupPolicy(ctx, &efs.DescribeBackupPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, efstypes.StatusDisabled, descBak.BackupPolicy.Status)
+
+	putBak, err := client.PutBackupPolicy(ctx, &efs.PutBackupPolicyInput{
+		FileSystemId: aws.String(fsID),
+		BackupPolicy: &efstypes.BackupPolicy{Status: efstypes.StatusEnabled},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, efstypes.StatusEnabled, putBak.BackupPolicy.Status)
+
+	descBak2, err := client.DescribeBackupPolicy(ctx, &efs.DescribeBackupPolicyInput{
+		FileSystemId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, efstypes.StatusEnabled, descBak2.BackupPolicy.Status)
+}
+
+func TestEFS_Replication(t *testing.T) {
+	client := efsClient()
+
+	srcOut, err := client.CreateFileSystem(ctx, &efs.CreateFileSystemInput{
+		CreationToken: aws.String("repl-src-fs"),
+	})
+	require.NoError(t, err)
+	srcID := *srcOut.FileSystemId
+	t.Cleanup(func() {
+		_, _ = client.DeleteReplicationConfiguration(ctx, &efs.DeleteReplicationConfigurationInput{SourceFileSystemId: aws.String(srcID)})
+		_, _ = client.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(srcID)})
+	})
+
+	createRepl, err := client.CreateReplicationConfiguration(ctx, &efs.CreateReplicationConfigurationInput{
+		SourceFileSystemId: aws.String(srcID),
+		Destinations: []efstypes.DestinationToCreate{
+			{Region: aws.String("us-west-2")},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, srcID, aws.ToString(createRepl.SourceFileSystemId))
+	require.Len(t, createRepl.Destinations, 1)
+	destFsID := aws.ToString(createRepl.Destinations[0].FileSystemId)
+	assert.NotEmpty(t, destFsID)
+	t.Cleanup(func() {
+		_, _ = client.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(destFsID)})
+	})
+
+	// Describe by source id.
+	descRepl, err := client.DescribeReplicationConfigurations(ctx, &efs.DescribeReplicationConfigurationsInput{
+		FileSystemId: aws.String(srcID),
+	})
+	require.NoError(t, err)
+	require.Len(t, descRepl.Replications, 1)
+	assert.Equal(t, srcID, aws.ToString(descRepl.Replications[0].SourceFileSystemId))
+	assert.Equal(t, "us-west-2", aws.ToString(descRepl.Replications[0].Destinations[0].Region))
+
+	_, err = client.DeleteReplicationConfiguration(ctx, &efs.DeleteReplicationConfigurationInput{
+		SourceFileSystemId: aws.String(srcID),
+	})
+	require.NoError(t, err)
+
+	// After deletion the source no longer has a replication configuration.
+	descRepl2, err := client.DescribeReplicationConfigurations(ctx, &efs.DescribeReplicationConfigurationsInput{
+		FileSystemId: aws.String(srcID),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, descRepl2.Replications)
+}
+
+func TestEFS_AccountPreferencesAndTagging(t *testing.T) {
+	client := efsClient()
+
+	// Account preferences round-trip.
+	putPref, err := client.PutAccountPreferences(ctx, &efs.PutAccountPreferencesInput{
+		ResourceIdType: efstypes.ResourceIdTypeLongId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putPref.ResourceIdPreference)
+	assert.Equal(t, efstypes.ResourceIdTypeLongId, putPref.ResourceIdPreference.ResourceIdType)
+
+	descPref, err := client.DescribeAccountPreferences(ctx, &efs.DescribeAccountPreferencesInput{})
+	require.NoError(t, err)
+	require.NotNil(t, descPref.ResourceIdPreference)
+	assert.Equal(t, efstypes.ResourceIdTypeLongId, descPref.ResourceIdPreference.ResourceIdType)
+
+	// Resource-ARN tagging API on a file system.
+	fsOut, err := client.CreateFileSystem(ctx, &efs.CreateFileSystemInput{
+		CreationToken: aws.String("tag-test-fs"),
+	})
+	require.NoError(t, err)
+	fsID := *fsOut.FileSystemId
+	t.Cleanup(func() {
+		_, _ = client.DeleteFileSystem(ctx, &efs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)})
+	})
+
+	_, err = client.TagResource(ctx, &efs.TagResourceInput{
+		ResourceId: aws.String(fsID),
+		Tags: []efstypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+			{Key: aws.String("team"), Value: aws.String("infra")},
+		},
+	})
+	require.NoError(t, err)
+
+	listTags, err := client.ListTagsForResource(ctx, &efs.ListTagsForResourceInput{
+		ResourceId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	got := map[string]string{}
+	for _, tg := range listTags.Tags {
+		got[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+	assert.Equal(t, "prod", got["env"])
+	assert.Equal(t, "infra", got["team"])
+
+	_, err = client.UntagResource(ctx, &efs.UntagResourceInput{
+		ResourceId: aws.String(fsID),
+		TagKeys:    []string{"team"},
+	})
+	require.NoError(t, err)
+
+	listTags2, err := client.ListTagsForResource(ctx, &efs.ListTagsForResourceInput{
+		ResourceId: aws.String(fsID),
+	})
+	require.NoError(t, err)
+	got2 := map[string]string{}
+	for _, tg := range listTags2.Tags {
+		got2[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+	assert.Equal(t, "prod", got2["env"])
+	_, hasTeam := got2["team"]
+	assert.False(t, hasTeam)
+}
+
 func TestEFS_FullLifecycle(t *testing.T) {
 	client := efsClient()
 
