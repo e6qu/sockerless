@@ -44,9 +44,13 @@ type CBBuild struct {
 	Phases      []CBPhase      `json:"phases"`
 	Logs        map[string]any `json:"logs"`
 	Environment map[string]any `json:"environment,omitempty"`
+	ReportArns  []string       `json:"reportArns,omitempty"`
 	// Seq is a sim-internal monotonic creation order used to sort ListBuilds
 	// faithfully by start order; it's not part of the CodeBuild wire shape.
 	Seq int64 `json:"-"`
+	// ReportGroups holds the report-group names the buildspec references; the
+	// build produces a Report per group on completion. Sim-internal, not wire.
+	ReportGroups []string `json:"-"`
 }
 
 type CBPhase struct {
@@ -77,15 +81,60 @@ type CBTag struct {
 	Value string `json:"value"`
 }
 
+// CBReportGroup mirrors the CodeBuild ReportGroup shape. status is read-only
+// and ACTIVE for a live group; type is TEST or CODE_COVERAGE.
+type CBReportGroup struct {
+	Arn          string         `json:"arn"`
+	Name         string         `json:"name"`
+	Type         string         `json:"type"`
+	ExportConfig map[string]any `json:"exportConfig,omitempty"`
+	Created      float64        `json:"created"`
+	LastModified float64        `json:"lastModified"`
+	Status       string         `json:"status"`
+	Tags         []CBTag        `json:"tags,omitempty"`
+}
+
+// CBReport mirrors the CodeBuild Report shape. A report is produced by a build
+// whose buildspec references the report group; the sim creates it from the
+// build's terminal state, never a synthetic placeholder.
+type CBReport struct {
+	Arn            string         `json:"arn"`
+	Type           string         `json:"type"`
+	Name           string         `json:"name"`
+	ReportGroupArn string         `json:"reportGroupArn"`
+	ExecutionId    string         `json:"executionId,omitempty"`
+	Status         string         `json:"status"`
+	Created        float64        `json:"created"`
+	Expired        float64        `json:"expired,omitempty"`
+	ExportConfig   map[string]any `json:"exportConfig,omitempty"`
+	Truncated      bool           `json:"truncated"`
+}
+
+// CBSourceCredential mirrors the SourceCredentialsInfo shape. The token itself
+// is never echoed back by the real API; only the ARN, authType, serverType,
+// and (for SECRETS_MANAGER) the resource are readable.
+type CBSourceCredential struct {
+	Arn        string `json:"arn"`
+	ServerType string `json:"serverType"`
+	AuthType   string `json:"authType"`
+	Resource   string `json:"resource,omitempty"`
+}
+
 var (
-	cbProjects sim.Store[CBProject]
-	cbBuilds   sim.Store[CBBuild]
-	cbMu       sync.Mutex
+	cbProjects    sim.Store[CBProject]
+	cbBuilds      sim.Store[CBBuild]
+	cbReportGrps  sim.Store[CBReportGroup]
+	cbReports     sim.Store[CBReport]
+	cbSourceCreds sim.Store[CBSourceCredential]
+	cbMu          sync.Mutex
 )
 
 func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 	cbProjects = sim.MakeStore[CBProject](srv.DB(), "codebuild_projects")
 	cbBuilds = sim.MakeStore[CBBuild](srv.DB(), "codebuild_builds")
+	cbReportGrps = sim.MakeStore[CBReportGroup](srv.DB(), "codebuild_report_groups")
+	cbReports = sim.MakeStore[CBReport](srv.DB(), "codebuild_reports")
+	cbSourceCreds = sim.MakeStore[CBSourceCredential](srv.DB(), "codebuild_source_credentials")
 
 	r.Register("CodeBuild_20161006.CreateProject", handleCBCreateProject)
 	r.Register("CodeBuild_20161006.BatchGetProjects", handleCBBatchGetProjects)
@@ -93,9 +142,24 @@ func registerCodeBuild(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("CodeBuild_20161006.UpdateProject", handleCBUpdateProject)
 	r.Register("CodeBuild_20161006.DeleteProject", handleCBDeleteProject)
 	r.Register("CodeBuild_20161006.StartBuild", handleCBStartBuild)
+	r.Register("CodeBuild_20161006.StopBuild", handleCBStopBuild)
+	r.Register("CodeBuild_20161006.RetryBuild", handleCBRetryBuild)
 	r.Register("CodeBuild_20161006.BatchGetBuilds", handleCBBatchGetBuilds)
 	r.Register("CodeBuild_20161006.ListBuildsForProject", handleCBListBuildsForProject)
 	r.Register("CodeBuild_20161006.ListBuilds", handleCBListBuilds)
+
+	r.Register("CodeBuild_20161006.CreateReportGroup", handleCBCreateReportGroup)
+	r.Register("CodeBuild_20161006.UpdateReportGroup", handleCBUpdateReportGroup)
+	r.Register("CodeBuild_20161006.DeleteReportGroup", handleCBDeleteReportGroup)
+	r.Register("CodeBuild_20161006.ListReportGroups", handleCBListReportGroups)
+	r.Register("CodeBuild_20161006.BatchGetReportGroups", handleCBBatchGetReportGroups)
+	r.Register("CodeBuild_20161006.ListReports", handleCBListReports)
+	r.Register("CodeBuild_20161006.ListReportsForReportGroup", handleCBListReportsForReportGroup)
+	r.Register("CodeBuild_20161006.BatchGetReports", handleCBBatchGetReports)
+
+	r.Register("CodeBuild_20161006.ImportSourceCredentials", handleCBImportSourceCredentials)
+	r.Register("CodeBuild_20161006.ListSourceCredentials", handleCBListSourceCredentials)
+	r.Register("CodeBuild_20161006.DeleteSourceCredentials", handleCBDeleteSourceCredentials)
 }
 
 func cbARN(resource string) string {
@@ -324,6 +388,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		cbWriteError(w, "InvalidInputException", err.Error())
 		return
 	}
+	reportGroups := cbBuildReportGroups(p, req.BuildspecOverride)
 
 	cbMu.Lock()
 	defer cbMu.Unlock()
@@ -331,9 +396,95 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 	buildID := req.ProjectName + ":" + uuid.New().String()
 	now := cbEpochNow()
 	build := CBBuild{
+		ID:           buildID,
+		Arn:          cbARN("build/" + buildID),
+		ProjectName:  req.ProjectName,
+		BuildStatus:  "IN_PROGRESS",
+		Seq:          cbNextBuildSeq(),
+		StartTime:    now,
+		EndTime:      now,
+		Environment:  p.Environment,
+		ReportGroups: reportGroups,
+		Phases: []CBPhase{
+			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: now, EndTime: now, DurationInSeconds: 0},
+			{PhaseType: "BUILD", PhaseStatus: "IN_PROGRESS", StartTime: now},
+		},
+		Logs: cbLogsLocation(),
+	}
+	cbBuilds.Put(buildID, build)
+	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
+	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
+}
+
+func handleCBStopBuild(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	build, ok := cbBuilds.Get(req.ID)
+	if !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Build not found: "+req.ID)
+		return
+	}
+	// StopBuild transitions a running build to STOPPED. A build that already
+	// settled keeps its terminal status (real CodeBuild is idempotent here).
+	if build.BuildStatus == "IN_PROGRESS" {
+		now := cbEpochNow()
+		build.BuildStatus = "STOPPED"
+		build.EndTime = now
+		build.Phases = []CBPhase{
+			{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: build.StartTime, EndTime: build.StartTime, DurationInSeconds: 0},
+			{PhaseType: "BUILD", PhaseStatus: "STOPPED", StartTime: build.StartTime, EndTime: now, DurationInSeconds: now - build.StartTime},
+			{PhaseType: "COMPLETED", PhaseStatus: "STOPPED", StartTime: now, EndTime: now, DurationInSeconds: 0},
+		}
+		cbBuilds.Put(req.ID, build)
+	}
+	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
+}
+
+func handleCBRetryBuild(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	prior, ok := cbBuilds.Get(req.ID)
+	if !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Build not found: "+req.ID)
+		return
+	}
+	p, ok := cbProjects.Get(prior.ProjectName)
+	if !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Project not found: "+prior.ProjectName)
+		return
+	}
+	commands, err := cbBuildCommands(p, "")
+	if err != nil {
+		cbWriteError(w, "InvalidInputException", err.Error())
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	// RetryBuild starts a fresh build of the same project (a new build id),
+	// mirroring real CodeBuild which produces a new build resource.
+	buildID := prior.ProjectName + ":" + uuid.New().String()
+	now := cbEpochNow()
+	build := CBBuild{
 		ID:          buildID,
 		Arn:         cbARN("build/" + buildID),
-		ProjectName: req.ProjectName,
+		ProjectName: prior.ProjectName,
 		BuildStatus: "IN_PROGRESS",
 		Seq:         cbNextBuildSeq(),
 		StartTime:   now,
@@ -346,7 +497,7 @@ func handleCBStartBuild(w http.ResponseWriter, r *http.Request) {
 		Logs: cbLogsLocation(),
 	}
 	cbBuilds.Put(buildID, build)
-	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, req.EnvironmentVariablesOverride))
+	go cbRunBuild(buildID, commands, cbEnvironment(p.Environment, nil))
 	cbWriteJSON(w, http.StatusOK, map[string]any{"build": build})
 }
 
@@ -354,6 +505,33 @@ type cbBuildspec struct {
 	Phases map[string]struct {
 		Commands []string `yaml:"commands"`
 	} `yaml:"phases"`
+	// Reports maps a report-group name to its report config; a build with a
+	// reports section produces a Report per group, exactly like real CodeBuild.
+	Reports map[string]struct {
+		Files []string `yaml:"files"`
+	} `yaml:"reports"`
+}
+
+// cbBuildReportGroups returns the report-group names a project's buildspec
+// references via its reports section (empty if none).
+func cbBuildReportGroups(p CBProject, override string) []string {
+	buildspec := override
+	if buildspec == "" {
+		buildspec = cbString(p.Source["buildspec"])
+	}
+	if buildspec == "" {
+		return nil
+	}
+	var spec cbBuildspec
+	if err := yaml.Unmarshal([]byte(buildspec), &spec); err != nil {
+		return nil
+	}
+	groups := make([]string, 0, len(spec.Reports))
+	for name := range spec.Reports {
+		groups = append(groups, name)
+	}
+	sort.Strings(groups)
+	return groups
 }
 
 func cbBuildCommands(p CBProject, override string) ([]string, error) {
@@ -439,6 +617,39 @@ func cbCompleteBuild(buildID string, exitCode int, reason string) {
 		{PhaseType: "SUBMITTED", PhaseStatus: "SUCCEEDED", StartTime: build.StartTime, EndTime: build.StartTime, DurationInSeconds: 0},
 		buildPhase,
 		{PhaseType: "COMPLETED", PhaseStatus: status, StartTime: now, EndTime: now, DurationInSeconds: 0},
+	}
+
+	// A build whose buildspec references report groups produces one Report per
+	// group, carrying the build's terminal status — the real CodeBuild flow.
+	reportStatus := "SUCCEEDED"
+	if status != "SUCCEEDED" {
+		reportStatus = "FAILED"
+	}
+	for _, groupName := range build.ReportGroups {
+		groupArn := cbARN("report-group/" + groupName)
+		rg, ok := cbReportGrps.Get(groupArn)
+		if !ok {
+			continue
+		}
+		execID := strings.SplitN(build.ID, ":", 2)
+		reportName := build.ID
+		if len(execID) == 2 {
+			reportName = execID[1]
+		}
+		reportArn := cbARN("report/" + groupName + ":" + reportName)
+		report := CBReport{
+			Arn:            reportArn,
+			Type:           rg.Type,
+			Name:           reportName,
+			ReportGroupArn: groupArn,
+			ExecutionId:    build.Arn,
+			Status:         reportStatus,
+			Created:        now,
+			ExportConfig:   rg.ExportConfig,
+			Truncated:      false,
+		}
+		cbReports.Put(reportArn, report)
+		build.ReportArns = append(build.ReportArns, reportArn)
 	}
 	cbBuilds.Put(buildID, build)
 }
@@ -536,6 +747,335 @@ func cbSortBuildIDs(builds []CBBuild, sortOrder string) []string {
 		ids = append(ids, b.ID)
 	}
 	return ids
+}
+
+// --- Report groups ---
+
+func handleCBCreateReportGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name         string         `json:"name"`
+		Type         string         `json:"type"`
+		ExportConfig map[string]any `json:"exportConfig"`
+		Tags         []CBTag        `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.Name == "" {
+		cbWriteError(w, "InvalidInputException", "name is required")
+		return
+	}
+	if req.Type == "" {
+		cbWriteError(w, "InvalidInputException", "type is required")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	arn := cbARN("report-group/" + req.Name)
+	if _, ok := cbReportGrps.Get(arn); ok {
+		cbWriteError(w, "ResourceAlreadyExistsException", "Report group already exists: "+req.Name)
+		return
+	}
+	now := cbEpochNow()
+	rg := CBReportGroup{
+		Arn:          arn,
+		Name:         req.Name,
+		Type:         req.Type,
+		ExportConfig: req.ExportConfig,
+		Created:      now,
+		LastModified: now,
+		Status:       "ACTIVE",
+		Tags:         req.Tags,
+	}
+	cbReportGrps.Put(arn, rg)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"reportGroup": rg})
+}
+
+func handleCBUpdateReportGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arn          string         `json:"arn"`
+		ExportConfig map[string]any `json:"exportConfig"`
+		Tags         []CBTag        `json:"tags"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	rg, ok := cbReportGrps.Get(req.Arn)
+	if !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Report group not found: "+req.Arn)
+		return
+	}
+	if req.ExportConfig != nil {
+		rg.ExportConfig = req.ExportConfig
+	}
+	if req.Tags != nil {
+		rg.Tags = req.Tags
+	}
+	rg.LastModified = cbEpochNow()
+	cbReportGrps.Put(req.Arn, rg)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"reportGroup": rg})
+}
+
+func handleCBDeleteReportGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arn           string `json:"arn"`
+		DeleteReports bool   `json:"deleteReports"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	if req.DeleteReports {
+		for _, rep := range cbReports.List() {
+			if rep.ReportGroupArn == req.Arn {
+				cbReports.Delete(rep.Arn)
+			}
+		}
+	}
+	cbReportGrps.Delete(req.Arn)
+	cbWriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleCBListReportGroups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SortOrder  string `json:"sortOrder"`
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	all := cbReportGrps.List()
+	arns := make([]string, 0, len(all))
+	for _, rg := range all {
+		arns = append(arns, rg.Arn)
+	}
+	sort.Strings(arns)
+	if strings.EqualFold(req.SortOrder, "DESCENDING") {
+		reverseStrings(arns)
+	}
+	page, nextTok := awsPage(arns, req.NextToken, req.MaxResults, 100)
+	resp := map[string]any{"reportGroups": page}
+	if nextTok != "" {
+		resp["nextToken"] = nextTok
+	}
+	cbWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleCBBatchGetReportGroups(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReportGroupArns []string `json:"reportGroupArns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	var found []CBReportGroup
+	var notFound []string
+	for _, arn := range req.ReportGroupArns {
+		if rg, ok := cbReportGrps.Get(arn); ok {
+			found = append(found, rg)
+		} else {
+			notFound = append(notFound, arn)
+		}
+	}
+	if found == nil {
+		found = []CBReportGroup{}
+	}
+	if notFound == nil {
+		notFound = []string{}
+	}
+	cbWriteJSON(w, http.StatusOK, map[string]any{
+		"reportGroups":         found,
+		"reportGroupsNotFound": notFound,
+	})
+}
+
+// --- Reports ---
+
+func handleCBListReports(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SortOrder  string `json:"sortOrder"`
+		MaxResults int    `json:"maxResults"`
+		NextToken  string `json:"nextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	cbWriteReportArnsPage(w, cbReports.List(), "", req.SortOrder, req.MaxResults, req.NextToken)
+}
+
+func handleCBListReportsForReportGroup(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReportGroupArn string `json:"reportGroupArn"`
+		SortOrder      string `json:"sortOrder"`
+		MaxResults     int    `json:"maxResults"`
+		NextToken      string `json:"nextToken"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.ReportGroupArn == "" {
+		cbWriteError(w, "InvalidInputException", "reportGroupArn is required")
+		return
+	}
+	cbWriteReportArnsPage(w, cbReports.List(), req.ReportGroupArn, req.SortOrder, req.MaxResults, req.NextToken)
+}
+
+// cbWriteReportArnsPage filters reports (optionally by group), sorts by creation
+// order, and writes a paged {reports:[arns],nextToken}. ListReports defaults to
+// DESCENDING (most-recent first), matching real CodeBuild.
+func cbWriteReportArnsPage(w http.ResponseWriter, all []CBReport, groupArn, sortOrder string, maxResults int, nextToken string) {
+	var reports []CBReport
+	for _, rep := range all {
+		if groupArn == "" || rep.ReportGroupArn == groupArn {
+			reports = append(reports, rep)
+		}
+	}
+	ascending := strings.EqualFold(sortOrder, "ASCENDING")
+	sort.Slice(reports, func(i, j int) bool {
+		if reports[i].Created == reports[j].Created {
+			if ascending {
+				return reports[i].Arn < reports[j].Arn
+			}
+			return reports[i].Arn > reports[j].Arn
+		}
+		if ascending {
+			return reports[i].Created < reports[j].Created
+		}
+		return reports[i].Created > reports[j].Created
+	})
+	arns := make([]string, 0, len(reports))
+	for _, rep := range reports {
+		arns = append(arns, rep.Arn)
+	}
+	page, nextTok := awsPage(arns, nextToken, maxResults, 100)
+	resp := map[string]any{"reports": page}
+	if nextTok != "" {
+		resp["nextToken"] = nextTok
+	}
+	cbWriteJSON(w, http.StatusOK, resp)
+}
+
+func handleCBBatchGetReports(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ReportArns []string `json:"reportArns"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	var found []CBReport
+	var notFound []string
+	for _, arn := range req.ReportArns {
+		if rep, ok := cbReports.Get(arn); ok {
+			found = append(found, rep)
+		} else {
+			notFound = append(notFound, arn)
+		}
+	}
+	if found == nil {
+		found = []CBReport{}
+	}
+	if notFound == nil {
+		notFound = []string{}
+	}
+	cbWriteJSON(w, http.StatusOK, map[string]any{
+		"reports":         found,
+		"reportsNotFound": notFound,
+	})
+}
+
+// --- Source credentials ---
+
+func handleCBImportSourceCredentials(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Token           string `json:"token"`
+		Username        string `json:"username"`
+		ServerType      string `json:"serverType"`
+		AuthType        string `json:"authType"`
+		ShouldOverwrite *bool  `json:"shouldOverwrite"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+	if req.ServerType == "" || req.AuthType == "" {
+		cbWriteError(w, "InvalidInputException", "serverType and authType are required")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	// Real CodeBuild keys a source credential by (serverType, authType) per
+	// region/account, so the ARN is deterministic from the server type.
+	arn := cbARN("token/" + strings.ToLower(req.ServerType))
+	overwrite := req.ShouldOverwrite == nil || *req.ShouldOverwrite
+	if _, ok := cbSourceCreds.Get(arn); ok && !overwrite {
+		cbWriteError(w, "ResourceAlreadyExistsException", "Source credentials already exist for server type: "+req.ServerType)
+		return
+	}
+	// For SECRETS_MANAGER auth, the token is a secret ARN echoed back as resource.
+	resource := ""
+	if strings.EqualFold(req.AuthType, "SECRETS_MANAGER") {
+		resource = req.Token
+	}
+	cred := CBSourceCredential{
+		Arn:        arn,
+		ServerType: req.ServerType,
+		AuthType:   req.AuthType,
+		Resource:   resource,
+	}
+	cbSourceCreds.Put(arn, cred)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"arn": arn})
+}
+
+func handleCBListSourceCredentials(w http.ResponseWriter, r *http.Request) {
+	all := cbSourceCreds.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].Arn < all[j].Arn })
+	if all == nil {
+		all = []CBSourceCredential{}
+	}
+	cbWriteJSON(w, http.StatusOK, map[string]any{"sourceCredentialsInfos": all})
+}
+
+func handleCBDeleteSourceCredentials(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Arn string `json:"arn"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		cbWriteError(w, "InvalidInputException", "invalid JSON")
+		return
+	}
+
+	cbMu.Lock()
+	defer cbMu.Unlock()
+
+	if _, ok := cbSourceCreds.Get(req.Arn); !ok {
+		cbWriteError(w, "ResourceNotFoundException", "Source credentials not found: "+req.Arn)
+		return
+	}
+	cbSourceCreds.Delete(req.Arn)
+	cbWriteJSON(w, http.StatusOK, map[string]any{"arn": req.Arn})
 }
 
 func reverseStrings(s []string) {

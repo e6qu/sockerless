@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -105,11 +106,23 @@ type wafStoredRegex struct {
 	Tags      []wafTag
 }
 
+// wafStoredLogging holds a per-web-ACL logging configuration. The full
+// LoggingConfiguration body passes through as opaque json.RawMessage so the
+// sim preserves every wire field; ResourceArn is lifted out for keying and
+// Scope is derived from the ARN path ("global/" → CLOUDFRONT) so ListLogging-
+// Configurations can filter by Scope the way real AWS does.
+type wafStoredLogging struct {
+	ResourceArn string
+	Scope       string
+	Config      json.RawMessage
+}
+
 var (
 	wafWebACLs    sim.Store[wafStoredWebACL]
 	wafIPSets     sim.Store[wafStoredIPSet]
 	wafRuleGroups sim.Store[wafStoredRuleGroup]
 	wafRegexSets  sim.Store[wafStoredRegex]
+	wafLogging    sim.Store[wafStoredLogging]
 	// wafAssociations: resourceARN → webACLARN. Tracks CloudFront
 	// distribution → WebACL bindings.
 	wafAssociations sync.Map
@@ -179,6 +192,7 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	wafIPSets = sim.MakeStore[wafStoredIPSet](srv.DB(), "wafv2_ipsets")
 	wafRuleGroups = sim.MakeStore[wafStoredRuleGroup](srv.DB(), "wafv2_rulegroups")
 	wafRegexSets = sim.MakeStore[wafStoredRegex](srv.DB(), "wafv2_regex_sets")
+	wafLogging = sim.MakeStore[wafStoredLogging](srv.DB(), "wafv2_logging")
 
 	// WebACL
 	r.Register("AWSWAF_20190729.CreateWebACL", handleWAFCreateWebACL)
@@ -213,6 +227,11 @@ func registerWAFv2(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSWAF_20190729.TagResource", handleWAFTagResource)
 	r.Register("AWSWAF_20190729.UntagResource", handleWAFUntagResource)
 	r.Register("AWSWAF_20190729.ListTagsForResource", handleWAFListTagsForResource)
+	// Logging configuration
+	r.Register("AWSWAF_20190729.PutLoggingConfiguration", handleWAFPutLoggingConfiguration)
+	r.Register("AWSWAF_20190729.GetLoggingConfiguration", handleWAFGetLoggingConfiguration)
+	r.Register("AWSWAF_20190729.DeleteLoggingConfiguration", handleWAFDeleteLoggingConfiguration)
+	r.Register("AWSWAF_20190729.ListLoggingConfigurations", handleWAFListLoggingConfigurations)
 	// Sampled requests (stub)
 	r.Register("AWSWAF_20190729.GetSampledRequests", handleWAFGetSampledRequests)
 }
@@ -1113,6 +1132,131 @@ func handleWAFListTagsForResource(w http.ResponseWriter, r *http.Request) {
 			"TagList":     tagList,
 		},
 	})
+}
+
+// ---------- LoggingConfiguration handlers ----------
+
+// wafScopeFromARN derives the WAFv2 Scope from a web ACL ARN. The path
+// component is "global/" for CLOUDFRONT and "regional/" for REGIONAL.
+func wafScopeFromARN(arn string) string {
+	if strings.Contains(arn, ":global/") {
+		return "CLOUDFRONT"
+	}
+	return "REGIONAL"
+}
+
+// wafWebACLExistsByARN reports whether a web ACL with the given ARN exists.
+// PutLoggingConfiguration targets a web ACL, so the sim validates it the way
+// real AWS does (WAFNonexistentItemException for an unknown web ACL).
+func wafWebACLExistsByARN(arn string) bool {
+	for _, s := range wafWebACLs.List() {
+		if s.WebACL.ARN == arn {
+			return true
+		}
+	}
+	return false
+}
+
+type wafPutLoggingReq struct {
+	LoggingConfiguration json.RawMessage `json:"LoggingConfiguration"`
+}
+
+func handleWAFPutLoggingConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req wafPutLoggingReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if len(req.LoggingConfiguration) == 0 {
+		wafWriteError(w, "WAFInvalidParameterException", "LoggingConfiguration is required")
+		return
+	}
+	var meta struct {
+		ResourceArn           string          `json:"ResourceArn"`
+		LogDestinationConfigs json.RawMessage `json:"LogDestinationConfigs"`
+	}
+	if err := json.Unmarshal(req.LoggingConfiguration, &meta); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode LoggingConfiguration: "+err.Error())
+		return
+	}
+	if meta.ResourceArn == "" {
+		wafWriteError(w, "WAFInvalidParameterException", "LoggingConfiguration.ResourceArn is required")
+		return
+	}
+	if len(meta.LogDestinationConfigs) == 0 {
+		wafWriteError(w, "WAFInvalidParameterException", "LoggingConfiguration.LogDestinationConfigs is required")
+		return
+	}
+	if !wafWebACLExistsByARN(meta.ResourceArn) {
+		wafWriteError(w, "WAFNonexistentItemException", "WebACL not found for ResourceArn")
+		return
+	}
+	wafLogging.Put(meta.ResourceArn, wafStoredLogging{
+		ResourceArn: meta.ResourceArn,
+		Scope:       wafScopeFromARN(meta.ResourceArn),
+		Config:      append(json.RawMessage(nil), req.LoggingConfiguration...),
+	})
+	wafWriteJSON(w, map[string]any{"LoggingConfiguration": req.LoggingConfiguration})
+}
+
+type wafGetLoggingReq struct {
+	ResourceArn string `json:"ResourceArn"`
+}
+
+func handleWAFGetLoggingConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req wafGetLoggingReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	stored, ok := wafLogging.Get(req.ResourceArn)
+	if !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "LoggingConfiguration not found")
+		return
+	}
+	wafWriteJSON(w, map[string]any{"LoggingConfiguration": stored.Config})
+}
+
+func handleWAFDeleteLoggingConfiguration(w http.ResponseWriter, r *http.Request) {
+	var req wafGetLoggingReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	if _, ok := wafLogging.Get(req.ResourceArn); !ok {
+		wafWriteError(w, "WAFNonexistentItemException", "LoggingConfiguration not found")
+		return
+	}
+	wafLogging.Delete(req.ResourceArn)
+	wafWriteJSON(w, struct{}{})
+}
+
+func handleWAFListLoggingConfigurations(w http.ResponseWriter, r *http.Request) {
+	var req wafListReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		wafWriteError(w, "WAFInvalidParameterException", "could not decode: "+err.Error())
+		return
+	}
+	items := []json.RawMessage{}
+	for _, s := range wafLogging.List() {
+		if s.Scope != req.Scope {
+			continue
+		}
+		items = append(items, s.Config)
+	}
+	sortBy(items, func(c json.RawMessage) string {
+		var m struct {
+			ResourceArn string `json:"ResourceArn"`
+		}
+		_ = json.Unmarshal(c, &m)
+		return m.ResourceArn
+	})
+	page, next := awsPage(items, req.NextMarker, req.Limit, 100)
+	resp := map[string]any{"LoggingConfigurations": page}
+	if next != "" {
+		resp["NextMarker"] = next
+	}
+	wafWriteJSON(w, resp)
 }
 
 // ---------- GetSampledRequests (stub) ----------

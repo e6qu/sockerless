@@ -742,3 +742,248 @@ func TestGlue_ConnectionCRUD_SDK(t *testing.T) {
 	}
 	assert.True(t, found)
 }
+
+func TestGlue_SecurityConfigurationCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateSecurityConfiguration(ctx, &glue.CreateSecurityConfigurationInput{
+		Name: aws.String("glue-sdk-secconf"),
+		EncryptionConfiguration: &gluetypes.EncryptionConfiguration{
+			S3Encryption: []gluetypes.S3Encryption{{
+				S3EncryptionMode: gluetypes.S3EncryptionModeSses3,
+			}},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSecurityConfiguration(ctx, &glue.DeleteSecurityConfigurationInput{Name: aws.String("glue-sdk-secconf")})
+	})
+
+	get, err := c.GetSecurityConfiguration(ctx, &glue.GetSecurityConfigurationInput{Name: aws.String("glue-sdk-secconf")})
+	require.NoError(t, err)
+	require.NotNil(t, get.SecurityConfiguration)
+	assert.Equal(t, "glue-sdk-secconf", aws.ToString(get.SecurityConfiguration.Name))
+	require.NotNil(t, get.SecurityConfiguration.EncryptionConfiguration)
+	require.Len(t, get.SecurityConfiguration.EncryptionConfiguration.S3Encryption, 1)
+	assert.Equal(t, gluetypes.S3EncryptionModeSses3, get.SecurityConfiguration.EncryptionConfiguration.S3Encryption[0].S3EncryptionMode)
+
+	list, err := c.GetSecurityConfigurations(ctx, &glue.GetSecurityConfigurationsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, sc := range list.SecurityConfigurations {
+		if aws.ToString(sc.Name) == "glue-sdk-secconf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_WorkflowLifecycle_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateWorkflow(ctx, &glue.CreateWorkflowInput{
+		Name:        aws.String("glue-sdk-wf"),
+		Description: aws.String("sdk workflow"),
+		DefaultRunProperties: map[string]string{
+			"env": "test",
+		},
+		MaxConcurrentRuns: aws.Int32(2),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteWorkflow(ctx, &glue.DeleteWorkflowInput{Name: aws.String("glue-sdk-wf")})
+	})
+
+	get, err := c.GetWorkflow(ctx, &glue.GetWorkflowInput{Name: aws.String("glue-sdk-wf")})
+	require.NoError(t, err)
+	require.NotNil(t, get.Workflow)
+	assert.Equal(t, "glue-sdk-wf", aws.ToString(get.Workflow.Name))
+	assert.Equal(t, "sdk workflow", aws.ToString(get.Workflow.Description))
+	assert.Equal(t, "test", get.Workflow.DefaultRunProperties["env"])
+
+	list, err := c.ListWorkflows(ctx, &glue.ListWorkflowsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, n := range list.Workflows {
+		if n == "glue-sdk-wf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	start, err := c.StartWorkflowRun(ctx, &glue.StartWorkflowRunInput{
+		Name:          aws.String("glue-sdk-wf"),
+		RunProperties: map[string]string{"k": "v"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(start.RunId))
+
+	run, err := c.GetWorkflowRun(ctx, &glue.GetWorkflowRunInput{
+		Name:  aws.String("glue-sdk-wf"),
+		RunId: start.RunId,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, run.Run)
+	assert.Equal(t, aws.ToString(start.RunId), aws.ToString(run.Run.WorkflowRunId))
+	assert.Equal(t, "v", run.Run.WorkflowRunProperties["k"])
+}
+
+func TestGlue_ClassifierCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateClassifier(ctx, &glue.CreateClassifierInput{
+		CsvClassifier: &gluetypes.CreateCsvClassifierRequest{
+			Name:           aws.String("glue-sdk-classifier"),
+			Delimiter:      aws.String(","),
+			ContainsHeader: gluetypes.CsvHeaderOptionPresent,
+			Header:         []string{"a", "b"},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteClassifier(ctx, &glue.DeleteClassifierInput{Name: aws.String("glue-sdk-classifier")})
+	})
+
+	get, err := c.GetClassifier(ctx, &glue.GetClassifierInput{Name: aws.String("glue-sdk-classifier")})
+	require.NoError(t, err)
+	require.NotNil(t, get.Classifier)
+	require.NotNil(t, get.Classifier.CsvClassifier)
+	assert.Equal(t, "glue-sdk-classifier", aws.ToString(get.Classifier.CsvClassifier.Name))
+	assert.Equal(t, ",", aws.ToString(get.Classifier.CsvClassifier.Delimiter))
+
+	_, err = c.UpdateClassifier(ctx, &glue.UpdateClassifierInput{
+		CsvClassifier: &gluetypes.UpdateCsvClassifierRequest{
+			Name:      aws.String("glue-sdk-classifier"),
+			Delimiter: aws.String(";"),
+		},
+	})
+	require.NoError(t, err)
+	get, err = c.GetClassifier(ctx, &glue.GetClassifierInput{Name: aws.String("glue-sdk-classifier")})
+	require.NoError(t, err)
+	assert.Equal(t, ";", aws.ToString(get.Classifier.CsvClassifier.Delimiter))
+
+	list, err := c.GetClassifiers(ctx, &glue.GetClassifiersInput{})
+	require.NoError(t, err)
+	found := false
+	for _, cl := range list.Classifiers {
+		if cl.CsvClassifier != nil && aws.ToString(cl.CsvClassifier.Name) == "glue-sdk-classifier" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_UserDefinedFunctionCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateDatabase(ctx, &glue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{Name: aws.String("glue-sdk-udf-db")},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteUserDefinedFunction(ctx, &glue.DeleteUserDefinedFunctionInput{
+			DatabaseName: aws.String("glue-sdk-udf-db"),
+			FunctionName: aws.String("glue-sdk-udf"),
+		})
+		_, _ = c.DeleteDatabase(ctx, &glue.DeleteDatabaseInput{Name: aws.String("glue-sdk-udf-db")})
+	})
+
+	_, err = c.CreateUserDefinedFunction(ctx, &glue.CreateUserDefinedFunctionInput{
+		DatabaseName: aws.String("glue-sdk-udf-db"),
+		FunctionInput: &gluetypes.UserDefinedFunctionInput{
+			FunctionName: aws.String("glue-sdk-udf"),
+			ClassName:    aws.String("com.example.MyUDF"),
+			OwnerName:    aws.String("owner"),
+			OwnerType:    gluetypes.PrincipalTypeUser,
+			ResourceUris: []gluetypes.ResourceUri{{
+				ResourceType: gluetypes.ResourceTypeJar,
+				Uri:          aws.String("s3://bucket/udf.jar"),
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	get, err := c.GetUserDefinedFunction(ctx, &glue.GetUserDefinedFunctionInput{
+		DatabaseName: aws.String("glue-sdk-udf-db"),
+		FunctionName: aws.String("glue-sdk-udf"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, get.UserDefinedFunction)
+	assert.Equal(t, "glue-sdk-udf", aws.ToString(get.UserDefinedFunction.FunctionName))
+	assert.Equal(t, "com.example.MyUDF", aws.ToString(get.UserDefinedFunction.ClassName))
+	require.Len(t, get.UserDefinedFunction.ResourceUris, 1)
+	assert.Equal(t, "s3://bucket/udf.jar", aws.ToString(get.UserDefinedFunction.ResourceUris[0].Uri))
+
+	list, err := c.GetUserDefinedFunctions(ctx, &glue.GetUserDefinedFunctionsInput{
+		DatabaseName: aws.String("glue-sdk-udf-db"),
+		Pattern:      aws.String("*"),
+	})
+	require.NoError(t, err)
+	found := false
+	for _, f := range list.UserDefinedFunctions {
+		if aws.ToString(f.FunctionName) == "glue-sdk-udf" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_SchemaRegistry_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateRegistry(ctx, &glue.CreateRegistryInput{
+		RegistryName: aws.String("glue-sdk-registry"),
+		Description:  aws.String("sdk registry"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSchema(ctx, &glue.DeleteSchemaInput{
+			SchemaId: &gluetypes.SchemaId{
+				RegistryName: aws.String("glue-sdk-registry"),
+				SchemaName:   aws.String("glue-sdk-schema"),
+			},
+		})
+		_, _ = c.DeleteRegistry(ctx, &glue.DeleteRegistryInput{
+			RegistryId: &gluetypes.RegistryId{RegistryName: aws.String("glue-sdk-registry")},
+		})
+	})
+
+	getReg, err := c.GetRegistry(ctx, &glue.GetRegistryInput{
+		RegistryId: &gluetypes.RegistryId{RegistryName: aws.String("glue-sdk-registry")},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-registry", aws.ToString(getReg.RegistryName))
+	assert.NotEmpty(t, aws.ToString(getReg.RegistryArn))
+
+	listReg, err := c.ListRegistries(ctx, &glue.ListRegistriesInput{})
+	require.NoError(t, err)
+	foundReg := false
+	for _, r := range listReg.Registries {
+		if aws.ToString(r.RegistryName) == "glue-sdk-registry" {
+			foundReg = true
+		}
+	}
+	assert.True(t, foundReg)
+
+	createSchema, err := c.CreateSchema(ctx, &glue.CreateSchemaInput{
+		RegistryId:       &gluetypes.RegistryId{RegistryName: aws.String("glue-sdk-registry")},
+		SchemaName:       aws.String("glue-sdk-schema"),
+		DataFormat:       gluetypes.DataFormatAvro,
+		Compatibility:    gluetypes.CompatibilityBackward,
+		SchemaDefinition: aws.String(`{"type":"record","name":"r","fields":[]}`),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-schema", aws.ToString(createSchema.SchemaName))
+	assert.NotEmpty(t, aws.ToString(createSchema.SchemaArn))
+
+	getSchema, err := c.GetSchema(ctx, &glue.GetSchemaInput{
+		SchemaId: &gluetypes.SchemaId{
+			RegistryName: aws.String("glue-sdk-registry"),
+			SchemaName:   aws.String("glue-sdk-schema"),
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-schema", aws.ToString(getSchema.SchemaName))
+	assert.Equal(t, gluetypes.DataFormatAvro, getSchema.DataFormat)
+	assert.Equal(t, gluetypes.CompatibilityBackward, getSchema.Compatibility)
+}

@@ -289,10 +289,10 @@ var serviceCoverageFloor = map[string]int{
 	"AmazonElastiCacheV9":                  25,
 	"AmazonRDSv19":                         40,
 	"AutoScaling_2011_01_01":               13,
-	"AWSGlue":                              52,
-	"AWSWAF_20190729":                      28,
-	"CloudTrail_20131101":                  16,
-	"CodeBuild_20161006":                   9,
+	"AWSGlue":                              78,
+	"AWSWAF_20190729":                      32,
+	"CloudTrail_20131101":                  23,
+	"CodeBuild_20161006":                   22,
 	"Logs_20140328":                        18, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          16, // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      33, // Route 53 (REST)

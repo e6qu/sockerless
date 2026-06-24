@@ -250,3 +250,159 @@ func TestCodeBuild_FailedBuildPhaseContext_SDK(t *testing.T) {
 	assert.Equal(t, "COMMAND_EXECUTION_ERROR", aws.ToString(buildPhase.Contexts[0].StatusCode))
 	assert.Contains(t, aws.ToString(buildPhase.Contexts[0].Message), "status 7")
 }
+
+// TestCodeBuild_StopAndRetryBuild_SDK exercises StopBuild (a long-running build
+// settles to STOPPED) and RetryBuild (a new build of the same project).
+func TestCodeBuild_StopAndRetryBuild_SDK(t *testing.T) {
+	c := codebuildClient()
+	proj := "cb-sdk-stop-project"
+	_, err := c.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name: aws.String(proj),
+		// A short sleep keeps the build IN_PROGRESS long enough to stop it.
+		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String("version: 0.2\nphases:\n  build:\n    commands:\n      - sleep 5\n")},
+		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(proj)}) })
+
+	start, err := c.StartBuild(ctx, &codebuild.StartBuildInput{ProjectName: aws.String(proj)})
+	require.NoError(t, err)
+	buildID := aws.ToString(start.Build.Id)
+
+	stop, err := c.StopBuild(ctx, &codebuild.StopBuildInput{Id: aws.String(buildID)})
+	require.NoError(t, err)
+	require.NotNil(t, stop.Build)
+	assert.Equal(t, cbtypes.StatusTypeStopped, stop.Build.BuildStatus)
+
+	retry, err := c.RetryBuild(ctx, &codebuild.RetryBuildInput{Id: aws.String(buildID)})
+	require.NoError(t, err)
+	require.NotNil(t, retry.Build)
+	assert.NotEqual(t, buildID, aws.ToString(retry.Build.Id), "RetryBuild creates a new build id")
+	assert.Equal(t, proj, aws.ToString(retry.Build.ProjectName))
+}
+
+// TestCodeBuild_ReportGroupsAndReports_SDK covers report-group CRUD plus the
+// reports a build produces when its buildspec references a report group:
+// CreateReportGroup, UpdateReportGroup, BatchGetReportGroups, ListReportGroups,
+// then ListReports / ListReportsForReportGroup / BatchGetReports, then
+// DeleteReportGroup.
+func TestCodeBuild_ReportGroupsAndReports_SDK(t *testing.T) {
+	c := codebuildClient()
+	rgName := "cb-sdk-rg"
+	rg, err := c.CreateReportGroup(ctx, &codebuild.CreateReportGroupInput{
+		Name: aws.String(rgName),
+		Type: cbtypes.ReportTypeTest,
+		ExportConfig: &cbtypes.ReportExportConfig{
+			ExportConfigType: cbtypes.ReportExportConfigTypeNoExport,
+		},
+		Tags: []cbtypes.Tag{{Key: aws.String("team"), Value: aws.String("ci")}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rg.ReportGroup)
+	rgArn := aws.ToString(rg.ReportGroup.Arn)
+	assert.Equal(t, cbtypes.ReportGroupStatusTypeActive, rg.ReportGroup.Status)
+	t.Cleanup(func() {
+		_, _ = c.DeleteReportGroup(ctx, &codebuild.DeleteReportGroupInput{Arn: aws.String(rgArn), DeleteReports: true})
+	})
+
+	_, err = c.UpdateReportGroup(ctx, &codebuild.UpdateReportGroupInput{
+		Arn:  aws.String(rgArn),
+		Tags: []cbtypes.Tag{{Key: aws.String("team"), Value: aws.String("platform")}},
+	})
+	require.NoError(t, err)
+
+	bg, err := c.BatchGetReportGroups(ctx, &codebuild.BatchGetReportGroupsInput{ReportGroupArns: []string{rgArn}})
+	require.NoError(t, err)
+	require.Len(t, bg.ReportGroups, 1)
+	assert.Equal(t, rgName, aws.ToString(bg.ReportGroups[0].Name))
+	assert.Empty(t, bg.ReportGroupsNotFound)
+
+	lg, err := c.ListReportGroups(ctx, &codebuild.ListReportGroupsInput{})
+	require.NoError(t, err)
+	assert.Contains(t, lg.ReportGroups, rgArn)
+
+	// A build whose buildspec references the report group produces a Report.
+	proj := "cb-sdk-report-project"
+	buildspec := "version: 0.2\nphases:\n  build:\n    commands:\n      - printf ok\nreports:\n  " + rgName + ":\n    files:\n      - '**/*'\n"
+	_, err = c.CreateProject(ctx, &codebuild.CreateProjectInput{
+		Name:        aws.String(proj),
+		Source:      &cbtypes.ProjectSource{Type: cbtypes.SourceTypeNoSource, Buildspec: aws.String(buildspec)},
+		Artifacts:   &cbtypes.ProjectArtifacts{Type: cbtypes.ArtifactsTypeNoArtifacts},
+		Environment: &cbtypes.ProjectEnvironment{Type: cbtypes.EnvironmentTypeLinuxContainer, Image: aws.String("aws/codebuild/standard:7.0"), ComputeType: cbtypes.ComputeTypeBuildGeneral1Small},
+		ServiceRole: aws.String("arn:aws:iam::123456789012:role/cb-role"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = c.DeleteProject(ctx, &codebuild.DeleteProjectInput{Name: aws.String(proj)}) })
+
+	start, err := c.StartBuild(ctx, &codebuild.StartBuildInput{ProjectName: aws.String(proj)})
+	require.NoError(t, err)
+	buildID := aws.ToString(start.Build.Id)
+
+	var reportArn string
+	require.Eventually(t, func() bool {
+		builds, err := c.BatchGetBuilds(ctx, &codebuild.BatchGetBuildsInput{Ids: []string{buildID}})
+		require.NoError(t, err)
+		require.Len(t, builds.Builds, 1)
+		b := builds.Builds[0]
+		if b.BuildStatus != cbtypes.StatusTypeSucceeded {
+			return false
+		}
+		if len(b.ReportArns) == 0 {
+			return false
+		}
+		reportArn = b.ReportArns[0]
+		return true
+	}, 10*time.Second, 100*time.Millisecond)
+	require.NotEmpty(t, reportArn)
+
+	lr, err := c.ListReports(ctx, &codebuild.ListReportsInput{})
+	require.NoError(t, err)
+	assert.Contains(t, lr.Reports, reportArn)
+
+	lrg, err := c.ListReportsForReportGroup(ctx, &codebuild.ListReportsForReportGroupInput{ReportGroupArn: aws.String(rgArn)})
+	require.NoError(t, err)
+	assert.Contains(t, lrg.Reports, reportArn)
+
+	br, err := c.BatchGetReports(ctx, &codebuild.BatchGetReportsInput{ReportArns: []string{reportArn}})
+	require.NoError(t, err)
+	require.Len(t, br.Reports, 1)
+	assert.Equal(t, rgArn, aws.ToString(br.Reports[0].ReportGroupArn))
+	assert.Equal(t, cbtypes.ReportStatusTypeSucceeded, br.Reports[0].Status)
+	assert.Empty(t, br.ReportsNotFound)
+}
+
+// TestCodeBuild_SourceCredentials_SDK covers ImportSourceCredentials,
+// ListSourceCredentials, and DeleteSourceCredentials. The token is never echoed
+// back; only the ARN, serverType, and authType are readable.
+func TestCodeBuild_SourceCredentials_SDK(t *testing.T) {
+	c := codebuildClient()
+	imp, err := c.ImportSourceCredentials(ctx, &codebuild.ImportSourceCredentialsInput{
+		Token:      aws.String("ghp_exampletoken"),
+		ServerType: cbtypes.ServerTypeGithub,
+		AuthType:   cbtypes.AuthTypePersonalAccessToken,
+	})
+	require.NoError(t, err)
+	credArn := aws.ToString(imp.Arn)
+	require.NotEmpty(t, credArn)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSourceCredentials(ctx, &codebuild.DeleteSourceCredentialsInput{Arn: aws.String(credArn)})
+	})
+
+	list, err := c.ListSourceCredentials(ctx, &codebuild.ListSourceCredentialsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, info := range list.SourceCredentialsInfos {
+		if aws.ToString(info.Arn) == credArn {
+			found = true
+			assert.Equal(t, cbtypes.ServerTypeGithub, info.ServerType)
+			assert.Equal(t, cbtypes.AuthTypePersonalAccessToken, info.AuthType)
+		}
+	}
+	assert.True(t, found, "imported credential must be listed")
+
+	del, err := c.DeleteSourceCredentials(ctx, &codebuild.DeleteSourceCredentialsInput{Arn: aws.String(credArn)})
+	require.NoError(t, err)
+	assert.Equal(t, credArn, aws.ToString(del.Arn))
+}

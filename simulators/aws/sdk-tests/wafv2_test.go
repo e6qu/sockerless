@@ -470,3 +470,86 @@ func TestWAFv2ListWebACLsPagination(t *testing.T) {
 		assert.False(t, seen[aws.ToString(s.Id)], "page 2 must not repeat page 1 items")
 	}
 }
+
+// TestWAFv2LoggingConfiguration exercises the logging configuration control
+// plane round-trip: create a web ACL, attach a logging configuration with
+// PutLoggingConfiguration, read it back with GetLoggingConfiguration, confirm
+// it appears in ListLoggingConfigurations (scoped), then remove it with
+// DeleteLoggingConfiguration. Logging configurations key on the web ACL ARN.
+func TestWAFv2LoggingConfiguration(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	name := "sdk-log-" + time.Now().Format("150405.000000")
+	createOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name:          aws.String(name),
+		Scope:         wafv2types.ScopeCloudfront,
+		DefaultAction: &wafv2types.DefaultAction{Allow: &wafv2types.AllowAction{}},
+		VisibilityConfig: &wafv2types.VisibilityConfig{
+			SampledRequestsEnabled:   true,
+			CloudWatchMetricsEnabled: true,
+			MetricName:               aws.String(name + "-m"),
+		},
+	})
+	require.NoError(t, err)
+	aclARN := aws.ToString(createOut.Summary.ARN)
+	require.NotEmpty(t, aclARN)
+	lock := aws.ToString(createOut.Summary.LockToken)
+	defer func() {
+		_, _ = c.DeleteWebACL(ctx, &wafv2.DeleteWebACLInput{
+			Name: aws.String(name), Scope: wafv2types.ScopeCloudfront,
+			Id: createOut.Summary.Id, LockToken: aws.String(lock),
+		})
+	}()
+
+	// CloudWatch Logs log group destinations for WAF must be named
+	// aws-waf-logs-*; the ARN is REGIONAL us-east-1 for CLOUDFRONT scope.
+	logDest := "arn:aws:logs:us-east-1:123456789012:log-group:aws-waf-logs-" + name
+
+	putOut, err := c.PutLoggingConfiguration(ctx, &wafv2.PutLoggingConfigurationInput{
+		LoggingConfiguration: &wafv2types.LoggingConfiguration{
+			ResourceArn:           aws.String(aclARN),
+			LogDestinationConfigs: []string{logDest},
+			RedactedFields: []wafv2types.FieldToMatch{
+				{UriPath: &wafv2types.UriPath{}},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, putOut.LoggingConfiguration)
+	assert.Equal(t, aclARN, aws.ToString(putOut.LoggingConfiguration.ResourceArn))
+	require.Equal(t, []string{logDest}, putOut.LoggingConfiguration.LogDestinationConfigs)
+
+	getOut, err := c.GetLoggingConfiguration(ctx, &wafv2.GetLoggingConfigurationInput{
+		ResourceArn: aws.String(aclARN),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.LoggingConfiguration)
+	assert.Equal(t, aclARN, aws.ToString(getOut.LoggingConfiguration.ResourceArn))
+	require.Equal(t, []string{logDest}, getOut.LoggingConfiguration.LogDestinationConfigs)
+	require.Len(t, getOut.LoggingConfiguration.RedactedFields, 1)
+	require.NotNil(t, getOut.LoggingConfiguration.RedactedFields[0].UriPath)
+
+	listOut, err := c.ListLoggingConfigurations(ctx, &wafv2.ListLoggingConfigurationsInput{
+		Scope: wafv2types.ScopeCloudfront,
+	})
+	require.NoError(t, err)
+	found := false
+	for _, lc := range listOut.LoggingConfigurations {
+		if aws.ToString(lc.ResourceArn) == aclARN {
+			found = true
+		}
+	}
+	assert.True(t, found, "ListLoggingConfigurations must include the put config")
+
+	_, err = c.DeleteLoggingConfiguration(ctx, &wafv2.DeleteLoggingConfigurationInput{
+		ResourceArn: aws.String(aclARN),
+	})
+	require.NoError(t, err)
+
+	_, err = c.GetLoggingConfiguration(ctx, &wafv2.GetLoggingConfigurationInput{
+		ResourceArn: aws.String(aclARN),
+	})
+	require.Error(t, err, "GetLoggingConfiguration after delete must fail")
+}
