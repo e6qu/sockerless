@@ -110,8 +110,10 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerEventBridge(awsRouter, srv)
 	registerKinesis(awsRouter, srv)
 	registerCloudTrail(awsRouter, srv)
+	registerCloudTrailLake(awsRouter, srv)
 	registerStepFunctions(awsRouter, srv)
 	registerCodeBuild(awsRouter, srv)
+	registerCodeBuildExtended(awsRouter, srv)
 	registerGlue(awsRouter, srv)
 	registerApplicationAutoScaling(awsRouter, srv)
 

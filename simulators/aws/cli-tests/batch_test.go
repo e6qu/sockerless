@@ -314,3 +314,249 @@ func TestBatch_SchedulingPolicy_CLI(t *testing.T) {
 	parseJSON(t, out, &described)
 	assert.Empty(t, described.SchedulingPolicies)
 }
+
+func TestBatch_ConsumableResource_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-consumable-resource",
+		"--consumable-resource-name", "batch-cli-cr",
+		"--resource-type", "REPLENISHABLE",
+		"--total-quantity", "100",
+	))
+	var created struct {
+		ConsumableResourceArn  string `json:"consumableResourceArn"`
+		ConsumableResourceName string `json:"consumableResourceName"`
+	}
+	parseJSON(t, out, &created)
+	require.NotEmpty(t, created.ConsumableResourceArn)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-consumable-resource", "--consumable-resource", "batch-cli-cr"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "describe-consumable-resource", "--consumable-resource", "batch-cli-cr"))
+	var described struct {
+		TotalQuantity     int64 `json:"totalQuantity"`
+		AvailableQuantity int64 `json:"availableQuantity"`
+	}
+	parseJSON(t, out, &described)
+	assert.Equal(t, int64(100), described.TotalQuantity)
+	assert.Equal(t, int64(100), described.AvailableQuantity)
+
+	out = runCLI(t, awsCLI("batch", "update-consumable-resource",
+		"--consumable-resource", "batch-cli-cr",
+		"--operation", "ADD",
+		"--quantity", "25"))
+	var updated struct {
+		TotalQuantity int64 `json:"totalQuantity"`
+	}
+	parseJSON(t, out, &updated)
+	assert.Equal(t, int64(125), updated.TotalQuantity)
+
+	out = runCLI(t, awsCLI("batch", "list-consumable-resources"))
+	var listed struct {
+		ConsumableResources []struct {
+			ConsumableResourceName string `json:"consumableResourceName"`
+		} `json:"consumableResources"`
+	}
+	parseJSON(t, out, &listed)
+	found := false
+	for _, cr := range listed.ConsumableResources {
+		if cr.ConsumableResourceName == "batch-cli-cr" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	out = runCLI(t, awsCLI("batch", "list-jobs-by-consumable-resource", "--consumable-resource", "batch-cli-cr"))
+	var byRes struct {
+		Jobs []any `json:"jobs"`
+	}
+	parseJSON(t, out, &byRes)
+	assert.Empty(t, byRes.Jobs)
+}
+
+func TestBatch_ServiceEnvironment_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-service-environment",
+		"--service-environment-name", "batch-cli-se",
+		"--service-environment-type", "SAGEMAKER_TRAINING",
+		"--state", "ENABLED",
+		"--capacity-limits", `[{"capacityUnit":"NUM_INSTANCES","maxCapacity":10}]`,
+	))
+	var created struct {
+		ServiceEnvironmentArn  string `json:"serviceEnvironmentArn"`
+		ServiceEnvironmentName string `json:"serviceEnvironmentName"`
+	}
+	parseJSON(t, out, &created)
+	require.NotEmpty(t, created.ServiceEnvironmentArn)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-service-environment", "--service-environment", "batch-cli-se"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "describe-service-environments", "--service-environments", "batch-cli-se"))
+	var described struct {
+		ServiceEnvironments []struct {
+			State          string `json:"state"`
+			Status         string `json:"status"`
+			CapacityLimits []struct {
+				MaxCapacity int32 `json:"maxCapacity"`
+			} `json:"capacityLimits"`
+		} `json:"serviceEnvironments"`
+	}
+	parseJSON(t, out, &described)
+	require.Len(t, described.ServiceEnvironments, 1)
+	assert.Equal(t, "ENABLED", described.ServiceEnvironments[0].State)
+	assert.Equal(t, "VALID", described.ServiceEnvironments[0].Status)
+	require.Len(t, described.ServiceEnvironments[0].CapacityLimits, 1)
+	assert.Equal(t, int32(10), described.ServiceEnvironments[0].CapacityLimits[0].MaxCapacity)
+
+	runCLI(t, awsCLI("batch", "update-service-environment",
+		"--service-environment", "batch-cli-se",
+		"--state", "DISABLED"))
+	out = runCLI(t, awsCLI("batch", "describe-service-environments", "--service-environments", "batch-cli-se"))
+	parseJSON(t, out, &described)
+	assert.Equal(t, "DISABLED", described.ServiceEnvironments[0].State)
+}
+
+func TestBatch_ServiceJob_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-job-queue",
+		"--job-queue-name", "batch-cli-svc-jq",
+		"--priority", "1",
+		"--compute-environment-order", "[]"))
+	var cq struct {
+		JobQueueArn string `json:"jobQueueArn"`
+	}
+	parseJSON(t, out, &cq)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-job-queue", "--job-queue", "batch-cli-svc-jq"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "submit-service-job",
+		"--job-name", "batch-cli-svc-job",
+		"--job-queue", cq.JobQueueArn,
+		"--service-job-type", "SAGEMAKER_TRAINING",
+		"--service-request-payload", `{"trainingJobName":"t1"}`,
+	))
+	var sub struct {
+		JobID string `json:"jobId"`
+	}
+	parseJSON(t, out, &sub)
+	require.NotEmpty(t, sub.JobID)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "terminate-service-job", "--job-id", sub.JobID, "--reason", "cleanup"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "describe-service-job", "--job-id", sub.JobID))
+	var desc struct {
+		JobName        string `json:"jobName"`
+		ServiceJobType string `json:"serviceJobType"`
+	}
+	parseJSON(t, out, &desc)
+	assert.Equal(t, "batch-cli-svc-job", desc.JobName)
+	assert.Equal(t, "SAGEMAKER_TRAINING", desc.ServiceJobType)
+
+	runCLI(t, awsCLI("batch", "update-service-job", "--job-id", sub.JobID, "--scheduling-priority", "7"))
+
+	out = runCLI(t, awsCLI("batch", "list-service-jobs", "--job-queue", cq.JobQueueArn))
+	var listed struct {
+		JobSummaryList []struct {
+			JobID string `json:"jobId"`
+		} `json:"jobSummaryList"`
+	}
+	parseJSON(t, out, &listed)
+	found := false
+	for _, s := range listed.JobSummaryList {
+		if s.JobID == sub.JobID {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestBatch_QuotaShare_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-job-queue",
+		"--job-queue-name", "batch-cli-qs-jq",
+		"--priority", "1",
+		"--compute-environment-order", "[]"))
+	var cq struct {
+		JobQueueArn string `json:"jobQueueArn"`
+	}
+	parseJSON(t, out, &cq)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-job-queue", "--job-queue", "batch-cli-qs-jq"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "create-quota-share",
+		"--quota-share-name", "batch-cli-qs",
+		"--job-queue", cq.JobQueueArn,
+		"--state", "ENABLED",
+		"--capacity-limits", `[{"capacityUnit":"vCPU","maxCapacity":64}]`,
+		"--resource-sharing-configuration", `{"strategy":"LEND_AND_BORROW","borrowLimit":10}`,
+		"--preemption-configuration", `{"inSharePreemption":"ENABLED"}`,
+	))
+	var created struct {
+		QuotaShareArn  string `json:"quotaShareArn"`
+		QuotaShareName string `json:"quotaShareName"`
+	}
+	parseJSON(t, out, &created)
+	require.NotEmpty(t, created.QuotaShareArn)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-quota-share", "--quota-share-arn", created.QuotaShareArn))
+	})
+
+	out = runCLI(t, awsCLI("batch", "describe-quota-share", "--quota-share-arn", created.QuotaShareArn))
+	var described struct {
+		State          string `json:"state"`
+		Status         string `json:"status"`
+		CapacityLimits []struct {
+			MaxCapacity int32 `json:"maxCapacity"`
+		} `json:"capacityLimits"`
+	}
+	parseJSON(t, out, &described)
+	assert.Equal(t, "ENABLED", described.State)
+	assert.Equal(t, "VALID", described.Status)
+	require.Len(t, described.CapacityLimits, 1)
+	assert.Equal(t, int32(64), described.CapacityLimits[0].MaxCapacity)
+
+	runCLI(t, awsCLI("batch", "update-quota-share",
+		"--quota-share-arn", created.QuotaShareArn,
+		"--state", "DISABLED"))
+	out = runCLI(t, awsCLI("batch", "describe-quota-share", "--quota-share-arn", created.QuotaShareArn))
+	parseJSON(t, out, &described)
+	assert.Equal(t, "DISABLED", described.State)
+
+	out = runCLI(t, awsCLI("batch", "list-quota-shares", "--job-queue", cq.JobQueueArn))
+	var listed struct {
+		QuotaShares []struct {
+			QuotaShareName string `json:"quotaShareName"`
+		} `json:"quotaShares"`
+	}
+	parseJSON(t, out, &listed)
+	found := false
+	for _, qs := range listed.QuotaShares {
+		if qs.QuotaShareName == "batch-cli-qs" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestBatch_JobQueueSnapshot_CLI(t *testing.T) {
+	out := runCLI(t, awsCLI("batch", "create-job-queue",
+		"--job-queue-name", "batch-cli-snap-jq",
+		"--priority", "1",
+		"--compute-environment-order", "[]"))
+	var cq struct {
+		JobQueueArn string `json:"jobQueueArn"`
+	}
+	parseJSON(t, out, &cq)
+	t.Cleanup(func() {
+		runCLI(t, awsCLI("batch", "delete-job-queue", "--job-queue", "batch-cli-snap-jq"))
+	})
+
+	out = runCLI(t, awsCLI("batch", "get-job-queue-snapshot", "--job-queue", cq.JobQueueArn))
+	var snap struct {
+		FrontOfQueue struct {
+			Jobs []any `json:"jobs"`
+		} `json:"frontOfQueue"`
+	}
+	parseJSON(t, out, &snap)
+	assert.NotNil(t, snap.FrontOfQueue.Jobs)
+}

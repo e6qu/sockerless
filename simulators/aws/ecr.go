@@ -93,6 +93,11 @@ type ECRPullThroughCacheRule struct {
 	RegistryId          string `json:"registryId"`
 	CreatedAt           int64  `json:"createdAt"`
 	UpdatedAt           int64  `json:"updatedAt,omitempty"`
+	// CredentialArn / CustomRoleArn are set by UpdatePullThroughCacheRule when
+	// the upstream registry requires authentication; echoed back by
+	// ValidatePullThroughCacheRule.
+	CredentialArn string `json:"credentialArn,omitempty"`
+	CustomRoleArn string `json:"customRoleArn,omitempty"`
 }
 
 // State stores
@@ -147,6 +152,7 @@ func registerECR(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AmazonEC2ContainerRegistry_V20150921.DeletePullThroughCacheRule", handleECRDeletePullThroughCacheRule)
 
 	registerECRRegistry(r, srv)
+	registerECRAdvanced(r, srv)
 	registerECRLayers(r, srv)
 	registerECROCI(srv)
 }

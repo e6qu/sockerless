@@ -411,3 +411,238 @@ func TestBatch_JobQueueWithSchedulingPolicy_SDK(t *testing.T) {
 	require.Len(t, dq.JobQueues, 1)
 	assert.Equal(t, spArn, aws.ToString(dq.JobQueues[0].SchedulingPolicyArn))
 }
+
+func TestBatch_ConsumableResource_SDK(t *testing.T) {
+	c := batchClient()
+
+	create, err := c.CreateConsumableResource(ctx, &batch.CreateConsumableResourceInput{
+		ConsumableResourceName: aws.String("batch-sdk-cr"),
+		ResourceType:           aws.String("REPLENISHABLE"),
+		TotalQuantity:          aws.Int64(100),
+		Tags:                   map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(create.ConsumableResourceArn))
+	t.Cleanup(func() {
+		_, _ = c.DeleteConsumableResource(ctx, &batch.DeleteConsumableResourceInput{
+			ConsumableResource: aws.String("batch-sdk-cr"),
+		})
+	})
+
+	desc, err := c.DescribeConsumableResource(ctx, &batch.DescribeConsumableResourceInput{
+		ConsumableResource: aws.String("batch-sdk-cr"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "batch-sdk-cr", aws.ToString(desc.ConsumableResourceName))
+	assert.Equal(t, int64(100), aws.ToInt64(desc.TotalQuantity))
+	assert.Equal(t, int64(100), aws.ToInt64(desc.AvailableQuantity))
+
+	upd, err := c.UpdateConsumableResource(ctx, &batch.UpdateConsumableResourceInput{
+		ConsumableResource: aws.String("batch-sdk-cr"),
+		Operation:          aws.String("ADD"),
+		Quantity:           aws.Int64(50),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, int64(150), aws.ToInt64(upd.TotalQuantity))
+
+	list, err := c.ListConsumableResources(ctx, &batch.ListConsumableResourcesInput{})
+	require.NoError(t, err)
+	found := false
+	for _, cr := range list.ConsumableResources {
+		if aws.ToString(cr.ConsumableResourceName) == "batch-sdk-cr" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	jobs, err := c.ListJobsByConsumableResource(ctx, &batch.ListJobsByConsumableResourceInput{
+		ConsumableResource: aws.String("batch-sdk-cr"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, jobs.Jobs)
+}
+
+func TestBatch_ServiceEnvironment_SDK(t *testing.T) {
+	c := batchClient()
+
+	create, err := c.CreateServiceEnvironment(ctx, &batch.CreateServiceEnvironmentInput{
+		ServiceEnvironmentName: aws.String("batch-sdk-se"),
+		ServiceEnvironmentType: batchtypes.ServiceEnvironmentTypeSagemakerTraining,
+		State:                  batchtypes.ServiceEnvironmentStateEnabled,
+		CapacityLimits: []batchtypes.CapacityLimit{
+			{CapacityUnit: aws.String("NUM_INSTANCES"), MaxCapacity: aws.Int32(10)},
+		},
+		Tags: map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(create.ServiceEnvironmentArn))
+	t.Cleanup(func() {
+		_, _ = c.DeleteServiceEnvironment(ctx, &batch.DeleteServiceEnvironmentInput{
+			ServiceEnvironment: aws.String("batch-sdk-se"),
+		})
+	})
+
+	desc, err := c.DescribeServiceEnvironments(ctx, &batch.DescribeServiceEnvironmentsInput{
+		ServiceEnvironments: []string{"batch-sdk-se"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.ServiceEnvironments, 1)
+	se := desc.ServiceEnvironments[0]
+	assert.Equal(t, batchtypes.ServiceEnvironmentStateEnabled, se.State)
+	assert.Equal(t, batchtypes.ServiceEnvironmentStatusValid, se.Status)
+	require.Len(t, se.CapacityLimits, 1)
+	assert.Equal(t, int32(10), aws.ToInt32(se.CapacityLimits[0].MaxCapacity))
+
+	_, err = c.UpdateServiceEnvironment(ctx, &batch.UpdateServiceEnvironmentInput{
+		ServiceEnvironment: aws.String("batch-sdk-se"),
+		State:              batchtypes.ServiceEnvironmentStateDisabled,
+	})
+	require.NoError(t, err)
+	desc, err = c.DescribeServiceEnvironments(ctx, &batch.DescribeServiceEnvironmentsInput{
+		ServiceEnvironments: []string{"batch-sdk-se"},
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.ServiceEnvironments, 1)
+	assert.Equal(t, batchtypes.ServiceEnvironmentStateDisabled, desc.ServiceEnvironments[0].State)
+}
+
+func TestBatch_ServiceJob_SDK(t *testing.T) {
+	c := batchClient()
+
+	cq, err := c.CreateJobQueue(ctx, &batch.CreateJobQueueInput{
+		JobQueueName: aws.String("batch-sdk-svc-jq"),
+		Priority:     aws.Int32(1),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteJobQueue(ctx, &batch.DeleteJobQueueInput{JobQueue: aws.String("batch-sdk-svc-jq")})
+	})
+
+	sub, err := c.SubmitServiceJob(ctx, &batch.SubmitServiceJobInput{
+		JobName:               aws.String("batch-sdk-svc-job"),
+		JobQueue:              aws.String(aws.ToString(cq.JobQueueArn)),
+		ServiceJobType:        batchtypes.ServiceJobTypeSagemakerTraining,
+		ServiceRequestPayload: aws.String(`{"trainingJobName":"t1"}`),
+	})
+	require.NoError(t, err)
+	jobID := aws.ToString(sub.JobId)
+	require.NotEmpty(t, jobID)
+	t.Cleanup(func() {
+		_, _ = c.TerminateServiceJob(ctx, &batch.TerminateServiceJobInput{
+			JobId:  aws.String(jobID),
+			Reason: aws.String("cleanup"),
+		})
+	})
+
+	desc, err := c.DescribeServiceJob(ctx, &batch.DescribeServiceJobInput{JobId: aws.String(jobID)})
+	require.NoError(t, err)
+	assert.Equal(t, "batch-sdk-svc-job", aws.ToString(desc.JobName))
+	assert.Equal(t, batchtypes.ServiceJobTypeSagemakerTraining, desc.ServiceJobType)
+
+	_, err = c.UpdateServiceJob(ctx, &batch.UpdateServiceJobInput{
+		JobId:              aws.String(jobID),
+		SchedulingPriority: aws.Int32(5),
+	})
+	require.NoError(t, err)
+
+	list, err := c.ListServiceJobs(ctx, &batch.ListServiceJobsInput{
+		JobQueue: aws.String(aws.ToString(cq.JobQueueArn)),
+	})
+	require.NoError(t, err)
+	found := false
+	for _, s := range list.JobSummaryList {
+		if aws.ToString(s.JobId) == jobID {
+			found = true
+		}
+	}
+	assert.True(t, found)
+
+	require.Eventually(t, func() bool {
+		d, err := c.DescribeServiceJob(ctx, &batch.DescribeServiceJobInput{JobId: aws.String(jobID)})
+		return err == nil && d.Status == batchtypes.ServiceJobStatusSucceeded
+	}, 10*time.Second, 100*time.Millisecond)
+}
+
+func TestBatch_QuotaShare_SDK(t *testing.T) {
+	c := batchClient()
+
+	cq, err := c.CreateJobQueue(ctx, &batch.CreateJobQueueInput{
+		JobQueueName: aws.String("batch-sdk-qs-jq"),
+		Priority:     aws.Int32(1),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteJobQueue(ctx, &batch.DeleteJobQueueInput{JobQueue: aws.String("batch-sdk-qs-jq")})
+	})
+
+	create, err := c.CreateQuotaShare(ctx, &batch.CreateQuotaShareInput{
+		QuotaShareName: aws.String("batch-sdk-qs"),
+		JobQueue:       aws.String(aws.ToString(cq.JobQueueArn)),
+		State:          batchtypes.QuotaShareStateEnabled,
+		CapacityLimits: []batchtypes.QuotaShareCapacityLimit{
+			{CapacityUnit: aws.String("vCPU"), MaxCapacity: aws.Int32(64)},
+		},
+		ResourceSharingConfiguration: &batchtypes.QuotaShareResourceSharingConfiguration{
+			Strategy:    batchtypes.QuotaShareResourceSharingStrategyLendAndBorrow,
+			BorrowLimit: aws.Int32(10),
+		},
+		PreemptionConfiguration: &batchtypes.QuotaSharePreemptionConfiguration{
+			InSharePreemption: batchtypes.QuotaShareInSharePreemptionStateEnabled,
+		},
+		Tags: map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	qsArn := aws.ToString(create.QuotaShareArn)
+	require.NotEmpty(t, qsArn)
+	t.Cleanup(func() {
+		_, _ = c.DeleteQuotaShare(ctx, &batch.DeleteQuotaShareInput{QuotaShareArn: aws.String(qsArn)})
+	})
+
+	desc, err := c.DescribeQuotaShare(ctx, &batch.DescribeQuotaShareInput{QuotaShareArn: aws.String(qsArn)})
+	require.NoError(t, err)
+	assert.Equal(t, "batch-sdk-qs", aws.ToString(desc.QuotaShareName))
+	assert.Equal(t, batchtypes.QuotaShareStateEnabled, desc.State)
+	require.Len(t, desc.CapacityLimits, 1)
+	assert.Equal(t, int32(64), aws.ToInt32(desc.CapacityLimits[0].MaxCapacity))
+
+	_, err = c.UpdateQuotaShare(ctx, &batch.UpdateQuotaShareInput{
+		QuotaShareArn: aws.String(qsArn),
+		State:         batchtypes.QuotaShareStateDisabled,
+	})
+	require.NoError(t, err)
+	desc, err = c.DescribeQuotaShare(ctx, &batch.DescribeQuotaShareInput{QuotaShareArn: aws.String(qsArn)})
+	require.NoError(t, err)
+	assert.Equal(t, batchtypes.QuotaShareStateDisabled, desc.State)
+
+	list, err := c.ListQuotaShares(ctx, &batch.ListQuotaSharesInput{
+		JobQueue: aws.String(aws.ToString(cq.JobQueueArn)),
+	})
+	require.NoError(t, err)
+	found := false
+	for _, qs := range list.QuotaShares {
+		if aws.ToString(qs.QuotaShareName) == "batch-sdk-qs" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestBatch_JobQueueSnapshot_SDK(t *testing.T) {
+	c := batchClient()
+
+	cq, err := c.CreateJobQueue(ctx, &batch.CreateJobQueueInput{
+		JobQueueName: aws.String("batch-sdk-snap-jq"),
+		Priority:     aws.Int32(1),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteJobQueue(ctx, &batch.DeleteJobQueueInput{JobQueue: aws.String("batch-sdk-snap-jq")})
+	})
+
+	snap, err := c.GetJobQueueSnapshot(ctx, &batch.GetJobQueueSnapshotInput{
+		JobQueue: aws.String(aws.ToString(cq.JobQueueArn)),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, snap.FrontOfQueue)
+	assert.NotNil(t, snap.FrontOfQueue.Jobs)
+}

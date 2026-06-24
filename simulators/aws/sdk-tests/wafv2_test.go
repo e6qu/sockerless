@@ -553,3 +553,302 @@ func TestWAFv2LoggingConfiguration(t *testing.T) {
 	})
 	require.Error(t, err, "GetLoggingConfiguration after delete must fail")
 }
+
+// TestWAFv2APIKeysAndCapacity exercises the API-key control plane
+// (CreateAPIKey, ListAPIKeys, GetDecryptedAPIKey, DeleteAPIKey) and the
+// CheckCapacity WCU estimator in one round-trip.
+func TestWAFv2APIKeysAndCapacity(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	domains := []string{"example.com", "app.example.com"}
+	createOut, err := c.CreateAPIKey(ctx, &wafv2.CreateAPIKeyInput{
+		Scope:        wafv2types.ScopeCloudfront,
+		TokenDomains: domains,
+	})
+	require.NoError(t, err)
+	apiKey := aws.ToString(createOut.APIKey)
+	require.NotEmpty(t, apiKey)
+	defer func() {
+		_, _ = c.DeleteAPIKey(ctx, &wafv2.DeleteAPIKeyInput{
+			Scope: wafv2types.ScopeCloudfront, APIKey: aws.String(apiKey),
+		})
+	}()
+
+	listOut, err := c.ListAPIKeys(ctx, &wafv2.ListAPIKeysInput{Scope: wafv2types.ScopeCloudfront})
+	require.NoError(t, err)
+	found := false
+	for _, s := range listOut.APIKeySummaries {
+		if aws.ToString(s.APIKey) == apiKey {
+			found = true
+			require.ElementsMatch(t, domains, s.TokenDomains)
+		}
+	}
+	assert.True(t, found, "ListAPIKeys must include the created key")
+
+	decOut, err := c.GetDecryptedAPIKey(ctx, &wafv2.GetDecryptedAPIKeyInput{
+		Scope: wafv2types.ScopeCloudfront, APIKey: aws.String(apiKey),
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, domains, decOut.TokenDomains)
+	require.NotNil(t, decOut.CreationTimestamp)
+
+	// CheckCapacity over two byte-match rules: each ByteMatchStatement costs
+	// a known WCU; the sum is deterministic.
+	capOut, err := c.CheckCapacity(ctx, &wafv2.CheckCapacityInput{
+		Scope: wafv2types.ScopeCloudfront,
+		Rules: []wafv2types.Rule{
+			{
+				Name:     aws.String("r1"),
+				Priority: 0,
+				Statement: &wafv2types.Statement{
+					ByteMatchStatement: &wafv2types.ByteMatchStatement{
+						SearchString:         []byte("admin"),
+						PositionalConstraint: wafv2types.PositionalConstraintContains,
+						FieldToMatch:         &wafv2types.FieldToMatch{UriPath: &wafv2types.UriPath{}},
+						TextTransformations: []wafv2types.TextTransformation{
+							{Priority: 0, Type: wafv2types.TextTransformationTypeNone},
+						},
+					},
+				},
+				Action:           &wafv2types.RuleAction{Block: &wafv2types.BlockAction{}},
+				VisibilityConfig: &wafv2types.VisibilityConfig{SampledRequestsEnabled: false, CloudWatchMetricsEnabled: false, MetricName: aws.String("r1")},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Greater(t, capOut.Capacity, int64(0), "CheckCapacity must return a positive WCU sum")
+
+	// Delete the key, then it must be gone from the list.
+	_, err = c.DeleteAPIKey(ctx, &wafv2.DeleteAPIKeyInput{
+		Scope: wafv2types.ScopeCloudfront, APIKey: aws.String(apiKey),
+	})
+	require.NoError(t, err)
+}
+
+// TestWAFv2ManagedRuleGroupCatalog exercises the read-only managed rule
+// group / product catalog: ListAvailableManagedRuleGroups,
+// ListAvailableManagedRuleGroupVersions, DescribeManagedRuleGroup,
+// DescribeAllManagedProducts, DescribeManagedProductsByVendor.
+func TestWAFv2ManagedRuleGroupCatalog(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	listOut, err := c.ListAvailableManagedRuleGroups(ctx, &wafv2.ListAvailableManagedRuleGroupsInput{
+		Scope: wafv2types.ScopeCloudfront,
+	})
+	require.NoError(t, err)
+	hasCommon := false
+	for _, g := range listOut.ManagedRuleGroups {
+		if aws.ToString(g.Name) == "AWSManagedRulesCommonRuleSet" && aws.ToString(g.VendorName) == "AWS" {
+			hasCommon = true
+		}
+	}
+	require.True(t, hasCommon, "catalog must include AWSManagedRulesCommonRuleSet from AWS")
+
+	verOut, err := c.ListAvailableManagedRuleGroupVersions(ctx, &wafv2.ListAvailableManagedRuleGroupVersionsInput{
+		Scope:      wafv2types.ScopeCloudfront,
+		VendorName: aws.String("AWS"),
+		Name:       aws.String("AWSManagedRulesCommonRuleSet"),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, verOut.Versions)
+	require.NotEmpty(t, aws.ToString(verOut.CurrentDefaultVersion))
+
+	descOut, err := c.DescribeManagedRuleGroup(ctx, &wafv2.DescribeManagedRuleGroupInput{
+		Scope:      wafv2types.ScopeCloudfront,
+		VendorName: aws.String("AWS"),
+		Name:       aws.String("AWSManagedRulesCommonRuleSet"),
+	})
+	require.NoError(t, err)
+	require.Greater(t, aws.ToInt64(descOut.Capacity), int64(0))
+	require.NotEmpty(t, descOut.Rules)
+	require.NotEmpty(t, descOut.AvailableLabels)
+
+	allProducts, err := c.DescribeAllManagedProducts(ctx, &wafv2.DescribeAllManagedProductsInput{
+		Scope: wafv2types.ScopeCloudfront,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, allProducts.ManagedProducts)
+
+	byVendor, err := c.DescribeManagedProductsByVendor(ctx, &wafv2.DescribeManagedProductsByVendorInput{
+		Scope:      wafv2types.ScopeCloudfront,
+		VendorName: aws.String("AWS"),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, byVendor.ManagedProducts)
+	for _, p := range byVendor.ManagedProducts {
+		assert.Equal(t, "AWS", aws.ToString(p.VendorName))
+	}
+}
+
+// TestWAFv2ManagedRuleSetLifecycle exercises the publisher-side managed rule
+// set CRUD: PutManagedRuleSetVersions (create + publish), GetManagedRuleSet,
+// ListManagedRuleSets, UpdateManagedRuleSetVersionExpiryDate.
+func TestWAFv2ManagedRuleSetLifecycle(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// Managed rule sets are publisher-owned resources surfaced through
+	// List/Get (there is no Create op). Discover the seeded set, read its
+	// lock token, then publish a version against it.
+	listOut, err := c.ListManagedRuleSets(ctx, &wafv2.ListManagedRuleSetsInput{Scope: wafv2types.ScopeCloudfront})
+	require.NoError(t, err)
+	require.NotEmpty(t, listOut.ManagedRuleSets, "the sim seeds a managed rule set per scope")
+	seed := listOut.ManagedRuleSets[0]
+	id := aws.ToString(seed.Id)
+	name := aws.ToString(seed.Name)
+	seedLock := aws.ToString(seed.LockToken)
+	rgARN := "arn:aws:wafv2:us-east-1:123456789012:global/rulegroup/backing/" + id
+
+	putOut, err := c.PutManagedRuleSetVersions(ctx, &wafv2.PutManagedRuleSetVersionsInput{
+		Name:               aws.String(name),
+		Scope:              wafv2types.ScopeCloudfront,
+		Id:                 aws.String(id),
+		LockToken:          aws.String(seedLock),
+		RecommendedVersion: aws.String("Version_1.0"),
+		VersionsToPublish: map[string]wafv2types.VersionToPublish{
+			"Version_1.0": {
+				AssociatedRuleGroupArn: aws.String(rgARN),
+				ForecastedLifetime:     aws.Int32(90),
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(putOut.NextLockToken))
+
+	getOut, err := c.GetManagedRuleSet(ctx, &wafv2.GetManagedRuleSetInput{
+		Name: aws.String(name), Scope: wafv2types.ScopeCloudfront, Id: aws.String(id),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, getOut.ManagedRuleSet)
+	require.Contains(t, getOut.ManagedRuleSet.PublishedVersions, "Version_1.0")
+	require.Equal(t, "Version_1.0", aws.ToString(getOut.ManagedRuleSet.RecommendedVersion))
+	curLock := aws.ToString(getOut.LockToken)
+
+	expiry := time.Now().Add(48 * time.Hour)
+	updOut, err := c.UpdateManagedRuleSetVersionExpiryDate(ctx, &wafv2.UpdateManagedRuleSetVersionExpiryDateInput{
+		Name: aws.String(name), Scope: wafv2types.ScopeCloudfront, Id: aws.String(id),
+		LockToken:       aws.String(curLock),
+		VersionToExpire: aws.String("Version_1.0"),
+		ExpiryTimestamp: aws.Time(expiry),
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Version_1.0", aws.ToString(updOut.ExpiringVersion))
+	require.NotNil(t, updOut.ExpiryTimestamp)
+	require.NotEmpty(t, aws.ToString(updOut.NextLockToken))
+}
+
+// TestWAFv2PermissionPolicyAndStats exercises the cross-account permission
+// policy (Put/Get/DeletePermissionPolicy on a rule group ARN), the mobile SDK
+// release catalog (GenerateMobileSdkReleaseUrl, GetMobileSdkRelease,
+// ListMobileSdkReleases), DeleteFirewallManagerRuleGroups,
+// GetRateBasedStatementManagedKeys, and GetTopPathStatisticsByTraffic.
+func TestWAFv2PermissionPolicyAndStats(t *testing.T) {
+	c := wafClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ts := time.Now().Format("150405.000000")
+
+	// Rule group → permission policy round-trip.
+	rgOut, err := c.CreateRuleGroup(ctx, &wafv2.CreateRuleGroupInput{
+		Name: aws.String("pp-rg-" + ts), Scope: wafv2types.ScopeCloudfront,
+		Capacity:         aws.Int64(50),
+		VisibilityConfig: &wafv2types.VisibilityConfig{SampledRequestsEnabled: false, CloudWatchMetricsEnabled: false, MetricName: aws.String("ppm")},
+	})
+	require.NoError(t, err)
+	rgARN := aws.ToString(rgOut.Summary.ARN)
+	rgID := aws.ToString(rgOut.Summary.Id)
+	rgLock := aws.ToString(rgOut.Summary.LockToken)
+	defer func() {
+		_, _ = c.DeleteRuleGroup(ctx, &wafv2.DeleteRuleGroupInput{
+			Name: aws.String("pp-rg-" + ts), Scope: wafv2types.ScopeCloudfront,
+			Id: aws.String(rgID), LockToken: aws.String(rgLock),
+		})
+	}()
+
+	policy := `{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"AWS":"arn:aws:iam::123456789012:root"},"Action":["wafv2:GetRuleGroup"],"Resource":"` + rgARN + `"}]}`
+	_, err = c.PutPermissionPolicy(ctx, &wafv2.PutPermissionPolicyInput{
+		ResourceArn: aws.String(rgARN), Policy: aws.String(policy),
+	})
+	require.NoError(t, err)
+
+	getPP, err := c.GetPermissionPolicy(ctx, &wafv2.GetPermissionPolicyInput{ResourceArn: aws.String(rgARN)})
+	require.NoError(t, err)
+	require.Equal(t, policy, aws.ToString(getPP.Policy))
+
+	_, err = c.DeletePermissionPolicy(ctx, &wafv2.DeletePermissionPolicyInput{ResourceArn: aws.String(rgARN)})
+	require.NoError(t, err)
+	_, err = c.GetPermissionPolicy(ctx, &wafv2.GetPermissionPolicyInput{ResourceArn: aws.String(rgARN)})
+	require.Error(t, err, "GetPermissionPolicy after delete must fail")
+
+	// Mobile SDK release catalog.
+	listRel, err := c.ListMobileSdkReleases(ctx, &wafv2.ListMobileSdkReleasesInput{Platform: wafv2types.PlatformIos})
+	require.NoError(t, err)
+	require.NotEmpty(t, listRel.ReleaseSummaries)
+	relVer := aws.ToString(listRel.ReleaseSummaries[0].ReleaseVersion)
+
+	getRel, err := c.GetMobileSdkRelease(ctx, &wafv2.GetMobileSdkReleaseInput{
+		Platform: wafv2types.PlatformIos, ReleaseVersion: aws.String(relVer),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, getRel.MobileSdkRelease)
+	require.Equal(t, relVer, aws.ToString(getRel.MobileSdkRelease.ReleaseVersion))
+
+	urlOut, err := c.GenerateMobileSdkReleaseUrl(ctx, &wafv2.GenerateMobileSdkReleaseUrlInput{
+		Platform: wafv2types.PlatformIos, ReleaseVersion: aws.String(relVer),
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(urlOut.Url))
+
+	// Web ACL → FirewallManager rule group delete + rate-based keys + traffic.
+	aclOut, err := c.CreateWebACL(ctx, &wafv2.CreateWebACLInput{
+		Name: aws.String("pp-acl-" + ts), Scope: wafv2types.ScopeCloudfront,
+		DefaultAction:    &wafv2types.DefaultAction{Allow: &wafv2types.AllowAction{}},
+		VisibilityConfig: &wafv2types.VisibilityConfig{SampledRequestsEnabled: false, CloudWatchMetricsEnabled: false, MetricName: aws.String("m")},
+	})
+	require.NoError(t, err)
+	aclID := aws.ToString(aclOut.Summary.Id)
+	aclARN := aws.ToString(aclOut.Summary.ARN)
+	aclName := "pp-acl-" + ts
+
+	rbk, err := c.GetRateBasedStatementManagedKeys(ctx, &wafv2.GetRateBasedStatementManagedKeysInput{
+		Scope: wafv2types.ScopeCloudfront, WebACLName: aws.String(aclName),
+		WebACLId: aws.String(aclID), RuleName: aws.String("any-rate-rule"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, rbk.ManagedKeysIPV4)
+	require.NotNil(t, rbk.ManagedKeysIPV6)
+
+	stats, err := c.GetTopPathStatisticsByTraffic(ctx, &wafv2.GetTopPathStatisticsByTrafficInput{
+		Scope: wafv2types.ScopeCloudfront, WebAclArn: aws.String(aclARN),
+		Limit:                         aws.Int32(10),
+		NumberOfTopTrafficBotsPerPath: aws.Int32(5),
+		TimeWindow: &wafv2types.TimeWindow{
+			StartTime: aws.Time(time.Now().Add(-time.Hour)),
+			EndTime:   aws.Time(time.Now()),
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, stats)
+
+	// DeleteFirewallManagerRuleGroups advances the web ACL lock token.
+	getACL, err := c.GetWebACL(ctx, &wafv2.GetWebACLInput{
+		Name: aws.String(aclName), Scope: wafv2types.ScopeCloudfront, Id: aws.String(aclID),
+	})
+	require.NoError(t, err)
+	fmDel, err := c.DeleteFirewallManagerRuleGroups(ctx, &wafv2.DeleteFirewallManagerRuleGroupsInput{
+		WebACLArn: aws.String(aclARN), WebACLLockToken: getACL.LockToken,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(fmDel.NextWebACLLockToken))
+
+	// Clean up the web ACL with the advanced lock token.
+	_, _ = c.DeleteWebACL(ctx, &wafv2.DeleteWebACLInput{
+		Name: aws.String(aclName), Scope: wafv2types.ScopeCloudfront,
+		Id: aws.String(aclID), LockToken: fmDel.NextWebACLLockToken,
+	})
+}
