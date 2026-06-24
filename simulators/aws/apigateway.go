@@ -131,9 +131,11 @@ func registerAPIGateway(srv *sim.Server) {
 	mux.HandleFunc("GET /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration", cloudTrailRecordedREST("GetIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWGetIntegration))
 	mux.HandleFunc("DELETE /restapis/{restApiId}/resources/{resourceId}/methods/{httpMethod}/integration", cloudTrailRecordedREST("DeleteIntegration", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteIntegration))
 	mux.HandleFunc("POST /restapis/{restApiId}/deployments", cloudTrailRecordedREST("CreateDeployment", "apigateway.amazonaws.com", apiResource, handleAPIGWCreateDeployment))
+	mux.HandleFunc("GET /restapis/{restApiId}/deployments", cloudTrailRecordedREST("GetDeployments", "apigateway.amazonaws.com", apiResource, handleAPIGWListDeployments))
 	mux.HandleFunc("GET /restapis/{restApiId}/deployments/{deploymentId}", cloudTrailRecordedREST("GetDeployment", "apigateway.amazonaws.com", apiResource, handleAPIGWGetDeployment))
 	mux.HandleFunc("DELETE /restapis/{restApiId}/deployments/{deploymentId}", cloudTrailRecordedREST("DeleteDeployment", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteDeployment))
 	mux.HandleFunc("POST /restapis/{restApiId}/stages", cloudTrailRecordedREST("CreateStage", "apigateway.amazonaws.com", apiResource, handleAPIGWCreateStage))
+	mux.HandleFunc("GET /restapis/{restApiId}/stages", cloudTrailRecordedREST("GetStages", "apigateway.amazonaws.com", apiResource, handleAPIGWListStages))
 	mux.HandleFunc("GET /restapis/{restApiId}/stages/{stageName}", cloudTrailRecordedREST("GetStage", "apigateway.amazonaws.com", apiResource, handleAPIGWGetStage))
 	mux.HandleFunc("DELETE /restapis/{restApiId}/stages/{stageName}", cloudTrailRecordedREST("DeleteStage", "apigateway.amazonaws.com", apiResource, handleAPIGWDeleteStage))
 
@@ -438,6 +440,24 @@ func handleAPIGWCreateDeployment(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusCreated, d)
 }
 
+func handleAPIGWListDeployments(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(apiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var out []APIGWDeployment
+	for _, d := range apigwDeployments.List() {
+		if d.RestApiId == apiId {
+			out = append(out, d)
+		}
+	}
+	if out == nil {
+		out = []APIGWDeployment{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
+}
+
 func handleAPIGWGetDeployment(w http.ResponseWriter, r *http.Request) {
 	apiId := sim.PathParam(r, "restApiId")
 	deploymentId := sim.PathParam(r, "deploymentId")
@@ -477,6 +497,24 @@ func handleAPIGWCreateStage(w http.ResponseWriter, r *http.Request) {
 	}
 	apigwStages.Put(apiId+"/"+s.StageName, s)
 	sim.WriteJSON(w, http.StatusCreated, s)
+}
+
+func handleAPIGWListStages(w http.ResponseWriter, r *http.Request) {
+	apiId := sim.PathParam(r, "restApiId")
+	if _, ok := apigwRestApis.Get(apiId); !ok {
+		sim.AWSErrorf(w, "NotFoundException", http.StatusNotFound, "Invalid Rest API identifier specified")
+		return
+	}
+	var out []APIGWStage
+	for _, s := range apigwStages.List() {
+		if s.RestApiId == apiId {
+			out = append(out, s)
+		}
+	}
+	if out == nil {
+		out = []APIGWStage{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"item": out})
 }
 
 func handleAPIGWGetStage(w http.ResponseWriter, r *http.Request) {

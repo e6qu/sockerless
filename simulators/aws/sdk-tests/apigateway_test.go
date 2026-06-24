@@ -143,4 +143,66 @@ func TestAPIGateway_RestApiLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "prod", aws.ToString(stage.StageName))
+
+	// GetDeployments + GetStages list the resources just created.
+	deps, err := c.GetDeployments(ctx, &apigateway.GetDeploymentsInput{RestApiId: aws.String(apiId)})
+	require.NoError(t, err)
+	foundDep := false
+	for _, d := range deps.Items {
+		if aws.ToString(d.Id) == aws.ToString(dep.Id) {
+			foundDep = true
+			break
+		}
+	}
+	assert.True(t, foundDep, "created deployment should appear in GetDeployments")
+
+	stages, err := c.GetStages(ctx, &apigateway.GetStagesInput{RestApiId: aws.String(apiId)})
+	require.NoError(t, err)
+	foundStage := false
+	for _, s := range stages.Item {
+		if aws.ToString(s.StageName) == "prod" {
+			foundStage = true
+			break
+		}
+	}
+	assert.True(t, foundStage, "created stage should appear in GetStages")
+}
+
+// TestAPIGatewayV2_UpdateRoute exercises the PATCH route update path:
+// CreateRoute → UpdateRoute (change RouteKey) → GetRoute reflects it.
+func TestAPIGatewayV2_UpdateRoute(t *testing.T) {
+	c := apigwv2Client()
+	create, err := c.CreateApi(ctx, &apigatewayv2.CreateApiInput{
+		Name:         aws.String("update-route-api"),
+		ProtocolType: "HTTP",
+	})
+	require.NoError(t, err)
+	apiId := aws.ToString(create.ApiId)
+	require.NotEmpty(t, apiId)
+	t.Cleanup(func() {
+		_, _ = c.DeleteApi(ctx, &apigatewayv2.DeleteApiInput{ApiId: aws.String(apiId)})
+	})
+
+	rt, err := c.CreateRoute(ctx, &apigatewayv2.CreateRouteInput{
+		ApiId:    aws.String(apiId),
+		RouteKey: aws.String("GET /before"),
+	})
+	require.NoError(t, err)
+	routeId := aws.ToString(rt.RouteId)
+	require.NotEmpty(t, routeId)
+
+	upd, err := c.UpdateRoute(ctx, &apigatewayv2.UpdateRouteInput{
+		ApiId:    aws.String(apiId),
+		RouteId:  aws.String(routeId),
+		RouteKey: aws.String("POST /after"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "POST /after", aws.ToString(upd.RouteKey))
+
+	got, err := c.GetRoute(ctx, &apigatewayv2.GetRouteInput{
+		ApiId:   aws.String(apiId),
+		RouteId: aws.String(routeId),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "POST /after", aws.ToString(got.RouteKey))
 }

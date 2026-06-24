@@ -28,6 +28,7 @@ type EC2Vpc struct {
 	OwnerId                          string
 	IsDefault                        bool
 	InstanceTenancy                  string
+	DhcpOptionsId                    string
 	EnableDnsSupport                 bool
 	EnableDnsHostnames               bool
 	EnableNetworkAddressUsageMetrics bool
@@ -565,6 +566,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("AssignPrivateIpAddresses", handleAssignPrivateIpAddresses)
 
 	registerEC2LaunchTemplates(r, srv)
+	registerEC2AmiPlacementDhcp(r, srv)
 }
 
 // Tag helpers
@@ -597,6 +599,12 @@ func writeTagSetXML(tags []EC2Tag) string {
 
 func ec2ID(prefix string) string {
 	return prefix + "-" + generateUUID()[:8]
+}
+
+// ec2NowRFC3339Milli formats the current time as the millisecond-precision UTC
+// timestamp AMIs use for creationDate (e.g. 2024-01-01T00:00:00.000Z).
+func ec2NowRFC3339Milli() string {
+	return time.Now().UTC().Format("2006-01-02T15:04:05.000Z")
 }
 
 func ec2Xmlns() string {
@@ -697,8 +705,12 @@ func vpcItemBodyXML(vpc EC2Vpc) string {
 	if tenancy == "" {
 		tenancy = "default"
 	}
-	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>default</dhcpOptionsId>%s%s`,
-		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, cidrAssoc, writeTagSetXML(vpc.Tags))
+	dhcpOptionsID := vpc.DhcpOptionsId
+	if dhcpOptionsID == "" {
+		dhcpOptionsID = "default"
+	}
+	return fmt.Sprintf(`<vpcId>%s</vpcId><cidrBlock>%s</cidrBlock><state>%s</state><ownerId>%s</ownerId><isDefault>%t</isDefault><instanceTenancy>%s</instanceTenancy><dhcpOptionsId>%s</dhcpOptionsId>%s%s`,
+		vpc.VpcId, vpc.CidrBlock, vpc.State, vpc.OwnerId, vpc.IsDefault, tenancy, dhcpOptionsID, cidrAssoc, writeTagSetXML(vpc.Tags))
 }
 
 func vpcItemXML(vpc EC2Vpc) string {
@@ -4751,6 +4763,27 @@ func handleDescribeImages(w http.ResponseWriter, r *http.Request) {
 	virtType := firstFilter("virtualization-type", "hvm")
 	ownerAlias := firstFilter("owner-alias", "amazon")
 	nameFilter := firstFilter("name", "")
+
+	// First serve any user-registered AMIs (CreateImage / RegisterImage /
+	// CopyImage). When an explicit ImageId resolves to a stored AMI, or the
+	// filters match a stored AMI, return those records and skip the synthesized
+	// fallback — the synthesized path exists only for `data.aws_ami` lookups of
+	// vendor AMIs the sim has no registry for.
+	var stored strings.Builder
+	for _, img := range ec2Images.List() {
+		if len(imageIDs) > 0 && !ec2StrInValues(img.ImageId, imageIDs) {
+			continue
+		}
+		if !ec2ImageMatchesFilters(img, filters) {
+			continue
+		}
+		stored.WriteString(ec2StoredImageXML(img))
+	}
+	if stored.Len() > 0 {
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprintf(w, `<DescribeImagesResponse %s><requestId>%s</requestId><imagesSet>%s</imagesSet></DescribeImagesResponse>`, ec2Xmlns(), generateUUID(), stored.String())
+		return
+	}
 
 	var ids []string
 	switch {

@@ -493,3 +493,252 @@ func TestGlue_Tags_SDK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, tags.Tags["tier"])
 }
+
+func TestGlue_JobUpdateListAndBatchStop_SDK(t *testing.T) {
+	c := glueClient()
+
+	create, err := c.CreateJob(ctx, &glue.CreateJobInput{
+		Name:        aws.String("glue-sdk-upd-job"),
+		Description: aws.String("before"),
+		Role:        aws.String("arn:aws:iam::123456789012:role/glue-role"),
+		Command: &gluetypes.JobCommand{
+			Name:           aws.String("glueetl"),
+			ScriptLocation: aws.String("s3://bucket/script.py"),
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-upd-job", aws.ToString(create.Name))
+	t.Cleanup(func() {
+		_, _ = c.DeleteJob(ctx, &glue.DeleteJobInput{JobName: aws.String("glue-sdk-upd-job")})
+	})
+
+	upd, err := c.UpdateJob(ctx, &glue.UpdateJobInput{
+		JobName: aws.String("glue-sdk-upd-job"),
+		JobUpdate: &gluetypes.JobUpdate{
+			Description: aws.String("after"),
+			Role:        aws.String("arn:aws:iam::123456789012:role/glue-role"),
+			Command: &gluetypes.JobCommand{
+				Name:           aws.String("glueetl"),
+				ScriptLocation: aws.String("s3://bucket/updated.py"),
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-upd-job", aws.ToString(upd.JobName))
+
+	get, err := c.GetJob(ctx, &glue.GetJobInput{JobName: aws.String("glue-sdk-upd-job")})
+	require.NoError(t, err)
+	assert.Equal(t, "after", aws.ToString(get.Job.Description))
+	assert.Equal(t, "s3://bucket/updated.py", aws.ToString(get.Job.Command.ScriptLocation))
+
+	list, err := c.ListJobs(ctx, &glue.ListJobsInput{})
+	require.NoError(t, err)
+	assert.Contains(t, list.JobNames, "glue-sdk-upd-job")
+
+	// BatchStopJobRun against a run id that does not exist surfaces as an error
+	// entry, not a hard failure.
+	stop, err := c.BatchStopJobRun(ctx, &glue.BatchStopJobRunInput{
+		JobName:   aws.String("glue-sdk-upd-job"),
+		JobRunIds: []string{"jr_does_not_exist"},
+	})
+	require.NoError(t, err)
+	require.Len(t, stop.Errors, 1)
+	assert.Equal(t, "jr_does_not_exist", aws.ToString(stop.Errors[0].JobRunId))
+}
+
+func TestGlue_CrawlerCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateCrawler(ctx, &glue.CreateCrawlerInput{
+		Name:         aws.String("glue-sdk-crawler"),
+		Role:         aws.String("arn:aws:iam::123456789012:role/glue-crawler-role"),
+		DatabaseName: aws.String("glue-sdk-crawler-db"),
+		Description:  aws.String("sdk crawler"),
+		TablePrefix:  aws.String("pfx_"),
+		Targets: &gluetypes.CrawlerTargets{
+			S3Targets: []gluetypes.S3Target{
+				{Path: aws.String("s3://bucket/data/")},
+			},
+		},
+		Tags: map[string]string{"team": "data"},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteCrawler(ctx, &glue.DeleteCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	})
+
+	get, err := c.GetCrawler(ctx, &glue.GetCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	require.NoError(t, err)
+	require.NotNil(t, get.Crawler)
+	assert.Equal(t, "glue-sdk-crawler", aws.ToString(get.Crawler.Name))
+	assert.Equal(t, "glue-sdk-crawler-db", aws.ToString(get.Crawler.DatabaseName))
+	require.Len(t, get.Crawler.Targets.S3Targets, 1)
+	assert.Equal(t, "s3://bucket/data/", aws.ToString(get.Crawler.Targets.S3Targets[0].Path))
+
+	// Tags ride GetTags, not the Crawler shape.
+	tags, err := c.GetTags(ctx, &glue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:crawler/glue-sdk-crawler"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "data", tags.Tags["team"])
+
+	_, err = c.UpdateCrawler(ctx, &glue.UpdateCrawlerInput{
+		Name:        aws.String("glue-sdk-crawler"),
+		Role:        aws.String("arn:aws:iam::123456789012:role/glue-crawler-role"),
+		Description: aws.String("updated crawler"),
+		Targets: &gluetypes.CrawlerTargets{
+			S3Targets: []gluetypes.S3Target{{Path: aws.String("s3://bucket/data2/")}},
+		},
+	})
+	require.NoError(t, err)
+	get, err = c.GetCrawler(ctx, &glue.GetCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	require.NoError(t, err)
+	assert.Equal(t, "updated crawler", aws.ToString(get.Crawler.Description))
+
+	_, err = c.StartCrawler(ctx, &glue.StartCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	require.NoError(t, err)
+	get, err = c.GetCrawler(ctx, &glue.GetCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	require.NoError(t, err)
+	assert.Equal(t, gluetypes.CrawlerStateRunning, get.Crawler.State)
+
+	_, err = c.StopCrawler(ctx, &glue.StopCrawlerInput{Name: aws.String("glue-sdk-crawler")})
+	require.NoError(t, err)
+
+	crawlers, err := c.GetCrawlers(ctx, &glue.GetCrawlersInput{})
+	require.NoError(t, err)
+	foundCrawler := false
+	for _, cr := range crawlers.Crawlers {
+		if aws.ToString(cr.Name) == "glue-sdk-crawler" {
+			foundCrawler = true
+		}
+	}
+	assert.True(t, foundCrawler)
+
+	names, err := c.ListCrawlers(ctx, &glue.ListCrawlersInput{})
+	require.NoError(t, err)
+	assert.Contains(t, names.CrawlerNames, "glue-sdk-crawler")
+}
+
+func TestGlue_TriggerCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	// A dependent job for the trigger action.
+	_, err := c.CreateJob(ctx, &glue.CreateJobInput{
+		Name: aws.String("glue-sdk-trigger-job"),
+		Role: aws.String("arn:aws:iam::123456789012:role/glue-role"),
+		Command: &gluetypes.JobCommand{
+			Name:           aws.String("glueetl"),
+			ScriptLocation: aws.String("s3://bucket/script.py"),
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteJob(ctx, &glue.DeleteJobInput{JobName: aws.String("glue-sdk-trigger-job")})
+	})
+
+	created, err := c.CreateTrigger(ctx, &glue.CreateTriggerInput{
+		Name:        aws.String("glue-sdk-trigger"),
+		Type:        gluetypes.TriggerTypeScheduled,
+		Schedule:    aws.String("cron(15 12 * * ? *)"),
+		Description: aws.String("sdk trigger"),
+		Actions: []gluetypes.Action{
+			{JobName: aws.String("glue-sdk-trigger-job")},
+		},
+		Tags: map[string]string{"kind": "schedule"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-trigger", aws.ToString(created.Name))
+	t.Cleanup(func() {
+		_, _ = c.DeleteTrigger(ctx, &glue.DeleteTriggerInput{Name: aws.String("glue-sdk-trigger")})
+	})
+
+	get, err := c.GetTrigger(ctx, &glue.GetTriggerInput{Name: aws.String("glue-sdk-trigger")})
+	require.NoError(t, err)
+	require.NotNil(t, get.Trigger)
+	assert.Equal(t, gluetypes.TriggerTypeScheduled, get.Trigger.Type)
+	require.Len(t, get.Trigger.Actions, 1)
+	assert.Equal(t, "glue-sdk-trigger-job", aws.ToString(get.Trigger.Actions[0].JobName))
+
+	tags, err := c.GetTags(ctx, &glue.GetTagsInput{
+		ResourceArn: aws.String("arn:aws:glue:us-east-1:123456789012:trigger/glue-sdk-trigger"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "schedule", tags.Tags["kind"])
+
+	started, err := c.StartTrigger(ctx, &glue.StartTriggerInput{Name: aws.String("glue-sdk-trigger")})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-trigger", aws.ToString(started.Name))
+	get, err = c.GetTrigger(ctx, &glue.GetTriggerInput{Name: aws.String("glue-sdk-trigger")})
+	require.NoError(t, err)
+	assert.Equal(t, gluetypes.TriggerStateActivated, get.Trigger.State)
+
+	stopped, err := c.StopTrigger(ctx, &glue.StopTriggerInput{Name: aws.String("glue-sdk-trigger")})
+	require.NoError(t, err)
+	assert.Equal(t, "glue-sdk-trigger", aws.ToString(stopped.Name))
+
+	triggers, err := c.GetTriggers(ctx, &glue.GetTriggersInput{})
+	require.NoError(t, err)
+	found := false
+	for _, tr := range triggers.Triggers {
+		if aws.ToString(tr.Name) == "glue-sdk-trigger" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}
+
+func TestGlue_ConnectionCRUD_SDK(t *testing.T) {
+	c := glueClient()
+
+	_, err := c.CreateConnection(ctx, &glue.CreateConnectionInput{
+		ConnectionInput: &gluetypes.ConnectionInput{
+			Name:           aws.String("glue-sdk-conn"),
+			Description:    aws.String("sdk connection"),
+			ConnectionType: gluetypes.ConnectionTypeJdbc,
+			ConnectionProperties: map[string]string{
+				"JDBC_CONNECTION_URL": "jdbc:mysql://host:3306/db",
+				"USERNAME":            "admin",
+			},
+			MatchCriteria: []string{"crit-a"},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteConnection(ctx, &glue.DeleteConnectionInput{ConnectionName: aws.String("glue-sdk-conn")})
+	})
+
+	get, err := c.GetConnection(ctx, &glue.GetConnectionInput{Name: aws.String("glue-sdk-conn")})
+	require.NoError(t, err)
+	require.NotNil(t, get.Connection)
+	assert.Equal(t, "glue-sdk-conn", aws.ToString(get.Connection.Name))
+	assert.Equal(t, gluetypes.ConnectionTypeJdbc, get.Connection.ConnectionType)
+	assert.Equal(t, "admin", get.Connection.ConnectionProperties["USERNAME"])
+
+	_, err = c.UpdateConnection(ctx, &glue.UpdateConnectionInput{
+		Name: aws.String("glue-sdk-conn"),
+		ConnectionInput: &gluetypes.ConnectionInput{
+			Name:           aws.String("glue-sdk-conn"),
+			Description:    aws.String("updated connection"),
+			ConnectionType: gluetypes.ConnectionTypeJdbc,
+			ConnectionProperties: map[string]string{
+				"JDBC_CONNECTION_URL": "jdbc:mysql://host:3306/db2",
+				"USERNAME":            "root",
+			},
+		},
+	})
+	require.NoError(t, err)
+	get, err = c.GetConnection(ctx, &glue.GetConnectionInput{Name: aws.String("glue-sdk-conn")})
+	require.NoError(t, err)
+	assert.Equal(t, "updated connection", aws.ToString(get.Connection.Description))
+	assert.Equal(t, "root", get.Connection.ConnectionProperties["USERNAME"])
+
+	conns, err := c.GetConnections(ctx, &glue.GetConnectionsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, cn := range conns.ConnectionList {
+		if aws.ToString(cn.Name) == "glue-sdk-conn" {
+			found = true
+		}
+	}
+	assert.True(t, found)
+}

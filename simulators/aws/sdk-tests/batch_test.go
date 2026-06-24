@@ -267,3 +267,147 @@ func TestBatch_JobSubmitDescribe_SDK(t *testing.T) {
 	assert.Equal(t, batchtypes.JobStatusSucceeded, job.Status)
 	assert.EqualValues(t, 0, aws.ToInt32(job.Container.ExitCode))
 }
+
+func TestBatch_SchedulingPolicy_SDK(t *testing.T) {
+	c := batchClient()
+
+	create, err := c.CreateSchedulingPolicy(ctx, &batch.CreateSchedulingPolicyInput{
+		Name: aws.String("batch-sdk-sp"),
+		FairsharePolicy: &batchtypes.FairsharePolicy{
+			ShareDecaySeconds:  aws.Int32(3600),
+			ComputeReservation: aws.Int32(50),
+			ShareDistribution: []batchtypes.ShareAttributes{
+				{ShareIdentifier: aws.String("teamA"), WeightFactor: aws.Float32(0.5)},
+			},
+		},
+		Tags: map[string]string{"env": "sdk"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(create.Arn))
+	require.Equal(t, "batch-sdk-sp", aws.ToString(create.Name))
+	arn := aws.ToString(create.Arn)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSchedulingPolicy(ctx, &batch.DeleteSchedulingPolicyInput{Arn: aws.String(arn)})
+	})
+
+	describe, err := c.DescribeSchedulingPolicies(ctx, &batch.DescribeSchedulingPoliciesInput{
+		Arns: []string{arn},
+	})
+	require.NoError(t, err)
+	require.Len(t, describe.SchedulingPolicies, 1)
+	sp := describe.SchedulingPolicies[0]
+	assert.Equal(t, "batch-sdk-sp", aws.ToString(sp.Name))
+	require.NotNil(t, sp.FairsharePolicy)
+	assert.EqualValues(t, 3600, aws.ToInt32(sp.FairsharePolicy.ShareDecaySeconds))
+	assert.EqualValues(t, 50, aws.ToInt32(sp.FairsharePolicy.ComputeReservation))
+	require.Len(t, sp.FairsharePolicy.ShareDistribution, 1)
+	assert.Equal(t, "teamA", aws.ToString(sp.FairsharePolicy.ShareDistribution[0].ShareIdentifier))
+
+	list, err := c.ListSchedulingPolicies(ctx, &batch.ListSchedulingPoliciesInput{})
+	require.NoError(t, err)
+	found := false
+	for _, lp := range list.SchedulingPolicies {
+		if aws.ToString(lp.Arn) == arn {
+			found = true
+		}
+	}
+	assert.True(t, found, "created scheduling policy should appear in ListSchedulingPolicies")
+
+	_, err = c.UpdateSchedulingPolicy(ctx, &batch.UpdateSchedulingPolicyInput{
+		Arn: aws.String(arn),
+		FairsharePolicy: &batchtypes.FairsharePolicy{
+			ShareDecaySeconds:  aws.Int32(7200),
+			ComputeReservation: aws.Int32(25),
+		},
+	})
+	require.NoError(t, err)
+
+	describe, err = c.DescribeSchedulingPolicies(ctx, &batch.DescribeSchedulingPoliciesInput{Arns: []string{arn}})
+	require.NoError(t, err)
+	require.Len(t, describe.SchedulingPolicies, 1)
+	require.NotNil(t, describe.SchedulingPolicies[0].FairsharePolicy)
+	assert.EqualValues(t, 7200, aws.ToInt32(describe.SchedulingPolicies[0].FairsharePolicy.ShareDecaySeconds))
+
+	// Resource-level tags on the scheduling policy ARN.
+	_, err = c.TagResource(ctx, &batch.TagResourceInput{
+		ResourceArn: aws.String(arn),
+		Tags:        map[string]string{"team": "platform"},
+	})
+	require.NoError(t, err)
+	tags, err := c.ListTagsForResource(ctx, &batch.ListTagsForResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	assert.Equal(t, "platform", tags.Tags["team"])
+	assert.Equal(t, "sdk", tags.Tags["env"])
+	_, err = c.UntagResource(ctx, &batch.UntagResourceInput{
+		ResourceArn: aws.String(arn),
+		TagKeys:     []string{"team"},
+	})
+	require.NoError(t, err)
+	tags, err = c.ListTagsForResource(ctx, &batch.ListTagsForResourceInput{ResourceArn: aws.String(arn)})
+	require.NoError(t, err)
+	_, has := tags.Tags["team"]
+	assert.False(t, has, "untagged key should be gone")
+
+	_, err = c.DeleteSchedulingPolicy(ctx, &batch.DeleteSchedulingPolicyInput{Arn: aws.String(arn)})
+	require.NoError(t, err)
+	describe, err = c.DescribeSchedulingPolicies(ctx, &batch.DescribeSchedulingPoliciesInput{Arns: []string{arn}})
+	require.NoError(t, err)
+	assert.Empty(t, describe.SchedulingPolicies)
+}
+
+func TestBatch_JobQueueWithSchedulingPolicy_SDK(t *testing.T) {
+	c := batchClient()
+
+	sp, err := c.CreateSchedulingPolicy(ctx, &batch.CreateSchedulingPolicyInput{
+		Name: aws.String("batch-sdk-jq-sp"),
+		FairsharePolicy: &batchtypes.FairsharePolicy{
+			ShareDistribution: []batchtypes.ShareAttributes{
+				{ShareIdentifier: aws.String("default"), WeightFactor: aws.Float32(1.0)},
+			},
+		},
+	})
+	require.NoError(t, err)
+	spArn := aws.ToString(sp.Arn)
+	t.Cleanup(func() {
+		_, _ = c.DeleteSchedulingPolicy(ctx, &batch.DeleteSchedulingPolicyInput{Arn: aws.String(spArn)})
+	})
+
+	_, err = c.CreateComputeEnvironment(ctx, &batch.CreateComputeEnvironmentInput{
+		ComputeEnvironmentName: aws.String("batch-sdk-jq-sp-ce"),
+		Type:                   batchtypes.CETypeManaged,
+		State:                  batchtypes.CEStateEnabled,
+		ComputeResources: &batchtypes.ComputeResource{
+			Type:     batchtypes.CRTypeEc2,
+			MinvCpus: aws.Int32(0),
+			MaxvCpus: aws.Int32(16),
+			Subnets:  []string{"subnet-00000001"},
+		},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = c.DeleteComputeEnvironment(ctx, &batch.DeleteComputeEnvironmentInput{
+			ComputeEnvironment: aws.String("batch-sdk-jq-sp-ce"),
+		})
+	})
+
+	cq, err := c.CreateJobQueue(ctx, &batch.CreateJobQueueInput{
+		JobQueueName:        aws.String("batch-sdk-jq-sp"),
+		Priority:            aws.Int32(1),
+		SchedulingPolicyArn: aws.String(spArn),
+		ComputeEnvironmentOrder: []batchtypes.ComputeEnvironmentOrder{
+			{Order: aws.Int32(1), ComputeEnvironment: aws.String("batch-sdk-jq-sp-ce")},
+		},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, aws.ToString(cq.JobQueueArn))
+	t.Cleanup(func() {
+		_, _ = c.DeleteJobQueue(ctx, &batch.DeleteJobQueueInput{JobQueue: aws.String("batch-sdk-jq-sp")})
+	})
+
+	dq, err := c.DescribeJobQueues(ctx, &batch.DescribeJobQueuesInput{
+		JobQueues: []string{"batch-sdk-jq-sp"},
+	})
+	require.NoError(t, err)
+	require.Len(t, dq.JobQueues, 1)
+	assert.Equal(t, spArn, aws.ToString(dq.JobQueues[0].SchedulingPolicyArn))
+}
