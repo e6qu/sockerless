@@ -51,6 +51,10 @@ type ScheduleGroup struct {
 var (
 	schedules      sim.Store[Schedule]
 	scheduleGroups sim.Store[ScheduleGroup]
+	// scheduleTags holds resource tags keyed by the resource ARN (a schedule or
+	// schedule-group ARN), independent of the resource record so tag CRUD does
+	// not have to mutate the Schedule/ScheduleGroup rows.
+	scheduleTags sim.Store[[]SchedulerTag]
 	// schedulesMu guards reassignment of the package-level schedules store
 	// (registration) against the once-per-second firing-loop goroutine that
 	// reads it — they live in different goroutines when several sims are built
@@ -70,6 +74,7 @@ func registerScheduler(srv *sim.Server) {
 	schedulesMu.Lock()
 	schedules = sim.MakeStore[Schedule](srv.DB(), "scheduler_schedules")
 	scheduleGroups = sim.MakeStore[ScheduleGroup](srv.DB(), "scheduler_schedule_groups")
+	scheduleTags = sim.MakeStore[[]SchedulerTag](srv.DB(), "scheduler_tags")
 	schedulesMu.Unlock()
 
 	srv.HandleFunc("POST /schedules/{Name}", schedulerRecorded("CreateSchedule", handleSchedulerCreateSchedule))
@@ -82,6 +87,27 @@ func registerScheduler(srv *sim.Server) {
 	srv.HandleFunc("GET /schedule-groups/{Name}", schedulerRecorded("GetScheduleGroup", handleSchedulerGetScheduleGroup))
 	srv.HandleFunc("DELETE /schedule-groups/{Name}", schedulerRecorded("DeleteScheduleGroup", handleSchedulerDeleteScheduleGroup))
 	srv.HandleFunc("GET /schedule-groups", schedulerRecorded("ListScheduleGroups", handleSchedulerListScheduleGroups))
+
+	// Resource tagging shares the real path `/tags/{ResourceArn}` with other
+	// REST-JSON services (e.g. Amplify) that the collapsed-port sim mounts on the
+	// same mux. The real clouds disambiguate by service hostname; the sim reads
+	// the in-band SigV4 signing service (`.../scheduler/aws4_request`) from the
+	// Authorization header and routes scheduler-signed `/tags/...` traffic here
+	// before it reaches the shared mux, leaving every other service's tag traffic
+	// to fall through untouched.
+	// Register the ops so CloudTrail lookup surfaces scheduler tag calls.
+	restRegisterOp("scheduler.amazonaws.com", "TagResource")
+	restRegisterOp("scheduler.amazonaws.com", "UntagResource")
+	restRegisterOp("scheduler.amazonaws.com", "ListTagsForResource")
+	srv.WrapHandler(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/tags/") && schedulerSignedRequest(r) {
+				schedulerServeTags(w, r)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
 
 	// Evaluate ScheduleExpressions and invoke due targets (ECS/Lambda/SQS/SNS).
 	startSchedulerFiringLoop()
@@ -461,6 +487,156 @@ func handleSchedulerDeleteScheduleGroup(w http.ResponseWriter, r *http.Request) 
 	}
 	scheduleGroups.Delete(name)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// SchedulerTag mirrors the wire scheduler#Tag shape.
+type SchedulerTag struct {
+	Key   string `json:"Key"`
+	Value string `json:"Value"`
+}
+
+// schedulerSignedRequest reports whether the request's SigV4 Authorization
+// header names "scheduler" as the signing service (Credential=AKID/date/region/
+// scheduler/aws4_request) — the in-band discriminator that tells the shared
+// `/tags/...` route this traffic belongs to EventBridge Scheduler, not another
+// service mounted on the same mux.
+func schedulerSignedRequest(r *http.Request) bool {
+	auth := r.Header.Get("Authorization")
+	i := strings.Index(auth, "Credential=")
+	if i < 0 {
+		return false
+	}
+	parts := strings.Split(auth[i+len("Credential="):], "/")
+	// AKID / date / region / service / aws4_request
+	return len(parts) >= 4 && parts[3] == "scheduler"
+}
+
+// schedulerTagARNFromPath extracts the resource ARN from `/tags/{ResourceArn}`.
+// Go's http.Request.URL.Path is already percent-decoded, so the ARN's colons and
+// slashes are intact.
+func schedulerTagARNFromPath(r *http.Request) string {
+	return strings.TrimPrefix(r.URL.Path, "/tags/")
+}
+
+// schedulerServeTags dispatches a scheduler-signed `/tags/...` request to the
+// tag CRUD handlers by HTTP method, recording the call in CloudTrail (this path
+// bypasses the central recorder, like the other Scheduler ops).
+func schedulerServeTags(w http.ResponseWriter, r *http.Request) {
+	var op string
+	var h http.HandlerFunc
+	switch r.Method {
+	case http.MethodPost:
+		op, h = "TagResource", handleSchedulerTagResource
+	case http.MethodDelete:
+		op, h = "UntagResource", handleSchedulerUntagResource
+	case http.MethodGet:
+		op, h = "ListTagsForResource", handleSchedulerListTagsForResource
+	default:
+		schedulerError(w, "ValidationException", http.StatusBadRequest, "unsupported method %s", r.Method)
+		return
+	}
+	rec := &cloudTrailStatusRecorder{ResponseWriter: w}
+	h(rec, r)
+	if rec.statusCode() >= 500 {
+		return
+	}
+	cloudTrailRecord(CloudTrailEvent{
+		EventName:   op,
+		EventSource: "scheduler.amazonaws.com",
+		AccessKeyId: cloudTrailAccessKeyID(r),
+		ReadOnly:    cloudTrailReadOnly(op),
+	})
+}
+
+// schedulerResourceExists reports whether a tag ResourceArn refers to a known
+// schedule or schedule-group, so tag ops fail with ResourceNotFoundException
+// for an unknown ARN as real AWS does.
+func schedulerResourceExists(arn string) bool {
+	if strings.Contains(arn, ":schedule-group/") {
+		name := arn[strings.LastIndex(arn, "/")+1:]
+		if name == "default" {
+			return true
+		}
+		_, ok := scheduleGroups.Get(name)
+		return ok
+	}
+	if strings.Contains(arn, ":schedule/") {
+		// schedule ARN: .../schedule/{group}/{name}
+		rest := arn[strings.Index(arn, ":schedule/")+len(":schedule/"):]
+		parts := strings.SplitN(rest, "/", 2)
+		if len(parts) == 2 {
+			_, ok := schedules.Get(scheduleKey(parts[0], parts[1]))
+			return ok
+		}
+	}
+	return false
+}
+
+func handleSchedulerTagResource(w http.ResponseWriter, r *http.Request) {
+	arn := schedulerTagARNFromPath(r)
+	if !schedulerResourceExists(arn) {
+		schedulerError(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Resource %q not found", arn)
+		return
+	}
+	var req struct {
+		Tags []SchedulerTag `json:"Tags"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		schedulerError(w, "ValidationException", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	existing, _ := scheduleTags.Get(arn)
+	idx := map[string]int{}
+	for i, t := range existing {
+		idx[t.Key] = i
+	}
+	for _, t := range req.Tags {
+		if i, ok := idx[t.Key]; ok {
+			existing[i].Value = t.Value
+		} else {
+			idx[t.Key] = len(existing)
+			existing = append(existing, t)
+		}
+	}
+	scheduleTags.Put(arn, existing)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSchedulerUntagResource(w http.ResponseWriter, r *http.Request) {
+	arn := schedulerTagARNFromPath(r)
+	if !schedulerResourceExists(arn) {
+		schedulerError(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Resource %q not found", arn)
+		return
+	}
+	remove := map[string]bool{}
+	for _, k := range r.URL.Query()["TagKeys"] {
+		remove[k] = true
+	}
+	existing, _ := scheduleTags.Get(arn)
+	var kept []SchedulerTag
+	for _, t := range existing {
+		if !remove[t.Key] {
+			kept = append(kept, t)
+		}
+	}
+	scheduleTags.Put(arn, kept)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSchedulerListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	arn := schedulerTagARNFromPath(r)
+	if !schedulerResourceExists(arn) {
+		schedulerError(w, "ResourceNotFoundException", http.StatusNotFound,
+			"Resource %q not found", arn)
+		return
+	}
+	tags, _ := scheduleTags.Get(arn)
+	if tags == nil {
+		tags = []SchedulerTag{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"Tags": tags})
 }
 
 func handleSchedulerListScheduleGroups(w http.ResponseWriter, r *http.Request) {

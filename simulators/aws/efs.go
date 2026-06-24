@@ -98,20 +98,33 @@ func ensureAccessPointRootDir(root string, rd *EFSRootDirectory) {
 // EFS types
 
 type EFSFileSystem struct {
-	FileSystemId         string `json:"FileSystemId"`
-	FileSystemArn        string `json:"FileSystemArn"`
-	CreationToken        string `json:"CreationToken"`
-	CreationTime         int64  `json:"CreationTime"`
-	LifeCycleState       string `json:"LifeCycleState"`
-	Name                 string `json:"Name,omitempty"`
-	OwnerId              string `json:"OwnerId"`
-	PerformanceMode      string `json:"PerformanceMode"`
-	ThroughputMode       string `json:"ThroughputMode"`
-	NumberOfMountTargets int    `json:"NumberOfMountTargets"`
-	SizeInBytes          struct {
+	FileSystemId    string `json:"FileSystemId"`
+	FileSystemArn   string `json:"FileSystemArn"`
+	CreationToken   string `json:"CreationToken"`
+	CreationTime    int64  `json:"CreationTime"`
+	LifeCycleState  string `json:"LifeCycleState"`
+	Name            string `json:"Name,omitempty"`
+	OwnerId         string `json:"OwnerId"`
+	PerformanceMode string `json:"PerformanceMode"`
+	ThroughputMode  string `json:"ThroughputMode"`
+	// ProvisionedThroughputInMibps is only present when ThroughputMode is
+	// "provisioned"; AWS omits it otherwise. *float64 so it round-trips a
+	// 0-vs-unset distinction the SDK reads back.
+	ProvisionedThroughputInMibps *float64 `json:"ProvisionedThroughputInMibps,omitempty"`
+	NumberOfMountTargets         int      `json:"NumberOfMountTargets"`
+	SizeInBytes                  struct {
 		Value int64 `json:"Value"`
 	} `json:"SizeInBytes"`
-	Tags []EFSTag `json:"Tags,omitempty"`
+	// FileSystemProtection carries the replication-overwrite-protection status,
+	// set by UpdateFileSystemProtection and echoed on the FileSystemDescription.
+	FileSystemProtection *EFSFileSystemProtection `json:"FileSystemProtection,omitempty"`
+	Tags                 []EFSTag                 `json:"Tags,omitempty"`
+}
+
+// EFSFileSystemProtection mirrors the wire FileSystemProtectionDescription the
+// SDK reads from both UpdateFileSystemProtection and the FileSystemDescription.
+type EFSFileSystemProtection struct {
+	ReplicationOverwriteProtection string `json:"ReplicationOverwriteProtection"`
 }
 
 type EFSTag struct {
@@ -224,6 +237,8 @@ func registerEFS(srv *sim.Server) {
 	apResource := cloudTrailRESTResource("AWS::EFS::AccessPoint", "id")
 	mux.HandleFunc("POST /2015-02-01/file-systems", cloudTrailRecordedREST("CreateFileSystem", "elasticfilesystem.amazonaws.com", nil, handleEFSCreateFileSystem))
 	mux.HandleFunc("GET /2015-02-01/file-systems", cloudTrailRecordedREST("DescribeFileSystems", "elasticfilesystem.amazonaws.com", nil, handleEFSDescribeFileSystems))
+	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}", cloudTrailRecordedREST("UpdateFileSystem", "elasticfilesystem.amazonaws.com", fsResource, handleEFSUpdateFileSystem))
+	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/protection", cloudTrailRecordedREST("UpdateFileSystemProtection", "elasticfilesystem.amazonaws.com", fsResource, handleEFSUpdateFileSystemProtection))
 	mux.HandleFunc("DELETE /2015-02-01/file-systems/{id}", cloudTrailRecordedREST("DeleteFileSystem", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDeleteFileSystem))
 	mux.HandleFunc("PUT /2015-02-01/file-systems/{id}/lifecycle-configuration", cloudTrailRecordedREST("PutLifecycleConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSPutLifecycleConfiguration))
 	mux.HandleFunc("GET /2015-02-01/file-systems/{id}/lifecycle-configuration", cloudTrailRecordedREST("DescribeLifecycleConfiguration", "elasticfilesystem.amazonaws.com", fsResource, handleEFSDescribeLifecycleConfiguration))
@@ -815,6 +830,81 @@ func handleEFSDeleteFileSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	efsLifecyclePolicies.Delete(id)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEFSUpdateFileSystem updates the throughput mode and/or provisioned
+// throughput of an existing file system, returning the full
+// FileSystemDescription with the live mount-target count (HTTP 202, matching
+// real EFS).
+func handleEFSUpdateFileSystem(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		ThroughputMode               string   `json:"ThroughputMode"`
+		ProvisionedThroughputInMibps *float64 `json:"ProvisionedThroughputInMibps"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	if req.ThroughputMode == "provisioned" && req.ProvisionedThroughputInMibps == nil {
+		sim.AWSError(w, "BadRequest",
+			"ProvisionedThroughputInMibps is required when ThroughputMode is provisioned",
+			http.StatusBadRequest)
+		return
+	}
+	efsFileSystems.Update(fsId, func(fs *EFSFileSystem) {
+		if req.ThroughputMode != "" {
+			fs.ThroughputMode = req.ThroughputMode
+		}
+		if fs.ThroughputMode == "provisioned" {
+			fs.ProvisionedThroughputInMibps = req.ProvisionedThroughputInMibps
+		} else {
+			// Leaving provisioned mode clears the provisioned value, as real EFS does.
+			fs.ProvisionedThroughputInMibps = nil
+		}
+	})
+	fs, _ := efsFileSystems.Get(fsId)
+	count := 0
+	for _, mt := range efsMountTargets.List() {
+		if mt.FileSystemId == fsId {
+			count++
+		}
+	}
+	fs.NumberOfMountTargets = count
+	sim.WriteJSON(w, http.StatusAccepted, fs)
+}
+
+// handleEFSUpdateFileSystemProtection sets the file system's
+// ReplicationOverwriteProtection and returns the FileSystemProtectionDescription.
+func handleEFSUpdateFileSystemProtection(w http.ResponseWriter, r *http.Request) {
+	fsId := sim.PathParam(r, "id")
+	if _, ok := efsFileSystems.Get(fsId); !ok {
+		sim.AWSErrorf(w, "FileSystemNotFound", http.StatusNotFound,
+			"File system '%s' does not exist", fsId)
+		return
+	}
+	var req struct {
+		ReplicationOverwriteProtection string `json:"ReplicationOverwriteProtection"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "BadRequest", "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	status := req.ReplicationOverwriteProtection
+	if status != "ENABLED" && status != "DISABLED" {
+		sim.AWSError(w, "BadRequest",
+			"ReplicationOverwriteProtection must be ENABLED or DISABLED", http.StatusBadRequest)
+		return
+	}
+	efsFileSystems.Update(fsId, func(fs *EFSFileSystem) {
+		fs.FileSystemProtection = &EFSFileSystemProtection{ReplicationOverwriteProtection: status}
+	})
+	sim.WriteJSON(w, http.StatusOK, EFSFileSystemProtection{ReplicationOverwriteProtection: status})
 }
 
 func handleEFSPutLifecycleConfiguration(w http.ResponseWriter, r *http.Request) {

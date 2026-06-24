@@ -431,6 +431,8 @@ func registerGlue(r *sim.AWSRouter, srv *sim.Server) {
 	registerGlueMLDataQuality(r, srv)
 	registerGlueSessionsBlueprints(r, srv)
 	registerGlueCatalogOptimizer(r, srv)
+	registerGlueMLTasksSchedules(r, srv)
+	registerGlueEntityCatalog2(r, srv)
 }
 
 func glueEpochNow() float64 {
