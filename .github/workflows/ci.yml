@@ -434,8 +434,8 @@ jobs:
             timeout_minutes: 20
           - suite: compute
             run: '^Test(CloudMap|DynamoDB|EC2|CLI_ECR|ECR|ECS|EFS|Logs)'
-            timeout: 900s
-            timeout_minutes: 15
+            timeout: 1500s
+            timeout_minutes: 27
           - suite: appdata
             run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|RDS|ResourceTags|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s

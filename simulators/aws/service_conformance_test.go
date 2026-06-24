@@ -270,26 +270,26 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
 // must bump the floor (the ratchet ratchets up).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            270, // ec2Query
-	"AWSSecurityTokenServiceV20110615":     4,   // STS (awsQuery, unversioned)
+	"AmazonEC2":                            354, // ec2Query
+	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 58,  // ECR
 	"AmazonElastiCacheV9":                  41,
 	"AmazonRDSv19":                         64,
 	"AutoScaling_2011_01_01":               25,
-	"AWSGlue":                              194,
+	"AWSGlue":                              258,
 	"AWSWAF_20190729":                      55,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
 	"Logs_20140328":                        36, // CloudWatch Logs
-	"Route53AutoNaming_v20170314":          16, // Cloud Map / ServiceDiscovery
+	"Route53AutoNaming_v20170314":          30, // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      33, // Route 53 (REST)
-	"MagnolioAPIService_v20150201":         29, // EFS (REST)
+	"MagnolioAPIService_v20150201":         31, // EFS (REST)
 	// restJson1 services measured via the REST registry (Part B).
-	"AWSGirApiService":        62, // AWS Lambda
+	"AWSGirApiService":        85, // AWS Lambda
 	"AWSBatchV20160810":       45, // AWS Batch
 	"BackplaneControlService": 62, // Amazon API Gateway
 	"Amplify":                 37,
-	"AWSChronosService":       9,  // EventBridge Scheduler
+	"AWSChronosService":       12, // EventBridge Scheduler
 	"ApiGatewayV2":            44, // Amazon API Gateway v2
 	"Cloudfront2020_05_31":    67, // Amazon CloudFront (restXml)
 

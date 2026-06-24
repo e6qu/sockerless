@@ -572,6 +572,8 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerEC2IPAM(r, srv)
 	registerEC2VPN(r, srv)
 	registerEC2VerifiedAccess(r, srv)
+	registerEC2CapacityFleet(r, srv)
+	registerEC2HostsImagesVpc(r, srv)
 }
 
 // Tag helpers

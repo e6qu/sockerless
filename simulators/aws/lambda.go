@@ -234,6 +234,7 @@ func registerLambda(srv *sim.Server) {
 	// layer-version permissions.
 	lambdaCSCStore = sim.MakeStore[LambdaCodeSigningConfig](srv.DB(), "lambda_code_signing_configs")
 	registerLambdaExtras2(srv)
+	registerLambdaExtras3(srv)
 }
 
 func handleLambdaCreateFunction(w http.ResponseWriter, r *http.Request) {

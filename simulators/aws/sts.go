@@ -1,6 +1,8 @@
 package main
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -41,6 +43,13 @@ func registerSTS(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.Register("AssumeRole", handleSTSAssumeRole)
 	r.Register("AssumeRoleWithWebIdentity", handleSTSAssumeRoleWithWebIdentity)
 	r.Register("GetSessionToken", handleSTSGetSessionToken)
+	r.Register("GetFederationToken", handleSTSGetFederationToken)
+	r.Register("AssumeRoleWithSAML", handleSTSAssumeRoleWithSAML)
+	r.Register("GetWebIdentityToken", handleSTSGetWebIdentityToken)
+	r.Register("GetDelegatedAccessToken", handleSTSGetDelegatedAccessToken)
+	r.Register("AssumeRoot", handleSTSAssumeRoot)
+	r.Register("DecodeAuthorizationMessage", handleSTSDecodeAuthorizationMessage)
+	r.Register("GetAccessKeyInfo", handleSTSGetAccessKeyInfo)
 }
 
 // iamPrincipalForAccessKey resolves a SigV4 access-key id to the caller-facing
@@ -194,6 +203,185 @@ func handleSTSGetSessionToken(w http.ResponseWriter, r *http.Request) {
   <GetSessionTokenResult><Credentials><AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken><Expiration>%s</Expiration></Credentials></GetSessionTokenResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
 </GetSessionTokenResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339), generateUUID())
+}
+
+// handleSTSGetFederationToken mints temporary credentials for a federated user
+// (a named session that is not an IAM role), returning Credentials, the
+// FederatedUser identity, and PackedPolicySize.
+func handleSTSGetFederationToken(w http.ResponseWriter, r *http.Request) {
+	name := r.FormValue("Name")
+	if name == "" {
+		stsErrorXML(w, "ValidationError", "Name is required", http.StatusBadRequest)
+		return
+	}
+	akid, secret, token := stsMintTempCred()
+	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
+	fedArn := fmt.Sprintf("arn:aws:sts::%s:federated-user/%s", awsAccountID(), name)
+	fedUserID := awsAccountID() + ":" + name
+	iamTempCreds.Put(akid, IAMTempCred{
+		AccessKeyID: akid, PrincipalArn: fedArn,
+		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetFederationTokenResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <GetFederationTokenResult>
+    <Credentials><AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken><Expiration>%s</Expiration></Credentials>
+    <FederatedUser><Arn>%s</Arn><FederatedUserId>%s</FederatedUserId></FederatedUser>
+    <PackedPolicySize>0</PackedPolicySize>
+  </GetFederationTokenResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetFederationTokenResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339),
+		xmlEscape(fedArn), xmlEscape(fedUserID), generateUUID())
+}
+
+// handleSTSAssumeRoleWithSAML assumes a role from a SAML assertion, minting
+// temporary credentials exactly as AssumeRole does (the SAML assertion stands
+// in for the trust-policy check the sim does not enforce).
+func handleSTSAssumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
+	roleArn := r.FormValue("RoleArn")
+	if roleArn == "" || r.FormValue("PrincipalArn") == "" || r.FormValue("SAMLAssertion") == "" {
+		stsErrorXML(w, "ValidationError", "RoleArn, PrincipalArn and SAMLAssertion are required", http.StatusBadRequest)
+		return
+	}
+	roleName := iamRoleNameFromArn(roleArn)
+	role, ok := iamRoles.Get(roleName)
+	if !ok {
+		stsErrorXML(w, "AccessDenied", fmt.Sprintf("Not authorized to perform sts:AssumeRoleWithSAML on %s", roleArn), http.StatusForbidden)
+		return
+	}
+	// The session name for SAML is derived from the assertion subject; AWS uses
+	// the SAML subject's NameID. Use a stable simulator subject.
+	subject := "sim-saml-subject"
+	sessionName := subject
+	akid, secret, token := stsMintTempCred()
+	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
+	assumedArn := fmt.Sprintf("arn:aws:sts::%s:assumed-role/%s/%s", awsAccountID(), role.RoleName, sessionName)
+	iamTempCreds.Put(akid, IAMTempCred{
+		AccessKeyID: akid, RoleName: role.RoleName, PrincipalArn: assumedArn,
+		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AssumeRoleWithSAMLResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRoleWithSAMLResult>
+    <Credentials><AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken><Expiration>%s</Expiration></Credentials>
+    <AssumedRoleUser><Arn>%s</Arn><AssumedRoleId>%s</AssumedRoleId></AssumedRoleUser>
+    <Subject>%s</Subject>
+    <SubjectType>persistent</SubjectType>
+    <Issuer>https://sim.local/saml</Issuer>
+    <Audience>https://signin.aws.amazon.com/saml</Audience>
+    <NameQualifier>sim-name-qualifier</NameQualifier>
+    <PackedPolicySize>0</PackedPolicySize>
+  </AssumeRoleWithSAMLResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</AssumeRoleWithSAMLResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339),
+		xmlEscape(assumedArn), role.RoleId+":"+sessionName, subject, generateUUID())
+}
+
+// handleSTSGetWebIdentityToken issues a signed web-identity token (a JWT) and
+// its expiration. Unlike the assume-role variants this returns the token
+// itself, not credentials.
+func handleSTSGetWebIdentityToken(w http.ResponseWriter, r *http.Request) {
+	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
+	// A simulator JWT: three base64url segments so a client parsing the dot-form
+	// gets a structurally-valid token. Not cryptographically signed.
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256","typ":"JWT"}`))
+	claims := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(
+		`{"iss":"https://sim.local","aud":%q,"exp":%d}`, r.FormValue("Audience"), exp.Unix())))
+	jwt := header + "." + claims + "." + base64.RawURLEncoding.EncodeToString([]byte("sim-signature"))
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetWebIdentityTokenResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <GetWebIdentityTokenResult><WebIdentityToken>%s</WebIdentityToken><Expiration>%s</Expiration></GetWebIdentityTokenResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetWebIdentityTokenResponse>`, xmlEscape(jwt), exp.Format(time.RFC3339), generateUUID())
+}
+
+// handleSTSGetDelegatedAccessToken trades a token in for temporary credentials,
+// returning the credentials and the principal they grant access to.
+func handleSTSGetDelegatedAccessToken(w http.ResponseWriter, r *http.Request) {
+	if r.FormValue("TradeInToken") == "" {
+		stsErrorXML(w, "ValidationError", "TradeInToken is required", http.StatusBadRequest)
+		return
+	}
+	akid, secret, token := stsMintTempCred()
+	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
+	principal := fmt.Sprintf("arn:aws:iam::%s:user/simulator", awsAccountID())
+	iamTempCreds.Put(akid, IAMTempCred{
+		AccessKeyID: akid, PrincipalArn: principal,
+		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetDelegatedAccessTokenResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <GetDelegatedAccessTokenResult>
+    <Credentials><AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken><Expiration>%s</Expiration></Credentials>
+    <AssumedPrincipal>%s</AssumedPrincipal>
+    <PackedPolicySize>0</PackedPolicySize>
+  </GetDelegatedAccessTokenResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetDelegatedAccessTokenResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339),
+		xmlEscape(principal), generateUUID())
+}
+
+// handleSTSAssumeRoot mints temporary credentials for a member account's root
+// user, returning Credentials and the SourceIdentity.
+func handleSTSAssumeRoot(w http.ResponseWriter, r *http.Request) {
+	target := r.FormValue("TargetPrincipal")
+	if target == "" {
+		stsErrorXML(w, "ValidationError", "TargetPrincipal is required", http.StatusBadRequest)
+		return
+	}
+	akid, secret, token := stsMintTempCred()
+	exp := time.Now().UTC().Add(time.Duration(stsDurationSeconds(r)) * time.Second)
+	rootArn := fmt.Sprintf("arn:aws:iam::%s:root", target)
+	iamTempCreds.Put(akid, IAMTempCred{
+		AccessKeyID: akid, PrincipalArn: rootArn,
+		Expiration: exp.Format(time.RFC3339), CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<AssumeRootResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <AssumeRootResult>
+    <Credentials><AccessKeyId>%s</AccessKeyId><SecretAccessKey>%s</SecretAccessKey><SessionToken>%s</SessionToken><Expiration>%s</Expiration></Credentials>
+    <SourceIdentity>%s</SourceIdentity>
+  </AssumeRootResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</AssumeRootResponse>`, akid, xmlEscape(secret), xmlEscape(token), exp.Format(time.RFC3339),
+		xmlEscape(target), generateUUID())
+}
+
+// handleSTSDecodeAuthorizationMessage decodes an encoded authorization failure
+// message into its JSON DecodedMessage. The sim stores the original JSON in the
+// encoded blob (base64 of the JSON), so decoding round-trips it; a non-base64
+// or non-JSON blob yields an empty decoded object rather than erroring.
+func handleSTSDecodeAuthorizationMessage(w http.ResponseWriter, r *http.Request) {
+	encoded := r.FormValue("EncodedMessage")
+	if encoded == "" {
+		stsErrorXML(w, "ValidationError", "EncodedMessage is required", http.StatusBadRequest)
+		return
+	}
+	decoded := `{"allowed":false,"decodedMessage":"simulator-decoded"}`
+	if raw, err := base64.StdEncoding.DecodeString(encoded); err == nil {
+		if json.Valid(raw) {
+			decoded = string(raw)
+		}
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<DecodeAuthorizationMessageResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <DecodeAuthorizationMessageResult><DecodedMessage>%s</DecodedMessage></DecodeAuthorizationMessageResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</DecodeAuthorizationMessageResponse>`, xmlEscape(decoded), generateUUID())
+}
+
+// handleSTSGetAccessKeyInfo returns the account that owns a supplied access key
+// id. The sim resolves it to the simulator account.
+func handleSTSGetAccessKeyInfo(w http.ResponseWriter, r *http.Request) {
+	if r.FormValue("AccessKeyId") == "" {
+		stsErrorXML(w, "ValidationError", "AccessKeyId is required", http.StatusBadRequest)
+		return
+	}
+	w.Header().Set("Content-Type", "text/xml")
+	fmt.Fprintf(w, `<GetAccessKeyInfoResponse xmlns="https://sts.amazonaws.com/doc/2011-06-15/">
+  <GetAccessKeyInfoResult><Account>%s</Account></GetAccessKeyInfoResult>
+  <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
+</GetAccessKeyInfoResponse>`, awsAccountID(), generateUUID())
 }
 
 func stsErrorXML(w http.ResponseWriter, code, message string, status int) {
