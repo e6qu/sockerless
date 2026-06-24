@@ -35,7 +35,7 @@ jobs:
             modules: github-runner-dispatcher-aws github-runner-dispatcher-gcp github-runner-dispatcher-azure
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -57,7 +57,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -143,7 +143,7 @@ jobs:
           --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -193,7 +193,7 @@ jobs:
             backends: aca azure-functions
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -232,7 +232,7 @@ jobs:
             backends: azf
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -255,7 +255,7 @@ jobs:
     name: test (e2e)
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -269,7 +269,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -300,7 +300,7 @@ jobs:
     name: sim (${{ matrix.cloud }})
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -366,7 +366,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -439,7 +439,7 @@ jobs:
             timeout_minutes: 20
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -498,7 +498,7 @@ jobs:
     name: tf (${{ matrix.cloud }})
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -568,7 +568,7 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -597,7 +597,7 @@ jobs:
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -631,7 +631,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -700,7 +700,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -740,7 +740,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -757,7 +757,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -793,7 +793,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
@@ -854,7 +854,7 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7.0.0
-      - uses: actions/setup-go@v6.4.0
+      - uses: actions/setup-go@v6.5.0
         with:
           go-version: '1.25'
           cache: true
