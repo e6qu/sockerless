@@ -44,16 +44,64 @@ type ScalingActivity struct {
 	StatusCode           string
 }
 
+type ASScalingPolicy struct {
+	Name                  string
+	ARN                   string
+	AutoScalingGroupName  string
+	PolicyType            string
+	AdjustmentType        string
+	ScalingAdjustment     int
+	HasScalingAdjustment  bool
+	Cooldown              int
+	HasCooldown           bool
+	MetricAggregationType string
+	Enabled               bool
+}
+
+type ASScheduledAction struct {
+	Name                 string
+	ARN                  string
+	AutoScalingGroupName string
+	MinSize              int
+	HasMinSize           bool
+	MaxSize              int
+	HasMaxSize           bool
+	DesiredCapacity      int
+	HasDesiredCapacity   bool
+	Recurrence           string
+	StartTime            string
+	EndTime              string
+	TimeZone             string
+}
+
+type ASLifecycleHook struct {
+	Name                  string
+	AutoScalingGroupName  string
+	LifecycleTransition   string
+	DefaultResult         string
+	HeartbeatTimeout      int
+	GlobalTimeout         int
+	NotificationTargetARN string
+	NotificationMetadata  string
+	RoleARN               string
+}
+
 var (
 	asLaunchConfigurations sim.Store[ASLaunchConfiguration]
 	autoScalingGroups      sim.Store[AutoScalingGroup]
 	scalingActivities      sim.Store[ScalingActivity]
+	asScalingPolicies      sim.Store[ASScalingPolicy]
+	asScheduledActions     sim.Store[ASScheduledAction]
+	asLifecycleHooks       sim.Store[ASLifecycleHook]
 )
 
 func registerAutoScaling(r *sim.AWSQueryRouter, srv *sim.Server) {
 	asLaunchConfigurations = sim.MakeStore[ASLaunchConfiguration](srv.DB(), "autoscaling_launch_configurations")
 	autoScalingGroups = sim.MakeStore[AutoScalingGroup](srv.DB(), "autoscaling_groups")
 	scalingActivities = sim.MakeStore[ScalingActivity](srv.DB(), "autoscaling_activities")
+	asScalingPolicies = sim.MakeStore[ASScalingPolicy](srv.DB(), "autoscaling_policies")
+	asScheduledActions = sim.MakeStore[ASScheduledAction](srv.DB(), "autoscaling_scheduled_actions")
+	asLifecycleHooks = sim.MakeStore[ASLifecycleHook](srv.DB(), "autoscaling_lifecycle_hooks")
 
 	r.RegisterVersioned("2011-01-01", "CreateLaunchConfiguration", handleASCreateLaunchConfiguration)
 	r.RegisterVersioned("2011-01-01", "DescribeLaunchConfigurations", handleASDescribeLaunchConfigurations)
@@ -67,6 +115,19 @@ func registerAutoScaling(r *sim.AWSQueryRouter, srv *sim.Server) {
 	r.RegisterVersioned("2011-01-01", "DeleteTags", handleASDeleteTags)
 	r.RegisterVersioned("2011-01-01", "DescribeTags", handleASDescribeTags)
 	r.RegisterVersioned("2011-01-01", "DeleteAutoScalingGroup", handleASDeleteAutoScalingGroup)
+	r.RegisterVersioned("2011-01-01", "PutScalingPolicy", handleASPutScalingPolicy)
+	r.RegisterVersioned("2011-01-01", "DescribePolicies", handleASDescribePolicies)
+	r.RegisterVersioned("2011-01-01", "DeletePolicy", handleASDeletePolicy)
+	r.RegisterVersioned("2011-01-01", "ExecutePolicy", handleASExecutePolicy)
+	r.RegisterVersioned("2011-01-01", "PutScheduledUpdateGroupAction", handleASPutScheduledUpdateGroupAction)
+	r.RegisterVersioned("2011-01-01", "DescribeScheduledActions", handleASDescribeScheduledActions)
+	r.RegisterVersioned("2011-01-01", "DeleteScheduledAction", handleASDeleteScheduledAction)
+	r.RegisterVersioned("2011-01-01", "PutLifecycleHook", handleASPutLifecycleHook)
+	r.RegisterVersioned("2011-01-01", "DescribeLifecycleHooks", handleASDescribeLifecycleHooks)
+	r.RegisterVersioned("2011-01-01", "DeleteLifecycleHook", handleASDeleteLifecycleHook)
+	r.RegisterVersioned("2011-01-01", "DescribeAutoScalingInstances", handleASDescribeAutoScalingInstances)
+	r.RegisterVersioned("2011-01-01", "SetInstanceHealth", handleASSetInstanceHealth)
+	r.RegisterVersioned("2011-01-01", "TerminateInstanceInAutoScalingGroup", handleASTerminateInstanceInAutoScalingGroup)
 }
 
 func handleASCreateLaunchConfiguration(w http.ResponseWriter, r *http.Request) {
@@ -337,6 +398,530 @@ func handleASDescribeTags(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	asResponse(w, "DescribeTags", fmt.Sprintf("<Tags>%s</Tags>", items.String()))
+}
+
+// asResourceKey composes the storage key for per-group child resources
+// (policies, scheduled actions, lifecycle hooks): the same name can exist
+// under different Auto Scaling groups, so the group name is part of the key.
+func asResourceKey(groupName, resourceName string) string {
+	return groupName + "|" + resourceName
+}
+
+func handleASPutScalingPolicy(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	name := r.FormValue("PolicyName")
+	if group == "" || name == "" {
+		asError(w, "ValidationError", "AutoScalingGroupName and PolicyName are required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := autoScalingGroups.Get(group); !ok {
+		asError(w, "ValidationError", fmt.Sprintf("AutoScalingGroup %q not found", group), http.StatusBadRequest)
+		return
+	}
+	key := asResourceKey(group, name)
+	policyType := firstNonEmpty(r.FormValue("PolicyType"), "SimpleScaling")
+	policy := ASScalingPolicy{
+		Name:                  name,
+		ARN:                   scalingPolicyARN(group, name),
+		AutoScalingGroupName:  group,
+		PolicyType:            policyType,
+		AdjustmentType:        r.FormValue("AdjustmentType"),
+		MetricAggregationType: r.FormValue("MetricAggregationType"),
+		Enabled:               r.FormValue("Enabled") != "false",
+	}
+	if existing, ok := asScalingPolicies.Get(key); ok {
+		policy.ARN = existing.ARN // ARN is stable across updates
+	}
+	if v := r.FormValue("ScalingAdjustment"); v != "" {
+		policy.ScalingAdjustment = asAtoiDefault(v, 0)
+		policy.HasScalingAdjustment = true
+	}
+	if v := r.FormValue("Cooldown"); v != "" {
+		policy.Cooldown = asAtoiDefault(v, 0)
+		policy.HasCooldown = true
+	}
+	asScalingPolicies.Put(key, policy)
+	asResponse(w, "PutScalingPolicy", fmt.Sprintf("<PolicyARN>%s</PolicyARN>", xmlEscape(policy.ARN)))
+}
+
+func handleASDescribePolicies(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	wantNames := autoscalingParamList(r, "PolicyNames.member")
+	wantTypes := autoscalingParamList(r, "PolicyTypes.member")
+	policies := make([]ASScalingPolicy, 0)
+	for _, p := range asScalingPolicies.List() {
+		if group != "" && p.AutoScalingGroupName != group {
+			continue
+		}
+		if len(wantNames) > 0 && !asNameOrARNMatches(wantNames, p.Name, p.ARN) {
+			continue
+		}
+		if len(wantTypes) > 0 && !containsString(wantTypes, p.PolicyType) {
+			continue
+		}
+		policies = append(policies, p)
+	}
+	sort.Slice(policies, func(i, j int) bool { return policies[i].ARN < policies[j].ARN })
+	page, next := awsPageExplicit(policies, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
+	var items strings.Builder
+	for _, p := range page {
+		items.WriteString(scalingPolicyXML(p))
+	}
+	body := fmt.Sprintf("<ScalingPolicies>%s</ScalingPolicies>", items.String())
+	if next != "" {
+		body += "<NextToken>" + xmlEscape(next) + "</NextToken>"
+	}
+	asResponse(w, "DescribePolicies", body)
+}
+
+func handleASDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	policy := r.FormValue("PolicyName")
+	for _, p := range asScalingPolicies.List() {
+		if group != "" && p.AutoScalingGroupName != group {
+			continue
+		}
+		if p.Name == policy || p.ARN == policy {
+			asScalingPolicies.Delete(asResourceKey(p.AutoScalingGroupName, p.Name))
+		}
+	}
+	asEmptyResponse(w, "DeletePolicy")
+}
+
+func handleASExecutePolicy(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	policy := r.FormValue("PolicyName")
+	var found *ASScalingPolicy
+	for _, p := range asScalingPolicies.List() {
+		if group != "" && p.AutoScalingGroupName != group {
+			continue
+		}
+		if p.Name == policy || p.ARN == policy {
+			pc := p
+			found = &pc
+			break
+		}
+	}
+	if found == nil {
+		asError(w, "ValidationError", fmt.Sprintf("ScalingPolicy %q not found", policy), http.StatusBadRequest)
+		return
+	}
+	asg, ok := autoScalingGroups.Get(found.AutoScalingGroupName)
+	if !ok {
+		asError(w, "ValidationError", "AutoScalingGroup not found", http.StatusBadRequest)
+		return
+	}
+	if found.HasScalingAdjustment {
+		desired := asg.DesiredCapacity
+		switch found.AdjustmentType {
+		case "ExactCapacity":
+			desired = found.ScalingAdjustment
+		case "PercentChangeInCapacity":
+			desired += desired * found.ScalingAdjustment / 100
+		default: // ChangeInCapacity (and unset)
+			desired += found.ScalingAdjustment
+		}
+		if desired < asg.MinSize {
+			desired = asg.MinSize
+		}
+		if desired > asg.MaxSize {
+			desired = asg.MaxSize
+		}
+		asg.DesiredCapacity = desired
+		if err := reconcileAutoScalingGroup(&asg, fmt.Sprintf("Executing policy %s", found.Name)); err != nil {
+			asError(w, "ValidationError", err.Error(), http.StatusBadRequest)
+			return
+		}
+		autoScalingGroups.Put(asg.Name, asg)
+	}
+	asEmptyResponse(w, "ExecutePolicy")
+}
+
+func handleASPutScheduledUpdateGroupAction(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	name := r.FormValue("ScheduledActionName")
+	if group == "" || name == "" {
+		asError(w, "ValidationError", "AutoScalingGroupName and ScheduledActionName are required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := autoScalingGroups.Get(group); !ok {
+		asError(w, "ValidationError", fmt.Sprintf("AutoScalingGroup %q not found", group), http.StatusBadRequest)
+		return
+	}
+	key := asResourceKey(group, name)
+	action := ASScheduledAction{
+		Name:                 name,
+		ARN:                  scheduledActionARN(group, name),
+		AutoScalingGroupName: group,
+		Recurrence:           r.FormValue("Recurrence"),
+		StartTime:            r.FormValue("StartTime"),
+		EndTime:              r.FormValue("EndTime"),
+		TimeZone:             r.FormValue("TimeZone"),
+	}
+	if existing, ok := asScheduledActions.Get(key); ok {
+		action.ARN = existing.ARN
+	}
+	if v := r.FormValue("MinSize"); v != "" {
+		action.MinSize = asAtoiDefault(v, 0)
+		action.HasMinSize = true
+	}
+	if v := r.FormValue("MaxSize"); v != "" {
+		action.MaxSize = asAtoiDefault(v, 0)
+		action.HasMaxSize = true
+	}
+	if v := r.FormValue("DesiredCapacity"); v != "" {
+		action.DesiredCapacity = asAtoiDefault(v, 0)
+		action.HasDesiredCapacity = true
+	}
+	asScheduledActions.Put(key, action)
+	asEmptyResponse(w, "PutScheduledUpdateGroupAction")
+}
+
+func handleASDescribeScheduledActions(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	wantNames := autoscalingParamList(r, "ScheduledActionNames.member")
+	actions := make([]ASScheduledAction, 0)
+	for _, a := range asScheduledActions.List() {
+		if group != "" && a.AutoScalingGroupName != group {
+			continue
+		}
+		if len(wantNames) > 0 && !asNameOrARNMatches(wantNames, a.Name, a.ARN) {
+			continue
+		}
+		actions = append(actions, a)
+	}
+	sort.Slice(actions, func(i, j int) bool { return actions[i].ARN < actions[j].ARN })
+	page, next := awsPageExplicit(actions, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
+	var items strings.Builder
+	for _, a := range page {
+		items.WriteString(scheduledActionXML(a))
+	}
+	body := fmt.Sprintf("<ScheduledUpdateGroupActions>%s</ScheduledUpdateGroupActions>", items.String())
+	if next != "" {
+		body += "<NextToken>" + xmlEscape(next) + "</NextToken>"
+	}
+	asResponse(w, "DescribeScheduledActions", body)
+}
+
+func handleASDeleteScheduledAction(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	name := r.FormValue("ScheduledActionName")
+	asScheduledActions.Delete(asResourceKey(group, name))
+	asEmptyResponse(w, "DeleteScheduledAction")
+}
+
+func handleASPutLifecycleHook(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	name := r.FormValue("LifecycleHookName")
+	if group == "" || name == "" {
+		asError(w, "ValidationError", "AutoScalingGroupName and LifecycleHookName are required", http.StatusBadRequest)
+		return
+	}
+	if _, ok := autoScalingGroups.Get(group); !ok {
+		asError(w, "ValidationError", fmt.Sprintf("AutoScalingGroup %q not found", group), http.StatusBadRequest)
+		return
+	}
+	hook := ASLifecycleHook{
+		Name:                  name,
+		AutoScalingGroupName:  group,
+		LifecycleTransition:   r.FormValue("LifecycleTransition"),
+		DefaultResult:         firstNonEmpty(r.FormValue("DefaultResult"), "ABANDON"),
+		HeartbeatTimeout:      asAtoiDefault(r.FormValue("HeartbeatTimeout"), 3600),
+		GlobalTimeout:         172800,
+		NotificationTargetARN: r.FormValue("NotificationTargetARN"),
+		NotificationMetadata:  r.FormValue("NotificationMetadata"),
+		RoleARN:               r.FormValue("RoleARN"),
+	}
+	asLifecycleHooks.Put(asResourceKey(group, name), hook)
+	asEmptyResponse(w, "PutLifecycleHook")
+}
+
+func handleASDescribeLifecycleHooks(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	wantNames := autoscalingParamList(r, "LifecycleHookNames.member")
+	hooks := make([]ASLifecycleHook, 0)
+	for _, h := range asLifecycleHooks.List() {
+		if group != "" && h.AutoScalingGroupName != group {
+			continue
+		}
+		if len(wantNames) > 0 && !containsString(wantNames, h.Name) {
+			continue
+		}
+		hooks = append(hooks, h)
+	}
+	sort.Slice(hooks, func(i, j int) bool { return hooks[i].Name < hooks[j].Name })
+	var items strings.Builder
+	for _, h := range hooks {
+		items.WriteString(lifecycleHookXML(h))
+	}
+	asResponse(w, "DescribeLifecycleHooks", fmt.Sprintf("<LifecycleHooks>%s</LifecycleHooks>", items.String()))
+}
+
+func handleASDeleteLifecycleHook(w http.ResponseWriter, r *http.Request) {
+	group := r.FormValue("AutoScalingGroupName")
+	name := r.FormValue("LifecycleHookName")
+	asLifecycleHooks.Delete(asResourceKey(group, name))
+	asEmptyResponse(w, "DeleteLifecycleHook")
+}
+
+func handleASDescribeAutoScalingInstances(w http.ResponseWriter, r *http.Request) {
+	wantIDs := autoscalingParamList(r, "InstanceIds.member")
+	type asgInstance struct {
+		instanceID string
+		asg        AutoScalingGroup
+	}
+	instances := make([]asgInstance, 0)
+	groups := autoScalingGroups.List()
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Name < groups[j].Name })
+	for _, asg := range groups {
+		for _, id := range asg.InstanceIds {
+			if len(wantIDs) > 0 && !containsString(wantIDs, id) {
+				continue
+			}
+			instances = append(instances, asgInstance{instanceID: id, asg: asg})
+		}
+	}
+	page, next := awsPageExplicit(instances, r.FormValue("NextToken"), asAtoiDefault(r.FormValue("MaxRecords"), 0))
+	var items strings.Builder
+	for _, ai := range page {
+		items.WriteString(autoScalingInstanceXML(ai.instanceID, ai.asg))
+	}
+	body := fmt.Sprintf("<AutoScalingInstances>%s</AutoScalingInstances>", items.String())
+	if next != "" {
+		body += "<NextToken>" + xmlEscape(next) + "</NextToken>"
+	}
+	asResponse(w, "DescribeAutoScalingInstances", body)
+}
+
+func handleASSetInstanceHealth(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.FormValue("InstanceId")
+	if instanceID == "" {
+		asError(w, "ValidationError", "InstanceId is required", http.StatusBadRequest)
+		return
+	}
+	// SetInstanceHealth marks an instance Healthy/Unhealthy. An Unhealthy
+	// instance is replaced by the group on the next reconcile; we model that
+	// by terminating it and reconciling back to DesiredCapacity.
+	if r.FormValue("HealthStatus") == "Unhealthy" {
+		for _, asg := range autoScalingGroups.List() {
+			if idx := indexOfString(asg.InstanceIds, instanceID); idx >= 0 {
+				asg.InstanceIds = append(asg.InstanceIds[:idx], asg.InstanceIds[idx+1:]...)
+				terminateASGInstance(instanceID)
+				if err := reconcileAutoScalingGroup(&asg, "Replacing unhealthy instance"); err != nil {
+					asError(w, "ValidationError", err.Error(), http.StatusBadRequest)
+					return
+				}
+				autoScalingGroups.Put(asg.Name, asg)
+				break
+			}
+		}
+	}
+	asEmptyResponse(w, "SetInstanceHealth")
+}
+
+func handleASTerminateInstanceInAutoScalingGroup(w http.ResponseWriter, r *http.Request) {
+	instanceID := r.FormValue("InstanceId")
+	if instanceID == "" {
+		asError(w, "ValidationError", "InstanceId is required", http.StatusBadRequest)
+		return
+	}
+	decrement := r.FormValue("ShouldDecrementDesiredCapacity") == "true"
+	var owner *AutoScalingGroup
+	for _, asg := range autoScalingGroups.List() {
+		if idx := indexOfString(asg.InstanceIds, instanceID); idx >= 0 {
+			asg.InstanceIds = append(asg.InstanceIds[:idx], asg.InstanceIds[idx+1:]...)
+			ownerCopy := asg
+			owner = &ownerCopy
+			break
+		}
+	}
+	if owner == nil {
+		asError(w, "ValidationError", fmt.Sprintf("Instance %q is not part of an Auto Scaling group", instanceID), http.StatusBadRequest)
+		return
+	}
+	terminateASGInstance(instanceID)
+	if decrement && owner.DesiredCapacity > 0 {
+		owner.DesiredCapacity--
+	}
+	cause := fmt.Sprintf("Terminating instance %s", instanceID)
+	if err := reconcileAutoScalingGroup(owner, cause); err != nil {
+		asError(w, "ValidationError", err.Error(), http.StatusBadRequest)
+		return
+	}
+	autoScalingGroups.Put(owner.Name, *owner)
+	now := time.Now().UTC().Format(time.RFC3339)
+	activity := ScalingActivity{
+		ActivityId:           generateUUID(),
+		AutoScalingGroupName: owner.Name,
+		Description:          cause,
+		Cause:                cause,
+		StartTime:            now,
+		EndTime:              now,
+		StatusCode:           "InProgress",
+	}
+	scalingActivities.Put(activity.ActivityId, activity)
+	asResponse(w, "TerminateInstanceInAutoScalingGroup", fmt.Sprintf("<Activity>%s</Activity>", scalingActivityInnerXML(activity)))
+}
+
+// terminateASGInstance tears down the EC2 instance backing an Auto Scaling
+// group member, mirroring reconcileAutoScalingGroup's scale-in path.
+func terminateASGInstance(instanceID string) {
+	inst, ok := ec2Instances.Get(instanceID)
+	if !ok {
+		return
+	}
+	_ = ec2StopRealVM(context.Background(), instanceID)
+	inst.State = "terminated"
+	ec2Instances.Put(instanceID, inst)
+	if inst.NetworkInterfaceId != "" {
+		ec2NetworkInterfaces.Delete(inst.NetworkInterfaceId)
+		_ = ec2DeleteRealNIC(context.Background(), inst.NetworkInterfaceId)
+	}
+	ec2DeleteOnTerminationVolumes(instanceID)
+}
+
+func scalingPolicyARN(group, name string) string {
+	return fmt.Sprintf("arn:aws:autoscaling:%s:%s:scalingPolicy:%s:autoScalingGroupName/%s:policyName/%s",
+		awsRegion(), awsAccountID(), generateUUID(), group, name)
+}
+
+func scheduledActionARN(group, name string) string {
+	return fmt.Sprintf("arn:aws:autoscaling:%s:%s:scheduledUpdateGroupAction:%s:autoScalingGroupName/%s:scheduledActionName/%s",
+		awsRegion(), awsAccountID(), generateUUID(), group, name)
+}
+
+func scalingPolicyXML(p ASScalingPolicy) string {
+	var b strings.Builder
+	b.WriteString("<member>")
+	fmt.Fprintf(&b, "<AutoScalingGroupName>%s</AutoScalingGroupName>", xmlEscape(p.AutoScalingGroupName))
+	fmt.Fprintf(&b, "<PolicyName>%s</PolicyName>", xmlEscape(p.Name))
+	fmt.Fprintf(&b, "<PolicyARN>%s</PolicyARN>", xmlEscape(p.ARN))
+	fmt.Fprintf(&b, "<PolicyType>%s</PolicyType>", xmlEscape(p.PolicyType))
+	if p.AdjustmentType != "" {
+		fmt.Fprintf(&b, "<AdjustmentType>%s</AdjustmentType>", xmlEscape(p.AdjustmentType))
+	}
+	if p.HasScalingAdjustment {
+		fmt.Fprintf(&b, "<ScalingAdjustment>%d</ScalingAdjustment>", p.ScalingAdjustment)
+	}
+	if p.HasCooldown {
+		fmt.Fprintf(&b, "<Cooldown>%d</Cooldown>", p.Cooldown)
+	}
+	if p.MetricAggregationType != "" {
+		fmt.Fprintf(&b, "<MetricAggregationType>%s</MetricAggregationType>", xmlEscape(p.MetricAggregationType))
+	}
+	fmt.Fprintf(&b, "<Enabled>%t</Enabled>", p.Enabled)
+	b.WriteString("<Alarms/>")
+	b.WriteString("</member>")
+	return b.String()
+}
+
+func scheduledActionXML(a ASScheduledAction) string {
+	var b strings.Builder
+	b.WriteString("<member>")
+	fmt.Fprintf(&b, "<AutoScalingGroupName>%s</AutoScalingGroupName>", xmlEscape(a.AutoScalingGroupName))
+	fmt.Fprintf(&b, "<ScheduledActionName>%s</ScheduledActionName>", xmlEscape(a.Name))
+	fmt.Fprintf(&b, "<ScheduledActionARN>%s</ScheduledActionARN>", xmlEscape(a.ARN))
+	if a.Recurrence != "" {
+		fmt.Fprintf(&b, "<Recurrence>%s</Recurrence>", xmlEscape(a.Recurrence))
+	}
+	if a.StartTime != "" {
+		fmt.Fprintf(&b, "<StartTime>%s</StartTime>", xmlEscape(a.StartTime))
+		fmt.Fprintf(&b, "<Time>%s</Time>", xmlEscape(a.StartTime))
+	}
+	if a.EndTime != "" {
+		fmt.Fprintf(&b, "<EndTime>%s</EndTime>", xmlEscape(a.EndTime))
+	}
+	if a.TimeZone != "" {
+		fmt.Fprintf(&b, "<TimeZone>%s</TimeZone>", xmlEscape(a.TimeZone))
+	}
+	if a.HasMinSize {
+		fmt.Fprintf(&b, "<MinSize>%d</MinSize>", a.MinSize)
+	}
+	if a.HasMaxSize {
+		fmt.Fprintf(&b, "<MaxSize>%d</MaxSize>", a.MaxSize)
+	}
+	if a.HasDesiredCapacity {
+		fmt.Fprintf(&b, "<DesiredCapacity>%d</DesiredCapacity>", a.DesiredCapacity)
+	}
+	b.WriteString("</member>")
+	return b.String()
+}
+
+func lifecycleHookXML(h ASLifecycleHook) string {
+	var b strings.Builder
+	b.WriteString("<member>")
+	fmt.Fprintf(&b, "<LifecycleHookName>%s</LifecycleHookName>", xmlEscape(h.Name))
+	fmt.Fprintf(&b, "<AutoScalingGroupName>%s</AutoScalingGroupName>", xmlEscape(h.AutoScalingGroupName))
+	if h.LifecycleTransition != "" {
+		fmt.Fprintf(&b, "<LifecycleTransition>%s</LifecycleTransition>", xmlEscape(h.LifecycleTransition))
+	}
+	if h.NotificationTargetARN != "" {
+		fmt.Fprintf(&b, "<NotificationTargetARN>%s</NotificationTargetARN>", xmlEscape(h.NotificationTargetARN))
+	}
+	if h.RoleARN != "" {
+		fmt.Fprintf(&b, "<RoleARN>%s</RoleARN>", xmlEscape(h.RoleARN))
+	}
+	if h.NotificationMetadata != "" {
+		fmt.Fprintf(&b, "<NotificationMetadata>%s</NotificationMetadata>", xmlEscape(h.NotificationMetadata))
+	}
+	fmt.Fprintf(&b, "<HeartbeatTimeout>%d</HeartbeatTimeout>", h.HeartbeatTimeout)
+	fmt.Fprintf(&b, "<GlobalTimeout>%d</GlobalTimeout>", h.GlobalTimeout)
+	fmt.Fprintf(&b, "<DefaultResult>%s</DefaultResult>", xmlEscape(h.DefaultResult))
+	b.WriteString("</member>")
+	return b.String()
+}
+
+func autoScalingInstanceXML(instanceID string, asg AutoScalingGroup) string {
+	imageID := ""
+	instanceType := ""
+	if inst, ok := ec2Instances.Get(instanceID); ok {
+		imageID = inst.ImageId
+		instanceType = inst.InstanceType
+	}
+	var b strings.Builder
+	b.WriteString("<member>")
+	fmt.Fprintf(&b, "<InstanceId>%s</InstanceId>", xmlEscape(instanceID))
+	fmt.Fprintf(&b, "<AutoScalingGroupName>%s</AutoScalingGroupName>", xmlEscape(asg.Name))
+	fmt.Fprintf(&b, "<AvailabilityZone>%s</AvailabilityZone>", xmlEscape(awsAvailabilityZone()))
+	b.WriteString("<LifecycleState>InService</LifecycleState>")
+	b.WriteString("<HealthStatus>HEALTHY</HealthStatus>")
+	if asg.LaunchConfigurationName != "" {
+		fmt.Fprintf(&b, "<LaunchConfigurationName>%s</LaunchConfigurationName>", xmlEscape(asg.LaunchConfigurationName))
+	}
+	if instanceType != "" {
+		fmt.Fprintf(&b, "<InstanceType>%s</InstanceType>", xmlEscape(instanceType))
+	}
+	if imageID != "" {
+		fmt.Fprintf(&b, "<ImageId>%s</ImageId>", xmlEscape(imageID))
+	}
+	b.WriteString("<ProtectedFromScaleIn>false</ProtectedFromScaleIn>")
+	b.WriteString("</member>")
+	return b.String()
+}
+
+// scalingActivityInnerXML emits the body of an <Activity> element (used by
+// TerminateInstanceInAutoScalingGroup's ActivityType output).
+func scalingActivityInnerXML(a ScalingActivity) string {
+	return fmt.Sprintf("<ActivityId>%s</ActivityId><AutoScalingGroupName>%s</AutoScalingGroupName><Description>%s</Description><Cause>%s</Cause><StartTime>%s</StartTime><StatusCode>%s</StatusCode><Progress>0</Progress>",
+		a.ActivityId, xmlEscape(a.AutoScalingGroupName), xmlEscape(a.Description), xmlEscape(a.Cause), a.StartTime, a.StatusCode)
+}
+
+func asNameOrARNMatches(wants []string, name, arn string) bool {
+	for _, w := range wants {
+		if w == name || w == arn {
+			return true
+		}
+	}
+	return false
+}
+
+func indexOfString(list []string, v string) int {
+	for i, s := range list {
+		if s == v {
+			return i
+		}
+	}
+	return -1
 }
 
 func reconcileAutoScalingGroup(asg *AutoScalingGroup, cause string) error {

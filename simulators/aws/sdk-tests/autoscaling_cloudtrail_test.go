@@ -138,6 +138,175 @@ func TestAutoScalingGroupLifecycleSDK(t *testing.T) {
 	}
 }
 
+// TestAutoScalingPoliciesAndHooksSDK exercises the scaling-policy,
+// scheduled-action, lifecycle-hook, and per-instance verbs of EC2 Auto
+// Scaling against a real group, asserting round-trip read-back.
+func TestAutoScalingPoliciesAndHooksSDK(t *testing.T) {
+	asgClient := autoScalingClient()
+	ec2Client := ec2Client()
+
+	vpcOut, err := ec2Client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.92.0.0/16")})
+	require.NoError(t, err)
+	subnetOut, err := ec2Client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:            vpcOut.Vpc.VpcId,
+		CidrBlock:        aws.String("10.92.1.0/24"),
+		AvailabilityZone: aws.String("us-east-1a"),
+	})
+	require.NoError(t, err)
+
+	_, err = asgClient.CreateLaunchConfiguration(ctx, &autoscaling.CreateLaunchConfigurationInput{
+		LaunchConfigurationName: aws.String("pol-lc"),
+		ImageId:                 aws.String("ami-pol1234"),
+		InstanceType:            aws.String("t3.small"),
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = asgClient.DeleteLaunchConfiguration(ctx, &autoscaling.DeleteLaunchConfigurationInput{
+			LaunchConfigurationName: aws.String("pol-lc"),
+		})
+	})
+
+	_, err = asgClient.CreateAutoScalingGroup(ctx, &autoscaling.CreateAutoScalingGroupInput{
+		AutoScalingGroupName:    aws.String("pol-asg"),
+		LaunchConfigurationName: aws.String("pol-lc"),
+		MinSize:                 aws.Int32(1),
+		MaxSize:                 aws.Int32(4),
+		DesiredCapacity:         aws.Int32(2),
+		VPCZoneIdentifier:       subnetOut.Subnet.SubnetId,
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = asgClient.DeleteAutoScalingGroup(ctx, &autoscaling.DeleteAutoScalingGroupInput{
+			AutoScalingGroupName: aws.String("pol-asg"),
+			ForceDelete:          aws.Bool(true),
+		})
+	})
+
+	// Scaling policy round-trip.
+	putPol, err := asgClient.PutScalingPolicy(ctx, &autoscaling.PutScalingPolicyInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		PolicyName:           aws.String("scale-out"),
+		PolicyType:           aws.String("SimpleScaling"),
+		AdjustmentType:       aws.String("ChangeInCapacity"),
+		ScalingAdjustment:    aws.Int32(1),
+		Cooldown:             aws.Int32(120),
+	})
+	require.NoError(t, err)
+	assert.Contains(t, aws.ToString(putPol.PolicyARN), ":scalingPolicy:")
+
+	polOut, err := asgClient.DescribePolicies(ctx, &autoscaling.DescribePoliciesInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+	})
+	require.NoError(t, err)
+	require.Len(t, polOut.ScalingPolicies, 1)
+	assert.Equal(t, "scale-out", aws.ToString(polOut.ScalingPolicies[0].PolicyName))
+	assert.Equal(t, int32(1), aws.ToInt32(polOut.ScalingPolicies[0].ScalingAdjustment))
+
+	// ExecutePolicy bumps DesiredCapacity by the scaling adjustment.
+	_, err = asgClient.ExecutePolicy(ctx, &autoscaling.ExecutePolicyInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		PolicyName:           aws.String("scale-out"),
+	})
+	require.NoError(t, err)
+	grpOut, err := asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		AutoScalingGroupNames: []string{"pol-asg"},
+	})
+	require.NoError(t, err)
+	require.Len(t, grpOut.AutoScalingGroups, 1)
+	assert.Equal(t, int32(3), aws.ToInt32(grpOut.AutoScalingGroups[0].DesiredCapacity))
+
+	_, err = asgClient.DeletePolicy(ctx, &autoscaling.DeletePolicyInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		PolicyName:           aws.String("scale-out"),
+	})
+	require.NoError(t, err)
+	polOut, err = asgClient.DescribePolicies(ctx, &autoscaling.DescribePoliciesInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+	})
+	require.NoError(t, err)
+	assert.Empty(t, polOut.ScalingPolicies)
+
+	// Scheduled action round-trip.
+	_, err = asgClient.PutScheduledUpdateGroupAction(ctx, &autoscaling.PutScheduledUpdateGroupActionInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		ScheduledActionName:  aws.String("nightly"),
+		Recurrence:           aws.String("0 0 * * *"),
+		MinSize:              aws.Int32(0),
+		MaxSize:              aws.Int32(5),
+		DesiredCapacity:      aws.Int32(1),
+	})
+	require.NoError(t, err)
+	schedOut, err := asgClient.DescribeScheduledActions(ctx, &autoscaling.DescribeScheduledActionsInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+	})
+	require.NoError(t, err)
+	require.Len(t, schedOut.ScheduledUpdateGroupActions, 1)
+	assert.Equal(t, "nightly", aws.ToString(schedOut.ScheduledUpdateGroupActions[0].ScheduledActionName))
+	assert.Equal(t, "0 0 * * *", aws.ToString(schedOut.ScheduledUpdateGroupActions[0].Recurrence))
+
+	_, err = asgClient.DeleteScheduledAction(ctx, &autoscaling.DeleteScheduledActionInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		ScheduledActionName:  aws.String("nightly"),
+	})
+	require.NoError(t, err)
+
+	// Lifecycle hook round-trip.
+	_, err = asgClient.PutLifecycleHook(ctx, &autoscaling.PutLifecycleHookInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		LifecycleHookName:    aws.String("drain"),
+		LifecycleTransition:  aws.String("autoscaling:EC2_INSTANCE_TERMINATING"),
+		HeartbeatTimeout:     aws.Int32(300),
+		DefaultResult:        aws.String("CONTINUE"),
+	})
+	require.NoError(t, err)
+	hookOut, err := asgClient.DescribeLifecycleHooks(ctx, &autoscaling.DescribeLifecycleHooksInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+	})
+	require.NoError(t, err)
+	require.Len(t, hookOut.LifecycleHooks, 1)
+	assert.Equal(t, "drain", aws.ToString(hookOut.LifecycleHooks[0].LifecycleHookName))
+	assert.Equal(t, "CONTINUE", aws.ToString(hookOut.LifecycleHooks[0].DefaultResult))
+
+	_, err = asgClient.DeleteLifecycleHook(ctx, &autoscaling.DeleteLifecycleHookInput{
+		AutoScalingGroupName: aws.String("pol-asg"),
+		LifecycleHookName:    aws.String("drain"),
+	})
+	require.NoError(t, err)
+
+	// Per-instance verbs.
+	asgInstances, err := asgClient.DescribeAutoScalingInstances(ctx, &autoscaling.DescribeAutoScalingInstancesInput{})
+	require.NoError(t, err)
+	var instanceID string
+	for _, d := range asgInstances.AutoScalingInstances {
+		if aws.ToString(d.AutoScalingGroupName) == "pol-asg" {
+			instanceID = aws.ToString(d.InstanceId)
+			break
+		}
+	}
+	require.NotEmpty(t, instanceID, "DescribeAutoScalingInstances must list pol-asg's instances")
+
+	termOut, err := asgClient.TerminateInstanceInAutoScalingGroup(ctx, &autoscaling.TerminateInstanceInAutoScalingGroupInput{
+		InstanceId:                     aws.String(instanceID),
+		ShouldDecrementDesiredCapacity: aws.Bool(true),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, termOut.Activity)
+	assert.Equal(t, "pol-asg", aws.ToString(termOut.Activity.AutoScalingGroupName))
+
+	// SetInstanceHealth on a remaining instance is accepted.
+	grpOut, err = asgClient.DescribeAutoScalingGroups(ctx, &autoscaling.DescribeAutoScalingGroupsInput{
+		AutoScalingGroupNames: []string{"pol-asg"},
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, grpOut.AutoScalingGroups[0].Instances)
+	healthyID := aws.ToString(grpOut.AutoScalingGroups[0].Instances[0].InstanceId)
+	_, err = asgClient.SetInstanceHealth(ctx, &autoscaling.SetInstanceHealthInput{
+		InstanceId:   aws.String(healthyID),
+		HealthStatus: aws.String("Healthy"),
+	})
+	require.NoError(t, err)
+}
+
 func TestCloudTrailRecordsAPICallsToS3SDK(t *testing.T) {
 	ctClient := cloudTrailClient()
 	s3Client := s3Client()
