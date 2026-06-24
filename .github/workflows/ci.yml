@@ -410,8 +410,11 @@ jobs:
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
-            make sdk-test
-        timeout-minutes: 5
+            make sdk-test SDK_TEST_TIMEOUT=600s
+        # The suite grows as services reach full op-coverage; give the step
+        # headroom over the inner go-test deadline (SDK_TEST_TIMEOUT) so a hung
+        # test fails with a named Go stack rather than an opaque step kill.
+        timeout-minutes: 12
         env:
           GOWORK: "off"
       - name: Spec-shape ratchet (aws sdk)
