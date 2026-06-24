@@ -48,7 +48,10 @@ func cwListDashboardEntries(prefix string) []map[string]any {
 		d, _ := cwDashboards.Get(n)
 		// LastModified must encode as a timestamp (cbor tag-1 / RFC3339 JSON),
 		// not a bare string, or the SDK's *time.Time field fails to decode.
-		lm, _ := time.Parse(time.RFC3339, d.LastModified)
+		lm, err := time.Parse(time.RFC3339, d.LastModified)
+		if err != nil {
+			lm = time.Now().UTC()
+		}
 		out = append(out, map[string]any{
 			"DashboardName": d.Name,
 			"DashboardArn":  cwDashboardArn(d.Name),

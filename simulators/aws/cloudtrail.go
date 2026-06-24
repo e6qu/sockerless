@@ -1215,7 +1215,12 @@ func cloudTrailLogBody(event CloudTrailEvent) ([]byte, error) {
 }
 
 func cloudTrailObjectKey(trail CloudTrailTrail, event CloudTrailEvent) string {
-	t, _ := time.Parse(time.RFC3339, event.EventTime)
+	t, err := time.Parse(time.RFC3339, event.EventTime)
+	if err != nil {
+		// EventTime is always sim-written RFC3339; a malformed value must not
+		// silently produce a year-0001 S3 key path — fall back to now.
+		t = time.Now().UTC()
+	}
 	prefix := strings.Trim(trail.S3KeyPrefix, "/")
 	if prefix != "" {
 		prefix += "/"

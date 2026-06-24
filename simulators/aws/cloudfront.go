@@ -603,6 +603,11 @@ func registerCloudFront(srv *sim.Server) {
 	// streaming distributions, VPC origins, and Anycast IP lists.
 	registerCloudFrontExtras2(srv)
 
+	// Distribution tenants, connection groups, trust stores, resource policies,
+	// WebACL associations, alias/domain conflicts, the ListDistributionsBy*
+	// projections, and the copy/promote/anycast-update/managed-cert variants.
+	registerCloudFrontExtras3(srv)
+
 	// OriginAccessControl
 	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("CreateOriginAccessControl", "cloudfront.amazonaws.com", nil, handleCFCreateOAC))
 	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("ListOriginAccessControls", "cloudfront.amazonaws.com", nil, handleCFListOACs))
