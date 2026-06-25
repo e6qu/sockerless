@@ -4,13 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/gcp-ratchet-2-azure-gate` — **GCP coverage ratchet round 2 + build the Azure operation-coverage gate (BUG-2220).**
+`fix/elbv2-tcp-healthcheck-fields` — **ELBv2 TCP target group still returned HealthCheckPath (#688, BUG-2222).**
 
-- **Azure operation-coverage gate (the last sim without one).** Built `azureMethodFloor` in `simulators/azure/azure_coverage_test.go` — the Swagger-spec analogue of `serviceCoverageFloor` (AWS) / `gcpMethodFloor` (GCP). Per vendored Azure ARM Swagger doc it counts implemented operations (covered = a registered route matches its method + normalized path under the same `matchAzureSegs` rules the route-validity gate uses), locked by an exact-equality ratchet over 90 swagger files. `TestServiceConformance_AzureCoverage` logs per-file fractions; `TestServiceConformance_AzureCoverageFloor` is the ratchet. **Azure measured at 630/2597 (24%). All three simulators now have an operation-coverage ratchet.**
-- **GCP ratchet round (one service file per agent), all spec-validated (0 new violations) + real Google Cloud Go SDK:** Spanner 186→198/198, Cloud SQL v1 136→148/148, VPC Access 15→16/16, ServiceUsage 19→20/20, IAM Credentials 11→14/14 (all 100%); API Gateway 54→57/60, Cloud Functions v2 15→31/42, Cloud SQL v1beta4 45→146/148, Cloud Resource Manager v3 11→105/124 (projects/folders/orgs/liens/tagKeys/tagValues/tagBindings + IAM), Cloud Run v1 61→98/152 + v2 51→62/116 (Knative child resources, domain mappings, revisions, IAM); plus the big-surface wave: Dataflow 8→84/84 (100%), Bigtable Admin 65→136/162, Cloud Logging 170→480/508.
-- **GCP coverage 2413→3180/5244 (46%→61%); ~22 services at 100%.** The uncovered remainder per service is the `{+name}`/`{+resource}` reserved-expansion template alternates the flatPath form already covers.
+- Follow-up to #685 (which omitted `Matcher` for TCP health checks): `HealthCheckPath` is the same HTTP/HTTPS-only class and was still leaking — `CreateTargetGroup` defaulted it to `/` for every protocol and the target-group XML emitted `<HealthCheckPath>` unconditionally, so a TCP target group returned `HealthCheckPath=/` → perpetual `terraform-provider-aws` `health_check.path` drift.
+- Fix: generalized `elbv2MatcherApplies` → `elbv2HTTPHealthCheck` (governs both HTTP-only fields) + a `elbv2DefaultedHealthCheckPath` helper. Create defaults the path to `/` only for HTTP/HTTPS; the XML emits it only for HTTP/HTTPS; Modify clears both Matcher + path when the health check changes to a non-HTTP protocol (defaults them when it changes to HTTP). Boyscout-confirmed `ProtocolVersion` is already omitted for TCP.
+- Tests: SDK + CLI fidelity tests assert the path is omitted for a TCP health check (and `/` for an HTTP health check on a TCP target group); the idempotency-fidelity terraform stack's TCP target group gained a TCP `health_check` block so `plan -detailed-exitcode` catches this drift class — real apply + clean plan (127s). aws build/lint(0) + conformance + spec-validator(0) green. Closes #688.
 
-**Next candidates:** keep ratcheting GCP big surfaces (Logging 508, Bigtable 162, Dataflow 84, Cloud Run/CRM remainders) and **start ratcheting Azure services** now that its gate exists (Container Apps/Jobs, Service Bus, Event Hubs, Storage, Cosmos DB, networking). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked) remains.
+**Next candidates:** keep ratcheting GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders) and **start ratcheting Azure services** now that its gate exists. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #689): GCP coverage ratchet round 2 + Azure operation-coverage gate (BUG-2220/2221)
+Built `azureMethodFloor` in `simulators/azure/azure_coverage_test.go` (the Swagger-spec analogue of `serviceCoverageFloor`/`gcpMethodFloor`, ratchet over 90 swagger files — all three sims now gated; Azure 630/2597 = 24%); GCP ratcheted 2413→3180/5244 (46%→61%) with ~22 services at 100% (Spanner, Cloud SQL v1, VPC Access, ServiceUsage, IAM Credentials, Dataflow to 100%; CRM v3 11→105, Logging 170→480, Bigtable 65→136, Cloud Run/Functions up); plus a smoke-build proxy-retry resilience fix (BUG-2221).
 
 ---
 ### Prior branch (merged #687): CI flake hardening + ELBv2 #685/#683 + CloudTrail (BUG-2216/2217/2218/2219)

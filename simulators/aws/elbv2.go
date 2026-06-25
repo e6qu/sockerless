@@ -420,7 +420,7 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 		IpAddressType:           firstNonEmpty(r.FormValue("IpAddressType"), "ipv4"),
 		HealthCheckProtocol:     firstNonEmpty(r.FormValue("HealthCheckProtocol"), protocol),
 		HealthCheckPort:         firstNonEmpty(r.FormValue("HealthCheckPort"), "traffic-port"),
-		HealthCheckPath:         firstNonEmpty(r.FormValue("HealthCheckPath"), "/"),
+		HealthCheckPath:         elbv2DefaultedHealthCheckPath(firstNonEmpty(r.FormValue("HealthCheckProtocol"), protocol), r.FormValue("HealthCheckPath")),
 		HealthCheckEnabled:      true,
 		HealthCheckInterval:     atoiDefault(r.FormValue("HealthCheckIntervalSeconds"), 30),
 		HealthCheckTimeout:      atoiDefault(r.FormValue("HealthCheckTimeoutSeconds"), 5),
@@ -504,10 +504,22 @@ func handleELBv2ModifyTargetGroup(w http.ResponseWriter, r *http.Request) {
 		if v := r.FormValue("Matcher.GrpcCode"); v != "" {
 			tg.MatcherGrpcCode = v
 		}
-		// When the health check is (now) HTTP/HTTPS and no Matcher was ever set,
-		// AWS supplies the "200" default; for TCP/etc. no Matcher applies.
-		if elbv2MatcherApplies(tg.HealthCheckProtocol) && tg.MatcherHttpCode == "" && tg.MatcherGrpcCode == "" {
-			tg.MatcherHttpCode = elbv2DefaultMatcher()
+		// Keep the HTTP-only attributes consistent with the (possibly changed)
+		// health-check protocol. HTTP/HTTPS: AWS supplies the "200" Matcher and "/"
+		// path defaults when none were set. TCP/etc.: neither attribute applies, so
+		// clear any value carried over from a prior HTTP health check (otherwise a
+		// stale Matcher/HealthCheckPath leaks and breaks terraform idempotency).
+		if elbv2HTTPHealthCheck(tg.HealthCheckProtocol) {
+			if tg.MatcherHttpCode == "" && tg.MatcherGrpcCode == "" {
+				tg.MatcherHttpCode = elbv2DefaultMatcher()
+			}
+			if tg.HealthCheckPath == "" {
+				tg.HealthCheckPath = "/"
+			}
+		} else {
+			tg.MatcherHttpCode = ""
+			tg.MatcherGrpcCode = ""
+			tg.HealthCheckPath = ""
 		}
 	}) {
 		elbv2ErrorXML(w, "TargetGroupNotFound", "Target group not found", http.StatusNotFound, sim.RequestID(r.Context()))
@@ -893,13 +905,13 @@ func elbv2AvailabilityZonesXML(subnets []string) string {
 	return b.String()
 }
 
-// elbv2MatcherApplies reports whether a Matcher (HTTP response codes) is part of
-// the target group's health check. Real ELBv2 carries a Matcher only when the
-// health-check protocol is HTTP or HTTPS; for TCP/TLS/UDP/TCP_UDP/GENEVE health
-// checks AWS omits Matcher entirely (the API rejects a Matcher on those, and
-// Describe* returns none), so emitting one breaks terraform-provider-aws
-// idempotency.
-func elbv2MatcherApplies(healthCheckProtocol string) bool {
+// elbv2HTTPHealthCheck reports whether the target group's health check is
+// HTTP/HTTPS. The HTTP-only health-check attributes — Matcher (response codes)
+// and HealthCheckPath — are part of the target group only when this is true;
+// for TCP/TLS/UDP/TCP_UDP/GENEVE health checks AWS omits both (the API rejects
+// them on those protocols, and Describe* returns neither), so emitting them
+// breaks terraform-provider-aws idempotency.
+func elbv2HTTPHealthCheck(healthCheckProtocol string) bool {
 	switch healthCheckProtocol {
 	case "HTTP", "HTTPS":
 		return true
@@ -909,8 +921,8 @@ func elbv2MatcherApplies(healthCheckProtocol string) bool {
 }
 
 // elbv2DefaultMatcher returns the AWS default health-check success codes for an
-// HTTP/HTTPS health check ("200"). It is only meaningful when a Matcher applies
-// (see elbv2MatcherApplies); callers must gate on the health-check protocol.
+// HTTP/HTTPS health check ("200"). It is only meaningful when the health check
+// is HTTP/HTTPS (see elbv2HTTPHealthCheck); callers must gate on the protocol.
 func elbv2DefaultMatcher() string {
 	return "200"
 }
@@ -923,8 +935,24 @@ func elbv2DefaultedMatcher(healthCheckProtocol, requested string) string {
 	if requested != "" {
 		return requested
 	}
-	if elbv2MatcherApplies(healthCheckProtocol) {
+	if elbv2HTTPHealthCheck(healthCheckProtocol) {
 		return elbv2DefaultMatcher()
+	}
+	return ""
+}
+
+// elbv2DefaultedHealthCheckPath returns the stored HealthCheckPath for a target
+// group: the requested value if supplied, otherwise the AWS default ("/") for an
+// HTTP/HTTPS health check. For TCP/UDP/etc. health checks no path applies, so it
+// stays empty unless the caller explicitly supplied one — defaulting it to "/"
+// there is what leaked a HealthCheckPath onto TCP target groups and broke
+// terraform-provider-aws idempotency.
+func elbv2DefaultedHealthCheckPath(healthCheckProtocol, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if elbv2HTTPHealthCheck(healthCheckProtocol) {
+		return "/"
 	}
 	return ""
 }
@@ -950,12 +978,24 @@ func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
 	switch {
 	case tg.MatcherGrpcCode != "":
 		matcher = fmt.Sprintf("<Matcher><GrpcCode>%s</GrpcCode></Matcher>", xmlEscape(tg.MatcherGrpcCode))
-	case elbv2MatcherApplies(tg.HealthCheckProtocol):
+	case elbv2HTTPHealthCheck(tg.HealthCheckProtocol):
 		code := tg.MatcherHttpCode
 		if code == "" {
 			code = elbv2DefaultMatcher()
 		}
 		matcher = fmt.Sprintf("<Matcher><HttpCode>%s</HttpCode></Matcher>", xmlEscape(code))
+	}
+	// HealthCheckPath, like Matcher, is an HTTP-only attribute: real ELBv2 returns
+	// it only for HTTP/HTTPS health checks and omits the element for TCP/TLS/UDP/
+	// TCP_UDP/GENEVE. Emitting it on a TCP target group made terraform-provider-aws
+	// plan a perpetual "health_check.path" diff.
+	healthCheckPath := ""
+	if elbv2HTTPHealthCheck(tg.HealthCheckProtocol) {
+		p := tg.HealthCheckPath
+		if p == "" {
+			p = "/"
+		}
+		healthCheckPath = fmt.Sprintf("<HealthCheckPath>%s</HealthCheckPath>", xmlEscape(p))
 	}
 	protoVer := ""
 	if tg.ProtocolVersion != "" {
@@ -965,11 +1005,11 @@ func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
 	if ipType == "" {
 		ipType = "ipv4"
 	}
-	return fmt.Sprintf(`<member><TargetGroupArn>%s</TargetGroupArn><TargetGroupName>%s</TargetGroupName><Protocol>%s</Protocol>%s<Port>%d</Port><VpcId>%s</VpcId><HealthCheckProtocol>%s</HealthCheckProtocol><HealthCheckPort>%s</HealthCheckPort><HealthCheckEnabled>%t</HealthCheckEnabled><HealthCheckIntervalSeconds>%d</HealthCheckIntervalSeconds><HealthCheckTimeoutSeconds>%d</HealthCheckTimeoutSeconds><HealthyThresholdCount>%d</HealthyThresholdCount><UnhealthyThresholdCount>%d</UnhealthyThresholdCount><HealthCheckPath>%s</HealthCheckPath>%s<LoadBalancerArns>%s</LoadBalancerArns><TargetType>%s</TargetType><IpAddressType>%s</IpAddressType></member>`,
+	return fmt.Sprintf(`<member><TargetGroupArn>%s</TargetGroupArn><TargetGroupName>%s</TargetGroupName><Protocol>%s</Protocol>%s<Port>%d</Port><VpcId>%s</VpcId><HealthCheckProtocol>%s</HealthCheckProtocol><HealthCheckPort>%s</HealthCheckPort><HealthCheckEnabled>%t</HealthCheckEnabled><HealthCheckIntervalSeconds>%d</HealthCheckIntervalSeconds><HealthCheckTimeoutSeconds>%d</HealthCheckTimeoutSeconds><HealthyThresholdCount>%d</HealthyThresholdCount><UnhealthyThresholdCount>%d</UnhealthyThresholdCount>%s%s<LoadBalancerArns>%s</LoadBalancerArns><TargetType>%s</TargetType><IpAddressType>%s</IpAddressType></member>`,
 		xmlEscape(tg.Arn), xmlEscape(tg.Name), xmlEscape(tg.Protocol), protoVer, tg.Port, xmlEscape(tg.VpcID),
 		xmlEscape(tg.HealthCheckProtocol), xmlEscape(tg.HealthCheckPort), tg.HealthCheckEnabled,
 		tg.HealthCheckInterval, tg.HealthCheckTimeout, tg.HealthyThresholdCount, tg.UnhealthyThresholdCount,
-		xmlEscape(tg.HealthCheckPath), matcher, elbv2StringMembersXMLInner(tg.LoadBalancerArns), xmlEscape(tg.TargetType), xmlEscape(ipType))
+		healthCheckPath, matcher, elbv2StringMembersXMLInner(tg.LoadBalancerArns), xmlEscape(tg.TargetType), xmlEscape(ipType))
 }
 
 func elbv2ListenerXML(listener ELBv2Listener) string {
