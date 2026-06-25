@@ -688,3 +688,242 @@ func TestIAM_ServiceAccountDisableEnablePatch(t *testing.T) {
 		}).Do()
 	require.Error(t, err)
 }
+
+// TestIAM_ServiceAccountUpdatePut exercises the legacy full-replace update
+// (serviceAccounts.update → PUT). Real GCP replaces the mutable fields from the
+// body without an updateMask.
+func TestIAM_ServiceAccountUpdatePut(t *testing.T) {
+	svc := iamService(t)
+
+	sa, err := svc.Projects.ServiceAccounts.Create("projects/sa-put-project",
+		&iam.CreateServiceAccountRequest{
+			AccountId:      "put-sa",
+			ServiceAccount: &iam.ServiceAccount{DisplayName: "Original"},
+		}).Do()
+	require.NoError(t, err)
+
+	updated, err := svc.Projects.ServiceAccounts.Update(sa.Name,
+		&iam.ServiceAccount{DisplayName: "Replaced", Description: "via PUT"}).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Replaced", updated.DisplayName)
+	assert.Equal(t, "via PUT", updated.Description)
+
+	got, err := svc.Projects.ServiceAccounts.Get(sa.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Replaced", got.DisplayName)
+}
+
+// iamPoolFromOp decodes the WorkloadIdentityPool embedded in a settled LRO
+// response. The sim settles every pool operation synchronously (done=true) with
+// the resource as the protobuf-Any response, so the resource is readable
+// straight off the returned Operation.
+func iamPoolFromOp(t *testing.T, op *iam.Operation) iam.WorkloadIdentityPool {
+	t.Helper()
+	require.True(t, op.Done, "operation must settle synchronously")
+	var pool iam.WorkloadIdentityPool
+	require.NoError(t, json.Unmarshal(op.Response, &pool))
+	return pool
+}
+
+// TestIAM_WorkloadIdentityPoolCRUD round-trips a Workload Identity Federation
+// pool and a provider beneath it: create (LRO) → get → list → patch → delete →
+// undelete, plus the providers sub-collection.
+func TestIAM_WorkloadIdentityPoolCRUD(t *testing.T) {
+	svc := iamService(t)
+	parent := "projects/wif-project/locations/global"
+
+	// Create pool → settled LRO carrying the resource.
+	op, err := svc.Projects.Locations.WorkloadIdentityPools.Create(parent,
+		&iam.WorkloadIdentityPool{DisplayName: "CI Pool", Description: "github actions"}).
+		WorkloadIdentityPoolId("github-pool").Do()
+	require.NoError(t, err)
+	pool := iamPoolFromOp(t, op)
+	assert.Equal(t, parent+"/workloadIdentityPools/github-pool", pool.Name)
+	assert.Equal(t, "CI Pool", pool.DisplayName)
+	assert.Equal(t, "ACTIVE", pool.State)
+
+	name := parent + "/workloadIdentityPools/github-pool"
+
+	// Get.
+	got, err := svc.Projects.Locations.WorkloadIdentityPools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, name, got.Name)
+	assert.Equal(t, "github actions", got.Description)
+
+	// List — pool present.
+	list, err := svc.Projects.Locations.WorkloadIdentityPools.List(parent).Do()
+	require.NoError(t, err)
+	found := false
+	for _, p := range list.WorkloadIdentityPools {
+		if p.Name == name {
+			found = true
+		}
+	}
+	assert.True(t, found, "created pool must appear in list")
+
+	// Patch displayName.
+	pop, err := svc.Projects.Locations.WorkloadIdentityPools.Patch(name,
+		&iam.WorkloadIdentityPool{DisplayName: "Renamed Pool"}).UpdateMask("displayName").Do()
+	require.NoError(t, err)
+	require.True(t, pop.Done)
+	got, err = svc.Projects.Locations.WorkloadIdentityPools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Renamed Pool", got.DisplayName)
+
+	// Create a provider beneath the pool.
+	prov, err := svc.Projects.Locations.WorkloadIdentityPools.Providers.Create(name,
+		&iam.WorkloadIdentityPoolProvider{
+			DisplayName:        "GitHub OIDC",
+			AttributeCondition: "assertion.repository=='octo/repo'",
+			Oidc:               &iam.Oidc{IssuerUri: "https://token.actions.githubusercontent.com"},
+		}).WorkloadIdentityPoolProviderId("github-provider").Do()
+	require.NoError(t, err)
+	require.True(t, prov.Done)
+	provName := name + "/providers/github-provider"
+	gotProv, err := svc.Projects.Locations.WorkloadIdentityPools.Providers.Get(provName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, provName, gotProv.Name)
+	assert.Equal(t, "GitHub OIDC", gotProv.DisplayName)
+
+	// Delete pool → soft-delete (state=DELETED).
+	dop, err := svc.Projects.Locations.WorkloadIdentityPools.Delete(name).Do()
+	require.NoError(t, err)
+	require.True(t, dop.Done)
+	got, err = svc.Projects.Locations.WorkloadIdentityPools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DELETED", got.State, "delete soft-deletes the pool")
+
+	// Undelete → back to ACTIVE.
+	uop, err := svc.Projects.Locations.WorkloadIdentityPools.Undelete(name,
+		&iam.UndeleteWorkloadIdentityPoolRequest{}).Do()
+	require.NoError(t, err)
+	require.True(t, uop.Done)
+	got, err = svc.Projects.Locations.WorkloadIdentityPools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", got.State, "undelete revives the pool")
+}
+
+// TestIAM_WorkforcePoolCRUD round-trips a location-scoped workforce pool and a
+// provider beneath it: create (LRO) → get → list → delete → undelete.
+func TestIAM_WorkforcePoolCRUD(t *testing.T) {
+	svc := iamService(t)
+	location := "locations/global"
+
+	op, err := svc.Locations.WorkforcePools.Create(location,
+		&iam.WorkforcePool{DisplayName: "Staff Pool", Parent: "organizations/123"}).
+		WorkforcePoolId("staff-pool").Do()
+	require.NoError(t, err)
+	require.True(t, op.Done)
+
+	name := location + "/workforcePools/staff-pool"
+	got, err := svc.Locations.WorkforcePools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, name, got.Name)
+	assert.Equal(t, "Staff Pool", got.DisplayName)
+	assert.Equal(t, "ACTIVE", got.State)
+
+	list, err := svc.Locations.WorkforcePools.List(location).Do()
+	require.NoError(t, err)
+	found := false
+	for _, p := range list.WorkforcePools {
+		if p.Name == name {
+			found = true
+		}
+	}
+	assert.True(t, found, "created workforce pool must appear in list")
+
+	// Provider beneath the pool.
+	prov, err := svc.Locations.WorkforcePools.Providers.Create(name,
+		&iam.WorkforcePoolProvider{
+			DisplayName: "Okta",
+			Oidc:        &iam.GoogleIamAdminV1WorkforcePoolProviderOidc{IssuerUri: "https://okta.example.com"},
+		}).WorkforcePoolProviderId("okta").Do()
+	require.NoError(t, err)
+	require.True(t, prov.Done)
+	provName := name + "/providers/okta"
+	gotProv, err := svc.Locations.WorkforcePools.Providers.Get(provName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, provName, gotProv.Name)
+
+	// Delete (soft) → undelete.
+	dop, err := svc.Locations.WorkforcePools.Delete(name).Do()
+	require.NoError(t, err)
+	require.True(t, dop.Done)
+	got, err = svc.Locations.WorkforcePools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DELETED", got.State)
+
+	uop, err := svc.Locations.WorkforcePools.Undelete(name, &iam.UndeleteWorkforcePoolRequest{}).Do()
+	require.NoError(t, err)
+	require.True(t, uop.Done)
+	got, err = svc.Locations.WorkforcePools.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", got.State)
+}
+
+// TestIAM_OAuthClientCRUD round-trips an OAuth client and a credential beneath
+// it. Unlike pools, oauthClients return the resource directly (no LRO); a
+// created credential carries a clientSecret.
+func TestIAM_OAuthClientCRUD(t *testing.T) {
+	svc := iamService(t)
+	parent := "projects/oauth-project/locations/global"
+
+	client, err := svc.Projects.Locations.OauthClients.Create(parent,
+		&iam.OauthClient{
+			DisplayName:         "CLI Client",
+			ClientType:          "CONFIDENTIAL_CLIENT",
+			AllowedGrantTypes:   []string{"authorization_code_grant"},
+			AllowedScopes:       []string{"https://www.googleapis.com/auth/cloud-platform"},
+			AllowedRedirectUris: []string{"https://example.com/callback"},
+		}).OauthClientId("cli-client").Do()
+	require.NoError(t, err)
+	name := parent + "/oauthClients/cli-client"
+	assert.Equal(t, name, client.Name)
+	assert.Equal(t, "cli-client", client.ClientId)
+	assert.Equal(t, "ACTIVE", client.State)
+
+	got, err := svc.Projects.Locations.OauthClients.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "CLI Client", got.DisplayName)
+
+	list, err := svc.Projects.Locations.OauthClients.List(parent).Do()
+	require.NoError(t, err)
+	found := false
+	for _, c := range list.OauthClients {
+		if c.Name == name {
+			found = true
+		}
+	}
+	assert.True(t, found, "created oauth client must appear in list")
+
+	// Credential — create returns a clientSecret.
+	cred, err := svc.Projects.Locations.OauthClients.Credentials.Create(name,
+		&iam.OauthClientCredential{DisplayName: "primary"}).
+		OauthClientCredentialId("primary").Do()
+	require.NoError(t, err)
+	credName := name + "/credentials/primary"
+	assert.Equal(t, credName, cred.Name)
+	assert.NotEmpty(t, cred.ClientSecret, "credential create must return a clientSecret")
+
+	gotCred, err := svc.Projects.Locations.OauthClients.Credentials.Get(credName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "primary", gotCred.DisplayName)
+
+	_, err = svc.Projects.Locations.OauthClients.Credentials.Delete(credName).Do()
+	require.NoError(t, err)
+	_, err = svc.Projects.Locations.OauthClients.Credentials.Get(credName).Do()
+	require.Error(t, err, "credential get after delete must fail")
+
+	// Delete client → soft-delete → undelete.
+	_, err = svc.Projects.Locations.OauthClients.Delete(name).Do()
+	require.NoError(t, err)
+	got, err = svc.Projects.Locations.OauthClients.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "DELETED", got.State)
+
+	_, err = svc.Projects.Locations.OauthClients.Undelete(name, &iam.UndeleteOauthClientRequest{}).Do()
+	require.NoError(t, err)
+	got, err = svc.Projects.Locations.OauthClients.Get(name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "ACTIVE", got.State)
+}

@@ -506,7 +506,18 @@ func armSpecValidator(srv *sim.Server) error {
 				return nil
 			}
 			var out []sim.SpecViolation
-			validateDiscoveryValue(c.method.doc, c.method.op, &discoverySchema{Ref: c.method.responseRef}, c.method.responseRef, "$", body, &out)
+			if arr, ok := body.([]any); ok && isStreamingResponseOp(c.method.op) {
+				// Server-streaming REST method (Firestore runQuery / batchGet /
+				// runAggregationQuery): the wire body is a JSON array of stream
+				// elements — real GCP responds identically — while the Discovery
+				// schema describes a single element. Validate each element against
+				// the element schema rather than the whole array.
+				for i, el := range arr {
+					validateDiscoveryValue(c.method.doc, c.method.op, &discoverySchema{Ref: c.method.responseRef}, c.method.responseRef, fmt.Sprintf("$[%d]", i), el, &out)
+				}
+			} else {
+				validateDiscoveryValue(c.method.doc, c.method.op, &discoverySchema{Ref: c.method.responseRef}, c.method.responseRef, "$", body, &out)
+			}
 			if len(out) == 0 {
 				return nil
 			}
@@ -517,6 +528,16 @@ func armSpecValidator(srv *sim.Server) error {
 		return closest
 	})
 	return nil
+}
+
+// isStreamingResponseOp reports whether op is a Firestore server-streaming REST
+// method. These return a JSON array of stream elements on the wire (matching
+// real GCP); each element conforms to the Discovery response schema, so the
+// validator checks elements individually rather than rejecting the array.
+func isStreamingResponseOp(op string) bool {
+	return strings.HasSuffix(op, ":runQuery") ||
+		strings.HasSuffix(op, ":batchGet") ||
+		strings.HasSuffix(op, ":runAggregationQuery")
 }
 
 // validateDiscoveryValue walks a decoded JSON value against a Discovery

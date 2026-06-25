@@ -136,3 +136,151 @@ func TestSecretManager_GetSecret_NotFound_ErrorClassification(t *testing.T) {
 		t.Errorf("expected HTTP 404, got %d", apiErr.Code)
 	}
 }
+
+// TestSecretManager_RegionalLifecycleSDK exercises the location-scoped
+// (regional) secret surface: create/get/list secrets and add/access/list
+// versions under projects/{p}/locations/{loc}/secrets, the regional analogue
+// of the global surface.
+func TestSecretManager_RegionalLifecycleSDK(t *testing.T) {
+	svc := secretManagerService(t)
+	location := "us-central1"
+	parent := "projects/sdk-regional-project/locations/" + location
+	secretID := "sdk-regional-secret"
+	secretName := parent + "/secrets/" + secretID
+
+	created, err := svc.Projects.Locations.Secrets.Create(parent, &secretmanager.Secret{
+		Labels: map[string]string{"env": "dev"},
+	}).SecretId(secretID).Do()
+	require.NoError(t, err)
+	require.Equal(t, secretName, created.Name)
+	require.Equal(t, map[string]string{"env": "dev"}, created.Labels)
+
+	got, err := svc.Projects.Locations.Secrets.Get(secretName).Do()
+	require.NoError(t, err)
+	require.Equal(t, secretName, got.Name)
+
+	listed, err := svc.Projects.Locations.Secrets.List(parent).Do()
+	require.NoError(t, err)
+	require.Len(t, listed.Secrets, 1)
+	require.Equal(t, secretName, listed.Secrets[0].Name)
+
+	v1, err := svc.Projects.Locations.Secrets.AddVersion(secretName, &secretmanager.AddSecretVersionRequest{
+		Payload: &secretmanager.SecretPayload{
+			Data: base64.StdEncoding.EncodeToString([]byte("regional-first")),
+		},
+	}).Do()
+	require.NoError(t, err)
+	require.Equal(t, secretName+"/versions/1", v1.Name)
+	require.Equal(t, "ENABLED", v1.State)
+
+	access, err := svc.Projects.Locations.Secrets.Versions.Access(secretName + "/versions/latest").Do()
+	require.NoError(t, err)
+	require.Equal(t, secretName+"/versions/1", access.Name)
+	require.Equal(t, base64.StdEncoding.EncodeToString([]byte("regional-first")), access.Payload.Data)
+
+	getVer, err := svc.Projects.Locations.Secrets.Versions.Get(secretName + "/versions/1").Do()
+	require.NoError(t, err)
+	require.Equal(t, secretName+"/versions/1", getVer.Name)
+
+	versions, err := svc.Projects.Locations.Secrets.Versions.List(secretName).Do()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), versions.TotalSize)
+
+	// Disable then re-enable round-trips through the regional version actions.
+	_, err = svc.Projects.Locations.Secrets.Versions.Disable(secretName+"/versions/1",
+		&secretmanager.DisableSecretVersionRequest{}).Do()
+	require.NoError(t, err)
+	disabled, err := svc.Projects.Locations.Secrets.Versions.Get(secretName + "/versions/1").Do()
+	require.NoError(t, err)
+	require.Equal(t, "DISABLED", disabled.State)
+	_, err = svc.Projects.Locations.Secrets.Versions.Enable(secretName+"/versions/1",
+		&secretmanager.EnableSecretVersionRequest{}).Do()
+	require.NoError(t, err)
+
+	patched, err := svc.Projects.Locations.Secrets.Patch(secretName, &secretmanager.Secret{
+		Labels: map[string]string{"env": "prod"},
+	}).UpdateMask("labels").Do()
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"env": "prod"}, patched.Labels)
+
+	_, err = svc.Projects.Locations.Secrets.Delete(secretName).Do()
+	require.NoError(t, err)
+	_, err = svc.Projects.Locations.Secrets.Get(secretName).Do()
+	require.Error(t, err)
+	var apiErr *googleapi.Error
+	require.True(t, errors.As(err, &apiErr))
+	require.Equal(t, 404, apiErr.Code)
+}
+
+// TestSecretManager_IamPolicySDK exercises the IAM policy surface on a secret
+// resource: getIamPolicy returns an empty default, setIamPolicy persists a
+// binding read back by getIamPolicy, and testIamPermissions echoes the
+// caller's requested permissions.
+func TestSecretManager_IamPolicySDK(t *testing.T) {
+	svc := secretManagerService(t)
+	parent := "projects/sdk-iam-project"
+	secretID := "sdk-iam-secret"
+	secretName := parent + "/secrets/" + secretID
+
+	_, err := svc.Projects.Secrets.Create(parent, &secretmanager.Secret{}).SecretId(secretID).Do()
+	require.NoError(t, err)
+	t.Cleanup(func() { _, _ = svc.Projects.Secrets.Delete(secretName).Do() })
+
+	// Default policy: empty bindings, version 1, with a stable etag.
+	pol, err := svc.Projects.Secrets.GetIamPolicy(secretName).Do()
+	require.NoError(t, err)
+	require.Empty(t, pol.Bindings)
+	require.NotEmpty(t, pol.Etag)
+
+	// Set a binding, supplying the etag from the read for optimistic concurrency.
+	want := &secretmanager.Policy{
+		Etag: pol.Etag,
+		Bindings: []*secretmanager.Binding{{
+			Role:    "roles/secretmanager.secretAccessor",
+			Members: []string{"user:alice@example.com"},
+		}},
+	}
+	set, err := svc.Projects.Secrets.SetIamPolicy(secretName, &secretmanager.SetIamPolicyRequest{
+		Policy: want,
+	}).Do()
+	require.NoError(t, err)
+	require.Len(t, set.Bindings, 1)
+	require.Equal(t, "roles/secretmanager.secretAccessor", set.Bindings[0].Role)
+	require.Equal(t, []string{"user:alice@example.com"}, set.Bindings[0].Members)
+
+	// Read it back.
+	got, err := svc.Projects.Secrets.GetIamPolicy(secretName).Do()
+	require.NoError(t, err)
+	require.Len(t, got.Bindings, 1)
+	require.Equal(t, "user:alice@example.com", got.Bindings[0].Members[0])
+
+	// testIamPermissions echoes the requested permission set.
+	perms := []string{"secretmanager.versions.access", "secretmanager.secrets.get"}
+	tested, err := svc.Projects.Secrets.TestIamPermissions(secretName, &secretmanager.TestIamPermissionsRequest{
+		Permissions: perms,
+	}).Do()
+	require.NoError(t, err)
+	require.ElementsMatch(t, perms, tested.Permissions)
+}
+
+// TestSecretManager_LocationsSDK exercises the Locations meta-API
+// (ListLocations + GetLocation) the Secret Manager Discovery document
+// defines for region discovery.
+func TestSecretManager_LocationsSDK(t *testing.T) {
+	svc := secretManagerService(t)
+	project := "projects/sdk-loc-project"
+
+	list, err := svc.Projects.Locations.List(project).Do()
+	require.NoError(t, err)
+	require.NotEmpty(t, list.Locations)
+	var someLoc string
+	for _, l := range list.Locations {
+		require.NotEmpty(t, l.LocationId)
+		require.Equal(t, project+"/locations/"+l.LocationId, l.Name)
+		someLoc = l.LocationId
+	}
+
+	got, err := svc.Projects.Locations.Get(project + "/locations/" + someLoc).Do()
+	require.NoError(t, err)
+	require.Equal(t, someLoc, got.LocationId)
+}

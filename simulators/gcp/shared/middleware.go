@@ -211,6 +211,16 @@ func (w *statusWriter) Write(p []byte) (int, error) {
 	return w.ResponseWriter.Write(p)
 }
 
+// Flush implements http.Flusher so streaming handlers (e.g. Firestore
+// runQuery / batchGet server-streaming responses) can flush each element to the
+// wire through the middleware chain. Without it the flush would stop here and
+// the response would buffer.
+func (w *statusWriter) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // Hijack implements http.Hijacker so WebSocket upgrades work through the middleware.
 func (w *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	if h, ok := w.ResponseWriter.(http.Hijacker); ok {

@@ -133,11 +133,78 @@ type BQTableRow struct {
 	F []map[string]any `json:"f"`
 }
 
+// BQModel mirrors the Discovery "Model" schema members the sim persists
+// and round-trips. Models have no `kind` member in the Discovery schema.
+type BQModel struct {
+	Etag             string            `json:"etag,omitempty"`
+	ModelReference   BQModelRef        `json:"modelReference"`
+	CreationTime     string            `json:"creationTime,omitempty"`
+	LastModifiedTime string            `json:"lastModifiedTime,omitempty"`
+	Description      string            `json:"description,omitempty"`
+	FriendlyName     string            `json:"friendlyName,omitempty"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	ExpirationTime   string            `json:"expirationTime,omitempty"`
+	Location         string            `json:"location,omitempty"`
+	ModelType        string            `json:"modelType,omitempty"`
+}
+
+type BQModelRef struct {
+	ProjectID string `json:"projectId,omitempty"`
+	DatasetID string `json:"datasetId,omitempty"`
+	ModelID   string `json:"modelId,omitempty"`
+}
+
+// BQRoutine mirrors the Discovery "Routine" schema members the sim
+// persists and round-trips. Routines have no `kind` member.
+type BQRoutine struct {
+	Etag              string          `json:"etag,omitempty"`
+	RoutineReference  BQRoutineRef    `json:"routineReference"`
+	RoutineType       string          `json:"routineType,omitempty"`
+	CreationTime      string          `json:"creationTime,omitempty"`
+	LastModifiedTime  string          `json:"lastModifiedTime,omitempty"`
+	Language          string          `json:"language,omitempty"`
+	Arguments         json.RawMessage `json:"arguments,omitempty"`
+	ReturnType        json.RawMessage `json:"returnType,omitempty"`
+	ReturnTableType   json.RawMessage `json:"returnTableType,omitempty"`
+	ImportedLibraries []string        `json:"importedLibraries,omitempty"`
+	DefinitionBody    string          `json:"definitionBody,omitempty"`
+	Description       string          `json:"description,omitempty"`
+	DeterminismLevel  string          `json:"determinismLevel,omitempty"`
+	StrictMode        *bool           `json:"strictMode,omitempty"`
+}
+
+type BQRoutineRef struct {
+	ProjectID string `json:"projectId,omitempty"`
+	DatasetID string `json:"datasetId,omitempty"`
+	RoutineID string `json:"routineId,omitempty"`
+}
+
+// BQRowAccessPolicy mirrors the Discovery "RowAccessPolicy" schema. No
+// `kind` member.
+type BQRowAccessPolicy struct {
+	Etag                     string               `json:"etag,omitempty"`
+	RowAccessPolicyReference BQRowAccessPolicyRef `json:"rowAccessPolicyReference"`
+	FilterPredicate          string               `json:"filterPredicate,omitempty"`
+	Grantees                 []string             `json:"grantees,omitempty"`
+	CreationTime             string               `json:"creationTime,omitempty"`
+	LastModifiedTime         string               `json:"lastModifiedTime,omitempty"`
+}
+
+type BQRowAccessPolicyRef struct {
+	ProjectID string `json:"projectId,omitempty"`
+	DatasetID string `json:"datasetId,omitempty"`
+	TableID   string `json:"tableId,omitempty"`
+	PolicyID  string `json:"policyId,omitempty"`
+}
+
 var (
 	bqDatasets sim.Store[BQDataset]
 	bqTables   sim.Store[BQTable]
 	bqRows     sim.Store[BQRowSet]
 	bqJobs     sim.Store[storedBQJob]
+	bqModels   sim.Store[BQModel]
+	bqRoutines sim.Store[BQRoutine]
+	bqRAPs     sim.Store[BQRowAccessPolicy]
 
 	bqFromRE  = regexp.MustCompile("(?i)\\bfrom\\s+`?([^`\\s]+)`?")
 	bqWhereRE = regexp.MustCompile(`(?i)\bwhere\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*('([^']*)'|"([^"]*)"|[^\s;]+)`)
@@ -148,6 +215,11 @@ func registerBigQuery(srv *sim.Server) {
 	bqTables = sim.MakeStore[BQTable](srv.DB(), "bigquery_tables")
 	bqRows = sim.MakeStore[BQRowSet](srv.DB(), "bigquery_rows")
 	bqJobs = sim.MakeStore[storedBQJob](srv.DB(), "bigquery_jobs")
+	bqModels = sim.MakeStore[BQModel](srv.DB(), "bigquery_models")
+	bqRoutines = sim.MakeStore[BQRoutine](srv.DB(), "bigquery_routines")
+	bqRAPs = sim.MakeStore[BQRowAccessPolicy](srv.DB(), "bigquery_row_access_policies")
+
+	srv.HandleFunc("GET /bigquery/v2/projects", handleBQListProjects)
 
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets", handleBQInsertDataset)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets", handleBQListDatasets)
@@ -155,6 +227,11 @@ func registerBigQuery(srv *sim.Server) {
 	srv.HandleFunc("PATCH /bigquery/v2/projects/{project}/datasets/{dataset}", handleBQPatchDataset)
 	srv.HandleFunc("PUT /bigquery/v2/projects/{project}/datasets/{dataset}", handleBQPatchDataset)
 	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/datasets/{dataset}", handleBQDeleteDataset)
+	// datasets.undelete is a POST colon-verb on the dataset name; the
+	// {datasetVerb} param captures "<dataset>:undelete".
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{datasetVerb}", handleBQDatasetVerb)
+
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/serviceAccount", handleBQGetServiceAccount)
 
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables", handleBQInsertTable)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables", handleBQListTables)
@@ -162,14 +239,45 @@ func registerBigQuery(srv *sim.Server) {
 	srv.HandleFunc("PATCH /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}", handleBQPatchTable)
 	srv.HandleFunc("PUT /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}", handleBQPatchTable)
 	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}", handleBQDeleteTable)
+	// tables IAM verbs are POST colon-verbs on the table name; {tableVerb}
+	// captures "<table>:getIamPolicy" etc.
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{tableVerb}", handleBQTableVerb)
 
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/insertAll", handleBQInsertAll)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/data", handleBQTableDataList)
+
+	// Models — list/get/patch/delete (no insert: models are produced by ML
+	// query jobs, not created directly via REST).
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/models", handleBQListModels)
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}", handleBQGetModel)
+	srv.HandleFunc("PATCH /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}", handleBQPatchModel)
+	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/models/{model}", handleBQDeleteModel)
+
+	// Routines — list/insert/get/update/delete + IAM verbs.
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/routines", handleBQListRoutines)
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/routines", handleBQInsertRoutine)
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}", handleBQGetRoutine)
+	srv.HandleFunc("PUT /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}", handleBQUpdateRoutine)
+	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routine}", handleBQDeleteRoutine)
+	// Routine IAM verbs ("<routine>:getIamPolicy" etc.) fan in on {routineVerb}.
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/routines/{routineVerb}", handleBQRoutineVerb)
+
+	// Row access policies — list/insert(+batchDelete)/get/update/delete + IAM.
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies", handleBQListRAPs)
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies", handleBQInsertRAP)
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies:batchDelete", handleBQBatchDeleteRAP)
+	srv.HandleFunc("GET /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}", handleBQGetRAP)
+	srv.HandleFunc("PUT /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}", handleBQUpdateRAP)
+	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policy}", handleBQDeleteRAP)
+	// Row-access-policy IAM verbs ("<policy>:getIamPolicy"/":testIamPermissions").
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/datasets/{dataset}/tables/{table}/rowAccessPolicies/{policyVerb}", handleBQRAPVerb)
 
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/queries", handleBQQuery)
 	srv.HandleFunc("POST /bigquery/v2/projects/{project}/jobs", handleBQInsertJob)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/jobs", handleBQListJobs)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/jobs/{job}", handleBQGetJob)
+	srv.HandleFunc("POST /bigquery/v2/projects/{project}/jobs/{job}/cancel", handleBQCancelJob)
+	srv.HandleFunc("DELETE /bigquery/v2/projects/{project}/jobs/{job}/delete", handleBQDeleteJob)
 	srv.HandleFunc("GET /bigquery/v2/projects/{project}/queries/{job}", handleBQGetQueryResults)
 }
 
@@ -183,6 +291,18 @@ func bqTableKey(project, dataset, table string) string {
 
 func bqJobKey(project, job string) string {
 	return project + "/" + job
+}
+
+func bqModelKey(project, dataset, model string) string {
+	return project + "/" + dataset + "/" + model
+}
+
+func bqRoutineKey(project, dataset, routine string) string {
+	return project + "/" + dataset + "/" + routine
+}
+
+func bqRAPKey(project, dataset, table, policy string) string {
+	return project + "/" + dataset + "/" + table + "/" + policy
 }
 
 func bqMillisNow() string {
@@ -731,6 +851,473 @@ func bqParseTableRef(defaultProject, ref string) (string, string, string, error)
 		return parts[0], parts[1], parts[2], nil
 	default:
 		return "", "", "", fmt.Errorf("invalid table reference %q", ref)
+	}
+}
+
+// ---- projects.list / projects.getServiceAccount / jobs.delete ----
+
+func handleBQListProjects(w http.ResponseWriter, r *http.Request) {
+	// Enumerate every project referenced by an existing dataset so the list
+	// reflects real persisted state rather than a fabricated catalog.
+	seen := map[string]bool{}
+	for _, d := range bqDatasets.List() {
+		if p := d.DatasetReference.ProjectID; p != "" {
+			seen[p] = true
+		}
+	}
+	projects := make([]string, 0, len(seen))
+	for p := range seen {
+		projects = append(projects, p)
+	}
+	sort.Strings(projects)
+	items := make([]map[string]any, 0, len(projects))
+	for _, p := range projects {
+		items = append(items, map[string]any{
+			"kind":             "bigquery#project",
+			"id":               p,
+			"numericId":        "0",
+			"projectReference": map[string]any{"projectId": p},
+			"friendlyName":     p,
+		})
+	}
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{
+		"kind":       "bigquery#projectList",
+		"etag":       bqEtag(items),
+		"projects":   page,
+		"totalItems": len(items),
+	}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleBQGetServiceAccount(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"kind":  "bigquery#getServiceAccountResponse",
+		"email": fmt.Sprintf("bq-%s@bigquery-encryption.iam.gserviceaccount.com", project),
+	})
+}
+
+func handleBQCancelJob(w http.ResponseWriter, r *http.Request) {
+	project, jobID := sim.PathParam(r, "project"), sim.PathParam(r, "job")
+	job, ok := bqJobs.Get(bqJobKey(project, jobID))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Job %s:%s", project, jobID)
+		return
+	}
+	// Query jobs in the sim complete synchronously, so a cancel request on an
+	// already-DONE job is a no-op that returns the job's terminal state — the
+	// same shape real BigQuery returns when cancelling a finished job.
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"kind": "bigquery#jobCancelResponse",
+		"job":  job.BQJob,
+	})
+}
+
+func handleBQDeleteJob(w http.ResponseWriter, r *http.Request) {
+	project, jobID := sim.PathParam(r, "project"), sim.PathParam(r, "job")
+	if !bqJobs.Delete(bqJobKey(project, jobID)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Job %s:%s", project, jobID)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- datasets.undelete (POST colon-verb) ----
+
+func handleBQDatasetVerb(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	name, verb, _ := strings.Cut(sim.PathParam(r, "datasetVerb"), ":")
+	switch verb {
+	case "undelete":
+		key := bqDatasetKey(project, name)
+		d, ok := bqDatasets.Get(key)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Dataset %s:%s", project, name)
+			return
+		}
+		d = bqApplyDatasetDefaults(r, d, project, name)
+		bqDatasets.Put(key, d)
+		sim.WriteJSON(w, http.StatusOK, d)
+	default:
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown dataset verb: %s", verb)
+	}
+}
+
+// ---- tables IAM verbs ----
+
+func handleBQTableVerb(w http.ResponseWriter, r *http.Request) {
+	project, dataset := sim.PathParam(r, "project"), sim.PathParam(r, "dataset")
+	name, verb, _ := strings.Cut(sim.PathParam(r, "tableVerb"), ":")
+	switch verb {
+	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+		resource := "bigquery:" + bqTableKey(project, dataset, name)
+		handleResourceIAM(w, r, gcpResourceIAMStore(), resource, verb)
+	default:
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown table verb: %s", verb)
+	}
+}
+
+// ---- Models ----
+
+func bqApplyModelDefaults(m BQModel, project, dataset, model string) BQModel {
+	now := bqMillisNow()
+	m.ModelReference.ProjectID = project
+	m.ModelReference.DatasetID = dataset
+	m.ModelReference.ModelID = model
+	if m.Location == "" {
+		m.Location = "US"
+	}
+	if m.CreationTime == "" {
+		m.CreationTime = now
+	}
+	m.LastModifiedTime = now
+	m.Etag = bqEtag(m)
+	return m
+}
+
+func handleBQListModels(w http.ResponseWriter, r *http.Request) {
+	project, dataset := sim.PathParam(r, "project"), sim.PathParam(r, "dataset")
+	if _, ok := bqDatasets.Get(bqDatasetKey(project, dataset)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Dataset %s:%s", project, dataset)
+		return
+	}
+	all := bqModels.Filter(func(m BQModel) bool {
+		return m.ModelReference.ProjectID == project && m.ModelReference.DatasetID == dataset
+	})
+	sort.Slice(all, func(i, j int) bool { return all[i].ModelReference.ModelID < all[j].ModelReference.ModelID })
+	items := make([]any, len(all))
+	for i, m := range all {
+		items[i] = m
+	}
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"models": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleBQGetModel(w http.ResponseWriter, r *http.Request) {
+	project, dataset, model := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "model")
+	m, ok := bqModels.Get(bqModelKey(project, dataset, model))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Model %s:%s.%s", project, dataset, model)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, m)
+}
+
+func handleBQPatchModel(w http.ResponseWriter, r *http.Request) {
+	project, dataset, model := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "model")
+	key := bqModelKey(project, dataset, model)
+	current, ok := bqModels.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Model %s:%s.%s", project, dataset, model)
+		return
+	}
+	var req BQModel
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid model body: %v", err)
+		return
+	}
+	if req.FriendlyName != "" {
+		current.FriendlyName = req.FriendlyName
+	}
+	if req.Description != "" {
+		current.Description = req.Description
+	}
+	if req.ExpirationTime != "" {
+		current.ExpirationTime = req.ExpirationTime
+	}
+	if req.Labels != nil {
+		current.Labels = req.Labels
+	}
+	current = bqApplyModelDefaults(current, project, dataset, model)
+	bqModels.Put(key, current)
+	sim.WriteJSON(w, http.StatusOK, current)
+}
+
+func handleBQDeleteModel(w http.ResponseWriter, r *http.Request) {
+	project, dataset, model := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "model")
+	if !bqModels.Delete(bqModelKey(project, dataset, model)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Model %s:%s.%s", project, dataset, model)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- Routines ----
+
+func bqApplyRoutineDefaults(rt BQRoutine, project, dataset, routine string) BQRoutine {
+	now := bqMillisNow()
+	rt.RoutineReference.ProjectID = project
+	rt.RoutineReference.DatasetID = dataset
+	rt.RoutineReference.RoutineID = routine
+	if rt.CreationTime == "" {
+		rt.CreationTime = now
+	}
+	rt.LastModifiedTime = now
+	rt.Etag = bqEtag(rt)
+	return rt
+}
+
+func handleBQListRoutines(w http.ResponseWriter, r *http.Request) {
+	project, dataset := sim.PathParam(r, "project"), sim.PathParam(r, "dataset")
+	if _, ok := bqDatasets.Get(bqDatasetKey(project, dataset)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Dataset %s:%s", project, dataset)
+		return
+	}
+	all := bqRoutines.Filter(func(rt BQRoutine) bool {
+		return rt.RoutineReference.ProjectID == project && rt.RoutineReference.DatasetID == dataset
+	})
+	sort.Slice(all, func(i, j int) bool { return all[i].RoutineReference.RoutineID < all[j].RoutineReference.RoutineID })
+	items := make([]any, len(all))
+	for i, rt := range all {
+		items[i] = rt
+	}
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"routines": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleBQInsertRoutine(w http.ResponseWriter, r *http.Request) {
+	project, dataset := sim.PathParam(r, "project"), sim.PathParam(r, "dataset")
+	if _, ok := bqDatasets.Get(bqDatasetKey(project, dataset)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Dataset %s:%s", project, dataset)
+		return
+	}
+	var req BQRoutine
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid routine body: %v", err)
+		return
+	}
+	routine := req.RoutineReference.RoutineID
+	if routine == "" {
+		sim.GCPError(w, http.StatusBadRequest, "routineReference.routineId is required", "INVALID_ARGUMENT")
+		return
+	}
+	key := bqRoutineKey(project, dataset, routine)
+	if _, ok := bqRoutines.Get(key); ok {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "Already Exists: Routine %s:%s.%s", project, dataset, routine)
+		return
+	}
+	req = bqApplyRoutineDefaults(req, project, dataset, routine)
+	bqRoutines.Put(key, req)
+	sim.WriteJSON(w, http.StatusOK, req)
+}
+
+func handleBQGetRoutine(w http.ResponseWriter, r *http.Request) {
+	project, dataset, routine := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "routine")
+	rt, ok := bqRoutines.Get(bqRoutineKey(project, dataset, routine))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Routine %s:%s.%s", project, dataset, routine)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, rt)
+}
+
+func handleBQUpdateRoutine(w http.ResponseWriter, r *http.Request) {
+	project, dataset, routine := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "routine")
+	key := bqRoutineKey(project, dataset, routine)
+	current, ok := bqRoutines.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Routine %s:%s.%s", project, dataset, routine)
+		return
+	}
+	var req BQRoutine
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid routine body: %v", err)
+		return
+	}
+	// routines.update is a full PUT replacement; preserve immutable creation
+	// time and re-derive the reference + etag.
+	req.CreationTime = current.CreationTime
+	req = bqApplyRoutineDefaults(req, project, dataset, routine)
+	bqRoutines.Put(key, req)
+	sim.WriteJSON(w, http.StatusOK, req)
+}
+
+func handleBQDeleteRoutine(w http.ResponseWriter, r *http.Request) {
+	project, dataset, routine := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "routine")
+	if !bqRoutines.Delete(bqRoutineKey(project, dataset, routine)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Routine %s:%s.%s", project, dataset, routine)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleBQRoutineVerb(w http.ResponseWriter, r *http.Request) {
+	project, dataset := sim.PathParam(r, "project"), sim.PathParam(r, "dataset")
+	name, verb, _ := strings.Cut(sim.PathParam(r, "routineVerb"), ":")
+	switch verb {
+	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+		resource := "bigquery:" + bqRoutineKey(project, dataset, name)
+		handleResourceIAM(w, r, gcpResourceIAMStore(), resource, verb)
+	default:
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown routine verb: %s", verb)
+	}
+}
+
+// ---- Row access policies ----
+
+func bqApplyRAPDefaults(rap BQRowAccessPolicy, project, dataset, table, policy string) BQRowAccessPolicy {
+	now := bqMillisNow()
+	rap.RowAccessPolicyReference.ProjectID = project
+	rap.RowAccessPolicyReference.DatasetID = dataset
+	rap.RowAccessPolicyReference.TableID = table
+	rap.RowAccessPolicyReference.PolicyID = policy
+	if rap.CreationTime == "" {
+		rap.CreationTime = now
+	}
+	rap.LastModifiedTime = now
+	rap.Etag = bqEtag(rap)
+	return rap
+}
+
+func handleBQListRAPs(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table")
+	if _, ok := bqTables.Get(bqTableKey(project, dataset, table)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Table %s:%s.%s", project, dataset, table)
+		return
+	}
+	all := bqRAPs.Filter(func(rap BQRowAccessPolicy) bool {
+		ref := rap.RowAccessPolicyReference
+		return ref.ProjectID == project && ref.DatasetID == dataset && ref.TableID == table
+	})
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].RowAccessPolicyReference.PolicyID < all[j].RowAccessPolicyReference.PolicyID
+	})
+	items := make([]any, len(all))
+	for i, rap := range all {
+		items[i] = rap
+	}
+	page, next, ok := paginateListCompute(w, r, items)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"rowAccessPolicies": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleBQInsertRAP(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table")
+	if _, ok := bqTables.Get(bqTableKey(project, dataset, table)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Table %s:%s.%s", project, dataset, table)
+		return
+	}
+	var req BQRowAccessPolicy
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid row access policy body: %v", err)
+		return
+	}
+	policy := req.RowAccessPolicyReference.PolicyID
+	if policy == "" {
+		sim.GCPError(w, http.StatusBadRequest, "rowAccessPolicyReference.policyId is required", "INVALID_ARGUMENT")
+		return
+	}
+	key := bqRAPKey(project, dataset, table, policy)
+	if _, ok := bqRAPs.Get(key); ok {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "Already Exists: Row access policy %s", policy)
+		return
+	}
+	req = bqApplyRAPDefaults(req, project, dataset, table, policy)
+	bqRAPs.Put(key, req)
+	sim.WriteJSON(w, http.StatusOK, req)
+}
+
+func handleBQGetRAP(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table, policy := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table"), sim.PathParam(r, "policy")
+	rap, ok := bqRAPs.Get(bqRAPKey(project, dataset, table, policy))
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Row access policy %s", policy)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, rap)
+}
+
+func handleBQUpdateRAP(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table, policy := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table"), sim.PathParam(r, "policy")
+	key := bqRAPKey(project, dataset, table, policy)
+	current, ok := bqRAPs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Row access policy %s", policy)
+		return
+	}
+	var req BQRowAccessPolicy
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid row access policy body: %v", err)
+		return
+	}
+	req.CreationTime = current.CreationTime
+	req = bqApplyRAPDefaults(req, project, dataset, table, policy)
+	bqRAPs.Put(key, req)
+	sim.WriteJSON(w, http.StatusOK, req)
+}
+
+func handleBQDeleteRAP(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table, policy := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table"), sim.PathParam(r, "policy")
+	if !bqRAPs.Delete(bqRAPKey(project, dataset, table, policy)) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Row access policy %s", policy)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleBQBatchDeleteRAP(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table")
+	if _, ok := bqTables.Get(bqTableKey(project, dataset, table)); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Table %s:%s.%s", project, dataset, table)
+		return
+	}
+	var req struct {
+		PolicyIds []string `json:"policyIds"`
+		Force     bool     `json:"force"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid batchDelete body: %v", err)
+		return
+	}
+	for _, policy := range req.PolicyIds {
+		key := bqRAPKey(project, dataset, table, policy)
+		if !bqRAPs.Delete(key) && !req.Force {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Not found: Row access policy %s", policy)
+			return
+		}
+	}
+	// batchDelete returns an empty body (response: null in Discovery).
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func handleBQRAPVerb(w http.ResponseWriter, r *http.Request) {
+	project, dataset, table := sim.PathParam(r, "project"), sim.PathParam(r, "dataset"), sim.PathParam(r, "table")
+	name, verb, _ := strings.Cut(sim.PathParam(r, "policyVerb"), ":")
+	switch verb {
+	// Row access policies expose only getIamPolicy + testIamPermissions
+	// (no setIamPolicy) per the Discovery document.
+	case "getIamPolicy", "testIamPermissions":
+		resource := "bigquery:" + bqRAPKey(project, dataset, table, name)
+		handleResourceIAM(w, r, gcpResourceIAMStore(), resource, verb)
+	default:
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "Unknown row access policy verb: %s", verb)
 	}
 }
 

@@ -87,397 +87,483 @@ func registerSecretManager(srv *sim.Server) {
 	smSecretPayloads = sim.MakeStore[smPayloadRecord](srv.DB(), "sm_secret_payloads")
 	smVersionSeq = sim.MakeStore[smSeqRecord](srv.DB(), "sm_version_seq")
 
-	// CreateSecret: POST /v1/projects/{project}/secrets?secretId=X
-	srv.HandleFunc("POST /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		secretID := r.URL.Query().Get("secretId")
-		if secretID == "" {
-			sim.GCPError(w, http.StatusBadRequest, "secretId query parameter is required", "INVALID_ARGUMENT")
-			return
-		}
+	// Global secret surface: secrets live directly under the project.
+	registerSecretManagerSecretRoutes(srv, "/v1/projects/{project}/secrets", smSecretParentGlobal)
+	// Regional secret surface: secrets live under a location. The same
+	// stores back both surfaces, keyed by the full (location-qualified)
+	// resource name, so regional and global secrets never collide.
+	registerSecretManagerSecretRoutes(srv, "/v1/projects/{project}/locations/{location}/secrets", smSecretParentRegional)
+}
 
-		var req struct {
-			Labels         map[string]string `json:"labels,omitempty"`
-			Annotations    map[string]string `json:"annotations,omitempty"`
-			VersionAliases map[string]string `json:"versionAliases,omitempty"`
-			Ttl            string            `json:"ttl,omitempty"`
-			ExpireTime     string            `json:"expireTime,omitempty"`
-			Replication    map[string]any    `json:"replication,omitempty"`
-			Rotation       json.RawMessage   `json:"rotation,omitempty"`
-			Topics         json.RawMessage   `json:"topics,omitempty"`
-		}
-		if err := sim.ReadJSON(r, &req); err != nil {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-			return
-		}
+// smSecretParentGlobal builds the `projects/{p}/secrets` parent for a
+// request against the global secret surface.
+func smSecretParentGlobal(r *http.Request) string {
+	return fmt.Sprintf("projects/%s/secrets", sim.PathParam(r, "project"))
+}
 
-		name := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
-		if _, exists := smSecrets.Get(name); exists {
-			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "secret %s already exists", secretID)
-			return
-		}
+// smSecretParentRegional builds the `projects/{p}/locations/{loc}/secrets`
+// parent for a request against the regional secret surface.
+func smSecretParentRegional(r *http.Request) string {
+	return fmt.Sprintf("projects/%s/locations/%s/secrets",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+}
 
-		secret := Secret{
-			Name:           name,
-			CreateTime:     time.Now().UTC().Format(time.RFC3339),
-			Labels:         req.Labels,
-			Annotations:    req.Annotations,
-			VersionAliases: req.VersionAliases,
-			Ttl:            req.Ttl,
-			ExpireTime:     req.ExpireTime,
-			Replication:    req.Replication,
-			Rotation:       req.Rotation,
-			Topics:         req.Topics,
-		}
-		smSecrets.Put(name, secret)
-		smVersionSeq.Put(name, smSeqRecord{Next: 0})
-		sim.WriteJSON(w, http.StatusOK, secret)
+// registerSecretManagerSecretRoutes mounts the full secrets + versions +
+// IAM surface under the given mux prefix. The global and regional surfaces
+// are identical except for the parent path, so both register through here;
+// parentFor derives the `…/secrets` resource-name parent from the request.
+func registerSecretManagerSecretRoutes(srv *sim.Server, prefix string, parentFor func(*http.Request) string) {
+	// CreateSecret: POST {prefix}?secretId=X
+	srv.HandleFunc("POST "+prefix, func(w http.ResponseWriter, r *http.Request) {
+		secretManagerCreateSecret(w, r, parentFor(r))
 	})
 
-	// GetSecret: GET /v1/projects/{project}/secrets/{secret}
-	// ListSecrets: GET /v1/projects/{project}/secrets
-	// Registered explicitly because the global GCS catch-all at the
-	// same path prefix used to swallow this request and return a
-	// GCS-shaped 404 with `bucket "v1"` error message.
-	srv.HandleFunc("GET /v1/projects/{project}/secrets", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		prefix := fmt.Sprintf("projects/%s/secrets/", project)
-		var all []Secret
-		for _, s := range smSecrets.List() {
-			if strings.HasPrefix(s.Name, prefix) {
-				all = append(all, s)
-			}
-		}
-		if all == nil {
-			all = []Secret{}
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
-		// Honor the `filter` query param (e.g. labels.env=prod) the Secret
-		// Manager ListSecrets API supports.
-		all = gcpApplyListParams(all, r)
-		page, next, ok := paginateList(w, r, all)
-		if !ok {
-			return
-		}
-		resp := map[string]any{"secrets": page, "totalSize": len(all)}
-		if next != "" {
-			resp["nextPageToken"] = next
-		}
-		sim.WriteJSON(w, http.StatusOK, resp)
+	// ListSecrets: GET {prefix}
+	srv.HandleFunc("GET "+prefix, func(w http.ResponseWriter, r *http.Request) {
+		secretManagerListSecrets(w, r, parentFor(r))
 	})
 
-	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
-		name := fmt.Sprintf("projects/%s/secrets/%s",
-			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
-		secret, ok := smSecrets.Get(name)
-		if !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
-			return
-		}
-		sim.WriteJSON(w, http.StatusOK, secret)
+	// GetSecret + GetIamPolicy share a single GET handler on {secretAction}.
+	// GetSecret is plain "{secret}"; getIamPolicy arrives as the colon-verb
+	// "{secret}:getIamPolicy" — Go's ServeMux can't spell `{secret}:verb` as
+	// a separate pattern, and it would collide with this one, so the handler
+	// fans in on the optional colon suffix.
+	srv.HandleFunc("GET "+prefix+"/{secretAction}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerSecretGetAction(w, r, parentFor(r))
 	})
 
-	// UpdateSecret: PATCH /v1/projects/{project}/secrets/{secret}?updateMask=labels
-	srv.HandleFunc("PATCH /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
-		name := fmt.Sprintf("projects/%s/secrets/%s",
-			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
-		secret, ok := smSecrets.Get(name)
-		if !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
-			return
-		}
-
-		updateMask := strings.TrimSpace(r.URL.Query().Get("updateMask"))
-		if updateMask == "" {
-			sim.GCPError(w, http.StatusBadRequest, "updateMask query parameter is required", "INVALID_ARGUMENT")
-			return
-		}
-
-		var req struct {
-			Labels      map[string]string `json:"labels"`
-			Annotations map[string]string `json:"annotations"`
-			Topics      json.RawMessage   `json:"topics"`
-			Rotation    json.RawMessage   `json:"rotation"`
-		}
-		if err := sim.ReadJSON(r, &req); err != nil {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-			return
-		}
-
-		for _, field := range strings.Split(updateMask, ",") {
-			switch strings.TrimSpace(field) {
-			case "labels":
-				secret.Labels = copyLabels(req.Labels)
-			case "annotations":
-				secret.Annotations = copyLabels(req.Annotations)
-			case "topics":
-				secret.Topics = req.Topics
-			case "rotation":
-				secret.Rotation = req.Rotation
-			case "":
-			default:
-				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported updateMask field %q", field)
-				return
-			}
-		}
-		smSecrets.Put(name, secret)
-		sim.WriteJSON(w, http.StatusOK, secret)
+	// UpdateSecret: PATCH {prefix}/{secret}?updateMask=labels
+	srv.HandleFunc("PATCH "+prefix+"/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerPatchSecret(w, r, parentFor(r))
 	})
 
-	// DeleteSecret: DELETE /v1/projects/{project}/secrets/{secret}
-	srv.HandleFunc("DELETE /v1/projects/{project}/secrets/{secret}", func(w http.ResponseWriter, r *http.Request) {
-		name := fmt.Sprintf("projects/%s/secrets/%s",
-			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
-		if !smSecrets.Delete(name) {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
-			return
-		}
-
-		smVersionSeq.Delete(name)
-		prefix := name + "/versions/"
-		for _, v := range smSecretVersions.List() {
-			if strings.HasPrefix(v.Name, prefix) {
-				smSecretVersions.Delete(v.Name)
-				smSecretPayloads.Delete(v.Name)
-			}
-		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	// DeleteSecret: DELETE {prefix}/{secret}
+	srv.HandleFunc("DELETE "+prefix+"/{secret}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerDeleteSecret(w, r, parentFor(r))
 	})
 
-	// AddSecretVersion: POST /v1/projects/{project}/secrets/{secret}:addVersion.
-	// Go's ServeMux doesn't allow `{wild}:suffix` — register a generic
-	// POST /secrets/{secretAction} handler and parse the colon suffix.
-	srv.HandleFunc("POST /v1/projects/{project}/secrets/{secretAction}", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		secretAction := sim.PathParam(r, "secretAction")
-		secretID, action, found := strings.Cut(secretAction, ":")
-		if !found || action != "addVersion" {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
-			return
-		}
-		secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
-
-		if _, ok := smSecrets.Get(secretName); !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
-			return
-		}
-
-		var req struct {
-			Payload struct {
-				Data       string `json:"data"` // base64-encoded
-				DataCrc32c *int64 `json:"dataCrc32c,string,omitempty"`
-			} `json:"payload"`
-		}
-		if err := sim.ReadJSON(r, &req); err != nil {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
-			return
-		}
-		raw, err := base64.StdEncoding.DecodeString(req.Payload.Data)
-		if err != nil {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "payload.data must be base64: %v", err)
-			return
-		}
-		checksum := int64(crc32.Checksum(raw, smCRC32CTable))
-		if req.Payload.DataCrc32c != nil && *req.Payload.DataCrc32c != checksum {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
-				"payload.dataCrc32c mismatch: got %d, want %d", *req.Payload.DataCrc32c, checksum)
-			return
-		}
-
-		// Version IDs are monotonically increasing. Reserve the next ID
-		// atomically by bumping the per-secret counter under the store write
-		// lock, so concurrent AddSecretVersion calls never collide on an ID.
-		var assigned int
-		if !smVersionSeq.Update(secretName, func(s *smSeqRecord) {
-			s.Next++
-			assigned = s.Next
-		}) {
-			// Counter absent (secret created before the counter existed): seed
-			// it from the current version count, then reserve the next ID.
-			n := 0
-			for _, v := range smSecretVersions.List() {
-				if strings.HasPrefix(v.Name, secretName+"/versions/") {
-					n++
-				}
-			}
-			assigned = n + 1
-			smVersionSeq.Put(secretName, smSeqRecord{Next: assigned})
-		}
-		versionID := fmt.Sprintf("%d", assigned)
-		versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
-		ver := SecretVersion{
-			Name:                           versionName,
-			CreateTime:                     time.Now().UTC().Format(time.RFC3339),
-			State:                          "ENABLED",
-			ClientSpecifiedPayloadChecksum: req.Payload.DataCrc32c != nil,
-		}
-		smSecretVersions.Put(versionName, ver)
-		smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw, DataCrc32c: checksum})
-		sim.WriteJSON(w, http.StatusOK, ver)
+	// AddVersion / SetIamPolicy / TestIamPermissions:
+	//   POST {prefix}/{secretAction} where secretAction is "{secret}:verb".
+	srv.HandleFunc("POST "+prefix+"/{secretAction}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerSecretPostAction(w, r, parentFor(r))
 	})
 
-	// ListSecretVersions: GET /v1/projects/{project}/secrets/{secret}/versions
-	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}/versions", func(w http.ResponseWriter, r *http.Request) {
-		secretName := fmt.Sprintf("projects/%s/secrets/%s",
-			sim.PathParam(r, "project"), sim.PathParam(r, "secret"))
-		if _, ok := smSecrets.Get(secretName); !ok {
-			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
-			return
-		}
-		if filter := strings.TrimSpace(r.URL.Query().Get("filter")); filter != "" {
-			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported filter %q", filter)
-			return
-		}
-
-		prefix := secretName + "/versions/"
-		var versions []SecretVersion
-		for _, v := range smSecretVersions.List() {
-			if strings.HasPrefix(v.Name, prefix) {
-				versions = append(versions, v)
-			}
-		}
-		sort.Slice(versions, func(i, j int) bool {
-			iv, iok := secretVersionNumber(versions[i].Name, prefix)
-			jv, jok := secretVersionNumber(versions[j].Name, prefix)
-			if iok && jok && iv != jv {
-				return iv > jv
-			}
-			if versions[i].CreateTime != versions[j].CreateTime {
-				return versions[i].CreateTime > versions[j].CreateTime
-			}
-			return versions[i].Name > versions[j].Name
-		})
-
-		start, pageSize, ok := secretManagerPagination(w, r, len(versions))
-		if !ok {
-			return
-		}
-		end := len(versions)
-		if pageSize > 0 && start+pageSize < end {
-			end = start + pageSize
-		}
-		page := versions[start:end]
-		if page == nil {
-			page = []SecretVersion{}
-		}
-		resp := map[string]any{
-			"versions":  page,
-			"totalSize": len(versions),
-		}
-		if end < len(versions) {
-			resp["nextPageToken"] = strconv.Itoa(end)
-		}
-		sim.WriteJSON(w, http.StatusOK, resp)
+	// ListSecretVersions: GET {prefix}/{secret}/versions
+	srv.HandleFunc("GET "+prefix+"/{secret}/versions", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerListVersions(w, r, parentFor(r))
 	})
 
-	// AccessSecretVersion: GET /v1/projects/{project}/secrets/{secret}/versions/{version}:access.
-	// Same Go mux workaround as AddSecretVersion.
-	srv.HandleFunc("GET /v1/projects/{project}/secrets/{secret}/versions/{versionAction}",
-		func(w http.ResponseWriter, r *http.Request) {
-			project := sim.PathParam(r, "project")
-			secretID := sim.PathParam(r, "secret")
-			versionAction := sim.PathParam(r, "versionAction")
-			versionID, action, found := strings.Cut(versionAction, ":")
-			if !found {
-				// Plain GetSecretVersion (no `:action` suffix): return the
-				// version metadata. tf-google reads back the version after
-				// create to populate the resource state.
-				versionID = versionAction
-				if versionID == "latest" {
-					resolved, ok := resolveLatestVersionID(project, secretID)
-					if !ok {
-						sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
-							"no enabled versions for secret projects/%s/secrets/%s", project, secretID)
-						return
-					}
-					versionID = resolved
-				}
-				versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
-				ver, ok := smSecretVersions.Get(versionName)
-				if !ok {
-					sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
-					return
-				}
-				sim.WriteJSON(w, http.StatusOK, ver)
-				return
-			}
-			if action != "access" {
-				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
-				return
-			}
-			payload, resolvedID, err := accessSecretPayloadResolved(project, secretID, versionID)
-			if err != nil {
-				if errors.Is(err, errSecretVersionNotEnabled) {
-					sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "%s", err.Error())
-					return
-				}
-				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "%s", err.Error())
-				return
-			}
-			// Real GCP resolves `latest` to the concrete version
-			// number in the response `name` so clients can pin
-			// downstream calls, detect rotation, and log the
-			// exact version that served a request.
-			sim.WriteJSON(w, http.StatusOK, map[string]any{
-				"name": fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, resolvedID),
-				"payload": map[string]string{
-					"data":       base64.StdEncoding.EncodeToString(payload.Data),
-					"dataCrc32c": strconv.FormatInt(payload.DataCrc32c, 10),
-				},
-			})
-		})
+	// GetSecretVersion / AccessSecretVersion:
+	//   GET {prefix}/{secret}/versions/{versionAction}
+	srv.HandleFunc("GET "+prefix+"/{secret}/versions/{versionAction}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerVersionGetAction(w, r, parentFor(r))
+	})
 
 	// Enable / Disable / Destroy secret versions:
-	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:enable
-	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:disable
-	//   POST /v1/projects/{project}/secrets/{secret}/versions/{version}:destroy
-	// The terraform-provider-google secret_version resource POSTs :enable
-	// after creating a version (versions default to ENABLED on create; the
-	// explicit enable is a no-op but the provider still expects 200).
-	srv.HandleFunc("POST /v1/projects/{project}/secrets/{secret}/versions/{versionAction}",
-		func(w http.ResponseWriter, r *http.Request) {
-			project := sim.PathParam(r, "project")
-			secretID := sim.PathParam(r, "secret")
-			versionAction := sim.PathParam(r, "versionAction")
-			versionID, action, found := strings.Cut(versionAction, ":")
-			if !found {
-				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "missing :action suffix on version %q", versionAction)
-				return
+	//   POST {prefix}/{secret}/versions/{versionAction}
+	srv.HandleFunc("POST "+prefix+"/{secret}/versions/{versionAction}", func(w http.ResponseWriter, r *http.Request) {
+		secretManagerVersionPostAction(w, r, parentFor(r))
+	})
+}
+
+func secretManagerCreateSecret(w http.ResponseWriter, r *http.Request, parent string) {
+	secretID := r.URL.Query().Get("secretId")
+	if secretID == "" {
+		sim.GCPError(w, http.StatusBadRequest, "secretId query parameter is required", "INVALID_ARGUMENT")
+		return
+	}
+
+	var req struct {
+		Labels         map[string]string `json:"labels,omitempty"`
+		Annotations    map[string]string `json:"annotations,omitempty"`
+		VersionAliases map[string]string `json:"versionAliases,omitempty"`
+		Ttl            string            `json:"ttl,omitempty"`
+		ExpireTime     string            `json:"expireTime,omitempty"`
+		Replication    map[string]any    `json:"replication,omitempty"`
+		Rotation       json.RawMessage   `json:"rotation,omitempty"`
+		Topics         json.RawMessage   `json:"topics,omitempty"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+
+	name := parent + "/" + secretID
+	if _, exists := smSecrets.Get(name); exists {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "secret %s already exists", secretID)
+		return
+	}
+
+	secret := Secret{
+		Name:           name,
+		CreateTime:     time.Now().UTC().Format(time.RFC3339),
+		Labels:         req.Labels,
+		Annotations:    req.Annotations,
+		VersionAliases: req.VersionAliases,
+		Ttl:            req.Ttl,
+		ExpireTime:     req.ExpireTime,
+		Replication:    req.Replication,
+		Rotation:       req.Rotation,
+		Topics:         req.Topics,
+	}
+	smSecrets.Put(name, secret)
+	smVersionSeq.Put(name, smSeqRecord{Next: 0})
+	sim.WriteJSON(w, http.StatusOK, secret)
+}
+
+// ListSecrets is registered explicitly because the global GCS catch-all at
+// the same path prefix used to swallow this request and return a GCS-shaped
+// 404 with `bucket "v1"` error message.
+func secretManagerListSecrets(w http.ResponseWriter, r *http.Request, parent string) {
+	prefix := parent + "/"
+	var all []Secret
+	for _, s := range smSecrets.List() {
+		if strings.HasPrefix(s.Name, prefix) {
+			all = append(all, s)
+		}
+	}
+	if all == nil {
+		all = []Secret{}
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+	// Honor the `filter` query param (e.g. labels.env=prod) the Secret
+	// Manager ListSecrets API supports.
+	all = gcpApplyListParams(all, r)
+	page, next, ok := paginateList(w, r, all)
+	if !ok {
+		return
+	}
+	resp := map[string]any{"secrets": page, "totalSize": len(all)}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func secretManagerGetSecret(w http.ResponseWriter, name string) {
+	secret, ok := smSecrets.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, secret)
+}
+
+func secretManagerPatchSecret(w http.ResponseWriter, r *http.Request, parent string) {
+	name := parent + "/" + sim.PathParam(r, "secret")
+	secret, ok := smSecrets.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
+		return
+	}
+
+	updateMask := strings.TrimSpace(r.URL.Query().Get("updateMask"))
+	if updateMask == "" {
+		sim.GCPError(w, http.StatusBadRequest, "updateMask query parameter is required", "INVALID_ARGUMENT")
+		return
+	}
+
+	var req struct {
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+		Topics      json.RawMessage   `json:"topics"`
+		Rotation    json.RawMessage   `json:"rotation"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+
+	for _, field := range strings.Split(updateMask, ",") {
+		switch strings.TrimSpace(field) {
+		case "labels":
+			secret.Labels = copyLabels(req.Labels)
+		case "annotations":
+			secret.Annotations = copyLabels(req.Annotations)
+		case "topics":
+			secret.Topics = req.Topics
+		case "rotation":
+			secret.Rotation = req.Rotation
+		case "":
+		default:
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported updateMask field %q", field)
+			return
+		}
+	}
+	smSecrets.Put(name, secret)
+	sim.WriteJSON(w, http.StatusOK, secret)
+}
+
+func secretManagerDeleteSecret(w http.ResponseWriter, r *http.Request, parent string) {
+	name := parent + "/" + sim.PathParam(r, "secret")
+	if !smSecrets.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", name)
+		return
+	}
+
+	smVersionSeq.Delete(name)
+	gcpResourceIAMStore().Delete(name)
+	prefix := name + "/versions/"
+	for _, v := range smSecretVersions.List() {
+		if strings.HasPrefix(v.Name, prefix) {
+			smSecretVersions.Delete(v.Name)
+			smSecretPayloads.Delete(v.Name)
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// secretManagerSecretGetAction serves GetSecret (plain "{secret}") and the
+// one GET colon-verb Discovery defines on a secret: `:getIamPolicy`.
+func secretManagerSecretGetAction(w http.ResponseWriter, r *http.Request, parent string) {
+	secretAction := sim.PathParam(r, "secretAction")
+	secretID, action, found := strings.Cut(secretAction, ":")
+	if !found {
+		// Plain GetSecret (no `:action` suffix).
+		secretManagerGetSecret(w, parent+"/"+secretAction)
+		return
+	}
+	if action != "getIamPolicy" {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
+		return
+	}
+	secretName := parent + "/" + secretID
+	if _, ok := smSecrets.Get(secretName); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
+		return
+	}
+	handleResourceIAM(w, r, gcpResourceIAMStore(), secretName, "getIamPolicy")
+}
+
+// secretManagerSecretPostAction fans in the POST colon-verbs on a secret
+// resource: `:addVersion`, `:setIamPolicy`, `:testIamPermissions`.
+func secretManagerSecretPostAction(w http.ResponseWriter, r *http.Request, parent string) {
+	secretAction := sim.PathParam(r, "secretAction")
+	secretID, action, found := strings.Cut(secretAction, ":")
+	if !found {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
+		return
+	}
+	secretName := parent + "/" + secretID
+	if _, ok := smSecrets.Get(secretName); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
+		return
+	}
+	switch action {
+	case "addVersion":
+		secretManagerAddVersion(w, r, secretName)
+	case "setIamPolicy", "testIamPermissions":
+		handleResourceIAM(w, r, gcpResourceIAMStore(), secretName, action)
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown secret action %q", secretAction)
+	}
+}
+
+func secretManagerAddVersion(w http.ResponseWriter, r *http.Request, secretName string) {
+	var req struct {
+		Payload struct {
+			Data       string `json:"data"` // base64-encoded
+			DataCrc32c *int64 `json:"dataCrc32c,string,omitempty"`
+		} `json:"payload"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(req.Payload.Data)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "payload.data must be base64: %v", err)
+		return
+	}
+	checksum := int64(crc32.Checksum(raw, smCRC32CTable))
+	if req.Payload.DataCrc32c != nil && *req.Payload.DataCrc32c != checksum {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
+			"payload.dataCrc32c mismatch: got %d, want %d", *req.Payload.DataCrc32c, checksum)
+		return
+	}
+
+	// Version IDs are monotonically increasing. Reserve the next ID
+	// atomically by bumping the per-secret counter under the store write
+	// lock, so concurrent AddSecretVersion calls never collide on an ID.
+	var assigned int
+	if !smVersionSeq.Update(secretName, func(s *smSeqRecord) {
+		s.Next++
+		assigned = s.Next
+	}) {
+		// Counter absent (secret created before the counter existed): seed
+		// it from the current version count, then reserve the next ID.
+		n := 0
+		for _, v := range smSecretVersions.List() {
+			if strings.HasPrefix(v.Name, secretName+"/versions/") {
+				n++
 			}
-			// Resolve `latest` alias to the concrete version number
-			// per real GCP behaviour — :enable/:disable/:destroy on
-			// `latest` act on the resolved version, and the response
-			// `name` carries that version (not the literal "latest").
-			if versionID == "latest" {
-				resolved, ok := resolveLatestVersionID(project, secretID)
-				if !ok {
-					sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
-						"no enabled versions for secret projects/%s/secrets/%s", project, secretID)
-					return
-				}
-				versionID = resolved
-			}
-			versionName := fmt.Sprintf("projects/%s/secrets/%s/versions/%s", project, secretID, versionID)
-			ver, ok := smSecretVersions.Get(versionName)
+		}
+		assigned = n + 1
+		smVersionSeq.Put(secretName, smSeqRecord{Next: assigned})
+	}
+	versionID := fmt.Sprintf("%d", assigned)
+	versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
+	ver := SecretVersion{
+		Name:                           versionName,
+		CreateTime:                     time.Now().UTC().Format(time.RFC3339),
+		State:                          "ENABLED",
+		ClientSpecifiedPayloadChecksum: req.Payload.DataCrc32c != nil,
+	}
+	smSecretVersions.Put(versionName, ver)
+	smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw, DataCrc32c: checksum})
+	sim.WriteJSON(w, http.StatusOK, ver)
+}
+
+func secretManagerListVersions(w http.ResponseWriter, r *http.Request, parent string) {
+	secretName := parent + "/" + sim.PathParam(r, "secret")
+	if _, ok := smSecrets.Get(secretName); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret %s not found", secretName)
+		return
+	}
+	if filter := strings.TrimSpace(r.URL.Query().Get("filter")); filter != "" {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "unsupported filter %q", filter)
+		return
+	}
+
+	prefix := secretName + "/versions/"
+	var versions []SecretVersion
+	for _, v := range smSecretVersions.List() {
+		if strings.HasPrefix(v.Name, prefix) {
+			versions = append(versions, v)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		iv, iok := secretVersionNumber(versions[i].Name, prefix)
+		jv, jok := secretVersionNumber(versions[j].Name, prefix)
+		if iok && jok && iv != jv {
+			return iv > jv
+		}
+		if versions[i].CreateTime != versions[j].CreateTime {
+			return versions[i].CreateTime > versions[j].CreateTime
+		}
+		return versions[i].Name > versions[j].Name
+	})
+
+	start, pageSize, ok := secretManagerPagination(w, r, len(versions))
+	if !ok {
+		return
+	}
+	end := len(versions)
+	if pageSize > 0 && start+pageSize < end {
+		end = start + pageSize
+	}
+	page := versions[start:end]
+	if page == nil {
+		page = []SecretVersion{}
+	}
+	resp := map[string]any{
+		"versions":  page,
+		"totalSize": len(versions),
+	}
+	if end < len(versions) {
+		resp["nextPageToken"] = strconv.Itoa(end)
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+// secretManagerVersionGetAction handles GetSecretVersion (no suffix) and
+// AccessSecretVersion (`:access`). Same Go mux workaround as AddVersion.
+func secretManagerVersionGetAction(w http.ResponseWriter, r *http.Request, parent string) {
+	secretName := parent + "/" + sim.PathParam(r, "secret")
+	versionAction := sim.PathParam(r, "versionAction")
+	versionID, action, found := strings.Cut(versionAction, ":")
+	if !found {
+		// Plain GetSecretVersion (no `:action` suffix): return the
+		// version metadata. tf-google reads back the version after
+		// create to populate the resource state.
+		versionID = versionAction
+		if versionID == "latest" {
+			resolved, ok := resolveLatestVersionIDForSecret(secretName)
 			if !ok {
-				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+					"no enabled versions for secret %s", secretName)
 				return
 			}
-			switch action {
-			case "enable":
-				ver.State = "ENABLED"
-			case "disable":
-				ver.State = "DISABLED"
-			case "destroy":
-				ver.State = "DESTROYED"
-				smSecretPayloads.Delete(versionName)
-			default:
-				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
-				return
-			}
-			smSecretVersions.Put(versionName, ver)
-			sim.WriteJSON(w, http.StatusOK, ver)
-		})
+			versionID = resolved
+		}
+		versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
+		ver, ok := smSecretVersions.Get(versionName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, ver)
+		return
+	}
+	if action != "access" {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
+		return
+	}
+	payload, resolvedID, err := accessSecretPayloadResolvedForSecret(secretName, versionID)
+	if err != nil {
+		if errors.Is(err, errSecretVersionNotEnabled) {
+			sim.GCPErrorf(w, http.StatusBadRequest, "FAILED_PRECONDITION", "%s", err.Error())
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "%s", err.Error())
+		return
+	}
+	// Real GCP resolves `latest` to the concrete version number in the
+	// response `name` so clients can pin downstream calls, detect
+	// rotation, and log the exact version that served a request.
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"name": fmt.Sprintf("%s/versions/%s", secretName, resolvedID),
+		"payload": map[string]string{
+			"data":       base64.StdEncoding.EncodeToString(payload.Data),
+			"dataCrc32c": strconv.FormatInt(payload.DataCrc32c, 10),
+		},
+	})
+}
+
+// secretManagerVersionPostAction handles :enable / :disable / :destroy.
+// The terraform-provider-google secret_version resource POSTs :enable after
+// creating a version (versions default to ENABLED on create; the explicit
+// enable is a no-op but the provider still expects 200).
+func secretManagerVersionPostAction(w http.ResponseWriter, r *http.Request, parent string) {
+	secretName := parent + "/" + sim.PathParam(r, "secret")
+	versionAction := sim.PathParam(r, "versionAction")
+	versionID, action, found := strings.Cut(versionAction, ":")
+	if !found {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "missing :action suffix on version %q", versionAction)
+		return
+	}
+	// Resolve `latest` alias to the concrete version number per real GCP
+	// behaviour — :enable/:disable/:destroy on `latest` act on the
+	// resolved version, and the response `name` carries that version.
+	if versionID == "latest" {
+		resolved, ok := resolveLatestVersionIDForSecret(secretName)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"no enabled versions for secret %s", secretName)
+			return
+		}
+		versionID = resolved
+	}
+	versionName := fmt.Sprintf("%s/versions/%s", secretName, versionID)
+	ver, ok := smSecretVersions.Get(versionName)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
+		return
+	}
+	switch action {
+	case "enable":
+		ver.State = "ENABLED"
+	case "disable":
+		ver.State = "DISABLED"
+	case "destroy":
+		ver.State = "DESTROYED"
+		smSecretPayloads.Delete(versionName)
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
+		return
+	}
+	smSecretVersions.Put(versionName, ver)
+	sim.WriteJSON(w, http.StatusOK, ver)
 }
 
 func copyLabels(in map[string]string) map[string]string {
@@ -528,27 +614,28 @@ func secretManagerPagination(w http.ResponseWriter, r *http.Request, total int) 
 // "latest" alias. Exported for cloudbuild.go's build-step secretEnv
 // expansion.
 func accessSecretPayload(project, secretID, version string) ([]byte, error) {
-	payload, _, err := accessSecretPayloadResolved(project, secretID, version)
+	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
+	payload, _, err := accessSecretPayloadResolvedForSecret(secretName, version)
 	if err != nil {
 		return nil, err
 	}
 	return payload.Data, nil
 }
 
-// accessSecretPayloadResolved is like accessSecretPayload but also
-// returns the concrete version identifier that "latest" resolved to.
-// Real GCP Secret Manager echoes the resolved version number in
-// every `:access` response's `name` field — without that, rotation-
-// tracking + audit-logging clients see `"latest"` forever and
+// accessSecretPayloadResolvedForSecret is like accessSecretPayload but
+// keyed by the full secret resource name (so it serves both the global and
+// the regional surface) and also returns the concrete version identifier
+// that "latest" resolved to. Real GCP Secret Manager echoes the resolved
+// version number in every `:access` response's `name` field — without that,
+// rotation-tracking + audit-logging clients see `"latest"` forever and
 // can't detect when the underlying version changes.
-func accessSecretPayloadResolved(project, secretID, version string) (smPayloadRecord, string, error) {
-	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
+func accessSecretPayloadResolvedForSecret(secretName, version string) (smPayloadRecord, string, error) {
 	resolvedID := version
 	if version == "latest" {
 		// "latest" is an alias for the highest version number — regardless of
 		// state. Accessing it when that version is DISABLED/DESTROYED fails
 		// (it does NOT fall back to an older enabled version).
-		id, ok := resolveLatestVersionID(project, secretID)
+		id, ok := resolveLatestVersionIDForSecret(secretName)
 		if !ok {
 			return smPayloadRecord{}, "", fmt.Errorf("no versions for secret %s", secretName)
 		}
@@ -569,11 +656,10 @@ func accessSecretPayloadResolved(project, secretID, version string) (smPayloadRe
 	return pl, resolvedID, nil
 }
 
-// resolveLatestVersionID returns the concrete version number of the
-// "latest" alias for the given secret. Returns "" + false if no
-// versions exist.
-func resolveLatestVersionID(project, secretID string) (string, bool) {
-	secretName := fmt.Sprintf("projects/%s/secrets/%s", project, secretID)
+// resolveLatestVersionIDForSecret returns the concrete version number of the
+// "latest" alias for the given full secret resource name. Returns "" + false
+// if no versions exist.
+func resolveLatestVersionIDForSecret(secretName string) (string, bool) {
 	var latestN int
 	for _, v := range smSecretVersions.List() {
 		if !strings.HasPrefix(v.Name, secretName+"/versions/") {
