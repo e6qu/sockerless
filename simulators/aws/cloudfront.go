@@ -608,6 +608,10 @@ func registerCloudFront(srv *sim.Server) {
 	// projections, and the copy/promote/anycast-update/managed-cert variants.
 	registerCloudFrontExtras3(srv)
 
+	// Connection functions, the CloudFront Functions TestFunction op, tagging
+	// op-name registration, and the create-distribution variant op names.
+	registerCloudFrontComplete(srv)
+
 	// OriginAccessControl
 	mux.HandleFunc("POST /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("CreateOriginAccessControl", "cloudfront.amazonaws.com", nil, handleCFCreateOAC))
 	mux.HandleFunc("GET /"+cfAPIVersion+"/origin-access-control", cloudTrailRecordedREST("ListOriginAccessControls", "cloudfront.amazonaws.com", nil, handleCFListOACs))

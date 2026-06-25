@@ -529,8 +529,13 @@ func registerCloudFrontExtras2(srv *sim.Server) {
 	mux.HandleFunc("POST /"+v+"/get-realtime-log-config", cloudTrailRecordedREST("GetRealtimeLogConfig", "cloudfront.amazonaws.com", nil, handleCFGetRealtimeLog))
 	mux.HandleFunc("POST /"+v+"/delete-realtime-log-config", cloudTrailRecordedREST("DeleteRealtimeLogConfig", "cloudfront.amazonaws.com", nil, handleCFDeleteRealtimeLog))
 
-	// Streaming Distribution
-	mux.HandleFunc("POST /"+v+"/streaming-distribution", cloudTrailRecordedREST("CreateStreamingDistribution", "cloudfront.amazonaws.com", nil, handleCFCreateStreamingDist))
+	// Streaming Distribution — the create path serves both
+	// CreateStreamingDistribution and CreateStreamingDistributionWithTags, which
+	// the SDK both send to POST /streaming-distribution (the WithTags variant
+	// adds a ?WithTags query flag and wraps the config in
+	// StreamingDistributionConfigWithTags). The dynamic dispatcher records the
+	// right op name per request.
+	mux.HandleFunc("POST /"+v+"/streaming-distribution", cloudTrailRecordedRESTDynamic(cfCreateStreamingDistributionOperationName, "cloudfront.amazonaws.com", nil, handleCFCreateStreamingDist))
 	mux.HandleFunc("GET /"+v+"/streaming-distribution", cloudTrailRecordedREST("ListStreamingDistributions", "cloudfront.amazonaws.com", nil, handleCFListStreamingDist))
 	mux.HandleFunc("GET /"+v+"/streaming-distribution/{Id}", cloudTrailRecordedREST("GetStreamingDistribution", "cloudfront.amazonaws.com", streamingRes, handleCFGetStreamingDist))
 	mux.HandleFunc("GET /"+v+"/streaming-distribution/{Id}/config", cloudTrailRecordedREST("GetStreamingDistributionConfig", "cloudfront.amazonaws.com", streamingRes, handleCFGetStreamingDistConfig))
@@ -1026,9 +1031,34 @@ func cfActiveSignersFrom(ts CFStreamingTrustedSigners) CFActiveTrustedSigners {
 	return CFActiveTrustedSigners{Enabled: ts.Enabled, Quantity: ts.Quantity, Items: signers}
 }
 
+// cfCreateStreamingDistributionOperationName disambiguates the create op by the
+// ?WithTags query flag the SDK sets on the shared POST /streaming-distribution
+// path, mirroring real AWS.
+func cfCreateStreamingDistributionOperationName(r *http.Request, _ []byte) string {
+	if r.URL.Query().Has("WithTags") {
+		return "CreateStreamingDistributionWithTags"
+	}
+	return "CreateStreamingDistribution"
+}
+
+// CFStreamingDistributionConfigWithTags is the CreateStreamingDistributionWithTags
+// body wrapper. The SDK emits this whenever the request carries tags.
+type CFStreamingDistributionConfigWithTags struct {
+	XMLName                     xml.Name                      `xml:"StreamingDistributionConfigWithTags"`
+	StreamingDistributionConfig CFStreamingDistributionConfig `xml:"StreamingDistributionConfig"`
+	Tags                        CFTags                        `xml:"Tags"`
+}
+
 func handleCFCreateStreamingDist(w http.ResponseWriter, r *http.Request) {
 	var cfg CFStreamingDistributionConfig
-	if err := xml.NewDecoder(r.Body).Decode(&cfg); err != nil {
+	if r.URL.Query().Has("WithTags") {
+		var wrap CFStreamingDistributionConfigWithTags
+		if err := xml.NewDecoder(r.Body).Decode(&wrap); err != nil {
+			cfWriteError(w, http.StatusBadRequest, "MalformedXML", "Could not decode StreamingDistributionConfigWithTags: "+err.Error())
+			return
+		}
+		cfg = wrap.StreamingDistributionConfig
+	} else if err := xml.NewDecoder(r.Body).Decode(&cfg); err != nil {
 		cfWriteError(w, http.StatusBadRequest, "MalformedXML", "Could not decode StreamingDistributionConfig: "+err.Error())
 		return
 	}

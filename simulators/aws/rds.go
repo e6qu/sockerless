@@ -347,6 +347,7 @@ func registerRDS(r *sim.AWSQueryRouter, srv *sim.Server) {
 
 	registerRDSProxiesRoles(r, srv)
 	registerRDSRestoreExtras(r, srv)
+	registerRDSComplete(r, srv)
 }
 
 func rdsInstanceARN(id string) string {
