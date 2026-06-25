@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -109,12 +110,74 @@ type BuildTrigger struct {
 	Build                 *Build            `json:"build,omitempty"`
 }
 
+// WorkerPool mirrors the Cloud Build v1 WorkerPool resource. Output-only
+// fields (name, uid, state, *Time, etag) are populated by the simulator.
+type WorkerPool struct {
+	Name                string            `json:"name,omitempty"`
+	DisplayName         string            `json:"displayName,omitempty"`
+	UID                 string            `json:"uid,omitempty"`
+	Annotations         map[string]string `json:"annotations,omitempty"`
+	CreateTime          string            `json:"createTime,omitempty"`
+	UpdateTime          string            `json:"updateTime,omitempty"`
+	DeleteTime          string            `json:"deleteTime,omitempty"`
+	State               string            `json:"state,omitempty"`
+	PrivatePoolV1Config map[string]any    `json:"privatePoolV1Config,omitempty"`
+	Etag                string            `json:"etag,omitempty"`
+}
+
+// GitHubEnterpriseConfig mirrors the Cloud Build v1 source-host config.
+type GitHubEnterpriseConfig struct {
+	Name          string         `json:"name,omitempty"`
+	HostURL       string         `json:"hostUrl,omitempty"`
+	AppID         string         `json:"appId,omitempty"`
+	CreateTime    string         `json:"createTime,omitempty"`
+	WebhookKey    string         `json:"webhookKey,omitempty"`
+	PeeredNetwork string         `json:"peeredNetwork,omitempty"`
+	Secrets       map[string]any `json:"secrets,omitempty"`
+	DisplayName   string         `json:"displayName,omitempty"`
+	SslCa         string         `json:"sslCa,omitempty"`
+}
+
+// GitLabConfig mirrors the Cloud Build v1 GitLab source-host config.
+type GitLabConfig struct {
+	Name                  string           `json:"name,omitempty"`
+	Username              string           `json:"username,omitempty"`
+	Secrets               map[string]any   `json:"secrets,omitempty"`
+	CreateTime            string           `json:"createTime,omitempty"`
+	WebhookKey            string           `json:"webhookKey,omitempty"`
+	ConnectedRepositories []map[string]any `json:"connectedRepositories,omitempty"`
+	EnterpriseConfig      map[string]any   `json:"enterpriseConfig,omitempty"`
+}
+
+// BitbucketServerConfig mirrors the Cloud Build v1 Bitbucket Server config.
+type BitbucketServerConfig struct {
+	Name                  string           `json:"name,omitempty"`
+	HostURI               string           `json:"hostUri,omitempty"`
+	Secrets               map[string]any   `json:"secrets,omitempty"`
+	CreateTime            string           `json:"createTime,omitempty"`
+	Username              string           `json:"username,omitempty"`
+	WebhookKey            string           `json:"webhookKey,omitempty"`
+	APIKey                string           `json:"apiKey,omitempty"`
+	ConnectedRepositories []map[string]any `json:"connectedRepositories,omitempty"`
+	PeeredNetwork         string           `json:"peeredNetwork,omitempty"`
+	SslCa                 string           `json:"sslCa,omitempty"`
+	PeeredNetworkIPRange  string           `json:"peeredNetworkIpRange,omitempty"`
+}
+
 var cbBuilds sim.Store[Build]
 var cbTriggers sim.Store[BuildTrigger]
+var cbWorkerPools sim.Store[WorkerPool]
+var cbGHEConfigs sim.Store[GitHubEnterpriseConfig]
+var cbGitLabConfigs sim.Store[GitLabConfig]
+var cbBitbucketConfigs sim.Store[BitbucketServerConfig]
 
 func registerCloudBuild(srv *sim.Server) {
 	cbBuilds = sim.MakeStore[Build](srv.DB(), "cloudbuild_builds")
 	cbTriggers = sim.MakeStore[BuildTrigger](srv.DB(), "cloudbuild_triggers")
+	cbWorkerPools = sim.MakeStore[WorkerPool](srv.DB(), "cloudbuild_worker_pools")
+	cbGHEConfigs = sim.MakeStore[GitHubEnterpriseConfig](srv.DB(), "cloudbuild_ghe_configs")
+	cbGitLabConfigs = sim.MakeStore[GitLabConfig](srv.DB(), "cloudbuild_gitlab_configs")
+	cbBitbucketConfigs = sim.MakeStore[BitbucketServerConfig](srv.DB(), "cloudbuild_bitbucket_configs")
 
 	// CreateBuild: POST /v1/projects/{project}/builds
 	srv.HandleFunc("POST /v1/projects/{project}/builds", func(w http.ResponseWriter, r *http.Request) {
@@ -240,6 +303,527 @@ func registerCloudBuild(srv *sim.Server) {
 		}
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
+
+	// Global GetOperation: GET /v1/operations/{operation}. The cloudbuild
+	// LRO names the simulator mints are `operations/build/{project}/{id}`;
+	// the {+name} template captures the whole tail as a single param.
+	srv.HandleFunc("GET /v1/operations/{operation...}", handleCloudBuildGetOperation)
+
+	// Regional builds (read-only mirror of the global build endpoints).
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/builds", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		builds := cbBuilds.Filter(func(b Build) bool { return b.ProjectID == project })
+		sort.Slice(builds, func(i, j int) bool { return builds[i].CreateTime > builds[j].CreateTime })
+		page, next, ok := paginateList(w, r, builds)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"builds": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/builds/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := sim.PathParam(r, "id")
+		build, ok := cbBuilds.Get(id)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "build %s not found", id)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, build)
+	})
+
+	// getDefaultServiceAccount: GET /v1/projects/{p}/locations/{loc}/defaultServiceAccount.
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/defaultServiceAccount", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":                fmt.Sprintf("projects/%s/locations/%s/defaultServiceAccount", project, location),
+			"serviceAccountEmail": fmt.Sprintf("projects/%s/serviceAccounts/%s@cloudbuild.gserviceaccount.com", project, project),
+		})
+	})
+
+	// Worker pools (regional).
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/workerPools", handleCreateWorkerPool)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/workerPools", handleListWorkerPools)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/workerPools/{pool}", handleGetWorkerPool)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/workerPools/{pool}", handlePatchWorkerPool)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/workerPools/{pool}", handleDeleteWorkerPool)
+
+	// GitHub Enterprise configs — global and regional.
+	srv.HandleFunc("POST /v1/projects/{project}/githubEnterpriseConfigs", handleCreateGHEConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/githubEnterpriseConfigs", handleListGHEConfigs)
+	srv.HandleFunc("GET /v1/projects/{project}/githubEnterpriseConfigs/{config}", handleGetGHEConfig)
+	srv.HandleFunc("PATCH /v1/projects/{project}/githubEnterpriseConfigs/{config}", handlePatchGHEConfig)
+	srv.HandleFunc("DELETE /v1/projects/{project}/githubEnterpriseConfigs/{config}", handleDeleteGHEConfig)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/githubEnterpriseConfigs", handleCreateGHEConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/githubEnterpriseConfigs", handleListGHEConfigs)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/githubEnterpriseConfigs/{config}", handleGetGHEConfig)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/githubEnterpriseConfigs/{config}", handlePatchGHEConfig)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/githubEnterpriseConfigs/{config}", handleDeleteGHEConfig)
+
+	// GitLab configs (regional) + repos list.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gitLabConfigs", handleCreateGitLabConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gitLabConfigs", handleListGitLabConfigs)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gitLabConfigs/{config}", handleGetGitLabConfig)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/gitLabConfigs/{config}", handlePatchGitLabConfig)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/gitLabConfigs/{config}", handleDeleteGitLabConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gitLabConfigs/{config}/repos", handleListGitLabRepos)
+
+	// Bitbucket Server configs (regional) + repos list.
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/bitbucketServerConfigs", handleCreateBitbucketConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/bitbucketServerConfigs", handleListBitbucketConfigs)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/bitbucketServerConfigs/{config}", handleGetBitbucketConfig)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/bitbucketServerConfigs/{config}", handlePatchBitbucketConfig)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/bitbucketServerConfigs/{config}", handleDeleteBitbucketConfig)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/bitbucketServerConfigs/{config}/repos", handleListBitbucketRepos)
+}
+
+// cbDoneOperation returns a done=true LRO carrying a typed resource as its
+// response. Cloud Build's source-host-config and worker-pool mutations are
+// LROs; the Go SDK returns the *Operation without auto-polling, so the
+// simulator resolves it synchronously and embeds the resource so callers can
+// read it straight from operation.response.
+func cbDoneOperation(name, typeURL string, resource any) CloudBuildOperation {
+	resp := map[string]any{"@type": typeURL}
+	if b, err := json.Marshal(resource); err == nil {
+		var raw map[string]any
+		if json.Unmarshal(b, &raw) == nil {
+			for k, v := range raw {
+				resp[k] = v
+			}
+		}
+	}
+	return CloudBuildOperation{Name: name, Done: true, Response: resp}
+}
+
+func handleCloudBuildGetOperation(w http.ResponseWriter, r *http.Request) {
+	name := "operations/" + sim.PathParam(r, "operation")
+	// cloudbuild build LROs are named operations/build/{project}/{id}.
+	parts := strings.Split(name, "/")
+	if len(parts) == 4 && parts[1] == "build" {
+		id := parts[3]
+		build, ok := cbBuilds.Get(id)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation for build %s not found", id)
+			return
+		}
+		op := CloudBuildOperation{
+			Name: name,
+			Done: build.Status == "SUCCESS" || build.Status == "FAILURE" || build.Status == "CANCELLED",
+		}
+		if op.Done {
+			if build.Status == "SUCCESS" {
+				op.Response = map[string]any{"@type": "type.googleapis.com/google.devtools.cloudbuild.v1.Build"}
+				for k, v := range structToMap(build) {
+					op.Response[k] = v
+				}
+			} else {
+				op.Error = &BuildError{Code: 13, Message: build.StatusDetail}
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, op)
+		return
+	}
+	// Other (config / worker-pool) LROs resolve synchronously.
+	sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{Name: name, Done: true})
+}
+
+func cbConfigKey(project, location, kind, id string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/%s/%s", project, location, kind, id)
+}
+
+// ---- Worker pools ----
+
+func handleCreateWorkerPool(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	id := r.URL.Query().Get("workerPoolId")
+	if id == "" {
+		id = generateUUID()
+	}
+	var pool WorkerPool
+	if err := sim.ReadJSON(r, &pool); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid workerPool body: %v", err)
+		return
+	}
+	pool.Name = fmt.Sprintf("projects/%s/locations/%s/workerPools/%s", project, location, id)
+	pool.UID = generateUUID()
+	pool.State = "RUNNING"
+	pool.CreateTime = nowTimestamp()
+	pool.UpdateTime = pool.CreateTime
+	pool.Etag = generateUUID()
+	cbWorkerPools.Put(pool.Name, pool)
+	op := cbDoneOperation(
+		fmt.Sprintf("projects/%s/locations/%s/operations/workerpool-%s", project, location, id),
+		"type.googleapis.com/google.devtools.cloudbuild.v1.WorkerPool", pool)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleGetWorkerPool(w http.ResponseWriter, r *http.Request) {
+	key := fmt.Sprintf("projects/%s/locations/%s/workerPools/%s",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "pool"))
+	pool, ok := cbWorkerPools.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "workerPool %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, pool)
+}
+
+func handleListWorkerPools(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("projects/%s/locations/%s/workerPools/", sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+	pools := cbWorkerPools.Filter(func(p WorkerPool) bool { return strings.HasPrefix(p.Name, prefix) })
+	sort.Slice(pools, func(i, j int) bool { return pools[i].Name < pools[j].Name })
+	page, next, ok := paginateListParam(w, r, pools, "pageSize")
+	if !ok {
+		return
+	}
+	resp := map[string]any{"workerPools": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handlePatchWorkerPool(w http.ResponseWriter, r *http.Request) {
+	key := fmt.Sprintf("projects/%s/locations/%s/workerPools/%s",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "pool"))
+	prior, ok := cbWorkerPools.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "workerPool %s not found", key)
+		return
+	}
+	var update WorkerPool
+	if err := sim.ReadJSON(r, &update); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid workerPool body: %v", err)
+		return
+	}
+	mask := r.URL.Query().Get("updateMask")
+	has := func(p string) bool { return updateMaskHas(mask, p) }
+	if mask == "" || has("displayName") {
+		prior.DisplayName = update.DisplayName
+	}
+	if mask == "" || has("annotations") {
+		prior.Annotations = update.Annotations
+	}
+	if mask == "" || has("privatePoolV1Config") {
+		prior.PrivatePoolV1Config = update.PrivatePoolV1Config
+	}
+	prior.UpdateTime = nowTimestamp()
+	prior.Etag = generateUUID()
+	cbWorkerPools.Put(key, prior)
+	op := cbDoneOperation(
+		fmt.Sprintf("projects/%s/locations/%s/operations/workerpool-%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "pool")),
+		"type.googleapis.com/google.devtools.cloudbuild.v1.WorkerPool", prior)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleDeleteWorkerPool(w http.ResponseWriter, r *http.Request) {
+	key := fmt.Sprintf("projects/%s/locations/%s/workerPools/%s",
+		sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "pool"))
+	if _, ok := cbWorkerPools.Get(key); !ok {
+		if r.URL.Query().Get("allowMissing") == "true" {
+			sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{Name: key, Done: true})
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "workerPool %s not found", key)
+		return
+	}
+	cbWorkerPools.Delete(key)
+	sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{
+		Name: fmt.Sprintf("projects/%s/locations/%s/operations/workerpool-%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "pool")),
+		Done: true,
+	})
+}
+
+// ---- GitHub Enterprise configs ----
+
+func handleCreateGHEConfig(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := buildTriggerLocation(r)
+	id := r.URL.Query().Get("gheConfigId")
+	if id == "" {
+		id = generateUUID()
+	}
+	var cfg GitHubEnterpriseConfig
+	if err := sim.ReadJSON(r, &cfg); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid githubEnterpriseConfig body: %v", err)
+		return
+	}
+	cfg.Name = cbConfigKey(project, location, "githubEnterpriseConfigs", id)
+	cfg.CreateTime = nowTimestamp()
+	cbGHEConfigs.Put(cfg.Name, cfg)
+	op := cbDoneOperation(
+		fmt.Sprintf("projects/%s/locations/%s/operations/ghe-%s", project, location, id),
+		"type.googleapis.com/google.devtools.cloudbuild.v1.GitHubEnterpriseConfig", cfg)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleGetGHEConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), buildTriggerLocation(r), "githubEnterpriseConfigs", sim.PathParam(r, "config"))
+	cfg, ok := cbGHEConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "githubEnterpriseConfig %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func handleListGHEConfigs(w http.ResponseWriter, r *http.Request) {
+	prefix := cbConfigKey(sim.PathParam(r, "project"), buildTriggerLocation(r), "githubEnterpriseConfigs", "")
+	configs := cbGHEConfigs.Filter(func(c GitHubEnterpriseConfig) bool { return strings.HasPrefix(c.Name, prefix) })
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"configs": configs})
+}
+
+func handlePatchGHEConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), buildTriggerLocation(r), "githubEnterpriseConfigs", sim.PathParam(r, "config"))
+	prior, ok := cbGHEConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "githubEnterpriseConfig %s not found", key)
+		return
+	}
+	var update GitHubEnterpriseConfig
+	if err := sim.ReadJSON(r, &update); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid githubEnterpriseConfig body: %v", err)
+		return
+	}
+	mask := r.URL.Query().Get("updateMask")
+	if mask == "" || updateMaskHas(mask, "hostUrl") {
+		prior.HostURL = update.HostURL
+	}
+	if mask == "" || updateMaskHas(mask, "appId") {
+		prior.AppID = update.AppID
+	}
+	if mask == "" || updateMaskHas(mask, "displayName") {
+		prior.DisplayName = update.DisplayName
+	}
+	if mask == "" || updateMaskHas(mask, "peeredNetwork") {
+		prior.PeeredNetwork = update.PeeredNetwork
+	}
+	if mask == "" || updateMaskHas(mask, "secrets") {
+		prior.Secrets = update.Secrets
+	}
+	if mask == "" || updateMaskHas(mask, "sslCa") {
+		prior.SslCa = update.SslCa
+	}
+	cbGHEConfigs.Put(key, prior)
+	op := cbDoneOperation(key, "type.googleapis.com/google.devtools.cloudbuild.v1.GitHubEnterpriseConfig", prior)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleDeleteGHEConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), buildTriggerLocation(r), "githubEnterpriseConfigs", sim.PathParam(r, "config"))
+	cbGHEConfigs.Delete(key)
+	sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{Name: key, Done: true})
+}
+
+// ---- GitLab configs ----
+
+func handleCreateGitLabConfig(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	id := r.URL.Query().Get("gitlabConfigId")
+	if id == "" {
+		id = generateUUID()
+	}
+	var cfg GitLabConfig
+	if err := sim.ReadJSON(r, &cfg); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid gitLabConfig body: %v", err)
+		return
+	}
+	cfg.Name = cbConfigKey(project, location, "gitLabConfigs", id)
+	cfg.CreateTime = nowTimestamp()
+	cbGitLabConfigs.Put(cfg.Name, cfg)
+	op := cbDoneOperation(
+		fmt.Sprintf("projects/%s/locations/%s/operations/gitlab-%s", project, location, id),
+		"type.googleapis.com/google.devtools.cloudbuild.v1.GitLabConfig", cfg)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleGetGitLabConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "gitLabConfigs", sim.PathParam(r, "config"))
+	cfg, ok := cbGitLabConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "gitLabConfig %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func handleListGitLabConfigs(w http.ResponseWriter, r *http.Request) {
+	prefix := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "gitLabConfigs", "")
+	configs := cbGitLabConfigs.Filter(func(c GitLabConfig) bool { return strings.HasPrefix(c.Name, prefix) })
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	page, next, ok := paginateListParam(w, r, configs, "pageSize")
+	if !ok {
+		return
+	}
+	resp := map[string]any{"gitlabConfigs": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handlePatchGitLabConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "gitLabConfigs", sim.PathParam(r, "config"))
+	prior, ok := cbGitLabConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "gitLabConfig %s not found", key)
+		return
+	}
+	var update GitLabConfig
+	if err := sim.ReadJSON(r, &update); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid gitLabConfig body: %v", err)
+		return
+	}
+	mask := r.URL.Query().Get("updateMask")
+	if mask == "" || updateMaskHas(mask, "username") {
+		prior.Username = update.Username
+	}
+	if mask == "" || updateMaskHas(mask, "secrets") {
+		prior.Secrets = update.Secrets
+	}
+	if mask == "" || updateMaskHas(mask, "enterpriseConfig") {
+		prior.EnterpriseConfig = update.EnterpriseConfig
+	}
+	cbGitLabConfigs.Put(key, prior)
+	op := cbDoneOperation(key, "type.googleapis.com/google.devtools.cloudbuild.v1.GitLabConfig", prior)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleDeleteGitLabConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "gitLabConfigs", sim.PathParam(r, "config"))
+	cbGitLabConfigs.Delete(key)
+	sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{Name: key, Done: true})
+}
+
+func handleListGitLabRepos(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "gitLabConfigs", sim.PathParam(r, "config"))
+	if _, ok := cbGitLabConfigs.Get(key); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "gitLabConfig %s not found", key)
+		return
+	}
+	// A freshly created config has no connected repositories to enumerate;
+	// the real API returns the discovered repos, which only exist after a
+	// connection handshake the simulator does not perform.
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"gitlabRepositories": []any{}})
+}
+
+// ---- Bitbucket Server configs ----
+
+func handleCreateBitbucketConfig(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	id := r.URL.Query().Get("bitbucketServerConfigId")
+	if id == "" {
+		id = generateUUID()
+	}
+	var cfg BitbucketServerConfig
+	if err := sim.ReadJSON(r, &cfg); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid bitbucketServerConfig body: %v", err)
+		return
+	}
+	cfg.Name = cbConfigKey(project, location, "bitbucketServerConfigs", id)
+	cfg.CreateTime = nowTimestamp()
+	cbBitbucketConfigs.Put(cfg.Name, cfg)
+	op := cbDoneOperation(
+		fmt.Sprintf("projects/%s/locations/%s/operations/bitbucket-%s", project, location, id),
+		"type.googleapis.com/google.devtools.cloudbuild.v1.BitbucketServerConfig", cfg)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleGetBitbucketConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "bitbucketServerConfigs", sim.PathParam(r, "config"))
+	cfg, ok := cbBitbucketConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bitbucketServerConfig %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func handleListBitbucketConfigs(w http.ResponseWriter, r *http.Request) {
+	prefix := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "bitbucketServerConfigs", "")
+	configs := cbBitbucketConfigs.Filter(func(c BitbucketServerConfig) bool { return strings.HasPrefix(c.Name, prefix) })
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	page, next, ok := paginateListParam(w, r, configs, "pageSize")
+	if !ok {
+		return
+	}
+	resp := map[string]any{"bitbucketServerConfigs": page}
+	if next != "" {
+		resp["nextPageToken"] = next
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handlePatchBitbucketConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "bitbucketServerConfigs", sim.PathParam(r, "config"))
+	prior, ok := cbBitbucketConfigs.Get(key)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bitbucketServerConfig %s not found", key)
+		return
+	}
+	var update BitbucketServerConfig
+	if err := sim.ReadJSON(r, &update); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid bitbucketServerConfig body: %v", err)
+		return
+	}
+	mask := r.URL.Query().Get("updateMask")
+	if mask == "" || updateMaskHas(mask, "hostUri") {
+		prior.HostURI = update.HostURI
+	}
+	if mask == "" || updateMaskHas(mask, "username") {
+		prior.Username = update.Username
+	}
+	if mask == "" || updateMaskHas(mask, "apiKey") {
+		prior.APIKey = update.APIKey
+	}
+	if mask == "" || updateMaskHas(mask, "secrets") {
+		prior.Secrets = update.Secrets
+	}
+	if mask == "" || updateMaskHas(mask, "peeredNetwork") {
+		prior.PeeredNetwork = update.PeeredNetwork
+	}
+	if mask == "" || updateMaskHas(mask, "sslCa") {
+		prior.SslCa = update.SslCa
+	}
+	cbBitbucketConfigs.Put(key, prior)
+	op := cbDoneOperation(key, "type.googleapis.com/google.devtools.cloudbuild.v1.BitbucketServerConfig", prior)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleDeleteBitbucketConfig(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "bitbucketServerConfigs", sim.PathParam(r, "config"))
+	cbBitbucketConfigs.Delete(key)
+	sim.WriteJSON(w, http.StatusOK, CloudBuildOperation{Name: key, Done: true})
+}
+
+func handleListBitbucketRepos(w http.ResponseWriter, r *http.Request) {
+	key := cbConfigKey(sim.PathParam(r, "project"), sim.PathParam(r, "location"), "bitbucketServerConfigs", sim.PathParam(r, "config"))
+	if _, ok := cbBitbucketConfigs.Get(key); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bitbucketServerConfig %s not found", key)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"bitbucketServerRepositories": []any{}})
+}
+
+// updateMaskHas reports whether a comma-separated FieldMask names a field
+// (or one of its sub-paths).
+func updateMaskHas(mask, field string) bool {
+	for _, f := range strings.Split(mask, ",") {
+		f = strings.TrimSpace(f)
+		if f == field || strings.HasPrefix(f, field+".") {
+			return true
+		}
+	}
+	return false
 }
 
 func buildTriggerLocation(r *http.Request) string {

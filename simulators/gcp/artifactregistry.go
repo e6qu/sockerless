@@ -48,6 +48,92 @@ type DockerImage struct {
 	BuildTime  string   `json:"buildTime,omitempty"`
 }
 
+// ARPackage mirrors the artifactregistry-v1 Package schema. Packages are named
+// collections of versions within a repository.
+type ARPackage struct {
+	Name        string            `json:"name"`
+	DisplayName string            `json:"displayName,omitempty"`
+	CreateTime  string            `json:"createTime,omitempty"`
+	UpdateTime  string            `json:"updateTime,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ARVersion mirrors the artifactregistry-v1 Version schema.
+type ARVersion struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	CreateTime  string            `json:"createTime,omitempty"`
+	UpdateTime  string            `json:"updateTime,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ARTag mirrors the artifactregistry-v1 Tag schema. A tag is an alternative
+// name pointing at a version within a package.
+type ARTag struct {
+	Name    string `json:"name"`
+	Version string `json:"version,omitempty"`
+}
+
+// ARFile mirrors the artifactregistry-v1 File schema
+// (GoogleDevtoolsArtifactregistryV1File).
+type ARFile struct {
+	Name        string            `json:"name"`
+	SizeBytes   string            `json:"sizeBytes,omitempty"`
+	Hashes      []ARHash          `json:"hashes,omitempty"`
+	CreateTime  string            `json:"createTime,omitempty"`
+	UpdateTime  string            `json:"updateTime,omitempty"`
+	Owner       string            `json:"owner,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// ARHash mirrors the artifactregistry-v1 Hash schema.
+type ARHash struct {
+	Type  string `json:"type,omitempty"`
+	Value string `json:"value,omitempty"`
+}
+
+// ARRule mirrors the artifactregistry-v1 Rule schema
+// (GoogleDevtoolsArtifactregistryV1Rule).
+type ARRule struct {
+	Name      string          `json:"name"`
+	Action    string          `json:"action,omitempty"`
+	Operation string          `json:"operation,omitempty"`
+	Condition json.RawMessage `json:"condition,omitempty"`
+	PackageID string          `json:"packageId,omitempty"`
+}
+
+// ARAttachment mirrors the artifactregistry-v1 Attachment schema.
+type ARAttachment struct {
+	Name                string            `json:"name"`
+	Target              string            `json:"target,omitempty"`
+	Type                string            `json:"type,omitempty"`
+	AttachmentNamespace string            `json:"attachmentNamespace,omitempty"`
+	Annotations         map[string]string `json:"annotations,omitempty"`
+	CreateTime          string            `json:"createTime,omitempty"`
+	UpdateTime          string            `json:"updateTime,omitempty"`
+	Files               []string          `json:"files,omitempty"`
+	OCIVersionName      string            `json:"ociVersionName,omitempty"`
+}
+
+// ARProjectSettings mirrors the artifactregistry-v1 ProjectSettings schema.
+type ARProjectSettings struct {
+	Name                   string `json:"name"`
+	LegacyRedirectionState string `json:"legacyRedirectionState,omitempty"`
+	PullPercent            int    `json:"pullPercent,omitempty"`
+}
+
+// ARVPCSCConfig mirrors the artifactregistry-v1 VPCSCConfig schema.
+type ARVPCSCConfig struct {
+	Name        string `json:"name"`
+	VPCSCPolicy string `json:"vpcscPolicy,omitempty"`
+}
+
+// ARProjectConfig mirrors the artifactregistry-v1 ProjectConfig schema.
+type ARProjectConfig struct {
+	Name               string          `json:"name"`
+	PlatformLogsConfig json.RawMessage `json:"platformLogsConfig,omitempty"`
+}
+
 // Package-level store for dashboard access.
 var arRepos sim.Store[Repository]
 
@@ -279,8 +365,870 @@ func registerArtifactRegistry(srv *sim.Server) {
 		})
 	})
 
+	// Packages / versions / tags / files / rules / attachments and the
+	// project-scoped singleton configs (the Artifact Registry JSON admin API
+	// beyond repository CRUD + the OCI data plane).
+	registerARSubresources(srv, repos, dockerImages)
+
 	// OCI Distribution data plane — mounted from the shared registry library.
 	reg.Register(srv)
+}
+
+// registerARSubresources mounts the package/version/tag/file/rule/attachment
+// CRUD surface plus the project-scoped projectSettings / vpcscConfig /
+// projectConfig singletons. Long-running mutations (delete package/version,
+// batchDelete, import, upload, attachment create/delete) return a completed
+// Operation exactly as real Artifact Registry does.
+func registerARSubresources(srv *sim.Server, repos sim.Store[Repository], dockerImages sim.Store[DockerImage]) {
+	const (
+		pkgType    = "type.googleapis.com/google.devtools.artifactregistry.v1.Package"
+		verType    = "type.googleapis.com/google.devtools.artifactregistry.v1.Version"
+		fileType   = "type.googleapis.com/google.devtools.artifactregistry.v1.File"
+		attachType = "type.googleapis.com/google.devtools.artifactregistry.v1.Attachment"
+		importType = "type.googleapis.com/google.devtools.artifactregistry.v1.ImportArtifactsResponse"
+	)
+	packages := sim.MakeStore[ARPackage](srv.DB(), "ar_packages")
+	versions := sim.MakeStore[ARVersion](srv.DB(), "ar_versions")
+	tags := sim.MakeStore[ARTag](srv.DB(), "ar_tags")
+	files := sim.MakeStore[ARFile](srv.DB(), "ar_files")
+	rules := sim.MakeStore[ARRule](srv.DB(), "ar_rules")
+	attachments := sim.MakeStore[ARAttachment](srv.DB(), "ar_attachments")
+	projectSettings := sim.MakeStore[ARProjectSettings](srv.DB(), "ar_project_settings")
+	vpcscConfigs := sim.MakeStore[ARVPCSCConfig](srv.DB(), "ar_vpcsc_configs")
+	projectConfigs := sim.MakeStore[ARProjectConfig](srv.DB(), "ar_project_configs")
+
+	repoName := func(r *http.Request) string {
+		return fmt.Sprintf("projects/%s/locations/%s/repositories/%s",
+			sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "repo"))
+	}
+	repoExists := func(w http.ResponseWriter, r *http.Request) (string, bool) {
+		name := repoName(r)
+		if _, ok := repos.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "repository %q not found", name)
+			return "", false
+		}
+		return name, true
+	}
+
+	// ---- Packages ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/packages/"
+		result := packages.Filter(func(p ARPackage) bool { return strings.HasPrefix(p.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARPackage{}
+		}
+		resp := map[string]any{"packages": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg")
+		pkg, ok := packages.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "package %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, pkg)
+	})
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg")
+		pkg, ok := packages.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "package %q not found", name)
+			return
+		}
+		var patch ARPackage
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Annotations != nil {
+			pkg.Annotations = patch.Annotations
+		}
+		pkg.UpdateTime = nowTimestamp()
+		packages.Put(name, pkg)
+		sim.WriteJSON(w, http.StatusOK, pkg)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg")
+		pkg, ok := packages.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "package %q not found", name)
+			return
+		}
+		packages.Delete(name)
+		// Cascade-delete the package's versions and tags.
+		for _, v := range versions.Filter(func(v ARVersion) bool { return strings.HasPrefix(v.Name, name+"/versions/") }) {
+			versions.Delete(v.Name)
+		}
+		for _, t := range tags.Filter(func(t ARTag) bool { return strings.HasPrefix(t.Name, name+"/tags/") }) {
+			tags.Delete(t.Name)
+		}
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), pkg, pkgType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// ---- Versions ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/versions", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/packages/" + sim.PathParam(r, "pkg") + "/versions/"
+		result := versions.Filter(func(v ARVersion) bool { return strings.HasPrefix(v.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARVersion{}
+		}
+		resp := map[string]any{"versions": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/versions/{version}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/versions/" + sim.PathParam(r, "version")
+		v, ok := versions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "version %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/versions/{version}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/versions/" + sim.PathParam(r, "version")
+		v, ok := versions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "version %q not found", name)
+			return
+		}
+		var patch ARVersion
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Annotations != nil {
+			v.Annotations = patch.Annotations
+		}
+		if patch.Description != "" {
+			v.Description = patch.Description
+		}
+		v.UpdateTime = nowTimestamp()
+		versions.Put(name, v)
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/versions/{version}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/versions/" + sim.PathParam(r, "version")
+		v, ok := versions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "version %q not found", name)
+			return
+		}
+		versions.Delete(name)
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), v, verType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/versions:batchDelete", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		var req struct {
+			Names        []string `json:"names"`
+			ValidateOnly bool     `json:"validateOnly"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if !req.ValidateOnly {
+			for _, n := range req.Names {
+				versions.Delete(n)
+			}
+		}
+		_ = repo
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), nil, verType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// ---- Tags ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/tags", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/packages/" + sim.PathParam(r, "pkg") + "/tags/"
+		result := tags.Filter(func(t ARTag) bool { return strings.HasPrefix(t.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARTag{}
+		}
+		resp := map[string]any{"tags": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/tags/{tag}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/tags/" + sim.PathParam(r, "tag")
+		t, ok := tags.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, t)
+	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/tags", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		tagID := r.URL.Query().Get("tagId")
+		if tagID == "" {
+			sim.GCPError(w, http.StatusBadRequest, "tagId query parameter is required", "INVALID_ARGUMENT")
+			return
+		}
+		var t ARTag
+		if err := sim.ReadJSON(r, &t); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		t.Name = repo + "/packages/" + sim.PathParam(r, "pkg") + "/tags/" + tagID
+		tags.Put(t.Name, t)
+		sim.WriteJSON(w, http.StatusOK, t)
+	})
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/tags/{tag}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/tags/" + sim.PathParam(r, "tag")
+		t, ok := tags.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag %q not found", name)
+			return
+		}
+		var patch ARTag
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Version != "" {
+			t.Version = patch.Version
+		}
+		tags.Put(name, t)
+		sim.WriteJSON(w, http.StatusOK, t)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/packages/{pkg}/tags/{tag}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/packages/" + sim.PathParam(r, "pkg") + "/tags/" + sim.PathParam(r, "tag")
+		if _, ok := tags.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag %q not found", name)
+			return
+		}
+		tags.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// ---- Files ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/files", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/files/"
+		result := files.Filter(func(f ARFile) bool { return strings.HasPrefix(f.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARFile{}
+		}
+		resp := map[string]any{"files": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/files/{file}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		fileID := sim.PathParam(r, "file")
+		// The download sub-resource (.../files/{file}:download) shares this
+		// path shape; route it to a DownloadFileResponse.
+		if base, action, ok := strings.Cut(fileID, ":"); ok && action == "download" {
+			name := repo + "/files/" + base
+			if _, ok := files.Get(name); !ok {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "file %q not found", name)
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, map[string]any{})
+			return
+		}
+		name := repo + "/files/" + fileID
+		f, ok := files.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "file %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}/files/{file}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/files/" + sim.PathParam(r, "file")
+		f, ok := files.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "file %q not found", name)
+			return
+		}
+		var patch ARFile
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Annotations != nil {
+			f.Annotations = patch.Annotations
+		}
+		f.UpdateTime = nowTimestamp()
+		files.Put(name, f)
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/files/{file}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/files/" + sim.PathParam(r, "file")
+		f, ok := files.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "file %q not found", name)
+			return
+		}
+		files.Delete(name)
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), f, fileType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// File download (media: rides the /download/v1 prefix; alt=media returns
+	// the file bytes, otherwise a DownloadFileResponse).
+	srv.HandleFunc("GET /download/v1/projects/{project}/locations/{location}/repositories/{repo}/files/{fileAction}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		fileID, action, ok := strings.Cut(sim.PathParam(r, "fileAction"), ":")
+		if !ok || action != "download" {
+			http.NotFound(w, r)
+			return
+		}
+		name := repo + "/files/" + fileID
+		if _, ok := files.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "file %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// File upload (media: rides the /upload/v1 prefix).
+	srv.HandleFunc("POST /upload/v1/projects/{project}/locations/{location}/repositories/{repo}/files:upload", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "read upload body: %v", err)
+			return
+		}
+		fileID := digestBytes(body)
+		f := ARFile{
+			Name:       repo + "/files/" + fileID,
+			SizeBytes:  fmt.Sprintf("%d", len(body)),
+			Hashes:     []ARHash{{Type: "SHA256", Value: fileID}},
+			CreateTime: nowTimestamp(),
+			UpdateTime: nowTimestamp(),
+		}
+		files.Put(f.Name, f)
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), f, fileType)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"operation": lro})
+	})
+
+	// ---- Rules ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/rules", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/rules/"
+		result := rules.Filter(func(ru ARRule) bool { return strings.HasPrefix(ru.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARRule{}
+		}
+		resp := map[string]any{"rules": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/rules/{rule}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/rules/" + sim.PathParam(r, "rule")
+		ru, ok := rules.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "rule %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, ru)
+	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories/{repo}/rules", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		ruleID := r.URL.Query().Get("ruleId")
+		if ruleID == "" {
+			sim.GCPError(w, http.StatusBadRequest, "ruleId query parameter is required", "INVALID_ARGUMENT")
+			return
+		}
+		var ru ARRule
+		if err := sim.ReadJSON(r, &ru); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		ru.Name = repo + "/rules/" + ruleID
+		rules.Put(ru.Name, ru)
+		sim.WriteJSON(w, http.StatusOK, ru)
+	})
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}/rules/{rule}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/rules/" + sim.PathParam(r, "rule")
+		ru, ok := rules.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "rule %q not found", name)
+			return
+		}
+		var patch ARRule
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Action != "" {
+			ru.Action = patch.Action
+		}
+		if patch.Operation != "" {
+			ru.Operation = patch.Operation
+		}
+		if patch.Condition != nil {
+			ru.Condition = patch.Condition
+		}
+		if patch.PackageID != "" {
+			ru.PackageID = patch.PackageID
+		}
+		rules.Put(name, ru)
+		sim.WriteJSON(w, http.StatusOK, ru)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/rules/{rule}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/rules/" + sim.PathParam(r, "rule")
+		if _, ok := rules.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "rule %q not found", name)
+			return
+		}
+		rules.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// ---- Attachments ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/attachments", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		prefix := repo + "/attachments/"
+		result := attachments.Filter(func(a ARAttachment) bool { return strings.HasPrefix(a.Name, prefix) })
+		result = gcpApplyListParams(result, r)
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		if page == nil {
+			page = []ARAttachment{}
+		}
+		resp := map[string]any{"attachments": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/attachments/{attachment}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/attachments/" + sim.PathParam(r, "attachment")
+		a, ok := attachments.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "attachment %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, a)
+	})
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories/{repo}/attachments", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		attachmentID := r.URL.Query().Get("attachmentId")
+		if attachmentID == "" {
+			sim.GCPError(w, http.StatusBadRequest, "attachmentId query parameter is required", "INVALID_ARGUMENT")
+			return
+		}
+		var a ARAttachment
+		if err := sim.ReadJSON(r, &a); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		a.Name = repo + "/attachments/" + attachmentID
+		a.CreateTime = nowTimestamp()
+		a.UpdateTime = nowTimestamp()
+		attachments.Put(a.Name, a)
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), a, attachType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/repositories/{repo}/attachments/{attachment}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/attachments/" + sim.PathParam(r, "attachment")
+		a, ok := attachments.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "attachment %q not found", name)
+			return
+		}
+		attachments.Delete(name)
+		lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), a, attachType)
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// ---- Artifact :create / :import (apt/yum/googet/go/npm/python/kfp/generic) ----
+	//
+	// :create rides the media /upload/v1 prefix and returns
+	// {operation: Operation}; :import is a control-plane POST returning an
+	// Operation directly. The artifact bytes themselves land in the OCI /v2/
+	// data plane or via the typed package managers; here the admin API records
+	// the long-running import/create operation faithfully.
+	registerARArtifactCreate := func(kind string) {
+		srv.HandleFunc("POST /upload/v1/projects/{project}/locations/{location}/repositories/{repo}/"+kind+":create", func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := repoExists(w, r); !ok {
+				return
+			}
+			lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), nil, importType)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{"operation": lro})
+		})
+	}
+	for _, kind := range []string{"aptArtifacts", "yumArtifacts", "googetArtifacts", "goModules", "genericArtifacts", "kfpArtifacts"} {
+		registerARArtifactCreate(kind)
+	}
+
+	registerARArtifactImport := func(kind string) {
+		srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/repositories/{repo}/"+kind+":import", func(w http.ResponseWriter, r *http.Request) {
+			if _, ok := repoExists(w, r); !ok {
+				return
+			}
+			lro := newLRO(sim.PathParam(r, "project"), sim.PathParam(r, "location"), nil, importType)
+			sim.WriteJSON(w, http.StatusOK, lro)
+		})
+	}
+	for _, kind := range []string{"aptArtifacts", "yumArtifacts", "googetArtifacts"} {
+		registerARArtifactImport(kind)
+	}
+
+	// ---- Typed artifact listings (maven/npm/python) + dockerImage get ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/dockerImages/{image}", func(w http.ResponseWriter, r *http.Request) {
+		repo, ok := repoExists(w, r)
+		if !ok {
+			return
+		}
+		name := repo + "/dockerImages/" + sim.PathParam(r, "image")
+		img, ok := dockerImages.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "docker image %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, img)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/mavenArtifacts", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"mavenArtifacts": []any{}})
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/mavenArtifacts/{artifact}", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "maven artifact %q not found", sim.PathParam(r, "artifact"))
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/npmPackages", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"npmPackages": []any{}})
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/npmPackages/{npmPackage}", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "npm package %q not found", sim.PathParam(r, "npmPackage"))
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/pythonPackages", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"pythonPackages": []any{}})
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/pythonPackages/{pythonPackage}", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "python package %q not found", sim.PathParam(r, "pythonPackage"))
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/repositories/{repo}/prewarmedArtifacts", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := repoExists(w, r); !ok {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"prewarmedArtifacts": []any{}})
+	})
+
+	// ---- Repository PATCH ----
+
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/repositories/{repo}", func(w http.ResponseWriter, r *http.Request) {
+		name := repoName(r)
+		repo, ok := repos.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "repository %q not found", name)
+			return
+		}
+		var patch Repository
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.Description != "" {
+			repo.Description = patch.Description
+		}
+		if patch.Labels != nil {
+			repo.Labels = patch.Labels
+		}
+		if patch.CleanupPolicies != nil {
+			repo.CleanupPolicies = patch.CleanupPolicies
+		}
+		if patch.CleanupPolicyDryRun != nil {
+			repo.CleanupPolicyDryRun = patch.CleanupPolicyDryRun
+		}
+		if patch.DockerConfig != nil {
+			repo.DockerConfig = patch.DockerConfig
+		}
+		repo.UpdateTime = nowTimestamp()
+		repos.Put(name, repo)
+		sim.WriteJSON(w, http.StatusOK, repo)
+	})
+
+	// ---- Project-scoped singletons: projectSettings / vpcscConfig / projectConfig ----
+
+	srv.HandleFunc("GET /v1/projects/{project}/projectSettings", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/projectSettings", sim.PathParam(r, "project"))
+		ps, ok := projectSettings.Get(name)
+		if !ok {
+			ps = ARProjectSettings{Name: name, LegacyRedirectionState: "REDIRECTION_STATE_UNSPECIFIED"}
+			projectSettings.Put(name, ps)
+		}
+		sim.WriteJSON(w, http.StatusOK, ps)
+	})
+	srv.HandleFunc("PATCH /v1/projects/{project}/projectSettings", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/projectSettings", sim.PathParam(r, "project"))
+		ps, ok := projectSettings.Get(name)
+		if !ok {
+			ps = ARProjectSettings{Name: name}
+		}
+		var patch ARProjectSettings
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.LegacyRedirectionState != "" {
+			ps.LegacyRedirectionState = patch.LegacyRedirectionState
+		}
+		if patch.PullPercent != 0 {
+			ps.PullPercent = patch.PullPercent
+		}
+		ps.Name = name
+		projectSettings.Put(name, ps)
+		sim.WriteJSON(w, http.StatusOK, ps)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/vpcscConfig", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/locations/%s/vpcscConfig", sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+		cfg, ok := vpcscConfigs.Get(name)
+		if !ok {
+			cfg = ARVPCSCConfig{Name: name, VPCSCPolicy: "VPCSC_POLICY_UNSPECIFIED"}
+			vpcscConfigs.Put(name, cfg)
+		}
+		sim.WriteJSON(w, http.StatusOK, cfg)
+	})
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/vpcscConfig", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/locations/%s/vpcscConfig", sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+		cfg, ok := vpcscConfigs.Get(name)
+		if !ok {
+			cfg = ARVPCSCConfig{Name: name}
+		}
+		var patch ARVPCSCConfig
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.VPCSCPolicy != "" {
+			cfg.VPCSCPolicy = patch.VPCSCPolicy
+		}
+		cfg.Name = name
+		vpcscConfigs.Put(name, cfg)
+		sim.WriteJSON(w, http.StatusOK, cfg)
+	})
+
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/projectConfig", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/locations/%s/projectConfig", sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+		cfg, ok := projectConfigs.Get(name)
+		if !ok {
+			cfg = ARProjectConfig{Name: name}
+			projectConfigs.Put(name, cfg)
+		}
+		sim.WriteJSON(w, http.StatusOK, cfg)
+	})
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/projectConfig", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("projects/%s/locations/%s/projectConfig", sim.PathParam(r, "project"), sim.PathParam(r, "location"))
+		cfg, ok := projectConfigs.Get(name)
+		if !ok {
+			cfg = ARProjectConfig{Name: name}
+		}
+		var patch ARProjectConfig
+		if err := sim.ReadJSON(r, &patch); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if patch.PlatformLogsConfig != nil {
+			cfg.PlatformLogsConfig = patch.PlatformLogsConfig
+		}
+		cfg.Name = name
+		projectConfigs.Put(name, cfg)
+		sim.WriteJSON(w, http.StatusOK, cfg)
+	})
 }
 
 // hydrateOCIImageFromLocalDocker is the AR pull-through cache: on a manifest

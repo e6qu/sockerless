@@ -104,7 +104,11 @@ func gcpOperationMetadataType(responseType string) string {
 		return "type.googleapis.com/google.cloud.apigateway.v1.OperationMetadata"
 	case "type.googleapis.com/google.cloud.eventarc.v1.Trigger",
 		"type.googleapis.com/google.cloud.eventarc.v1.Channel",
-		"type.googleapis.com/google.cloud.eventarc.v1.ChannelConnection":
+		"type.googleapis.com/google.cloud.eventarc.v1.ChannelConnection",
+		"type.googleapis.com/google.cloud.eventarc.v1.Enrollment",
+		"type.googleapis.com/google.cloud.eventarc.v1.MessageBus",
+		"type.googleapis.com/google.cloud.eventarc.v1.Pipeline",
+		"type.googleapis.com/google.cloud.eventarc.v1.GoogleApiSource":
 		return "type.googleapis.com/google.cloud.eventarc.v1.OperationMetadata"
 	default:
 		return "type.googleapis.com/google.longrunning.OperationMetadata"

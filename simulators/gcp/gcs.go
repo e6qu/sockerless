@@ -2,7 +2,9 @@ package main
 
 import (
 	"crypto/md5"
+	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1253,6 +1255,8 @@ func registerGCS(srv *sim.Server) {
 		w.WriteHeader(http.StatusOK)
 		w.Write(body)
 	})
+
+	registerGCSExtras(srv, buckets, objects)
 }
 
 func setGCSObjectResponseHeaders(h http.Header, obj GCSObject, size int) {
@@ -1416,4 +1420,1050 @@ func GCSObjectBytes(bucket, object string) ([]byte, error) {
 		return nil, fmt.Errorf("object %s/%s not found", bucket, object)
 	}
 	return gcsObjectBytes(obj, bucket, object)
+}
+
+// The types below mirror the storage v1 Discovery schemas exactly (field
+// names + the constant `kind` discriminator) so the runtime spec-validator
+// — which rejects any member the schema does not define — passes. Each is a
+// real CRUD resource tied to the existing bucket/object stores.
+
+// GCSBucketACL mirrors the storage#bucketAccessControl resource.
+type GCSBucketACL struct {
+	Kind        string          `json:"kind"`
+	ID          string          `json:"id"`
+	SelfLink    string          `json:"selfLink,omitempty"`
+	Bucket      string          `json:"bucket"`
+	Entity      string          `json:"entity"`
+	Role        string          `json:"role"`
+	Email       string          `json:"email,omitempty"`
+	EntityID    string          `json:"entityId,omitempty"`
+	Domain      string          `json:"domain,omitempty"`
+	ProjectTeam *gcsProjectTeam `json:"projectTeam,omitempty"`
+	Etag        string          `json:"etag,omitempty"`
+}
+
+// GCSObjectACL mirrors the storage#objectAccessControl resource. The
+// default-object-ACL surface reuses it (same schema, the `object`/`generation`
+// fields stay empty for a bucket-level default entry).
+type GCSObjectACL struct {
+	Kind        string          `json:"kind"`
+	ID          string          `json:"id"`
+	SelfLink    string          `json:"selfLink,omitempty"`
+	Bucket      string          `json:"bucket"`
+	Object      string          `json:"object,omitempty"`
+	Generation  string          `json:"generation,omitempty"`
+	Entity      string          `json:"entity"`
+	Role        string          `json:"role"`
+	Email       string          `json:"email,omitempty"`
+	EntityID    string          `json:"entityId,omitempty"`
+	Domain      string          `json:"domain,omitempty"`
+	ProjectTeam *gcsProjectTeam `json:"projectTeam,omitempty"`
+	Etag        string          `json:"etag,omitempty"`
+}
+
+type gcsProjectTeam struct {
+	ProjectNumber string `json:"projectNumber,omitempty"`
+	Team          string `json:"team,omitempty"`
+}
+
+// GCSFolder mirrors the storage#folder resource (HNS-enabled buckets).
+type GCSFolder struct {
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	SelfLink       string `json:"selfLink,omitempty"`
+	Bucket         string `json:"bucket"`
+	Name           string `json:"name"`
+	Metageneration string `json:"metageneration,omitempty"`
+	CreateTime     string `json:"createTime,omitempty"`
+	UpdateTime     string `json:"updateTime,omitempty"`
+}
+
+// GCSManagedFolder mirrors the storage#managedFolder resource.
+type GCSManagedFolder struct {
+	Kind           string `json:"kind"`
+	ID             string `json:"id"`
+	SelfLink       string `json:"selfLink,omitempty"`
+	Bucket         string `json:"bucket"`
+	Name           string `json:"name"`
+	Metageneration string `json:"metageneration,omitempty"`
+	CreateTime     string `json:"createTime,omitempty"`
+	UpdateTime     string `json:"updateTime,omitempty"`
+}
+
+// GCSNotification mirrors the storage#notification resource.
+type GCSNotification struct {
+	Kind             string            `json:"kind"`
+	ID               string            `json:"id"`
+	SelfLink         string            `json:"selfLink,omitempty"`
+	Topic            string            `json:"topic"`
+	PayloadFormat    string            `json:"payload_format,omitempty"`
+	EventTypes       []string          `json:"event_types,omitempty"`
+	CustomAttributes map[string]string `json:"custom_attributes,omitempty"`
+	ObjectNamePrefix string            `json:"object_name_prefix,omitempty"`
+	Etag             string            `json:"etag,omitempty"`
+
+	bucket string // unexported: store-key scoping, never serialized
+}
+
+// GCSHmacKey mirrors the storage#hmacKeyMetadata resource. The secret is
+// stored on the record but only ever emitted in the create response
+// (storage#hmacKey), matching real GCS.
+type GCSHmacKey struct {
+	Kind                string `json:"kind"`
+	ID                  string `json:"id"`
+	AccessID            string `json:"accessId"`
+	ProjectID           string `json:"projectId"`
+	ServiceAccountEmail string `json:"serviceAccountEmail,omitempty"`
+	State               string `json:"state"`
+	TimeCreated         string `json:"timeCreated,omitempty"`
+	Updated             string `json:"updated,omitempty"`
+	SelfLink            string `json:"selfLink,omitempty"`
+	Etag                string `json:"etag,omitempty"`
+
+	secret string // unexported: returned only on create, never on read/list
+}
+
+var (
+	gcsBucketACLs     sim.Store[GCSBucketACL]
+	gcsObjectDefACLs  sim.Store[GCSObjectACL]
+	gcsFolders        sim.Store[GCSFolder]
+	gcsManagedFolders sim.Store[GCSManagedFolder]
+	gcsNotifications  sim.Store[GCSNotification]
+	gcsHmacKeys       sim.Store[GCSHmacKey]
+)
+
+// gcsACLEmailFor derives the email/projectTeam fields from an ACL entity in
+// the documented forms (user-<email>, group-<email>, project-team-<id>,
+// allUsers, allAuthenticatedUsers) so the returned resource carries the
+// derived members the schema describes.
+func gcsACLEmailFor(entity string) (email string, team *gcsProjectTeam) {
+	switch {
+	case strings.HasPrefix(entity, "user-") && strings.Contains(entity, "@"):
+		return strings.TrimPrefix(entity, "user-"), nil
+	case strings.HasPrefix(entity, "group-") && strings.Contains(entity, "@"):
+		return strings.TrimPrefix(entity, "group-"), nil
+	case strings.HasPrefix(entity, "project-"):
+		rest := strings.TrimPrefix(entity, "project-")
+		if i := strings.LastIndex(rest, "-"); i > 0 {
+			return "", &gcsProjectTeam{ProjectNumber: rest[i+1:], Team: rest[:i]}
+		}
+	}
+	return "", nil
+}
+
+// registerGCSExtras mounts the remaining storage v1 control-plane surfaces —
+// bucket ACLs, default object ACLs, folders, managed folders (+ their IAM),
+// notification configs, HMAC keys, anywhere caches, bucket operations,
+// bucket-level lifecycle verbs (relocate/restore/lockRetentionPolicy),
+// channels.stop, the project service account, and the metadata-only object
+// insert. Each is a faithful slice of the real JSON API.
+func registerGCSExtras(srv *sim.Server, buckets sim.Store[Bucket], objects sim.Store[GCSObject]) {
+	gcsBucketACLs = sim.MakeStore[GCSBucketACL](srv.DB(), "gcs_bucket_acls")
+	gcsObjectDefACLs = sim.MakeStore[GCSObjectACL](srv.DB(), "gcs_default_object_acls")
+	gcsFolders = sim.MakeStore[GCSFolder](srv.DB(), "gcs_folders")
+	gcsManagedFolders = sim.MakeStore[GCSManagedFolder](srv.DB(), "gcs_managed_folders")
+	gcsNotifications = sim.MakeStore[GCSNotification](srv.DB(), "gcs_notifications")
+	gcsHmacKeys = sim.MakeStore[GCSHmacKey](srv.DB(), "gcs_hmac_keys")
+
+	bucketExists := func(w http.ResponseWriter, name string) bool {
+		if _, ok := buckets.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", name)
+			return false
+		}
+		return true
+	}
+
+	registerGCSBucketACLs(srv, buckets, bucketExists)
+	registerGCSDefaultObjectACLs(srv, buckets, bucketExists)
+	registerGCSFolders(srv, buckets, bucketExists)
+	registerGCSManagedFolders(srv, buckets, bucketExists)
+	registerGCSNotifications(srv, buckets, bucketExists)
+	registerGCSHmacKeys(srv)
+	registerGCSAnywhereCaches(srv, buckets, bucketExists)
+	registerGCSBucketLifecycle(srv, buckets, objects, bucketExists)
+}
+
+// --- Bucket access controls (storage#bucketAccessControl) ---
+
+func registerGCSBucketACLs(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	key := func(bucket, entity string) string { return bucket + "\x00" + entity }
+	build := func(r *http.Request, bucket, entity, role string) GCSBucketACL {
+		email, team := gcsACLEmailFor(entity)
+		return GCSBucketACL{
+			Kind:        "storage#bucketAccessControl",
+			ID:          bucket + "/" + entity,
+			SelfLink:    gcpSelfLink(r, "/storage/v1/b/"+bucket+"/acl/"+entity),
+			Bucket:      bucket,
+			Entity:      entity,
+			Role:        role,
+			Email:       email,
+			ProjectTeam: team,
+			Etag:        "CAE=",
+		}
+	}
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/acl", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		items := gcsBucketACLs.Filter(func(a GCSBucketACL) bool { return a.Bucket == bucket })
+		sort.Slice(items, func(i, j int) bool { return items[i].Entity < items[j].Entity })
+		if items == nil {
+			items = []GCSBucketACL{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "storage#bucketAccessControls", "items": items})
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/acl/{entity}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		acl, ok := gcsBucketACLs.Get(key(bucket, entity))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, acl)
+	})
+
+	insert := func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSBucketACL
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Entity == "" || in.Role == "" {
+			sim.GCPError(w, http.StatusBadRequest, "entity and role are required", "INVALID_ARGUMENT")
+			return
+		}
+		acl := build(r, bucket, in.Entity, in.Role)
+		gcsBucketACLs.Put(key(bucket, in.Entity), acl)
+		sim.WriteJSON(w, http.StatusOK, acl)
+	}
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/acl", insert)
+
+	update := func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		if _, ok := gcsBucketACLs.Get(key(bucket, entity)); !ok {
+			if !bucketExists(w, bucket) {
+				return
+			}
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		var in GCSBucketACL
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		acl := build(r, bucket, entity, in.Role)
+		gcsBucketACLs.Put(key(bucket, entity), acl)
+		sim.WriteJSON(w, http.StatusOK, acl)
+	}
+	srv.HandleFunc("PUT /storage/v1/b/{bucket}/acl/{entity}", update)
+	srv.HandleFunc("PATCH /storage/v1/b/{bucket}/acl/{entity}", update)
+
+	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/acl/{entity}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		if !gcsBucketACLs.Delete(key(bucket, entity)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// --- Default object access controls (storage#objectAccessControl) ---
+
+func registerGCSDefaultObjectACLs(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	key := func(bucket, entity string) string { return bucket + "\x00" + entity }
+	build := func(r *http.Request, bucket, entity, role string) GCSObjectACL {
+		email, team := gcsACLEmailFor(entity)
+		return GCSObjectACL{
+			Kind:        "storage#objectAccessControl",
+			ID:          bucket + "/" + entity,
+			SelfLink:    gcpSelfLink(r, "/storage/v1/b/"+bucket+"/defaultObjectAcl/"+entity),
+			Bucket:      bucket,
+			Entity:      entity,
+			Role:        role,
+			Email:       email,
+			ProjectTeam: team,
+			Etag:        "CAE=",
+		}
+	}
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/defaultObjectAcl", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		items := gcsObjectDefACLs.Filter(func(a GCSObjectACL) bool { return a.Bucket == bucket })
+		sort.Slice(items, func(i, j int) bool { return items[i].Entity < items[j].Entity })
+		if items == nil {
+			items = []GCSObjectACL{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "storage#objectAccessControls", "items": items})
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/defaultObjectAcl/{entity}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		acl, ok := gcsObjectDefACLs.Get(key(bucket, entity))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no default object ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, acl)
+	})
+
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/defaultObjectAcl", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSObjectACL
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Entity == "" || in.Role == "" {
+			sim.GCPError(w, http.StatusBadRequest, "entity and role are required", "INVALID_ARGUMENT")
+			return
+		}
+		acl := build(r, bucket, in.Entity, in.Role)
+		gcsObjectDefACLs.Put(key(bucket, in.Entity), acl)
+		sim.WriteJSON(w, http.StatusOK, acl)
+	})
+
+	update := func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		if _, ok := gcsObjectDefACLs.Get(key(bucket, entity)); !ok {
+			if !bucketExists(w, bucket) {
+				return
+			}
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no default object ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		var in GCSObjectACL
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		acl := build(r, bucket, entity, in.Role)
+		gcsObjectDefACLs.Put(key(bucket, entity), acl)
+		sim.WriteJSON(w, http.StatusOK, acl)
+	}
+	srv.HandleFunc("PUT /storage/v1/b/{bucket}/defaultObjectAcl/{entity}", update)
+	srv.HandleFunc("PATCH /storage/v1/b/{bucket}/defaultObjectAcl/{entity}", update)
+
+	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/defaultObjectAcl/{entity}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, entity := sim.PathParam(r, "bucket"), sim.PathParam(r, "entity")
+		if !gcsObjectDefACLs.Delete(key(bucket, entity)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "no default object ACL entry for entity %q on bucket %q", entity, bucket)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// --- Folders (storage#folder, HNS buckets) ---
+
+func registerGCSFolders(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	key := func(bucket, name string) string { return bucket + "\x00" + name }
+	build := func(r *http.Request, bucket, name string) GCSFolder {
+		now := gcsTimestamp()
+		return GCSFolder{
+			Kind:           "storage#folder",
+			ID:             bucket + "/" + name,
+			SelfLink:       gcpSelfLink(r, "/storage/v1/b/"+bucket+"/folders/"+name),
+			Bucket:         bucket,
+			Name:           name,
+			Metageneration: "1",
+			CreateTime:     now,
+			UpdateTime:     now,
+		}
+	}
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/folders", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		prefix := r.URL.Query().Get("prefix")
+		items := gcsFolders.Filter(func(f GCSFolder) bool {
+			return f.Bucket == bucket && (prefix == "" || strings.HasPrefix(f.Name, prefix))
+		})
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		mapped := make([]map[string]any, 0, len(items))
+		for _, f := range items {
+			mapped = append(mapped, gcsStructToMap(f))
+		}
+		page, next, ok := paginateListGCS(w, r, mapped)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"kind": "storage#folders", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "folder")
+		f, ok := gcsFolders.Get(key(bucket, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder %q not found in bucket %q", name, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/folders", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSFolder
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		if _, exists := gcsFolders.Get(key(bucket, in.Name)); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "folder %q already exists", in.Name)
+			return
+		}
+		f := build(r, bucket, in.Name)
+		gcsFolders.Put(key(bucket, in.Name), f)
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "folder")
+		if !gcsFolders.Delete(key(bucket, name)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder %q not found in bucket %q", name, bucket)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// deleteRecursive and renameTo are long-running operations: GCS returns a
+	// GoogleLongrunningOperation. The sim performs the mutation synchronously
+	// and returns a done=true operation carrying the result.
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/folders/{folder}/deleteRecursive", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "folder")
+		removed := false
+		for _, f := range gcsFolders.Filter(func(f GCSFolder) bool { return f.Bucket == bucket && strings.HasPrefix(f.Name, name) }) {
+			if gcsFolders.Delete(key(bucket, f.Name)) {
+				removed = true
+			}
+		}
+		if !removed {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder %q not found in bucket %q", name, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, gcsDoneOperation(r, bucket, nil))
+	})
+
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/folders/{sourceFolder}/renameTo/folders/{destinationFolder}", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		src, dst := sim.PathParam(r, "sourceFolder"), sim.PathParam(r, "destinationFolder")
+		f, ok := gcsFolders.Get(key(bucket, src))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder %q not found in bucket %q", src, bucket)
+			return
+		}
+		gcsFolders.Delete(key(bucket, src))
+		f.Name = dst
+		f.ID = bucket + "/" + dst
+		f.SelfLink = gcpSelfLink(r, "/storage/v1/b/"+bucket+"/folders/"+dst)
+		f.UpdateTime = gcsTimestamp()
+		gcsFolders.Put(key(bucket, dst), f)
+		sim.WriteJSON(w, http.StatusOK, gcsDoneOperation(r, bucket, gcsStructToMap(f)))
+	})
+}
+
+// --- Managed folders (storage#managedFolder) + their IAM ---
+
+func registerGCSManagedFolders(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	key := func(bucket, name string) string { return bucket + "\x00" + name }
+	build := func(r *http.Request, bucket, name string) GCSManagedFolder {
+		now := gcsTimestamp()
+		return GCSManagedFolder{
+			Kind:           "storage#managedFolder",
+			ID:             bucket + "/" + name,
+			SelfLink:       gcpSelfLink(r, "/storage/v1/b/"+bucket+"/managedFolders/"+name),
+			Bucket:         bucket,
+			Name:           name,
+			Metageneration: "1",
+			CreateTime:     now,
+			UpdateTime:     now,
+		}
+	}
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/managedFolders", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		prefix := r.URL.Query().Get("prefix")
+		items := gcsManagedFolders.Filter(func(f GCSManagedFolder) bool {
+			return f.Bucket == bucket && (prefix == "" || strings.HasPrefix(f.Name, prefix))
+		})
+		sort.Slice(items, func(i, j int) bool { return items[i].Name < items[j].Name })
+		mapped := make([]map[string]any, 0, len(items))
+		for _, f := range items {
+			mapped = append(mapped, gcsStructToMap(f))
+		}
+		page, next, ok := paginateListGCS(w, r, mapped)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"kind": "storage#managedFolders", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/managedFolders/{managedFolder}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "managedFolder")
+		f, ok := gcsManagedFolders.Get(key(bucket, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed folder %q not found in bucket %q", name, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/managedFolders", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSManagedFolder
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		if _, exists := gcsManagedFolders.Get(key(bucket, in.Name)); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "managed folder %q already exists", in.Name)
+			return
+		}
+		f := build(r, bucket, in.Name)
+		gcsManagedFolders.Put(key(bucket, in.Name), f)
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+
+	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/managedFolders/{managedFolder}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "managedFolder")
+		if !gcsManagedFolders.Delete(key(bucket, name)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "managed folder %q not found in bucket %q", name, bucket)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	// Managed-folder IAM — getIamPolicy / setIamPolicy / testIamPermissions.
+	// Backed by the same shared policy store as bucket/object IAM.
+	resource := func(bucket, name string) string {
+		return "projects/_/buckets/" + bucket + "/managedFolders/" + name
+	}
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/managedFolders/{managedFolder}/iam", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "managedFolder")
+		policy, ok := gcpResourcePolicies.Get("managedFolder/" + bucket + "/" + name)
+		if !ok {
+			policy = IAMPolicy{Bindings: []IAMBinding{}, Etag: gcpPolicyETag(), Version: 1}
+			gcpResourcePolicies.Put("managedFolder/"+bucket+"/"+name, policy)
+		}
+		policy.Kind = "storage#policy"
+		policy.ResourceId = resource(bucket, name)
+		sim.WriteJSON(w, http.StatusOK, policy)
+	})
+	srv.HandleFunc("PUT /storage/v1/b/{bucket}/managedFolders/{managedFolder}/iam", func(w http.ResponseWriter, r *http.Request) {
+		bucket, name := sim.PathParam(r, "bucket"), sim.PathParam(r, "managedFolder")
+		var policy IAMPolicy
+		if err := sim.ReadJSON(r, &policy); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		policy.Etag = gcpPolicyETag()
+		if policy.Version == 0 {
+			policy.Version = 1
+		}
+		policy.Kind = "storage#policy"
+		policy.ResourceId = resource(bucket, name)
+		gcpResourcePolicies.Put("managedFolder/"+bucket+"/"+name, policy)
+		sim.WriteJSON(w, http.StatusOK, policy)
+	})
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/managedFolders/{managedFolder}/iam/testPermissions", func(w http.ResponseWriter, r *http.Request) {
+		gcsWriteTestPermissions(w, r)
+	})
+}
+
+// --- Notification configs (storage#notification) ---
+
+func registerGCSNotifications(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	key := func(bucket, id string) string { return bucket + "\x00" + id }
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/notificationConfigs", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		items := gcsNotifications.Filter(func(n GCSNotification) bool { return n.bucket == bucket })
+		sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+		if items == nil {
+			items = []GCSNotification{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"kind": "storage#notifications", "items": items})
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/notificationConfigs/{notification}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, id := sim.PathParam(r, "bucket"), sim.PathParam(r, "notification")
+		n, ok := gcsNotifications.Get(key(bucket, id))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "notification %q not found in bucket %q", id, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, n)
+	})
+
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/notificationConfigs", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSNotification
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Topic == "" {
+			sim.GCPError(w, http.StatusBadRequest, "topic is required", "INVALID_ARGUMENT")
+			return
+		}
+		id := strconv.FormatInt(int64(gcsNotifications.Len()+1), 10)
+		in.Kind = "storage#notification"
+		in.ID = id
+		in.bucket = bucket
+		if in.PayloadFormat == "" {
+			in.PayloadFormat = "JSON_API_V1"
+		}
+		in.SelfLink = gcpSelfLink(r, "/storage/v1/b/"+bucket+"/notificationConfigs/"+id)
+		gcsNotifications.Put(key(bucket, id), in)
+		sim.WriteJSON(w, http.StatusOK, in)
+	})
+
+	srv.HandleFunc("DELETE /storage/v1/b/{bucket}/notificationConfigs/{notification}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, id := sim.PathParam(r, "bucket"), sim.PathParam(r, "notification")
+		if !gcsNotifications.Delete(key(bucket, id)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "notification %q not found in bucket %q", id, bucket)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// --- HMAC keys (storage#hmacKeyMetadata) + project service account ---
+
+func registerGCSHmacKeys(srv *sim.Server) {
+	srv.HandleFunc("GET /storage/v1/projects/{projectId}/serviceAccount", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "projectId")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":          "storage#serviceAccount",
+			"email_address": "service-" + project + "@gs-project-accounts.iam.gserviceaccount.com",
+		})
+	})
+
+	srv.HandleFunc("GET /storage/v1/projects/{projectId}/hmacKeys", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "projectId")
+		saFilter := r.URL.Query().Get("serviceAccountEmail")
+		showDeleted := r.URL.Query().Get("showDeletedKeys") == "true"
+		items := gcsHmacKeys.Filter(func(k GCSHmacKey) bool {
+			if k.ProjectID != project {
+				return false
+			}
+			if saFilter != "" && k.ServiceAccountEmail != saFilter {
+				return false
+			}
+			if k.State == "DELETED" && !showDeleted {
+				return false
+			}
+			return true
+		})
+		sort.Slice(items, func(i, j int) bool { return items[i].AccessID < items[j].AccessID })
+		mapped := make([]map[string]any, 0, len(items))
+		for _, k := range items {
+			mapped = append(mapped, gcsStructToMap(k))
+		}
+		page, next, ok := paginateListGCS(w, r, mapped)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"kind": "storage#hmacKeysMetadata", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /storage/v1/projects/{projectId}/hmacKeys/{accessId}", func(w http.ResponseWriter, r *http.Request) {
+		project, accessID := sim.PathParam(r, "projectId"), sim.PathParam(r, "accessId")
+		k, ok := gcsHmacKeys.Get(project + "\x00" + accessID)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "HMAC key %q not found", accessID)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, gcsStructToMap(k))
+	})
+
+	srv.HandleFunc("POST /storage/v1/projects/{projectId}/hmacKeys", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "projectId")
+		sa := r.URL.Query().Get("serviceAccountEmail")
+		if sa == "" {
+			sim.GCPError(w, http.StatusBadRequest, "serviceAccountEmail is required", "INVALID_ARGUMENT")
+			return
+		}
+		accessID := "GOOG" + strings.ToUpper(gcsRandHex(12))
+		now := gcsTimestamp()
+		k := GCSHmacKey{
+			Kind:                "storage#hmacKeyMetadata",
+			ID:                  project + "/" + accessID,
+			AccessID:            accessID,
+			ProjectID:           project,
+			ServiceAccountEmail: sa,
+			State:               "ACTIVE",
+			TimeCreated:         now,
+			Updated:             now,
+			SelfLink:            gcpSelfLink(r, "/storage/v1/projects/"+project+"/hmacKeys/"+accessID),
+			Etag:                "CAE=",
+			secret:              base64.StdEncoding.EncodeToString([]byte(gcsRandHex(20))),
+		}
+		gcsHmacKeys.Put(project+"\x00"+accessID, k)
+		// Create returns storage#hmacKey: { kind, metadata, secret }.
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":     "storage#hmacKey",
+			"metadata": gcsStructToMap(k),
+			"secret":   k.secret,
+		})
+	})
+
+	srv.HandleFunc("PUT /storage/v1/projects/{projectId}/hmacKeys/{accessId}", func(w http.ResponseWriter, r *http.Request) {
+		project, accessID := sim.PathParam(r, "projectId"), sim.PathParam(r, "accessId")
+		k, ok := gcsHmacKeys.Get(project + "\x00" + accessID)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "HMAC key %q not found", accessID)
+			return
+		}
+		var in GCSHmacKey
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.State != "" {
+			k.State = in.State
+		}
+		k.Updated = gcsTimestamp()
+		gcsHmacKeys.Put(project+"\x00"+accessID, k)
+		sim.WriteJSON(w, http.StatusOK, gcsStructToMap(k))
+	})
+
+	srv.HandleFunc("DELETE /storage/v1/projects/{projectId}/hmacKeys/{accessId}", func(w http.ResponseWriter, r *http.Request) {
+		project, accessID := sim.PathParam(r, "projectId"), sim.PathParam(r, "accessId")
+		k, ok := gcsHmacKeys.Get(project + "\x00" + accessID)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "HMAC key %q not found", accessID)
+			return
+		}
+		// Real GCS only allows deleting an INACTIVE key; it then transitions
+		// to DELETED rather than vanishing.
+		k.State = "DELETED"
+		k.Updated = gcsTimestamp()
+		gcsHmacKeys.Put(project+"\x00"+accessID, k)
+		w.WriteHeader(http.StatusNoContent)
+	})
+}
+
+// --- Anywhere caches (storage#anywhereCache) ---
+
+func registerGCSAnywhereCaches(srv *sim.Server, buckets sim.Store[Bucket], bucketExists func(http.ResponseWriter, string) bool) {
+	caches := sim.MakeStore[GCSAnywhereCache](srv.DB(), "gcs_anywhere_caches")
+	key := func(bucket, id string) string { return bucket + "\x00" + id }
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/anywhereCaches", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		items := caches.Filter(func(c GCSAnywhereCache) bool { return c.Bucket == bucket })
+		sort.Slice(items, func(i, j int) bool { return items[i].AnywhereCacheID < items[j].AnywhereCacheID })
+		mapped := make([]map[string]any, 0, len(items))
+		for _, c := range items {
+			mapped = append(mapped, gcsStructToMap(c))
+		}
+		page, next, ok := paginateListGCS(w, r, mapped)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"kind": "storage#anywhereCaches", "items": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/anywhereCaches/{anywhereCacheId}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, id := sim.PathParam(r, "bucket"), sim.PathParam(r, "anywhereCacheId")
+		c, ok := caches.Get(key(bucket, id))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "anywhere cache %q not found in bucket %q", id, bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, c)
+	})
+
+	// insert / update are long-running operations returning a
+	// GoogleLongrunningOperation whose response carries the cache.
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/anywhereCaches", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		var in GCSAnywhereCache
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		id := "anywhere-cache-" + gcsRandHex(6)
+		now := gcsTimestamp()
+		c := GCSAnywhereCache{
+			Kind:            "storage#anywhereCache",
+			ID:              bucket + "/" + id,
+			SelfLink:        gcpSelfLink(r, "/storage/v1/b/"+bucket+"/anywhereCaches/"+id),
+			Bucket:          bucket,
+			AnywhereCacheID: id,
+			Zone:            in.Zone,
+			State:           "running",
+			CreateTime:      now,
+			UpdateTime:      now,
+			Ttl:             in.Ttl,
+			AdmissionPolicy: in.AdmissionPolicy,
+		}
+		caches.Put(key(bucket, id), c)
+		sim.WriteJSON(w, http.StatusOK, gcsDoneOperation(r, bucket, gcsStructToMap(c)))
+	})
+
+	srv.HandleFunc("PATCH /storage/v1/b/{bucket}/anywhereCaches/{anywhereCacheId}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, id := sim.PathParam(r, "bucket"), sim.PathParam(r, "anywhereCacheId")
+		c, ok := caches.Get(key(bucket, id))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "anywhere cache %q not found in bucket %q", id, bucket)
+			return
+		}
+		var in GCSAnywhereCache
+		if err := sim.ReadJSON(r, &in); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if in.Ttl != "" {
+			c.Ttl = in.Ttl
+		}
+		if in.AdmissionPolicy != "" {
+			c.AdmissionPolicy = in.AdmissionPolicy
+		}
+		c.UpdateTime = gcsTimestamp()
+		caches.Put(key(bucket, id), c)
+		sim.WriteJSON(w, http.StatusOK, gcsDoneOperation(r, bucket, gcsStructToMap(c)))
+	})
+
+	stateVerb := func(state string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			bucket, id := sim.PathParam(r, "bucket"), sim.PathParam(r, "anywhereCacheId")
+			c, ok := caches.Get(key(bucket, id))
+			if !ok {
+				sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "anywhere cache %q not found in bucket %q", id, bucket)
+				return
+			}
+			c.State = state
+			c.UpdateTime = gcsTimestamp()
+			caches.Put(key(bucket, id), c)
+			sim.WriteJSON(w, http.StatusOK, c)
+		}
+	}
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/anywhereCaches/{anywhereCacheId}/pause", stateVerb("paused"))
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/anywhereCaches/{anywhereCacheId}/resume", stateVerb("running"))
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/anywhereCaches/{anywhereCacheId}/disable", stateVerb("disabled"))
+}
+
+// GCSAnywhereCache mirrors the storage#anywhereCache resource.
+type GCSAnywhereCache struct {
+	Kind            string `json:"kind"`
+	ID              string `json:"id"`
+	SelfLink        string `json:"selfLink,omitempty"`
+	Bucket          string `json:"bucket"`
+	AnywhereCacheID string `json:"anywhereCacheId"`
+	Zone            string `json:"zone,omitempty"`
+	State           string `json:"state,omitempty"`
+	CreateTime      string `json:"createTime,omitempty"`
+	UpdateTime      string `json:"updateTime,omitempty"`
+	Ttl             string `json:"ttl,omitempty"`
+	AdmissionPolicy string `json:"admissionPolicy,omitempty"`
+	PendingUpdate   bool   `json:"pendingUpdate,omitempty"`
+	IngestOnWrite   bool   `json:"ingestOnWrite,omitempty"`
+}
+
+// --- Bucket lifecycle verbs, operations, IAM testPermissions, channels,
+//     and the metadata-only object insert. ---
+
+func registerGCSBucketLifecycle(srv *sim.Server, buckets sim.Store[Bucket], objects sim.Store[GCSObject], bucketExists func(http.ResponseWriter, string) bool) {
+	// bucket IAM testPermissions (getIamPolicy/setIamPolicy already live in iam.go)
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/iam/testPermissions", func(w http.ResponseWriter, r *http.Request) {
+		gcsWriteTestPermissions(w, r)
+	})
+
+	// lockRetentionPolicy / restore both return the Bucket resource.
+	returnBucket := func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		b, ok := buckets.Get(bucket)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "bucket %q not found", bucket)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, b.Data)
+	}
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/lockRetentionPolicy", returnBucket)
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/restore", returnBucket)
+
+	// relocate returns a GoogleLongrunningOperation.
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/relocate", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		// drain the RelocateBucketRequest body
+		_ = sim.ReadJSON(r, &map[string]any{})
+		sim.WriteJSON(w, http.StatusOK, gcsDoneOperation(r, bucket, nil))
+	})
+
+	// Bucket operations: list / get / cancel / advanceRelocateBucket.
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/operations", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"kind":       "storage#operations",
+			"operations": []any{},
+		})
+	})
+	srv.HandleFunc("GET /storage/v1/b/{bucket}/operations/{operationId}", func(w http.ResponseWriter, r *http.Request) {
+		bucket, opID := sim.PathParam(r, "bucket"), sim.PathParam(r, "operationId")
+		op := gcsDoneOperation(r, bucket, nil)
+		op["name"] = "projects/_/buckets/" + bucket + "/operations/" + opID
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/operations/{operationId}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/operations/{operationId}/advanceRelocateBucket", func(w http.ResponseWriter, r *http.Request) {
+		_ = sim.ReadJSON(r, &map[string]any{})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// channels.stop — stops a watch channel; returns an empty 200.
+	srv.HandleFunc("POST /storage/v1/channels/stop", func(w http.ResponseWriter, r *http.Request) {
+		_ = sim.ReadJSON(r, &map[string]any{})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Metadata-only object insert (objects.insert with no media upload).
+	// Creates a zero-length object from the supplied resource fields.
+	srv.HandleFunc("POST /storage/v1/b/{bucket}/o", func(w http.ResponseWriter, r *http.Request) {
+		bucket := sim.PathParam(r, "bucket")
+		if !bucketExists(w, bucket) {
+			return
+		}
+		name := r.URL.Query().Get("name")
+		var res GCSObject
+		if r.ContentLength != 0 {
+			if err := sim.ReadJSON(r, &res); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
+		}
+		if name == "" {
+			name = res.Name
+		}
+		if name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "name is required", "INVALID_ARGUMENT")
+			return
+		}
+		attrs := GCSObject{
+			Name:        name,
+			ContentType: res.ContentType,
+			Metadata:    res.Metadata,
+		}
+		obj, err := persistGCSObject(objects, bucket, name, nil, attrs)
+		if err != nil {
+			writeGCSPersistError(w, "insert object", err)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, gcsObjectMetadata(r, obj))
+	})
+}
+
+// gcsWriteTestPermissions echoes the requested permissions back as granted —
+// the sim's single-tenant model treats the caller as the bucket owner.
+func gcsWriteTestPermissions(w http.ResponseWriter, r *http.Request) {
+	perms := r.URL.Query()["permissions"]
+	if perms == nil {
+		perms = []string{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"kind":        "storage#testIamPermissionsResponse",
+		"permissions": perms,
+	})
+}
+
+// gcsDoneOperation builds a completed storage#operation. When response is
+// non-nil it is placed in the operation's response member.
+func gcsDoneOperation(r *http.Request, bucket string, response map[string]any) map[string]any {
+	op := map[string]any{
+		"kind":     "storage#operation",
+		"name":     "projects/_/buckets/" + bucket + "/operations/" + gcsRandHex(8),
+		"done":     true,
+		"selfLink": gcpSelfLink(r, "/storage/v1/b/"+bucket+"/operations/"+gcsRandHex(8)),
+	}
+	if response != nil {
+		op["response"] = response
+	}
+	return op
+}
+
+// gcsStructToMap round-trips a resource struct through JSON so list/response
+// bodies carry exactly the schema-defined members (omitempty honored,
+// unexported fields dropped) the spec-validator accepts.
+func gcsStructToMap(v any) map[string]any {
+	b, _ := json.Marshal(v)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+// gcsRandHex returns n random hex characters for synthesizing resource IDs.
+func gcsRandHex(n int) string {
+	buf := make([]byte, (n+1)/2)
+	_, _ = rand.Read(buf)
+	return hex.EncodeToString(buf)[:n]
 }

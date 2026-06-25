@@ -176,6 +176,8 @@ func registerFirestore(srv *sim.Server) {
 	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/documents/{docPath...}", handleFSGetOrList)
 	srv.HandleFunc("PATCH /v1/projects/{project}/databases/{database}/documents/{docPath...}", handleFSPatchDocument)
 	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}/documents/{docPath...}", handleFSDeleteDocument)
+
+	registerFirestoreAdmin(srv)
 }
 
 func fsDatabasePrefix(project, database string) string {
@@ -1071,4 +1073,763 @@ func fsMapsEqual(a, b *FSMapValue) bool {
 		}
 	}
 	return true
+}
+
+// ----------------------------------------------------------------------------
+// Firestore v1 Admin API surface
+//
+// The admin resources (databases, collectionGroups/{cg}/indexes,
+// collectionGroups/{cg}/fields, backupSchedules, locations/{loc}/backups,
+// userCreds, operations) implement real CRUD. Each resource body is stored as
+// the typed-value JSON the client sent (a fidelity-preserving map: every field
+// the client supplies round-trips back, and the sim only sets the
+// server-managed fields the Discovery schema marks output-only — name, state,
+// createTime/updateTime, uid). Mutating operations the Discovery marks
+// long-running (database create/patch/delete, the database export/import/
+// bulkDelete/restore/clone verbs, index create, field patch) return a
+// GoogleLongrunningOperation, persisted under the database-scoped operations
+// collection so a subsequent operations.get returns the same record.
+
+// fsResource is the stored shape for an admin resource: the client-supplied
+// body plus the server-assigned resource name. Storing the whole body as a map
+// preserves every field the SDK sent so the read-back is byte-faithful and
+// never drops an unmodeled field.
+type fsResource struct {
+	Name string         `json:"name"`
+	Body map[string]any `json:"body"`
+}
+
+// fsAdminOp is the stored shape of a Firestore admin long-running operation.
+// The sim performs no asynchronous work, so every operation is created already
+// done with its embedded response, matching what real Firestore returns once
+// the underlying resource has settled. Metadata is omitted unless the operation
+// has a concrete metadata message the admin SDK's proto registry can resolve
+// (IndexOperationMetadata / FieldOperationMetadata) — emitting an unregistered
+// @type there makes the client's Any unmarshal fail.
+type fsAdminOp struct {
+	Name     string         `json:"name"`
+	Metadata map[string]any `json:"metadata,omitempty"`
+	Done     bool           `json:"done"`
+	Response map[string]any `json:"response"`
+}
+
+var (
+	fsDatabases       sim.Store[fsResource]
+	fsIndexes         sim.Store[fsResource]
+	fsFields          sim.Store[fsResource]
+	fsBackupSchedules sim.Store[fsResource]
+	fsBackups         sim.Store[fsResource]
+	fsUserCreds       sim.Store[fsResource]
+	fsAdminOps        sim.Store[fsAdminOp]
+)
+
+func registerFirestoreAdmin(srv *sim.Server) {
+	fsDatabases = sim.MakeStore[fsResource](srv.DB(), "firestore_databases")
+	fsIndexes = sim.MakeStore[fsResource](srv.DB(), "firestore_indexes")
+	fsFields = sim.MakeStore[fsResource](srv.DB(), "firestore_fields")
+	fsBackupSchedules = sim.MakeStore[fsResource](srv.DB(), "firestore_backup_schedules")
+	fsBackups = sim.MakeStore[fsResource](srv.DB(), "firestore_backups")
+	fsUserCreds = sim.MakeStore[fsResource](srv.DB(), "firestore_user_creds")
+	fsAdminOps = sim.MakeStore[fsAdminOp](srv.DB(), "firestore_admin_operations")
+
+	// Locations (locations.list / locations.get) are shared GCP surface mounted
+	// once on the collapsed sim mux (by the eventarc slice); the firestore-v1
+	// Discovery doc lists them too, so they count toward firestore coverage
+	// without a duplicate registration here.
+
+	// Databases (admin CRUD). The colon-verb forms (databases:clone /
+	// databases:restore at the collection level, and the per-database
+	// {dbAction} that captures "{db}:exportDocuments" etc.) fan in on a
+	// single action parameter that also carries the ":verb" suffix.
+	srv.HandleFunc("POST /v1/projects/{project}/databases", handleFSDatabasesCollection)
+	srv.HandleFunc("GET /v1/projects/{project}/databases", handleFSListDatabases)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}", handleFSGetDatabase)
+	srv.HandleFunc("PATCH /v1/projects/{project}/databases/{database}", handleFSPatchDatabase)
+	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}", handleFSDeleteDatabase)
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{dbAction}", handleFSDatabaseVerb)
+
+	// Indexes (collectionGroups/{cg}/indexes).
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/indexes", handleFSCreateIndex)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/indexes", handleFSListIndexes)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/indexes/{index}", handleFSGetIndex)
+	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/indexes/{index}", handleFSDeleteIndex)
+
+	// Fields (collectionGroups/{cg}/fields).
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/fields", handleFSListFields)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/fields/{field}", handleFSGetField)
+	srv.HandleFunc("PATCH /v1/projects/{project}/databases/{database}/collectionGroups/{cg}/fields/{field}", handleFSPatchField)
+
+	// Backup schedules (databases/{db}/backupSchedules).
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/backupSchedules", handleFSCreateBackupSchedule)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/backupSchedules", handleFSListBackupSchedules)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/backupSchedules/{bs}", handleFSGetBackupSchedule)
+	srv.HandleFunc("PATCH /v1/projects/{project}/databases/{database}/backupSchedules/{bs}", handleFSPatchBackupSchedule)
+	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}/backupSchedules/{bs}", handleFSDeleteBackupSchedule)
+
+	// Backups (locations/{loc}/backups).
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/backups", handleFSListBackups)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/backups/{backup}", handleFSGetBackup)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/backups/{backup}", handleFSDeleteBackup)
+
+	// User creds (databases/{db}/userCreds).
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/userCreds", handleFSUserCredsCollection)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/userCreds", handleFSListUserCreds)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/userCreds/{uc}", handleFSGetUserCreds)
+	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}/userCreds/{uc}", handleFSDeleteUserCreds)
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/userCreds/{ucAction}", handleFSUserCredsVerb)
+
+	// Operations (databases/{db}/operations).
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/operations", handleFSListOperations)
+	srv.HandleFunc("GET /v1/projects/{project}/databases/{database}/operations/{operation}", handleFSGetOperation)
+	srv.HandleFunc("DELETE /v1/projects/{project}/databases/{database}/operations/{operation}", handleFSDeleteOperation)
+	srv.HandleFunc("POST /v1/projects/{project}/databases/{database}/operations/{opAction}", handleFSCancelOperation)
+}
+
+// fsReadBody decodes the request body into a fidelity-preserving map. An empty
+// body yields an empty (non-nil) map.
+func fsReadBody(r *http.Request) (map[string]any, error) {
+	body := map[string]any{}
+	if r.Body == nil {
+		return body, nil
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if err.Error() == "EOF" {
+			return map[string]any{}, nil
+		}
+		return nil, err
+	}
+	if body == nil {
+		body = map[string]any{}
+	}
+	fsNormalizeAdminEnums(body)
+	return body, nil
+}
+
+// Enum name tables for the admin enum fields, ordered so the proto wire number
+// indexes the slice (matching the Discovery enum declaration order). The gax
+// REST transport serializes enums with UseEnumNumbers, so the sim receives
+// numbers; real Firestore returns the string names on read-back, and the
+// Discovery schema declares these fields as strings — so the sim normalizes
+// numeric enum tokens to their canonical name at ingest.
+var (
+	fsDatabaseTypeEnum  = []string{"DATABASE_TYPE_UNSPECIFIED", "FIRESTORE_NATIVE", "DATASTORE_MODE"}
+	fsIndexQueryScope   = []string{"QUERY_SCOPE_UNSPECIFIED", "COLLECTION", "COLLECTION_GROUP", "COLLECTION_RECURSIVE"}
+	fsIndexApiScope     = []string{"ANY_API", "DATASTORE_MODE_API", "MONGODB_COMPATIBLE_API"}
+	fsIndexState        = []string{"STATE_UNSPECIFIED", "CREATING", "READY", "NEEDS_REPAIR"}
+	fsIndexFieldOrder   = []string{"ORDER_UNSPECIFIED", "ASCENDING", "DESCENDING"}
+	fsIndexFieldArrayCf = []string{"ARRAY_CONFIG_UNSPECIFIED", "CONTAINS"}
+)
+
+// fsEnumName converts a numeric enum token to its canonical name using names
+// (indexed by proto number). A non-numeric value (already a string name) or an
+// out-of-range number is returned unchanged.
+func fsEnumName(v any, names []string) any {
+	n, ok := v.(float64)
+	if !ok {
+		return v
+	}
+	i := int(n)
+	if i < 0 || i >= len(names) {
+		return v
+	}
+	return names[i]
+}
+
+func fsAsMap(v any) (map[string]any, bool) {
+	m, ok := v.(map[string]any)
+	return m, ok
+}
+
+// fsNormalizeIndexEnums converts the enum fields of an Index map (queryScope,
+// apiScope, state, and each field's order/arrayConfig) from wire numbers to
+// names.
+func fsNormalizeIndexEnums(idx map[string]any) {
+	if v, ok := idx["queryScope"]; ok {
+		idx["queryScope"] = fsEnumName(v, fsIndexQueryScope)
+	}
+	if v, ok := idx["apiScope"]; ok {
+		idx["apiScope"] = fsEnumName(v, fsIndexApiScope)
+	}
+	if v, ok := idx["state"]; ok {
+		idx["state"] = fsEnumName(v, fsIndexState)
+	}
+	fields, ok := idx["fields"].([]any)
+	if !ok {
+		return
+	}
+	for _, f := range fields {
+		fm, ok := fsAsMap(f)
+		if !ok {
+			continue
+		}
+		if v, ok := fm["order"]; ok {
+			fm["order"] = fsEnumName(v, fsIndexFieldOrder)
+		}
+		if v, ok := fm["arrayConfig"]; ok {
+			fm["arrayConfig"] = fsEnumName(v, fsIndexFieldArrayCf)
+		}
+	}
+}
+
+// fsNormalizeAdminEnums normalizes every numeric enum token in an admin
+// resource body (database/index/field shapes) to its canonical string name.
+func fsNormalizeAdminEnums(body map[string]any) {
+	if v, ok := body["type"]; ok {
+		body["type"] = fsEnumName(v, fsDatabaseTypeEnum)
+	}
+	// Index-shaped body (createIndex payload).
+	fsNormalizeIndexEnums(body)
+	// Field-shaped body: indexConfig.indexes[] are full Index shapes.
+	if ic, ok := fsAsMap(body["indexConfig"]); ok {
+		if idxs, ok := ic["indexes"].([]any); ok {
+			for _, i := range idxs {
+				if im, ok := fsAsMap(i); ok {
+					fsNormalizeIndexEnums(im)
+				}
+			}
+		}
+	}
+}
+
+// fsNewAdminOp creates a completed Firestore admin LRO for the given resource
+// (already carrying its server-assigned name) and persists it under the
+// database-scoped operations collection. The returned Operation embeds the
+// resource as a protobuf.Any (with @type) — what the Firestore admin SDK polls
+// for and unmarshals once done. metadata, when non-nil, must carry an @type
+// naming a concrete OperationMetadata message the admin SDK's proto registry
+// resolves (IndexOperationMetadata / FieldOperationMetadata) plus only that
+// schema's fields; a nil metadata omits the field (database operations, whose
+// metadata messages are not part of this client's registry).
+func fsNewAdminOp(project, database string, resource map[string]any, typeName string, metadata map[string]any) fsAdminOp {
+	opID := generateUUID()
+	resp := map[string]any{}
+	for k, v := range resource {
+		resp[k] = v
+	}
+	resp["@type"] = typeName
+	op := fsAdminOp{
+		Name:     fmt.Sprintf("projects/%s/databases/%s/operations/%s", project, database, opID),
+		Done:     true,
+		Response: resp,
+		Metadata: metadata,
+	}
+	fsAdminOps.Put(op.Name, op)
+	return op
+}
+
+// fsIndexOpMetadata builds an IndexOperationMetadata Any for a completed index
+// operation, carrying the schema's index/state/start-end-time fields.
+func fsIndexOpMetadata(indexName string) map[string]any {
+	return map[string]any{
+		"@type":     "type.googleapis.com/google.firestore.admin.v1.IndexOperationMetadata",
+		"index":     indexName,
+		"state":     "SUCCESSFUL",
+		"startTime": nowTimestamp(),
+		"endTime":   nowTimestamp(),
+	}
+}
+
+// fsFieldOpMetadata builds a FieldOperationMetadata Any for a completed field
+// operation, carrying the schema's field/state/start-end-time fields.
+func fsFieldOpMetadata(fieldName string) map[string]any {
+	return map[string]any{
+		"@type":     "type.googleapis.com/google.firestore.admin.v1.FieldOperationMetadata",
+		"field":     fieldName,
+		"state":     "SUCCESSFUL",
+		"startTime": nowTimestamp(),
+		"endTime":   nowTimestamp(),
+	}
+}
+
+// --- Databases ---
+
+func fsDatabaseName(project, database string) string {
+	return fmt.Sprintf("projects/%s/databases/%s", project, database)
+}
+
+func handleFSDatabasesCollection(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	dbID := r.URL.Query().Get("databaseId")
+	if dbID == "" {
+		sim.GCPError(w, http.StatusBadRequest, "databaseId is required", "INVALID_ARGUMENT")
+		return
+	}
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid database body: %v", err)
+		return
+	}
+	name := fsDatabaseName(project, dbID)
+	if _, ok := fsDatabases.Get(name); ok {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "Database already exists: %s", name)
+		return
+	}
+	now := nowTimestamp()
+	body["name"] = name
+	body["uid"] = generateUUID()
+	body["createTime"] = now
+	body["updateTime"] = now
+	fsDatabases.Put(name, fsResource{Name: name, Body: body})
+	op := fsNewAdminOp(project, dbID, body, "type.googleapis.com/google.firestore.admin.v1.Database", nil)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleFSListDatabases(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	prefix := fmt.Sprintf("projects/%s/databases/", project)
+	dbs := fsDatabases.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(dbs, func(i, j int) bool { return dbs[i].Name < dbs[j].Name })
+	out := make([]map[string]any, 0, len(dbs))
+	for _, d := range dbs {
+		out = append(out, d.Body)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"databases": out})
+}
+
+func handleFSGetDatabase(w http.ResponseWriter, r *http.Request) {
+	name := fsDatabaseName(sim.PathParam(r, "project"), sim.PathParam(r, "database"))
+	d, ok := fsDatabases.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Database not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSPatchDatabase(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	name := fsDatabaseName(project, database)
+	d, ok := fsDatabases.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Database not found: %s", name)
+		return
+	}
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid database body: %v", err)
+		return
+	}
+	for k, v := range body {
+		d.Body[k] = v
+	}
+	d.Body["name"] = name
+	d.Body["updateTime"] = nowTimestamp()
+	fsDatabases.Put(name, d)
+	op := fsNewAdminOp(project, database, d.Body, "type.googleapis.com/google.firestore.admin.v1.Database", nil)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleFSDeleteDatabase(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	name := fsDatabaseName(project, database)
+	d, ok := fsDatabases.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Database not found: %s", name)
+		return
+	}
+	fsDatabases.Delete(name)
+	op := fsNewAdminOp(project, database, d.Body, "type.googleapis.com/google.firestore.admin.v1.Database", nil)
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+// handleFSDatabaseVerb fans in the per-database colon verbs that ride a single
+// path segment ({db}:exportDocuments / :importDocuments / :bulkDeleteDocuments)
+// plus the collection-level databases:clone / databases:restore — Go's mux
+// cannot spell a ":verb" as its own pattern, so these arrive captured in
+// dbAction. Each returns a long-running Operation.
+func handleFSDatabaseVerb(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	dbAction := sim.PathParam(r, "dbAction")
+	dbID, verb, ok := strings.Cut(dbAction, ":")
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Unknown database verb: %s", dbAction)
+		return
+	}
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	switch verb {
+	case "exportDocuments", "importDocuments", "bulkDeleteDocuments":
+		name := fsDatabaseName(project, dbID)
+		if _, exists := fsDatabases.Get(name); !exists {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Database not found: %s", name)
+			return
+		}
+		op := fsNewAdminOp(project, dbID, map[string]any{"name": name}, "type.googleapis.com/google.firestore.admin.v1.Database", nil)
+		sim.WriteJSON(w, http.StatusOK, op)
+	case "clone", "restore":
+		// databases:clone / databases:restore — collection-level verbs (dbID
+		// here is the literal "databases" segment, not a database id). The new
+		// database id rides the request body (databaseId).
+		newID, _ := body["databaseId"].(string)
+		if newID == "" {
+			newID = generateUUID()
+		}
+		name := fsDatabaseName(project, newID)
+		now := nowTimestamp()
+		db := map[string]any{"name": name, "uid": generateUUID(), "createTime": now, "updateTime": now}
+		fsDatabases.Put(name, fsResource{Name: name, Body: db})
+		op := fsNewAdminOp(project, newID, db, "type.googleapis.com/google.firestore.admin.v1.Database", nil)
+		sim.WriteJSON(w, http.StatusOK, op)
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Unknown database verb: %s", verb)
+	}
+}
+
+// --- Indexes ---
+
+func handleFSCreateIndex(w http.ResponseWriter, r *http.Request) {
+	project, database, cg := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg")
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid index body: %v", err)
+		return
+	}
+	indexID := generateUUID()
+	name := fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/indexes/%s", project, database, cg, indexID)
+	body["name"] = name
+	body["state"] = "READY"
+	fsIndexes.Put(name, fsResource{Name: name, Body: body})
+	op := fsNewAdminOp(project, database, body, "type.googleapis.com/google.firestore.admin.v1.Index", fsIndexOpMetadata(name))
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleFSListIndexes(w http.ResponseWriter, r *http.Request) {
+	project, database, cg := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg")
+	prefix := fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/indexes/", project, database, cg)
+	idxs := fsIndexes.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(idxs, func(i, j int) bool { return idxs[i].Name < idxs[j].Name })
+	out := make([]map[string]any, 0, len(idxs))
+	for _, d := range idxs {
+		out = append(out, d.Body)
+	}
+	resp := map[string]any{"indexes": out}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func handleFSGetIndex(w http.ResponseWriter, r *http.Request) {
+	project, database, cg, index := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg"), sim.PathParam(r, "index")
+	name := fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/indexes/%s", project, database, cg, index)
+	d, ok := fsIndexes.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Index not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSDeleteIndex(w http.ResponseWriter, r *http.Request) {
+	project, database, cg, index := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg"), sim.PathParam(r, "index")
+	name := fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/indexes/%s", project, database, cg, index)
+	if !fsIndexes.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Index not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// --- Fields ---
+
+func fsFieldName(project, database, cg, field string) string {
+	return fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/fields/%s", project, database, cg, field)
+}
+
+func handleFSListFields(w http.ResponseWriter, r *http.Request) {
+	project, database, cg := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg")
+	prefix := fmt.Sprintf("projects/%s/databases/%s/collectionGroups/%s/fields/", project, database, cg)
+	fields := fsFields.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
+	out := make([]map[string]any, 0, len(fields))
+	for _, d := range fields {
+		out = append(out, d.Body)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"fields": out})
+}
+
+func handleFSGetField(w http.ResponseWriter, r *http.Request) {
+	name := fsFieldName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg"), sim.PathParam(r, "field"))
+	d, ok := fsFields.Get(name)
+	if !ok {
+		// A field with default (empty) config is implicitly present in
+		// Firestore; the SDK reads it back even when it was never written.
+		// Echo the empty default rather than 404 so the read-back is faithful.
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"name": name})
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSPatchField(w http.ResponseWriter, r *http.Request) {
+	project, database, cg, field := sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "cg"), sim.PathParam(r, "field")
+	name := fsFieldName(project, database, cg, field)
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid field body: %v", err)
+		return
+	}
+	d, ok := fsFields.Get(name)
+	if !ok {
+		d = fsResource{Name: name, Body: map[string]any{}}
+	}
+	for k, v := range body {
+		d.Body[k] = v
+	}
+	d.Body["name"] = name
+	fsFields.Put(name, d)
+	op := fsNewAdminOp(project, database, d.Body, "type.googleapis.com/google.firestore.admin.v1.Field", fsFieldOpMetadata(name))
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+// --- Backup schedules ---
+
+func fsBackupScheduleName(project, database, bs string) string {
+	return fmt.Sprintf("projects/%s/databases/%s/backupSchedules/%s", project, database, bs)
+}
+
+func handleFSCreateBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid backupSchedule body: %v", err)
+		return
+	}
+	bsID := generateUUID()
+	name := fsBackupScheduleName(project, database, bsID)
+	now := nowTimestamp()
+	body["name"] = name
+	body["createTime"] = now
+	body["updateTime"] = now
+	fsBackupSchedules.Put(name, fsResource{Name: name, Body: body})
+	sim.WriteJSON(w, http.StatusOK, body)
+}
+
+func handleFSListBackupSchedules(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	prefix := fmt.Sprintf("projects/%s/databases/%s/backupSchedules/", project, database)
+	bss := fsBackupSchedules.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(bss, func(i, j int) bool { return bss[i].Name < bss[j].Name })
+	out := make([]map[string]any, 0, len(bss))
+	for _, d := range bss {
+		out = append(out, d.Body)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"backupSchedules": out})
+}
+
+func handleFSGetBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	name := fsBackupScheduleName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "bs"))
+	d, ok := fsBackupSchedules.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Backup schedule not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSPatchBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	name := fsBackupScheduleName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "bs"))
+	d, ok := fsBackupSchedules.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Backup schedule not found: %s", name)
+		return
+	}
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid backupSchedule body: %v", err)
+		return
+	}
+	for k, v := range body {
+		d.Body[k] = v
+	}
+	d.Body["name"] = name
+	d.Body["updateTime"] = nowTimestamp()
+	fsBackupSchedules.Put(name, d)
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSDeleteBackupSchedule(w http.ResponseWriter, r *http.Request) {
+	name := fsBackupScheduleName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "bs"))
+	if !fsBackupSchedules.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Backup schedule not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// --- Backups ---
+
+func fsBackupName(project, location, backup string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/backups/%s", project, location, backup)
+}
+
+func handleFSListBackups(w http.ResponseWriter, r *http.Request) {
+	project, location := sim.PathParam(r, "project"), sim.PathParam(r, "location")
+	prefix := fmt.Sprintf("projects/%s/locations/%s/backups/", project, location)
+	bks := fsBackups.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(bks, func(i, j int) bool { return bks[i].Name < bks[j].Name })
+	out := make([]map[string]any, 0, len(bks))
+	for _, d := range bks {
+		out = append(out, d.Body)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"backups": out})
+}
+
+func handleFSGetBackup(w http.ResponseWriter, r *http.Request) {
+	name := fsBackupName(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "backup"))
+	d, ok := fsBackups.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Backup not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSDeleteBackup(w http.ResponseWriter, r *http.Request) {
+	name := fsBackupName(sim.PathParam(r, "project"), sim.PathParam(r, "location"), sim.PathParam(r, "backup"))
+	if !fsBackups.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Backup not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// --- User creds ---
+
+func fsUserCredsName(project, database, uc string) string {
+	return fmt.Sprintf("projects/%s/databases/%s/userCreds/%s", project, database, uc)
+}
+
+func handleFSUserCredsCollection(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	ucID := r.URL.Query().Get("userCredsId")
+	if ucID == "" {
+		ucID = generateUUID()
+	}
+	body, err := fsReadBody(r)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid userCreds body: %v", err)
+		return
+	}
+	name := fsUserCredsName(project, database, ucID)
+	body["name"] = name
+	body["state"] = "ENABLED"
+	body["createTime"] = nowTimestamp()
+	body["securePassword"] = generateUUID()
+	fsUserCreds.Put(name, fsResource{Name: name, Body: body})
+	sim.WriteJSON(w, http.StatusOK, body)
+}
+
+func handleFSListUserCreds(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	prefix := fmt.Sprintf("projects/%s/databases/%s/userCreds/", project, database)
+	ucs := fsUserCreds.Filter(func(d fsResource) bool { return strings.HasPrefix(d.Name, prefix) })
+	sort.Slice(ucs, func(i, j int) bool { return ucs[i].Name < ucs[j].Name })
+	out := make([]map[string]any, 0, len(ucs))
+	for _, d := range ucs {
+		out = append(out, d.Body)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"userCreds": out})
+}
+
+func handleFSGetUserCreds(w http.ResponseWriter, r *http.Request) {
+	name := fsUserCredsName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "uc"))
+	d, ok := fsUserCreds.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "User creds not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+func handleFSDeleteUserCreds(w http.ResponseWriter, r *http.Request) {
+	name := fsUserCredsName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "uc"))
+	if !fsUserCreds.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "User creds not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleFSUserCredsVerb fans in the userCreds :enable / :disable /
+// :resetPassword colon verbs (ucAction captures "{uc}:verb"), each of which
+// mutates and returns the UserCreds resource.
+func handleFSUserCredsVerb(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	ucAction := sim.PathParam(r, "ucAction")
+	ucID, verb, ok := strings.Cut(ucAction, ":")
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Unknown userCreds verb: %s", ucAction)
+		return
+	}
+	name := fsUserCredsName(project, database, ucID)
+	d, ok := fsUserCreds.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "User creds not found: %s", name)
+		return
+	}
+	switch verb {
+	case "enable":
+		d.Body["state"] = "ENABLED"
+	case "disable":
+		d.Body["state"] = "DISABLED"
+	case "resetPassword":
+		d.Body["securePassword"] = generateUUID()
+	default:
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Unknown userCreds verb: %s", verb)
+		return
+	}
+	fsUserCreds.Put(name, d)
+	sim.WriteJSON(w, http.StatusOK, d.Body)
+}
+
+// --- Operations ---
+
+func fsOperationName(project, database, op string) string {
+	return fmt.Sprintf("projects/%s/databases/%s/operations/%s", project, database, op)
+}
+
+func handleFSListOperations(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	prefix := fmt.Sprintf("projects/%s/databases/%s/operations/", project, database)
+	ops := fsAdminOps.Filter(func(o fsAdminOp) bool { return strings.HasPrefix(o.Name, prefix) })
+	sort.Slice(ops, func(i, j int) bool { return ops[i].Name < ops[j].Name })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"operations": ops})
+}
+
+func handleFSGetOperation(w http.ResponseWriter, r *http.Request) {
+	name := fsOperationName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "operation"))
+	op, ok := fsAdminOps.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Operation not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleFSDeleteOperation(w http.ResponseWriter, r *http.Request) {
+	name := fsOperationName(sim.PathParam(r, "project"), sim.PathParam(r, "database"), sim.PathParam(r, "operation"))
+	if !fsAdminOps.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Operation not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+// handleFSCancelOperation handles operations/{op}:cancel (opAction captures
+// "{op}:cancel"). Cancelling a settled operation is a no-op that returns Empty.
+func handleFSCancelOperation(w http.ResponseWriter, r *http.Request) {
+	project, database := sim.PathParam(r, "project"), sim.PathParam(r, "database")
+	opAction := sim.PathParam(r, "opAction")
+	opID, verb, ok := strings.Cut(opAction, ":")
+	if !ok || verb != "cancel" {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Unknown operation verb: %s", opAction)
+		return
+	}
+	name := fsOperationName(project, database, opID)
+	if _, ok := fsAdminOps.Get(name); !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Operation not found: %s", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
