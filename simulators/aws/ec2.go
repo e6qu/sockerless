@@ -577,6 +577,12 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerEC2CapacityFleet(r, srv)
 	registerEC2HostsImagesVpc(r, srv)
 	registerEC2NetworkInsights(r, srv)
+	registerEC2EBSSnapshot(r, srv)
+	registerEC2VpcEndpointSvc(r, srv)
+	registerEC2InstanceMgmt(r, srv)
+	registerEC2ReservedCapacity(r, srv)
+	registerEC2ImagesFpga(r, srv)
+	registerEC2NetworkingMisc(r, srv)
 }
 
 // Tag helpers
@@ -1287,8 +1293,15 @@ func handleAssociateAddress(w http.ResponseWriter, r *http.Request) {
 	}
 	// When associating to an instance without an explicit private IP, real AWS
 	// uses the instance's primary private address — read it back for fidelity.
-	if privateIp == "" && instanceId != "" {
-		if inst, ok := ec2Instances.Get(instanceId); ok {
+	// A supplied-but-unknown instance is a real InvalidInstanceID.NotFound, not
+	// a silently-accepted association to a non-existent instance.
+	if instanceId != "" {
+		inst, ok := ec2Instances.Get(instanceId)
+		if !ok {
+			ec2ErrorXML(w, "InvalidInstanceID.NotFound", fmt.Sprintf("The instance ID '%s' does not exist", instanceId), http.StatusBadRequest)
+			return
+		}
+		if privateIp == "" {
 			privateIp = inst.PrivateIpAddress
 		}
 	}
@@ -1464,10 +1477,15 @@ func handleCreateNatGateway(w http.ResponseWriter, r *http.Request) {
 	tags := parseTags(r)
 	id := ec2ID("nat")
 
-	vpcId := ""
-	if s, ok := ec2Subnets.Get(subnetId); ok {
-		vpcId = s.VpcId
+	// A missing subnet is a real InvalidSubnetID.NotFound (not the downstream
+	// InsufficientFreeAddressesInSubnet that AllocateSubnetIP would otherwise
+	// surface), and the NAT gateway's VpcId comes from the subnet.
+	s, ok := ec2Subnets.Get(subnetId)
+	if !ok {
+		ec2ErrorXML(w, "InvalidSubnetID.NotFound", fmt.Sprintf("The subnet ID '%s' does not exist", subnetId), http.StatusBadRequest)
+		return
 	}
+	vpcId := s.VpcId
 	publicIp := ""
 	if e, ok := ec2ElasticIPs.Get(allocId); ok {
 		publicIp = e.PublicIp
@@ -1619,11 +1637,14 @@ func handleCreateRouteTable(w http.ResponseWriter, r *http.Request) {
 	tags := parseTags(r)
 	id := ec2ID("rtb")
 
-	// Look up VPC CIDR for local route
-	localCidr := "10.0.0.0/16"
-	if v, ok := ec2Vpcs.Get(vpcId); ok {
-		localCidr = v.CidrBlock
+	// The local route's CIDR is the VPC's own CIDR; a missing VPC is a real
+	// InvalidVpcID.NotFound, not a fabricated default block.
+	v, ok := ec2Vpcs.Get(vpcId)
+	if !ok {
+		ec2ErrorXML(w, "InvalidVpcID.NotFound", fmt.Sprintf("The vpc ID '%s' does not exist", vpcId), http.StatusBadRequest)
+		return
 	}
+	localCidr := v.CidrBlock
 
 	rt := EC2RouteTable{
 		RouteTableId: id,
