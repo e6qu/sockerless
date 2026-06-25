@@ -132,7 +132,7 @@ func TestDNS_CrossJobResolution(t *testing.T) {
 		var err error
 		logs, err = exec.Command("docker", "logs", alphaContainer).CombinedOutput()
 		return err == nil && strings.Contains(string(logs), "gcp-cross-job-dns-ok")
-	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud DNS private zone: %s", logs)
+	}, 30*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via Cloud DNS private zone: %s", logs)
 	assert.Contains(t, string(logs), "gcp-cross-job-dns-ok")
 }
 

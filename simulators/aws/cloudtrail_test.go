@@ -182,11 +182,13 @@ func TestAWSEventSourceCoversAllServiceSlices(t *testing.T) {
 	queryCases := map[string]string{
 		"2016-11-15": "ec2.amazonaws.com",
 		"2011-01-01": "autoscaling.amazonaws.com",
+		"2010-08-01": "monitoring.amazonaws.com",
 		"2010-03-31": "sns.amazonaws.com",
 		"2015-12-01": "elasticloadbalancing.amazonaws.com",
 		"2014-10-31": "rds.amazonaws.com",
 		"2010-05-08": "iam.amazonaws.com",
 		"2011-06-15": "sts.amazonaws.com",
+		"2015-02-02": "elasticache.amazonaws.com",
 	}
 	for version, want := range queryCases {
 		form := url.Values{"Action": {"X"}, "Version": {version}}

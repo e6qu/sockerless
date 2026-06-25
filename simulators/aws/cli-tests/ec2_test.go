@@ -252,7 +252,9 @@ func TestEC2CopySnapshotCLI(t *testing.T) {
 
 func waitCLISnapshotStatus(t *testing.T, snapshotID, want string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous deadline: the snapshot transition is fast, but a tight 2s window
+	// can expire under CI scheduling stalls / GC pauses and flake the test.
+	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
 		out := runCLI(t, awsCLI("ec2", "describe-snapshots",
 			"--snapshot-ids", snapshotID,

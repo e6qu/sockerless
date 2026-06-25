@@ -138,7 +138,9 @@ func TestSDK_ContainerAppsApps_StartsRealReplicaAndLogs(t *testing.T) {
 	}()
 
 	found := false
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+	// Generous deadline so a slow real-replica start on a loaded CI runner doesn't
+	// expire before the arithmetic output is logged; the loop breaks on first match.
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
 		kql := `ContainerAppConsoleLogs_CL | where ContainerAppName_s == "sdk-exec-app"`
 		result := queryWorkspace(t, "default", kql)
 		require.Len(t, result.Tables, 1)

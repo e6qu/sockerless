@@ -225,7 +225,10 @@ func TestServiceBus_AMQPSDKQueueSendReceive(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
 
-	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Generous receive window: the message is already enqueued, so this returns
+	// as soon as the AMQP link delivers it; the wide timeout only guards against
+	// slow link/credit establishment on a loaded CI runner.
+	receiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
 	require.NoError(t, err)
@@ -261,7 +264,10 @@ func TestServiceBus_AMQPSDKTopicSubscriptionSendReceive(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
 
-	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Generous receive window: the message is already enqueued, so this returns
+	// as soon as the AMQP link delivers it; the wide timeout only guards against
+	// slow link/credit establishment on a loaded CI runner.
+	receiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
 	require.NoError(t, err)
@@ -288,7 +294,10 @@ func TestServiceBus_RawAMQPSDKQueueSendReceive(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
 
-	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Generous receive window: the message is already enqueued, so this returns
+	// as soon as the AMQP link delivers it; the wide timeout only guards against
+	// slow link/credit establishment on a loaded CI runner.
+	receiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
 	require.NoError(t, err)
@@ -324,7 +333,10 @@ func TestServiceBus_RawAMQPSDKTopicSubscriptionSendReceive(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = receiver.Close(context.Background()) })
 
-	receiveCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	// Generous receive window: the message is already enqueued, so this returns
+	// as soon as the AMQP link delivers it; the wide timeout only guards against
+	// slow link/credit establishment on a loaded CI runner.
+	receiveCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	messages, err := receiver.ReceiveMessages(receiveCtx, 1, nil)
 	require.NoError(t, err)

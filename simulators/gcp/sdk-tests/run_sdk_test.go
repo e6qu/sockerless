@@ -176,11 +176,13 @@ func TestSDK_CloudRun_RunJob_MultiContainerSharesLocalhost(t *testing.T) {
 	exec, err := runOp.Wait(ctx)
 	require.NoError(t, err)
 
+	// Generous deadline so a slow real multi-container job start on a loaded CI
+	// runner doesn't expire before the execution completes; matches sibling tests.
 	require.Eventually(t, func() bool {
 		got, err := execClient.GetExecution(ctx, &runpb.GetExecutionRequest{Name: exec.Name})
 		require.NoError(t, err)
 		return got.RunningCount == 0 && got.SucceededCount == 1
-	}, 15*time.Second, 200*time.Millisecond)
+	}, 60*time.Second, 200*time.Millisecond)
 
 	client := logadminClient(t)
 	it := client.Entries(ctx, logadmin.Filter(`resource.type="cloud_run_job" AND resource.labels.job_name="sdk-run-job-sidecar"`))

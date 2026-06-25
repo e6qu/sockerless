@@ -33,14 +33,28 @@ func TestELBv2_TargetGroupFidelitySDK(t *testing.T) {
 	assert.Equal(t, "HTTP1", aws.ToString(got.ProtocolVersion), "HTTP target group protocol_version defaults HTTP1")
 	assert.Equal(t, elbv2types.TargetGroupIpAddressTypeEnumIpv4, got.IpAddressType)
 
-	// TCP (NLB) target group with no matcher → AWS default 200-399.
+	// TCP (NLB) target group: its health check defaults to TCP, so real AWS
+	// returns NO Matcher (the Matcher only applies to HTTP/HTTPS health checks).
+	// Emitting one breaks terraform-provider-aws idempotency.
 	tcpTG, err := c.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
 		Name: aws.String("tg-tcp-fidelity"), Protocol: elbv2types.ProtocolEnumTcp,
 		Port: aws.Int32(443), VpcId: aws.String(vpcID), TargetType: elbv2types.TargetTypeEnumIp,
 	})
 	require.NoError(t, err)
-	require.NotNil(t, tcpTG.TargetGroups[0].Matcher)
-	assert.Equal(t, "200-399", aws.ToString(tcpTG.TargetGroups[0].Matcher.HttpCode), "TCP target group default matcher is 200-399")
+	assert.Nil(t, tcpTG.TargetGroups[0].Matcher, "TCP health check carries no Matcher")
+	tcpDesc, err := c.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{aws.ToString(tcpTG.TargetGroups[0].TargetGroupArn)}})
+	require.NoError(t, err)
+	assert.Nil(t, tcpDesc.TargetGroups[0].Matcher, "DescribeTargetGroups omits Matcher for a TCP health check")
+
+	// A TCP target group with an explicit HTTP health check DOES carry a Matcher.
+	tcpHTTPHC, err := c.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
+		Name: aws.String("tg-tcp-httphc-fidelity"), Protocol: elbv2types.ProtocolEnumTcp,
+		Port: aws.Int32(443), VpcId: aws.String(vpcID), TargetType: elbv2types.TargetTypeEnumIp,
+		HealthCheckProtocol: elbv2types.ProtocolEnumHttp, HealthCheckPort: aws.String("8080"),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, tcpHTTPHC.TargetGroups[0].Matcher, "an HTTP health check on a TCP target group carries a Matcher")
+	assert.Equal(t, "200", aws.ToString(tcpHTTPHC.TargetGroups[0].Matcher.HttpCode), "HTTP health check default matcher is 200")
 
 	// ModifyTargetGroup matcher must persist.
 	_, err = c.ModifyTargetGroup(ctx, &elbv2.ModifyTargetGroupInput{
