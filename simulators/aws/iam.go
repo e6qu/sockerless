@@ -115,6 +115,11 @@ func registerIAM(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerIAMLists(r)
 	registerIAMUsers(r, srv)
 	registerIAMGroups(r, srv)
+	registerIAMRolesPolicies(r, srv)
+	registerIAMUsersCreds(r, srv)
+	registerIAMMFAKeys(r, srv)
+	registerIAMProvidersCerts(r, srv)
+	registerIAMAccountReports(r, srv)
 }
 
 // iamRoleFieldsXML emits the inner role fields without the `<Role>`
@@ -300,6 +305,30 @@ func handleIAMGetRole(w http.ResponseWriter, r *http.Request) {
 
 func handleIAMDeleteRole(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("RoleName")
+	if _, ok := iamRoles.Get(name); !ok {
+		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("The role with name %s cannot be found.", name), http.StatusNotFound)
+		return
+	}
+	// Real IAM refuses to delete a role that still has policies attached or is
+	// referenced by an instance profile — detach/remove them first.
+	for _, p := range iamRolePolicies.List() {
+		if p.RoleName == name {
+			iamErrorXML(w, "DeleteConflict", "Cannot delete entity, must delete policies first.", http.StatusConflict)
+			return
+		}
+	}
+	for _, ap := range iamAttachedPolicies.List() {
+		if ap.RoleName == name {
+			iamErrorXML(w, "DeleteConflict", "Cannot delete entity, must detach all policies first.", http.StatusConflict)
+			return
+		}
+	}
+	for _, ip := range iamInstanceProfiles.List() {
+		if ip.RoleName == name {
+			iamErrorXML(w, "DeleteConflict", "Cannot delete entity, must remove roles from instance profile first.", http.StatusConflict)
+			return
+		}
+	}
 	iamRoles.Delete(name)
 
 	w.Header().Set("Content-Type", "text/xml")
@@ -313,6 +342,10 @@ func handleIAMUpdateAssumeRolePolicy(w http.ResponseWriter, r *http.Request) {
 	policyDoc := r.FormValue("PolicyDocument")
 	if decoded, err := url.QueryUnescape(policyDoc); err == nil {
 		policyDoc = decoded
+	}
+	if _, err := parseIAMPolicy(policyDoc); err != nil {
+		iamErrorXML(w, "MalformedPolicyDocument", "The trust policy could not be parsed: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	if ok := iamRoles.Update(name, func(role *IAMRole) {
@@ -334,6 +367,10 @@ func handleIAMPutRolePolicy(w http.ResponseWriter, r *http.Request) {
 	policyDoc := r.FormValue("PolicyDocument")
 	if decoded, err := url.QueryUnescape(policyDoc); err == nil {
 		policyDoc = decoded
+	}
+	if _, err := parseIAMPolicy(policyDoc); err != nil {
+		iamErrorXML(w, "MalformedPolicyDocument", "The policy document could not be parsed: "+err.Error(), http.StatusBadRequest)
+		return
 	}
 
 	key := roleName + "/" + policyName
@@ -660,10 +697,18 @@ func handleIAMGetInstanceProfile(w http.ResponseWriter, r *http.Request) {
 
 func handleIAMDeleteInstanceProfile(w http.ResponseWriter, r *http.Request) {
 	name := r.FormValue("InstanceProfileName")
-	if !iamInstanceProfiles.Delete(name) {
+	ip, ok := iamInstanceProfiles.Get(name)
+	if !ok {
 		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Instance Profile %s was not found.", name), http.StatusNotFound)
 		return
 	}
+	// Real IAM refuses to delete an instance profile that still has a role —
+	// the caller must RemoveRoleFromInstanceProfile first.
+	if ip.RoleName != "" {
+		iamErrorXML(w, "DeleteConflict", "Cannot delete entity, must remove roles from instance profile first.", http.StatusConflict)
+		return
+	}
+	iamInstanceProfiles.Delete(name)
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<DeleteInstanceProfileResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
