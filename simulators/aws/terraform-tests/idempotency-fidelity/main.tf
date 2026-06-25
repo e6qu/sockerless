@@ -213,14 +213,23 @@ resource "aws_lb_target_group" "secondary" {
   vpc_id   = aws_vpc.main.id
 }
 
-# TCP (NLB) target group: its health check defaults to TCP, which carries NO
-# Matcher. If DescribeTargetGroups emits a Matcher for a TCP health check, the
-# provider sees a matcher it never set and plans a perpetual drift.
+# TCP (NLB) target group with an explicit TCP health_check block. A TCP health
+# check carries NO Matcher and NO HealthCheckPath (both are HTTP-only). If
+# DescribeTargetGroups emits either for a TCP health check, the provider reads
+# back an attribute it never set and plans a perpetual health_check.path /
+# matcher drift (issues #685 and #688).
 resource "aws_lb_target_group" "tcp" {
   name     = "fidelity-tg-tcp"
   port     = 443
   protocol = "TCP"
   vpc_id   = aws_vpc.main.id
+
+  health_check {
+    protocol            = "TCP"
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    interval            = 30
+  }
 }
 
 # SNI certificate attached via aws_lb_listener_certificate: read back through

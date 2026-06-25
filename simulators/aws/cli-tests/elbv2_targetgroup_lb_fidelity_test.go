@@ -33,6 +33,13 @@ func TestELBv2TargetGroupLBFidelityCLI(t *testing.T) {
 		"--query", "TargetGroups[0].Matcher.HttpCode", "--output", "text"); v != "None" {
 		t.Fatalf("TCP target group Matcher: got %q, want None (no Matcher for TCP health checks)", v)
 	}
+	// HealthCheckPath is the same HTTP-only class: real AWS omits it for a TCP
+	// health check, so describe-target-groups must print None (a leaked "/" broke
+	// terraform idempotency — issue #688).
+	if v := q("elbv2", "describe-target-groups", "--target-group-arns", tcpTGArn,
+		"--query", "TargetGroups[0].HealthCheckPath", "--output", "text"); v != "None" {
+		t.Fatalf("TCP target group HealthCheckPath: got %q, want None (no path for TCP health checks)", v)
+	}
 	// A TCP target group with an explicit HTTP health check DOES carry a Matcher.
 	tcpHTTPArn := q("elbv2", "create-target-group", "--name", "cli-tg-tcp-httphc-fid", "--protocol", "TCP", "--port", "443",
 		"--vpc-id", vpcID, "--target-type", "ip", "--health-check-protocol", "HTTP", "--health-check-port", "8080",

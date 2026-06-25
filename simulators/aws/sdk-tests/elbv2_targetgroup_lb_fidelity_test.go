@@ -30,23 +30,27 @@ func TestELBv2_TargetGroupFidelitySDK(t *testing.T) {
 	got := httpTG.TargetGroups[0]
 	require.NotNil(t, got.Matcher)
 	assert.Equal(t, "200-299", aws.ToString(got.Matcher.HttpCode), "matcher must round-trip (was hardcoded 200)")
+	assert.Equal(t, "/", aws.ToString(got.HealthCheckPath), "HTTP health check defaults HealthCheckPath to /")
 	assert.Equal(t, "HTTP1", aws.ToString(got.ProtocolVersion), "HTTP target group protocol_version defaults HTTP1")
 	assert.Equal(t, elbv2types.TargetGroupIpAddressTypeEnumIpv4, got.IpAddressType)
 
 	// TCP (NLB) target group: its health check defaults to TCP, so real AWS
-	// returns NO Matcher (the Matcher only applies to HTTP/HTTPS health checks).
-	// Emitting one breaks terraform-provider-aws idempotency.
+	// returns NO Matcher and NO HealthCheckPath (both apply only to HTTP/HTTPS
+	// health checks). Emitting either breaks terraform-provider-aws idempotency.
 	tcpTG, err := c.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
 		Name: aws.String("tg-tcp-fidelity"), Protocol: elbv2types.ProtocolEnumTcp,
 		Port: aws.Int32(443), VpcId: aws.String(vpcID), TargetType: elbv2types.TargetTypeEnumIp,
 	})
 	require.NoError(t, err)
 	assert.Nil(t, tcpTG.TargetGroups[0].Matcher, "TCP health check carries no Matcher")
+	assert.Nil(t, tcpTG.TargetGroups[0].HealthCheckPath, "TCP health check carries no HealthCheckPath")
 	tcpDesc, err := c.DescribeTargetGroups(ctx, &elbv2.DescribeTargetGroupsInput{TargetGroupArns: []string{aws.ToString(tcpTG.TargetGroups[0].TargetGroupArn)}})
 	require.NoError(t, err)
 	assert.Nil(t, tcpDesc.TargetGroups[0].Matcher, "DescribeTargetGroups omits Matcher for a TCP health check")
+	assert.Nil(t, tcpDesc.TargetGroups[0].HealthCheckPath, "DescribeTargetGroups omits HealthCheckPath for a TCP health check")
 
-	// A TCP target group with an explicit HTTP health check DOES carry a Matcher.
+	// A TCP target group with an explicit HTTP health check DOES carry a Matcher
+	// and the default HealthCheckPath.
 	tcpHTTPHC, err := c.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
 		Name: aws.String("tg-tcp-httphc-fidelity"), Protocol: elbv2types.ProtocolEnumTcp,
 		Port: aws.Int32(443), VpcId: aws.String(vpcID), TargetType: elbv2types.TargetTypeEnumIp,
@@ -55,6 +59,7 @@ func TestELBv2_TargetGroupFidelitySDK(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, tcpHTTPHC.TargetGroups[0].Matcher, "an HTTP health check on a TCP target group carries a Matcher")
 	assert.Equal(t, "200", aws.ToString(tcpHTTPHC.TargetGroups[0].Matcher.HttpCode), "HTTP health check default matcher is 200")
+	assert.Equal(t, "/", aws.ToString(tcpHTTPHC.TargetGroups[0].HealthCheckPath), "an HTTP health check on a TCP target group carries the / HealthCheckPath")
 
 	// ModifyTargetGroup matcher must persist.
 	_, err = c.ModifyTargetGroup(ctx, &elbv2.ModifyTargetGroupInput{
