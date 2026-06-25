@@ -58,18 +58,21 @@ func registerGCPAPIGateway(srv *sim.Server) {
 	srv.HandleFunc("POST /v1/projects/{project}/locations/global/apis", handleGCPAPIGWCreateApi)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/global/apis/{api}", handleGCPAPIGWGetApi)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/global/apis", handleGCPAPIGWListApis)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/global/apis/{api}", handleGCPAPIGWPatchApi)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/global/apis/{api}", handleGCPAPIGWDeleteApi)
 
 	// ApiConfigs (under Apis).
 	srv.HandleFunc("POST /v1/projects/{project}/locations/global/apis/{api}/configs", handleGCPAPIGWCreateConfig)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}", handleGCPAPIGWGetConfig)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/global/apis/{api}/configs", handleGCPAPIGWListConfigs)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}", handleGCPAPIGWPatchConfig)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}", handleGCPAPIGWDeleteConfig)
 
 	// Gateways (regional).
 	srv.HandleFunc("POST /v1/projects/{project}/locations/{location}/gateways", handleGCPAPIGWCreateGateway)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gateways/{gw}", handleGCPAPIGWGetGateway)
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/gateways", handleGCPAPIGWListGateways)
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/gateways/{gw}", handleGCPAPIGWPatchGateway)
 	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{location}/gateways/{gw}", handleGCPAPIGWDeleteGateway)
 
 	// IAM v1 per AIP-130. Empty default policy until setIamPolicy
@@ -204,6 +207,30 @@ func handleGCPAPIGWListApis(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"apis": out})
 }
 
+func handleGCPAPIGWPatchApi(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	name := fmt.Sprintf("projects/%s/locations/global/apis/%s", project, sim.PathParam(r, "api"))
+	api, ok := apigwApis.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "api not found: %s", name)
+		return
+	}
+	var req APIGWApi
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
+	if req.DisplayName != "" {
+		api.DisplayName = req.DisplayName
+	}
+	if req.Labels != nil {
+		api.Labels = req.Labels
+	}
+	apigwApis.Put(name, api)
+	op := newLRO(project, "global", api, "type.googleapis.com/google.cloud.apigateway.v1.Api")
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
 func handleGCPAPIGWDeleteApi(w http.ResponseWriter, r *http.Request) {
 	project := sim.PathParam(r, "project")
 	name := fmt.Sprintf("projects/%s/locations/global/apis/%s", project, sim.PathParam(r, "api"))
@@ -266,6 +293,31 @@ func handleGCPAPIGWListConfigs(w http.ResponseWriter, r *http.Request) {
 		out = []APIGWApiConfig{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"apiConfigs": out})
+}
+
+func handleGCPAPIGWPatchConfig(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	name := fmt.Sprintf("projects/%s/locations/global/apis/%s/configs/%s",
+		project, sim.PathParam(r, "api"), sim.PathParam(r, "cfg"))
+	c, ok := apigwConfigs.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "config not found: %s", name)
+		return
+	}
+	var req APIGWApiConfig
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
+	if req.DisplayName != "" {
+		c.DisplayName = req.DisplayName
+	}
+	if req.Labels != nil {
+		c.Labels = req.Labels
+	}
+	apigwConfigs.Put(name, c)
+	op := newLRO(project, "global", c, "type.googleapis.com/google.cloud.apigateway.v1.ApiConfig")
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func handleGCPAPIGWDeleteConfig(w http.ResponseWriter, r *http.Request) {
@@ -331,6 +383,34 @@ func handleGCPAPIGWListGateways(w http.ResponseWriter, r *http.Request) {
 		out = []APIGWGateway{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"gateways": out})
+}
+
+func handleGCPAPIGWPatchGateway(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	location := sim.PathParam(r, "location")
+	name := fmt.Sprintf("projects/%s/locations/%s/gateways/%s", project, location, sim.PathParam(r, "gw"))
+	g, ok := apigwGateways.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "gateway not found: %s", name)
+		return
+	}
+	var req APIGWGateway
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%s", err.Error())
+		return
+	}
+	if req.DisplayName != "" {
+		g.DisplayName = req.DisplayName
+	}
+	if req.ApiConfig != "" {
+		g.ApiConfig = req.ApiConfig
+	}
+	if req.Labels != nil {
+		g.Labels = req.Labels
+	}
+	apigwGateways.Put(name, g)
+	op := newLRO(project, location, g, "type.googleapis.com/google.cloud.apigateway.v1.Gateway")
+	sim.WriteJSON(w, http.StatusOK, op)
 }
 
 func handleGCPAPIGWDeleteGateway(w http.ResponseWriter, r *http.Request) {

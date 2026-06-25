@@ -4,11 +4,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
     && ARCH=$(uname -m) \
     && curl -fsSL "https://download.docker.com/linux/static/stable/${ARCH}/docker-27.5.1.tgz" | tar xz -C /usr/local/bin --strip-components=1 docker/docker
 
+# Resilient module-download wrapper (retries proxy.golang.org blips).
+COPY smoke-tests/retry-go-build.sh /usr/local/bin/retry-go-build
+RUN chmod +x /usr/local/bin/retry-go-build
+
 # Build simulator (independent module, not in go.work)
 WORKDIR /sim
 COPY simulators/realexec/ /realexec/
 COPY simulators/gcp/ /sim/
-RUN GOWORK=off go build -tags noui -o /usr/local/bin/simulator-gcp .
+RUN retry-go-build /usr/local/bin/simulator-gcp .
 
 # Copy source and build backend
 WORKDIR /src
@@ -18,7 +22,7 @@ COPY backends/core/ backends/core/
 COPY backends/gcp-common/ backends/gcp-common/
 COPY backends/cloudrun/ backends/cloudrun/
 
-RUN cd backends/cloudrun && GOWORK=off go mod download && GOWORK=off go build -tags noui -o /usr/local/bin/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
+RUN cd backends/cloudrun && retry-go-build /usr/local/bin/sockerless-backend-cloudrun ./cmd/sockerless-backend-cloudrun
 
 COPY smoke-tests/run.sh /test/run.sh
 RUN chmod +x /test/run.sh

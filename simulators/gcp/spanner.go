@@ -40,11 +40,35 @@ type spannerSession struct {
 	Labels     map[string]string `json:"labels,omitempty"`
 }
 
+// spannerReplicaInfo mirrors the Discovery ReplicaInfo schema (replica
+// placement within an instance configuration).
+type spannerReplicaInfo struct {
+	Location              string `json:"location,omitempty"`
+	Type                  string `json:"type,omitempty"`
+	DefaultLeaderLocation bool   `json:"defaultLeaderLocation,omitempty"`
+}
+
+// spannerInstanceConfig mirrors the Discovery InstanceConfig schema.
+type spannerInstanceConfig struct {
+	Name             string               `json:"name"`
+	DisplayName      string               `json:"displayName,omitempty"`
+	ConfigType       string               `json:"configType,omitempty"`
+	Replicas         []spannerReplicaInfo `json:"replicas,omitempty"`
+	OptionalReplicas []spannerReplicaInfo `json:"optionalReplicas,omitempty"`
+	BaseConfig       string               `json:"baseConfig,omitempty"`
+	Labels           map[string]string    `json:"labels,omitempty"`
+	Etag             string               `json:"etag,omitempty"`
+	LeaderOptions    []string             `json:"leaderOptions,omitempty"`
+	Reconciling      bool                 `json:"reconciling,omitempty"`
+	State            string               `json:"state,omitempty"`
+}
+
 var (
-	spannerInstances sim.Store[spannerInstance]
-	spannerDatabases sim.Store[spannerDatabase]
-	spannerDDLs      sim.Store[spannerDatabaseDDL]
-	spannerSessions  sim.Store[spannerSession]
+	spannerInstances       sim.Store[spannerInstance]
+	spannerDatabases       sim.Store[spannerDatabase]
+	spannerDDLs            sim.Store[spannerDatabaseDDL]
+	spannerSessions        sim.Store[spannerSession]
+	spannerInstanceConfigs sim.Store[spannerInstanceConfig]
 )
 
 func registerSpanner(srv *sim.Server) {
@@ -52,6 +76,7 @@ func registerSpanner(srv *sim.Server) {
 	spannerDatabases = sim.MakeStore[spannerDatabase](srv.DB(), "spanner_databases")
 	spannerDDLs = sim.MakeStore[spannerDatabaseDDL](srv.DB(), "spanner_database_ddls")
 	spannerSessions = sim.MakeStore[spannerSession](srv.DB(), "spanner_sessions")
+	spannerInstanceConfigs = sim.MakeStore[spannerInstanceConfig](srv.DB(), "spanner_instance_configs")
 
 	const base = "/spanner/v1/projects/{project}/instances"
 	srv.HandleFunc("POST "+base, handleSpannerCreateInstance)
@@ -60,6 +85,25 @@ func registerSpanner(srv *sim.Server) {
 	srv.HandleFunc("POST "+base+"/{rest...}", handleSpannerInstanceChild)
 	srv.HandleFunc("PATCH "+base+"/{rest...}", handleSpannerInstanceChild)
 	srv.HandleFunc("DELETE "+base+"/{rest...}", handleSpannerInstanceChild)
+
+	// Instance configurations: real CRUD plus their long-running operations
+	// and ssdCaches operations. Registered in flatPath form so the routes
+	// align with the Discovery method URIs.
+	const cfgBase = "/spanner/v1/projects/{project}/instanceConfigs"
+	srv.HandleFunc("POST "+cfgBase, handleSpannerCreateInstanceConfig)
+	srv.HandleFunc("GET "+cfgBase, handleSpannerListInstanceConfigs)
+	srv.HandleFunc("GET "+cfgBase+"/{config}", handleSpannerGetInstanceConfig)
+	srv.HandleFunc("PATCH "+cfgBase+"/{config}", handleSpannerUpdateInstanceConfig)
+	srv.HandleFunc("DELETE "+cfgBase+"/{config}", handleSpannerDeleteInstanceConfig)
+	srv.HandleFunc("GET "+cfgBase+"/{config}/operations", handleSpannerListInstanceConfigOperations)
+	srv.HandleFunc("GET "+cfgBase+"/{config}/operations/{operation}", handleSpannerGetInstanceConfigOperation)
+	srv.HandleFunc("DELETE "+cfgBase+"/{config}/operations/{operation}", handleSpannerDeleteInstanceConfigOperation)
+	srv.HandleFunc("GET "+cfgBase+"/{config}/ssdCaches/{ssdCache}/operations", handleSpannerListInstanceConfigOperations)
+	srv.HandleFunc("GET "+cfgBase+"/{config}/ssdCaches/{ssdCache}/operations/{operation}", handleSpannerGetInstanceConfigOperation)
+	srv.HandleFunc("DELETE "+cfgBase+"/{config}/ssdCaches/{ssdCache}/operations/{operation}", handleSpannerDeleteInstanceConfigOperation)
+
+	srv.HandleFunc("GET /spanner/v1/projects/{project}/instanceConfigOperations", handleSpannerListInstanceConfigOperationsCollection)
+	srv.HandleFunc("GET /spanner/v1/scans", handleSpannerListScans)
 }
 
 func spannerInstanceName(project, instance string) string {
@@ -456,4 +500,164 @@ func handleSpannerDeleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func spannerInstanceConfigName(project, config string) string {
+	return fmt.Sprintf("projects/%s/instanceConfigs/%s", project, config)
+}
+
+func newSpannerInstanceConfigLRO(project, config string, resource any, typeName string) Operation {
+	op := newLRO(project, "global", resource, typeName)
+	return renameGCPOperation(op, fmt.Sprintf("projects/%s/instanceConfigs/%s/operations", project, config))
+}
+
+func handleSpannerCreateInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	project := sim.PathParam(r, "project")
+	var req struct {
+		InstanceConfigID string                `json:"instanceConfigId"`
+		InstanceConfig   spannerInstanceConfig `json:"instanceConfig"`
+		ValidateOnly     bool                  `json:"validateOnly"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	configID := req.InstanceConfigID
+	if configID == "" {
+		sim.GCPError(w, http.StatusBadRequest, "instanceConfigId is required", "INVALID_ARGUMENT")
+		return
+	}
+	cfg := req.InstanceConfig
+	cfg.Name = spannerInstanceConfigName(project, configID)
+	if cfg.DisplayName == "" {
+		cfg.DisplayName = configID
+	}
+	if _, ok := spannerInstanceConfigs.Get(cfg.Name); ok {
+		sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS", "instance config %q already exists", cfg.Name)
+		return
+	}
+	cfg.ConfigType = "USER_MANAGED"
+	cfg.State = "READY"
+	cfg.Reconciling = false
+	if cfg.Etag == "" {
+		cfg.Etag = generateUUID()
+	}
+	if req.ValidateOnly {
+		op := newSpannerInstanceConfigLRO(project, configID, cfg, "type.googleapis.com/google.spanner.admin.instance.v1.InstanceConfig")
+		sim.WriteJSON(w, http.StatusOK, op)
+		return
+	}
+	spannerInstanceConfigs.Put(cfg.Name, cfg)
+	op := newSpannerInstanceConfigLRO(project, configID, cfg, "type.googleapis.com/google.spanner.admin.instance.v1.InstanceConfig")
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSpannerListInstanceConfigs(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("projects/%s/instanceConfigs/", sim.PathParam(r, "project"))
+	out := spannerInstanceConfigs.Filter(func(c spannerInstanceConfig) bool { return strings.HasPrefix(c.Name, prefix) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"instanceConfigs": out})
+}
+
+func handleSpannerGetInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	name := spannerInstanceConfigName(sim.PathParam(r, "project"), sim.PathParam(r, "config"))
+	cfg, ok := spannerInstanceConfigs.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance config %q not found", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, cfg)
+}
+
+func handleSpannerUpdateInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	project, configID := sim.PathParam(r, "project"), sim.PathParam(r, "config")
+	name := spannerInstanceConfigName(project, configID)
+	cfg, ok := spannerInstanceConfigs.Get(name)
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance config %q not found", name)
+		return
+	}
+	var req struct {
+		InstanceConfig spannerInstanceConfig `json:"instanceConfig"`
+		UpdateMask     string                `json:"updateMask"`
+		ValidateOnly   bool                  `json:"validateOnly"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+		return
+	}
+	for _, field := range strings.Split(req.UpdateMask, ",") {
+		switch strings.TrimSpace(field) {
+		case "displayName":
+			cfg.DisplayName = req.InstanceConfig.DisplayName
+		case "labels":
+			cfg.Labels = req.InstanceConfig.Labels
+		}
+	}
+	cfg.Etag = generateUUID()
+	if !req.ValidateOnly {
+		spannerInstanceConfigs.Put(name, cfg)
+	}
+	op := newSpannerInstanceConfigLRO(project, configID, cfg, "type.googleapis.com/google.spanner.admin.instance.v1.InstanceConfig")
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+func handleSpannerDeleteInstanceConfig(w http.ResponseWriter, r *http.Request) {
+	name := spannerInstanceConfigName(sim.PathParam(r, "project"), sim.PathParam(r, "config"))
+	if !spannerInstanceConfigs.Delete(name) {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "instance config %q not found", name)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSpannerListInstanceConfigOperations(w http.ResponseWriter, r *http.Request) {
+	base := spannerInstanceConfigName(sim.PathParam(r, "project"), sim.PathParam(r, "config"))
+	var prefix string
+	if ssd := sim.PathParam(r, "ssdCache"); ssd != "" {
+		prefix = fmt.Sprintf("%s/ssdCaches/%s/operations/", base, ssd)
+	} else {
+		prefix = base + "/operations/"
+	}
+	out := crOperations.Filter(func(op Operation) bool { return strings.HasPrefix(op.Name, prefix) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"operations": out})
+}
+
+func handleSpannerGetInstanceConfigOperation(w http.ResponseWriter, r *http.Request) {
+	base := spannerInstanceConfigName(sim.PathParam(r, "project"), sim.PathParam(r, "config"))
+	var name string
+	if ssd := sim.PathParam(r, "ssdCache"); ssd != "" {
+		name = fmt.Sprintf("%s/ssdCaches/%s/operations/%s", base, ssd, sim.PathParam(r, "operation"))
+	} else {
+		name = fmt.Sprintf("%s/operations/%s", base, sim.PathParam(r, "operation"))
+	}
+	if op, ok := crOperations.Get(name); ok {
+		sim.WriteJSON(w, http.StatusOK, op)
+		return
+	}
+	sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
+}
+
+func handleSpannerDeleteInstanceConfigOperation(w http.ResponseWriter, r *http.Request) {
+	base := spannerInstanceConfigName(sim.PathParam(r, "project"), sim.PathParam(r, "config"))
+	var name string
+	if ssd := sim.PathParam(r, "ssdCache"); ssd != "" {
+		name = fmt.Sprintf("%s/ssdCaches/%s/operations/%s", base, ssd, sim.PathParam(r, "operation"))
+	} else {
+		name = fmt.Sprintf("%s/operations/%s", base, sim.PathParam(r, "operation"))
+	}
+	crOperations.Delete(name)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleSpannerListInstanceConfigOperationsCollection(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("projects/%s/instanceConfigs/", sim.PathParam(r, "project"))
+	out := crOperations.Filter(func(op Operation) bool { return strings.HasPrefix(op.Name, prefix) })
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"operations": out})
+}
+
+func handleSpannerListScans(w http.ResponseWriter, r *http.Request) {
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"scans": []any{}})
 }

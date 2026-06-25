@@ -79,6 +79,50 @@ func registerVPCAccess(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
+	// Update connector (machineType / instance / throughput scaling).
+	srv.HandleFunc("PATCH /v1/projects/{project}/locations/{location}/connectors/{name}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		connName := sim.PathParam(r, "name")
+		name := fmt.Sprintf("projects/%s/locations/%s/connectors/%s", project, location, connName)
+
+		existing, ok := connectors.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "Connector %s not found", connName)
+			return
+		}
+
+		var req VPCAccessConnector
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+
+		// Only the mutable scaling fields are honored on update; the
+		// name, network, ipCidrRange and subnet are immutable on a real
+		// connector and are preserved from the stored resource.
+		if req.MachineType != "" {
+			existing.MachineType = req.MachineType
+		}
+		if req.MinInstances != 0 {
+			existing.MinInstances = req.MinInstances
+		}
+		if req.MaxInstances != 0 {
+			existing.MaxInstances = req.MaxInstances
+		}
+		if req.MinThroughput != 0 {
+			existing.MinThroughput = req.MinThroughput
+		}
+		if req.MaxThroughput != 0 {
+			existing.MaxThroughput = req.MaxThroughput
+		}
+		existing.State = "READY"
+		connectors.Put(name, existing)
+
+		op := newLRO(project, location, existing, "type.googleapis.com/google.cloud.vpcaccess.v1.Connector")
+		sim.WriteJSON(w, http.StatusOK, op)
+	})
+
 	// Get connector
 	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/connectors/{name}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")

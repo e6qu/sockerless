@@ -274,6 +274,8 @@ func registerCloudLogging(srv *sim.Server) {
 	srv.HandleFunc("PUT /v2/projects/{project}/metrics/{metric}", handleUpdateLoggingMetric)
 	srv.HandleFunc("PATCH /v2/projects/{project}/metrics/{metric}", handleUpdateLoggingMetric)
 	srv.HandleFunc("DELETE /v2/projects/{project}/metrics/{metric}", handleDeleteLoggingMetric)
+
+	registerCloudLoggingAdmin(srv)
 }
 
 func loggingSinkKey(project, sink string) string {

@@ -300,6 +300,37 @@ func TestAPIGateway_Lifecycle(t *testing.T) {
 	assert.Equal(t, "ACTIVE", gw.State)
 	assert.NotEmpty(t, gw.DefaultHostname)
 
+	// Patch Api (displayName) — LRO, then read back the mutation.
+	apiPatchOp, err := svc.Projects.Locations.Apis.Patch(api.Name, &apigateway.ApigatewayApi{
+		DisplayName: "Test API renamed",
+	}).UpdateMask("displayName").Do()
+	require.NoError(t, err)
+	assert.True(t, apiPatchOp.Done)
+	api, err = svc.Projects.Locations.Apis.Get(api.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Test API renamed", api.DisplayName)
+
+	// Patch ApiConfig (displayName).
+	cfgName := cfgList.ApiConfigs[0].Name
+	cfgPatchOp, err := svc.Projects.Locations.Apis.Configs.Patch(cfgName, &apigateway.ApigatewayApiConfig{
+		DisplayName: "v1 renamed",
+	}).UpdateMask("displayName").Do()
+	require.NoError(t, err)
+	assert.True(t, cfgPatchOp.Done)
+	cfg, err := svc.Projects.Locations.Apis.Configs.Get(cfgName).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "v1 renamed", cfg.DisplayName)
+
+	// Patch Gateway (displayName).
+	gwPatchOp, err := svc.Projects.Locations.Gateways.Patch(gw.Name, &apigateway.ApigatewayGateway{
+		DisplayName: "Gateway renamed",
+	}).UpdateMask("displayName").Do()
+	require.NoError(t, err)
+	assert.True(t, gwPatchOp.Done)
+	gw, err = svc.Projects.Locations.Gateways.Get(gw.Name).Do()
+	require.NoError(t, err)
+	assert.Equal(t, "Gateway renamed", gw.DisplayName)
+
 	// Cleanup: delete in dependency order.
 	_, _ = svc.Projects.Locations.Gateways.Delete(gw.Name).Do()
 	_, _ = svc.Projects.Locations.Apis.Configs.Delete(cfgList.ApiConfigs[0].Name).Do()
