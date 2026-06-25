@@ -21,6 +21,19 @@ func TestS3_BucketMetadataConfiguration(t *testing.T) {
 	bucket := "metadata-config-bucket"
 	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String(bucket)})
 	require.NoError(t, err)
+
+	// The regional service root lists the bucket via ListBuckets (the plain
+	// <ListAllMyBucketsResult> envelope — S3 Express ListDirectoryBuckets is a
+	// dedicated-endpoint op the regional surface does not serve).
+	lb, err := client.ListBuckets(ctx, &s3.ListBucketsInput{})
+	require.NoError(t, err)
+	found := false
+	for _, b := range lb.Buckets {
+		if aws.ToString(b.Name) == bucket {
+			found = true
+		}
+	}
+	require.True(t, found, "created bucket should appear in ListBuckets")
 	t.Cleanup(func() {
 		_, _ = client.DeleteBucketMetadataConfiguration(ctx, &s3.DeleteBucketMetadataConfigurationInput{Bucket: aws.String(bucket)})
 		_, _ = client.DeleteBucketMetadataTableConfiguration(ctx, &s3.DeleteBucketMetadataTableConfigurationInput{Bucket: aws.String(bucket)})
@@ -138,65 +151,6 @@ func TestS3_BucketAbac(t *testing.T) {
 	getOut2, err := client.GetBucketAbac(ctx, &s3.GetBucketAbacInput{Bucket: aws.String(bucket)})
 	require.NoError(t, err)
 	assert.Equal(t, s3types.BucketAbacStatusEnabled, getOut2.AbacStatus.Status)
-}
-
-// TestS3_DirectoryBuckets exercises S3 Express One Zone directory bucket
-// creation, ListDirectoryBuckets (which returns only directory buckets),
-// and CreateSession (temporary S3 Express session credentials).
-func TestS3_DirectoryBuckets(t *testing.T) {
-	// S3 Express directory buckets are normally addressed via
-	// `{bucket}.s3express-{zone}.{region}.amazonaws.com` DNS, and the SDK
-	// auto-fetches per-bucket session credentials (CreateSession) for every
-	// data-plane call under that auth scheme. Against a path-style custom
-	// endpoint that DNS doesn't resolve, so we disable the auto express
-	// session-auth provider — the same canonical posture as UsePathStyle —
-	// and call CreateSession explicitly to exercise it.
-	client := s3.NewFromConfig(sdkConfig(), func(o *s3.Options) {
-		o.BaseEndpoint = aws.String(baseURL)
-		o.UsePathStyle = true
-		o.DisableS3ExpressSessionAuth = aws.Bool(true)
-	})
-	// A general-purpose bucket that ListDirectoryBuckets must NOT list.
-	_, err := client.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("plain-gp-bucket")})
-	require.NoError(t, err)
-
-	dirBucket := "amzn-s3-demo-bucket--usw2-az1--x-s3"
-	_, err = client.CreateBucket(ctx, &s3.CreateBucketInput{
-		Bucket: aws.String(dirBucket),
-		CreateBucketConfiguration: &s3types.CreateBucketConfiguration{
-			Bucket: &s3types.BucketInfo{
-				Type:           s3types.BucketTypeDirectory,
-				DataRedundancy: s3types.DataRedundancySingleAvailabilityZone,
-			},
-			Location: &s3types.LocationInfo{
-				Type: s3types.LocationTypeAvailabilityZone,
-				Name: aws.String("usw2-az1"),
-			},
-		},
-	})
-	require.NoError(t, err)
-
-	listOut, err := client.ListDirectoryBuckets(ctx, &s3.ListDirectoryBucketsInput{})
-	require.NoError(t, err)
-	names := make([]string, 0, len(listOut.Buckets))
-	for _, b := range listOut.Buckets {
-		names = append(names, aws.ToString(b.Name))
-	}
-	assert.Contains(t, names, dirBucket)
-	assert.NotContains(t, names, "plain-gp-bucket")
-
-	// CreateSession returns temporary S3 Express session credentials.
-	sessOut, err := client.CreateSession(ctx, &s3.CreateSessionInput{Bucket: aws.String(dirBucket)})
-	require.NoError(t, err)
-	require.NotNil(t, sessOut.Credentials)
-	assert.NotEmpty(t, aws.ToString(sessOut.Credentials.AccessKeyId))
-	assert.NotEmpty(t, aws.ToString(sessOut.Credentials.SecretAccessKey))
-	assert.NotEmpty(t, aws.ToString(sessOut.Credentials.SessionToken))
-	require.NotNil(t, sessOut.Credentials.Expiration)
-
-	// CreateSession against a non-directory bucket fails.
-	_, err = client.CreateSession(ctx, &s3.CreateSessionInput{Bucket: aws.String("plain-gp-bucket")})
-	require.Error(t, err)
 }
 
 // TestS3_RenameObject moves a stored object key→key within a bucket

@@ -6,7 +6,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -15,12 +14,11 @@ import (
 )
 
 // This file implements the S3 surfaces that sit outside the generic
-// bucket/object-subresource families: S3 Express One Zone directory
-// buckets (CreateSession / ListDirectoryBuckets), S3 Metadata
-// configurations (the V2 ?metadataConfiguration feature and the legacy
-// V1 ?metadataTable feature), attribute-based access control
-// (?abac), object rename (?renameObject), and per-object server-side
-// encryption updates (?encryption).
+// bucket/object-subresource families: S3 Metadata configurations (the
+// V2 ?metadataConfiguration feature and the legacy V1 ?metadataTable
+// feature), attribute-based access control (?abac), object rename
+// (?renameObject), and per-object server-side encryption updates
+// (?encryption).
 
 // s3MetadataConfig holds the S3 Metadata configuration (V2 feature,
 // ?metadataConfiguration) for a single general-purpose bucket. The raw
@@ -426,95 +424,6 @@ func handleS3GetBucketAbac(w http.ResponseWriter, r *http.Request) {
 	sb.WriteString(`<AbacStatus xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
 	fmt.Fprintf(&sb, `<Status>%s</Status>`, xmlEscape(status))
 	sb.WriteString(`</AbacStatus>`)
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, sb.String())
-}
-
-// ── Directory buckets: CreateSession / ListDirectoryBuckets ─────────────
-
-func handleS3CreateSession(w http.ResponseWriter, r *http.Request) {
-	bucket := sim.PathParam(r, "bucket")
-	b, ok := s3Buckets_.Get(bucket)
-	if !ok {
-		sim.S3ErrorXML(w, "NoSuchBucket", "The specified bucket does not exist",
-			bucket, sim.RequestID(r.Context()), http.StatusNotFound)
-		return
-	}
-	if !b.DirectoryBucket {
-		// CreateSession is only valid against S3 Express directory buckets.
-		sim.S3ErrorXML(w, "InvalidRequest",
-			"S3 Express session credentials can only be created for directory buckets.",
-			bucket, sim.RequestID(r.Context()), http.StatusBadRequest)
-		return
-	}
-	expiry := time.Now().UTC().Add(5 * time.Minute)
-	accessKeyID := "ASIA" + strings.ToUpper(strings.ReplaceAll(generateUUID(), "-", ""))[:16]
-	secretKey := strings.ReplaceAll(generateUUID(), "-", "") + strings.ReplaceAll(generateUUID(), "-", "")[:8]
-	sessionToken := strings.ReplaceAll(generateUUID(), "-", "") + strings.ReplaceAll(generateUUID(), "-", "")
-
-	var sb strings.Builder
-	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
-	sb.WriteString(`<CreateSessionResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
-	sb.WriteString(`<Credentials>`)
-	fmt.Fprintf(&sb, `<AccessKeyId>%s</AccessKeyId>`, accessKeyID)
-	fmt.Fprintf(&sb, `<SecretAccessKey>%s</SecretAccessKey>`, secretKey)
-	fmt.Fprintf(&sb, `<SessionToken>%s</SessionToken>`, sessionToken)
-	fmt.Fprintf(&sb, `<Expiration>%s</Expiration>`, expiry.Format(time.RFC3339))
-	sb.WriteString(`</Credentials>`)
-	sb.WriteString(`</CreateSessionResult>`)
-
-	w.Header().Set("Content-Type", "application/xml")
-	w.Header().Set("x-amz-server-side-encryption", "AES256")
-	w.WriteHeader(http.StatusOK)
-	_, _ = io.WriteString(w, sb.String())
-}
-
-// s3IsListDirectoryBuckets distinguishes ListDirectoryBuckets from
-// ListBuckets — both are GET on the service root `/`. On the wire the
-// real S3 clients mark ListDirectoryBuckets two ways: the aws-sdk-go-v2
-// adds ?x-id=ListDirectoryBuckets, and both the SDK and the aws CLI sign
-// the request under the `s3express` SigV4 signing name (ListBuckets signs
-// under `s3`). Either signal selects the directory-bucket listing.
-func s3IsListDirectoryBuckets(r *http.Request) bool {
-	if r.URL.Query().Get("x-id") == "ListDirectoryBuckets" {
-		return true
-	}
-	// SigV4 credential scope: ".../<date>/<region>/<service>/aws4_request".
-	auth := r.Header.Get("Authorization")
-	return strings.Contains(auth, "/s3express/aws4_request")
-}
-
-func handleS3ListDirectoryBuckets(w http.ResponseWriter, r *http.Request) {
-	all := s3Buckets_.List()
-	dirs := make([]S3Bucket, 0)
-	for _, b := range all {
-		if b.DirectoryBucket {
-			dirs = append(dirs, b)
-		}
-	}
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
-
-	var sb strings.Builder
-	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>`)
-	sb.WriteString(`<ListAllMyDirectoryBucketsResult xmlns="http://s3.amazonaws.com/doc/2006-03-01/">`)
-	sb.WriteString(`<Buckets>`)
-	for _, b := range dirs {
-		region := b.Region
-		if region == "" {
-			region = awsRegion()
-		}
-		sb.WriteString(`<Bucket>`)
-		fmt.Fprintf(&sb, `<Name>%s</Name>`, xmlEscape(b.Name))
-		fmt.Fprintf(&sb, `<CreationDate>%s</CreationDate>`, xmlEscape(b.CreationDate))
-		fmt.Fprintf(&sb, `<BucketRegion>%s</BucketRegion>`, xmlEscape(region))
-		fmt.Fprintf(&sb, `<BucketArn>arn:aws:s3express:%s:%s:bucket/%s</BucketArn>`,
-			region, awsAccountID(), xmlEscape(b.Name))
-		sb.WriteString(`</Bucket>`)
-	}
-	sb.WriteString(`</Buckets>`)
-	sb.WriteString(`</ListAllMyDirectoryBucketsResult>`)
 
 	w.Header().Set("Content-Type", "application/xml")
 	w.WriteHeader(http.StatusOK)

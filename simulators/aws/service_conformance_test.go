@@ -14,10 +14,7 @@ import (
 // subresource matrix and collect the operation names they yield — the REST
 // analogue of reading the awsJson/query routers.
 func s3ImplementedOps() map[string]bool {
-	// ListDirectoryBuckets is GET / disambiguated from ListBuckets only by the
-	// SigV4 credential scope (s3express), which this op-name harness doesn't
-	// reconstruct; the route implements it, so seed it like ListBuckets.
-	ops := map[string]bool{"ListBuckets": true, "ListDirectoryBuckets": true}
+	ops := map[string]bool{"ListBuckets": true}
 	bucketReq := func(method, rawquery string) string {
 		r := httptest.NewRequest(method, "/bucket?"+rawquery, nil)
 		return s3BucketOperationName(r, nil)
@@ -42,7 +39,7 @@ func s3ImplementedOps() map[string]bool {
 		"intelligent-tiering", "inventory", "analytics", "metrics",
 		"uploads", "versions", "location", "policyStatus", "delete",
 		"metadataConfiguration", "metadataTable", "metadataInventoryTable",
-		"metadataJournalTable", "abac", "session",
+		"metadataJournalTable", "abac",
 	}
 	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
 		add(bucketReq(m, ""))
@@ -318,6 +315,11 @@ var s3ConformanceMissing = []string{
 	// per-request *.s3-object-lambda route — neither is faithfully serviceable
 	// over the request/response model (same class as Kinesis SubscribeToShard).
 	"SelectObjectContent", "WriteGetObjectResponse",
+	// ListDirectoryBuckets and CreateSession are S3 Express operations served
+	// only from dedicated S3 Express endpoints (s3express-control / zonal), never
+	// the regional s3.amazonaws.com surface the simulator hosts (the spec marks
+	// them smithy.rules#staticContextParams) — so the sim does not host them.
+	"ListDirectoryBuckets", "CreateSession",
 }
 
 // TestServiceConformance_S3Ratchet locks S3's REST operation-coverage gap set,

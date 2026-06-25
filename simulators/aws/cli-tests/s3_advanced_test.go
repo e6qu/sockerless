@@ -48,34 +48,3 @@ func TestS3CLI_BucketMetadataTableConfiguration(t *testing.T) {
 
 	runCLI(t, awsCLI("s3api", "delete-bucket-metadata-table-configuration", "--bucket", bucket))
 }
-
-// TestS3CLI_ListDirectoryBuckets exercises ListDirectoryBuckets via the
-// aws CLI. It is a service-level GET on `/` (no bucket subdomain), so it
-// routes faithfully against the path-style sim endpoint.
-//
-// CreateSession and the directory-bucket variant of CreateBucket are NOT
-// exercised over the CLI: botocore forces S3 Express virtual-host
-// addressing (`{bucket}.s3express-{zone}.{region}.amazonaws.com`) and an
-// auto CreateSession pre-fetch for any `*--x-s3` bucket name, neither of
-// which a path-style custom endpoint resolves (and `*.localhost`
-// subdomains don't resolve on macOS). Both ops are covered faithfully by
-// the SDK round-trip in sdk-tests/s3_advanced_test.go (which drives the
-// same handlers and the conformance hook) using path-style + the
-// DisableS3ExpressSessionAuth canonical posture.
-func TestS3CLI_ListDirectoryBuckets(t *testing.T) {
-	out := runCLI(t, awsCLI("s3api", "list-directory-buckets"))
-	var listResp struct {
-		Buckets []struct {
-			Name string `json:"Name"`
-		} `json:"Buckets"`
-	}
-	require.NoError(t, json.Unmarshal([]byte(out), &listResp))
-	// A general-purpose bucket must never appear in the directory listing.
-	_ = awsCLI("s3api", "create-bucket", "--bucket", "cli-plain-gp-bucket").Run()
-	t.Cleanup(func() { _ = awsCLI("s3api", "delete-bucket", "--bucket", "cli-plain-gp-bucket").Run() })
-	out2 := runCLI(t, awsCLI("s3api", "list-directory-buckets"))
-	require.NoError(t, json.Unmarshal([]byte(out2), &listResp))
-	for _, b := range listResp.Buckets {
-		assert.NotEqual(t, "cli-plain-gp-bucket", b.Name)
-	}
-}

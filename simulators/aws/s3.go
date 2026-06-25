@@ -19,14 +19,6 @@ import (
 type S3Bucket struct {
 	Name         string `xml:"Name"`
 	CreationDate string `xml:"CreationDate"`
-	// DirectoryBucket marks a bucket created as an S3 Express One Zone
-	// directory bucket (CreateBucket with <CreateBucketConfiguration>
-	// <Bucket><Type>Directory</Type>). ListDirectoryBuckets returns only
-	// these, and CreateSession is valid only against one.
-	DirectoryBucket bool `xml:"-"`
-	// Region records the bucket's home Region (the sim's configured region
-	// at creation time). Surfaced as BucketRegion in ListDirectoryBuckets.
-	Region string `xml:"-"`
 }
 
 type S3Object struct {
@@ -168,13 +160,10 @@ func registerS3(srv *sim.Server) {
 	//     edge case rather than rejecting such bucket names.
 	s3BucketResource := cloudTrailRESTResource("AWS::S3::Bucket", "bucket")
 	s3ObjectResource := cloudTrailRESTResource("AWS::S3::Object", "key", "bucket")
-	s3ServiceOp := func(r *http.Request, _ []byte) string {
-		if s3IsListDirectoryBuckets(r) {
-			return "ListDirectoryBuckets"
-		}
-		return "ListBuckets"
+	staticOp := func(name string) func(*http.Request, []byte) string {
+		return func(*http.Request, []byte) string { return name }
 	}
-	mux.HandleFunc("GET /{$}", cloudTrailRecordedRESTDynamic(s3ServiceOp, "s3.amazonaws.com", nil, s3Enforced(s3ServiceOp, handleS3ListBuckets)))
+	mux.HandleFunc("GET /{$}", cloudTrailRecordedREST("ListBuckets", "s3.amazonaws.com", nil, s3Enforced(staticOp("ListBuckets"), handleS3ListBuckets)))
 	mux.HandleFunc("PUT /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3PutBucketDispatch)))
 	mux.HandleFunc("DELETE /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3DeleteBucketDispatch)))
 	mux.HandleFunc("GET /{bucket}", cloudTrailRecordedRESTDynamic(s3BucketOperationName, "s3.amazonaws.com", s3BucketResource, s3Enforced(s3BucketOperationName, handleS3GetOrHeadBucket)))
@@ -283,10 +272,6 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 			return "GetBucketMetadataTableConfiguration"
 		case q.Has("abac"):
 			return "GetBucketAbac"
-		case q.Has("session"):
-			// CreateSession is a GET on the directory bucket with ?session
-			// (returns S3 Express temporary session credentials).
-			return "CreateSession"
 		case q.Has("policy"):
 			return "GetBucketPolicy"
 		case q.Has("uploads"):
@@ -476,10 +461,6 @@ func handleS3GetOrHeadObject(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleS3ListBuckets(w http.ResponseWriter, r *http.Request) {
-	if s3IsListDirectoryBuckets(r) {
-		handleS3ListDirectoryBuckets(w, r)
-		return
-	}
 	buckets := s3Buckets_.List()
 	if buckets == nil {
 		buckets = []S3Bucket{}
@@ -520,26 +501,9 @@ func handleS3CreateBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Detect a directory bucket (S3 Express One Zone): CreateBucket carries
-	// <CreateBucketConfiguration><Bucket><Type>Directory</Type></Bucket>.
-	// Parse the small config body to set the marker.
-	isDirectory := false
-	if body, err := io.ReadAll(r.Body); err == nil && len(body) > 0 {
-		var cfg struct {
-			Bucket struct {
-				Type string `xml:"Type"`
-			} `xml:"Bucket"`
-		}
-		if xml.Unmarshal(body, &cfg) == nil && cfg.Bucket.Type == "Directory" {
-			isDirectory = true
-		}
-	}
-
 	b := S3Bucket{
-		Name:            bucket,
-		CreationDate:    time.Now().UTC().Format(time.RFC3339),
-		DirectoryBucket: isDirectory,
-		Region:          awsRegion(),
+		Name:         bucket,
+		CreationDate: time.Now().UTC().Format(time.RFC3339),
 	}
 	s3Buckets_.Put(bucket, b)
 
@@ -610,9 +574,6 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 		return
 	case q.Has("abac"):
 		handleS3GetBucketAbac(w, r)
-		return
-	case q.Has("session"):
-		handleS3CreateSession(w, r)
 		return
 	case q.Has("policy"):
 		emitStoredOr404(w, r, bucket, "policy", "NoSuchBucketPolicy", "The bucket policy does not exist")

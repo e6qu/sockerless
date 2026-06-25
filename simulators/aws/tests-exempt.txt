@@ -3,7 +3,3 @@ AWSStepFunctions.ListStateMachineVersions
 AWSGlue.GetPartitionIndexes
 POST /service/GraniteServiceVersion20100801/operation/
 GET /2018-10-31/layers
-# S3 service-root dynamic dispatcher: GET / resolves to ListBuckets or
-# ListDirectoryBuckets by SigV4 scope; both ops are exercised by their own
-# SDK tests, so the bare-root mux pattern itself carries no separate operation.
-GET /{$}
