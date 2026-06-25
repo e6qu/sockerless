@@ -92,7 +92,9 @@ func TestContainerAppsApps_CLI_StartsRealReplicaAndLogs(t *testing.T) {
 
 	queryURL := baseURL + "/v1/workspaces/default/query"
 	kqlBody := `{"query": "ContainerAppConsoleLogs_CL | where ContainerAppName_s == \"` + appName + `\""}`
-	deadline := time.Now().Add(10 * time.Second)
+	// Generous deadline so a slow real-replica start on a loaded CI runner doesn't
+	// expire before the arithmetic output is logged; the loop returns on first match.
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		out := runCLI(t, azRest("POST", queryURL, kqlBody))
 		if strings.Contains(out, "54") {

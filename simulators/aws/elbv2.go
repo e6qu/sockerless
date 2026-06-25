@@ -297,6 +297,7 @@ func handleELBv2DeleteLoadBalancer(w http.ResponseWriter, r *http.Request) {
 	elbv2LoadBalancers.Delete(arn)
 	for _, listener := range elbv2Listeners.Filter(func(l ELBv2Listener) bool { return l.LoadBalancerArn == arn }) {
 		elbv2Listeners.Delete(listener.Arn)
+		elbv2StopNLBProxy(listener.Arn)
 	}
 	for _, tg := range elbv2TargetGroups.List() {
 		tg.LoadBalancerArns = removeString(tg.LoadBalancerArns, arn)
@@ -425,7 +426,7 @@ func handleELBv2CreateTargetGroup(w http.ResponseWriter, r *http.Request) {
 		HealthCheckTimeout:      atoiDefault(r.FormValue("HealthCheckTimeoutSeconds"), 5),
 		HealthyThresholdCount:   atoiDefault(r.FormValue("HealthyThresholdCount"), 5),
 		UnhealthyThresholdCount: atoiDefault(r.FormValue("UnhealthyThresholdCount"), 2),
-		MatcherHttpCode:         firstNonEmpty(r.FormValue("Matcher.HttpCode"), elbv2DefaultMatcher(protocol)),
+		MatcherHttpCode:         elbv2DefaultedMatcher(firstNonEmpty(r.FormValue("HealthCheckProtocol"), protocol), r.FormValue("Matcher.HttpCode")),
 		MatcherGrpcCode:         r.FormValue("Matcher.GrpcCode"),
 		Tags:                    parseELBv2Tags(r, "Tags"),
 		Attributes:              defaultELBv2TargetGroupAttributes(),
@@ -502,6 +503,11 @@ func handleELBv2ModifyTargetGroup(w http.ResponseWriter, r *http.Request) {
 		}
 		if v := r.FormValue("Matcher.GrpcCode"); v != "" {
 			tg.MatcherGrpcCode = v
+		}
+		// When the health check is (now) HTTP/HTTPS and no Matcher was ever set,
+		// AWS supplies the "200" default; for TCP/etc. no Matcher applies.
+		if elbv2MatcherApplies(tg.HealthCheckProtocol) && tg.MatcherHttpCode == "" && tg.MatcherGrpcCode == "" {
+			tg.MatcherHttpCode = elbv2DefaultMatcher()
 		}
 	}) {
 		elbv2ErrorXML(w, "TargetGroupNotFound", "Target group not found", http.StatusNotFound, sim.RequestID(r.Context()))
@@ -648,6 +654,12 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	}
+	// NLB stream listeners forward a raw byte stream; bind a real TCP proxy so
+	// the data plane is faithful (e.g. SSH through an NLB).
+	if err := elbv2StartNLBProxy(listener); err != nil {
+		elbv2ErrorXML(w, "OperationNotPermitted", err.Error(), http.StatusBadRequest, sim.RequestID(r.Context()))
+		return
+	}
 	elbv2XMLResponse(w, "CreateListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
 }
 
@@ -696,6 +708,7 @@ func handleELBv2ModifyListenerAttributes(w http.ResponseWriter, r *http.Request)
 func handleELBv2DeleteListener(w http.ResponseWriter, r *http.Request) {
 	arn := r.FormValue("ListenerArn")
 	elbv2Listeners.Delete(arn)
+	elbv2StopNLBProxy(arn)
 	elbv2XMLResponse(w, "DeleteListener", "", sim.RequestID(r.Context()))
 }
 
@@ -846,7 +859,7 @@ func elbv2LoadBalancerXML(lb ELBv2LoadBalancer) string {
 		extra += fmt.Sprintf("<CustomerOwnedIpv4Pool>%s</CustomerOwnedIpv4Pool>", xmlEscape(lb.CustomerOwnedIpv4Pool))
 	}
 	return fmt.Sprintf(`<member><LoadBalancerArn>%s</LoadBalancerArn><DNSName>%s</DNSName><CanonicalHostedZoneId>%s</CanonicalHostedZoneId><CreatedTime>%s</CreatedTime><LoadBalancerName>%s</LoadBalancerName><Scheme>%s</Scheme><VpcId>%s</VpcId><State><Code>%s</Code></State><Type>%s</Type><AvailabilityZones>%s</AvailabilityZones><SecurityGroups>%s</SecurityGroups><IpAddressType>%s</IpAddressType>%s</member>`,
-		xmlEscape(lb.Arn), xmlEscape(lb.DNSName), xmlEscape(lb.CanonicalZone), xmlEscape(lb.CreatedTime), xmlEscape(lb.Name),
+		xmlEscape(lb.Arn), xmlEscape(elbv2ReportedDNSName(lb)), xmlEscape(lb.CanonicalZone), xmlEscape(lb.CreatedTime), xmlEscape(lb.Name),
 		xmlEscape(lb.Scheme), xmlEscape(lb.VpcID), xmlEscape(lb.State), xmlEscape(lb.Type), elbv2AvailabilityZonesXML(lb.Subnets),
 		elbv2StringMembersXMLInner(lb.SecurityGroups), xmlEscape(lb.IpAddressType), extra)
 }
@@ -880,16 +893,40 @@ func elbv2AvailabilityZonesXML(subnets []string) string {
 	return b.String()
 }
 
-// elbv2DefaultMatcher returns the AWS default health-check success codes for a
-// target group's protocol: HTTP/HTTPS (ALB) default to "200"; TCP/TLS/UDP/
-// TCP_UDP/GENEVE (NLB) default to "200-399".
-func elbv2DefaultMatcher(protocol string) string {
-	switch protocol {
+// elbv2MatcherApplies reports whether a Matcher (HTTP response codes) is part of
+// the target group's health check. Real ELBv2 carries a Matcher only when the
+// health-check protocol is HTTP or HTTPS; for TCP/TLS/UDP/TCP_UDP/GENEVE health
+// checks AWS omits Matcher entirely (the API rejects a Matcher on those, and
+// Describe* returns none), so emitting one breaks terraform-provider-aws
+// idempotency.
+func elbv2MatcherApplies(healthCheckProtocol string) bool {
+	switch healthCheckProtocol {
 	case "HTTP", "HTTPS":
-		return "200"
+		return true
 	default:
-		return "200-399"
+		return false
 	}
+}
+
+// elbv2DefaultMatcher returns the AWS default health-check success codes for an
+// HTTP/HTTPS health check ("200"). It is only meaningful when a Matcher applies
+// (see elbv2MatcherApplies); callers must gate on the health-check protocol.
+func elbv2DefaultMatcher() string {
+	return "200"
+}
+
+// elbv2DefaultedMatcher returns the stored Matcher.HttpCode for a target group:
+// the requested value if supplied, otherwise the AWS default for an HTTP/HTTPS
+// health check. For TCP/UDP/etc. health checks no Matcher applies, so it stays
+// empty unless the caller explicitly supplied one.
+func elbv2DefaultedMatcher(healthCheckProtocol, requested string) string {
+	if requested != "" {
+		return requested
+	}
+	if elbv2MatcherApplies(healthCheckProtocol) {
+		return elbv2DefaultMatcher()
+	}
+	return ""
 }
 
 // elbv2DefaultProtocolVersion: HTTP/HTTPS target groups default protocol_version
@@ -905,13 +942,18 @@ func elbv2DefaultProtocolVersion(protocol, requested string) string {
 }
 
 func elbv2TargetGroupXML(tg ELBv2TargetGroup) string {
+	// Real ELBv2 returns a Matcher only for HTTP/HTTPS health checks (or a gRPC
+	// health check carrying GrpcCode). For TCP/TLS/UDP/TCP_UDP/GENEVE health
+	// checks AWS omits Matcher entirely; emitting one makes
+	// terraform-provider-aws plan a perpetual "matcher" diff.
 	var matcher string
-	if tg.MatcherGrpcCode != "" {
+	switch {
+	case tg.MatcherGrpcCode != "":
 		matcher = fmt.Sprintf("<Matcher><GrpcCode>%s</GrpcCode></Matcher>", xmlEscape(tg.MatcherGrpcCode))
-	} else {
+	case elbv2MatcherApplies(tg.HealthCheckProtocol):
 		code := tg.MatcherHttpCode
 		if code == "" {
-			code = elbv2DefaultMatcher(tg.Protocol)
+			code = elbv2DefaultMatcher()
 		}
 		matcher = fmt.Sprintf("<Matcher><HttpCode>%s</HttpCode></Matcher>", xmlEscape(code))
 	}

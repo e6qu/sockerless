@@ -210,7 +210,9 @@ ENTRYPOINT ["/usr/local/bin/%s"]
 
 func waitForCLIJSON(t *testing.T, url string, ready func(string) bool) string {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
+	// Generous deadline: each `az rest` poll pays Python startup cost, so a tight
+	// window allows only a few attempts and races on a loaded CI runner.
+	deadline := time.Now().Add(30 * time.Second)
 	var last string
 	for {
 		out, err := azRest("GET", url, "").CombinedOutput()

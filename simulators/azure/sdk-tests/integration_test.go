@@ -133,12 +133,14 @@ func TestIntegration_AzureFunctionsLifecycle(t *testing.T) {
 	invokeResp.Body.Close()
 	require.Equal(t, http.StatusOK, invokeResp.StatusCode)
 
-	// 5. Query AppTraces for the function we just invoked.
-	time.Sleep(100 * time.Millisecond)
+	// 5. Query AppTraces for the function we just invoked. Poll until the trace
+	// is ingested rather than racing on a fixed sleep that a loaded runner could
+	// exceed.
 	kql := `AppTraces | where AppRoleName == "` + siteName + `"`
-	result := queryWorkspace(t, "default", kql)
-	require.Len(t, result.Tables, 1)
-	require.GreaterOrEqual(t, len(result.Tables[0].Rows), 1, "should have at least one Function invoked AppTraces entry")
+	require.Eventually(t, func() bool {
+		result := queryWorkspace(t, "default", kql)
+		return len(result.Tables) == 1 && len(result.Tables[0].Rows) >= 1
+	}, 30*time.Second, 200*time.Millisecond, "should have at least one Function invoked AppTraces entry")
 
 	// 6. Delete function app
 	delReq, _ := http.NewRequestWithContext(ctx, "DELETE",

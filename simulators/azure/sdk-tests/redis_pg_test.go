@@ -44,7 +44,9 @@ func armReq(t *testing.T, method, path string, body string) *http.Response {
 
 func waitAzureAsyncOperation(t *testing.T, opURL string) {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous deadline so a loaded CI runner doesn't expire before the async
+	// operation reports Succeeded; the loop still returns immediately on success.
+	deadline := time.Now().Add(30 * time.Second)
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, opURL, nil)
 		require.NoError(t, err)

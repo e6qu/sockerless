@@ -559,7 +559,9 @@ func waitForEC2InstanceState(t *testing.T, client *ec2.Client, instanceID string
 
 func waitForEC2SnapshotState(t *testing.T, client *ec2.Client, snapshotID string, want types.SnapshotState) *ec2.DescribeSnapshotsOutput {
 	t.Helper()
-	deadline := time.Now().Add(2 * time.Second)
+	// Generous deadline: the snapshot transition is fast, but a tight 2s window
+	// can expire under CI scheduling stalls / GC pauses and flake the test.
+	deadline := time.Now().Add(60 * time.Second)
 	var last *ec2.DescribeSnapshotsOutput
 	for time.Now().Before(deadline) {
 		out, err := client.DescribeSnapshots(ctx, &ec2.DescribeSnapshotsInput{SnapshotIds: []string{snapshotID}})

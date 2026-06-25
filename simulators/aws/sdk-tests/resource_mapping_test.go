@@ -299,34 +299,36 @@ func TestECS_RunTaskNetworkConfig(t *testing.T) {
 	taskArn := *runOut.Tasks[0].TaskArn
 	cleanupECSTask(t, client, clusterName, taskArn)
 
-	// Wait briefly for task to reach RUNNING
-	time.Sleep(800 * time.Millisecond)
-
-	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(clusterName),
-		Tasks:   []string{taskArn},
-	})
-	require.NoError(t, err)
-	require.Len(t, descOut.Tasks, 1)
-
-	task := descOut.Tasks[0]
-
-	// Verify the task has network attachments with the requested configuration
-	require.NotEmpty(t, task.Attachments, "task should have network attachments")
-
-	// Verify ENI attachment exists with a subnet and IP
+	// Poll until the task's ENI attachment is populated with its subnet and IP.
+	// The attachment is filled in as the task reaches RUNNING; a fixed sleep
+	// races on a loaded CI runner where that transition can take seconds.
 	var foundSubnet, foundIP bool
-	for _, att := range task.Attachments {
-		for _, detail := range att.Details {
-			if detail.Name != nil && detail.Value != nil {
-				if *detail.Name == "subnetId" && *detail.Value != "" {
-					foundSubnet = true
-				}
-				if *detail.Name == "privateIPv4Address" && *detail.Value != "" {
-					foundIP = true
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(clusterName),
+			Tasks:   []string{taskArn},
+		})
+		require.NoError(t, err)
+		require.Len(t, descOut.Tasks, 1)
+
+		foundSubnet, foundIP = false, false
+		for _, att := range descOut.Tasks[0].Attachments {
+			for _, detail := range att.Details {
+				if detail.Name != nil && detail.Value != nil {
+					if *detail.Name == "subnetId" && *detail.Value != "" {
+						foundSubnet = true
+					}
+					if *detail.Name == "privateIPv4Address" && *detail.Value != "" {
+						foundIP = true
+					}
 				}
 			}
 		}
+		if foundSubnet && foundIP {
+			break
+		}
+		time.Sleep(250 * time.Millisecond)
 	}
 	assert.True(t, foundSubnet, "task attachment should have a subnetId")
 	assert.True(t, foundIP, "task attachment should have a privateIPv4Address")

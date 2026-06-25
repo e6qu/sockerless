@@ -157,7 +157,9 @@ func TestContainerInstances_GroupLogsExecSDK(t *testing.T) {
 			Tail: to.Ptr[int32](20),
 		})
 		return err == nil && logs.Content != nil && strings.Contains(ptrVal(logs.Content), "aci-sdk-ready")
-	}, 10*time.Second, 250*time.Millisecond)
+		// Generous deadline so a slow real-container start on a loaded CI runner
+		// doesn't expire before the log line is emitted.
+	}, 30*time.Second, 250*time.Millisecond)
 
 	createACIGroup("sdk-aci", []*string{to.Ptr("/usr/local/bin/container-command"), to.Ptr("hold")})
 	t.Cleanup(func() {

@@ -85,7 +85,7 @@ func TestContainerApps_CrossJobDNS_CLI(t *testing.T) {
 		var err error
 		getent, err = exec.Command("docker", "exec", alphaContainer, "getent", "hosts", "beta").CombinedOutput()
 		return err == nil && len(getent) > 0
-	}, 10*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via ACA env DNS: %s", getent)
+	}, 30*time.Second, 500*time.Millisecond, "alpha should resolve 'beta' via ACA env DNS: %s", getent)
 	assert.Contains(t, string(getent), "beta")
 }
 

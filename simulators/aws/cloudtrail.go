@@ -1146,6 +1146,7 @@ var awsEventSourceByQueryVersion = map[string]string{
 	"2014-10-31": "rds.amazonaws.com",
 	"2010-05-08": "iam.amazonaws.com",
 	"2011-06-15": "sts.amazonaws.com",
+	"2015-02-02": "elasticache.amazonaws.com",
 }
 
 // awsEventSource resolves the CloudTrail eventSource for an awsJson or
