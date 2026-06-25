@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -30,6 +31,19 @@ type Function struct {
 	UpdateTime    string            `json:"updateTime"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Environment   enumString        `json:"environment,omitempty"`
+	// UpgradeInfo carries the 1st-Gen→2nd-Gen migration state. It is
+	// populated only for functions an upgrade-lifecycle verb has touched;
+	// the upgrade colon-verbs transition upgradeInfo.upgradeState.
+	UpgradeInfo *UpgradeInfo `json:"upgradeInfo,omitempty"`
+}
+
+// UpgradeInfo describes a function's 1st Gen → 2nd Gen migration state.
+// Mirrors google.cloud.functions.v2.UpgradeInfo: the upgrade colon-verbs
+// drive upgradeState through the documented transitions.
+type UpgradeInfo struct {
+	UpgradeState  string         `json:"upgradeState,omitempty"`
+	ServiceConfig *ServiceConfig `json:"serviceConfig,omitempty"`
+	BuildConfig   *BuildConfig   `json:"buildConfig,omitempty"`
 }
 
 // BuildConfig holds the build configuration for a function.
@@ -212,12 +226,22 @@ func registerCloudFunctions(srv *sim.Server) {
 		})
 	})
 
-	// Get function
+	// Get function. The `{function}` wildcard also captures the GET-side
+	// AIP-141 IAM verb `{id}:getIamPolicy` (Go's mux can't spell `{id}:verb`),
+	// dispatched by splitting on the colon.
 	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/functions/{function}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		location := sim.PathParam(r, "location")
-		functionID := sim.PathParam(r, "function")
-		name := fmt.Sprintf("projects/%s/locations/%s/functions/%s", project, location, functionID)
+		functionParam := sim.PathParam(r, "function")
+		if id, action, found := strings.Cut(functionParam, ":"); found {
+			if action == "getIamPolicy" {
+				handleResourceIAM(w, r, gcpResourceIAMStore(), cloudFunctionName(project, location, id), action)
+				return
+			}
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on function %q", action, id)
+			return
+		}
+		name := cloudFunctionName(project, location, functionParam)
 
 		fn, ok := functions.Get(name)
 		if !ok {
@@ -346,6 +370,198 @@ func registerCloudFunctions(srv *sim.Server) {
 		lro := newLRO(project, location, fn.wire(), "type.googleapis.com/google.cloud.functions.v2.Function")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
+
+	// Function-scoped POST colon-verbs: the AIP-141 IAM verbs
+	// (setIamPolicy / testIamPermissions), generateDownloadUrl, detachFunction,
+	// and the seven 1st-Gen→2nd-Gen upgrade-lifecycle verbs. Go's mux can't
+	// spell `{id}:verb`, so a single `{functionAction}` wildcard captures
+	// `<functionId>:<verb>` and fans in on the verb.
+	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/functions/{functionAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		id, action, found := strings.Cut(sim.PathParam(r, "functionAction"), ":")
+		if !found {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown function action %q", sim.PathParam(r, "functionAction"))
+			return
+		}
+		name := cloudFunctionName(project, location, id)
+
+		switch action {
+		case "setIamPolicy", "testIamPermissions":
+			handleResourceIAM(w, r, gcpResourceIAMStore(), name, action)
+			return
+		}
+
+		// The remaining verbs operate on an existing function.
+		fn, ok := functions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "function %q not found", name)
+			return
+		}
+
+		switch action {
+		case "generateDownloadUrl":
+			// GenerateDownloadUrlRequest has no body fields; the response is
+			// a signed Cloud Storage URL for the function's source archive.
+			bucket := fmt.Sprintf("gcf-sources-%s-%s", project, location)
+			object := fmt.Sprintf("downloads/%s.zip", id)
+			downloadURL := fmt.Sprintf("http://%s/download/storage/v1/b/%s/o/%s?alt=media",
+				r.Host, bucket, url.QueryEscape(object))
+			sim.WriteJSON(w, http.StatusOK, map[string]any{"downloadUrl": downloadURL})
+		case "setupFunctionUpgradeConfig":
+			applyUpgradeState(&fn, "SETUP_FUNCTION_UPGRADE_CONFIG_SUCCESSFUL")
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		case "abortFunctionUpgrade":
+			applyUpgradeState(&fn, "ELIGIBLE_FOR_2ND_GEN_UPGRADE")
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		case "redirectFunctionUpgradeTraffic":
+			applyUpgradeState(&fn, "REDIRECT_FUNCTION_UPGRADE_TRAFFIC_SUCCESSFUL")
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		case "rollbackFunctionUpgradeTraffic":
+			// Roll traffic back to the 1st Gen stack; the function returns to
+			// the setup-complete state (the 2nd Gen stack still exists).
+			applyUpgradeState(&fn, "SETUP_FUNCTION_UPGRADE_CONFIG_SUCCESSFUL")
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		case "commitFunctionUpgrade", "commitFunctionUpgradeAsGen2":
+			// Commit finalizes the migration: the function is now a 2nd Gen
+			// function and upgradeInfo is cleared. A successful upgrade is
+			// indicated by the LRO completing with the Function in the response.
+			fn.Environment = "GEN_2"
+			fn.UpgradeInfo = nil
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		case "detachFunction":
+			// Detach the 2nd Gen function from its 1st Gen counterpart; the
+			// function survives as a standalone 2nd Gen function.
+			fn.UpgradeInfo = nil
+			fn.UpdateTime = nowTimestamp()
+			functions.Put(name, fn)
+			sim.WriteJSON(w, http.StatusOK, newLRO(project, location, fn.wire(), cloudFunctionTypeURL))
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on function %q", action, id)
+		}
+	})
+
+	// List locations (Locations.ListLocations).
+	srv.HandleFunc("GET /v2/projects/{project}/locations", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		locations := make([]map[string]any, 0, len(cloudFunctionRegions))
+		for _, region := range cloudFunctionRegions {
+			locations = append(locations, map[string]any{
+				"name":        fmt.Sprintf("projects/%s/locations/%s", project, region),
+				"locationId":  region,
+				"displayName": region,
+				"labels":      map[string]string{"cloud.googleapis.com/region": region},
+			})
+		}
+		page, next, ok := paginateList(w, r, locations)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"locations": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	// List operations (Operations.ListOperations) under a location. Projects
+	// the shared crOperations store filtered to this location's prefix.
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/operations", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		prefix := fmt.Sprintf("projects/%s/locations/%s/operations/", project, location)
+		out := make([]Operation, 0)
+		for _, op := range crOperations.List() {
+			if strings.HasPrefix(op.Name, prefix) {
+				out = append(out, op)
+			}
+		}
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+		page, next, ok := paginateList(w, r, out)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"operations": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	// List runtimes (ListRuntimes) — the function runtimes available in a
+	// location. A faithful representative slice of the real Cloud Functions
+	// Gen2 runtime catalog.
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/runtimes", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"runtimes": cloudFunctionRuntimes()})
+	})
+}
+
+// cloudFunctionTypeURL is the protobuf type URL for the Function resource,
+// stamped into LRO responses.
+const cloudFunctionTypeURL = "type.googleapis.com/google.cloud.functions.v2.Function"
+
+// cloudFunctionRegions is a representative slice of the regions in which
+// Cloud Functions Gen2 is available, used to back ListLocations.
+var cloudFunctionRegions = []string{
+	"us-central1", "us-east1", "us-west1",
+	"europe-west1", "europe-west2",
+	"asia-east1", "asia-northeast1",
+}
+
+// cloudFunctionName builds the fully-qualified Cloud Functions v2 resource
+// name from its coordinates.
+func cloudFunctionName(project, location, functionID string) string {
+	return fmt.Sprintf("projects/%s/locations/%s/functions/%s", project, location, functionID)
+}
+
+// applyUpgradeState stamps the function's upgradeInfo.upgradeState, allocating
+// the UpgradeInfo sub-object on first use.
+func applyUpgradeState(fn *storedFunction, state string) {
+	if fn.UpgradeInfo == nil {
+		fn.UpgradeInfo = &UpgradeInfo{}
+	}
+	fn.UpgradeInfo.UpgradeState = state
+}
+
+// cloudFunctionRuntimes returns a representative slice of the real Cloud
+// Functions Gen2 runtime catalog for ListRuntimes.
+func cloudFunctionRuntimes() []map[string]any {
+	type rt struct {
+		name, displayName string
+	}
+	catalog := []rt{
+		{"nodejs20", "Node.js 20"},
+		{"nodejs18", "Node.js 18"},
+		{"python312", "Python 3.12"},
+		{"python311", "Python 3.11"},
+		{"go122", "Go 1.22"},
+		{"go121", "Go 1.21"},
+		{"java21", "Java 21"},
+		{"java17", "Java 17"},
+		{"dotnet8", ".NET 8"},
+		{"ruby33", "Ruby 3.3"},
+		{"php83", "PHP 8.3"},
+	}
+	out := make([]map[string]any, 0, len(catalog))
+	for _, c := range catalog {
+		out = append(out, map[string]any{
+			"name":        c.name,
+			"displayName": c.displayName,
+			"stage":       "GA",
+			"environment": "GEN_2",
+		})
+	}
+	return out
 }
 
 // invokeCloudFunctionProcess executes a Cloud Function invocation. Cloud

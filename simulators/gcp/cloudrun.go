@@ -138,11 +138,229 @@ type CRServiceList struct {
 	Items      []CRService    `json:"items"`
 }
 
+// CRConfiguration is the Knative Configuration resource. Cloud Run
+// auto-creates one Configuration per Service (the Configuration owns the
+// rolling sequence of Revisions). Shape per the cloudrun-v1 Discovery
+// `Configuration`/`ConfigurationSpec`/`ConfigurationStatus` schemas.
+type CRConfiguration struct {
+	APIVersion string                 `json:"apiVersion"`
+	Kind       string                 `json:"kind"`
+	Metadata   CRServiceMetadata      `json:"metadata"`
+	Spec       *CRConfigurationSpec   `json:"spec,omitempty"`
+	Status     *CRConfigurationStatus `json:"status,omitempty"`
+}
+
+type CRConfigurationSpec struct {
+	Template *CRServiceTemplate `json:"template,omitempty"`
+}
+
+type CRConfigurationStatus struct {
+	ObservedGeneration        int64         `json:"observedGeneration,omitempty"`
+	LatestCreatedRevisionName string        `json:"latestCreatedRevisionName,omitempty"`
+	LatestReadyRevisionName   string        `json:"latestReadyRevisionName,omitempty"`
+	Conditions                []CRCondition `json:"conditions,omitempty"`
+}
+
+// CRRevision is the Knative Revision resource — an immutable snapshot of a
+// Configuration's container spec. Shape per the cloudrun-v1 Discovery
+// `Revision`/`RevisionSpec`/`RevisionStatus` schemas.
+type CRRevision struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Metadata   CRServiceMetadata `json:"metadata"`
+	Spec       *CRRevisionSpec   `json:"spec,omitempty"`
+	Status     *CRRevisionStatus `json:"status,omitempty"`
+}
+
+type CRRevisionSpec struct {
+	Containers         []CRContainer `json:"containers,omitempty"`
+	TimeoutSeconds     int64         `json:"timeoutSeconds,omitempty"`
+	ServiceAccountName string        `json:"serviceAccountName,omitempty"`
+}
+
+type CRRevisionStatus struct {
+	ObservedGeneration int64         `json:"observedGeneration,omitempty"`
+	ServiceName        string        `json:"serviceName,omitempty"`
+	ImageDigest        string        `json:"imageDigest,omitempty"`
+	LogURL             string        `json:"logUrl,omitempty"`
+	DesiredReplicas    int32         `json:"desiredReplicas,omitempty"`
+	Conditions         []CRCondition `json:"conditions,omitempty"`
+}
+
+// CRRoute is the Knative Route resource — the traffic-routing surface
+// auto-created alongside the Service. Shape per the cloudrun-v1 Discovery
+// `Route`/`RouteSpec`/`RouteStatus` schemas.
+type CRRoute struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Metadata   CRServiceMetadata `json:"metadata"`
+	Spec       *CRRouteSpec      `json:"spec,omitempty"`
+	Status     *CRRouteStatus    `json:"status,omitempty"`
+}
+
+type CRRouteSpec struct {
+	Traffic []CRTraffic `json:"traffic,omitempty"`
+}
+
+type CRRouteStatus struct {
+	ObservedGeneration int64         `json:"observedGeneration,omitempty"`
+	URL                string        `json:"url,omitempty"`
+	Address            *CRAddress    `json:"address,omitempty"`
+	Traffic            []CRTraffic   `json:"traffic,omitempty"`
+	Conditions         []CRCondition `json:"conditions,omitempty"`
+}
+
+// CRDomainMapping is the Knative DomainMapping resource (the
+// domains.cloudrun.com API group). Shape per the cloudrun-v1 Discovery
+// `DomainMapping`/`DomainMappingSpec`/`DomainMappingStatus` schemas.
+type CRDomainMapping struct {
+	APIVersion string                 `json:"apiVersion"`
+	Kind       string                 `json:"kind"`
+	Metadata   CRServiceMetadata      `json:"metadata"`
+	Spec       *CRDomainMappingSpec   `json:"spec,omitempty"`
+	Status     *CRDomainMappingStatus `json:"status,omitempty"`
+}
+
+type CRDomainMappingSpec struct {
+	RouteName       string `json:"routeName,omitempty"`
+	CertificateMode string `json:"certificateMode,omitempty"`
+	ForceOverride   bool   `json:"forceOverride,omitempty"`
+}
+
+type CRDomainMappingStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	MappedRouteName    string             `json:"mappedRouteName,omitempty"`
+	URL                string             `json:"url,omitempty"`
+	ResourceRecords    []CRResourceRecord `json:"resourceRecords,omitempty"`
+	Conditions         []CRCondition      `json:"conditions,omitempty"`
+}
+
+type CRResourceRecord struct {
+	Name   string `json:"name,omitempty"`
+	Rrdata string `json:"rrdata,omitempty"`
+	Type   string `json:"type,omitempty"`
+}
+
+// Knative list-response shapes (items + apiVersion/kind, no nextPageToken —
+// the serving.knative.dev List responses page via the `metadata.continue`
+// field, which the sim leaves empty since it returns the full set).
+type CRConfigurationList struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Items      []CRConfiguration `json:"items"`
+}
+
+type CRRevisionList struct {
+	APIVersion string       `json:"apiVersion"`
+	Kind       string       `json:"kind"`
+	Items      []CRRevision `json:"items"`
+}
+
+type CRRouteList struct {
+	APIVersion string    `json:"apiVersion"`
+	Kind       string    `json:"kind"`
+	Items      []CRRoute `json:"items"`
+}
+
+type CRDomainMappingList struct {
+	APIVersion string            `json:"apiVersion"`
+	Kind       string            `json:"kind"`
+	Items      []CRDomainMapping `json:"items"`
+}
+
+// CRAuthorizedDomain mirrors the Discovery `AuthorizedDomain` schema.
+type CRAuthorizedDomain struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
 func registerCloudRun(srv *sim.Server) {
 	services := sim.MakeStore[CRService](srv.DB(), "cloudrun_services")
+	configurations := sim.MakeStore[CRConfiguration](srv.DB(), "cloudrun_v1_configurations")
+	revisions := sim.MakeStore[CRRevision](srv.DB(), "cloudrun_v1_revisions")
+	routes := sim.MakeStore[CRRoute](srv.DB(), "cloudrun_v1_routes")
+	domainmappings := sim.MakeStore[CRDomainMapping](srv.DB(), "cloudrun_v1_domainmappings")
 
 	svcKey := func(namespace, name string) string {
 		return namespace + "/" + name
+	}
+
+	// reconcileKnativeChildren mirrors Cloud Run's server-side Knative
+	// reconciliation: creating or replacing a Service materializes the
+	// owned Configuration, Route, and the new Revision. The sim records
+	// real child resources (rather than synthesizing them on read) so
+	// get/list over configurations/revisions/routes return faithful data.
+	reconcileKnativeChildren := func(namespace string, svc CRService, revName string) {
+		now := time.Now().UTC().Format(time.RFC3339)
+		key := svcKey(namespace, svc.Metadata.Name)
+		var tmplSpec *CRTemplateSpec
+		if svc.Spec.Template != nil {
+			tmplSpec = svc.Spec.Template.Spec
+		}
+		var containers []CRContainer
+		var timeout int64
+		var sa string
+		if tmplSpec != nil {
+			containers = tmplSpec.Containers
+			timeout = tmplSpec.TimeoutSeconds
+			sa = tmplSpec.ServiceAccountName
+		}
+		meta := func(name string) CRServiceMetadata {
+			return CRServiceMetadata{
+				Name:              name,
+				Namespace:         namespace,
+				UID:               generateUUID(),
+				Generation:        svc.Metadata.Generation,
+				ResourceVersion:   svc.Metadata.ResourceVersion,
+				Labels:            svc.Metadata.Labels,
+				CreationTimestamp: now,
+			}
+		}
+		ready := []CRCondition{{Type: "Ready", Status: "True", LastTransitionTime: now}}
+
+		configurations.Put(key, CRConfiguration{
+			APIVersion: "serving.knative.dev/v1",
+			Kind:       "Configuration",
+			Metadata:   meta(svc.Metadata.Name),
+			Spec:       &CRConfigurationSpec{Template: svc.Spec.Template},
+			Status: &CRConfigurationStatus{
+				ObservedGeneration:        svc.Metadata.Generation,
+				LatestCreatedRevisionName: revName,
+				LatestReadyRevisionName:   revName,
+				Conditions:                ready,
+			},
+		})
+
+		routes.Put(key, CRRoute{
+			APIVersion: "serving.knative.dev/v1",
+			Kind:       "Route",
+			Metadata:   meta(svc.Metadata.Name),
+			Spec:       &CRRouteSpec{Traffic: svc.Spec.Traffic},
+			Status: &CRRouteStatus{
+				ObservedGeneration: svc.Metadata.Generation,
+				URL:                fmt.Sprintf("https://%s-%s.run.app", svc.Metadata.Name, namespace),
+				Address:            &CRAddress{URL: fmt.Sprintf("http://%s.%s.svc.cluster.local", svc.Metadata.Name, namespace)},
+				Traffic:            crStatusTraffic(svc.Spec.Traffic, revName),
+				Conditions:         ready,
+			},
+		})
+
+		revisions.Put(svcKey(namespace, revName), CRRevision{
+			APIVersion: "serving.knative.dev/v1",
+			Kind:       "Revision",
+			Metadata:   meta(revName),
+			Spec: &CRRevisionSpec{
+				Containers:         containers,
+				TimeoutSeconds:     timeout,
+				ServiceAccountName: sa,
+			},
+			Status: &CRRevisionStatus{
+				ObservedGeneration: svc.Metadata.Generation,
+				ServiceName:        svc.Metadata.Name,
+				DesiredReplicas:    1,
+				Conditions:         ready,
+			},
+		})
 	}
 
 	// CreateService: POST /apis/serving.knative.dev/v1/namespaces/{namespace}/services
@@ -190,6 +408,7 @@ func registerCloudRun(srv *sim.Server) {
 		}
 
 		services.Put(key, svc)
+		reconcileKnativeChildren(namespace, svc, svc.Metadata.Name+"-00001")
 		sim.WriteJSON(w, http.StatusOK, svc)
 	})
 
@@ -266,6 +485,7 @@ func registerCloudRun(srv *sim.Server) {
 		}
 
 		services.Put(key, update)
+		reconcileKnativeChildren(namespace, update, revName)
 		sim.WriteJSON(w, http.StatusOK, update)
 	})
 
@@ -278,6 +498,15 @@ func registerCloudRun(srv *sim.Server) {
 				"service %q not found in namespace %q", name, namespace)
 			return
 		}
+		key := svcKey(namespace, name)
+		configurations.Delete(key)
+		routes.Delete(key)
+		revPrefix := key + "-"
+		for _, rev := range revisions.List() {
+			if strings.HasPrefix(svcKey(rev.Metadata.Namespace, rev.Metadata.Name), revPrefix) {
+				revisions.Delete(svcKey(rev.Metadata.Namespace, rev.Metadata.Name))
+			}
+		}
 		// Knative DELETE returns a Status object. The cloudrun-v1
 		// Discovery Status schema declares no apiVersion/kind members —
 		// only code/details/message/metadata/reason/status.
@@ -285,4 +514,355 @@ func registerCloudRun(srv *sim.Server) {
 			"status": "Success",
 		})
 	})
+
+	// --- Knative Configurations (read-only; auto-created with the Service) ---
+
+	getConfiguration := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		cfg, ok := configurations.Get(svcKey(namespace, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"configuration %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, cfg)
+	}
+	listConfigurations := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		prefix := namespace + "/"
+		items := make([]CRConfiguration, 0)
+		for _, c := range configurations.List() {
+			if strings.HasPrefix(svcKey(c.Metadata.Namespace, c.Metadata.Name), prefix) {
+				items = append(items, c)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, CRConfigurationList{
+			APIVersion: "serving.knative.dev/v1", Kind: "ConfigurationList", Items: items,
+		})
+	}
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/configurations/{name}", getConfiguration)
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/configurations", listConfigurations)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/configurations/{name}", getConfiguration)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/configurations", listConfigurations)
+
+	// --- Knative Revisions (get/list/delete) ---
+
+	getRevision := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		rev, ok := revisions.Get(svcKey(namespace, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"revision %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rev)
+	}
+	listRevisions := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		prefix := namespace + "/"
+		items := make([]CRRevision, 0)
+		for _, rev := range revisions.List() {
+			if strings.HasPrefix(svcKey(rev.Metadata.Namespace, rev.Metadata.Name), prefix) {
+				items = append(items, rev)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, CRRevisionList{
+			APIVersion: "serving.knative.dev/v1", Kind: "RevisionList", Items: items,
+		})
+	}
+	deleteRevision := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		if !revisions.Delete(svcKey(namespace, name)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"revision %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"status": "Success"})
+	}
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions/{name}", getRevision)
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions", listRevisions)
+	srv.HandleFunc("DELETE /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions/{name}", deleteRevision)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/revisions/{name}", getRevision)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/revisions", listRevisions)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{namespace}/revisions/{name}", deleteRevision)
+
+	// --- Knative Routes (get/list) ---
+
+	getRoute := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		rt, ok := routes.Get(svcKey(namespace, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"route %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rt)
+	}
+	listRoutes := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		prefix := namespace + "/"
+		items := make([]CRRoute, 0)
+		for _, rt := range routes.List() {
+			if strings.HasPrefix(svcKey(rt.Metadata.Namespace, rt.Metadata.Name), prefix) {
+				items = append(items, rt)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, CRRouteList{
+			APIVersion: "serving.knative.dev/v1", Kind: "RouteList", Items: items,
+		})
+	}
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/routes/{name}", getRoute)
+	srv.HandleFunc("GET /apis/serving.knative.dev/v1/namespaces/{namespace}/routes", listRoutes)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/routes/{name}", getRoute)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/routes", listRoutes)
+
+	// --- Knative DomainMappings (create/get/list/delete; domains.cloudrun.com group) ---
+
+	createDomainMapping := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		var dm CRDomainMapping
+		if err := sim.ReadJSON(r, &dm); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid domain mapping body: %v", err)
+			return
+		}
+		if dm.Metadata.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "metadata.name is required", "INVALID_ARGUMENT")
+			return
+		}
+		dm.Metadata.Namespace = namespace
+		key := svcKey(namespace, dm.Metadata.Name)
+		if _, exists := domainmappings.Get(key); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS",
+				"domain mapping %q already exists in namespace %q", dm.Metadata.Name, namespace)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		dm.APIVersion = "domains.cloudrun.com/v1"
+		dm.Kind = "DomainMapping"
+		dm.Metadata.UID = generateUUID()
+		dm.Metadata.Generation = 1
+		dm.Metadata.ResourceVersion = "1"
+		dm.Metadata.CreationTimestamp = now
+		routeName := ""
+		if dm.Spec != nil {
+			routeName = dm.Spec.RouteName
+		}
+		dm.Status = &CRDomainMappingStatus{
+			ObservedGeneration: 1,
+			MappedRouteName:    routeName,
+			URL:                "https://" + dm.Metadata.Name,
+			ResourceRecords: []CRResourceRecord{
+				{Name: dm.Metadata.Name, Rrdata: "ghs.googlehosted.com.", Type: "CNAME"},
+			},
+			Conditions: []CRCondition{{Type: "Ready", Status: "True", LastTransitionTime: now}},
+		}
+		domainmappings.Put(key, dm)
+		sim.WriteJSON(w, http.StatusOK, dm)
+	}
+	getDomainMapping := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		dm, ok := domainmappings.Get(svcKey(namespace, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"domain mapping %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, dm)
+	}
+	listDomainMappings := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		prefix := namespace + "/"
+		items := make([]CRDomainMapping, 0)
+		for _, dm := range domainmappings.List() {
+			if strings.HasPrefix(svcKey(dm.Metadata.Namespace, dm.Metadata.Name), prefix) {
+				items = append(items, dm)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, CRDomainMappingList{
+			APIVersion: "domains.cloudrun.com/v1", Kind: "DomainMappingList", Items: items,
+		})
+	}
+	deleteDomainMapping := func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		if !domainmappings.Delete(svcKey(namespace, name)) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"domain mapping %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"status": "Success"})
+	}
+	srv.HandleFunc("POST /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings", createDomainMapping)
+	srv.HandleFunc("GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings/{name}", getDomainMapping)
+	srv.HandleFunc("GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings", listDomainMappings)
+	srv.HandleFunc("DELETE /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings/{name}", deleteDomainMapping)
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{namespace}/domainmappings", createDomainMapping)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/domainmappings/{name}", getDomainMapping)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/domainmappings", listDomainMappings)
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{namespace}/domainmappings/{name}", deleteDomainMapping)
+
+	// --- AuthorizedDomains (list) ---
+
+	listAuthorizedDomains := func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"domains": []CRAuthorizedDomain{},
+		})
+	}
+	srv.HandleFunc("GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/authorizeddomains", listAuthorizedDomains)
+	srv.HandleFunc("GET /v1/projects/{project}/authorizeddomains", listAuthorizedDomains)
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/authorizeddomains", listAuthorizedDomains)
+
+	// --- Per-location Service mirrors (v1/projects/.../locations/.../services) ---
+	// Real Cloud Run exposes the same Knative Service surface under the
+	// regional path; the sim maps the {location} segment to the Knative
+	// namespace so a service created under either spelling round-trips.
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		var svc CRService
+		if err := sim.ReadJSON(r, &svc); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid service body: %v", err)
+			return
+		}
+		if svc.Metadata.Name == "" {
+			sim.GCPError(w, http.StatusBadRequest, "metadata.name is required", "INVALID_ARGUMENT")
+			return
+		}
+		svc.Metadata.Namespace = namespace
+		key := svcKey(namespace, svc.Metadata.Name)
+		if _, exists := services.Get(key); exists {
+			sim.GCPErrorf(w, http.StatusConflict, "ALREADY_EXISTS",
+				"service %q already exists in namespace %q", svc.Metadata.Name, namespace)
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		svc.APIVersion = "serving.knative.dev/v1"
+		svc.Kind = "Service"
+		svc.Metadata.UID = generateUUID()
+		svc.Metadata.Generation = 1
+		svc.Metadata.ResourceVersion = "1"
+		svc.Metadata.CreationTimestamp = now
+		revName := svc.Metadata.Name + "-00001"
+		svc.Status = &CRServiceStatus{
+			ObservedGeneration:        1,
+			LatestReadyRevisionName:   revName,
+			LatestCreatedRevisionName: revName,
+			URL:                       fmt.Sprintf("https://%s-%s.run.app", svc.Metadata.Name, namespace),
+			Address:                   &CRAddress{URL: fmt.Sprintf("http://%s.%s.svc.cluster.local", svc.Metadata.Name, namespace)},
+			Conditions:                []CRCondition{{Type: "Ready", Status: "True", LastTransitionTime: now}},
+			Traffic:                   crStatusTraffic(svc.Spec.Traffic, revName),
+		}
+		services.Put(key, svc)
+		reconcileKnativeChildren(namespace, svc, revName)
+		sim.WriteJSON(w, http.StatusOK, svc)
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		// Service IAM verbs ride the {name} segment as "<svc>:getIamPolicy".
+		if id, action, found := strings.Cut(name, ":"); found {
+			handleResourceIAM(w, r, gcpResourceIAMStore(),
+				fmt.Sprintf("projects/%s/locations/%s/services/%s", sim.PathParam(r, "project"), namespace, id), action)
+			return
+		}
+		svc, ok := services.Get(svcKey(namespace, name))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"service %q not found in namespace %q", name, namespace)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, svc)
+	})
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{namespace}/services", func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		prefix := namespace + "/"
+		items := make([]CRService, 0)
+		for _, s := range services.List() {
+			if strings.HasPrefix(svcKey(s.Metadata.Namespace, s.Metadata.Name), prefix) {
+				items = append(items, s)
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, CRServiceList{
+			APIVersion: "serving.knative.dev/v1", Kind: "ServiceList", Items: items,
+		})
+	})
+	srv.HandleFunc("PUT /v1/projects/{project}/locations/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		key := svcKey(namespace, name)
+		existing, ok := services.Get(key)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"service %q not found in namespace %q", name, namespace)
+			return
+		}
+		var update CRService
+		if err := sim.ReadJSON(r, &update); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid service body: %v", err)
+			return
+		}
+		update.APIVersion = "serving.knative.dev/v1"
+		update.Kind = "Service"
+		update.Metadata.Name = name
+		update.Metadata.Namespace = namespace
+		update.Metadata.UID = existing.Metadata.UID
+		update.Metadata.Generation = existing.Metadata.Generation + 1
+		update.Metadata.ResourceVersion = fmt.Sprintf("%d", update.Metadata.Generation)
+		update.Metadata.CreationTimestamp = existing.Metadata.CreationTimestamp
+		revName := fmt.Sprintf("%s-%05d", name, update.Metadata.Generation)
+		now := time.Now().UTC().Format(time.RFC3339)
+		update.Status = &CRServiceStatus{
+			ObservedGeneration:        update.Metadata.Generation,
+			LatestReadyRevisionName:   revName,
+			LatestCreatedRevisionName: revName,
+			URL:                       fmt.Sprintf("https://%s-%s.run.app", name, namespace),
+			Address:                   &CRAddress{URL: fmt.Sprintf("http://%s.%s.svc.cluster.local", name, namespace)},
+			Conditions:                []CRCondition{{Type: "Ready", Status: "True", LastTransitionTime: now}},
+			Traffic:                   crStatusTraffic(update.Spec.Traffic, revName),
+		}
+		services.Put(key, update)
+		reconcileKnativeChildren(namespace, update, revName)
+		sim.WriteJSON(w, http.StatusOK, update)
+	})
+	srv.HandleFunc("DELETE /v1/projects/{project}/locations/{namespace}/services/{name}", func(w http.ResponseWriter, r *http.Request) {
+		namespace := sim.PathParam(r, "namespace")
+		name := sim.PathParam(r, "name")
+		key := svcKey(namespace, name)
+		if !services.Delete(key) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND",
+				"service %q not found in namespace %q", name, namespace)
+			return
+		}
+		configurations.Delete(key)
+		routes.Delete(key)
+		revPrefix := key + "-"
+		for _, rev := range revisions.List() {
+			if strings.HasPrefix(svcKey(rev.Metadata.Namespace, rev.Metadata.Name), revPrefix) {
+				revisions.Delete(svcKey(rev.Metadata.Namespace, rev.Metadata.Name))
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"status": "Success"})
+	})
+
+	// --- Service IAM verbs (getIamPolicy via {name}:verb GET; set/test via POST) ---
+
+	srv.HandleFunc("POST /v1/projects/{project}/locations/{namespace}/services/{nameAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		namespace := sim.PathParam(r, "namespace")
+		nameAction := sim.PathParam(r, "nameAction")
+		id, action, found := strings.Cut(nameAction, ":")
+		if !found {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action on service %q", nameAction)
+			return
+		}
+		handleResourceIAM(w, r, gcpResourceIAMStore(),
+			fmt.Sprintf("projects/%s/locations/%s/services/%s", project, namespace, id), action)
+	})
+
+	// GET /v1/projects/{project}/locations (list) is served by registerEventarc.
 }

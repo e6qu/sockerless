@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -89,27 +92,11 @@ func registerIAM(srv *sim.Server) {
 		iamResources = sim.MakeStore[map[string]any](srv.DB(), "iam_admin_resources")
 	}
 
-	// CRM GetProject (v1) — used by google_project_service to verify project exists
-	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"projectNumber":  "123456789012",
-			"projectId":      project,
-			"lifecycleState": "ACTIVE",
-			"name":           project,
-		})
-	})
-
-	// CRM GetProject (v3) — used by google_project_iam_member
-	srv.HandleFunc("GET /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"name":        "projects/" + project,
-			"projectId":   project,
-			"state":       "ACTIVE",
-			"displayName": project,
-		})
-	})
+	// Cloud Resource Manager v3 — the resource-hierarchy + tagging API
+	// (projects / folders / organizations / liens / tagKeys / tagValues /
+	// tagBindings / tagHolds / effectiveTags). Also mounts the legacy
+	// Cloud Resource Manager v1 GetProject the sim's terraform paths use.
+	registerCRMv3(srv, projectPolicies, resourcePolicies)
 
 	// Create service account
 	srv.HandleFunc("POST /v1/projects/{project}/serviceAccounts", func(w http.ResponseWriter, r *http.Request) {
@@ -414,6 +401,59 @@ func registerIAM(srv *sim.Server) {
 			sim.WriteJSON(w, http.StatusOK, map[string]any{
 				"token": token,
 			})
+		case "signBlob":
+			// iamcredentials.serviceAccounts.signBlob — sign an opaque,
+			// base64-encoded payload with the service account's system-managed
+			// key. Body: { payload (base64), delegates }. Response:
+			// { keyId, signedBlob (base64) }. The sim has no modeled
+			// system-managed private key for the SA, so it produces a
+			// deterministic representative signature (HMAC-SHA256 over the
+			// decoded payload against the sim's per-process key) — sufficient
+			// for clients that only round-trip the signature, which never
+			// verify it against Google's public key.
+			var req struct {
+				Payload   string   `json:"payload"`
+				Delegates []string `json:"delegates"`
+			}
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
+			raw, err := base64.StdEncoding.DecodeString(req.Payload)
+			if err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "payload must be base64: %v", err)
+				return
+			}
+			sig := simSAHMAC(raw)
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"keyId":      simSAKeyID(email),
+				"signedBlob": base64.StdEncoding.EncodeToString(sig),
+			})
+		case "signJwt":
+			// iamcredentials.serviceAccounts.signJwt — sign a JWT claim set
+			// (the request payload is the JSON claims string) with the SA's
+			// system-managed key. Response: { keyId, signedJwt }. As with
+			// signBlob the sim has no modeled SA private key, so it emits a
+			// real-shape JWS (header.payload.signature) whose signature is a
+			// deterministic HMAC over the signing input — representative, not
+			// RS256-verifiable against Google's keys.
+			var req struct {
+				Payload   string   `json:"payload"`
+				Delegates []string `json:"delegates"`
+			}
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+				return
+			}
+			headerJSON, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT", "kid": simSAKeyID(email)})
+			headerB64 := base64.RawURLEncoding.EncodeToString(headerJSON)
+			payloadB64 := base64.RawURLEncoding.EncodeToString([]byte(req.Payload))
+			signingInput := headerB64 + "." + payloadB64
+			sigB64 := base64.RawURLEncoding.EncodeToString(simSAHMAC([]byte(signingInput)))
+			sim.WriteJSON(w, http.StatusOK, map[string]any{
+				"keyId":     simSAKeyID(email),
+				"signedJwt": signingInput + "." + sigB64,
+			})
 		default:
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported service-account action %q", action)
 		}
@@ -437,6 +477,31 @@ func registerIAM(srv *sim.Server) {
 			resp["nextPageToken"] = next
 		}
 		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	// iamcredentials.serviceAccounts.getAllowedLocations — returns the
+	// trust-boundary locations a short-lived credential minted for this SA
+	// may be used in. The sim models an unrestricted boundary ("0x0" is the
+	// real wire's "all locations" sentinel encodedLocations value).
+	srv.HandleFunc("GET /v1/projects/{project}/serviceAccounts/{email}/allowedLocations", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"locations":        []string{},
+			"encodedLocations": "0x0",
+		})
+	})
+	// iamcredentials.projects.locations.workloadIdentityPools.getAllowedLocations
+	srv.HandleFunc("GET /v1/projects/{project}/locations/{location}/workloadIdentityPools/{pool}/allowedLocations", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"locations":        []string{},
+			"encodedLocations": "0x0",
+		})
+	})
+	// iamcredentials.locations.workforcePools.getAllowedLocations
+	srv.HandleFunc("GET /v1/locations/{location}/workforcePools/{pool}/allowedLocations", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"locations":        []string{},
+			"encodedLocations": "0x0",
+		})
 	})
 
 	// Project IAM - getIamPolicy / setIamPolicy
@@ -634,6 +699,854 @@ func registerIAM(srv *sim.Server) {
 
 		sim.WriteJSON(w, http.StatusOK, policy)
 	})
+}
+
+// CRMProject mirrors the cloudresourcemanager#Project (v3) resource.
+type CRMProject struct {
+	Name        string            `json:"name"`
+	Parent      string            `json:"parent,omitempty"`
+	ProjectId   string            `json:"projectId"`
+	State       string            `json:"state"`
+	DisplayName string            `json:"displayName,omitempty"`
+	CreateTime  string            `json:"createTime,omitempty"`
+	UpdateTime  string            `json:"updateTime,omitempty"`
+	DeleteTime  string            `json:"deleteTime,omitempty"`
+	Etag        string            `json:"etag,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// CRMFolder mirrors the cloudresourcemanager#Folder (v3) resource.
+type CRMFolder struct {
+	Name        string `json:"name"`
+	Parent      string `json:"parent,omitempty"`
+	DisplayName string `json:"displayName,omitempty"`
+	State       string `json:"state"`
+	CreateTime  string `json:"createTime,omitempty"`
+	UpdateTime  string `json:"updateTime,omitempty"`
+	DeleteTime  string `json:"deleteTime,omitempty"`
+	Etag        string `json:"etag,omitempty"`
+}
+
+// CRMLien mirrors the cloudresourcemanager#Lien (v3) resource.
+type CRMLien struct {
+	Name         string   `json:"name"`
+	Parent       string   `json:"parent,omitempty"`
+	Restrictions []string `json:"restrictions,omitempty"`
+	Reason       string   `json:"reason,omitempty"`
+	Origin       string   `json:"origin,omitempty"`
+	CreateTime   string   `json:"createTime,omitempty"`
+}
+
+// CRMTagKey mirrors the cloudresourcemanager#TagKey (v3) resource.
+type CRMTagKey struct {
+	Name               string `json:"name"`
+	Parent             string `json:"parent,omitempty"`
+	ShortName          string `json:"shortName,omitempty"`
+	NamespacedName     string `json:"namespacedName,omitempty"`
+	Description        string `json:"description,omitempty"`
+	CreateTime         string `json:"createTime,omitempty"`
+	UpdateTime         string `json:"updateTime,omitempty"`
+	Etag               string `json:"etag,omitempty"`
+	Purpose            string `json:"purpose,omitempty"`
+	AllowedValuesRegex string `json:"allowedValuesRegex,omitempty"`
+}
+
+// CRMTagValue mirrors the cloudresourcemanager#TagValue (v3) resource.
+type CRMTagValue struct {
+	Name           string `json:"name"`
+	Parent         string `json:"parent,omitempty"`
+	ShortName      string `json:"shortName,omitempty"`
+	NamespacedName string `json:"namespacedName,omitempty"`
+	Description    string `json:"description,omitempty"`
+	CreateTime     string `json:"createTime,omitempty"`
+	UpdateTime     string `json:"updateTime,omitempty"`
+	Etag           string `json:"etag,omitempty"`
+}
+
+// CRMTagBinding mirrors the cloudresourcemanager#TagBinding (v3) resource.
+type CRMTagBinding struct {
+	Name                   string `json:"name"`
+	Parent                 string `json:"parent,omitempty"`
+	TagValue               string `json:"tagValue,omitempty"`
+	TagValueNamespacedName string `json:"tagValueNamespacedName,omitempty"`
+}
+
+// CRMTagHold mirrors the cloudresourcemanager#TagHold (v3) resource.
+type CRMTagHold struct {
+	Name       string `json:"name"`
+	Holder     string `json:"holder,omitempty"`
+	Origin     string `json:"origin,omitempty"`
+	HelpLink   string `json:"helpLink,omitempty"`
+	CreateTime string `json:"createTime,omitempty"`
+}
+
+// crmLRO builds a settled (done=true) long-running Operation whose response
+// embeds the supplied resource. The Cloud Resource Manager LRO mutations
+// (project/folder/tagKey/tagValue create/patch/delete/move/undelete) return
+// an Operation; the sim settles it synchronously, matching how every other
+// IAM-admin collection in this file resolves its LROs.
+func crmLRO(resource any, typeName string) Operation {
+	resp := map[string]any{}
+	b, _ := json.Marshal(resource)
+	_ = json.Unmarshal(b, &resp)
+	resp["@type"] = typeName
+	return Operation{
+		Name: "operations/" + generateUUID(),
+		Metadata: map[string]any{
+			"@type":      "type.googleapis.com/google.cloud.resourcemanager.v3.OperationMetadata",
+			"createTime": nowTimestamp(),
+		},
+		Done:     true,
+		Response: resp,
+	}
+}
+
+// crmEtag mints an etag for a Cloud Resource Manager resource.
+func crmEtag() string {
+	return base64.StdEncoding.EncodeToString([]byte(generateUUID()))
+}
+
+// crmIamVerb dispatches a Cloud Resource Manager v3 IAM colon-verb captured in
+// an "{id}:verb" path parameter. It resolves the resource-scoped policy key and
+// reuses the shared handleResourceIAM so etag / member-validation / optimistic-
+// concurrency behaviour matches every other GCP resource's IAM surface.
+func crmIamVerb(w http.ResponseWriter, r *http.Request, store sim.Store[IAMPolicy], idAction, kind string) bool {
+	id, action, found := strings.Cut(idAction, ":")
+	if !found {
+		return false
+	}
+	switch action {
+	case "getIamPolicy", "setIamPolicy", "testIamPermissions":
+		handleResourceIAM(w, r, store, kind+"/"+id, action)
+		return true
+	}
+	return false
+}
+
+// registerCRMv3 mounts the Cloud Resource Manager v3 resource-hierarchy and
+// tagging surface plus the legacy v1 GetProject the sim's terraform paths use.
+// Every collection is a real CRUD store; mutating ops that the API models as
+// long-running return a settled Operation, and IAM verbs reuse the shared
+// policy store.
+func registerCRMv3(srv *sim.Server, projectPolicies, resourcePolicies sim.Store[IAMPolicy]) {
+	projects := sim.MakeStore[CRMProject](srv.DB(), "crm_projects")
+	folders := sim.MakeStore[CRMFolder](srv.DB(), "crm_folders")
+	liens := sim.MakeStore[CRMLien](srv.DB(), "crm_liens")
+	tagKeys := sim.MakeStore[CRMTagKey](srv.DB(), "crm_tag_keys")
+	tagValues := sim.MakeStore[CRMTagValue](srv.DB(), "crm_tag_values")
+	tagBindings := sim.MakeStore[CRMTagBinding](srv.DB(), "crm_tag_bindings")
+	tagHolds := sim.MakeStore[CRMTagHold](srv.DB(), "crm_tag_holds")
+	const (
+		typeProject  = "type.googleapis.com/google.cloud.resourcemanager.v3.Project"
+		typeFolder   = "type.googleapis.com/google.cloud.resourcemanager.v3.Folder"
+		typeTagKey   = "type.googleapis.com/google.cloud.resourcemanager.v3.TagKey"
+		typeTagValue = "type.googleapis.com/google.cloud.resourcemanager.v3.TagValue"
+		typeTagBind  = "type.googleapis.com/google.cloud.resourcemanager.v3.TagBinding"
+		typeTagHold  = "type.googleapis.com/google.cloud.resourcemanager.v3.TagHold"
+		typeEmpty    = "type.googleapis.com/google.protobuf.Empty"
+	)
+
+	// getOrSeedProject returns the stored project, synthesizing an ACTIVE row
+	// for a project ID the sim hasn't seen — the terraform/SDK paths read a
+	// project the harness assumes already exists in the org.
+	getOrSeedProject := func(projectID string) CRMProject {
+		name := "projects/" + projectID
+		p, ok := projects.Get(name)
+		if ok {
+			return p
+		}
+		p = CRMProject{
+			Name:       name,
+			ProjectId:  projectID,
+			State:      "ACTIVE",
+			Parent:     "organizations/123456789012",
+			CreateTime: nowTimestamp(),
+			Etag:       crmEtag(),
+		}
+		projects.Put(name, p)
+		return p
+	}
+
+	// ---- Cloud Resource Manager v1 GetProject (legacy) -------------------
+	// google_project_service verifies a project exists via the v1 read.
+	srv.HandleFunc("GET /v1/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
+		p := getOrSeedProject(sim.PathParam(r, "project"))
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"projectNumber":  "123456789012",
+			"projectId":      p.ProjectId,
+			"lifecycleState": "ACTIVE",
+			"name":           p.DisplayName,
+		})
+	})
+
+	// ---- projects (v3) ---------------------------------------------------
+	srv.HandleFunc("GET /v3/projects:search", func(w http.ResponseWriter, r *http.Request) {
+		rows := projects.Filter(func(CRMProject) bool { return true })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"projects": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("GET /v3/projects", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := projects.Filter(func(p CRMProject) bool { return parent == "" || p.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"projects": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v3/projects", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMProject
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if req.ProjectId == "" {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "projectId is required")
+			return
+		}
+		p := CRMProject{
+			Name:        "projects/" + req.ProjectId,
+			Parent:      req.Parent,
+			ProjectId:   req.ProjectId,
+			State:       "ACTIVE",
+			DisplayName: req.DisplayName,
+			Labels:      req.Labels,
+			CreateTime:  nowTimestamp(),
+			UpdateTime:  nowTimestamp(),
+			Etag:        crmEtag(),
+		}
+		projects.Put(p.Name, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+	})
+	srv.HandleFunc("GET /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, getOrSeedProject(sim.PathParam(r, "project")))
+	})
+	srv.HandleFunc("PATCH /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
+		p := getOrSeedProject(sim.PathParam(r, "project"))
+		var req CRMProject
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		mask := r.URL.Query().Get("updateMask")
+		applyMask := func(field string) bool { return mask == "" || strings.Contains(mask, field) }
+		if applyMask("displayName") {
+			p.DisplayName = req.DisplayName
+		}
+		if applyMask("labels") {
+			p.Labels = req.Labels
+		}
+		p.UpdateTime = nowTimestamp()
+		p.Etag = crmEtag()
+		projects.Put(p.Name, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+	})
+	srv.HandleFunc("DELETE /v3/projects/{project}", func(w http.ResponseWriter, r *http.Request) {
+		p := getOrSeedProject(sim.PathParam(r, "project"))
+		p.State = "DELETE_REQUESTED"
+		p.UpdateTime = nowTimestamp()
+		projects.Put(p.Name, p)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+	})
+	// projects colon-verbs: move / undelete / IAM triple.
+	srv.HandleFunc("POST /v3/projects/{projectAction}", func(w http.ResponseWriter, r *http.Request) {
+		idAction := sim.PathParam(r, "projectAction")
+		if crmIamVerb(w, r, projectPolicies, idAction, "project") {
+			return
+		}
+		id, action, _ := strings.Cut(idAction, ":")
+		p := getOrSeedProject(id)
+		switch action {
+		case "move":
+			var req struct {
+				DestinationParent string `json:"destinationParent"`
+			}
+			_ = sim.ReadJSON(r, &req)
+			p.Parent = req.DestinationParent
+			p.UpdateTime = nowTimestamp()
+			projects.Put(p.Name, p)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+		case "undelete":
+			p.State = "ACTIVE"
+			p.UpdateTime = nowTimestamp()
+			projects.Put(p.Name, p)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(p, typeProject))
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported project action %q", action)
+		}
+	})
+
+	// ---- folders (v3) ----------------------------------------------------
+	srv.HandleFunc("GET /v3/folders:search", func(w http.ResponseWriter, r *http.Request) {
+		rows := folders.Filter(func(CRMFolder) bool { return true })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"folders": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("GET /v3/folders", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := folders.Filter(func(f CRMFolder) bool { return parent == "" || f.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"folders": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v3/folders", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMFolder
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		f := CRMFolder{
+			Name:        "folders/" + gcpNumericID(12),
+			Parent:      req.Parent,
+			DisplayName: req.DisplayName,
+			State:       "ACTIVE",
+			CreateTime:  nowTimestamp(),
+			UpdateTime:  nowTimestamp(),
+			Etag:        crmEtag(),
+		}
+		folders.Put(f.Name, f)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+	})
+	srv.HandleFunc("GET /v3/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
+		f, ok := folders.Get("folders/" + sim.PathParam(r, "folder"))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder not found")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, f)
+	})
+	srv.HandleFunc("PATCH /v3/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
+		name := "folders/" + sim.PathParam(r, "folder")
+		f, ok := folders.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder not found")
+			return
+		}
+		var req CRMFolder
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		if req.DisplayName != "" {
+			f.DisplayName = req.DisplayName
+		}
+		f.UpdateTime = nowTimestamp()
+		f.Etag = crmEtag()
+		folders.Put(name, f)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+	})
+	srv.HandleFunc("DELETE /v3/folders/{folder}", func(w http.ResponseWriter, r *http.Request) {
+		name := "folders/" + sim.PathParam(r, "folder")
+		f, ok := folders.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder not found")
+			return
+		}
+		f.State = "DELETE_REQUESTED"
+		f.UpdateTime = nowTimestamp()
+		folders.Put(name, f)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+	})
+	srv.HandleFunc("POST /v3/folders/{folderAction}", func(w http.ResponseWriter, r *http.Request) {
+		idAction := sim.PathParam(r, "folderAction")
+		if crmIamVerb(w, r, resourcePolicies, idAction, "folder") {
+			return
+		}
+		id, action, _ := strings.Cut(idAction, ":")
+		name := "folders/" + id
+		f, ok := folders.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "folder not found")
+			return
+		}
+		switch action {
+		case "move":
+			var req struct {
+				DestinationParent string `json:"destinationParent"`
+			}
+			_ = sim.ReadJSON(r, &req)
+			f.Parent = req.DestinationParent
+			f.UpdateTime = nowTimestamp()
+			folders.Put(name, f)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+		case "undelete":
+			f.State = "ACTIVE"
+			f.UpdateTime = nowTimestamp()
+			folders.Put(name, f)
+			sim.WriteJSON(w, http.StatusOK, crmLRO(f, typeFolder))
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported folder action %q", action)
+		}
+	})
+
+	// ---- organizations (v3) ----------------------------------------------
+	srv.HandleFunc("GET /v3/organizations:search", func(w http.ResponseWriter, r *http.Request) {
+		// The sim models a single representative organization the harness's
+		// projects/folders attach under.
+		org := map[string]any{
+			"name":                "organizations/123456789012",
+			"displayName":         "example.com",
+			"directoryCustomerId": "C0xxxxxxx",
+			"state":               "ACTIVE",
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"organizations": []any{org}})
+	})
+	srv.HandleFunc("GET /v3/organizations/{org}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":                "organizations/" + sim.PathParam(r, "org"),
+			"displayName":         "example.com",
+			"directoryCustomerId": "C0xxxxxxx",
+			"state":               "ACTIVE",
+		})
+	})
+	srv.HandleFunc("POST /v3/organizations/{orgAction}", func(w http.ResponseWriter, r *http.Request) {
+		idAction := sim.PathParam(r, "orgAction")
+		if crmIamVerb(w, r, resourcePolicies, idAction, "organization") {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported organization action")
+	})
+
+	// ---- liens (v3) ------------------------------------------------------
+	srv.HandleFunc("POST /v3/liens", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMLien
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		l := CRMLien{
+			Name:         "liens/" + gcpNumericID(16),
+			Parent:       req.Parent,
+			Restrictions: req.Restrictions,
+			Reason:       req.Reason,
+			Origin:       req.Origin,
+			CreateTime:   nowTimestamp(),
+		}
+		liens.Put(l.Name, l)
+		sim.WriteJSON(w, http.StatusOK, l)
+	})
+	srv.HandleFunc("GET /v3/liens", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := liens.Filter(func(l CRMLien) bool { return parent == "" || l.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"liens": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("GET /v3/liens/{lien}", func(w http.ResponseWriter, r *http.Request) {
+		l, ok := liens.Get("liens/" + sim.PathParam(r, "lien"))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, l)
+	})
+	srv.HandleFunc("DELETE /v3/liens/{lien}", func(w http.ResponseWriter, r *http.Request) {
+		name := "liens/" + sim.PathParam(r, "lien")
+		if _, ok := liens.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "lien not found")
+			return
+		}
+		liens.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+
+	// ---- operations (v3) -------------------------------------------------
+	srv.HandleFunc("GET /v3/operations/{op}", func(w http.ResponseWriter, r *http.Request) {
+		// CRM LROs settle synchronously, so a follow-up poll returns a
+		// done operation with an empty response envelope.
+		sim.WriteJSON(w, http.StatusOK, Operation{
+			Name: "operations/" + sim.PathParam(r, "op"),
+			Done: true,
+		})
+	})
+
+	// ---- tagKeys (v3) ----------------------------------------------------
+	srv.HandleFunc("GET /v3/tagKeys/namespaced", func(w http.ResponseWriter, r *http.Request) {
+		ns := r.URL.Query().Get("name")
+		for _, k := range tagKeys.Filter(func(CRMTagKey) bool { return true }) {
+			if k.NamespacedName == ns {
+				sim.WriteJSON(w, http.StatusOK, k)
+				return
+			}
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag key %q not found", ns)
+	})
+	srv.HandleFunc("GET /v3/tagKeys", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := tagKeys.Filter(func(k CRMTagKey) bool { return parent == "" || k.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"tagKeys": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v3/tagKeys", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMTagKey
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		k := CRMTagKey{
+			Name:               "tagKeys/" + gcpNumericID(18),
+			Parent:             req.Parent,
+			ShortName:          req.ShortName,
+			NamespacedName:     crmNamespaced(req.Parent, req.ShortName),
+			Description:        req.Description,
+			Purpose:            req.Purpose,
+			AllowedValuesRegex: req.AllowedValuesRegex,
+			CreateTime:         nowTimestamp(),
+			UpdateTime:         nowTimestamp(),
+			Etag:               crmEtag(),
+		}
+		tagKeys.Put(k.Name, k)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+	})
+	srv.HandleFunc("GET /v3/tagKeys/{key}", func(w http.ResponseWriter, r *http.Request) {
+		k, ok := tagKeys.Get("tagKeys/" + sim.PathParam(r, "key"))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag key not found")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, k)
+	})
+	srv.HandleFunc("PATCH /v3/tagKeys/{key}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagKeys/" + sim.PathParam(r, "key")
+		k, ok := tagKeys.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag key not found")
+			return
+		}
+		var req CRMTagKey
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		mask := r.URL.Query().Get("updateMask")
+		if mask == "" || strings.Contains(mask, "description") {
+			k.Description = req.Description
+		}
+		k.UpdateTime = nowTimestamp()
+		k.Etag = crmEtag()
+		tagKeys.Put(name, k)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+	})
+	srv.HandleFunc("DELETE /v3/tagKeys/{key}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagKeys/" + sim.PathParam(r, "key")
+		k, ok := tagKeys.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag key not found")
+			return
+		}
+		tagKeys.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(k, typeTagKey))
+	})
+	srv.HandleFunc("POST /v3/tagKeys/{keyAction}", func(w http.ResponseWriter, r *http.Request) {
+		if crmIamVerb(w, r, resourcePolicies, sim.PathParam(r, "keyAction"), "tagKey") {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported tagKey action")
+	})
+
+	// ---- tagValues (v3) --------------------------------------------------
+	srv.HandleFunc("GET /v3/tagValues/namespaced", func(w http.ResponseWriter, r *http.Request) {
+		ns := r.URL.Query().Get("name")
+		for _, v := range tagValues.Filter(func(CRMTagValue) bool { return true }) {
+			if v.NamespacedName == ns {
+				sim.WriteJSON(w, http.StatusOK, v)
+				return
+			}
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag value %q not found", ns)
+	})
+	srv.HandleFunc("GET /v3/tagValues", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := tagValues.Filter(func(v CRMTagValue) bool { return parent == "" || v.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"tagValues": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v3/tagValues", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMTagValue
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		v := CRMTagValue{
+			Name:           "tagValues/" + gcpNumericID(18),
+			Parent:         req.Parent,
+			ShortName:      req.ShortName,
+			NamespacedName: crmNamespaced(req.Parent, req.ShortName),
+			Description:    req.Description,
+			CreateTime:     nowTimestamp(),
+			UpdateTime:     nowTimestamp(),
+			Etag:           crmEtag(),
+		}
+		tagValues.Put(v.Name, v)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+	})
+	srv.HandleFunc("GET /v3/tagValues/{val}", func(w http.ResponseWriter, r *http.Request) {
+		v, ok := tagValues.Get("tagValues/" + sim.PathParam(r, "val"))
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag value not found")
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, v)
+	})
+	srv.HandleFunc("PATCH /v3/tagValues/{val}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagValues/" + sim.PathParam(r, "val")
+		v, ok := tagValues.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag value not found")
+			return
+		}
+		var req CRMTagValue
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		mask := r.URL.Query().Get("updateMask")
+		if mask == "" || strings.Contains(mask, "description") {
+			v.Description = req.Description
+		}
+		v.UpdateTime = nowTimestamp()
+		v.Etag = crmEtag()
+		tagValues.Put(name, v)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+	})
+	srv.HandleFunc("DELETE /v3/tagValues/{val}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagValues/" + sim.PathParam(r, "val")
+		v, ok := tagValues.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag value not found")
+			return
+		}
+		tagValues.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(v, typeTagValue))
+	})
+	// tagValues tagHolds list/create live under tagValues/{val}/tagHolds.
+	srv.HandleFunc("GET /v3/tagValues/{val}/tagHolds", func(w http.ResponseWriter, r *http.Request) {
+		prefix := "tagValues/" + sim.PathParam(r, "val") + "/tagHolds/"
+		rows := tagHolds.Filter(func(h CRMTagHold) bool { return strings.HasPrefix(h.Name, prefix) })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"tagHolds": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("POST /v3/tagValues/{val}/tagHolds", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMTagHold
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		h := CRMTagHold{
+			Name:       "tagValues/" + sim.PathParam(r, "val") + "/tagHolds/" + gcpNumericID(16),
+			Holder:     req.Holder,
+			Origin:     req.Origin,
+			HelpLink:   req.HelpLink,
+			CreateTime: nowTimestamp(),
+		}
+		tagHolds.Put(h.Name, h)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(h, typeTagHold))
+	})
+	srv.HandleFunc("DELETE /v3/tagValues/{val}/tagHolds/{hold}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagValues/" + sim.PathParam(r, "val") + "/tagHolds/" + sim.PathParam(r, "hold")
+		if _, ok := tagHolds.Get(name); !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "tag hold not found")
+			return
+		}
+		tagHolds.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty))
+	})
+	srv.HandleFunc("POST /v3/tagValues/{valAction}", func(w http.ResponseWriter, r *http.Request) {
+		if crmIamVerb(w, r, resourcePolicies, sim.PathParam(r, "valAction"), "tagValue") {
+			return
+		}
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unsupported tagValue action")
+	})
+
+	// ---- tagBindings (v3) ------------------------------------------------
+	srv.HandleFunc("POST /v3/tagBindings", func(w http.ResponseWriter, r *http.Request) {
+		var req CRMTagBinding
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		b := CRMTagBinding{
+			Name:                   "tagBindings/" + gcpNumericID(16),
+			Parent:                 req.Parent,
+			TagValue:               req.TagValue,
+			TagValueNamespacedName: req.TagValueNamespacedName,
+		}
+		tagBindings.Put(b.Name, b)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(b, typeTagBind))
+	})
+	srv.HandleFunc("GET /v3/tagBindings", func(w http.ResponseWriter, r *http.Request) {
+		parent := r.URL.Query().Get("parent")
+		rows := tagBindings.Filter(func(b CRMTagBinding) bool { return parent == "" || b.Parent == parent })
+		sort.Slice(rows, func(i, j int) bool { return rows[i].Name < rows[j].Name })
+		page, next, ok := paginateList(w, r, rows)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"tagBindings": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("DELETE /v3/tagBindings/{binding...}", func(w http.ResponseWriter, r *http.Request) {
+		name := "tagBindings/" + sim.PathParam(r, "binding")
+		tagBindings.Delete(name)
+		sim.WriteJSON(w, http.StatusOK, crmLRO(map[string]any{}, typeEmpty))
+	})
+
+	// ---- effectiveTags (v3) ---------------------------------------------
+	srv.HandleFunc("GET /v3/effectiveTags", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"effectiveTags": []any{}})
+	})
+
+	// ---- folders.capabilities (v3) --------------------------------------
+	// A folder capability is a boolean feature toggle on the folder; the only
+	// modeled one is the management capability. GET reads it, PATCH returns an
+	// Operation (the API models the mutation as long-running).
+	srv.HandleFunc("GET /v3/folders/{folder}/capabilities/{capability}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":  "folders/" + sim.PathParam(r, "folder") + "/capabilities/" + sim.PathParam(r, "capability"),
+			"value": false,
+		})
+	})
+	srv.HandleFunc("PATCH /v3/folders/{folder}/capabilities/{capability}", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Value bool `json:"value"`
+		}
+		_ = sim.ReadJSON(r, &req)
+		cap := map[string]any{
+			"name":  "folders/" + sim.PathParam(r, "folder") + "/capabilities/" + sim.PathParam(r, "capability"),
+			"value": req.Value,
+		}
+		sim.WriteJSON(w, http.StatusOK, crmLRO(cap, "type.googleapis.com/google.cloud.resourcemanager.v3.Capability"))
+	})
+
+	// ---- locations.tagBindingCollections (v3) ---------------------------
+	// A tagBindingCollection is the full set of direct tag bindings on a
+	// resource, keyed by its full-resource-name and addressable in a location.
+	// GET reads it; PATCH (the only mutator) returns an Operation.
+	srv.HandleFunc("GET /v3/locations/{location}/tagBindingCollections/{collection}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":             "locations/" + sim.PathParam(r, "location") + "/tagBindingCollections/" + sim.PathParam(r, "collection"),
+			"fullResourceName": "",
+			"tags":             map[string]string{},
+			"etag":             crmEtag(),
+		})
+	})
+	srv.HandleFunc("PATCH /v3/locations/{location}/tagBindingCollections/{collection}", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			FullResourceName string            `json:"fullResourceName"`
+			Tags             map[string]string `json:"tags"`
+		}
+		_ = sim.ReadJSON(r, &req)
+		coll := map[string]any{
+			"name":             "locations/" + sim.PathParam(r, "location") + "/tagBindingCollections/" + sim.PathParam(r, "collection"),
+			"fullResourceName": req.FullResourceName,
+			"tags":             req.Tags,
+			"etag":             crmEtag(),
+		}
+		sim.WriteJSON(w, http.StatusOK, crmLRO(coll, "type.googleapis.com/google.cloud.resourcemanager.v3.TagBindingCollection"))
+	})
+	srv.HandleFunc("GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":             "locations/" + sim.PathParam(r, "location") + "/effectiveTagBindingCollections/" + sim.PathParam(r, "collection"),
+			"fullResourceName": "",
+			"effectiveTags":    map[string]string{},
+		})
+	})
+}
+
+// crmNamespaced renders a tagKey/tagValue namespaced name from its parent and
+// short name (e.g. parent "organizations/123" + shortName "env" → "123/env").
+func crmNamespaced(parent, shortName string) string {
+	if parent == "" || shortName == "" {
+		return ""
+	}
+	id := parent
+	if i := strings.LastIndex(parent, "/"); i >= 0 {
+		id = parent[i+1:]
+	}
+	return id + "/" + shortName
+}
+
+// simSAHMAC produces a deterministic representative signature for the
+// iamcredentials signBlob / signJwt operations. Real GCP signs with the
+// service account's system-managed RS256 key; the sim has no modeled SA
+// private key, so it emits an HMAC-SHA256 over the input against the
+// process-scoped key. Clients in the repo only round-trip the signature
+// (they never verify it against Google's public certs), so the
+// representative signature is sufficient and is documented as such.
+func simSAHMAC(input []byte) []byte {
+	mac := hmac.New(sha256.New, idTokenSignKey())
+	mac.Write(input)
+	return mac.Sum(nil)
+}
+
+// simSAKeyID derives a stable, opaque key identifier for a service account,
+// mirroring the 40-hex-char keyId real GCP returns in signBlob / signJwt
+// responses. Deterministic per email so repeated signs report the same key.
+func simSAKeyID(email string) string {
+	sum := sha256.Sum256([]byte("sa-signing-key:" + email))
+	return hex.EncodeToString(sum[:20])
 }
 
 // registerCustomRoles mounts the custom-role CRUD surface for one scope

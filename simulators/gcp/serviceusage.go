@@ -102,6 +102,19 @@ func registerServiceUsage(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 
+	// Delete a long-running operation (serviceusage.operations.delete).
+	// Per AIP / google.longrunning, this drops the client's interest in
+	// the operation result and returns google.protobuf.Empty ({}). It does
+	// not cancel the operation. The shared crOperations store backs every
+	// service's LROs, so the deletion is honored across the sim.
+	srv.HandleFunc("DELETE /v1/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
+		name := fmt.Sprintf("operations/%s", sim.PathParam(r, "operation"))
+		if crOperations != nil {
+			crOperations.Delete(name)
+		}
+		sim.WriteJSON(w, http.StatusOK, struct{}{})
+	})
+
 	// Batch enable services
 	srv.HandleFunc("POST /v1/projects/{project}/services:batchEnable", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")

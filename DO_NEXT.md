@@ -4,15 +4,18 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/ci-flakes-and-open-issues` — **CI flakiness sweep + ELBv2 open issues + CloudTrail fix (BUG-2216/2217/2218/2219).** A `sim (aws sdk)` job flaked after #686 (failed once, passed on a no-change re-run), so this branch hardened flaky patterns across all three sim test suites + closed the two unblocked open GitHub issues + an incidental CloudTrail gap.
+`feat/gcp-ratchet-2-azure-gate` — **GCP coverage ratchet round 2 + build the Azure operation-coverage gate (BUG-2220).**
 
-- **Flaky-pattern hardening (BUG-2216).** AWS: ENI-attach 800ms-sleep→poll; EBS-snapshot poll 2s→60s (likeliest culprit); DynamoDB-Local readiness 30s→120s. GCP: Cloud Run job-execution 3s-sleep→poll; job/DNS `Eventually` 10-15s→30-60s. Azure: AppTraces 100ms-sleep→`Eventually`; async-op 2s→30s, CLI-JSON 5s→30s, Service Bus + Event Hubs AMQP receive 5s→30s, ACA/ACI log+DNS 10s→30s. No assertion weakened; genuine cloud-delay + timestamp-separator sleeps left alone.
-- **ELBv2 #685 (BUG-2217)** — omit HealthCheck `Matcher` for non-HTTP/HTTPS health checks (was breaking terraform idempotency on TCP target groups). SDK+CLI+terraform-idempotency.
-- **ELBv2 #683 (BUG-2218)** — real NLB raw-TCP data plane (`elbv2_nlb_proxy.go`): TCP/TCP_UDP listeners bind a `net.Listener`, resolve a healthy target per-connection, `io.Copy` both ways. TLS/UDP honestly excluded. Proven by a raw-bytes round-trip test.
-- **CloudTrail (BUG-2219)** — added the missing ElastiCache `2015-02-02` eventSource mapping (all ElastiCache events were being dropped from the trail); tightened the coverage test.
-- Verified: aws+gcp+azure build/lint(0); AWS conformance + ELBv2 spec-validator(0) + terraform idempotency + cli-shard guard; touched suites rerun green.
+- **Azure operation-coverage gate (the last sim without one).** Built `azureMethodFloor` in `simulators/azure/azure_coverage_test.go` — the Swagger-spec analogue of `serviceCoverageFloor` (AWS) / `gcpMethodFloor` (GCP). Per vendored Azure ARM Swagger doc it counts implemented operations (covered = a registered route matches its method + normalized path under the same `matchAzureSegs` rules the route-validity gate uses), locked by an exact-equality ratchet over 90 swagger files. `TestServiceConformance_AzureCoverage` logs per-file fractions; `TestServiceConformance_AzureCoverageFloor` is the ratchet. **Azure measured at 630/2597 (24%). All three simulators now have an operation-coverage ratchet.**
+- **GCP ratchet round (one service file per agent), all spec-validated (0 new violations) + real Google Cloud Go SDK:** Spanner 186→198/198, Cloud SQL v1 136→148/148, VPC Access 15→16/16, ServiceUsage 19→20/20, IAM Credentials 11→14/14 (all 100%); API Gateway 54→57/60, Cloud Functions v2 15→31/42, Cloud SQL v1beta4 45→146/148, Cloud Resource Manager v3 11→105/124 (projects/folders/orgs/liens/tagKeys/tagValues/tagBindings + IAM), Cloud Run v1 61→98/152 + v2 51→62/116 (Knative child resources, domain mappings, revisions, IAM); plus the big-surface wave: Dataflow 8→84/84 (100%), Bigtable Admin 65→136/162, Cloud Logging 170→480/508.
+- **GCP coverage 2413→3180/5244 (46%→61%); ~22 services at 100%.** The uncovered remainder per service is the `{+name}`/`{+resource}` reserved-expansion template alternates the flatPath form already covers.
 
-**Next candidates:** keep ratcheting GCP coverage (the prior arc — Spanner/SQL Admin/the small-gap batch, then big surfaces + the Azure coverage gate), or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked) remains.
+**Next candidates:** keep ratcheting GCP big surfaces (Logging 508, Bigtable 162, Dataflow 84, Cloud Run/CRM remainders) and **start ratcheting Azure services** now that its gate exists (Container Apps/Jobs, Service Bus, Event Hubs, Storage, Cosmos DB, networking). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked) remains.
+
+---
+### Prior branch (merged #687): CI flake hardening + ELBv2 #685/#683 + CloudTrail (BUG-2216/2217/2218/2219)
+- Flaky-pattern hardening across AWS/GCP/Azure test suites (~20 racy waits → poll-until / widened deadlines; no assertion weakened).
+- ELBv2 #685: omit HealthCheck `Matcher` for non-HTTP/HTTPS health checks (terraform idempotency). ELBv2 #683: real NLB raw-TCP data plane, made discoverable via DescribeLoadBalancers (a client `net.Dial`s the reported endpoint). CloudTrail: added the missing ElastiCache `2015-02-02` eventSource mapping (events were being dropped).
 
 ---
 ### Prior branch (merged #686): GCP operation-coverage gate + ratchet (BUG-2214/2215)

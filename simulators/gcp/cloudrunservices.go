@@ -159,6 +159,29 @@ type TrafficTarget struct {
 	Tag      string `json:"tag,omitempty"`
 }
 
+// RevisionV2 mirrors the subset of google.cloud.run.v2.Revision the sim
+// materializes per service deploy. Cloud Run creates an immutable Revision
+// for every Service generation; the sim records one so the
+// services.revisions get/list endpoints return faithful data.
+type RevisionV2 struct {
+	Name        string            `json:"name"`
+	UID         string            `json:"uid,omitempty"`
+	Generation  int64             `json:"generation,string,omitempty"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
+	CreateTime  string            `json:"createTime,omitempty"`
+	UpdateTime  string            `json:"updateTime,omitempty"`
+	LaunchStage enumString        `json:"launchStage,omitempty"`
+	Service     string            `json:"service,omitempty"`
+	Scaling     *RevisionScaling  `json:"scaling,omitempty"`
+	VpcAccess   *VpcAccess        `json:"vpcAccess,omitempty"`
+	Timeout     string            `json:"timeout,omitempty"`
+	Containers  []Container       `json:"containers,omitempty"`
+	Volumes     []Volume          `json:"volumes,omitempty"`
+	Conditions  []Condition       `json:"conditions,omitempty"`
+	Reconciling bool              `json:"reconciling,omitempty"`
+}
+
 func containerEnvMap(envVars []EnvVar) map[string]string {
 	if len(envVars) == 0 {
 		return nil
@@ -497,9 +520,43 @@ func seedServiceV2Defaults(svc ServiceV2, host, project, location, serviceID str
 	return svc
 }
 
+// reconcileServiceRevision materializes the immutable Revision a Service
+// deploy produces. revName is the bare revision id (e.g. "svc-00001-abc");
+// the stored record is keyed by its full resource name.
+func reconcileServiceRevision(store sim.Store[RevisionV2], serviceName, revName string, svc ServiceV2) {
+	now := nowTimestamp()
+	full := serviceName + "/revisions/" + revName
+	rev := RevisionV2{
+		Name:        full,
+		UID:         generateUUID(),
+		Generation:  svc.Generation,
+		CreateTime:  now,
+		UpdateTime:  now,
+		LaunchStage: svc.LaunchStage,
+		Service:     serviceName,
+		Conditions: []Condition{
+			{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: now},
+		},
+	}
+	if svc.Template != nil {
+		rev.Labels = svc.Template.Labels
+		rev.Annotations = svc.Template.Annotations
+		rev.Containers = svc.Template.Containers
+		rev.Volumes = svc.Template.Volumes
+		rev.Scaling = svc.Template.Scaling
+		rev.VpcAccess = svc.Template.VpcAccess
+		rev.Timeout = svc.Template.Timeout
+	}
+	store.Put(full, rev)
+}
+
 func registerCloudRunServicesV2(srv *sim.Server) {
 	services := sim.MakeStore[ServiceV2](srv.DB(), "crv2_services")
 	crv2Services = services
+	revisions := sim.MakeStore[RevisionV2](srv.DB(), "crv2_revisions")
+	if crOperations == nil {
+		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
+	}
 
 	// CreateService: POST /v2/projects/{project}/locations/{location}/services?serviceId=<id>
 	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/services", func(w http.ResponseWriter, r *http.Request) {
@@ -536,17 +593,30 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		svc = seedServiceV2Defaults(svc, r.Host, project, location, serviceID)
 
 		services.Put(name, svc)
+		reconcileServiceRevision(revisions, name, serviceID+"-00001-abc", svc)
 
 		lro := newLRO(project, location, svc, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
 
 	// GetService: GET /v2/projects/{project}/locations/{location}/services/{service}
+	// The {service} wildcard also captures the GET-side IAM verb
+	// `{service}:getIamPolicy` (Go's mux can't spell `{id}:verb`); split
+	// on the colon and dispatch to the shared IAM handler.
 	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/services/{service}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
 		location := sim.PathParam(r, "location")
-		serviceID := sim.PathParam(r, "service")
-		name := fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceID)
+		serviceParam := sim.PathParam(r, "service")
+		if id, action, found := strings.Cut(serviceParam, ":"); found {
+			if action == "getIamPolicy" {
+				handleResourceIAM(w, r, gcpResourceIAMStore(),
+					fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, id), action)
+				return
+			}
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on service %q", action, id)
+			return
+		}
+		name := fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, serviceParam)
 		svc, ok := services.Get(name)
 		if !ok {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "service %q not found", name)
@@ -591,6 +661,10 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		}
 		services.Delete(name)
 		deleteCloudRunServiceInstance(name)
+		revPrefix := name + "/revisions/"
+		for _, rev := range revisions.Filter(func(r RevisionV2) bool { return strings.HasPrefix(r.Name, revPrefix) }) {
+			revisions.Delete(rev.Name)
+		}
 		lro := newLRO(project, location, svc, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
 	})
@@ -689,8 +763,116 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 		update.URI = existing.URI
 
 		services.Put(name, update)
+		reconcileServiceRevision(revisions, name, revName, update)
 		lro := newLRO(project, location, update, "type.googleapis.com/google.cloud.run.v2.Service")
 		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// --- Service Revisions (get/list/delete) ---
+
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		serviceID := sim.PathParam(r, "service")
+		revisionID := sim.PathParam(r, "revision")
+		name := fmt.Sprintf("projects/%s/locations/%s/services/%s/revisions/%s", project, location, serviceID, revisionID)
+		rev, ok := revisions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "revision %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, rev)
+	})
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/services/{service}/revisions", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		serviceID := sim.PathParam(r, "service")
+		prefix := fmt.Sprintf("projects/%s/locations/%s/services/%s/revisions/", project, location, serviceID)
+		result := revisions.Filter(func(rev RevisionV2) bool { return strings.HasPrefix(rev.Name, prefix) })
+		if result == nil {
+			result = []RevisionV2{}
+		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"revisions": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+	srv.HandleFunc("DELETE /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		serviceID := sim.PathParam(r, "service")
+		revisionID := sim.PathParam(r, "revision")
+		name := fmt.Sprintf("projects/%s/locations/%s/services/%s/revisions/%s", project, location, serviceID, revisionID)
+		rev, ok := revisions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "revision %q not found", name)
+			return
+		}
+		revisions.Delete(name)
+		lro := newLRO(project, location, rev, "type.googleapis.com/google.cloud.run.v2.Revision")
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// --- Service IAM verbs (setIamPolicy / testIamPermissions) ---
+	// getIamPolicy rides the GET service handler's colon-split above.
+	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/services/{serviceAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		serviceAction := sim.PathParam(r, "serviceAction")
+		id, action, found := strings.Cut(serviceAction, ":")
+		if !found {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action on service %q", serviceAction)
+			return
+		}
+		switch action {
+		case "setIamPolicy", "testIamPermissions":
+			handleResourceIAM(w, r, gcpResourceIAMStore(),
+				fmt.Sprintf("projects/%s/locations/%s/services/%s", project, location, id), action)
+		default:
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on service %q", action, id)
+		}
+	})
+
+	// --- Operations (delete / wait) ---
+	// GET .../operations and GET .../operations/{operation} are served by
+	// registerCloudFunctions / registerOperations respectively.
+	srv.HandleFunc("DELETE /v2/projects/{project}/locations/{location}/operations/{operation}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		opID := sim.PathParam(r, "operation")
+		name := fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID)
+		if !crOperations.Delete(name) {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
+			return
+		}
+		// google.longrunning.DeleteOperation returns google.protobuf.Empty.
+		sim.WriteJSON(w, http.StatusOK, map[string]any{})
+	})
+	srv.HandleFunc("POST /v2/projects/{project}/locations/{location}/operations/{opAction}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		opAction := sim.PathParam(r, "opAction")
+		opID, action, found := strings.Cut(opAction, ":")
+		if !found || action != "wait" {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown operation action %q", opAction)
+			return
+		}
+		name := fmt.Sprintf("projects/%s/locations/%s/operations/%s", project, location, opID)
+		op, ok := crOperations.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "operation %q not found", name)
+			return
+		}
+		// The sim does no async work — every LRO is already done — so
+		// WaitOperation returns the (completed) operation immediately, as
+		// real Cloud Run does once the underlying resource has settled.
+		sim.WriteJSON(w, http.StatusOK, op)
 	})
 
 	// Invoke handler. Real Cloud Run hosts the service URI as

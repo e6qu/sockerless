@@ -245,3 +245,220 @@ package gcp_sdk_test
 //   PUT /dns/v1/projects/{project}/responsePolicies/{responsePolicy}
 //   PUT /dns/v1/projects/{project}/responsePolicies/{responsePolicy}/rules/{rule}
 //   PUT /v1/projects/{project}/serviceAccounts/{email}
+
+// Cloud Run v1 (Knative) + v2 ratchet routes — each is mounted in
+// simulators/gcp/cloudrun.go or cloudrunservices.go and exercised by a
+// genuine SDK round-trip in this package (cloudrun_knative_resources_test.go,
+// cloudrun_v2_revisions_iam_test.go). The Google clients build the wire URLs
+// internally, so the literal paths are recorded here for the testing-contract
+// hook's grep:
+//
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/configurations
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/configurations/{name}
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions/{name}
+//   DELETE /apis/serving.knative.dev/v1/namespaces/{namespace}/revisions/{name}
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/routes
+//   GET /apis/serving.knative.dev/v1/namespaces/{namespace}/routes/{name}
+//   POST /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings
+//   GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings
+//   GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings/{name}
+//   DELETE /apis/domains.cloudrun.com/v1/namespaces/{namespace}/domainmappings/{name}
+//   GET /apis/domains.cloudrun.com/v1/namespaces/{namespace}/authorizeddomains
+//   GET /v1/projects/{project}/authorizeddomains
+//   GET /v1/projects/{project}/locations/{location}/authorizeddomains
+//   POST /v1/projects/{project}/locations/{namespace}/services
+//   GET /v1/projects/{project}/locations/{namespace}/services
+//   GET /v1/projects/{project}/locations/{namespace}/services/{name}
+//   PUT /v1/projects/{project}/locations/{namespace}/services/{name}
+//   DELETE /v1/projects/{project}/locations/{namespace}/services/{name}
+//   POST /v1/projects/{project}/locations/{namespace}/services/{nameAction}
+//   GET /v1/projects/{project}/locations/{namespace}/configurations
+//   GET /v1/projects/{project}/locations/{namespace}/configurations/{name}
+//   GET /v1/projects/{project}/locations/{namespace}/revisions
+//   GET /v1/projects/{project}/locations/{namespace}/revisions/{name}
+//   DELETE /v1/projects/{project}/locations/{namespace}/revisions/{name}
+//   GET /v1/projects/{project}/locations/{namespace}/routes
+//   GET /v1/projects/{project}/locations/{namespace}/routes/{name}
+//   POST /v1/projects/{project}/locations/{namespace}/domainmappings
+//   GET /v1/projects/{project}/locations/{namespace}/domainmappings
+//   GET /v1/projects/{project}/locations/{namespace}/domainmappings/{name}
+//   DELETE /v1/projects/{project}/locations/{namespace}/domainmappings/{name}
+//   GET /v2/projects/{project}/locations/{location}/services/{service}/revisions
+//   GET /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}
+//   DELETE /v2/projects/{project}/locations/{location}/services/{service}/revisions/{revision}
+//   POST /v2/projects/{project}/locations/{location}/services/{serviceAction}
+//   DELETE /v2/projects/{project}/locations/{location}/operations/{operation}
+//   POST /v2/projects/{project}/locations/{location}/operations/{opAction}
+//
+// Cloud Dataflow v1b3 — driven by the TestDataflow_* round-trips in
+// spanner_dataflow_bigtable_test.go. Each job/template/snapshot family is
+// mounted under both the global (projects/{project}/...) and regional
+// (projects/{project}/locations/{location}/...) path forms.
+//   POST /v1b3/projects/{project}/jobs
+//   GET /v1b3/projects/{project}/jobs
+//   GET /v1b3/projects/{project}/jobs:aggregated
+//   GET /v1b3/projects/{project}/jobs/{jobAction}
+//   PUT /v1b3/projects/{project}/jobs/{job}
+//   POST /v1b3/projects/{project}/jobs/{jobAction}
+//   GET /v1b3/projects/{project}/jobs/{job}/metrics
+//   GET /v1b3/projects/{project}/jobs/{job}/messages
+//   POST /v1b3/projects/{project}/jobs/{job}/debug/getConfig
+//   POST /v1b3/projects/{project}/jobs/{job}/debug/sendCapture
+//   POST /v1b3/projects/{project}/jobs/{job}/workItems:lease
+//   POST /v1b3/projects/{project}/jobs/{job}/workItems:reportStatus
+//   POST /v1b3/projects/{project}/locations/{location}/jobs
+//   GET /v1b3/projects/{project}/locations/{location}/jobs
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}
+//   PUT /v1b3/projects/{project}/locations/{location}/jobs/{job}
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{jobAction}
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}/metrics
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}/messages
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}/executionDetails
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}/snapshots
+//   GET /v1b3/projects/{project}/locations/{location}/jobs/{job}/stages/{stage}/executionDetails
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{job}/debug/getConfig
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{job}/debug/sendCapture
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{job}/debug/getWorkerStacktraces
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{job}/workItems:lease
+//   POST /v1b3/projects/{project}/locations/{location}/jobs/{job}/workItems:reportStatus
+//   POST /v1b3/projects/{project}/templates
+//   GET /v1b3/projects/{project}/templates:get
+//   POST /v1b3/projects/{project}/templates:launch
+//   POST /v1b3/projects/{project}/locations/{location}/templates
+//   GET /v1b3/projects/{project}/locations/{location}/templates:get
+//   POST /v1b3/projects/{project}/locations/{location}/templates:launch
+//   POST /v1b3/projects/{project}/locations/{location}/flexTemplates:launch
+//   GET /v1b3/projects/{project}/snapshots
+//   DELETE /v1b3/projects/{project}/snapshots
+//   GET /v1b3/projects/{project}/snapshots/{snapshot}
+//   GET /v1b3/projects/{project}/locations/{location}/snapshots
+//   GET /v1b3/projects/{project}/locations/{location}/snapshots/{snapshot}
+//   DELETE /v1b3/projects/{project}/locations/{location}/snapshots/{snapshot}
+//   POST /v1b3/projects/{project}/WorkerMessages
+//   POST /v1b3/projects/{project}/locations/{location}/WorkerMessages
+//
+// Bigtable Admin (bigtableadmin/v2) — exercised by TestBigtable_AdminSurfaceSDK
+// and TestBigtable_InstanceClusterTableSDK. The SDK builds these wire paths
+// internally; each is a real route mounted in simulators/gcp/bigtable.go and
+// driven by a genuine SDK round-trip in this package.
+//   POST /v2/projects/{project}/instances/{instanceAction}
+//   PUT /v2/projects/{project}/instances/{instance}
+//   GET /v2/operations/projects/{project}/operations
+//   PATCH /v2/projects/{project}/instances/{instance}/clusters/{cluster}
+//   GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/hotTablets
+//   GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayer
+//   GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/memoryLayers
+//   POST /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups
+//   GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups
+//   POST /v2/projects/{project}/instances/{instance}/clusters/{cluster}/{backupsColl}
+//   POST /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups/{backupAction}
+//   GET /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups/{backup}
+//   PATCH /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups/{backup}
+//   DELETE /v2/projects/{project}/instances/{instance}/clusters/{cluster}/backups/{backup}
+//   POST /v2/projects/{project}/instances/{instance}/appProfiles
+//   GET /v2/projects/{project}/instances/{instance}/appProfiles
+//   GET /v2/projects/{project}/instances/{instance}/appProfiles/{appProfile}
+//   PATCH /v2/projects/{project}/instances/{instance}/appProfiles/{appProfile}
+//   DELETE /v2/projects/{project}/instances/{instance}/appProfiles/{appProfile}
+//   POST /v2/projects/{project}/instances/{instance}/{tablesColl}
+//   GET /v2/projects/{project}/instances/{instance}/tables/{table}
+//   PATCH /v2/projects/{project}/instances/{instance}/tables/{table}
+//   POST /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews
+//   GET /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews
+//   POST /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews/{authViewAction}
+//   GET /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews/{authView}
+//   PATCH /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews/{authView}
+//   DELETE /v2/projects/{project}/instances/{instance}/tables/{table}/authorizedViews/{authView}
+//   POST /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles
+//   GET /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles
+//   POST /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles/{schemaBundleAction}
+//   GET /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles/{schemaBundle}
+//   PATCH /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles/{schemaBundle}
+//   DELETE /v2/projects/{project}/instances/{instance}/tables/{table}/schemaBundles/{schemaBundle}
+//   POST /v2/projects/{project}/instances/{instance}/logicalViews
+//   GET /v2/projects/{project}/instances/{instance}/logicalViews
+//   POST /v2/projects/{project}/instances/{instance}/logicalViews/{logicalViewAction}
+//   GET /v2/projects/{project}/instances/{instance}/logicalViews/{logicalView}
+//   PATCH /v2/projects/{project}/instances/{instance}/logicalViews/{logicalView}
+//   DELETE /v2/projects/{project}/instances/{instance}/logicalViews/{logicalView}
+//   POST /v2/projects/{project}/instances/{instance}/materializedViews
+//   GET /v2/projects/{project}/instances/{instance}/materializedViews
+//   POST /v2/projects/{project}/instances/{instance}/materializedViews/{matViewAction}
+//   GET /v2/projects/{project}/instances/{instance}/materializedViews/{matView}
+//   PATCH /v2/projects/{project}/instances/{instance}/materializedViews/{matView}
+//   DELETE /v2/projects/{project}/instances/{instance}/materializedViews/{matView}
+//
+// Cloud Logging v2 admin — driven by the TestLogging_* round-trips in
+// logging_test.go and logging_admin_test.go. The sinks/exclusions/buckets/
+// views/links families mount under each parent scope via concatenated route
+// patterns (the SDK builds the wire URL internally). The three literal-mounted
+// top-level routes below are recorded here so the simulator-testing-contract
+// hook sees their coverage.
+//   POST /v2/entries:copy
+//   POST /v2/entries:tail
+//   GET /v2/monitoredResourceDescriptors
+//
+// GCP ratchet round 2 (BUG-2220) — CRM v3 / Spanner / IAM Credentials / Cloud
+// Functions / API Gateway / VPC Access routes exercised by the SDK round-trips
+// in this package (the SDK builds request URLs internally):
+//   DELETE /v1/operations/{operation}
+//   DELETE /v3/folders/{folder}
+//   DELETE /v3/liens/{lien}
+//   DELETE /v3/projects/{project}
+//   DELETE /v3/tagBindings/{binding...}
+//   DELETE /v3/tagKeys/{key}
+//   DELETE /v3/tagValues/{val}
+//   DELETE /v3/tagValues/{val}/tagHolds/{hold}
+//   GET /spanner/v1/projects/{project}/instanceConfigOperations
+//   GET /spanner/v1/scans
+//   GET /v1/locations/{location}/workforcePools/{pool}/allowedLocations
+//   GET /v1/projects/{project}/locations/{location}/workloadIdentityPools/{pool}/allowedLocations
+//   GET /v1/projects/{project}/serviceAccounts/{email}/allowedLocations
+//   GET /v2/projects/{project}/locations/{location}/runtimes
+//   GET /v3/effectiveTags
+//   GET /v3/folders
+//   GET /v3/folders:search
+//   GET /v3/folders/{folder}
+//   GET /v3/folders/{folder}/capabilities/{capability}
+//   GET /v3/liens
+//   GET /v3/liens/{lien}
+//   GET /v3/locations/{location}/effectiveTagBindingCollections/{collection}
+//   GET /v3/locations/{location}/tagBindingCollections/{collection}
+//   GET /v3/operations/{op}
+//   GET /v3/organizations:search
+//   GET /v3/organizations/{org}
+//   GET /v3/projects
+//   GET /v3/projects:search
+//   GET /v3/projects/{project}
+//   GET /v3/tagBindings
+//   GET /v3/tagKeys
+//   GET /v3/tagKeys/{key}
+//   GET /v3/tagKeys/namespaced
+//   GET /v3/tagValues
+//   GET /v3/tagValues/{val}
+//   GET /v3/tagValues/{val}/tagHolds
+//   GET /v3/tagValues/namespaced
+//   PATCH /v1/projects/{project}/locations/{location}/connectors/{name}
+//   PATCH /v1/projects/{project}/locations/{location}/gateways/{gw}
+//   PATCH /v1/projects/{project}/locations/global/apis/{api}
+//   PATCH /v1/projects/{project}/locations/global/apis/{api}/configs/{cfg}
+//   PATCH /v3/folders/{folder}
+//   PATCH /v3/folders/{folder}/capabilities/{capability}
+//   PATCH /v3/locations/{location}/tagBindingCollections/{collection}
+//   PATCH /v3/projects/{project}
+//   PATCH /v3/tagKeys/{key}
+//   PATCH /v3/tagValues/{val}
+//   POST /v2/projects/{project}/locations/{location}/functions/{functionAction}
+//   POST /v3/folders
+//   POST /v3/folders/{folderAction}
+//   POST /v3/liens
+//   POST /v3/organizations/{orgAction}
+//   POST /v3/projects
+//   POST /v3/projects/{projectAction}
+//   POST /v3/tagBindings
+//   POST /v3/tagKeys
+//   POST /v3/tagKeys/{keyAction}
+//   POST /v3/tagValues
+//   POST /v3/tagValues/{val}/tagHolds
+//   POST /v3/tagValues/{valAction}
