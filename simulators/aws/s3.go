@@ -47,6 +47,12 @@ type S3Object struct {
 	RestoreRequested  bool
 	RestoreInProgress bool
 	RestoreExpiryDate string
+	// SSEAlgorithm / SSEKMSKeyID hold the object's server-side encryption
+	// settings, set by UpdateObjectEncryption. Empty when the object uses
+	// the default (none recorded). Surfaced as the
+	// x-amz-server-side-encryption[-aws-kms-key-id] response headers.
+	SSEAlgorithm string
+	SSEKMSKeyID  string
 }
 
 // XML response types for S3
@@ -225,11 +231,25 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 			// generic PutBucket<Subresource> family.
 			return "PutObjectLockConfiguration"
 		}
+		switch {
+		case q.Has("metadataInventoryTable"):
+			return "UpdateBucketMetadataInventoryTableConfiguration"
+		case q.Has("metadataJournalTable"):
+			return "UpdateBucketMetadataJournalTableConfiguration"
+		case q.Has("abac"):
+			return "PutBucketAbac"
+		}
 		if name, _, ok := firstBucketSubresource(q); ok {
 			return "PutBucket" + s3SubresourceOperationSuffix(name)
 		}
 		return "CreateBucket"
 	case http.MethodDelete:
+		switch {
+		case q.Has("metadataConfiguration"):
+			return "DeleteBucketMetadataConfiguration"
+		case q.Has("metadataTable"):
+			return "DeleteBucketMetadataTableConfiguration"
+		}
 		if name, _, ok := firstBucketSubresource(q); ok {
 			return "DeleteBucket" + s3SubresourceOperationSuffix(name)
 		}
@@ -238,8 +258,20 @@ func s3BucketOperationName(r *http.Request, _ []byte) string {
 		if q.Has("delete") {
 			return "DeleteObjects"
 		}
+		if q.Has("metadataConfiguration") {
+			return "CreateBucketMetadataConfiguration"
+		}
+		if q.Has("metadataTable") {
+			return "CreateBucketMetadataTableConfiguration"
+		}
 	case http.MethodGet:
 		switch {
+		case q.Has("metadataConfiguration"):
+			return "GetBucketMetadataConfiguration"
+		case q.Has("metadataTable"):
+			return "GetBucketMetadataTableConfiguration"
+		case q.Has("abac"):
+			return "GetBucketAbac"
 		case q.Has("policy"):
 			return "GetBucketPolicy"
 		case q.Has("uploads"):
@@ -296,6 +328,13 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 		return "HeadObject"
 	case http.MethodPut:
 		switch {
+		case q.Has("renameObject"):
+			return "RenameObject"
+		case q.Has("encryption"):
+			// Object-level ?encryption is UpdateObjectEncryption (the
+			// bucket-level ?encryption op is PutBucketEncryption, routed
+			// by s3BucketOperationName on the no-key path).
+			return "UpdateObjectEncryption"
 		case r.Header.Get("x-amz-copy-source") != "" && q.Has("uploadId") && q.Has("partNumber"):
 			return "UploadPartCopy"
 		case r.Header.Get("x-amz-copy-source") != "":
@@ -527,6 +566,15 @@ func handleS3GetBucket(w http.ResponseWriter, r *http.Request) {
 	// `r.URL.Query().Has(...)` is the right check, not value-based.
 	q := r.URL.Query()
 	switch {
+	case q.Has("metadataConfiguration"):
+		handleS3GetBucketMetadataConfiguration(w, r)
+		return
+	case q.Has("metadataTable"):
+		handleS3GetBucketMetadataTableConfiguration(w, r)
+		return
+	case q.Has("abac"):
+		handleS3GetBucketAbac(w, r)
+		return
 	case q.Has("policy"):
 		emitStoredOr404(w, r, bucket, "policy", "NoSuchBucketPolicy", "The bucket policy does not exist")
 		return
@@ -902,6 +950,7 @@ func handleS3GetObject(w http.ResponseWriter, r *http.Request) {
 	for k, v := range obj.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
 	}
+	s3SetObjectEncryptionHeaders(w, obj)
 
 	http.ServeContent(w, r, key, obj.LastModified, bytes.NewReader(obj.Data))
 }
@@ -925,8 +974,22 @@ func handleS3HeadObject(w http.ResponseWriter, r *http.Request) {
 	for k, v := range obj.Metadata {
 		w.Header().Set("x-amz-meta-"+k, v)
 	}
+	s3SetObjectEncryptionHeaders(w, obj)
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// s3SetObjectEncryptionHeaders emits the x-amz-server-side-encryption
+// response headers for an object whose SSE was set by
+// UpdateObjectEncryption.
+func s3SetObjectEncryptionHeaders(w http.ResponseWriter, obj S3Object) {
+	if obj.SSEAlgorithm == "" {
+		return
+	}
+	w.Header().Set("x-amz-server-side-encryption", obj.SSEAlgorithm)
+	if obj.SSEKMSKeyID != "" {
+		w.Header().Set("x-amz-server-side-encryption-aws-kms-key-id", obj.SSEKMSKeyID)
+	}
 }
 
 func handleS3DeleteObject(w http.ResponseWriter, r *http.Request) {

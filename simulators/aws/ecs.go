@@ -2541,21 +2541,21 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		sessionID := generateUUID()
 
 		// Store the session
-		// Look up the Docker container ID for this task (may need to wait briefly
-		// for the container to start — it starts async after RUNNING transition)
+		// Look up the Docker container ID for this task. The container starts
+		// async after the RUNNING transition, so both the task's process entry
+		// AND the named container's handle may appear a beat later — keep polling
+		// until both are ready. A single missing handle is not a give-up signal;
+		// breaking early here surfaced as a spurious TargetNotConnectedException
+		// under heavier concurrent test load.
 		var dockerContainerID string
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 40; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
-				procs, ok := v.(*ecsTaskProcesses)
-				if !ok {
-					break
+				if procs, ok := v.(*ecsTaskProcesses); ok {
+					if handle := procs.handleFor(container.Name); handle != nil {
+						dockerContainerID = handle.ContainerID
+						break
+					}
 				}
-				handle := procs.handleFor(container.Name)
-				if handle == nil {
-					break
-				}
-				dockerContainerID = handle.ContainerID
-				break
 			}
 			time.Sleep(250 * time.Millisecond)
 		}

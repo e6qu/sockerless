@@ -81,9 +81,13 @@ func handleS3PostBucketDispatch(w http.ResponseWriter, r *http.Request) {
 		// Multi-object delete: parse <Delete><Object><Key>... XML, delete
 		// each, return <DeleteResult><Deleted>...</Deleted></DeleteResult>.
 		handleS3MultiObjectDelete(w, r)
+	case q.Has("metadataConfiguration"):
+		handleS3CreateBucketMetadataConfiguration(w, r)
+	case q.Has("metadataTable"):
+		handleS3CreateBucketMetadataTableConfiguration(w, r)
 	default:
 		sim.S3ErrorXML(w, "InvalidRequest",
-			"POST on a bucket requires ?delete",
+			"POST on a bucket requires ?delete, ?metadataConfiguration, or ?metadataTable",
 			sim.PathParam(r, "bucket"), sim.RequestID(r.Context()),
 			http.StatusBadRequest)
 	}
@@ -101,6 +105,14 @@ func handleS3PutObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if q.Has("renameObject") {
+		handleS3RenameObject(w, r)
+		return
+	}
+	if q.Has("encryption") {
+		handleS3UpdateObjectEncryption(w, r)
+		return
+	}
 	if r.Header.Get("x-amz-copy-source") != "" && q.Has("uploadId") && q.Has("partNumber") {
 		handleS3UploadPartCopy(w, r)
 		return

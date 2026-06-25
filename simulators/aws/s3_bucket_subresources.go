@@ -110,6 +110,17 @@ func firstBucketSubresource(q map[string][]string) (string, bucketSubresource, b
 // subresource-config handler.
 func handleS3PutBucketDispatch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	switch {
+	case q.Has("metadataInventoryTable"):
+		handleS3UpdateBucketMetadataInventoryTable(w, r)
+		return
+	case q.Has("metadataJournalTable"):
+		handleS3UpdateBucketMetadataJournalTable(w, r)
+		return
+	case q.Has("abac"):
+		handleS3PutBucketAbac(w, r)
+		return
+	}
 	if name, spec, ok := firstBucketSubresource(q); ok {
 		handleS3PutBucketSubresource(w, r, name, spec)
 		return
@@ -122,6 +133,14 @@ func handleS3PutBucketDispatch(w http.ResponseWriter, r *http.Request) {
 // subresource-config clear handler.
 func handleS3DeleteBucketDispatch(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	switch {
+	case q.Has("metadataConfiguration"):
+		handleS3DeleteBucketMetadataConfiguration(w, r)
+		return
+	case q.Has("metadataTable"):
+		handleS3DeleteBucketMetadataTableConfiguration(w, r)
+		return
+	}
 	if name, spec, ok := firstBucketSubresource(q); ok {
 		if !spec.hasDelete {
 			sim.S3ErrorXML(w, "MethodNotAllowed",
