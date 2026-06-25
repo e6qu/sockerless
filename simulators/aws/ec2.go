@@ -583,6 +583,11 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	registerEC2ReservedCapacity(r, srv)
 	registerEC2ImagesFpga(r, srv)
 	registerEC2NetworkingMisc(r, srv)
+	registerEC2ImageMgmt(r, srv)
+	registerEC2InstanceExtras(r, srv)
+	registerEC2LgwCapacity(r, srv)
+	registerEC2AccountMisc(r, srv)
+	registerEC2VolumesMisc(r, srv)
 }
 
 // Tag helpers

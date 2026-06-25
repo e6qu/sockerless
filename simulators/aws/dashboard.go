@@ -102,7 +102,7 @@ func handleDashboardS3Buckets(w http.ResponseWriter, _ *http.Request) {
 	buckets := s3Buckets_.List()
 	out := make([]bucketSummary, len(buckets))
 	for i, b := range buckets {
-		out[i] = bucketSummary(b)
+		out[i] = bucketSummary{Name: b.Name, CreationDate: b.CreationDate}
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
 }

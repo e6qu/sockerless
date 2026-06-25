@@ -14,7 +14,10 @@ import (
 // subresource matrix and collect the operation names they yield — the REST
 // analogue of reading the awsJson/query routers.
 func s3ImplementedOps() map[string]bool {
-	ops := map[string]bool{"ListBuckets": true}
+	// ListDirectoryBuckets is GET / disambiguated from ListBuckets only by the
+	// SigV4 credential scope (s3express), which this op-name harness doesn't
+	// reconstruct; the route implements it, so seed it like ListBuckets.
+	ops := map[string]bool{"ListBuckets": true, "ListDirectoryBuckets": true}
 	bucketReq := func(method, rawquery string) string {
 		r := httptest.NewRequest(method, "/bucket?"+rawquery, nil)
 		return s3BucketOperationName(r, nil)
@@ -38,6 +41,8 @@ func s3ImplementedOps() map[string]bool {
 		"notification", "publicAccessBlock", "object-lock", "ownershipControls",
 		"intelligent-tiering", "inventory", "analytics", "metrics",
 		"uploads", "versions", "location", "policyStatus", "delete",
+		"metadataConfiguration", "metadataTable", "metadataInventoryTable",
+		"metadataJournalTable", "abac", "session",
 	}
 	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
 		add(bucketReq(m, ""))
@@ -52,6 +57,7 @@ func s3ImplementedOps() map[string]bool {
 	objQueries := []string{
 		"", "tagging=", "uploads=", "uploadId=x", "uploadId=x&partNumber=1",
 		"acl=", "retention=", "legal-hold=", "attributes=", "torrent=", "restore=", "select=",
+		"renameObject=", "encryption=",
 	}
 	for _, m := range []string{"GET", "PUT", "DELETE", "HEAD", "POST"} {
 		for _, q := range objQueries {
@@ -119,48 +125,11 @@ var serviceConformanceCatalog = map[string][]string{
 		"ListInboundResponsibilityTransfers", "ListOutboundResponsibilityTransfers",
 		"TerminateResponsibilityTransfer", "UpdateResponsibilityTransfer",
 	},
-	// SSM: Parameter Store + documents + maintenance windows + patch baselines +
-	// service settings + resource data sync are implemented; the run/automation/
-	// session/inventory/compliance/ops-item/association execution subsystems remain.
-	"AmazonSSM": {
-		"AssociateOpsItemRelatedItem", "CancelCommand", "CancelMaintenanceWindowExecution",
-		"CreateActivation", "CreateAssociation", "CreateAssociationBatch", "CreateOpsItem",
-		"CreateOpsMetadata", "DeleteActivation", "DeleteAssociation", "DeleteInventory",
-		"DeleteOpsItem", "DeleteOpsMetadata", "DeleteResourcePolicy",
-		"DeregisterManagedInstance", "DeregisterPatchBaselineForPatchGroup",
-		"DescribeActivations", "DescribeAssociation", "DescribeAssociationExecutionTargets",
-		"DescribeAssociationExecutions", "DescribeAutomationExecutions",
-		"DescribeAutomationStepExecutions", "DescribeAvailablePatches",
-		"DescribeDocumentPermission", "DescribeEffectiveInstanceAssociations",
-		"DescribeEffectivePatchesForPatchBaseline", "DescribeInstanceAssociationsStatus",
-		"DescribeInstanceInformation", "DescribeInstancePatchStates",
-		"DescribeInstancePatchStatesForPatchGroup", "DescribeInstancePatches",
-		"DescribeInstanceProperties", "DescribeInventoryDeletions",
-		"DescribeMaintenanceWindowExecutionTaskInvocations",
-		"DescribeMaintenanceWindowExecutionTasks", "DescribeMaintenanceWindowExecutions",
-		"DescribeMaintenanceWindowSchedule", "DescribeMaintenanceWindowsForTarget",
-		"DescribeOpsItems", "DescribePatchGroupState", "DescribePatchGroups",
-		"DescribePatchProperties", "DescribeSessions", "DisassociateOpsItemRelatedItem",
-		"GetAccessToken", "GetAutomationExecution", "GetCalendarState", "GetCommandInvocation",
-		"GetConnectionStatus", "GetDeployablePatchSnapshotForInstance", "GetExecutionPreview",
-		"GetInventory", "GetInventorySchema", "GetMaintenanceWindowExecution",
-		"GetMaintenanceWindowExecutionTask", "GetMaintenanceWindowExecutionTaskInvocation",
-		"GetMaintenanceWindowTask", "GetOpsItem", "GetOpsMetadata", "GetOpsSummary",
-		"GetParameterHistory", "GetPatchBaselineForPatchGroup", "GetResourcePolicies",
-		"LabelParameterVersion", "ListAssociationVersions", "ListAssociations",
-		"ListCommandInvocations", "ListCommands", "ListComplianceItems",
-		"ListComplianceSummaries", "ListDocumentMetadataHistory", "ListInventoryEntries",
-		"ListNodes", "ListNodesSummary", "ListOpsItemEvents", "ListOpsItemRelatedItems",
-		"ListOpsMetadata", "ListResourceComplianceSummaries", "ModifyDocumentPermission",
-		"PutComplianceItems", "PutInventory", "PutResourcePolicy",
-		"RegisterPatchBaselineForPatchGroup", "ResumeSession", "SendAutomationSignal",
-		"SendCommand", "StartAccessRequest", "StartAssociationsOnce", "StartAutomationExecution",
-		"StartChangeRequestExecution", "StartExecutionPreview", "StartSession",
-		"StopAutomationExecution", "TerminateSession", "UnlabelParameterVersion",
-		"UpdateAssociation", "UpdateAssociationStatus", "UpdateDocumentMetadata",
-		"UpdateMaintenanceWindowTarget", "UpdateMaintenanceWindowTask",
-		"UpdateManagedInstanceRole", "UpdateOpsItem", "UpdateOpsMetadata",
-	},
+	// SSM: all operations implemented (Parameter Store + documents + maintenance
+	// windows + patch baselines/groups + service settings + resource data sync +
+	// associations + automation + run command + ops-items + sessions + activations +
+	// inventory + compliance + nodes + ops-metadata + resource policies).
+	"AmazonSSM": {},
 	// Step Functions / ACM / Secrets Manager / Application Auto Scaling: all
 	// operations implemented (conformance-complete).
 	"AWSStepFunctions":        {},
@@ -270,7 +239,7 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 // The count must EQUAL the floor — a drop is a regression; implementing more ops
 // must bump the floor (the ratchet ratchets up).
 var serviceCoverageFloor = map[string]int{
-	"AmazonEC2":                            600, // ec2Query
+	"AmazonEC2":                            769, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 58,  // ECR
 	"AmazonElastiCacheV9":                  75,
@@ -280,7 +249,7 @@ var serviceCoverageFloor = map[string]int{
 	"AWSWAF_20190729":                      55,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
-	"Logs_20140328":                        104, // CloudWatch Logs
+	"Logs_20140328":                        111, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          30,  // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      71,  // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         31,  // EFS (REST)
@@ -292,7 +261,7 @@ var serviceCoverageFloor = map[string]int{
 	"AWSChronosService":       12,  // EventBridge Scheduler
 	"ApiGatewayV2":            103, // Amazon API Gateway v2
 	"Cloudfront2020_05_31":    167, // Amazon CloudFront (restXml)
-
+	"DynamoDB_20120810":       57,  // Amazon DynamoDB (awsJson1.0, already complete)
 }
 
 // TestServiceConformance_CoverageFloor locks the implemented-op count for the
@@ -344,12 +313,11 @@ func TestServiceConformance_Coverage(t *testing.T) {
 // and object ACL/lock/retention/legal-hold). The list is locked by
 // TestServiceConformance_S3Ratchet; implement one → remove it here.
 var s3ConformanceMissing = []string{
-	"CreateBucketMetadataConfiguration", "CreateBucketMetadataTableConfiguration",
-	"CreateSession", "DeleteBucketMetadataConfiguration", "DeleteBucketMetadataTableConfiguration",
-	"GetBucketAbac", "GetBucketMetadataConfiguration", "GetBucketMetadataTableConfiguration",
-	"ListDirectoryBuckets", "PutBucketAbac", "RenameObject", "SelectObjectContent",
-	"UpdateBucketMetadataInventoryTableConfiguration", "UpdateBucketMetadataJournalTableConfiguration",
-	"UpdateObjectEncryption", "WriteGetObjectResponse",
+	// SelectObjectContent returns an HTTP/2 SelectObjectContentEventStream and
+	// WriteGetObjectResponse is an S3 Object Lambda data-plane callback to a
+	// per-request *.s3-object-lambda route — neither is faithfully serviceable
+	// over the request/response model (same class as Kinesis SubscribeToShard).
+	"SelectObjectContent", "WriteGetObjectResponse",
 }
 
 // TestServiceConformance_S3Ratchet locks S3's REST operation-coverage gap set,
