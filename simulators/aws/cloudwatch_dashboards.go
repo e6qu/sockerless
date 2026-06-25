@@ -112,7 +112,10 @@ func handleCWJSONListDashboards(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		DashboardNamePrefix string `json:"DashboardNamePrefix"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidParameterValue", "The request body is not valid JSON.", http.StatusBadRequest)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"DashboardEntries": cwListDashboardEntries(req.DashboardNamePrefix)})
 }
 

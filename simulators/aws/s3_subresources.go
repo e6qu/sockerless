@@ -63,9 +63,11 @@ func handleS3PostObjectDispatch(w http.ResponseWriter, r *http.Request) {
 		handleS3CompleteMultipart(w, r)
 	case q.Has("restore"):
 		handleS3RestoreObject(w, r)
+	case q.Has("select"):
+		handleS3SelectObjectContent(w, r)
 	default:
 		sim.S3ErrorXML(w, "InvalidRequest",
-			"POST on an object requires ?uploads (InitiateMultipartUpload), ?uploadId (CompleteMultipartUpload), or ?restore (RestoreObject)",
+			"POST on an object requires ?uploads (InitiateMultipartUpload), ?uploadId (CompleteMultipartUpload), ?restore (RestoreObject), or ?select (SelectObjectContent)",
 			"", sim.RequestID(r.Context()), http.StatusBadRequest)
 	}
 }

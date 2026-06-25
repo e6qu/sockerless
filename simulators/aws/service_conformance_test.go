@@ -105,23 +105,10 @@ func s3ImplementedOps() map[string]bool {
 // so they are measured by their own enumeration harness instead — S3 via
 // s3ImplementedOps + TestServiceConformance_S3Ratchet.
 var serviceConformanceCatalog = map[string][]string{
-	// CloudWatch monitoring: the dataset/KMS, OTel-enrichment, managed-insight-rule,
-	// and metric-widget-image surfaces remain.
-	"GraniteServiceVersion20100801": {
-		"AssociateDatasetKmsKey", "DescribeAlarmContributors", "DisassociateDatasetKmsKey",
-		"GetDataset", "GetInsightRuleReport", "GetMetricWidgetImage", "GetOTelEnrichment",
-		"ListManagedInsightRules", "PutManagedInsightRules", "StartOTelEnrichment",
-		"StopOTelEnrichment",
-	},
-	// Organizations: the GovCloud account, responsibility-transfer, and
-	// effective-policy-validation surfaces remain.
-	"AWSOrganizationsV20161128": {
-		"CreateGovCloudAccount", "DescribeResponsibilityTransfer",
-		"InviteOrganizationToTransferResponsibility", "LeaveOrganization",
-		"ListAccountsWithInvalidEffectivePolicy", "ListEffectivePolicyValidationErrors",
-		"ListInboundResponsibilityTransfers", "ListOutboundResponsibilityTransfers",
-		"TerminateResponsibilityTransfer", "UpdateResponsibilityTransfer",
-	},
+	// CloudWatch monitoring: all operations implemented.
+	"GraniteServiceVersion20100801": {},
+	// Organizations: all operations implemented.
+	"AWSOrganizationsV20161128": {},
 	// SSM: all operations implemented (Parameter Store + documents + maintenance
 	// windows + patch baselines/groups + service settings + resource data sync +
 	// associations + automation + run command + ops-items + sessions + activations +
@@ -133,17 +120,14 @@ var serviceConformanceCatalog = map[string][]string{
 	"CertificateManager":      {},
 	"secretsmanager":          {},
 	"AnyScaleFrontendService": {},
-	// Kinesis: complete except the HTTP/2 event-stream consumer subscription.
-	"Kinesis_20131202": {"SubscribeToShard"},
+	// Kinesis: all operations implemented (SubscribeToShard streams over vnd.amazon.eventstream).
+	"Kinesis_20131202": {},
 	// KMS: all operations implemented (real Go-stdlib crypto for Sign/Verify/MAC/
 	// data-key-pairs/ECDH; custom key stores; grants; multi-region keys).
 	"TrentService": {},
 	// ELBv2: all operations implemented (the mutual-TLS trust-store surface closed).
 	"ElasticLoadBalancing_v10": {},
-	"AmazonSQS": {
-		"CancelMessageMoveTask", "ListDeadLetterSourceQueues", "ListMessageMoveTasks",
-		"StartMessageMoveTask",
-	},
+	"AmazonSQS":                {},
 	// SNS / EventBridge / DynamoDB: all remaining operations are implemented.
 	"AmazonSimpleNotificationService": {},
 	"AWSEvents":                       {},
@@ -246,7 +230,7 @@ var serviceCoverageFloor = map[string]int{
 	"AWSWAF_20190729":                      55,
 	"CloudTrail_20131101":                  60,
 	"CodeBuild_20161006":                   59,
-	"Logs_20140328":                        111, // CloudWatch Logs
+	"Logs_20140328":                        113, // CloudWatch Logs
 	"Route53AutoNaming_v20170314":          30,  // Cloud Map / ServiceDiscovery
 	"AWSDnsV20130401":                      71,  // Route 53 (REST)
 	"MagnolioAPIService_v20150201":         31,  // EFS (REST)
@@ -310,11 +294,12 @@ func TestServiceConformance_Coverage(t *testing.T) {
 // and object ACL/lock/retention/legal-hold). The list is locked by
 // TestServiceConformance_S3Ratchet; implement one → remove it here.
 var s3ConformanceMissing = []string{
-	// SelectObjectContent returns an HTTP/2 SelectObjectContentEventStream and
-	// WriteGetObjectResponse is an S3 Object Lambda data-plane callback to a
-	// per-request *.s3-object-lambda route — neither is faithfully serviceable
-	// over the request/response model (same class as Kinesis SubscribeToShard).
-	"SelectObjectContent", "WriteGetObjectResponse",
+	// WriteGetObjectResponse is an S3 Object Lambda data-plane callback addressed
+	// to a per-request {RequestRoute}.s3-object-lambda.<region> endpoint (the spec
+	// marks it UseObjectLambdaEndpoint), never the regional s3.amazonaws.com
+	// surface the simulator hosts — a dedicated-endpoint op. (SelectObjectContent,
+	// a vnd.amazon.eventstream op, IS now implemented + SDK/CLI-tested.)
+	"WriteGetObjectResponse",
 	// ListDirectoryBuckets and CreateSession are S3 Express operations served
 	// only from dedicated S3 Express endpoints (s3express-control / zonal), never
 	// the regional s3.amazonaws.com surface the simulator hosts (the spec marks

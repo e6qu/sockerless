@@ -476,7 +476,10 @@ func handleOrgCreateOrganization(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		FeatureSet string `json:"FeatureSet"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidInputException", "The request body is not valid JSON.", http.StatusBadRequest)
+		return
+	}
 	if _, ok := orgOrg.Get(orgSingletonKey); ok {
 		// Real service raises this when the account already runs an org.
 		sim.AWSError(w, "AlreadyInOrganizationException", "The provided account is already a member of an organization.", http.StatusBadRequest)
@@ -1509,7 +1512,10 @@ func handleOrgListDelegatedAdmins(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ServicePrincipal string `json:"ServicePrincipal"`
 	}
-	_ = sim.ReadJSON(r, &req)
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AWSError(w, "InvalidInputException", "The request body is not valid JSON.", http.StatusBadRequest)
+		return
+	}
 	seen := map[string]bool{}
 	out := []map[string]any{}
 	admins := orgDelegatedAdmins.List()

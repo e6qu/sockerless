@@ -379,6 +379,8 @@ func s3ObjectOperationName(r *http.Request, _ []byte) string {
 			return "CompleteMultipartUpload"
 		case q.Has("restore"):
 			return "RestoreObject"
+		case q.Has("select"):
+			return "SelectObjectContent"
 		}
 	case http.MethodDelete:
 		switch {
