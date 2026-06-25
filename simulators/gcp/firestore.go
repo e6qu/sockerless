@@ -639,6 +639,50 @@ func handleFSBatchWrite(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"writeResults": results, "status": status})
 }
 
+// fsStreamArray writes a Firestore server-streaming response (runQuery /
+// batchGet) as an incrementally-flushed JSON array — the faithful REST wire
+// form of a gRPC server stream. No Content-Length is set, so the Go HTTP server
+// uses chunked transfer-encoding; each element is written and flushed as its own
+// chunk, exactly as real Firestore streams results over HTTP. Client
+// cancellation is honored: if the caller disconnects mid-stream, emission stops.
+// The full array is still valid JSON once received, so SDK/CLI clients that
+// buffer the whole body parse it identically.
+func fsStreamArray(w http.ResponseWriter, r *http.Request, elements []map[string]any) {
+	w.Header().Set("Content-Type", "application/json; charset=UTF-8")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+	writeChunk := func(b []byte) bool {
+		if _, err := w.Write(b); err != nil {
+			return false
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		return true
+	}
+	if !writeChunk([]byte("[")) {
+		return
+	}
+	for i, el := range elements {
+		select {
+		case <-r.Context().Done():
+			return // client disconnected mid-stream — stop emitting
+		default:
+		}
+		b, err := json.Marshal(el)
+		if err != nil {
+			return
+		}
+		if i > 0 {
+			b = append([]byte{','}, b...)
+		}
+		if !writeChunk(b) {
+			return
+		}
+	}
+	writeChunk([]byte("]"))
+}
+
 func handleFSBatchGet(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Documents   []string `json:"documents"`
@@ -661,7 +705,7 @@ func handleFSBatchGet(w http.ResponseWriter, r *http.Request) {
 			out = append(out, map[string]any{"missing": name, "readTime": readTime})
 		}
 	}
-	sim.WriteJSON(w, http.StatusOK, out)
+	fsStreamArray(w, r, out)
 }
 
 func handleFSRunRootQuery(w http.ResponseWriter, r *http.Request) {
@@ -743,7 +787,7 @@ func handleFSRunQuery(w http.ResponseWriter, r *http.Request, parentPath string)
 	if len(out) == 0 {
 		out = append(out, map[string]any{"readTime": readTime, "done": true})
 	}
-	sim.WriteJSON(w, http.StatusOK, out)
+	fsStreamArray(w, r, out)
 }
 
 // fsCompareToCursor compares a document's orderBy key against the cursor values,

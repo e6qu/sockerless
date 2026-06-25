@@ -6,10 +6,3 @@
 # BUG ID; this list only shrinks — fixing the simulator removes lines,
 # never the other way around. New violations fail CI until fixed or
 # filed + listed here.
-
-# Permanent modeling exemption (not a sim bug): Firestore REST server-streaming
-# methods (runQuery / batchGet) return a JSON array of stream elements on the
-# wire — real GCP responds identically; the Discovery document describes the
-# element shape, so the array reads as a type mismatch.
-POST /v1/projects/{projectsId}/databases/{databasesId}/documents:batchGet	type-mismatch	$
-POST /v1/projects/{projectsId}/databases/{databasesId}/documents/{documentsId}/{documentsId1}:runQuery	type-mismatch	$

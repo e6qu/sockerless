@@ -10,6 +10,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math/big"
 	"net/http"
 	"reflect"
 	"sort"
@@ -1442,16 +1444,23 @@ func dnssecState(raw json.RawMessage) string {
 }
 
 func deriveDNSKey(zone ManagedZone, keyType string) DNSKey {
-	// Deterministic ECDSA P-256 key from the zone id + key type. The reader is
-	// an unbounded SHA-256 keystream so ecdsa.GenerateKey's rejection sampling
-	// can never exhaust it — the same zone always yields the same key (and thus
-	// the same key tag the dnsKeys.get path must re-derive and match). A bounded
-	// reader would EOF on the occasional rejection and force a fallback to a
-	// random key, breaking get-by-id.
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), newDNSKeyKeystream("dnssec:"+zone.ID+":"+keyType))
-	if err != nil {
-		priv, _ = ecdsa.GenerateKey(elliptic.P256(), newDNSKeyKeystream("dnssec-fallback:"+zone.ID+":"+keyType))
-	}
+	// Deterministic ECDSA P-256 key from the zone id + key type, so dnsKeys.list
+	// and dnsKeys.get re-derive the SAME key (and thus the same key tag get-by-id
+	// must match). ecdsa.GenerateKey is deliberately NOT deterministic — it
+	// consumes a random number of bytes from the reader via the crypto-internal
+	// MaybeReadByte masking — so derive the private scalar directly from a
+	// SHA-256 keystream instead. 320 bits reduced into [1, n-1] leaves negligible
+	// modular bias, ample for a simulator's stable DNSSEC key.
+	curve := elliptic.P256()
+	scalarBuf := make([]byte, 40)
+	_, _ = io.ReadFull(newDNSKeyKeystream("dnssec:"+zone.ID+":"+keyType), scalarBuf)
+	d := new(big.Int).SetBytes(scalarBuf)
+	d.Mod(d, new(big.Int).Sub(curve.Params().N, big.NewInt(1)))
+	d.Add(d, big.NewInt(1))
+	priv := new(ecdsa.PrivateKey)
+	priv.Curve = curve
+	priv.D = d
+	priv.X, priv.Y = curve.ScalarBaseMult(d.Bytes())
 	// RFC 6605 §4: the DNSKEY public key for ECDSAP256SHA256 is the raw
 	// 64-byte X||Y point.
 	pub := make([]byte, 64)
