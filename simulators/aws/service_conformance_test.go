@@ -222,6 +222,7 @@ func serviceImplementedCount(m *smithyService, jsonTargets []string, versioned m
 var serviceCoverageFloor = map[string]int{
 	"AmazonEC2":                            769, // ec2Query
 	"AWSSecurityTokenServiceV20110615":     11,  // STS (awsQuery, unversioned)
+	"AWSIdentityManagementV20100508":       176, // IAM (awsQuery, unversioned)
 	"AmazonEC2ContainerRegistry_V20150921": 58,  // ECR
 	"AmazonElastiCacheV9":                  75,
 	"AmazonRDSv19":                         164,

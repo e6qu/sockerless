@@ -72,11 +72,32 @@ func handleIAMListPolicyVersions(w http.ResponseWriter, r *http.Request) {
 		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("Policy %s was not found.", arn), http.StatusNotFound)
 		return
 	}
+	// Enumerate every version: v1 is implicit (the policy's own document), v2..vN
+	// live in the iamPolicyVersions store CreatePolicyVersion writes to. The
+	// default is whichever the policy currently points at (v1 when unset).
+	defaultID := policy.DefaultVersionId
+	if defaultID == "" {
+		defaultID = "v1"
+	}
+	versions := []IAMPolicyVersion{{VersionId: "v1", CreateDate: policy.CreateDate}}
+	for _, v := range iamPolicyVersions.List() {
+		if v.PolicyArn == arn {
+			versions = append(versions, v)
+		}
+	}
+	sort.Slice(versions, func(i, j int) bool {
+		return iamVersionNum(versions[i].VersionId) < iamVersionNum(versions[j].VersionId)
+	})
+	var members strings.Builder
+	for _, v := range versions {
+		fmt.Fprintf(&members, "<member><VersionId>%s</VersionId><IsDefaultVersion>%t</IsDefaultVersion><CreateDate>%s</CreateDate></member>",
+			v.VersionId, v.VersionId == defaultID, v.CreateDate)
+	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<ListPolicyVersionsResponse %s>
-  <ListPolicyVersionsResult><Versions><member><VersionId>%s</VersionId><IsDefaultVersion>true</IsDefaultVersion><CreateDate>%s</CreateDate></member></Versions><IsTruncated>false</IsTruncated></ListPolicyVersionsResult>
+  <ListPolicyVersionsResult><Versions>%s</Versions><IsTruncated>false</IsTruncated></ListPolicyVersionsResult>
   <ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata>
-</ListPolicyVersionsResponse>`, iamXmlns, policy.DefaultVersionId, policy.CreateDate, generateUUID())
+</ListPolicyVersionsResponse>`, iamXmlns, members.String(), generateUUID())
 }
 
 func handleIAMListRoles(w http.ResponseWriter, r *http.Request) {

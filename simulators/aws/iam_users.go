@@ -128,8 +128,43 @@ func handleIAMDeleteUser(w http.ResponseWriter, r *http.Request) {
 		iamErrorXML(w, "NoSuchEntity", fmt.Sprintf("The user with name %s cannot be found.", name), http.StatusNotFound)
 		return
 	}
+	// Real IAM refuses to delete a user that still has dependents attached —
+	// the caller must detach them first — rather than silently orphaning them.
+	if msg := iamUserDeleteConflict(name); msg != "" {
+		iamErrorXML(w, "DeleteConflict", msg, http.StatusConflict)
+		return
+	}
 	iamUsers.Delete(name)
 	iamEmptyResultXML(w, "DeleteUser")
+}
+
+// iamUserDeleteConflict returns a non-empty DeleteConflict message if the user
+// still has an attachment real IAM requires removed before deletion.
+func iamUserDeleteConflict(name string) string {
+	for _, k := range iamAccessKeys.List() {
+		if k.UserName == name {
+			return "Cannot delete entity, must delete access keys first."
+		}
+	}
+	for _, p := range iamUserPolicies.List() {
+		if p.UserName == name {
+			return "Cannot delete entity, must delete policies first."
+		}
+	}
+	for _, ap := range iamUserAttached.List() {
+		if ap.UserName == name {
+			return "Cannot delete entity, must detach all policies first."
+		}
+	}
+	for _, m := range iamGroupMembers.List() {
+		if m.UserName == name {
+			return "Cannot delete entity, must remove users from all groups first."
+		}
+	}
+	if _, ok := iamLoginProfiles.Get(name); ok {
+		return "Cannot delete entity, must delete login profile first."
+	}
+	return ""
 }
 
 func handleIAMCreateAccessKey(w http.ResponseWriter, r *http.Request) {
