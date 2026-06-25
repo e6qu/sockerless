@@ -269,12 +269,9 @@ func handleCWPutMetricData(w http.ResponseWriter, r *http.Request) {
 			Timestamp:  float64(ts.Unix()),
 			Unit:       item.Unit,
 		}
-		cwMetrics.Update(key, func(existing *[]CWMetricDatum) {
+		cwMetrics.Upsert(key, func(existing *[]CWMetricDatum) {
 			*existing = append(*existing, datum)
 		})
-		if _, ok := cwMetrics.Get(key); !ok {
-			cwMetrics.Put(key, []CWMetricDatum{datum})
-		}
 	}
 
 	// Empty CBOR response

@@ -363,13 +363,13 @@ func handleSQSPurgeQueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := queueNameFromURL(req.QueueUrl)
-	q, ok := sqsQueues.Get(name)
-	if !ok {
+	if _, ok := sqsQueues.Get(name); !ok {
 		sqsQueueDoesNotExist(w)
 		return
 	}
-	q.Messages = nil
-	sqsQueues.Put(name, q)
+	// Clear under the store's single write lock so a concurrent ReceiveMessage
+	// or SendMessage mutation isn't clobbered by a snapshot-and-write-back.
+	sqsQueues.Update(name, func(q *SQSQueue) { q.Messages = nil })
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 

@@ -158,6 +158,36 @@ func (s *SQLiteStore[T]) Update(id string, fn func(*T)) bool {
 	return true
 }
 
+// Upsert atomically create-or-modifies the row at id under the single write
+// lock (absent → the zero value), avoiding the Update-then-Put race.
+func (s *SQLiteStore[T]) Upsert(id string, fn func(*T)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var v T
+	var data []byte
+	err := s.db.QueryRow(
+		fmt.Sprintf(`SELECT value FROM %q WHERE key = ?`, s.table), id).Scan(&data)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		s.fatalDBErr("Upsert read", id, err)
+	}
+	if err == nil {
+		if err := json.Unmarshal(data, &v); err != nil {
+			s.fatalDBErr("Upsert unmarshal (corrupt row)", id, err)
+		}
+	}
+	fn(&v)
+	updated, err := json.Marshal(v)
+	if err != nil {
+		s.fatalDBErr("Upsert marshal", id, err)
+	}
+	if _, err := s.db.Exec(
+		fmt.Sprintf(`INSERT OR REPLACE INTO %q (key, value) VALUES (?, ?)`, s.table),
+		id, updated); err != nil {
+		s.fatalDBErr("Upsert write", id, err)
+	}
+}
+
 // MakeStore returns a SQLiteStore if db is non-nil, or a MemoryStore
 // otherwise.
 //

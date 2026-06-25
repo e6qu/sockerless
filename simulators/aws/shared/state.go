@@ -12,6 +12,11 @@ type Store[T any] interface {
 	Filter(fn func(T) bool) []T
 	Len() int
 	Update(id string, fn func(*T)) bool
+	// Upsert atomically applies fn to the item at id under a single lock,
+	// creating it from the zero value when absent (create-or-modify). Use it
+	// for read-modify-write that must not race a concurrent writer the way a
+	// separate Update-then-Put pair would.
+	Upsert(id string, fn func(*T))
 }
 
 // StateStore is an alias for backward compatibility.
@@ -105,4 +110,14 @@ func (s *MemoryStore[T]) Update(id string, fn func(*T)) bool {
 	fn(&v)
 	s.items[id] = v
 	return true
+}
+
+// Upsert atomically create-or-modifies the item at id under the single write
+// lock (absent → the zero value), avoiding the Update-then-Put race.
+func (s *MemoryStore[T]) Upsert(id string, fn func(*T)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v := s.items[id]
+	fn(&v)
+	s.items[id] = v
 }

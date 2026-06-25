@@ -1,12 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"crypto/md5"
+	"encoding/csv"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -549,4 +553,341 @@ func handleS3ListObjectsV1(w http.ResponseWriter, r *http.Request, bucket string
 		result.NextMarker = nextMarker
 	}
 	sim.WriteXML(w, http.StatusOK, result)
+}
+
+// ── SelectObjectContent ──────────────────────────────────────────────
+//
+// SelectObjectContent (POST /{bucket}/{key}?select&select-type=2) runs an
+// SQL query over a stored object's bytes and streams the result as the
+// SelectObjectContentEventStream — an application/vnd.amazon.eventstream
+// HTTP body that aws-sdk-go-v2's eventstream decoder reassembles natively.
+//
+// The wire framing matches real S3 exactly:
+//   - one or more Records events (:event-type=Records,
+//     :content-type=application/octet-stream) whose payload is the selected
+//     rows serialized per OutputSerialization;
+//   - one Stats event (:event-type=Stats, :content-type=text/xml) carrying a
+//     <Stats> XML document with real BytesScanned/BytesProcessed/BytesReturned;
+//   - one terminal End event (:event-type=End).
+// Every frame carries :message-type=event.
+//
+// Supported SQL subset: `SELECT * FROM S3Object[ alias]` (case-insensitive).
+// This faithfully echoes every input row, reserialized into the requested
+// OutputSerialization, over both CSV and JSON-Lines input. Projections
+// (`SELECT s._1, s._2 …`) and WHERE filtering are NOT evaluated — rather than
+// fabricate rows that don't match the query, the sim returns a real
+// S3-shaped error for any expression it can't honor faithfully.
+
+type selectInputSerialization struct {
+	XMLName xml.Name `xml:"InputSerialization"`
+	CSV     *struct {
+		FileHeaderInfo string `xml:"FileHeaderInfo"`
+		RecordDelim    string `xml:"RecordDelimiter"`
+		FieldDelim     string `xml:"FieldDelimiter"`
+		QuoteChar      string `xml:"QuoteCharacter"`
+	} `xml:"CSV"`
+	JSON *struct {
+		Type string `xml:"Type"`
+	} `xml:"JSON"`
+	CompressionType string `xml:"CompressionType"`
+}
+
+type selectOutputSerialization struct {
+	XMLName xml.Name `xml:"OutputSerialization"`
+	CSV     *struct {
+		FieldDelim  string `xml:"FieldDelimiter"`
+		RecordDelim string `xml:"RecordDelimiter"`
+		QuoteChar   string `xml:"QuoteCharacter"`
+	} `xml:"CSV"`
+	JSON *struct {
+		RecordDelim string `xml:"RecordDelimiter"`
+	} `xml:"JSON"`
+}
+
+type selectObjectContentRequest struct {
+	XMLName             xml.Name                  `xml:"SelectObjectContentRequest"`
+	Expression          string                    `xml:"Expression"`
+	ExpressionType      string                    `xml:"ExpressionType"`
+	InputSerialization  selectInputSerialization  `xml:"InputSerialization"`
+	OutputSerialization selectOutputSerialization `xml:"OutputSerialization"`
+}
+
+// selectStatsXML is the <Stats> payload of the Stats event. The field names
+// and order mirror com.amazonaws.s3#Stats so aws-sdk-go-v2's XML deserializer
+// reads BytesScanned/BytesProcessed/BytesReturned.
+type selectStatsXML struct {
+	XMLName        xml.Name `xml:"Stats"`
+	BytesScanned   int64    `xml:"BytesScanned"`
+	BytesProcessed int64    `xml:"BytesProcessed"`
+	BytesReturned  int64    `xml:"BytesReturned"`
+}
+
+func handleS3SelectObjectContent(w http.ResponseWriter, r *http.Request) {
+	bucket := sim.PathParam(r, "bucket")
+	key := sim.PathParam(r, "key")
+	storeKey := s3ObjectKey(bucket, key)
+	obj, ok := s3Objects.Get(storeKey)
+	if !ok {
+		sim.S3ErrorXML(w, "NoSuchKey", "The specified key does not exist.",
+			key, sim.RequestID(r.Context()), http.StatusNotFound)
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		sim.S3ErrorXML(w, "InvalidRequest", "failed to read request body: "+err.Error(),
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	var req selectObjectContentRequest
+	if err := xml.Unmarshal(body, &req); err != nil {
+		sim.S3ErrorXML(w, "MalformedXML", "the SelectObjectContentRequest XML is malformed: "+err.Error(),
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	if req.ExpressionType != "" && !strings.EqualFold(req.ExpressionType, "SQL") {
+		sim.S3ErrorXML(w, "InvalidExpressionType",
+			"The ExpressionType is not valid. Only SQL expressions are supported.",
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	if req.InputSerialization.CompressionType != "" &&
+		!strings.EqualFold(req.InputSerialization.CompressionType, "NONE") {
+		sim.S3ErrorXML(w, "InvalidCompressionFormat",
+			"The compression type is not supported by this simulator. Use CompressionType NONE.",
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	if !selectIsStar(req.Expression) {
+		sim.S3ErrorXML(w, "InvalidExpression",
+			"This simulator faithfully supports only `SELECT * FROM S3Object` queries; "+
+				"projection and WHERE filtering are not evaluated.",
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+
+	// Run the (minimal) S3 Select over the real stored bytes: parse the input
+	// per InputSerialization into rows, then reserialize per OutputSerialization.
+	rows, err := selectParseRows(obj.Data, req.InputSerialization)
+	if err != nil {
+		sim.S3ErrorXML(w, "InvalidTextEncoding", err.Error(),
+			key, sim.RequestID(r.Context()), http.StatusBadRequest)
+		return
+	}
+	records := selectSerializeRows(rows, req.OutputSerialization)
+
+	bytesScanned := int64(len(obj.Data))
+	bytesProcessed := int64(len(obj.Data))
+	bytesReturned := int64(len(records))
+
+	w.Header().Set("Content-Type", "application/vnd.amazon.eventstream")
+	w.WriteHeader(http.StatusOK)
+	flusher, _ := w.(http.Flusher)
+
+	if len(records) > 0 {
+		_, _ = w.Write(awsEventStreamMessage(map[string]string{
+			":message-type": "event",
+			":event-type":   "Records",
+			":content-type": "application/octet-stream",
+		}, records))
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+
+	statsXML, _ := xml.Marshal(selectStatsXML{
+		BytesScanned:   bytesScanned,
+		BytesProcessed: bytesProcessed,
+		BytesReturned:  bytesReturned,
+	})
+	_, _ = w.Write(awsEventStreamMessage(map[string]string{
+		":message-type": "event",
+		":event-type":   "Stats",
+		":content-type": "text/xml",
+	}, statsXML))
+	if flusher != nil {
+		flusher.Flush()
+	}
+
+	// End event: empty payload terminates the stream deterministically.
+	_, _ = w.Write(awsEventStreamMessage(map[string]string{
+		":message-type": "event",
+		":event-type":   "End",
+	}, nil))
+	if flusher != nil {
+		flusher.Flush()
+	}
+}
+
+// selectIsStar reports whether the expression is a plain
+// `SELECT * FROM S3Object[ alias]` (case-insensitive, whitespace-tolerant),
+// i.e. an unfiltered, unprojected echo of every row.
+func selectIsStar(expr string) bool {
+	fields := strings.Fields(strings.ToUpper(strings.TrimSpace(expr)))
+	// Minimum: SELECT * FROM S3OBJECT
+	if len(fields) < 4 {
+		return false
+	}
+	if fields[0] != "SELECT" || fields[1] != "*" || fields[2] != "FROM" {
+		return false
+	}
+	if fields[3] != "S3OBJECT" {
+		return false
+	}
+	// Allow an optional table alias; reject WHERE / LIMIT / anything else.
+	for _, f := range fields[4:] {
+		if f == "WHERE" || f == "LIMIT" || f == "GROUP" || f == "ORDER" {
+			return false
+		}
+	}
+	return true
+}
+
+// selectParseRows turns the raw object bytes into rows of string fields,
+// honoring the InputSerialization (CSV vs JSON-Lines/Document). For JSON
+// each parsed record's object is preserved as a row so JSON output can be
+// reserialized faithfully; CSV output flattens object values in key order.
+func selectParseRows(data []byte, in selectInputSerialization) ([]selectRow, error) {
+	switch {
+	case in.JSON != nil:
+		return selectParseJSON(data, in.JSON.Type)
+	default:
+		// CSV is the default when neither CSV nor JSON is named; honoring
+		// an explicit CSV block is identical.
+		return selectParseCSV(data, in)
+	}
+}
+
+// selectRow carries both shapes a row can take: csv holds the raw ordered
+// fields (CSV input), json holds the decoded record (JSON input). Exactly
+// one is populated per row depending on the input serialization.
+type selectRow struct {
+	csv  []string
+	json json.RawMessage
+}
+
+func selectParseCSV(data []byte, in selectInputSerialization) ([]selectRow, error) {
+	rd := csv.NewReader(bytes.NewReader(data))
+	rd.FieldsPerRecord = -1
+	if in.CSV != nil && in.CSV.FieldDelim != "" {
+		rd.Comma = rune(in.CSV.FieldDelim[0])
+	}
+	var rows []selectRow
+	first := true
+	skipHeader := in.CSV != nil && strings.EqualFold(in.CSV.FileHeaderInfo, "USE")
+	for {
+		rec, err := rd.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse CSV input: %v", err)
+		}
+		if first && skipHeader {
+			first = false
+			continue
+		}
+		first = false
+		rows = append(rows, selectRow{csv: rec})
+	}
+	return rows, nil
+}
+
+func selectParseJSON(data []byte, jsonType string) ([]selectRow, error) {
+	// JSON-Lines (Type=LINES, the default) and Document (Type=DOCUMENT) both
+	// decode a stream of top-level JSON values via a streaming decoder, which
+	// transparently handles whitespace/newlines between records.
+	_ = jsonType
+	dec := json.NewDecoder(bytes.NewReader(data))
+	var rows []selectRow
+	for {
+		var raw json.RawMessage
+		err := dec.Decode(&raw)
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse JSON input: %v", err)
+		}
+		rows = append(rows, selectRow{json: raw})
+	}
+	return rows, nil
+}
+
+// selectSerializeRows reserializes the parsed rows per OutputSerialization.
+// CSV output joins fields with the field delimiter and terminates each row
+// with the record delimiter; JSON output emits one compact JSON value per
+// record delimiter. Defaults match real S3: ',' field, '\n' record.
+func selectSerializeRows(rows []selectRow, out selectOutputSerialization) []byte {
+	var buf bytes.Buffer
+	if out.JSON != nil {
+		recDelim := "\n"
+		if out.JSON.RecordDelim != "" {
+			recDelim = out.JSON.RecordDelim
+		}
+		for _, row := range rows {
+			buf.Write(selectRowToJSON(row))
+			buf.WriteString(recDelim)
+		}
+		return buf.Bytes()
+	}
+	// CSV output (the default when neither block is present).
+	field := ","
+	rec := "\n"
+	if out.CSV != nil {
+		if out.CSV.FieldDelim != "" {
+			field = out.CSV.FieldDelim
+		}
+		if out.CSV.RecordDelim != "" {
+			rec = out.CSV.RecordDelim
+		}
+	}
+	for _, row := range rows {
+		buf.WriteString(strings.Join(selectRowToCSVFields(row), field))
+		buf.WriteString(rec)
+	}
+	return buf.Bytes()
+}
+
+// selectRowToJSON renders a row as a compact JSON value. JSON-input rows are
+// echoed verbatim (compacted); CSV-input rows become a JSON object keyed by
+// column position (_1, _2, …), matching S3 Select's CSV→JSON column naming.
+func selectRowToJSON(row selectRow) []byte {
+	if row.json != nil {
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, row.json); err != nil {
+			return row.json
+		}
+		return compact.Bytes()
+	}
+	obj := make(map[string]string, len(row.csv))
+	for i, v := range row.csv {
+		obj["_"+strconv.Itoa(i+1)] = v
+	}
+	b, _ := json.Marshal(obj)
+	return b
+}
+
+// selectRowToCSVFields renders a row as ordered CSV fields. CSV-input rows
+// pass through; JSON-input objects flatten to their values in key order.
+func selectRowToCSVFields(row selectRow) []string {
+	if row.csv != nil {
+		return row.csv
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(row.json, &m); err != nil {
+		// A non-object JSON value (array/scalar) serializes as a single field.
+		return []string{strings.TrimSpace(string(row.json))}
+	}
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fields := make([]string, 0, len(keys))
+	for _, k := range keys {
+		v := strings.Trim(string(m[k]), `"`)
+		fields = append(fields, v)
+	}
+	return fields
 }

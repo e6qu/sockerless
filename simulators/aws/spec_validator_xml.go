@@ -65,6 +65,9 @@ func (st *specValidatorState) validateQueryAction(reqBody []byte, respHeader htt
 		return nil // surface gate owns unknown actions
 	}
 	op := idx.serviceShort + "." + action
+	if isEventStreamResponse(respHeader) {
+		return nil // framed event-stream body — validated by the SDK decoder
+	}
 	if !looksLikeXML(respHeader, respBody) {
 		return []sim.SpecViolation{{Op: op, Kind: "malformed-xml", Field: "$",
 			Detail: fmt.Sprintf("query-protocol success response is not XML (Content-Type %q)", respHeader.Get("Content-Type"))}}
@@ -328,6 +331,12 @@ func (v *xmlShapeValidator) restXMLBody(def smithyOpDef, respHeader http.Header,
 }
 
 func (v *xmlShapeValidator) parseBody(respHeader http.Header, respBody []byte) (*xmlNode, bool) {
+	if isEventStreamResponse(respHeader) {
+		// An event-stream output (e.g. S3 SelectObjectContent) is a framed
+		// vnd.amazon.eventstream body, not an XML document — the SDK decoder
+		// validates it, so there is no XML envelope to shape-check here.
+		return nil, false
+	}
 	if !looksLikeXML(respHeader, respBody) {
 		v.violate("malformed-xml", "$", fmt.Sprintf("restXml success response is not XML (Content-Type %q)", respHeader.Get("Content-Type")))
 		return nil, false
@@ -687,6 +696,14 @@ func truncateForDetail(s string) string {
 
 // looksLikeXML accepts an XML Content-Type or, absent one, a body that
 // starts with an XML declaration / element.
+// isEventStreamResponse reports whether the response is an AWS event stream
+// (application/vnd.amazon.eventstream) — a framed multi-message body the SDK's
+// eventstream decoder consumes, which carries no single XML/JSON envelope to
+// shape-validate (e.g. S3 SelectObjectContent, Logs StartLiveTail).
+func isEventStreamResponse(respHeader http.Header) bool {
+	return strings.Contains(respHeader.Get("Content-Type"), "vnd.amazon.eventstream")
+}
+
 func looksLikeXML(respHeader http.Header, respBody []byte) bool {
 	if ct := respHeader.Get("Content-Type"); ct != "" {
 		return strings.Contains(ct, "xml")

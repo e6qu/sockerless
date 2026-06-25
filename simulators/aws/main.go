@@ -89,6 +89,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerECR(awsRouter, srv)
 	registerCloudWatchLogs(awsRouter, srv)
 	registerCloudWatchMetricsJSON(awsRouter)
+	registerCloudWatchMonitoringExtra(awsRouter, srv)
 	registerCloudWatchAlarmsJSON(awsRouter)
 	registerCloudWatchAlarmOpsJSON(awsRouter)
 	registerCloudWatchMetricStreamsJSON(awsRouter)
@@ -113,6 +114,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerWAFv2(awsRouter, srv)
 	registerEventBridge(awsRouter, srv)
 	registerKinesis(awsRouter, srv)
+	registerKinesisStreaming(awsRouter, srv)
 	registerCloudTrail(awsRouter, srv)
 	registerCloudTrailLake(awsRouter, srv)
 	registerStepFunctions(awsRouter, srv)
@@ -150,7 +152,9 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	// SQS migrated from awsQuery to awsJson1_0 in late 2023. Route
 	// it via the JSON router (X-Amz-Target: AmazonSQS.<Op>).
 	registerSQS(awsRouter, srv)
+	registerSQSMessageMove(awsRouter, srv)
 	registerOrganizations(awsRouter, srv)
+	registerOrganizationsExtra(awsRouter, srv)
 
 	// POST / handler: check X-Amz-Target first (JSON protocol),
 	// fall back to Action parameter (Query Protocol)
