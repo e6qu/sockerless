@@ -91,7 +91,7 @@ func TestStorage_ARMListKeysCanonical512BitPerAccount(t *testing.T) {
 		raw, err := base64.StdEncoding.DecodeString(key.Value)
 		require.NoError(t, err)
 		assert.Len(t, raw, 64)
-		assert.Equal(t, "FULL", key.Permissions)
+		assert.Equal(t, "Full", key.Permissions)
 	}
 }
 

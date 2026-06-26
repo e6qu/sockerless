@@ -33,7 +33,15 @@ func TestOrganizations_DescribeAndList(t *testing.T) {
 	accts, err := c.ListAccounts(ctx, &organizations.ListAccountsInput{})
 	require.NoError(t, err)
 	require.NotEmpty(t, accts.Accounts)
-	assert.Equal(t, aws.ToString(org.Organization.MasterAccountId), aws.ToString(accts.Accounts[0].Id))
+	// The management account is listed, but ListAccounts is ordered by account
+	// id (not management-account-first), so assert membership rather than
+	// position — other tests may have created accounts whose random ids sort
+	// before the management account's.
+	var ids []string
+	for _, a := range accts.Accounts {
+		ids = append(ids, aws.ToString(a.Id))
+	}
+	assert.Contains(t, ids, aws.ToString(org.Organization.MasterAccountId))
 }
 
 // TestOrganizations_Roots exercises ListRoots and the default FullAWSAccess SCP.
