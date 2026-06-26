@@ -89,7 +89,11 @@ type FunctionEnvelope struct {
 // as external per the `sim-emitted-url-roundtrip` skill's
 // "document external" branch.
 type FunctionEnvelopeProperties struct {
-	Name              string         `json:"name"`
+	// Name is the function's short name, tracked internally; the real
+	// Microsoft.Web FunctionEnvelopeProperties shape carries no `name`
+	// member (the name lives on the ProxyResource envelope), so it is not
+	// emitted on the wire.
+	Name              string         `json:"-"`
 	FunctionAppID     string         `json:"function_app_id,omitempty"`
 	ScriptHref        string         `json:"script_href,omitempty"` // external: Kudu admin URL on the deployed Function App
 	ConfigHref        string         `json:"config_href,omitempty"` // external: Kudu admin URL on the deployed Function App
@@ -100,13 +104,16 @@ type FunctionEnvelopeProperties struct {
 	IsDisabled        bool           `json:"isDisabled"`
 }
 
-// Package-level store for dashboard access.
+// Package-level stores for dashboard access and the web_more.go slice (slot
+// functions reuse the same function-config store).
 var azfSites sim.Store[Site]
+var azfFunctionConfigs sim.Store[FunctionEnvelope]
 
 func registerAzureFunctions(srv *sim.Server) {
 	sites := sim.MakeStore[Site](srv.DB(), "azf_sites")
 	azfSites = sites
 	functionConfigs := sim.MakeStore[FunctionEnvelope](srv.DB(), "azf_function_configs")
+	azfFunctionConfigs = functionConfigs
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Web"
 

@@ -92,6 +92,8 @@ func registerPGFlexibleServerMore(srv *sim.Server) {
 	srv.HandleFunc("PUT "+armBase+"/{name}/virtualendpoints/{ve}", handlePGCreateVirtualEndpoint)
 	srv.HandleFunc("PATCH "+armBase+"/{name}/virtualendpoints/{ve}", handlePGUpdateVirtualEndpoint)
 	srv.HandleFunc("DELETE "+armBase+"/{name}/virtualendpoints/{ve}", handlePGDeleteVirtualEndpoint)
+
+	registerPGFlexibleServerCompletion(srv)
 }
 
 // pgWriteActionAccepted answers a server lifecycle action (start/stop/restart)

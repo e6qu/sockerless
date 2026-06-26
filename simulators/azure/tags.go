@@ -38,12 +38,27 @@ const tagsDefaultMarker = "/providers/microsoft.resources/tags/default"
 func registerTags(srv *sim.Server) {
 	tagsStore = sim.MakeStore[TagsResource](srv.DB(), "azure_tags_default")
 
-	// Real Azure's `Microsoft.Resources/tags/default` endpoint sits
-	// at the end of any ARM scope path: subscription, resource group,
-	// or individual resource. Go 1.22 ServeMux can't match a
-	// variable-depth scope prefix with a fixed suffix, so use the
-	// WrapHandler middleware approach (same shape as
-	// authorization.go's role-definitions dispatcher).
+	// The subscription- and resource-group-scope spellings of
+	// `Microsoft.Resources/tags/default` are fixed-depth, so they mount as
+	// ordinary mux routes (Tags_GetAtScope / CreateOrUpdateAtScope /
+	// UpdateAtScope / DeleteAtScope).
+	for _, scopeBase := range []string{
+		"/subscriptions/{subscriptionId}",
+		"/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}",
+	} {
+		p := scopeBase + "/providers/Microsoft.Resources/tags/default"
+		srv.HandleFunc("GET "+p, handleTagsDefaultRoute)
+		srv.HandleFunc("PUT "+p, handleTagsDefaultRoute)
+		srv.HandleFunc("PATCH "+p, handleTagsDefaultRoute)
+		srv.HandleFunc("DELETE "+p, handleTagsDefaultRoute)
+	}
+
+	// Resource-scope and management-group-scope spellings sit at the end of a
+	// variable-depth ARM scope path. Go 1.22 ServeMux can't match a
+	// variable-depth scope prefix with a fixed suffix, so those are dispatched
+	// via WrapHandler (same shape as authorization.go's role-definitions
+	// dispatcher). Subscription / resource-group scopes — which carry no
+	// embedded `/providers/` — fall through to the mux routes above.
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Match the marker case-insensitively against the ORIGINAL path's
@@ -57,9 +72,24 @@ func registerTags(srv *sim.Server) {
 			}
 			scope := strings.ToLower(r.URL.Path[:len(r.URL.Path)-len(tagsDefaultMarker)])
 			scope = strings.TrimSuffix(scope, "/")
+			if strings.HasPrefix(scope, "/subscriptions/") && !strings.Contains(scope, "/providers/") {
+				// Subscription / resource-group scope: served by the mux routes.
+				next.ServeHTTP(w, r)
+				return
+			}
 			handleTagsDefault(w, r, scope)
 		})
 	})
+}
+
+// handleTagsDefaultRoute serves the subscription- and resource-group-scope
+// tags/default routes, reconstructing the scope from the path parameters.
+func handleTagsDefaultRoute(w http.ResponseWriter, r *http.Request) {
+	scope := "/subscriptions/" + sim.PathParam(r, "subscriptionId")
+	if rg := sim.PathParam(r, "resourceGroupName"); rg != "" {
+		scope += "/resourceGroups/" + rg
+	}
+	handleTagsDefault(w, r, strings.ToLower(scope))
 }
 
 func handleTagsDefault(w http.ResponseWriter, r *http.Request, scope string) {

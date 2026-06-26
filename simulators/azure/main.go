@@ -116,6 +116,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerACRTasks(srv)
 	registerPrivateDNS(srv)
 	registerAzureFunctions(srv)
+	registerWebMore(srv)
 	registerApplicationInsights(srv)
 
 	// Cloud metadata (for Terraform provider metadata_host)
@@ -137,6 +138,8 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerPGFlexibleServer(srv)
 	registerCosmosDB(srv)
 	registerCosmosAPIs(srv)
+	registerCosmosMetrics(srv)
+	registerCosmosPEC(srv)
 	registerCosmosScripts(srv)
 	registerCosmosChangeFeed(srv)
 	registerServiceBus(srv)

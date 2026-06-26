@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -330,92 +331,66 @@ func registerAzureMonitor(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": items})
 	})
 
-	// POST - Execute KQL query (Log Analytics data-plane)
-	// Handle both /v1/workspaces/ (CLI, tests) and /workspaces/ (Azure SDK)
-	queryHandler := func(w http.ResponseWriter, r *http.Request) {
+	// Execute KQL query (Log Analytics data-plane, https://api.loganalytics.io/v1).
+	// POST carries the query in the body; GET carries it as the `query` query
+	// parameter. Both return the QueryResults tabular shape.
+	postQueryHandler := func(w http.ResponseWriter, r *http.Request) {
 		workspaceID := sim.PathParam(r, "workspaceId")
-
 		var req QueryRequest
 		if err := sim.ReadJSON(r, &req); err != nil {
 			sim.AzureError(w, "BadArgumentError", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
 			return
 		}
-
 		if req.Query == "" {
 			sim.AzureError(w, "BadArgumentError", "The 'query' property is required.", http.StatusBadRequest)
 			return
 		}
-
-		parsed := parseKQL(req.Query)
-
-		// Look up the table schema
-		columns, ok := kqlTableSchemas[parsed.Table]
-		if !ok {
-			// Default to ContainerAppConsoleLogs_CL schema
-			columns = kqlTableSchemas["ContainerAppConsoleLogs_CL"]
-		}
-
-		// Look up log entries for this workspace + table
-		storeKey := workspaceID + ":" + parsed.Table
-		entries, _ := monitorLogs.Get(storeKey)
-		// Also check "default" workspace for backward compat
-		if len(entries) == 0 {
-			entries, _ = monitorLogs.Get("default:" + parsed.Table)
-		}
-
-		rows := make([][]any, 0)
-		for _, row := range entries {
-			if !row.matchesFilters(parsed.Filters) {
-				continue
-			}
-			rows = append(rows, row.toRow(columns))
-			if parsed.Limit > 0 && len(rows) >= parsed.Limit {
-				break
-			}
-		}
-
-		// Apply project clause — filter columns and rows to projected subset
-		resultColumns := columns
-		resultRows := rows
-		if len(parsed.Project) > 0 {
-			// Build index mapping from projected column names to original indices
-			colIndex := make(map[string]int, len(columns))
-			for i, col := range columns {
-				colIndex[col.Name] = i
-			}
-			var projCols []Column
-			var projIndices []int
-			for _, name := range parsed.Project {
-				if idx, ok := colIndex[name]; ok {
-					projCols = append(projCols, columns[idx])
-					projIndices = append(projIndices, idx)
-				}
-			}
-			projRows := make([][]any, len(rows))
-			for i, row := range rows {
-				pr := make([]any, len(projIndices))
-				for j, idx := range projIndices {
-					pr[j] = row[idx]
-				}
-				projRows[i] = pr
-			}
-			resultColumns = projCols
-			resultRows = projRows
-		}
-
-		resp := QueryResponse{
-			Tables: []Table{
-				{
-					Name:    "PrimaryResult",
-					Columns: resultColumns,
-					Rows:    resultRows,
-				},
-			},
-		}
-
-		sim.WriteJSON(w, http.StatusOK, resp)
+		sim.WriteJSON(w, http.StatusOK, runKQLQuery(workspaceID, req.Query))
 	}
-	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", queryHandler)
+	getQueryHandler := func(w http.ResponseWriter, r *http.Request) {
+		workspaceID := sim.PathParam(r, "workspaceId")
+		query := r.URL.Query().Get("query")
+		if query == "" {
+			sim.AzureError(w, "BadArgumentError", "The 'query' parameter is required.", http.StatusBadRequest)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, runKQLQuery(workspaceID, query))
+	}
+	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/query", postQueryHandler)
+	srv.HandleFunc("GET /v1/workspaces/{workspaceId}/query", getQueryHandler)
+
+	// Workspace schema metadata (tables and their columns) — the data-plane
+	// metadata API. GET and POST return the same MetadataResults shape.
+	metadataHandler := func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, logAnalyticsMetadata(sim.PathParam(r, "workspaceId")))
+	}
+	srv.HandleFunc("GET /v1/workspaces/{workspaceId}/metadata", metadataHandler)
+	srv.HandleFunc("POST /v1/workspaces/{workspaceId}/metadata", metadataHandler)
+
+	// Batch of queries — each request runs against its workspace; responses
+	// come back keyed by the request id, in request order.
+	srv.HandleFunc("POST /v1/$batch", func(w http.ResponseWriter, r *http.Request) {
+		var batch struct {
+			Requests []struct {
+				ID        string       `json:"id"`
+				Body      QueryRequest `json:"body"`
+				Workspace string       `json:"workspace"`
+			} `json:"requests"`
+		}
+		if err := sim.ReadJSON(r, &batch); err != nil {
+			sim.AzureError(w, "BadArgumentError", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		responses := make([]map[string]any, 0, len(batch.Requests))
+		for _, req := range batch.Requests {
+			responses = append(responses, map[string]any{
+				"id":     req.ID,
+				"status": http.StatusOK,
+				"body":   runKQLQuery(req.Workspace, req.Body.Query),
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"responses": responses})
+	})
 
 	// POST - Log ingestion endpoint (simplified)
 	srv.HandleFunc("POST /dataCollectionRules/{dcrId}/streams/{streamName}", func(w http.ResponseWriter, r *http.Request) {
@@ -456,6 +431,37 @@ func registerAzureMonitor(srv *sim.Server) {
 
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// logAnalyticsMetadata builds the MetadataResults schema document for a
+// workspace from the tables the simulator's KQL engine actually serves
+// (kqlTableSchemas) — the data-plane metadata API's tables/columns view.
+func logAnalyticsMetadata(workspaceID string) map[string]any {
+	names := make([]string, 0, len(kqlTableSchemas))
+	for name := range kqlTableSchemas {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	tables := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		cols := make([]map[string]any, 0, len(kqlTableSchemas[name]))
+		for _, c := range kqlTableSchemas[name] {
+			cols = append(cols, map[string]any{"name": c.Name, "type": c.Type})
+		}
+		tables = append(tables, map[string]any{
+			"id":             name,
+			"name":           name,
+			"timespanColumn": "TimeGenerated",
+			"columns":        cols,
+		})
+	}
+	return map[string]any{
+		"tables": tables,
+		"workspaces": []map[string]any{{
+			"id":   workspaceID,
+			"name": workspaceID,
+		}},
+	}
 }
 
 // generateUUID generates a random UUID string.

@@ -54,6 +54,8 @@ func registerLogicApps(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{workflowName}/runs", handleLogicWorkflowRunList)
 	srv.HandleFunc("GET "+base+"/{workflowName}/runs/{runName}", handleLogicWorkflowRunGet)
 	srv.HandleFunc("POST "+base+"/{workflowName}/runs/{runName}/cancel", handleLogicWorkflowRunCancel)
+
+	registerLogicAppsMore(srv)
 }
 
 func logicWorkflowID(sub, rg, name string) string {
@@ -102,6 +104,8 @@ func handleLogicWorkflowPut(w http.ResponseWriter, r *http.Request) {
 		Properties: props,
 	}
 	logicWorkflows.Put(id, wf)
+	logicSnapshotWorkflowVersion(wf)
+	logicSyncTriggers(wf)
 	sim.WriteJSON(w, http.StatusOK, wf)
 }
 
@@ -269,34 +273,7 @@ func handleLogicWorkflowTriggerRun(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Trigger %q not found.", triggerName)
 		return
 	}
-	runID := generateUUID()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	id := logicWorkflowRunID(sub, rg, workflowName, runID)
-	run := LogicWorkflowRun{
-		ID:   id,
-		Name: runID,
-		Type: "Microsoft.Logic/workflows/runs",
-		Properties: map[string]any{
-			"startTime":     now,
-			"endTime":       now,
-			"waitEndTime":   now,
-			"status":        "Succeeded",
-			"correlationId": generateUUID(),
-			"trigger": map[string]any{
-				"name":      triggerName,
-				"startTime": now,
-				"endTime":   now,
-				"status":    "Succeeded",
-			},
-			"workflow": map[string]any{
-				"id":   workflowID,
-				"name": workflowName,
-				"type": "Microsoft.Logic/workflows",
-			},
-			"outputs": map[string]any{},
-		},
-	}
-	logicRuns.Put(id, run)
+	logicRecordTriggerRun(wf, triggerName)
 	w.WriteHeader(http.StatusAccepted)
 }
 
