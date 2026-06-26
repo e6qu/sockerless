@@ -4,8 +4,18 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	sim "github.com/sockerless/simulator"
+)
+
+// eventGridKeyGen tracks the per-resource SAS-key rotation count so repeated
+// regenerateKey calls yield distinct keys. It is kept out of the resource's
+// spec-visible properties (the EventGrid schemas declare no such field), so it
+// never leaks into a GET/LIST response.
+var (
+	eventGridKeyGen   = map[string]int{}
+	eventGridKeyGenMu sync.Mutex
 )
 
 // Microsoft.EventGrid ARM control plane — operations, topic types, resource
@@ -152,8 +162,7 @@ func handleEventGridUpdateSystemTopic(w http.ResponseWriter, r *http.Request) {
 // per generation so a subsequent listKeys observes the new value; the other key
 // is unchanged.
 func eventGridRegenerateKeyResponse(w http.ResponseWriter, r *http.Request, store sim.Store[EventGridTopic], id, label string) {
-	resource, ok := store.Get(id)
-	if !ok {
+	if _, ok := store.Get(id); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "%s %q not found", label, id)
 		return
 	}
@@ -161,15 +170,10 @@ func eventGridRegenerateKeyResponse(w http.ResponseWriter, r *http.Request, stor
 		KeyName string `json:"keyName"`
 	}
 	_ = sim.ReadJSON(r, &req)
-	if resource.Properties == nil {
-		resource.Properties = map[string]any{}
-	}
-	gen := 1
-	if cur, ok := resource.Properties["keyGeneration"].(float64); ok {
-		gen = int(cur) + 1
-	}
-	resource.Properties["keyGeneration"] = float64(gen)
-	store.Put(id, resource)
+	eventGridKeyGenMu.Lock()
+	eventGridKeyGen[id]++
+	gen := eventGridKeyGen[id]
+	eventGridKeyGenMu.Unlock()
 	rotated := req.KeyName
 	if rotated != "key1" && rotated != "key2" {
 		rotated = "key1"
