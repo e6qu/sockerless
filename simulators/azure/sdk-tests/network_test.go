@@ -387,6 +387,214 @@ func TestNetwork_PublicIPPrefixNatGatewaySubnetAssociation(t *testing.T) {
 	require.NotEmpty(t, page.Value)
 }
 
+// TestNetwork_VirtualNetworkPeering exercises the virtualNetworkPeerings
+// sub-resource: it peers two virtual networks and confirms the peering's
+// remoteVirtualNetwork cross-reference reads back as the remote VNet's ARM
+// ID, then lists and deletes the peering.
+func TestNetwork_VirtualNetworkPeering(t *testing.T) {
+	rg := "peering-rg"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	vnetClient, err := armnetwork.NewVirtualNetworksClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	mkVnet := func(name, prefix string) *string {
+		poller, err := vnetClient.BeginCreateOrUpdate(ctx, rg, name, armnetwork.VirtualNetwork{
+			Location: ptrStr("eastus"),
+			Properties: &armnetwork.VirtualNetworkPropertiesFormat{
+				AddressSpace: &armnetwork.AddressSpace{AddressPrefixes: []*string{ptrStr(prefix)}},
+			},
+		}, nil)
+		require.NoError(t, err)
+		resp, err := poller.PollUntilDone(ctx, nil)
+		require.NoError(t, err)
+		require.NotNil(t, resp.ID)
+		return resp.ID
+	}
+	_ = mkVnet("peer-local", "10.20.0.0/16")
+	remoteID := mkVnet("peer-remote", "10.21.0.0/16")
+
+	peerClient, err := armnetwork.NewVirtualNetworkPeeringsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	peerPoller, err := peerClient.BeginCreateOrUpdate(ctx, rg, "peer-local", "to-remote", armnetwork.VirtualNetworkPeering{
+		Properties: &armnetwork.VirtualNetworkPeeringPropertiesFormat{
+			AllowVirtualNetworkAccess: to.Ptr(true),
+			AllowForwardedTraffic:     to.Ptr(true),
+			RemoteVirtualNetwork:      &armnetwork.SubResource{ID: remoteID},
+		},
+	}, nil)
+	require.NoError(t, err)
+	peerResp, err := peerPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "to-remote", *peerResp.Name)
+
+	got, err := peerClient.Get(ctx, rg, "peer-local", "to-remote", nil)
+	require.NoError(t, err)
+	require.NotNil(t, got.Properties)
+	require.NotNil(t, got.Properties.RemoteVirtualNetwork)
+	assert.Equal(t, *remoteID, *got.Properties.RemoteVirtualNetwork.ID)
+	assert.True(t, *got.Properties.AllowVirtualNetworkAccess)
+
+	pager := peerClient.NewListPager(rg, "peer-local", nil)
+	require.True(t, pager.More())
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, page.Value, 1)
+
+	delPoller, err := peerClient.BeginDelete(ctx, rg, "peer-local", "to-remote", nil)
+	require.NoError(t, err)
+	_, err = delPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+}
+
+// TestNetwork_RouteTableAndRoutes covers the route table UpdateTags (PATCH)
+// path and the routes sub-resource CRUD, confirming a route's next-hop
+// configuration reads back through both the per-route client and the parent
+// route table.
+func TestNetwork_RouteTableAndRoutes(t *testing.T) {
+	rg := "rt-rg"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	rtClient, err := armnetwork.NewRouteTablesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	rtPoller, err := rtClient.BeginCreateOrUpdate(ctx, rg, "sdk-rt", armnetwork.RouteTable{
+		Location:   ptrStr("eastus"),
+		Properties: &armnetwork.RouteTablePropertiesFormat{},
+	}, nil)
+	require.NoError(t, err)
+	_, err = rtPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	tagsResp, err := rtClient.UpdateTags(ctx, rg, "sdk-rt", armnetwork.TagsObject{
+		Tags: map[string]*string{"env": to.Ptr("test")},
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, tagsResp.Tags["env"])
+	assert.Equal(t, "test", *tagsResp.Tags["env"])
+
+	routesClient, err := armnetwork.NewRoutesClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	routePoller, err := routesClient.BeginCreateOrUpdate(ctx, rg, "sdk-rt", "to-appliance", armnetwork.Route{
+		Properties: &armnetwork.RoutePropertiesFormat{
+			AddressPrefix:    ptrStr("10.40.0.0/16"),
+			NextHopType:      to.Ptr(armnetwork.RouteNextHopTypeVirtualAppliance),
+			NextHopIPAddress: ptrStr("10.0.0.4"),
+		},
+	}, nil)
+	require.NoError(t, err)
+	routeResp, err := routePoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "to-appliance", *routeResp.Name)
+	require.NotNil(t, routeResp.Properties)
+	assert.Equal(t, armnetwork.RouteNextHopTypeVirtualAppliance, *routeResp.Properties.NextHopType)
+
+	gotRoute, err := routesClient.Get(ctx, rg, "sdk-rt", "to-appliance", nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotRoute.Properties)
+	assert.Equal(t, "10.40.0.0/16", *gotRoute.Properties.AddressPrefix)
+	assert.Equal(t, "10.0.0.4", *gotRoute.Properties.NextHopIPAddress)
+
+	// Parent route table now reflects the route.
+	gotRT, err := rtClient.Get(ctx, rg, "sdk-rt", nil)
+	require.NoError(t, err)
+	require.NotNil(t, gotRT.Properties)
+	require.Len(t, gotRT.Properties.Routes, 1)
+	assert.Equal(t, "to-appliance", *gotRT.Properties.Routes[0].Name)
+
+	routePager := routesClient.NewListPager(rg, "sdk-rt", nil)
+	require.True(t, routePager.More())
+	routePage, err := routePager.NextPage(ctx)
+	require.NoError(t, err)
+	require.Len(t, routePage.Value, 1)
+
+	delRoute, err := routesClient.BeginDelete(ctx, rg, "sdk-rt", "to-appliance", nil)
+	require.NoError(t, err)
+	_, err = delRoute.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	gotRT, err = rtClient.Get(ctx, rg, "sdk-rt", nil)
+	require.NoError(t, err)
+	assert.Empty(t, gotRT.Properties.Routes)
+}
+
+// TestNetwork_NatGatewayUpdateTags covers the NAT gateway UpdateTags (PATCH)
+// path on a gateway with no attached subnets or public IPs (so it needs no
+// real-network host).
+func TestNetwork_NatGatewayUpdateTags(t *testing.T) {
+	rg := "nat-tags-rg"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	natClient, err := armnetwork.NewNatGatewaysClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	natPoller, err := natClient.BeginCreateOrUpdate(ctx, rg, "tag-nat", armnetwork.NatGateway{
+		Location: ptrStr("eastus"),
+		SKU:      &armnetwork.NatGatewaySKU{Name: to.Ptr(armnetwork.NatGatewaySKUNameStandard)},
+		Properties: &armnetwork.NatGatewayPropertiesFormat{
+			IdleTimeoutInMinutes: to.Ptr[int32](5),
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = natPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	tagsResp, err := natClient.UpdateTags(ctx, rg, "tag-nat", armnetwork.TagsObject{
+		Tags: map[string]*string{"team": to.Ptr("net")},
+	}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, tagsResp.Tags["team"])
+	assert.Equal(t, "net", *tagsResp.Tags["team"])
+}
+
+// TestNetwork_LoadBalancerBackendPoolClient exercises the standalone
+// backendAddressPools client (CreateOrUpdate / Get / List) against an
+// existing load balancer.
+func TestNetwork_LoadBalancerBackendPoolClient(t *testing.T) {
+	rg := "lb-pool-rg"
+	rgClient, err := armresources.NewResourceGroupsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	_, err = rgClient.CreateOrUpdate(ctx, rg, armresources.ResourceGroup{Location: ptrStr("eastus")}, nil)
+	require.NoError(t, err)
+
+	lbClient, err := armnetwork.NewLoadBalancersClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	lbPoller, err := lbClient.BeginCreateOrUpdate(ctx, rg, "pool-lb", armnetwork.LoadBalancer{
+		Location:   to.Ptr("eastus"),
+		SKU:        &armnetwork.LoadBalancerSKU{Name: to.Ptr(armnetwork.LoadBalancerSKUNameStandard)},
+		Properties: &armnetwork.LoadBalancerPropertiesFormat{},
+	}, nil)
+	require.NoError(t, err)
+	_, err = lbPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+
+	poolClient, err := armnetwork.NewLoadBalancerBackendAddressPoolsClient(subscriptionID, &fakeCredential{}, clientOpts())
+	require.NoError(t, err)
+	poolPoller, err := poolClient.BeginCreateOrUpdate(ctx, rg, "pool-lb", "pool-a", armnetwork.BackendAddressPool{
+		Name: to.Ptr("pool-a"),
+	}, nil)
+	require.NoError(t, err)
+	poolResp, err := poolPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "pool-a", *poolResp.Name)
+
+	gotPool, err := poolClient.Get(ctx, rg, "pool-lb", "pool-a", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "pool-a", *gotPool.Name)
+
+	pager := poolClient.NewListPager(rg, "pool-lb", nil)
+	require.True(t, pager.More())
+	page, err := pager.NextPage(ctx)
+	require.NoError(t, err)
+	require.NotEmpty(t, page.Value)
+}
+
 func ptrProto(p armnetwork.SecurityRuleProtocol) *armnetwork.SecurityRuleProtocol { return &p }
 func ptrAccess(a armnetwork.SecurityRuleAccess) *armnetwork.SecurityRuleAccess    { return &a }
 func ptrDir(d armnetwork.SecurityRuleDirection) *armnetwork.SecurityRuleDirection { return &d }

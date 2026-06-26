@@ -63,6 +63,33 @@ type SBNetworkRuleSet struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// SBPrivateEndpointConnection is a private endpoint connection on a
+// namespace (Microsoft.ServiceBus/namespaces/privateEndpointConnections).
+type SBPrivateEndpointConnection struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// SBDisasterRecovery is a GEO-DR alias on a namespace
+// (Microsoft.ServiceBus/namespaces/disasterRecoveryConfigs).
+type SBDisasterRecovery struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
+// SBMigrationConfig is the Standard→Premium migration configuration on a
+// namespace (Microsoft.ServiceBus/namespaces/migrationConfigurations).
+type SBMigrationConfig struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 // SBAuthorizationRule is a SAS authorization rule on a namespace,
 // queue, or topic. Real Azure auto-provisions `RootManageSharedAccessKey`
 // on every namespace; operators add named rules with scoped rights.
@@ -85,6 +112,9 @@ var (
 	sbRules         sim.Store[SBRule]
 	sbAuthRules     sim.Store[SBAuthorizationRule]
 	sbNetworkRules  sim.Store[SBNetworkRuleSet]
+	sbPrivateConns  sim.Store[SBPrivateEndpointConnection]
+	sbDRConfigs     sim.Store[SBDisasterRecovery]
+	sbMigrations    sim.Store[SBMigrationConfig]
 )
 
 func registerServiceBus(srv *sim.Server) {
@@ -95,20 +125,44 @@ func registerServiceBus(srv *sim.Server) {
 	sbRules = sim.MakeStore[SBRule](srv.DB(), "sb_rules")
 	sbAuthRules = sim.MakeStore[SBAuthorizationRule](srv.DB(), "sb_auth_rules")
 	sbNetworkRules = sim.MakeStore[SBNetworkRuleSet](srv.DB(), "sb_network_rule_sets")
+	sbPrivateConns = sim.MakeStore[SBPrivateEndpointConnection](srv.DB(), "sb_private_endpoint_connections")
+	sbDRConfigs = sim.MakeStore[SBDisasterRecovery](srv.DB(), "sb_disaster_recovery_configs")
+	sbMigrations = sim.MakeStore[SBMigrationConfig](srv.DB(), "sb_migration_configs")
 
 	const ns = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ServiceBus/namespaces"
+	const nsBySub = "/subscriptions/{subscriptionId}/providers/Microsoft.ServiceBus/namespaces"
 
 	srv.HandleFunc("PUT "+ns+"/{name}", handleSBCreateNamespace)
 	srv.HandleFunc("GET "+ns+"/{name}", handleSBGetNamespace)
+	srv.HandleFunc("PATCH "+ns+"/{name}", handleSBUpdateNamespace)
 	srv.HandleFunc("DELETE "+ns+"/{name}", handleSBDeleteNamespace)
 	srv.HandleFunc("GET "+ns, handleSBListNamespacesByRG)
+	srv.HandleFunc("GET "+nsBySub, handleSBListNamespacesBySub)
 	srv.HandleFunc("GET "+ns+"/{name}/networkRuleSets/default", handleSBGetNamespaceNetworkRuleSet)
 	srv.HandleFunc("PUT "+ns+"/{name}/networkRuleSets/default", handleSBPutNamespaceNetworkRuleSet)
 	srv.HandleFunc("GET "+ns+"/{name}/networkRuleSets", handleSBListNamespaceNetworkRuleSets)
+	srv.HandleFunc("GET "+ns+"/{name}/privateLinkResources", handleSBListPrivateLinkResources)
+	srv.HandleFunc("GET "+ns+"/{name}/privateEndpointConnections", handleSBListPrivateEndpointConnections)
+	srv.HandleFunc("PUT "+ns+"/{name}/privateEndpointConnections/{pec}", handleSBPutPrivateEndpointConnection)
+	srv.HandleFunc("GET "+ns+"/{name}/privateEndpointConnections/{pec}", handleSBGetPrivateEndpointConnection)
+	srv.HandleFunc("DELETE "+ns+"/{name}/privateEndpointConnections/{pec}", handleSBDeletePrivateEndpointConnection)
+
 	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs/{alias}", handleSBGetDisasterRecoveryConfig)
+	srv.HandleFunc("PUT "+ns+"/{name}/disasterRecoveryConfigs/{alias}", handleSBPutDisasterRecoveryConfig)
+	srv.HandleFunc("DELETE "+ns+"/{name}/disasterRecoveryConfigs/{alias}", handleSBDeleteDisasterRecoveryConfig)
 	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs", handleSBListDisasterRecoveryConfigs)
+	srv.HandleFunc("POST "+ns+"/{name}/disasterRecoveryConfigs/{alias}/breakPairing", handleSBDisasterRecoveryBreakPairing)
+	srv.HandleFunc("POST "+ns+"/{name}/disasterRecoveryConfigs/{alias}/failover", handleSBDisasterRecoveryFailover)
+	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules", handleSBListDRAuthorizationRules)
+	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules/{rule}", handleSBGetDRAuthorizationRule)
+	srv.HandleFunc("POST "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules/{rule}/listKeys", handleSBListDRAuthorizationRuleKeys)
+
 	srv.HandleFunc("GET "+ns+"/{name}/migrationConfigurations/{config}", handleSBGetMigrationConfiguration)
+	srv.HandleFunc("PUT "+ns+"/{name}/migrationConfigurations/{config}", handleSBPutMigrationConfiguration)
+	srv.HandleFunc("DELETE "+ns+"/{name}/migrationConfigurations/{config}", handleSBDeleteMigrationConfiguration)
 	srv.HandleFunc("GET "+ns+"/{name}/migrationConfigurations", handleSBListMigrationConfigurations)
+	srv.HandleFunc("POST "+ns+"/{name}/migrationConfigurations/{config}/upgrade", handleSBCompleteMigration)
+	srv.HandleFunc("POST "+ns+"/{name}/migrationConfigurations/{config}/revert", handleSBRevertMigration)
 
 	// AuthorizationRules at namespace, queue, and topic scope. Real
 	// Azure auto-provisions `RootManageSharedAccessKey` on namespace
@@ -122,11 +176,27 @@ func registerServiceBus(srv *sim.Server) {
 	srv.HandleFunc("POST "+ns+"/{name}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("namespaces"))
 	srv.HandleFunc("POST "+ns+"/{name}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("namespaces"))
 
+	// The official Azure SDK addresses namespace-scoped authorization rules
+	// with the PascalCase `AuthorizationRules` collection segment (the casing
+	// the swagger declares); terraform and raw HTTP clients use lowercase
+	// `authorizationRules`. ARM is case-insensitive on the path, so both
+	// spellings dispatch to the same handlers (which key storage on the
+	// lowercase resource ID).
+	srv.HandleFunc("PUT "+ns+"/{name}/AuthorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/authorizationRules", "namespaces"))
+	srv.HandleFunc("GET "+ns+"/{name}/AuthorizationRules/{rule}", sbAuthRuleGet("namespaces"))
+	srv.HandleFunc("DELETE "+ns+"/{name}/AuthorizationRules/{rule}", sbAuthRuleDelete("namespaces"))
+	srv.HandleFunc("GET "+ns+"/{name}/AuthorizationRules", sbAuthRuleList("namespaces"))
+	srv.HandleFunc("POST "+ns+"/{name}/AuthorizationRules/{rule}/listKeys", sbAuthRuleListKeys("namespaces"))
+	srv.HandleFunc("POST "+ns+"/{name}/AuthorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("namespaces"))
+
 	srv.HandleFunc("PUT "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/queues/authorizationRules", "queues"))
 	srv.HandleFunc("GET "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleGet("queues"))
 	srv.HandleFunc("DELETE "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}", sbAuthRuleDelete("queues"))
 	srv.HandleFunc("GET "+ns+"/{name}/queues/{queue}/authorizationRules", sbAuthRuleList("queues"))
 	srv.HandleFunc("POST "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("queues"))
+	// Queue / topic auth-rule list-keys is spelled `ListKeys` (PascalCase) in
+	// the SDK swagger, unlike the namespace-scoped lowercase `listKeys`.
+	srv.HandleFunc("POST "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}/ListKeys", sbAuthRuleListKeys("queues"))
 	srv.HandleFunc("POST "+ns+"/{name}/queues/{queue}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("queues"))
 
 	srv.HandleFunc("PUT "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}", sbAuthRuleCreate("Microsoft.ServiceBus/namespaces/topics/authorizationRules", "topics"))
@@ -134,6 +204,7 @@ func registerServiceBus(srv *sim.Server) {
 	srv.HandleFunc("DELETE "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}", sbAuthRuleDelete("topics"))
 	srv.HandleFunc("GET "+ns+"/{name}/topics/{topic}/authorizationRules", sbAuthRuleList("topics"))
 	srv.HandleFunc("POST "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}/listKeys", sbAuthRuleListKeys("topics"))
+	srv.HandleFunc("POST "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}/ListKeys", sbAuthRuleListKeys("topics"))
 	srv.HandleFunc("POST "+ns+"/{name}/topics/{topic}/authorizationRules/{rule}/regenerateKeys", sbAuthRuleRegenerateKeys("topics"))
 
 	srv.HandleFunc("PUT "+ns+"/{name}/queues/{queue}", handleSBCreateQueue)
@@ -258,7 +329,71 @@ func handleSBDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			sbNetworkRules.Delete(ruleSet.ID)
 		}
 	}
+	for _, pec := range sbPrivateConns.List() {
+		if strings.HasPrefix(pec.ID, prefix) {
+			sbPrivateConns.Delete(pec.ID)
+		}
+	}
+	for _, dr := range sbDRConfigs.List() {
+		if strings.HasPrefix(dr.ID, prefix) {
+			sbDRConfigs.Delete(dr.ID)
+		}
+	}
+	for _, mc := range sbMigrations.List() {
+		if strings.HasPrefix(mc.ID, prefix) {
+			sbMigrations.Delete(mc.ID)
+		}
+	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSBUpdateNamespace applies a PATCH to a namespace, merging the
+// request's location / sku / tags / properties into the stored resource.
+func handleSBUpdateNamespace(w http.ResponseWriter, r *http.Request) {
+	id := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	n, ok := sbNamespaces.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
+		return
+	}
+	var req SBNamespace
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	if req.Location != "" {
+		n.Location = req.Location
+	}
+	if req.Sku != nil {
+		n.Sku = req.Sku
+	}
+	if req.Tags != nil {
+		n.Tags = req.Tags
+	}
+	if n.Properties == nil {
+		n.Properties = map[string]any{}
+	}
+	for k, v := range req.Properties {
+		n.Properties[k] = v
+	}
+	n.Properties["provisioningState"] = "Succeeded"
+	sbNamespaces.Put(id, n)
+	sim.WriteJSON(w, http.StatusOK, n)
+}
+
+// handleSBListNamespacesBySub lists every namespace in the subscription
+// (the subscription-scoped list, no resource group filter).
+func handleSBListNamespacesBySub(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("/subscriptions/%s/", sim.PathParam(r, "subscriptionId"))
+	all := sbNamespaces.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBNamespace, 0, len(all))
+	for _, n := range all {
+		if strings.HasPrefix(n.ID, prefix) {
+			out = append(out, n)
+		}
+	}
+	writeSBPagedList(w, r, out)
 }
 
 func handleSBListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
@@ -339,20 +474,173 @@ func handleSBListNamespaceNetworkRuleSets(w http.ResponseWriter, r *http.Request
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []SBNetworkRuleSet{ruleSet}})
 }
 
+func sbDisasterRecoveryID(sub, rg, name, alias string) string {
+	return sbNamespaceID(sub, rg, name) + "/disasterRecoveryConfigs/" + alias
+}
+
+func sbMigrationConfigID(sub, rg, name, config string) string {
+	return sbNamespaceID(sub, rg, name) + "/migrationConfigurations/" + config
+}
+
 func handleSBListDisasterRecoveryConfigs(w http.ResponseWriter, r *http.Request) {
 	if _, ok := sbNamespaces.Get(sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+	prefix := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/disasterRecoveryConfigs/"
+	all := sbDRConfigs.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBDisasterRecovery, 0, len(all))
+	for _, dr := range all {
+		if strings.HasPrefix(dr.ID, prefix) {
+			out = append(out, dr)
+		}
+	}
+	writeSBPagedList(w, r, out)
 }
 
 func handleSBGetDisasterRecoveryConfig(w http.ResponseWriter, r *http.Request) {
-	if _, ok := sbNamespaces.Get(sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))); !ok {
+	id := sbDisasterRecoveryID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias"))
+	dr, ok := sbDRConfigs.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, dr)
+}
+
+func handleSBPutDisasterRecoveryConfig(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name, alias := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias")
+	if _, ok := sbNamespaces.Get(sbNamespaceID(sub, rg, name)); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
 		return
 	}
-	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+	var req SBDisasterRecovery
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	id := sbDisasterRecoveryID(sub, rg, name, alias)
+	props := map[string]any{
+		"provisioningState":                 "Succeeded",
+		"role":                              "Primary",
+		"pendingReplicationOperationsCount": 0,
+	}
+	if v, ok := req.Properties["partnerNamespace"]; ok {
+		props["partnerNamespace"] = v
+	}
+	if v, ok := req.Properties["alternateName"]; ok {
+		props["alternateName"] = v
+	}
+	dr := SBDisasterRecovery{
+		ID:         id,
+		Name:       alias,
+		Type:       "Microsoft.ServiceBus/namespaces/disasterRecoveryConfigs",
+		Properties: props,
+	}
+	sbDRConfigs.Put(id, dr)
+	sim.WriteJSON(w, http.StatusOK, dr)
+}
+
+func handleSBDeleteDisasterRecoveryConfig(w http.ResponseWriter, r *http.Request) {
+	id := sbDisasterRecoveryID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias"))
+	if !sbDRConfigs.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSBDisasterRecoveryBreakPairing disables GEO-DR replication on the
+// alias; the alias's role becomes PrimaryNotReplicating.
+func handleSBDisasterRecoveryBreakPairing(w http.ResponseWriter, r *http.Request) {
+	id := sbDisasterRecoveryID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias"))
+	if _, ok := sbDRConfigs.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	sbDRConfigs.Update(id, func(dr *SBDisasterRecovery) {
+		if dr.Properties == nil {
+			dr.Properties = map[string]any{}
+		}
+		dr.Properties["role"] = "PrimaryNotReplicating"
+	})
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleSBDisasterRecoveryFailover promotes the secondary alias to primary.
+func handleSBDisasterRecoveryFailover(w http.ResponseWriter, r *http.Request) {
+	id := sbDisasterRecoveryID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias"))
+	if _, ok := sbDRConfigs.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	sbDRConfigs.Update(id, func(dr *SBDisasterRecovery) {
+		if dr.Properties == nil {
+			dr.Properties = map[string]any{}
+		}
+		dr.Properties["role"] = "Primary"
+	})
+	w.WriteHeader(http.StatusOK)
+}
+
+// sbDRAuthRuleParent validates the namespace + alias exist and returns the
+// namespace resource ID. A GEO-DR alias surfaces the primary namespace's
+// SAS authorization rules, so the rules are read through the namespace store.
+func sbDRAuthRuleParent(r *http.Request) (string, bool) {
+	sub, rg, name, alias := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "alias")
+	if _, ok := sbDRConfigs.Get(sbDisasterRecoveryID(sub, rg, name, alias)); !ok {
+		return "", false
+	}
+	return sbNamespaceID(sub, rg, name), true
+}
+
+func handleSBListDRAuthorizationRules(w http.ResponseWriter, r *http.Request) {
+	parent, ok := sbDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	prefix := parent + "/authorizationRules/"
+	var out []SBAuthorizationRule
+	for _, rule := range sbAuthRules.List() {
+		if strings.HasPrefix(rule.ID, prefix) {
+			out = append(out, rule)
+		}
+	}
+	if out == nil {
+		out = []SBAuthorizationRule{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleSBGetDRAuthorizationRule(w http.ResponseWriter, r *http.Request) {
+	parent, ok := sbDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	rule, ok := sbAuthRules.Get(parent + "/authorizationRules/" + sim.PathParam(r, "rule"))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, rule)
+}
+
+func handleSBListDRAuthorizationRuleKeys(w http.ResponseWriter, r *http.Request) {
+	parent, ok := sbDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "disaster recovery config not found")
+		return
+	}
+	ruleName := sim.PathParam(r, "rule")
+	id := parent + "/authorizationRules/" + ruleName
+	if _, ok := sbAuthRules.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "authorization rule not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, sbAuthRuleListKeysBody(r, id, sim.PathParam(r, "name"), ruleName))
 }
 
 func handleSBListMigrationConfigurations(w http.ResponseWriter, r *http.Request) {
@@ -360,15 +648,182 @@ func handleSBListMigrationConfigurations(w http.ResponseWriter, r *http.Request)
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+	prefix := sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/migrationConfigurations/"
+	all := sbMigrations.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBMigrationConfig, 0, len(all))
+	for _, mc := range all {
+		if strings.HasPrefix(mc.ID, prefix) {
+			out = append(out, mc)
+		}
+	}
+	writeSBPagedList(w, r, out)
 }
 
 func handleSBGetMigrationConfiguration(w http.ResponseWriter, r *http.Request) {
-	if _, ok := sbNamespaces.Get(sbNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))); !ok {
+	id := sbMigrationConfigID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "config"))
+	mc, ok := sbMigrations.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "migration configuration not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, mc)
+}
+
+func handleSBPutMigrationConfiguration(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name, config := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "config")
+	if _, ok := sbNamespaces.Get(sbNamespaceID(sub, rg, name)); !ok {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
 		return
 	}
-	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "migration configuration not found")
+	var req SBMigrationConfig
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	id := sbMigrationConfigID(sub, rg, name, config)
+	props := map[string]any{
+		"provisioningState":                 "Succeeded",
+		"migrationState":                    "Active",
+		"pendingReplicationOperationsCount": 0,
+	}
+	if v, ok := req.Properties["targetNamespace"]; ok {
+		props["targetNamespace"] = v
+	}
+	if v, ok := req.Properties["postMigrationName"]; ok {
+		props["postMigrationName"] = v
+	}
+	mc := SBMigrationConfig{
+		ID:         id,
+		Name:       config,
+		Type:       "Microsoft.ServiceBus/namespaces/migrationConfigurations",
+		Properties: props,
+	}
+	sbMigrations.Put(id, mc)
+	sim.WriteJSON(w, http.StatusOK, mc)
+}
+
+func handleSBDeleteMigrationConfiguration(w http.ResponseWriter, r *http.Request) {
+	id := sbMigrationConfigID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "config"))
+	if !sbMigrations.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "migration configuration not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSBCompleteMigration finalizes a Standard→Premium migration: the
+// connection strings point to the premium namespace.
+func handleSBCompleteMigration(w http.ResponseWriter, r *http.Request) {
+	id := sbMigrationConfigID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "config"))
+	if _, ok := sbMigrations.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "migration configuration not found")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleSBRevertMigration reverts an in-progress Standard→Premium migration.
+func handleSBRevertMigration(w http.ResponseWriter, r *http.Request) {
+	id := sbMigrationConfigID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "config"))
+	if _, ok := sbMigrations.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "migration configuration not found")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// sbPrivateEndpointConnectionID returns the resource ID of a private
+// endpoint connection on a namespace.
+func sbPrivateEndpointConnectionID(sub, rg, name, pec string) string {
+	return sbNamespaceID(sub, rg, name) + "/privateEndpointConnections/" + pec
+}
+
+func handleSBListPrivateEndpointConnections(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")
+	if _, ok := sbNamespaces.Get(sbNamespaceID(sub, rg, name)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
+		return
+	}
+	prefix := sbNamespaceID(sub, rg, name) + "/privateEndpointConnections/"
+	all := sbPrivateConns.List()
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	out := make([]SBPrivateEndpointConnection, 0, len(all))
+	for _, pec := range all {
+		if strings.HasPrefix(pec.ID, prefix) {
+			out = append(out, pec)
+		}
+	}
+	writeSBPagedList(w, r, out)
+}
+
+func handleSBGetPrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	id := sbPrivateEndpointConnectionID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	pec, ok := sbPrivateConns.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "private endpoint connection not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleSBPutPrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name, pecName := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec")
+	if _, ok := sbNamespaces.Get(sbNamespaceID(sub, rg, name)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
+		return
+	}
+	var req SBPrivateEndpointConnection
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	id := sbPrivateEndpointConnectionID(sub, rg, name, pecName)
+	props := map[string]any{}
+	for k, v := range req.Properties {
+		props[k] = v
+	}
+	props["provisioningState"] = "Succeeded"
+	pec := SBPrivateEndpointConnection{
+		ID:         id,
+		Name:       pecName,
+		Type:       "Microsoft.ServiceBus/namespaces/privateEndpointConnections",
+		Properties: props,
+	}
+	sbPrivateConns.Put(id, pec)
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleSBDeletePrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	id := sbPrivateEndpointConnectionID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	if !sbPrivateConns.Delete(id) {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "private endpoint connection not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSBListPrivateLinkResources returns the namespace's private link
+// resource groups (the single "namespace" group, as real Azure returns).
+func handleSBListPrivateLinkResources(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")
+	id := sbNamespaceID(sub, rg, name)
+	if _, ok := sbNamespaces.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "namespace not found")
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value": []map[string]any{{
+			"id":   id + "/privateLinkResources/namespace",
+			"name": "namespace",
+			"type": "Microsoft.ServiceBus/namespaces/privateLinkResources",
+			"properties": map[string]any{
+				"groupId":           "namespace",
+				"requiredMembers":   []string{"namespace"},
+				"requiredZoneNames": []string{"privatelink.servicebus.windows.net"},
+			},
+		}},
+	})
 }
 
 func sbDefaultNetworkRuleSet(id string) SBNetworkRuleSet {

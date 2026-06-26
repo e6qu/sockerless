@@ -241,22 +241,6 @@ func registerACR(srv *sim.Server) {
 		})
 	})
 
-	// GET - List replications (azurerm provider reads this after creating a registry)
-	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/replications", func(w http.ResponseWriter, r *http.Request) {
-		sub := sim.PathParam(r, "subscriptionId")
-		rg := sim.PathParam(r, "resourceGroupName")
-		name := sim.PathParam(r, "registryName")
-		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s", sub, rg, name)
-		if _, ok := registries.Get(resourceID); !ok {
-			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
-				"The Resource 'Microsoft.ContainerRegistry/registries/%s' under resource group '%s' was not found.", name, rg)
-			return
-		}
-		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"value": []any{},
-		})
-	})
-
 	// DELETE - Delete registry
 	srv.HandleFunc("DELETE "+armBase+"/registries/{registryName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
@@ -380,6 +364,44 @@ func registerACR(srv *sim.Server) {
 			cacheRules.Delete(ruleID)
 			w.WriteHeader(http.StatusNoContent)
 		})
+
+	// PATCH cache rule (Update — only credentialSetResourceId is mutable).
+	srv.HandleFunc("PATCH "+armBase+"/registries/{registryName}/cacheRules/{cacheRuleName}",
+		func(w http.ResponseWriter, r *http.Request) {
+			sub := sim.PathParam(r, "subscriptionId")
+			rg := sim.PathParam(r, "resourceGroupName")
+			regName := sim.PathParam(r, "registryName")
+			ruleName := sim.PathParam(r, "cacheRuleName")
+			ruleID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s/cacheRules/%s",
+				sub, rg, regName, ruleName)
+			if _, ok := cacheRules.Get(ruleID); !ok {
+				sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+					"Cache rule '%s' under registry '%s' was not found.", ruleName, regName)
+				return
+			}
+			var req ACRCacheRule
+			if err := sim.ReadJSON(r, &req); err != nil {
+				sim.AzureError(w, "InvalidRequestContent",
+					"Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+				return
+			}
+			cacheRules.Update(ruleID, func(cr *ACRCacheRule) {
+				if req.Properties.CredentialSetResourceID != "" {
+					cr.Properties.CredentialSetResourceID = req.Properties.CredentialSetResourceID
+				}
+				cr.Properties.ProvisioningState = "Succeeded"
+			})
+			rule, _ := cacheRules.Get(ruleID)
+			sim.WriteJSON(w, http.StatusOK, rule)
+		})
+
+	// Registry-level operations, sub-resources, and actions (replications,
+	// webhooks, scopeMaps, tokens, credentialSets, connectedRegistries,
+	// privateEndpointConnections, privateLinkResources, listUsages, import,
+	// credentials, and the provider operations list).
+	registerACRRegistryActions(srv, registries)
+	registerACRChildResources(srv)
+	registerACRWebhooks(srv)
 
 	// OCI Distribution data plane — mounted from the shared registry library.
 	reg.Register(srv)
@@ -527,4 +549,587 @@ func acrOAuthError(w http.ResponseWriter, code, msg string) {
 		"error":             code,
 		"error_description": msg,
 	})
+}
+
+// acrARMBase is the Microsoft.ContainerRegistry ARM provider path prefix shared
+// by every registry control-plane route.
+const acrARMBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
+
+// acrSubResource is a generic ARM child resource of a container registry
+// (replication, scopeMap, token, credentialSet, connectedRegistry,
+// privateEndpointConnection, and the registry-tasks children task / taskRun /
+// agentPool). Only the fields the matching Swagger schema declares are emitted:
+// id/name/type for every resource, location/tags for tracked resources,
+// identity where the schema allows it, and a properties object echoed from the
+// request plus a settled provisioningState.
+type acrSubResource struct {
+	ID         string            `json:"id,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	Location   string            `json:"location,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Identity   json.RawMessage   `json:"identity,omitempty"`
+	Properties map[string]any    `json:"properties,omitempty"`
+}
+
+// acrChildKind configures the CRUD handlers for one registry child resource.
+// allowLocation/allowTags/allowIdentity gate the top-level fields the child's
+// Swagger schema declares; patch enables the PATCH verb (some children, e.g.
+// privateEndpointConnections, have no update operation).
+type acrChildKind struct {
+	seg           string // path segment, e.g. "replications"
+	nameParam     string // route param name, e.g. "replicationName"
+	typeName      string // ARM resource type, e.g. "Microsoft.ContainerRegistry/registries/replications"
+	allowLocation bool
+	allowTags     bool
+	allowIdentity bool
+	patch         bool
+	store         sim.Store[acrSubResource]
+}
+
+// acrRegistryID returns the registry ARM resource ID for the request and
+// whether that registry exists in the store.
+func acrRegistryID(r *http.Request) (string, bool) {
+	regID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.ContainerRegistry/registries/%s",
+		sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "registryName"))
+	_, ok := acrRegistries.Get(regID)
+	return regID, ok
+}
+
+func (k acrChildKind) resourceID(r *http.Request) string {
+	regID, _ := acrRegistryID(r)
+	return fmt.Sprintf("%s/%s/%s", regID, k.seg, sim.PathParam(r, k.nameParam))
+}
+
+// registerACRChild mounts PUT/GET/list/PATCH/DELETE for one child kind.
+func registerACRChild(srv *sim.Server, k acrChildKind) {
+	base := acrARMBase + "/registries/{registryName}/" + k.seg
+	srv.HandleFunc("PUT "+base+"/{"+k.nameParam+"}", k.handlePut)
+	srv.HandleFunc("GET "+base+"/{"+k.nameParam+"}", k.handleGet)
+	srv.HandleFunc("GET "+base, k.handleList)
+	if k.patch {
+		srv.HandleFunc("PATCH "+base+"/{"+k.nameParam+"}", k.handlePatch)
+	}
+	srv.HandleFunc("DELETE "+base+"/{"+k.nameParam+"}", k.handleDelete)
+}
+
+func (k acrChildKind) handlePut(w http.ResponseWriter, r *http.Request) {
+	regID, ok := acrRegistryID(r)
+	if !ok {
+		acrRegistryNotFound(w, r)
+		return
+	}
+	name := sim.PathParam(r, k.nameParam)
+	var req acrSubResource
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	resID := fmt.Sprintf("%s/%s/%s", regID, k.seg, name)
+	res := acrSubResource{ID: resID, Name: name, Type: k.typeName}
+	if k.allowLocation {
+		res.Location = req.Location
+	}
+	if k.allowTags {
+		res.Tags = req.Tags
+	}
+	if k.allowIdentity {
+		res.Identity = req.Identity
+	}
+	props := req.Properties
+	if props == nil {
+		props = map[string]any{}
+	}
+	props["provisioningState"] = "Succeeded"
+	res.Properties = props
+	k.store.Put(resID, res)
+	sim.WriteJSON(w, http.StatusOK, res)
+}
+
+func (k acrChildKind) handleGet(w http.ResponseWriter, r *http.Request) {
+	res, ok := k.store.Get(k.resourceID(r))
+	if !ok {
+		acrChildNotFound(w, k, r)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, res)
+}
+
+func (k acrChildKind) handleList(w http.ResponseWriter, r *http.Request) {
+	regID, ok := acrRegistryID(r)
+	if !ok {
+		acrRegistryNotFound(w, r)
+		return
+	}
+	prefix := regID + "/" + k.seg + "/"
+	matched := k.store.Filter(func(s acrSubResource) bool {
+		return strings.HasPrefix(s.ID, prefix)
+	})
+	if matched == nil {
+		matched = []acrSubResource{}
+	}
+	sort.Slice(matched, func(i, j int) bool { return matched[i].ID < matched[j].ID })
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": matched})
+}
+
+func (k acrChildKind) handlePatch(w http.ResponseWriter, r *http.Request) {
+	resID := k.resourceID(r)
+	if _, ok := k.store.Get(resID); !ok {
+		acrChildNotFound(w, k, r)
+		return
+	}
+	var req acrSubResource
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	k.store.Update(resID, func(s *acrSubResource) {
+		if k.allowLocation && req.Location != "" {
+			s.Location = req.Location
+		}
+		if k.allowTags && req.Tags != nil {
+			s.Tags = req.Tags
+		}
+		if k.allowIdentity && req.Identity != nil {
+			s.Identity = req.Identity
+		}
+		if req.Properties != nil {
+			if s.Properties == nil {
+				s.Properties = map[string]any{}
+			}
+			for key, v := range req.Properties {
+				s.Properties[key] = v
+			}
+			s.Properties["provisioningState"] = "Succeeded"
+		}
+	})
+	res, _ := k.store.Get(resID)
+	sim.WriteJSON(w, http.StatusOK, res)
+}
+
+func (k acrChildKind) handleDelete(w http.ResponseWriter, r *http.Request) {
+	if k.store.Delete(k.resourceID(r)) {
+		w.WriteHeader(http.StatusOK)
+	} else {
+		w.WriteHeader(http.StatusNoContent)
+	}
+}
+
+func acrRegistryNotFound(w http.ResponseWriter, r *http.Request) {
+	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+		"The Resource 'Microsoft.ContainerRegistry/registries/%s' under resource group '%s' was not found.",
+		sim.PathParam(r, "registryName"), sim.PathParam(r, "resourceGroupName"))
+}
+
+func acrChildNotFound(w http.ResponseWriter, k acrChildKind, r *http.Request) {
+	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+		"The Resource '%s/%s' under registry '%s' was not found.",
+		k.typeName, sim.PathParam(r, k.nameParam), sim.PathParam(r, "registryName"))
+}
+
+// registerACRChildResources mounts the registry child sub-resources that share
+// the generic CRUD shape.
+func registerACRChildResources(srv *sim.Server) {
+	const t = "Microsoft.ContainerRegistry/registries/"
+	registerACRChild(srv, acrChildKind{
+		seg: "replications", nameParam: "replicationName", typeName: t + "replications",
+		allowLocation: true, allowTags: true, patch: true,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_replications"),
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "scopeMaps", nameParam: "scopeMapName", typeName: t + "scopeMaps", patch: true,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_scope_maps"),
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "tokens", nameParam: "tokenName", typeName: t + "tokens", patch: true,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_tokens"),
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "credentialSets", nameParam: "credentialSetName", typeName: t + "credentialSets",
+		allowIdentity: true, patch: true,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_credential_sets"),
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "connectedRegistries", nameParam: "connectedRegistryName", typeName: t + "connectedRegistries", patch: true,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_connected_registries"),
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "privateEndpointConnections", nameParam: "privateEndpointConnectionName",
+		typeName: t + "privateEndpointConnections", patch: false,
+		store: sim.MakeStore[acrSubResource](srv.DB(), "acr_pe_connections"),
+	})
+
+	// POST .../connectedRegistries/{name}/deactivate — LRO action, no body.
+	srv.HandleFunc("POST "+acrARMBase+"/registries/{registryName}/connectedRegistries/{connectedRegistryName}/deactivate",
+		func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		})
+}
+
+// --- Webhooks ---
+//
+// Webhooks need bespoke handlers because the create/update parameters carry
+// write-only secret fields (serviceUri, customHeaders) that the Webhook
+// response schema does not declare. The stored row keeps the secrets for
+// getCallbackConfig; the HTTP response emits only the declared WebhookProperties
+// members (status, scope, actions, provisioningState).
+type acrWebhookStored struct {
+	ID                string            `json:"id"`
+	Name              string            `json:"name"`
+	Type              string            `json:"type"`
+	Location          string            `json:"location"`
+	Tags              map[string]string `json:"tags,omitempty"`
+	Status            string            `json:"status,omitempty"`
+	Scope             string            `json:"scope,omitempty"`
+	Actions           []string          `json:"actions"`
+	ProvisioningState string            `json:"provisioningState"`
+	ServiceURI        string            `json:"serviceUri,omitempty"`
+	CustomHeaders     map[string]string `json:"customHeaders,omitempty"`
+}
+
+// response renders the wire shape of a webhook (WebhookProperties only — the
+// secret serviceUri/customHeaders are never returned).
+func (wh acrWebhookStored) response() map[string]any {
+	props := map[string]any{
+		"actions":           wh.actionsOrEmpty(),
+		"provisioningState": wh.ProvisioningState,
+	}
+	if wh.Status != "" {
+		props["status"] = wh.Status
+	}
+	if wh.Scope != "" {
+		props["scope"] = wh.Scope
+	}
+	out := map[string]any{
+		"id":         wh.ID,
+		"name":       wh.Name,
+		"type":       wh.Type,
+		"location":   wh.Location,
+		"properties": props,
+	}
+	if len(wh.Tags) > 0 {
+		out["tags"] = wh.Tags
+	}
+	return out
+}
+
+func (wh acrWebhookStored) actionsOrEmpty() []string {
+	if wh.Actions == nil {
+		return []string{}
+	}
+	return wh.Actions
+}
+
+// acrWebhookCreateParams is the WebhookCreateParameters request body.
+type acrWebhookCreateParams struct {
+	Location   string            `json:"location"`
+	Tags       map[string]string `json:"tags"`
+	Properties struct {
+		ServiceURI    string            `json:"serviceUri"`
+		CustomHeaders map[string]string `json:"customHeaders"`
+		Status        string            `json:"status"`
+		Scope         string            `json:"scope"`
+		Actions       []string          `json:"actions"`
+	} `json:"properties"`
+}
+
+func registerACRWebhooks(srv *sim.Server) {
+	webhooks := sim.MakeStore[acrWebhookStored](srv.DB(), "acr_webhooks")
+	const typeName = "Microsoft.ContainerRegistry/registries/webhooks"
+	base := acrARMBase + "/registries/{registryName}/webhooks"
+
+	webhookID := func(r *http.Request) (string, bool) {
+		regID, ok := acrRegistryID(r)
+		return regID + "/webhooks/" + sim.PathParam(r, "webhookName"), ok
+	}
+
+	srv.HandleFunc("PUT "+base+"/{webhookName}", func(w http.ResponseWriter, r *http.Request) {
+		id, ok := webhookID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		var req acrWebhookCreateParams
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		wh := acrWebhookStored{
+			ID: id, Name: sim.PathParam(r, "webhookName"), Type: typeName,
+			Location: req.Location, Tags: req.Tags,
+			Status: req.Properties.Status, Scope: req.Properties.Scope, Actions: req.Properties.Actions,
+			ProvisioningState: "Succeeded",
+			ServiceURI:        req.Properties.ServiceURI, CustomHeaders: req.Properties.CustomHeaders,
+		}
+		webhooks.Put(id, wh)
+		sim.WriteJSON(w, http.StatusOK, wh.response())
+	})
+
+	srv.HandleFunc("GET "+base+"/{webhookName}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := webhookID(r)
+		wh, ok := webhooks.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Webhook '%s' under registry '%s' was not found.", sim.PathParam(r, "webhookName"), sim.PathParam(r, "registryName"))
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, wh.response())
+	})
+
+	srv.HandleFunc("GET "+base, func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		prefix := regID + "/webhooks/"
+		matched := webhooks.Filter(func(wh acrWebhookStored) bool { return strings.HasPrefix(wh.ID, prefix) })
+		sort.Slice(matched, func(i, j int) bool { return matched[i].ID < matched[j].ID })
+		out := make([]map[string]any, 0, len(matched))
+		for _, wh := range matched {
+			out = append(out, wh.response())
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	srv.HandleFunc("PATCH "+base+"/{webhookName}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := webhookID(r)
+		if _, ok := webhooks.Get(id); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Webhook '%s' under registry '%s' was not found.", sim.PathParam(r, "webhookName"), sim.PathParam(r, "registryName"))
+			return
+		}
+		var req acrWebhookCreateParams
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		webhooks.Update(id, func(wh *acrWebhookStored) {
+			if req.Tags != nil {
+				wh.Tags = req.Tags
+			}
+			if req.Properties.ServiceURI != "" {
+				wh.ServiceURI = req.Properties.ServiceURI
+			}
+			if req.Properties.CustomHeaders != nil {
+				wh.CustomHeaders = req.Properties.CustomHeaders
+			}
+			if req.Properties.Status != "" {
+				wh.Status = req.Properties.Status
+			}
+			if req.Properties.Scope != "" {
+				wh.Scope = req.Properties.Scope
+			}
+			if req.Properties.Actions != nil {
+				wh.Actions = req.Properties.Actions
+			}
+			wh.ProvisioningState = "Succeeded"
+		})
+		wh, _ := webhooks.Get(id)
+		sim.WriteJSON(w, http.StatusOK, wh.response())
+	})
+
+	srv.HandleFunc("DELETE "+base+"/{webhookName}", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := webhookID(r)
+		if webhooks.Delete(id) {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	// POST .../webhooks/{name}/ping — fires a ping notification, returns EventInfo.
+	srv.HandleFunc("POST "+base+"/{webhookName}/ping", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"id": generateUUID()})
+	})
+
+	// POST .../webhooks/{name}/getCallbackConfig — returns the stored secrets.
+	srv.HandleFunc("POST "+base+"/{webhookName}/getCallbackConfig", func(w http.ResponseWriter, r *http.Request) {
+		id, _ := webhookID(r)
+		wh, ok := webhooks.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Webhook '%s' under registry '%s' was not found.", sim.PathParam(r, "webhookName"), sim.PathParam(r, "registryName"))
+			return
+		}
+		out := map[string]any{"serviceUri": wh.ServiceURI}
+		if len(wh.CustomHeaders) > 0 {
+			out["customHeaders"] = wh.CustomHeaders
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
+	})
+
+	// POST .../webhooks/{name}/listEvents — the delivered-event history (empty
+	// until a notification fires; the sim does not retain delivery records).
+	srv.HandleFunc("POST "+base+"/{webhookName}/listEvents", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+	})
+}
+
+// registerACRRegistryActions mounts the registry-level operations and POST/GET
+// actions: the provider operations list, registry PATCH, listUsages,
+// importImage, generateCredentials, regenerateCredential, and the
+// privateLinkResources read endpoints.
+func registerACRRegistryActions(srv *sim.Server, registries sim.Store[Registry]) {
+	// GET /providers/Microsoft.ContainerRegistry/operations — provider op list.
+	srv.HandleFunc("GET /providers/Microsoft.ContainerRegistry/operations", func(w http.ResponseWriter, r *http.Request) {
+		op := func(name, resource, operation, desc string) map[string]any {
+			return map[string]any{
+				"name": name,
+				"display": map[string]any{
+					"provider": "Microsoft Container Registry", "resource": resource,
+					"operation": operation, "description": desc,
+				},
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []map[string]any{
+			op("Microsoft.ContainerRegistry/registries/read", "Registries", "Get Registry", "Gets the properties of the specified container registry."),
+			op("Microsoft.ContainerRegistry/registries/write", "Registries", "Update Registry", "Creates or updates a container registry with the specified parameters."),
+			op("Microsoft.ContainerRegistry/registries/delete", "Registries", "Delete Registry", "Deletes the specified container registry."),
+			op("Microsoft.ContainerRegistry/registries/push/write", "Registries", "Push/Pull Registry", "Pushes images to the specified container registry."),
+		}})
+	})
+
+	// PATCH registry — update mutable properties / tags / sku.
+	srv.HandleFunc("PATCH "+acrARMBase+"/registries/{registryName}", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		var req struct {
+			Tags       map[string]string `json:"tags"`
+			SKU        *RegistrySku      `json:"sku"`
+			Properties *struct {
+				AdminUserEnabled         *bool  `json:"adminUserEnabled"`
+				PublicNetworkAccess      string `json:"publicNetworkAccess"`
+				NetworkRuleBypassOptions string `json:"networkRuleBypassOptions"`
+				AnonymousPullEnabled     *bool  `json:"anonymousPullEnabled"`
+				DataEndpointEnabled      *bool  `json:"dataEndpointEnabled"`
+			} `json:"properties"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		registries.Update(regID, func(reg *Registry) {
+			if req.Tags != nil {
+				reg.Tags = req.Tags
+			}
+			if req.SKU != nil {
+				if req.SKU.Tier == "" {
+					req.SKU.Tier = req.SKU.Name
+				}
+				reg.Sku = req.SKU
+			}
+			if req.Properties != nil {
+				if req.Properties.AdminUserEnabled != nil {
+					reg.Properties.AdminUserEnabled = *req.Properties.AdminUserEnabled
+				}
+				if req.Properties.PublicNetworkAccess != "" {
+					reg.Properties.PublicNetworkAccess = req.Properties.PublicNetworkAccess
+				}
+				if req.Properties.NetworkRuleBypassOptions != "" {
+					reg.Properties.NetworkRuleBypassOptions = req.Properties.NetworkRuleBypassOptions
+				}
+				if req.Properties.AnonymousPullEnabled != nil {
+					reg.Properties.AnonymousPullEnabled = req.Properties.AnonymousPullEnabled
+				}
+				if req.Properties.DataEndpointEnabled != nil {
+					reg.Properties.DataEndpointEnabled = req.Properties.DataEndpointEnabled
+				}
+			}
+		})
+		reg, _ := registries.Get(regID)
+		sim.WriteJSON(w, http.StatusOK, reg)
+	})
+
+	// GET .../listUsages — quota usage report.
+	srv.HandleFunc("GET "+acrARMBase+"/registries/{registryName}/listUsages", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := acrRegistryID(r); !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []map[string]any{
+			{"name": "Size", "limit": 10737418240, "currentValue": 0, "unit": "Bytes"},
+			{"name": "Webhooks", "limit": 100, "currentValue": 0, "unit": "Count"},
+		}})
+	})
+
+	// POST .../importImage — copies an image from a source registry. LRO with
+	// no response body.
+	srv.HandleFunc("POST "+acrARMBase+"/registries/{registryName}/importImage", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := acrRegistryID(r); !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// POST .../generateCredentials — mints token credentials.
+	srv.HandleFunc("POST "+acrARMBase+"/registries/{registryName}/generateCredentials", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"username": sim.PathParam(r, "registryName"),
+			"passwords": []map[string]string{
+				{"name": "password1", "value": simListKey32(regID, "gen1")},
+				{"name": "password2", "value": simListKey32(regID, "gen2")},
+			},
+		})
+	})
+
+	// POST .../regenerateCredential — regenerates an admin password.
+	srv.HandleFunc("POST "+acrARMBase+"/registries/{registryName}/regenerateCredential", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		name := sim.PathParam(r, "registryName")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"username": name,
+			"passwords": []map[string]string{
+				{"name": "password", "value": simListKey32(regID, "password")},
+				{"name": "password2", "value": simListKey32(regID, "password2")},
+			},
+		})
+	})
+
+	// GET .../privateLinkResources — the registry exposes a single "registry" group.
+	srv.HandleFunc("GET "+acrARMBase+"/registries/{registryName}/privateLinkResources", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{acrPrivateLinkResource(regID, "registry")}})
+	})
+
+	// GET .../privateLinkResources/{groupName} — the single registry group.
+	srv.HandleFunc("GET "+acrARMBase+"/registries/{registryName}/privateLinkResources/{groupName}", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, acrPrivateLinkResource(regID, sim.PathParam(r, "groupName")))
+	})
+}
+
+// acrPrivateLinkResource builds a PrivateLinkResource for the registry group.
+func acrPrivateLinkResource(regID, group string) map[string]any {
+	return map[string]any{
+		"id":   regID + "/privateLinkResources/" + group,
+		"name": group,
+		"type": "Microsoft.ContainerRegistry/registries/privateLinkResources",
+		"properties": map[string]any{
+			"groupId":           group,
+			"requiredMembers":   []string{"registry", "registry_data_" + group},
+			"requiredZoneNames": []string{"privatelink.azurecr.io"},
+		},
+	}
 }

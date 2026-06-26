@@ -46,6 +46,15 @@ type EHAuthorizationRule struct {
 	Properties map[string]any `json:"properties,omitempty"`
 }
 
+// EHPrivateEndpointConnection is a private endpoint connection on an
+// Event Hubs namespace.
+type EHPrivateEndpointConnection struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 type ehEventRecord struct {
 	SequenceNumber int64
 	Offset         string
@@ -81,8 +90,19 @@ var (
 	ehConsumerGroups  sim.Store[EHConsumerGroup]
 	ehAuthRules       sim.Store[EHAuthorizationRule]
 	ehPartitionEvents sim.Store[ehPartitionLog]
+	ehPrivateConns    sim.Store[EHPrivateEndpointConnection]
+	ehNetworkRules    sim.Store[EHNetworkRuleSet]
 	ehMu              sync.Mutex
 )
+
+// EHNetworkRuleSet is the single 'default' network rule set on an
+// Event Hubs namespace.
+type EHNetworkRuleSet struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
 
 func registerEventHubs(srv *sim.Server) {
 	ehNamespaces = sim.MakeStore[EHNamespace](srv.DB(), "eventhub_namespaces")
@@ -90,14 +110,33 @@ func registerEventHubs(srv *sim.Server) {
 	ehConsumerGroups = sim.MakeStore[EHConsumerGroup](srv.DB(), "eventhub_consumer_groups")
 	ehAuthRules = sim.MakeStore[EHAuthorizationRule](srv.DB(), "eventhub_auth_rules")
 	ehPartitionEvents = sim.MakeStore[ehPartitionLog](srv.DB(), "eventhub_partition_events")
+	ehPrivateConns = sim.MakeStore[EHPrivateEndpointConnection](srv.DB(), "eventhub_private_endpoint_connections")
+	ehNetworkRules = sim.MakeStore[EHNetworkRuleSet](srv.DB(), "eventhub_network_rule_sets")
 
 	const ns = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.EventHub/namespaces"
+	const nsBySub = "/subscriptions/{subscriptionId}/providers/Microsoft.EventHub/namespaces"
 
 	srv.HandleFunc("PUT "+ns+"/{name}", handleEHCreateNamespace)
 	srv.HandleFunc("GET "+ns+"/{name}", handleEHGetNamespace)
+	srv.HandleFunc("PATCH "+ns+"/{name}", handleEHUpdateNamespace)
 	srv.HandleFunc("DELETE "+ns+"/{name}", handleEHDeleteNamespace)
 	srv.HandleFunc("GET "+ns, handleEHListNamespacesByRG)
+	srv.HandleFunc("GET "+nsBySub, handleEHListNamespacesBySub)
 	srv.HandleFunc("GET "+ns+"/{name}/networkRuleSets/default", handleEHGetNamespaceNetworkRuleSet)
+	srv.HandleFunc("PUT "+ns+"/{name}/networkRuleSets/default", handleEHPutNamespaceNetworkRuleSet)
+	srv.HandleFunc("GET "+ns+"/{name}/networkRuleSets", handleEHListNamespaceNetworkRuleSets)
+	srv.HandleFunc("GET "+ns+"/{name}/privateLinkResources", handleEHListPrivateLinkResources)
+	srv.HandleFunc("GET "+ns+"/{name}/privateEndpointConnections", handleEHListPrivateEndpointConnections)
+	srv.HandleFunc("PUT "+ns+"/{name}/privateEndpointConnections/{pec}", handleEHPutPrivateEndpointConnection)
+	srv.HandleFunc("GET "+ns+"/{name}/privateEndpointConnections/{pec}", handleEHGetPrivateEndpointConnection)
+	srv.HandleFunc("DELETE "+ns+"/{name}/privateEndpointConnections/{pec}", handleEHDeletePrivateEndpointConnection)
+	srv.HandleFunc("GET "+ns+"/{name}/networkSecurityPerimeterConfigurations", handleEHListNetworkSecurityPerimeterConfigs)
+	srv.HandleFunc("GET "+ns+"/{name}/networkSecurityPerimeterConfigurations/{assoc}", handleEHGetNetworkSecurityPerimeterConfig)
+	srv.HandleFunc("POST "+ns+"/{name}/networkSecurityPerimeterConfigurations/{assoc}/reconcile", handleEHReconcileNetworkSecurityPerimeterConfig)
+
+	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules", handleEHListDRAuthorizationRules)
+	srv.HandleFunc("GET "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules/{rule}", handleEHGetDRAuthorizationRule)
+	srv.HandleFunc("POST "+ns+"/{name}/disasterRecoveryConfigs/{alias}/authorizationRules/{rule}/listKeys", handleEHListDRAuthorizationRuleKeys)
 
 	srv.HandleFunc("PUT "+ns+"/{name}/authorizationRules/{rule}", ehAuthRuleCreate("Microsoft.EventHub/namespaces/authorizationRules", "namespaces"))
 	srv.HandleFunc("GET "+ns+"/{name}/authorizationRules/{rule}", ehAuthRuleGet("namespaces"))
@@ -236,6 +275,12 @@ func handleEHDeleteNamespace(w http.ResponseWriter, r *http.Request) {
 			ehAuthRules.Delete(rule.ID)
 		}
 	}
+	for _, pec := range ehPrivateConns.List() {
+		if strings.HasPrefix(pec.ID, prefix) {
+			ehPrivateConns.Delete(pec.ID)
+		}
+	}
+	ehNetworkRules.Delete(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -255,23 +300,301 @@ func handleEHListNamespacesByRG(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
 }
 
-func handleEHGetNamespaceNetworkRuleSet(w http.ResponseWriter, r *http.Request) {
-	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
-	if _, ok := ehNamespaces.Get(id); !ok {
-		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
-		return
-	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"id":   id + "/networkRuleSets/default",
-		"name": "default",
-		"type": "Microsoft.EventHub/namespaces/networkRuleSets",
-		"properties": map[string]any{
+func ehDefaultNetworkRuleSet(id string) EHNetworkRuleSet {
+	return EHNetworkRuleSet{
+		ID:   id + "/networkRuleSets/default",
+		Name: "default",
+		Type: "Microsoft.EventHub/namespaces/networkRuleSets",
+		Properties: map[string]any{
 			"defaultAction":               "Allow",
 			"publicNetworkAccess":         "Enabled",
 			"trustedServiceAccessEnabled": false,
 			"virtualNetworkRules":         []any{},
 			"ipRules":                     []any{},
 		},
+	}
+}
+
+func handleEHGetNamespaceNetworkRuleSet(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	ruleSet, ok := ehNetworkRules.Get(id)
+	if !ok {
+		ruleSet = ehDefaultNetworkRuleSet(id)
+	}
+	sim.WriteJSON(w, http.StatusOK, ruleSet)
+}
+
+func handleEHPutNamespaceNetworkRuleSet(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	var req EHNetworkRuleSet
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	ruleSet := ehDefaultNetworkRuleSet(id)
+	for k, v := range req.Properties {
+		ruleSet.Properties[k] = v
+	}
+	ehNetworkRules.Put(id, ruleSet)
+	sim.WriteJSON(w, http.StatusOK, ruleSet)
+}
+
+func handleEHListNamespaceNetworkRuleSets(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	ruleSet, ok := ehNetworkRules.Get(id)
+	if !ok {
+		ruleSet = ehDefaultNetworkRuleSet(id)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []EHNetworkRuleSet{ruleSet}})
+}
+
+// handleEHUpdateNamespace applies a PATCH to an Event Hubs namespace.
+func handleEHUpdateNamespace(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	n, ok := ehNamespaces.Get(id)
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	var req EHNamespace
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	if req.Location != "" {
+		n.Location = req.Location
+	}
+	if req.SKU != nil {
+		n.SKU = req.SKU
+	}
+	if req.Tags != nil {
+		n.Tags = req.Tags
+	}
+	if n.Properties == nil {
+		n.Properties = map[string]any{}
+	}
+	for k, v := range req.Properties {
+		n.Properties[k] = v
+	}
+	ehApplyNamespaceDefaults(&n, r)
+	n.Properties["provisioningState"] = "Succeeded"
+	n.Properties["status"] = "Active"
+	ehNamespaces.Put(id, n)
+	sim.WriteJSON(w, http.StatusOK, n)
+}
+
+// handleEHListNamespacesBySub lists every Event Hubs namespace in the
+// subscription.
+func handleEHListNamespacesBySub(w http.ResponseWriter, r *http.Request) {
+	prefix := fmt.Sprintf("/subscriptions/%s/", sim.PathParam(r, "subscriptionId"))
+	var out []EHNamespace
+	for _, n := range ehNamespaces.List() {
+		if strings.HasPrefix(n.ID, prefix) {
+			ehApplyNamespaceDefaults(&n, r)
+			out = append(out, n)
+		}
+	}
+	if out == nil {
+		out = []EHNamespace{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func ehPrivateEndpointConnectionID(sub, rg, name, pec string) string {
+	return ehNamespaceID(sub, rg, name) + "/privateEndpointConnections/" + pec
+}
+
+func handleEHListPrivateEndpointConnections(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	prefix := id + "/privateEndpointConnections/"
+	var out []EHPrivateEndpointConnection
+	for _, pec := range ehPrivateConns.List() {
+		if strings.HasPrefix(pec.ID, prefix) {
+			out = append(out, pec)
+		}
+	}
+	if out == nil {
+		out = []EHPrivateEndpointConnection{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleEHGetPrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	id := ehPrivateEndpointConnectionID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	pec, ok := ehPrivateConns.Get(id)
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "private endpoint connection not found", http.StatusNotFound)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleEHPutPrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	sub, rg, name, pecName := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec")
+	if _, ok := ehNamespaces.Get(ehNamespaceID(sub, rg, name)); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	var req EHPrivateEndpointConnection
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	id := ehPrivateEndpointConnectionID(sub, rg, name, pecName)
+	props := map[string]any{}
+	for k, v := range req.Properties {
+		props[k] = v
+	}
+	props["provisioningState"] = "Succeeded"
+	pec := EHPrivateEndpointConnection{
+		ID:         id,
+		Name:       pecName,
+		Type:       "Microsoft.EventHub/namespaces/privateEndpointConnections",
+		Properties: props,
+	}
+	ehPrivateConns.Put(id, pec)
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleEHDeletePrivateEndpointConnection(w http.ResponseWriter, r *http.Request) {
+	id := ehPrivateEndpointConnectionID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	if !ehPrivateConns.Delete(id) {
+		sim.AzureError(w, "ResourceNotFound", "private endpoint connection not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleEHListPrivateLinkResources returns the namespace's private link
+// resource groups (the single "namespace" group).
+func handleEHListPrivateLinkResources(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value": []map[string]any{{
+			"id":   id + "/privateLinkResources/namespace",
+			"name": "namespace",
+			"type": "Microsoft.EventHub/namespaces/privateLinkResources",
+			"properties": map[string]any{
+				"groupId":           "namespace",
+				"requiredMembers":   []string{"namespace"},
+				"requiredZoneNames": []string{"privatelink.servicebus.windows.net"},
+			},
+		}},
+	})
+}
+
+// handleEHListNetworkSecurityPerimeterConfigs returns the namespace's
+// network security perimeter configurations (none until a perimeter is
+// associated, as real Azure returns).
+func handleEHListNetworkSecurityPerimeterConfigs(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+}
+
+func handleEHGetNetworkSecurityPerimeterConfig(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	sim.AzureError(w, "ResourceNotFound", "network security perimeter configuration not found", http.StatusNotFound)
+}
+
+func handleEHReconcileNetworkSecurityPerimeterConfig(w http.ResponseWriter, r *http.Request) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	if _, ok := ehNamespaces.Get(id); !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// ehDRAuthRuleParent validates the namespace exists and returns its
+// resource ID. A GEO-DR alias surfaces the primary namespace's SAS
+// authorization rules, so they are read through the namespace store.
+func ehDRAuthRuleParent(r *http.Request) (string, bool) {
+	id := ehNamespaceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"))
+	_, ok := ehNamespaces.Get(id)
+	return id, ok
+}
+
+func handleEHListDRAuthorizationRules(w http.ResponseWriter, r *http.Request) {
+	parent, ok := ehDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	prefix := parent + "/authorizationRules/"
+	var out []EHAuthorizationRule
+	for _, rule := range ehAuthRules.List() {
+		if strings.HasPrefix(rule.ID, prefix) {
+			out = append(out, rule)
+		}
+	}
+	if out == nil {
+		out = []EHAuthorizationRule{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleEHGetDRAuthorizationRule(w http.ResponseWriter, r *http.Request) {
+	parent, ok := ehDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	rule, ok := ehAuthRules.Get(parent + "/authorizationRules/" + sim.PathParam(r, "rule"))
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "authorization rule not found", http.StatusNotFound)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, rule)
+}
+
+func handleEHListDRAuthorizationRuleKeys(w http.ResponseWriter, r *http.Request) {
+	parent, ok := ehDRAuthRuleParent(r)
+	if !ok {
+		sim.AzureError(w, "ResourceNotFound", "namespace not found", http.StatusNotFound)
+		return
+	}
+	ruleName := sim.PathParam(r, "rule")
+	if _, ok := ehAuthRules.Get(parent + "/authorizationRules/" + ruleName); !ok {
+		sim.AzureError(w, "ResourceNotFound", "authorization rule not found", http.StatusNotFound)
+		return
+	}
+	namespace := sim.PathParam(r, "name")
+	key := "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	conn := fmt.Sprintf("Endpoint=%s;SharedAccessKeyName=%s;SharedAccessKey=%s", azureServiceBusConnectionEndpoint(r, namespace), ruleName, key)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"keyName":                   ruleName,
+		"primaryKey":                key,
+		"secondaryKey":              key,
+		"primaryConnectionString":   conn,
+		"secondaryConnectionString": conn,
 	})
 }
 
