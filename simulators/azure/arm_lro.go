@@ -66,5 +66,12 @@ func handleAzureAsyncOperationStatus(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Operation %q not found.", opID)
 		return
 	}
+	// Real Azure returns a Retry-After on an in-progress operation poll; advertise
+	// a short one so the SDK poller re-polls promptly. Without it azcore falls
+	// back to its 30s default frequency (a Retry-After of 0 is ignored), which
+	// would make each long-running operation in a test take 30s.
+	if op.Status == "InProgress" {
+		w.Header().Set("Retry-After", "1")
+	}
 	sim.WriteJSON(w, http.StatusOK, op)
 }
