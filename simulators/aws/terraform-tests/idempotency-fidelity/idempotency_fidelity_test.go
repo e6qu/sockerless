@@ -34,6 +34,16 @@ func TestIdempotencyFidelity(t *testing.T) {
 	require.Contains(t, outputs.must(t, "listener_certificate_arn"), "arn:aws:acm:",
 		"HTTPS listener certificate_arn must round-trip through state")
 
+	// #691: the NLB dns_name must be a stable, AWS-shaped hostname — never the
+	// data-plane proxy host:port — so the Route53 alias above is valid and the
+	// plan stays clean. A host:port would contain a colon (and break the alias).
+	nlbDNS := outputs.must(t, "nlb_dns_name")
+	require.NotContains(t, nlbDNS, ":", "NLB dns_name must be a hostname, not host:port")
+	require.Regexp(t, `^fidelity-nlb-[0-9a-f]+\.elb\.us-east-1\.amazonaws\.com$`, nlbDNS,
+		"NLB dns_name must be the AWS-shaped NLB hostname")
+	require.NotEmpty(t, outputs.must(t, "nlb_zone_id"),
+		"NLB zone_id (CanonicalHostedZoneId) is required for the Route53 alias target")
+
 	env.Terraform(t, "destroy", "-auto-approve")
 }
 

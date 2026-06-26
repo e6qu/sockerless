@@ -667,11 +667,13 @@ func handleELBv2CreateListener(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// NLB stream listeners forward a raw byte stream; bind a real TCP proxy so
-	// the data plane is faithful (e.g. SSH through an NLB).
-	if err := elbv2StartNLBProxy(listener); err != nil {
-		elbv2ErrorXML(w, "OperationNotPermitted", err.Error(), http.StatusBadRequest, sim.RequestID(r.Context()))
-		return
-	}
+	// the data plane is faithful (e.g. SSH through an NLB). Real CreateListener
+	// always succeeds — the proxy is the sim's local realization of the data
+	// plane, and binding the listener port on the dev host can legitimately fail
+	// (a privileged port without root, or a same-port collision off Linux). In
+	// that case the control plane (and the stable DNSName) stay faithful; only the
+	// local raw-TCP data plane for this listener is unavailable on this host.
+	elbv2StartNLBProxyBestEffort(listener)
 	elbv2XMLResponse(w, "CreateListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
 }
 
@@ -871,7 +873,7 @@ func elbv2LoadBalancerXML(lb ELBv2LoadBalancer) string {
 		extra += fmt.Sprintf("<CustomerOwnedIpv4Pool>%s</CustomerOwnedIpv4Pool>", xmlEscape(lb.CustomerOwnedIpv4Pool))
 	}
 	return fmt.Sprintf(`<member><LoadBalancerArn>%s</LoadBalancerArn><DNSName>%s</DNSName><CanonicalHostedZoneId>%s</CanonicalHostedZoneId><CreatedTime>%s</CreatedTime><LoadBalancerName>%s</LoadBalancerName><Scheme>%s</Scheme><VpcId>%s</VpcId><State><Code>%s</Code></State><Type>%s</Type><AvailabilityZones>%s</AvailabilityZones><SecurityGroups>%s</SecurityGroups><IpAddressType>%s</IpAddressType>%s</member>`,
-		xmlEscape(lb.Arn), xmlEscape(elbv2ReportedDNSName(lb)), xmlEscape(lb.CanonicalZone), xmlEscape(lb.CreatedTime), xmlEscape(lb.Name),
+		xmlEscape(lb.Arn), xmlEscape(lb.DNSName), xmlEscape(lb.CanonicalZone), xmlEscape(lb.CreatedTime), xmlEscape(lb.Name),
 		xmlEscape(lb.Scheme), xmlEscape(lb.VpcID), xmlEscape(lb.State), xmlEscape(lb.Type), elbv2AvailabilityZonesXML(lb.Subnets),
 		elbv2StringMembersXMLInner(lb.SecurityGroups), xmlEscape(lb.IpAddressType), extra)
 }
