@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -89,6 +90,155 @@ func registerSubscription(srv *sim.Server) {
 			"value": providers,
 		})
 	})
+
+	// GET - List subscriptions (SubscriptionsClient.NewListPager). The
+	// catalog is the default subscription plus any subscription that owns a
+	// resource group.
+	srv.HandleFunc("GET /subscriptions", func(w http.ResponseWriter, _ *http.Request) {
+		seen := map[string]bool{azureDefaultSubscriptionID: true}
+		out := []map[string]any{azureSubscriptionObject(azureDefaultSubscriptionID)}
+		for _, sub := range azureSubscriptionIDsWithResourceGroups() {
+			if seen[sub] {
+				continue
+			}
+			seen[sub] = true
+			out = append(out, azureSubscriptionObject(sub))
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	// GET - List the subscription's locations (SubscriptionsClient.NewListLocationsPager).
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/locations", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": azureLocations(sub)})
+	})
+
+	// GET - List tenants (TenantsClient.NewListPager).
+	srv.HandleFunc("GET /tenants", func(w http.ResponseWriter, _ *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"value": []map[string]any{{
+				"id":            "/tenants/" + simTenantID,
+				"tenantId":      simTenantID,
+				"displayName":   "Simulator Tenant",
+				"defaultDomain": "simulator.onmicrosoft.com",
+				"tenantType":    "AAD",
+				"countryCode":   "US",
+			}},
+		})
+	})
+
+	// POST - Check a resource name against ARM reserved words (CheckResourceNameClient).
+	srv.HandleFunc("POST /providers/Microsoft.Resources/checkResourceName", func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		status := "Allowed"
+		if azureReservedResourceName(req.Name) {
+			status = "Reserved"
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"name":   req.Name,
+			"type":   req.Type,
+			"status": status,
+		})
+	})
+
+	// POST - Check availability-zone peering between subscriptions
+	// (SubscriptionClient.CheckZonePeers). The SDK URL carries a trailing slash.
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Resources/checkZonePeers/", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		var req struct {
+			Location        string   `json:"location"`
+			SubscriptionIDs []string `json:"subscriptionIds"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		peers := make([]map[string]any, 0, len(req.SubscriptionIDs))
+		for _, peer := range req.SubscriptionIDs {
+			peers = append(peers, map[string]any{"availabilityZone": "1", "peers": []map[string]any{{"availabilityZone": "1", "subscriptionId": peer}}})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"subscriptionId":        sub,
+			"location":              req.Location,
+			"availabilityZonePeers": peers,
+		})
+	})
+}
+
+// azureDefaultSubscriptionID is the subscription identity the simulator presents
+// (also used by the instance-metadata endpoints).
+const azureDefaultSubscriptionID = "00000000-0000-0000-0000-000000000001"
+
+// azureSubscriptionIDsWithResourceGroups returns the distinct subscription IDs
+// that own at least one resource group.
+func azureSubscriptionIDsWithResourceGroups() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, rg := range azureResourceGroups.List() {
+		parts := strings.Split(strings.TrimPrefix(rg.ID, "/subscriptions/"), "/")
+		if len(parts) == 0 || parts[0] == "" || seen[parts[0]] {
+			continue
+		}
+		seen[parts[0]] = true
+		out = append(out, parts[0])
+	}
+	return out
+}
+
+func azureSubscriptionObject(sub string) map[string]any {
+	return map[string]any{
+		"id":             "/subscriptions/" + sub,
+		"subscriptionId": sub,
+		"tenantId":       simTenantID,
+		"displayName":    "Simulator Subscription",
+		"state":          "Enabled",
+		"subscriptionPolicies": map[string]any{
+			"locationPlacementId": "Internal_2014-09-01",
+			"quotaId":             "Internal_2014-09-01",
+			"spendingLimit":       "Off",
+		},
+	}
+}
+
+// azureLocations is the simulated subscription's region catalog. The set mirrors
+// the regions the provider resource-type entries advertise.
+func azureLocations(sub string) []map[string]any {
+	type region struct{ name, display, regional string }
+	regions := []region{
+		{"eastus", "East US", "(US) East US"},
+		{"westeurope", "West Europe", "(Europe) West Europe"},
+		{"westus", "West US", "(US) West US"},
+	}
+	out := make([]map[string]any, 0, len(regions))
+	for _, rg := range regions {
+		out = append(out, map[string]any{
+			"id":                  fmt.Sprintf("/subscriptions/%s/locations/%s", sub, rg.name),
+			"subscriptionId":      sub,
+			"name":                rg.name,
+			"displayName":         rg.display,
+			"regionalDisplayName": rg.regional,
+			"type":                "Region",
+		})
+	}
+	return out
+}
+
+// azureReservedResourceName reports whether a resource name is an ARM reserved
+// word (CheckResourceName returns Reserved for these). The list mirrors the
+// well-known reserved set documented for the Resources checkResourceName API.
+func azureReservedResourceName(name string) bool {
+	reserved := map[string]bool{
+		"login": true, "microsoft": true, "azure": true, "windows": true,
+		"xbox": true, "bing": true,
+	}
+	return reserved[strings.ToLower(name)]
 }
 
 func azureProviderResourceTypeEntries(namespace string) []map[string]any {

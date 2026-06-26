@@ -145,6 +145,29 @@ func registerAPIM(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}/namedValues/{nv}", handleAPIMGetNamedValue)
 	srv.HandleFunc("DELETE "+base+"/{name}/namedValues/{nv}", handleAPIMDeleteNamedValue)
 	srv.HandleFunc("GET "+base+"/{name}/namedValues", handleAPIMListNamedValues)
+
+	registerAPIMMore(srv)
+}
+
+// apimRedactNamedValue returns a copy of the named value with the secret
+// `value` stripped from properties. A named value's secret is write-only on the
+// real service: GET / LIST / PUT / PATCH never echo it; only listValue does.
+func apimRedactNamedValue(nv APIMNamedValue) APIMNamedValue {
+	if nv.Properties == nil {
+		return nv
+	}
+	if _, ok := nv.Properties["value"]; !ok {
+		return nv
+	}
+	redacted := make(map[string]any, len(nv.Properties))
+	for k, v := range nv.Properties {
+		if k == "value" {
+			continue
+		}
+		redacted[k] = v
+	}
+	nv.Properties = redacted
+	return nv
 }
 
 // Sub-resource handlers — each follows the same shape: PUT replaces,
@@ -270,7 +293,7 @@ func handleAPIMCreateNamedValue(w http.ResponseWriter, r *http.Request) {
 		Properties: req.Properties,
 	}
 	apimNamedValues.Put(apimNamedValueKey(sub, rg, svc, n), nv)
-	sim.WriteJSON(w, http.StatusOK, nv)
+	sim.WriteJSON(w, http.StatusOK, apimRedactNamedValue(nv))
 }
 func handleAPIMGetNamedValue(w http.ResponseWriter, r *http.Request) {
 	sub, rg, svc, n := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "nv")
@@ -279,7 +302,7 @@ func handleAPIMGetNamedValue(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "NamedValue %q not found", n)
 		return
 	}
-	sim.WriteJSON(w, http.StatusOK, nv)
+	sim.WriteJSON(w, http.StatusOK, apimRedactNamedValue(nv))
 }
 func handleAPIMDeleteNamedValue(w http.ResponseWriter, r *http.Request) {
 	sub, rg, svc, n := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "nv")
@@ -293,6 +316,9 @@ func handleAPIMListNamedValues(w http.ResponseWriter, r *http.Request) {
 	sub, rg, svc := sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")
 	prefix := apimServiceID(sub, rg, svc) + "/namedValues/"
 	all := apimNamedValues.Filter(func(nv APIMNamedValue) bool { return strings.HasPrefix(nv.ID, prefix) })
+	for i := range all {
+		all[i] = apimRedactNamedValue(all[i])
+	}
 	if all == nil {
 		all = []APIMNamedValue{}
 	}
@@ -380,6 +406,30 @@ func handleAPIMDeleteService(w http.ResponseWriter, r *http.Request) {
 	for _, s := range apimSubscriptions.List() {
 		if strings.HasPrefix(s.ID, prefix) {
 			apimSubscriptions.Delete(s.ID)
+		}
+	}
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	for _, o := range apimOperations.List() {
+		if rest, found := strings.CutPrefix(o.ID, id+"/apis/"); found {
+			if api, op, ok := strings.Cut(rest, "/operations/"); ok {
+				apimOperations.Delete(apimOperationKey(sub, rg, name, api, op))
+			}
+		}
+	}
+	for _, b := range apimBackends.List() {
+		if strings.HasPrefix(b.ID, prefix) {
+			apimBackends.Delete(apimBackendKey(sub, rg, name, b.Name))
+		}
+	}
+	for _, nv := range apimNamedValues.List() {
+		if strings.HasPrefix(nv.ID, prefix) {
+			apimNamedValues.Delete(apimNamedValueKey(sub, rg, name, nv.Name))
+		}
+	}
+	for _, c := range apimChildren.List() {
+		if strings.HasPrefix(strings.ToLower(c.ID), strings.ToLower(prefix)) {
+			apimChildren.Delete(strings.ToLower(c.ID))
 		}
 	}
 	// All APIM deletes return a synchronous 200: terraform-provider-azurerm's

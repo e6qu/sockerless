@@ -108,6 +108,9 @@ func registerEventGrid(srv *sim.Server) {
 	srv.HandleFunc("DELETE "+partnerTopicsBase+"/{partnerTopicName}/providers/Microsoft.EventGrid/eventSubscriptions/{eventSubscriptionName}", handleEventGridDeleteEventSubscription)
 	srv.HandleFunc("GET "+partnerTopicsBase+"/{partnerTopicName}/providers/Microsoft.EventGrid/eventSubscriptions", handleEventGridListEventSubscriptions)
 
+	registerEventGridMore(srv)
+	registerEventGridPartner(srv)
+
 	srv.WrapHandler(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			host := r.Host
@@ -164,16 +167,29 @@ func eventGridScopeFromRequest(r *http.Request) (string, sim.Store[EventGridTopi
 		return eventGridSystemTopicID(sub, rg, sim.PathParam(r, "systemTopicName")), eventGridSystemTopics, true
 	case sim.PathParam(r, "partnerTopicName") != "":
 		return eventGridPartnerTopicID(sub, rg, sim.PathParam(r, "partnerTopicName")), eventGridPartnerTopics, true
+	case sim.PathParam(r, "domainName") != "":
+		// A domain-scoped event subscription (domains/{domainName}/
+		// eventSubscriptions/...) — distinct from a domain TOPIC scope,
+		// which sets domainTopicName and is matched above.
+		return eventGridDomainID(sub, rg, sim.PathParam(r, "domainName")), eventGridDomains, true
 	default:
 		return "", nil, false
 	}
 }
 
+// eventGridSubscriptionIDForRequest builds the canonical event-subscription
+// resource ID for the addressed scope. Azure routes the same logical
+// subscription through two URL shapes: the provider-qualified
+// ".../providers/Microsoft.EventGrid/eventSubscriptions/{name}" form
+// (the EventSubscriptions operations group at an arbitrary {scope}) and the
+// nested ".../eventSubscriptions/{name}" form (the per-resource
+// {Topic,Domain,SystemTopic,PartnerTopic,DomainTopic}EventSubscriptions
+// groups). The ID mirrors whichever form addressed it.
 func eventGridSubscriptionIDForRequest(r *http.Request, scopeID, name string) string {
-	if sim.PathParam(r, "systemTopicName") != "" {
-		return eventGridSystemTopicSubscriptionID(scopeID, name)
+	if strings.Contains(r.URL.Path, "/providers/Microsoft.EventGrid/eventSubscriptions/") {
+		return eventGridSubscriptionID(scopeID, name)
 	}
-	return eventGridSubscriptionID(scopeID, name)
+	return eventGridSystemTopicSubscriptionID(scopeID, name)
 }
 
 func eventGridEndpointHost(r *http.Request, topic string) string {
