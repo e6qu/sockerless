@@ -4,13 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/elbv2-tcp-healthcheck-fields` — **ELBv2 TCP target group still returned HealthCheckPath (#688, BUG-2222).**
+`fix/elbv2-nlb-stable-dnsname` — **ELBv2 NLB DescribeLoadBalancers returned proxy host:port as DNSName (#691, BUG-2223).**
 
-- Follow-up to #685 (which omitted `Matcher` for TCP health checks): `HealthCheckPath` is the same HTTP/HTTPS-only class and was still leaking — `CreateTargetGroup` defaulted it to `/` for every protocol and the target-group XML emitted `<HealthCheckPath>` unconditionally, so a TCP target group returned `HealthCheckPath=/` → perpetual `terraform-provider-aws` `health_check.path` drift.
-- Fix: generalized `elbv2MatcherApplies` → `elbv2HTTPHealthCheck` (governs both HTTP-only fields) + a `elbv2DefaultedHealthCheckPath` helper. Create defaults the path to `/` only for HTTP/HTTPS; the XML emits it only for HTTP/HTTPS; Modify clears both Matcher + path when the health check changes to a non-HTTP protocol (defaults them when it changes to HTTP). Boyscout-confirmed `ProtocolVersion` is already omitted for TCP.
-- Tests: SDK + CLI fidelity tests assert the path is omitted for a TCP health check (and `/` for an HTTP health check on a TCP target group); the idempotency-fidelity terraform stack's TCP target group gained a TCP `health_check` block so `plan -detailed-exitcode` catches this drift class — real apply + clean plan (127s). aws build/lint(0) + conformance + spec-validator(0) green. Closes #688.
+- Regression from #683 (the NLB raw-TCP data plane): `elbv2ReportedDNSName` overrode the stable AWS-shaped `DNSName` with the proxy's dialable `host:port` for any NLB with a running stream listener. The proxy bound an ephemeral port → reported DNSName changed every run (perpetual `terraform-provider-aws` `dns_name` drift) and `host:port` is not a valid Route53 alias target.
+- Fix (reachability made faithful instead of hijacking DNSName): DescribeLoadBalancers always returns the stable `<name>-<id>.elb.<region>.amazonaws.com` hostname (NLB + ALB; `CanonicalHostedZoneId` present so a Route53 alias is valid). The NLB stream proxy binds the **listener's configured port** on a stable host — `127.0.0.1`, or (on Linux, when that port is taken by another NLB) a distinct per-NLB `127.0.0.0/8` address leased via the new `realexec.ReserveNLBLoopbackIPv4` (the real-NLB "each LB has its own IP" shape, collision-free). The AWS-shaped DNSName resolves to that proxy host through injected workload-container hosts entries (`elbv2NLBHostEntries`/`elbv2WorkloadExtraHosts` merged onto the ECS workload `ExtraHosts`) — the faithful production consumer of `elbv2NLBProxyAddress`, so the deadcode gate stays green. CreateListener is best-effort on bind (real AWS never fails CreateListener for a sim-local socket issue).
+- Tests: #691 contract guard (DNSName AWS-shaped, colon-free, stable across calls, CanonicalHostedZoneId present); the #683 raw-TCP capability test reworked to resolve the DNSName via the production hosts mapping then connect on the listener port; idempotency-fidelity terraform stack gained a `network` `aws_lb` + TCP listener/target-group + a Route53 alias targeting it (real apply + clean plan, 151s). aws+realexec build/lint(0)/deadcode(0) + conformance + spec-validator(0) green. Closes #691.
 
 **Next candidates:** keep ratcheting GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders) and **start ratcheting Azure services** now that its gate exists. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #690): ELBv2 TCP target group HealthCheckPath (#688, BUG-2222)
+Same HTTP-only class as #685's Matcher — `HealthCheckPath` was defaulted/emitted for every protocol; now omitted for non-HTTP health checks (`elbv2MatcherApplies` → `elbv2HTTPHealthCheck` + `elbv2DefaultedHealthCheckPath`). SDK/CLI + a TCP `health_check` block in the idempotency TF stack.
 
 ---
 ### Prior branch (merged #689): GCP coverage ratchet round 2 + Azure operation-coverage gate (BUG-2220/2221)

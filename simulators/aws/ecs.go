@@ -1656,7 +1656,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			// netns tier: share the pause container's ENI netns.
 			cfg.NetworkMode = sharedNetMode
 		case i == 0:
-			cfg.ExtraHosts = hostMetadataExtraHosts()
+			cfg.ExtraHosts = append(hostMetadataExtraHosts(), elbv2WorkloadExtraHosts()...)
 			if !netnsTier {
 				netName, dockerIP, ok, nerr := ecsTaskVPCNetwork(taskID)
 				if nerr != nil {

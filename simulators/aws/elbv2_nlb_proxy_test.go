@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"net"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,6 +21,22 @@ func elbv2InitStoresForTest(t *testing.T) {
 		t.Fatalf("new server: %v", err)
 	}
 	registerELBv2(sim.NewAWSQueryRouter(), srv)
+}
+
+// elbv2TestNLBEndpoint resolves a load balancer's stable AWS-shaped DNSName to
+// its stream proxy host through the production hosts-entry mapping
+// (elbv2NLBHostEntries), then joins the listener port — the faithful path an
+// in-network client uses (resolve the DNS name, connect on the listener port),
+// never a host:port read out of DNSName.
+func elbv2TestNLBEndpoint(t *testing.T, lb ELBv2LoadBalancer, listenerPort int) string {
+	t.Helper()
+	for _, entry := range elbv2NLBHostEntries() {
+		if entry.Name == strings.TrimSuffix(lb.DNSName, ".") {
+			return net.JoinHostPort(entry.IP, strconv.Itoa(listenerPort))
+		}
+	}
+	t.Fatalf("no NLB host entry resolves DNSName %q to a proxy host", lb.DNSName)
+	return ""
 }
 
 // TestELBv2NLBProxyForwardsRawTCP proves the NLB stream data plane forwards a
@@ -78,7 +95,7 @@ func TestELBv2NLBProxyForwardsRawTCP(t *testing.T) {
 		Targets: []ELBv2TargetDescription{{ID: backendHost, Port: backendPort}},
 	})
 	listener := ELBv2Listener{
-		Arn: listenerArn, LoadBalancerArn: lbArn, Protocol: "TCP", Port: 22,
+		Arn: listenerArn, LoadBalancerArn: lbArn, Protocol: "TCP", Port: 2022,
 		DefaultActions: []ELBv2Action{{Type: "forward", TargetGroupArn: tgArn}},
 	}
 	elbv2Listeners.Put(listenerArn, listener)
@@ -88,17 +105,15 @@ func TestELBv2NLBProxyForwardsRawTCP(t *testing.T) {
 	}
 	defer elbv2StopNLBProxy(listenerArn)
 
-	// Discover the endpoint the same way a real client does: through the
-	// production DescribeLoadBalancers path. For an NLB with a running stream
-	// listener the reported DNSName is the dialable host:port.
+	// Discover the endpoint the way an in-network client does: resolve the
+	// stable AWS-shaped DNSName (what DescribeLoadBalancers returns) to the
+	// proxy host through the injected hosts entries, then connect on the
+	// listener port — never a host:port read from DNSName.
 	lb, ok := elbv2LoadBalancers.Get(lbArn)
 	if !ok {
 		t.Fatal("load balancer not found")
 	}
-	endpoint := elbv2ReportedDNSName(lb)
-	if endpoint == lb.DNSName {
-		t.Fatalf("DescribeLoadBalancers did not surface the NLB stream endpoint: got AWS-shaped DNSName %q", endpoint)
-	}
+	endpoint := elbv2TestNLBEndpoint(t, lb, listener.Port)
 
 	conn, err := net.DialTimeout("tcp", endpoint, 5*time.Second)
 	if err != nil {
@@ -130,11 +145,12 @@ func TestELBv2NLBProxyNoHealthyTargets(t *testing.T) {
 	tgArn := "arn:aws:elasticloadbalancing:us-east-1:000000000000:targetgroup/nlb-empty-tg/abc123"
 	listenerArn := "arn:aws:elasticloadbalancing:us-east-1:000000000000:listener/net/nlb-empty/abc123/def456"
 
-	elbv2LoadBalancers.Put(lbArn, ELBv2LoadBalancer{Arn: lbArn, Name: "nlb-empty", Type: "network"})
+	elbv2LoadBalancers.Put(lbArn, ELBv2LoadBalancer{Arn: lbArn, Name: "nlb-empty", Type: "network",
+		DNSName: "nlb-empty-abc123.elb.us-east-1.amazonaws.com"})
 	// No registered targets → no healthy target.
 	elbv2TargetGroups.Put(tgArn, ELBv2TargetGroup{Arn: tgArn, Protocol: "TCP", Port: 443,
 		HealthCheckProtocol: "TCP", HealthCheckTimeout: 1, TargetType: "ip"})
-	listener := ELBv2Listener{Arn: listenerArn, LoadBalancerArn: lbArn, Protocol: "TCP", Port: 22,
+	listener := ELBv2Listener{Arn: listenerArn, LoadBalancerArn: lbArn, Protocol: "TCP", Port: 2022,
 		DefaultActions: []ELBv2Action{{Type: "forward", TargetGroupArn: tgArn}}}
 	elbv2Listeners.Put(listenerArn, listener)
 
@@ -147,7 +163,7 @@ func TestELBv2NLBProxyNoHealthyTargets(t *testing.T) {
 	if !ok {
 		t.Fatal("load balancer not found")
 	}
-	conn, err := net.DialTimeout("tcp", elbv2ReportedDNSName(lb), 5*time.Second)
+	conn, err := net.DialTimeout("tcp", elbv2TestNLBEndpoint(t, lb, listener.Port), 5*time.Second)
 	if err != nil {
 		t.Fatalf("dial NLB endpoint: %v", err)
 	}

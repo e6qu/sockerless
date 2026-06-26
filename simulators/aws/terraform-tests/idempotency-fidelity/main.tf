@@ -26,6 +26,7 @@ provider "aws" {
     dynamodb = var.endpoint
     ecr      = var.endpoint
     acm      = var.endpoint
+    route53  = var.endpoint
   }
 }
 
@@ -295,6 +296,56 @@ resource "aws_lb_listener_rule" "oidc" {
   }
 }
 
+# Network Load Balancer with a TCP listener, plus a Route53 alias record that
+# targets it. DescribeLoadBalancers must return a STABLE, AWS-shaped hostname for
+# dns_name (never the data-plane proxy host:port): an unstable or non-hostname
+# dns_name drifts the NLB every plan, and an alias { name = <host:port> } is
+# invalid for aws_route53_record (an alias target must be a hostname + zone id).
+resource "aws_lb" "nlb" {
+  name               = "fidelity-nlb"
+  internal           = true
+  load_balancer_type = "network"
+  subnets            = [aws_subnet.a.id]
+}
+
+resource "aws_lb_target_group" "nlb_tcp" {
+  name        = "fidelity-nlb-tg"
+  port        = 2223
+  protocol    = "TCP"
+  target_type = "ip"
+  vpc_id      = aws_vpc.main.id
+}
+
+resource "aws_lb_listener" "nlb_tcp" {
+  load_balancer_arn = aws_lb.nlb.arn
+  port              = 2223
+  protocol          = "TCP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.nlb_tcp.arn
+  }
+}
+
+resource "aws_route53_zone" "internal" {
+  name = "fidelity.internal"
+}
+
+# Alias to the NLB: requires a stable hostname (aws_lb.nlb.dns_name) and the
+# NLB's canonical hosted zone id (aws_lb.nlb.zone_id). A host:port dns_name would
+# make this resource invalid; an unstable dns_name would drift it every plan.
+resource "aws_route53_record" "nlb_alias" {
+  zone_id = aws_route53_zone.internal.zone_id
+  name    = "nlb.fidelity.internal"
+  type    = "A"
+
+  alias {
+    name                   = aws_lb.nlb.dns_name
+    zone_id                = aws_lb.nlb.zone_id
+    evaluate_target_health = true
+  }
+}
+
 # Inline-egress SG with both IPv4 + IPv6: DescribeSecurityGroups must echo
 # Ipv6Ranges or ipv6_cidr_blocks drifts every plan.
 resource "aws_security_group" "dualstack" {
@@ -437,4 +488,12 @@ output "nat_instance_id" {
 
 output "listener_certificate_arn" {
   value = aws_lb_listener.https.certificate_arn
+}
+
+output "nlb_dns_name" {
+  value = aws_lb.nlb.dns_name
+}
+
+output "nlb_zone_id" {
+  value = aws_lb.nlb.zone_id
 }
