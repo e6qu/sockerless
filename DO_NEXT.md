@@ -4,15 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/azure-ratchet-3` — **third Azure service ratchet (BUG-2229).** Four agents (one service-set each, isolated worktrees → merged + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
+`feat/azure-ratchet-4` — **fourth Azure service ratchet (BUG-2234).** Four agents (isolated worktrees → merged with zero conflicts + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations, list-by-sub/RG paths exercised) + real `azure-sdk-for-go`.
 
-- **Cosmos DB** (Microsoft.DocumentDB): 2024-08-15 25→103/124, 2021-10-15 25→100/121 (MongoDB/Cassandra/Gremlin/Table families, SQL stored-procs/UDFs/triggers/client-encryption-keys, throughput autoscale↔manual migration, account update/failover/regenerateKey/checkNameExists, operations/locations — one version-agnostic handler set).
-- **Event Grid** (Microsoft.EventGrid): 2021-12-01 31→61/61, 2022-06-15 40→127/127 — both 100% (topics/domains/system-topics + per-scope event subscriptions, full partner family, topic-type/system-event-type catalogs).
-- **API Management** (Microsoft.ApiManagement): apimapis 9→52/91, apimproducts 4→25/31; apimbackends/apimdeletedservices/apimdeployment/apimnamedvalues/apimsubscriptions all 100%. Fixed BUG-2228 (named-value secret leak).
-- **PostgreSQL Flexible Server** 15→37/66 (start/stop/restart/failover LROs, administrators/backups/replicas/virtualEndpoints); **ARM Resources core** 15→32/40 (providers, deployments + exportTemplate, moveResources LROs, tagNames); **subscriptions** 1→7/7 (100%); **App Insights components** 3→8/8 (100%) — the shared moveResources route incidentally lifted web-arm 35→37.
-- **Azure total 1000→1409/2597 (38%→54%).** Merged-sim coverage equals the sum of the per-agent measurements; azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + spec-validator(0) + contract-hook all green.
+- **Logic Apps** (Microsoft.Logic) 13→106/106 (100%): workflows + versions + triggers + runs/actions/repetitions, integration accounts + 8 artifact collections, integration service environments + managed APIs.
+- **App Service / Web Apps** (Microsoft.Web) 37→161/692 (the core surface a real client uses: app service plans, web apps + slots, config/appsettings/connectionstrings, deployments, host-name bindings, source control, functions, static web apps, subscription-global catalogs). Fixed BUG-2233 (FunctionEnvelope `properties.name` leak + status codes). 100% is not the goal for a 692-op surface.
+- **Cosmos DB** finished: 2024-08-15 103→124/124, 2021-10-15 100→121/121, private-endpoint-connections 0→4/4 each (metrics/usages/percentile + region online/offline LROs); **Log Analytics query** data-plane 1→5/7 (shared `runKQLQuery`, real tables/columns/rows).
+- **API Management** apimapis 52→91/91, apimproducts 25→31/31 (resolvers, issues, tag descriptions, wikis); **PostgreSQL** 37→66/66 (LTR backups, threat protection, tuning, migrations, PEC); **ARM Resources** 32→36/40 (the 4 remaining are generic-resource routes Go 1.22's mux can't host).
+- **Azure total 1409→1758/2597 (54%→68%).** Merged-sim coverage equals the sum of the per-agent measurements; new LRO paths reuse the shared helper (Retry-After:1 → fast pollers). azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + contract-hook all green.
 
-**Next candidates:** keep ratcheting Azure (the cosmos remainder + the two cosmos PEC docs, the remaining apim resolvers/issues/wikis, postgresql/resources remainders, logic-arm 13/106, web-arm 37/692, monitor/operationalinsights, msgraph) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders, Compute selectively). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** keep ratcheting Azure (web-arm 161→ more of the 692, the remaining logic/apim greedy-template ops, msgraph, the two `{resourceId}/query` log-analytics ops, monitor metrics) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders, Compute selectively). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #695): third Azure service ratchet (BUG-2229) + CI-caught fixes (BUG-2230/2231/2232)
+Cosmos DB (Mongo/Cassandra/Gremlin families) + Event Grid (both docs 100%, partner family) + API Management (apis 52/91, five docs 100%) + PostgreSQL/Resources/subscriptions/App Insights; Azure 1000→1409/2597. Plus CI-caught fixes: async-op Retry-After (30s→1s polls), CLI timeout budget, Event Grid keyGeneration leak, and a GCP dep-cascade build fix.
 
 ---
 ### Prior branch (merged #694): second Azure service ratchet (BUG-2226) + CI-caught fixes (BUG-2227)

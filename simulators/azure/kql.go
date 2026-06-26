@@ -96,6 +96,72 @@ func parseKQLWhere(clause string) kqlFilter {
 	return kqlFilter{}
 }
 
+// runKQLQuery executes a KQL query against the workspace's stored log rows and
+// returns the QueryResults tabular shape. Both the POST and GET Log Analytics
+// query endpoints and each member of a $batch run through here.
+func runKQLQuery(workspaceID, query string) QueryResponse {
+	parsed := parseKQL(query)
+
+	columns, ok := kqlTableSchemas[parsed.Table]
+	if !ok {
+		// Default to ContainerAppConsoleLogs_CL schema for an unknown table.
+		columns = kqlTableSchemas["ContainerAppConsoleLogs_CL"]
+	}
+
+	storeKey := workspaceID + ":" + parsed.Table
+	entries, _ := monitorLogs.Get(storeKey)
+	if len(entries) == 0 {
+		entries, _ = monitorLogs.Get("default:" + parsed.Table)
+	}
+
+	rows := make([][]any, 0)
+	for _, row := range entries {
+		if !row.matchesFilters(parsed.Filters) {
+			continue
+		}
+		rows = append(rows, row.toRow(columns))
+		if parsed.Limit > 0 && len(rows) >= parsed.Limit {
+			break
+		}
+	}
+
+	// Apply project clause — filter columns and rows to the projected subset.
+	resultColumns := columns
+	resultRows := rows
+	if len(parsed.Project) > 0 {
+		colIndex := make(map[string]int, len(columns))
+		for i, col := range columns {
+			colIndex[col.Name] = i
+		}
+		var projCols []Column
+		var projIndices []int
+		for _, name := range parsed.Project {
+			if idx, ok := colIndex[name]; ok {
+				projCols = append(projCols, columns[idx])
+				projIndices = append(projIndices, idx)
+			}
+		}
+		projRows := make([][]any, len(rows))
+		for i, row := range rows {
+			pr := make([]any, len(projIndices))
+			for j, idx := range projIndices {
+				pr[j] = row[idx]
+			}
+			projRows[i] = pr
+		}
+		resultColumns = projCols
+		resultRows = projRows
+	}
+
+	return QueryResponse{
+		Tables: []Table{{
+			Name:    "PrimaryResult",
+			Columns: resultColumns,
+			Rows:    resultRows,
+		}},
+	}
+}
+
 // Table schemas — maps table name to column definitions.
 var kqlTableSchemas = map[string][]Column{
 	"ContainerAppConsoleLogs_CL": {

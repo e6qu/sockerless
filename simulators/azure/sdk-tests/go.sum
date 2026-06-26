@@ -18,6 +18,8 @@ github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2 v2.0.2 h1:EBiOwZY
 github.com/Azure/azure-sdk-for-go/sdk/messaging/azeventhubs/v2 v2.0.2/go.mod h1:NjuxmUsBJ0Ya9Xxjhjo06bj3/QB4C8z838I5S88UtQQ=
 github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.10.0 h1:kE5kpeiSqu4jcCQ/sWuyggMXJ/pT6oQ99+8hwPmyeJ0=
 github.com/Azure/azure-sdk-for-go/sdk/messaging/azservicebus v1.10.0/go.mod h1:IAN3Z0DMtehoxoQQnfqg1891z1P7GNoDryKtFcAyMBI=
+github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery v1.2.0 h1:s0SaQtHigowP0n3Kx4ieV94pNZAHlHhS+xjZyLCSVCQ=
+github.com/Azure/azure-sdk-for-go/sdk/monitor/azquery v1.2.0/go.mod h1:oI5SPI1vpNJYfP9MPWXthq7jDfh9xTAuQVBKPOu7DPo=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3 v3.1.0 h1:ilMZ576u8sm975EqV+AKEtD4u9TLwqEo2XY9csPXBRo=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v3 v3.1.0/go.mod h1:LGhzy+pg9AKr1Z7ZRyTC1qr1xNyVqLsqydvLdY+2iQk=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/applicationinsights/armapplicationinsights v1.2.0 h1:7FX6sHNPamIAyukt6w9Gw5Qa5bu+gVN2Iy70yHc0xns=

@@ -81,6 +81,25 @@ func registerAPIMMore(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{name}/apis/{api}/revisions", handleAPIMListApiRevisions)
 	srv.HandleFunc("GET "+base+"/{name}/apis/{api}/products", handleAPIMListApiProducts)
 
+	// GraphQL API resolvers + resolver policies.
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/resolvers", "{resolver}", "Microsoft.ApiManagement/service/apis/resolvers", true)
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/resolvers/{resolver}/policies", "{policy}", "Microsoft.ApiManagement/service/apis/resolvers/policies", false)
+
+	// API issues + issue comments + issue attachments.
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/issues", "{issue}", "Microsoft.ApiManagement/service/apis/issues", true)
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/issues/{issue}/comments", "{comment}", "Microsoft.ApiManagement/service/apis/issues/comments", false)
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/issues/{issue}/attachments", "{attachment}", "Microsoft.ApiManagement/service/apis/issues/attachments", false)
+
+	// API tag descriptions + API wiki.
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/tagDescriptions", "{tagDescription}", "Microsoft.ApiManagement/service/apis/tagDescriptions", false)
+	apimRegisterChild(srv, base+"/{name}/apis/{api}/wikis", "default", "Microsoft.ApiManagement/service/apis/wikis", true)
+
+	// Operations grouped by tag (read-only).
+	srv.HandleFunc("GET "+base+"/{name}/apis/{api}/operationsByTags", handleAPIMOperationsByTags)
+
+	// Product wiki.
+	apimRegisterChild(srv, base+"/{name}/products/{product}/wikis", "default", "Microsoft.ApiManagement/service/products/wikis", true)
+
 	// Product Update + child collections + associations.
 	srv.HandleFunc("PATCH "+base+"/{name}/products/{product}", handleAPIMPatchChildStore(apimProductsStore))
 	apimRegisterChild(srv, base+"/{name}/products/{product}/policies", "{policy}", "Microsoft.ApiManagement/service/products/policies", false)
@@ -537,6 +556,56 @@ func handleAPIMListApiProducts(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// handleAPIMOperationsByTags lists the API's operations grouped with the tags
+// assigned to them (Operation_ListByTags → TagResourceCollection). Each entry
+// pairs one operation with one tag assigned to it; the operation-tag links are
+// the per-operation tag children created via .../operations/{op}/tags/{tag}.
+func handleAPIMOperationsByTags(w http.ResponseWriter, r *http.Request) {
+	apiID := apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) +
+		"/apis/" + sim.PathParam(r, "api")
+	if _, ok := apimApis.Get(apiID); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "api not found")
+		return
+	}
+	opTagType := "Microsoft.ApiManagement/service/apis/operations/tags"
+	out := []map[string]any{}
+	for _, c := range apimChildren.List() {
+		if c.Type != opTagType {
+			continue
+		}
+		// c.ID is <apiID>/operations/<op>/tags/<tag>.
+		if !strings.HasPrefix(c.ID, apiID+"/operations/") {
+			continue
+		}
+		rest := strings.TrimPrefix(c.ID, apiID+"/operations/")
+		parts := strings.SplitN(rest, "/tags/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		opName, tagName := parts[0], parts[1]
+		opEntry := map[string]any{
+			"id":   apiID + "/operations/" + opName,
+			"name": opName,
+		}
+		if o, ok := apimOperations.Get(apimOperationKey(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name"), sim.PathParam(r, "api"), opName)); ok {
+			if m, ok := o.Properties["method"].(string); ok {
+				opEntry["method"] = m
+			}
+			if u, ok := o.Properties["urlTemplate"].(string); ok {
+				opEntry["urlTemplate"] = u
+			}
+		}
+		out = append(out, map[string]any{
+			"tag": map[string]any{
+				"id":   apimServiceID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/tags/" + tagName,
+				"name": tagName,
+			},
+			"operation": opEntry,
+		})
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out, "count": len(out)})
 }
 
 // ---- product ↔ api / group associations -------------------------------------

@@ -49,6 +49,9 @@ func registerResourcesARM(srv *sim.Server) {
 	srv.HandleFunc("POST /subscriptions/{subscriptionId}/resourceGroups/{sourceResourceGroupName}/moveResources", handleMoveResources)
 	srv.HandleFunc("POST /subscriptions/{subscriptionId}/resourceGroups/{sourceResourceGroupName}/validateMoveResources", handleMoveResources)
 
+	// Resource-provider registration at management-group scope.
+	srv.HandleFunc("POST /providers/Microsoft.Management/managementGroups/{groupId}/providers/{resourceProviderNamespace}/register", handleProviderRegisterAtMG)
+
 	// Legacy predefined tagNames catalog.
 	srv.HandleFunc("GET /subscriptions/{subscriptionId}/tagNames", handleTagNamesList)
 	srv.HandleFunc("PUT /subscriptions/{subscriptionId}/tagNames/{tagName}", handleTagNameCreate)
@@ -222,6 +225,17 @@ func handleMoveResources(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Azure-AsyncOperation", opURL)
 	w.Header().Set("Retry-After", "0")
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// handleProviderRegisterAtMG registers a resource provider at management-group
+// scope (Providers_RegisterAtManagementGroupScope). The operation returns no
+// body; the registration is reflected on subsequent provider reads.
+func handleProviderRegisterAtMG(w http.ResponseWriter, r *http.Request) {
+	if _, ok := azureKnownProvider(sim.PathParam(r, "resourceProviderNamespace")); !ok {
+		sim.AzureErrorf(w, "InvalidResourceNamespace", http.StatusNotFound, "The resource namespace %q is invalid.", sim.PathParam(r, "resourceProviderNamespace"))
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 // --- legacy predefined tagNames ---
