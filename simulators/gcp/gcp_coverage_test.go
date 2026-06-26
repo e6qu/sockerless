@@ -27,14 +27,14 @@ import (
 // (keyed by file name without the .discovery.json.gz suffix). Implement a
 // method (or grow the vendored doc) and the matching floor must move with it.
 var gcpMethodFloor = map[string]int{
-	"compute-v1":              174,
+	"compute-v1":              440,
 	"logging-v2":              480,
 	"cloudresourcemanager-v3": 105,
 	"sqladmin-v1beta4":        146,
 	"bigtableadmin-v2":        136,
 	"cloudrun-v1":             98,
 	"dataflow-v1b3":           84,
-	"cloudrun-v2":             62,
+	"cloudrun-v2":             89,
 	"iam-v1":                  264,
 	"bigquery-v2":             86,
 	"dns-v1":                  74,

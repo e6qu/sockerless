@@ -4,15 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/azure-ratchet-4` — **fourth Azure service ratchet (BUG-2234).** Four agents (isolated worktrees → merged with zero conflicts + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations, list-by-sub/RG paths exercised) + real `azure-sdk-for-go`.
+`feat/gcp-ratchet-3` — **GCP service ratchet round 3 (BUG-2235).** Pivoted from Azure to GCP (user choice). Four agents; gap-analysis showed **two targets were already at their faithful ceiling** — Bigtable Admin v2 (136/162), Cloud Resource Manager v3 (105/124), Logging v2 (480/508), Cloud Functions v2 (31/42) all have only `{+name}`/`{+resource}` reserved-expansion template alternates left, which the route-validity gate forbids matching. The agents correctly produced no work for those. The two with real gaps:
 
-- **Logic Apps** (Microsoft.Logic) 13→106/106 (100%): workflows + versions + triggers + runs/actions/repetitions, integration accounts + 8 artifact collections, integration service environments + managed APIs.
-- **App Service / Web Apps** (Microsoft.Web) 37→161/692 (the core surface a real client uses: app service plans, web apps + slots, config/appsettings/connectionstrings, deployments, host-name bindings, source control, functions, static web apps, subscription-global catalogs). Fixed BUG-2233 (FunctionEnvelope `properties.name` leak + status codes). 100% is not the goal for a 692-op surface.
-- **Cosmos DB** finished: 2024-08-15 103→124/124, 2021-10-15 100→121/121, private-endpoint-connections 0→4/4 each (metrics/usages/percentile + region online/offline LROs); **Log Analytics query** data-plane 1→5/7 (shared `runKQLQuery`, real tables/columns/rows).
-- **API Management** apimapis 52→91/91, apimproducts 25→31/31 (resolvers, issues, tag descriptions, wikis); **PostgreSQL** 37→66/66 (LTR backups, threat protection, tuning, migrations, PEC); **ARM Resources** 32→36/40 (the 4 remaining are generic-resource routes Go 1.22's mux can't host).
-- **Azure total 1409→1758/2597 (54%→68%).** Merged-sim coverage equals the sum of the per-agent measurements; new LRO paths reuse the shared helper (Retry-After:1 → fast pollers). azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + contract-hook all green.
+- **Compute Engine v1** 174→440/1994 (`compute_more.go`): images/snapshots/machineImages, regionDisks, globalAddresses/routes, the load-balancing control plane (targetPools/forwardingRules/healthChecks/backendServices/urlMaps/proxies/sslCertificates), zonal+regional instanceGroupManagers, instance actions (reset/setMachineType/setMetadata/attach+detachDisk/getSerialPortOutput), catalog reads, aggregatedList/operations — all metadata-only/host-agnostic, real-exec network ops stay Linux-gated. 100% is not the goal for a 1994-op surface.
+- **Cloud Run v2** 62→89/116 (`cloudrunworkerpools.go`, `cloudruninstances.go`): worker pools (CRUD + revisions + IAM), instances (CRUD + start/stop + IAM), UpdateJob/DeleteExecution/Tasks — plus a real fix: v2 `GET .../jobs/{job}` didn't colon-split so `JobsClient.GetIamPolicy` 404'd. Cloud Run v1 unchanged (its remaining gaps have no stable SDK/CLI/terraform client path).
+- **GCP total 3180→3473/5244 (61%→66%).** Every op spec-validated against its Discovery doc (0 new violations) + real Google Cloud Go SDK. Known limitation (documented, not separately filed): Cloud Logging `projects.locations.get` collides with Cloud Run v2's `:exportProjectMetadata` colon-verb in the collapsed single-port sim; exportProjectMetadata has no stable client to implement first, so it can't be mounted without coverage inflation.
 
-**Next candidates:** keep ratcheting Azure (web-arm 161→ more of the 692, the remaining logic/apim greedy-template ops, msgraph, the two `{resourceId}/query` log-analytics ops, monitor metrics) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders, Compute selectively). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** GCP — more of Compute v1's 1994 (the next control-plane tranche), Spanner/SQL/BigQuery/Dataproc remainders, or the gRPC-only surfaces (Bigtable data, Pub/Sub, Firestore). Azure — web-arm 161→ more of the 692, msgraph. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #696): fourth Azure service ratchet (BUG-2234)
+Logic Apps 100%, App Service/Web Apps 37→161/692, Cosmos DB both versions 100% + PEC + Log Analytics query, API Management + PostgreSQL to 100%, Resources 36/40; Azure 1409→1758/2597 (54%→68%). Plus BUG-2233 (Web FunctionEnvelope name leak).
 
 ---
 ### Prior branch (merged #695): third Azure service ratchet (BUG-2229) + CI-caught fixes (BUG-2230/2231/2232)

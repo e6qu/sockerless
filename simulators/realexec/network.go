@@ -133,7 +133,17 @@ func (h *Host) CreateNetworkNamespace(ctx context.Context, namespaceName string)
 
 	rollback := &CleanupStack{}
 	if err := h.runner.Run(ctx, "ip", "netns", "add", namespaceName); err != nil {
-		return nil, err
+		// A namespace of this name may be orphaned in the host-global
+		// /run/netns/ by a prior sim process that was killed before its cleanup
+		// ran (the namespace name is deterministic per resource, so a fresh sim
+		// process derives the same one). Callers gate on their in-process owner
+		// map before reaching here, so a collision means a dead-process leftover
+		// with no live owner — reclaim it by deleting the orphan and retrying
+		// once rather than failing every instance create with "File exists".
+		_ = h.runner.Run(ctx, "ip", "netns", "del", namespaceName)
+		if err := h.runner.Run(ctx, "ip", "netns", "add", namespaceName); err != nil {
+			return nil, err
+		}
 	}
 	rollback.Add(func(cleanupCtx context.Context) error {
 		return h.runner.Run(cleanupCtx, "ip", "netns", "del", namespaceName)

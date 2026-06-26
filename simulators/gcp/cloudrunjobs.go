@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -163,6 +164,45 @@ type Execution struct {
 	Reconciling    bool              `json:"reconciling"`
 }
 
+// Task represents a single google.cloud.run.v2.Task — one attempt of one
+// unit of work within an Execution. Cloud Run materializes TaskCount tasks
+// per execution; the sim records them so the
+// jobs.executions.tasks get/list endpoints return faithful data.
+type Task struct {
+	Name              string             `json:"name"`
+	UID               string             `json:"uid"`
+	Generation        int64              `json:"generation,string"`
+	Labels            map[string]string  `json:"labels,omitempty"`
+	CreateTime        string             `json:"createTime"`
+	ScheduledTime     string             `json:"scheduledTime,omitempty"`
+	StartTime         string             `json:"startTime,omitempty"`
+	CompletionTime    string             `json:"completionTime,omitempty"`
+	Job               string             `json:"job,omitempty"`
+	Execution         string             `json:"execution,omitempty"`
+	Containers        []Container        `json:"containers,omitempty"`
+	Volumes           []Volume           `json:"volumes,omitempty"`
+	MaxRetries        int32              `json:"maxRetries"`
+	Timeout           string             `json:"timeout,omitempty"`
+	ServiceAccount    string             `json:"serviceAccount,omitempty"`
+	Index             int32              `json:"index"`
+	Retried           int32              `json:"retried"`
+	LastAttemptResult *TaskAttemptResult `json:"lastAttemptResult,omitempty"`
+	Conditions        []Condition        `json:"conditions,omitempty"`
+	Reconciling       bool               `json:"reconciling"`
+}
+
+// TaskAttemptResult mirrors google.cloud.run.v2.TaskAttemptResult.
+type TaskAttemptResult struct {
+	Status   *RPCStatus `json:"status,omitempty"`
+	ExitCode int32      `json:"exitCode"`
+}
+
+// RPCStatus mirrors google.rpc.Status as proto-JSON.
+type RPCStatus struct {
+	Code    int32  `json:"code"`
+	Message string `json:"message,omitempty"`
+}
+
 // Condition represents a status condition on a resource. State is
 // proto-JSON: real run/apiv2 REST clients serialize the enum as a
 // number on PATCH (e.g. `"state": 2` for CONDITION_SUCCEEDED), so
@@ -311,6 +351,7 @@ var crOperations sim.Store[Operation]
 func registerCloudRunJobs(srv *sim.Server) {
 	jobs := sim.MakeStore[Job](srv.DB(), "crj_jobs")
 	executions := sim.MakeStore[Execution](srv.DB(), "crj_executions")
+	tasks := sim.MakeStore[Task](srv.DB(), "crj_tasks")
 	crjJobs = jobs
 	if crOperations == nil {
 		crOperations = sim.MakeStore[Operation](srv.DB(), "operations")
@@ -392,6 +433,19 @@ func registerCloudRunJobs(srv *sim.Server) {
 			return // let the executions handler deal with it
 		}
 
+		// The {job} wildcard also carries the GET-side IAM verb
+		// `{job}:getIamPolicy` (Go's mux can't spell `{id}:verb`); split
+		// on the colon and dispatch to the shared IAM handler.
+		if id, action, found := strings.Cut(jobID, ":"); found {
+			if action == "getIamPolicy" {
+				handleResourceIAM(w, r, gcpResourceIAMStore(),
+					fmt.Sprintf("projects/%s/locations/%s/jobs/%s", project, location, id), action)
+				return
+			}
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown action %q on job %q", action, id)
+			return
+		}
+
 		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s", project, location, jobID)
 		job, ok := jobs.Get(name)
 		if !ok {
@@ -448,6 +502,12 @@ func registerCloudRunJobs(srv *sim.Server) {
 		for _, e := range execs {
 			executions.Delete(e.Name)
 		}
+		// Also delete tasks belonging to those executions.
+		for _, t := range tasks.Filter(func(t Task) bool {
+			return strings.HasPrefix(t.Name, name+"/executions/")
+		}) {
+			tasks.Delete(t.Name)
+		}
 
 		lro := newLRO(project, location, job, "type.googleapis.com/google.cloud.run.v2.Job")
 		sim.WriteJSON(w, http.StatusOK, lro)
@@ -498,6 +558,36 @@ func registerCloudRunJobs(srv *sim.Server) {
 		}
 
 		executions.Put(execName, exec)
+
+		// Materialize one Task per index, mirroring how Cloud Run creates
+		// TaskCount tasks when an execution starts.
+		for i := int32(0); i < taskCount; i++ {
+			taskID := generateUUID()
+			taskName := fmt.Sprintf("%s/tasks/%s", execName, taskID)
+			task := Task{
+				Name:       taskName,
+				UID:        generateUUID(),
+				Generation: 1,
+				Labels:     job.Labels,
+				CreateTime: now,
+				StartTime:  now,
+				Job:        name,
+				Execution:  execName,
+				Index:      i,
+				Conditions: []Condition{
+					{Type: "Started", State: "CONDITION_PENDING", LastTransitionTime: now},
+				},
+				Reconciling: true,
+			}
+			if tmpl != nil {
+				task.Containers = tmpl.Containers
+				task.Volumes = tmpl.Volumes
+				task.MaxRetries = tmpl.MaxRetries
+				task.Timeout = tmpl.Timeout
+				task.ServiceAccount = tmpl.ServiceAccount
+			}
+			tasks.Put(taskName, task)
+		}
 
 		// Inject log entries for the execution
 		injectCloudRunJobLog(project, jobID, "Container started")
@@ -566,6 +656,31 @@ func registerCloudRunJobs(srv *sim.Server) {
 				e.Reconciling = false
 			})
 			if completed {
+				// Settle each task to match the execution outcome.
+				taskState := "CONDITION_SUCCEEDED"
+				taskReason := ""
+				var exitCode int32
+				if !succeeded {
+					taskState = "CONDITION_FAILED"
+					taskReason = "NonZeroExitCode"
+					exitCode = 1
+				}
+				completionTime := nowTimestamp()
+				taskPrefix := id + "/tasks/"
+				for _, tk := range tasks.Filter(func(t Task) bool { return strings.HasPrefix(t.Name, taskPrefix) }) {
+					tasks.Update(tk.Name, func(t *Task) {
+						t.CompletionTime = completionTime
+						t.Conditions = []Condition{
+							{Type: "Started", State: "CONDITION_SUCCEEDED", LastTransitionTime: completionTime},
+							{Type: "Completed", State: enumString(taskState), LastTransitionTime: completionTime, Reason: taskReason},
+						}
+						t.LastAttemptResult = &TaskAttemptResult{
+							Status:   &RPCStatus{Code: exitCode},
+							ExitCode: exitCode,
+						}
+						t.Reconciling = false
+					})
+				}
 				// Update the job's latestCreatedExecution with completion time
 				if jobKey, _, ok := strings.Cut(id, "/executions/"); ok {
 					jobs.Update(jobKey, func(j *Job) {
@@ -689,6 +804,117 @@ func registerCloudRunJobs(srv *sim.Server) {
 		exec, _ := executions.Get(name)
 		lro := newLRO(project, location, exec, "type.googleapis.com/google.cloud.run.v2.Execution")
 		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// UpdateJob: PATCH /v2/projects/{project}/locations/{location}/jobs/{job}
+	srv.HandleFunc("PATCH /v2/projects/{project}/locations/{location}/jobs/{job}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		jobID := sim.PathParam(r, "job")
+		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s", project, location, jobID)
+		existing, ok := jobs.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "job %q not found", name)
+			return
+		}
+		var update Job
+		if err := sim.ReadJSON(r, &update); err != nil {
+			sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid request body: %v", err)
+			return
+		}
+		// UpdateJob has no updateMask parameter — the full mutable resource is
+		// replaced. Preserve identity + server-owned fields.
+		update.Name = existing.Name
+		update.UID = existing.UID
+		update.CreateTime = existing.CreateTime
+		update.Generation = existing.Generation + 1
+		update.UpdateTime = nowTimestamp()
+		update.ExecutionCount = existing.ExecutionCount
+		update.LatestCreatedExecution = existing.LatestCreatedExecution
+		if update.LaunchStage == "" {
+			update.LaunchStage = existing.LaunchStage
+		}
+		if update.Template != nil {
+			if update.Template.Parallelism == 0 {
+				update.Template.Parallelism = 1
+			}
+			if update.Template.TaskCount == 0 {
+				update.Template.TaskCount = 1
+			}
+		}
+		update.TerminalCondition = &Condition{
+			Type:               "Ready",
+			State:              "CONDITION_SUCCEEDED",
+			LastTransitionTime: update.UpdateTime,
+		}
+		update.Conditions = []Condition{
+			{Type: "ConfigurationsReady", State: "CONDITION_SUCCEEDED", LastTransitionTime: update.UpdateTime},
+			{Type: "Ready", State: "CONDITION_SUCCEEDED", LastTransitionTime: update.UpdateTime},
+		}
+		update.Reconciling = false
+		jobs.Put(name, update)
+		lro := newLRO(project, location, update, "type.googleapis.com/google.cloud.run.v2.Job")
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// DeleteExecution: DELETE /v2/.../jobs/{job}/executions/{execution}
+	srv.HandleFunc("DELETE /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		jobID := sim.PathParam(r, "job")
+		execID := sim.PathParam(r, "execution")
+		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s", project, location, jobID, execID)
+		exec, ok := executions.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "execution %q not found", name)
+			return
+		}
+		executions.Delete(name)
+		taskPrefix := name + "/tasks/"
+		for _, tk := range tasks.Filter(func(t Task) bool { return strings.HasPrefix(t.Name, taskPrefix) }) {
+			tasks.Delete(tk.Name)
+		}
+		lro := newLRO(project, location, exec, "type.googleapis.com/google.cloud.run.v2.Execution")
+		sim.WriteJSON(w, http.StatusOK, lro)
+	})
+
+	// GetTask: GET /v2/.../jobs/{job}/executions/{execution}/tasks/{task}
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}/tasks/{task}", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		jobID := sim.PathParam(r, "job")
+		execID := sim.PathParam(r, "execution")
+		taskID := sim.PathParam(r, "task")
+		name := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s/tasks/%s", project, location, jobID, execID, taskID)
+		task, ok := tasks.Get(name)
+		if !ok {
+			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "task %q not found", name)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, task)
+	})
+
+	// ListTasks: GET /v2/.../jobs/{job}/executions/{execution}/tasks
+	srv.HandleFunc("GET /v2/projects/{project}/locations/{location}/jobs/{job}/executions/{execution}/tasks", func(w http.ResponseWriter, r *http.Request) {
+		project := sim.PathParam(r, "project")
+		location := sim.PathParam(r, "location")
+		jobID := sim.PathParam(r, "job")
+		execID := sim.PathParam(r, "execution")
+		prefix := fmt.Sprintf("projects/%s/locations/%s/jobs/%s/executions/%s/tasks/", project, location, jobID, execID)
+		result := tasks.Filter(func(t Task) bool { return strings.HasPrefix(t.Name, prefix) })
+		if result == nil {
+			result = []Task{}
+		}
+		sort.Slice(result, func(i, j int) bool { return result[i].Index < result[j].Index })
+		page, next, ok := paginateList(w, r, result)
+		if !ok {
+			return
+		}
+		resp := map[string]any{"tasks": page}
+		if next != "" {
+			resp["nextPageToken"] = next
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
 	})
 }
 

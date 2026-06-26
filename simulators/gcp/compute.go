@@ -1985,7 +1985,15 @@ func registerComputeCatalog(srv *sim.Server) {
 		}
 	}
 	srv.HandleFunc("GET /compute/v1/projects/{project}/global/images/{image}", func(w http.ResponseWriter, r *http.Request) {
-		sim.WriteJSON(w, http.StatusOK, imageJSON(sim.PathParam(r, "project"), sim.PathParam(r, "image")))
+		project := sim.PathParam(r, "project")
+		name := sim.PathParam(r, "image")
+		if gcpComputeImages != nil {
+			if m, ok := gcpComputeImages.Get(fmt.Sprintf("projects/%s/global/images/%s", project, name)); ok {
+				sim.WriteJSON(w, http.StatusOK, m)
+				return
+			}
+		}
+		sim.WriteJSON(w, http.StatusOK, imageJSON(project, name))
 	})
 	srv.HandleFunc("GET /compute/v1/projects/{project}/global/images/family/{family}", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
