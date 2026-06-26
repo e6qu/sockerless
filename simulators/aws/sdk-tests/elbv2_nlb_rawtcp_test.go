@@ -71,6 +71,10 @@ func TestELBv2_NLBRawTCPRoundTrip(t *testing.T) {
 	})
 	require.NoError(t, err)
 	lbArn := aws.ToString(nlb.LoadBalancers[0].LoadBalancerArn)
+	// Delete the NLB at the end so its stream proxy (bound on the listener port)
+	// and the DNS hosts entry it injects into workload containers don't leak into
+	// the rest of the shared-sim test suite and interfere with later tests.
+	defer elb.DeleteLoadBalancer(ctx, &elbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(lbArn)})
 
 	tg, err := elb.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
 		Name: aws.String("nlb-rawtcp-tg"), Protocol: elbtypes.ProtocolEnumTcp, Port: aws.Int32(int32(backendPort)),
@@ -155,6 +159,8 @@ func TestELBv2_NLBDescribeStableHostname(t *testing.T) {
 	})
 	require.NoError(t, err)
 	lbArn := aws.ToString(nlb.LoadBalancers[0].LoadBalancerArn)
+	// Clean up so this NLB's proxy/host-entry doesn't leak into the shared suite.
+	defer elb.DeleteLoadBalancer(ctx, &elbv2.DeleteLoadBalancerInput{LoadBalancerArn: aws.String(lbArn)})
 
 	tg, err := elb.CreateTargetGroup(ctx, &elbv2.CreateTargetGroupInput{
 		Name: aws.String("nlb-stable-dns-tg"), Protocol: elbtypes.ProtocolEnumTcp, Port: aws.Int32(443),
