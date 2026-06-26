@@ -441,7 +441,11 @@ jobs:
             timeout: 1200s
             timeout_minutes: 20
           - suite: appdata
-            run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|RDS|ResourceTags|Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
+            run: '^Test(CloudWatch|EventBridge|IAM|Kinesis|KMS|Lambda|ElastiCache|Organizations|RDS|ResourceTags)'
+            timeout: 1200s
+            timeout_minutes: 20
+          - suite: appdata2
+            run: '^Test(Route53|S3|Scheduler|SecretsManager|SFN|SNS|SQS|SSM|STS|WAFv2)'
             timeout: 1200s
             timeout_minutes: 20
     steps:
