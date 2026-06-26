@@ -105,6 +105,43 @@ type ContainerAppScale struct {
 	PollingInterval *int32 `json:"pollingInterval,omitempty"`
 }
 
+// ContainerAppAuthToken mirrors armappcontainers.ContainerAppAuthToken
+// — a TrackedResource whose properties carry the EasyAuth token the
+// getAuthtoken action issues.
+type ContainerAppAuthToken struct {
+	ID         string                     `json:"id,omitempty"`
+	Name       string                     `json:"name,omitempty"`
+	Type       string                     `json:"type,omitempty"`
+	Location   string                     `json:"location,omitempty"`
+	Tags       map[string]string          `json:"tags,omitempty"`
+	Properties ContainerAppAuthTokenProps `json:"properties"`
+}
+
+// ContainerAppAuthTokenProps mirrors
+// armappcontainers.ContainerAppAuthTokenProperties.
+type ContainerAppAuthTokenProps struct {
+	Token   string `json:"token,omitempty"`
+	Expires string `json:"expires,omitempty"`
+}
+
+// CustomHostnameAnalysisResult mirrors
+// armappcontainers.CustomHostnameAnalysisResult — the
+// listCustomHostNameAnalysis action response. Only swagger-declared
+// fields are emitted.
+type CustomHostnameAnalysisResult struct {
+	HostName                            string   `json:"hostName,omitempty"`
+	IsHostnameAlreadyVerified           bool     `json:"isHostnameAlreadyVerified"`
+	CustomDomainVerificationTest        string   `json:"customDomainVerificationTest,omitempty"`
+	HasConflictOnManagedEnvironment     bool     `json:"hasConflictOnManagedEnvironment"`
+	ConflictWithEnvironmentCustomDomain bool     `json:"conflictWithEnvironmentCustomDomain"`
+	ConflictingContainerAppResourceID   string   `json:"conflictingContainerAppResourceId,omitempty"`
+	CNameRecords                        []string `json:"cNameRecords,omitempty"`
+	TxtRecords                          []string `json:"txtRecords,omitempty"`
+	ARecords                            []string `json:"aRecords,omitempty"`
+	AlternateCNameRecords               []string `json:"alternateCNameRecords,omitempty"`
+	AlternateTxtRecords                 []string `json:"alternateTxtRecords,omitempty"`
+}
+
 // AsyncOperationStatus is the response shape for a polled
 // Azure-AsyncOperation status URL — `{"status":"Succeeded","name":...}`
 // is what `armappcontainers` (and every azcore poller) reads.
@@ -375,6 +412,153 @@ func registerContainerAppsApps(srv *sim.Server) {
 		}
 		stopACAAppReplicas(resourceID)
 		w.WriteHeader(http.StatusOK)
+	})
+
+	// GET - List containerApps by subscription. ARM exposes a
+	// subscription-wide list alongside the resource-group-scoped one.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.App/containerApps", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+		all := apps.Filter(func(a ContainerApp) bool {
+			return strings.HasPrefix(a.ID, prefix) && strings.Contains(a.ID, "/providers/Microsoft.App/containerApps/")
+		})
+		sort.Slice(all, func(i, j int) bool { return all[i].Name < all[j].Name })
+		page, next := armPage(r, all)
+		out := map[string]any{"value": page}
+		if next != "" {
+			out["nextLink"] = armNextLink(r, next)
+		}
+		sim.WriteJSON(w, http.StatusOK, out)
+	})
+
+	// PATCH - Update containerApp. Real ACA models this as a
+	// long-running operation that settles to provisioningState=Succeeded;
+	// the SDK's body poller reads the Succeeded state off the 200 body and
+	// returns immediately.
+	srv.HandleFunc("PATCH "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		app, ok := apps.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+
+		var req ContainerApp
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			app.Tags = req.Tags
+		}
+		if req.Properties.Configuration != nil {
+			app.Properties.Configuration = req.Properties.Configuration
+		}
+		if req.Properties.Template != nil {
+			app.Properties.Template = req.Properties.Template
+		}
+		if app.SystemData != nil {
+			app.SystemData.LastModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+
+		if err := startACAAppReplicas(r.Context(), resourceID, app); err != nil {
+			sim.AzureErrorf(w, "ContainerAppRevisionFailed", http.StatusInternalServerError,
+				"failed to start container app replica for %s: %v", name, err)
+			return
+		}
+		apps.Put(resourceID, app)
+		sim.WriteJSON(w, http.StatusOK, app)
+	})
+
+	// POST /containerApps/{appName}/start — start the app's revisions.
+	// LRO whose body poller terminates on provisioningState=Succeeded.
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/start", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		app, ok := apps.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		if err := startACAAppReplicas(r.Context(), resourceID, app); err != nil {
+			sim.AzureErrorf(w, "ContainerAppRevisionFailed", http.StatusInternalServerError,
+				"failed to start container app replica for %s: %v", name, err)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, app)
+	})
+
+	// POST /containerApps/{appName}/stop — stop the app's revisions.
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/stop", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		app, ok := apps.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		stopACAAppReplicas(resourceID)
+		sim.WriteJSON(w, http.StatusOK, app)
+	})
+
+	// POST /containerApps/{appName}/getAuthtoken — issue an EasyAuth
+	// token for the app. The SDK sends the mixed-case `getAuthtoken`
+	// segment verbatim (not in the lowercasing middleware map).
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/getAuthtoken", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		app, ok := apps.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		token := ContainerAppAuthToken{
+			ID:       resourceID,
+			Name:     name,
+			Type:     "Microsoft.App/containerApps",
+			Location: app.Location,
+			Properties: ContainerAppAuthTokenProps{
+				Token:   generateUUID(),
+				Expires: time.Now().Add(8 * time.Hour).UTC().Format(time.RFC3339),
+			},
+		}
+		sim.WriteJSON(w, http.StatusOK, token)
+	})
+
+	// POST /containerApps/{appName}/listCustomHostNameAnalysis — analyze
+	// a custom hostname's DNS binding. The SDK sends the mixed-case
+	// segment verbatim.
+	srv.HandleFunc("POST "+basePath+"/containerApps/{appName}/listCustomHostNameAnalysis", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "appName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
+		if _, ok := apps.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		result := CustomHostnameAnalysisResult{
+			HostName:                            r.URL.Query().Get("customHostname"),
+			IsHostnameAlreadyVerified:           false,
+			CustomDomainVerificationTest:        "Skipped",
+			HasConflictOnManagedEnvironment:     false,
+			ConflictWithEnvironmentCustomDomain: false,
+		}
+		sim.WriteJSON(w, http.StatusOK, result)
 	})
 }
 

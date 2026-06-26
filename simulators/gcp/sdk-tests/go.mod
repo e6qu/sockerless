@@ -8,13 +8,15 @@ require (
 	cloud.google.com/go/eventarc v1.23.0
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.24.0
+	cloud.google.com/go/iam v1.11.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0
-	cloud.google.com/go/storage v1.62.3
+	cloud.google.com/go/storage v1.63.0
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
 	google.golang.org/api v0.286.0
-	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa
+	google.golang.org/genproto v0.0.0-20260526163538-3dc84a4a5aaa
+	google.golang.org/genproto/googleapis/api v0.0.0-20260615183401-62b3387ff324
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 )
@@ -24,7 +26,6 @@ require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/auth v0.20.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
-	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/longrunning v1.0.0 // indirect
 	cloud.google.com/go/monitoring v1.29.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.33.0 // indirect
@@ -62,8 +63,7 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	google.golang.org/genproto v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260615183401-62b3387ff324 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
 

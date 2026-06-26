@@ -302,6 +302,53 @@ func registerContainerApps(srv *sim.Server) {
 		})
 	})
 
+	// GET - List jobs by subscription.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.App/jobs", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+		filtered := jobs.Filter(func(j ContainerAppJob) bool {
+			return strings.HasPrefix(j.ID, prefix) && strings.Contains(j.ID, "/providers/Microsoft.App/jobs/")
+		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"value": filtered,
+		})
+	})
+
+	// PATCH - Update job. Real ACA models this as a long-running
+	// operation that settles to provisioningState=Succeeded; the SDK's
+	// body poller reads the Succeeded state off the 200 body.
+	srv.HandleFunc("PATCH "+basePath+"/jobs/{jobName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "jobName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
+		job, ok := jobs.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/jobs/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		var req ContainerAppJob
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			job.Tags = req.Tags
+		}
+		if req.Properties.Configuration != nil {
+			job.Properties.Configuration = req.Properties.Configuration
+		}
+		if req.Properties.Template != nil {
+			job.Properties.Template = req.Properties.Template
+		}
+		if job.SystemData != nil {
+			job.SystemData.LastModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)
+		}
+		jobs.Put(resourceID, job)
+		sim.WriteJSON(w, http.StatusOK, job)
+	})
+
 	// POST /jobs/{jobName}/listsecrets — same shape as the containerApps
 	// listsecrets handler: secrets aren't returned on GET; the dedicated
 	// POST returns them. Single lowercase registration; the middleware
@@ -492,6 +539,41 @@ func registerContainerApps(srv *sim.Server) {
 			"name": execName,
 			"id":   execID,
 		})
+	})
+
+	// POST - Stop all executions of a job. Returns the collection of
+	// executions that were requested to be stopped (ContainerAppJobExecutions).
+	srv.HandleFunc("POST "+basePath+"/jobs/{jobName}/stop", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "jobName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/jobs/%s", sub, rg, name)
+		if _, ok := jobs.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.App/jobs/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+
+		running := executions.Filter(func(e JobExecution) bool {
+			return strings.HasPrefix(e.ID, resourceID+"/executions/") && e.Properties.Status == "Running"
+		})
+		stopped := make([]JobExecution, 0, len(running))
+		for _, e := range running {
+			if v, ok := acaProcessHandles.LoadAndDelete(e.ID); ok {
+				if procs, ok := v.(*acaExecutionProcesses); ok {
+					stopACAExecutionProcesses(procs)
+				}
+			}
+			executions.Update(e.ID, func(ex *JobExecution) {
+				ex.Properties.Status = "Stopped"
+				ex.Properties.EndTime = time.Now().UTC().Format(time.RFC3339)
+			})
+			if updated, ok := executions.Get(e.ID); ok {
+				stopped = append(stopped, updated)
+			}
+		}
+		injectContainerAppLog(name, "Executions stopped")
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": stopped})
 	})
 
 	// GET - List executions

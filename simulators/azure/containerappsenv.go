@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	sim "github.com/sockerless/simulator"
 )
@@ -112,6 +113,103 @@ type VnetConfiguration struct {
 	Internal               bool   `json:"internal"`
 }
 
+// EnvironmentAuthToken mirrors armappcontainers.EnvironmentAuthToken —
+// a TrackedResource whose properties carry the token the getAuthtoken
+// action issues.
+type EnvironmentAuthToken struct {
+	ID         string                    `json:"id,omitempty"`
+	Name       string                    `json:"name,omitempty"`
+	Type       string                    `json:"type,omitempty"`
+	Location   string                    `json:"location,omitempty"`
+	Tags       map[string]string         `json:"tags,omitempty"`
+	Properties EnvironmentAuthTokenProps `json:"properties"`
+}
+
+// EnvironmentAuthTokenProps mirrors
+// armappcontainers.EnvironmentAuthTokenProperties.
+type EnvironmentAuthTokenProps struct {
+	Token   string `json:"token,omitempty"`
+	Expires string `json:"expires,omitempty"`
+}
+
+// CheckNameAvailabilityResponse mirrors the common-types
+// CheckNameAvailabilityResponse (checkNameAvailability action).
+type CheckNameAvailabilityResponse struct {
+	NameAvailable *bool  `json:"nameAvailable,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	Message       string `json:"message,omitempty"`
+}
+
+// WorkloadProfileStates mirrors armappcontainers.WorkloadProfileStates —
+// a ProxyResource (no location) reporting per-profile node counts.
+type WorkloadProfileStates struct {
+	ID         string                     `json:"id,omitempty"`
+	Name       string                     `json:"name,omitempty"`
+	Type       string                     `json:"type,omitempty"`
+	Properties WorkloadProfileStatesProps `json:"properties,omitempty"`
+}
+
+// WorkloadProfileStatesProps mirrors
+// armappcontainers.WorkloadProfileStatesProperties.
+type WorkloadProfileStatesProps struct {
+	MinimumCount *int32 `json:"minimumCount,omitempty"`
+	MaximumCount *int32 `json:"maximumCount,omitempty"`
+	CurrentCount *int32 `json:"currentCount,omitempty"`
+}
+
+// Certificate mirrors armappcontainers.Certificate — a TrackedResource
+// for Custom Domain bindings. Secret request members (password, the raw
+// PFX/PEM `value`) are stripped from responses, matching real ACA.
+type Certificate struct {
+	ID         string            `json:"id,omitempty"`
+	Name       string            `json:"name,omitempty"`
+	Type       string            `json:"type,omitempty"`
+	Location   string            `json:"location,omitempty"`
+	Tags       map[string]string `json:"tags,omitempty"`
+	Properties CertificateProps  `json:"properties,omitempty"`
+}
+
+// CertificateProps mirrors armappcontainers.CertificateProperties.
+type CertificateProps struct {
+	ProvisioningState             string                         `json:"provisioningState,omitempty"`
+	CertificateKeyVaultProperties *CertificateKeyVaultProperties `json:"certificateKeyVaultProperties,omitempty"`
+	SubjectName                   string                         `json:"subjectName,omitempty"`
+	SubjectAlternativeNames       []string                       `json:"subjectAlternativeNames,omitempty"`
+	Issuer                        string                         `json:"issuer,omitempty"`
+	IssueDate                     string                         `json:"issueDate,omitempty"`
+	ExpirationDate                string                         `json:"expirationDate,omitempty"`
+	Thumbprint                    string                         `json:"thumbprint,omitempty"`
+	Valid                         *bool                          `json:"valid,omitempty"`
+	PublicKeyHash                 string                         `json:"publicKeyHash,omitempty"`
+}
+
+// CertificateKeyVaultProperties mirrors
+// armappcontainers.CertificateKeyVaultProperties.
+type CertificateKeyVaultProperties struct {
+	Identity    string `json:"identity,omitempty"`
+	KeyVaultURL string `json:"keyVaultUrl,omitempty"`
+}
+
+// ManagedCertificate mirrors armappcontainers.ManagedCertificate.
+type ManagedCertificate struct {
+	ID         string                  `json:"id,omitempty"`
+	Name       string                  `json:"name,omitempty"`
+	Type       string                  `json:"type,omitempty"`
+	Location   string                  `json:"location,omitempty"`
+	Tags       map[string]string       `json:"tags,omitempty"`
+	Properties ManagedCertificateProps `json:"properties,omitempty"`
+}
+
+// ManagedCertificateProps mirrors
+// armappcontainers.ManagedCertificateProperties.
+type ManagedCertificateProps struct {
+	ProvisioningState       string `json:"provisioningState,omitempty"`
+	SubjectName             string `json:"subjectName,omitempty"`
+	Error                   string `json:"error,omitempty"`
+	DomainControlValidation string `json:"domainControlValidation,omitempty"`
+	ValidationToken         string `json:"validationToken,omitempty"`
+}
+
 func registerContainerAppEnvironment(srv *sim.Server) {
 	acaEnvironments = sim.MakeStore[ContainerAppEnvironment](srv.DB(), "aca_environments")
 	environments := acaEnvironments
@@ -208,7 +306,165 @@ func registerContainerAppEnvironment(srv *sim.Server) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	// PATCH - Update a managed environment. Real ACA models this as a
+	// long-running operation that settles to provisioningState=Succeeded;
+	// the SDK's body poller reads it off the 200 body.
+	srv.HandleFunc("PATCH "+armBase+"/managedEnvironments/{envName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		envName := sim.PathParam(r, "envName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
+			sub, rg, envName)
+		env, ok := environments.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Managed environment '%s' not found.", envName)
+			return
+		}
+		var req ContainerAppEnvironment
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			env.Tags = req.Tags
+		}
+		if req.Properties.AppLogsConfiguration != nil {
+			env.Properties.AppLogsConfiguration = req.Properties.AppLogsConfiguration
+		}
+		if req.Properties.WorkloadProfiles != nil {
+			env.Properties.WorkloadProfiles = req.Properties.WorkloadProfiles
+		}
+		environments.Put(resourceID, env)
+		sim.WriteJSON(w, http.StatusOK, env.wire())
+	})
+
+	// GET - List managed environments in a resource group.
+	srv.HandleFunc("GET "+armBase+"/managedEnvironments", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/",
+			sub, rg)
+		filtered := environments.Filter(func(e ContainerAppEnvironment) bool {
+			return strings.HasPrefix(e.ID, prefix)
+		})
+		out := make([]containerAppEnvironmentWire, 0, len(filtered))
+		for _, e := range filtered {
+			out = append(out, e.wire())
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	// GET - List managed environments by subscription.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.App/managedEnvironments", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+		filtered := environments.Filter(func(e ContainerAppEnvironment) bool {
+			return strings.HasPrefix(e.ID, prefix) && strings.Contains(e.ID, "/providers/Microsoft.App/managedEnvironments/")
+		})
+		out := make([]containerAppEnvironmentWire, 0, len(filtered))
+		for _, e := range filtered {
+			out = append(out, e.wire())
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	// POST /managedEnvironments/{envName}/getAuthtoken — issue an
+	// environment auth token. The SDK sends the mixed-case segment
+	// verbatim (not in the lowercasing middleware map).
+	srv.HandleFunc("POST "+armBase+"/managedEnvironments/{envName}/getAuthtoken", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		envName := sim.PathParam(r, "envName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
+			sub, rg, envName)
+		env, ok := environments.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Managed environment '%s' not found.", envName)
+			return
+		}
+		token := EnvironmentAuthToken{
+			ID:       resourceID,
+			Name:     envName,
+			Type:     "Microsoft.App/managedEnvironments",
+			Location: env.Location,
+			Properties: EnvironmentAuthTokenProps{
+				Token:   generateUUID(),
+				Expires: time.Now().Add(8 * time.Hour).UTC().Format(time.RFC3339),
+			},
+		}
+		sim.WriteJSON(w, http.StatusOK, token)
+	})
+
+	// POST /managedEnvironments/{envName}/checknameavailability — check a
+	// child resource name. The middleware lowercases the SDK's
+	// `checkNameAvailability` segment, so the handler registers lowercase.
+	srv.HandleFunc("POST "+armBase+"/managedEnvironments/{envName}/checknameavailability", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		envName := sim.PathParam(r, "envName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
+			sub, rg, envName)
+		if _, ok := environments.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Managed environment '%s' not found.", envName)
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+			Type string `json:"type"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Name is available when no certificate of that name already exists
+		// in the environment.
+		certID := resourceID + "/certificates/" + req.Name
+		_, certExists := acaEnvCertificates.Get(certID)
+		available := !certExists
+		resp := CheckNameAvailabilityResponse{NameAvailable: &available}
+		if !available {
+			resp.Reason = "AlreadyExists"
+			resp.Message = fmt.Sprintf("Name %q is already in use.", req.Name)
+		}
+		sim.WriteJSON(w, http.StatusOK, resp)
+	})
+
+	// GET /managedEnvironments/{envName}/workloadProfileStates — per-profile
+	// node-count states derived from the environment's workload profiles.
+	srv.HandleFunc("GET "+armBase+"/managedEnvironments/{envName}/workloadProfileStates", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		envName := sim.PathParam(r, "envName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
+			sub, rg, envName)
+		env, ok := environments.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"Managed environment '%s' not found.", envName)
+			return
+		}
+		states := make([]WorkloadProfileStates, 0, len(env.Properties.WorkloadProfiles))
+		for _, wp := range env.Properties.WorkloadProfiles {
+			minc, maxc, cur := int32(0), int32(0), int32(0)
+			states = append(states, WorkloadProfileStates{
+				ID:   resourceID + "/workloadProfileStates/" + wp.Name,
+				Name: wp.Name,
+				Type: "Microsoft.App/managedEnvironments/workloadProfileStates",
+				Properties: WorkloadProfileStatesProps{
+					MinimumCount: &minc,
+					MaximumCount: &maxc,
+					CurrentCount: &cur,
+				},
+			})
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": states})
+	})
+
 	registerContainerAppEnvironmentStorages(srv, environments)
+	registerContainerAppEnvironmentCertificates(srv, environments)
 }
 
 // ManagedEnvironmentStorage pairs a sockerless-known name with a
@@ -325,4 +581,238 @@ func LookupEnvStorageBinding(envID, storageName string) (string, string, bool) {
 		return "", "", false
 	}
 	return s.Properties.AzureFile.AccountName, s.Properties.AzureFile.ShareName, true
+}
+
+// acaEnvCertificates / acaEnvManagedCertificates back the
+// managedEnvironments/<env>/certificates and /managedCertificates
+// sub-resources used for Custom Domain bindings.
+var acaEnvCertificates sim.Store[Certificate]
+var acaEnvManagedCertificates sim.Store[ManagedCertificate]
+
+func registerContainerAppEnvironmentCertificates(srv *sim.Server, envs sim.Store[ContainerAppEnvironment]) {
+	acaEnvCertificates = sim.MakeStore[Certificate](srv.DB(), "aca_env_certs")
+	acaEnvManagedCertificates = sim.MakeStore[ManagedCertificate](srv.DB(), "aca_env_managed_certs")
+
+	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/managedEnvironments/{envName}"
+
+	requireEnv := func(w http.ResponseWriter, r *http.Request) (string, bool) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		envName := sim.PathParam(r, "envName")
+		envID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/managedEnvironments/%s",
+			sub, rg, envName)
+		if _, ok := envs.Get(envID); !ok {
+			sim.AzureError(w, "ParentResourceNotFound", "Managed environment not found: "+envID, http.StatusNotFound)
+			return "", false
+		}
+		return envID, true
+	}
+
+	// ---- Certificates ----
+
+	// PUT - Create or update a certificate (synchronous in real ACA).
+	srv.HandleFunc("PUT "+armBase+"/certificates/{certificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "certificateName")
+		var req Certificate
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := envID + "/certificates/" + certName
+		cert := Certificate{
+			ID:       id,
+			Name:     certName,
+			Type:     "Microsoft.App/managedEnvironments/certificates",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Properties: CertificateProps{
+				ProvisioningState:             "Succeeded",
+				CertificateKeyVaultProperties: req.Properties.CertificateKeyVaultProperties,
+				SubjectName:                   req.Properties.SubjectName,
+			},
+		}
+		acaEnvCertificates.Put(id, cert)
+		sim.WriteJSON(w, http.StatusOK, cert)
+	})
+
+	// GET - Get a certificate.
+	srv.HandleFunc("GET "+armBase+"/certificates/{certificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "certificateName")
+		cert, ok := acaEnvCertificates.Get(envID + "/certificates/" + certName)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Certificate '%s' not found.", certName)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, cert)
+	})
+
+	// PATCH - Update a certificate's tags (synchronous).
+	srv.HandleFunc("PATCH "+armBase+"/certificates/{certificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "certificateName")
+		id := envID + "/certificates/" + certName
+		cert, ok := acaEnvCertificates.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Certificate '%s' not found.", certName)
+			return
+		}
+		var req Certificate
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			cert.Tags = req.Tags
+		}
+		acaEnvCertificates.Put(id, cert)
+		sim.WriteJSON(w, http.StatusOK, cert)
+	})
+
+	// DELETE - Delete a certificate.
+	srv.HandleFunc("DELETE "+armBase+"/certificates/{certificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "certificateName")
+		if acaEnvCertificates.Delete(envID + "/certificates/" + certName) {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	// GET - List certificates in the environment.
+	srv.HandleFunc("GET "+armBase+"/certificates", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		prefix := envID + "/certificates/"
+		filtered := acaEnvCertificates.Filter(func(c Certificate) bool {
+			return strings.HasPrefix(c.ID, prefix)
+		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
+	})
+
+	// ---- Managed Certificates ----
+
+	// PUT - Create or update a managed certificate. Real ACA models this
+	// as a long-running operation; the SDK's body poller terminates on
+	// provisioningState=Succeeded read off the 200/201 body.
+	srv.HandleFunc("PUT "+armBase+"/managedCertificates/{managedCertificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "managedCertificateName")
+		var req ManagedCertificate
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		id := envID + "/managedCertificates/" + certName
+		_, existed := acaEnvManagedCertificates.Get(id)
+		dcv := req.Properties.DomainControlValidation
+		if dcv == "" {
+			dcv = "CNAME"
+		}
+		cert := ManagedCertificate{
+			ID:       id,
+			Name:     certName,
+			Type:     "Microsoft.App/managedEnvironments/managedCertificates",
+			Location: req.Location,
+			Tags:     req.Tags,
+			Properties: ManagedCertificateProps{
+				ProvisioningState:       "Succeeded",
+				SubjectName:             req.Properties.SubjectName,
+				DomainControlValidation: dcv,
+				ValidationToken:         generateUUID(),
+			},
+		}
+		acaEnvManagedCertificates.Put(id, cert)
+		if existed {
+			sim.WriteJSON(w, http.StatusOK, cert)
+		} else {
+			sim.WriteJSON(w, http.StatusCreated, cert)
+		}
+	})
+
+	// GET - Get a managed certificate.
+	srv.HandleFunc("GET "+armBase+"/managedCertificates/{managedCertificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "managedCertificateName")
+		cert, ok := acaEnvManagedCertificates.Get(envID + "/managedCertificates/" + certName)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Managed certificate '%s' not found.", certName)
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, cert)
+	})
+
+	// PATCH - Update a managed certificate's tags (synchronous).
+	srv.HandleFunc("PATCH "+armBase+"/managedCertificates/{managedCertificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "managedCertificateName")
+		id := envID + "/managedCertificates/" + certName
+		cert, ok := acaEnvManagedCertificates.Get(id)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Managed certificate '%s' not found.", certName)
+			return
+		}
+		var req ManagedCertificate
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags != nil {
+			cert.Tags = req.Tags
+		}
+		acaEnvManagedCertificates.Put(id, cert)
+		sim.WriteJSON(w, http.StatusOK, cert)
+	})
+
+	// DELETE - Delete a managed certificate.
+	srv.HandleFunc("DELETE "+armBase+"/managedCertificates/{managedCertificateName}", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		certName := sim.PathParam(r, "managedCertificateName")
+		if acaEnvManagedCertificates.Delete(envID + "/managedCertificates/" + certName) {
+			w.WriteHeader(http.StatusOK)
+		} else {
+			w.WriteHeader(http.StatusNoContent)
+		}
+	})
+
+	// GET - List managed certificates in the environment.
+	srv.HandleFunc("GET "+armBase+"/managedCertificates", func(w http.ResponseWriter, r *http.Request) {
+		envID, ok := requireEnv(w, r)
+		if !ok {
+			return
+		}
+		prefix := envID + "/managedCertificates/"
+		filtered := acaEnvManagedCertificates.Filter(func(c ManagedCertificate) bool {
+			return strings.HasPrefix(c.ID, prefix)
+		})
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": filtered})
+	})
 }

@@ -4,13 +4,20 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/elbv2-nlb-stable-dnsname` — **ELBv2 NLB DescribeLoadBalancers returned proxy host:port as DNSName (#691, BUG-2223).**
+`feat/azure-ratchet-1` — **first Azure service ratchet (BUG-2224).** The Azure sim had a coverage gate (`azureMethodFloor`, #689) but no services ratcheted yet; this drives the first wave up against it, spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
 
-- Regression from #683 (the NLB raw-TCP data plane): `elbv2ReportedDNSName` overrode the stable AWS-shaped `DNSName` with the proxy's dialable `host:port` for any NLB with a running stream listener. The proxy bound an ephemeral port → reported DNSName changed every run (perpetual `terraform-provider-aws` `dns_name` drift) and `host:port` is not a valid Route53 alias target.
-- Fix (reachability made faithful instead of hijacking DNSName): DescribeLoadBalancers always returns the stable `<name>-<id>.elb.<region>.amazonaws.com` hostname (NLB + ALB; `CanonicalHostedZoneId` present so a Route53 alias is valid). The NLB stream proxy binds the **listener's configured port** on a stable host — `127.0.0.1`, or (on Linux, when that port is taken by another NLB) a distinct per-NLB `127.0.0.0/8` address leased via the new `realexec.ReserveNLBLoopbackIPv4` (the real-NLB "each LB has its own IP" shape, collision-free). The AWS-shaped DNSName resolves to that proxy host through injected workload-container hosts entries (`elbv2NLBHostEntries`/`elbv2WorkloadExtraHosts` merged onto the ECS workload `ExtraHosts`) — the faithful production consumer of `elbv2NLBProxyAddress`, so the deadcode gate stays green. CreateListener is best-effort on bind (real AWS never fails CreateListener for a sim-local socket issue).
-- Tests: #691 contract guard (DNSName AWS-shaped, colon-free, stable across calls, CanonicalHostedZoneId present); the #683 raw-TCP capability test reworked to resolve the DNSName via the production hosts mapping then connect on the listener port; idempotency-fidelity terraform stack gained a `network` `aws_lb` + TCP listener/target-group + a Route53 alias targeting it (real apply + clean plan, 151s). aws+realexec build/lint(0)/deadcode(0) + conformance + spec-validator(0) green. Closes #691.
+- **Container Apps** (Microsoft.App): containerApps 5→11/11, jobs 9→12/12, managedEnvironments 3→19/19 — all 100% (start/stop do real replica work; certificates + managedCertificates CRUD).
+- **Container Registry** (Microsoft.ContainerRegistry): 2025-11-01 12→58/58, 2023-07-01 12→52/52, registrytasks 2→25/25 — all 100% (replications/scopeMaps/tokens/credentialSets/connectedRegistries + webhooks with write-only secrets surfaced only via getCallbackConfig).
+- **Networking** (Microsoft.Network): NSG/NAT-Gateway/PublicIP-Prefix/RouteTable to 100%; virtualNetwork 6→18/21, loadBalancer 9→22/27, NIC 4→14/15, publicIP 4→6/9 (~50 routes; cross-references read back faithfully).
+- **Service Bus + Event Hubs**: all 8 docs to 100% (namespaces CRUD/list-by-sub/PATCH, authorizationRules listKeys/regenerateKeys, disasterRecovery break-pairing/failover, migrationConfigs, networkRuleSets, PEC) — plus a latent PascalCase casing bug (`AuthorizationRules`/`ListKeys`) the new SDK tests exposed, and two stub-404 DR/migration handlers converted to store-backed.
+- **Azure total 630→857/2597 (24%→33%); all three sims now actively ratcheting.** Each uses the existing `issueAzureAsyncOperation` LRO helper; integration reconciled floors from one measured pass + a literal-path doc block for the 4 subscription-wide list ops. azure build/lint(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor gates pass.
+- **Boyscout (BUG-2225, CI-caught on this branch):** EC2 `RunInstances` now honors `ClientToken` idempotency — a retried call (the aws-sdk-go-v2 auto-fills + re-sends the token on every retry) replays the original reservation instead of launching a duplicate batch. Fixed a real flake where `TestEC2_DescribeInstancesPagination` saw doubled instances under CI retry load.
 
-**Next candidates:** keep ratcheting GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders) and **start ratcheting Azure services** now that its gate exists. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** keep ratcheting Azure (Storage, Cosmos DB, Redis, Key Vault, remaining networking, EventGrid, APIM) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #692): ELBv2 NLB stable DNSName (#691, BUG-2223)
+Reverted #683's host:port DNSName hijack — DescribeLoadBalancers returns the stable AWS-shaped hostname again; reachability via listener-port bind + ExtraHosts hostname resolution (per-NLB loopback IP on Linux). Plus the appdata CLI shard split (flakiness).
 
 ---
 ### Prior branch (merged #690): ELBv2 TCP target group HealthCheckPath (#688, BUG-2222)

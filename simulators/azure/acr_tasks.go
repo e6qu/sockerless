@@ -88,10 +88,133 @@ func registerACRTasks(srv *sim.Server) {
 	acrRuns = sim.MakeStore[acrRun](srv.DB(), "acr_runs")
 	acrTasksLogger = srv.Logger()
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerRegistry"
-	// scheduleRun / runs are not in the path-normalization allowlist, so
-	// they must be registered with the exact casing the SDK emits.
+	// scheduleRun / runs / the task-children action verbs are not in the
+	// path-normalization allowlist, so they are registered with the exact
+	// casing the SDK emits.
 	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/scheduleRun", handleACRScheduleRun)
 	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/runs/{runId}", handleACRGetRun)
+
+	// Registry-tasks children (Microsoft.ContainerRegistry/registries/<x>):
+	// tasks and agentPools are tracked resources (Resource base — location +
+	// tags); taskRuns is a proxy resource that additionally carries location +
+	// identity. They share the generic CRUD shape with the registry children.
+	const t = "Microsoft.ContainerRegistry/registries/"
+	tasks := sim.MakeStore[acrSubResource](srv.DB(), "acr_tasks")
+	taskRuns := sim.MakeStore[acrSubResource](srv.DB(), "acr_task_runs")
+	agentPools := sim.MakeStore[acrSubResource](srv.DB(), "acr_agent_pools")
+	registerACRChild(srv, acrChildKind{
+		seg: "tasks", nameParam: "taskName", typeName: t + "tasks",
+		allowLocation: true, allowTags: true, allowIdentity: true, patch: true, store: tasks,
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "taskRuns", nameParam: "taskRunName", typeName: t + "taskRuns",
+		allowLocation: true, allowIdentity: true, patch: true, store: taskRuns,
+	})
+	registerACRChild(srv, acrChildKind{
+		seg: "agentPools", nameParam: "agentPoolName", typeName: t + "agentPools",
+		allowLocation: true, allowTags: true, patch: true, store: agentPools,
+	})
+
+	// POST .../tasks/{name}/listDetails — returns the Task including its
+	// credentials. The sim stores no secret credentials, so this returns the
+	// stored task resource as-is.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/tasks/{taskName}/listDetails", func(w http.ResponseWriter, r *http.Request) {
+		res, ok := tasks.Get(acrChildResourceID(r, "tasks", "taskName"))
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Task %q not found.", sim.PathParam(r, "taskName"))
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, res)
+	})
+
+	// POST .../taskRuns/{name}/listDetails — returns the TaskRun with results.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/taskRuns/{taskRunName}/listDetails", func(w http.ResponseWriter, r *http.Request) {
+		res, ok := taskRuns.Get(acrChildResourceID(r, "taskRuns", "taskRunName"))
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "TaskRun %q not found.", sim.PathParam(r, "taskRunName"))
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, res)
+	})
+
+	// POST .../agentPools/{name}/listQueueStatus — number of queued runs.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/agentPools/{agentPoolName}/listQueueStatus", func(w http.ResponseWriter, r *http.Request) {
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"count": 0})
+	})
+
+	// GET .../runs — list runs scheduled against the registry.
+	srv.HandleFunc("GET "+armBase+"/registries/{registryName}/runs", func(w http.ResponseWriter, r *http.Request) {
+		regID, ok := acrRegistryID(r)
+		if !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		prefix := regID + "/runs/"
+		matched := acrRuns.Filter(func(run acrRun) bool { return strings.HasPrefix(run.ID, prefix) })
+		if matched == nil {
+			matched = []acrRun{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": matched})
+	})
+
+	// PATCH .../runs/{runId} — update mutable run properties (isArchiveEnabled).
+	srv.HandleFunc("PATCH "+armBase+"/registries/{registryName}/runs/{runId}", func(w http.ResponseWriter, r *http.Request) {
+		runID := sim.PathParam(r, "runId")
+		run, ok := acrRuns.Get(runID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Run %q not found.", runID)
+			return
+		}
+		var req struct{}
+		_ = sim.ReadJSON(r, &req)
+		sim.WriteJSON(w, http.StatusOK, run)
+	})
+
+	// POST .../runs/{runId}/cancel — cancels a run. No response body.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/runs/{runId}/cancel", func(w http.ResponseWriter, r *http.Request) {
+		runID := sim.PathParam(r, "runId")
+		acrRuns.Update(runID, func(run *acrRun) {
+			run.Properties.Status = "Canceled"
+		})
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// POST .../runs/{runId}/listLogSasUrl — link to the run's build logs.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/runs/{runId}/listLogSasUrl", func(w http.ResponseWriter, r *http.Request) {
+		runID := sim.PathParam(r, "runId")
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"logLink": fmt.Sprintf("%s://%s/acr/v1/logs/%s", scheme, r.Host, runID),
+		})
+	})
+
+	// POST .../listBuildSourceUploadUrl — where a client uploads a build
+	// context tar before scheduling a run.
+	srv.HandleFunc("POST "+armBase+"/registries/{registryName}/listBuildSourceUploadUrl", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := acrRegistryID(r); !ok {
+			acrRegistryNotFound(w, r)
+			return
+		}
+		rel := "source/" + generateUUID() + ".tar.gz"
+		scheme := "https"
+		if r.TLS == nil {
+			scheme = "http"
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{
+			"uploadUrl":    fmt.Sprintf("%s://%s/acr/v1/build-source/%s", scheme, r.Host, rel),
+			"relativePath": rel,
+		})
+	})
+}
+
+// acrChildResourceID builds the ARM resource ID for a registry child given its
+// path segment and name route param.
+func acrChildResourceID(r *http.Request, seg, nameParam string) string {
+	regID, _ := acrRegistryID(r)
+	return fmt.Sprintf("%s/%s/%s", regID, seg, sim.PathParam(r, nameParam))
 }
 
 func handleACRScheduleRun(w http.ResponseWriter, r *http.Request) {
