@@ -314,6 +314,14 @@ type EC2Snapshot struct {
 	VolumeData       []byte
 }
 
+// EC2RunInstancesToken records the reservation a RunInstances ClientToken
+// produced, keyed by the token, so a retried call replays the same instances.
+type EC2RunInstancesToken struct {
+	Token         string
+	ReservationId string
+	InstanceIds   []string
+}
+
 // State stores
 var (
 	ec2Vpcs               sim.Store[EC2Vpc]
@@ -330,6 +338,12 @@ var (
 	ec2Volumes            sim.Store[EC2Volume]
 	ec2VolumeMods         sim.Store[EC2VolumeModification]
 	ec2Snapshots          sim.Store[EC2Snapshot]
+	// ec2RunTokens records the reservation each RunInstances ClientToken
+	// created, so a retried RunInstances replays the original instances
+	// instead of launching a duplicate batch (real EC2 ClientToken
+	// idempotency; the aws-sdk-go-v2 auto-fills and re-sends ClientToken on
+	// every retry).
+	ec2RunTokens sim.Store[EC2RunInstancesToken]
 	// ec2SubnetIPCursor tracks the next host octet to hand out per
 	// subnet for AllocateSubnetIP. Real EC2 maintains a per-subnet
 	// allocation pool; we approximate with a monotonic counter that
@@ -454,6 +468,7 @@ func registerEC2(r *sim.AWSQueryRouter, srv *sim.Server) {
 	ec2Volumes = sim.MakeStore[EC2Volume](srv.DB(), "ec2_volumes")
 	ec2VolumeMods = sim.MakeStore[EC2VolumeModification](srv.DB(), "ec2_volume_modifications")
 	ec2Snapshots = sim.MakeStore[EC2Snapshot](srv.DB(), "ec2_snapshots")
+	ec2RunTokens = sim.MakeStore[EC2RunInstancesToken](srv.DB(), "ec2_run_instances_tokens")
 
 	// VPC
 	r.Register("DescribeAccountAttributes", handleDescribeAccountAttributes)
@@ -3028,6 +3043,18 @@ func runInstancesRootBlockDevice(r *http.Request, lt EC2LaunchTemplateData) (int
 }
 
 func handleRunInstances(w http.ResponseWriter, r *http.Request) {
+	// ClientToken idempotency: the aws-sdk-go-v2 auto-fills ClientToken (it
+	// carries the Smithy idempotencyToken trait) and re-sends the same value on
+	// every retry. A retried RunInstances must replay the original reservation,
+	// not launch a duplicate batch — matching real EC2 within its idempotency
+	// window.
+	clientToken := r.FormValue("ClientToken")
+	if clientToken != "" {
+		if prev, ok := ec2RunTokens.Get(clientToken); ok {
+			writeRunInstancesReplay(w, prev)
+			return
+		}
+	}
 	minCount, maxCount, ok := runInstancesCounts(w, r)
 	if !ok {
 		return
@@ -3174,11 +3201,27 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
 		go ec2TransitionInstanceToRunning(inst.InstanceId)
 	}
 
+	// Record the reservation under its ClientToken so a retried RunInstances
+	// replays these exact instances instead of launching a duplicate batch.
+	if clientToken != "" && len(instances) > 0 {
+		ids := make([]string, 0, len(instances))
+		for _, inst := range instances {
+			ids = append(ids, inst.InstanceId)
+		}
+		ec2RunTokens.Put(clientToken, EC2RunInstancesToken{
+			Token: clientToken, ReservationId: reservationID, InstanceIds: ids,
+		})
+	}
+
+	writeRunInstancesResponse(w, reservationID, instances)
+}
+
+// writeRunInstancesResponse renders the RunInstances XML for a reservation.
+func writeRunInstancesResponse(w http.ResponseWriter, reservationID string, instances []EC2Instance) {
 	var instanceItems strings.Builder
 	for _, inst := range instances {
 		instanceItems.WriteString(ec2InstanceXML(inst))
 	}
-
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<RunInstancesResponse %s>
   <requestId>%s</requestId>
@@ -3187,6 +3230,18 @@ func handleRunInstances(w http.ResponseWriter, r *http.Request) {
   <groupSet/>
   <instancesSet>%s</instancesSet>
 </RunInstancesResponse>`, ec2Xmlns(), generateUUID(), reservationID, ec2Owner(), instanceItems.String())
+}
+
+// writeRunInstancesReplay re-renders the original reservation for an idempotent
+// RunInstances retry, re-fetching each instance's current state from the store.
+func writeRunInstancesReplay(w http.ResponseWriter, tok EC2RunInstancesToken) {
+	var instances []EC2Instance
+	for _, id := range tok.InstanceIds {
+		if inst, ok := ec2Instances.Get(id); ok {
+			instances = append(instances, inst)
+		}
+	}
+	writeRunInstancesResponse(w, tok.ReservationId, instances)
 }
 
 func runInstancesCounts(w http.ResponseWriter, r *http.Request) (int, int, bool) {
