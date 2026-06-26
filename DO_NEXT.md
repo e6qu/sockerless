@@ -4,19 +4,23 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/azure-ratchet-2` — **second Azure service ratchet (BUG-2226).** Four agents (one service-set each, isolated worktrees → merged + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
+`feat/azure-ratchet-3` — **third Azure service ratchet (BUG-2229).** Four agents (one service-set each, isolated worktrees → merged + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
 
-- **Storage ARM** (Microsoft.Storage): storage-arm-storage 6→44/49 (account action verbs + catalog + managementPolicies/inventoryPolicies/PEC/privateLinkResources/objectReplicationPolicies/encryptionScopes/localUsers); blob 6→17/17, file 5→12/12, queue 1→8/8, table 6→8/8 — all 100%. Fixed a pre-existing undeclared `provisioningState` on `FileShareProperties` and a wrong `KeyPermission` enum casing.
-- **Networking** (Microsoft.Network + DNS): dns 10→14/14, privatedns 12→17/17, loadbalancer 22→27/27, networkinterface 14→15/15, publicipaddress 6→9/9, virtualnetwork 18→21/21 — all 100%.
-- **Redis / Key Vault (mgmt) / Managed Identity**: redis 11→41/41, keyvault-arm 11→17/17, msi 4→12/12 — all 100%. Fixed Redis CheckNameAvailability shape (200-no-body vs error envelope) + a patch-schedule schema leak.
-- **Container Instances + RBAC**: containerinstance 11→18/18 (100%); roleAssignments 5→9, roleDefinitions 3→5 (caller-effective-permissions / arbitrary-resource-scope ops left honestly unimplemented).
-- **Azure total 857→1000/2597 (33%→38%).** Merged-sim coverage equals the sum of the per-agent measurements; azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + spec-validator(0) + contract-hook all green.
+- **Cosmos DB** (Microsoft.DocumentDB): 2024-08-15 25→103/124, 2021-10-15 25→100/121 (MongoDB/Cassandra/Gremlin/Table families, SQL stored-procs/UDFs/triggers/client-encryption-keys, throughput autoscale↔manual migration, account update/failover/regenerateKey/checkNameExists, operations/locations — one version-agnostic handler set).
+- **Event Grid** (Microsoft.EventGrid): 2021-12-01 31→61/61, 2022-06-15 40→127/127 — both 100% (topics/domains/system-topics + per-scope event subscriptions, full partner family, topic-type/system-event-type catalogs).
+- **API Management** (Microsoft.ApiManagement): apimapis 9→52/91, apimproducts 4→25/31; apimbackends/apimdeletedservices/apimdeployment/apimnamedvalues/apimsubscriptions all 100%. Fixed BUG-2228 (named-value secret leak).
+- **PostgreSQL Flexible Server** 15→37/66 (start/stop/restart/failover LROs, administrators/backups/replicas/virtualEndpoints); **ARM Resources core** 15→32/40 (providers, deployments + exportTemplate, moveResources LROs, tagNames); **subscriptions** 1→7/7 (100%); **App Insights components** 3→8/8 (100%) — the shared moveResources route incidentally lifted web-arm 35→37.
+- **Azure total 1000→1409/2597 (38%→54%).** Merged-sim coverage equals the sum of the per-agent measurements; azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + spec-validator(0) + contract-hook all green.
 
-**Next candidates:** keep ratcheting Azure (Cosmos DB 25/124, EventGrid 40/127, APIM, PostgreSQL 15/66, the remaining Storage account-mgmt LROs, resources/authorization remainders) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** keep ratcheting Azure (the cosmos remainder + the two cosmos PEC docs, the remaining apim resolvers/issues/wikis, postgresql/resources remainders, logic-arm 13/106, web-arm 37/692, monitor/operationalinsights, msgraph) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders, Compute selectively). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #694): second Azure service ratchet (BUG-2226) + CI-caught fixes (BUG-2227)
+Storage ARM (blob/file/queue/table 100%), DNS/Private DNS/LB/NIC/Public IP/VNet all 100%, Redis/Key Vault/Managed Identity all 100%, Container Instances 100% + RBAC up; Azure 857→1000/2597. Plus two CI-caught test fixes (org-account-ordering flake, stale KeyPermission assertion).
 
 ---
 ### Prior branch (merged #693): first Azure service ratchet (BUG-2224) + EC2 ClientToken idempotency (BUG-2225)
-Container Apps / Container Registry / Service Bus + Event Hubs all to 100%, Networking up; Azure 630→857/2597. Plus a CI-caught boyscout fix: EC2 `RunInstances` honors `ClientToken` idempotency (a retried call replays the original reservation instead of doubling the batch).
+Container Apps / Container Registry / Service Bus + Event Hubs all to 100%, Networking up; Azure 630→857/2597. Plus a CI-caught boyscout fix: EC2 `RunInstances` honors `ClientToken` idempotency.
 
 ---
 ### Prior branch (merged #692): ELBv2 NLB stable DNSName (#691, BUG-2223)
