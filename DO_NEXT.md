@@ -4,16 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/azure-ratchet-1` — **first Azure service ratchet (BUG-2224).** The Azure sim had a coverage gate (`azureMethodFloor`, #689) but no services ratcheted yet; this drives the first wave up against it, spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
+`feat/azure-ratchet-2` — **second Azure service ratchet (BUG-2226).** Four agents (one service-set each, isolated worktrees → merged + reconciled in one combined measured pass), every op spec-validated against vendored ARM Swagger (0 new violations) + real `azure-sdk-for-go`.
 
-- **Container Apps** (Microsoft.App): containerApps 5→11/11, jobs 9→12/12, managedEnvironments 3→19/19 — all 100% (start/stop do real replica work; certificates + managedCertificates CRUD).
-- **Container Registry** (Microsoft.ContainerRegistry): 2025-11-01 12→58/58, 2023-07-01 12→52/52, registrytasks 2→25/25 — all 100% (replications/scopeMaps/tokens/credentialSets/connectedRegistries + webhooks with write-only secrets surfaced only via getCallbackConfig).
-- **Networking** (Microsoft.Network): NSG/NAT-Gateway/PublicIP-Prefix/RouteTable to 100%; virtualNetwork 6→18/21, loadBalancer 9→22/27, NIC 4→14/15, publicIP 4→6/9 (~50 routes; cross-references read back faithfully).
-- **Service Bus + Event Hubs**: all 8 docs to 100% (namespaces CRUD/list-by-sub/PATCH, authorizationRules listKeys/regenerateKeys, disasterRecovery break-pairing/failover, migrationConfigs, networkRuleSets, PEC) — plus a latent PascalCase casing bug (`AuthorizationRules`/`ListKeys`) the new SDK tests exposed, and two stub-404 DR/migration handlers converted to store-backed.
-- **Azure total 630→857/2597 (24%→33%); all three sims now actively ratcheting.** Each uses the existing `issueAzureAsyncOperation` LRO helper; integration reconciled floors from one measured pass + a literal-path doc block for the 4 subscription-wide list ops. azure build/lint(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor gates pass.
-- **Boyscout (BUG-2225, CI-caught on this branch):** EC2 `RunInstances` now honors `ClientToken` idempotency — a retried call (the aws-sdk-go-v2 auto-fills + re-sends the token on every retry) replays the original reservation instead of launching a duplicate batch. Fixed a real flake where `TestEC2_DescribeInstancesPagination` saw doubled instances under CI retry load.
+- **Storage ARM** (Microsoft.Storage): storage-arm-storage 6→44/49 (account action verbs + catalog + managementPolicies/inventoryPolicies/PEC/privateLinkResources/objectReplicationPolicies/encryptionScopes/localUsers); blob 6→17/17, file 5→12/12, queue 1→8/8, table 6→8/8 — all 100%. Fixed a pre-existing undeclared `provisioningState` on `FileShareProperties` and a wrong `KeyPermission` enum casing.
+- **Networking** (Microsoft.Network + DNS): dns 10→14/14, privatedns 12→17/17, loadbalancer 22→27/27, networkinterface 14→15/15, publicipaddress 6→9/9, virtualnetwork 18→21/21 — all 100%.
+- **Redis / Key Vault (mgmt) / Managed Identity**: redis 11→41/41, keyvault-arm 11→17/17, msi 4→12/12 — all 100%. Fixed Redis CheckNameAvailability shape (200-no-body vs error envelope) + a patch-schedule schema leak.
+- **Container Instances + RBAC**: containerinstance 11→18/18 (100%); roleAssignments 5→9, roleDefinitions 3→5 (caller-effective-permissions / arbitrary-resource-scope ops left honestly unimplemented).
+- **Azure total 857→1000/2597 (33%→38%).** Merged-sim coverage equals the sum of the per-agent measurements; azure build/lint(0)/deadcode(0)/dupl(0) + route-validity + doc/spec-consumption + coverage-floor + spec-validator(0) + contract-hook all green.
 
-**Next candidates:** keep ratcheting Azure (Storage, Cosmos DB, Redis, Key Vault, remaining networking, EventGrid, APIM) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** keep ratcheting Azure (Cosmos DB 25/124, EventGrid 40/127, APIM, PostgreSQL 15/66, the remaining Storage account-mgmt LROs, resources/authorization remainders) and GCP big surfaces (Logging/Bigtable/Cloud Run/CRM remainders). Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+
+---
+### Prior branch (merged #693): first Azure service ratchet (BUG-2224) + EC2 ClientToken idempotency (BUG-2225)
+Container Apps / Container Registry / Service Bus + Event Hubs all to 100%, Networking up; Azure 630→857/2597. Plus a CI-caught boyscout fix: EC2 `RunInstances` honors `ClientToken` idempotency (a retried call replays the original reservation instead of doubling the batch).
 
 ---
 ### Prior branch (merged #692): ELBv2 NLB stable DNSName (#691, BUG-2223)

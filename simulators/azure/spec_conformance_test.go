@@ -170,8 +170,9 @@ var allowedNonSpecAzureRoutes = map[string]string{
 	// (webSocketUri / execEndpoint) that clients connect to verbatim;
 	// the sim shapes its own bridge URLs ARM-style. The session URL is
 	// sim-emitted, never client-constructed.
-	"GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerInstance/containerGroups/{containerGroupName}/containers/{containerName}/execSessions/{sessionID}": "sim-emitted exec WebSocket bridge (real API returns an opaque webSocketUri)",
-	"POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/jobs/{jobName}/executions/{execName}/exec":                                                             "sim-emitted exec WebSocket bridge (real API returns an opaque execEndpoint)",
+	"GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerInstance/containerGroups/{containerGroupName}/containers/{containerName}/execSessions/{sessionID}":   "sim-emitted exec WebSocket bridge (real API returns an opaque webSocketUri)",
+	"GET /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.ContainerInstance/containerGroups/{containerGroupName}/containers/{containerName}/attachSessions/{sessionID}": "sim-emitted attach WebSocket bridge (real API returns an opaque webSocketUri)",
+	"POST /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.App/jobs/{jobName}/executions/{execName}/exec":                                                               "sim-emitted exec WebSocket bridge (real API returns an opaque execEndpoint)",
 }
 
 // vendoredForRefClosure lists swagger files vendored only because a

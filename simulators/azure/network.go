@@ -909,6 +909,7 @@ func registerNetwork(srv *sim.Server) {
 	registerLoadBalancerSubResources(srv)
 	registerNetworkInterfaceSubResources(srv)
 	registerRouteTableRoutes(srv)
+	registerNetworkMoreOps(srv)
 }
 
 // azureTagsObject is the ARM TagsObject request body shared by every

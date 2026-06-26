@@ -154,20 +154,21 @@ type FileShare struct {
 
 // FileShareProperties holds the properties of a file share.
 type FileShareProperties struct {
-	ShareQuota        int               `json:"shareQuota,omitempty"`
-	AccessTier        string            `json:"accessTier,omitempty"`
-	EnabledProtocols  string            `json:"enabledProtocols,omitempty"`
-	ProvisioningState string            `json:"provisioningState,omitempty"`
-	LastModifiedTime  string            `json:"lastModifiedTime,omitempty"`
-	LeaseStatus       string            `json:"leaseStatus,omitempty"`
-	LeaseState        string            `json:"leaseState,omitempty"`
-	Metadata          map[string]string `json:"metadata,omitempty"`
+	ShareQuota       int               `json:"shareQuota,omitempty"`
+	AccessTier       string            `json:"accessTier,omitempty"`
+	EnabledProtocols string            `json:"enabledProtocols,omitempty"`
+	LastModifiedTime string            `json:"lastModifiedTime,omitempty"`
+	LeaseStatus      string            `json:"leaseStatus,omitempty"`
+	LeaseState       string            `json:"leaseState,omitempty"`
+	Metadata         map[string]string `json:"metadata,omitempty"`
 }
 
 // Package-level stores for cross-plane projections and dashboard access.
 var (
 	azStorageAccounts sim.Store[StorageAccount]
 	storageTables     sim.Store[StorageTable]
+	azBlobContainers  sim.Store[BlobContainer]
+	azFileShares      sim.Store[FileShare]
 )
 
 func storageTableResourceID(sub, rg, account, table string) string {
@@ -218,6 +219,7 @@ func registerAzureFiles(srv *sim.Server) {
 	storageAccounts := sim.MakeStore[StorageAccount](srv.DB(), "storage_accounts")
 	azStorageAccounts = storageAccounts
 	fileShares := sim.MakeStore[FileShare](srv.DB(), "file_shares")
+	azFileShares = fileShares
 	storageTables = sim.MakeStore[StorageTable](srv.DB(), "storage_tables")
 	// dataPlaneShares tracks shares created via either ARM or data-plane APIs
 	// so that the data-plane middleware can return 404 for non-existent shares.
@@ -471,14 +473,13 @@ func registerAzureFiles(srv *sim.Server) {
 			Type: "Microsoft.Storage/storageAccounts/fileServices/shares",
 			Etag: fmt.Sprintf("\"0x%s\"", randomSuffix(16)),
 			Properties: FileShareProperties{
-				ShareQuota:        quota,
-				AccessTier:        accessTier,
-				EnabledProtocols:  protocols,
-				ProvisioningState: "Succeeded",
-				LastModifiedTime:  time.Now().UTC().Format(time.RFC3339),
-				LeaseStatus:       "Unlocked",
-				LeaseState:        "Available",
-				Metadata:          req.Properties.Metadata,
+				ShareQuota:       quota,
+				AccessTier:       accessTier,
+				EnabledProtocols: protocols,
+				LastModifiedTime: time.Now().UTC().Format(time.RFC3339),
+				LeaseStatus:      "Unlocked",
+				LeaseState:       "Available",
+				Metadata:         req.Properties.Metadata,
 			},
 		}
 
@@ -561,8 +562,8 @@ func registerAzureFiles(srv *sim.Server) {
 
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
 			"keys": []map[string]any{
-				{"keyName": "key1", "value": simListKey64(acctID, "key1"), "permissions": "FULL"},
-				{"keyName": "key2", "value": simListKey64(acctID, "key2"), "permissions": "FULL"},
+				{"keyName": "key1", "value": simListKey64(acctID, "key1"), "permissions": "Full"},
+				{"keyName": "key2", "value": simListKey64(acctID, "key2"), "permissions": "Full"},
 			},
 		})
 	})
@@ -763,6 +764,7 @@ func registerAzureFiles(srv *sim.Server) {
 	// surface, terraform's `azurerm_storage_container` and the SDK's
 	// `armstorage.NewBlobContainersClient` 404.
 	blobContainers := sim.MakeStore[BlobContainer](srv.DB(), "blob_containers")
+	azBlobContainers = blobContainers
 	containerBasePath := armBase + "/storageAccounts/{accountName}/blobServices/default/containers"
 
 	srv.HandleFunc("PUT "+containerBasePath+"/{containerName}", func(w http.ResponseWriter, r *http.Request) {

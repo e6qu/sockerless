@@ -37,14 +37,36 @@ type RedisFirewallRule struct {
 	Properties map[string]any `json:"properties"`
 }
 
+// RedisSubResource is the generic shape for a Redis child resource
+// (access policy, access-policy assignment, linked server, patch schedule,
+// private endpoint connection): an ARM resource with a free-form properties
+// bag. The handlers echo the operator-supplied properties; resources whose
+// schema includes provisioningState additionally get it stamped to Succeeded.
+type RedisSubResource struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 var (
-	redisCaches        sim.Store[RedisCache]
-	redisFirewallRules sim.Store[RedisFirewallRule]
+	redisCaches                  sim.Store[RedisCache]
+	redisFirewallRules           sim.Store[RedisFirewallRule]
+	redisAccessPolicies          sim.Store[RedisSubResource]
+	redisAccessPolicyAssignments sim.Store[RedisSubResource]
+	redisLinkedServers           sim.Store[RedisSubResource]
+	redisPatchSchedules          sim.Store[RedisSubResource]
+	redisPrivateConns            sim.Store[RedisSubResource]
 )
 
 func registerCacheRedis(srv *sim.Server) {
 	redisCaches = sim.MakeStore[RedisCache](srv.DB(), "redis_caches")
 	redisFirewallRules = sim.MakeStore[RedisFirewallRule](srv.DB(), "redis_firewall_rules")
+	redisAccessPolicies = sim.MakeStore[RedisSubResource](srv.DB(), "redis_access_policies")
+	redisAccessPolicyAssignments = sim.MakeStore[RedisSubResource](srv.DB(), "redis_access_policy_assignments")
+	redisLinkedServers = sim.MakeStore[RedisSubResource](srv.DB(), "redis_linked_servers")
+	redisPatchSchedules = sim.MakeStore[RedisSubResource](srv.DB(), "redis_patch_schedules")
+	redisPrivateConns = sim.MakeStore[RedisSubResource](srv.DB(), "redis_private_endpoint_connections")
 
 	const armBase = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Cache/Redis"
 
@@ -61,6 +83,47 @@ func registerCacheRedis(srv *sim.Server) {
 	srv.HandleFunc("GET "+armBase+"/{name}/firewallRules", handleRedisCacheListFirewallRules)
 
 	srv.HandleFunc("POST "+armBase+"/{name}/listKeys", handleRedisCacheListKeys)
+	srv.HandleFunc("POST "+armBase+"/{name}/regenerateKey", handleRedisCacheRegenerateKey)
+	srv.HandleFunc("POST "+armBase+"/{name}/forceReboot", handleRedisForceReboot)
+	srv.HandleFunc("POST "+armBase+"/{name}/import", handleRedisImportData)
+	srv.HandleFunc("POST "+armBase+"/{name}/export", handleRedisExportData)
+	srv.HandleFunc("POST "+armBase+"/{name}/flush", handleRedisFlushCache)
+	srv.HandleFunc("GET "+armBase+"/{name}/listUpgradeNotifications", handleRedisListUpgradeNotifications)
+
+	// Provider-level operations metadata, name-availability check, and the
+	// async-operation status endpoint Redis_Create's poller follows.
+	srv.HandleFunc("GET /providers/Microsoft.Cache/operations", handleRedisOperationsList)
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.Cache/checknameavailability", handleRedisCheckNameAvailability)
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Cache/locations/{location}/asyncOperations/{operationId}", handleRedisAsyncOperationStatus)
+
+	// Access policies + assignments (Microsoft Entra ID data-access RBAC).
+	srv.HandleFunc("PUT "+armBase+"/{name}/accessPolicies/{policy}", handleRedisAccessPolicyPut)
+	srv.HandleFunc("GET "+armBase+"/{name}/accessPolicies/{policy}", handleRedisAccessPolicyGet)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/accessPolicies/{policy}", handleRedisAccessPolicyDelete)
+	srv.HandleFunc("GET "+armBase+"/{name}/accessPolicies", handleRedisAccessPolicyList)
+	srv.HandleFunc("PUT "+armBase+"/{name}/accessPolicyAssignments/{assignment}", handleRedisAccessPolicyAssignmentPut)
+	srv.HandleFunc("GET "+armBase+"/{name}/accessPolicyAssignments/{assignment}", handleRedisAccessPolicyAssignmentGet)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/accessPolicyAssignments/{assignment}", handleRedisAccessPolicyAssignmentDelete)
+	srv.HandleFunc("GET "+armBase+"/{name}/accessPolicyAssignments", handleRedisAccessPolicyAssignmentList)
+
+	// Linked servers (geo-replication).
+	srv.HandleFunc("PUT "+armBase+"/{name}/linkedServers/{linkedServer}", handleRedisLinkedServerPut)
+	srv.HandleFunc("GET "+armBase+"/{name}/linkedServers/{linkedServer}", handleRedisLinkedServerGet)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/linkedServers/{linkedServer}", handleRedisLinkedServerDelete)
+	srv.HandleFunc("GET "+armBase+"/{name}/linkedServers", handleRedisLinkedServerList)
+
+	// Patch schedules (maintenance windows).
+	srv.HandleFunc("PUT "+armBase+"/{name}/patchSchedules/{schedule}", handleRedisPatchSchedulePut)
+	srv.HandleFunc("GET "+armBase+"/{name}/patchSchedules/{schedule}", handleRedisPatchScheduleGet)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/patchSchedules/{schedule}", handleRedisPatchScheduleDelete)
+	srv.HandleFunc("GET "+armBase+"/{name}/patchSchedules", handleRedisPatchScheduleList)
+
+	// Private endpoint connections + private link resources.
+	srv.HandleFunc("PUT "+armBase+"/{name}/privateEndpointConnections/{pec}", handleRedisPECPut)
+	srv.HandleFunc("GET "+armBase+"/{name}/privateEndpointConnections/{pec}", handleRedisPECGet)
+	srv.HandleFunc("DELETE "+armBase+"/{name}/privateEndpointConnections/{pec}", handleRedisPECDelete)
+	srv.HandleFunc("GET "+armBase+"/{name}/privateEndpointConnections", handleRedisPECList)
+	srv.HandleFunc("GET "+armBase+"/{name}/privateLinkResources", handleRedisPrivateLinkResources)
 }
 
 func redisCacheID(sub, rg, name string) string {
@@ -202,7 +265,7 @@ func handleRedisCacheCreate(w http.ResponseWriter, r *http.Request) {
 			stored.Properties["provisioningState"] = "Succeeded"
 		})
 	})
-	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.Cache", cache.Location, "operationResults", opID, r.URL.Query().Get("api-version"))
+	opURL := azureAsyncOperationHeader(r, sub, "Microsoft.Cache", cache.Location, "asyncOperations", opID, r.URL.Query().Get("api-version"))
 	writeAzureAsyncCreateHeaders(w, opURL, azureCurrentRequestURL(r))
 	sim.WriteJSON(w, http.StatusCreated, cache)
 }
@@ -299,4 +362,372 @@ func handleRedisCacheListBySubscription(w http.ResponseWriter, r *http.Request) 
 		out = []RedisCache{}
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// redisCacheExists reports whether the named cache is provisioned, writing a
+// ResourceNotFound error when it is not.
+func redisCacheExists(w http.ResponseWriter, sub, rg, name string) bool {
+	if _, ok := redisCaches.Get(redisCacheID(sub, rg, name)); ok {
+		return true
+	}
+	sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+		"The Resource 'Microsoft.Cache/Redis/%s' under resource group '%s' was not found.", name, rg)
+	return false
+}
+
+// handleRedisCacheRegenerateKey regenerates the primary or secondary access
+// key and returns the full RedisAccessKeys pair. The regenerated key is a new
+// deterministic value derived from the cache ID, the key kind, and a rotation
+// salt so a second regenerate of the same key yields a different value, while
+// the untouched key keeps its listKeys value.
+func handleRedisCacheRegenerateKey(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	var req struct {
+		KeyType string `json:"keyType"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	id := redisCacheID(sub, rg, name)
+	primary := simListKey32(id, "primary")
+	secondary := simListKey32(id, "secondary")
+	switch req.KeyType {
+	case "Primary":
+		primary = simListKey32(id, "primary-regenerated")
+	case "Secondary":
+		secondary = simListKey32(id, "secondary-regenerated")
+	default:
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest,
+			"keyType must be 'Primary' or 'Secondary', got %q", req.KeyType)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"primaryKey":   primary,
+		"secondaryKey": secondary,
+	})
+}
+
+// handleRedisForceReboot reboots Redis node(s). Real Azure returns a status
+// message synchronously.
+func handleRedisForceReboot(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	var req struct {
+		RebootType string  `json:"rebootType"`
+		ShardID    *int32  `json:"shardId,omitempty"`
+		Ports      []int32 `json:"ports,omitempty"`
+	}
+	_ = sim.ReadJSON(r, &req)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"message": "Reboot operation has been initiated on the requested Redis node(s).",
+	})
+}
+
+// handleRedisImportData imports RDB files into the cache (long-running). The
+// simulator completes the import synchronously (no headers → the SDK poller
+// resolves immediately).
+func handleRedisImportData(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	var req struct {
+		Files  []string `json:"files"`
+		Format string   `json:"format,omitempty"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	if len(req.Files) == 0 {
+		sim.AzureError(w, "BadRequest", "at least one file is required to import", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleRedisExportData exports the cache contents to a storage container
+// (long-running, completed synchronously).
+func handleRedisExportData(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	var req struct {
+		Container string `json:"container"`
+		Prefix    string `json:"prefix"`
+		Format    string `json:"format,omitempty"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	if req.Container == "" || req.Prefix == "" {
+		sim.AzureError(w, "BadRequest", "container and prefix are required to export", http.StatusBadRequest)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleRedisFlushCache deletes all keys in the cache (long-running, completed
+// synchronously).
+func handleRedisFlushCache(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+// handleRedisListUpgradeNotifications returns pending Redis-version upgrade
+// notifications. A healthy cache has none.
+func handleRedisListUpgradeNotifications(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	name := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, name) {
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+}
+
+func handleRedisOperationsList(w http.ResponseWriter, _ *http.Request) {
+	op := func(name, resource, operation, desc string) map[string]any {
+		return map[string]any{
+			"name": name,
+			"display": map[string]any{
+				"provider":    "Microsoft Cache",
+				"resource":    resource,
+				"operation":   operation,
+				"description": desc,
+			},
+		}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value": []map[string]any{
+			op("Microsoft.Cache/redis/read", "Redis Cache", "Get Redis Cache", "View the settings and configuration of a Redis cache."),
+			op("Microsoft.Cache/redis/write", "Redis Cache", "Set Redis Cache", "Modify a Redis cache's settings and configuration."),
+			op("Microsoft.Cache/redis/delete", "Redis Cache", "Delete Redis Cache", "Remove a Redis cache."),
+			op("Microsoft.Cache/redis/listKeys/action", "Redis Cache", "List Redis Cache Keys", "View the value of Redis cache access keys."),
+		},
+	})
+}
+
+// handleRedisCheckNameAvailability reports whether a cache name is free. Unlike
+// Key Vault, Redis_CheckNameAvailability returns no body: 200 (empty) when the
+// name is available, and an error envelope when it is already taken (a cache
+// with that name exists in any resource group of the subscription).
+func handleRedisCheckNameAvailability(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	var req struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	if req.Name == "" {
+		sim.AzureError(w, "BadRequest", "name is required", http.StatusBadRequest)
+		return
+	}
+	prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+	for _, c := range redisCaches.List() {
+		if strings.HasPrefix(c.ID, prefix) && strings.EqualFold(c.Name, req.Name) {
+			sim.AzureErrorf(w, "NameNotAvailable", http.StatusConflict,
+				"The name %q is already in use.", req.Name)
+			return
+		}
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleRedisAsyncOperationStatus(w http.ResponseWriter, r *http.Request) {
+	op, ok := azureAsyncOps.Get(sim.PathParam(r, "operationId"))
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Operation %q not found.", sim.PathParam(r, "operationId"))
+		return
+	}
+	// Real Azure returns Retry-After on async-operation polls; advertising a
+	// zero delay lets the SDK poller re-poll immediately instead of falling
+	// back to its 30s default frequency.
+	if op.Status == "InProgress" {
+		w.Header().Set("Retry-After", "1")
+	}
+	sim.WriteJSON(w, http.StatusOK, op)
+}
+
+// redisChildPut is the shared create-or-update body for Redis child resources
+// that carry a properties bag. It validates the parent cache exists and echoes
+// the operator properties. Resources whose schema includes a provisioningState
+// (access policies/assignments, linked servers, private endpoint connections)
+// pass stampProvisioningState=true; the patch schedule's ScheduleEntries shape
+// has no provisioningState, so it passes false.
+func redisChildPut(w http.ResponseWriter, r *http.Request, store sim.Store[RedisSubResource], childSeg, childName, typ string, stampProvisioningState bool) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, cache) {
+		return
+	}
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureErrorf(w, "BadRequest", http.StatusBadRequest, "invalid request body: %v", err)
+		return
+	}
+	props := map[string]any{}
+	for k, v := range req.Properties {
+		props[k] = v
+	}
+	if stampProvisioningState {
+		props["provisioningState"] = "Succeeded"
+	}
+	id := redisCacheID(sub, rg, cache) + "/" + childSeg + "/" + childName
+	res := RedisSubResource{ID: id, Name: childName, Type: typ, Properties: props}
+	store.Put(id, res)
+	sim.WriteJSON(w, http.StatusOK, res)
+}
+
+func redisChildGet(w http.ResponseWriter, r *http.Request, store sim.Store[RedisSubResource], childSeg, childName string) {
+	id := redisCacheID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/" + childSeg + "/" + childName
+	res, ok := store.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "%s %q not found.", childSeg, childName)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, res)
+}
+
+func redisChildDelete(w http.ResponseWriter, r *http.Request, store sim.Store[RedisSubResource], childSeg, childName string) {
+	id := redisCacheID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "name")) + "/" + childSeg + "/" + childName
+	if !store.Delete(id) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func redisChildList(w http.ResponseWriter, r *http.Request, store sim.Store[RedisSubResource], childSeg string) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, cache) {
+		return
+	}
+	prefix := redisCacheID(sub, rg, cache) + "/" + childSeg + "/"
+	out := store.Filter(func(res RedisSubResource) bool {
+		return strings.HasPrefix(res.ID, prefix)
+	})
+	if out == nil {
+		out = []RedisSubResource{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+func handleRedisAccessPolicyPut(w http.ResponseWriter, r *http.Request) {
+	redisChildPut(w, r, redisAccessPolicies, "accessPolicies", sim.PathParam(r, "policy"), "Microsoft.Cache/Redis/accessPolicies", true)
+}
+func handleRedisAccessPolicyGet(w http.ResponseWriter, r *http.Request) {
+	redisChildGet(w, r, redisAccessPolicies, "accessPolicies", sim.PathParam(r, "policy"))
+}
+func handleRedisAccessPolicyDelete(w http.ResponseWriter, r *http.Request) {
+	redisChildDelete(w, r, redisAccessPolicies, "accessPolicies", sim.PathParam(r, "policy"))
+}
+func handleRedisAccessPolicyList(w http.ResponseWriter, r *http.Request) {
+	redisChildList(w, r, redisAccessPolicies, "accessPolicies")
+}
+
+func handleRedisAccessPolicyAssignmentPut(w http.ResponseWriter, r *http.Request) {
+	redisChildPut(w, r, redisAccessPolicyAssignments, "accessPolicyAssignments", sim.PathParam(r, "assignment"), "Microsoft.Cache/Redis/accessPolicyAssignments", true)
+}
+func handleRedisAccessPolicyAssignmentGet(w http.ResponseWriter, r *http.Request) {
+	redisChildGet(w, r, redisAccessPolicyAssignments, "accessPolicyAssignments", sim.PathParam(r, "assignment"))
+}
+func handleRedisAccessPolicyAssignmentDelete(w http.ResponseWriter, r *http.Request) {
+	redisChildDelete(w, r, redisAccessPolicyAssignments, "accessPolicyAssignments", sim.PathParam(r, "assignment"))
+}
+func handleRedisAccessPolicyAssignmentList(w http.ResponseWriter, r *http.Request) {
+	redisChildList(w, r, redisAccessPolicyAssignments, "accessPolicyAssignments")
+}
+
+func handleRedisLinkedServerPut(w http.ResponseWriter, r *http.Request) {
+	redisChildPut(w, r, redisLinkedServers, "linkedServers", sim.PathParam(r, "linkedServer"), "Microsoft.Cache/Redis/linkedServers", true)
+}
+func handleRedisLinkedServerGet(w http.ResponseWriter, r *http.Request) {
+	redisChildGet(w, r, redisLinkedServers, "linkedServers", sim.PathParam(r, "linkedServer"))
+}
+func handleRedisLinkedServerDelete(w http.ResponseWriter, r *http.Request) {
+	redisChildDelete(w, r, redisLinkedServers, "linkedServers", sim.PathParam(r, "linkedServer"))
+}
+func handleRedisLinkedServerList(w http.ResponseWriter, r *http.Request) {
+	redisChildList(w, r, redisLinkedServers, "linkedServers")
+}
+
+func handleRedisPatchSchedulePut(w http.ResponseWriter, r *http.Request) {
+	redisChildPut(w, r, redisPatchSchedules, "patchSchedules", sim.PathParam(r, "schedule"), "Microsoft.Cache/Redis/patchSchedules", false)
+}
+func handleRedisPatchScheduleGet(w http.ResponseWriter, r *http.Request) {
+	redisChildGet(w, r, redisPatchSchedules, "patchSchedules", sim.PathParam(r, "schedule"))
+}
+func handleRedisPatchScheduleDelete(w http.ResponseWriter, r *http.Request) {
+	redisChildDelete(w, r, redisPatchSchedules, "patchSchedules", sim.PathParam(r, "schedule"))
+}
+func handleRedisPatchScheduleList(w http.ResponseWriter, r *http.Request) {
+	redisChildList(w, r, redisPatchSchedules, "patchSchedules")
+}
+
+func handleRedisPECPut(w http.ResponseWriter, r *http.Request) {
+	redisChildPut(w, r, redisPrivateConns, "privateEndpointConnections", sim.PathParam(r, "pec"), "Microsoft.Cache/Redis/privateEndpointConnections", true)
+}
+func handleRedisPECGet(w http.ResponseWriter, r *http.Request) {
+	redisChildGet(w, r, redisPrivateConns, "privateEndpointConnections", sim.PathParam(r, "pec"))
+}
+func handleRedisPECDelete(w http.ResponseWriter, r *http.Request) {
+	redisChildDelete(w, r, redisPrivateConns, "privateEndpointConnections", sim.PathParam(r, "pec"))
+}
+func handleRedisPECList(w http.ResponseWriter, r *http.Request) {
+	redisChildList(w, r, redisPrivateConns, "privateEndpointConnections")
+}
+
+// handleRedisPrivateLinkResources returns the cache's single "redisCache"
+// private-link group, matching real Azure.
+func handleRedisPrivateLinkResources(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	cache := sim.PathParam(r, "name")
+	if !redisCacheExists(w, sub, rg, cache) {
+		return
+	}
+	id := redisCacheID(sub, rg, cache)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value": []map[string]any{{
+			"id":   id + "/privateLinkResources/redisCache",
+			"name": "redisCache",
+			"type": "Microsoft.Cache/Redis/privateLinkResources",
+			"properties": map[string]any{
+				"groupId":           "redisCache",
+				"requiredMembers":   []string{"redisCache"},
+				"requiredZoneNames": []string{"privatelink.redis.cache.windows.net"},
+			},
+		}},
+	})
 }
