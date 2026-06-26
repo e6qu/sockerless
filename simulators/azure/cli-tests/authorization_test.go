@@ -10,6 +10,46 @@ import (
 
 const authAPIVersion = "2022-04-01"
 
+// TestRoleDefinition_CustomCreateGetDelete exercises the custom-role-definition
+// lifecycle (RoleDefinitions_CreateOrUpdate / Get / Delete) via az-rest.
+func TestRoleDefinition_CustomCreateGetDelete(t *testing.T) {
+	roleDefID := "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+	url := fmt.Sprintf("%s/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s?api-version=%s",
+		baseURL, subscriptionID, roleDefID, authAPIVersion)
+	body := fmt.Sprintf(`{
+		"properties": {
+			"roleName": "Sockerless CLI Custom Role",
+			"type": "CustomRole",
+			"description": "Created via az rest.",
+			"permissions": [{"actions": ["*/read"], "notActions": []}],
+			"assignableScopes": ["/subscriptions/%s"]
+		}
+	}`, subscriptionID)
+
+	out := runCLI(t, azRest("PUT", url, body))
+	var def struct {
+		Name       string `json:"name"`
+		Properties struct {
+			RoleName string `json:"roleName"`
+			Type     string `json:"type"`
+		} `json:"properties"`
+	}
+	parseJSON(t, out, &def)
+	assert.Equal(t, roleDefID, def.Name)
+	assert.Equal(t, "Sockerless CLI Custom Role", def.Properties.RoleName)
+	assert.Equal(t, "CustomRole", def.Properties.Type)
+
+	out = runCLI(t, azRest("GET", url, ""))
+	parseJSON(t, out, &def)
+	assert.Equal(t, "Sockerless CLI Custom Role", def.Properties.RoleName)
+
+	runCLI(t, azRest("DELETE", url, ""))
+
+	cmd := azRest("GET", url, "")
+	_, err := cmd.CombinedOutput()
+	assert.Error(t, err, "custom role definition GET must fail after delete")
+}
+
 func TestRoleAssignment_CreateAndShow(t *testing.T) {
 	raName := "00000000-0000-0000-0000-000000000099"
 	url := fmt.Sprintf("%s/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Authorization/roleAssignments/%s?api-version=%s",

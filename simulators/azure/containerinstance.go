@@ -59,10 +59,18 @@ type aciExecSession struct {
 	Password    string `json:"password"`
 }
 
+// aciAttachSession is a pending websocket attach to a running container's
+// standard streams (the analogue of `docker attach`).
+type aciAttachSession struct {
+	ContainerID string `json:"containerId"`
+	Password    string `json:"password"`
+}
+
 var (
 	aciContainerGroups sim.Store[ACIContainerGroup]
 	aciRuntimeRecords  sim.Store[aciRuntimeRecord]
 	aciExecSessions    sync.Map
+	aciAttachSessions  sync.Map
 	aciLogMu           sync.Mutex
 	aciLogs            = map[string][]string{}
 )
@@ -84,6 +92,20 @@ func registerContainerInstances(srv *sim.Server) {
 	srv.HandleFunc("GET "+base+"/{containerGroupName}/containers/{containerName}/logs", handleACIContainerLogs)
 	srv.HandleFunc("POST "+base+"/{containerGroupName}/containers/{containerName}/exec", handleACIContainerExec)
 	srv.HandleFunc("GET "+base+"/{containerGroupName}/containers/{containerName}/execSessions/{sessionID}", handleACIContainerExecSession)
+
+	// Provider operation metadata.
+	srv.HandleFunc("GET /providers/Microsoft.ContainerInstance/operations", handleACIOperationsList)
+	// Per-region capacity, capabilities and cached images.
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/usages", handleACILocationUsages)
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/capabilities", handleACILocationCapabilities)
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.ContainerInstance/locations/{location}/cachedImages", handleACILocationCachedImages)
+	// Outbound network dependency endpoints for a container group.
+	srv.HandleFunc("GET "+base+"/{containerGroupName}/outboundNetworkDependenciesEndpoints", handleACIOutboundNetworkDeps)
+	// Attach to a running container's standard streams (websocket handshake).
+	srv.HandleFunc("POST "+base+"/{containerGroupName}/containers/{containerName}/attach", handleACIContainerAttach)
+	srv.HandleFunc("GET "+base+"/{containerGroupName}/containers/{containerName}/attachSessions/{sessionID}", handleACIContainerAttachSession)
+	// Delete the subnet<->container-group service association link.
+	srv.HandleFunc("DELETE /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Network/virtualNetworks/{virtualNetworkName}/subnets/{subnetName}/providers/Microsoft.ContainerInstance/serviceAssociationLinks/default", handleACISubnetServiceAssociationLinkDelete)
 }
 
 func aciContainerGroupID(sub, rg, name string) string {
@@ -399,6 +421,271 @@ func handleACIContainerExecSession(w http.ResponseWriter, r *http.Request) {
 		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
 		time.Now().Add(5*time.Second),
 	)
+}
+
+// handleACIOperationsList returns the Microsoft.ContainerInstance resource
+// provider's published operation metadata (Operations_List).
+func handleACIOperationsList(w http.ResponseWriter, _ *http.Request) {
+	op := func(name, resource, operation, description string) map[string]any {
+		return map[string]any{
+			"name": name,
+			"display": map[string]any{
+				"provider":    "Microsoft Container Instance",
+				"resource":    resource,
+				"operation":   operation,
+				"description": description,
+			},
+			"origin": "User, System",
+		}
+	}
+	value := []map[string]any{
+		op("Microsoft.ContainerInstance/register/action", "Microsoft Container Instance", "Registers the subscription for the container instance resource provider and enables the creation of container groups.", "Registers the subscription for the container instance resource provider and enables the creation of container groups."),
+		op("Microsoft.ContainerInstance/containerGroups/read", "Container Groups", "Get Container Groups", "Get all container groups."),
+		op("Microsoft.ContainerInstance/containerGroups/write", "Container Groups", "Create or Update Container Groups", "Create or update a specific container group."),
+		op("Microsoft.ContainerInstance/containerGroups/delete", "Container Groups", "Delete Container Groups", "Delete the specified container group."),
+		op("Microsoft.ContainerInstance/containerGroups/restart/action", "Container Groups", "Restart Container Groups", "Restarts a specific container group."),
+		op("Microsoft.ContainerInstance/containerGroups/stop/action", "Container Groups", "Stop Container Groups", "Stops a specific container group."),
+		op("Microsoft.ContainerInstance/containerGroups/start/action", "Container Groups", "Start Container Groups", "Starts a specific container group."),
+		op("Microsoft.ContainerInstance/containerGroups/containers/exec/action", "Container", "Exec Container", "Exec a specific container."),
+		op("Microsoft.ContainerInstance/containerGroups/containers/attach/action", "Container", "Attach Container", "Attach to the output stream of a container."),
+		op("Microsoft.ContainerInstance/containerGroups/containers/logs/read", "Container Logs", "Get Container Logs", "Get logs for a specific container."),
+		op("Microsoft.ContainerInstance/locations/usages/read", "Location Usages", "Get Usages", "Get the usage of the specific resource type under a subscription."),
+		op("Microsoft.ContainerInstance/locations/capabilities/read", "Location Capabilities", "Get Capabilities", "Get the capabilities for a region."),
+		op("Microsoft.ContainerInstance/operations/read", "Operations", "List Operations", "List the operations for Azure Container Instance service."),
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
+}
+
+// handleACILocationUsages reports the subscription's Azure Container Instances
+// usage for a region (Location_ListUsage). Current consumption is computed from
+// the container groups the simulator actually holds in that region; the limits
+// are the published per-region default quotas.
+func handleACILocationUsages(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	location := sim.PathParam(r, "location")
+	prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/", sub)
+	groupCount := int32(0)
+	var cores float64
+	for _, group := range aciContainerGroups.Filter(func(group ACIContainerGroup) bool {
+		return strings.HasPrefix(group.ID, prefix) && aciLocationMatches(group.Location, location)
+	}) {
+		groupCount++
+		cores += aciGroupCPU(&group)
+	}
+	usage := func(name string, current, limit int32) map[string]any {
+		return map[string]any{
+			"id":           fmt.Sprintf("/subscriptions/%s/providers/Microsoft.ContainerInstance/locations/%s/usages/%s", sub, location, name),
+			"unit":         "Count",
+			"currentValue": current,
+			"limit":        limit,
+			"name": map[string]any{
+				"value":          name,
+				"localizedValue": name,
+			},
+		}
+	}
+	value := []map[string]any{
+		usage("ContainerGroups", groupCount, 100),
+		usage("StandardCores", int32(cores), 100),
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
+}
+
+// handleACILocationCapabilities returns the published Azure Container Instances
+// resource capabilities for a region (Location_ListCapabilities).
+func handleACILocationCapabilities(w http.ResponseWriter, r *http.Request) {
+	location := sim.PathParam(r, "location")
+	capability := func(osType, ipType string) map[string]any {
+		return map[string]any{
+			"resourceType":  "containerGroups",
+			"osType":        osType,
+			"location":      location,
+			"ipAddressType": ipType,
+			"gpu":           "None",
+			"capabilities": map[string]any{
+				"maxMemoryInGB": 16,
+				"maxCpu":        4,
+				"maxGpuCount":   4,
+			},
+		}
+	}
+	value := []map[string]any{
+		capability("Linux", "Public"),
+		capability("Linux", "Private"),
+		capability("Windows", "Public"),
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
+}
+
+// handleACILocationCachedImages returns the images cached by the platform in a
+// region (Location_ListCachedImages). The simulator maintains no Azure-managed
+// image cache, so the list is empty.
+func handleACILocationCachedImages(w http.ResponseWriter, _ *http.Request) {
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": []any{}})
+}
+
+// handleACIOutboundNetworkDeps returns the container group's outbound network
+// dependency endpoints. Per the Azure contract this list is always empty.
+func handleACIOutboundNetworkDeps(w http.ResponseWriter, r *http.Request) {
+	id := aciContainerGroupID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "containerGroupName"))
+	if _, ok := aciContainerGroups.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Container group %q not found.", sim.PathParam(r, "containerGroupName"))
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, []string{})
+}
+
+// handleACIContainerAttach issues the websocket handshake for attaching to a
+// running container's standard streams (Containers_Attach).
+func handleACIContainerAttach(w http.ResponseWriter, r *http.Request) {
+	id := aciContainerGroupID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "containerGroupName"))
+	containerName := sim.PathParam(r, "containerName")
+	if _, ok := aciContainerGroups.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Container group %q not found.", sim.PathParam(r, "containerGroupName"))
+		return
+	}
+	rec, ok := aciRuntimeRecords.Get(aciRuntimeKey(id, containerName))
+	if !ok || rec.ContainerID == "" || rec.State != ACIStateRunning {
+		sim.AzureErrorf(w, "ContainerNotRunning", http.StatusBadRequest, "Container %q is not running.", containerName)
+		return
+	}
+	sessionID := generateUUID()
+	password := generateUUID()
+	aciAttachSessions.Store(sessionID, aciAttachSession{ContainerID: rec.ContainerID, Password: password})
+	scheme := "ws"
+	if strings.EqualFold(azureRequestScheme(r), "https") {
+		scheme = "wss"
+	}
+	query := url.Values{}
+	query.Set("password", password)
+	if apiVersion := r.URL.Query().Get("api-version"); apiVersion != "" {
+		query.Set("api-version", apiVersion)
+	}
+	uri := fmt.Sprintf("%s://%s%s/containers/%s/attachSessions/%s?%s",
+		scheme, r.Host, id, containerName, sessionID, query.Encode())
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"webSocketUri": uri,
+		"password":     password,
+	})
+}
+
+// handleACIContainerAttachSession upgrades the attach websocket and streams the
+// running container's standard streams over it.
+func handleACIContainerAttachSession(w http.ResponseWriter, r *http.Request) {
+	sessionID := sim.PathParam(r, "sessionID")
+	v, ok := aciAttachSessions.LoadAndDelete(sessionID)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Attach session %q not found.", sessionID)
+		return
+	}
+	session, ok := v.(aciAttachSession)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Attach session %q not found.", sessionID)
+		return
+	}
+	if session.Password != "" && r.URL.Query().Get("password") != session.Password && r.Header.Get("Authorization") != session.Password {
+		sim.AzureError(w, "Unauthorized", "Invalid attach session password.", http.StatusUnauthorized)
+		return
+	}
+	conn, err := acaWSUpgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close() //nolint:errcheck
+
+	cli := sim.DockerClient()
+	if cli == nil {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, "docker client not initialised"))
+		return
+	}
+	ctx := r.Context()
+	attach, err := cli.ContainerAttach(ctx, session.ContainerID, dockercontainer.AttachOptions{
+		Stream: true,
+		Stdin:  true,
+		Stdout: true,
+		Stderr: true,
+	})
+	if err != nil {
+		_ = conn.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseInternalServerErr, err.Error()))
+		return
+	}
+	defer attach.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := attach.Reader.Read(buf)
+			if n > 0 {
+				if werr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); werr != nil {
+					return
+				}
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	for {
+		_, msg, err := conn.ReadMessage()
+		if err != nil {
+			break
+		}
+		if _, werr := attach.Conn.Write(msg); werr != nil {
+			break
+		}
+	}
+	_ = attach.CloseWrite()
+	<-done
+	_ = conn.WriteControl(
+		websocket.CloseMessage,
+		websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+		time.Now().Add(5*time.Second),
+	)
+}
+
+// handleACISubnetServiceAssociationLinkDelete removes the service association
+// link that binds a delegated subnet to Azure Container Instances. The
+// simulator holds no such link, so the delete is a no-op success.
+func handleACISubnetServiceAssociationLinkDelete(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// aciLocationMatches compares two Azure region names, ignoring case and the
+// spaces Azure permits in display-form locations ("East US" == "eastus").
+func aciLocationMatches(a, b string) bool {
+	norm := func(s string) string { return strings.ReplaceAll(strings.ToLower(s), " ", "") }
+	return norm(a) == norm(b)
+}
+
+// aciGroupCPU sums the CPU cores requested across a container group's containers.
+func aciGroupCPU(group *ACIContainerGroup) float64 {
+	var total float64
+	for _, c := range aciContainers(group) {
+		props, _ := c["properties"].(map[string]any)
+		if props == nil {
+			continue
+		}
+		resources, _ := props["resources"].(map[string]any)
+		if resources == nil {
+			continue
+		}
+		requests, _ := resources["requests"].(map[string]any)
+		if requests == nil {
+			continue
+		}
+		switch cpu := requests["cpu"].(type) {
+		case float64:
+			total += cpu
+		case int:
+			total += float64(cpu)
+		}
+	}
+	return total
 }
 
 func aciApplyGroupDefaults(r *http.Request, group *ACIContainerGroup) {

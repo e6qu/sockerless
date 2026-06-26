@@ -275,6 +275,8 @@ func registerPublicDNS(srv *sim.Server) {
 		zoneName := sim.PathParam(r, "zoneName")
 		writePublicDNSRecordSetList(w, r, recordSets, publicDNSZoneID(sub, rg, zoneName), "")
 	})
+
+	registerPublicDNSMore(srv, zones, recordSets)
 }
 
 func publicDNSZoneID(sub, rg, zoneName string) string {

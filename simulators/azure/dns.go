@@ -642,6 +642,8 @@ func registerPrivateDNS(srv *sim.Server) {
 		vnetLinks.Delete(resourceID)
 		w.WriteHeader(http.StatusAccepted)
 	})
+
+	registerPrivateDNSMore(srv, zones, recordSets, vnetLinks)
 }
 
 // realizeCNAMEAsDockerAlias makes recordName resolve to the App targeted by a

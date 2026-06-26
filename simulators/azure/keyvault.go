@@ -255,16 +255,28 @@ func (a KeyVaultAttrs) MarshalJSON() ([]byte, error) {
 	})
 }
 
+// KeyVaultPrivateEndpointConnection is a private endpoint connection on a
+// vault (Microsoft.KeyVault/vaults/privateEndpointConnections).
+type KeyVaultPrivateEndpointConnection struct {
+	ID         string         `json:"id"`
+	Name       string         `json:"name"`
+	Type       string         `json:"type"`
+	Etag       string         `json:"etag,omitempty"`
+	Properties map[string]any `json:"properties,omitempty"`
+}
+
 var (
-	keyVaults     sim.Store[KeyVault]
-	deletedVaults sim.Store[DeletedKeyVault]
-	keyVaultData  sim.Store[kvSecretStored] // key: <vault>/<secretName>
+	keyVaults        sim.Store[KeyVault]
+	deletedVaults    sim.Store[DeletedKeyVault]
+	keyVaultData     sim.Store[kvSecretStored] // key: <vault>/<secretName>
+	keyVaultPrivConn sim.Store[KeyVaultPrivateEndpointConnection]
 )
 
 func registerKeyVault(srv *sim.Server) {
 	keyVaults = sim.MakeStore[KeyVault](srv.DB(), "keyvaults")
 	deletedVaults = sim.MakeStore[DeletedKeyVault](srv.DB(), "keyvault_deleted_vaults")
 	keyVaultData = sim.MakeStore[kvSecretStored](srv.DB(), "keyvault_secrets")
+	keyVaultPrivConn = sim.MakeStore[KeyVaultPrivateEndpointConnection](srv.DB(), "keyvault_private_endpoint_connections")
 	keyVaultKeys = sim.MakeStore[kvKeyStored](srv.DB(), "keyvault_keys")
 	keyVaultCertificates = sim.MakeStore[kvCertStored](srv.DB(), "keyvault_certificates")
 
@@ -604,6 +616,18 @@ func registerKeyVault(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": all})
 	})
 
+	// Vault name-availability check. The azurerm provider calls this
+	// pre-create. A name is taken when an active vault already uses it.
+	srv.HandleFunc("POST /subscriptions/{subscriptionId}/providers/Microsoft.KeyVault/checknameavailability", handleKeyVaultCheckNameAvailability)
+
+	// Vault private endpoint connections + private link resources.
+	const vaultBase = armBase + "/vaults"
+	srv.HandleFunc("PUT "+vaultBase+"/{name}/privateEndpointConnections/{pec}", handleKeyVaultPECPut)
+	srv.HandleFunc("GET "+vaultBase+"/{name}/privateEndpointConnections/{pec}", handleKeyVaultPECGet)
+	srv.HandleFunc("DELETE "+vaultBase+"/{name}/privateEndpointConnections/{pec}", handleKeyVaultPECDelete)
+	srv.HandleFunc("GET "+vaultBase+"/{name}/privateEndpointConnections", handleKeyVaultPECList)
+	srv.HandleFunc("GET "+vaultBase+"/{name}/privateLinkResources", handleKeyVaultPrivateLinkResources)
+
 	// Data plane — subdomain routing via WrapHandler. Host pattern:
 	// `<vault>.vault.<sim-host>:<port>`. Strip the suffix to identify
 	// the vault and route to the right handler.
@@ -669,6 +693,144 @@ func deleteDeletedVaultsFor(sub, name string) {
 			deletedVaults.Delete(v.ID)
 		}
 	}
+}
+
+func keyVaultResourceID(sub, rg, name string) string {
+	return fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.KeyVault/vaults/%s", sub, rg, name)
+}
+
+// handleKeyVaultCheckNameAvailability reports whether a vault name is free.
+// A name is taken when an active vault in the subscription already uses it.
+func handleKeyVaultCheckNameAvailability(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	var req struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Name == "" {
+		sim.AzureError(w, "BadRequest", "name is required", http.StatusBadRequest)
+		return
+	}
+	prefix := fmt.Sprintf("/subscriptions/%s/", sub)
+	taken := false
+	for _, v := range keyVaults.List() {
+		if strings.HasPrefix(v.ID, prefix) && strings.EqualFold(v.Name, req.Name) {
+			taken = true
+			break
+		}
+	}
+	resp := map[string]any{"nameAvailable": !taken}
+	if taken {
+		resp["reason"] = "AlreadyExists"
+		resp["message"] = fmt.Sprintf("The vault name %q is already in use.", req.Name)
+	}
+	sim.WriteJSON(w, http.StatusOK, resp)
+}
+
+func keyVaultPECID(sub, rg, vault, pec string) string {
+	return keyVaultResourceID(sub, rg, vault) + "/privateEndpointConnections/" + pec
+}
+
+func handleKeyVaultPECPut(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	vault := sim.PathParam(r, "name")
+	pecName := sim.PathParam(r, "pec")
+	if _, ok := keyVaults.Get(keyVaultResourceID(sub, rg, vault)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Vault %q not found in resource group %q.", vault, rg)
+		return
+	}
+	var req KeyVaultPrivateEndpointConnection
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	props := map[string]any{}
+	for k, v := range req.Properties {
+		props[k] = v
+	}
+	props["provisioningState"] = "Succeeded"
+	id := keyVaultPECID(sub, rg, vault, pecName)
+	pec := KeyVaultPrivateEndpointConnection{
+		ID:         id,
+		Name:       pecName,
+		Type:       "Microsoft.KeyVault/vaults/privateEndpointConnections",
+		Properties: props,
+	}
+	keyVaultPrivConn.Put(id, pec)
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleKeyVaultPECGet(w http.ResponseWriter, r *http.Request) {
+	id := keyVaultPECID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"),
+		sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	pec, ok := keyVaultPrivConn.Get(id)
+	if !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Private endpoint connection %q not found.", sim.PathParam(r, "pec"))
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, pec)
+}
+
+func handleKeyVaultPECDelete(w http.ResponseWriter, r *http.Request) {
+	id := keyVaultPECID(sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"),
+		sim.PathParam(r, "name"), sim.PathParam(r, "pec"))
+	if !keyVaultPrivConn.Delete(id) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
+func handleKeyVaultPECList(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	vault := sim.PathParam(r, "name")
+	if _, ok := keyVaults.Get(keyVaultResourceID(sub, rg, vault)); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Vault %q not found in resource group %q.", vault, rg)
+		return
+	}
+	prefix := keyVaultResourceID(sub, rg, vault) + "/privateEndpointConnections/"
+	out := keyVaultPrivConn.Filter(func(p KeyVaultPrivateEndpointConnection) bool {
+		return strings.HasPrefix(p.ID, prefix)
+	})
+	if out == nil {
+		out = []KeyVaultPrivateEndpointConnection{}
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+}
+
+// handleKeyVaultPrivateLinkResources returns the vault's single "vault"
+// private-link group, matching real Azure.
+func handleKeyVaultPrivateLinkResources(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	rg := sim.PathParam(r, "resourceGroupName")
+	vault := sim.PathParam(r, "name")
+	id := keyVaultResourceID(sub, rg, vault)
+	if _, ok := keyVaults.Get(id); !ok {
+		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+			"Vault %q not found in resource group %q.", vault, rg)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"value": []map[string]any{{
+			"id":   id + "/privateLinkResources/vault",
+			"name": "vault",
+			"type": "Microsoft.KeyVault/vaults/privateLinkResources",
+			"properties": map[string]any{
+				"groupId":           "vault",
+				"requiredMembers":   []string{"default"},
+				"requiredZoneNames": []string{"privatelink.vaultcore.azure.net"},
+			},
+		}},
+	})
 }
 
 // handleKeyVaultDataPlane routes requests with `<vault>.vault.*` Host

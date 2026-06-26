@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 
@@ -32,6 +31,45 @@ type RoleAssignmentProperties struct {
 }
 
 var azureRoleAssignments sim.Store[RoleAssignment]
+
+// CustomRoleDefinition is a user-authored RBAC role definition created through
+// RoleDefinitions_CreateOrUpdate. Built-in roles are served from builtinRoleDefs;
+// custom roles are stored here, keyed by their role-definition GUID.
+type CustomRoleDefinition struct {
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Type     string         `json:"type"`
+	Response map[string]any `json:"response"`
+}
+
+var customRoleDefs sim.Store[CustomRoleDefinition]
+
+// roleDefExists reports whether a role-definition GUID resolves to a built-in
+// or a stored custom role definition.
+func roleDefExists(guid string) bool {
+	if _, ok := builtinRoleDefByID(guid); ok {
+		return true
+	}
+	_, ok := customRoleDefs.Get(guid)
+	return ok
+}
+
+// rbacIsSimpleScope reports whether an RBAC scope is a bare subscription
+// ("/subscriptions/{id}") or resource group
+// ("/subscriptions/{id}/resourceGroups/{rg}") scope — the shapes the mux serves
+// through registered routes. Deeper resource scopes and management-group scopes
+// are handled by the scope-agnostic authorization middleware instead.
+func rbacIsSimpleScope(scope string) bool {
+	segs := strings.Split(strings.Trim(scope, "/"), "/")
+	switch len(segs) {
+	case 2:
+		return strings.EqualFold(segs[0], "subscriptions")
+	case 4:
+		return strings.EqualFold(segs[0], "subscriptions") && strings.EqualFold(segs[2], "resourceGroups")
+	default:
+		return false
+	}
+}
 
 // parseRoleAssignmentPath extracts the scope and role assignment name from a path like
 // subscriptions/{sub}/providers/Microsoft.Authorization/roleAssignments/{name}
@@ -322,6 +360,41 @@ func parsePrincipalIdFilter(filter string) string {
 func registerAuthorization(srv *sim.Server) {
 	roleAssignments := sim.MakeStore[RoleAssignment](srv.DB(), "role_assignments")
 	azureRoleAssignments = roleAssignments
+	customRoleDefs = sim.MakeStore[CustomRoleDefinition](srv.DB(), "custom_role_definitions")
+
+	// Subscription- and resource-group-scoped role assignments and custom role
+	// definitions are mounted as concrete routes (the mux can express those
+	// scopes). Deeper resource scopes and management-group scopes are served by
+	// the scope-agnostic middleware below, which Go 1.22's mux cannot match
+	// (a fixed suffix after an arbitrary-length scope prefix). Both entry points
+	// share the same do* handler logic.
+	subRAItem := func(w http.ResponseWriter, r *http.Request) {
+		rbacDispatchRoleAssignmentItem(w, r, "/subscriptions/"+sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "roleAssignmentName"))
+	}
+	rgRAItem := func(w http.ResponseWriter, r *http.Request) {
+		scope := "/subscriptions/" + sim.PathParam(r, "subscriptionId") + "/resourceGroups/" + sim.PathParam(r, "resourceGroupName")
+		rbacDispatchRoleAssignmentItem(w, r, scope, sim.PathParam(r, "roleAssignmentName"))
+	}
+	const subRA = "/subscriptions/{subscriptionId}/providers/Microsoft.Authorization/roleAssignments"
+	const rgRA = "/subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}/providers/Microsoft.Authorization/roleAssignments"
+	srv.HandleFunc("PUT "+subRA+"/{roleAssignmentName}", subRAItem)
+	srv.HandleFunc("GET "+subRA+"/{roleAssignmentName}", subRAItem)
+	srv.HandleFunc("DELETE "+subRA+"/{roleAssignmentName}", subRAItem)
+	srv.HandleFunc("GET "+subRA, func(w http.ResponseWriter, r *http.Request) {
+		doRoleAssignmentList(w, r, "/subscriptions/"+sim.PathParam(r, "subscriptionId"))
+	})
+	srv.HandleFunc("PUT "+rgRA+"/{roleAssignmentName}", rgRAItem)
+	srv.HandleFunc("GET "+rgRA+"/{roleAssignmentName}", rgRAItem)
+	srv.HandleFunc("DELETE "+rgRA+"/{roleAssignmentName}", rgRAItem)
+	srv.HandleFunc("GET "+rgRA, func(w http.ResponseWriter, r *http.Request) {
+		scope := "/subscriptions/" + sim.PathParam(r, "subscriptionId") + "/resourceGroups/" + sim.PathParam(r, "resourceGroupName")
+		doRoleAssignmentList(w, r, scope)
+	})
+
+	// Custom role definitions: create/update and delete at subscription scope.
+	const subRD = "/subscriptions/{subscriptionId}/providers/Microsoft.Authorization/roleDefinitions/{roleDefinitionId}"
+	srv.HandleFunc("PUT "+subRD, handleRoleDefinitionPut)
+	srv.HandleFunc("DELETE "+subRD, handleRoleDefinitionDelete)
 
 	// Middleware to handle authorization requests at ANY scope level.
 	// Go 1.22 mux doesn't support variable-length wildcards in the middle of
@@ -354,21 +427,22 @@ func registerAuthorization(srv *sim.Server) {
 				afterMarker = strings.TrimSuffix(afterMarker, "/")
 
 				if afterMarker != "" {
-					// GET by ID: return single role definition
+					// GET by ID: return single role definition (built-in or custom).
 					roleDefID := afterMarker
 					if d, ok := builtinRoleDefByID(roleDefID); ok {
-						fmt.Fprintf(os.Stderr, "AUTHZ: roleDefinition GET-by-ID path=%s id=%s role=%s\n", path, roleDefID, d.Name)
 						sim.WriteJSON(w, http.StatusOK, roleDefinitionJSON(sub, d))
 						return
 					}
-					// Not found
-					fmt.Fprintf(os.Stderr, "AUTHZ: roleDefinition GET-by-ID NOT FOUND path=%s id=%s\n", path, roleDefID)
+					if c, ok := customRoleDefs.Get(roleDefID); ok {
+						sim.WriteJSON(w, http.StatusOK, c.Response)
+						return
+					}
 					sim.AzureErrorf(w, "RoleDefinitionNotFound", http.StatusNotFound,
 						"Role definition '%s' not found.", roleDefID)
 					return
 				}
 
-				// LIST: return all matching role definitions
+				// LIST: return all matching role definitions (built-in + custom).
 				filter := r.URL.Query().Get("$filter")
 				// Parse OData filter: "roleName eq 'Monitoring Reader'" → exact match on "Monitoring Reader"
 				filterRoleName := parseRoleNameFilter(filter)
@@ -380,8 +454,12 @@ func registerAuthorization(srv *sim.Server) {
 					}
 					defs = append(defs, roleDefinitionJSON(sub, d))
 				}
-
-				fmt.Fprintf(os.Stderr, "AUTHZ: roleDefinitions LIST path=%s filter=%q filterRole=%q numDefs=%d\n", path, filter, filterRoleName, len(defs))
+				for _, c := range customRoleDefs.List() {
+					if filterRoleName != "" && customRoleDefName(c) != filterRoleName {
+						continue
+					}
+					defs = append(defs, c.Response)
+				}
 
 				sim.WriteJSON(w, http.StatusOK, map[string]any{
 					"value": defs,
@@ -402,25 +480,11 @@ func registerAuthorization(srv *sim.Server) {
 					after = strings.TrimSuffix(after, "/")
 					if after == "" {
 						scope := path[:idx]
-						filter := r.URL.Query().Get("$filter")
-						principalFilter := parsePrincipalIdFilter(filter)
-						atScope := strings.Contains(strings.ToLower(filter), "atscope()")
-
-						var values []map[string]any
-						for _, ra := range roleAssignments.List() {
-							if principalFilter != "" && !strings.EqualFold(ra.Properties.PrincipalId, principalFilter) {
-								continue
-							}
-							if atScope && !strings.EqualFold(ra.Properties.Scope, scope) {
-								continue
-							}
-							values = append(values, roleAssignmentJSON(ra))
+						if rbacIsSimpleScope(scope) {
+							next.ServeHTTP(w, r) // subscription/RG-scope list is a concrete route
+							return
 						}
-						if values == nil {
-							values = []map[string]any{}
-						}
-						fmt.Fprintf(os.Stderr, "AUTHZ: roleAssignments LIST scope=%s filter=%q num=%d\n", scope, filter, len(values))
-						sim.WriteJSON(w, http.StatusOK, map[string]any{"value": values})
+						doRoleAssignmentList(w, r, scope)
 						return
 					}
 				}
@@ -433,113 +497,213 @@ func registerAuthorization(srv *sim.Server) {
 					next.ServeHTTP(w, r)
 					return
 				}
-
-				resourceID := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s", scope, raName)
-
-				switch r.Method {
-				case http.MethodPut:
-					// Real Azure requires the role assignment name to be a GUID.
-					if !guidRe.MatchString(raName) {
-						sim.AzureErrorf(w, "InvalidRoleAssignmentName", http.StatusBadRequest,
-							"The role assignment name '%s' is not a valid GUID.", raName)
-						return
-					}
-
-					var req struct {
-						Properties struct {
-							RoleDefinitionId string `json:"roleDefinitionId"`
-							PrincipalId      string `json:"principalId"`
-							PrincipalType    string `json:"principalType"`
-						} `json:"properties"`
-					}
-					if err := sim.ReadJSON(r, &req); err != nil {
-						sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
-						return
-					}
-
-					// Validate the role definition exists. Real Azure returns 400
-					// RoleDefinitionDoesNotExist for an unknown roleDefinitionId.
-					roleDefID := roleDefinitionGUID(req.Properties.RoleDefinitionId)
-					if roleDefID == "" {
-						sim.AzureErrorf(w, "InvalidRoleDefinitionId", http.StatusBadRequest,
-							"The role definition ID '%s' is malformed.", req.Properties.RoleDefinitionId)
-						return
-					}
-					if _, ok := builtinRoleDefByID(roleDefID); !ok {
-						sim.AzureErrorf(w, "RoleDefinitionDoesNotExist", http.StatusBadRequest,
-							"The specified role definition with ID '%s' does not exist.", roleDefID)
-						return
-					}
-
-					// Validate the principal is a well-formed GUID. Real Azure
-					// rejects a malformed principalId; it cannot, however, be the
-					// authority on every valid external principal (users, groups,
-					// service principals, managed identities across the tenant),
-					// so the sim does not hard-fail a syntactically-valid GUID it
-					// hasn't itself provisioned — that would reject legitimate
-					// assignments to principals created out of band. principalExists
-					// (Entra object or managed identity) is used to set the
-					// principalType when the sim does know the principal.
-					if !guidRe.MatchString(req.Properties.PrincipalId) {
-						sim.AzureErrorf(w, "InvalidPrincipalId", http.StatusBadRequest,
-							"The principal ID '%s' is not a valid GUID.", req.Properties.PrincipalId)
-						return
-					}
-
-					principalType := req.Properties.PrincipalType
-					if principalType == "" && managedIdentityPrincipalExists(req.Properties.PrincipalId) {
-						principalType = "ServicePrincipal"
-					}
-
-					_, exists := roleAssignments.Get(resourceID)
-
-					ra := RoleAssignment{
-						ID:   resourceID,
-						Name: raName,
-						Type: "Microsoft.Authorization/roleAssignments",
-						Properties: RoleAssignmentProperties{
-							RoleDefinitionId: req.Properties.RoleDefinitionId,
-							PrincipalId:      req.Properties.PrincipalId,
-							PrincipalType:    principalType,
-							Scope:            scope,
-						},
-					}
-					roleAssignments.Put(resourceID, ra)
-
-					fmt.Fprintf(os.Stderr, "AUTHZ: roleAssignment PUT scope=%s name=%s exists=%v\n", scope, raName, exists)
-
-					if exists {
-						sim.WriteJSON(w, http.StatusOK, ra)
-					} else {
-						sim.WriteJSON(w, http.StatusCreated, ra)
-					}
-
-				case http.MethodGet:
-					ra, ok := roleAssignments.Get(resourceID)
-					if !ok {
-						sim.AzureErrorf(w, "RoleAssignmentNotFound", http.StatusNotFound,
-							"Role assignment '%s' not found.", raName)
-						return
-					}
-					sim.WriteJSON(w, http.StatusOK, ra)
-
-				case http.MethodDelete:
-					ra, ok := roleAssignments.Get(resourceID)
-					if !ok {
-						sim.AzureErrorf(w, "RoleAssignmentNotFound", http.StatusNotFound,
-							"Role assignment '%s' not found.", raName)
-						return
-					}
-					roleAssignments.Delete(resourceID)
-					sim.WriteJSON(w, http.StatusOK, ra)
-
-				default:
-					next.ServeHTTP(w, r)
+				if rbacIsSimpleScope(scope) {
+					next.ServeHTTP(w, r) // subscription/RG-scope item is a concrete route
+					return
 				}
+				rbacDispatchRoleAssignmentItem(w, r, scope, raName)
 				return
 			}
 
 			next.ServeHTTP(w, r)
 		})
 	})
+}
+
+// rbacDispatchRoleAssignmentItem routes a single-role-assignment request to the
+// method-specific handler, given the resolved scope and assignment name.
+func rbacDispatchRoleAssignmentItem(w http.ResponseWriter, r *http.Request, scope, raName string) {
+	switch r.Method {
+	case http.MethodPut:
+		doRoleAssignmentPut(w, r, scope, raName)
+	case http.MethodGet:
+		doRoleAssignmentGet(w, scope, raName)
+	case http.MethodDelete:
+		doRoleAssignmentDelete(w, scope, raName)
+	default:
+		sim.AzureError(w, "MethodNotAllowed", "Method not allowed.", http.StatusMethodNotAllowed)
+	}
+}
+
+// doRoleAssignmentPut creates or updates a role assignment (RoleAssignments_Create).
+func doRoleAssignmentPut(w http.ResponseWriter, r *http.Request, scope, raName string) {
+	// Real Azure requires the role assignment name to be a GUID.
+	if !guidRe.MatchString(raName) {
+		sim.AzureErrorf(w, "InvalidRoleAssignmentName", http.StatusBadRequest,
+			"The role assignment name '%s' is not a valid GUID.", raName)
+		return
+	}
+	var req struct {
+		Properties struct {
+			RoleDefinitionId string `json:"roleDefinitionId"`
+			PrincipalId      string `json:"principalId"`
+			PrincipalType    string `json:"principalType"`
+		} `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Validate the role definition exists. Real Azure returns 400
+	// RoleDefinitionDoesNotExist for an unknown roleDefinitionId.
+	roleDefID := roleDefinitionGUID(req.Properties.RoleDefinitionId)
+	if roleDefID == "" {
+		sim.AzureErrorf(w, "InvalidRoleDefinitionId", http.StatusBadRequest,
+			"The role definition ID '%s' is malformed.", req.Properties.RoleDefinitionId)
+		return
+	}
+	if !roleDefExists(roleDefID) {
+		sim.AzureErrorf(w, "RoleDefinitionDoesNotExist", http.StatusBadRequest,
+			"The specified role definition with ID '%s' does not exist.", roleDefID)
+		return
+	}
+
+	// Validate the principal is a well-formed GUID. Real Azure rejects a
+	// malformed principalId; it cannot, however, be the authority on every valid
+	// external principal (users, groups, service principals, managed identities
+	// across the tenant), so the sim does not hard-fail a syntactically-valid
+	// GUID it hasn't itself provisioned — that would reject legitimate
+	// assignments to principals created out of band. managedIdentityPrincipalExists
+	// is used only to set principalType when the sim does know the principal.
+	if !guidRe.MatchString(req.Properties.PrincipalId) {
+		sim.AzureErrorf(w, "InvalidPrincipalId", http.StatusBadRequest,
+			"The principal ID '%s' is not a valid GUID.", req.Properties.PrincipalId)
+		return
+	}
+
+	principalType := req.Properties.PrincipalType
+	if principalType == "" && managedIdentityPrincipalExists(req.Properties.PrincipalId) {
+		principalType = "ServicePrincipal"
+	}
+
+	resourceID := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s", scope, raName)
+	_, exists := azureRoleAssignments.Get(resourceID)
+	ra := RoleAssignment{
+		ID:   resourceID,
+		Name: raName,
+		Type: "Microsoft.Authorization/roleAssignments",
+		Properties: RoleAssignmentProperties{
+			RoleDefinitionId: req.Properties.RoleDefinitionId,
+			PrincipalId:      req.Properties.PrincipalId,
+			PrincipalType:    principalType,
+			Scope:            scope,
+		},
+	}
+	azureRoleAssignments.Put(resourceID, ra)
+	if exists {
+		sim.WriteJSON(w, http.StatusOK, ra)
+	} else {
+		sim.WriteJSON(w, http.StatusCreated, ra)
+	}
+}
+
+// doRoleAssignmentGet returns a single role assignment (RoleAssignments_Get).
+func doRoleAssignmentGet(w http.ResponseWriter, scope, raName string) {
+	resourceID := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s", scope, raName)
+	ra, ok := azureRoleAssignments.Get(resourceID)
+	if !ok {
+		sim.AzureErrorf(w, "RoleAssignmentNotFound", http.StatusNotFound, "Role assignment '%s' not found.", raName)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, ra)
+}
+
+// doRoleAssignmentDelete removes a role assignment (RoleAssignments_Delete).
+func doRoleAssignmentDelete(w http.ResponseWriter, scope, raName string) {
+	resourceID := fmt.Sprintf("%s/providers/Microsoft.Authorization/roleAssignments/%s", scope, raName)
+	ra, ok := azureRoleAssignments.Get(resourceID)
+	if !ok {
+		sim.AzureErrorf(w, "RoleAssignmentNotFound", http.StatusNotFound, "Role assignment '%s' not found.", raName)
+		return
+	}
+	azureRoleAssignments.Delete(resourceID)
+	sim.WriteJSON(w, http.StatusOK, ra)
+}
+
+// doRoleAssignmentList lists role assignments visible at a scope
+// (RoleAssignments_ListForSubscription / _ListForResourceGroup / _ListForResource /
+// _ListForScope), honoring $filter=principalId eq 'X' and $filter=atScope().
+func doRoleAssignmentList(w http.ResponseWriter, r *http.Request, scope string) {
+	filter := r.URL.Query().Get("$filter")
+	principalFilter := parsePrincipalIdFilter(filter)
+	atScope := strings.Contains(strings.ToLower(filter), "atscope()")
+	values := []map[string]any{}
+	for _, ra := range azureRoleAssignments.List() {
+		if principalFilter != "" && !strings.EqualFold(ra.Properties.PrincipalId, principalFilter) {
+			continue
+		}
+		if atScope && !strings.EqualFold(ra.Properties.Scope, scope) {
+			continue
+		}
+		values = append(values, roleAssignmentJSON(ra))
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"value": values})
+}
+
+// handleRoleDefinitionPut creates or updates a custom role definition
+// (RoleDefinitions_CreateOrUpdate).
+func handleRoleDefinitionPut(w http.ResponseWriter, r *http.Request) {
+	sub := sim.PathParam(r, "subscriptionId")
+	roleDefID := sim.PathParam(r, "roleDefinitionId")
+	if !guidRe.MatchString(roleDefID) {
+		sim.AzureErrorf(w, "InvalidRoleDefinitionId", http.StatusBadRequest,
+			"The role definition name '%s' is not a valid GUID.", roleDefID)
+		return
+	}
+	var req struct {
+		Properties map[string]any `json:"properties"`
+	}
+	if err := sim.ReadJSON(r, &req); err != nil {
+		sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.Properties == nil {
+		sim.AzureError(w, "InvalidRoleDefinition", "Role definition properties are required.", http.StatusBadRequest)
+		return
+	}
+	if name, _ := req.Properties["roleName"].(string); strings.TrimSpace(name) == "" {
+		sim.AzureError(w, "RoleDefinitionRoleNameRequired", "The role definition roleName is required.", http.StatusBadRequest)
+		return
+	}
+	props := cloneMap(req.Properties)
+	// type is the role-definition kind; custom roles report "CustomRole".
+	if t, _ := props["type"].(string); t == "" {
+		props["type"] = "CustomRole"
+	}
+	id := fmt.Sprintf("/subscriptions/%s/providers/Microsoft.Authorization/roleDefinitions/%s", sub, roleDefID)
+	response := map[string]any{
+		"id":         id,
+		"name":       roleDefID,
+		"type":       "Microsoft.Authorization/roleDefinitions",
+		"properties": props,
+	}
+	customRoleDefs.Put(roleDefID, CustomRoleDefinition{
+		ID:       id,
+		Name:     roleDefID,
+		Type:     "Microsoft.Authorization/roleDefinitions",
+		Response: response,
+	})
+	sim.WriteJSON(w, http.StatusCreated, response)
+}
+
+// handleRoleDefinitionDelete removes a custom role definition
+// (RoleDefinitions_Delete). Deleting an unknown definition is a no-op (204), as
+// real Azure does.
+func handleRoleDefinitionDelete(w http.ResponseWriter, r *http.Request) {
+	roleDefID := sim.PathParam(r, "roleDefinitionId")
+	c, ok := customRoleDefs.Get(roleDefID)
+	if !ok {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	customRoleDefs.Delete(roleDefID)
+	sim.WriteJSON(w, http.StatusOK, c.Response)
+}
+
+// customRoleDefName returns a custom role definition's roleName for $filter matching.
+func customRoleDefName(c CustomRoleDefinition) string {
+	props, _ := c.Response["properties"].(map[string]any)
+	name, _ := props["roleName"].(string)
+	return name
 }
