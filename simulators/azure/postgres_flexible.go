@@ -81,6 +81,8 @@ func registerPGFlexibleServer(srv *sim.Server) {
 	srv.HandleFunc("GET "+armBase+"/{name}/configurations", handlePGListConfigurations)
 	srv.HandleFunc("GET "+armBase+"/{name}/configurations/{cfg}", handlePGGetConfiguration)
 	srv.HandleFunc("PUT "+armBase+"/{name}/configurations/{cfg}", handlePGUpdateConfiguration)
+
+	registerPGFlexibleServerMore(srv)
 }
 
 // pgConfigKey is the per-(server, configuration-name) store key.

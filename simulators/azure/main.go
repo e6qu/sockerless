@@ -124,6 +124,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	// Infrastructure services
 	registerAzureAsyncOperations(srv)
 	registerResourceGroups(srv)
+	registerResourcesARM(srv)
 	registerTags(srv)
 	registerNetwork(srv)
 	registerCompute(srv)
@@ -135,6 +136,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerCacheRedis(srv)
 	registerPGFlexibleServer(srv)
 	registerCosmosDB(srv)
+	registerCosmosAPIs(srv)
 	registerCosmosScripts(srv)
 	registerCosmosChangeFeed(srv)
 	registerServiceBus(srv)

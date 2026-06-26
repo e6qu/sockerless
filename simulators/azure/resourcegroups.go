@@ -20,8 +20,13 @@ type ResourceGroup struct {
 	} `json:"properties"`
 }
 
+// azureResourceGroups is the shared Microsoft.Resources/resourceGroups store,
+// read by the resources-ARM PATCH/exportTemplate handlers in resourcesarm.go.
+var azureResourceGroups sim.Store[ResourceGroup]
+
 func registerResourceGroups(srv *sim.Server) {
 	resourceGroups := sim.MakeStore[ResourceGroup](srv.DB(), "resource_groups")
+	azureResourceGroups = resourceGroups
 
 	// PUT - Create or update resource group
 	srv.HandleFunc("PUT /subscriptions/{subscriptionId}/resourceGroups/{resourceGroupName}", func(w http.ResponseWriter, r *http.Request) {

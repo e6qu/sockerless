@@ -3,7 +3,7 @@ module github.com/sockerless/gcp-common
 go 1.25.8
 
 require (
-	cloud.google.com/go/cloudbuild v1.30.0
+	cloud.google.com/go/cloudbuild v1.31.0
 	cloud.google.com/go/run v1.21.0
 	cloud.google.com/go/storage v1.63.0
 	github.com/rs/zerolog v1.35.1

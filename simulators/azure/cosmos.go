@@ -415,6 +415,14 @@ func handleCosmosDeleteAccount(w http.ResponseWriter, r *http.Request) {
 			cosmosThroughputs.Delete(t.ID)
 		}
 	}
+	for _, c := range cosmosResources.List() {
+		if strings.HasPrefix(c.ID, id+"/") {
+			cosmosResources.Delete(c.ID)
+		}
+	}
+	for _, role := range []string{"primary", "secondary", "primary-readonly", "secondary-readonly"} {
+		cosmosKeyGens.Delete(id + "|" + role)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -425,10 +433,10 @@ func handleCosmosListKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryMasterKey":           simListKey32(id, "primary"),
-		"secondaryMasterKey":         simListKey32(id, "secondary"),
-		"primaryReadonlyMasterKey":   simListKey32(id, "primary-readonly"),
-		"secondaryReadonlyMasterKey": simListKey32(id, "secondary-readonly"),
+		"primaryMasterKey":           cosmosKeyMaterial(id, "primary"),
+		"secondaryMasterKey":         cosmosKeyMaterial(id, "secondary"),
+		"primaryReadonlyMasterKey":   cosmosKeyMaterial(id, "primary-readonly"),
+		"secondaryReadonlyMasterKey": cosmosKeyMaterial(id, "secondary-readonly"),
 	})
 }
 
@@ -442,8 +450,8 @@ func handleCosmosListReadOnlyKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"primaryReadonlyMasterKey":   simListKey32(id, "primary-readonly"),
-		"secondaryReadonlyMasterKey": simListKey32(id, "secondary-readonly"),
+		"primaryReadonlyMasterKey":   cosmosKeyMaterial(id, "primary-readonly"),
+		"secondaryReadonlyMasterKey": cosmosKeyMaterial(id, "secondary-readonly"),
 	})
 }
 
@@ -454,7 +462,7 @@ func handleCosmosListConnectionStrings(w http.ResponseWriter, r *http.Request) {
 		sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Cosmos DB account not found: %s", id)
 		return
 	}
-	key := simListKey32(id, "primary")
+	key := cosmosKeyMaterial(id, "primary")
 	endpoint, _ := a.Properties["documentEndpoint"].(string)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"connectionStrings": []map[string]any{{
@@ -690,25 +698,16 @@ func cosmosARMParts(r *http.Request) (string, string, string, string) {
 	return sim.PathParam(r, "subscriptionId"), sim.PathParam(r, "resourceGroupName"), sim.PathParam(r, "account"), sim.PathParam(r, "database")
 }
 
+// cosmosThroughputID is the ARM id of the throughputSettings/default resource
+// being addressed — which is exactly the request path. Keying by the path lets
+// one pair of throughput handlers serve every family (SQL, Table, MongoDB,
+// Cassandra, Gremlin) without per-family path-param plumbing.
 func cosmosThroughputID(r *http.Request) string {
-	sub, rg, account, database := cosmosARMParts(r)
-	if table := sim.PathParam(r, "table"); table != "" {
-		return cosmosTableID(sub, rg, account, table) + "/throughputSettings/default"
-	}
-	if c := sim.PathParam(r, "container"); c != "" {
-		return cosmosSQLContainerID(sub, rg, account, database, c) + "/throughputSettings/default"
-	}
-	return cosmosSQLDatabaseID(sub, rg, account, database) + "/throughputSettings/default"
+	return r.URL.Path
 }
 
 func cosmosThroughputType(r *http.Request) string {
-	if sim.PathParam(r, "table") != "" {
-		return "Microsoft.DocumentDB/databaseAccounts/tables/throughputSettings"
-	}
-	if sim.PathParam(r, "container") != "" {
-		return "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers/throughputSettings"
-	}
-	return "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/throughputSettings"
+	return cosmosThroughputTypeFromPath(r.URL.Path)
 }
 
 func ensureResourceProperty(props map[string]any, name string) map[string]any {

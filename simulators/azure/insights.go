@@ -3,9 +3,17 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
+
+// AppInsightsPurge tracks an asynchronous data-purge operation
+// (ComponentsClient.Purge / GetPurgeStatus).
+type AppInsightsPurge struct {
+	OperationID string `json:"operationId"`
+	Status      string `json:"status"`
+}
 
 // AppInsightsComponent represents an Azure Application Insights component.
 type AppInsightsComponent struct {
@@ -182,6 +190,103 @@ func registerApplicationInsights(srv *sim.Server) {
 		} else {
 			w.WriteHeader(http.StatusNoContent)
 		}
+	})
+
+	// PATCH - Update component tags only (ComponentsClient.UpdateTags).
+	srv.HandleFunc("PATCH "+armBase+"/components/{componentName}", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "componentName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Insights/components/%s", sub, rg, name)
+		comp, ok := components.Get(resourceID)
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Insights/components/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		var req struct {
+			Tags map[string]string `json:"tags"`
+		}
+		if err := sim.ReadJSON(r, &req); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if req.Tags == nil {
+			req.Tags = map[string]string{}
+		}
+		comp.Tags = req.Tags
+		components.Put(resourceID, comp)
+		sim.WriteJSON(w, http.StatusOK, comp)
+	})
+
+	// GET - List components in a resource group (ComponentsClient.NewListByResourceGroupPager).
+	srv.HandleFunc("GET "+armBase+"/components", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Insights/components/", sub, rg)
+		out := components.Filter(func(c AppInsightsComponent) bool {
+			return strings.HasPrefix(c.ID, prefix)
+		})
+		if out == nil {
+			out = []AppInsightsComponent{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	// GET - List components in the subscription (ComponentsClient.NewListPager).
+	srv.HandleFunc("GET /subscriptions/{subscriptionId}/providers/Microsoft.Insights/components", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		prefix := fmt.Sprintf("/subscriptions/%s/resourceGroups/", sub)
+		out := components.Filter(func(c AppInsightsComponent) bool {
+			return strings.HasPrefix(c.ID, prefix)
+		})
+		if out == nil {
+			out = []AppInsightsComponent{}
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": out})
+	})
+
+	// POST - Purge data, and GET its status (ComponentsClient.Purge /
+	// GetPurgeStatus). Purge is a 202 that returns an operationId the caller
+	// later polls for completion.
+	purges := sim.MakeStore[AppInsightsPurge](srv.DB(), "insights_purges")
+	srv.HandleFunc("POST "+armBase+"/components/{componentName}/purge", func(w http.ResponseWriter, r *http.Request) {
+		sub := sim.PathParam(r, "subscriptionId")
+		rg := sim.PathParam(r, "resourceGroupName")
+		name := sim.PathParam(r, "componentName")
+		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Insights/components/%s", sub, rg, name)
+		if _, ok := components.Get(resourceID); !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
+				"The Resource 'Microsoft.Insights/components/%s' under resource group '%s' was not found.", name, rg)
+			return
+		}
+		var body struct {
+			Table   string `json:"table"`
+			Filters []any  `json:"filters"`
+		}
+		if err := sim.ReadJSON(r, &body); err != nil {
+			sim.AzureError(w, "InvalidRequestContent", "Failed to parse request body: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+		if body.Table == "" {
+			sim.AzureError(w, "InvalidRequestContent", "The 'table' property is required.", http.StatusBadRequest)
+			return
+		}
+		purgeID := generateUUID()
+		purges.Put(purgeID, AppInsightsPurge{OperationID: purgeID, Status: "completed"})
+		// Real App Insights returns the purge id in both the body and the
+		// x-ms-status-location header pointing at the operations status URL.
+		w.Header().Set("x-ms-status-location", fmt.Sprintf("%s://%s%s/operations/%s?api-version=%s",
+			azureRequestScheme(r), r.Host, resourceID, purgeID, r.URL.Query().Get("api-version")))
+		sim.WriteJSON(w, http.StatusAccepted, map[string]any{"operationId": purgeID})
+	})
+	srv.HandleFunc("GET "+armBase+"/components/{componentName}/operations/{purgeId}", func(w http.ResponseWriter, r *http.Request) {
+		p, ok := purges.Get(sim.PathParam(r, "purgeId"))
+		if !ok {
+			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound, "Purge operation %q not found.", sim.PathParam(r, "purgeId"))
+			return
+		}
+		sim.WriteJSON(w, http.StatusOK, map[string]any{"status": p.Status})
 	})
 
 	// GET/PUT - Billing features (azurerm provider reads then updates after

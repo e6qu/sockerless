@@ -14,6 +14,11 @@ GO_LDFLAGS      := -s -w
 RUN_ENV        := SIM_LISTEN_ADDR=:4568
 RUN_FLAGS      :=
 
+# go-test deadline for the CLI suite. Each `az` invocation carries ~0.5-2s of
+# Python interpreter startup, so the wall-clock grows with the test count as the
+# sim's coverage ratchets up; keep generous headroom over the current runtime.
+CLI_TEST_TIMEOUT ?= 600s
+
 REPO_ROOT_REL  := ../..
 
 include $(REPO_ROOT_REL)/make/go-app.mk
@@ -40,7 +45,7 @@ sdk-test-local: build ## go test the SDK-driven sim tests on a Linux host with r
 	cd sdk-tests && $(GO_ENV) go test -v -count=1 ./...
 
 cli-test: build ## go test the CLI-driven sim tests
-	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout 120s ./...
+	cd cli-tests && $(GO_ENV) go test -v -count=1 -timeout $(CLI_TEST_TIMEOUT) ./...
 
 # The azure terraform stack is Docker-only: this outer `go test` wraps a
 # `docker run go test` (terraform-tests/helpers_test.go) that does the real

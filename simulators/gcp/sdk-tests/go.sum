@@ -10,8 +10,8 @@ cloud.google.com/go/bigtable v1.50.0 h1:lihc3U/eVrlIjK55i93K8sol+pKtFozIJ9vooEuN
 cloud.google.com/go/bigtable v1.50.0/go.mod h1:RTannV5mvoJM8KscLTfRYMPo84u9/j+C3PSyYJGf5Ic=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
-cloud.google.com/go/eventarc v1.23.0 h1:/EUAdoBWSlqQRbpQYTV2Msmg4esw3Mum3tEU7zkhLi4=
-cloud.google.com/go/eventarc v1.23.0/go.mod h1:tIJL0hoWtZXVa5MjcAep/4xB+AXz4AbqQV14ogX5VwU=
+cloud.google.com/go/eventarc v1.24.0 h1:CIbP4yT5AzMyjDthvnPfSsLJhti7fepLTg+opCJvr6M=
+cloud.google.com/go/eventarc v1.24.0/go.mod h1:pFJA4y1jNwTT1oq7BlV04G3oRr0PjQB4lQjJxmpFZdE=
 cloud.google.com/go/firestore v1.22.0 h1:avooeboIq37vKXobrbPUFhFBxS/c3FqmWoX0xs8dO6E=
 cloud.google.com/go/firestore v1.22.0/go.mod h1:PaM4i7i7ruALSKmlpHXXZaPObcZw0W7ie5UOPr72iTU=
 cloud.google.com/go/functions v1.24.0 h1:0nb8LMMABq/oChZg+ovRD5bsc/dNm5ti/aoHRZ9MoUs=
