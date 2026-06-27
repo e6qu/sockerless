@@ -116,6 +116,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerServiceUsage(srv)
 	registerCompute(srv)
 	registerComputeMore(srv)
+	registerComputeMore2(srv)
 	registerVPCAccess(srv)
 	registerIAM(srv)
 	registerOAuth2(srv)
@@ -162,8 +163,11 @@ func startGRPCServer(port string) {
 	registerCloudLoggingGRPC(gs)
 	registerBigtableGRPC(gs)
 	registerBigtableDataGRPC(gs)
+	registerFirestoreGRPC(gs)
+	registerPubSubGRPC(gs)
+	registerSpannerGRPC(gs)
 
-	fmt.Fprintf(os.Stderr, "  gRPC Cloud Logging, Bigtable Admin + Data on :%s\n", port)
+	fmt.Fprintf(os.Stderr, "  gRPC Cloud Logging, Bigtable Admin + Data, Firestore, Pub/Sub, Spanner on :%s\n", port)
 	if err := gs.Serve(lis); err != nil {
 		log.Fatalf("gRPC: failed to serve: %v", err)
 	}

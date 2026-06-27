@@ -106,8 +106,15 @@ type FSValue struct {
 	StringValue    string        `json:"stringValue,omitempty"`
 	BytesValue     string        `json:"bytesValue,omitempty"`
 	ReferenceValue string        `json:"referenceValue,omitempty"`
+	GeoPointValue  *FSGeoPoint   `json:"geoPointValue,omitempty"`
 	ArrayValue     *FSArrayValue `json:"arrayValue,omitempty"`
 	MapValue       *FSMapValue   `json:"mapValue,omitempty"`
+}
+
+// FSGeoPoint mirrors Firestore's geoPointValue: a latitude/longitude pair.
+type FSGeoPoint struct {
+	Latitude  float64 `json:"latitude"`
+	Longitude float64 `json:"longitude"`
 }
 
 type FSArrayValue struct {
