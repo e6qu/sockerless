@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-_(none — last branch merged; awaiting next pick.)_
+`feat/gcp-ratchet-4-grpc` — **BUG-2239 (in progress, not yet pushed).** Native gRPC data planes for Firestore / Pub/Sub / Spanner (high-level `cloud.google.org/go/*` clients via `*_EMULATOR_HOST`) + a Compute Engine v1 control-plane metadata-CRUD tranche (`compute_more2.go`, ~30 resource families: backend buckets, licenses, ssl policies, target ssl/https proxies, external VPN gateways, resource policies, node templates/groups, VPN gateways/tunnels, service attachments, packet mirrorings, network attachments, regional security policies, autoscalers incl. collection-level patch/update, reservations, storage pools, target instances, future reservations, instant snapshots; IAM-policy triplet on ten resources; `listAvailableFeatures` cipher catalog; nodeTypes/storagePoolTypes/networkProfiles/region-diskTypes read-only catalogs). Compute v1 floor 440→864/1994. 27 SDK round-trip tests, 0 new spec violations. Before pushing: rebase on `origin/main`, sync local `main`.
 
-**Next candidates:** GCP — more of Compute v1's 1994 (the next control-plane tranche), Spanner/SQL/BigQuery/Dataproc remainders, or extend gRPC to Pub/Sub (google.pubsub.v1) / Firestore (google.firestore.v1) native APIs (the Bigtable data-plane gRPC transport landed in #656 and had its coverage closed out in #698, so the pattern — `register<Service>GRPC(gs)` on the shared `startGRPCServer` mux + `BIGTABLE_EMULATOR_HOST`-style coordinates — is now established). Azure — web-arm 161→ more of the 692, msgraph. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates:** GCP — more of Compute v1's 1994 (~1130 still uncovered, mostly template alternates + real-exec), BigQuery (9 — all `{+resource}` template alternates at faithful ceiling), Dataproc remainders, or the small REST remainder duo (pubsub schema deleteRevision/listRevisions + sqladmin-v1beta4 pointInTimeRestore). Azure — web-arm 161→ more of the 692, msgraph. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
 
 ---
 ### Prior branch (merged #698): Bigtable gRPC data-plane coverage close-out (BUG-2237) + CloudBuild test-hang fix (BUG-2238) + no-skip-if-absent rule

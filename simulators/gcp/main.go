@@ -116,6 +116,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, error) {
 	registerServiceUsage(srv)
 	registerCompute(srv)
 	registerComputeMore(srv)
+	registerComputeMore2(srv)
 	registerVPCAccess(srv)
 	registerIAM(srv)
 	registerOAuth2(srv)
