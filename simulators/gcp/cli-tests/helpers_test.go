@@ -19,6 +19,8 @@ import (
 
 var (
 	baseURL          string
+	grpcAddr         string // host:port of the sim's gRPC server (Bigtable data/admin + Cloud Logging)
+	cbtPath          string // absolute path to an installed cbt binary (Bigtable data-plane CLI)
 	simCmd           *exec.Cmd
 	binaryPath       string
 	evalImageName    string
@@ -84,6 +86,7 @@ func TestMain(m *testing.M) {
 	}
 
 	baseURL = fmt.Sprintf("http://127.0.0.1:%d", port)
+	grpcAddr = fmt.Sprintf("127.0.0.1:%d", grpcPort)
 
 	if err := waitForHealth(baseURL + "/health"); err != nil {
 		simCmd.Process.Kill()
@@ -94,12 +97,52 @@ func TestMain(m *testing.M) {
 	tmpDir, _ = filepath.Abs("tmp")
 	os.MkdirAll(tmpDir, 0755)
 
+	// Install the Bigtable data-plane CLI (cbt) into the tmp dir. cbt is the
+	// canonical Bigtable data-plane adaptor (gcloud bigtable is admin-only),
+	// required by TestBigtableCLI_DataPlane_cbt. Installing it here (rather
+	// than skip-if-absent) keeps the test deterministic: every CLI test run
+	// exercises the gRPC data plane through a second real adaptor. The
+	// `pkg@version` form of go install does not modify this module's go.mod.
+	cbtDir := filepath.Join(tmpDir, "bin")
+	os.MkdirAll(cbtDir, 0755)
+	installCBT(cbtDir)
+
 	code := m.Run()
 
 	simCmd.Process.Kill()
 	simCmd.Wait()
 	os.RemoveAll(tmpDir)
 	os.Exit(code)
+}
+
+// installCBT builds the Bigtable data-plane CLI (cbt) into binDir and sets
+// cbtPath to the resulting executable. cbt is the canonical Bigtable data-plane
+// adaptor (gcloud bigtable is admin-only) — installing it here keeps the
+// data-plane CLI test unconditional. Fatals on failure (no skip, no fallback):
+// the install is a hard requirement, not best-effort.
+func installCBT(binDir string) {
+	binExe := "cbt"
+	if runtime.GOOS == "windows" {
+		binExe = "cbt.exe"
+	}
+	cbtPath = filepath.Join(binDir, binExe)
+	// Already installed in a prior run that reused tmp/.
+	if _, err := os.Stat(cbtPath); err == nil {
+		return
+	}
+	// v1.13.0 is the last release of cloud.google.com/go/bigtable that still
+	// ships cmd/cbt; later versions moved it out of the module.
+	install := exec.Command("go", "install", "cloud.google.com/go/bigtable/cmd/cbt@v1.13.0")
+	install.Env = append(os.Environ(), "GOBIN="+binDir, "GOWORK=off")
+	var buf bytes.Buffer
+	install.Stdout = &buf
+	install.Stderr = &buf
+	if err := install.Run(); err != nil {
+		log.Fatalf("go install cbt failed (required for Bigtable data-plane CLI test): %v\n%s", err, buf.String())
+	}
+	if _, err := os.Stat(cbtPath); err != nil {
+		log.Fatalf("go install cbt reported success but %s is missing: %v\n%s", cbtPath, err, buf.String())
+	}
 }
 
 func waitForHealth(url string) error {
