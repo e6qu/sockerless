@@ -1,6 +1,7 @@
 package gcp_cli_test
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -47,5 +48,80 @@ func TestBigtableCLI_InstanceTableList(t *testing.T) {
 	out := runCLI(t, gcloudCLI("bigtable", "tables", "list", "--instances=cli-bt", "--format=value(name)"))
 	if !strings.Contains(out, "cli_table") {
 		t.Fatalf("bigtable tables list missing cli_table: %s", out)
+	}
+}
+
+// TestBigtableCLI_DataPlane_cbt exercises the Bigtable Data API v2 gRPC slice
+// through the canonical data-plane CLI `cbt` (a distinct adaptor from the Go
+// SDK), reaching the sim via BIGTABLE_EMULATOR_HOST — the same coordinate the
+// real client uses for the real emulator. Closes the Bigtable data-plane CLI
+// gap: the data plane had no second-adaptor coverage at all (gcloud bigtable is
+// admin-only; the data plane's CLI surface is cbt). cbt is built in TestMain
+// (see installCBT) so the test runs unconditionally.
+func TestBigtableCLI_DataPlane_cbt(t *testing.T) {
+	const (
+		instance = "cbt-dp"
+		table    = "cbt_table"
+		family   = "cf"
+	)
+	// Provision the instance via gcloud (admin) — cbt can create instances too,
+	// but gcloud is the canonical admin CLI and already wired here.
+	runCLI(t, gcloudCLI("bigtable", "instances", "create", instance,
+		"--display-name=cbt data plane",
+		"--cluster="+instance+"-c1",
+		"--cluster-zone=us-central1-a",
+		"--cluster-num-nodes=1",
+		"--instance-type=PRODUCTION",
+		"--format=json"))
+
+	// cbt inherits BIGTABLE_EMULATOR_HOST from its env, which points it at the
+	// sim's gRPC server (admin + data plane). -project and -instance are the
+	// canonical cbt flags (positional instance args are not part of cbt's CLI).
+	cbt := func(args ...string) string {
+		cmd := exec.Command(cbtPath, append([]string{
+			"-project=" + project, "-instance=" + instance,
+		}, args...)...)
+		cmd.Env = append(gcloudEnv(), "BIGTABLE_EMULATOR_HOST="+grpcAddr)
+		return runCLI(t, cmd)
+	}
+
+	// Admin via cbt (exercising BigtableTableAdmin gRPC, not just gcloud):
+	// createtable then createfamily.
+	cbt("createtable", table)
+	cbt("createfamily", table, family)
+
+	// set: data-plane MutateRow. Value format is family:qualifier=value.
+	cbt("set", table, "r1", family+":name=alice")
+	cbt("set", table, "r2", family+":name=bob")
+
+	// lookup: single-row ReadRow.
+	got := cbt("lookup", table, "r1")
+	if !strings.Contains(got, "alice") {
+		t.Fatalf("cbt lookup r1 missing value alice: %s", got)
+	}
+
+	// read: full-table ReadRows scan must surface both rows.
+	out := cbt("read", table)
+	if !strings.Contains(out, "alice") || !strings.Contains(out, "bob") {
+		t.Fatalf("cbt read missing seeded values: %s", out)
+	}
+
+	// count: a distinct data-plane op (streams SampleRowKeys internally and
+	// reports the row count) — covers SampleRowKeys from the second adaptor.
+	cnt := cbt("count", table)
+	if !strings.Contains(cnt, "2") {
+		t.Fatalf("cbt count did not report 2 rows: %s", cnt)
+	}
+}
+
+// gcloudEnv returns the environment-variable set TestMain's gcloudCLI helper
+// builds for every gcloud invocation — reused so cbt inherits the same admin
+// endpoint overrides when it falls back to admin calls internally.
+func gcloudEnv() []string {
+	return []string{
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_DNS=" + baseURL + "/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_BIGTABLE=" + baseURL + "/",
+		"CLOUDSDK_API_ENDPOINT_OVERRIDES_BIGTABLEADMIN=" + baseURL + "/",
+		"CLOUDSDK_CORE_PROJECT=" + project,
 	}
 }

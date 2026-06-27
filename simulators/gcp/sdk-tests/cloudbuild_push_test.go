@@ -1,7 +1,9 @@
 package gcp_sdk_test
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
 	"strings"
@@ -51,12 +53,26 @@ func TestCloudBuild_FaithfulBuildPush(t *testing.T) {
 		],
 		"images":[%q]
 	}`, bucket, objectName, imageName, imageName, imageName)
-	resp := httpPOST(t, buildURL, body)
-	require.Contains(t, resp, `"status":"SUCCESS"`, "build+push should succeed: %s", resp)
+	// Bound the synchronous build+push: on a healthy runtime it completes in
+	// <15s, but a wedged container runtime (e.g. Podman-on-macOS in its gvproxy
+	// 500 state) or a stalled registry would otherwise hang the push forever
+	// and consume the whole suite's -timeout. A 120s budget is generous for a
+	// real build yet fails fast with a clear deadline error instead of an 8m
+	// hang. The server-side push goroutine outlives this client
+	// give-up, but the sim process is torn down at suite end regardless.
+	buildCtx, buildCancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer buildCancel()
+	breq, _ := http.NewRequestWithContext(buildCtx, http.MethodPost, buildURL, strings.NewReader(body))
+	breq.Header.Set("Content-Type", "application/json")
+	bresp, err := http.DefaultClient.Do(breq)
+	require.NoError(t, err, "build+push request (deadline 120s; a timeout means the container runtime or registry is unresponsive)")
+	defer bresp.Body.Close()
+	resp, _ := io.ReadAll(bresp.Body)
+	require.Contains(t, string(resp), `"status":"SUCCESS"`, "build+push should succeed: %s", string(resp))
 
 	// Faithful build→push: the image must live in the registry (pullable via
 	// /v2/), NOT on the build host's local daemon.
-	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", "-f", imageName).Run() })
+	t.Cleanup(func() { _, _ = dockerCLIWithTimeout(60*time.Second, "image", "rm", "-f", imageName) })
 	tagOnly := imageName[strings.LastIndex(imageName, ":")+1:]
 	manifestURL := fmt.Sprintf("http://127.0.0.1:%s/v2/sockerless-overlay/cloudrun/manifests/%s", regPort, tagOnly)
 	mreq, _ := http.NewRequest(http.MethodGet, manifestURL, nil)
@@ -65,12 +81,15 @@ func TestCloudBuild_FaithfulBuildPush(t *testing.T) {
 	require.NoError(t, err)
 	defer mresp.Body.Close()
 	require.Equal(t, http.StatusOK, mresp.StatusCode, "built image must be present in the registry (/v2/ manifest)")
-	assert.Error(t, exec.Command("docker", "image", "inspect", imageName).Run(),
+	_, inspectErr := dockerCLIWithTimeout(60*time.Second, "image", "inspect", imageName)
+	assert.Error(t, inspectErr,
 		"built overlay image %s must NOT remain on the local daemon after push", imageName)
 }
 
 // pullImageWithRetry pulls an image with bounded exponential backoff so a
-// transient public-mirror throttle doesn't flake docker-dependent setup.
+// transient public-mirror throttle doesn't flake docker-dependent setup. Each
+// attempt carries its own deadline (dockerCLIWithTimeout) so a wedged container
+// runtime fails fast instead of hanging the whole suite.
 func pullImageWithRetry(t *testing.T, image string) {
 	t.Helper()
 	var lastErr error
@@ -82,7 +101,7 @@ func pullImageWithRetry(t *testing.T, image string) {
 				delay *= 2
 			}
 		}
-		out, err := exec.Command("docker", "pull", image).CombinedOutput()
+		out, err := dockerCLIWithTimeout(180*time.Second, "pull", image)
 		if err == nil {
 			return
 		}
@@ -95,6 +114,7 @@ func pullImageWithRetry(t *testing.T, image string) {
 // duration of the test — a reachable, auto-insecure (on Docker) stand-in for
 // the AR `/v2/` endpoint the sim's Cloud Build pushes to. Docker auto-trusts a
 // 127.0.0.1 registry; a local Podman host needs an insecure-registries drop-in.
+// Every docker call carries a deadline so a wedged runtime fails fast.
 func startThrowawayRegistry(t *testing.T, port string) {
 	t.Helper()
 	const regImage = "public.ecr.aws/docker/library/registry:2"
@@ -102,12 +122,12 @@ func startThrowawayRegistry(t *testing.T, port string) {
 	name := "gcp-cb-sdktest-reg-" + port
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
-		_ = exec.Command("docker", "rm", "-f", name).Run()
+		_, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", name)
 		if attempt > 0 {
 			time.Sleep(time.Duration(attempt) * time.Second)
 		}
-		out, err := exec.Command("docker", "run", "-d", "--rm", "--name", name,
-			"-p", port+":5000", regImage).CombinedOutput()
+		out, err := dockerCLIWithTimeout(60*time.Second, "run", "-d", "--rm", "--name", name,
+			"-p", port+":5000", regImage)
 		if err == nil {
 			lastErr = nil
 			break
@@ -115,7 +135,7 @@ func startThrowawayRegistry(t *testing.T, port string) {
 		lastErr = fmt.Errorf("%v: %s", err, out)
 	}
 	require.NoError(t, lastErr, "start throwaway registry")
-	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", name).Run() })
+	t.Cleanup(func() { _, _ = dockerCLIWithTimeout(60*time.Second, "rm", "-f", name) })
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
 		resp, derr := http.Get(fmt.Sprintf("http://127.0.0.1:%s/v2/", port))
@@ -128,4 +148,15 @@ func startThrowawayRegistry(t *testing.T, port string) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("throwaway registry on :%s did not become ready", port)
+}
+
+// dockerCLIWithTimeout runs `docker <args...>` with a hard deadline. A wedged
+// container runtime (Podman-on-macOS gvproxy 500 state, stalled daemon) makes
+// an unbounded `docker` call hang forever; bounding every call keeps a broken
+// runtime from monopolising the suite — the test fails in <deadline instead of
+// at the go-test -timeout.
+func dockerCLIWithTimeout(deadline time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 }

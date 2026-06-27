@@ -220,7 +220,20 @@ If a dependency is required, it is required. If Docker is needed, Docker must be
 
 Fallbacks create two code paths. Two code paths means two sets of bugs, two behaviors to test, two mental models. The "fallback" path is always the one that rots first because it's exercised least.
 
-If you think a fallback is needed, **ask the user**. Never add one silently. The answer will usually be: make the dependency explicit and fail clearly when it's missing.
+If you think a fallback is needed, **ask the user**. Never add one silently. The answer will usually be: make the dependency explicit and fail clearly when it's the missing one.
+
+## No skip-if-absent tests
+
+Never write tests that `t.Skip` when an external tool, binary, or CLI is "not installed" (`exec.LookPath("cbt")`, `t.Skip` when Docker is missing, `t.Skip` when `gcloud` isn't on PATH, etc.). Skip-if-absent tests are deceptive: they report green in environments that lack the dependency (CI images without the tool, a fresh checkout, a contributor's laptop) while exercising nothing. They become dead code — silently skipped on every run, forgotten, and the surface they claim to cover rots unseen. A green checkmark that proves nothing is worse than a red checkmark that demands the dependency be installed.
+
+The dependency is either required or it isn't:
+
+- **Required** — install it in `TestMain` (build it from source via `go install pkg@version` into the test's tmp dir, `docker pull` the image, `go build` the helper binary — the project already does each of these for other tests) so the test runs unconditionally every time. If the install itself fails, `log.Fatalf` in `TestMain` — a clear, actionable failure, not a silent skip.
+- **Not required** — delete the test. Don't keep a conditional that never fires.
+
+The one narrow exception is a capability the *host kernel* cannot provide (e.g. Linux-only `CAP_NET_ADMIN` network-namespace tests on macOS/Darwin): there is no way to install a kernel capability into a foreign OS, so a `runtime.GOOS`-gated skip is honest (the test cannot run on this host, full stop) — not "we couldn't find the tool, oh well." That is fundamentally different from "cbt isn't on PATH today." Tool-absent skips are always wrong; kernel-capability skips are the only sanctioned form, and only because there is no alternative.
+
+If you find an existing skip-if-absent test, treat it as a bug: either install the dependency in `TestMain` (preferred) or delete the test.
 
 ## No silent deferrals
 
