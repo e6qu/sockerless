@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2238 filed - 2194 fixed - 2 open - 16 false positives.**
+**2239 filed - 2194 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -12,6 +12,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 |----|-----|------|---------|-----------|
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
+| 2239 | P2 | GCP sim — REST remainders (bigquery/pubsub/sqladmin) + Compute v1 control-plane tranche + native gRPC data planes for Firestore/Pub/Sub/Spanner | conformance / fidelity / gRPC-transport | Three independent gaps folded into one branch per user request. (1) **REST Discovery remainders**: bigquery-v2 86→95/95, pubsub-v1 86→92/92, sqladmin-v1beta4 146→148/148 — small metadata-only closes. (2) **Compute v1 control-plane tranche**: 440→ (next ~150 metadata-only methods — autoscalers, network attachments, dedicated connections, etc.). (3) **Native gRPC data planes**: the high-level Go SDK clients `firestore.NewClient`, `pubsub.NewClient`, `spanner.NewClient` are gRPC-only and currently CANNOT target the sim at all (only the low-level REST `*Service` clients work); the Bigtable data plane (`bigtable_data.go`, #656) is the only gRPC slice today. Extending the established `registerXGRPC(gs)` + `startGRPCServer` pattern to Firestore (`google.firestore.v1.Firestore` — Get/Create/Update/Delete/List/BatchGetDocuments/RunQuery streaming/Commit/BatchWrite, sharing `fsDocuments`), Pub/Sub (`google.pubsub.v1.Publisher`+`Subscriber` — Publish/Pull/StreamingPull/Acknowledge/ModifyAckDeadline, sharing `psTopics`/`psSubscriptions`/`psQueues`), and Spanner (`google.spanner.v1.Spanner` — CreateSession/ExecuteSql/ExecuteStreamingSql/Read/Commit, sharing `spannerSessions`) makes the gRPC-native clients work against the sim for the first time. Each slice ships SDK tests via the emulator-host coordinate pattern (`FIRESTORE_EMULATOR_HOST` / `PUBSUB_EMULATOR_HOST` / `SPANNER_EMULATOR_HOST` — the same coordinates real clients use for the real emulators). The gRPC slices are a separate fidelity axis from the Discovery floor (which is REST-only) — they don't move the coverage % but they unlock the canonical client surface. |
 ## Recently fixed (cont.)
 
 | ID | Sev | Area | Pattern | One-liner |
