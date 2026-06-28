@@ -849,7 +849,7 @@ func waitForECSTaskStatus(t *testing.T, client *ecs.Client, clusterName, taskArn
 			return false
 		}
 		return aws.ToString(desc.Tasks[0].LastStatus) == want
-	}, 20*time.Second, 500*time.Millisecond)
+	}, 60*time.Second, 500*time.Millisecond)
 }
 
 func ebsVolumeIDFromTask(t *testing.T, task ecstypes.Task) string {

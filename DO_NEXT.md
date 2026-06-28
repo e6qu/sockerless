@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/gcp-ratchet-5-grpc` — second GCP gRPC round (Cloud KMS + Secret Manager) + Compute v1 control-plane tranche #2 (BUG-2240). Work is complete: gcp build/lint(0)/vet clean; new SDK tests green; conformance gates green. Next step is review, rebase on `origin/main`, push, and open the PR.
+`feat/gcp-ratchet-5-grpc` — second GCP gRPC round (Cloud KMS + Secret Manager) + Compute v1 control-plane tranche #2 (BUG-2240), plus boyscout fix for AWS ECS ExecuteCommand flake (BUG-2241). Work is complete: gcp build/lint(0)/vet clean; new SDK tests green; conformance gates green; AWS ECS exec tests updated for the systematic RUNNING-after-start fix. Next step is review, rebase on `origin/main`, push, and open the PR.
 
 **Next candidates (post-merge):** GCP — more of Compute v1's 1994 (~886 still uncovered, mostly template alternates + real-exec), Dataproc remainders, or small REST remainder duos. Azure — web-arm 161→ more of the 692, msgraph. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
 
