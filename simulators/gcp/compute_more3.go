@@ -43,9 +43,11 @@ func registerComputeMore3(srv *sim.Server) {
 	tcpRegion := mk("compute_region_target_tcp_proxies")
 
 	// Commitments ride the shared CRUD helper directly (no custom verbs).
+	// The Discovery document does not expose a DELETE for commitments.
 	(computeMetaResource{
 		collection: "commitments", kind: "compute#commitment",
 		scope: cScopeRegion, store: mk("compute_commitments"), patch: true, aggregated: true,
+		skipDelete: true,
 	}).register(srv)
 
 	// Regional TargetTcpProxies CRUD (the global collection already lives
@@ -80,7 +82,7 @@ func registerComputeMore3(srv *sim.Server) {
 		}
 		(computeMetaResource{
 			collection: "networkEndpointGroups", kind: "compute#networkEndpointGroup",
-			scope: sc, store: store, patch: true,
+			scope: sc, store: store,
 		}).register(srv)
 		registerComputeNetworkEndpointGroupMembers(srv, sc, store)
 	}
@@ -143,14 +145,11 @@ func registerComputeMore3(srv *sim.Server) {
 		{cScopeGlobal, "addresses"},
 		{cScopeGlobal, "healthChecks"},
 		{cScopeGlobal, "routes"},
-		{cScopeGlobal, "targetHttpsProxies"},
 		{cScopeGlobal, "targetTcpProxies"},
 		{cScopeGlobal, "urlMaps"},
 		{cScopeRegion, "addresses"},
 		{cScopeRegion, "healthChecks"},
 		{cScopeRegion, "targetPools"},
-		{cScopeRegion, "targetTcpProxies"},
-		{cScopeRegion, "urlMaps"},
 		{cScopeRegion, "instanceGroups"},
 		{cScopeZone, "instanceGroups"},
 	}
