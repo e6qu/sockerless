@@ -716,9 +716,14 @@ func registerComputeRouterMore(srv *sim.Server) {
 			sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "route policy %q not found", name)
 			return
 		}
+		respRP := map[string]any{}
+		for k, v := range rp {
+			if k != "kind" {
+				respRP[k] = v
+			}
+		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":     "compute#routersGetRoutePolicyResponse",
-			"resource": rp,
+			"resource": respRP,
 		})
 	})
 
@@ -763,7 +768,6 @@ func registerComputeRouterMore(srv *sim.Server) {
 			return
 		}
 		sim.WriteJSON(w, http.StatusOK, map[string]any{
-			"kind":     "compute#routerPreviewResponse",
 			"resource": body,
 		})
 	})
