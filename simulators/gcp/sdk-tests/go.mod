@@ -9,8 +9,10 @@ require (
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/functions v1.24.0
 	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/run v1.21.0
+	cloud.google.com/go/secretmanager v1.20.0
 	cloud.google.com/go/storage v1.63.0
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1

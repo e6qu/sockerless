@@ -1087,6 +1087,64 @@ func ecsCleanupTaskManagedEBS(task *ECSTask) {
 	}
 }
 
+// ecsTaskCloudWatchSink prepares CloudWatch Logs resources for a task and
+// returns a log sink for containers using the awslogs driver. The log group and
+// stream are created before the container starts so they are observable as soon
+// as the task reports RUNNING.
+func ecsTaskCloudWatchSink(td ECSTaskDefinition, taskID string) sim.LogSink {
+	var sink sim.LogSink = discardLogSink{}
+	for _, cd := range td.ContainerDefinitions {
+		if cd.LogConfiguration == nil || cd.LogConfiguration.LogDriver != "awslogs" {
+			continue
+		}
+		logGroup := cd.LogConfiguration.Options["awslogs-group"]
+		streamPrefix := cd.LogConfiguration.Options["awslogs-stream-prefix"]
+		if logGroup == "" || streamPrefix == "" {
+			continue
+		}
+		logStreamName := fmt.Sprintf("%s/%s/%s", streamPrefix, cd.Name, taskID)
+		nowMs := time.Now().UnixMilli()
+
+		// Create log group if not exists
+		if _, exists := cwLogGroups.Get(logGroup); !exists {
+			cwLogGroups.Put(logGroup, CWLogGroup{
+				LogGroupName: logGroup,
+				Arn:          cwLogGroupArn(logGroup),
+				CreationTime: nowMs,
+			})
+		}
+
+		// Create log stream
+		key := cwEventsKey(logGroup, logStreamName)
+		cwLogStreams.Put(key, CWLogStream{
+			LogStreamName:       logStreamName,
+			LogGroupName:        logGroup,
+			CreationTime:        nowMs,
+			FirstEventTimestamp: nowMs,
+			LastEventTimestamp:  nowMs,
+			Arn:                 cwLogStreamArn(logGroup, logStreamName),
+			UploadSequenceToken: "1",
+		})
+
+		// Insert initial log event
+		cmdDesc := strings.Join(append(cd.EntryPoint, cd.Command...), " ")
+		if cmdDesc == "" {
+			cmdDesc = "container started"
+		}
+		cwLogEvents.Put(key, []CWLogEvent{
+			{
+				Timestamp:     nowMs,
+				Message:       cmdDesc,
+				IngestionTime: nowMs,
+			},
+		})
+
+		sink = &cwLogSink{logGroup: logGroup, logStream: logStreamName}
+		break
+	}
+	return sink
+}
+
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Cluster              string                       `json:"cluster"`
@@ -1284,7 +1342,11 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		ecsTasks.Put(taskID, task)
 		tasks = append(tasks, task)
 
-		// Simulate async transition: PROVISIONING → PENDING → RUNNING
+		// Simulate async transition: PROVISIONING → PENDING → RUNNING.
+		// RUNNING is not reported until the task's containers are actually
+		// started and their Docker handles are stored. This matches real ECS
+		// semantics and eliminates a class of races where callers (e.g.
+		// ExecuteCommand, task metadata) see RUNNING before the container exists.
 		go func(id string, td ECSTaskDefinition, taskTags []ECSTag, overrides *ECSTaskOverride, taskVolumeHosts map[string]string) {
 			// PROVISIONING → PENDING
 			time.Sleep(100 * time.Millisecond)
@@ -1295,76 +1357,11 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 				}
 			})
 
-			// PENDING → RUNNING
-			time.Sleep(400 * time.Millisecond)
+			// Prepare CloudWatch logs before the container starts, so the log
+			// group/stream are observable as soon as the task reports RUNNING.
+			sink := ecsTaskCloudWatchSink(td, id)
 
-			// Mark task as RUNNING before starting containers
-			now := time.Now().Unix()
-			ecsTasks.Update(id, func(t *ECSTask) {
-				t.LastStatus = ECSTaskStatusRunning
-				t.Connectivity = "CONNECTED"
-				t.StartedAt = &now
-				for j := range t.Containers {
-					t.Containers[j].LastStatus = "RUNNING"
-				}
-				for j := range t.Attachments {
-					t.Attachments[j].Status = "ATTACHED"
-				}
-			})
-
-			// Inject CloudWatch logs for containers with awslogs log driver,
-			// and pick a sink for the real container we start below.
-			var sink sim.LogSink = discardLogSink{}
-			for _, cd := range td.ContainerDefinitions {
-				if cd.LogConfiguration == nil || cd.LogConfiguration.LogDriver != "awslogs" {
-					continue
-				}
-				logGroup := cd.LogConfiguration.Options["awslogs-group"]
-				streamPrefix := cd.LogConfiguration.Options["awslogs-stream-prefix"]
-				if logGroup == "" || streamPrefix == "" {
-					continue
-				}
-				logStreamName := fmt.Sprintf("%s/%s/%s", streamPrefix, cd.Name, id)
-				nowMs := time.Now().UnixMilli()
-
-				// Create log group if not exists
-				if _, exists := cwLogGroups.Get(logGroup); !exists {
-					cwLogGroups.Put(logGroup, CWLogGroup{
-						LogGroupName: logGroup,
-						Arn:          cwLogGroupArn(logGroup),
-						CreationTime: nowMs,
-					})
-				}
-
-				// Create log stream
-				key := cwEventsKey(logGroup, logStreamName)
-				cwLogStreams.Put(key, CWLogStream{
-					LogStreamName:       logStreamName,
-					LogGroupName:        logGroup,
-					CreationTime:        nowMs,
-					FirstEventTimestamp: nowMs,
-					LastEventTimestamp:  nowMs,
-					Arn:                 cwLogStreamArn(logGroup, logStreamName),
-					UploadSequenceToken: "1",
-				})
-
-				// Insert initial log event
-				cmdDesc := strings.Join(append(cd.EntryPoint, cd.Command...), " ")
-				if cmdDesc == "" {
-					cmdDesc = "container started"
-				}
-				cwLogEvents.Put(key, []CWLogEvent{
-					{
-						Timestamp:     nowMs,
-						Message:       cmdDesc,
-						IngestionTime: nowMs,
-					},
-				})
-
-				sink = &cwLogSink{logGroup: logGroup, logStream: logStreamName}
-				break
-			}
-
+			// Start containers. This is the real work that RUNNING must wait for.
 			processes, err := startECSTaskContainers(id, td, taskTags, overrides, taskVolumeHosts, sink)
 			if err != nil {
 				// Surface the start failure: it's otherwise only recorded in
@@ -1386,7 +1383,25 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					}
 					ecsCleanupTaskManagedEBS(t)
 				})
-			} else if processes != nil {
+				return
+			}
+
+			// Containers are actually running. Report RUNNING and wire up
+			// lifecycle waits. Store handles before marking RUNNING so any
+			// concurrent observer that sees RUNNING also sees handles.
+			now := time.Now().Unix()
+			ecsTasks.Update(id, func(t *ECSTask) {
+				t.LastStatus = ECSTaskStatusRunning
+				t.Connectivity = "CONNECTED"
+				t.StartedAt = &now
+				for j := range t.Containers {
+					t.Containers[j].LastStatus = "RUNNING"
+				}
+				for j := range t.Attachments {
+					t.Attachments[j].Status = "ATTACHED"
+				}
+			})
+			if processes != nil {
 				ecsProcessHandles.Store(id, processes)
 
 				for name, handle := range processes.Handles {
@@ -1414,7 +1429,6 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					}(id, name, handle)
 				}
 			}
-
 		}(taskID, td, taskTags, req.Overrides, taskVolumeHosts)
 	}
 
@@ -2541,14 +2555,12 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 		sessionID := generateUUID()
 
 		// Store the session
-		// Look up the Docker container ID for this task. The container starts
-		// async after the RUNNING transition, so both the task's process entry
-		// AND the named container's handle may appear a beat later — keep polling
-		// until both are ready. A single missing handle is not a give-up signal;
-		// breaking early here surfaced as a spurious TargetNotConnectedException
-		// under heavier concurrent test load.
+		// Look up the Docker container ID for this task. Because RUNNING is now
+		// reported only after the container handle is stored, a brief grace
+		// poll is enough to cover the tiny window between the store and the
+		// status update on extremely loaded runners.
 		var dockerContainerID string
-		for i := 0; i < 40; i++ {
+		for i := 0; i < 10; i++ {
 			if v, ok := ecsProcessHandles.Load(taskID); ok {
 				if procs, ok := v.(*ecsTaskProcesses); ok {
 					if handle := procs.handleFor(container.Name); handle != nil {
@@ -2557,7 +2569,7 @@ func handleECSExecuteCommand(srv *sim.Server) http.HandlerFunc {
 					}
 				}
 			}
-			time.Sleep(250 * time.Millisecond)
+			time.Sleep(100 * time.Millisecond)
 		}
 		if dockerContainerID == "" {
 			sim.AWSError(w, "TargetNotConnectedException",

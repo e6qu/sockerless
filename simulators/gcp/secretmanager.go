@@ -375,23 +375,37 @@ func secretManagerAddVersion(w http.ResponseWriter, r *http.Request, secretName 
 		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "payload.data must be base64: %v", err)
 		return
 	}
-	checksum := int64(crc32.Checksum(raw, smCRC32CTable))
-	if req.Payload.DataCrc32c != nil && *req.Payload.DataCrc32c != checksum {
-		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT",
-			"payload.dataCrc32c mismatch: got %d, want %d", *req.Payload.DataCrc32c, checksum)
+	hasCRC := req.Payload.DataCrc32c != nil
+	var suppliedCRC int64
+	if hasCRC {
+		suppliedCRC = *req.Payload.DataCrc32c
+	}
+	ver, err := smAddVersionPayload(secretName, raw, hasCRC, suppliedCRC)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
 		return
 	}
+	sim.WriteJSON(w, http.StatusOK, ver)
+}
 
-	// Version IDs are monotonically increasing. Reserve the next ID
-	// atomically by bumping the per-secret counter under the store write
-	// lock, so concurrent AddSecretVersion calls never collide on an ID.
+// smAddVersionPayload appends a new ENABLED SecretVersion to the named secret,
+// storing the supplied payload bytes and computing the CRC32C checksum the API
+// reports back from AccessSecretVersion. When hasCRC is true, the supplied
+// checksum is validated against the computed value. Version IDs are reserved
+// atomically by bumping the per-secret counter under the store write lock, so
+// concurrent AddSecretVersion calls never collide on an ID. Both the REST
+// :addVersion handler and the gRPC AddSecretVersion RPC go through here.
+func smAddVersionPayload(secretName string, data []byte, hasCRC bool, suppliedCRC32C int64) (SecretVersion, error) {
+	checksum := int64(crc32.Checksum(data, smCRC32CTable))
+	if hasCRC && suppliedCRC32C != checksum {
+		return SecretVersion{}, fmt.Errorf("payload.dataCrc32c mismatch: got %d, want %d", suppliedCRC32C, checksum)
+	}
+
 	var assigned int
 	if !smVersionSeq.Update(secretName, func(s *smSeqRecord) {
 		s.Next++
 		assigned = s.Next
 	}) {
-		// Counter absent (secret created before the counter existed): seed
-		// it from the current version count, then reserve the next ID.
 		n := 0
 		for _, v := range smSecretVersions.List() {
 			if strings.HasPrefix(v.Name, secretName+"/versions/") {
@@ -407,11 +421,11 @@ func secretManagerAddVersion(w http.ResponseWriter, r *http.Request, secretName 
 		Name:                           versionName,
 		CreateTime:                     time.Now().UTC().Format(time.RFC3339),
 		State:                          "ENABLED",
-		ClientSpecifiedPayloadChecksum: req.Payload.DataCrc32c != nil,
+		ClientSpecifiedPayloadChecksum: hasCRC,
 	}
 	smSecretVersions.Put(versionName, ver)
-	smSecretPayloads.Put(versionName, smPayloadRecord{Data: raw, DataCrc32c: checksum})
-	sim.WriteJSON(w, http.StatusOK, ver)
+	smSecretPayloads.Put(versionName, smPayloadRecord{Data: data, DataCrc32c: checksum})
+	return ver, nil
 }
 
 func secretManagerListVersions(w http.ResponseWriter, r *http.Request, parent string) {
@@ -550,6 +564,26 @@ func secretManagerVersionPostAction(w http.ResponseWriter, r *http.Request, pare
 		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "secret version %s not found", versionName)
 		return
 	}
+	updated, ok, err := smSetVersionState(versionName, ver, action)
+	if err != nil {
+		sim.GCPErrorf(w, http.StatusBadRequest, "INVALID_ARGUMENT", "%v", err)
+		return
+	}
+	if !ok {
+		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, updated)
+}
+
+// smSetVersionState transitions a SecretVersion to the requested state. The
+// action is one of "enable" / "disable" / "destroy" (matching the REST colon
+// verbs). Destroying a version also drops its stored payload bytes — the
+// version's metadata is retained but the data is irretrievable, matching real
+// Secret Manager. Both the REST :enable/:disable/:destroy handlers and the
+// gRPC Enable/Disable/Destroy RPCs go through here. The returned bool is false
+// when the action verb is unrecognized so callers can surface the right error.
+func smSetVersionState(versionName string, ver SecretVersion, action string) (SecretVersion, bool, error) {
 	switch action {
 	case "enable":
 		ver.State = "ENABLED"
@@ -559,11 +593,10 @@ func secretManagerVersionPostAction(w http.ResponseWriter, r *http.Request, pare
 		ver.State = "DESTROYED"
 		smSecretPayloads.Delete(versionName)
 	default:
-		sim.GCPErrorf(w, http.StatusNotFound, "NOT_FOUND", "unknown version action %q", versionAction)
-		return
+		return ver, false, nil
 	}
 	smSecretVersions.Put(versionName, ver)
-	sim.WriteJSON(w, http.StatusOK, ver)
+	return ver, true, nil
 }
 
 func copyLabels(in map[string]string) map[string]string {

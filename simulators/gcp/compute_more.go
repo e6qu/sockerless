@@ -47,6 +47,7 @@ type computeMetaResource struct {
 	// Verb toggles. insert/get/list/delete are registered unless the
 	// corresponding skip flag is set; the rest are opt-in.
 	skipGet    bool // image GET is owned by the catalog handler
+	skipDelete bool // some collections (e.g. commitments) have no Discovery DELETE
 	patch      bool
 	setLabels  bool
 	aggregated bool
@@ -180,14 +181,16 @@ func (res computeMetaResource) register(srv *sim.Server) {
 	})
 
 	// Delete
-	srv.HandleFunc("DELETE "+base+"/{name}", func(w http.ResponseWriter, r *http.Request) {
-		project := sim.PathParam(r, "project")
-		key := relPath(r, sim.PathParam(r, "name"))
-		if computeNotFound(w, res.store.Delete(key), res.collection, sim.PathParam(r, "name")) {
-			return
-		}
-		sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, computeScopeSegment(res.scope, r), computeSelfLink(key), "delete"))
-	})
+	if !res.skipDelete {
+		srv.HandleFunc("DELETE "+base+"/{name}", func(w http.ResponseWriter, r *http.Request) {
+			project := sim.PathParam(r, "project")
+			key := relPath(r, sim.PathParam(r, "name"))
+			if computeNotFound(w, res.store.Delete(key), res.collection, sim.PathParam(r, "name")) {
+				return
+			}
+			sim.WriteJSON(w, http.StatusOK, newComputeOpWithType(project, computeScopeSegment(res.scope, r), computeSelfLink(key), "delete"))
+		})
+	}
 
 	// Patch (merge top-level members the client sent).
 	if res.patch {

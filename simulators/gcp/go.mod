@@ -4,9 +4,12 @@ go 1.25.8
 
 require (
 	cloud.google.com/go/bigtable v1.50.0
+	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/longrunning v1.1.0
 	cloud.google.com/go/pubsub v1.50.2
+	cloud.google.com/go/secretmanager v1.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
@@ -20,7 +23,6 @@ require (
 
 require (
 	cloud.google.com/go/firestore v1.22.0 // indirect
-	cloud.google.com/go/iam v1.11.0 // indirect
 	cloud.google.com/go/pubsub/v2 v2.5.1 // indirect
 	cloud.google.com/go/spanner v1.91.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect

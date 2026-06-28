@@ -613,6 +613,7 @@ var (
 	gcpURLMaps           sim.Store[ComputeURLMap]
 	gcpTargetHTTPProxies sim.Store[ComputeTargetHTTPProxy]
 	gcpForwardingRules   sim.Store[ComputeForwardingRule]
+	gcpRouters           sim.Store[ComputeRouter]
 )
 
 func registerCompute(srv *sim.Server) {
@@ -1053,6 +1054,7 @@ func registerCompute(srv *sim.Server) {
 	addresses := sim.MakeStore[ComputeAddress](srv.DB(), "compute_addresses")
 	routers := sim.MakeStore[ComputeRouter](srv.DB(), "compute_routers")
 	gcpAddresses = addresses
+	gcpRouters = routers
 
 	srv.HandleFunc("POST /compute/v1/projects/{project}/regions/{region}/addresses", func(w http.ResponseWriter, r *http.Request) {
 		project := sim.PathParam(r, "project")
