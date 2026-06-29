@@ -122,6 +122,52 @@ func TestRepoGraphQL_GitHubRepoQuery(t *testing.T) {
 	}
 }
 
+// TestRepoGraphQL_RepositoryOwnerOrg verifies that repositoryOwner(login:)
+// returns real organization data (not a synthetic partial User-shaped payload)
+// when the login resolves to an organization.
+func TestRepoGraphQL_RepositoryOwnerOrg(t *testing.T) {
+	orgLogin := "sweep-owner-org"
+	org := testServer.store.CreateOrg(testServer.store.UsersByLogin["admin"], orgLogin, "Sweep Owner Org", "")
+	if org == nil {
+		t.Fatal("failed to create org")
+	}
+	defer func() {
+		testServer.store.mu.Lock()
+		delete(testServer.store.Orgs, org.ID)
+		delete(testServer.store.OrgsByLogin, orgLogin)
+		delete(testServer.store.Memberships, membershipKey(orgLogin, testServer.store.UsersByLogin["admin"].ID))
+		testServer.store.mu.Unlock()
+	}()
+
+	query := `query Owner($login: String!) {
+		repositoryOwner(login: $login) {
+			id
+			login
+			name
+			url
+			createdAt
+			updatedAt
+		}
+	}`
+	d := gqlData(t, query, map[string]interface{}{"login": orgLogin})
+	owner, _ := d["repositoryOwner"].(map[string]interface{})
+	if owner == nil {
+		t.Fatalf("repositoryOwner null: %v", d)
+	}
+	if owner["login"] != orgLogin {
+		t.Errorf("login = %v, want %q", owner["login"], orgLogin)
+	}
+	if owner["name"] != "Sweep Owner Org" {
+		t.Errorf("name = %v, want %q", owner["name"], "Sweep Owner Org")
+	}
+	if owner["url"] != "/"+orgLogin {
+		t.Errorf("url = %v, want /%s", owner["url"], orgLogin)
+	}
+	if owner["createdAt"] == nil || owner["updatedAt"] == nil {
+		t.Errorf("createdAt/updatedAt missing: %v", owner)
+	}
+}
+
 // --- Finding 1: the static --json field set gh repo view exposes ---
 
 func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {

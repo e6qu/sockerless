@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - bleephub fidelity audit: runner auto-update message + GraphQL org owner real data (BUG-2256/2257)
+
+A focused audit of bleephub turned up two real fidelity gaps and a stale comment:
+
+**Runner `AgentRefreshMessage` delivery (BUG-2256).** Real GitHub pushes an `AgentRefreshMessage` to a runner when a newer runner package is available; the actions/runner self-updater parses the body as `{agentId, targetVersion, timeout}` and kicks off a background update. bleephub's V1 broker only ever dispatched `PipelineAgentJobRequest` and `JobCancellation`, so the update path was absent. Added `sendAgentRefreshMessage` in `broker.go` (locks the store, marshals the real body shape, finds every open session for the target agent, and pushes the message on the session channel). Added a sim-control endpoint `POST /internal/agents/{agent_id}/refresh-message` in `handle_mgmt.go`, gated to site-admin tokens, accepting `{targetVersion, timeout}`; it 404s for unknown agents and 202s on success. Because bleephub has no update feed, the operator/test harness triggers the message explicitly — the broker itself faithfully delivers the same envelope real GitHub would.
+
+**GraphQL `repositoryOwner(login:)` returned synthetic data for organizations (BUG-2257).** The resolver had an inline partial map with only `login`, `databaseId`, `name`, and `url` for the org case, leaving every other User-shaped field null. Fixed by routing the org branch through the existing `orgToGraphQL` converter so `id`, `login`, `name`, `description`, `email`, `url`, `avatarUrl`, `createdAt`, and `updatedAt` all carry real organization-store data. The schema still returns the existing User-shaped type (a proper `RepositoryOwner` union is not yet modeled), but the payload is no longer synthetic.
+
+**Boyscout:** corrected the `server.go` route comment that called the artifact and cache routes "stubs"; `artifacts.go` implements real artifact upload/download/list/delete and cache reserve/upload/download lifecycle.
+
+Tests: `broker_refresh_test.go` covers `AgentRefreshMessage` delivery, admin-only auth, and missing-agent 404; `TestRepoGraphQL_RepositoryOwnerOrg` pins the org-owner shape. bleephub Go tests, all fuzz targets, and `-race` pass; UI `typecheck`/`test`/`build` pass; `make bleephub-gh-docker-test` reports 115/0 pass; `make bleephub-runner-docker-test` reports 14/14 pass; `make lint` is clean.
+
 ## 2026-06-29 - AWS Budgets Terraform parity (#714, BUG-2255)
 
 A follow-up to the Budgets service slice landed in #713. The SDK/CLI path worked, but `terraform-provider-aws` hit two lifecycle gaps:

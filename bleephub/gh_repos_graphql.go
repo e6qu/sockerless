@@ -612,10 +612,11 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 
 	// `repositoryOwner(login)` is the interface real GitHub exposes for "user or
 	// organization that owns repos". gh CLI's `gh repo list <login>` queries it.
-	// Bleephub treats user and org the same — both have a .repositories field on
-	// userType already — so we return the User shape regardless of whether the
-	// login resolves to a User or an Org (orgs.login is also indexed in
-	// OrgsByLogin; treat their JSON shape as the same as a User for this purpose).
+	// Bleephub's GraphQL schema does not yet model a RepositoryOwner union,
+	// so repositoryOwner returns the existing User-shaped type for both users
+	// and organizations. Organizations are converted with orgToGraphQL so all
+	// shared fields (login, name, email, url, avatarUrl, createdAt, updatedAt)
+	// carry real org data instead of a synthetic partial object.
 	queryType.AddFieldConfig("repositoryOwner", &graphql.Field{
 		Type: userType,
 		Args: graphql.FieldConfigArgument{
@@ -626,17 +627,11 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if u := s.store.LookupUserByLogin(login); u != nil {
 				return userToGraphQL(u), nil
 			}
-			// Org → fake a User-shaped payload so userType.repositories resolves.
 			s.store.mu.RLock()
 			org := s.store.OrgsByLogin[login]
 			s.store.mu.RUnlock()
 			if org != nil {
-				return map[string]interface{}{
-					"login":      org.Login,
-					"databaseId": org.ID,
-					"name":       org.Name,
-					"url":        "/" + org.Login,
-				}, nil
+				return orgToGraphQL(org), nil
 			}
 			return nil, nil
 		},

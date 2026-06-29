@@ -158,7 +158,7 @@ func (s *Server) registerRoutes() {
 	// Action resolution + tarball proxy (actions.go)
 	s.registerActionRoutes()
 
-	// Artifact + cache stubs (artifacts.go)
+	// Artifact + cache storage (artifacts.go)
 	s.registerArtifactRoutes()
 
 	// Run service: acquire/renew/complete (run_service.go)
