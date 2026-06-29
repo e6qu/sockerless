@@ -315,8 +315,7 @@ func sqsErrorJSON(w http.ResponseWriter, code, message string, status int) {
 }
 
 func sqsQueueDoesNotExist(w http.ResponseWriter) {
-	w.Header().Set("x-amzn-query-error", "AWS.SimpleQueueService.NonExistentQueue;Sender")
-	sqsErrorJSON(w, "QueueDoesNotExist", "The specified queue does not exist.", http.StatusBadRequest)
+	sqsErrorJSON(w, "AWS.SimpleQueueService.NonExistentQueue", "The specified queue does not exist.", http.StatusBadRequest)
 }
 
 // sqsNumericAttributes are the queue attributes whose values must be

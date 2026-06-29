@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - AWS Budgets Terraform parity (#714, BUG-2255)
+
+A follow-up to the Budgets service slice landed in #713. The SDK/CLI path worked, but `terraform-provider-aws` hit two lifecycle gaps:
+
+1. **Implicit `AccountId` derivation.** With `skip_requesting_account_id = true`, the provider sends `CreateBudget` without an `AccountId`. Real AWS resolves the account from the signing credentials; the simulator now does the same by falling back to `awsAccountID()` when `AccountId` is empty. The fallback is applied consistently across `CreateBudget`, `DescribeBudget`, `DeleteBudget`, `UpdateBudget`, and `DescribeBudgets`.
+
+2. **Missing tag operations.** The provider calls `ListTagsForResource` during the `aws_budgets_budget` refresh cycle; the operation was registered in the conformance allowlist but not implemented, causing `UnknownOperationException`. Implemented `ListTagsForResource`, `TagResource`, and `UntagResource` keyed by the budget ARN (`arn:aws:budgets::<account>:budget/<name>`), with tags stored per budget name.
+
+The terraform-tests production-shape stack now includes an `aws_budgets_budget` resource with a notification block, plus a `budgets` provider endpoint alias. SDK tests cover tag round-trips and the implicit-account raw-HTTP path (the aws-sdk-go-v2 client itself enforces `AccountId`, so the server-side fallback is exercised via a direct awsJson1.1 POST).
+
+AWS build/lint(0)/vet clean; `TestServiceConformance` passes after adding the three new Budgets operations to `allowedNonSpecTargets`; `TestBudgetsCRUDSDK`, `TestBudgetsCreateBudgetDerivesAccountId`, `TestBudgetsDescribeAndDeleteDeriveAccountId`, and `TestBudgetsNotificationsAndSubscribersSDK` pass.
+
 ## 2026-06-29 - AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251)
 
 A single branch closed all ten open AWS-focused GitHub issues. The shared shape across nine of the ten was **stored but not enforced**: the CRUD surface accepted, validated, and persisted state, but the real side effect (background evaluation, protocol serving, cross-service dispatch, host firewall installation, or task scheduling) was missing. Each fix adds the real side effect and a canonical-client test that proves it resolves.
