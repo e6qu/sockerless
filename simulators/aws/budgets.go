@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -84,6 +85,9 @@ func registerBudgets(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AWSBudgetServiceGateway.CreateSubscriber", handleBudgetsCreateSubscriber)
 	r.Register("AWSBudgetServiceGateway.DescribeSubscribersForNotification", handleBudgetsDescribeSubscribersForNotification)
 	r.Register("AWSBudgetServiceGateway.DeleteSubscriber", handleBudgetsDeleteSubscriber)
+	r.Register("AWSBudgetServiceGateway.ListTagsForResource", handleBudgetsListTagsForResource)
+	r.Register("AWSBudgetServiceGateway.TagResource", handleBudgetsTagResource)
+	r.Register("AWSBudgetServiceGateway.UntagResource", handleBudgetsUntagResource)
 }
 
 func budgetsNowEpoch() float64 {
@@ -248,8 +252,10 @@ func handleBudgetsCreateBudget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AccountId == "" {
-		budgetsError(w, "InvalidParameterException", "AccountId is required", http.StatusBadRequest)
-		return
+		// Real AWS derives the AccountId from the caller's signing credentials
+		// when the request omits it. terraform-provider-aws with
+		// skip_requesting_account_id = true relies on this behavior.
+		req.AccountId = awsAccountID()
 	}
 	if req.Budget == nil || req.Budget.BudgetName == "" {
 		budgetsError(w, "InvalidParameterException", "Budget.BudgetName is required", http.StatusBadRequest)
@@ -289,6 +295,9 @@ func handleBudgetsDescribeBudget(w http.ResponseWriter, r *http.Request) {
 	if !budgetsRead(w, r, &req) {
 		return
 	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
+	}
 	entry, ok := budgetsMustGetEntry(w, req.BudgetName)
 	if !ok {
 		return
@@ -304,10 +313,14 @@ func handleBudgetsDeleteBudget(w http.ResponseWriter, r *http.Request) {
 	if !budgetsRead(w, r, &req) {
 		return
 	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
+	}
 	if _, ok := budgetsMustGetEntry(w, req.BudgetName); !ok {
 		return
 	}
 	budgetsStore.Delete(req.BudgetName)
+	budgetTagsDelete(req.BudgetName)
 	writeAWSJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -318,6 +331,9 @@ func handleBudgetsUpdateBudget(w http.ResponseWriter, r *http.Request) {
 	}
 	if !budgetsRead(w, r, &req) {
 		return
+	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
 	}
 	if req.NewBudget == nil || req.NewBudget.BudgetName == "" {
 		budgetsError(w, "InvalidParameterException", "NewBudget.BudgetName is required", http.StatusBadRequest)
@@ -352,6 +368,9 @@ func handleBudgetsDescribeBudgets(w http.ResponseWriter, r *http.Request) {
 	}
 	if !budgetsRead(w, r, &req) {
 		return
+	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
 	}
 	all := budgetsStore.List()
 	total := len(all)
@@ -394,6 +413,9 @@ func handleBudgetsCreateNotification(w http.ResponseWriter, r *http.Request) {
 	if !budgetsRead(w, r, &req) {
 		return
 	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
+	}
 	if req.Notification == nil {
 		budgetsError(w, "InvalidParameterException", "Notification is required", http.StatusBadRequest)
 		return
@@ -424,6 +446,9 @@ func handleBudgetsDescribeNotificationsForBudget(w http.ResponseWriter, r *http.
 	}
 	if !budgetsRead(w, r, &req) {
 		return
+	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
 	}
 	entry, ok := budgetsMustGetEntry(w, req.BudgetName)
 	if !ok {
@@ -469,6 +494,9 @@ func handleBudgetsDeleteNotification(w http.ResponseWriter, r *http.Request) {
 	if !budgetsRead(w, r, &req) {
 		return
 	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
+	}
 	if req.Notification == nil {
 		budgetsError(w, "InvalidParameterException", "Notification is required", http.StatusBadRequest)
 		return
@@ -506,6 +534,9 @@ func handleBudgetsCreateSubscriber(w http.ResponseWriter, r *http.Request) {
 	}
 	if !budgetsRead(w, r, &req) {
 		return
+	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
 	}
 	if req.Subscriber == nil || req.Notification == nil {
 		budgetsError(w, "InvalidParameterException", "Notification and Subscriber are required", http.StatusBadRequest)
@@ -548,6 +579,9 @@ func handleBudgetsDescribeSubscribersForNotification(w http.ResponseWriter, r *h
 	}
 	if !budgetsRead(w, r, &req) {
 		return
+	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
 	}
 	if req.Notification == nil {
 		budgetsError(w, "InvalidParameterException", "Notification is required", http.StatusBadRequest)
@@ -599,6 +633,9 @@ func handleBudgetsDeleteSubscriber(w http.ResponseWriter, r *http.Request) {
 	if !budgetsRead(w, r, &req) {
 		return
 	}
+	if req.AccountId == "" {
+		req.AccountId = awsAccountID()
+	}
 	if req.Notification == nil || req.Subscriber == nil {
 		budgetsError(w, "InvalidParameterException", "Notification and Subscriber are required", http.StatusBadRequest)
 		return
@@ -625,4 +662,117 @@ func handleBudgetsDeleteSubscriber(w http.ResponseWriter, r *http.Request) {
 	entry.Subscribers[key] = kept
 	budgetsStore.Put(req.BudgetName, entry)
 	writeAWSJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleBudgetsListTagsForResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		budgetsRequestEnvelope
+		ResourceARN string
+	}
+	if !budgetsRead(w, r, &req) {
+		return
+	}
+	name := budgetsNameFromARN(req.ResourceARN)
+	entry, ok := budgetsMustGetEntry(w, name)
+	if !ok {
+		return
+	}
+	writeAWSJSON(w, http.StatusOK, map[string]any{"ResourceTags": budgetsTagsToWire(entry.Budget.BudgetName)})
+}
+
+func handleBudgetsTagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		budgetsRequestEnvelope
+		ResourceARN  string
+		ResourceTags []struct {
+			Key   string
+			Value string
+		}
+	}
+	if !budgetsRead(w, r, &req) {
+		return
+	}
+	name := budgetsNameFromARN(req.ResourceARN)
+	entry, ok := budgetsMustGetEntry(w, name)
+	if !ok {
+		return
+	}
+	budgetTagsSet(entry.Budget.BudgetName, req.ResourceTags)
+	writeAWSJSON(w, http.StatusOK, map[string]any{})
+}
+
+func handleBudgetsUntagResource(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		budgetsRequestEnvelope
+		ResourceARN     string
+		ResourceTagKeys []string
+	}
+	if !budgetsRead(w, r, &req) {
+		return
+	}
+	name := budgetsNameFromARN(req.ResourceARN)
+	entry, ok := budgetsMustGetEntry(w, name)
+	if !ok {
+		return
+	}
+	budgetTagsUnset(entry.Budget.BudgetName, req.ResourceTagKeys)
+	writeAWSJSON(w, http.StatusOK, map[string]any{})
+}
+
+// budgetsNameFromARN extracts the budget name from the ARN the Budgets API
+// uses for tagging. The provider builds "arn:aws:budgets::<account>:budget/<name>".
+func budgetsNameFromARN(arn string) string {
+	if i := strings.LastIndex(arn, "/"); i >= 0 {
+		return arn[i+1:]
+	}
+	if i := strings.LastIndex(arn, ":"); i >= 0 {
+		return arn[i+1:]
+	}
+	return arn
+}
+
+// budgetsTags is the tag store keyed by budget name.
+var budgetsTags = map[string]map[string]string{}
+var budgetsTagsMu sync.Mutex
+
+func budgetTagsSet(name string, tags []struct {
+	Key   string
+	Value string
+}) {
+	budgetsTagsMu.Lock()
+	defer budgetsTagsMu.Unlock()
+	if budgetsTags[name] == nil {
+		budgetsTags[name] = map[string]string{}
+	}
+	for _, t := range tags {
+		budgetsTags[name][t.Key] = t.Value
+	}
+}
+
+func budgetTagsUnset(name string, keys []string) {
+	budgetsTagsMu.Lock()
+	defer budgetsTagsMu.Unlock()
+	if budgetsTags[name] == nil {
+		return
+	}
+	for _, k := range keys {
+		delete(budgetsTags[name], k)
+	}
+}
+
+func budgetTagsDelete(name string) {
+	budgetsTagsMu.Lock()
+	defer budgetsTagsMu.Unlock()
+	delete(budgetsTags, name)
+}
+
+func budgetsTagsToWire(name string) []map[string]any {
+	budgetsTagsMu.Lock()
+	defer budgetsTagsMu.Unlock()
+	tags := budgetsTags[name]
+	out := make([]map[string]any, 0, len(tags))
+	for k, v := range tags {
+		out = append(out, map[string]any{"Key": k, "Value": v})
+	}
+	return out
 }

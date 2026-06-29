@@ -144,6 +144,9 @@ var allowedNonSpecTargets = map[string]string{
 	"AWSBudgetServiceGateway.DescribeNotificationsForBudget":     "AWS Budgets control plane",
 	"AWSBudgetServiceGateway.DescribeSubscribersForNotification": "AWS Budgets control plane",
 	"AWSBudgetServiceGateway.UpdateBudget":                       "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.ListTagsForResource":                "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.TagResource":                        "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.UntagResource":                      "AWS Budgets control plane",
 }
 
 func TestJSONTargetsExistInSmithyModels(t *testing.T) {

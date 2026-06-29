@@ -56,6 +56,7 @@ provider "aws" {
     batch            = var.endpoint
     appautoscaling   = var.endpoint
     scheduler        = var.endpoint
+    budgets          = var.endpoint
   }
 }
 
@@ -1725,4 +1726,51 @@ output "batch_job_queue_arn" {
 
 output "batch_job_definition_arn" {
   value = aws_batch_job_definition.tf_batch_jd.arn
+}
+
+resource "aws_budgets_budget" "tf_monthly" {
+  account_id   = "123456789012"
+  name         = "tf-monthly"
+  budget_type  = "COST"
+  limit_amount = "100"
+  limit_unit   = "USD"
+  time_unit    = "MONTHLY"
+
+  cost_types {
+    include_credit             = false
+    include_discount           = false
+    include_other_subscription = false
+    include_recurring          = false
+    include_refund             = false
+    include_subscription       = true
+    include_support            = false
+    include_tax                = false
+    include_upfront            = false
+    use_amortized              = false
+    use_blended                = false
+  }
+
+  notification {
+    comparison_operator        = "GREATER_THAN"
+    threshold                  = 80
+    threshold_type             = "PERCENTAGE"
+    notification_type          = "ACTUAL"
+    subscriber_email_addresses = ["alerts@example.com"]
+  }
+
+  tags = {
+    env = "terraform"
+  }
+}
+
+output "budgets_budget_name" {
+  value = aws_budgets_budget.tf_monthly.name
+}
+
+output "budgets_budget_limit_amount" {
+  value = aws_budgets_budget.tf_monthly.limit_amount
+}
+
+output "budgets_budget_tag_env" {
+  value = aws_budgets_budget.tf_monthly.tags["env"]
 }

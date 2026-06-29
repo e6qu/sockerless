@@ -1,6 +1,9 @@
 package aws_sdk_test
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,6 +25,11 @@ func TestBudgetsCRUDSDK(t *testing.T) {
 	c := budgetsClient()
 	const name = "sdk-budget-crud"
 
+	// Implicit AccountId path is what terraform-provider-aws uses with
+	// skip_requesting_account_id = true, but the aws-sdk-go-v2 client itself
+	// enforces AccountId as a required field, so we test the server-side
+	// fallback via a manual HTTP request and the SDK path with an explicit
+	// account ID.
 	_, err := c.CreateBudget(ctx, &budgets.CreateBudgetInput{
 		AccountId: aws.String(budgetsAccountID),
 		Budget: &btypes.Budget{
@@ -54,6 +62,40 @@ func TestBudgetsCRUDSDK(t *testing.T) {
 	require.NotNil(t, desc.Budget.BudgetLimit)
 	assert.Equal(t, "100", aws.ToString(desc.Budget.BudgetLimit.Amount))
 	assert.Equal(t, "USD", aws.ToString(desc.Budget.BudgetLimit.Unit))
+
+	_, err = c.TagResource(ctx, &budgets.TagResourceInput{
+		ResourceARN: aws.String("arn:aws:budgets::" + budgetsAccountID + ":budget/" + name),
+		ResourceTags: []btypes.ResourceTag{
+			{Key: aws.String("env"), Value: aws.String("test")},
+			{Key: aws.String("owner"), Value: aws.String("tf")},
+		},
+	})
+	require.NoError(t, err)
+
+	tags, err := c.ListTagsForResource(ctx, &budgets.ListTagsForResourceInput{
+		ResourceARN: aws.String("arn:aws:budgets::" + budgetsAccountID + ":budget/" + name),
+	})
+	require.NoError(t, err)
+	require.Len(t, tags.ResourceTags, 2)
+	found := map[string]string{}
+	for _, rt := range tags.ResourceTags {
+		found[aws.ToString(rt.Key)] = aws.ToString(rt.Value)
+	}
+	assert.Equal(t, "test", found["env"])
+	assert.Equal(t, "tf", found["owner"])
+
+	_, err = c.UntagResource(ctx, &budgets.UntagResourceInput{
+		ResourceARN:     aws.String("arn:aws:budgets::" + budgetsAccountID + ":budget/" + name),
+		ResourceTagKeys: []string{"owner"},
+	})
+	require.NoError(t, err)
+
+	tags2, err := c.ListTagsForResource(ctx, &budgets.ListTagsForResourceInput{
+		ResourceARN: aws.String("arn:aws:budgets::" + budgetsAccountID + ":budget/" + name),
+	})
+	require.NoError(t, err)
+	require.Len(t, tags2.ResourceTags, 1)
+	assert.Equal(t, "env", aws.ToString(tags2.ResourceTags[0].Key))
 
 	_, err = c.UpdateBudget(ctx, &budgets.UpdateBudgetInput{
 		AccountId: aws.String(budgetsAccountID),
@@ -99,6 +141,94 @@ func TestBudgetsCRUDSDK(t *testing.T) {
 		BudgetName: aws.String(name),
 	})
 	assert.Error(t, err)
+}
+
+func TestBudgetsCreateBudgetDerivesAccountId(t *testing.T) {
+	// terraform-provider-aws with skip_requesting_account_id = true sends
+	// CreateBudget without AccountId. The SDK validates it locally, so we
+	// exercise the server-side fallback through a raw HTTP POST with the
+	// awsJson1.1 envelope.
+	reqBody, err := json.Marshal(map[string]any{
+		"Budget": map[string]any{
+			"BudgetName": "sdk-budget-implicit-account",
+			"BudgetLimit": map[string]any{
+				"Amount": "50",
+				"Unit":   "USD",
+			},
+			"TimeUnit":   "MONTHLY",
+			"BudgetType": "COST",
+		},
+	})
+	require.NoError(t, err)
+
+	req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(reqBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+	req.Header.Set("X-Amz-Target", "AWSBudgetServiceGateway.CreateBudget")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	assert.Equal(t, http.StatusOK, resp.StatusCode, "CreateBudget without AccountId must succeed")
+
+	c := budgetsClient()
+	t.Cleanup(func() {
+		_, _ = c.DeleteBudget(ctx, &budgets.DeleteBudgetInput{
+			AccountId:  aws.String(budgetsAccountID),
+			BudgetName: aws.String("sdk-budget-implicit-account"),
+		})
+	})
+
+	desc, err := c.DescribeBudget(ctx, &budgets.DescribeBudgetInput{
+		AccountId:  aws.String(budgetsAccountID),
+		BudgetName: aws.String("sdk-budget-implicit-account"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "sdk-budget-implicit-account", aws.ToString(desc.Budget.BudgetName))
+}
+
+func TestBudgetsDescribeAndDeleteDeriveAccountId(t *testing.T) {
+	// The SDK marks AccountId as required for DescribeBudget/DeleteBudget too,
+	// but the simulator should derive it from the configured account when it is
+	// omitted. Exercise those paths through raw HTTP calls matching the provider.
+	const name = "sdk-budget-implicit-describe-delete"
+	createBody, err := json.Marshal(map[string]any{
+		"AccountId": budgetsAccountID,
+		"Budget": map[string]any{
+			"BudgetName":  name,
+			"BudgetLimit": map[string]any{"Amount": "75", "Unit": "USD"},
+			"TimeUnit":    "MONTHLY",
+			"BudgetType":  "COST",
+		},
+	})
+	require.NoError(t, err)
+
+	makeReq := func(target string, body []byte) *http.Request {
+		req, err := http.NewRequestWithContext(ctx, "POST", baseURL, bytes.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/x-amz-json-1.1")
+		req.Header.Set("X-Amz-Target", "AWSBudgetServiceGateway."+target)
+		return req
+	}
+
+	resp, err := http.DefaultClient.Do(makeReq("CreateBudget", createBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	describeBody, err := json.Marshal(map[string]any{"BudgetName": name})
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(makeReq("DescribeBudget", describeBody))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	deleteBody, err := json.Marshal(map[string]any{"BudgetName": name})
+	require.NoError(t, err)
+	resp, err = http.DefaultClient.Do(makeReq("DeleteBudget", deleteBody))
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
 }
 
 func TestBudgetsNotificationsAndSubscribersSDK(t *testing.T) {

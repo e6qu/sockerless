@@ -68,6 +68,9 @@ import (
 //     UpdateTrail, GetTrailStatus, StartLogging, StopLogging,
 //     LookupEvents, DeleteTrail, AddTags, RemoveTags, ListTags,
 //     PutEventSelectors, GetEventSelectors
+//   - Budgets: CreateBudget, UpdateBudget, DescribeBudget,
+//     DescribeBudgets, DeleteBudget, ListTagsForResource,
+//     TagResource, UntagResource
 //   - API Gateway: CreateRestApi, GetRestApi, DeleteRestApi,
 //     CreateResource, GetResource, DeleteResource, PutMethod,
 //     GetMethod, DeleteMethod, PutIntegration, GetIntegration,
@@ -218,6 +221,13 @@ func TestStackProductionShape(t *testing.T) {
 	cwDashARN := outputs.must(t, "cloudwatch_dashboard_arn")
 	require.Contains(t, cwDashARN, ":dashboard/tf-dash",
 		"CloudWatch dashboard ARN must use the dashboard resource path; got %s", cwDashARN)
+
+	require.Equal(t, "tf-monthly", outputs.must(t, "budgets_budget_name"),
+		"aws_budgets_budget name must round-trip through the Budgets API")
+	require.Equal(t, "100", outputs.must(t, "budgets_budget_limit_amount"),
+		"aws_budgets_budget limit_amount must round-trip through the Budgets API")
+	require.Equal(t, "terraform", outputs.must(t, "budgets_budget_tag_env"),
+		"aws_budgets_budget tags must round-trip through TagResource + ListTagsForResource")
 
 	require.Equal(t, "tf-asg", outputs.must(t, "autoscaling_group_name"),
 		"Auto Scaling group name must round-trip through provider refresh")

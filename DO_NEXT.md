@@ -4,12 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`chore/continuity-and-open-issues` — closing open GitHub issues #703-#712 (AWS simulator stored-but-not-enforced sweep + Budgets service slice) and fixing two CI-caught regressions from that sweep (scheduler `DescribeServices.RunningCount` race and empty-SG deny-all in EC2 host-firewall enforcement). Rebase on `origin/main` before opening the PR; PR #713 is already open and being iterated to green.
+`fix/aws-budgets-terraform-parity-714` — closing issue #714 (AWS Budgets Terraform lifecycle gaps: missing implicit `AccountId` derivation + `ListTagsForResource`). Rebase on `origin/main` before opening the PR.
 
 **Next candidates after this branch:** resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
 
 ---
-### Prior branch (in progress): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251, plus CI-caught BUG-2253/2254)
+### Prior branch (in progress): AWS Budgets Terraform parity (#714, BUG-2255)
+`fix/aws-budgets-terraform-parity-714` closes the Terraform lifecycle gaps in the AWS Budgets service slice. `CreateBudget`/`DescribeBudget`/`DeleteBudget`/`UpdateBudget`/`DescribeBudgets` now derive `AccountId` from `awsAccountID()` when the request omits it, matching real AWS behavior when the caller's signing credentials supply the account (the path used by `terraform-provider-aws` with `skip_requesting_account_id = true`). `ListTagsForResource`, `TagResource`, and `UntagResource` are implemented so `aws_budgets_budget` can complete its Create+Read+Delete cycle. SDK tests cover tag round-trips and the implicit-account raw-HTTP path; the terraform-tests production-shape stack gained a `aws_budgets_budget` resource plus endpoint alias and assertions.
+
+---
+### Prior branch (merged #713): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251, plus CI-caught BUG-2253/2254)
 Closed all ten open AWS-focused GitHub issues. Each fix ships real side effects and SDK tests: SQS DLQ redrive, ACM real PEM minting, AWS Budgets service slice, Route 53 DNS server, CloudWatch Logs metric-filter→metric publishing, CloudWatch alarm→SNS dispatch, Application Auto Scaling target tracking for ECS, ELBv2 HTTPS/TLS termination, ECS service scheduler, and EC2 security-group host-firewall enforcement. Added `allowedNonSpecTargets` to `spec_conformance_test.go` for the Budgets service, which is real but not in the vendored Smithy corpus. Added deterministic unit tests for the ECS scheduler because the SDK integration test requires a healthy container runtime. Identified and filed BUG-2252: the conformance/coverage gates do not catch behavioral side-effect gaps (background evaluators, protocol listeners, cross-service dispatch); documented in WHAT_WE_DID.md.
 
 The PR #713 CI run surfaced two regressions in the new code and they were fixed in the same branch:
