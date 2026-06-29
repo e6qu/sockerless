@@ -2474,62 +2474,139 @@ func ec2IPRangeHasCidr(ranges []EC2IpRange, cidr string) bool {
 	return false
 }
 
+// ec2SGValidationError describes a syntactic failure of an IpPermission.
+// Code is the real AWS error code returned to SDK/CLI/terraform callers, so a
+// provider using the simulator sees the same rejection it would in real AWS.
+type ec2SGValidationError struct {
+	Code    string
+	Message string
+}
+
+// validateIpPermission checks protocol, port range, CIDR syntax, and the
+// existence of referenced security groups. It mirrors the rejection real AWS
+// applies at the AuthorizeSecurityGroup{Ingress,Egress} boundary. An empty Code
+// means the permission is well-formed.
+func validateIpPermission(perm EC2IpPermission) ec2SGValidationError {
+	proto := strings.ToLower(strings.TrimSpace(perm.IpProtocol))
+	switch proto {
+	case "-1", "all":
+		// All-traffic rules carry no port semantics.
+	case "tcp", "udp":
+		if perm.FromPort < 0 || perm.FromPort > 65535 || perm.ToPort < 0 || perm.ToPort > 65535 {
+			return ec2SGValidationError{Code: "InvalidPortRange.Malformed",
+				Message: fmt.Sprintf("Invalid port range (%d-%d) for protocol %s; ports must be 0-65535", perm.FromPort, perm.ToPort, proto)}
+		}
+		if perm.FromPort != 0 && perm.ToPort != 0 && perm.FromPort > perm.ToPort {
+			return ec2SGValidationError{Code: "InvalidPortRange.Malformed",
+				Message: fmt.Sprintf("Invalid port range (%d-%d) for protocol %s; fromPort must be less than or equal to toPort", perm.FromPort, perm.ToPort, proto)}
+		}
+	case "icmp", "icmpv6":
+		// For ICMP the values encode type/code; -1 (all) is accepted, otherwise
+		// each value must fit 0-255.
+		for _, p := range []int{perm.FromPort, perm.ToPort} {
+			if p != -1 && (p < 0 || p > 255) {
+				return ec2SGValidationError{Code: "InvalidPortRange.Malformed",
+					Message: fmt.Sprintf("Invalid ICMP type/code value %d for protocol %s; must be -1 or 0-255", p, proto)}
+			}
+		}
+	default:
+		return ec2SGValidationError{Code: "InvalidPermission.Malformed",
+			Message: fmt.Sprintf("Unsupported protocol %q; supported: -1, tcp, udp, icmp, icmpv6", perm.IpProtocol)}
+	}
+
+	for _, ipr := range perm.IpRanges {
+		if _, _, err := net.ParseCIDR(ipr.CidrIp); err != nil {
+			return ec2SGValidationError{Code: "InvalidPermission.Malformed",
+				Message: fmt.Sprintf("Invalid CIDR %q: %v", ipr.CidrIp, err)}
+		}
+	}
+	for _, ipr := range perm.Ipv6Ranges {
+		if _, _, err := net.ParseCIDR(ipr.CidrIpv6); err != nil {
+			return ec2SGValidationError{Code: "InvalidPermission.Malformed",
+				Message: fmt.Sprintf("Invalid IPv6 CIDR %q: %v", ipr.CidrIpv6, err)}
+		}
+	}
+	for _, gp := range perm.UserIdGroupPairs {
+		if gp.GroupId == "" {
+			return ec2SGValidationError{Code: "InvalidGroup.NotFound",
+				Message: "UserIdGroupPairs.GroupId is required"}
+		}
+		if _, ok := ec2SecurityGroups.Get(gp.GroupId); !ok {
+			return ec2SGValidationError{Code: "InvalidGroup.NotFound",
+				Message: fmt.Sprintf("The security group %q does not exist", gp.GroupId)}
+		}
+	}
+	return ec2SGValidationError{}
+}
+
 func handleAuthorizeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
-	groupId := r.FormValue("GroupId")
-	perm := parseIpPermission(r, "IpPermissions.1")
-
-	if sg, ok := ec2SecurityGroups.Get(groupId); ok && ec2PermissionDuplicate(sg.IpPermissions, perm) {
-		ec2ErrorXML(w, "InvalidPermission.Duplicate",
-			"the specified rule already exists", http.StatusBadRequest)
-		return
-	}
-
-	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		sg.IpPermissions = append(sg.IpPermissions, perm)
-	})
-
-	rules := createSecurityGroupRules(groupId, perm, false)
-	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
-		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
-		return
-	}
-	var ruleSetXML strings.Builder
-	for _, rule := range rules {
-		ruleSetXML.WriteString(sgrItemXML(rule))
-	}
-
-	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<AuthorizeSecurityGroupIngressResponse %s>
-  <requestId>%s</requestId><return>true</return>
-  <securityGroupRuleSet>%s</securityGroupRuleSet>
-</AuthorizeSecurityGroupIngressResponse>`, ec2Xmlns(), generateUUID(), ruleSetXML.String())
+	handleAuthorizeSecurityGroupRule(w, r, false)
 }
 
 func handleAuthorizeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
+	handleAuthorizeSecurityGroupRule(w, r, true)
+}
+
+func handleAuthorizeSecurityGroupRule(w http.ResponseWriter, r *http.Request, egress bool) {
 	groupId := r.FormValue("GroupId")
+	if _, ok := ec2SecurityGroups.Get(groupId); !ok {
+		ec2ErrorXML(w, "InvalidGroup.NotFound", fmt.Sprintf("The security group '%s' does not exist", groupId), http.StatusBadRequest)
+		return
+	}
 	perm := parseIpPermission(r, "IpPermissions.1")
 
-	if sg, ok := ec2SecurityGroups.Get(groupId); ok && ec2PermissionDuplicate(sg.IpPermissionsEgress, perm) {
+	if verr := validateIpPermission(perm); verr.Code != "" {
+		ec2ErrorXML(w, verr.Code, verr.Message, http.StatusBadRequest)
+		return
+	}
+
+	var existing []EC2IpPermission
+	if egress {
+		if sg, ok := ec2SecurityGroups.Get(groupId); ok {
+			existing = sg.IpPermissionsEgress
+		}
+	} else {
+		if sg, ok := ec2SecurityGroups.Get(groupId); ok {
+			existing = sg.IpPermissions
+		}
+	}
+	if ec2PermissionDuplicate(existing, perm) {
 		ec2ErrorXML(w, "InvalidPermission.Duplicate",
 			"the specified rule already exists", http.StatusBadRequest)
 		return
 	}
 
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		sg.IpPermissionsEgress = append(sg.IpPermissionsEgress, perm)
+		if egress {
+			sg.IpPermissionsEgress = append(sg.IpPermissionsEgress, perm)
+		} else {
+			sg.IpPermissions = append(sg.IpPermissions, perm)
+		}
 	})
 
-	rules := createSecurityGroupRules(groupId, perm, true)
+	rules := createSecurityGroupRules(groupId, perm, egress)
+	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
+		direction := "ingress"
+		if egress {
+			direction = "egress"
+		}
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group %s rules: %v", direction, err), http.StatusServiceUnavailable)
+		return
+	}
 	var ruleSetXML strings.Builder
 	for _, rule := range rules {
 		ruleSetXML.WriteString(sgrItemXML(rule))
 	}
 
+	action := "AuthorizeSecurityGroupIngress"
+	if egress {
+		action = "AuthorizeSecurityGroupEgress"
+	}
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<AuthorizeSecurityGroupEgressResponse %s>
+	fmt.Fprintf(w, `<%sResponse %s>
   <requestId>%s</requestId><return>true</return>
   <securityGroupRuleSet>%s</securityGroupRuleSet>
-</AuthorizeSecurityGroupEgressResponse>`, ec2Xmlns(), generateUUID(), ruleSetXML.String())
+</%sResponse>`, action, ec2Xmlns(), generateUUID(), ruleSetXML.String(), action)
 }
 
 func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
@@ -2559,6 +2636,10 @@ func handleRevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 		sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
 	})
 	deleteSecurityGroupRules(groupId, perm, true)
+	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group egress rules: %v", err), http.StatusServiceUnavailable)
+		return
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<RevokeSecurityGroupEgressResponse %s>
@@ -2761,7 +2842,7 @@ func ec2ErrorXML(w http.ResponseWriter, code, message string, status int) {
 	w.Header().Set("Content-Type", "text/xml")
 	w.WriteHeader(status)
 	fmt.Fprintf(w, `<Response><Errors><Error><Code>%s</Code><Message>%s</Message></Error></Errors><RequestID>%s</RequestID></Response>`,
-		code, message, generateUUID())
+		xmlEscape(code), xmlEscape(message), generateUUID())
 }
 
 func ec2Filters(r *http.Request) map[string][]string {

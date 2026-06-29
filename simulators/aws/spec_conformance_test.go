@@ -125,6 +125,27 @@ func buildConformanceSimulator(t *testing.T) (*sim.Server, *sim.AWSRouter, *sim.
 	return srv, jsonRouter, queryRouter
 }
 
+// allowedNonSpecTargets lists X-Amz-Target values the simulator serves that
+// are real, documented AWS JSON-RPC surfaces but are NOT described by any
+// vendored Smithy model. Each entry MUST be justified — this is never a place
+// to hide an invented AWS operation.
+var allowedNonSpecTargets = map[string]string{
+	// AWS Budgets (awsJson1.1 over POST /). The Budgets control plane is a
+	// real AWS service; the vendored Smithy corpus does not currently include
+	// its model, so the real operation names are allowlisted here.
+	"AWSBudgetServiceGateway.CreateBudget":                       "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.CreateNotification":                 "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.CreateSubscriber":                   "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DeleteBudget":                       "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DeleteNotification":                 "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DeleteSubscriber":                   "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DescribeBudget":                     "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DescribeBudgets":                    "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DescribeNotificationsForBudget":     "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.DescribeSubscribersForNotification": "AWS Budgets control plane",
+	"AWSBudgetServiceGateway.UpdateBudget":                       "AWS Budgets control plane",
+}
+
 func TestJSONTargetsExistInSmithyModels(t *testing.T) {
 	models := loadSmithyModels(t)
 	_, jsonRouter, _ := buildConformanceSimulator(t)
@@ -136,6 +157,9 @@ func TestJSONTargetsExistInSmithyModels(t *testing.T) {
 
 	var offenders []string
 	for _, target := range jsonRouter.Targets() {
+		if _, ok := allowedNonSpecTargets[target]; ok {
+			continue
+		}
 		i := strings.LastIndex(target, ".")
 		if i < 0 {
 			offenders = append(offenders, target+"  (not Service.Operation shaped)")

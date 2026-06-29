@@ -4,9 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-No active branch. The last work merged as PR #702. Pick the next task from the candidates below or from [PLAN.md](PLAN.md).
+`chore/continuity-and-open-issues` — closing open GitHub issues #703-#712 (AWS simulator stored-but-not-enforced sweep + Budgets service slice) and documenting the systematic root cause in BUGS.md/WHAT_WE_DID.md. Rebase on `origin/main` before opening the PR.
 
-**Next candidates:** GCP — more of Compute v1's 1994 (~886 still uncovered, mostly template alternates + real-exec), Dataproc remainders, or small REST remainder duos. Azure — web-arm 161→ more of the 692, msgraph. Or the live-cloud track (BUG-1075). Open GitHub issues: only #394 (azuread, upstream-blocked).
+**Next candidates after this branch:** resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+
+---
+### Prior branch (in progress): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251)
+Closed all ten open AWS-focused GitHub issues. Each fix ships real side effects and SDK tests: SQS DLQ redrive, ACM real PEM minting, AWS Budgets service slice, Route 53 DNS server, CloudWatch Logs metric-filter→metric publishing, CloudWatch alarm→SNS dispatch, Application Auto Scaling target tracking for ECS, ELBv2 HTTPS/TLS termination, ECS service scheduler, and EC2 security-group host-firewall enforcement. Added `allowedNonSpecTargets` to `spec_conformance_test.go` for the Budgets service, which is real but not in the vendored Smithy corpus. Added deterministic unit tests for the ECS scheduler because the SDK integration test requires a healthy container runtime. Identified and filed BUG-2252: the conformance/coverage gates do not catch behavioral side-effect gaps (background evaluators, protocol listeners, cross-service dispatch); documented in WHAT_WE_DID.md.
 
 ---
 ### Prior branch (merged #702): second GCP gRPC round (Cloud KMS + Secret Manager) + Compute v1 control-plane tranche #2 (BUG-2240) + AWS ECS ExecuteCommand flake fix (BUG-2241)

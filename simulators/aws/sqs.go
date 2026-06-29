@@ -196,6 +196,81 @@ func sqsEnqueueByARN(queueARN, body string) bool {
 	return true
 }
 
+// sqsParseRedrivePolicy extracts the dead-letter target ARN and the
+// maxReceiveCount threshold from a queue's stored RedrivePolicy attribute.
+// SQS serializes RedrivePolicy as a JSON string with maxReceiveCount as a
+// JSON string number; the helper tolerates both numeric and string forms.
+// ok is false when the queue has no usable RedrivePolicy.
+func sqsParseRedrivePolicy(attrs map[string]string) (dlqARN string, maxReceiveCount int, ok bool) {
+	raw, present := attrs["RedrivePolicy"]
+	if !present || strings.TrimSpace(raw) == "" {
+		return "", 0, false
+	}
+	var rp struct {
+		DeadLetterTargetArn string `json:"deadLetterTargetArn"`
+		MaxReceiveCount     any    `json:"maxReceiveCount"`
+	}
+	if err := json.Unmarshal([]byte(raw), &rp); err != nil {
+		return "", 0, false
+	}
+	switch v := rp.MaxReceiveCount.(type) {
+	case string:
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return "", 0, false
+		}
+		maxReceiveCount = n
+	case float64:
+		if v <= 0 {
+			return "", 0, false
+		}
+		maxReceiveCount = int(v)
+	default:
+		return "", 0, false
+	}
+	if rp.DeadLetterTargetArn == "" {
+		return "", 0, false
+	}
+	return rp.DeadLetterTargetArn, maxReceiveCount, true
+}
+
+// sqsNameFromARN returns the trailing resource name of an SQS ARN
+// (arn:aws:sqs:<region>:<account>:<name> → <name>).
+func sqsNameFromARN(arn string) string {
+	if i := strings.LastIndex(arn, ":"); i >= 0 {
+		return arn[i+1:]
+	}
+	return arn
+}
+
+// sqsEnqueueRedrives moves each message into the dead-letter queue named by
+// dlqARN, matching real SQS ReceiveMessage-side redrive: the message leaves the
+// source queue, gets a fresh MessageId, and its ApproximateReceiveCount resets
+// to zero on the DLQ. An empty dlqARN or a missing DLQ drops the messages, the
+// way real SQS behaves when the configured DLQ has been deleted.
+func sqsEnqueueRedrives(dlqARN string, msgs []SQSMessage) {
+	if dlqARN == "" || len(msgs) == 0 {
+		return
+	}
+	dlqName := sqsNameFromARN(dlqARN)
+	if _, ok := sqsQueues.Get(dlqName); !ok {
+		return
+	}
+	now := time.Now().Unix()
+	sqsQueues.Update(dlqName, func(d *SQSQueue) {
+		for _, m := range msgs {
+			d.Messages = append(d.Messages, SQSMessage{
+				MessageId:              generateUUID(),
+				Body:                   m.Body,
+				MD5OfBody:              m.MD5OfBody,
+				SentTimestamp:          now,
+				MessageAttributes:      m.MessageAttributes,
+				MD5OfMessageAttributes: m.MD5OfMessageAttributes,
+			})
+		}
+	})
+}
+
 func registerSQS(r *sim.AWSRouter, srv *sim.Server) {
 	// Message-level ops are CloudTrail DATA events (excluded from LookupEvents);
 	// queue-management ops are management events.
@@ -749,24 +824,36 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().Unix()
 	var picked []SQSMessage
+	var redrived []SQSMessage
+	var dlqARN string
 
 	sqsQueues.Update(name, func(qq *SQSQueue) {
+		var hasRedrive bool
+		var maxReceiveCount int
+		dlqARN, maxReceiveCount, hasRedrive = sqsParseRedrivePolicy(qq.Attributes)
+		kept := qq.Messages[:0]
 		for i := range qq.Messages {
-			if len(picked) >= maxN {
-				break
-			}
-			if qq.Messages[i].VisibleAt > now {
+			m := qq.Messages[i]
+			if len(picked) >= maxN || m.VisibleAt > now {
+				kept = append(kept, m)
 				continue
 			}
-			qq.Messages[i].ReceiptHandle = generateUUID()
-			qq.Messages[i].VisibleAt = now + int64(visTimeout)
-			qq.Messages[i].ApproximateReceiveCount++
-			if qq.Messages[i].FirstReceivedAt == 0 {
-				qq.Messages[i].FirstReceivedAt = now
+			m.ReceiptHandle = generateUUID()
+			m.VisibleAt = now + int64(visTimeout)
+			m.ApproximateReceiveCount++
+			if m.FirstReceivedAt == 0 {
+				m.FirstReceivedAt = now
 			}
-			picked = append(picked, qq.Messages[i])
+			if hasRedrive && m.ApproximateReceiveCount > maxReceiveCount {
+				redrived = append(redrived, m)
+				continue
+			}
+			kept = append(kept, m)
+			picked = append(picked, m)
 		}
+		qq.Messages = kept
 	})
+	sqsEnqueueRedrives(dlqARN, redrived)
 
 	out := make([]map[string]any, 0, len(picked))
 	for _, m := range picked {

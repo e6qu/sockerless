@@ -116,50 +116,41 @@ func elbv2StartNLBProxyBestEffort(listener ELBv2Listener) {
 }
 
 // elbv2BindNLBProxy binds a stream listener's proxy on the load balancer's
-// stable host at the listener's configured port. The first stream listener of an
-// NLB binds 127.0.0.1:<port> — deterministically reachable for any same-host
-// client (SDK/CLI/in-process) — unless that port is already taken on 127.0.0.1
-// by another NLB; on Linux it then leases a distinct 127.0.0.0/8 address per NLB
-// and binds there, so many NLBs can expose the SAME listener port (e.g. 2222)
-// without colliding — the way two real NLBs each have their own address. Off
-// Linux only 127.0.0.1 is bound by default, so a same-port second NLB fails to
-// bind there (the documented single-NLB-per-port limit of the dev-host path);
+// stable host at the listener's configured port. The first stream or TLS
+// listener of a load balancer binds 127.0.0.1:<port> — deterministically
+// reachable for any same-host client (SDK/CLI/in-process) — unless that port is
+// already taken on 127.0.0.1 by another load balancer; on Linux it then leases
+// a distinct 127.0.0.0/8 address per load balancer and binds there, so many
+// load balancers can expose the SAME listener port (e.g. 2222) without
+// colliding — the way two real NLBs each have their own address. Off Linux only
+// 127.0.0.1 is bound by default, so a same-port second load balancer fails to
+// bind there (the documented single-LB-per-port limit of the dev-host path);
 // the proxy never lies about its address. A load balancer's later listeners
 // reuse the host already chosen for it. Caller holds elbv2NLBProxyMu.
 func elbv2BindNLBProxy(listener ELBv2Listener, resolver realexec.ProxyTarget) (elbv2NLBHost, *realexec.TCPProxy, error) {
-	lbArn := listener.LoadBalancerArn
-	if existing, ok := elbv2NLBHosts[lbArn]; ok {
-		bindAddr := net.JoinHostPort(existing.host, strconv.Itoa(listener.Port))
-		proxy, err := realexec.StartTCPProxy(bindAddr, resolver)
-		if err != nil {
-			return elbv2NLBHost{}, nil, fmt.Errorf("start NLB TCP proxy for listener %s on %s: %w", listener.Arn, bindAddr, err)
-		}
-		return existing, proxy, nil
+	host, err := elbv2AcquireStableHost(listener.LoadBalancerArn, listener.Port)
+	if err != nil {
+		return elbv2NLBHost{}, nil, err
 	}
-	primary := net.JoinHostPort("127.0.0.1", strconv.Itoa(listener.Port))
-	if proxy, err := realexec.StartTCPProxy(primary, resolver); err == nil {
-		return elbv2NLBHost{host: "127.0.0.1"}, proxy, nil
-	}
-	// 127.0.0.1:<port> is taken (another NLB on this port). Lease a distinct
-	// per-NLB loopback address (Linux) and bind there, like a real NLB's own IP.
-	ip, leased := realexec.ReserveNLBLoopbackIPv4(lbArn)
-	if !leased {
-		return elbv2NLBHost{}, nil, fmt.Errorf("listener port %d already bound on 127.0.0.1 and no per-NLB loopback address is available on this host (one NLB per listener port off Linux)", listener.Port)
-	}
-	bindAddr := net.JoinHostPort(ip.String(), strconv.Itoa(listener.Port))
+	bindAddr := net.JoinHostPort(host.host, strconv.Itoa(listener.Port))
 	proxy, err := realexec.StartTCPProxy(bindAddr, resolver)
 	if err != nil {
-		realexec.ReleaseNLBLoopbackIPv4(ip)
 		return elbv2NLBHost{}, nil, fmt.Errorf("start NLB TCP proxy for listener %s on %s: %w", listener.Arn, bindAddr, err)
 	}
-	return elbv2NLBHost{host: ip.String(), leaseIP: ip}, proxy, nil
+	elbv2NLBHosts[listener.LoadBalancerArn] = host
+	return host, proxy, nil
 }
 
 // elbv2ReleaseNLBHostIfUnused drops the load balancer's stable host (and frees
-// its loopback lease) once no stream listener for the NLB is still running.
-// Caller holds elbv2NLBProxyMu.
+// its loopback lease) once no stream or TLS listener for the load balancer is
+// still running. Caller holds elbv2NLBProxyMu.
 func elbv2ReleaseNLBHostIfUnused(lbArn string) {
 	for _, p := range elbv2NLBProxies {
+		if p.lbArn == lbArn {
+			return
+		}
+	}
+	for _, p := range elbv2TLSProxies {
 		if p.lbArn == lbArn {
 			return
 		}
@@ -168,6 +159,27 @@ func elbv2ReleaseNLBHostIfUnused(lbArn string) {
 		realexec.ReleaseNLBLoopbackIPv4(host.leaseIP)
 		delete(elbv2NLBHosts, lbArn)
 	}
+}
+
+// elbv2AcquireStableHost returns the load balancer's stable bind host (leasing
+// it on first use), the single address every stream and TLS listener for the
+// load balancer binds so `<dnsname>:<listenerPort>` reaches the right proxy.
+// Caller holds elbv2NLBProxyMu. The host is released by
+// elbv2ReleaseNLBHostIfUnused once the last listener for the LB stops.
+func elbv2AcquireStableHost(lbArn string, port int) (elbv2NLBHost, error) {
+	if existing, ok := elbv2NLBHosts[lbArn]; ok {
+		return existing, nil
+	}
+	primary := net.JoinHostPort("127.0.0.1", strconv.Itoa(port))
+	if ln, err := net.Listen("tcp", primary); err == nil {
+		_ = ln.Close()
+		return elbv2NLBHost{host: "127.0.0.1"}, nil
+	}
+	ip, leased := realexec.ReserveNLBLoopbackIPv4(lbArn)
+	if !leased {
+		return elbv2NLBHost{}, fmt.Errorf("listener port %d already bound on 127.0.0.1 and no per-NLB loopback address is available on this host (one load balancer per listener port off Linux)", port)
+	}
+	return elbv2NLBHost{host: ip.String(), leaseIP: ip}, nil
 }
 
 // elbv2StopNLBProxy closes and forgets the TCP proxy for a listener (on
@@ -202,17 +214,17 @@ func elbv2NLBProxyAddress(listenerArn string) string {
 }
 
 // elbv2NLBHostEntries returns the hosts entries that make a load balancer's
-// AWS-shaped DNS name resolve to its stream proxy's stable host, for every NLB
-// that has a running stream listener. A workload that resolves the NLB's DNS
-// name (the value DescribeLoadBalancers returns) and connects on the listener
-// port therefore reaches the proxy — the faithful analogue of a real NLB's DNS
-// name resolving to its addresses. This is the production consumer of the proxy
-// host: it is merged into workload-container hosts the same way the metadata and
-// Cloud Map host entries are.
+// AWS-shaped DNS name resolve to its stream / TLS proxy's stable host, for
+// every load balancer that has a running stream or TLS listener. A workload
+// that resolves the LB's DNS name (the value DescribeLoadBalancers returns) and
+// connects on the listener port therefore reaches the proxy — the faithful
+// analogue of a real LB's DNS name resolving to its addresses. This is the
+// production consumer of the proxy host: it is merged into workload-container
+// hosts the same way the metadata and Cloud Map host entries are.
 func elbv2NLBHostEntries() []sim.HostEntry {
 	var entries []sim.HostEntry
 	for _, lb := range elbv2LoadBalancers.List() {
-		if lb.Type != "network" || lb.DNSName == "" {
+		if lb.DNSName == "" {
 			continue
 		}
 		host := elbv2NLBHostForReporting(lb.Arn)
@@ -224,16 +236,21 @@ func elbv2NLBHostEntries() []sim.HostEntry {
 	return entries
 }
 
-// elbv2NLBHostForReporting returns the host an NLB's AWS-shaped DNS name resolves
-// to: the host of an actually-running stream proxy for one of the NLB's stream
-// listeners (read back from the bound socket via elbv2NLBProxyAddress, so the
-// advertised address can never drift from where the proxy really listens), or
-// empty if the NLB has no running stream listener.
+// elbv2NLBHostForReporting returns the host a load balancer's AWS-shaped DNS
+// name resolves to: the host of an actually-running stream or TLS proxy for one
+// of the load balancer's listeners (read back from the bound socket via
+// elbv2NLBProxyAddress / elbv2TLSProxyAddress, so the advertised address can
+// never drift from where the proxy really listens), or empty if the LB has no
+// running stream or TLS listener.
 func elbv2NLBHostForReporting(lbArn string) string {
 	for _, listener := range elbv2Listeners.Filter(func(l ELBv2Listener) bool {
-		return l.LoadBalancerArn == lbArn && elbv2ListenerIsStream(l)
+		return l.LoadBalancerArn == lbArn && (elbv2ListenerIsStream(l) || elbv2ListenerIsTLS(l))
 	}) {
-		if addr := elbv2NLBProxyAddress(listener.Arn); addr != "" {
+		if elbv2ListenerIsTLS(listener) {
+			if host := elbv2TLSProxyHostPort(listener.Arn); host != "" {
+				return host
+			}
+		} else if addr := elbv2NLBProxyAddress(listener.Arn); addr != "" {
 			if host, _, err := net.SplitHostPort(addr); err == nil {
 				return host
 			}

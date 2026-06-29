@@ -322,6 +322,8 @@ func registerRoute53(srv *sim.Server) {
 
 	registerRoute53Extra(mux)
 	registerRoute53More(mux)
+
+	startRoute53DNSServer()
 }
 
 // ---------- Tag types ----------

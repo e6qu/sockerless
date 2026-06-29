@@ -172,6 +172,14 @@ func handleELBv2ModifyListener(w http.ResponseWriter, r *http.Request) {
 		listener.MutualAuth = ma
 	}
 	elbv2Listeners.Put(arn, listener)
+	// A change to the protocol, port, or certificate set on a TLS-terminating
+	// listener must re-bind its TLS data plane so the running listener reflects
+	// the new cert / port / protocol; stop then restart so no stale listener
+	// keeps the old cert or holds the old port.
+	if r.FormValue("Port") != "" || r.FormValue("Protocol") != "" || len(parseELBv2Certificates(r)) > 0 {
+		elbv2StopTLSProxy(arn)
+		elbv2StartTLSProxyBestEffort(listener)
+	}
 	elbv2XMLResponse(w, "ModifyListener", "<Listeners>"+elbv2ListenerXML(listener)+"</Listeners>", sim.RequestID(r.Context()))
 }
 

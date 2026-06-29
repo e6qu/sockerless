@@ -119,10 +119,11 @@ type acmTag struct {
 type acmStoredCert struct {
 	Cert ACMCertificate
 	Tags []acmTag
-	// Material holds the PEM bytes a caller imported (ImportCertificate)
-	// so GetCertificate / ExportCertificate can return them verbatim.
-	// Empty for AMAZON_ISSUED certs the sim can't mint real key material
-	// for. PrivateKey is only ever returned by ExportCertificate for a
+	// Material holds the PEM bytes — for an IMPORTED cert, the bytes the
+	// caller supplied; for a PRIVATE cert, a self-signed leaf minted at
+	// RequestCertificate time; for an AMAZON_ISSUED DNS-validated cert, a
+	// self-signed leaf minted at issuance time (PENDING_VALIDATION →
+	// ISSUED). PrivateKey is only ever returned by ExportCertificate for a
 	// PRIVATE cert, matching real ACM.
 	CertificateBody  string
 	CertificateChain string
@@ -134,6 +135,25 @@ type acmStoredCert struct {
 var (
 	acmCertificates sim.Store[acmStoredCert]
 )
+
+// acmCertMaterial returns the PEM-encoded certificate body and private key for
+// an ISSUED certificate ARN, the material a TLS terminator (ELBv2 HTTPS/TLS
+// listener) loads into a tls.Certificate. Returns ok=false if the cert is
+// absent or has no key material (PENDING_VALIDATION, or a non-exportable type).
+func acmCertMaterial(arn string) (certPEM, keyPEM string, ok bool) {
+	id := acmARNToID(arn)
+	if id == "" {
+		return "", "", false
+	}
+	stored, found := acmCertificates.Get(id)
+	if !found {
+		return "", "", false
+	}
+	if stored.CertificateBody == "" || stored.PrivateKey == "" {
+		return "", "", false
+	}
+	return stored.CertificateBody, stored.PrivateKey, true
+}
 
 // acmCertARN constructs an ARN for the simulator's region. Real ACM
 // pins us-east-1 only for CloudFront associations — that constraint
@@ -196,8 +216,9 @@ var acmAccountConfiguration sim.Store[acmAccountConfig]
 
 // handleACMGetCertificate returns the certificate body and chain for an
 // ISSUED certificate. Real ACM serves the PEM the operator imported (or that
-// ACM minted); the sim returns the stored PEM for an IMPORTED/PRIVATE cert.
-// It does not return the private key — only ExportCertificate does that.
+// ACM minted); the sim returns the stored PEM for IMPORTED/PRIVATE certs and
+// the self-signed PEM minted at issuance for an AMAZON_ISSUED cert. It does
+// not return the private key — only ExportCertificate does that.
 func handleACMGetCertificate(w http.ResponseWriter, r *http.Request) {
 	var req acmCertARNReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -210,11 +231,12 @@ func handleACMGetCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
 		return
 	}
+	if stored.Cert.Status != "ISSUED" {
+		acmWriteError(w, "RequestInProgressException",
+			"The certificate body is not yet available for "+req.CertificateArn)
+		return
+	}
 	if stored.CertificateBody == "" {
-		// An AMAZON_ISSUED cert the sim minted has no real PEM body — real
-		// ACM returns RequestInProgressException until the cert is issued
-		// and then serves a real PEM. The sim is honest that it has no PEM
-		// for these rather than fabricating one.
 		acmWriteError(w, "RequestInProgressException",
 			"The certificate body is not yet available for "+req.CertificateArn)
 		return
@@ -608,29 +630,39 @@ func handleACMDescribeCertificate(w http.ResponseWriter, r *http.Request) {
 		acmWriteError(w, "ResourceNotFoundException", "Could not find certificate "+req.CertificateArn)
 		return
 	}
-	stored = acmReconcileIssuance(id, stored)
+	stored, err := acmReconcileIssuance(id, stored)
+	if err != nil {
+		acmWriteError(w, "InvalidParameterValueException", err.Error())
+		return
+	}
 	acmWriteJSON(w, http.StatusOK, map[string]ACMCertificate{"Certificate": stored.Cert})
 }
 
 // acmReconcileIssuance transitions a DNS-validated AMAZON_ISSUED certificate
 // from PENDING_VALIDATION to ISSUED once every domain's _acm-challenge CNAME
 // exists in the Route53 sim store, mirroring real ACM (which issues after the
-// validation records propagate). The sim cannot perform real public DNS
-// validation, so record presence is the honest "validation done" signal — a
-// cert with no record stays PENDING, exactly like real ACM. Persists and
-// returns the (possibly updated) record.
-func acmReconcileIssuance(id string, stored acmStoredCert) acmStoredCert {
+// validation records propagate). At issuance the sim mints a real self-signed
+// X.509 leaf + RSA private key (PEM) so GetCertificate / ExportCertificate
+// serve genuine PEM material — the cert is self-signed because the sim has no
+// real public CA, but the key is real 2048-bit RSA. Persists and returns the
+// (possibly updated) record.
+func acmReconcileIssuance(id string, stored acmStoredCert) (acmStoredCert, error) {
 	cert := stored.Cert
 	if cert.Type != "AMAZON_ISSUED" || cert.Status != "PENDING_VALIDATION" {
-		return stored
+		return stored, nil
 	}
 	for _, dvo := range cert.DomainValidationOptions {
 		if dvo.ValidationMethod != "DNS" || dvo.ResourceRecord == nil {
-			return stored // EMAIL / malformed — issuance not modeled, stays pending
+			return stored, nil // EMAIL / malformed — issuance not modeled, stays pending
 		}
 		if !acmDNSRecordPresent(dvo.ResourceRecord.Name) {
-			return stored // validation record not created yet — still pending
+			return stored, nil // validation record not created yet — still pending
 		}
+	}
+	domains := append([]string{cert.DomainName}, cert.SubjectAlternativeNames...)
+	certPEM, keyPEM, err := acmGenerateLeaf(cert.DomainName, domains)
+	if err != nil {
+		return stored, fmt.Errorf("mint AMAZON_ISSUED certificate material: %w", err)
 	}
 	now := acmEpochNow()
 	notAfter := float64(time.Now().UTC().AddDate(1, 0, 0).Unix())
@@ -643,8 +675,11 @@ func acmReconcileIssuance(id string, stored acmStoredCert) acmStoredCert {
 		cert.DomainValidationOptions[i].ValidationStatus = "SUCCESS"
 	}
 	stored.Cert = cert
+	stored.CertificateBody = certPEM
+	stored.CertificateChain = certPEM
+	stored.PrivateKey = keyPEM
 	acmCertificates.Put(id, stored)
-	return stored
+	return stored, nil
 }
 
 // acmDNSRecordPresent reports whether a CNAME ResourceRecordSet with the given

@@ -41,12 +41,14 @@ func TestECS_CLI_ServiceFamily(t *testing.T) {
 	var created struct {
 		Service struct {
 			Status       string `json:"status"`
-			RunningCount int    `json:"runningCount"`
+			DesiredCount int    `json:"desiredCount"`
 		} `json:"service"`
 	}
 	parseJSON(t, createOut, &created)
 	assert.Equal(t, "ACTIVE", created.Service.Status)
-	assert.Equal(t, 2, created.Service.RunningCount)
+	// RunningCount converges asynchronously via the service scheduler; the
+	// synchronous read-back is DesiredCount.
+	assert.Equal(t, 2, created.Service.DesiredCount)
 
 	descOut := runCLI(t, awsCLI("ecs", "describe-services",
 		"--cluster", cluster, "--services", "cli-svc", "--output", "json"))

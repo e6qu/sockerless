@@ -50,6 +50,14 @@ type CWAlarm struct {
 	// that takes precedence over the metric-derived evaluation until cleared.
 	ManualState       string `json:"-" cbor:"-"`
 	ManualStateReason string `json:"-" cbor:"-"`
+	// StateValue / StateReason / StateUpdatedTimestamp hold the last state the
+	// background evaluator derived and dispatched actions for. DescribeAlarms
+	// continues to evaluate live metric data so an alarm whose metric just
+	// changed reflects it immediately; these fields persist the dispatched
+	// state so transitions are detectable across evaluator ticks.
+	StateValue            string `json:"StateValue,omitempty" cbor:"StateValue,omitempty"`
+	StateReason           string `json:"StateReason,omitempty" cbor:"StateReason,omitempty"`
+	StateUpdatedTimestamp int64  `json:"StateUpdatedTimestamp,omitempty" cbor:"StateUpdatedTimestamp,omitempty"`
 }
 
 // cwAlarmByArn finds an alarm by its ARN (the resource id the tagging API uses).
@@ -770,6 +778,7 @@ func cwDeleteAlarms(names []string) {
 	for _, n := range names {
 		cwAlarms.Delete(n)
 		cwCompositeAlarms.Delete(n)
+		cwAlarmLastState.Delete(n)
 	}
 }
 

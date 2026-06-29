@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -689,4 +691,105 @@ func cwResolveLogGroupIdentifier(id string) (string, bool) {
 		return id, true
 	}
 	return "", false
+}
+
+// cwEvaluateMetricFilters applies every metric filter whose LogGroupName
+// matches to the freshly ingested events, publishing each transformation's
+// metric datum into the shared metric store — the path by which a
+// filter-pattern match turns into a queryable CloudWatch metric and a fired
+// alarm. Real CloudWatch evaluates filters asynchronously after PutLogEvents;
+// the simulator evaluates inline so a follow-up GetMetricStatistics observes
+// the new datapoints deterministically.
+func cwEvaluateMetricFilters(logGroupName string, events []struct {
+	Timestamp int64  `json:"timestamp"`
+	Message   string `json:"message"`
+}) {
+	filters := cwMetricFilters.Filter(func(f CWMetricFilter) bool {
+		return f.LogGroupName == logGroupName
+	})
+	if len(filters) == 0 {
+		return
+	}
+	for _, e := range events {
+		for _, f := range filters {
+			pattern, err := cwCompileLogPattern(f.FilterPattern)
+			if err != nil || !pattern.match(e.Message) {
+				continue
+			}
+			for _, t := range f.MetricTransformations {
+				cwPublishFilterMetric(t, e.Message, e.Timestamp)
+			}
+		}
+	}
+}
+
+// cwPublishFilterMetric emits a single metric datum derived from a matched
+// event under the transformation's namespace/metric. MetricValue resolves to a
+// literal number, a "$." JSON-path token (summed across the event), or falls
+// back to DefaultValue when neither yields a number. Dimensions declared on the
+// transformation resolve literal values verbatim and "$." tokens against the
+// event JSON.
+func cwPublishFilterMetric(t CWMetricTransformation, message string, tsMillis int64) {
+	value, ok := cwResolveMetricValue(t.MetricValue, message)
+	if !ok && t.DefaultValue != nil {
+		value = *t.DefaultValue
+		ok = true
+	}
+	if !ok {
+		return
+	}
+	dims := make([]CWDimension, 0, len(t.Dimensions))
+	for name, raw := range t.Dimensions {
+		dims = append(dims, CWDimension{Name: name, Value: cwResolveDimValue(raw, message)})
+	}
+	cwStoreDatum(CWMetricDatum{
+		Namespace:  t.MetricNamespace,
+		MetricName: t.MetricName,
+		Dimensions: dims,
+		Value:      value,
+		Timestamp:  float64(tsMillis / 1000),
+		Unit:       t.Unit,
+	})
+}
+
+// cwResolveMetricValue parses a MetricTransformation value token: a literal
+// float ("1", "2.5"), or a "$.path" JSON selector that extracts a numeric field
+// from the matched event. Returns false when the token is neither a number nor
+// a resolvable numeric JSON field.
+func cwResolveMetricValue(token, message string) (float64, bool) {
+	token = strings.TrimSpace(token)
+	if v, err := strconv.ParseFloat(token, 64); err == nil {
+		return v, true
+	}
+	if strings.HasPrefix(token, "$") {
+		var doc any
+		if err := json.Unmarshal([]byte(message), &doc); err != nil {
+			return 0, false
+		}
+		got, present := cwSelectJSON(doc, token)
+		if !present {
+			return 0, false
+		}
+		if f, err := strconv.ParseFloat(cwJSONScalar(got), 64); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// cwResolveDimValue resolves a dimension value, treating "$." tokens as JSON
+// selectors into the event and everything else as a literal.
+func cwResolveDimValue(token, message string) string {
+	if !strings.HasPrefix(token, "$") {
+		return token
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(message), &doc); err != nil {
+		return token
+	}
+	got, present := cwSelectJSON(doc, token)
+	if !present {
+		return token
+	}
+	return cwJSONScalar(got)
 }

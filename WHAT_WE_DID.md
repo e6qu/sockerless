@@ -4,6 +4,34 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251)
+
+A single branch closed all ten open AWS-focused GitHub issues. The shared shape across nine of the ten was **stored but not enforced**: the CRUD surface accepted, validated, and persisted state, but the real side effect (background evaluation, protocol serving, cross-service dispatch, host firewall installation, or task scheduling) was missing. Each fix adds the real side effect and a canonical-client test that proves it resolves.
+
+**AWS Budgets service slice (#703, `budgets.go`)** adds the full awsJson1.1 Budgets control plane — `CreateBudget`/`DeleteBudget`/`DescribeBudget`/`DescribeBudgets`/`UpdateBudget`/`CreateNotification`/`DescribeNotificationsForBudget`/`DeleteNotification`/`CreateSubscriber`/`DescribeSubscribersForNotification`/`DeleteSubscriber` — using the real `AWSBudgetServiceGateway` X-Amz-Target prefix. Because Budgets is not in the vendored Smithy corpus, `spec_conformance_test.go` gained an `allowedNonSpecTargets` map with justified entries for the real operation names.
+
+**SQS DLQ auto-redrive (#704, `sqs.go`)** moves messages to the configured dead-letter queue after `maxReceiveCount` failed receipts (visibility-timeout expiry or negative receipt). The redrive preserves the message body and attributes and sets `DeadLetterQueueSourceArn`.
+
+**CloudWatch alarm → SNS dispatch (#705, `cloudwatch_alarm_evaluator.go`)** adds a background evaluator that polls alarm metrics, transitions `OK`/`ALARM`/`INSUFFICIENT_DATA` state with the real datapoint-count semantics, and publishes the canonical AWS alarm JSON to every SNS topic in `AlarmActions`.
+
+**CloudWatch Logs metric filters (#706, `cloudwatch_logs_ops.go`)** evaluates `PutMetricFilter` patterns against incoming `PutLogEvents` entries, extracts values (or counts events), and writes real `cwStoreDatum` metrics so alarms and dashboards see them.
+
+**Application Auto Scaling target tracking (#707, `application_autoscaling_eval.go`)** runs a background evaluator that reads target-tracking policies, fetches the metric from CloudWatch, computes the adjustment using `TargetValue` and the configured `AdjustmentType`, and updates the ECS service `DesiredCount`.
+
+**ACM real PEM minting (#708, `acm.go`)** replaces placeholder certificates for `AMAZON_ISSUED` with real RSA-2048 self-signed X.509 PEM: random 128-bit serial, 13-month validity, SANs from the request, and a matching private key returned by `GetCertificate` (the sim needs the key for its own TLS termination; real AWS returns only cert+chain).
+
+**ELBv2 HTTPS/TLS termination (#709, `elbv2_tls_proxy.go`)** terminates TLS for `HTTPS` and `TLS` listeners using the ACM PEM, with SNI matching and ALPN-aware forwarding to the target group. The SDK test creates an ALB with an HTTPS listener and asserts a real HTTPS request succeeds and presents the certificate.
+
+**Route 53 DNS server (#710, `route53_dns.go`)** serves hosted-zone records over UDP+TCP on `SIM_DNS_PORT`, answering A/AAAA/CNAME/NS/SOA/MX/TXT/SRV/PTR with wildcard expansion, alias resolution, and apex NS/SOA synthesis.
+
+**ECS service scheduler (#711, `ecs_service_scheduler.go`)** reconciles each ACTIVE service every 2s so `RunningCount`/`PendingCount` track the live task set, launches replacements for stopped tasks, scales on `DesiredCount` changes, and drains tasks on deletion. The SDK integration test verifies desired-count convergence through the real ECS client; deterministic package-level unit tests verify count derivation, scale-down, INACTIVE skip, and launch metadata.
+
+**EC2 security-group host-firewall enforcement (#712, `ec2_realexec.go`)** applies SG ingress rules as nftables rules in the ECS task namespace on Linux + CAP_NET_ADMIN hosts. `ec2BuildIngressPacketRules` expands CIDRs, IPv6 ranges, and SG-reference pairs into concrete packet rules; `ec2ApplyRealECSTaskSecurityGroups` installs them, and `ec2ReapplyRealSecurityGroup` updates live tasks after `AuthorizeSecurityGroupIngress` changes.
+
+**Systematic root cause.** These issues slipped through because the existing gates (`serviceCoverageFloor`, `TestServiceConformance`, route-validity, doc-consumption) measure endpoint-count and wire-shape fidelity, not behavioral side-effect fidelity. Filed as BUG-2252 and documented in `BUGS.md`: a behavioral gate — or a canonical-client matrix that asserts each side effect resolves — is needed to catch background evaluators, protocol listeners, cross-service dispatch, and host enforcement before merge.
+
+Tests: each issue has a real SDK test in `simulators/aws/sdk-tests/`; the ECS scheduler and EC2 SG enforcement also have package-level unit tests. AWS build/lint(0)/vet clean; `TestServiceConformance` passes after adding the Budgets allowlist. The full AWS sdk-test suite on this macOS/Podman host is blocked by a local container-runtime issue (`unable to upgrade to tcp, received 500` / containers exit immediately), so focused test runs were used; the new unit tests run deterministically everywhere.
+
 ## 2026-06-28 - Second GCP gRPC round (Cloud KMS + Secret Manager) + Compute v1 control-plane tranche #2 (BUG-2240)
 
 A single branch bundling two more native gRPC data planes and the next Compute Engine v1 metadata tranche, extending the transport pattern established in #656 (Bigtable) and #700 (Firestore/Pub/Sub/Spanner).

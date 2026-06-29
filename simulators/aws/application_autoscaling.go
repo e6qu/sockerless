@@ -108,6 +108,10 @@ func registerApplicationAutoScaling(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("AnyScaleFrontendService.DescribeScheduledActions", handleAppASDescribeScheduledActions)
 	r.Register("AnyScaleFrontendService.DescribeScalingActivities", handleAppASDescribeScalingActivities)
 	r.Register("AnyScaleFrontendService.GetPredictiveScalingForecast", handleAppASGetPredictiveScalingForecast)
+
+	// Evaluate target-tracking policies and adjust capacity on a short cadence
+	// so a policy is observable inside a test. Idempotent across re-registrations.
+	startAppScalingEvalLoop()
 }
 
 // appScalableTargetKey is the storage key for the identity triple.
