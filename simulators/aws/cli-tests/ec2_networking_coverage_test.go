@@ -83,8 +83,9 @@ func TestEC2CLI_RevokeSecurityGroupRules(t *testing.T) {
 		t.Fatalf("re-revoke ingress error = %q, want InvalidPermission.NotFound", out)
 	}
 
+	// VPC security groups are created with a default ALLOW ALL egress rule.
+	// Revoke it and confirm a re-revoke fails.
 	egress := `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`
-	runCLI(t, awsCLI("ec2", "authorize-security-group-egress", "--group-id", sg, "--ip-permissions", egress))
 	runCLI(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg, "--ip-permissions", egress))
 
 	out = runCLIExpectError(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg, "--ip-permissions", egress))

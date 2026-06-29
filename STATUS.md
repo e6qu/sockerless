@@ -39,7 +39,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#670) | `feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194)** — EC2/RDS/ElastiCache/Glue/Route53/EFS +77 ops; Lambda/Batch/API Gateway/Amplify/Scheduler measured. |
 | Earlier merged | #665–#669 built the AWS service-conformance gate; #574–#664 = the runner/cell + audit + IAM-enforcement + sim-fidelity arc. Full history in `git log` and [WHAT_WE_DID.md](WHAT_WE_DID.md). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (2263 filed · 2218 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
+| Bugs | See [BUGS.md](BUGS.md) header (2264 filed · 2219 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
 | Live infra | None up. |
 
 ## What's next

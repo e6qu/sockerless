@@ -130,12 +130,11 @@ func TestEC2_RevokeSecurityGroupRules(t *testing.T) {
 	require.Error(t, err)
 	requireSGErrorCode(t, err, "InvalidPermission.NotFound")
 
-	// Default egress (all traffic) — revoke it and confirm it's gone.
+	// VPC security groups are created with a default ALLOW ALL egress rule.
+	// Revoke it and confirm it's gone.
 	egress := []ec2types.IpPermission{{
 		IpProtocol: aws.String("-1"), IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
 	}}
-	_, err = c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{GroupId: aws.String(sgID), IpPermissions: egress})
-	require.NoError(t, err)
 	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{GroupId: aws.String(sgID), IpPermissions: egress})
 	require.NoError(t, err)
 

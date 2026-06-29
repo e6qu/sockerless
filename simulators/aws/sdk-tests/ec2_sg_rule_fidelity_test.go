@@ -33,6 +33,17 @@ func TestEC2_SecurityGroupRuleFidelity(t *testing.T) {
 	sgAlb := mkSG("fidelity-alb")
 	sgTasks := mkSG("fidelity-tasks")
 
+	// Real AWS creates VPC security groups with a default ALLOW ALL egress rule.
+	// Revoke it first so we can authorize an identical rule and assert its fidelity.
+	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{
+		GroupId: aws.String(sgTasks),
+		IpPermissions: []types.IpPermission{{
+			IpProtocol: aws.String("-1"),
+			IpRanges:   []types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
+
 	// All-traffic egress rule — no ports.
 	_, err = c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
 		GroupId: aws.String(sgTasks),

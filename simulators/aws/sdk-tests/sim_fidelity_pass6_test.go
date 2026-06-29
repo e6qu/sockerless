@@ -37,6 +37,15 @@ func TestEC2_DescribeSecurityGroupRulesFilters(t *testing.T) {
 		}},
 	})
 	require.NoError(t, err)
+	// Revoke the default ALLOW ALL egress rule before authorizing a test egress
+	// rule, matching the real AWS workflow for VPC security groups.
+	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{
+		GroupId: aws.String(gid),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("-1"), IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
 	_, err = c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
 		GroupId: aws.String(gid),
 		IpPermissions: []ec2types.IpPermission{{

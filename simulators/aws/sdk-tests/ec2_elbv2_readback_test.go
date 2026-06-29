@@ -93,6 +93,16 @@ func TestEC2_SecurityGroupEgressIpv6Ranges(t *testing.T) {
 		GroupName: aws.String("ipv6-egress-sg"), Description: aws.String("ipv6"), VpcId: vpc.Vpc.VpcId,
 	})
 	require.NoError(t, err)
+	// Revoke the default ALLOW ALL IPv4 egress rule so we can authorize a
+	// combined IPv4+IPv6 all-traffic rule without hitting InvalidPermission.Duplicate.
+	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{
+		GroupId: sg.GroupId,
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("-1"),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
 	_, err = c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
 		GroupId: sg.GroupId,
 		IpPermissions: []ec2types.IpPermission{{

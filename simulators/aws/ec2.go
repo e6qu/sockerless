@@ -2080,6 +2080,15 @@ func handleCreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		Tags:        tags,
 		OwnerId:     ec2Owner(),
 	}
+	// Real AWS creates VPC security groups with a default ALLOW ALL egress rule.
+	// Simulating it keeps terraform-provider-aws's `aws_security_group` resource
+	// from failing when it revokes the default rule before applying user rules.
+	if vpcId != "" {
+		sg.IpPermissionsEgress = []EC2IpPermission{{
+			IpProtocol: "-1",
+			IpRanges:   []EC2IpRange{{CidrIp: "0.0.0.0/0"}},
+		}}
+	}
 	ec2SecurityGroups.Put(id, sg)
 
 	w.Header().Set("Content-Type", "text/xml")

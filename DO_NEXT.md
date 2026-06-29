@@ -21,9 +21,11 @@ SDK and CLI tests were added for both fixes:
 - `simulators/aws/sdk-tests/cloudwatch_logs_failloud_test.go` — `TestCloudWatchLogs_PutMetricFilterRejectsInvalidPattern`, `TestCloudWatchLogs_PutSubscriptionFilterRejectsInvalidPattern`
 - `simulators/aws/cli-tests/cloudwatch_logs_ops_test.go` — `TestLogs_PutMetricFilterCLIRejectsInvalidPattern`, `TestLogs_PutSubscriptionFilterCLIRejectsInvalidPattern`
 
-All targeted SDK and CLI tests pass; `make lint` in `simulators/aws` is clean.
+**CI-caught follow-up: BUG-2264 — VPC security groups created without the default ALLOW ALL egress rule.** After the revoke-not-found fix landed, the AWS Terraform production-shape test (`TestStackProductionShape`) failed because `terraform-provider-aws` revokes the default egress rule that real AWS creates with every VPC security group. Fixed in `simulators/aws/ec2.go` by initializing `IpPermissionsEgress` with the default rule in `handleCreateSecurityGroup` when `VpcId` is present. Existing SDK tests that assumed empty egress were updated to revoke the default first; `TestStackProductionShape` now passes.
 
-**Next:** PR #725 is open and rebased on `origin/main`; awaiting user merge. After merge, rotate continuity files to the post-#725 state.
+All targeted SDK/CLI tests, the full AWS SDK test suite, AWS sim unit tests, `TestStackProductionShape`, and `make lint` pass.
+
+**Next:** commit the CI fix and continuity-file updates, push to PR #725, and re-run CI.
 
 ---
 ### Prior branch (merged #724): bleephub + UI audit (BUG-2261)
