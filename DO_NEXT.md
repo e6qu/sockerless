@@ -4,7 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-No active branch. Last merged PR is #717. Next candidates: resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+No active branch. Last merged PR is #718. Next candidates: resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+
+---
+### Prior branch (merged #718): continuity rotation after #717
+No code change; `STATUS.md`/`DO_NEXT.md` reconciled to the post-#717 state.
 
 ---
 ### Prior branch (merged #717): bleephub fidelity audit (BUG-2256/2257)
