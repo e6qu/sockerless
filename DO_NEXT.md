@@ -4,19 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-ui-audit-2026-06-29` — bleephub + bleephub UI audit. Scope: manual/code audit of Go handlers/resolvers and UI components/pages for fidelity gaps, UX parity, errors/warnings, and incidental bugs (boyscout rule); visual/console parity via Playwright screenshots; extended fuzz coverage. After fixes: full verification suite and PR.
+`chore/continuity-post-720` (PR #721) — BUG-2260 fix + dependency freshness boyscout update pushed. Next step is to wait for the `sim (azure)` CI job (and the rest of the matrix) to pass, then merge via the normal PR flow.
 
-### Work done on this branch
-- Reconciled `STATUS.md`/`DO_NEXT.md` with the active branch.
-- Filed and fixed BUG-2258: GraphQL `PullRequest.headRepositoryOwner` now returns org data for org-owned repos.
-- Filed and fixed BUG-2259: REST PR `head.user`/`base.user` now use the snake_case `simple-user` shape.
-- Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` and extended `TestCreatePullRequestREST`.
-- Re-ran all bleephub fuzz targets; Playwright e2e passed with 31 screenshots; UI tests/typecheck/build passed.
+---
+### Current task: BUG-2260 — Azure Cosmos emulator EOF flake (done)
+The `sim (azure)` SDK-test job failed on PR #721 with `Post "http://127.0.0.1:8081/dbs": EOF` in `TestCosmosScripts_DifferentialVsEmulator/sproc-missing-404`. Fixed by adding transient-error retry logic to `cosmosRESTReq` in `simulators/azure/sdk-tests/cosmos_scripts_differential_test.go`. The pre-push `check-latest-deps` hook then flagged pre-existing AWS SDK patch-version drift in six modules; cleared those with `make upgrade-deps`. Both changes are on `chore/continuity-post-720` and pushed.
 
-### Remaining before PR
-- `git add` the new test file and commit all changes.
-- Rebase on `origin/main` and push the branch.
-- Open PR via `gh pr create`.
+---
+### Prior branch (merged #720): bleephub + UI audit (BUG-2258/2259)
+`feat/bleephub-ui-audit-2026-06-29` fixed org-aware PR owner rendering: GraphQL `PullRequest.headRepositoryOwner` now resolves the organization from `repo.FullName` for org-owned repos, and REST PR `head.user`/`base.user` now use the snake_case `simple-user` shape via the new `repoOwnerREST` helper. Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` and extended `TestCreatePullRequestREST`. Playwright e2e passed with 31 screenshots; extended fuzz targets passed; UI tests/typecheck/build and Go tests/race/lint all pass.
 
 ---
 ### Prior branch (merged #718): continuity rotation after #717

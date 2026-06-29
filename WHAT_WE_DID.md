@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - Azure Cosmos emulator transient-EOF flake fix (BUG-2260)
+
+The post-#720 continuity PR (#721) failed in `sim (azure)` with `Post "http://127.0.0.1:8081/dbs": EOF` inside `TestCosmosScripts_DifferentialVsEmulator/sproc-missing-404`. The vNext Cosmos emulator passed its SDK-based readiness probe and completed the first two subtests, then reset the raw-REST data-plane connection before the third scenario's database creation.
+
+`cosmosRESTReq` in `simulators/azure/sdk-tests/cosmos_scripts_differential_test.go` now retries a small class of transient transport errors: `io.EOF`, `io.ErrUnexpectedEOF`, and temporary/timeout `net.Error`. It still fails loud on permanent transport errors and on the final attempt, and it never retries HTTP-level responses. This mirrors the retry behavior the official `azcosmos` SDK already applies for the SDK-based differential test (`TestCosmos_DifferentialVsEmulator`), so both oracle paths now have equivalent resilience against emulator flakiness.
+
+**Boyscout:** the pre-push `check-latest-deps` hook flagged pre-existing AWS SDK patch-version drift in `backends/aws-common`, `backends/ecs`, `backends/lambda`, `bleephub`, `bleeplab`, and `simulators/aws/sdk-tests`. Ran `make upgrade-deps` in each module; all changes are patch bumps and `go build`/`go vet` pass.
+
+Tests: `TestCosmosScripts_DifferentialVsEmulator` and `TestCosmos_DifferentialVsEmulator` both pass locally against the emulator. `go vet ./...` is clean in `simulators/azure/sdk-tests`.
+
 ## 2026-06-29 - bleephub + UI audit: org-aware PR owner rendering (BUG-2258/2259)
 
 A second pass over bleephub focused on GraphQL/REST owner-shape fidelity and UI parity. Two related bugs were filed and fixed:

@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -119,24 +121,39 @@ func urlQueryEscape(s string) string {
 func cosmosRESTReq(t *testing.T, endpoint, method, path, resourceType, resourceLink, body string, extra map[string]string) (map[string]any, int) {
 	t.Helper()
 	xmsDate := time.Now().UTC().Format(http.TimeFormat)
-	var br io.Reader
-	if body != "" {
-		br = strings.NewReader(body)
+
+	var resp *http.Response
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+		}
+		var br io.Reader
+		if body != "" {
+			br = strings.NewReader(body)
+		}
+		req, err := http.NewRequest(method, strings.TrimRight(endpoint, "/")+path, br)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		req.Header.Set("x-ms-date", xmsDate)
+		req.Header.Set("x-ms-version", "2018-12-31")
+		req.Header.Set("Authorization", cosmosSign(method, resourceType, resourceLink, xmsDate))
+		if body != "" {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range extra {
+			req.Header.Set(k, v)
+		}
+		resp, err = http.DefaultClient.Do(req)
+		if err == nil {
+			break
+		}
+		if !cosmosTransientErr(err) {
+			t.Fatalf("do request: %v", err)
+		}
+		t.Logf("cosmosRESTReq transient error (attempt %d): %v", attempt+1, err)
 	}
-	req, err := http.NewRequest(method, strings.TrimRight(endpoint, "/")+path, br)
-	if err != nil {
-		t.Fatalf("new request: %v", err)
-	}
-	req.Header.Set("x-ms-date", xmsDate)
-	req.Header.Set("x-ms-version", "2018-12-31")
-	req.Header.Set("Authorization", cosmosSign(method, resourceType, resourceLink, xmsDate))
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for k, v := range extra {
-		req.Header.Set(k, v)
-	}
-	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("do request: %v", err)
 	}
@@ -147,6 +164,21 @@ func cosmosRESTReq(t *testing.T, endpoint, method, path, resourceType, resourceL
 		_ = json.Unmarshal(raw, &out)
 	}
 	return out, resp.StatusCode
+}
+
+// cosmosTransientErr reports whether err is a transient transport error against
+// the Cosmos emulator that is worth retrying. It intentionally does NOT match
+// HTTP-level errors (4xx/5xx responses are returned, not errors) or permanent
+// failures like connection refused.
+func cosmosTransientErr(err error) bool {
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var ne net.Error
+	if errors.As(err, &ne) {
+		return ne.Temporary() || ne.Timeout()
+	}
+	return false
 }
 
 // cosmosDiffMakeContainer creates a database + a /pk-partitioned container over

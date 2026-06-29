@@ -6,7 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-ui-audit-2026-06-29` — bleephub + bleephub UI audit (manual/code fidelity, visual/console parity, extended fuzz, boyscout fixes). Fixes BUG-2258/2259: org-aware PR owner rendering in GraphQL and REST. |
+| Active branch | `chore/continuity-post-720` (PR #721) — fix for BUG-2260 pushed; awaiting CI. |
+| Last merged (#720) | `feat/bleephub-ui-audit-2026-06-29` — **bleephub + UI audit (BUG-2258/2259)** — org-aware PR owner rendering: GraphQL `PullRequest.headRepositoryOwner` now resolves the organization from `repo.FullName` for org-owned repos instead of returning the creating user; REST PR `head.user`/`base.user` now use the snake_case `simple-user` shape via the new `repoOwnerREST` helper, fixing OpenAPI response-shape violations. Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` and extended `TestCreatePullRequestREST`. Visual/console audit via Playwright e2e passed (21/21, 31 screenshots); extended fuzz targets passed; UI tests/typecheck/build and Go tests/race/lint all pass. |
 | Last merged (#718) | `chore(continuity): mark PR #717 merged, no active branch` — continuity-file rotation only; no code change. |
 | Last merged (#717) | `feat/bleephub-fidelity-audit-2026-06-29` — **bleephub fidelity audit (BUG-2256/2257)** — implemented `AgentRefreshMessage` broker delivery and a site-admin sim-control endpoint to trigger it; fixed GraphQL `repositoryOwner(login:)` to return real organization data via `orgToGraphQL` instead of a synthetic partial User-shaped payload; corrected the stale "Artifact + cache stubs" comment in `server.go`. All bleephub Go tests, fuzz targets, race tests, UI tests/typecheck/build, and both Docker integration test suites pass. |
 | Last merged (#715) | `fix/aws-budgets-terraform-parity-714` — **AWS Budgets Terraform lifecycle parity (#714, BUG-2255)** — fixed `CreateBudget`/`DescribeBudget`/`DeleteBudget`/`UpdateBudget`/`DescribeBudgets` to derive `AccountId` from the caller account when omitted, matching real AWS credential-based resolution, and implemented `ListTagsForResource`/`TagResource`/`UntagResource` keyed by budget ARN so `aws_budgets_budget` completes its Create+Read+Delete cycle. Added the `budgets` endpoint alias and a budget resource to the terraform-tests production-shape stack; SDK tests cover tags and the implicit-account raw-HTTP path. Boyscout: corrected the SQS missing-queue error `__type` to `AWS.SimpleQueueService.NonExistentQueue`. |
@@ -38,7 +39,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#670) | `feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194)** — EC2/RDS/ElastiCache/Glue/Route53/EFS +77 ops; Lambda/Batch/API Gateway/Amplify/Scheduler measured. |
 | Earlier merged | #665–#669 built the AWS service-conformance gate; #574–#664 = the runner/cell + audit + IAM-enforcement + sim-fidelity arc. Full history in `git log` and [WHAT_WE_DID.md](WHAT_WE_DID.md). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (2241 filed · 2197 fixed · 2 open · 16 FP). 2 open: BUG-1075 (live-cloud), BUG-1345 (azuread upstream) — both externally gated. |
+| Bugs | See [BUGS.md](BUGS.md) header (2260 filed · 2215 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
 | Live infra | None up. |
 
 ## What's next
