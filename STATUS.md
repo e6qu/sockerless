@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `chore/continuity-post-720` — fixing CI-caught BUG-2260 (Cosmos emulator EOF flake in Azure SDK scripts differential test) on the post-#720 continuity PR (#721). |
+| Active branch | `chore/continuity-post-720` (PR #721) — fix for BUG-2260 pushed; awaiting CI. |
 | Last merged (#720) | `feat/bleephub-ui-audit-2026-06-29` — **bleephub + UI audit (BUG-2258/2259)** — org-aware PR owner rendering: GraphQL `PullRequest.headRepositoryOwner` now resolves the organization from `repo.FullName` for org-owned repos instead of returning the creating user; REST PR `head.user`/`base.user` now use the snake_case `simple-user` shape via the new `repoOwnerREST` helper, fixing OpenAPI response-shape violations. Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` and extended `TestCreatePullRequestREST`. Visual/console audit via Playwright e2e passed (21/21, 31 screenshots); extended fuzz targets passed; UI tests/typecheck/build and Go tests/race/lint all pass. |
 | Last merged (#718) | `chore(continuity): mark PR #717 merged, no active branch` — continuity-file rotation only; no code change. |
 | Last merged (#717) | `feat/bleephub-fidelity-audit-2026-06-29` — **bleephub fidelity audit (BUG-2256/2257)** — implemented `AgentRefreshMessage` broker delivery and a site-admin sim-control endpoint to trigger it; fixed GraphQL `repositoryOwner(login:)` to return real organization data via `orgToGraphQL` instead of a synthetic partial User-shaped payload; corrected the stale "Artifact + cache stubs" comment in `server.go`. All bleephub Go tests, fuzz targets, race tests, UI tests/typecheck/build, and both Docker integration test suites pass. |
@@ -39,7 +39,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#670) | `feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194)** — EC2/RDS/ElastiCache/Glue/Route53/EFS +77 ops; Lambda/Batch/API Gateway/Amplify/Scheduler measured. |
 | Earlier merged | #665–#669 built the AWS service-conformance gate; #574–#664 = the runner/cell + audit + IAM-enforcement + sim-fidelity arc. Full history in `git log` and [WHAT_WE_DID.md](WHAT_WE_DID.md). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (2260 filed · 2214 fixed · 4 open · 16 FP). 4 open: BUG-2260 (Cosmos emulator flake, in progress), BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — last three externally gated or architectural. |
+| Bugs | See [BUGS.md](BUGS.md) header (2260 filed · 2215 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
 | Live infra | None up. |
 
 ## What's next

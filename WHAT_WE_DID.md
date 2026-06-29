@@ -10,6 +10,8 @@ The post-#720 continuity PR (#721) failed in `sim (azure)` with `Post "http://12
 
 `cosmosRESTReq` in `simulators/azure/sdk-tests/cosmos_scripts_differential_test.go` now retries a small class of transient transport errors: `io.EOF`, `io.ErrUnexpectedEOF`, and temporary/timeout `net.Error`. It still fails loud on permanent transport errors and on the final attempt, and it never retries HTTP-level responses. This mirrors the retry behavior the official `azcosmos` SDK already applies for the SDK-based differential test (`TestCosmos_DifferentialVsEmulator`), so both oracle paths now have equivalent resilience against emulator flakiness.
 
+**Boyscout:** the pre-push `check-latest-deps` hook flagged pre-existing AWS SDK patch-version drift in `backends/aws-common`, `backends/ecs`, `backends/lambda`, `bleephub`, `bleeplab`, and `simulators/aws/sdk-tests`. Ran `make upgrade-deps` in each module; all changes are patch bumps and `go build`/`go vet` pass.
+
 Tests: `TestCosmosScripts_DifferentialVsEmulator` and `TestCosmos_DifferentialVsEmulator` both pass locally against the emulator. `go vet ./...` is clean in `simulators/azure/sdk-tests`.
 
 ## 2026-06-29 - bleephub + UI audit: org-aware PR owner rendering (BUG-2258/2259)

@@ -4,11 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`chore/continuity-post-720` — post-#720 continuity PR (#721). Fixing CI-caught BUG-2260: Cosmos vNext emulator returns transient `EOF` during `TestCosmosScripts_DifferentialVsEmulator`, causing `sim (azure)` to fail on an otherwise no-code-change PR.
+`chore/continuity-post-720` (PR #721) — BUG-2260 fix + dependency freshness boyscout update pushed. Next step is to wait for the `sim (azure)` CI job (and the rest of the matrix) to pass, then merge via the normal PR flow.
 
 ---
-### Current task: BUG-2260 — Azure Cosmos emulator EOF flake
-The `sim (azure)` SDK-test job failed on PR #721 with `Post "http://127.0.0.1:8081/dbs": EOF` in the `sproc-missing-404` subtest of `TestCosmosScripts_DifferentialVsEmulator`. The emulator passed readiness and the first two scenarios ran, then the raw-REST helper `cosmosRESTReq` fataled on a transient transport reset. Fix: retry transient network errors (EOF, unexpected EOF, temporary/timeout `net.Error`) inside `cosmosRESTReq`, mirroring the resilience the official `azcosmos` SDK already provides for the SDK-based differential test. Verify with `cd simulators/azure/sdk-tests && GOWORK=off go test -v -count=1 -run 'TestCosmosScripts_DifferentialVsEmulator' -timeout 15m .`.
+### Current task: BUG-2260 — Azure Cosmos emulator EOF flake (done)
+The `sim (azure)` SDK-test job failed on PR #721 with `Post "http://127.0.0.1:8081/dbs": EOF` in `TestCosmosScripts_DifferentialVsEmulator/sproc-missing-404`. Fixed by adding transient-error retry logic to `cosmosRESTReq` in `simulators/azure/sdk-tests/cosmos_scripts_differential_test.go`. The pre-push `check-latest-deps` hook then flagged pre-existing AWS SDK patch-version drift in six modules; cleared those with `make upgrade-deps`. Both changes are on `chore/continuity-post-720` and pushed.
 
 ---
 ### Prior branch (merged #720): bleephub + UI audit (BUG-2258/2259)
