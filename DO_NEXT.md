@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-fidelity-audit-2026-06-29` — bleephub fidelity audit: implement runner `AgentRefreshMessage` broker delivery (BUG-2256), fix GraphQL `repositoryOwner(login:)` to return real organization data instead of a synthetic partial User-shaped object (BUG-2257), and correct the stale "Artifact + cache stubs" comment in `server.go`. Tests: bleephub Go tests + race + fuzz, UI tests/typecheck/build, `make bleephub-gh-docker-test`, `make bleephub-runner-docker-test`.
+`feat/bleephub-fidelity-audit-2026-06-29` (#717) — bleephub fidelity audit: implement runner `AgentRefreshMessage` broker delivery (BUG-2256), fix GraphQL `repositoryOwner(login:)` to return real organization data instead of a synthetic partial User-shaped object (BUG-2257), and correct the stale "Artifact + cache stubs" comment in `server.go`. Tests: bleephub Go tests + race + fuzz, UI tests/typecheck/build, `make bleephub-gh-docker-test`, `make bleephub-runner-docker-test`.
 
 ---
 ### Prior branch (merged #716): continuity rotation after #715
