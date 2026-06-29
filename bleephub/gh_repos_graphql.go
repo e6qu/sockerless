@@ -773,6 +773,86 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 	}
 }
 
+// repoOwnerGraphQL returns a User-shaped map for the owner of repo. For
+// org-owned repositories it resolves the organization from the repo's full
+// name and converts it with the same field names userToGraphQL uses, so
+// callers that embed the owner under REST/GraphQL repo shapes get a
+// consistent User-type object.
+func repoOwnerGraphQL(repo *Repo, st *Store) map[string]interface{} {
+	if repo == nil {
+		return nil
+	}
+	ownerLogin, _, _ := strings.Cut(repo.FullName, "/")
+	st.mu.RLock()
+	org := st.OrgsByLogin[ownerLogin]
+	st.mu.RUnlock()
+	if org != nil {
+		return map[string]interface{}{
+			"nodeID":     org.NodeID,
+			"databaseId": org.ID,
+			"login":      org.Login,
+			"name":       org.Name,
+			"email":      org.Email,
+			"avatarUrl":  org.AvatarURL,
+			"bio":        org.Description,
+			"url":        "/" + org.Login,
+			"createdAt":  org.CreatedAt.Format(time.RFC3339),
+			"updatedAt":  org.UpdatedAt.Format(time.RFC3339),
+		}
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if repo.Owner != nil {
+		return userToGraphQL(repo.Owner)
+	}
+	return nil
+}
+
+// repoOwnerREST returns a simple-user-shaped map for the owner of repo,
+// using snake_case keys. For org-owned repos it resolves the organization
+// from the repo's full name rather than the creating user.
+func repoOwnerREST(repo *Repo, st *Store, baseURL string) map[string]interface{} {
+	if repo == nil {
+		return nil
+	}
+	ownerLogin, _, _ := strings.Cut(repo.FullName, "/")
+	st.mu.RLock()
+	org := st.OrgsByLogin[ownerLogin]
+	st.mu.RUnlock()
+	if org != nil {
+		api := baseURL + "/api/v3/orgs/" + org.Login
+		return map[string]interface{}{
+			"login":               org.Login,
+			"id":                  org.ID,
+			"node_id":             org.NodeID,
+			"avatar_url":          org.AvatarURL,
+			"gravatar_id":         "",
+			"url":                 api,
+			"html_url":            baseURL + "/" + org.Login,
+			"followers_url":       api + "/followers",
+			"following_url":       api + "/following{/other_user}",
+			"gists_url":           api + "/gists{/gist_id}",
+			"starred_url":         api + "/starred{/owner}{/repo}",
+			"subscriptions_url":   api + "/subscriptions",
+			"organizations_url":   api + "/orgs",
+			"repos_url":           api + "/repos",
+			"events_url":          api + "/events{/privacy}",
+			"received_events_url": api + "/received_events",
+			"type":                org.Type,
+			"site_admin":          false,
+			"name":                org.Name,
+			"email":               org.Email,
+			"user_view_type":      "public",
+		}
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if repo.Owner != nil {
+		return userToJSON(repo.Owner)
+	}
+	return nil
+}
+
 // releaseToGQL renders a stored Release as the GraphQL source map for the
 // Release type. latestID is the id of the repo's latest published release
 // (0 when none) so isLatest reflects the same derivation REST uses.

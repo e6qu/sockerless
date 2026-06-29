@@ -49,6 +49,22 @@ func TestCreatePullRequestREST(t *testing.T) {
 	if data["user"] == nil {
 		t.Fatal("missing user")
 	}
+
+	// head.user and base.user must be the REST simple-user shape
+	// (snake_case), not the GraphQL camelCase map.
+	headUser, _ := head["user"].(map[string]interface{})
+	if headUser == nil {
+		t.Fatal("missing head.user")
+	}
+	if _, ok := headUser["node_id"]; !ok {
+		t.Errorf("head.user missing node_id: %v", headUser)
+	}
+	if _, ok := headUser["login"]; !ok {
+		t.Errorf("head.user missing login: %v", headUser)
+	}
+	if _, ok := headUser["nodeID"]; ok {
+		t.Errorf("head.user has GraphQL nodeID in REST response: %v", headUser)
+	}
 }
 
 func TestListPullRequestsREST(t *testing.T) {

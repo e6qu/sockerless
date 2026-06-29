@@ -1988,13 +1988,13 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	}
 
 	// Single-repo PRs: head repo/owner are the PR's own repo and its owner.
-	var headRepository, headRepositoryOwner map[string]interface{}
+	// For org-owned repos the owner must be the Organization, not the user who
+	// created the repo; real GitHub returns the org as headRepositoryOwner.
+	var headRepository map[string]interface{}
 	if repo != nil {
 		headRepository = repoToGraphQL(repo)
-		if repo.Owner != nil {
-			headRepositoryOwner = userToGraphQL(repo.Owner)
-		}
 	}
+	headRepositoryOwner := repoOwnerGraphQL(repo, st)
 
 	// The PR's single synthetic head commit, carrying the real check-run
 	// rollup recorded against its sha.

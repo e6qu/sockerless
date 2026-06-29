@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - bleephub + UI audit: org-aware PR owner rendering (BUG-2258/2259)
+
+A second pass over bleephub focused on GraphQL/REST owner-shape fidelity and UI parity. Two related bugs were filed and fixed:
+
+**GraphQL `PullRequest.headRepositoryOwner` reported the creating user for org-owned repos (BUG-2258).** `prToGraphQLLocked` built `headRepositoryOwner` with `userToGraphQL(repo.Owner)`; for org-owned repos `repo.Owner` is the user who created the repo, so `headRepositoryOwner.login` was a personal login instead of the organization. This breaks `gh pr list`/`view` against org repos. Fixed by deriving the owner from `repo.FullName` and, when it resolves to an organization, converting it with `orgToGraphQL` (User-shaped fields). Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` to pin the behavior.
+
+**REST PR `head.user`/`base.user` used GraphQL camelCase keys (BUG-2259).** `pullRequestSimpleJSON` reused `repoOwnerGraphQL` for the embedded owner, emitting camelCase `nodeID`, `databaseId`, `avatarUrl`, `createdAt`, `updatedAt`. The vendored GitHub OpenAPI description expects the REST `simple-user` shape (`node_id`, `avatar_url`, `created_at`, `updated_at`, etc.), so the response-shape ratchet flagged the mismatch. Fixed by introducing `repoOwnerREST`, which is also org-aware (resolves the organization from `repo.FullName`) but emits snake_case keys, matching the REST simple-user contract. Updated `TestCreatePullRequestREST` to assert the REST shape and reject camelCase fields.
+
+**UI/visual audit.** Playwright e2e suite passed (21/21); 31 screenshots captured across light/dark themes, overview, repos, issues, pulls, actions, run detail, OAuth, apps, and metrics surfaces. No broken layouts, console errors, or missing error/loading states were observed; a11y labels exist on primary nav, theme toggle, repo search, run filters, workflow options, and runner status. The bundle chunk-size warning remains above 500 kB but does not fail the build.
+
+**Extended fuzz.** Re-ran all bleephub fuzz targets for 20–30 seconds each: `FuzzGraphQLQuery`, `FuzzGraphQLWithVariables`, `FuzzGraphQLRawVariables`, `FuzzRESTMapBody`, `FuzzEncodeCursorRoundTrip`, `FuzzPaginateGQL`, `FuzzDecodeCursor`. All passed without panics.
+
 ## 2026-06-29 - bleephub fidelity audit: runner auto-update message + GraphQL org owner real data (BUG-2256/2257)
 
 A focused audit of bleephub turned up two real fidelity gaps and a stale comment:

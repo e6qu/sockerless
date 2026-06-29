@@ -515,9 +515,7 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 	var repoOwnerJSON interface{}
 	if repo != nil {
 		repoJSON = repoToJSON(repo, st, baseURL)
-		if repo.Owner != nil {
-			repoOwnerJSON = userToJSON(repo.Owner)
-		}
+		repoOwnerJSON = repoOwnerREST(repo, st, baseURL)
 	}
 
 	// GitHub's assignee is the first assignee, null when unassigned.
