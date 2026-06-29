@@ -404,6 +404,10 @@ func registerECS(r *sim.AWSRouter, srv *sim.Server) {
 	ecsTasks = sim.MakeStore[ECSTask](srv.DB(), "ecs_tasks")
 	ecsRevisions = make(map[string]int)
 
+	// Start the background service scheduler that reconciles each ACTIVE
+	// service's RUNNING task set against its DesiredCount. Idempotent.
+	startECSScheduler()
+
 	r.Register("AmazonEC2ContainerServiceV20141113.CreateCluster", handleECSCreateCluster)
 	r.Register("AmazonEC2ContainerServiceV20141113.DescribeClusters", handleECSDescribeClusters)
 	r.Register("AmazonEC2ContainerServiceV20141113.UpdateCluster", handleECSUpdateCluster)
@@ -1145,6 +1149,24 @@ func ecsTaskCloudWatchSink(td ECSTaskDefinition, taskID string) sim.LogSink {
 	return sink
 }
 
+// ecsRunTaskInput is the parsed RunTask request — extracted so the in-process
+// service scheduler can launch tasks through the same code path as the
+// RunTask API handler.
+type ecsRunTaskInput struct {
+	Cluster              string
+	TaskDefinition       string
+	Count                int
+	Group                string
+	LaunchType           string
+	Tags                 []ECSTag
+	PropagateTags        string
+	EnableExecuteCommand bool
+	Overrides            *ECSTaskOverride
+	VolumeConfigurations []ECSTaskVolumeConfiguration
+	NetworkConfiguration *ECSTaskNetworkConfig
+	StartedBy            string
+}
+
 func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Cluster              string                       `json:"cluster"`
@@ -1157,13 +1179,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		EnableExecuteCommand bool                         `json:"enableExecuteCommand,omitempty"`
 		Overrides            *ECSTaskOverride             `json:"overrides,omitempty"`
 		VolumeConfigurations []ECSTaskVolumeConfiguration `json:"volumeConfigurations,omitempty"`
-		NetworkConfiguration *struct {
-			AwsvpcConfiguration *struct {
-				Subnets        []string `json:"subnets"`
-				SecurityGroups []string `json:"securityGroups"`
-				AssignPublicIp string   `json:"assignPublicIp"`
-			} `json:"awsvpcConfiguration"`
-		} `json:"networkConfiguration"`
+		NetworkConfiguration *ECSTaskNetworkConfig        `json:"networkConfiguration"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -1182,12 +1198,41 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			"count cannot be greater than 10.", http.StatusBadRequest)
 		return
 	}
-	if req.Cluster == "" {
-		req.Cluster = "default"
+	in := ecsRunTaskInput{
+		Cluster:              req.Cluster,
+		TaskDefinition:       req.TaskDefinition,
+		Count:                req.Count,
+		Group:                req.Group,
+		LaunchType:           req.LaunchType,
+		Tags:                 req.Tags,
+		PropagateTags:        req.PropagateTags,
+		EnableExecuteCommand: req.EnableExecuteCommand,
+		Overrides:            req.Overrides,
+		VolumeConfigurations: req.VolumeConfigurations,
+		NetworkConfiguration: req.NetworkConfiguration,
+	}
+	tasks, rerr := runECSTasks(r.Context(), in)
+	if rerr != nil {
+		sim.AWSError(w, rerr.code, rerr.message, rerr.status)
+		return
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"tasks":    ecsTasksWire(tasks),
+		"failures": []any{},
+	})
+}
+
+// runECSTasks launches `in.Count` tasks for the named cluster / task
+// definition, performing the same validation, ENI allocation, and async
+// PROVISIONING → PENDING → RUNNING lifecycle transitions as the RunTask API.
+// Used by handleECSRunTask and the in-process ECS service scheduler.
+func runECSTasks(ctx context.Context, in ecsRunTaskInput) ([]ECSTask, *ecsRequestError) {
+	if in.Cluster == "" {
+		in.Cluster = "default"
 	}
 
 	// Resolve cluster name
-	clusterName := req.Cluster
+	clusterName := in.Cluster
 	if strings.HasPrefix(clusterName, "arn:") {
 		parts := strings.Split(clusterName, "/")
 		if len(parts) > 1 {
@@ -1197,13 +1242,12 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 	cluster, ok := ecsClusters.Get(clusterName)
 	if !ok {
-		sim.AWSErrorf(w, "ClusterNotFoundException", http.StatusBadRequest,
-			"Cluster not found: %s", req.Cluster)
-		return
+		return nil, &ecsRequestError{"ClusterNotFoundException",
+			fmt.Sprintf("Cluster not found: %s", in.Cluster), http.StatusBadRequest}
 	}
 
 	// Resolve task definition
-	tdKey := req.TaskDefinition
+	tdKey := in.TaskDefinition
 	if strings.HasPrefix(tdKey, "arn:") {
 		parts := strings.Split(tdKey, "/")
 		if len(parts) > 1 {
@@ -1221,18 +1265,16 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 	td, ok := ecsTaskDefinitions.Get(tdKey)
 	if !ok {
-		sim.AWSErrorf(w, "ClientException", http.StatusBadRequest,
-			"Unable to describe task definition: %s", req.TaskDefinition)
-		return
+		return nil, &ecsRequestError{"ClientException",
+			fmt.Sprintf("Unable to describe task definition: %s", in.TaskDefinition), http.StatusBadRequest}
 	}
 
 	// Validate security groups exist
-	if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
-		for _, sgID := range req.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups {
+	if in.NetworkConfiguration != nil && in.NetworkConfiguration.AwsvpcConfiguration != nil {
+		for _, sgID := range in.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups {
 			if _, sgOK := ec2SecurityGroups.Get(sgID); !sgOK {
-				sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
-					"The security group '%s' does not exist", sgID)
-				return
+				return nil, &ecsRequestError{"InvalidParameterException",
+					fmt.Sprintf("The security group '%s' does not exist", sgID), http.StatusBadRequest}
 			}
 		}
 	}
@@ -1242,13 +1284,13 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 	// clean InvalidParameterException when the caller passes one we
 	// don't know about (matches real AWS InvalidSubnetID.NotFound).
 	var requestedSubnet string
-	if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil &&
-		len(req.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0 {
-		requestedSubnet = req.NetworkConfiguration.AwsvpcConfiguration.Subnets[0]
+	if in.NetworkConfiguration != nil && in.NetworkConfiguration.AwsvpcConfiguration != nil &&
+		len(in.NetworkConfiguration.AwsvpcConfiguration.Subnets) > 0 {
+		requestedSubnet = in.NetworkConfiguration.AwsvpcConfiguration.Subnets[0]
 	}
 
 	var tasks []ECSTask
-	for i := 0; i < req.Count; i++ {
+	for i := 0; i < in.Count; i++ {
 		_ = i
 		taskID := generateUUID()
 		taskArn := fmt.Sprintf("arn:aws:ecs:"+awsRegion()+":"+awsAccountID()+":task/%s/%s", clusterName, taskID)
@@ -1258,8 +1300,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		if requestedSubnet != "" {
 			ip, ipErr := AllocateSubnetIP(requestedSubnet)
 			if ipErr != nil {
-				sim.AWSError(w, "InvalidParameterException", ipErr.Error(), http.StatusBadRequest)
-				return
+				return nil, &ecsRequestError{"InvalidParameterException", ipErr.Error(), http.StatusBadRequest}
 			}
 			privateIP = ip
 			subnetID = requestedSubnet
@@ -1283,15 +1324,14 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 
 		// Merge tags: request tags take priority, then inherited from task def
 		var taskTags []ECSTag
-		if req.PropagateTags == "TASK_DEFINITION" && len(td.Tags) > 0 {
+		if in.PropagateTags == "TASK_DEFINITION" && len(td.Tags) > 0 {
 			taskTags = append(taskTags, td.Tags...)
 		}
-		taskTags = append(taskTags, req.Tags...)
+		taskTags = append(taskTags, in.Tags...)
 
-		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(r.Context(), td, req.VolumeConfigurations, taskID, requestedSubnet)
+		taskVolumeHosts, ebsAttachments, ebsErr := ecsPrepareManagedEBSVolumes(ctx, td, in.VolumeConfigurations, taskID, requestedSubnet)
 		if ebsErr != nil {
-			sim.AWSError(w, ebsErr.code, ebsErr.message, ebsErr.status)
-			return
+			return nil, ebsErr
 		}
 
 		attachmentDetails := []ECSKeyValuePair{
@@ -1310,12 +1350,13 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 			Containers:           containers,
 			CreatedAt:            &createdAt,
 			Tags:                 taskTags,
-			LaunchType:           req.LaunchType,
-			Cpu:                  ecsTaskCPU(td, req.Overrides),
-			Memory:               ecsTaskMemory(td, req.Overrides),
-			Group:                req.Group,
-			Overrides:            req.Overrides,
-			EnableExecuteCommand: req.EnableExecuteCommand,
+			LaunchType:           in.LaunchType,
+			Cpu:                  ecsTaskCPU(td, in.Overrides),
+			Memory:               ecsTaskMemory(td, in.Overrides),
+			Group:                in.Group,
+			Overrides:            in.Overrides,
+			EnableExecuteCommand: in.EnableExecuteCommand,
+			StartedBy:            in.StartedBy,
 			Attachments: []ECSAttachment{
 				{
 					Id:      eniID,
@@ -1328,8 +1369,8 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		task.Attachments = append(task.Attachments, ebsAttachments...)
 
 		// Store VPC network configuration from request
-		if req.NetworkConfiguration != nil && req.NetworkConfiguration.AwsvpcConfiguration != nil {
-			vpc := req.NetworkConfiguration.AwsvpcConfiguration
+		if in.NetworkConfiguration != nil && in.NetworkConfiguration.AwsvpcConfiguration != nil {
+			vpc := in.NetworkConfiguration.AwsvpcConfiguration
 			task.NetworkConfiguration = &ECSTaskNetworkConfig{
 				AwsvpcConfiguration: &ECSTaskVpcConfig{
 					Subnets:        vpc.Subnets,
@@ -1429,13 +1470,10 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 					}(id, name, handle)
 				}
 			}
-		}(taskID, td, taskTags, req.Overrides, taskVolumeHosts)
+		}(taskID, td, taskTags, in.Overrides, taskVolumeHosts)
 	}
 
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tasks":    ecsTasksWire(tasks),
-		"failures": []any{},
-	})
+	return tasks, nil
 }
 
 func ecsTaskCPU(td ECSTaskDefinition, overrides *ECSTaskOverride) string {
@@ -1582,7 +1620,7 @@ func startECSTaskContainers(taskID string, td ECSTaskDefinition, taskTags []ECST
 			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("task netns pause pid: %w", perr)
 		}
-		if aerr := ec2AttachRealECSTaskNIC(context.Background(), taskID, subnetID, pid, eniIP); aerr != nil {
+		if aerr := ec2AttachRealECSTaskNIC(context.Background(), taskID, subnetID, pid, eniIP, ecsTaskSecurityGroupIDs(taskID)); aerr != nil {
 			cleanupECSTaskProcesses(taskID, processes)
 			return nil, fmt.Errorf("attach task to VPC netns: %w", aerr)
 		}
@@ -1717,6 +1755,17 @@ func ecsContainerOverrideFor(overrides *ECSTaskOverride, containerName string) E
 
 // ecsVPCNetworkName is the Docker network backing a VPC.
 func ecsVPCNetworkName(vpcID string) string { return "sockerless-sim-vpc-" + vpcID }
+
+// ecsTaskSecurityGroupIDs returns the awsvpc security groups attached to the
+// task — the SGs whose ingress/egress rules the real-exec netns tier enforces
+// at the packet layer on Linux + CAP_NET_ADMIN hosts.
+func ecsTaskSecurityGroupIDs(taskID string) []string {
+	task, ok := ecsTasks.Get(taskID)
+	if !ok || task.NetworkConfiguration == nil || task.NetworkConfiguration.AwsvpcConfiguration == nil {
+		return nil
+	}
+	return task.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups
+}
 
 // ecsTaskENIInfo reads a task's awsvpc ENI IP + subnet from its attachment.
 // Returns ok=false for tasks without an awsvpc ENI.
@@ -1987,12 +2036,25 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	taskID := req.Task
-	if strings.HasPrefix(taskID, "arn:") {
-		parts := strings.Split(taskID, "/")
-		if len(parts) > 0 {
-			taskID = parts[len(parts)-1]
-		}
+	taskID := ecsTaskIDFromRef(req.Task)
+	if !stopECSTask(taskID, req.Reason, "UserInitiated") {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"Task not found: %s", req.Task)
+		return
+	}
+	task, _ := ecsTasks.Get(taskID)
+	sim.WriteJSON(w, http.StatusOK, map[string]any{
+		"task": ecsTaskWire{task},
+	})
+}
+
+// stopECSTask transitions a task to STOPPED — stopping its Docker containers,
+// recording the stop code/reason/exit code, and tearing down its VPC veth.
+// Returns false when the task is unknown. Used by the StopTask API handler
+// and the in-process service scheduler.
+func stopECSTask(taskID, reason, code string) bool {
+	if _, ok := ecsTasks.Get(taskID); !ok {
+		return false
 	}
 
 	// Stop running container if any
@@ -2003,15 +2065,18 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := time.Now().Unix()
-	found := ecsTasks.Update(taskID, func(t *ECSTask) {
+	ecsTasks.Update(taskID, func(t *ECSTask) {
 		t.DesiredStatus = ECSTaskStatusStopped
 		t.LastStatus = ECSTaskStatusStopped
 		t.StoppedAt = &now
-		t.StopCode = "UserInitiated"
-		if req.Reason != "" {
-			t.StoppedReason = req.Reason
-		} else {
+		t.StopCode = code
+		switch {
+		case reason != "":
+			t.StoppedReason = reason
+		case code == "UserInitiated":
 			t.StoppedReason = "Task stopped by user"
+		default:
+			t.StoppedReason = ""
 		}
 		// A user-initiated stop SIGKILLs the container; the faithful exit code is
 		// 137 (128+SIGKILL), what real Fargate reports — not a clean-exit 0.
@@ -2023,20 +2088,10 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 		ecsCleanupTaskManagedEBS(t)
 	})
 
-	if !found {
-		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
-			"Task not found: %s", req.Task)
-		return
-	}
-
 	// Tear down the task's VPC veth (netns tier) after cloud-visible state is
 	// updated; Docker/netns cleanup can take seconds on CI.
 	go ec2DetachRealECSTaskNIC(context.Background(), taskID)
-
-	task, _ := ecsTasks.Get(taskID)
-	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"task": ecsTaskWire{task},
-	})
+	return true
 }
 
 func handleECSListTasks(w http.ResponseWriter, r *http.Request) {

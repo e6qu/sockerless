@@ -382,6 +382,8 @@ func handleCWPutLogEvents(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	cwEvaluateMetricFilters(req.LogGroupName, req.LogEvents)
+
 	// Update stream timestamps
 	cwLogStreams.Update(key, func(s *CWLogStream) {
 		s.LastIngestionTime = now

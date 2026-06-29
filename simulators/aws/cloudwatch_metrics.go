@@ -76,6 +76,8 @@ func registerCloudWatchMetrics(srv *sim.Server) {
 	registerCloudWatchAnomalyInsightCBOR(srv)
 	registerCloudWatchMiscCBOR(srv)
 	registerCloudWatchDashboardsCBOR(srv)
+
+	startCWAlarmEvaluator()
 }
 
 // GetMetricData request/response types (CBOR)

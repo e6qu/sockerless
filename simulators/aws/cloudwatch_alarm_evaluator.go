@@ -1,0 +1,169 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+)
+
+// CloudWatch continuously re-evaluates each metric alarm against incoming
+// datapoints and, on a state transition, invokes the configured action
+// topics (AlarmActions / OKActions / InsufficientDataActions) with the
+// canonical alarm notification JSON. The simulator mirrors that with a
+// background evaluator started once during CloudWatch registration: every
+// tick it re-derives every alarm's state from the live metric store, and
+// when the derived state differs from the last dispatched state it fans
+// the notification out through the real SNS publish path (snsFanout), so
+// SQS / Lambda subscribers receive it exactly as a client-side Publish
+// would deliver.
+
+// cwAlarmLastState records the last state the background evaluator
+// dispatched actions for, keyed by alarm name. An absent entry is treated
+// as INSUFFICIENT_DATA — the state real CloudWatch creates an alarm in.
+var cwAlarmLastState sync.Map
+
+// startCWAlarmEvaluator launches the background goroutine that re-derives
+// every metric alarm's state every cwAlarmEvalInterval and dispatches the
+// configured action topics on state transitions.
+func startCWAlarmEvaluator() {
+	go func() {
+		ticker := time.NewTicker(cwAlarmEvalInterval)
+		defer ticker.Stop()
+		for range ticker.C {
+			cwEvaluateAlarmsOnce()
+		}
+	}()
+}
+
+const cwAlarmEvalInterval = 2 * time.Second
+
+// cwEvaluateAlarmsOnce is one evaluator pass: snapshot every metric alarm,
+// re-derive its state, and on a transition dispatch actions, record history,
+// and persist the dispatched state. Manual SetAlarmState overrides do not
+// dispatch actions here — SetAlarmState is a testing/admin knob that real
+// CloudWatch does not route through AlarmActions.
+func cwEvaluateAlarmsOnce() {
+	for _, a := range cwAlarms.List() {
+		newState, reason := cwEvaluateAlarmState(a)
+		prev := cwAlarmRememberedState(a.AlarmName)
+		if prev == newState {
+			continue
+		}
+		cwAlarmLastState.Store(a.AlarmName, newState)
+		cwDispatchAlarmActions(a, prev, newState, reason)
+		historyData, _ := json.Marshal(map[string]string{
+			"previousState": prev,
+			"newState":      newState,
+			"stateReason":   reason,
+		})
+		cwRecordAlarmHistory(a.AlarmName, "MetricAlarm", "StateUpdate",
+			fmt.Sprintf("Alarm updated from %s to %s", prev, newState), string(historyData))
+		ts := time.Now().UTC().Unix()
+		cwAlarms.Update(a.AlarmName, func(x *CWAlarm) {
+			x.StateValue = newState
+			x.StateReason = reason
+			x.StateUpdatedTimestamp = ts
+		})
+	}
+}
+
+// cwAlarmRememberedState returns the last dispatched state for an alarm,
+// defaulting to INSUFFICIENT_DATA when the evaluator has not seen it yet.
+func cwAlarmRememberedState(name string) string {
+	if v, ok := cwAlarmLastState.Load(name); ok {
+		if s, ok := v.(string); ok && s != "" {
+			return s
+		}
+	}
+	return "INSUFFICIENT_DATA"
+}
+
+// cwDispatchAlarmActions fans the alarm notification out to each configured
+// action topic for the new state via the real SNS publish path. A topic
+// ARN that doesn't resolve to a known SNS topic is skipped, matching real
+// CloudWatch silently dropping a deleted action target.
+func cwDispatchAlarmActions(a CWAlarm, oldState, newState, reason string) {
+	if !a.ActionsEnabled {
+		return
+	}
+	var targets []string
+	switch newState {
+	case "ALARM":
+		targets = a.AlarmActions
+	case "OK":
+		targets = a.OKActions
+	case "INSUFFICIENT_DATA":
+		targets = a.InsufficientDataActions
+	}
+	if len(targets) == 0 {
+		return
+	}
+	message := cwAlarmNotificationMessage(a, oldState, newState, reason)
+	subject := cwAlarmNotificationSubject(newState, a.AlarmName)
+	for _, topicARN := range targets {
+		name := snsTopicNameFromARN(topicARN)
+		if _, ok := snsTopics.Get(name); !ok {
+			continue
+		}
+		snsFanout(topicARN, generateUUID(), subject, message)
+	}
+}
+
+// cwAlarmNotificationMessage renders the canonical CloudWatch alarm
+// notification JSON delivered as the SNS Message field — the shape an SQS
+// subscriber parses to react to a threshold breach.
+func cwAlarmNotificationMessage(a CWAlarm, oldState, newState, reason string) string {
+	trigger := map[string]any{
+		"Period":             a.Period,
+		"EvaluationPeriods":  a.EvaluationPeriods,
+		"Threshold":          a.Threshold,
+		"ComparisonOperator": a.ComparisonOperator,
+		"TreatMissingData":   a.TreatMissingData,
+		"MetricName":         a.MetricName,
+		"Namespace":          a.Namespace,
+		"StatisticType":      "SingleStatistic",
+	}
+	if a.ExtendedStatistic != "" {
+		trigger["ExtendedStatistic"] = a.ExtendedStatistic
+	} else {
+		stat := a.Statistic
+		if stat == "" {
+			stat = "Average"
+		}
+		trigger["Statistic"] = stat
+	}
+	if len(a.Dimensions) > 0 {
+		dims := make([]map[string]string, 0, len(a.Dimensions))
+		for _, d := range a.Dimensions {
+			dims = append(dims, map[string]string{"Name": d.Name, "Value": d.Value})
+		}
+		trigger["Dimensions"] = dims
+	}
+	payload := map[string]any{
+		"AlarmName":               a.AlarmName,
+		"AlarmDescription":        a.AlarmDescription,
+		"AWSAccountId":            awsAccountID(),
+		"NewStateValue":           newState,
+		"NewStateReason":          reason,
+		"StateChangeTime":         time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+		"Region":                  awsRegion(),
+		"OldStateValue":           oldState,
+		"OKActions":               a.OKActions,
+		"AlarmActions":            a.AlarmActions,
+		"InsufficientDataActions": a.InsufficientDataActions,
+		"Trigger":                 trigger,
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Sprintf(`{"AlarmName":%q,"NewStateValue":%q,"OldStateValue":%q}`, a.AlarmName, newState, oldState)
+	}
+	return string(b)
+}
+
+// cwAlarmNotificationSubject renders the SNS Subject for an alarm
+// notification — "<STATE>: \"<AlarmName>\" in <Region>" — matching the real
+// CloudWatch subject line so topic subscribers can filter on it.
+func cwAlarmNotificationSubject(state, name string) string {
+	return fmt.Sprintf("%s: %q in %s", state, name, awsRegion())
+}

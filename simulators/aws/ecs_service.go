@@ -350,7 +350,7 @@ func handleECSCreateService(w http.ResponseWriter, r *http.Request) {
 		ClusterArn:                    cluster.ClusterArn,
 		TaskDefinition:                req.TaskDefinition,
 		DesiredCount:                  desired,
-		RunningCount:                  desired, // modeled: tasks are immediately running
+		RunningCount:                  0,
 		PendingCount:                  0,
 		Status:                        "ACTIVE",
 		LaunchType:                    req.LaunchType,
@@ -407,8 +407,8 @@ func ecsServiceDeployment(svc ECSService, now float64) ECSDeployment {
 		Status:                      "PRIMARY",
 		TaskDefinition:              svc.TaskDefinition,
 		DesiredCount:                svc.DesiredCount,
-		RunningCount:                svc.DesiredCount,
-		PendingCount:                0,
+		RunningCount:                svc.RunningCount,
+		PendingCount:                svc.PendingCount,
 		RolloutState:                "COMPLETED",
 		CreatedAt:                   now,
 		UpdatedAt:                   now,
@@ -438,6 +438,11 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 	for _, ref := range req.Services {
 		name := ecsServiceNameFromRef(ref)
 		if svc, ok := ecsServices.Get(ecsServiceKey(clusterName, name)); ok {
+			// RunningCount/PendingCount are derived from the live task set so
+			// DescribeServices is always consistent with DescribeTasks, even
+			// when the asynchronous scheduler has not yet refreshed the cached
+			// counts stored on the service object.
+			svc = ecsServiceWithLiveCounts(svc)
 			services = append(services, svc)
 		} else {
 			failures = append(failures, map[string]string{
@@ -607,7 +612,6 @@ func handleECSUpdateService(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.DesiredCount != nil {
 		svc.DesiredCount = *req.DesiredCount
-		svc.RunningCount = *req.DesiredCount
 	}
 	if req.NetworkConfiguration != nil {
 		svc.NetworkConfiguration = req.NetworkConfiguration
@@ -684,7 +688,9 @@ func handleECSDeleteService(w http.ResponseWriter, r *http.Request) {
 	}
 	// Real ECS drains then marks the service INACTIVE; DescribeServices keeps
 	// returning it as INACTIVE, which is how terraform-provider-aws confirms the
-	// delete converged.
+	// delete converged. Stop the service's running tasks first so the
+	// scheduler doesn't keep resurrecting them against an INACTIVE service.
+	ecsStopServiceTasks(svc)
 	svc.Status = "INACTIVE"
 	svc.DesiredCount = 0
 	svc.RunningCount = 0

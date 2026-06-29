@@ -20,6 +20,7 @@ import (
 
 var (
 	baseURL                string
+	dnsPort                int
 	simCmd                 *exec.Cmd
 	binaryPath             string
 	evalImageName          string // Docker image containing eval-arithmetic binary
@@ -75,8 +76,20 @@ func TestMain(m *testing.M) {
 	port := ln.Addr().(*net.TCPAddr).Port
 	ln.Close()
 
+	// Free UDP port for the Route 53 DNS server. The simulator and the
+	// test share SIM_DNS_PORT so both know where to send queries.
+	udpConn, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		log.Fatalf("Failed to find free DNS port: %v", err)
+	}
+	dnsPort = udpConn.(*net.UDPConn).LocalAddr().(*net.UDPAddr).Port
+	udpConn.Close()
+
 	simCmd = exec.Command(binaryPath)
-	simCmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port))
+	simCmd.Env = append(os.Environ(),
+		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
+		fmt.Sprintf("SIM_DNS_PORT=%d", dnsPort),
+	)
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr
 	if err := simCmd.Start(); err != nil {

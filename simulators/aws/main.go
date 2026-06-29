@@ -122,6 +122,7 @@ func buildSimulator(cfg sim.Config) (*sim.Server, *sim.AWSRouter, *sim.AWSQueryR
 	registerCodeBuildExtended(awsRouter, srv)
 	registerGlue(awsRouter, srv)
 	registerApplicationAutoScaling(awsRouter, srv)
+	registerBudgets(awsRouter, srv)
 
 	// Register AWS Query Protocol services (Action form parameter routing)
 	queryRouter := sim.NewAWSQueryRouter()

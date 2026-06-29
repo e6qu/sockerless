@@ -71,8 +71,13 @@ func ec2ECSRealNetAvailable() bool {
 // ec2AttachRealECSTaskNIC plumbs a veth from the task's VPC subnet bridge into
 // the container's network namespace, giving it eth0 at the ENI IP. Because each
 // VPC is its own netns, overlapping VPC CIDRs work natively — no remapping, the
-// ENI IP is the container's real address.
-func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid int, eniIP string) error {
+// ENI IP is the container's real address. After the L2 path is up it programs
+// the task's security group rules into the netns nftables ingress chain, so the
+// SG is enforced at the packet layer on Linux + CAP_NET_ADMIN hosts. On hosts
+// without real-exec capabilities, ec2ApplyRealECSTaskSecurityGroups is a no-op
+// and SG rules remain metadata-only — enforced faithfully by the API surface
+// (validation, DescribeSecurityGroups) but not at the host firewall level.
+func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid int, eniIP string, securityGroupIDs []string) error {
 	sn, ok := ec2Subnets.Get(subnetID)
 	if !ok {
 		return fmt.Errorf("subnet %s not found", subnetID)
@@ -122,6 +127,9 @@ func ec2AttachRealECSTaskNIC(ctx context.Context, taskID, subnetID string, pid i
 	ec2RealMu.Lock()
 	ec2RealECSNICs[taskID] = nic
 	ec2RealMu.Unlock()
+	if err := ec2ApplyRealECSTaskSecurityGroups(ctx, taskID, securityGroupIDs); err != nil {
+		return fmt.Errorf("apply security groups for %s: %w", taskID, err)
+	}
 	return nil
 }
 
@@ -343,14 +351,13 @@ func ec2DeleteRealNIC(ctx context.Context, eniID string) error {
 	return errors.Join(errs...)
 }
 
-func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGroupIDs []string) error {
-	ec2RealMu.Lock()
-	nic := ec2RealNICs[eniID]
-	tap := ec2RealVMNICs[eniID]
-	ec2RealMu.Unlock()
-	if nic == nil && tap == nil {
-		return nil
-	}
+// ec2BuildIngressPacketRules materializes the nftables-facing packet rules for
+// the ingress side of the supplied security groups. It expands every IpPermission
+// into one PacketRule per source (IPv4 / IPv6 / SG reference, with no CIDR
+// treated as 0.0.0.0/0 to match real AWS' "all sources" semantics). Referenced
+// security groups expand to their member CIDRs at apply time, since the nftables
+// tier operates on IP prefixes rather than SG ids.
+func ec2BuildIngressPacketRules(securityGroupIDs []string) []realexec.PacketRule {
 	var rules []realexec.PacketRule
 	for _, groupID := range securityGroupIDs {
 		sg, ok := ec2SecurityGroups.Get(groupID)
@@ -358,7 +365,7 @@ func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGr
 			continue
 		}
 		for _, perm := range sg.IpPermissions {
-			if len(perm.IpRanges) == 0 {
+			if len(perm.IpRanges) == 0 && len(perm.Ipv6Ranges) == 0 && len(perm.UserIdGroupPairs) == 0 {
 				rules = append(rules, realexec.PacketRule{
 					Protocol:   perm.IpProtocol,
 					SourceCIDR: "0.0.0.0/0",
@@ -375,8 +382,119 @@ func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGr
 					ToPort:     perm.ToPort,
 				})
 			}
+			for _, ipRange := range perm.Ipv6Ranges {
+				rules = append(rules, realexec.PacketRule{
+					Protocol:   perm.IpProtocol,
+					SourceCIDR: ipRange.CidrIpv6,
+					FromPort:   perm.FromPort,
+					ToPort:     perm.ToPort,
+				})
+			}
+			for _, gp := range perm.UserIdGroupPairs {
+				for _, src := range ec2SGMemberCIDRs(gp.GroupId) {
+					rules = append(rules, realexec.PacketRule{
+						Protocol:   perm.IpProtocol,
+						SourceCIDR: src,
+						FromPort:   perm.FromPort,
+						ToPort:     perm.ToPort,
+					})
+				}
+			}
 		}
 	}
+	return rules
+}
+
+// ec2SGMemberCIDRs returns the set of IPv4 /32 prefixes currently attached to
+// the supplied security group — every ENI (EC2 instance or standalone) and ECS
+// task whose SG list contains groupID contributes its private IP. Security group
+// references resolve to live member IPs at apply time, since nftables matches on
+// prefixes, not on SG ids.
+func ec2SGMemberCIDRs(groupID string) []string {
+	seen := map[string]bool{}
+	add := func(ip string) {
+		if ip == "" {
+			return
+		}
+		seen[ip+"/32"] = true
+	}
+	for _, eni := range ec2NetworkInterfaces.List() {
+		for _, id := range eni.SecurityGroupIds {
+			if id == groupID {
+				add(eni.PrivateIpAddress)
+				break
+			}
+		}
+	}
+	for _, inst := range ec2Instances.List() {
+		for _, id := range inst.SecurityGroupIds {
+			if id == groupID {
+				add(inst.PrivateIpAddress)
+				break
+			}
+		}
+	}
+	for _, task := range ecsTasks.List() {
+		if !ecsTaskUsesSecurityGroup(task, groupID) {
+			continue
+		}
+		for _, att := range task.Attachments {
+			if att.Type != "ElasticNetworkInterface" {
+				continue
+			}
+			for _, d := range att.Details {
+				if d.Name == "privateIPv4Address" {
+					add(d.Value)
+				}
+			}
+		}
+	}
+	var out []string
+	for cidr := range seen {
+		out = append(out, cidr)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func ecsTaskUsesSecurityGroup(task ECSTask, groupID string) bool {
+	if task.NetworkConfiguration == nil || task.NetworkConfiguration.AwsvpcConfiguration == nil {
+		return false
+	}
+	for _, id := range task.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups {
+		if id == groupID {
+			return true
+		}
+	}
+	return false
+}
+
+func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGroupIDs []string) error {
+	ec2RealMu.Lock()
+	nic := ec2RealNICs[eniID]
+	tap := ec2RealVMNICs[eniID]
+	ec2RealMu.Unlock()
+	if nic == nil && tap == nil {
+		return nil
+	}
+	// No security groups means default-allow (no host-level ingress filter).
+	// This matches the pre-enforcement behaviour and avoids breaking tasks
+	// launched without an explicit SG, which AWS would assign to the VPC's
+	// default SG but the simulator does not model yet.
+	if len(securityGroupIDs) == 0 {
+		if nic != nil {
+			if err := nic.ClearIngressFilter(ctx); err != nil {
+				return err
+			}
+		}
+		if tap != nil {
+			if err := tap.ClearIngressFilter(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	rules := ec2BuildIngressPacketRules(securityGroupIDs)
 	if nic != nil {
 		if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
 			return err
@@ -388,6 +506,28 @@ func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGr
 		}
 	}
 	return nil
+}
+
+// ec2ApplyRealECSTaskSecurityGroups programs the nftables ingress filter for an
+// attached ECS task NIC, enforcing the task's security-group rules at the packet
+// layer. Called both at task attach (the first time the NIC exists) and on every
+// Authorize/Revoke that touches one of the task's security groups — via
+// ec2ReapplyRealSecurityGroup — so adding a port to a running task's SG opens it
+// immediately without restarting the task.
+func ec2ApplyRealECSTaskSecurityGroups(ctx context.Context, taskID string, securityGroupIDs []string) error {
+	ec2RealMu.Lock()
+	nic := ec2RealECSNICs[taskID]
+	ec2RealMu.Unlock()
+	if nic == nil {
+		return nil
+	}
+	// No security groups means default-allow. An empty ruleset would install a
+	// deny-all filter (the realexec layer ends every filter with a drop rule),
+	// breaking tasks that rely on the previous default-allow behaviour.
+	if len(securityGroupIDs) == 0 {
+		return nic.ClearIngressFilter(ctx)
+	}
+	return nic.ConfigureIngressFilter(ctx, ec2BuildIngressPacketRules(securityGroupIDs))
 }
 
 func ec2StartRealVM(ctx context.Context, inst EC2Instance) error {
@@ -677,6 +817,12 @@ func ec2RealVMAlive(instanceID string) bool {
 	return vm != nil && vm.Alive()
 }
 
+// ec2ReapplyRealSecurityGroup reprograms the nftables ingress filter on every
+// network path currently bound to groupID — ENIs attached to EC2 instances and
+// ECS task NICs in the awsvpc netns tier — so an Authorize/Revoke on a running
+// workload takes effect immediately. Hosts without real-exec capabilities skip
+// the call (the per-NIC apply is a no-op when no real NIC exists), and SG rules
+// there remain metadata-only.
 func ec2ReapplyRealSecurityGroup(ctx context.Context, groupID string) error {
 	for _, eni := range ec2NetworkInterfaces.List() {
 		for _, attachedGroupID := range eni.SecurityGroupIds {
@@ -687,6 +833,18 @@ func ec2ReapplyRealSecurityGroup(ctx context.Context, groupID string) error {
 				return err
 			}
 			break
+		}
+	}
+	for _, task := range ecsTasks.List() {
+		if !ecsTaskUsesSecurityGroup(task, groupID) {
+			continue
+		}
+		var sgIDs []string
+		if task.NetworkConfiguration != nil && task.NetworkConfiguration.AwsvpcConfiguration != nil {
+			sgIDs = task.NetworkConfiguration.AwsvpcConfiguration.SecurityGroups
+		}
+		if err := ec2ApplyRealECSTaskSecurityGroups(ctx, task.TaskID(), sgIDs); err != nil {
+			return err
 		}
 	}
 	return nil

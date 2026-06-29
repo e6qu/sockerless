@@ -14,6 +14,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.4
 	github.com/aws/aws-sdk-go-v2/service/batch v1.66.0
+	github.com/aws/aws-sdk-go-v2/service/budgets v1.44.6
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.2
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.56.4
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.59.0
@@ -49,6 +50,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/stretchr/testify v1.11.1
+	golang.org/x/net v0.56.0
 )
 
 require (
