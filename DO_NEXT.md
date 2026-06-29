@@ -4,7 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-No active branch. Last merged PR is #720 (`feat/bleephub-ui-audit-2026-06-29`). Next candidates: resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+`chore/continuity-post-720` — post-#720 continuity PR (#721). Fixing CI-caught BUG-2260: Cosmos vNext emulator returns transient `EOF` during `TestCosmosScripts_DifferentialVsEmulator`, causing `sim (azure)` to fail on an otherwise no-code-change PR.
+
+---
+### Current task: BUG-2260 — Azure Cosmos emulator EOF flake
+The `sim (azure)` SDK-test job failed on PR #721 with `Post "http://127.0.0.1:8081/dbs": EOF` in the `sproc-missing-404` subtest of `TestCosmosScripts_DifferentialVsEmulator`. The emulator passed readiness and the first two scenarios ran, then the raw-REST helper `cosmosRESTReq` fataled on a transient transport reset. Fix: retry transient network errors (EOF, unexpected EOF, temporary/timeout `net.Error`) inside `cosmosRESTReq`, mirroring the resilience the official `azcosmos` SDK already provides for the SDK-based differential test. Verify with `cd simulators/azure/sdk-tests && GOWORK=off go test -v -count=1 -run 'TestCosmosScripts_DifferentialVsEmulator' -timeout 15m .`.
 
 ---
 ### Prior branch (merged #720): bleephub + UI audit (BUG-2258/2259)

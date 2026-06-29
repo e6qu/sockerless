@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2259 filed - 2214 fixed - 3 open - 16 false positives.**
+**2260 filed - 2214 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2260 | P3 | Azure sim SDK test — `TestCosmosScripts_DifferentialVsEmulator` flaky with `Post "http://127.0.0.1:8081/dbs": EOF` | flaky test / emulator transient error | `sim (azure)` failed on the post-#720 continuity PR with EOF from the Cosmos vNext emulator while creating a database in the `sproc-missing-404` subtest. The emulator passed its readiness probe and the first two scenarios (`sproc-crud`, `sproc-create-and-execute`) ran, then the data-plane connection was reset before the third scenario's `POST /dbs`. The raw-REST helper in `cosmos_scripts_differential_test.go` currently fatals on the first transport error. Fix by retrying a small number of transient network errors (EOF, unexpected EOF, temporary/timeout `net.Error`) inside `cosmosRESTReq`, matching the resilience the official `azcosmos` SDK provides for the SDK-based differential test. |
 | 2252 | P2 | simulator conformance gates | behavioral/cross-service coverage gap | The `serviceCoverageFloor`/`gcpMethodFloor`/`azureMethodFloor` gates and `TestServiceConformance` measure endpoint-count and wire-shape fidelity, not behavioral side-effect fidelity. Background evaluators (CloudWatch alarms, Application Auto Scaling target tracking, ECS service scheduler), protocol listeners (Route 53 DNS, ELBv2 TLS/NLB proxies), and cross-service dispatch (alarm→SNS, metric-filter→PutMetricData, DLQ→redrive) can be stored-but-not-enforced without failing any gate. A new behavioral gate — or a canonical-client test matrix that asserts the side effect resolves (DNS record round-trips, alarm JSON arrives at SNS, scaling action changes DesiredCount, etc.) — is needed to catch this class before merge. Distilled from the ten issues fixed in #703-#712; see `WHAT_WE_DID.md` for the audit note. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
