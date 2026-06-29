@@ -2,6 +2,25 @@ import { test, expect, type Page } from "@playwright/test";
 import fs from "fs";
 import path from "path";
 
+// Fail e2e tests on browser console errors or uncaught page exceptions.
+// Warnings are logged to stdout for audit visibility but do not fail the test.
+test.beforeEach(({ page }, testInfo) => {
+  page.on("console", (msg) => {
+    const text = msg.text();
+    const type = msg.type();
+    if (type === "error") {
+      throw new Error(`Console error in ${testInfo.title}: ${text}`);
+    }
+    if (type === "warning") {
+      // eslint-disable-next-line no-console
+      console.warn(`[browser warning] ${testInfo.title}: ${text}`);
+    }
+  });
+  page.on("pageerror", (err) => {
+    throw new Error(`Uncaught page error in ${testInfo.title}: ${err.message}`);
+  });
+});
+
 // Screenshots land in temp/screenshots/ (gitignored). Created lazily.
 // process.cwd() = sockerless/ui/packages/bleephub when Playwright runs
 const SCREENSHOT_DIR = path.resolve(process.cwd(), "../../../temp/screenshots");

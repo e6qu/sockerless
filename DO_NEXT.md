@@ -4,11 +4,21 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`chore/continuity-post-720` (PR #721) — BUG-2260 fix + dependency freshness boyscout update pushed. Next step is to wait for the `sim (azure)` CI job (and the rest of the matrix) to pass, then merge via the normal PR flow.
+`feat/bleephub-comprehensive-audit-2026-06-29` — comprehensive bleephub + UI audit. Scope: fidelity checks against the `gh` CLI / GitHub API, UI/UX parity with vision + screenshots across light/dark themes and key surfaces, browser-console / build / test error inspection, extended fuzz targets, and boyscout fixes for any incidental bugs found.
 
 ---
-### Current task: BUG-2260 — Azure Cosmos emulator EOF flake (done)
-The `sim (azure)` SDK-test job failed on PR #721 with `Post "http://127.0.0.1:8081/dbs": EOF` in `TestCosmosScripts_DifferentialVsEmulator/sproc-missing-404`. Fixed by adding transient-error retry logic to `cosmosRESTReq` in `simulators/azure/sdk-tests/cosmos_scripts_differential_test.go`. The pre-push `check-latest-deps` hook then flagged pre-existing AWS SDK patch-version drift in six modules; cleared those with `make upgrade-deps`. Both changes are on `chore/continuity-post-720` and pushed.
+### Current task: comprehensive bleephub + UI audit — DONE
+The audit completed on `feat/bleephub-comprehensive-audit-2026-06-29`:
+- Ran the full bleephub validation matrix: Go tests with `-race`, UI typecheck/tests/build, Playwright e2e with 31 screenshots, and extended fuzz targets.
+- Found and fixed **BUG-2261**: `github.com/graphql-go/graphql` panicked on `query($A:){A}` (empty variable type); `bleephub/gh_graphql.go` now pre-validates queries with `graphqlValidateNoPanic` and returns a GraphQL `errors[]` envelope instead of crashing. The crash input is preserved as a fuzz regression seed.
+- Found and fixed a **UI rendering bug** in the shared `DataTable` component (`ui/packages/core/src/components/DataTable.tsx`): `border-collapse` plus Tailwind-only padding caused adjacent columns to visually merge (e.g. "CI Pipeline#1", "admin/ci-demo6/30/2026", "buildbuild"). Switched to `border-collapse: separate` with explicit inline cell padding and subtle right borders between columns.
+- Improved GitHub-parity in the workflow run detail jobs table (`ui/packages/bleephub/src/pages/WorkflowDetailPage.tsx`): replaced redundant separate `Key` + `Name` columns with a single `Job` column showing the display name and the key only when it differs.
+- Added browser console/page-error detection to the Playwright e2e harness (`ui/packages/bleephub/e2e/bleephub.spec.ts`); the 21 e2e tests passed with no console errors or uncaught exceptions.
+- Spot-checked GitHub API fidelity with curl against `/api/v3/user`, `/api/v3/user/repos`, and issue CRUD endpoints; response shapes and URL fields are GitHub-compatible.
+
+All validation passes: bleephub Go tests/race/lint, UI typecheck/tests/build, Playwright e2e, and extended fuzz targets.
+
+**Next:** commit the fixes, update continuity files, rebase on `origin/main`, and open PR #722.
 
 ---
 ### Prior branch (merged #720): bleephub + UI audit (BUG-2258/2259)

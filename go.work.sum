@@ -626,6 +626,7 @@ contrib.go.opencensus.io/exporter/stackdriver v0.13.15-0.20230702191903-2de6d274
 contrib.go.opencensus.io/exporter/stackdriver v0.13.15-0.20230702191903-2de6d2748484/go.mod h1:uxw+4/0SiKbbVSD/F2tk5pJTdVcfIBBcsQ8gwcu4X+E=
 cyphar.com/go-pathrs v0.2.1 h1:9nx1vOgwVvX1mNBWDu93+vaceedpbsDqo+XuBGL40b8=
 cyphar.com/go-pathrs v0.2.1/go.mod h1:y8f1EMG7r+hCuFf/rXsKqMJrJAUoADZGNh5/vZPKcGc=
+cyphar.com/go-pathrs v0.2.5/go.mod h1:y8f1EMG7r+hCuFf/rXsKqMJrJAUoADZGNh5/vZPKcGc=
 dmitri.shuralyov.com/gpu/mtl v0.0.0-20190408044501-666a987793e9/go.mod h1:H6x//7gZCb22OMCxBHrMx7a5I7Hp++hsVxbQ4BYO7hU=
 git.sr.ht/~sbinet/gg v0.6.0 h1:RIzgkizAk+9r7uPzf/VfbJHBMKUr0F5hRFxTUGMnt38=
 git.sr.ht/~sbinet/gg v0.6.0/go.mod h1:uucygbfC9wVPQIfrmwM2et0imr8L7KQWywX0xpFMm94=

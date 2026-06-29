@@ -64,24 +64,25 @@ export function WorkflowDetailPage() {
   const jobs = Object.values(wf.jobs).sort((a, b) => a.key.localeCompare(b.key));
 
   const columns = [
-    col.accessor("key", {
-      header: "Key",
-      cell: (info) => (
-        <span
-          className="font-mono"
-          style={{ color: "var(--color-accent)" }}
-        >
-          {info.getValue()}
-        </span>
-      ),
-    }),
     col.accessor("displayName", {
-      header: "Name",
-      cell: (info) => (
-        <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-          {info.getValue()}
-        </span>
-      ),
+      header: "Job",
+      cell: (info) => {
+        const job = info.row.original;
+        const name = info.getValue();
+        return (
+          <span className="inline-flex items-center gap-2">
+            <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>{name}</span>
+            {job.key !== name && (
+              <span
+                className="font-mono"
+                style={{ color: "var(--color-accent)", fontSize: "0.75em" }}
+              >
+                {job.key}
+              </span>
+            )}
+          </span>
+        );
+      },
     }),
     col.accessor("status", {
       header: "Status",

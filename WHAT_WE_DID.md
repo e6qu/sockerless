@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-29 - bleephub comprehensive audit: GraphQL panic fix + DataTable rendering fix (BUG-2261)
+
+A full bleephub + UI audit on `feat/bleephub-comprehensive-audit-2026-06-29` ran the complete validation matrix and fixed two real bugs surfaced by fuzzing and screenshot inspection.
+
+**GraphQL validation panic (BUG-2261).** `FuzzGraphQLWithVariables` discovered that `query($A:){A}` — a syntactically parseable but invalid variable definition with an empty Named type — causes `github.com/graphql-go/graphql` to dereference a nil pointer inside `typeFromAST`/`TypeInfo.Enter`. The panic escaped `graphql.Do` and crashed the request handler. `bleephub/gh_graphql.go` now calls `graphqlValidateNoPanic` before executing a query; the helper parses and validates the AST inside a `recover()` and returns a descriptive error for malformed documents, which the handler converts into a GitHub-shaped GraphQL `errors[]` envelope with HTTP 200. The crash input is committed as a regression seed in `bleephub/testdata/fuzz/FuzzGraphQLWithVariables/897d11eedb038f37`.
+
+**DataTable column-merging rendering bug.** Playwright screenshots revealed that every `DataTable`-backed surface had adjacent columns visually fused: the workflow runs list showed "CI Pipeline#1" and "admin/ci-demo6/30/2026, 1:41:33 AM2", and the workflow run detail jobs table showed "buildbuild" / "test test". The root cause was `border-collapse: collapse` combined with Tailwind-only padding (`px-3`) on table cells; the collapsed model and the small font made the inter-cell padding disappear. `ui/packages/core/src/components/DataTable.tsx` now uses `border-collapse: separate` with `borderSpacing: 0`, explicit inline horizontal/vertical padding on every `th`/`td`, and a subtle right border between columns so the table remains dense but readable.
+
+**Workflow run detail GitHub parity.** The jobs table previously showed separate `Key` and `Name` columns that were identical for simple jobs, contributing to the merged-column appearance and diverging from GitHub's single job-name list. `ui/packages/bleephub/src/pages/WorkflowDetailPage.tsx` now renders one `Job` column with the display name and a muted monospaced key only when `key != displayName`.
+
+**E2E console/error auditing.** `ui/packages/bleephub/e2e/bleephub.spec.ts` now attaches listeners for `console` and `pageerror` on every test: console `error` messages and uncaught page exceptions fail the test, while warnings are logged to stdout for audit visibility. The full Playwright suite (21/21 tests, 31 screenshots across light/dark themes and key surfaces) passed with no console errors or page errors.
+
+**API fidelity spot-check.** curl checks against `/api/v3/user`, `/api/v3/user/repos`, repo create, issue create, and issue list returned GitHub-compatible response shapes with correct `html_url`/`url` fields and REST simple-user-style embedded owner objects.
+
+Tests: bleephub `make test` and `make lint` pass; `go test -race ./...` passes; UI `typecheck`, `test`, and `build` pass; Playwright e2e passes (21/21); all bleephub fuzz targets ran extended durations without new crashes.
+
 ## 2026-06-29 - Azure Cosmos emulator transient-EOF flake fix (BUG-2260)
 
 The post-#720 continuity PR (#721) failed in `sim (azure)` with `Post "http://127.0.0.1:8081/dbs": EOF` inside `TestCosmosScripts_DifferentialVsEmulator/sproc-missing-404`. The vNext Cosmos emulator passed its SDK-based readiness probe and completed the first two subtests, then reset the raw-REST data-plane connection before the third scenario's database creation.

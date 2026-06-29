@@ -7,6 +7,8 @@ import (
 
 	"github.com/graphql-go/graphql"
 	"github.com/graphql-go/graphql/gqlerrors"
+	"github.com/graphql-go/graphql/language/parser"
+	"github.com/graphql-go/graphql/language/source"
 )
 
 // ghNotFoundError marks a resolver lookup miss that must surface as a
@@ -145,6 +147,18 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// graphql-go panics on some syntactically-parsed-but-invalid variable
+	// definitions (e.g. `query($A:){A}` — an empty Named type). Pre-validate
+	// the parsed AST so malformed queries return a GraphQL errors[] envelope
+	// instead of crashing the handler.
+	if err := graphqlValidateNoPanic(s.graphqlSchema, req.Query); err != nil {
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"data":   nil,
+			"errors": []map[string]interface{}{{"message": err.Error()}},
+		})
+		return
+	}
+
 	result := graphql.Do(graphql.Params{
 		Schema:         s.graphqlSchema,
 		RequestString:  req.Query,
@@ -189,6 +203,30 @@ func (s *Server) handleGraphQL(w http.ResponseWriter, r *http.Request) {
 		out["errors"] = errItems
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// graphqlValidateNoPanic parses and validates a GraphQL query against schema
+// without letting graphql-go's panics escape. It returns an error only for
+// malformed documents that would otherwise crash the library; syntactically
+// invalid but safe documents are left to graphql.Do to report normally.
+func graphqlValidateNoPanic(schema graphql.Schema, query string) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("graphql validation panic: %v", r)
+		}
+	}()
+	src := source.NewSource(&source.Source{Body: []byte(query), Name: "GraphQL request"})
+	AST, parseErr := parser.Parse(parser.ParseParams{Source: src})
+	if parseErr != nil {
+		return fmt.Errorf("graphql parse error: %w", parseErr)
+	}
+	validationResult := graphql.ValidateDocument(&schema, AST, nil)
+	if !validationResult.IsValid {
+		// Validation errors are normal GraphQL failures; let graphql.Do return
+		// them in its standard errors[] envelope.
+		return nil
+	}
+	return nil
 }
 
 // userToGraphQL converts a User to a map with camelCase keys for GraphQL resolvers.
