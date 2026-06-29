@@ -4,13 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/aws-budgets-terraform-parity-714` — closing issue #714 (AWS Budgets Terraform lifecycle gaps: missing implicit `AccountId` derivation + `ListTagsForResource`). Rebase on `origin/main` before opening the PR.
-
-**Next candidates after this branch:** resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+No active branch. Last merged PR is #715. Next candidates: resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
 
 ---
-### Prior branch (in progress): AWS Budgets Terraform parity (#714, BUG-2255)
-`fix/aws-budgets-terraform-parity-714` closes the Terraform lifecycle gaps in the AWS Budgets service slice. `CreateBudget`/`DescribeBudget`/`DeleteBudget`/`UpdateBudget`/`DescribeBudgets` now derive `AccountId` from `awsAccountID()` when the request omits it, matching real AWS behavior when the caller's signing credentials supply the account (the path used by `terraform-provider-aws` with `skip_requesting_account_id = true`). `ListTagsForResource`, `TagResource`, and `UntagResource` are implemented so `aws_budgets_budget` can complete its Create+Read+Delete cycle. SDK tests cover tag round-trips and the implicit-account raw-HTTP path; the terraform-tests production-shape stack gained a `aws_budgets_budget` resource plus endpoint alias and assertions.
+### Prior branch (merged #715): AWS Budgets Terraform parity (#714, BUG-2255)
+`fix/aws-budgets-terraform-parity-714` closed the Terraform lifecycle gaps in the AWS Budgets service slice. `CreateBudget`/`DescribeBudget`/`DeleteBudget`/`UpdateBudget`/`DescribeBudgets` now derive `AccountId` from `awsAccountID()` when the request omits it, matching real AWS behavior when the caller's signing credentials supply the account (the path used by `terraform-provider-aws` with `skip_requesting_account_id = true`). `ListTagsForResource`, `TagResource`, and `UntagResource` are implemented so `aws_budgets_budget` can complete its Create+Read+Delete cycle. SDK tests cover tag round-trips and the implicit-account raw-HTTP path; the terraform-tests production-shape stack gained an `aws_budgets_budget` resource plus endpoint alias and assertions. Boyscout: corrected the SQS missing-queue error `__type` to `AWS.SimpleQueueService.NonExistentQueue`.
 
 ---
 ### Prior branch (merged #713): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251, plus CI-caught BUG-2253/2254)
