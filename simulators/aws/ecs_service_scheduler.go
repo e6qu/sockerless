@@ -202,6 +202,36 @@ func ecsServiceTasksForGroup(clusterArn, group string) []ECSTask {
 	})
 }
 
+// ecsServiceWithLiveCounts returns a copy of svc whose RunningCount and
+// PendingCount (and the primary deployment's counts) reflect the actual task
+// set stored in ecsTasks. DescribeServices uses this so callers always see
+// counts consistent with DescribeTasks, regardless of scheduler-tick timing.
+func ecsServiceWithLiveCounts(svc ECSService) ECSService {
+	group := ecsServiceTaskGroup(svc.ServiceName)
+	runningCount, pendingCount := 0, 0
+	for _, t := range ecsServiceTasksForGroup(svc.ClusterArn, group) {
+		switch t.LastStatus {
+		case ECSTaskStatusRunning:
+			runningCount++
+		case ECSTaskStatusProvisioning, ECSTaskStatusPending:
+			pendingCount++
+		}
+	}
+	if svc.RunningCount != runningCount {
+		svc.RunningCount = runningCount
+	}
+	if svc.PendingCount != pendingCount {
+		svc.PendingCount = pendingCount
+	}
+	if len(svc.Deployments) > 0 {
+		svc.Deployments[0].RunningCount = runningCount
+		svc.Deployments[0].PendingCount = pendingCount
+		svc.Deployments[0].DesiredCount = svc.DesiredCount
+		svc.Deployments[0].UpdatedAt = float64(time.Now().Unix())
+	}
+	return svc
+}
+
 // ecsStopServiceTasks drains every non-STOPPED task for a service. Called
 // from DeleteService so a deleted service's tasks don't keep running.
 func ecsStopServiceTasks(svc ECSService) {

@@ -438,6 +438,11 @@ func handleECSDescribeServices(w http.ResponseWriter, r *http.Request) {
 	for _, ref := range req.Services {
 		name := ecsServiceNameFromRef(ref)
 		if svc, ok := ecsServices.Get(ecsServiceKey(clusterName, name)); ok {
+			// RunningCount/PendingCount are derived from the live task set so
+			// DescribeServices is always consistent with DescribeTasks, even
+			// when the asynchronous scheduler has not yet refreshed the cached
+			// counts stored on the service object.
+			svc = ecsServiceWithLiveCounts(svc)
 			services = append(services, svc)
 		} else {
 			failures = append(failures, map[string]string{

@@ -4,13 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`chore/continuity-and-open-issues` — closing open GitHub issues #703-#712 (AWS simulator stored-but-not-enforced sweep + Budgets service slice) and documenting the systematic root cause in BUGS.md/WHAT_WE_DID.md. Rebase on `origin/main` before opening the PR.
+`chore/continuity-and-open-issues` — closing open GitHub issues #703-#712 (AWS simulator stored-but-not-enforced sweep + Budgets service slice) and fixing two CI-caught regressions from that sweep (scheduler `DescribeServices.RunningCount` race and empty-SG deny-all in EC2 host-firewall enforcement). Rebase on `origin/main` before opening the PR; PR #713 is already open and being iterated to green.
 
 **Next candidates after this branch:** resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
 
 ---
-### Prior branch (in progress): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251)
+### Prior branch (in progress): AWS simulator stored-but-not-enforced sweep + Budgets service slice (#703-#712, BUG-2242 through BUG-2251, plus CI-caught BUG-2253/2254)
 Closed all ten open AWS-focused GitHub issues. Each fix ships real side effects and SDK tests: SQS DLQ redrive, ACM real PEM minting, AWS Budgets service slice, Route 53 DNS server, CloudWatch Logs metric-filter→metric publishing, CloudWatch alarm→SNS dispatch, Application Auto Scaling target tracking for ECS, ELBv2 HTTPS/TLS termination, ECS service scheduler, and EC2 security-group host-firewall enforcement. Added `allowedNonSpecTargets` to `spec_conformance_test.go` for the Budgets service, which is real but not in the vendored Smithy corpus. Added deterministic unit tests for the ECS scheduler because the SDK integration test requires a healthy container runtime. Identified and filed BUG-2252: the conformance/coverage gates do not catch behavioral side-effect gaps (background evaluators, protocol listeners, cross-service dispatch); documented in WHAT_WE_DID.md.
+
+The PR #713 CI run surfaced two regressions in the new code and they were fixed in the same branch:
+- **BUG-2253:** `TestECS_ServiceScheduler_ReconcilesDesiredCount` flaked because `DescribeServices.RunningCount` lagged behind `DescribeTasks.LastStatus`. Fixed by computing the counts from the live task set in `handleECSDescribeServices`.
+- **BUG-2254:** #712's host-firewall enforcement installed a deny-all filter when an awsvpc task/ENI had no explicit security groups, breaking VPC reachability tests. Fixed by clearing the ingress filter instead of applying an empty ruleset when the SG list is empty.
 
 ---
 ### Prior branch (merged #702): second GCP gRPC round (Cloud KMS + Secret Manager) + Compute v1 control-plane tranche #2 (BUG-2240) + AWS ECS ExecuteCommand flake fix (BUG-2241)

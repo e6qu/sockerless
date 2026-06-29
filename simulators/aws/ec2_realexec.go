@@ -477,6 +477,23 @@ func ec2ApplyRealNICSecurityGroups(ctx context.Context, eniID string, securityGr
 	if nic == nil && tap == nil {
 		return nil
 	}
+	// No security groups means default-allow (no host-level ingress filter).
+	// This matches the pre-enforcement behaviour and avoids breaking tasks
+	// launched without an explicit SG, which AWS would assign to the VPC's
+	// default SG but the simulator does not model yet.
+	if len(securityGroupIDs) == 0 {
+		if nic != nil {
+			if err := nic.ClearIngressFilter(ctx); err != nil {
+				return err
+			}
+		}
+		if tap != nil {
+			if err := tap.ClearIngressFilter(ctx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 	rules := ec2BuildIngressPacketRules(securityGroupIDs)
 	if nic != nil {
 		if err := nic.ConfigureIngressFilter(ctx, rules); err != nil {
@@ -503,6 +520,12 @@ func ec2ApplyRealECSTaskSecurityGroups(ctx context.Context, taskID string, secur
 	ec2RealMu.Unlock()
 	if nic == nil {
 		return nil
+	}
+	// No security groups means default-allow. An empty ruleset would install a
+	// deny-all filter (the realexec layer ends every filter with a drop rule),
+	// breaking tasks that rely on the previous default-allow behaviour.
+	if len(securityGroupIDs) == 0 {
+		return nic.ClearIngressFilter(ctx)
 	}
 	return nic.ConfigureIngressFilter(ctx, ec2BuildIngressPacketRules(securityGroupIDs))
 }
