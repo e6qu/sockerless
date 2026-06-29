@@ -23,7 +23,7 @@ SDK and CLI tests were added for both fixes:
 
 All targeted SDK and CLI tests pass; `make lint` in `simulators/aws` is clean.
 
-**Next:** commit the fixes and continuity-file updates, rebase on `origin/main`, and open PR #725.
+**Next:** PR #725 is open and rebased on `origin/main`; awaiting user merge. After merge, rotate continuity files to the post-#725 state.
 
 ---
 ### Prior branch (merged #724): bleephub + UI audit (BUG-2261)
