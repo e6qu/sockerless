@@ -66,6 +66,7 @@ export function DataTable<T>({
           background: color-mix(in oklch, var(--color-accent-soft) 55%, var(--color-surface));
         }
       `}</style>
+
       <div
         className="flex items-center justify-between gap-4 px-3 py-2"
         style={{ borderBottom: "1px solid var(--color-border)" }}
@@ -95,29 +96,38 @@ export function DataTable<T>({
       <div className="overflow-x-auto">
         <table
           className="min-w-full font-mono"
-          style={{ fontSize: "0.78rem", borderCollapse: "collapse" }}
+          style={{
+            fontSize: "0.78rem",
+            borderCollapse: "separate",
+            borderSpacing: 0,
+          }}
         >
           <thead style={{ background: "var(--color-bg-subtle)" }}>
             {table.getHeaderGroups().map((hg) => (
               <tr key={hg.id}>
-                {hg.headers.map((header) => {
+                {hg.headers.map((header, idx) => {
                   const sort = header.column.getIsSorted();
                   const canSort = header.column.getCanSort();
                   const ariaSort: React.AriaAttributes["aria-sort"] =
                     sort === "asc" ? "ascending" : sort === "desc" ? "descending" : canSort ? "none" : undefined;
+                  const isLastHeader = idx === hg.headers.length - 1;
                   return (
                     <th
                       key={header.id}
                       scope="col"
                       aria-sort={ariaSort}
-                      className="select-none px-3 py-2 text-left uppercase tracking-[0.15em]"
+                      className="select-none text-left uppercase tracking-[0.15em]"
                       style={{
+                        padding: "0.5rem 0.75rem",
                         fontSize: "0.62rem",
                         fontWeight: 500,
                         color: sort
                           ? "var(--color-accent)"
                           : "var(--color-fg-subtle)",
                         borderBottom: "1px solid var(--color-border)",
+                        borderRight: isLastHeader
+                          ? undefined
+                          : "1px solid color-mix(in oklch, var(--color-border) 35%, transparent)",
                         whiteSpace: "nowrap",
                       }}
                     >
@@ -161,8 +171,9 @@ export function DataTable<T>({
               <tr>
                 <td
                   colSpan={columns.length}
-                  className="px-3 py-8 text-center font-mono uppercase tracking-[0.2em]"
+                  className="text-center font-mono uppercase tracking-[0.2em]"
                   style={{
+                    padding: "2rem 0.75rem",
                     fontSize: "0.7rem",
                     color: "var(--color-fg-subtle)",
                   }}
@@ -197,20 +208,26 @@ export function DataTable<T>({
                     "--reveal-delay": `${Math.min(i * 16, 240)}ms`,
                   } as React.CSSProperties}
                 >
-                  {row.getVisibleCells().map((cell) => (
-                    <td
-                      key={cell.id}
-                      className="px-3 py-1.5"
-                      style={{
-                        borderBottom:
-                          "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
-                        whiteSpace: "nowrap",
-                        color: "var(--color-fg)",
-                      }}
-                    >
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </td>
-                  ))}
+                  {row.getVisibleCells().map((cell, idx) => {
+                    const isLastCell = idx === row.getVisibleCells().length - 1;
+                    return (
+                      <td
+                        key={cell.id}
+                        style={{
+                          padding: "0.375rem 0.75rem",
+                          borderBottom:
+                            "1px solid color-mix(in oklch, var(--color-border) 60%, transparent)",
+                          borderRight: isLastCell
+                            ? undefined
+                            : "1px solid color-mix(in oklch, var(--color-border) 35%, transparent)",
+                          whiteSpace: "nowrap",
+                          color: "var(--color-fg)",
+                        }}
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </td>
+                    );
+                  })}
                 </tr>
               ))
             )}
