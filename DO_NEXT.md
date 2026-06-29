@@ -4,7 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-No active branch. Last merged PR is #715. Next candidates: resume the GCP/Azure ratchet arcs (Compute v1 real-exec remainders, Dataproc, Azure web-arm/msgraph), or the live-cloud track (BUG-1075).
+`feat/bleephub-fidelity-audit-2026-06-29` — bleephub fidelity audit: implement runner `AgentRefreshMessage` broker delivery (BUG-2256), fix GraphQL `repositoryOwner(login:)` to return real organization data instead of a synthetic partial User-shaped object (BUG-2257), and correct the stale "Artifact + cache stubs" comment in `server.go`. Tests: bleephub Go tests + race + fuzz, UI tests/typecheck/build, `make bleephub-gh-docker-test`, `make bleephub-runner-docker-test`.
+
+---
+### Prior branch (merged #716): continuity rotation after #715
+No code change; `STATUS.md`/`DO_NEXT.md` reconciled to the post-#715 state.
 
 ---
 ### Prior branch (merged #715): AWS Budgets Terraform parity (#714, BUG-2255)

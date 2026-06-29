@@ -1,8 +1,11 @@
 package bleephub
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
+	"strconv"
+	"time"
 )
 
 func (s *Server) registerMgmtRoutes() {
@@ -15,6 +18,7 @@ func (s *Server) registerMgmtRoutes() {
 	s.route("GET /internal/oauth/state", s.handleOAuthStateInternal)
 	s.route("GET /internal/sessions", s.handleListSessions)
 	s.route("GET /internal/repos", s.handleListRepos)
+	s.route("POST /internal/agents/{agent_id}/refresh-message", s.handleAgentRefreshMessage)
 }
 
 // appView / installationView / oauthState — operator-facing admin
@@ -340,4 +344,55 @@ func (s *Server) handleListRepos(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, repos)
+}
+
+// handleAgentRefreshMessage — POST /internal/agents/{agent_id}/refresh-message
+//
+// Sim-control endpoint that tells bleephub to deliver an AgentRefreshMessage
+// to the named agent's open session(s). Real GitHub pushes this message when
+// a newer runner package is available; bleephub has no update feed, so the
+// operator/test harness triggers it explicitly. Requires site-admin token.
+func (s *Server) handleAgentRefreshMessage(w http.ResponseWriter, r *http.Request) {
+	caller := ghUserFromContext(r.Context())
+	if caller == nil || !caller.SiteAdmin {
+		writeGHError(w, http.StatusForbidden, "Must be a site administrator.")
+		return
+	}
+
+	agentID, err := strconv.Atoi(r.PathValue("agent_id"))
+	if err != nil || agentID == 0 {
+		writeGHError(w, http.StatusBadRequest, "invalid agent id")
+		return
+	}
+
+	var req struct {
+		TargetVersion string `json:"targetVersion"`
+		Timeout       string `json:"timeout"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeGHError(w, http.StatusBadRequest, "invalid JSON")
+		return
+	}
+	if req.TargetVersion == "" {
+		writeGHValidationError(w, "AgentRefreshMessage", "targetVersion", "missing_field")
+		return
+	}
+
+	timeout := 5 * time.Minute
+	if req.Timeout != "" {
+		if d, err := time.ParseDuration(req.Timeout); err == nil {
+			timeout = d
+		}
+	}
+
+	s.store.mu.RLock()
+	_, exists := s.store.Agents[agentID]
+	s.store.mu.RUnlock()
+	if !exists {
+		writeGHError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+
+	s.sendAgentRefreshMessage(agentID, req.TargetVersion, timeout)
+	w.WriteHeader(http.StatusAccepted)
 }

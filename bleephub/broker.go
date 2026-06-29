@@ -243,6 +243,44 @@ func isHostedPoolAlias(lower string) bool {
 		strings.HasPrefix(lower, "windows-")
 }
 
+// sendAgentRefreshMessage pushes an AgentRefreshMessage to every session
+// for the given agent. Real GitHub sends this when a newer runner version
+// is available; the runner's self-updater downloads the target package and
+// restarts. The message rides the session channel exactly like a
+// cancellation so it reaches the runner's open long-poll.
+func (s *Server) sendAgentRefreshMessage(agentID int, targetVersion string, timeout time.Duration) {
+	if agentID == 0 || targetVersion == "" {
+		return
+	}
+	s.store.mu.Lock()
+	defer s.store.mu.Unlock()
+	body, err := json.Marshal(map[string]interface{}{
+		"agentId":       agentID,
+		"targetVersion": targetVersion,
+		"timeout":       timeout.String(),
+	})
+	if err != nil {
+		s.logger.Error().Err(err).Int("agentId", agentID).Msg("failed to marshal AgentRefreshMessage")
+		return
+	}
+	msg := &TaskAgentMessage{
+		MessageID:   s.store.NextMsg,
+		MessageType: "AgentRefreshMessage",
+		Body:        string(body),
+	}
+	s.store.NextMsg++
+	for _, sess := range s.store.Sessions {
+		if sess.Agent != nil && sess.Agent.ID == agentID {
+			select {
+			case sess.MsgCh <- msg:
+				s.logger.Info().Int("agentId", agentID).Str("version", targetVersion).Msg("AgentRefreshMessage sent to runner")
+			default:
+				s.logger.Error().Int("agentId", agentID).Msg("AgentRefreshMessage channel full")
+			}
+		}
+	}
+}
+
 // sendJobCancellation pushes a JobCancellation message at the runner
 // executing the job. Unlike job requests (pull-only), cancellations go
 // through the session channel: the runner's listener keeps a poll open
