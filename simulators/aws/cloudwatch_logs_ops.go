@@ -168,6 +168,11 @@ func handleCWPutMetricFilter(w http.ResponseWriter, r *http.Request) {
 			"The specified log group does not exist: %s", req.LogGroupName)
 		return
 	}
+	if _, err := cwCompileLogPattern(req.FilterPattern); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"Invalid filter pattern: %s", err.Error())
+		return
+	}
 	key := cwFilterKey(req.LogGroupName, req.FilterName)
 	creation := time.Now().UnixMilli()
 	if existing, ok := cwMetricFilters.Get(key); ok {
@@ -311,6 +316,11 @@ func handleCWPutSubscriptionFilter(w http.ResponseWriter, r *http.Request) {
 	if _, ok := cwLogGroups.Get(req.LogGroupName); !ok {
 		sim.AWSErrorf(w, "ResourceNotFoundException", http.StatusBadRequest,
 			"The specified log group does not exist: %s", req.LogGroupName)
+		return
+	}
+	if _, err := cwCompileLogPattern(req.FilterPattern); err != nil {
+		sim.AWSErrorf(w, "InvalidParameterException", http.StatusBadRequest,
+			"Invalid filter pattern: %s", err.Error())
 		return
 	}
 	key := cwFilterKey(req.LogGroupName, req.FilterName)

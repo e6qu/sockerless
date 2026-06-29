@@ -2613,9 +2613,19 @@ func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 	groupId := r.FormValue("GroupId")
 	perm := parseIpPermission(r, "IpPermissions.1")
 
+	var found bool
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		sg.IpPermissions = removePermission(sg.IpPermissions, perm)
+		found = ec2PermissionExists(sg.IpPermissions, perm)
+		if found {
+			sg.IpPermissions = removePermission(sg.IpPermissions, perm)
+		}
 	})
+	if !found {
+		ec2ErrorXML(w, "InvalidPermission.NotFound",
+			"The specified rule does not exist in this security group.",
+			http.StatusBadRequest)
+		return
+	}
 	deleteSecurityGroupRules(groupId, perm, false)
 	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
@@ -2632,9 +2642,19 @@ func handleRevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
 	groupId := r.FormValue("GroupId")
 	perm := parseIpPermission(r, "IpPermissions.1")
 
+	var found bool
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
+		found = ec2PermissionExists(sg.IpPermissionsEgress, perm)
+		if found {
+			sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
+		}
 	})
+	if !found {
+		ec2ErrorXML(w, "InvalidPermission.NotFound",
+			"The specified rule does not exist in this security group.",
+			http.StatusBadRequest)
+		return
+	}
 	deleteSecurityGroupRules(groupId, perm, true)
 	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
 		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group egress rules: %v", err), http.StatusServiceUnavailable)
@@ -5416,6 +5436,21 @@ func removePermission(perms []EC2IpPermission, target EC2IpPermission) []EC2IpPe
 		result = append(result, p)
 	}
 	return result
+}
+
+// ec2PermissionExists reports whether target matches a permission already
+// present in perms. It is used by the revoke handlers to return
+// InvalidPermission.NotFound for non-existent rules, matching real AWS behavior
+// for security groups in non-default VPCs.
+func ec2PermissionExists(perms []EC2IpPermission, target EC2IpPermission) bool {
+	targetKey := permSourceKey(target)
+	for _, p := range perms {
+		if p.IpProtocol == target.IpProtocol && p.FromPort == target.FromPort &&
+			p.ToPort == target.ToPort && permSourceKey(p) == targetKey {
+			return true
+		}
+	}
+	return false
 }
 
 // permSourceKey is a canonical, order-independent key over a permission's

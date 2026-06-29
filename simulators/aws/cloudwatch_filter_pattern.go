@@ -41,7 +41,10 @@ func cwCompileLogPattern(pattern string) (*cwCompiledPattern, error) {
 	if pattern == "" {
 		return nil, nil
 	}
-	if strings.HasPrefix(pattern, "{") && strings.HasSuffix(pattern, "}") {
+	if strings.HasPrefix(pattern, "{") {
+		if !strings.HasSuffix(pattern, "}") {
+			return nil, fmt.Errorf("invalid filter pattern: unbalanced braces")
+		}
 		node, err := cwParseStructuredPattern(pattern[1 : len(pattern)-1])
 		if err != nil {
 			return nil, err

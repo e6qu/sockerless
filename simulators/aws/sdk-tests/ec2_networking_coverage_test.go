@@ -125,6 +125,11 @@ func TestEC2_RevokeSecurityGroupRules(t *testing.T) {
 	_, err = c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{GroupId: aws.String(sgID), IpPermissions: ingress})
 	require.NoError(t, err)
 
+	// Revoking the same rule a second time must fail with InvalidPermission.NotFound.
+	_, err = c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{GroupId: aws.String(sgID), IpPermissions: ingress})
+	require.Error(t, err)
+	requireSGErrorCode(t, err, "InvalidPermission.NotFound")
+
 	// Default egress (all traffic) — revoke it and confirm it's gone.
 	egress := []ec2types.IpPermission{{
 		IpProtocol: aws.String("-1"), IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
@@ -133,6 +138,11 @@ func TestEC2_RevokeSecurityGroupRules(t *testing.T) {
 	require.NoError(t, err)
 	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{GroupId: aws.String(sgID), IpPermissions: egress})
 	require.NoError(t, err)
+
+	// Egress re-revoke must also fail with InvalidPermission.NotFound.
+	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{GroupId: aws.String(sgID), IpPermissions: egress})
+	require.Error(t, err)
+	requireSGErrorCode(t, err, "InvalidPermission.NotFound")
 
 	desc, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{sgID}})
 	require.NoError(t, err)

@@ -4,24 +4,30 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-comprehensive-audit-2026-06-29` — comprehensive bleephub + UI audit. Scope: fidelity checks against the `gh` CLI / GitHub API, UI/UX parity with vision + screenshots across light/dark themes and key surfaces, browser-console / build / test error inspection, extended fuzz targets, and boyscout fixes for any incidental bugs found.
+`feat/aws-sim-revoke-filter-validation` — fix AWS simulator EC2 security-group revoke-not-found and CloudWatch Logs filter-pattern validation (BUG-2262/2263).
 
 ---
-### Current task: comprehensive bleephub + UI audit — DONE
-The audit completed on `feat/bleephub-comprehensive-audit-2026-06-29`:
-- Ran the full bleephub validation matrix: Go tests with `-race`, UI typecheck/tests/build, Playwright e2e with 31 screenshots, and extended fuzz targets.
-- Found and fixed **BUG-2261**: `github.com/graphql-go/graphql` panicked on `query($A:){A}` (empty variable type); `bleephub/gh_graphql.go` now pre-validates queries with `graphqlValidateNoPanic` and returns a GraphQL `errors[]` envelope instead of crashing. The crash input is preserved as a fuzz regression seed.
-- Found and fixed a **UI rendering bug** in the shared `DataTable` component (`ui/packages/core/src/components/DataTable.tsx`): `border-collapse` plus Tailwind-only padding caused adjacent columns to visually merge (e.g. "CI Pipeline#1", "admin/ci-demo6/30/2026", "buildbuild"). Switched to `border-collapse: separate` with explicit inline cell padding and subtle right borders between columns.
-- Improved GitHub-parity in the workflow run detail jobs table (`ui/packages/bleephub/src/pages/WorkflowDetailPage.tsx`): replaced redundant separate `Key` + `Name` columns with a single `Job` column showing the display name and the key only when it differs.
-- Added browser console/page-error detection to the Playwright e2e harness (`ui/packages/bleephub/e2e/bleephub.spec.ts`); the 21 e2e tests passed with no console errors or uncaught exceptions.
-- Spot-checked GitHub API fidelity with curl against `/api/v3/user`, `/api/v3/user/repos`, and issue CRUD endpoints; response shapes and URL fields are GitHub-compatible.
+### Current task: AWS sim revoke/filter validation — DONE
 
-All validation passes: bleephub Go tests/race/lint, UI typecheck/tests/build, Playwright e2e, and extended fuzz targets.
+The branch fixes two simulator fidelity gaps filed from open issues #722 and #723:
 
-**Next:** commit the fixes, update continuity files, rebase on `origin/main`, and open PR #722.
+- **BUG-2262 — EC2 `RevokeSecurityGroupIngress`/`Egress` succeed for non-existent rules.** `simulators/aws/ec2.go` now checks whether the requested permission exists before mutating the security group; a second revoke of the same rule returns `InvalidPermission.NotFound`, matching the AWS SDK for Go v2 documentation for non-default VPCs. A new `ec2PermissionExists` helper compares protocol, ports, and CIDR ranges.
+
+- **BUG-2263 — CloudWatch Logs `PutMetricFilter`/`PutSubscriptionFilter` stored invalid `FilterPattern` values.** `simulators/aws/cloudwatch_logs_ops.go` now calls `cwCompileLogPattern` in both handlers and returns `InvalidParameterException` for malformed patterns, matching the CloudWatch Logs Smithy model. `simulators/aws/cloudwatch_filter_pattern.go` was also corrected so that `{` (an unbalanced brace) is rejected as a malformed structured pattern instead of treated as an unstructured term.
+
+SDK and CLI tests were added for both fixes:
+- `simulators/aws/sdk-tests/ec2_networking_coverage_test.go` — `TestEC2_RevokeSecurityGroupRules`
+- `simulators/aws/cli-tests/ec2_networking_coverage_test.go` — `TestEC2CLI_RevokeSecurityGroupRules`
+- `simulators/aws/sdk-tests/cloudwatch_logs_failloud_test.go` — `TestCloudWatchLogs_PutMetricFilterRejectsInvalidPattern`, `TestCloudWatchLogs_PutSubscriptionFilterRejectsInvalidPattern`
+- `simulators/aws/cli-tests/cloudwatch_logs_ops_test.go` — `TestLogs_PutMetricFilterCLIRejectsInvalidPattern`, `TestLogs_PutSubscriptionFilterCLIRejectsInvalidPattern`
+
+All targeted SDK and CLI tests pass; `make lint` in `simulators/aws` is clean.
+
+**Next:** commit the fixes and continuity-file updates, rebase on `origin/main`, and open PR #725.
 
 ---
-### Prior branch (merged #720): bleephub + UI audit (BUG-2258/2259)
+### Prior branch (merged #724): bleephub + UI audit (BUG-2261)
+`feat/bleephub-comprehensive-audit-2026-06-29` fixed the GraphQL panic on `query($A:){A}` via `graphqlValidateNoPanic` in `bleephub/gh_graphql.go`, fixed the `DataTable` column-merging rendering bug in `ui/packages/core/src/components/DataTable.tsx`, simplified the workflow run detail jobs table in `ui/packages/bleephub/src/pages/WorkflowDetailPage.tsx`, added Playwright console/page-error failure hooks, and spot-checked GitHub API fidelity with curl. bleephub Go tests/race/lint, UI typecheck/test/build, and Playwright e2e (21/21) pass.
 `feat/bleephub-ui-audit-2026-06-29` fixed org-aware PR owner rendering: GraphQL `PullRequest.headRepositoryOwner` now resolves the organization from `repo.FullName` for org-owned repos, and REST PR `head.user`/`base.user` now use the snake_case `simple-user` shape via the new `repoOwnerREST` helper. Added `TestPRGraphQL_OrgOwnedHeadRepositoryOwner` and extended `TestCreatePullRequestREST`. Playwright e2e passed with 31 screenshots; extended fuzz targets passed; UI tests/typecheck/build and Go tests/race/lint all pass.
 
 ---

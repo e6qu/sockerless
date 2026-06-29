@@ -77,9 +77,20 @@ func TestEC2CLI_RevokeSecurityGroupRules(t *testing.T) {
 	runCLI(t, awsCLI("ec2", "authorize-security-group-ingress", "--group-id", sg, "--ip-permissions", ingress))
 	runCLI(t, awsCLI("ec2", "revoke-security-group-ingress", "--group-id", sg, "--ip-permissions", ingress))
 
+	// Re-revoke must fail with InvalidPermission.NotFound.
+	out := runCLIExpectError(t, awsCLI("ec2", "revoke-security-group-ingress", "--group-id", sg, "--ip-permissions", ingress))
+	if !strings.Contains(out, "InvalidPermission.NotFound") {
+		t.Fatalf("re-revoke ingress error = %q, want InvalidPermission.NotFound", out)
+	}
+
 	egress := `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`
 	runCLI(t, awsCLI("ec2", "authorize-security-group-egress", "--group-id", sg, "--ip-permissions", egress))
 	runCLI(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg, "--ip-permissions", egress))
+
+	out = runCLIExpectError(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg, "--ip-permissions", egress))
+	if !strings.Contains(out, "InvalidPermission.NotFound") {
+		t.Fatalf("re-revoke egress error = %q, want InvalidPermission.NotFound", out)
+	}
 
 	ingressCount := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-security-groups", "--group-ids", sg,
 		"--query", "length(SecurityGroups[0].IpPermissions)", "--output", "text")))

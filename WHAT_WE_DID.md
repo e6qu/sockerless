@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-30 - AWS simulator fidelity: EC2 revoke-not-found + CloudWatch Logs filter validation (BUG-2262/2263, #725)
+
+A focused AWS-simulator fidelity pass closed two open issues:
+
+**EC2 `RevokeSecurityGroupIngress`/`Egress` now return `InvalidPermission.NotFound` for missing rules (BUG-2262).** Real AWS rejects a revoke request whose values do not match an existing rule in a non-default VPC. The sim's handlers in `simulators/aws/ec2.go` previously removed the permission unconditionally and returned success, so re-revoking the same rule appeared to work. They now call a new `ec2PermissionExists` helper that compares protocol, from/to ports, and CIDR ranges, and return `InvalidPermission.NotFound` when no matching rule exists. Both ingress and egress paths are fixed.
+
+**CloudWatch Logs `PutMetricFilter`/`PutSubscriptionFilter` now validate `FilterPattern` up front (BUG-2263).** The CloudWatch Logs Smithy model lists `InvalidParameterException` for both operations, and the sim already had a working pattern compiler (`cwCompileLogPattern`) used by `TestMetricFilter` and `FilterLogEvents`. The `PutMetricFilter` and `PutSubscriptionFilter` handlers in `simulators/aws/cloudwatch_logs_ops.go` now compile the pattern before storing it and return `InvalidParameterException` for malformed input. A latent parser edge case was also fixed: `cwCompileLogPattern` in `simulators/aws/cloudwatch_filter_pattern.go` treated a lone `{` as an unstructured term, so it returned success. It now rejects unbalanced braces as a malformed structured pattern.
+
+**Tests.** SDK tests in `simulators/aws/sdk-tests/ec2_networking_coverage_test.go` and `simulators/aws/sdk-tests/cloudwatch_logs_failloud_test.go`, plus CLI tests in `simulators/aws/cli-tests/ec2_networking_coverage_test.go` and `simulators/aws/cli-tests/cloudwatch_logs_ops_test.go`, assert the new error paths and confirm valid patterns/rules still succeed. All targeted SDK and CLI tests pass.
+
+Tests: `make lint` in `simulators/aws` is clean; targeted AWS SDK and CLI tests for the changed surfaces pass.
+
 ## 2026-06-29 - bleephub comprehensive audit: GraphQL panic fix + DataTable rendering fix (BUG-2261)
 
 A full bleephub + UI audit on `feat/bleephub-comprehensive-audit-2026-06-29` ran the complete validation matrix and fixed two real bugs surfaced by fuzzing and screenshot inspection.
