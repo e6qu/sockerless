@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
@@ -103,10 +105,11 @@ type KMSRotation struct {
 // with the RSA private key and uses the decrypted bytes as the CMK's
 // AES-256 key material.
 type kmsImportParams struct {
-	KeyId       string
-	ImportToken string // base64 token
-	ValidTo     float64
-	PrivateKey  *rsa.PrivateKey
+	KeyId             string
+	ImportToken       string // base64 token
+	ValidTo           float64
+	PrivateKey        *rsa.PrivateKey
+	WrappingAlgorithm string
 }
 
 var (
@@ -1164,10 +1167,11 @@ func handleKMSGetParametersForImport(w http.ResponseWriter, r *http.Request) {
 	importToken := base64.StdEncoding.EncodeToString(tokenBytes)
 	validTo := float64(time.Now().Add(24 * time.Hour).Unix())
 	kmsImportTokens.Put(importToken, kmsImportParams{
-		KeyId:       keyId,
-		ImportToken: importToken,
-		ValidTo:     validTo,
-		PrivateKey:  priv,
+		KeyId:             keyId,
+		ImportToken:       importToken,
+		ValidTo:           validTo,
+		PrivateKey:        priv,
+		WrappingAlgorithm: req.WrappingAlgorithm,
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":             keyId,
@@ -1216,7 +1220,7 @@ func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "EncryptedKeyMaterial exceeds wrapping key size", http.StatusBadRequest)
 		return
 	}
-	plaintext, err := rsa.DecryptPKCS1v15(rand.Reader, params.PrivateKey, req.EncryptedKeyMaterial)
+	plaintext, err := kmsDecryptImportedKeyMaterial(params.PrivateKey, params.WrappingAlgorithm, req.EncryptedKeyMaterial)
 	if err != nil {
 		sim.AWSError(w, "ValidationException", "failed to decrypt key material", http.StatusBadRequest)
 		return
@@ -1235,6 +1239,23 @@ func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId": keyId,
 	})
+}
+
+// kmsDecryptImportedKeyMaterial unwraps key material that was encrypted with
+// the RSA public key returned by GetParametersForImport. It honors the wrapping
+// algorithm recorded on the import token (RSAES_OAEP_SHA_256, RSAES_OAEP_SHA_1,
+// or RSAES_PKCS1_V1_5).
+func kmsDecryptImportedKeyMaterial(priv *rsa.PrivateKey, alg string, ciphertext []byte) ([]byte, error) {
+	switch alg {
+	case "RSAES_OAEP_SHA_256":
+		return rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, ciphertext, nil)
+	case "RSAES_OAEP_SHA_1":
+		return rsa.DecryptOAEP(sha1.New(), rand.Reader, priv, ciphertext, nil)
+	case "RSAES_PKCS1_V1_5", "":
+		return rsa.DecryptPKCS1v15(rand.Reader, priv, ciphertext)
+	default:
+		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", alg)
+	}
 }
 
 // handleKMSDeleteImportedKeyMaterial deletes the imported key material,

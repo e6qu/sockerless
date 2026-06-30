@@ -1,6 +1,10 @@
 package aws_sdk_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -193,10 +197,21 @@ func TestKMS_ImportKeyMaterialCycle(t *testing.T) {
 	require.NotEmpty(t, params.ImportToken, "ImportToken must be present")
 	require.NotEmpty(t, params.PublicKey, "a real wrapping public key must be returned")
 
+	pubAny, err := x509.ParsePKIXPublicKey(params.PublicKey)
+	require.NoError(t, err, "PublicKey must be a valid DER-encoded SubjectPublicKeyInfo")
+	pubRSA, ok := pubAny.(*rsa.PublicKey)
+	require.True(t, ok, "PublicKey must be an RSA public key")
+
+	material := make([]byte, 32)
+	_, err = rand.Read(material)
+	require.NoError(t, err, "must generate key material to import")
+	encryptedMaterial, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubRSA, material, nil)
+	require.NoError(t, err, "must encrypt key material with RSA-OAEP-SHA256")
+
 	_, err = c.ImportKeyMaterial(ctx, &kms.ImportKeyMaterialInput{
 		KeyId:                aws.String(keyId),
 		ImportToken:          params.ImportToken,
-		EncryptedKeyMaterial: []byte("sim-wrapped-material"),
+		EncryptedKeyMaterial: encryptedMaterial,
 		ExpirationModel:      kmstypes.ExpirationModelTypeKeyMaterialDoesNotExpire,
 	})
 	require.NoError(t, err)

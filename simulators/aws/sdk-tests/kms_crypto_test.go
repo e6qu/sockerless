@@ -67,6 +67,8 @@ func TestKMS_AsymmetricSignVerify(t *testing.T) {
 		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPssSha256,
 	})
 	require.Error(t, err, "Verify of a tampered message must fail")
+	var invalidSig *kmstypes.KMSInvalidSignatureException
+	require.ErrorAs(t, err, &invalidSig, "tampered Verify must return KMSInvalidSignatureException")
 }
 
 // TestKMS_ECDSASignVerify covers the EC signing path (ECC_NIST_P256 →
@@ -389,4 +391,97 @@ func TestKMS_GetKeyLastUsage(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, usage.KeyLastUsage, "after a Sign, KeyLastUsage must be reported")
 	assert.Equal(t, "Sign", string(usage.KeyLastUsage.Operation))
+}
+
+// TestKMS_AsymmetricOperationsRestored exercises every asymmetric/MAC
+// operation handler restored in the kms_crypto.go rewrite: GetPublicKey,
+// Sign, Verify, GenerateMac, VerifyMac, GenerateDataKeyPair,
+// GenerateDataKeyPairWithoutPlaintext, and DeriveSharedSecret. Each call
+// must succeed, confirming the handlers are registered and functional.
+func TestKMS_AsymmetricOperationsRestored(t *testing.T) {
+	c := kmsClient()
+
+	signKey, err := c.CreateKey(ctx, &kms.CreateKeyInput{
+		Description: aws.String("rsa-sign-all-ops"),
+		KeySpec:     kmstypes.KeySpecRsa2048,
+		KeyUsage:    kmstypes.KeyUsageTypeSignVerify,
+	})
+	require.NoError(t, err)
+	signKeyId := *signKey.KeyMetadata.KeyId
+
+	_, err = c.GetPublicKey(ctx, &kms.GetPublicKeyInput{KeyId: aws.String(signKeyId)})
+	require.NoError(t, err)
+	signOut, err := c.Sign(ctx, &kms.SignInput{
+		KeyId:            aws.String(signKeyId),
+		Message:          []byte("msg"),
+		MessageType:      kmstypes.MessageTypeRaw,
+		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPssSha256,
+	})
+	require.NoError(t, err)
+	_, err = c.Verify(ctx, &kms.VerifyInput{
+		KeyId:            aws.String(signKeyId),
+		Message:          []byte("msg"),
+		Signature:        signOut.Signature,
+		SigningAlgorithm: kmstypes.SigningAlgorithmSpecRsassaPssSha256,
+		MessageType:      kmstypes.MessageTypeRaw,
+	})
+	require.NoError(t, err)
+
+	hmacKey, err := c.CreateKey(ctx, &kms.CreateKeyInput{
+		Description: aws.String("hmac-all-ops"),
+		KeySpec:     kmstypes.KeySpecHmac256,
+		KeyUsage:    kmstypes.KeyUsageTypeGenerateVerifyMac,
+	})
+	require.NoError(t, err)
+	hmacKeyId := *hmacKey.KeyMetadata.KeyId
+
+	macOut, err := c.GenerateMac(ctx, &kms.GenerateMacInput{
+		KeyId:        aws.String(hmacKeyId),
+		Message:      []byte("mac-msg"),
+		MacAlgorithm: kmstypes.MacAlgorithmSpecHmacSha256,
+	})
+	require.NoError(t, err)
+	_, err = c.VerifyMac(ctx, &kms.VerifyMacInput{
+		KeyId:        aws.String(hmacKeyId),
+		Message:      []byte("mac-msg"),
+		Mac:          macOut.Mac,
+		MacAlgorithm: kmstypes.MacAlgorithmSpecHmacSha256,
+	})
+	require.NoError(t, err)
+
+	symmetricKey, err := c.CreateKey(ctx, &kms.CreateKeyInput{
+		Description: aws.String("data-key-pair-all-ops"),
+	})
+	require.NoError(t, err)
+	symmetricKeyId := *symmetricKey.KeyMetadata.KeyId
+
+	_, err = c.GenerateDataKeyPair(ctx, &kms.GenerateDataKeyPairInput{
+		KeyId:       aws.String(symmetricKeyId),
+		KeyPairSpec: kmstypes.DataKeyPairSpecRsa2048,
+	})
+	require.NoError(t, err)
+	_, err = c.GenerateDataKeyPairWithoutPlaintext(ctx, &kms.GenerateDataKeyPairWithoutPlaintextInput{
+		KeyId:       aws.String(symmetricKeyId),
+		KeyPairSpec: kmstypes.DataKeyPairSpecRsa2048,
+	})
+	require.NoError(t, err)
+
+	eccKey, err := c.CreateKey(ctx, &kms.CreateKeyInput{
+		Description: aws.String("ecdh-all-ops"),
+		KeySpec:     kmstypes.KeySpecEccNistP256,
+		KeyUsage:    kmstypes.KeyUsageTypeKeyAgreement,
+	})
+	require.NoError(t, err)
+	eccKeyId := *eccKey.KeyMetadata.KeyId
+
+	peerPriv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	peerPub, err := x509.MarshalPKIXPublicKey(&peerPriv.PublicKey)
+	require.NoError(t, err)
+	_, err = c.DeriveSharedSecret(ctx, &kms.DeriveSharedSecretInput{
+		KeyId:                 aws.String(eccKeyId),
+		KeyAgreementAlgorithm: kmstypes.KeyAgreementAlgorithmSpecEcdh,
+		PublicKey:             peerPub,
+	})
+	require.NoError(t, err)
 }

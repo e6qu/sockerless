@@ -122,20 +122,9 @@ var serviceConformanceCatalog = map[string][]string{
 	"AnyScaleFrontendService": {},
 	// Kinesis: all operations implemented (SubscribeToShard streams over vnd.amazon.eventstream).
 	"Kinesis_20131202": {},
-	// KMS: symmetric encryption (Encrypt/Decrypt/GenerateDataKey), grants,
-	// custom key stores, multi-region keys, and key management are implemented.
-	// Asymmetric signing/MAC/data-key-pair/ECDH operations remain unimplemented
-	// on the regional sim surface.
-	"TrentService": {
-		"DeriveSharedSecret",
-		"GenerateDataKeyPair",
-		"GenerateDataKeyPairWithoutPlaintext",
-		"GenerateMac",
-		"GetPublicKey",
-		"Sign",
-		"Verify",
-		"VerifyMac",
-	},
+	// KMS: all operations implemented (real Go-stdlib crypto for Sign/Verify/MAC/
+	// data-key-pairs/ECDH; custom key stores; grants; multi-region keys).
+	"TrentService": {},
 	// ELBv2: all operations implemented (the mutual-TLS trust-store surface closed).
 	"ElasticLoadBalancing_v10": {},
 	"AmazonSQS":                {},
