@@ -25,10 +25,14 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string   `json:"name"`
-		Description string   `json:"description"`
-		Private     flexBool `json:"private"`
-		AutoInit    flexBool `json:"auto_init"`
+		Name              string   `json:"name"`
+		Description       string   `json:"description"`
+		Private           flexBool `json:"private"`
+		Visibility        string   `json:"visibility"`
+		DefaultBranch     string   `json:"default_branch"`
+		AutoInit          flexBool `json:"auto_init"`
+		GitignoreTemplate string   `json:"gitignore_template"`
+		LicenseTemplate   string   `json:"license_template"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -38,10 +42,42 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := s.store.CreateRepo(user, req.Name, req.Description, bool(req.Private))
+	private := bool(req.Private)
+	if req.Visibility != "" {
+		switch req.Visibility {
+		case "public":
+			private = false
+		case "private", "internal":
+			private = true
+		default:
+			writeGHValidationError(w, "Repository", "visibility", "invalid")
+			return
+		}
+	}
+
+	defaultBranch := req.DefaultBranch
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	repo := s.store.CreateRepo(user, req.Name, req.Description, private)
 	if repo == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
 		return
+	}
+
+	if defaultBranch != "main" {
+		s.store.UpdateRepo(user.Login, req.Name, func(r *Repo) {
+			r.DefaultBranch = defaultBranch
+		})
+	}
+
+	if bool(req.AutoInit) || req.GitignoreTemplate != "" || req.LicenseTemplate != "" {
+		if err := s.initRepoFiles(r.Context(), repo, defaultBranch, req.Description, req.GitignoreTemplate, req.LicenseTemplate, bool(req.AutoInit)); err != nil {
+			s.store.DeleteRepo(user.Login, req.Name)
+			writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
+			return
+		}
 	}
 
 	s.recordAuditEvent("repo.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "repo_id": repo.ID})
@@ -188,7 +224,14 @@ func (s *Server) baseURL(r *http.Request) string {
 // called with st.mu held: it derives open_issues_count from the store.
 func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 	ownerJSON := map[string]interface{}{}
-	if repo.Owner != nil {
+	if repo.OwnerType == "Organization" {
+		parts := strings.SplitN(repo.FullName, "/", 2)
+		if len(parts) == 2 {
+			if org := st.GetOrg(parts[0]); org != nil {
+				ownerJSON = orgAsSimpleUserJSON(org)
+			}
+		}
+	} else if repo.Owner != nil {
 		ownerJSON = userToJSON(repo.Owner)
 	}
 

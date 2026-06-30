@@ -1,19 +1,22 @@
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepos } from "../api.js";
 import type { BleephubRepo } from "../types.js";
-import { PageTitle, Blankslate } from "../components/ui.js";
+import { PageTitle, Blankslate, Button } from "../components/ui.js";
 import { RepoIcon, BranchIcon } from "../components/octicons.js";
+import { RepoCreateDialog } from "../components/RepoCreateDialog.js";
 
 export function ReposPage() {
+  const queryClient = useQueryClient();
   const { data, isLoading, isError, error } = useQuery({
     queryKey: ["repos"],
     queryFn: fetchRepos,
     refetchInterval: 10000,
   });
   const [filter, setFilter] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -33,15 +36,27 @@ export function ReposPage() {
         title="Repositories"
         meta={`${data.length} repositor${data.length === 1 ? "y" : "ies"} indexed`}
         actions={
-          <input
-            type="search"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            placeholder="Find a repository…"
-            aria-label="Find a repository"
-            style={{ fontSize: "0.82rem", minWidth: "16rem" }}
-          />
+          <div style={{ display: "flex", gap: "0.5rem" }}>
+            <input
+              type="search"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              placeholder="Find a repository…"
+              aria-label="Find a repository"
+              style={{ fontSize: "0.82rem", minWidth: "16rem" }}
+            />
+            <Button onClick={() => setCreateOpen(true)}>New repository</Button>
+          </div>
         }
+      />
+
+      <RepoCreateDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={() => {
+          setCreateOpen(false);
+          queryClient.invalidateQueries({ queryKey: ["repos"] });
+        }}
       />
 
       {data.length === 0 ? (

@@ -1,11 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { useQuery } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   fetchRepoDetail,
   fetchRepoBranches,
   fetchRepoCommits,
+  fetchRepoContents,
+  fetchRepoReadme,
   fetchWebhooks,
   fetchSecrets,
   fetchEnvironments,
@@ -14,6 +18,8 @@ import {
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type {
   GithubCommit,
+  GithubContentItem,
+  GithubContentFile,
   GithubWebhook,
   GithubSecret,
   GithubEnvironment,
@@ -21,7 +27,14 @@ import type {
 } from "../types.js";
 import { RepoHeader } from "../components/Shell.js";
 import { Box, Blankslate, CodeBlock } from "../components/ui.js";
-import { BranchIcon, TagIcon, LockIcon, CommentIcon } from "../components/octicons.js";
+import {
+  BranchIcon,
+  TagIcon,
+  LockIcon,
+  CommentIcon,
+  FileIcon,
+  DirectoryIcon,
+} from "../components/octicons.js";
 
 type SubTab = "code" | "commits" | "releases" | "webhooks" | "secrets" | "environments";
 
@@ -126,12 +139,20 @@ export function RepoDetailPage() {
         ))}
       </div>
 
-      {tab === "code" &&
-        (commitsError ? (
+      {tab === "code" && (
+        commitsError ? (
           <InlineError title="Failed to load repository contents" detail={String(commitsErr)} />
         ) : (
-          <CodeView owner={owner} repo={repo} commits={commits} loading={commitsLoading} branch={repoData.default_branch} />
-        ))}
+          <CodeView
+            owner={owner}
+            repo={repo}
+            commits={commits}
+            loading={commitsLoading}
+            branches={branches.map((b) => b.name)}
+            defaultBranch={repoData.default_branch}
+          />
+        )
+      )}
       {tab === "commits" &&
         (commitsError ? (
           <InlineError title="Failed to load commits" detail={String(commitsErr)} />
@@ -171,44 +192,201 @@ function CodeView({
   repo,
   commits,
   loading,
-  branch,
+  branches,
+  defaultBranch,
 }: {
   owner: string;
   repo: string;
   commits: GithubCommit[];
   loading: boolean;
-  branch: string;
+  branches: string[];
+  defaultBranch: string;
 }) {
-  if (loading) return <Spinner label="loading code" />;
+  const [branch, setBranch] = useState(defaultBranch);
+  const [path, setPath] = useState("");
+
+  useEffect(() => {
+    setBranch(defaultBranch);
+  }, [defaultBranch]);
+
+  const {
+    data: items,
+    isLoading: itemsLoading,
+    isError: itemsError,
+    error: itemsErr,
+  } = useQuery({
+    queryKey: ["contents", owner, repo, path, branch],
+    queryFn: () => fetchRepoContents(owner, repo, path, branch),
+    enabled: commits.length > 0,
+  });
+
+  const {
+    data: readme,
+    isLoading: readmeLoading,
+    isError: readmeError,
+  } = useQuery({
+    queryKey: ["readme", owner, repo, branch],
+    queryFn: () => fetchRepoReadme(owner, repo, branch),
+    enabled: commits.length > 0 && path === "",
+  });
+
+  if (loading || itemsLoading || readmeLoading) return <Spinner label="loading code" />;
   if (commits.length === 0) {
-    return (
-      <Blankslate title="This repository is empty">
-        <p className="mb-3">Push an existing repository from the command line:</p>
-        <CodeBlock>
-          {`git remote add origin ${window.location.origin}/${owner}/${repo}.git\ngit push -u origin ${branch}`}
-        </CodeBlock>
-      </Blankslate>
-    );
+    return <EmptyRepoSetup owner={owner} repo={repo} defaultBranch={defaultBranch} />;
   }
-  const head = commits[0];
+  if (itemsError) return <InlineError title="Failed to load files" detail={String(itemsErr)} />;
+
+  const fileList = Array.isArray(items) ? items : [];
+
   return (
-    <Box
-      header={
-        <span>
-          <span style={{ color: "var(--color-fg)", fontWeight: 600 }}>{head.commit.author.name}</span>{" "}
-          {head.commit.message.split("\n")[0]} ·{" "}
-          <span className="font-mono">{head.sha.slice(0, 7)}</span> ·{" "}
-          {new Date(head.commit.author.date).toLocaleDateString()}
-        </span>
-      }
-    >
-      <div style={{ padding: "1rem", fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
-        {commits.length} commit{commits.length !== 1 ? "s" : ""} on{" "}
-        <span className="inline-flex items-center gap-1">
-          <BranchIcon size={14} /> {branch}
-        </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <div className="flex items-center gap-2">
+        <select
+          aria-label="Branch"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          style={{ fontSize: "0.85rem", padding: "0.35rem 0.5rem" }}
+        >
+          {branches.map((b) => (
+            <option key={b} value={b}>
+              {b}
+            </option>
+          ))}
+        </select>
+        {path && (
+          <button
+            type="button"
+            onClick={() => setPath(path.split("/").slice(0, -1).join("/"))}
+            style={{ fontSize: "0.85rem", color: "var(--color-accent)", background: "transparent", border: "none" }}
+          >
+            ..
+          </button>
+        )}
+        <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>{path}</span>
       </div>
-    </Box>
+
+      {fileList.length > 0 && (
+        <Box>
+          {fileList.map((item, i) => (
+            <FileRow
+              key={item.sha}
+              item={item}
+              isLast={i === fileList.length - 1}
+              onClick={() => {
+                if (item.type === "dir") {
+                  setPath(path ? `${path}/${item.name}` : item.name);
+                }
+              }}
+            />
+          ))}
+        </Box>
+      )}
+
+      {readmeError ? null : readme ? (
+        <Box
+          header={
+            <span style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+              {readme.name}
+            </span>
+          }
+        >
+          <div
+            style={{ padding: "1rem", fontSize: "0.9rem" }}
+            className="markdown-body"
+          >
+            <Markdown remarkPlugins={[remarkGfm]}>
+              {decodeBase64(readme.content)}
+            </Markdown>
+          </div>
+        </Box>
+      ) : null}
+    </div>
+  );
+}
+
+function FileRow({
+  item,
+  isLast,
+  onClick,
+}: {
+  item: GithubContentItem;
+  isLast: boolean;
+  onClick: () => void;
+}) {
+  const isDir = item.type === "dir";
+  return (
+    <div
+      role={isDir ? "button" : undefined}
+      onClick={isDir ? onClick : undefined}
+      className="flex items-center gap-2"
+      style={{
+        padding: "0.55rem 1rem",
+        borderBottom: isLast ? "none" : "1px solid var(--color-border)",
+        cursor: isDir ? "pointer" : "default",
+        fontSize: "0.85rem",
+      }}
+    >
+      <span style={{ color: "var(--color-accent)", display: "flex" }}>
+        {isDir ? <DirectoryIcon size={16} /> : <FileIcon size={16} />}
+      </span>
+      <span style={{ color: "var(--color-accent)", fontWeight: 500 }}>{item.name}</span>
+    </div>
+  );
+}
+
+function EmptyRepoSetup({
+  owner,
+  repo,
+  defaultBranch,
+}: {
+  owner: string;
+  repo: string;
+  defaultBranch: string;
+}) {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const [activeTab, setActiveTab] = useState<"https" | "ssh" | "gh">("https");
+  const tabs: { key: "https" | "ssh" | "gh"; label: string }[] = [
+    { key: "https", label: "HTTPS" },
+    { key: "ssh", label: "SSH" },
+    { key: "gh", label: "GitHub CLI" },
+  ];
+
+  const snippets: Record<typeof activeTab, string> = {
+    https: `git remote add origin ${origin}/${owner}/${repo}.git\ngit branch -M ${defaultBranch}\ngit push -u origin ${defaultBranch}`,
+    ssh: `git remote add origin git@bleephub.local:${owner}/${repo}.git\ngit branch -M ${defaultBranch}\ngit push -u origin ${defaultBranch}`,
+    gh: `gh repo clone ${owner}/${repo}\ncd ${repo}`,
+  };
+
+  return (
+    <Blankslate title="This repository is empty">
+      <p className="mb-3">Get started by creating a new file or cloning an existing repository.</p>
+
+      <div
+        className="mb-3 flex gap-1"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setActiveTab(t.key)}
+            style={{
+              padding: "0.4rem 0.7rem",
+              marginBottom: "-1px",
+              fontSize: "0.84rem",
+              fontWeight: activeTab === t.key ? 600 : 500,
+              color: activeTab === t.key ? "var(--color-fg)" : "var(--color-fg-muted)",
+              background: "transparent",
+              border: "none",
+              borderBottom: `2px solid ${activeTab === t.key ? "var(--color-accent)" : "transparent"}`,
+            }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <CodeBlock>{snippets[activeTab]}</CodeBlock>
+    </Blankslate>
   );
 }
 
@@ -381,4 +559,15 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
       ))}
     </Box>
   );
+}
+
+function decodeBase64(s: string): string {
+  try {
+    if (typeof window !== "undefined" && window.atob) {
+      return window.atob(s);
+    }
+    return Buffer.from(s, "base64").toString("utf-8");
+  } catch {
+    return "";
+  }
 }

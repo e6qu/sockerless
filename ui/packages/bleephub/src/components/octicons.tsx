@@ -71,6 +71,23 @@ export function RepoIcon(p: IconProps) {
   );
 }
 
+export function FileIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 2.5h5l3 3v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z" />
+      <path d="M9 2.5v3h3" />
+    </Svg>
+  );
+}
+
+export function DirectoryIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2 4.5a1 1 0 0 1 1-1h3l2 2h5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1z" />
+    </Svg>
+  );
+}
+
 export function IssueOpenedIcon(p: IconProps) {
   return (
     <Svg {...p}>

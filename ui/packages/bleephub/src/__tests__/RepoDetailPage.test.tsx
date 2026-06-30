@@ -71,10 +71,37 @@ const releasesData = [
   },
 ];
 
+const branchesData = [{ name: "main", commit: { sha: "abc" } }];
+const commitsData = [
+  {
+    sha: "abc123",
+    commit: {
+      message: "Initial commit",
+      author: { name: "Admin", email: "a@b", date: "2026-01-01T00:00:00Z" },
+    },
+  },
+];
+const contentsData = [
+  { name: "README.md", path: "README.md", sha: "r1", type: "file", size: 14 },
+  { name: "src", path: "src", sha: "d1", type: "dir" },
+];
+const readmeData = {
+  name: "README.md",
+  path: "README.md",
+  sha: "r1",
+  type: "file",
+  encoding: "base64",
+  content: "IyB0ZXN0CgpuZXh0cmEgZGV0YWls",
+};
+
 function routedFetch(url: RequestInfo | URL): Promise<Response> {
   const u = url.toString();
   if (u.includes("/releases")) return Promise.resolve(jsonResponse(releasesData));
   if (u.endsWith("/repos/admin/test")) return Promise.resolve(jsonResponse(repoData));
+  if (u.endsWith("/branches")) return Promise.resolve(jsonResponse(branchesData));
+  if (u.endsWith("/commits")) return Promise.resolve(jsonResponse(commitsData));
+  if (u.endsWith("/readme")) return Promise.resolve(jsonResponse(readmeData));
+  if (u.includes("/contents/")) return Promise.resolve(jsonResponse(contentsData));
   return Promise.resolve(jsonResponse([]));
 }
 
@@ -94,5 +121,38 @@ describe("RepoDetailPage releases", () => {
     ).toBeInTheDocument();
     // no zero-time rendering anywhere
     expect(screen.queryByText(/1970/)).not.toBeInTheDocument();
+  });
+});
+
+describe("RepoDetailPage code", () => {
+  it("renders the file tree and README for a non-empty repo", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => routedFetch(url));
+    renderPage();
+    await screen.findByText("a repo");
+
+    await waitFor(() => {
+      expect(screen.getByText("README.md")).toBeInTheDocument();
+      expect(screen.getByText("src")).toBeInTheDocument();
+    });
+    expect(screen.getByText("test")).toBeInTheDocument();
+  });
+
+  it("shows GitHub-standard empty-repo setup tabs for an empty repo", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.endsWith("/repos/admin/test")) return Promise.resolve(jsonResponse(repoData));
+      if (u.endsWith("/branches")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/commits")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderPage();
+    await screen.findByText("a repo");
+
+    await waitFor(() => {
+      expect(screen.getByText("This repository is empty")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("button", { name: "HTTPS" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "SSH" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "GitHub CLI" })).toBeInTheDocument();
   });
 });

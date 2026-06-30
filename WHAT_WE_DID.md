@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-30 - bleephub GitHub-like repository UI and backend extensions
+
+A single branch (`feat/bleephub-github-like-ui`) made the bleephub frontend feel like GitHub's repository surface while adding the real backend endpoints the UI requires.
+
+**Backend API extensions.** `POST /api/v3/user/repos` and `POST /api/v3/orgs/{org}/repos` now accept `visibility`, `default_branch`, `gitignore_template`, `license_template`, and `auto_init`. `auto_init` writes a real README commit via go-git; gitignore and license templates are committed in the same initial commit when requested. `PUT /api/v3/repos/{owner}/{repo}/contents/{path...}` creates or updates a file and produces a real commit, supporting both the first commit on an empty repo and follow-up edits. New read endpoints serve curated real templates: `GET /api/v3/gitignore/templates`, `GET /api/v3/gitignore/templates/{name}`, `GET /api/v3/licenses`, `GET /api/v3/licenses/{license}`. Org-owned repositories now return the organization as the repository owner using the REST `simple-user` shape with `type: "Organization"`, satisfying the OpenAPI response-shape ratchet.
+
+**Git state fixes.** `handleListBranches` now filters out zero-hash references, and repo creation no longer leaves a stray `master` ref when the default branch is something else. `handleGetContents` now treats an empty path as a root-directory listing, which the new file tree needs.
+
+**UI changes.** Removed the global **Workflows** navbar entry (`Shell.tsx`); workflows remain reachable per-repository through the Actions tab and via the existing `/ui/workflows` route, which was restored in `App.tsx` after an accidental removal broke the existing Actions e2e test. Added `RepoCreateDialog` with name, description, visibility radio buttons, README init checkbox, and searchable .gitignore/license selects. Rebuilt the repository Code tab in `RepoDetailPage` with a branch selector, file tree, directory navigation, rendered README (using `react-markdown` + `remark-gfm`), and empty-repo clone instructions with HTTPS/SSH/GitHub CLI tabs. Added `FileIcon` and `DirectoryIcon` octicons plus the API helpers and types the new components need.
+
+**Tests.** Added bleephub HTTP API tests for auto-init, templates, visibility/default-branch handling, org repo creation, `PUT contents` create/update, gitignore/license templates, and root contents listing. Added Vitest tests for the repo creation dialog and the Code tab/empty-repo state. Extended Playwright e2e tests with repo creation, empty-repo clone tabs, and initialized-repo file tree + README rendering.
+
+**Validation.** `go test ./bleephub -count=1` passes; UI `typecheck` and Vitest (84/84) pass; Playwright e2e passes (23/23); `make bleephub/lint` and `make ui/packages/bleephub/lint` are clean.
+
 ## 2026-06-30 - bleephub local-dev convenience script
 
 Added `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + storage from the current source tree with one command. The script builds the UI, builds the Go server (embedding the UI by default, or a no-UI binary for `--dev`), creates local data/git directories under `.local/bleephub/`, and starts the server. It supports `--dev` to launch the Vite dev server on `:5173` with HMR, and `--tls` to generate a self-signed cert and serve HTTPS on `:8443`. It records PIDs, probes `/health` before declaring success, and provides `stop`, `restart`, `status`, `logs`, and `clean` commands. The `bleephub/README.md` quick-start section now references the script.

@@ -211,6 +211,7 @@ func (s *Server) registerRoutes() {
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
+	s.registerGHTemplateRoutes()
 	s.registerGHOrgRoutes()
 	s.registerGHIssueRoutes()
 	s.registerGHPullRoutes()

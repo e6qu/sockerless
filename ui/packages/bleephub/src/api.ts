@@ -34,6 +34,7 @@ import type {
   GithubRunner,
   GithubContentFile,
   GithubOrgVisibility,
+  GithubContentItem,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -308,6 +309,51 @@ async function ghFetchPage<T>(url: string): Promise<Page<T>> {
 
 export const fetchRepoDetail = (owner: string, repo: string) =>
   ghFetch<BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
+
+export const createRepo = (payload: {
+  name: string;
+  description?: string;
+  private?: boolean;
+  visibility?: "public" | "private" | "internal";
+  default_branch?: string;
+  auto_init?: boolean;
+  gitignore_template?: string;
+  license_template?: string;
+}): Promise<BleephubRepo> =>
+  ghPostJSON("/api/v3/user/repos", payload);
+
+export const fetchRepoContents = (
+  owner: string,
+  repo: string,
+  path = "",
+  ref?: string,
+): Promise<GithubContentItem[]> => {
+  const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  return ghFetch<GithubContentItem[]>(`/api/v3/repos/${owner}/${repo}/contents/${path}${qs}`);
+};
+
+export const fetchRepoReadme = (owner: string, repo: string, ref?: string): Promise<GithubContentFile> => {
+  const qs = ref ? `?ref=${encodeURIComponent(ref)}` : "";
+  return ghFetch<GithubContentFile>(`/api/v3/repos/${owner}/${repo}/readme${qs}`);
+};
+
+export const fetchGitignoreTemplates = () => ghFetch<string[]>("/api/v3/gitignore/templates");
+export const fetchLicenseTemplates = () =>
+  ghFetch<{ key: string; name: string; spdx_id: string }[]>("/api/v3/licenses");
+
+async function ghPostJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
 
 /** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
 export const fetchRepoIssuesPage = (

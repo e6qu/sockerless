@@ -46,6 +46,9 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		if !ref.Name().IsBranch() {
 			return nil
 		}
+		if ref.Hash().IsZero() {
+			return nil
+		}
 		branchName := ref.Name().Short()
 		branches = append(branches, map[string]interface{}{
 			"name":      branchName,
