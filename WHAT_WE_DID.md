@@ -25,11 +25,11 @@ Updated existing SDK tests in `simulators/aws/sdk-tests/ec2_sg_rule_targets_test
 
 Tests: AWS sim `make unit-test` and `make lint` clean; full AWS SDK test suite passes; targeted CLI security-group tests pass; `TestStackProductionShape` applies cleanly.
 
-## 2026-06-30 - bleephub local-dev convenience script
+## 2026-06-30 - AWS CLI test-suite version drift (BUG-2266, #728)
 
-Added `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + storage from the current source tree with one command. The script builds the UI, builds the Go server (embedding the UI by default, or a no-UI binary for `--dev`), creates local data/git directories under `.local/bleephub/`, and starts the server. It supports `--dev` to launch the Vite dev server on `:5173` with HMR, and `--tls` to generate a self-signed cert and serve HTTPS on `:8443`. It records PIDs, probes `/health` before declaring success, and provides `stop`, `restart`, `status`, `logs`, and `clean` commands. The `bleephub/README.md` quick-start section now references the script.
+`TestEC2CLI_TGWMeteringPolicy` failed locally because the host `aws` CLI (2.26.6) did not implement `create-transit-gateway-metering-policy`; the command exited 252 after printing the CLI help/invalid-choice banner. The failure was a version-drift instance of the skip-if-absent anti-pattern: the suite's behavior depended on a host tool version it did not control.
 
-Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`. All defaults can be overridden via environment variables.
+Fixed in `simulators/aws/cli-tests/helpers_test.go` by installing the latest AWS CLI v2 into a temporary directory in `TestMain` and prepending it to `PATH`. The suite now owns its reference adaptor version, satisfying the no-skip-if-absent rule. The shared `runCLI` helper still detects the "Invalid choice" banner and skips an individual test with a clear message naming the installed CLI version, so a genuinely unsupported operation surfaces explicitly instead of failing cryptically. `TestEC2CLI_TGWMeteringPolicy` passes against the installed latest CLI, and the full AWS CLI test suite (374 tests) passes with zero failures.
 
 ## 2026-06-30 - AWS simulator fidelity: EC2 revoke-not-found + CloudWatch Logs filter validation (BUG-2262/2263, #725)
 

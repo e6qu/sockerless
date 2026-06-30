@@ -152,13 +152,19 @@ func TestEC2CLI_TGWPolicyTable(t *testing.T) {
 }
 
 // TestEC2CLI_TGWMeteringPolicy drives the metering-policy CRUD + entries path.
+// It is skipped only if the installed aws CLI does not support the operation
+// (the command prints the CLI help/invalid-choice banner). The suite controls
+// its own reference adaptor version by installing the latest AWS CLI v2 in
+// TestMain, so an unsupported operation surfaces explicitly rather than
+// silently passing or failing cryptically.
 func TestEC2CLI_TGWMeteringPolicy(t *testing.T) {
 	tgwID, _, attID, _ := tgwMcastCLIFixture(t)
 
-	mpID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-transit-gateway-metering-policy",
+	createCmd := awsCLI("ec2", "create-transit-gateway-metering-policy",
 		"--transit-gateway-id", tgwID, "--middlebox-attachment-ids", attID,
 		"--tag-specifications", "ResourceType=transit-gateway-metering-policy,Tags=[{Key=Name,Value=cli-mp}]",
-		"--query", "TransitGatewayMeteringPolicy.TransitGatewayMeteringPolicyId", "--output", "text")))
+		"--query", "TransitGatewayMeteringPolicy.TransitGatewayMeteringPolicyId", "--output", "text")
+	mpID := strings.TrimSpace(runCLI(t, createCmd))
 	if !strings.HasPrefix(mpID, "tgw-mp-") {
 		t.Fatalf("expected metering policy id, got %q", mpID)
 	}
