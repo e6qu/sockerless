@@ -19,6 +19,9 @@ func TestEC2CLI_SecurityGroupRuleFidelity(t *testing.T) {
 	sgAlb := mkSG("cli-fidelity-alb")
 	sgTasks := mkSG("cli-fidelity-tasks")
 
+	// Revoke the default ALLOW ALL egress rule before authorizing a test rule.
+	runCLI(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sgTasks,
+		"--ip-permissions", `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`))
 	runCLI(t, awsCLI("ec2", "authorize-security-group-egress", "--group-id", sgTasks,
 		"--ip-permissions", `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`))
 	runCLI(t, awsCLI("ec2", "authorize-security-group-ingress", "--group-id", sgTasks,

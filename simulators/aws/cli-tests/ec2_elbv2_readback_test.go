@@ -48,6 +48,10 @@ func TestEC2CLI_RouteNetworkInterfaceId(t *testing.T) {
 func TestEC2CLI_SecurityGroupEgressIpv6Ranges(t *testing.T) {
 	vpc := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc", "--cidr-block", "10.45.0.0/16", "--query", "Vpc.VpcId", "--output", "text")))
 	sg := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-security-group", "--group-name", "cli-ipv6-egress", "--description", "ipv6", "--vpc-id", vpc, "--query", "GroupId", "--output", "text")))
+	// Revoke the default ALLOW ALL IPv4 egress rule before authorizing a
+	// combined IPv4+IPv6 all-traffic rule.
+	runCLI(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg,
+		"--ip-permissions", `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`))
 	runCLI(t, awsCLI("ec2", "authorize-security-group-egress", "--group-id", sg,
 		"--ip-permissions", `[{"IpProtocol":"-1","IpRanges":[{"CidrIp":"0.0.0.0/0"}],"Ipv6Ranges":[{"CidrIpv6":"::/0"}]}]`))
 
