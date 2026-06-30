@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -654,5 +655,353 @@ func TestGitFetchPrivateRepoWithAuth(t *testing.T) {
 	defer httpResp.Body.Close()
 	if httpResp.StatusCode != 200 {
 		t.Fatalf("expected 200 for authenticated fetch on private repo, got %d", httpResp.StatusCode)
+	}
+}
+
+// TestCreateRepoAutoInit verifies auto_init creates a README commit.
+func TestCreateRepoAutoInit(t *testing.T) {
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":        "auto-init",
+		"description": "A self-initialized repo",
+		"auto_init":   true,
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["default_branch"] != "main" {
+		t.Fatalf("expected default_branch=main, got %v", data["default_branch"])
+	}
+
+	// README should be reachable
+	readmeResp := ghGet(t, "/api/v3/repos/admin/auto-init/readme", defaultToken)
+	if readmeResp.StatusCode != 200 {
+		readmeResp.Body.Close()
+		t.Fatalf("expected 200 for readme, got %d", readmeResp.StatusCode)
+	}
+	readme := decodeJSON(t, readmeResp)
+	if readme["name"] != "README.md" {
+		t.Fatalf("expected readme name README.md, got %v", readme["name"])
+	}
+	content, _ := base64.StdEncoding.DecodeString(readme["content"].(string))
+	if !strings.Contains(string(content), "# auto-init") {
+		t.Fatalf("unexpected readme content: %s", string(content))
+	}
+	if !strings.Contains(string(content), "A self-initialized repo") {
+		t.Fatalf("expected description in readme, got: %s", string(content))
+	}
+
+	// Branch should exist now
+	branchesResp := ghGet(t, "/api/v3/repos/admin/auto-init/branches", defaultToken)
+	defer branchesResp.Body.Close()
+	if branchesResp.StatusCode != 200 {
+		t.Fatalf("expected 200 for branches, got %d", branchesResp.StatusCode)
+	}
+	var branches []map[string]interface{}
+	if err := json.NewDecoder(branchesResp.Body).Decode(&branches); err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch, got %d", len(branches))
+	}
+}
+
+// TestCreateRepoWithTemplates verifies gitignore and license templates are committed.
+func TestCreateRepoWithTemplates(t *testing.T) {
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":               "templated",
+		"gitignore_template": "Go",
+		"license_template":   "mit",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	defer resp.Body.Close()
+
+	for _, path := range []string{".gitignore", "LICENSE"} {
+		contentResp := ghGet(t, "/api/v3/repos/admin/templated/contents/"+path, defaultToken)
+		if contentResp.StatusCode != 200 {
+			contentResp.Body.Close()
+			t.Fatalf("expected 200 for %s, got %d", path, contentResp.StatusCode)
+		}
+		contentResp.Body.Close()
+	}
+}
+
+// TestCreateRepoVisibility verifies visibility field overrides private.
+func TestCreateRepoVisibility(t *testing.T) {
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":       "vis-public",
+		"private":    true,
+		"visibility": "public",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["private"] != false {
+		t.Fatalf("expected private=false, got %v", data["private"])
+	}
+	if data["visibility"] != "public" {
+		t.Fatalf("expected visibility=public, got %v", data["visibility"])
+	}
+
+	resp2 := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":       "vis-private",
+		"visibility": "private",
+	})
+	if resp2.StatusCode != 201 {
+		resp2.Body.Close()
+		t.Fatalf("expected 201, got %d", resp2.StatusCode)
+	}
+	data2 := decodeJSON(t, resp2)
+	if data2["private"] != true {
+		t.Fatalf("expected private=true, got %v", data2["private"])
+	}
+}
+
+// TestCreateRepoDefaultBranch verifies a non-main default branch is honored.
+func TestCreateRepoDefaultBranch(t *testing.T) {
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":           "custom-branch",
+		"auto_init":      true,
+		"default_branch": "develop",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["default_branch"] != "develop" {
+		t.Fatalf("expected default_branch=develop, got %v", data["default_branch"])
+	}
+
+	branchesResp := ghGet(t, "/api/v3/repos/admin/custom-branch/branches", defaultToken)
+	defer branchesResp.Body.Close()
+	var branches []map[string]interface{}
+	if err := json.NewDecoder(branchesResp.Body).Decode(&branches); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, b := range branches {
+		if b["name"] == "develop" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected develop branch to exist, got %v", branches)
+	}
+}
+
+// TestCreateOrgRepoExtended verifies org repo creation supports the new fields.
+func TestCreateOrgRepoExtended(t *testing.T) {
+	orgResp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
+		"login": "create-org",
+		"name":  "Create Org",
+	})
+	if orgResp.StatusCode != 201 {
+		orgResp.Body.Close()
+		t.Fatalf("expected 201 for org create, got %d", orgResp.StatusCode)
+	}
+	orgResp.Body.Close()
+
+	resp := ghPost(t, "/api/v3/orgs/create-org/repos", defaultToken, map[string]interface{}{
+		"name":           "org-repo",
+		"auto_init":      true,
+		"private":        true,
+		"default_branch": "trunk",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["full_name"] != "create-org/org-repo" {
+		t.Fatalf("expected full_name=create-org/org-repo, got %v", data["full_name"])
+	}
+	owner, _ := data["owner"].(map[string]interface{})
+	if owner["login"] != "create-org" {
+		t.Fatalf("expected owner.login=create-org, got %v", owner["login"])
+	}
+	if owner["type"] != "Organization" {
+		t.Fatalf("expected owner.type=Organization, got %v", owner["type"])
+	}
+	if data["default_branch"] != "trunk" {
+		t.Fatalf("expected default_branch=trunk, got %v", data["default_branch"])
+	}
+
+	readmeResp := ghGet(t, "/api/v3/repos/create-org/org-repo/readme", defaultToken)
+	defer readmeResp.Body.Close()
+	if readmeResp.StatusCode != 200 {
+		t.Fatalf("expected 200 for readme, got %d", readmeResp.StatusCode)
+	}
+}
+
+// TestPutContentsCreateFile verifies PUT contents creates a new file and commit.
+func TestPutContentsCreateFile(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "put-create",
+	})
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("hello world"))
+	resp := ghPut(t, "/api/v3/repos/admin/put-create/contents/foo/bar.txt", defaultToken, map[string]interface{}{
+		"message": "add file",
+		"content": encoded,
+		"branch":  "main",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	content, _ := data["content"].(map[string]interface{})
+	if content["name"] != "bar.txt" {
+		t.Fatalf("expected name=bar.txt, got %v", content["name"])
+	}
+	commit, _ := data["commit"].(map[string]interface{})
+	if commit["message"] != "add file" {
+		t.Fatalf("expected commit message 'add file', got %v", commit["message"])
+	}
+
+	// Verify file is readable
+	getResp := ghGet(t, "/api/v3/repos/admin/put-create/contents/foo/bar.txt", defaultToken)
+	defer getResp.Body.Close()
+	if getResp.StatusCode != 200 {
+		t.Fatalf("expected 200 for get, got %d", getResp.StatusCode)
+	}
+}
+
+// TestPutContentsUpdateFile verifies PUT contents updates an existing file.
+func TestPutContentsUpdateFile(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":      "put-update",
+		"auto_init": true,
+	})
+
+	encoded := base64.StdEncoding.EncodeToString([]byte("first"))
+	resp1 := ghPut(t, "/api/v3/repos/admin/put-update/contents/x.txt", defaultToken, map[string]interface{}{
+		"message": "first",
+		"content": encoded,
+	})
+	if resp1.StatusCode != 201 {
+		resp1.Body.Close()
+		t.Fatalf("expected 201, got %d", resp1.StatusCode)
+	}
+	data1 := decodeJSON(t, resp1)
+	content1, _ := data1["content"].(map[string]interface{})
+	sha1 := content1["sha"].(string)
+
+	encoded2 := base64.StdEncoding.EncodeToString([]byte("second"))
+	resp2 := ghPut(t, "/api/v3/repos/admin/put-update/contents/x.txt", defaultToken, map[string]interface{}{
+		"message": "second",
+		"content": encoded2,
+		"sha":     sha1,
+	})
+	if resp2.StatusCode != 201 {
+		resp2.Body.Close()
+		t.Fatalf("expected 201, got %d", resp2.StatusCode)
+	}
+	data2 := decodeJSON(t, resp2)
+	content2, _ := data2["content"].(map[string]interface{})
+	if content2["sha"] == sha1 {
+		t.Fatal("expected sha to change after update")
+	}
+}
+
+// TestGetContentsRootListing verifies GET contents with an empty path lists root files.
+func TestGetContentsRootListing(t *testing.T) {
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":      "root-listing",
+		"auto_init": true,
+	})
+
+	resp := ghGet(t, "/api/v3/repos/admin/root-listing/contents/", defaultToken)
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	var items []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, item := range items {
+		if item["name"] == "README.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected README.md in root listing, got %v", items)
+	}
+}
+
+// TestGitignoreTemplates verifies the gitignore template endpoints.
+func TestGitignoreTemplates(t *testing.T) {
+	listResp := ghGet(t, "/api/v3/gitignore/templates", defaultToken)
+	if listResp.StatusCode != 200 {
+		listResp.Body.Close()
+		t.Fatalf("expected 200, got %d", listResp.StatusCode)
+	}
+	var names []string
+	if err := json.NewDecoder(listResp.Body).Decode(&names); err != nil {
+		t.Fatal(err)
+	}
+	listResp.Body.Close()
+	if len(names) == 0 {
+		t.Fatal("expected at least one gitignore template")
+	}
+
+	getResp := ghGet(t, "/api/v3/gitignore/templates/Go", defaultToken)
+	if getResp.StatusCode != 200 {
+		getResp.Body.Close()
+		t.Fatalf("expected 200, got %d", getResp.StatusCode)
+	}
+	data := decodeJSON(t, getResp)
+	if data["name"] != "Go" {
+		t.Fatalf("expected name=Go, got %v", data["name"])
+	}
+
+	missingResp := ghGet(t, "/api/v3/gitignore/templates/NonExistent", defaultToken)
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != 404 {
+		t.Fatalf("expected 404, got %d", missingResp.StatusCode)
+	}
+}
+
+// TestLicenseTemplates verifies the license template endpoints.
+func TestLicenseTemplates(t *testing.T) {
+	listResp := ghGet(t, "/api/v3/licenses", defaultToken)
+	if listResp.StatusCode != 200 {
+		listResp.Body.Close()
+		t.Fatalf("expected 200, got %d", listResp.StatusCode)
+	}
+	var items []map[string]interface{}
+	if err := json.NewDecoder(listResp.Body).Decode(&items); err != nil {
+		t.Fatal(err)
+	}
+	listResp.Body.Close()
+	if len(items) == 0 {
+		t.Fatal("expected at least one license")
+	}
+
+	getResp := ghGet(t, "/api/v3/licenses/mit", defaultToken)
+	if getResp.StatusCode != 200 {
+		getResp.Body.Close()
+		t.Fatalf("expected 200, got %d", getResp.StatusCode)
+	}
+	data := decodeJSON(t, getResp)
+	if data["key"] != "mit" {
+		t.Fatalf("expected key=mit, got %v", data["key"])
+	}
+
+	missingResp := ghGet(t, "/api/v3/licenses/notreal", defaultToken)
+	defer missingResp.Body.Close()
+	if missingResp.StatusCode != 404 {
+		t.Fatalf("expected 404, got %d", missingResp.StatusCode)
 	}
 }

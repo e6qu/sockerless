@@ -274,9 +274,14 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Private     bool   `json:"private"`
+		Name              string   `json:"name"`
+		Description       string   `json:"description"`
+		Private           flexBool `json:"private"`
+		Visibility        string   `json:"visibility"`
+		DefaultBranch     string   `json:"default_branch"`
+		AutoInit          flexBool `json:"auto_init"`
+		GitignoreTemplate string   `json:"gitignore_template"`
+		LicenseTemplate   string   `json:"license_template"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -286,13 +291,75 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo := s.store.CreateOrgRepo(org, user, req.Name, req.Description, req.Private)
+	private := bool(req.Private)
+	if req.Visibility != "" {
+		switch req.Visibility {
+		case "public":
+			private = false
+		case "private", "internal":
+			private = true
+		default:
+			writeGHValidationError(w, "Repository", "visibility", "invalid")
+			return
+		}
+	}
+
+	defaultBranch := req.DefaultBranch
+	if defaultBranch == "" {
+		defaultBranch = "main"
+	}
+
+	repo := s.store.CreateOrgRepo(org, user, req.Name, req.Description, private)
 	if repo == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
 		return
 	}
 
+	if defaultBranch != "main" {
+		s.store.UpdateRepo(org.Login, req.Name, func(r *Repo) {
+			r.DefaultBranch = defaultBranch
+		})
+	}
+
+	if bool(req.AutoInit) || req.GitignoreTemplate != "" || req.LicenseTemplate != "" {
+		if err := s.initRepoFiles(r.Context(), repo, defaultBranch, req.Description, req.GitignoreTemplate, req.LicenseTemplate, bool(req.AutoInit)); err != nil {
+			s.store.DeleteRepo(org.Login, req.Name)
+			writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
+}
+
+// orgAsSimpleUserJSON converts an Org to the simple-user shape GitHub uses
+// as the owner field of repositories owned by an organization. The fields
+// are identical to userToJSON; only the type differs.
+func orgAsSimpleUserJSON(org *Org) map[string]interface{} {
+	api := "/api/v3/users/" + org.Login
+	return map[string]interface{}{
+		"login":               org.Login,
+		"id":                  org.ID,
+		"node_id":             org.NodeID,
+		"avatar_url":          org.AvatarURL,
+		"gravatar_id":         "",
+		"url":                 api,
+		"html_url":            "/" + org.Login,
+		"followers_url":       api + "/followers",
+		"following_url":       api + "/following{/other_user}",
+		"gists_url":           api + "/gists{/gist_id}",
+		"starred_url":         api + "/starred{/owner}{/repo}",
+		"subscriptions_url":   api + "/subscriptions",
+		"organizations_url":   api + "/orgs",
+		"repos_url":           api + "/repos",
+		"events_url":          api + "/events{/privacy}",
+		"received_events_url": api + "/received_events",
+		"type":                org.Type,
+		"site_admin":          false,
+		"name":                org.Name,
+		"email":               org.Email,
+		"user_view_type":      "public",
+	}
 }
 
 // orgSimpleJSON converts an Org to the GitHub `organization-simple`

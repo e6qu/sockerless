@@ -103,12 +103,11 @@ test.describe("Overview page", () => {
 // ─── Sidebar navigation ─────────────────────────────────────────────────────
 
 test.describe("Header navigation", () => {
-  test("shows all 7 nav links", async ({ page }) => {
+  test("shows all 6 nav links", async ({ page }) => {
     await page.goto("/ui/");
     await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Workflows" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Runners" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Repos" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Runners" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Apps" })).toBeVisible();
     await expect(page.getByRole("link", { name: "OAuth" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
@@ -118,38 +117,33 @@ test.describe("Header navigation", () => {
   test("navigates between all pages", async ({ page }) => {
     await page.goto("/ui/");
 
-    await page.getByRole("link", { name: "Workflows" }).click();
-    await expect(page.url()).toContain("/ui/workflows");
-    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Workflows" })).toBeVisible();
-    await shot(page, "04-workflows");
-
     await page.getByRole("link", { name: "Runners" }).click();
     await expect(page.url()).toContain("/ui/runners");
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Runners" })).toBeVisible();
-    await shot(page, "05-runners");
+    await shot(page, "04-runners");
 
     await page.getByRole("link", { name: "Repos" }).click();
     await expect(page.url()).toContain("/ui/repos");
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Repositories" })).toBeVisible();
-    await shot(page, "06-repos");
+    await shot(page, "05-repos");
 
     await page.getByRole("link", { name: "Apps" }).click();
     await expect(page.url()).toContain("/ui/apps");
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Apps" })).toBeVisible();
-    await shot(page, "07-apps");
+    await shot(page, "06-apps");
 
     await page.getByRole("link", { name: "OAuth" }).click();
     await expect(page.url()).toContain("/ui/oauth");
-    await shot(page, "08-oauth");
+    await shot(page, "07-oauth");
 
     await page.getByRole("link", { name: "Metrics" }).click();
     await expect(page.url()).toContain("/ui/metrics");
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
-    await shot(page, "09-metrics");
+    await shot(page, "08-metrics");
 
     await page.getByRole("link", { name: "Overview" }).click();
     await expect(page.url()).toMatch(/\/ui\/$/);
-    await shot(page, "10-back-overview");
+    await shot(page, "09-back-overview");
   });
 });
 
@@ -203,6 +197,21 @@ test.describe("Repos page", () => {
     await expect(page.url()).toContain("test-repo-playwright");
     await shot(page, "14-repo-detail");
   });
+
+  test("creates a repo through the UI dialog", async ({ page }) => {
+    await page.goto("/ui/repos");
+    await page.waitForLoadState("networkidle");
+
+    await page.getByRole("button", { name: "New repository" }).click();
+    await expect(page.getByRole("heading", { name: "Create a new repository" })).toBeVisible();
+
+    await page.getByLabel("Repository name").fill("ui-created-repo");
+    await page.getByLabel("Description").fill("Created from the UI");
+    await page.getByRole("button", { name: "Create repository" }).click();
+
+    await expect(page.getByRole("link", { name: /ui-created-repo/ })).toBeVisible();
+    await shot(page, "13b-repos-after-ui-create");
+  });
 });
 
 // ─── Repo detail ─────────────────────────────────────────────────────────────
@@ -227,7 +236,30 @@ test.describe("Repo detail page", () => {
     // view shows the clone blankslate.
     await expect(page.getByRole("link", { name: "detail-test" })).toBeVisible();
     await expect(page.getByText(/this repository is empty/i)).toBeVisible();
+    await expect(page.getByRole("button", { name: "HTTPS" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "SSH" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "GitHub CLI" })).toBeVisible();
     await shot(page, "15-repo-detail-empty");
+  });
+
+  test("shows file tree and rendered README for initialized repo", async ({ page }) => {
+    await page.goto("/ui/");
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+
+    await apiPost(page, "/api/v3/user/repos", {
+      name: "readme-test",
+      description: "README test",
+      private: false,
+      auto_init: true,
+    }).catch(() => null);
+
+    await page.goto(`/ui/repos/${owner}/readme-test`);
+    await page.waitForLoadState("networkidle");
+
+    await expect(page.getByText("README.md").first()).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "Branch" })).toHaveValue("main");
+    await shot(page, "15b-repo-detail-with-readme");
   });
 
   test("issues tab shows issue list", async ({ page }) => {

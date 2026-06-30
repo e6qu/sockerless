@@ -756,43 +756,5 @@ func (st *Store) RemoveTeamRepo(orgLogin, slug, repoFullName string) bool {
 func (st *Store) CreateOrgRepo(org *Org, creator *User, name, description string, private bool) *Repo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-
-	fullName := org.Login + "/" + name
-	if _, exists := st.ReposByName[fullName]; exists {
-		return nil
-	}
-
-	now := time.Now().UTC()
-	visibility := "public"
-	if private {
-		visibility = "private"
-	}
-
-	repo := &Repo{
-		ID:                  st.NextRepo,
-		NodeID:              fmt.Sprintf("R_kgDO%08d", st.NextRepo),
-		Name:                name,
-		FullName:            fullName,
-		Description:         description,
-		DefaultBranch:       "main",
-		Visibility:          visibility,
-		Owner:               creator, // will also set OwnerType
-		OwnerID:             creator.ID,
-		Private:             private,
-		Topics:              []string{},
-		NextIssueNumber:     1,
-		NextMilestoneNumber: 1,
-		CreatedAt:           now,
-		UpdatedAt:           now,
-		PushedAt:            now,
-	}
-	st.NextRepo++
-
-	st.Repos[repo.ID] = repo
-	st.ReposByName[fullName] = repo
-	if st.persist != nil {
-		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
-	}
-
-	return repo
+	return st.createRepoLocked(org.Login+"/"+name, name, description, private, org.ID, "Organization", nil)
 }

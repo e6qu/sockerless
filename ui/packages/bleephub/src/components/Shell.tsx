@@ -24,7 +24,6 @@ export interface NavItem {
 const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
   { label: "Repos", to: "/ui/repos" },
-  { label: "Workflows", to: "/ui/workflows" },
   { label: "Runners", to: "/ui/runners" },
   { label: "Apps", to: "/ui/apps" },
   { label: "OAuth", to: "/ui/oauth" },

@@ -477,6 +477,15 @@ export interface GithubContentFile {
   content: string;
 }
 
+/** Content directory entry — GET .../contents/{path} (dir variant). */
+export interface GithubContentItem {
+  name: string;
+  path: string;
+  sha: string;
+  type: "file" | "dir";
+  size?: number;
+}
+
 /** `on.workflow_dispatch.inputs.<name>` entry parsed from workflow YAML. */
 export interface WorkflowDispatchInput {
   description?: string;

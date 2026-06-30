@@ -130,6 +130,8 @@ ui/packages/bleephub/playwright-report/
 # Misc
 *.log
 tmp/
+.local/
+opencode.json
 
 aws.sh
 # Per-user Claude state is ignored, but project-local skills are checked-in;

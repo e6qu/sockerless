@@ -23,7 +23,8 @@ type Repo struct {
 	Visibility          string    `json:"visibility"`
 	Language            string    `json:"language"`
 	Owner               *User     `json:"-"`
-	OwnerID             int       `json:"owner_id"` // serialized so Owner can be relinked on reload
+	OwnerID             int       `json:"owner_id"`   // serialized so Owner can be relinked on reload
+	OwnerType           string    `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
 	Private             bool      `json:"private"`
 	Fork                bool      `json:"fork"`
 	Archived            bool      `json:"archived"`
@@ -39,8 +40,11 @@ type Repo struct {
 func (st *Store) CreateRepo(owner *User, name, description string, private bool) *Repo {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	return st.createRepoLocked(owner.Login+"/"+name, name, description, private, owner.ID, "User", owner)
+}
 
-	fullName := owner.Login + "/" + name
+// createRepoLocked creates a repo record and its git storage. Caller must hold st.mu.
+func (st *Store) createRepoLocked(fullName, name, description string, private bool, ownerID int, ownerType string, owner *User) *Repo {
 	if _, exists := st.ReposByName[fullName]; exists {
 		return nil
 	}
@@ -60,7 +64,8 @@ func (st *Store) CreateRepo(owner *User, name, description string, private bool)
 		DefaultBranch:       "main",
 		Visibility:          visibility,
 		Owner:               owner,
-		OwnerID:             owner.ID,
+		OwnerID:             ownerID,
+		OwnerType:           ownerType,
 		Private:             private,
 		Topics:              []string{},
 		NextIssueNumber:     1,

@@ -4,7 +4,25 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`main` — no active branch; awaiting next task.
+`feat/bleephub-github-like-ui` — implementing a GitHub-like repository UI and the backend endpoints it needs.
+
+---
+### Active branch: bleephub GitHub-like UI
+
+Scope:
+- Global navigation: removed the top-level **Workflows** link (workflows remain reachable per-repository under the Actions tab and via the legacy `/ui/workflows` route).
+- Repository creation: new `RepoCreateDialog` with name, description, visibility (public/private/internal), README initialization, .gitignore template, and license template.
+- Backend repo-creation extensions: `POST /api/v3/user/repos` and `POST /api/v3/orgs/{org}/repos` now honor `visibility`, `default_branch`, `gitignore_template`, `license_template`, and `auto_init`; `auto_init` writes a real README commit via go-git.
+- New backend surfaces: `PUT /api/v3/repos/{owner}/{repo}/contents/{path...}` for file creation/updates; `GET /api/v3/gitignore/templates`, `GET /api/v3/gitignore/templates/{name}`, `GET /api/v3/licenses`, `GET /api/v3/licenses/{license}` with curated real templates.
+- Org-owned repos now serialize the organization as the repository owner using the REST `simple-user` shape with `type: "Organization"`.
+- Code tab: branch selector, file tree, directory navigation, rendered README via `react-markdown`/`remark-gfm`, and empty-repo clone instructions with HTTPS/SSH/GitHub CLI tabs.
+
+Validation:
+- bleephub Go tests pass (`go test ./bleephub -count=1`).
+- UI typecheck, Vitest (84/84), and Playwright e2e (23/23) pass.
+- `make bleephub/lint` and `make ui/packages/bleephub/lint` clean.
+
+**Next:** rebase on `origin/main`, push the PR, then pick the next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #728): bleephub local-dev script + AWS sim EC2 revoke-by-rule-id + AWS CLI version drift (BUG-2265/2266)
