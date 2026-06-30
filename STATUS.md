@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `main` — no open branch; awaiting next task. |
+| Active branch | `feat/bleephub-local-dev-script` — adding `scripts/bleephub-local-dev.sh` to start API + UI + storage from current source. |
 | Last merged (#725) | `fix/aws-sim-revoke-filter-validation` — **AWS sim EC2 revoke-not-found + CloudWatch Logs filter validation + default VPC egress rule (BUG-2262/2263/2264)** — `RevokeSecurityGroupIngress`/`Egress` now return `InvalidPermission.NotFound` for missing rules; `PutMetricFilter`/`PutSubscriptionFilter` validate `FilterPattern` via `cwCompileLogPattern` and return `InvalidParameterException`; `cwCompileLogPattern` rejects unbalanced braces; VPC security groups now initialize with the real AWS default ALLOW ALL IPv4 egress rule. SDK/CLI tests added/updated; `TestStackProductionShape`, full AWS SDK suite, and AWS sim unit tests pass. |
 | Last merged (#718) | `chore(continuity): mark PR #717 merged, no active branch` — continuity-file rotation only; no code change. |
 | Last merged (#717) | `feat/bleephub-fidelity-audit-2026-06-29` — **bleephub fidelity audit (BUG-2256/2257)** — implemented `AgentRefreshMessage` broker delivery and a site-admin sim-control endpoint to trigger it; fixed GraphQL `repositoryOwner(login:)` to return real organization data via `orgToGraphQL` instead of a synthetic partial User-shaped payload; corrected the stale "Artifact + cache stubs" comment in `server.go`. All bleephub Go tests, fuzz targets, race tests, UI tests/typecheck/build, and both Docker integration test suites pass. |

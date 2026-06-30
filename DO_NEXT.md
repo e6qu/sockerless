@@ -4,7 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`main` — no active branch; awaiting next task.
+`feat/bleephub-local-dev-script` — add `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + storage from the current source tree, with start/stop/status/logs/clean commands and optional `--dev` (Vite HMR on :5173) and `--tls` (HTTPS on :8443) modes.
+
+---
+### In progress
+
+- Add `scripts/bleephub-local-dev.sh` and wire it into `bleephub/README.md`.
+- Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`.
+- Verify the script compiles from source, starts the server, serves `/health` and `/ui/`, and cleans up local data.
+
+**Next:** rebase on `origin/main`, push the branch, and open a PR.
 
 ---
 ### Prior branch (merged #725): AWS sim revoke/filter validation (BUG-2262/2263/2264)

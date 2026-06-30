@@ -136,6 +136,22 @@ bun run dev                         # Vite dev server on :5173 with HMR
 
 To rebuild the embedded copy (production-style) re-run `bun run build` then `make build` in `bleephub/`.
 
+## One-command local dev
+
+For day-to-day hacking, use the convenience script instead of the manual build steps above. From the repo root:
+
+```bash
+./scripts/bleephub-local-dev.sh start          # HTTP :5555 + embedded UI
+./scripts/bleephub-local-dev.sh start --dev    # HTTP :5555 API + :5173 Vite UI with HMR
+./scripts/bleephub-local-dev.sh start --tls    # HTTPS :8443 + embedded UI (self-signed cert)
+./scripts/bleephub-local-dev.sh status
+./scripts/bleephub-local-dev.sh logs
+./scripts/bleephub-local-dev.sh stop
+./scripts/bleephub-local-dev.sh clean          # remove local data, logs, PID files
+```
+
+The script compiles the current source, starts the server and UI, and prints the endpoints, admin token, data directory, and log paths. Data, git storage, logs, and the PID file live under `.local/bleephub/` in the repo root by default (override with `BLEEPHUB_DATA_DIR` / `BLEEPHUB_GIT_DIR`). The default admin token is the same non-PAT-shaped value used in the quick start above.
+
 ## What it implements
 
 ### Runner protocol (`/_apis/`)

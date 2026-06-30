@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-30 - bleephub local-dev convenience script
+
+Added `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + storage from the current source tree with one command. The script builds the UI, builds the Go server (embedding the UI by default, or a no-UI binary for `--dev`), creates local data/git directories under `.local/bleephub/`, and starts the server. It supports `--dev` to launch the Vite dev server on `:5173` with HMR, and `--tls` to generate a self-signed cert and serve HTTPS on `:8443`. It records PIDs, probes `/health` before declaring success, and provides `stop`, `restart`, `status`, `logs`, and `clean` commands. The `bleephub/README.md` quick-start section now references the script.
+
+Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`. All defaults can be overridden via environment variables.
+
 ## 2026-06-30 - AWS simulator fidelity: EC2 revoke-not-found + CloudWatch Logs filter validation (BUG-2262/2263, #725)
 
 A focused AWS-simulator fidelity pass closed two open issues:
