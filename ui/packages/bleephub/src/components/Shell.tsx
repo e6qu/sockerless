@@ -209,7 +209,7 @@ export function RepoHeader({
           active={active === "actions"}
         />
         <RepoTabLink
-          to={`${base}/settings/secrets`}
+          to={`${base}/settings`}
           icon={<GearIcon size={15} />}
           label="Settings"
           active={active === "settings"}

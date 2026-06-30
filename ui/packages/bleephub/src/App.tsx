@@ -8,11 +8,13 @@ import { WorkflowsPage } from "./pages/WorkflowsPage.js";
 import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
 import { RunnersPage } from "./pages/RunnersPage.js";
 import { ReposPage } from "./pages/ReposPage.js";
+import { OrgReposPage } from "./pages/OrgReposPage.js";
 import { RepoDetailPage } from "./pages/RepoDetailPage.js";
 import { IssuesPage } from "./pages/IssuesPage.js";
 import { PullsPage } from "./pages/PullsPage.js";
 import { ActionsPage } from "./pages/ActionsPage.js";
 import { RunDetailPage } from "./pages/RunDetailPage.js";
+import { RepoSettingsPage } from "./pages/RepoSettingsPage.js";
 import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
@@ -43,6 +45,7 @@ export function App() {
               <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
               <Route path="/ui/runners" element={<RunnersPage />} />
               <Route path="/ui/repos" element={<ReposPage />} />
+              <Route path="/ui/orgs/:org/repos" element={<OrgReposPage />} />
               <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
               <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
@@ -50,6 +53,7 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions" element={<ActionsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions/runs/:runId" element={<RunDetailPage />} />
+              <Route path="/ui/repos/:owner/:repo/settings" element={<RepoSettingsPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />

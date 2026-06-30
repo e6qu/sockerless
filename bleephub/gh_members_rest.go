@@ -696,8 +696,9 @@ func (s *Server) handleCheckTeamRepo(w http.ResponseWriter, r *http.Request) {
 		j["permissions"] = perms
 		j["role_name"] = roleName
 		// team-repository (unlike repository / minimal-repository) does
-		// not carry has_discussions.
+		// not carry has_discussions or has_pull_requests.
 		delete(j, "has_discussions")
+		delete(j, "has_pull_requests")
 		writeJSON(w, http.StatusOK, j)
 		return
 	}
