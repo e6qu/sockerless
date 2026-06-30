@@ -1,6 +1,8 @@
 package bleephub
 
 import (
+	"encoding/base64"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -13,7 +15,202 @@ import (
 func (s *Server) registerGHRepoRefRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches", s.handleListBranches)
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}", s.handleGetBranch)
+	s.route("GET /api/v3/repos/{owner}/{repo}/tags", s.handleListTags)
+	s.route("GET /api/v3/repos/{owner}/{repo}/git/refs", s.handleListRefs)
+	s.route("GET /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleGetRefs)
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleDeleteRef)
+}
+
+func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	stor := s.store.GetGitStorage(owner, repoName)
+	if stor == nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+
+	base := s.baseURL(r)
+	var tags []map[string]interface{}
+	refs, err := stor.IterReferences()
+	if err != nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+	_ = refs.ForEach(func(ref *plumbing.Reference) error {
+		if !ref.Name().IsTag() {
+			return nil
+		}
+		if ref.Hash().IsZero() {
+			return nil
+		}
+		tagName := ref.Name().Short()
+		tags = append(tags, map[string]interface{}{
+			"name":        tagName,
+			"zipball_url": base + "/" + repo.FullName + "/legacy.zip/refs/tags/" + tagName,
+			"tarball_url": base + "/" + repo.FullName + "/legacy.tar.gz/refs/tags/" + tagName,
+			"commit": map[string]interface{}{
+				"sha": ref.Hash().String(),
+				"url": base + "/api/v3/repos/" + repo.FullName + "/commits/" + ref.Hash().String(),
+			},
+			"node_id": nodeIDForTag(repo, tagName),
+		})
+		return nil
+	})
+
+	if tags == nil {
+		tags = []map[string]interface{}{}
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, tags))
+}
+
+func nodeIDForTag(repo *Repo, tagName string) string {
+	return encodeNodeID("Tag", repo.ID, tagName)
+}
+
+func (s *Server) handleListRefs(w http.ResponseWriter, r *http.Request) {
+	s.handleGetRefs(w, r)
+}
+
+func (s *Server) handleGetRefs(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	refPath := r.PathValue("ref")
+
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	stor := s.store.GetGitStorage(owner, repoName)
+	if stor == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	base := s.baseURL(r)
+
+	// Empty path means list all refs.
+	if refPath == "" {
+		s.listRefs(w, r, base, repo.FullName, stor, "")
+		return
+	}
+
+	// refPath may be a namespace like "heads" or "heads/main", or a deeper
+	// path like "heads/feature/foo". GitHub first tries to resolve the exact
+	// path as a single reference; if that fails, it treats the path as a
+	// namespace and lists everything underneath.
+	fullRef := plumbing.ReferenceName("refs/" + refPath)
+	if ref, err := stor.Reference(fullRef); err == nil {
+		writeJSON(w, http.StatusOK, refToJSON(base, repo.FullName, ref))
+		return
+	}
+
+	prefix := "refs/" + refPath
+	if !strings.HasSuffix(prefix, "/") {
+		prefix += "/"
+	}
+
+	// If the requested path looks like a leaf (no trailing slash and at least
+	// two segments), and there is nothing under it, return 404 to match the
+	// GitHub behavior for a missing single ref. Otherwise return the listing.
+	segments := strings.Split(strings.TrimSuffix(refPath, "/"), "/")
+	looksLikeSingleRef := len(segments) >= 2
+
+	refs, err := stor.IterReferences()
+	if err != nil {
+		if looksLikeSingleRef {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+		} else {
+			writeJSON(w, http.StatusOK, []interface{}{})
+		}
+		return
+	}
+
+	var items []map[string]interface{}
+	_ = refs.ForEach(func(ref *plumbing.Reference) error {
+		if !strings.HasPrefix(string(ref.Name()), prefix) {
+			return nil
+		}
+		items = append(items, refToJSON(base, repo.FullName, ref))
+		return nil
+	})
+
+	if len(items) == 0 && looksLikeSingleRef {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if items == nil {
+		items = []map[string]interface{}{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func (s *Server) listRefs(w http.ResponseWriter, r *http.Request, baseURL, fullName string, stor storer.ReferenceStorer, prefix string) {
+	refs, err := stor.IterReferences()
+	if err != nil {
+		writeJSON(w, http.StatusOK, []interface{}{})
+		return
+	}
+
+	var items []map[string]interface{}
+	_ = refs.ForEach(func(ref *plumbing.Reference) error {
+		if prefix != "" && !strings.HasPrefix(string(ref.Name()), prefix) {
+			return nil
+		}
+		items = append(items, refToJSON(baseURL, fullName, ref))
+		return nil
+	})
+
+	if items == nil {
+		items = []map[string]interface{}{}
+	}
+	writeJSON(w, http.StatusOK, items)
+}
+
+func refToJSON(baseURL, fullName string, ref *plumbing.Reference) map[string]interface{} {
+	return map[string]interface{}{
+		"ref":     string(ref.Name()),
+		"node_id": encodeNodeID("Ref", 0, string(ref.Name())),
+		"url":     baseURL + "/api/v3/repos/" + fullName + "/git/refs/" + ref.Name().String(),
+		"object": map[string]interface{}{
+			"sha":  ref.Hash().String(),
+			"type": refObjectType(ref),
+			"url":  baseURL + "/api/v3/repos/" + fullName + "/git/" + refObjectType(ref) + "s/" + ref.Hash().String(),
+		},
+	}
+}
+
+func refObjectType(ref *plumbing.Reference) string {
+	switch {
+	case ref.Name().IsTag():
+		return "tag"
+	case ref.Name().IsBranch():
+		return "commit"
+	default:
+		return "commit"
+	}
+}
+
+// encodeNodeID returns a deterministic base64 GraphQL global node id for the
+// given type and local identifier. It mirrors the shape GitHub uses for opaque
+// node IDs without requiring a persistent node-id table.
+func encodeNodeID(typ string, id int, suffix string) string {
+	var payload string
+	if suffix != "" {
+		payload = fmt.Sprintf("%s:%d:%s", typ, id, suffix)
+	} else {
+		payload = fmt.Sprintf("%s:%d", typ, id)
+	}
+	return base64.StdEncoding.EncodeToString([]byte(payload))
 }
 
 func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
