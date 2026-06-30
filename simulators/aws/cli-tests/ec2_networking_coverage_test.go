@@ -99,3 +99,47 @@ func TestEC2CLI_RevokeSecurityGroupRules(t *testing.T) {
 		t.Fatalf("ingress permissions after revoke = %q, want 0", ingressCount)
 	}
 }
+
+func TestEC2CLI_RevokeSecurityGroupRulesByID(t *testing.T) {
+	vpc := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-vpc", "--cidr-block", "10.118.0.0/16", "--query", "Vpc.VpcId", "--output", "text")))
+	sg := strings.TrimSpace(runCLI(t, awsCLI("ec2", "create-security-group", "--group-name", "cli-revoke-by-id", "--description", "r", "--vpc-id", vpc, "--query", "GroupId", "--output", "text")))
+
+	// Authorize an ingress rule and capture its rule ID.
+	ruleID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "authorize-security-group-ingress",
+		"--group-id", sg,
+		"--ip-permissions", `[{"IpProtocol":"tcp","FromPort":443,"ToPort":443,"IpRanges":[{"CidrIp":"0.0.0.0/0"}]}]`,
+		"--query", "SecurityGroupRules[0].SecurityGroupRuleId", "--output", "text")))
+	if ruleID == "" {
+		t.Fatal("expected a non-empty security group rule id")
+	}
+
+	// Revoke by rule ID.
+	runCLI(t, awsCLI("ec2", "revoke-security-group-ingress", "--group-id", sg, "--security-group-rule-ids", ruleID))
+
+	// The rule row is gone.
+	count := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-security-group-rules",
+		"--security-group-rule-ids", ruleID,
+		"--query", "length(SecurityGroupRules)", "--output", "text")))
+	if count != "0" {
+		t.Fatalf("rule count after revoke-by-id = %q, want 0", count)
+	}
+
+	// Re-revoke is idempotent.
+	runCLI(t, awsCLI("ec2", "revoke-security-group-ingress", "--group-id", sg, "--security-group-rule-ids", ruleID))
+
+	// The default egress rule can be revoked by ID too.
+	egressRuleID := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-security-group-rules",
+		"--filters", `Name=group-id,Values=`+sg, `Name=egress,Values=true`,
+		"--query", "SecurityGroupRules[0].SecurityGroupRuleId", "--output", "text")))
+	if egressRuleID == "" {
+		t.Fatal("expected a non-empty default egress rule id")
+	}
+
+	runCLI(t, awsCLI("ec2", "revoke-security-group-egress", "--group-id", sg, "--security-group-rule-ids", egressRuleID))
+
+	egressCount := strings.TrimSpace(runCLI(t, awsCLI("ec2", "describe-security-groups", "--group-ids", sg,
+		"--query", "length(SecurityGroups[0].IpPermissionsEgress)", "--output", "text")))
+	if egressCount != "0" {
+		t.Fatalf("egress permissions after revoke-by-id = %q, want 0", egressCount)
+	}
+}

@@ -19,6 +19,16 @@ func sgRulesFor(t *testing.T, c *ec2.Client, groupID string) []types.SecurityGro
 	return out.SecurityGroupRules
 }
 
+func ingressRules(rules []types.SecurityGroupRule) []types.SecurityGroupRule {
+	var out []types.SecurityGroupRule
+	for _, r := range rules {
+		if !aws.ToBool(r.IsEgress) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
 // TestEC2_SecurityGroupRuleTargetsSDK covers the P1 gap where Authorize* with
 // IPv6 ranges or prefix lists produced NO SecurityGroupRule row (so a standalone
 // aws_vpc_security_group_*_rule with cidr_ipv6/prefix_list_id drifted/recreated
@@ -99,7 +109,7 @@ func TestEC2_RevokeRemovesOnlyMatchingRuleSDK(t *testing.T) {
 		GroupId: aws.String(gid), IpPermissions: []types.IpPermission{perm("10.121.2.0/24")},
 	})
 	require.NoError(t, err)
-	require.Len(t, sgRulesFor(t, c, gid), 2, "two ingress rules expected before revoke")
+	require.Len(t, ingressRules(sgRulesFor(t, c, gid)), 2, "two ingress rules expected before revoke")
 
 	// Revoke only the first CIDR — the second must survive (was: both removed).
 	_, err = c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
@@ -107,7 +117,7 @@ func TestEC2_RevokeRemovesOnlyMatchingRuleSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rules := sgRulesFor(t, c, gid)
+	rules := ingressRules(sgRulesFor(t, c, gid))
 	require.Len(t, rules, 1, "revoking one rule must leave exactly the other (no orphan, no over-delete)")
 	assert.Equal(t, "10.121.2.0/24", aws.ToString(rules[0].CidrIpv4))
 }
@@ -143,7 +153,7 @@ func TestEC2_UpdateSecurityGroupRuleDescriptionsSDK(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	rules := sgRulesFor(t, c, gid)
+	rules := ingressRules(sgRulesFor(t, c, gid))
 	require.Len(t, rules, 1)
 	assert.Equal(t, "ssh from office", aws.ToString(rules[0].Description), "rule description must update in place")
 

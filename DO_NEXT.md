@@ -4,7 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`main` — no active branch; awaiting next task.
+`feat/bleephub-local-dev-script` — **PR #728** — add `scripts/bleephub-local-dev.sh`; fix AWS sim EC2 revoke-by-rule-id regression (BUG-2265, issue #727); and fix AWS CLI test-suite version drift (BUG-2266).
+
+---
+### In progress
+
+- PR #728 is open and contains:
+  - `scripts/bleephub-local-dev.sh` for one-command bleephub API + UI + storage startup.
+  - Fix for `RevokeSecurityGroupIngress`/`Egress` by `SecurityGroupRuleIds` returning `InvalidPermission.NotFound` even when the rule exists.
+  - Materialization of the default VPC egress rule as `SecurityGroupRule` rows.
+  - SDK + CLI tests for rule-id revoke and default-egress revoke-by-id.
+  - Fix for AWS CLI test-suite version drift: `TestMain` installs the latest AWS CLI v2 into a temp dir and prepends it to `PATH` so the suite controls its own reference adaptor.
+
+**Next:** merge PR #728 (user action) and rotate `STATUS.md`/`DO_NEXT.md`/`WHAT_WE_DID.md`/`BUGS.md` to `main`.
 
 ---
 ### Prior branch (merged #725): AWS sim revoke/filter validation (BUG-2262/2263/2264)

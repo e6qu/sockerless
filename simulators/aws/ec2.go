@@ -2090,6 +2090,11 @@ func handleCreateSecurityGroup(w http.ResponseWriter, r *http.Request) {
 		}}
 	}
 	ec2SecurityGroups.Put(id, sg)
+	// Materialize the default egress rule as standalone SecurityGroupRule rows
+	// so DescribeSecurityGroupRules sees it and it can be revoked by rule ID.
+	if vpcId != "" {
+		createSecurityGroupRules(id, sg.IpPermissionsEgress[0], true)
+	}
 
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<CreateSecurityGroupResponse %s>
@@ -2618,15 +2623,130 @@ func handleAuthorizeSecurityGroupRule(w http.ResponseWriter, r *http.Request, eg
 </%sResponse>`, action, ec2Xmlns(), generateUUID(), ruleSetXML.String(), action)
 }
 
-func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
+// ec2PermissionHasAnySource reports whether a permission still has at least one
+// target (CIDR, prefix list, or security-group reference).
+func ec2PermissionHasAnySource(p EC2IpPermission) bool {
+	return len(p.IpRanges) > 0 || len(p.Ipv6Ranges) > 0 || len(p.PrefixListIds) > 0 || len(p.UserIdGroupPairs) > 0
+}
+
+// ec2RemoveRuleSource removes the source described by rule from the permission
+// list. If the matching permission has other sources, only the revoked source is
+// dropped; otherwise the whole permission is removed. The rule-to-permission
+// match is on protocol + ports + one of the four source types.
+func ec2RemoveRuleSource(perms []EC2IpPermission, rule EC2SecurityGroupRule) []EC2IpPermission {
+	var result []EC2IpPermission
+	for _, p := range perms {
+		if p.IpProtocol != rule.IpProtocol || p.FromPort != rule.FromPort || p.ToPort != rule.ToPort {
+			result = append(result, p)
+			continue
+		}
+		var newPerm EC2IpPermission
+		newPerm.IpProtocol = p.IpProtocol
+		newPerm.FromPort = p.FromPort
+		newPerm.ToPort = p.ToPort
+		removed := false
+		for _, r := range p.IpRanges {
+			if rule.CidrIpv4 != "" && r.CidrIp == rule.CidrIpv4 {
+				removed = true
+				continue
+			}
+			newPerm.IpRanges = append(newPerm.IpRanges, r)
+		}
+		for _, r := range p.Ipv6Ranges {
+			if rule.CidrIpv6 != "" && r.CidrIpv6 == rule.CidrIpv6 {
+				removed = true
+				continue
+			}
+			newPerm.Ipv6Ranges = append(newPerm.Ipv6Ranges, r)
+		}
+		for _, r := range p.PrefixListIds {
+			if rule.PrefixListId != "" && r.PrefixListId == rule.PrefixListId {
+				removed = true
+				continue
+			}
+			newPerm.PrefixListIds = append(newPerm.PrefixListIds, r)
+		}
+		for _, r := range p.UserIdGroupPairs {
+			if rule.RefGroupId != "" && r.GroupId == rule.RefGroupId {
+				removed = true
+				continue
+			}
+			newPerm.UserIdGroupPairs = append(newPerm.UserIdGroupPairs, r)
+		}
+		switch {
+		case removed && ec2PermissionHasAnySource(newPerm):
+			result = append(result, newPerm)
+		case !removed:
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// ec2RevokeByRuleIDs removes the standalone SecurityGroupRule rows identified by
+// ruleIDs and drops their sources from the legacy IpPermissions list on the
+// security group. Rule IDs that do not exist are ignored, matching AWS's
+// idempotent behavior for revoke-by-id. Rule IDs that exist but belong to a
+// different security group or direction are also ignored so the call cannot
+// accidentally mutate another group's rules.
+func ec2RevokeByRuleIDs(groupId string, ruleIDs []string, isEgress bool) {
+	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
+		for _, ruleID := range ruleIDs {
+			rule, ok := ec2SecurityGroupRules.Get(ruleID)
+			if !ok || rule.GroupId != groupId || rule.IsEgress != isEgress {
+				continue
+			}
+			ec2SecurityGroupRules.Delete(ruleID)
+			if isEgress {
+				sg.IpPermissionsEgress = ec2RemoveRuleSource(sg.IpPermissionsEgress, rule)
+			} else {
+				sg.IpPermissions = ec2RemoveRuleSource(sg.IpPermissions, rule)
+			}
+		}
+	})
+}
+
+// ec2RevokeSecurityGroup handles both RevokeSecurityGroupIngress and
+// RevokeSecurityGroupEgress. It supports spec-based revocation (legacy) and
+// rule-id-based revocation; the latter is idempotent for missing IDs.
+func ec2RevokeSecurityGroup(w http.ResponseWriter, r *http.Request, isEgress bool) {
 	groupId := r.FormValue("GroupId")
+
+	responseTag := "RevokeSecurityGroupIngressResponse"
+	direction := "ingress"
+	if isEgress {
+		responseTag = "RevokeSecurityGroupEgressResponse"
+		direction = "egress"
+	}
+
+	ruleIDs := ec2ParamList(r, "SecurityGroupRuleId")
+	if len(ruleIDs) > 0 {
+		ec2RevokeByRuleIDs(groupId, ruleIDs, isEgress)
+		if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
+			ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group %s rules: %v", direction, err), http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "text/xml")
+		fmt.Fprintf(w, `<%s %s>
+  <requestId>%s</requestId><return>true</return>
+</%s>`, responseTag, ec2Xmlns(), generateUUID(), responseTag)
+		return
+	}
+
 	perm := parseIpPermission(r, "IpPermissions.1")
 
 	var found bool
 	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		found = ec2PermissionExists(sg.IpPermissions, perm)
-		if found {
-			sg.IpPermissions = removePermission(sg.IpPermissions, perm)
+		if isEgress {
+			found = ec2PermissionExists(sg.IpPermissionsEgress, perm)
+			if found {
+				sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
+			}
+		} else {
+			found = ec2PermissionExists(sg.IpPermissions, perm)
+			if found {
+				sg.IpPermissions = removePermission(sg.IpPermissions, perm)
+			}
 		}
 	})
 	if !found {
@@ -2635,45 +2755,24 @@ func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
 			http.StatusBadRequest)
 		return
 	}
-	deleteSecurityGroupRules(groupId, perm, false)
+	deleteSecurityGroupRules(groupId, perm, isEgress)
 	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
-		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group ingress rules: %v", err), http.StatusServiceUnavailable)
+		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group %s rules: %v", direction, err), http.StatusServiceUnavailable)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<RevokeSecurityGroupIngressResponse %s>
+	fmt.Fprintf(w, `<%s %s>
   <requestId>%s</requestId><return>true</return>
-</RevokeSecurityGroupIngressResponse>`, ec2Xmlns(), generateUUID())
+</%s>`, responseTag, ec2Xmlns(), generateUUID(), responseTag)
+}
+
+func handleRevokeSecurityGroupIngress(w http.ResponseWriter, r *http.Request) {
+	ec2RevokeSecurityGroup(w, r, false)
 }
 
 func handleRevokeSecurityGroupEgress(w http.ResponseWriter, r *http.Request) {
-	groupId := r.FormValue("GroupId")
-	perm := parseIpPermission(r, "IpPermissions.1")
-
-	var found bool
-	ec2SecurityGroups.Update(groupId, func(sg *EC2SecurityGroup) {
-		found = ec2PermissionExists(sg.IpPermissionsEgress, perm)
-		if found {
-			sg.IpPermissionsEgress = removePermission(sg.IpPermissionsEgress, perm)
-		}
-	})
-	if !found {
-		ec2ErrorXML(w, "InvalidPermission.NotFound",
-			"The specified rule does not exist in this security group.",
-			http.StatusBadRequest)
-		return
-	}
-	deleteSecurityGroupRules(groupId, perm, true)
-	if err := ec2ReapplyRealSecurityGroup(r.Context(), groupId); err != nil {
-		ec2ErrorXML(w, "DependencyViolation", fmt.Sprintf("failed to program real security group egress rules: %v", err), http.StatusServiceUnavailable)
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/xml")
-	fmt.Fprintf(w, `<RevokeSecurityGroupEgressResponse %s>
-  <requestId>%s</requestId><return>true</return>
-</RevokeSecurityGroupEgressResponse>`, ec2Xmlns(), generateUUID())
+	ec2RevokeSecurityGroup(w, r, true)
 }
 
 func handleDescribeSecurityGroupRules(w http.ResponseWriter, r *http.Request) {

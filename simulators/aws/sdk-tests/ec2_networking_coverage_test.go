@@ -147,3 +147,70 @@ func TestEC2_RevokeSecurityGroupRules(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, desc.SecurityGroups[0].IpPermissions, "ingress rule revoked")
 }
+
+func TestEC2_RevokeSecurityGroupRulesByID(t *testing.T) {
+	c := ec2Client()
+	vpc, err := c.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.114.0.0/16")})
+	require.NoError(t, err)
+	sg, err := c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+		GroupName: aws.String("revoke-by-id"), Description: aws.String("r"), VpcId: vpc.Vpc.VpcId,
+	})
+	require.NoError(t, err)
+	sgID := aws.ToString(sg.GroupId)
+
+	// Authorize an ingress rule and capture its generated rule ID.
+	auth, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"), FromPort: aws.Int32(443), ToPort: aws.Int32(443),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("0.0.0.0/0")}},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, auth.SecurityGroupRules, 1)
+	ingressRuleID := aws.ToString(auth.SecurityGroupRules[0].SecurityGroupRuleId)
+	require.NotEmpty(t, ingressRuleID)
+
+	// Revoke by rule ID must succeed.
+	_, err = c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID), SecurityGroupRuleIds: []string{ingressRuleID},
+	})
+	require.NoError(t, err)
+
+	// The rule row and legacy permission are gone.
+	desc, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		SecurityGroupRuleIds: []string{ingressRuleID},
+	})
+	require.NoError(t, err)
+	assert.Empty(t, desc.SecurityGroupRules, "rule row deleted after revoke-by-id")
+
+	sgDesc, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{sgID}})
+	require.NoError(t, err)
+	assert.Empty(t, sgDesc.SecurityGroups[0].IpPermissions, "ingress permission removed after revoke-by-id")
+
+	// Revoking the same rule ID again is idempotent (success).
+	_, err = c.RevokeSecurityGroupIngress(ctx, &ec2.RevokeSecurityGroupIngressInput{
+		GroupId: aws.String(sgID), SecurityGroupRuleIds: []string{ingressRuleID},
+	})
+	require.NoError(t, err)
+
+	// The default egress rule is visible by ID and can be revoked by ID.
+	egressRules, err := c.DescribeSecurityGroupRules(ctx, &ec2.DescribeSecurityGroupRulesInput{
+		Filters: []ec2types.Filter{
+			{Name: aws.String("group-id"), Values: []string{sgID}},
+			{Name: aws.String("egress"), Values: []string{"true"}},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, egressRules.SecurityGroupRules, 1, "default egress rule has a rule row")
+	egressRuleID := aws.ToString(egressRules.SecurityGroupRules[0].SecurityGroupRuleId)
+
+	_, err = c.RevokeSecurityGroupEgress(ctx, &ec2.RevokeSecurityGroupEgressInput{
+		GroupId: aws.String(sgID), SecurityGroupRuleIds: []string{egressRuleID},
+	})
+	require.NoError(t, err)
+
+	sgDesc, err = c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{sgID}})
+	require.NoError(t, err)
+	assert.Empty(t, sgDesc.SecurityGroups[0].IpPermissionsEgress, "default egress rule revoked by id")
+}

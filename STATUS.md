@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `main` — no open branch; awaiting next task. |
+| Active branch | `feat/bleephub-local-dev-script` — **PR #728** — adding `scripts/bleephub-local-dev.sh` and fixing AWS sim EC2 revoke-by-rule-id regression (BUG-2265, issue #727) plus AWS CLI test-suite version drift (BUG-2266). |
 | Last merged (#725) | `fix/aws-sim-revoke-filter-validation` — **AWS sim EC2 revoke-not-found + CloudWatch Logs filter validation + default VPC egress rule (BUG-2262/2263/2264)** — `RevokeSecurityGroupIngress`/`Egress` now return `InvalidPermission.NotFound` for missing rules; `PutMetricFilter`/`PutSubscriptionFilter` validate `FilterPattern` via `cwCompileLogPattern` and return `InvalidParameterException`; `cwCompileLogPattern` rejects unbalanced braces; VPC security groups now initialize with the real AWS default ALLOW ALL IPv4 egress rule. SDK/CLI tests added/updated; `TestStackProductionShape`, full AWS SDK suite, and AWS sim unit tests pass. |
 | Last merged (#718) | `chore(continuity): mark PR #717 merged, no active branch` — continuity-file rotation only; no code change. |
 | Last merged (#717) | `feat/bleephub-fidelity-audit-2026-06-29` — **bleephub fidelity audit (BUG-2256/2257)** — implemented `AgentRefreshMessage` broker delivery and a site-admin sim-control endpoint to trigger it; fixed GraphQL `repositoryOwner(login:)` to return real organization data via `orgToGraphQL` instead of a synthetic partial User-shaped payload; corrected the stale "Artifact + cache stubs" comment in `server.go`. All bleephub Go tests, fuzz targets, race tests, UI tests/typecheck/build, and both Docker integration test suites pass. |
@@ -39,7 +39,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#670) | `feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194)** — EC2/RDS/ElastiCache/Glue/Route53/EFS +77 ops; Lambda/Batch/API Gateway/Amplify/Scheduler measured. |
 | Earlier merged | #665–#669 built the AWS service-conformance gate; #574–#664 = the runner/cell + audit + IAM-enforcement + sim-fidelity arc. Full history in `git log` and [WHAT_WE_DID.md](WHAT_WE_DID.md). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (2264 filed · 2219 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
+| Bugs | See [BUGS.md](BUGS.md) header (2266 filed · 2222 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
 | Live infra | None up. |
 
 ## What's next
