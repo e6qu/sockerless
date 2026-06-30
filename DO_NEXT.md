@@ -4,22 +4,43 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-repo-phase2-topics-and-delete-contents` — closing Phase 2 of the bleephub repo API gap audit: repository topics REST endpoints and file content deletion.
+`feat/bleephub-repo-phase3-tags-and-refs` — closing Phase 3 of the bleephub repo API gap audit: repository tags and git refs listing.
 
 ---
-### Active branch: bleephub repo Phase 2 (topics + DELETE contents)
+### Active branch: bleephub repo Phase 3 (tags + git refs)
 
 Scope:
-- Add `GET /api/v3/repos/{owner}/{repo}/topics` and `PUT /api/v3/repos/{owner}/{repo}/topics` (REST), backed by the existing `Repo.Topics` field and returning the GitHub `topics`/`names` envelope shape.
-- Add `DELETE /api/v3/repos/{owner}/{repo}/contents/{path...}` with `message`, `sha`, and optional `branch` parameters; commit the deletion via go-git and return the standard content-delete response.
-- Extend existing content tests and add backend HTTP tests for topics and delete-contents.
-- Update GraphQL/repo JSON topic exposure if needed to stay consistent.
+- Add `GET /api/v3/repos/{owner}/{repo}/tags` returning lightweight tag objects (name, commit SHA, zipball/tarball URLs).
+- Add `GET /api/v3/repos/{owner}/{repo}/git/refs` listing all refs.
+- Add `GET /api/v3/repos/{owner}/{repo}/git/refs/{namespace}` for `heads`, `tags`, and sub-paths.
+- Support both single-ref lookup (`.../refs/heads/main`) and namespace listing (`.../refs/heads`) when the path is ambiguous; GitHub resolves a single ref first and falls back to a listing.
+- Add backend HTTP tests for tags and refs.
 
 Validation:
 - `go test ./bleephub -count=1` passes.
 - `make bleephub/lint` clean.
+- OpenAPI shape ratchet clean for the new endpoints.
 
-**Next:** PR #735 is open and awaits review/merge. After merge, continue Phase 2 or pick the next chunk from PLAN.md.
+**Next:** push PR, then continue Phase 4 or next chunk from `PLAN.md`.
+
+---
+### Prior branch (merged #735): bleephub Phase 2 repo topics and file content deletion
+
+`feat/bleephub-repo-phase2-topics-and-delete-contents` added repository topics and file deletion to the bleephub repo API surface.
+
+Scope:
+- `GET /api/v3/repos/{owner}/{repo}/topics` returning the `{names: [...]}` envelope.
+- `PUT /api/v3/repos/{owner}/{repo}/topics` with validation (max 20 topics, max 50 chars, no empty or invalid characters).
+- `DELETE /api/v3/repos/{owner}/{repo}/contents/{path...}` requiring `message` and `sha`, with optional `branch`, and verifying SHA before deleting.
+- Added `deleteFileCommit` helper using go-git worktree `Remove`.
+- Added backend HTTP tests in `gh_repos_phase2_test.go`.
+
+Validation:
+- bleephub Go tests pass.
+- `make bleephub/lint` clean.
+- OpenAPI shape ratchet clean.
+
+**Next:** continue Phase 3 of the repo gap audit.
 
 ---
 ### Prior branch (merged #733): bleephub Phase 1 org repos, list filters, settings, and org-aware UI
