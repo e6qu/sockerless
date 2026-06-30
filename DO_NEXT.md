@@ -4,44 +4,39 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-repo-phase1-org-and-settings` — closing Phase 1 of the bleephub repo API/UI gap audit.
+`feat/bleephub-repo-phase2-topics-and-delete-contents` — closing Phase 2 of the bleephub repo API gap audit: repository topics REST endpoints and file content deletion.
 
 ---
-### Active branch: bleephub repo Phase 1 (org repos + list filters + settings + org-aware UI)
+### Active branch: bleephub repo Phase 2 (topics + DELETE contents)
 
 Scope:
-- New backend endpoints and extensions:
-  - `GET /api/v3/orgs/{org}/repos` with `type`/`sort`/`direction`/`per_page`/`page`.
-  - `GET /api/v3/user/repos` extended with `visibility`/`affiliation`/`type`/`sort`/`direction`/`per_page`/`page` (422 when `type` conflicts with `visibility`/`affiliation`).
-  - `GET /api/v3/users/{username}/repos` extended with `type`/`sort`/`direction`/`per_page`/`page`.
-  - `PATCH /api/v3/repos/{owner}/{repo}` extended to support `description`, `homepage`, `default_branch`, `private`, `has_*`, `archived`, `is_template`, `web_commit_signoff_required`, and all merge-method fields; explicitly rejects `name` rename with 422.
-  - Repo response shape now includes `homepage`, `license`, `size`, `has_pull_requests`, merge-method fields, and `organization` for org-owned repos.
-  - `POST /api/v3/orgs/{org}/repos` and `POST /api/v3/user/repos` honor new creation fields including `homepage` and merge-method toggles.
-  - `has_pull_requests` is stripped from `GET /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}` (team-repository schema).
-- Store changes:
-  - `Repo` struct extended with homepage, has_*, merge settings, license metadata, size, and organization linkage.
-  - New listing helpers `ListReposForOrg`, `ListReposForAuthUser`, `ListReposForUser`, `filterSortPaginateRepos`, `RepoSize`.
-  - Pagination delegated to the existing `paginateAndLink` helper; REST list endpoints set `NoPaginate` so Link headers are computed from the full filtered list.
-- UI changes:
-  - New `RepoListPage` shared component with visibility/sort/direction filters and Link-header pagination.
-  - `ReposPage` now uses `/api/v3/user/repos` with server-side filters and pagination.
-  - New `OrgReposPage` at `/ui/orgs/:org/repos` using `/api/v3/orgs/{org}/repos`.
-  - `RepoCreateDialog` supports org-targeted creation.
-  - New `RepoSettingsPage` at `/ui/repos/:owner/:repo/settings` with General tab (description, homepage, default branch, visibility, features, merge button options).
-  - Settings tab in `RepoHeader` now links to the new General settings page.
-- Tests:
-  - Backend: `gh_repos_phase1_test.go` covers org repo list, auth-user/user repo filters, sort/direction, type conflicts, extended PATCH, rename rejection, license template, organization field, size, and Link-header pagination.
-  - UI Vitest: updated `ReposPage.test.tsx`; added `OrgReposPage.test.tsx` and `RepoSettingsPage.test.tsx`.
-  - Playwright e2e: existing 23 tests pass against the rebuilt bundle.
+- Add `GET /api/v3/repos/{owner}/{repo}/topics` and `PUT /api/v3/repos/{owner}/{repo}/topics` (REST), backed by the existing `Repo.Topics` field and returning the GitHub `topics`/`names` envelope shape.
+- Add `DELETE /api/v3/repos/{owner}/{repo}/contents/{path...}` with `message`, `sha`, and optional `branch` parameters; commit the deletion via go-git and return the standard content-delete response.
+- Extend existing content tests and add backend HTTP tests for topics and delete-contents.
+- Update GraphQL/repo JSON topic exposure if needed to stay consistent.
 
 Validation:
-- bleephub Go tests pass (`go test ./bleephub -count=1`).
+- `go test ./bleephub -count=1` passes.
 - `make bleephub/lint` clean.
-- UI typecheck (`bunx tsc --noEmit`) and Vitest (88/88) pass.
-- `make ui/packages/bleephub/lint` clean.
-- Playwright e2e passes (23/23) after rebuilding the UI bundle and bleephub server binary.
 
-**Next:** PR #733 is open and awaits review/merge. After merge, continue with Phase 2 of the repo gap audit (topics, repo tags, file editor enhancements, forks/stars, or the next chunk from `PLAN.md`).
+**Next:** push PR, then continue Phase 2 or next chunk from `PLAN.md`.
+
+---
+### Prior branch (merged #733): bleephub Phase 1 org repos, list filters, settings, and org-aware UI
+
+`feat/bleephub-repo-phase1-org-and-settings` closed Phase 1 of the bleephub repo API/UI gap audit.
+
+Scope:
+- `GET /api/v3/orgs/{org}/repos` with `type`/`sort`/`direction`/`per_page`/`page`.
+- `GET /api/v3/user/repos` extended with `visibility`/`affiliation`/`type`/`sort`/`direction` and 422 conflict validation.
+- `GET /api/v3/users/{username}/repos` extended with `type`/`sort`/`direction`.
+- `PATCH /api/v3/repos/{owner}/{repo}` extended with description, homepage, default branch, visibility, feature toggles, archived/is_template, web_commit_signoff_required, and merge-method fields; rename rejected with 422.
+- Repo response shape gained `homepage`, `license`, `size`, `has_pull_requests`, merge settings, and `organization` for org-owned repos.
+- `RepoListOptions.NoPaginate` added so REST list handlers delegate Link-header slicing to `paginateAndLink`.
+- Phase 1 UI: `RepoListPage`, `OrgReposPage`, `RepoSettingsPage` General tab, org-targeted repo creation.
+- Backend HTTP tests in `gh_repos_phase1_test.go`; UI Vitest 88/88; Playwright e2e 23/23.
+
+**Next:** continue Phase 2 of the repo gap audit.
 
 ---
 ### Prior branch (merged #729): bleephub GitHub-like repository UI
