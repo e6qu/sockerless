@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-finale-and-open-issues` — closing the remaining bleephub repository API gaps and fixing three open AWS simulator issues.
+`feat/bleephub-finale-and-open-issues` — closing the remaining bleephub repository API gaps and fixing three open AWS simulator issues. Open as PR #737.
 
 ---
 ### Active branch: bleephub repo API finale + AWS sim open-issue fixes
@@ -29,7 +29,7 @@ Validation:
 - UI `bun --bun run typecheck` and `bun --bun run test` pass.
 - OpenAPI shape ratchet clean for the new endpoints.
 
-**Next:** commit continuity files, rebase on `origin/main`, push, and open the PR.
+**Next:** PR #737 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #736): bleephub Phase 3 repo tags and git refs
