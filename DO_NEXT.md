@@ -19,7 +19,7 @@ Validation:
 - `go test ./bleephub -count=1` passes.
 - `make bleephub/lint` clean.
 
-**Next:** push PR, then continue Phase 2 or next chunk from `PLAN.md`.
+**Next:** PR #735 is open and awaits review/merge. After merge, continue Phase 2 or pick the next chunk from PLAN.md.
 
 ---
 ### Prior branch (merged #733): bleephub Phase 1 org repos, list filters, settings, and org-aware UI
