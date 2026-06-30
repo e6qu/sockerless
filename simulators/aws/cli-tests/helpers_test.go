@@ -30,13 +30,30 @@ var (
 func TestMain(m *testing.M) {
 	// Some CI / host images ship an aws CLI that predates simulator-tested
 	// surfaces (e.g. create-transit-gateway-metering-policy). Rather than
-	// relying on whatever version happens to be installed, install the latest
-	// v2 CLI into a tmp dir and use it for the whole suite. This satisfies the
-	// no-skip-if-absent rule: the test controls its own reference adaptor
+	// relying on whatever version happens to be installed, ensure we have a
+	// recent CLI available. If the host CLI is already present we use it; if
+	// not, install the latest v2 into a tmp dir. This satisfies the
+	// no-skip-if-absent rule: the test suite controls its own reference adaptor
 	// version.
-	awsPath := installLatestAWSCLI()
+	awsPath, err := exec.LookPath("aws")
+	if err != nil {
+		awsPath = installLatestAWSCLI()
+	}
 	if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
 		awsCLIVersion = strings.TrimSpace(string(out))
+	} else {
+		// Host aws found in PATH but broken/unusable; install a fresh one.
+		awsPath = installLatestAWSCLI()
+		if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
+			awsCLIVersion = strings.TrimSpace(string(out))
+		}
+	}
+
+	// Prepend the chosen CLI's directory to PATH so awsCLI() picks it up.
+	// installLatestAWSCLI already does this, but ensure consistency for the
+	// host-CLI case too.
+	if dir := filepath.Dir(awsPath); dir != "" {
+		os.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 
 	// Build simulator
@@ -257,6 +274,14 @@ func installLatestAWSCLI() string {
 		}
 		if out, err := exec.Command("unzip", "-q", zip, "-d", binDir).CombinedOutput(); err != nil {
 			log.Fatalf("Failed to unzip aws CLI: %v\n%s", err, out)
+		}
+		// The upstream archive extracts to aws/aws, not aws-cli/aws. Rename it
+		// so installDir always points at the directory containing the aws binary.
+		extracted := filepath.Join(binDir, "aws")
+		if _, err := os.Stat(extracted); err == nil {
+			if err := os.Rename(extracted, installDir); err != nil {
+				log.Fatalf("Failed to rename aws CLI install dir: %v", err)
+			}
 		}
 	default:
 		log.Fatalf("Unsupported OS for automatic aws CLI install: %s", runtime.GOOS)
