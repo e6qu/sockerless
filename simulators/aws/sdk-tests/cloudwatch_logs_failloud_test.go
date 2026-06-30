@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	cwlogtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	smithy "github.com/aws/smithy-go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,4 +56,64 @@ func TestCloudWatchLogs_FilterAndQueryFailLoud(t *testing.T) {
 	})
 	require.Error(t, err, "a malformed query string must fail, not run as empty")
 	assert.Equal(t, "MalformedQueryException", errCode(err))
+}
+
+// TestCloudWatchLogs_PutMetricFilterRejectsInvalidPattern verifies that
+// PutMetricFilter validates its FilterPattern up front, matching the
+// InvalidParameterException error shape in the CloudWatch Logs Smithy model.
+func TestCloudWatchLogs_PutMetricFilterRejectsInvalidPattern(t *testing.T) {
+	cw := cwLogsClient()
+	group := "/test/put-metric-filter-invalid"
+	_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(group)})
+	require.NoError(t, err)
+	defer cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(group)})
+
+	var ae smithy.APIError
+	_, err = cw.PutMetricFilter(ctx, &cloudwatchlogs.PutMetricFilterInput{
+		LogGroupName:  aws.String(group),
+		FilterName:    aws.String("bad-filter"),
+		FilterPattern: aws.String("{"),
+		MetricTransformations: []cwlogtypes.MetricTransformation{{
+			MetricName:      aws.String("Bad"),
+			MetricNamespace: aws.String("Probe"),
+			MetricValue:     aws.String("1"),
+		}},
+	})
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ae), "expected smithy API error, got %T", err)
+	assert.Equal(t, "InvalidParameterException", ae.ErrorCode())
+
+	// Valid pattern must still succeed.
+	_, err = cw.PutMetricFilter(ctx, &cloudwatchlogs.PutMetricFilterInput{
+		LogGroupName:  aws.String(group),
+		FilterName:    aws.String("good-filter"),
+		FilterPattern: aws.String("ERROR"),
+		MetricTransformations: []cwlogtypes.MetricTransformation{{
+			MetricName:      aws.String("ErrorCount"),
+			MetricNamespace: aws.String("MyApp"),
+			MetricValue:     aws.String("1"),
+		}},
+	})
+	assert.NoError(t, err)
+}
+
+// TestCloudWatchLogs_PutSubscriptionFilterRejectsInvalidPattern verifies the
+// same validation is applied to PutSubscriptionFilter.
+func TestCloudWatchLogs_PutSubscriptionFilterRejectsInvalidPattern(t *testing.T) {
+	cw := cwLogsClient()
+	group := "/test/put-subscription-filter-invalid"
+	_, err := cw.CreateLogGroup(ctx, &cloudwatchlogs.CreateLogGroupInput{LogGroupName: aws.String(group)})
+	require.NoError(t, err)
+	defer cw.DeleteLogGroup(ctx, &cloudwatchlogs.DeleteLogGroupInput{LogGroupName: aws.String(group)})
+
+	var ae smithy.APIError
+	_, err = cw.PutSubscriptionFilter(ctx, &cloudwatchlogs.PutSubscriptionFilterInput{
+		LogGroupName:   aws.String(group),
+		FilterName:     aws.String("bad-sub"),
+		FilterPattern:  aws.String("{"),
+		DestinationArn: aws.String("arn:aws:lambda:us-east-1:123456789012:function:log-sink"),
+	})
+	require.Error(t, err)
+	require.True(t, errors.As(err, &ae), "expected smithy API error, got %T", err)
+	assert.Equal(t, "InvalidParameterException", ae.ErrorCode())
 }

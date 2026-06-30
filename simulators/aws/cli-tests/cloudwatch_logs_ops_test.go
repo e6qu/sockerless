@@ -1,6 +1,7 @@
 package aws_cli_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -192,4 +193,41 @@ func TestLogs_DataProtectionPolicyCLI(t *testing.T) {
 
 	runCLI(t, awsCLI("logs", "delete-data-protection-policy",
 		"--log-group-identifier", group))
+}
+
+// TestLogs_PutMetricFilterCLIRejectsInvalidPattern verifies that an invalid
+// filterPattern is rejected at put time, not silently stored.
+func TestLogs_PutMetricFilterCLIRejectsInvalidPattern(t *testing.T) {
+	group := "/cli/metric-filter-invalid"
+	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", group))
+	defer runCLIIgnore(awsCLI("logs", "delete-log-group", "--log-group-name", group))
+
+	out := runCLIExpectError(t, awsCLI("logs", "put-metric-filter",
+		"--log-group-name", group,
+		"--filter-name", "bad-filter",
+		"--filter-pattern", "{",
+		"--metric-transformations",
+		"metricName=Bad,metricNamespace=Probe,metricValue=1",
+	))
+	if !strings.Contains(out, "InvalidParameterException") {
+		t.Fatalf("put-metric-filter invalid pattern error = %q, want InvalidParameterException", out)
+	}
+}
+
+// TestLogs_PutSubscriptionFilterCLIRejectsInvalidPattern verifies the same
+// validation on put-subscription-filter.
+func TestLogs_PutSubscriptionFilterCLIRejectsInvalidPattern(t *testing.T) {
+	group := "/cli/subscription-filter-invalid"
+	runCLI(t, awsCLI("logs", "create-log-group", "--log-group-name", group))
+	defer runCLIIgnore(awsCLI("logs", "delete-log-group", "--log-group-name", group))
+
+	out := runCLIExpectError(t, awsCLI("logs", "put-subscription-filter",
+		"--log-group-name", group,
+		"--filter-name", "bad-sub",
+		"--filter-pattern", "{",
+		"--destination-arn", "arn:aws:lambda:us-east-1:123456789012:function:sink",
+	))
+	if !strings.Contains(out, "InvalidParameterException") {
+		t.Fatalf("put-subscription-filter invalid pattern error = %q, want InvalidParameterException", out)
+	}
 }
