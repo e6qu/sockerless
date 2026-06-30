@@ -4,19 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-local-dev-script` — **PR #728** — add `scripts/bleephub-local-dev.sh`; fix AWS sim EC2 revoke-by-rule-id regression (BUG-2265, issue #727); and fix AWS CLI test-suite version drift (BUG-2266).
+`main` — no active branch; awaiting next task.
 
 ---
-### In progress
+### Prior branch (merged #728): bleephub local-dev script + AWS sim EC2 revoke-by-rule-id + AWS CLI version drift (BUG-2265/2266)
 
-- PR #728 is open and contains:
-  - `scripts/bleephub-local-dev.sh` for one-command bleephub API + UI + storage startup.
-  - Fix for `RevokeSecurityGroupIngress`/`Egress` by `SecurityGroupRuleIds` returning `InvalidPermission.NotFound` even when the rule exists.
-  - Materialization of the default VPC egress rule as `SecurityGroupRule` rows.
-  - SDK + CLI tests for rule-id revoke and default-egress revoke-by-id.
-  - Fix for AWS CLI test-suite version drift: `TestMain` installs the latest AWS CLI v2 into a temp dir and prepends it to `PATH` so the suite controls its own reference adaptor.
+`feat/bleephub-local-dev-script` delivered three things:
 
-**Next:** merge PR #728 (user action) and rotate `STATUS.md`/`DO_NEXT.md`/`WHAT_WE_DID.md`/`BUGS.md` to `main`.
+- **`scripts/bleephub-local-dev.sh`** — one-command starter for bleephub API + UI + storage. Supports `start`, `stop`, `restart`, `status`, `logs`, `clean`, plus `--dev` (Vite HMR on :5173), `--tls` (HTTPS :8443 self-signed), `--no-build`, and `--yes`. Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`.
+
+- **BUG-2265 — EC2 `RevokeSecurityGroupIngress`/`Egress` by `SecurityGroupRuleIds` returned `InvalidPermission.NotFound` for existing rules.** Fixed in `simulators/aws/ec2.go` by parsing `SecurityGroupRuleId.N`, adding `ec2RemoveRuleSource`/`ec2RevokeByRuleIDs`, and materializing the default VPC egress rule as `SecurityGroupRule` rows on group creation. SDK tests in `simulators/aws/sdk-tests/ec2_networking_coverage_test.go` and CLI tests in `simulators/aws/cli-tests/ec2_networking_coverage_test.go` cover ingress/egress revoke-by-id and idempotency.
+
+- **BUG-2266 — AWS CLI test-suite version drift.** `simulators/aws/cli-tests/helpers_test.go` now uses the host AWS CLI when present and working, and installs the latest AWS CLI v2 into a temp dir when it is missing or broken. The suite controls its own reference adaptor version, satisfying the no-skip-if-absent rule.
+
+Full CI green on PR #728.
+
+**Next:** pick next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #725): AWS sim revoke/filter validation (BUG-2262/2263/2264)
