@@ -55,26 +55,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		commits = append(commits, map[string]interface{}{
-			"sha": commit.Hash.String(),
-			"commit": map[string]interface{}{
-				"message": strings.TrimSpace(commit.Message),
-				"author": map[string]interface{}{
-					"name":  commit.Author.Name,
-					"email": commit.Author.Email,
-					"date":  commit.Author.When.Format(time.RFC3339),
-				},
-				"committer": map[string]interface{}{
-					"name":  commit.Committer.Name,
-					"email": commit.Committer.Email,
-					"date":  commit.Committer.When.Format(time.RFC3339),
-				},
-				"tree": map[string]interface{}{
-					"sha": commit.TreeHash.String(),
-				},
-			},
-			"html_url": "/" + repo.FullName + "/commit/" + commit.Hash.String(),
-		})
+		commits = append(commits, commitToJSON(commit, repo, s.baseURL(r)))
 
 		if commit.NumParents() == 0 {
 			break

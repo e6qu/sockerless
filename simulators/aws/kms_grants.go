@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	sim "github.com/sockerless/simulator"
@@ -158,6 +157,11 @@ func handleKMSGenerateDataKeyWithoutPlaintext(w http.ResponseWriter, r *http.Req
 		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest, "Key %q does not exist", req.KeyId)
 		return
 	}
+	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	size := req.NumberOfBytes
 	if size == 0 {
 		if req.KeySpec == "AES_128" {
@@ -171,11 +175,16 @@ func handleKMSGenerateDataKeyWithoutPlaintext(w http.ResponseWriter, r *http.Req
 		sim.AWSError(w, "DependencyTimeoutException", "failed to generate random data key", http.StatusInternalServerError)
 		return
 	}
+	ciphertextBlob, ok := kmsEncryptBytes(keyId, plaintext)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to encrypt data key", http.StatusInternalServerError)
+		return
+	}
 	// Real GenerateDataKeyWithoutPlaintext returns only the encrypted key — the
 	// plaintext is never put on the wire.
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":          kmsKeyArn(keyId),
-		"CiphertextBlob": kmsEncryptEnvelope(keyId, plaintext),
+		"CiphertextBlob": ciphertextBlob,
 	})
 }
 
@@ -188,14 +197,19 @@ func handleKMSReEncrypt(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	srcKeyId, plaintext, ok := kmsDecryptEnvelope(req.CiphertextBlob)
+	srcKeyId, plaintext, ok := kmsDecryptBytes(req.CiphertextBlob)
 	if !ok {
 		sim.AWSErrorf(w, "InvalidCiphertextException", http.StatusBadRequest,
-			"The ciphertext blob is not in the expected sim envelope format.")
+			"The ciphertext blob is not in the expected format.")
 		return
 	}
-	if _, ok := kmsKeys.Get(srcKeyId); !ok {
+	srcKey, exists := kmsKeys.Get(srcKeyId)
+	if !exists {
 		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest, "Source key %q does not exist", srcKeyId)
+		return
+	}
+	if !kmsIsUsable(srcKey) {
+		kmsCryptoDisabledError(w, kmsKeyArn(srcKeyId))
 		return
 	}
 	destKeyId, ok := resolveKMSKey(req.DestinationKeyId)
@@ -204,36 +218,21 @@ func handleKMSReEncrypt(w http.ResponseWriter, r *http.Request) {
 			"Destination key %q does not exist", req.DestinationKeyId)
 		return
 	}
+	destKey, _ := kmsKeys.Get(destKeyId)
+	if !kmsIsUsable(destKey) {
+		kmsCryptoDisabledError(w, kmsKeyArn(destKeyId))
+		return
+	}
+	newBlob, ok := kmsEncryptBytes(destKeyId, plaintext)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to re-encrypt", http.StatusInternalServerError)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"CiphertextBlob": kmsEncryptEnvelope(destKeyId, plaintext),
+		"CiphertextBlob": newBlob,
 		"KeyId":          kmsKeyArn(destKeyId),
 		"SourceKeyId":    kmsKeyArn(srcKeyId),
 	})
-}
-
-// kmsEncryptEnvelope / kmsDecryptEnvelope mirror the kms-sim envelope format
-// the existing Encrypt/Decrypt/GenerateDataKey handlers use:
-// "kms-sim:<keyId>:<base64(plaintext)>".
-func kmsEncryptEnvelope(keyId string, plaintext []byte) []byte {
-	return []byte("kms-sim:" + keyId + ":" + base64.StdEncoding.EncodeToString(plaintext))
-}
-
-func kmsDecryptEnvelope(blob []byte) (keyId string, plaintext []byte, ok bool) {
-	const prefix = "kms-sim:"
-	envelope := string(blob)
-	if !strings.HasPrefix(envelope, prefix) {
-		return "", nil, false
-	}
-	rest := strings.TrimPrefix(envelope, prefix)
-	colon := strings.Index(rest, ":")
-	if colon < 0 {
-		return "", nil, false
-	}
-	pt, err := base64.StdEncoding.DecodeString(rest[colon+1:])
-	if err != nil {
-		return "", nil, false
-	}
-	return rest[:colon], pt, true
 }
 
 func kmsGrantToken() string {

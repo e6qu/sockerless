@@ -319,6 +319,48 @@ func (f *s3FS) Root() string {
 	return f.prefix
 }
 
+func (f *s3FS) renameRepoPrefix(oldFull, newFull string) error {
+	oldPrefix := f.key(oldFull) + "/"
+	newPrefix := f.key(newFull) + "/"
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+
+	var continuation *string
+	for {
+		resp, err := f.client.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+			Bucket:            aws.String(f.bucket),
+			Prefix:            aws.String(oldPrefix),
+			ContinuationToken: continuation,
+		})
+		if err != nil {
+			return fmt.Errorf("s3 list %s: %w", oldPrefix, err)
+		}
+		for _, obj := range resp.Contents {
+			oldKey := aws.ToString(obj.Key)
+			rel := strings.TrimPrefix(oldKey, oldPrefix)
+			newKey := newPrefix + rel
+			if _, err := f.client.CopyObject(ctx, &s3.CopyObjectInput{
+				Bucket:     aws.String(f.bucket),
+				CopySource: aws.String(f.bucket + "/" + oldKey),
+				Key:        aws.String(newKey),
+			}); err != nil {
+				return fmt.Errorf("s3 copy %s -> %s: %w", oldKey, newKey, err)
+			}
+			if _, err := f.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+				Bucket: aws.String(f.bucket),
+				Key:    aws.String(oldKey),
+			}); err != nil {
+				return fmt.Errorf("s3 delete %s: %w", oldKey, err)
+			}
+		}
+		if !aws.ToBool(resp.IsTruncated) {
+			break
+		}
+		continuation = resp.NextContinuationToken
+	}
+	return nil
+}
+
 func (f *s3FS) deleteRepoPrefix(fullName string) error {
 	prefix := f.key(fullName) + "/"
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

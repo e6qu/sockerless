@@ -182,8 +182,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("languages", &graphql.Field{
-		// gh selects languages(first:100){edges{size,node{name}}}; bleephub
-		// performs no byte-size language analysis → empty connection.
+		// gh selects languages(first:100){edges{size,node{name}}}.
 		Type: graphql.NewObject(graphql.ObjectConfig{
 			Name: "LanguageConnection",
 			Fields: graphql.Fields{
@@ -201,7 +200,47 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"first": &graphql.ArgumentConfig{Type: graphql.Int},
 		},
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return map[string]interface{}{"edges": []interface{}{}, "totalCount": 0}, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			fullName, _ := r["nameWithOwner"].(string)
+			owner, repoName, _ := strings.Cut(fullName, "/")
+			repo := s.store.GetRepo(owner, repoName)
+			if repo == nil {
+				return map[string]interface{}{"edges": []interface{}{}, "totalCount": 0}, nil
+			}
+			counts := s.store.computeRepoLanguages(repo)
+			first := 100
+			if n, ok := p.Args["first"].(int); ok && n > 0 && n < first {
+				first = n
+			}
+			edges := make([]interface{}, 0, len(counts))
+			// GitHub returns languages sorted by size descending.
+			type pair struct {
+				lang string
+				size int64
+			}
+			pairs := make([]pair, 0, len(counts))
+			for lang, size := range counts {
+				pairs = append(pairs, pair{lang, size})
+			}
+			sort.Slice(pairs, func(i, j int) bool {
+				if pairs[i].size != pairs[j].size {
+					return pairs[i].size > pairs[j].size
+				}
+				return pairs[i].lang < pairs[j].lang
+			})
+			for i, p := range pairs {
+				if i >= first {
+					break
+				}
+				edges = append(edges, map[string]interface{}{
+					"size": p.size,
+					"node": map[string]interface{}{"name": p.lang},
+				})
+			}
+			return map[string]interface{}{"edges": edges, "totalCount": len(pairs)}, nil
 		},
 	})
 	repoType.AddFieldConfig("repositoryTopics", &graphql.Field{

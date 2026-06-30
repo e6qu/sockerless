@@ -571,11 +571,19 @@ func snsARNAccount(arn string) string {
 
 // snsNotificationEnvelope renders SNS's canonical Notification JSON, the
 // body an SQS subscriber receives and the inner record of a Lambda SNS
-// event.
+// event. Built with json.Marshal so embedded alarm JSON is always valid JSON
+// (fmt.Sprintf %q can emit \x escapes that JSON parsers reject).
 func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
-	return fmt.Sprintf(
-		`{"Type":"Notification","MessageId":%q,"TopicArn":%q,"Subject":%q,"Message":%q}`,
-		msgID, topicARN, subject, message)
+	env := map[string]any{
+		"Type":      "Notification",
+		"MessageId": msgID,
+		"TopicArn":  topicARN,
+		"Subject":   subject,
+		"Message":   message,
+		"Timestamp": time.Now().UTC().Format("2006-01-02T15:04:05.000Z"),
+	}
+	b, _ := json.Marshal(env)
+	return string(b)
 }
 
 // snsFanout delivers one published message to the topic's subscribers

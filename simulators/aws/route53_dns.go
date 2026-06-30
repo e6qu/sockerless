@@ -205,7 +205,8 @@ func packAnyResource(b *dnsmessage.Builder, r dnsmessage.Resource) error {
 }
 
 // resolveRoute53 walks the Route 53 store, finds the longest-suffix matching
-// hosted zone, and returns answer records for the question.
+// hosted zone, and returns answer records for the question. It honors exact
+// records first, then wildcard records per RFC 4592.
 func resolveRoute53(q dnsmessage.Question) ([]dnsmessage.Resource, dnsmessage.RCode) {
 	qName := normalizeDNSName(q.Name.String())
 	qType := q.Type
@@ -221,6 +222,7 @@ func resolveRoute53(q dnsmessage.Question) ([]dnsmessage.Resource, dnsmessage.RC
 
 	hdrTTL := uint32(300)
 
+	// First pass: exact match.
 	var answers []dnsmessage.Resource
 	matched := false
 	for _, rr := range stored.Records {
@@ -242,11 +244,26 @@ func resolveRoute53(q dnsmessage.Question) ([]dnsmessage.Resource, dnsmessage.RC
 		}
 		answers = append(answers, recordsFromRRSet(rr, qName, ttl)...)
 	}
+	if matched {
+		return answers, dnsmessage.RCodeSuccess
+	}
+
+	// Second pass: wildcard match. Find the closest enclosing wildcard by
+	// walking labels from the query name outward.
+	wildcardRR, _ := findWildcardMatch(stored.Records, qName, qType)
+	if wildcardRR != nil {
+		ttl := hdrTTL
+		if wildcardRR.TTL != nil && *wildcardRR.TTL > 0 {
+			ttl = uint32(*wildcardRR.TTL)
+		}
+		answers = append(answers, recordsFromRRSet(*wildcardRR, qName, ttl)...)
+		return answers, dnsmessage.RCodeSuccess
+	}
 
 	// SOA at the apex is the negative-caching signal real Route 53 returns
 	// for NXDOMAIN inside an existing zone. Other types with no records
 	// return NOERROR with no answers (NODATA).
-	if !matched && qType != dnsmessage.TypeSOA {
+	if qType != dnsmessage.TypeSOA {
 		soa := findSOA(stored.Records, zoneName)
 		if soa != nil {
 			return nil, dnsmessage.RCodeNameError
@@ -299,6 +316,27 @@ func longestMatchingZone(qName string) (zoneID, zoneName string) {
 		}
 	}
 	return bestID, best
+}
+
+func findWildcardMatch(records []R53ResourceRecordSet, qName string, qType dnsmessage.Type) (*R53ResourceRecordSet, string) {
+	labels := strings.Split(qName, ".")
+	for i := range labels {
+		candidate := "*." + strings.Join(labels[i+1:], ".")
+		if candidate == "*." {
+			continue
+		}
+		for j := range records {
+			rr := &records[j]
+			if !strings.EqualFold(strings.TrimSuffix(rr.Name, "."), candidate) {
+				continue
+			}
+			if strings.ToUpper(rr.Type) != typeNameForQType(qType) {
+				continue
+			}
+			return rr, candidate
+		}
+	}
+	return nil, ""
 }
 
 func findSOA(records []R53ResourceRecordSet, zoneName string) *R53ResourceRecordSet {

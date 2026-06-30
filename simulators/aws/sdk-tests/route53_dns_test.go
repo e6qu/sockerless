@@ -230,6 +230,83 @@ func TestRoute53DNSNXDOMAIN(t *testing.T) {
 	assert.Equal(t, dnsmessage.RCodeNameError, resp.RCode)
 }
 
+func TestRoute53DNSWildcardARecord(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	zone := fmt.Sprintf("dns-wildcard-%s.local", time.Now().Format("150405.000000"))
+	zoneID := createZoneForDNS(t, ctx, c, zone)
+	t.Cleanup(func() { _, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)}) })
+
+	_, err := c.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{
+			Changes: []r53types.Change{{
+				Action: r53types.ChangeActionCreate,
+				ResourceRecordSet: &r53types.ResourceRecordSet{
+					Name:            aws.String("*." + zone),
+					Type:            r53types.RRTypeA,
+					TTL:             aws.Int64(60),
+					ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("5.6.7.8")}},
+				},
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	resp := dnsQuery(t, "foo."+zone, dnsmessage.TypeA)
+	require.Equal(t, dnsmessage.RCodeSuccess, resp.RCode)
+	require.Len(t, resp.Answers, 1)
+	a, ok := resp.Answers[0].Body.(*dnsmessage.AResource)
+	require.True(t, ok, "expected AResource, got %T", resp.Answers[0].Body)
+	assert.Equal(t, "5.6.7.8", net.IP(a.A[:]).String())
+}
+
+func TestRoute53DNSWildcardExactBeatsWildcard(t *testing.T) {
+	c := r53Client()
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	zone := fmt.Sprintf("dns-wildcard-exact-%s.local", time.Now().Format("150405.000000"))
+	zoneID := createZoneForDNS(t, ctx, c, zone)
+	t.Cleanup(func() { _, _ = c.DeleteHostedZone(ctx, &route53.DeleteHostedZoneInput{Id: aws.String(zoneID)}) })
+
+	_, err := c.ChangeResourceRecordSets(ctx, &route53.ChangeResourceRecordSetsInput{
+		HostedZoneId: aws.String(zoneID),
+		ChangeBatch: &r53types.ChangeBatch{
+			Changes: []r53types.Change{
+				{
+					Action: r53types.ChangeActionCreate,
+					ResourceRecordSet: &r53types.ResourceRecordSet{
+						Name:            aws.String("*." + zone),
+						Type:            r53types.RRTypeA,
+						TTL:             aws.Int64(60),
+						ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("5.6.7.8")}},
+					},
+				},
+				{
+					Action: r53types.ChangeActionCreate,
+					ResourceRecordSet: &r53types.ResourceRecordSet{
+						Name:            aws.String("exact." + zone),
+						Type:            r53types.RRTypeA,
+						TTL:             aws.Int64(60),
+						ResourceRecords: []r53types.ResourceRecord{{Value: aws.String("1.2.3.4")}},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	resp := dnsQuery(t, "exact."+zone, dnsmessage.TypeA)
+	require.Equal(t, dnsmessage.RCodeSuccess, resp.RCode)
+	require.Len(t, resp.Answers, 1)
+	a, ok := resp.Answers[0].Body.(*dnsmessage.AResource)
+	require.True(t, ok, "expected AResource, got %T", resp.Answers[0].Body)
+	assert.Equal(t, "1.2.3.4", net.IP(a.A[:]).String())
+}
+
 func createZoneForDNS(t *testing.T, ctx context.Context, c *route53.Client, zone string) string {
 	t.Helper()
 	out, err := c.CreateHostedZone(ctx, &route53.CreateHostedZoneInput{

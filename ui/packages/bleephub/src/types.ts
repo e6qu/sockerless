@@ -143,6 +143,7 @@ export interface BleephubRepo {
   merge_commit_title: string;
   merge_commit_message: string;
   pull_request_creation_policy: string;
+  topics?: string[];
 }
 
 /** MetricsSnapshot is a point-in-time metrics report. */

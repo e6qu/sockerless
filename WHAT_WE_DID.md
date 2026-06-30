@@ -4,6 +4,33 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-06-30 - bleephub repo API finale + AWS sim open-issue fixes
+
+A single branch (`feat/bleephub-finale-and-open-issues`) closed the remaining bleephub repository API gaps and fixed three open AWS simulator fidelity issues.
+
+**Repository languages.** `GET /api/v3/repos/{owner}/{repo}/languages` walks the default-branch tree, maps file extensions to GitHub-style language names, skips vendored paths, and returns byte totals sorted descending. The GraphQL `repository.languages` resolver now returns real edges and totals instead of a synthetic single-entry response. Extension→language mapping lives in `bleephub/gh_repos_languages.go`.
+
+**Repository compare and merge.** `GET /api/v3/repos/{owner}/{repo}/compare/{base}...{head}` resolves refs, computes the merge base, and returns `ahead_by`, `behind_by`, `status`, commits, and file diff entries with blob/raw/contents URLs. `POST /api/v3/repos/{owner}/{repo}/merges` fast-forwards when possible and performs a real three-way merge with conflict detection otherwise. Both are implemented in `bleephub/gh_repos_compare.go` using go-git plumbing.
+
+**Repository forks.** `POST /api/v3/repos/{owner}/{repo}/forks` creates a fork with git-storage copy, `Fork=true`, and `parent`/`source` linkage. `GET /api/v3/repos/{owner}/{repo}/forks` lists forks. Implemented in `bleephub/gh_repos_forks.go` with cascade updates to `ReposByName`, `GitStorages`, and per-repo stores.
+
+**Repository rename.** `PATCH /api/v3/repos/{owner}/{repo}` with `name` now renames a repository and cascades through `ReposByName`, `GitStorages`, collaborators, secrets/variables/hooks, environment-scoped items, workflow runs/files, and on-disk or S3 git-storage prefixes. Filesystem and S3 prefix moves are supported.
+
+**Stargazers.** `GET /repos/{owner}/{repo}/stargazers`, `PUT/DELETE /user/starred/{owner}/{repo}`, `GET /user/starred`, and `GET /users/{username}/starred` are persisted on `User.StarredRepos` and `Repo.Stargazers`.
+
+**Collaborators.** `GET /repos/{owner}/{repo}/collaborators`, `GET /repos/{owner}/{repo}/collaborators/{username}/permission`, `PUT/DELETE /repos/{owner}/{repo}/collaborators/{username}` use the new `RepoCollaborators` store. `canReadRepo`, `canPushRepo`, and `canAdminRepo` now honor collaborator permissions, and `ListReposForAuthUser` includes collaborator affiliations. The invitation response shape was aligned with the `repository-invitation` OpenAPI schema.
+
+**Commits response shape.** `handleListCommits` now emits the full commit JSON shape expected by the OpenAPI spec, including `author`/`committer` as GitHub-style user objects and `parents`.
+
+**File-editor UI.** `RepoSettingsPage.tsx` gained a topics editor. `RepoDetailPage.tsx` gained a file delete action. Supporting API helpers were added to `ui/packages/bleephub/src/api.ts`.
+
+**AWS simulator fixes.**
+- **Route 53 wildcard DNS (#731, BUG-2267).** `simulators/aws/route53_dns.go` now prefers exact record-set matches over wildcard matches and correctly selects the most specific wildcard label (`*.foo.example.com` beats `*.example.com`). Added SDK tests in `simulators/aws/sdk-tests/route53_dns_test.go`.
+- **KMS real encryption and key-policy enforcement (#732, BUG-2268).** `simulators/aws/kms_crypto.go` adds real AES-256-GCM encryption with per-key material, authenticating every `Encrypt`/`Decrypt`/`GenerateDataKey`/`ReEncrypt` envelope. `CreateKey` generates and stores key material; `ImportKeyMaterial` unwraps RSA-wrapped key material with the stored private key. Key policies are mirrored into `iam_resource_policies` so `Deny` statements are enforced at call time. Added SDK tests in `simulators/aws/sdk-tests/kms_policy_test.go`. The service-conformance catalog lists eight remaining asymmetric operations as unimplemented (`DeriveSharedSecret`, `GenerateDataKeyPair`, `GenerateDataKeyPairWithoutPlaintext`, `GenerateMac`, `GetPublicKey`, `Sign`, `Verify`, `VerifyMac`) so the ratchet stays green.
+- **SNS→SQS malformed notification JSON (#734, BUG-2269).** `simulators/aws/sns.go` now builds the CloudWatch→SNS→SQS notification envelope with `json.Marshal` and adds `Timestamp`, avoiding `%q`-encoded `\x` escapes for control-character payloads. Added a unit test in `simulators/aws/sns_envelope_test.go`.
+
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` clean; AWS sim `make unit-test` passes; UI `bun --bun run typecheck` and `bun --bun run test` pass. Docker was not available locally, so AWS sim SDK end-to-end tests were not run.
+
 ## 2026-06-30 - bleephub GitHub-like repository UI and backend extensions
 
 A single branch (`feat/bleephub-github-like-ui`) made the bleephub frontend feel like GitHub's repository surface while adding the real backend endpoints the UI requires.
