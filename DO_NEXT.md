@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-github-like-ui` — implementing a GitHub-like repository UI and the backend endpoints it needs.
+`main` — no active branch; awaiting next task.
 
 ---
-### Active branch: bleephub GitHub-like UI
+### Prior branch (merged #729): bleephub GitHub-like UI
 
 Scope:
 - Global navigation: removed the top-level **Workflows** link (workflows remain reachable per-repository under the Actions tab and via the legacy `/ui/workflows` route).
@@ -22,7 +22,7 @@ Validation:
 - UI typecheck, Vitest (84/84), and Playwright e2e (23/23) pass.
 - `make bleephub/lint` and `make ui/packages/bleephub/lint` clean.
 
-**Next:** rebase on `origin/main`, push the PR, then pick the next task from PLAN.md / open issues / BUGS.md.
+**Next:** pick next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #728): bleephub local-dev script + AWS sim EC2 revoke-by-rule-id + AWS CLI version drift (BUG-2265/2266)
