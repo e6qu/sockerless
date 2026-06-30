@@ -16,6 +16,8 @@ func (s *Server) registerGHRepoRoutes() {
 	s.route("DELETE /api/v3/repos/{owner}/{repo}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRepo))
 	s.route("GET /api/v3/users/{username}/repos", s.handleListUserRepos)
 	s.route("GET /api/v3/orgs/{org}/repos", s.handleListOrgRepos)
+	s.route("GET /api/v3/repos/{owner}/{repo}/topics", s.handleGetRepoTopics)
+	s.route("PUT /api/v3/repos/{owner}/{repo}/topics", s.requirePerm(scopeContents, permWrite, s.handlePutRepoTopics))
 	s.registerGHRepoRefRoutes()
 	s.registerGHRepoObjectRoutes()
 }
@@ -284,6 +286,81 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	s.store.DeleteRepo(owner, name)
 	s.recordAuditEvent("repo.destroy", user.Login, "", map[string]interface{}{"repo": owner + "/" + name})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetRepoTopics(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	user := ghUserFromContext(r.Context())
+	if repo.Private && !canReadRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	names := repo.Topics
+	if names == nil {
+		names = []string{}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"names": names,
+	})
+}
+
+func (s *Server) handlePutRepoTopics(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	user := ghUserFromContext(r.Context())
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
+		return
+	}
+
+	var req struct {
+		Names []string `json:"names"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if len(req.Names) > 20 {
+		writeGHValidationError(w, "Repository", "names", "invalid")
+		return
+	}
+	for _, n := range req.Names {
+		if n == "" || len(n) > 50 || strings.ContainsAny(n, " /\\:") {
+			writeGHValidationError(w, "Repository", "names", "invalid")
+			return
+		}
+	}
+
+	s.store.UpdateRepo(owner, name, func(r *Repo) {
+		r.Topics = req.Names
+		r.UpdatedAt = time.Now().UTC()
+	})
+
+	updated := s.store.GetRepo(owner, name)
+	names := updated.Topics
+	if names == nil {
+		names = []string{}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"names": names,
+	})
 }
 
 func (s *Server) handleListAuthUserRepos(w http.ResponseWriter, r *http.Request) {

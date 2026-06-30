@@ -112,6 +112,52 @@ func createFileCommit(stor gitStorage.Storer, branch, path, content, message str
 	return commitHash, nil
 }
 
+// deleteFileCommit removes a single file on the given branch and returns the
+// new commit hash. It returns an error if the file does not exist.
+func deleteFileCommit(stor gitStorage.Storer, branch, path, message string, sig *object.Signature) (plumbing.Hash, error) {
+	fs := memfs.New()
+	repo, err := git.Open(stor, fs)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("git open: %w", err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("worktree: %w", err)
+	}
+
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	ref, err := repo.Storer.Reference(branchRef)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("resolve branch %s: %w", branch, err)
+	}
+	parentHash := ref.Hash()
+
+	if err := wt.Checkout(&git.CheckoutOptions{Hash: parentHash, Force: true}); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("checkout: %w", err)
+	}
+
+	if _, err := fs.Stat(path); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("path does not exist: %s", path)
+	}
+
+	if _, err := wt.Remove(path); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("git remove %s: %w", path, err)
+	}
+
+	commitHash, err := wt.Commit(message, &git.CommitOptions{
+		Author:    sig,
+		Committer: sig,
+		Parents:   []plumbing.Hash{parentHash},
+	})
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("commit: %w", err)
+	}
+	if err := repo.Storer.SetReference(plumbing.NewHashReference(branchRef, commitHash)); err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("set ref: %w", err)
+	}
+	return commitHash, nil
+}
+
 func writeFilesToWorktree(fs billy.Filesystem, wt *git.Worktree, files map[string]string) error {
 	for path, body := range files {
 		if err := writeFileToWorktree(fs, wt, path, body); err != nil {
