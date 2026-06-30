@@ -76,6 +76,7 @@ var allowedGHESOnly = map[string]string{
 	"POST /actions/runner-registration": "GHES runner registration endpoint (actions/runner config.sh)",
 	"POST /admin/organizations":         "GHES admin/staff-tools API (create org)",
 	"GET /orgs/{}/audit-log":            "Org audit log — real GitHub (Enterprise), absent from the dotcom bundled description",
+	"GET /repos/{}/{}/git/refs":         "GHES / real GitHub git-refs listing endpoint, absent from the dotcom bundled description",
 }
 
 // dispatchRoutes are real GitHub sub-resource paths served through a single
@@ -86,6 +87,7 @@ var allowedGHESOnly = map[string]string{
 // not an invented path. Keyed by the normalized wildcard pattern.
 var dispatchRoutes = map[string]string{
 	"DELETE /repos/{}/{}/issues/{}/{}":      "→ DELETE /repos/{}/{}/issues/{}/labels/{} (remove a label)",
+	"GET /repos/{}/{}/git/refs/{}":          "→ GET /repos/{}/{}/git/refs/{} (single ref lookup)",
 	"GET /repos/{}/{}/pulls/{}/{}":          "→ GET /repos/{}/{}/pulls/comments/{} (a review comment)",
 	"PATCH /repos/{}/{}/pulls/{}/{}":        "→ PATCH /repos/{}/{}/pulls/comments/{} (edit a review comment)",
 	"DELETE /repos/{}/{}/pulls/{}/{}":       "→ DELETE /repos/{}/{}/pulls/comments/{} (delete a review comment)",
