@@ -41,7 +41,7 @@ Validation:
 - `make ui/packages/bleephub/lint` clean.
 - Playwright e2e passes (23/23) after rebuilding the UI bundle and bleephub server binary.
 
-**Next:** rebase on `origin/main`, push the PR, then continue with Phase 2 of the repo gap audit (topics, repo tags, file editor enhancements, forks/stars, or the next chunk from `PLAN.md`).
+**Next:** PR #733 is open and awaits review/merge. After merge, continue with Phase 2 of the repo gap audit (topics, repo tags, file editor enhancements, forks/stars, or the next chunk from `PLAN.md`).
 
 ---
 ### Prior branch (merged #729): bleephub GitHub-like repository UI
