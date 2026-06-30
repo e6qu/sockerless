@@ -10,6 +10,27 @@ Added `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + sto
 
 Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`. All defaults can be overridden via environment variables.
 
+## 2026-06-30 - AWS simulator fidelity: EC2 revoke-by-rule-id + default egress rule rows (BUG-2265, #728)
+
+Closed GitHub issue #727, a regression from #725 where `RevokeSecurityGroupIngress`/`Egress` by `SecurityGroupRuleIds` returned `InvalidPermission.NotFound` even for existing rules.
+
+The root cause was generic: the revoke handlers only looked at `IpPermissions.1` and ignored the `SecurityGroupRuleId.N` form parameters, so any rule-id-based revoke fell through to the spec-based not-found path. Fixed in `simulators/aws/ec2.go` by:
+
+- Parsing `SecurityGroupRuleId.N` via the existing `ec2ParamList` helper.
+- Adding `ec2RemoveRuleSource` to drop a single source from a legacy `IpPermission` while preserving other sources that share the same protocol/ports.
+- Adding `ec2RevokeByRuleIDs` to delete the matching `SecurityGroupRule` rows and update the legacy permission list. Missing or mismatched rule IDs are ignored, matching AWS's idempotent revoke-by-id behavior.
+- Materializing the default VPC ALLOW ALL egress rule as `SecurityGroupRule` rows when a security group is created, so `DescribeSecurityGroupRules` sees it and it can be revoked by ID (the generic fix for the invisible-default-rule gap that also blocked rule-id revoke of the default rule).
+
+Updated existing SDK tests in `simulators/aws/sdk-tests/ec2_sg_rule_targets_test.go` to filter ingress rules when asserting counts, since a fresh VPC security group now has a visible default egress rule row. Added `TestEC2_RevokeSecurityGroupRulesByID` (SDK) and `TestEC2CLI_RevokeSecurityGroupRulesByID` (CLI) covering ingress revoke-by-id, idempotency on a missing rule ID, and default-egress revoke-by-id.
+
+Tests: AWS sim `make unit-test` and `make lint` clean; full AWS SDK test suite passes; targeted CLI security-group tests pass; `TestStackProductionShape` applies cleanly.
+
+## 2026-06-30 - bleephub local-dev convenience script
+
+Added `scripts/bleephub-local-dev.sh` to start a default bleephub API + UI + storage from the current source tree with one command. The script builds the UI, builds the Go server (embedding the UI by default, or a no-UI binary for `--dev`), creates local data/git directories under `.local/bleephub/`, and starts the server. It supports `--dev` to launch the Vite dev server on `:5173` with HMR, and `--tls` to generate a self-signed cert and serve HTTPS on `:8443`. It records PIDs, probes `/health` before declaring success, and provides `stop`, `restart`, `status`, `logs`, and `clean` commands. The `bleephub/README.md` quick-start section now references the script.
+
+Default coordinates: API/UI on `http://localhost:5555` (UI at `/ui/`), admin token `bleephub-admin-token-00000000000000000000`, data dir `.local/bleephub/data`, git dir `.local/bleephub/git`. All defaults can be overridden via environment variables.
+
 ## 2026-06-30 - AWS simulator fidelity: EC2 revoke-not-found + CloudWatch Logs filter validation (BUG-2262/2263, #725)
 
 A focused AWS-simulator fidelity pass closed two open issues:
