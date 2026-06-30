@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-repo-phase3-tags-and-refs` — bleephub Phase 3 repo API gap close: repository tags and git refs listing. |
+| Active branch | `feat/bleephub-repo-phase3-tags-and-refs` — bleephub Phase 3 repo API gap close: repository tags and git refs listing. Open as PR #736. |
 | Last merged (#735) | `feat/bleephub-repo-phase2-topics-and-delete-contents` — **bleephub Phase 2 repo topics and file content deletion** — added `GET /api/v3/repos/{owner}/{repo}/topics` and `PUT /api/v3/repos/{owner}/{repo}/topics` with validation; added `DELETE /api/v3/repos/{owner}/{repo}/contents/{path...}` with SHA verification. bleephub Go tests and `make bleephub/lint` pass; OpenAPI shape ratchet clean. |
 | Last merged (#728) | `feat/bleephub-local-dev-script` — **bleephub local-dev convenience script + AWS sim EC2 revoke-by-rule-id + AWS CLI version drift fix (BUG-2265/2266)** — added `scripts/bleephub-local-dev.sh` for one-command API/UI/storage startup; fixed `RevokeSecurityGroupIngress`/`Egress` by `SecurityGroupRuleIds` returning `InvalidPermission.NotFound` for existing rules and materialized the default VPC egress rule as `SecurityGroupRule` rows; made the AWS CLI test suite control its own reference adaptor version by installing latest AWS CLI v2 in `TestMain`. Full CI green. |
 | Last merged (#718) | `chore(continuity): mark PR #717 merged, no active branch` — continuity-file rotation only; no code change. |

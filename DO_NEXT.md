@@ -40,7 +40,7 @@ Validation:
 - `make bleephub/lint` clean.
 - OpenAPI shape ratchet clean.
 
-**Next:** continue Phase 3 of the repo gap audit.
+**Next:** PR #736 is open and awaits review/merge. After merge, continue Phase 4 or pick the next chunk from `PLAN.md`.
 
 ---
 ### Prior branch (merged #733): bleephub Phase 1 org repos, list filters, settings, and org-aware UI
