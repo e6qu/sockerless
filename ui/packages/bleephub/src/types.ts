@@ -99,17 +99,50 @@ export interface BleephubLabel {
   type: string;
 }
 
+/** Filters the repo list endpoints support server-side. */
+export interface RepoListFilters {
+  type?: string;
+  visibility?: "public" | "private" | "internal";
+  sort?: "created" | "updated" | "pushed" | "full_name";
+  direction?: "asc" | "desc";
+}
+
 /** Repo represents a GitHub repository. */
 export interface BleephubRepo {
   id: number;
   name: string;
   full_name: string;
   description: string;
+  homepage: string | null;
   default_branch: string;
   visibility: string;
   private: boolean;
   created_at: string;
   updated_at: string;
+  pushed_at: string | null;
+  size: number;
+  owner: { login: string; type: string; avatar_url?: string };
+  organization?: { login: string; type: string; avatar_url?: string };
+  license: { key: string; name: string; spdx_id: string; url: string; node_id: string } | null;
+  has_issues: boolean;
+  has_projects: boolean;
+  has_wiki: boolean;
+  has_pull_requests: boolean;
+  is_template: boolean;
+  archived: boolean;
+  web_commit_signoff_required: boolean;
+  allow_squash_merge: boolean;
+  allow_merge_commit: boolean;
+  allow_rebase_merge: boolean;
+  allow_auto_merge: boolean;
+  allow_update_branch: boolean;
+  delete_branch_on_merge: boolean;
+  use_squash_pr_title_as_default: boolean;
+  squash_merge_commit_title: string;
+  squash_merge_commit_message: string;
+  merge_commit_title: string;
+  merge_commit_message: string;
+  pull_request_creation_policy: string;
 }
 
 /** MetricsSnapshot is a point-in-time metrics report. */

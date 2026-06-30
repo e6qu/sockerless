@@ -274,14 +274,25 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name              string   `json:"name"`
-		Description       string   `json:"description"`
-		Private           flexBool `json:"private"`
-		Visibility        string   `json:"visibility"`
-		DefaultBranch     string   `json:"default_branch"`
-		AutoInit          flexBool `json:"auto_init"`
-		GitignoreTemplate string   `json:"gitignore_template"`
-		LicenseTemplate   string   `json:"license_template"`
+		Name                      string   `json:"name"`
+		Description               string   `json:"description"`
+		Homepage                  string   `json:"homepage"`
+		Private                   flexBool `json:"private"`
+		Visibility                string   `json:"visibility"`
+		DefaultBranch             string   `json:"default_branch"`
+		AutoInit                  flexBool `json:"auto_init"`
+		GitignoreTemplate         string   `json:"gitignore_template"`
+		LicenseTemplate           string   `json:"license_template"`
+		HasIssues                 *bool    `json:"has_issues"`
+		HasProjects               *bool    `json:"has_projects"`
+		HasWiki                   *bool    `json:"has_wiki"`
+		HasPullRequests           *bool    `json:"has_pull_requests"`
+		AllowSquashMerge          *bool    `json:"allow_squash_merge"`
+		AllowMergeCommit          *bool    `json:"allow_merge_commit"`
+		AllowRebaseMerge          *bool    `json:"allow_rebase_merge"`
+		AllowAutoMerge            *bool    `json:"allow_auto_merge"`
+		DeleteBranchOnMerge       *bool    `json:"delete_branch_on_merge"`
+		UseSquashPRTitleAsDefault *bool    `json:"use_squash_pr_title_as_default"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -315,6 +326,40 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.store.UpdateRepo(org.Login, req.Name, func(r *Repo) {
+		r.Homepage = req.Homepage
+		if req.HasIssues != nil {
+			r.HasIssues = *req.HasIssues
+		}
+		if req.HasProjects != nil {
+			r.HasProjects = *req.HasProjects
+		}
+		if req.HasWiki != nil {
+			r.HasWiki = *req.HasWiki
+		}
+		if req.HasPullRequests != nil {
+			r.HasPullRequests = *req.HasPullRequests
+		}
+		if req.AllowSquashMerge != nil {
+			r.AllowSquashMerge = *req.AllowSquashMerge
+		}
+		if req.AllowMergeCommit != nil {
+			r.AllowMergeCommit = *req.AllowMergeCommit
+		}
+		if req.AllowRebaseMerge != nil {
+			r.AllowRebaseMerge = *req.AllowRebaseMerge
+		}
+		if req.AllowAutoMerge != nil {
+			r.AllowAutoMerge = *req.AllowAutoMerge
+		}
+		if req.DeleteBranchOnMerge != nil {
+			r.DeleteBranchOnMerge = *req.DeleteBranchOnMerge
+		}
+		if req.UseSquashPRTitleAsDefault != nil {
+			r.UseSquashPRTitleAsDefault = *req.UseSquashPRTitleAsDefault
+		}
+	})
+
 	if defaultBranch != "main" {
 		s.store.UpdateRepo(org.Login, req.Name, func(r *Repo) {
 			r.DefaultBranch = defaultBranch
@@ -329,6 +374,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	repo = s.store.GetRepo(org.Login, req.Name)
 	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
 }
 

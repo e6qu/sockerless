@@ -11,7 +11,7 @@ require (
 	github.com/sockerless/backend-core v0.0.0
 	golang.org/x/oauth2 v0.36.0
 	google.golang.org/api v0.286.0
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.82.0
 )
 
 require (

@@ -182,6 +182,14 @@ func (s *Server) initRepoFiles(ctx context.Context, repo *Repo, branch, descript
 	}
 	s.store.UpdateRepo(owner, name, func(r *Repo) {
 		r.PushedAt = time.Now().UTC()
+		if licenseTemplate != "" {
+			if key, ok := normalizeLicenseKey(licenseTemplate); ok {
+				tmpl := licenseTemplates[key]
+				r.LicenseKey = key
+				r.LicenseName = tmpl.name
+				r.LicenseSPDX = tmpl.spdxID
+			}
+		}
 	})
 	return nil
 }

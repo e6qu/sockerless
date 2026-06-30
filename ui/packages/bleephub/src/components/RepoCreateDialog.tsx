@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
-import { createRepo, fetchGitignoreTemplates, fetchLicenseTemplates } from "../api.js";
+import { createRepo, createOrgRepo, fetchGitignoreTemplates, fetchLicenseTemplates } from "../api.js";
 import { Button, Modal } from "./ui.js";
 
 interface RepoCreateDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
+  createTarget?: "user" | { org: string };
 }
 
-export function RepoCreateDialog({ open, onClose, onCreated }: RepoCreateDialogProps) {
+export function RepoCreateDialog({ open, onClose, onCreated, createTarget = "user" }: RepoCreateDialogProps) {
+  const isOrg = createTarget !== "user";
+  const org = isOrg ? createTarget.org : undefined;
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<"public" | "private">("public");
@@ -51,14 +54,19 @@ export function RepoCreateDialog({ open, onClose, onCreated }: RepoCreateDialogP
     setBusy(true);
     setError(null);
     try {
-      await createRepo({
+      const payload = {
         name: name.trim(),
         description: description.trim(),
         visibility,
         auto_init: autoInit,
         gitignore_template: gitignore || undefined,
         license_template: license || undefined,
-      });
+      };
+      if (org) {
+        await createOrgRepo(org, payload);
+      } else {
+        await createRepo(payload);
+      }
       reset();
       onCreated();
     } catch (err) {
@@ -71,7 +79,7 @@ export function RepoCreateDialog({ open, onClose, onCreated }: RepoCreateDialogP
   if (!open) return null;
 
   return (
-    <Modal onClose={handleClose} title="Create a new repository">
+    <Modal onClose={handleClose} title={isOrg ? `Create repository in ${org}` : "Create a new repository"}>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
         <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
           <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Repository name *</span>

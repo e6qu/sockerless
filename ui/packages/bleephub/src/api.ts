@@ -4,6 +4,7 @@ import type {
   BleephubDispatchRequest,
   BleephubSession,
   BleephubRepo,
+  RepoListFilters,
   BleephubMetrics,
   BleephubStatus,
   BleephubHealth,
@@ -120,6 +121,7 @@ export const fetchHealth = () =>
 
 export const fetchWorkflowFiles = () =>
   fetchJSON<BleephubWorkflowFile[]>("/internal/workflow_files");
+
 
 export const fetchApps = () => fetchJSON<BleephubApp[]>("/internal/apps");
 export const fetchInstallations = () =>
@@ -278,10 +280,21 @@ async function ghFetch<T>(path: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** One page of a Link-paginated list plus the rel="next" URL (null = last page). */
+/** One page of a Link-paginated list plus parsed rel links. */
 export interface Page<T> {
   items: T[];
   nextUrl: string | null;
+  lastPage: number | null;
+}
+
+/** Extract the rel="last" page number from a GitHub-style Link header. */
+export function parseLinkLast(link: string | null): number | null {
+  if (!link) return null;
+  for (const part of link.split(",")) {
+    const m = part.match(/<[^>]*[?&]page=(\d+)[^>]*>\s*;\s*rel="last"/);
+    if (m) return parseInt(m[1], 10);
+  }
+  return null;
 }
 
 /** Extract the rel="next" target from a GitHub-style Link header. */
@@ -304,11 +317,46 @@ async function ghFetchPage<T>(url: string): Promise<Page<T>> {
     throw new ApiError(res.status, `${res.status} ${res.statusText}`);
   }
   const items = (await res.json()) as T[];
-  return { items, nextUrl: parseLinkNext(res.headers.get("Link")) };
+  const link = res.headers.get("Link");
+  return { items, nextUrl: parseLinkNext(link), lastPage: parseLinkLast(link) };
 }
 
 export const fetchRepoDetail = (owner: string, repo: string) =>
   ghFetch<BleephubRepo>(`/api/v3/repos/${owner}/${repo}`);
+
+function buildRepoListURL(
+  base: string,
+  filters: RepoListFilters,
+  perPage: number,
+  pageUrl?: string,
+): string {
+  if (pageUrl) return pageUrl;
+  const params = new URLSearchParams({ per_page: String(perPage) });
+  if (filters.type) params.set("type", filters.type);
+  if (filters.visibility) params.set("visibility", filters.visibility);
+  if (filters.sort) params.set("sort", filters.sort);
+  if (filters.direction) params.set("direction", filters.direction);
+  return `${base}?${params}`;
+}
+
+/** First page of the authenticated user's repos; follow pages via Link header. */
+export const fetchUserReposPage = (
+  filters: RepoListFilters = {},
+  pageUrl?: string,
+): Promise<Page<BleephubRepo>> =>
+  ghFetchPage<BleephubRepo>(
+    buildRepoListURL("/api/v3/user/repos", filters, 30, pageUrl),
+  );
+
+/** First page of an organization's repos; follow pages via Link header. */
+export const fetchOrgReposPage = (
+  org: string,
+  filters: RepoListFilters = {},
+  pageUrl?: string,
+): Promise<Page<BleephubRepo>> =>
+  ghFetchPage<BleephubRepo>(
+    buildRepoListURL(`/api/v3/orgs/${org}/repos`, filters, 30, pageUrl),
+  );
 
 export const createRepo = (payload: {
   name: string;
@@ -321,6 +369,38 @@ export const createRepo = (payload: {
   license_template?: string;
 }): Promise<BleephubRepo> =>
   ghPostJSON("/api/v3/user/repos", payload);
+
+export const createOrgRepo = (
+  org: string,
+  payload: {
+    name: string;
+    description?: string;
+    private?: boolean;
+    visibility?: "public" | "private" | "internal";
+    default_branch?: string;
+    auto_init?: boolean;
+    gitignore_template?: string;
+    license_template?: string;
+  },
+): Promise<BleephubRepo> => ghPostJSON(`/api/v3/orgs/${org}/repos`, payload);
+
+export async function updateRepo(
+  owner: string,
+  repo: string,
+  payload: Partial<BleephubRepo>,
+): Promise<BleephubRepo> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<BleephubRepo>;
+}
 
 export const fetchRepoContents = (
   owner: string,
