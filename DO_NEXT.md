@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/aws-sim-revoke-filter-validation` — fix AWS simulator EC2 security-group revoke-not-found and CloudWatch Logs filter-pattern validation (BUG-2262/2263).
+`main` — no active branch; awaiting next task.
 
 ---
-### Current task: AWS sim revoke/filter validation — DONE
+### Prior branch (merged #725): AWS sim revoke/filter validation (BUG-2262/2263/2264)
 
 The branch fixes two simulator fidelity gaps filed from open issues #722 and #723:
 
@@ -25,7 +25,7 @@ SDK and CLI tests were added for both fixes:
 
 All targeted SDK/CLI tests, the full AWS SDK test suite, AWS sim unit tests, `TestStackProductionShape`, and `make lint` pass.
 
-**Next:** PR #725 CI is green. Awaiting user merge. After merge, rotate continuity files to the post-#725 state.
+**Next:** pick next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #724): bleephub + UI audit (BUG-2261)
