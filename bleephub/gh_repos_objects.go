@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/base64"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -18,6 +19,7 @@ func (s *Server) registerGHRepoObjectRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/readme", s.handleGetReadme)
 	s.route("GET /api/v3/repos/{owner}/{repo}/contents/{path...}", s.handleGetContents)
 	s.route("PUT /api/v3/repos/{owner}/{repo}/contents/{path...}", s.requirePerm(scopeContents, permWrite, s.handlePutContents))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/contents/{path...}", s.requirePerm(scopeContents, permWrite, s.handleDeleteContents))
 }
 
 func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
@@ -364,6 +366,135 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
 		"content": contentOut,
+		"commit": map[string]interface{}{
+			"sha":     commitHash.String(),
+			"message": strings.TrimSpace(commit.Message),
+			"author": map[string]interface{}{
+				"name":  commit.Author.Name,
+				"email": commit.Author.Email,
+				"date":  commit.Author.When.Format(time.RFC3339),
+			},
+			"committer": map[string]interface{}{
+				"name":  commit.Committer.Name,
+				"email": commit.Committer.Email,
+				"date":  commit.Committer.When.Format(time.RFC3339),
+			},
+			"tree": map[string]interface{}{
+				"sha": commit.TreeHash.String(),
+			},
+		},
+	})
+}
+
+func (s *Server) handleDeleteContents(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	path := r.PathValue("path")
+
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	user := ghUserFromContext(r.Context())
+	if repo.Private && !canReadRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+		SHA     string `json:"sha"`
+		Branch  string `json:"branch"`
+		Author  *struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		} `json:"author"`
+		Committer *struct {
+			Name  string `json:"name"`
+			Email string `json:"email"`
+		} `json:"committer"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Message == "" {
+		writeGHValidationError(w, "Commit", "message", "missing_field")
+		return
+	}
+	if req.SHA == "" {
+		writeGHValidationError(w, "Commit", "sha", "missing_field")
+		return
+	}
+
+	branch := req.Branch
+	if branch == "" {
+		branch = repo.DefaultBranch
+	}
+
+	stor := s.store.GetGitStorage(owner, repoName)
+	if stor == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// Resolve the file to verify the SHA matches.
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	ref, err := stor.Reference(branchRef)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	commit, err := object.GetCommit(stor, ref.Hash())
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	entry, err := tree.FindEntry(path)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, fmt.Sprintf("path %s does not exist", path))
+		return
+	}
+	if entry.Hash.String() != req.SHA {
+		writeGHError(w, http.StatusUnprocessableEntity, fmt.Sprintf("sha mismatch: expected %s, got %s", entry.Hash.String(), req.SHA))
+		return
+	}
+
+	sig := repoSignature(user.Login, "bleephub@local")
+	if req.Committer != nil {
+		sig = repoSignature(req.Committer.Name, req.Committer.Email)
+	} else if req.Author != nil {
+		sig = repoSignature(req.Author.Name, req.Author.Email)
+	}
+
+	commitHash, err := deleteFileCommit(stor, branch, path, req.Message, sig)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+
+	commit, err = object.GetCommit(stor, commitHash)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	s.store.UpdateRepo(owner, repoName, func(r *Repo) {
+		r.PushedAt = time.Now().UTC()
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"content": nil,
 		"commit": map[string]interface{}{
 			"sha":     commitHash.String(),
 			"message": strings.TrimSpace(commit.Message),
