@@ -25,7 +25,7 @@ SDK and CLI tests were added for both fixes:
 
 All targeted SDK/CLI tests, the full AWS SDK test suite, AWS sim unit tests, `TestStackProductionShape`, and `make lint` pass.
 
-**Next:** PR #725 has been force-pushed with the CI fix and continuity-file updates; CI is re-running automatically.
+**Next:** PR #725 CI is green. Awaiting user merge. After merge, rotate continuity files to the post-#725 state.
 
 ---
 ### Prior branch (merged #724): bleephub + UI audit (BUG-2261)
