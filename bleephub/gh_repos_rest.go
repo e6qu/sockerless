@@ -18,6 +18,20 @@ func (s *Server) registerGHRepoRoutes() {
 	s.route("GET /api/v3/orgs/{org}/repos", s.handleListOrgRepos)
 	s.route("GET /api/v3/repos/{owner}/{repo}/topics", s.handleGetRepoTopics)
 	s.route("PUT /api/v3/repos/{owner}/{repo}/topics", s.requirePerm(scopeContents, permWrite, s.handlePutRepoTopics))
+	s.route("GET /api/v3/repos/{owner}/{repo}/languages", s.handleGetRepoLanguages)
+	s.route("GET /api/v3/repos/{owner}/{repo}/compare/{range...}", s.handleCompareRefs)
+	s.route("POST /api/v3/repos/{owner}/{repo}/merges", s.requirePerm(scopeContents, permWrite, s.handleMergeRefs))
+	s.route("POST /api/v3/repos/{owner}/{repo}/forks", s.handleCreateFork)
+	s.route("GET /api/v3/repos/{owner}/{repo}/forks", s.handleListForks)
+	s.route("GET /api/v3/repos/{owner}/{repo}/stargazers", s.handleListStargazers)
+	s.route("PUT /api/v3/user/starred/{owner}/{repo}", s.handleStarRepo)
+	s.route("DELETE /api/v3/user/starred/{owner}/{repo}", s.handleUnstarRepo)
+	s.route("GET /api/v3/user/starred", s.handleListStarredRepos)
+	s.route("GET /api/v3/users/{username}/starred", s.handleListUserStarredRepos)
+	s.route("GET /api/v3/repos/{owner}/{repo}/collaborators", s.requirePerm(scopeContents, permRead, s.handleListCollaborators))
+	s.route("GET /api/v3/repos/{owner}/{repo}/collaborators/{username}/permission", s.requirePerm(scopeContents, permRead, s.handleGetCollaboratorPermission))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/collaborators/{username}", s.requirePerm(scopeAdministration, permWrite, s.handleAddCollaborator))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/collaborators/{username}", s.requirePerm(scopeAdministration, permWrite, s.handleRemoveCollaborator))
 	s.registerGHRepoRefRoutes()
 	s.registerGHRepoObjectRoutes()
 }
@@ -175,12 +189,23 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// GitHub supports renaming a repo via PATCH, but bleephub does not yet
-	// implement the full cascade required for a rename. Reject explicitly
-	// rather than silently ignore.
 	if newName, ok := req["name"].(string); ok && newName != "" && newName != repo.Name {
-		writeGHError(w, http.StatusUnprocessableEntity, "Repository rename is not supported.")
-		return
+		if !s.store.RenameRepo(owner, name, newName) {
+			writeGHError(w, http.StatusUnprocessableEntity, "Repository rename failed.")
+			return
+		}
+		// Update artifacts that embed the repo full name.
+		oldFull := owner + "/" + name
+		newFull := owner + "/" + newName
+		s.artifactStore.mu.Lock()
+		for _, art := range s.artifactStore.artifacts {
+			if art.RepoFullName == oldFull {
+				art.RepoFullName = newFull
+			}
+		}
+		s.artifactStore.mu.Unlock()
+
+		name = newName
 	}
 
 	s.store.UpdateRepo(owner, name, func(r *Repo) {
@@ -622,6 +647,14 @@ func fullRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} 
 	if repo.PullRequestCreationPolicy != "" {
 		out["pull_request_creation_policy"] = repo.PullRequestCreationPolicy
 	}
+	if repo.Fork {
+		if parent := st.GetRepoByID(repo.ParentID); parent != nil {
+			out["parent"] = repoToJSON(parent, st, baseURL)
+		}
+		if source := st.GetRepoByID(repo.SourceID); source != nil {
+			out["source"] = repoToJSON(source, st, baseURL)
+		}
+	}
 	return out
 }
 
@@ -658,4 +691,236 @@ func repoOrganizationJSON(repo *Repo, st *Store) interface{} {
 		return nil
 	}
 	return orgAsSimpleUserJSON(org)
+}
+
+func (s *Server) handleListStargazers(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	if s.store.GetRepo(owner, name) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	ids := s.store.ListRepoStargazers(owner, name)
+	out := make([]map[string]interface{}, 0, len(ids))
+	for _, id := range ids {
+		if u := s.store.GetUserByID(id); u != nil {
+			out = append(out, userToJSON(u))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleStarRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	if !s.store.StarRepo(user.ID, owner, name) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleUnstarRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	if !s.store.UnstarRepo(user.ID, owner, name) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListStarredRepos(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	names := s.store.ListStarredRepos(user.ID)
+	out := make([]map[string]interface{}, 0, len(names))
+	for _, fullName := range names {
+		parts := strings.SplitN(fullName, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
+			out = append(out, fullRepoJSON(repo, s.store, s.baseURL(r)))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleListUserStarredRepos(w http.ResponseWriter, r *http.Request) {
+	username := r.PathValue("username")
+	u := s.store.LookupUserByLogin(username)
+	if u == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	names := s.store.ListStarredRepos(u.ID)
+	out := make([]map[string]interface{}, 0, len(names))
+	for _, fullName := range names {
+		parts := strings.SplitN(fullName, "/", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
+			out = append(out, fullRepoJSON(repo, s.store, s.baseURL(r)))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleListCollaborators(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	collabs := s.store.ListRepoCollaborators(owner, name)
+	out := make([]map[string]interface{}, 0, len(collabs)+1)
+	if repo.Owner != nil {
+		out = append(out, collaboratorJSON(repo.Owner, "admin"))
+	}
+	for login, perm := range collabs {
+		if u := s.store.LookupUserByLogin(login); u != nil {
+			out = append(out, collaboratorJSON(u, perm))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetCollaboratorPermission(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	username := r.PathValue("username")
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	u := s.store.LookupUserByLogin(username)
+	if u == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	perm := s.store.GetRepoCollaboratorPermission(owner, name, username)
+	if perm == "" {
+		if repo.Owner != nil && strings.EqualFold(repo.Owner.Login, username) {
+			perm = "admin"
+		} else {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+	}
+	userJSON := userToJSON(u)
+	userJSON["role_name"] = githubRoleName(perm)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"permission": perm,
+		"user":       userJSON,
+		"role_name":  githubRoleName(perm),
+	})
+}
+
+func (s *Server) handleAddCollaborator(w http.ResponseWriter, r *http.Request) {
+	actor := ghUserFromContext(r.Context())
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	username := r.PathValue("username")
+	u := s.store.LookupUserByLogin(username)
+	if u == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		Permission string `json:"permission"`
+	}
+	if r.Header.Get("Content-Length") != "0" && r.ContentLength > 0 {
+		if !decodeJSONBody(w, r, &req) {
+			return
+		}
+	}
+	if !s.store.AddRepoCollaborator(owner, name, username, req.Permission) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	perm := s.store.GetRepoCollaboratorPermission(owner, name, username)
+	inviter := actor
+	if inviter == nil {
+		inviter = repo.Owner
+	}
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"id":          0,
+		"node_id":     "",
+		"repository":  repoToJSON(repo, s.store, s.baseURL(r)),
+		"invitee":     userToJSON(u),
+		"inviter":     userToJSON(inviter),
+		"permissions": githubRoleName(perm),
+		"created_at":  time.Now().UTC().Format(time.RFC3339),
+		"url":         s.baseURL(r) + "/user/repository-invitations/0",
+		"html_url":    s.baseURL(r) + "/" + repo.FullName + "/invitations",
+		"expired":     false,
+	})
+}
+
+func githubRoleName(perm string) string {
+	switch perm {
+	case "push":
+		return "write"
+	case "admin":
+		return "admin"
+	case "pull":
+		return "read"
+	default:
+		return perm
+	}
+}
+
+func (s *Server) handleRemoveCollaborator(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	if s.store.GetRepo(owner, name) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	username := r.PathValue("username")
+	if !s.store.RemoveRepoCollaborator(owner, name, username) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func collaboratorJSON(u *User, perm string) map[string]interface{} {
+	json := userToJSON(u)
+	json["permissions"] = collaboratorPermsJSON(perm)
+	json["role_name"] = perm
+	return json
+}
+
+func collaboratorPermsJSON(perm string) map[string]bool {
+	levels := map[string]int{"pull": 1, "push": 2, "admin": 3}
+	level := levels[perm]
+	return map[string]bool{
+		"pull":  level >= 1,
+		"push":  level >= 2,
+		"admin": level >= 3,
+	}
 }

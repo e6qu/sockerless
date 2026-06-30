@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { deleteRepoContent } from "../api.js";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -270,6 +271,9 @@ function CodeView({
           {fileList.map((item, i) => (
             <FileRow
               key={item.sha}
+              owner={owner}
+              repo={repo}
+              basePath={path}
               item={item}
               isLast={i === fileList.length - 1}
               onClick={() => {
@@ -305,15 +309,31 @@ function CodeView({
 }
 
 function FileRow({
+  owner,
+  repo,
+  basePath,
   item,
   isLast,
   onClick,
 }: {
+  owner: string;
+  repo: string;
+  basePath: string;
   item: GithubContentItem;
   isLast: boolean;
   onClick: () => void;
 }) {
+  const queryClient = useQueryClient();
   const isDir = item.type === "dir";
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      deleteRepoContent(owner, repo, item.path, item.sha, `Delete ${item.name} via web`),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["contents", owner, repo, basePath] });
+      queryClient.invalidateQueries({ queryKey: ["readme", owner, repo] });
+      queryClient.invalidateQueries({ queryKey: ["commits", owner, repo] });
+    },
+  });
   return (
     <div
       role={isDir ? "button" : undefined}
@@ -329,7 +349,28 @@ function FileRow({
       <span style={{ color: "var(--color-accent)", display: "flex" }}>
         {isDir ? <DirectoryIcon size={16} /> : <FileIcon size={16} />}
       </span>
-      <span style={{ color: "var(--color-accent)", fontWeight: 500 }}>{item.name}</span>
+      <span style={{ color: "var(--color-accent)", fontWeight: 500, flex: 1 }}>{item.name}</span>
+      {!isDir && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (window.confirm(`Delete ${item.name}?`)) {
+              deleteMutation.mutate();
+            }
+          }}
+          disabled={deleteMutation.isPending}
+          style={{
+            fontSize: "0.75rem",
+            color: "var(--color-danger-fg)",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          {deleteMutation.isPending ? "Deleting..." : "Delete"}
+        </button>
+      )}
     </div>
   );
 }

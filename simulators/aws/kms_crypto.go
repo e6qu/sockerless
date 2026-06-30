@@ -2,6 +2,8 @@ package main
 
 import (
 	"crypto"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/hmac"
@@ -10,23 +12,35 @@ import (
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
+	"encoding/binary"
 	"hash"
+	"io"
 	"net/http"
 	"strings"
 
 	sim "github.com/sockerless/simulator"
 )
 
-// KMS asymmetric + MAC crypto ops. These perform REAL cryptography with
-// the Go standard library: an ASYMMETRIC_SIGN CMK gets a real RSA/ECDSA
-// key generated on first use, Sign/Verify use it, GetPublicKey exports the
-// real DER-encoded SubjectPublicKeyInfo, HMAC CMKs MAC with real key bytes,
-// data-key-pairs are real RSA/ECC keypairs, and DeriveSharedSecret runs a
-// real ECDH. No fake signatures or MACs — Verify of a real Sign succeeds
-// and a tampered message fails, exactly as real KMS behaves.
+// KMS crypto: real AES-256-GCM for symmetric operations and real Go-stdlib
+// cryptography for asymmetric/MAC operations. No fake signatures, MACs, or
+// ciphertexts — Sign/Verify, GenerateMac/VerifyMac, data-key-pairs, and ECDH
+// all use persisted real key material.
+//
+// Symmetric ciphertext blob format v1:
+//   magic    [3]byte  "SK1"
+//   version  [1]byte  0x01
+//   keyIdLen [2]byte  big-endian uint16
+//   keyId    []byte
+//   nonce    [12]byte AES-GCM nonce
+//   ciphertext+tag []byte
+
+const kmsBlobMagic = "SK1"
+const kmsBlobVersion = byte(0x01)
+const kmsKeyMaterialLen = 32
 
 func registerKMSCrypto(r *sim.AWSRouter, srv *sim.Server) {
-	kmsKeyMaterial = sim.MakeStore[KMSKeyMaterial](srv.DB(), "kms_key_material")
+	registerKMSKeyMaterial(srv)
+	kmsAsymmetricKeyMaterial = sim.MakeStore[KMSKeyMaterial](srv.DB(), "kms_asymmetric_key_material")
 
 	r.Register("TrentService.Sign", handleKMSSign)
 	r.Register("TrentService.Verify", handleKMSVerify)
@@ -36,6 +50,12 @@ func registerKMSCrypto(r *sim.AWSRouter, srv *sim.Server) {
 	r.Register("TrentService.GenerateDataKeyPair", handleKMSGenerateDataKeyPair)
 	r.Register("TrentService.GenerateDataKeyPairWithoutPlaintext", handleKMSGenerateDataKeyPairWithoutPlaintext)
 	r.Register("TrentService.DeriveSharedSecret", handleKMSDeriveSharedSecret)
+}
+
+var kmsKeyMaterial sim.Store[[]byte]
+
+func registerKMSKeyMaterial(srv *sim.Server) {
+	kmsKeyMaterial = sim.MakeStore[[]byte](srv.DB(), "kms_key_material")
 }
 
 // KMSKeyMaterial holds the real backing key bytes for an asymmetric or HMAC
@@ -49,58 +69,59 @@ type KMSKeyMaterial struct {
 	HMACSecret    []byte `json:"HMACSecret,omitempty"`
 }
 
-var kmsKeyMaterial sim.Store[KMSKeyMaterial]
+var kmsAsymmetricKeyMaterial sim.Store[KMSKeyMaterial]
 
-// kmsSigningAlgorithmsFor returns the signing algorithms a given asymmetric
-// KeySpec supports, matching real KMS's GetPublicKey / DescribeKey output.
+// kmsSigningAlgorithmsFor returns the signing algorithms real KMS advertises
+// for an asymmetric signing key based on its KeySpec.
 func kmsSigningAlgorithmsFor(spec string) []string {
 	switch spec {
 	case "RSA_2048", "RSA_3072", "RSA_4096":
 		return []string{
-			"RSASSA_PSS_SHA_256", "RSASSA_PSS_SHA_384", "RSASSA_PSS_SHA_512",
-			"RSASSA_PKCS1_V1_5_SHA_256", "RSASSA_PKCS1_V1_5_SHA_384", "RSASSA_PKCS1_V1_5_SHA_512",
+			"RSASSA_PSS_SHA_256",
+			"RSASSA_PSS_SHA_384",
+			"RSASSA_PSS_SHA_512",
+			"RSASSA_PKCS1_V1_5_SHA_256",
+			"RSASSA_PKCS1_V1_5_SHA_384",
+			"RSASSA_PKCS1_V1_5_SHA_512",
 		}
-	case "ECC_NIST_P256":
+	case "ECC_NIST_P256", "ECC_SECG_P256K1":
 		return []string{"ECDSA_SHA_256"}
 	case "ECC_NIST_P384":
 		return []string{"ECDSA_SHA_384"}
 	case "ECC_NIST_P521":
 		return []string{"ECDSA_SHA_512"}
-	case "ECC_SECG_P256K1":
-		return []string{"ECDSA_SHA_256"}
-	default:
-		return nil
 	}
+	return nil
 }
 
-// kmsEncryptionAlgorithmsFor returns the encryption algorithms an RSA KeySpec
-// supports (only RSA asymmetric encrypt CMKs have these).
-func kmsEncryptionAlgorithmsFor(spec, keyUsage string) []string {
-	if keyUsage != "ENCRYPT_DECRYPT" {
+// kmsEncryptionAlgorithmsFor returns the encryption algorithms real KMS
+// advertises for an asymmetric encryption key based on its KeySpec and usage.
+func kmsEncryptionAlgorithmsFor(spec, usage string) []string {
+	if usage != "ENCRYPT_DECRYPT" {
 		return nil
 	}
 	switch spec {
 	case "RSA_2048", "RSA_3072", "RSA_4096":
 		return []string{"RSAES_OAEP_SHA_1", "RSAES_OAEP_SHA_256"}
-	default:
-		return nil
 	}
+	return nil
 }
 
-// kmsKeyAgreementAlgorithmsFor returns ["ECDH"] for an EC key-agreement CMK.
-func kmsKeyAgreementAlgorithmsFor(spec, keyUsage string) []string {
-	if keyUsage != "KEY_AGREEMENT" {
+// kmsKeyAgreementAlgorithmsFor returns the key-agreement algorithms real KMS
+// advertises for an ECC key with KEY_AGREEMENT usage.
+func kmsKeyAgreementAlgorithmsFor(spec, usage string) []string {
+	if usage != "KEY_AGREEMENT" {
 		return nil
 	}
 	switch spec {
 	case "ECC_NIST_P256", "ECC_NIST_P384", "ECC_NIST_P521", "ECC_SECG_P256K1":
 		return []string{"ECDH"}
-	default:
-		return nil
 	}
+	return nil
 }
 
-// kmsMacAlgorithmsFor returns the MAC algorithm an HMAC KeySpec supports.
+// kmsMacAlgorithmsFor returns the MAC algorithms real KMS advertises for an
+// HMAC key based on its KeySpec.
 func kmsMacAlgorithmsFor(spec string) []string {
 	switch spec {
 	case "HMAC_224":
@@ -111,9 +132,8 @@ func kmsMacAlgorithmsFor(spec string) []string {
 		return []string{"HMAC_SHA_384"}
 	case "HMAC_512":
 		return []string{"HMAC_SHA_512"}
-	default:
-		return nil
 	}
+	return nil
 }
 
 func kmsIsAsymmetricSpec(spec string) bool {
@@ -142,17 +162,143 @@ func kmsEllipticCurveFor(spec string) elliptic.Curve {
 		return elliptic.P384()
 	case "ECC_NIST_P521":
 		return elliptic.P521()
-	default:
-		return nil
 	}
+	return nil
 }
 
-// kmsEnsureMaterial generates and stores real backing key material for an
-// asymmetric or HMAC CMK on first use, so Sign→Verify and GenerateMac→VerifyMac
-// round-trip. The material is generated deterministically from a fresh CSPRNG
-// once, then persisted, so subsequent ops reuse the same key.
-func kmsEnsureMaterial(keyId, spec string) (KMSKeyMaterial, error) {
-	if m, ok := kmsKeyMaterial.Get(keyId); ok {
+// kmsGenerateKeyMaterial creates and persists 32 random bytes for a new CMK.
+func kmsGenerateKeyMaterial(keyId string) ([]byte, error) {
+	material := make([]byte, kmsKeyMaterialLen)
+	if _, err := io.ReadFull(rand.Reader, material); err != nil {
+		return nil, err
+	}
+	kmsKeyMaterial.Put(keyId, material)
+	return material, nil
+}
+
+// kmsGetKeyMaterial returns the persisted AES key for a CMK.
+func kmsGetKeyMaterial(keyId string) ([]byte, bool) {
+	return kmsKeyMaterial.Get(keyId)
+}
+
+// kmsDeleteKeyMaterial removes the key material for a CMK.
+func kmsDeleteKeyMaterial(keyId string) {
+	kmsKeyMaterial.Delete(keyId)
+}
+
+// kmsEncryptBytes encrypts plaintext under the named CMK and returns the
+// opaque ciphertext blob. Returns ok=false when the key has no material.
+func kmsEncryptBytes(keyId string, plaintext []byte) ([]byte, bool) {
+	material, ok := kmsGetKeyMaterial(keyId)
+	if !ok {
+		return nil, false
+	}
+	block, err := aes.NewCipher(material)
+	if err != nil {
+		return nil, false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, false
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return nil, false
+	}
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+
+	keyIdBytes := []byte(keyId)
+	if len(keyIdBytes) > 65535 {
+		return nil, false
+	}
+	out := make([]byte, 0, 3+1+2+len(keyIdBytes)+len(nonce)+len(ciphertext))
+	out = append(out, []byte(kmsBlobMagic)...)
+	out = append(out, kmsBlobVersion)
+	out = binary.BigEndian.AppendUint16(out, uint16(len(keyIdBytes)))
+	out = append(out, keyIdBytes...)
+	out = append(out, nonce...)
+	out = append(out, ciphertext...)
+	return out, true
+}
+
+// kmsDecryptBytes decrypts a blob produced by kmsEncryptBytes. It returns the
+// source key id, plaintext, and ok. Authentication tag verification happens
+// inside GCM.Open; a tampered blob returns ok=false.
+func kmsDecryptBytes(blob []byte) (keyId string, plaintext []byte, ok bool) {
+	if len(blob) < 3+1+2 {
+		return "", nil, false
+	}
+	if string(blob[0:3]) != kmsBlobMagic {
+		return "", nil, false
+	}
+	if blob[3] != kmsBlobVersion {
+		return "", nil, false
+	}
+	keyIdLen := binary.BigEndian.Uint16(blob[4:6])
+	off := 6
+	if len(blob) < off+int(keyIdLen)+12 {
+		return "", nil, false
+	}
+	keyId = string(blob[off : off+int(keyIdLen)])
+	off += int(keyIdLen)
+
+	material, exists := kmsGetKeyMaterial(keyId)
+	if !exists {
+		return "", nil, false
+	}
+	block, err := aes.NewCipher(material)
+	if err != nil {
+		return "", nil, false
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", nil, false
+	}
+	nonceSize := gcm.NonceSize()
+	if len(blob) < off+nonceSize {
+		return "", nil, false
+	}
+	nonce := blob[off : off+nonceSize]
+	ciphertext := blob[off+nonceSize:]
+	plaintext, err = gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", nil, false
+	}
+	return keyId, plaintext, true
+}
+
+// kmsIsUsable reports whether a CMK can currently perform cryptographic
+// operations. Keys in Disabled or PendingDeletion states must reject crypto.
+func kmsIsUsable(key KMSKey) bool {
+	return key.KeyState == "Enabled"
+}
+
+// kmsCryptoDisabledError returns the service-specific error real KMS emits
+// when a key is not in a valid state for the requested operation.
+func kmsCryptoDisabledError(w http.ResponseWriter, op string) {
+	sim.AWSErrorf(w, "DisabledException", http.StatusConflict,
+		"%s is disabled.", op)
+}
+
+// kmsKeyPolicyArn returns the ARN used as the resource-policy key for a CMK.
+func kmsKeyPolicyArn(keyId string) string {
+	return kmsKeyArn(keyId)
+}
+
+// kmsPutKeyPolicy mirrors a KMS key policy into the central resource-policy
+// store so the IAM enforcement gate evaluates it for crypto operations.
+func kmsPutKeyPolicy(keyId, policyJSON string) {
+	if policyJSON == "" {
+		policyJSON = kmsDefaultKeyPolicyJSON()
+	}
+	iamPutResourcePolicy(kmsKeyPolicyArn(keyId), policyJSON)
+}
+
+// kmsEnsureAsymmetricMaterial generates and stores real backing key material
+// for an asymmetric or HMAC CMK on first use, so Sign->Verify and
+// GenerateMac->VerifyMac round-trip.
+func kmsEnsureAsymmetricMaterial(keyId, spec string) (KMSKeyMaterial, error) {
+	if m, ok := kmsAsymmetricKeyMaterial.Get(keyId); ok {
 		return m, nil
 	}
 	m := KMSKeyMaterial{KeyId: keyId}
@@ -206,7 +352,7 @@ func kmsEnsureMaterial(keyId, spec string) (KMSKeyMaterial, error) {
 		}
 		m.PrivateKeyDER = der
 	}
-	kmsKeyMaterial.Put(keyId, m)
+	kmsAsymmetricKeyMaterial.Put(keyId, m)
 	return m, nil
 }
 
@@ -232,8 +378,7 @@ func kmsHashForSigningAlg(alg string, message []byte) ([]byte, crypto.Hash) {
 	}
 }
 
-// isPSS reports whether a signing algorithm uses RSASSA-PSS padding (vs the
-// RSASSA-PKCS1-v1_5 scheme).
+// isPSS reports whether a signing algorithm uses RSASSA-PSS padding.
 func isPSS(alg string) bool { return strings.HasPrefix(alg, "RSASSA_PSS") }
 
 func handleKMSSign(w http.ResponseWriter, r *http.Request) {
@@ -252,6 +397,10 @@ func handleKMSSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	if !kmsIsAsymmetricSpec(key.Spec) || key.KeyUsage != "SIGN_VERIFY" {
 		sim.AWSErrorf(w, "InvalidKeyUsageException", http.StatusBadRequest,
 			"%s key usage is %s, not SIGN_VERIFY.", kmsKeyArn(keyId), key.KeyUsage)
@@ -261,7 +410,7 @@ func handleKMSSign(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "SigningAlgorithm is required", http.StatusBadRequest)
 		return
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -320,7 +469,7 @@ func handleKMSVerify(w http.ResponseWriter, r *http.Request) {
 			"%s key usage is %s, not SIGN_VERIFY.", kmsKeyArn(keyId), key.KeyUsage)
 		return
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -348,8 +497,6 @@ func handleKMSVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if verifyErr != nil {
-		// Real KMS raises KMSInvalidSignatureException when the signature
-		// does not verify (e.g. a tampered message).
 		sim.AWSErrorf(w, "KMSInvalidSignatureException", http.StatusBadRequest,
 			"The signature is not valid for the message and key.")
 		return
@@ -379,7 +526,7 @@ func handleKMSGetPublicKey(w http.ResponseWriter, r *http.Request) {
 			"%s is not an asymmetric key.", kmsKeyArn(keyId))
 		return
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -433,9 +580,8 @@ func kmsHMACHash(alg string) func() hash.Hash {
 		return sha512.New384
 	case "HMAC_SHA_512":
 		return sha512.New
-	default:
-		return nil
 	}
+	return nil
 }
 
 func handleKMSGenerateMac(w http.ResponseWriter, r *http.Request) {
@@ -453,6 +599,10 @@ func handleKMSGenerateMac(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	if !kmsIsHMACSpec(key.Spec) || key.KeyUsage != "GENERATE_VERIFY_MAC" {
 		sim.AWSErrorf(w, "InvalidKeyUsageException", http.StatusBadRequest,
 			"%s is not an HMAC key.", kmsKeyArn(keyId))
@@ -464,7 +614,7 @@ func handleKMSGenerateMac(w http.ResponseWriter, r *http.Request) {
 			"Unsupported MacAlgorithm: %s", req.MacAlgorithm)
 		return
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -507,7 +657,7 @@ func handleKMSVerifyMac(w http.ResponseWriter, r *http.Request) {
 			"Unsupported MacAlgorithm: %s", req.MacAlgorithm)
 		return
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -516,7 +666,6 @@ func handleKMSVerifyMac(w http.ResponseWriter, r *http.Request) {
 	mac.Write(req.Message)
 	expected := mac.Sum(nil)
 	if !hmac.Equal(expected, req.Mac) {
-		// Real KMS raises KMSInvalidMacException when the MAC does not match.
 		sim.AWSErrorf(w, "KMSInvalidMacException", http.StatusBadRequest,
 			"The HMAC is not valid for the message and key.")
 		return
@@ -582,20 +731,28 @@ func handleKMSGenerateDataKeyPair(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	pubDER, privDER, err := kmsGenerateDataKeyPairMaterial(req.KeyPairSpec)
 	if err != nil {
 		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
 			"Unsupported KeyPairSpec: %s", req.KeyPairSpec)
 		return
 	}
-	// The private key is returned in plaintext AND wrapped under the CMK, using
-	// the same envelope the existing Encrypt handler produces.
+	wrapped, ok := kmsEncryptBytes(keyId, privDER)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to wrap private key", http.StatusInternalServerError)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":                    kmsKeyArn(keyId),
 		"KeyPairSpec":              req.KeyPairSpec,
 		"PublicKey":                pubDER,  // SDK base64-encodes on the wire
 		"PrivateKeyPlaintext":      privDER, // SDK base64-encodes on the wire
-		"PrivateKeyCiphertextBlob": kmsEncryptEnvelope(keyId, privDER),
+		"PrivateKeyCiphertextBlob": wrapped,
 		"KeyMaterialId":            keyId,
 	})
 }
@@ -613,26 +770,34 @@ func handleKMSGenerateDataKeyPairWithoutPlaintext(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
+	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	pubDER, privDER, err := kmsGenerateDataKeyPairMaterial(req.KeyPairSpec)
 	if err != nil {
 		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
 			"Unsupported KeyPairSpec: %s", req.KeyPairSpec)
 		return
 	}
-	// WithoutPlaintext returns only the wrapped private key — the plaintext is
-	// never put on the wire.
+	wrapped, ok := kmsEncryptBytes(keyId, privDER)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to wrap private key", http.StatusInternalServerError)
+		return
+	}
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":                    kmsKeyArn(keyId),
 		"KeyPairSpec":              req.KeyPairSpec,
 		"PublicKey":                pubDER, // SDK base64-encodes on the wire
-		"PrivateKeyCiphertextBlob": kmsEncryptEnvelope(keyId, privDER),
+		"PrivateKeyCiphertextBlob": wrapped,
 		"KeyMaterialId":            keyId,
 	})
 }
 
 // handleKMSDeriveSharedSecret runs a real ECDH between the CMK's EC private key
 // and the supplied peer public key (DER-encoded SPKI), returning the raw shared
-// secret — exactly as real KMS does for a KEY_AGREEMENT CMK.
+// secret.
 func handleKMSDeriveSharedSecret(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyId                 string `json:"KeyId"`
@@ -648,6 +813,10 @@ func handleKMSDeriveSharedSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	curve := kmsEllipticCurveFor(key.Spec)
 	if curve == nil || key.KeyUsage != "KEY_AGREEMENT" {
 		sim.AWSErrorf(w, "InvalidKeyUsageException", http.StatusBadRequest,
@@ -657,7 +826,7 @@ func handleKMSDeriveSharedSecret(w http.ResponseWriter, r *http.Request) {
 	if req.KeyAgreementAlgorithm == "" {
 		req.KeyAgreementAlgorithm = "ECDH"
 	}
-	mat, err := kmsEnsureMaterial(keyId, key.Spec)
+	mat, err := kmsEnsureAsymmetricMaterial(keyId, key.Spec)
 	if err != nil {
 		sim.AWSError(w, "KMSInternalException", "failed to materialize key", http.StatusInternalServerError)
 		return
@@ -700,6 +869,7 @@ func handleKMSDeriveSharedSecret(w http.ResponseWriter, r *http.Request) {
 			"Failed to derive shared secret: %v", err)
 		return
 	}
+	kmsRecordUsage(keyId, "DeriveSharedSecret")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":                 kmsKeyArn(keyId),
 		"SharedSecret":          shared, // SDK base64-encodes on the wire

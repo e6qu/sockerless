@@ -15,49 +15,52 @@ import (
 )
 
 type Repo struct {
-	ID                        int       `json:"id"`
-	NodeID                    string    `json:"node_id"`
-	Name                      string    `json:"name"`
-	FullName                  string    `json:"full_name"`
-	Description               string    `json:"description"`
-	Homepage                  string    `json:"homepage"`
-	DefaultBranch             string    `json:"default_branch"`
-	Visibility                string    `json:"visibility"`
-	Language                  string    `json:"language"`
-	Owner                     *User     `json:"-"`
-	OwnerID                   int       `json:"owner_id"`   // serialized so Owner can be relinked on reload
-	OwnerType                 string    `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
-	Private                   bool      `json:"private"`
-	Fork                      bool      `json:"fork"`
-	Archived                  bool      `json:"archived"`
-	IsTemplate                bool      `json:"is_template"`
-	WebCommitSignoffRequired  bool      `json:"web_commit_signoff_required"`
-	HasIssues                 bool      `json:"has_issues"`
-	HasProjects               bool      `json:"has_projects"`
-	HasWiki                   bool      `json:"has_wiki"`
-	HasPullRequests           bool      `json:"has_pull_requests"`
-	AllowSquashMerge          bool      `json:"allow_squash_merge"`
-	AllowMergeCommit          bool      `json:"allow_merge_commit"`
-	AllowRebaseMerge          bool      `json:"allow_rebase_merge"`
-	AllowAutoMerge            bool      `json:"allow_auto_merge"`
-	AllowUpdateBranch         bool      `json:"allow_update_branch"`
-	DeleteBranchOnMerge       bool      `json:"delete_branch_on_merge"`
-	UseSquashPRTitleAsDefault bool      `json:"use_squash_pr_title_as_default"`
-	SquashMergeCommitTitle    string    `json:"squash_merge_commit_title"`
-	SquashMergeCommitMessage  string    `json:"squash_merge_commit_message"`
-	MergeCommitTitle          string    `json:"merge_commit_title"`
-	MergeCommitMessage        string    `json:"merge_commit_message"`
-	PullRequestCreationPolicy string    `json:"pull_request_creation_policy"`
-	LicenseKey                string    `json:"license_key"`
-	LicenseName               string    `json:"license_name"`
-	LicenseSPDX               string    `json:"license_spdx"`
-	StargazersCount           int       `json:"stargazers_count"`
-	Topics                    []string  `json:"topics"`
-	NextIssueNumber           int       `json:"-"`
-	NextMilestoneNumber       int       `json:"-"`
-	CreatedAt                 time.Time `json:"created_at"`
-	UpdatedAt                 time.Time `json:"updated_at"`
-	PushedAt                  time.Time `json:"pushed_at"`
+	ID                        int          `json:"id"`
+	NodeID                    string       `json:"node_id"`
+	Name                      string       `json:"name"`
+	FullName                  string       `json:"full_name"`
+	Description               string       `json:"description"`
+	Homepage                  string       `json:"homepage"`
+	DefaultBranch             string       `json:"default_branch"`
+	Visibility                string       `json:"visibility"`
+	Language                  string       `json:"language"`
+	Owner                     *User        `json:"-"`
+	OwnerID                   int          `json:"owner_id"`   // serialized so Owner can be relinked on reload
+	OwnerType                 string       `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
+	Private                   bool         `json:"private"`
+	Fork                      bool         `json:"fork"`
+	Archived                  bool         `json:"archived"`
+	IsTemplate                bool         `json:"is_template"`
+	WebCommitSignoffRequired  bool         `json:"web_commit_signoff_required"`
+	HasIssues                 bool         `json:"has_issues"`
+	HasProjects               bool         `json:"has_projects"`
+	HasWiki                   bool         `json:"has_wiki"`
+	HasPullRequests           bool         `json:"has_pull_requests"`
+	AllowSquashMerge          bool         `json:"allow_squash_merge"`
+	AllowMergeCommit          bool         `json:"allow_merge_commit"`
+	AllowRebaseMerge          bool         `json:"allow_rebase_merge"`
+	AllowAutoMerge            bool         `json:"allow_auto_merge"`
+	AllowUpdateBranch         bool         `json:"allow_update_branch"`
+	DeleteBranchOnMerge       bool         `json:"delete_branch_on_merge"`
+	UseSquashPRTitleAsDefault bool         `json:"use_squash_pr_title_as_default"`
+	SquashMergeCommitTitle    string       `json:"squash_merge_commit_title"`
+	SquashMergeCommitMessage  string       `json:"squash_merge_commit_message"`
+	MergeCommitTitle          string       `json:"merge_commit_title"`
+	MergeCommitMessage        string       `json:"merge_commit_message"`
+	PullRequestCreationPolicy string       `json:"pull_request_creation_policy"`
+	LicenseKey                string       `json:"license_key"`
+	LicenseName               string       `json:"license_name"`
+	LicenseSPDX               string       `json:"license_spdx"`
+	StargazersCount           int          `json:"stargazers_count"`
+	Topics                    []string     `json:"topics"`
+	Stargazers                map[int]bool `json:"stargazers,omitempty"`
+	ParentID                  int          `json:"parent_id"`
+	SourceID                  int          `json:"source_id"`
+	NextIssueNumber           int          `json:"-"`
+	NextMilestoneNumber       int          `json:"-"`
+	CreatedAt                 time.Time    `json:"created_at"`
+	UpdatedAt                 time.Time    `json:"updated_at"`
+	PushedAt                  time.Time    `json:"pushed_at"`
 }
 
 func (st *Store) CreateRepo(owner *User, name, description string, private bool) *Repo {
@@ -99,6 +102,7 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 		AllowRebaseMerge:          true,
 		PullRequestCreationPolicy: "all",
 		Topics:                    []string{},
+		Stargazers:                map[int]bool{},
 		NextIssueNumber:           1,
 		NextMilestoneNumber:       1,
 		CreatedAt:                 now,
@@ -133,6 +137,12 @@ func (st *Store) GetRepo(owner, name string) *Repo {
 	return st.ReposByName[owner+"/"+name]
 }
 
+func (st *Store) GetRepoByID(id int) *Repo {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Repos[id]
+}
+
 func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -146,6 +156,217 @@ func (st *Store) UpdateRepo(owner, name string, fn func(*Repo)) bool {
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
+	return true
+}
+
+// ForkRepo creates a fork of sourceRepo owned by owner. It copies the git
+// storage and records parent/source linkage. Returns nil if the source repo
+// does not exist or the target name is already taken.
+func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	fullName := owner.Login + "/" + name
+	if _, exists := st.ReposByName[fullName]; exists {
+		return nil
+	}
+
+	srcStor, ok := st.GitStorages[sourceRepo.FullName]
+	if !ok {
+		return nil
+	}
+
+	sourceID := sourceRepo.ID
+	if sourceRepo.SourceID != 0 {
+		sourceID = sourceRepo.SourceID
+	}
+
+	repo := &Repo{
+		ID:                        st.NextRepo,
+		NodeID:                    fmt.Sprintf("R_kgDO%08d", st.NextRepo),
+		Name:                      name,
+		FullName:                  fullName,
+		Description:               sourceRepo.Description,
+		Homepage:                  sourceRepo.Homepage,
+		DefaultBranch:             sourceRepo.DefaultBranch,
+		Visibility:                sourceRepo.Visibility,
+		Language:                  sourceRepo.Language,
+		Owner:                     owner,
+		OwnerID:                   owner.ID,
+		OwnerType:                 "User",
+		Private:                   sourceRepo.Private,
+		Fork:                      true,
+		ParentID:                  sourceRepo.ID,
+		SourceID:                  sourceID,
+		HasIssues:                 sourceRepo.HasIssues,
+		HasProjects:               sourceRepo.HasProjects,
+		HasWiki:                   sourceRepo.HasWiki,
+		HasPullRequests:           sourceRepo.HasPullRequests,
+		AllowSquashMerge:          sourceRepo.AllowSquashMerge,
+		AllowMergeCommit:          sourceRepo.AllowMergeCommit,
+		AllowRebaseMerge:          sourceRepo.AllowRebaseMerge,
+		AllowAutoMerge:            sourceRepo.AllowAutoMerge,
+		AllowUpdateBranch:         sourceRepo.AllowUpdateBranch,
+		DeleteBranchOnMerge:       sourceRepo.DeleteBranchOnMerge,
+		UseSquashPRTitleAsDefault: sourceRepo.UseSquashPRTitleAsDefault,
+		SquashMergeCommitTitle:    sourceRepo.SquashMergeCommitTitle,
+		SquashMergeCommitMessage:  sourceRepo.SquashMergeCommitMessage,
+		MergeCommitTitle:          sourceRepo.MergeCommitTitle,
+		MergeCommitMessage:        sourceRepo.MergeCommitMessage,
+		PullRequestCreationPolicy: sourceRepo.PullRequestCreationPolicy,
+		LicenseKey:                sourceRepo.LicenseKey,
+		LicenseName:               sourceRepo.LicenseName,
+		LicenseSPDX:               sourceRepo.LicenseSPDX,
+		Topics:                    append([]string(nil), sourceRepo.Topics...),
+		Stargazers:                map[int]bool{},
+		NextIssueNumber:           1,
+		NextMilestoneNumber:       1,
+		CreatedAt:                 time.Now().UTC(),
+		UpdatedAt:                 time.Now().UTC(),
+		PushedAt:                  time.Now().UTC(),
+	}
+	st.NextRepo++
+
+	stor, err := openOrInitGitStorage(context.Background(), fullName)
+	if err != nil {
+		log.Printf("bleephub: fork repo %s: open git storage: %v", fullName, err)
+		return nil
+	}
+	if err := copyGitStorage(srcStor, stor); err != nil {
+		log.Printf("bleephub: fork repo %s: copy git storage: %v", fullName, err)
+		return nil
+	}
+
+	st.Repos[repo.ID] = repo
+	st.ReposByName[fullName] = repo
+	st.GitStorages[fullName] = stor
+
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return repo
+}
+
+// RenameRepo renames owner/name to owner/newName, moving every map keyed by
+// the repo full name and updating embedded repo-name strings. It returns true
+// on success.
+func (st *Store) RenameRepo(owner, name, newName string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	oldFull := owner + "/" + name
+	newFull := owner + "/" + newName
+	if oldFull == newFull {
+		return true
+	}
+	repo, ok := st.ReposByName[oldFull]
+	if !ok {
+		return false
+	}
+	if _, exists := st.ReposByName[newFull]; exists {
+		return false
+	}
+
+	// Rename on-disk / S3 git storage first; if it fails, abort before mutating
+	// in-memory indexes.
+	if GitDataDir() != "" {
+		oldDir := filepath.Join(GitDataDir(), filepath.FromSlash(oldFull))
+		newDir := filepath.Join(GitDataDir(), filepath.FromSlash(newFull))
+		if err := os.Rename(oldDir, newDir); err != nil && os.IsExist(err) {
+			log.Printf("bleephub: rename repo %s -> %s: move git dir: %v", oldFull, newFull, err)
+			return false
+		}
+	}
+	if IsS3GitStorage() {
+		s3fs, err := getS3FS(context.Background())
+		if err != nil {
+			log.Printf("bleephub: rename repo %s -> %s: resolve s3 fs: %v", oldFull, newFull, err)
+			return false
+		}
+		if s3fs != nil {
+			if err := s3fs.renameRepoPrefix(oldFull, newFull); err != nil {
+				log.Printf("bleephub: rename repo %s -> %s: move s3 prefix: %v", oldFull, newFull, err)
+				return false
+			}
+		}
+	}
+
+	repo.Name = newName
+	repo.FullName = newFull
+	repo.UpdatedAt = time.Now().UTC()
+
+	st.ReposByName[newFull] = repo
+	delete(st.ReposByName, oldFull)
+
+	if stor := st.GitStorages[oldFull]; stor != nil {
+		st.GitStorages[newFull] = stor
+		delete(st.GitStorages, oldFull)
+	}
+	if v := st.RepoSecrets[oldFull]; v != nil {
+		st.RepoSecrets[newFull] = v
+		delete(st.RepoSecrets, oldFull)
+	}
+	if v := st.RepoVariables[oldFull]; v != nil {
+		st.RepoVariables[newFull] = v
+		delete(st.RepoVariables, oldFull)
+	}
+	if v := st.RepoCollaborators[oldFull]; v != nil {
+		st.RepoCollaborators[newFull] = v
+		delete(st.RepoCollaborators, oldFull)
+	}
+	if v := st.Hooks[oldFull]; v != nil {
+		st.Hooks[newFull] = v
+		delete(st.Hooks, oldFull)
+	}
+	if v := st.CheckSuitePrefs[oldFull]; v != nil {
+		st.CheckSuitePrefs[newFull] = v
+		delete(st.CheckSuitePrefs, oldFull)
+	}
+
+	// Environment-scoped secrets/variables keyed "repo\x1fenv".
+	for k, v := range st.EnvSecrets {
+		repoKey, envName, found := strings.Cut(k, "\x1f")
+		if found && repoKey == oldFull {
+			newKey := newFull + "\x1f" + envName
+			st.EnvSecrets[newKey] = v
+			delete(st.EnvSecrets, k)
+		}
+	}
+	for k, v := range st.EnvVariables {
+		repoKey, envName, found := strings.Cut(k, "\x1f")
+		if found && repoKey == oldFull {
+			newKey := newFull + "\x1f" + envName
+			st.EnvVariables[newKey] = v
+			delete(st.EnvVariables, k)
+		}
+	}
+
+	// Workflow runs/files embed the repo full name.
+	for _, wf := range st.Workflows {
+		if wf.RepoFullName == oldFull {
+			wf.RepoFullName = newFull
+		}
+	}
+	for _, wf := range st.WorkflowFiles {
+		if wf.RepoFullName == oldFull {
+			wf.RepoFullName = newFull
+		}
+	}
+
+	st.Misc.mu.Lock()
+	if v := st.Misc.pagesBuilds[oldFull]; v != nil {
+		st.Misc.pagesBuilds[newFull] = v
+		delete(st.Misc.pagesBuilds, oldFull)
+	}
+	st.Misc.mu.Unlock()
+
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+		st.persist.MustDelete("repos", strconv.Itoa(repo.ID)) // no-op key; kept for symmetry
+		// TODO: persist key renames for maps that are persisted (secrets, vars,
+		// hooks, collaborators, env-scoped items, workflow_files, pages_builds).
+	}
+
 	return true
 }
 
@@ -236,6 +457,21 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	return true
+}
+
+// ListForks returns all repositories whose ParentID or SourceID matches
+// sourceRepoID, sorted/paged according to opts.
+func (st *Store) ListForks(sourceRepoID int, opts RepoListOptions) []*Repo {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var repos []*Repo
+	for _, r := range st.Repos {
+		if r.Fork && (r.ParentID == sourceRepoID || r.SourceID == sourceRepoID) {
+			repos = append(repos, r)
+		}
+	}
+	return filterSortPaginateRepos(repos, opts)
 }
 
 func (st *Store) ListReposByOwner(login string) []*Repo {
@@ -368,9 +604,20 @@ func (st *Store) ListReposForAuthUser(user *User, opts RepoListOptions) []*Repo 
 	}
 
 	// collaborator affiliation: repositories where the user has been added as
-	// a collaborator. bleephub does not model per-repo collaborators yet, so
-	// this set is empty.
-	_ = includeCollab
+	// a collaborator.
+	if includeCollab {
+		for fullName, perms := range st.RepoCollaborators {
+			if _, ok := perms[user.Login]; !ok {
+				continue
+			}
+			repo := st.ReposByName[fullName]
+			if repo == nil || seen[repo.ID] {
+				continue
+			}
+			seen[repo.ID] = true
+			repos = append(repos, repo)
+		}
+	}
 
 	// organization_member affiliation: every repository owned by an org the
 	// user is a member of.
@@ -531,4 +778,222 @@ func (st *Store) RepoSize(fullName string) int64 {
 		return nil
 	})
 	return total / 1024
+}
+
+// RepoPermission is the access level a collaborator has on a repo.
+type RepoPermission string
+
+const (
+	RepoPermPull  RepoPermission = "pull"
+	RepoPermPush  RepoPermission = "push"
+	RepoPermAdmin RepoPermission = "admin"
+)
+
+// AddRepoCollaborator grants permission to login on the repo. Only pull,
+// push, and admin are accepted (matches GitHub). Returns true if the repo
+// exists and the user exists.
+func (st *Store) AddRepoCollaborator(owner, name, login, permission string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	fullName := owner + "/" + name
+	repo, ok := st.ReposByName[fullName]
+	if !ok {
+		return false
+	}
+	u := st.UsersByLogin[login]
+	if u == nil {
+		return false
+	}
+	perm := normalizeRepoPermission(permission)
+	if st.RepoCollaborators[fullName] == nil {
+		st.RepoCollaborators[fullName] = map[string]string{}
+	}
+	st.RepoCollaborators[fullName][login] = perm
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repo_collaborators", fullName, st.RepoCollaborators[fullName])
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return true
+}
+
+// RemoveRepoCollaborator removes a collaborator from the repo. Returns true
+// if one was removed.
+func (st *Store) RemoveRepoCollaborator(owner, name, login string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	fullName := owner + "/" + name
+	repo, ok := st.ReposByName[fullName]
+	if !ok {
+		return false
+	}
+	if st.RepoCollaborators[fullName] == nil {
+		return false
+	}
+	if _, ok := st.RepoCollaborators[fullName][login]; !ok {
+		return false
+	}
+	delete(st.RepoCollaborators[fullName], login)
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repo_collaborators", fullName, st.RepoCollaborators[fullName])
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return true
+}
+
+// GetRepoCollaboratorPermission returns the permission string for a
+// collaborator, or "" if none.
+func (st *Store) GetRepoCollaboratorPermission(owner, name, login string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	fullName := owner + "/" + name
+	if st.RepoCollaborators[fullName] == nil {
+		return ""
+	}
+	return st.RepoCollaborators[fullName][login]
+}
+
+// ListRepoCollaborators returns the collaborators of a repo.
+func (st *Store) ListRepoCollaborators(owner, name string) map[string]string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	fullName := owner + "/" + name
+	out := make(map[string]string, len(st.RepoCollaborators[fullName]))
+	for k, v := range st.RepoCollaborators[fullName] {
+		out[k] = v
+	}
+	return out
+}
+
+func normalizeRepoPermission(p string) string {
+	switch strings.ToLower(p) {
+	case "admin":
+		return "admin"
+	case "push", "write":
+		return "push"
+	case "pull", "read", "":
+		return "pull"
+	default:
+		return "pull"
+	}
+}
+
+// StarRepo adds userID to the repo's stargazers and records the starred repo
+// on the user. Idempotent. Returns true if the star was newly added.
+func (st *Store) StarRepo(userID int, owner, name string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	fullName := owner + "/" + name
+	repo, ok := st.ReposByName[fullName]
+	if !ok {
+		return false
+	}
+	user, ok := st.Users[userID]
+	if !ok {
+		return false
+	}
+	if repo.Stargazers == nil {
+		repo.Stargazers = map[int]bool{}
+	}
+	if user.StarredRepos == nil {
+		user.StarredRepos = map[string]bool{}
+	}
+	if repo.Stargazers[userID] {
+		return false
+	}
+	repo.Stargazers[userID] = true
+	repo.StargazersCount = len(repo.Stargazers)
+	repo.UpdatedAt = time.Now().UTC()
+	user.StarredRepos[fullName] = true
+	user.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+		st.persist.MustPut("users", strconv.Itoa(user.ID), user)
+	}
+	return true
+}
+
+// UnstarRepo removes userID from the repo's stargazers. Returns true if a
+// star was actually removed.
+func (st *Store) UnstarRepo(userID int, owner, name string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	fullName := owner + "/" + name
+	repo, ok := st.ReposByName[fullName]
+	if !ok {
+		return false
+	}
+	user, ok := st.Users[userID]
+	if !ok {
+		return false
+	}
+	if repo.Stargazers == nil || !repo.Stargazers[userID] {
+		return false
+	}
+	delete(repo.Stargazers, userID)
+	repo.StargazersCount = len(repo.Stargazers)
+	repo.UpdatedAt = time.Now().UTC()
+	if user.StarredRepos != nil {
+		delete(user.StarredRepos, fullName)
+	}
+	user.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+		st.persist.MustPut("users", strconv.Itoa(user.ID), user)
+	}
+	return true
+}
+
+// IsRepoStarredBy reports whether userID has starred the repo.
+func (st *Store) IsRepoStarredBy(userID int, owner, name string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	repo, ok := st.ReposByName[owner+"/"+name]
+	if !ok || repo.Stargazers == nil {
+		return false
+	}
+	return repo.Stargazers[userID]
+}
+
+// ListRepoStargazers returns the user IDs who starred the repo, sorted
+// ascending.
+func (st *Store) ListRepoStargazers(owner, name string) []int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	repo, ok := st.ReposByName[owner+"/"+name]
+	if !ok || repo.Stargazers == nil {
+		return nil
+	}
+	out := make([]int, 0, len(repo.Stargazers))
+	for id := range repo.Stargazers {
+		out = append(out, id)
+	}
+	sort.Ints(out)
+	return out
+}
+
+// ListStarredRepos returns the full names of repos starred by userID.
+func (st *Store) ListStarredRepos(userID int) []string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	user, ok := st.Users[userID]
+	if !ok || user.StarredRepos == nil {
+		return nil
+	}
+	out := make([]string, 0, len(user.StarredRepos))
+	for name := range user.StarredRepos {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }

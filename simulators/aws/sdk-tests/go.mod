@@ -7,23 +7,23 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.32.26
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.25
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.29
-	github.com/aws/aws-sdk-go-v2/service/acm v1.40.1
+	github.com/aws/aws-sdk-go-v2/service/acm v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/amplify v1.39.5
 	github.com/aws/aws-sdk-go-v2/service/apigateway v1.40.7
 	github.com/aws/aws-sdk-go-v2/service/apigatewayv2 v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/applicationautoscaling v1.43.1
-	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.67.5
+	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.68.0
 	github.com/aws/aws-sdk-go-v2/service/batch v1.66.1
 	github.com/aws/aws-sdk-go-v2/service/budgets v1.44.7
 	github.com/aws/aws-sdk-go-v2/service/cloudfront v1.65.3
 	github.com/aws/aws-sdk-go-v2/service/cloudtrail v1.56.5
-	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.60.0
+	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.61.0
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.78.1
-	github.com/aws/aws-sdk-go-v2/service/codebuild v1.69.5
+	github.com/aws/aws-sdk-go-v2/service/codebuild v1.70.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.59.1
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.309.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.310.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.58.5
-	github.com/aws/aws-sdk-go-v2/service/ecs v1.86.0
+	github.com/aws/aws-sdk-go-v2/service/ecs v1.86.1
 	github.com/aws/aws-sdk-go-v2/service/efs v1.42.2
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.54.4
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.55.5

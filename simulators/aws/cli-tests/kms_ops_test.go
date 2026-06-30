@@ -1,6 +1,10 @@
 package aws_cli_test
 
 import (
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -165,8 +169,22 @@ func TestKMSCLI_ImportKeyMaterialCycle(t *testing.T) {
 	require.NoError(t, err)
 	tokenFile := filepath.Join(dir, "token.bin")
 	require.NoError(t, os.WriteFile(tokenFile, tokenRaw, 0o600))
+
+	pubDER, err := base64.StdEncoding.DecodeString(params.PublicKey)
+	require.NoError(t, err)
+	pubAny, err := x509.ParsePKIXPublicKey(pubDER)
+	require.NoError(t, err)
+	pubRSA, ok := pubAny.(*rsa.PublicKey)
+	require.True(t, ok, "PublicKey must be an RSA public key")
+
+	material := make([]byte, 32)
+	_, err = rand.Read(material)
+	require.NoError(t, err)
+	encryptedMaterial, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, pubRSA, material, nil)
+	require.NoError(t, err)
+
 	matFile := filepath.Join(dir, "material.bin")
-	require.NoError(t, os.WriteFile(matFile, []byte("sim-wrapped-material-cli"), 0o600))
+	require.NoError(t, os.WriteFile(matFile, encryptedMaterial, 0o600))
 
 	runCLI(t, awsCLI("kms", "import-key-material", "--key-id", keyId,
 		"--import-token", "fileb://"+tokenFile,

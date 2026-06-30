@@ -9,3 +9,10 @@
 # resolve the host version — without it `gh issue list --label`, `gh pr
 # status`, and `gh workflow run` fail. Permanent documented divergence (GHES vs dotcom description); see BUG-1698 for the endpoint addition.
 GET /meta -> 200	unknown-field	$.installed_version
+
+# GET /user/starred is a real GitHub endpoint that returns a list of starred
+# repositories. The vendored dotcom OpenAPI description does not include this
+# path, so the shape validator matches the nearest parameterized route
+# (/user/{user_id}) and reports a top-level type mismatch. The response is
+# intentionally an array of repository objects.
+GET /user/{} -> 200	type-mismatch	$

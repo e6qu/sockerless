@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useParams } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
-import { fetchRepoDetail, updateRepo } from "../api.js";
+import { fetchRepoDetail, updateRepo, fetchRepoTopics, updateRepoTopics } from "../api.js";
 import type { BleephubRepo } from "../types.js";
 import { RepoHeader } from "../components/Shell.js";
 import { PageTitle, Button, Box } from "../components/ui.js";
@@ -24,6 +24,20 @@ export function RepoSettingsPage() {
     },
   });
 
+  const topicsQuery = useQuery({
+    queryKey: ["repo-topics", owner, repo],
+    queryFn: () => fetchRepoTopics(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+
+  const topicsMutation = useMutation({
+    mutationFn: (names: string[]) => updateRepoTopics(owner, repo, names),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["repo-topics", owner, repo] });
+      queryClient.invalidateQueries({ queryKey: ["repo", owner, repo] });
+    },
+  });
+
   if (isLoading) return <Spinner label={`loading ${owner}/${repo}`} />;
   if (isError || !data)
     return <InlineError title={`Failed to load ${owner}/${repo}`} detail={String(error)} />;
@@ -33,6 +47,11 @@ export function RepoSettingsPage() {
       <RepoHeader owner={owner} repo={repo} active="settings" />
       <PageTitle title="General" />
       <RepoSettingsForm repo={data} onSave={(payload) => mutation.mutate(payload)} />
+      <RepoTopicsForm
+        topics={topicsQuery.data?.names ?? []}
+        isLoading={topicsQuery.isLoading}
+        onSave={(names) => topicsMutation.mutate(names)}
+      />
       {mutation.isError && (
         <div className="mt-4" style={{ color: "var(--color-danger-fg)" }}>
           {mutation.error instanceof Error ? mutation.error.message : String(mutation.error)}
@@ -41,7 +60,65 @@ export function RepoSettingsPage() {
       {mutation.isSuccess && (
         <div className="mt-4" style={{ color: "var(--gh-open)" }}>Settings saved.</div>
       )}
+      {topicsMutation.isError && (
+        <div className="mt-4" style={{ color: "var(--color-danger-fg)" }}>
+          {topicsMutation.error instanceof Error ? topicsMutation.error.message : String(topicsMutation.error)}
+        </div>
+      )}
+      {topicsMutation.isSuccess && (
+        <div className="mt-4" style={{ color: "var(--gh-open)" }}>Topics saved.</div>
+      )}
     </div>
+  );
+}
+
+function RepoTopicsForm({
+  topics,
+  isLoading,
+  onSave,
+}: {
+  topics: string[];
+  isLoading: boolean;
+  onSave: (names: string[]) => void;
+}) {
+  const [value, setValue] = useState(topics.join(", "));
+  useEffect(() => {
+    setValue(topics.join(", "));
+  }, [topics]);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const names = value
+      .split(",")
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0 && t.length <= 50 && !t.includes(" ") && !t.includes("/") && !t.includes("\\") && !t.includes(":"));
+    onSave(names.slice(0, 20));
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="mt-4">
+      <Box header={<span style={{ fontWeight: 600 }}>Topics</span>}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem", padding: "1rem" }}>
+          <label style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            <span style={{ fontSize: "0.85rem", fontWeight: 500 }}>Topics (comma separated)</span>
+            <input
+              type="text"
+              value={value}
+              disabled={isLoading}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder="e.g. go, ci, bleephub"
+              style={{ fontSize: "0.9rem", padding: "0.4rem 0.5rem" }}
+            />
+            <span style={{ fontSize: "0.75rem", color: "var(--color-fg-muted)" }}>
+              Up to 20 topics, max 50 chars, no spaces or / \ :.
+            </span>
+          </label>
+          <div className="flex justify-end">
+            <Button type="submit" variant="primary">Save topics</Button>
+          </div>
+        </div>
+      </Box>
+    </form>
   );
 }
 

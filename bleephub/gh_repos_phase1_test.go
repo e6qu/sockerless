@@ -252,8 +252,8 @@ func TestUpdateRepoExtended(t *testing.T) {
 	assertField("use_squash_pr_title_as_default", true)
 }
 
-// TestUpdateRepoRejectRename verifies PATCH with name → 422.
-func TestUpdateRepoRejectRename(t *testing.T) {
+// TestUpdateRepoRename verifies PATCH with name renames the repo.
+func TestUpdateRepoRename(t *testing.T) {
 	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
 		"name": "no-rename",
 	})
@@ -262,8 +262,19 @@ func TestUpdateRepoRejectRename(t *testing.T) {
 		"name": "renamed",
 	})
 	defer resp.Body.Close()
-	if resp.StatusCode != 422 {
-		t.Fatalf("expected 422, got %d", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["name"] != "renamed" {
+		t.Fatalf("expected name=renamed, got %v", data["name"])
+	}
+
+	// Old name is gone.
+	old := ghGet(t, "/api/v3/repos/admin/no-rename", defaultToken)
+	defer old.Body.Close()
+	if old.StatusCode != 404 {
+		t.Fatalf("expected 404 for old name, got %d", old.StatusCode)
 	}
 }
 

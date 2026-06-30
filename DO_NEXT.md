@@ -4,24 +4,51 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-repo-phase3-tags-and-refs` — closing Phase 3 of the bleephub repo API gap audit: repository tags and git refs listing.
+`feat/bleephub-finale-and-open-issues` — closing the remaining bleephub repository API gaps and fixing three open AWS simulator issues. Open as PR #737.
 
 ---
-### Active branch: bleephub repo Phase 3 (tags + git refs)
+### Active branch: bleephub repo API finale + AWS sim open-issue fixes
 
 Scope:
-- Add `GET /api/v3/repos/{owner}/{repo}/tags` returning lightweight tag objects (name, commit SHA, zipball/tarball URLs).
-- Add `GET /api/v3/repos/{owner}/{repo}/git/refs` listing all refs.
-- Add `GET /api/v3/repos/{owner}/{repo}/git/refs/{namespace}` for `heads`, `tags`, and sub-paths.
-- Support both single-ref lookup (`.../refs/heads/main`) and namespace listing (`.../refs/heads`) when the path is ambiguous; GitHub resolves a single ref first and falls back to a listing.
-- Add backend HTTP tests for tags and refs.
+- `GET /api/v3/repos/{owner}/{repo}/languages` with git-tree byte counts, extension-to-language mapping, vendored-path exclusion, and GraphQL `repository.languages` parity.
+- `GET /api/v3/repos/{owner}/{repo}/compare/{base}...{head}` with merge-base resolution, ahead/behind/status, commits, and diff file entries.
+- `POST /api/v3/repos/{owner}/{repo}/merges` with fast-forward and three-way merge support.
+- `POST /api/v3/repos/{owner}/{repo}/forks` and `GET /api/v3/repos/{owner}/{repo}/forks` with git-storage copy and parent/source linkage.
+- `PATCH /api/v3/repos/{owner}/{repo}` repository rename with full cascade across stores, collaborators, secrets/variables/hooks, workflow runs, and git-storage prefixes.
+- Stargazer endpoints: `GET /repos/{owner}/{repo}/stargazers`, `PUT/DELETE /user/starred/{owner}/{repo}`, `GET /user/starred`, `GET /users/{username}/starred`.
+- Collaborator endpoints: `GET /repos/{owner}/{repo}/collaborators`, `GET /repos/{owner}/{repo}/collaborators/{username}/permission`, `PUT/DELETE /repos/{owner}/{repo}/collaborators/{username}`.
+- File-editor UI: topics editor in `RepoSettingsPage.tsx`, file delete action in `RepoDetailPage.tsx`.
+- AWS sim Route 53 wildcard DNS resolution fix (#731, BUG-2267).
+- AWS sim KMS real AES-256-GCM encryption and key-policy `Deny` enforcement (#732, BUG-2268).
+- AWS sim CloudWatch→SNS→SQS malformed JSON notification fix (#734, BUG-2269).
 
 Validation:
 - `go test ./bleephub -count=1` passes.
 - `make bleephub/lint` clean.
+- AWS sim `make unit-test` passes.
+- UI `bun --bun run typecheck` and `bun --bun run test` pass.
 - OpenAPI shape ratchet clean for the new endpoints.
 
-**Next:** push PR, then continue Phase 4 or next chunk from `PLAN.md`.
+**Next:** PR #737 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #736): bleephub Phase 3 repo tags and git refs
+
+`feat/bleephub-repo-phase3-tags-and-refs` added repository tags and git refs listing to the bleephub repo API surface.
+
+Scope:
+- `GET /api/v3/repos/{owner}/{repo}/tags` returning lightweight tag objects (name, commit SHA, zipball/tarball URLs).
+- `GET /api/v3/repos/{owner}/{repo}/git/refs` listing all refs.
+- `GET /api/v3/repos/{owner}/{repo}/git/refs/{namespace}` for `heads`, `tags`, and sub-paths.
+- Single-ref lookup vs namespace listing resolution matching GitHub's behavior.
+- Backend HTTP tests for tags and refs.
+
+Validation:
+- bleephub Go tests pass.
+- `make bleephub/lint` clean.
+- OpenAPI shape ratchet clean.
+
+**Next:** PR #736 merged; continue with the repo API finale branch.
 
 ---
 ### Prior branch (merged #735): bleephub Phase 2 repo topics and file content deletion

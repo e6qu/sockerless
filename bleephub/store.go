@@ -52,17 +52,18 @@ func (st *Store) ReserveRunID() int {
 
 // User represents a GitHub user account.
 type User struct {
-	ID        int       `json:"id"`
-	NodeID    string    `json:"node_id"`
-	Login     string    `json:"login"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	AvatarURL string    `json:"avatar_url"`
-	Bio       string    `json:"bio"`
-	Type      string    `json:"type"`
-	SiteAdmin bool      `json:"site_admin"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID           int             `json:"id"`
+	NodeID       string          `json:"node_id"`
+	Login        string          `json:"login"`
+	Name         string          `json:"name"`
+	Email        string          `json:"email"`
+	AvatarURL    string          `json:"avatar_url"`
+	Bio          string          `json:"bio"`
+	Type         string          `json:"type"`
+	SiteAdmin    bool            `json:"site_admin"`
+	StarredRepos map[string]bool `json:"starred_repos,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // Token represents a personal access token.
@@ -122,6 +123,7 @@ type Store struct {
 	PendingMessages    []*TaskAgentMessage                    // messages awaiting delivery
 	RepoSecrets        map[string]map[string]*Secret          // "owner/repo" → name → secret
 	RepoVariables      map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
+	RepoCollaborators  map[string]map[string]string           // "owner/repo" → login → permission (pull/push/admin)
 	OrgSecrets         map[string]map[string]*OrgSecret       // org login → NAME → org secret
 	OrgVariables       map[string]map[string]*ActionsVariable // org login → NAME → org variable
 	EnvSecrets         map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
@@ -281,6 +283,7 @@ func NewStore() *Store {
 		WorkflowFiles:      make(map[int64]*WorkflowFile),
 		RepoSecrets:        make(map[string]map[string]*Secret),
 		RepoVariables:      make(map[string]map[string]*ActionsVariable),
+		RepoCollaborators:  make(map[string]map[string]string),
 		OrgSecrets:         make(map[string]map[string]*OrgSecret),
 		OrgVariables:       make(map[string]map[string]*ActionsVariable),
 		EnvSecrets:         make(map[string]map[string]*Secret),
@@ -1124,17 +1127,18 @@ func (st *Store) SeedDefaultUser() {
 
 	now := time.Now().UTC()
 	u := &User{
-		ID:        st.NextUser,
-		NodeID:    "U_kgDOBdefault",
-		Login:     "admin",
-		Name:      "Admin",
-		Email:     "admin@bleephub.local",
-		AvatarURL: "",
-		Bio:       "",
-		Type:      "User",
-		SiteAdmin: true,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:           st.NextUser,
+		NodeID:       "U_kgDOBdefault",
+		Login:        "admin",
+		Name:         "Admin",
+		Email:        "admin@bleephub.local",
+		AvatarURL:    "",
+		Bio:          "",
+		Type:         "User",
+		SiteAdmin:    true,
+		StarredRepos: map[string]bool{},
+		CreatedAt:    now,
+		UpdatedAt:    now,
 	}
 	st.Users[u.ID] = u
 	st.UsersByLogin[u.Login] = u
@@ -1172,6 +1176,13 @@ func (st *Store) LookupUserByLogin(login string) *User {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.UsersByLogin[login]
+}
+
+// GetUserByID returns the user with the given ID, or nil.
+func (st *Store) GetUserByID(id int) *User {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Users[id]
 }
 
 // CountFollowers returns how many users follow the given login.

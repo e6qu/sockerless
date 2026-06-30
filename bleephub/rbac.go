@@ -22,34 +22,13 @@ func isActiveOrgMember(st *Store, user *User, orgLogin string) bool {
 }
 
 // canReadRepo checks if a user can read a repository.
-// Public repos are readable by all. Private repos require ownership or org membership.
+// Public repos are readable by all. Private repos require ownership, org
+// membership, team access, or collaborator pull access.
 func canReadRepo(st *Store, user *User, repo *Repo) bool {
 	if !repo.Private {
 		return true
 	}
-	if user == nil {
-		return false
-	}
-	// Owner can always read
-	if repo.Owner != nil && repo.Owner.ID == user.ID {
-		return true
-	}
-	// Check org membership for org-owned repos
-	parts := strings.SplitN(repo.FullName, "/", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	orgLogin := parts[0]
-	org := st.GetOrg(orgLogin)
-	if org == nil {
-		return false
-	}
-	m := st.GetMembership(orgLogin, user.ID)
-	if m != nil && m.State == "active" {
-		return true
-	}
-	// Check team access
-	return hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "pull")
+	return canPullRepo(st, user, repo)
 }
 
 // canAdminRepo checks if a user has admin rights to a repository.
@@ -67,10 +46,82 @@ func canAdminRepo(st *Store, user *User, repo *Repo) bool {
 	}
 	orgLogin := parts[0]
 	org := st.GetOrg(orgLogin)
-	if org == nil {
+	if org != nil && canAdminOrg(st, user, org) {
+		return true
+	}
+	return repoCollaboratorPermissionAtLeast(st, repo.FullName, user.Login, "admin")
+}
+
+// canPushRepo checks if a user can push to a repository.
+// Push requires ownership, org membership, team push permission, or
+// collaborator push/admin access.
+func canPushRepo(st *Store, user *User, repo *Repo) bool {
+	if user == nil {
 		return false
 	}
-	return canAdminOrg(st, user, org)
+	if repo.Owner != nil && repo.Owner.ID == user.ID {
+		return true
+	}
+	parts := strings.SplitN(repo.FullName, "/", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	orgLogin := parts[0]
+	org := st.GetOrg(orgLogin)
+	if org != nil {
+		m := st.GetMembership(orgLogin, user.ID)
+		if m != nil && m.State == "active" {
+			return true
+		}
+		if hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "push") {
+			return true
+		}
+	}
+	return repoCollaboratorPermissionAtLeast(st, repo.FullName, user.Login, "push")
+}
+
+// canPullRepo checks if a user can pull (read) from a repository.
+func canPullRepo(st *Store, user *User, repo *Repo) bool {
+	if !repo.Private {
+		return true
+	}
+	if user == nil {
+		return false
+	}
+	if repo.Owner != nil && repo.Owner.ID == user.ID {
+		return true
+	}
+	parts := strings.SplitN(repo.FullName, "/", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	orgLogin := parts[0]
+	org := st.GetOrg(orgLogin)
+	if org != nil {
+		m := st.GetMembership(orgLogin, user.ID)
+		if m != nil && m.State == "active" {
+			return true
+		}
+		if hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "pull") {
+			return true
+		}
+	}
+	return repoCollaboratorPermissionAtLeast(st, repo.FullName, user.Login, "pull")
+}
+
+// repoCollaboratorPermissionAtLeast reports whether login has at least the
+// requested permission level on the repo via direct collaboration.
+func repoCollaboratorPermissionAtLeast(st *Store, repoFullName, login, minPerm string) bool {
+	parts := strings.SplitN(repoFullName, "/", 2)
+	if len(parts) != 2 {
+		return false
+	}
+	perm := st.GetRepoCollaboratorPermission(parts[0], parts[1], login)
+	if perm == "" {
+		return false
+	}
+	levels := map[string]int{"pull": 1, "push": 2, "admin": 3}
+	return levels[perm] >= levels[minPerm]
 }
 
 // hasTeamAccess checks if a user has at least the given permission level
@@ -110,31 +161,6 @@ func hasTeamAccess(st *Store, orgLogin string, userID int, repoFullName string, 
 		}
 	}
 	return false
-}
-
-// canPushRepo checks if a user can push to a repository.
-// Push requires ownership or org team-level "push" permission.
-func canPushRepo(st *Store, user *User, repo *Repo) bool {
-	if user == nil {
-		return false
-	}
-	if repo.Owner != nil && repo.Owner.ID == user.ID {
-		return true
-	}
-	parts := strings.SplitN(repo.FullName, "/", 2)
-	if len(parts) != 2 {
-		return false
-	}
-	orgLogin := parts[0]
-	org := st.GetOrg(orgLogin)
-	if org == nil {
-		return false
-	}
-	m := st.GetMembership(orgLogin, user.ID)
-	if m != nil && m.State == "active" {
-		return true
-	}
-	return hasTeamAccess(st, orgLogin, user.ID, repo.FullName, "push")
 }
 
 // permissionAtLeast returns true if perm is at least minPerm.

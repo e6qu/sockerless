@@ -417,6 +417,56 @@ export const fetchRepoReadme = (owner: string, repo: string, ref?: string): Prom
   return ghFetch<GithubContentFile>(`/api/v3/repos/${owner}/${repo}/readme${qs}`);
 };
 
+export const fetchRepoTopics = (owner: string, repo: string): Promise<{ names: string[] }> =>
+  ghFetch<{ names: string[] }>(`/api/v3/repos/${owner}/${repo}/topics`);
+
+export const updateRepoTopics = (owner: string, repo: string, names: string[]): Promise<{ names: string[] }> =>
+  ghPutJSON(`/api/v3/repos/${owner}/${repo}/topics`, { names });
+
+export const deleteRepoContent = (
+  owner: string,
+  repo: string,
+  path: string,
+  sha: string,
+  message: string,
+  branch?: string,
+): Promise<unknown> => {
+  const body: Record<string, string> = { message, sha };
+  if (branch) body.branch = branch;
+  return ghDeleteJSON(`/api/v3/repos/${owner}/${repo}/contents/${path}`, body);
+};
+
+async function ghPutJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function ghDeleteJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  if (res.status === 204) {
+    return undefined as T;
+  }
+  return res.json() as Promise<T>;
+}
+
 export const fetchGitignoreTemplates = () => ghFetch<string[]>("/api/v3/gitignore/templates");
 export const fetchLicenseTemplates = () =>
   ghFetch<{ key: string; name: string; spdx_id: string }[]>("/api/v3/licenses");

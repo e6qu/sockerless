@@ -3,6 +3,8 @@ package main
 import (
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
@@ -99,14 +101,15 @@ type KMSRotation struct {
 }
 
 // kmsImportParams holds the per-request wrapping keypair handed out by
-// GetParametersForImport. ImportKeyMaterial echoes the same ImportToken
-// back, so the sim records the token to validate the round-trip. The
-// wrapping public key is a real RSA key (DER-encoded), exactly what a
-// real client encrypts the key material against — no fakery.
+// GetParametersForImport. ImportKeyMaterial decrypts the wrapped material
+// with the RSA private key and uses the decrypted bytes as the CMK's
+// AES-256 key material.
 type kmsImportParams struct {
-	KeyId       string
-	ImportToken string // base64 token
-	ValidTo     float64
+	KeyId             string
+	ImportToken       string // base64 token
+	ValidTo           float64
+	PrivateKey        *rsa.PrivateKey
+	WrappingAlgorithm string
 }
 
 var (
@@ -124,6 +127,7 @@ func registerKMS(r *sim.AWSRouter, srv *sim.Server) {
 	kmsAliases = sim.MakeStore[string](srv.DB(), "kms_aliases")
 	kmsAliasNames = sim.MakeStore[string](srv.DB(), "kms_alias_names")
 	kmsImportTokens = sim.MakeStore[kmsImportParams](srv.DB(), "kms_import_tokens")
+	registerKMSKeyMaterial(srv)
 
 	r.Register("TrentService.CreateKey", handleKMSCreateKey)
 	r.Register("TrentService.DescribeKey", handleKMSDescribeKey)
@@ -284,6 +288,7 @@ func handleKMSPutKeyPolicy(w http.ResponseWriter, r *http.Request) {
 	key, _ := kmsKeys.Get(keyId)
 	key.PolicyJSON = req.Policy
 	kmsKeys.Put(keyId, key)
+	kmsPutKeyPolicy(keyId, req.Policy)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -538,6 +543,17 @@ func handleKMSCreateKey(w http.ResponseWriter, r *http.Request) {
 	}
 	kmsKeys.Put(keyId, key)
 
+	// AWS_KMS-origin keys get real 256-bit key material generated locally.
+	// EXTERNAL-origin keys remain without material until ImportKeyMaterial.
+	if req.Origin != "EXTERNAL" {
+		if _, err := kmsGenerateKeyMaterial(keyId); err != nil {
+			kmsKeys.Delete(keyId)
+			sim.AWSError(w, "DependencyTimeoutException", "failed to generate key material", http.StatusInternalServerError)
+			return
+		}
+	}
+	kmsPutKeyPolicy(keyId, req.Policy)
+
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyMetadata": kmsKeyMetadata(key),
 	})
@@ -635,10 +651,8 @@ func handleKMSScheduleKeyDeletion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleKMSEncrypt produces a ciphertext blob = base64("kms-sim:<keyId>:<base64(plaintext)>").
-// SDK callers treat ciphertext as opaque bytes; the sim's structured
-// envelope round-trips identically through Decrypt without needing
-// real cryptography.
+// handleKMSEncrypt encrypts plaintext under a CMK using real AES-256-GCM.
+// The returned CiphertextBlob is authenticated and bound to the source key id.
 func handleKMSEncrypt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyId     string `json:"KeyId"`
@@ -654,14 +668,26 @@ func handleKMSEncrypt(w http.ResponseWriter, r *http.Request) {
 			"Key %q does not exist", req.KeyId)
 		return
 	}
-	envelope := "kms-sim:" + keyId + ":" + base64.StdEncoding.EncodeToString(req.Plaintext)
-	ciphertextBlob := []byte(envelope)
+	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
+	ciphertextBlob, ok := kmsEncryptBytes(keyId, req.Plaintext)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to encrypt", http.StatusInternalServerError)
+		return
+	}
+	kmsRecordUsage(keyId, "Encrypt")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":          kmsKeyArn(keyId),
 		"CiphertextBlob": ciphertextBlob, // SDK base64-encodes on the wire
 	})
 }
 
+// handleKMSDecrypt decrypts a CiphertextBlob produced by Encrypt or
+// GenerateDataKey. It validates the authentication tag and the source key id,
+// and rejects disabled or pending-deletion keys.
 func handleKMSDecrypt(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		KeyId          string `json:"KeyId"`
@@ -671,35 +697,33 @@ func handleKMSDecrypt(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	envelope := string(req.CiphertextBlob)
-	const prefix = "kms-sim:"
-	if !strings.HasPrefix(envelope, prefix) {
+	srcKeyId, plaintext, ok := kmsDecryptBytes(req.CiphertextBlob)
+	if !ok {
 		sim.AWSErrorf(w, "InvalidCiphertextException", http.StatusBadRequest,
-			"The ciphertext blob is not in the expected sim envelope format.")
+			"The ciphertext blob is not in the expected format.")
 		return
 	}
-	rest := strings.TrimPrefix(envelope, prefix)
-	colon := strings.Index(rest, ":")
-	if colon < 0 {
-		sim.AWSErrorf(w, "InvalidCiphertextException", http.StatusBadRequest,
-			"Malformed sim ciphertext envelope.")
-		return
-	}
-	keyId := rest[:colon]
-	plaintextB64 := rest[colon+1:]
-	plaintext, err := base64.StdEncoding.DecodeString(plaintextB64)
-	if err != nil {
-		sim.AWSErrorf(w, "InvalidCiphertextException", http.StatusBadRequest,
-			"Sim ciphertext envelope had an invalid plaintext payload.")
-		return
-	}
-	if _, ok := kmsKeys.Get(keyId); !ok {
+	key, exists := kmsKeys.Get(srcKeyId)
+	if !exists {
 		sim.AWSErrorf(w, "NotFoundException", http.StatusBadRequest,
-			"Key %q does not exist", keyId)
+			"Key %q does not exist", srcKeyId)
 		return
 	}
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(srcKeyId))
+		return
+	}
+	if req.KeyId != "" {
+		resolved, ok := resolveKMSKey(req.KeyId)
+		if !ok || resolved != srcKeyId {
+			sim.AWSErrorf(w, "IncorrectKeyException", http.StatusBadRequest,
+				"The key ID in the request does not match the key ID of the ciphertext.")
+			return
+		}
+	}
+	kmsRecordUsage(srcKeyId, "Decrypt")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"KeyId":     kmsKeyArn(keyId),
+		"KeyId":     kmsKeyArn(srcKeyId),
 		"Plaintext": plaintext, // SDK base64-encodes on the wire
 	})
 }
@@ -720,6 +744,11 @@ func handleKMSGenerateDataKey(w http.ResponseWriter, r *http.Request) {
 			"Key %q does not exist", req.KeyId)
 		return
 	}
+	key, _ := kmsKeys.Get(keyId)
+	if !kmsIsUsable(key) {
+		kmsCryptoDisabledError(w, kmsKeyArn(keyId))
+		return
+	}
 	size := req.NumberOfBytes
 	if size == 0 {
 		switch req.KeySpec {
@@ -734,11 +763,16 @@ func handleKMSGenerateDataKey(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "DependencyTimeoutException", "failed to generate random data key", http.StatusInternalServerError)
 		return
 	}
-	envelope := []byte("kms-sim:" + keyId + ":" + base64.StdEncoding.EncodeToString(plaintext))
+	ciphertextBlob, ok := kmsEncryptBytes(keyId, plaintext)
+	if !ok {
+		sim.AWSError(w, "DependencyTimeoutException", "failed to encrypt data key", http.StatusInternalServerError)
+		return
+	}
+	kmsRecordUsage(keyId, "GenerateDataKey")
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":          kmsKeyArn(keyId),
 		"Plaintext":      plaintext,
-		"CiphertextBlob": envelope,
+		"CiphertextBlob": ciphertextBlob,
 	})
 }
 
@@ -1133,9 +1167,11 @@ func handleKMSGetParametersForImport(w http.ResponseWriter, r *http.Request) {
 	importToken := base64.StdEncoding.EncodeToString(tokenBytes)
 	validTo := float64(time.Now().Add(24 * time.Hour).Unix())
 	kmsImportTokens.Put(importToken, kmsImportParams{
-		KeyId:       keyId,
-		ImportToken: importToken,
-		ValidTo:     validTo,
+		KeyId:             keyId,
+		ImportToken:       importToken,
+		ValidTo:           validTo,
+		PrivateKey:        priv,
+		WrappingAlgorithm: req.WrappingAlgorithm,
 	})
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId":             keyId,
@@ -1147,15 +1183,16 @@ func handleKMSGetParametersForImport(w http.ResponseWriter, r *http.Request) {
 
 // handleKMSImportKeyMaterial accepts wrapped key material for an EXTERNAL key.
 // The import token must match one previously issued by
-// GetParametersForImport. The sim doesn't unwrap the material (it has no HSM
-// custody to bind it to) but validates the token round-trip and marks the key
-// as having material, moving it to Enabled. Returns the KeyId.
+// GetParametersForImport. The sim decrypts the wrapped material with the RSA
+// private key stored alongside the token and uses the decrypted 32 bytes as
+// the CMK's AES-256 key material, then moves the key to Enabled.
 func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		KeyId                string `json:"KeyId"`
-		ImportToken          []byte `json:"ImportToken"`
-		EncryptedKeyMaterial []byte `json:"EncryptedKeyMaterial"`
-		ExpirationModel      string `json:"ExpirationModel"`
+		KeyId                string  `json:"KeyId"`
+		ImportToken          []byte  `json:"ImportToken"`
+		EncryptedKeyMaterial []byte  `json:"EncryptedKeyMaterial"`
+		ExpirationModel      string  `json:"ExpirationModel"`
+		ValidTo              float64 `json:"ValidTo"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidRequest", "Invalid request body", http.StatusBadRequest)
@@ -1175,6 +1212,25 @@ func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
 			"The import token is expired or does not match the key.")
 		return
 	}
+	if params.PrivateKey == nil {
+		sim.AWSError(w, "KMSInternalException", "import token has no associated wrapping key", http.StatusInternalServerError)
+		return
+	}
+	if len(req.EncryptedKeyMaterial) > params.PrivateKey.Size() {
+		sim.AWSError(w, "ValidationException", "EncryptedKeyMaterial exceeds wrapping key size", http.StatusBadRequest)
+		return
+	}
+	plaintext, err := kmsDecryptImportedKeyMaterial(params.PrivateKey, params.WrappingAlgorithm, req.EncryptedKeyMaterial)
+	if err != nil {
+		sim.AWSError(w, "ValidationException", "failed to decrypt key material", http.StatusBadRequest)
+		return
+	}
+	if len(plaintext) != kmsKeyMaterialLen {
+		sim.AWSErrorf(w, "ValidationException", http.StatusBadRequest,
+			"Imported key material must be %d bytes, got %d", kmsKeyMaterialLen, len(plaintext))
+		return
+	}
+	kmsKeyMaterial.Put(keyId, plaintext)
 	kmsKeys.Update(keyId, func(k *KMSKey) {
 		k.HasImportedMaterial = true
 		k.KeyState = "Enabled"
@@ -1183,6 +1239,23 @@ func handleKMSImportKeyMaterial(w http.ResponseWriter, r *http.Request) {
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId": keyId,
 	})
+}
+
+// kmsDecryptImportedKeyMaterial unwraps key material that was encrypted with
+// the RSA public key returned by GetParametersForImport. It honors the wrapping
+// algorithm recorded on the import token (RSAES_OAEP_SHA_256, RSAES_OAEP_SHA_1,
+// or RSAES_PKCS1_V1_5).
+func kmsDecryptImportedKeyMaterial(priv *rsa.PrivateKey, alg string, ciphertext []byte) ([]byte, error) {
+	switch alg {
+	case "RSAES_OAEP_SHA_256":
+		return rsa.DecryptOAEP(sha256.New(), rand.Reader, priv, ciphertext, nil)
+	case "RSAES_OAEP_SHA_1":
+		return rsa.DecryptOAEP(sha1.New(), rand.Reader, priv, ciphertext, nil)
+	case "RSAES_PKCS1_V1_5", "":
+		return rsa.DecryptPKCS1v15(rand.Reader, priv, ciphertext)
+	default:
+		return nil, fmt.Errorf("unsupported wrapping algorithm: %s", alg)
+	}
 }
 
 // handleKMSDeleteImportedKeyMaterial deletes the imported key material,
@@ -1204,6 +1277,7 @@ func handleKMSDeleteImportedKeyMaterial(w http.ResponseWriter, r *http.Request) 
 		k.HasImportedMaterial = false
 		k.KeyState = "PendingImport"
 	})
+	kmsDeleteKeyMaterial(keyId)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
 		"KeyId": keyId,
 	})
