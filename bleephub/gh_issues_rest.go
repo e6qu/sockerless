@@ -538,32 +538,38 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 		closedAt = issue.ClosedAt.Format(time.RFC3339)
 	}
 
+	var activeLockReason interface{}
+	if issue.Locked {
+		activeLockReason = issue.ActiveLockReason
+	}
+
 	numStr := strconv.Itoa(issue.Number)
 	api := baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr
 	return map[string]interface{}{
-		"id":             issue.ID,
-		"node_id":        issue.NodeID,
-		"url":            api,
-		"html_url":       baseURL + "/" + repoFullName + "/issues/" + numStr,
-		"repository_url": baseURL + "/api/v3/repos/" + repoFullName,
-		"comments_url":   api + "/comments",
-		"events_url":     api + "/events",
-		"labels_url":     api + "/labels{/name}",
-		"number":         issue.Number,
-		"title":          issue.Title,
-		"body":           issue.Body,
-		"state":          state,
-		"state_reason":   issue.StateReason,
-		"user":           authorJSON,
-		"labels":         labels,
-		"assignee":       assignee,
-		"assignees":      assignees,
-		"milestone":      milestoneJSON,
-		"locked":         issue.Locked,
-		"comments":       commentCount,
-		"created_at":     issue.CreatedAt.Format(time.RFC3339),
-		"updated_at":     issue.UpdatedAt.Format(time.RFC3339),
-		"closed_at":      closedAt,
+		"id":                 issue.ID,
+		"node_id":            issue.NodeID,
+		"url":                api,
+		"html_url":           baseURL + "/" + repoFullName + "/issues/" + numStr,
+		"repository_url":     baseURL + "/api/v3/repos/" + repoFullName,
+		"comments_url":       api + "/comments",
+		"events_url":         api + "/events",
+		"labels_url":         api + "/labels{/name}",
+		"number":             issue.Number,
+		"title":              issue.Title,
+		"body":               issue.Body,
+		"state":              state,
+		"state_reason":       issue.StateReason,
+		"user":               authorJSON,
+		"labels":             labels,
+		"assignee":           assignee,
+		"assignees":          assignees,
+		"milestone":          milestoneJSON,
+		"locked":             issue.Locked,
+		"active_lock_reason": activeLockReason,
+		"comments":           commentCount,
+		"created_at":         issue.CreatedAt.Format(time.RFC3339),
+		"updated_at":         issue.UpdatedAt.Format(time.RFC3339),
+		"closed_at":          closedAt,
 	}
 }
 

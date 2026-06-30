@@ -155,7 +155,9 @@ type Store struct {
 	PRReviewComments   *PRReviewCommentStore         // PR review comments (inline / threads)
 	Misc               *MiscStore                    // long-tail surfaces
 	ProjectsV2         *ProjectV2Store               // GitHub Projects v2
-	LogLines           map[string][]string           // jobID → captured console log lines
+	NotificationsState map[int]*UserNotificationsState
+	Rulesets           map[int]*Ruleset
+	LogLines           map[string][]string // jobID → captured console log lines
 	NextAgent          int
 	NextMsg            int64
 	NextLog            int
@@ -177,6 +179,7 @@ type Store struct {
 	NextInstallationID int
 	NextCheckRunID     int64
 	NextCheckSuiteID   int64
+	NextRulesetID      int
 	actionsKeyPair     *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist            *Persistence
 	mu                 sync.RWMutex
@@ -315,6 +318,8 @@ func NewStore() *Store {
 		PRReviewComments:   newPRReviewCommentStore(nil),
 		Misc:               newMiscStore(),
 		ProjectsV2:         newProjectV2Store(nil),
+		NotificationsState: map[int]*UserNotificationsState{},
+		Rulesets:           map[int]*Ruleset{},
 		LogLines:           make(map[string][]string),
 		NextAgent:          1,
 		NextMsg:            1,
@@ -337,6 +342,7 @@ func NewStore() *Store {
 		NextInstallationID: 1,
 		NextCheckRunID:     1,
 		NextCheckSuiteID:   1,
+		NextRulesetID:      1,
 	}
 }
 
@@ -1080,6 +1086,32 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Misc.marketplacePlans[p.ID] = &p
+			return nil
+		}},
+		{"notifications_state", func(key string, raw []byte) error {
+			var state UserNotificationsState
+			if err := loadJSON(raw, &state); err != nil {
+				return err
+			}
+			userID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("notifications_state key %q: %w", key, err)
+			}
+			st.NotificationsState[userID] = &state
+			return nil
+		}},
+		{"repo_rulesets", func(key string, raw []byte) error {
+			var rs Ruleset
+			if err := loadJSON(raw, &rs); err != nil {
+				return err
+			}
+			if rs.Versions == nil {
+				rs.Versions = map[int]RulesetVersion{}
+			}
+			st.Rulesets[rs.ID] = &rs
+			if rs.ID >= st.NextRulesetID {
+				st.NextRulesetID = rs.ID + 1
+			}
 			return nil
 		}},
 	} {

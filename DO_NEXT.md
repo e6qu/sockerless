@@ -4,10 +4,41 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-finale-and-open-issues` — closing the remaining bleephub repository API gaps and fixing three open AWS simulator issues. Open as PR #737.
+`feat/bleephub-search-notifications-rulesets` — closing the GitHub Search API, Notifications API, and Repository Rulesets API surfaces on bleephub. Open as next PR.
 
 ---
-### Active branch: bleephub repo API finale + AWS sim open-issue fixes
+### Active branch: bleephub Search, Notifications, and Repository Rulesets APIs
+
+Scope:
+- **Search API** (`bleephub/gh_search.go`):
+  - `GET /api/v3/search/issues` with simple qualifier parsing (`repo:`, `user:`, `org:`, `language:`, `label:`, `state:`, `is:`, `in:`) and `sort`/`order`.
+  - `GET /api/v3/search/repositories` with repo/user/org qualifiers and text matching.
+  - `GET /api/v3/search/code` walking the default-branch git tree and matching path/content with `path:`, `extension:`, `filename:`, and free-text terms.
+  - `GET /api/v3/search/users` matching users and organizations.
+- **Notifications API** (`bleephub/gh_notifications.go`, `bleephub/store_notifications.go`):
+  - `GET /api/v3/notifications` and `GET /api/v3/repos/{owner}/{repo}/notifications` with `all`, `participating`, `since`, `before`.
+  - `PUT /api/v3/notifications` and `PUT /api/v3/repos/{owner}/{repo}/notifications` to mark notifications read.
+  - `GET /api/v3/notifications/threads/{thread_id}` and `PATCH` (read/done).
+  - `GET/PUT/DELETE /api/v3/notifications/threads/{thread_id}/subscription`.
+- **Repository Rulesets API** (`bleephub/gh_rulesets.go`, `bleephub/store_rulesets.go`):
+  - `GET /api/v3/repos/{owner}/{repo}/rulesets` and `POST`.
+  - `GET/PUT/DELETE /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}`.
+  - `GET /api/v3/repos/{owner}/{repo}/rules/branches/{branch}` evaluating active rulesets against a branch.
+  - `GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history` and `GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history/{version_id}`.
+- Persistence: notification read/subscription state and rulesets (including history) are stored in new `notifications_state` and `repo_rulesets` buckets.
+- Tests: backend HTTP tests for all three surfaces plus live-server shape tests observed by the OpenAPI response-shape validator.
+
+Validation:
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` clean.
+- OpenAPI shape ratchet clean for the new endpoints.
+
+**Next:** PR is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #737): bleephub repo API finale + AWS sim open-issue fixes
+
+`feat/bleephub-finale-and-open-issues` closed the remaining bleephub repository API gaps and fixed three open AWS simulator fidelity issues.
 
 Scope:
 - `GET /api/v3/repos/{owner}/{repo}/languages` with git-tree byte counts, extension-to-language mapping, vendored-path exclusion, and GraphQL `repository.languages` parity.
@@ -18,8 +49,8 @@ Scope:
 - Stargazer endpoints: `GET /repos/{owner}/{repo}/stargazers`, `PUT/DELETE /user/starred/{owner}/{repo}`, `GET /user/starred`, `GET /users/{username}/starred`.
 - Collaborator endpoints: `GET /repos/{owner}/{repo}/collaborators`, `GET /repos/{owner}/{repo}/collaborators/{username}/permission`, `PUT/DELETE /repos/{owner}/{repo}/collaborators/{username}`.
 - File-editor UI: topics editor in `RepoSettingsPage.tsx`, file delete action in `RepoDetailPage.tsx`.
-- AWS sim Route 53 wildcard DNS resolution fix (#731, BUG-2267).
-- AWS sim KMS real AES-256-GCM encryption and key-policy `Deny` enforcement (#732, BUG-2268).
+- AWS sim Route 53 wildcard DNS (#731, BUG-2267).
+- AWS sim KMS real encryption and key-policy enforcement (#732, BUG-2268).
 - AWS sim CloudWatch→SNS→SQS malformed JSON notification fix (#734, BUG-2269).
 
 Validation:
@@ -29,10 +60,7 @@ Validation:
 - UI `bun --bun run typecheck` and `bun --bun run test` pass.
 - OpenAPI shape ratchet clean for the new endpoints.
 
-**Next:** PR #737 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
-
----
-### Prior branch (merged #736): bleephub Phase 3 repo tags and git refs
+**Next:** PR #737 merged; continue with the Search/Notifications/Rulesets branch.
 
 `feat/bleephub-repo-phase3-tags-and-refs` added repository tags and git refs listing to the bleephub repo API surface.
 

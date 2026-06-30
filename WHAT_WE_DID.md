@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - bleephub Search, Notifications, and Repository Rulesets APIs
+
+A single branch (`feat/bleephub-search-notifications-rulesets`) closed three public GitHub API surfaces on bleephub.
+
+**Search API.** `bleephub/gh_search.go` adds `GET /api/v3/search/issues`, `GET /api/v3/search/repositories`, `GET /api/v3/search/code`, and `GET /api/v3/search/users`. Issue and repo search parse simple GitHub qualifiers (`repo:`, `user:`, `org:`, `language:`, `label:`, `state:`, `is:`, `in:`), apply text matching, and honor `sort`/`order`. Code search walks the default-branch git tree via go-git, matches file path and content against `path:`, `extension:`, `filename:`, and free-text terms, and skips files larger than 384 KiB. User search returns both user and organization results. The issue search response includes the `active_lock_reason` field required by the OpenAPI schema.
+
+**Notifications API.** `bleephub/gh_notifications.go` and `bleephub/store_notifications.go` add the full notification thread surface: `GET /api/v3/notifications` and `GET /api/v3/repos/{owner}/{repo}/notifications` with `all`, `participating`, `since`, and `before`; `PUT /api/v3/notifications` and `PUT /api/v3/repos/{owner}/{repo}/notifications` to mark notifications read; `GET/PATCH /api/v3/notifications/threads/{thread_id}` to fetch, mark read, or dismiss a thread; and `GET/PUT/DELETE /api/v3/notifications/threads/{thread_id}/subscription` for per-thread subscription state. Notification threads are derived from issues and pull requests the user can see, with reasons (`author`, `assign`, `comment`, `subscribed`) and unread state computed against per-user persistent read timestamps.
+
+**Repository Rulesets API.** `bleephub/gh_rulesets.go` and `bleephub/store_rulesets.go` add `GET/POST /api/v3/repos/{owner}/{repo}/rulesets`, `GET/PUT/DELETE /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}`, `GET /api/v3/repos/{owner}/{repo}/rules/branches/{branch}`, and ruleset history (`GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history` plus per-version GET). Rulesets support `branch`/`tag` targets, `active`/`evaluate`/`disabled` enforcement, bypass actors, ref-name conditions (including `~DEFAULT_BRANCH`, `~ALL`, and simple globs), and a representative set of rule types. Updates record a snapshot to versioned history.
+
+**Persistence and wiring.** `Store` gained `NotificationsState` (per-user read/subscription/dismiss maps) and `Rulesets`/`NextRulesetID`. Persistence loads and stores `notifications_state` keyed by user ID and `repo_rulesets` keyed by ruleset ID. Routes are registered in `bleephub/server.go`.
+
+**Tests.** Added `bleephub/gh_notifications_test.go`, `bleephub/gh_rulesets_test.go`, and `bleephub/gh_search_notifications_rulesets_live_test.go`. The live-server tests exercise the new endpoints through the shared TestMain server so the OpenAPI response-shape validator observes them.
+
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` is clean; the OpenAPI shape ratchet reports no new violations.
+
 ## 2026-06-30 - bleephub repo API finale + AWS sim open-issue fixes
 
 A single branch (`feat/bleephub-finale-and-open-issues`) closed the remaining bleephub repository API gaps and fixed three open AWS simulator fidelity issues.
