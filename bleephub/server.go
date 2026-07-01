@@ -221,6 +221,9 @@ func (s *Server) registerRoutes() {
 	// Projects classic (v1) API (gh_projects_classic.go)
 	s.registerGHProjectsClassicRoutes()
 
+	// Migrations API (gh_migrations.go)
+	s.registerGHMigrationsRoutes()
+
 	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
 	s.registerGHActionsExtrasRoutes()
 

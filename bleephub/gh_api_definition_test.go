@@ -88,6 +88,7 @@ var allowedGHESOnly = map[string]string{
 	"GET /repos/{}/{}/projects":                                      "Projects classic (v1) repo-scoped list — real GitHub endpoint, absent from the bundled dotcom description",
 	"POST /repos/{}/{}/projects":                                     "Projects classic (v1) repo-scoped create — real GitHub endpoint, absent from the bundled dotcom description",
 	"PATCH /repos/{}/{}/secret-scanning/alerts":                      "Secret scanning bulk update by query — real GitHub endpoint, absent from the bundled dotcom description",
+	"GET /orgs/{}/migrations/{}/repos/{}/lock":                       "Organization migration repository lock status — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
 	"GET /projects/{}":                                               "Projects classic (v1) get project — real GitHub endpoint, absent from the bundled dotcom description",
 	"PATCH /projects/{}":                                             "Projects classic (v1) update project — real GitHub endpoint, absent from the bundled dotcom description",
 	"DELETE /projects/{}":                                            "Projects classic (v1) delete project — real GitHub endpoint, absent from the bundled dotcom description",

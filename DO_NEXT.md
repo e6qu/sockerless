@@ -4,7 +4,32 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-api-ui-parity-continuation` — pushed; GitHub Projects classic (v1) REST API + UI awaits PR/merge.
+`feat/bleephub-api-ui-parity-continuation` — pushed; GitHub Migrations REST API + UI awaits PR/merge.
+
+Scope:
+- Added `UserMigration` and `OrgMigration` types plus store CRUD helpers in new `bleephub/store_migrations.go`.
+- Wired `user_migrations` and `org_migrations` buckets into `Store` persistence (`bleephub/store.go`).
+- Implemented REST handlers in `bleephub/gh_migrations.go`:
+  - `POST/GET /api/v3/user/migrations`, `GET/DELETE /api/v3/user/migrations/{id}/archive`, `DELETE /api/v3/user/migrations/{id}/repos/{repo_name}/lock`
+  - `POST/GET /api/v3/orgs/{org}/migrations`, `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/archive`, `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/repos/{repo_name}/lock`
+- Archives are generated on demand as real `tar.gz` files containing `metadata.json` and per-repository README/issue/PR/release data.
+- Added backend HTTP tests in `bleephub/gh_migrations_test.go` covering user/org CRUD, archive download/delete, lock status, and unlock.
+- Added live-server shape test in `bleephub/gh_migrations_live_test.go` so the OpenAPI response-shape validator observes the new endpoints.
+- Added route allowlist entries in `bleephub/gh_api_definition_test.go` and OpenAPI field allowlist entries in `bleephub/openapi-violation-allowlist.txt` for GHES-only `html_url`/`exported_at`.
+- Added `MigrationsPage.tsx` wired from `Shell.tsx` at `/ui/migrations`, plus API helpers in `ui/packages/bleephub/src/api.ts` and types in `ui/packages/bleephub/src/types.ts`.
+- Added `MigrationIcon` to `ui/packages/bleephub/src/components/octicons.tsx`.
+- Hardened migration list assertions in `gh_migrations_test.go` so the tests do not assume an empty global store.
+
+Validation:
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` passes.
+- `make ui/packages/bleephub/lint` passes.
+- `make ui/packages/bleephub/test` passes (90/90).
+- `make ui/packages/bleephub/build` passes.
+- `make bleephub/build` passes.
+- OpenAPI shape ratchet reports no new violations.
+
+**Next:** Create PR for the pushed branch; after merge, continue with remaining bleephub API/UI gaps (codespaces, packages, code scanning, secret scanning, dependabot, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (pushed): GitHub Projects classic (v1) REST API + UI

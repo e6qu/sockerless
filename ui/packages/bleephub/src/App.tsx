@@ -30,6 +30,7 @@ import { TeamsPage } from "./pages/TeamsPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
 import { StorageHealthPage } from "./pages/StorageHealthPage.js";
 import { GistsPage } from "./pages/GistsPage.js";
+import { MigrationsPage } from "./pages/MigrationsPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -75,6 +76,7 @@ export function App() {
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
+              <Route path="/ui/migrations" element={<MigrationsPage />} />
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />
               <Route path="/ui/admin/teams" element={<TeamsPage />} />

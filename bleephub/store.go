@@ -242,6 +242,8 @@ type Store struct {
 	ProjectClassic             map[int]*ProjectClassic // id → project
 	ProjectColumns             map[int]*ProjectColumn  // id → column
 	ProjectCards               map[int]*ProjectCard    // id → card
+	UserMigrations             map[int]*UserMigration  // id → user migration
+	OrgMigrations              map[int]*OrgMigration   // id → org migration
 	LogLines                   map[string][]string     // jobID → captured console log lines
 	Gists                      map[string]*Gist        // id → gist
 	GistComments               map[int]*GistComment    // id → gist comment
@@ -291,6 +293,8 @@ type Store struct {
 	NextProjectClassicID       int
 	NextProjectColumnID        int
 	NextProjectCardID          int
+	NextUserMigrationID        int
+	NextOrgMigrationID         int
 	NextAutolinkID             int
 	NextInvitationID           int
 	actionsKeyPair             *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
@@ -440,6 +444,8 @@ func NewStore() *Store {
 		ProjectClassic:             map[int]*ProjectClassic{},
 		ProjectColumns:             map[int]*ProjectColumn{},
 		ProjectCards:               map[int]*ProjectCard{},
+		UserMigrations:             map[int]*UserMigration{},
+		OrgMigrations:              map[int]*OrgMigration{},
 		LogLines:                   make(map[string][]string),
 		Gists:                      make(map[string]*Gist),
 		GistComments:               make(map[int]*GistComment),
@@ -487,6 +493,8 @@ func NewStore() *Store {
 		NextProjectClassicID:       1,
 		NextProjectColumnID:        1,
 		NextProjectCardID:          1,
+		NextUserMigrationID:        1,
+		NextOrgMigrationID:         1,
 		NextAutolinkID:             1,
 		NextInvitationID:           1,
 	}
@@ -535,7 +543,7 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	pages_builds, branch_protection, audit_log, marketplace_plans,
 //	notifications_state, repo_rulesets, projects_classic, project_columns,
 //	project_cards, secret_scanning_alerts, code_scanning_alerts,
-//	code_scanning_analyses, sarif_uploads.
+//	code_scanning_analyses, sarif_uploads, user_migrations, org_migrations.
 //
 // Other state (workflows, sessions, agents, ephemeral codes) deliberately
 // stays in-memory only — operator restart implies abandoning in-flight runs.
@@ -1455,6 +1463,30 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.DependabotOrgSecrets[key] = m
+			return nil
+		}},
+		{"user_migrations", func(_ string, raw []byte) error {
+			var r userMigrationRecord
+			if err := loadJSON(raw, &r); err != nil {
+				return err
+			}
+			m := recordToUserMigration(&r)
+			st.UserMigrations[m.ID] = m
+			if m.ID >= st.NextUserMigrationID {
+				st.NextUserMigrationID = m.ID + 1
+			}
+			return nil
+		}},
+		{"org_migrations", func(_ string, raw []byte) error {
+			var r orgMigrationRecord
+			if err := loadJSON(raw, &r); err != nil {
+				return err
+			}
+			m := recordToOrgMigration(&r)
+			st.OrgMigrations[m.ID] = m
+			if m.ID >= st.NextOrgMigrationID {
+				st.NextOrgMigrationID = m.ID + 1
+			}
 			return nil
 		}},
 	} {

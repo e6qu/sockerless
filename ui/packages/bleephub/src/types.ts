@@ -636,6 +636,42 @@ export interface GithubRelease {
   html_url: string;
 }
 
+export type GithubMigrationState = "pending" | "exporting" | "exported" | "failed";
+
+/** Request body for POST /user/migrations and /orgs/{org}/migrations. */
+export interface GithubMigrationStartPayload {
+  repositories: string[];
+  lock_repositories?: boolean;
+  exclude_metadata?: boolean;
+  exclude_git_data?: boolean;
+  exclude_attachments?: boolean;
+  exclude_releases?: boolean;
+  exclude_owner_projects?: boolean;
+  org_metadata_only?: boolean;
+}
+
+/** GitHub migration export object (Migrations REST API). */
+export interface GithubMigration {
+  id: number;
+  node_id: string;
+  guid: string;
+  state: GithubMigrationState;
+  repositories: BleephubRepo[];
+  lock_repositories: boolean;
+  exclude_metadata: boolean;
+  exclude_git_data: boolean;
+  exclude_attachments: boolean;
+  exclude_releases: boolean;
+  exclude_owner_projects: boolean;
+  org_metadata_only: boolean;
+  url: string;
+  html_url: string;
+  archive_url: string;
+  created_at: string;
+  updated_at: string;
+  exported_at: string;
+}
+
 export interface BleephubUser {
   id: number;
   login: string;

@@ -16,3 +16,16 @@ GET /meta -> 200	unknown-field	$.installed_version
 # (/user/{user_id}) and reports a top-level type mismatch. The response is
 # intentionally an array of repository objects.
 GET /user/{} -> 200	type-mismatch	$
+
+# GHES Migration responses include html_url and exported_at, which are not in
+# the vendored dotcom /user/migrations or /orgs/{org}/migrations schemas.
+GET /user/migrations/{} -> 200	unknown-field	$.html_url
+GET /user/migrations/{} -> 200	unknown-field	$.exported_at
+POST /user/migrations -> 201	unknown-field	$.html_url
+POST /user/migrations -> 201	unknown-field	$.exported_at
+GET /orgs/{}/migrations -> 200	unknown-field	$[].html_url
+GET /orgs/{}/migrations -> 200	unknown-field	$[].exported_at
+GET /orgs/{}/migrations/{} -> 200	unknown-field	$.html_url
+GET /orgs/{}/migrations/{} -> 200	unknown-field	$.exported_at
+POST /orgs/{}/migrations -> 201	unknown-field	$.html_url
+POST /orgs/{}/migrations -> 201	unknown-field	$.exported_at

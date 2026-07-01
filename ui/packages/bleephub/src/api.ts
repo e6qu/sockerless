@@ -25,6 +25,8 @@ import type {
   GithubSecret,
   GithubEnvironment,
   GithubRelease,
+  GithubMigration,
+  GithubMigrationStartPayload,
   GithubWorkflow,
   GithubWorkflowRun,
   GithubJob,
@@ -1196,3 +1198,61 @@ const setDependabotOrgSecretRepositories = (
   name: string,
   selected_repository_ids: number[],
 ) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`, { selected_repository_ids });
+
+// ─── GitHub Migrations REST ─────────────────────────────────────────────
+
+type MigrationScope = { kind: "user" } | { kind: "org"; org: string };
+
+function migrationBase(scope: MigrationScope): string {
+  return scope.kind === "user"
+    ? "/api/v3/user/migrations"
+    : `/api/v3/orgs/${scope.org}/migrations`;
+}
+
+export const fetchUserMigrations = () =>
+  ghFetch<GithubMigration[]>("/api/v3/user/migrations");
+
+export const fetchOrgMigrations = (org: string) =>
+  ghFetch<GithubMigration[]>(`/api/v3/orgs/${org}/migrations`);
+
+export const createUserMigration = (payload: GithubMigrationStartPayload) =>
+  ghPostJSON<GithubMigration>("/api/v3/user/migrations", payload);
+
+export const createOrgMigration = (org: string, payload: GithubMigrationStartPayload) =>
+  ghPostJSON<GithubMigration>(`/api/v3/orgs/${org}/migrations`, payload);
+
+export const deleteMigrationArchive = (scope: MigrationScope, id: number) =>
+  ghDeleteJSON<void>(`${migrationBase(scope)}/${id}/archive`, {});
+
+export const unlockMigrationRepo = (scope: MigrationScope, id: number, repoName: string) =>
+  ghDeleteJSON<void>(`${migrationBase(scope)}/${id}/repos/${encodeURIComponent(repoName)}/lock`, {});
+
+export const fetchOrgMigrationLockStatus = (org: string, id: number, repoName: string) =>
+  ghFetch<{ locked: boolean }>(
+    `/api/v3/orgs/${org}/migrations/${id}/repos/${encodeURIComponent(repoName)}/lock`,
+  );
+
+/** Download a migration archive by fetching the authenticated binary and
+ *  triggering a browser save-as for the given filename. */
+export async function downloadMigrationArchive(
+  scope: MigrationScope,
+  id: number,
+  filename: string,
+): Promise<void> {
+  const res = await fetch(`${migrationBase(scope)}/${id}/archive`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}

@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - GitHub Migrations REST API + UI (in progress on `feat/bleephub-api-ui-parity-continuation`)
+
+A single branch (`feat/bleephub-api-ui-parity-continuation`) implements the GitHub Migrations REST API surface for user and organization repository exports.
+
+**Data model and store.** `bleephub/store_migrations.go` introduces `UserMigration` and `OrgMigration` types, plus store CRUD helpers. `bleephub/store.go` adds `UserMigrations`, `OrgMigrations`, and next-ID counters, and wires the `user_migrations` and `org_migrations` persistence buckets into `loadFromPersistence`.
+
+**REST handlers.** `bleephub/gh_migrations.go` registers and implements:
+- `POST/GET /api/v3/user/migrations`
+- `GET /api/v3/user/migrations/{id}`
+- `GET/DELETE /api/v3/user/migrations/{id}/archive`
+- `DELETE /api/v3/user/migrations/{id}/repos/{repo_name}/lock`
+- `POST/GET /api/v3/orgs/{org}/migrations`
+- `GET /api/v3/orgs/{org}/migrations/{id}`
+- `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/archive`
+- `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/repos/{repo_name}/lock`
+
+Migration archives are generated on demand as real `tar.gz` files containing `metadata.json` plus per-repository README/issue/PR/release data. The `{repo_name}` lock path matches the real GitHub endpoint shape.
+
+**Tests.** `bleephub/gh_migrations_test.go` covers user and org migration CRUD, archive download and deletion, lock status, and unlock. `bleephub/gh_migrations_live_test.go` exercises the endpoints through the shared TestMain server so the OpenAPI response-shape validator observes them. `gh_api_definition_test.go` adds the new paths to `allowedGHESOnly`, and `openapi-violation-allowlist.txt` allowlists the GHES-only `html_url` and `exported_at` fields.
+
+**UI.** `ui/packages/bleephub/src/pages/MigrationsPage.tsx` lists user and organization migrations, starts new migrations with repository selection and exclude options, downloads archives, deletes archives, and unlocks repositories. It is wired from `ui/packages/bleephub/src/components/Shell.tsx` at `/ui/migrations` with a Migrations entry in the global nav. API helpers live in `ui/packages/bleephub/src/api.ts`, types in `ui/packages/bleephub/src/types.ts`, and a `MigrationIcon` in `ui/packages/bleephub/src/components/octicons.tsx`. A Vitest page test (`src/__tests__/MigrationsPage.test.tsx`) covers rendering and org-scope switching.
+
+`go test ./bleephub -count=1`, `make bleephub/lint`, `make ui/packages/bleephub/lint`, `make ui/packages/bleephub/test` (90/90), `make ui/packages/bleephub/build`, and `make bleephub/build` all pass.
+
 ## 2026-07-01 - GitHub Projects classic (v1) REST API + UI (in progress on `feat/bleephub-api-ui-parity-continuation`)
 
 A single branch (`feat/bleephub-api-ui-parity-continuation`) implements the full GitHub Projects classic (v1) REST API surface for repo-scoped projects, columns, and cards.

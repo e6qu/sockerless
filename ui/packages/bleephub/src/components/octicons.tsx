@@ -415,3 +415,13 @@ export function ProjectIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function MigrationIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+      <path d="M5 8h6M8 5v6" />
+      <path d="M12.5 3.5l-2-2M12.5 3.5v-2h-2" />
+    </Svg>
+  );
+}
