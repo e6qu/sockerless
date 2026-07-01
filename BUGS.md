@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2269 filed - 2225 fixed - 3 open - 16 false positives.**
+**2271 filed - 2227 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2271~~ | P2 | AWS sim — CloudWatch alarm history | racy Update-then-Put fallback storage | `cwRecordAlarmHistory` in `simulators/aws/cloudwatch_alarm_ops.go` read an alarm-history row with `Update`, mutated it, and wrote it back with `Put`. Concurrent evaluator ticks and API calls could race and drop history entries. Fixed by replacing the read-modify-write sequence with atomic `cwAlarmHistory.Upsert`. |
+| ~~2270~~ | P2 | AWS sim — CloudWatch metrics | racy Update-then-Put fallback storage | `handleCWQueryPutMetricData` in `simulators/aws/cloudwatch_metrics_query.go` read a metric row with `Update`, appended a datapoint, and wrote it back with `Put`. Under concurrent `PutMetricData` calls and alarm evaluator reads this could drop datapoints. Fixed by replacing the read-modify-write sequence with atomic `cwMetrics.Upsert`. |
 | ~~2269~~ | P2 | AWS sim — SNS | malformed alarm→SNS→SQS JSON | `snsNotificationEnvelope` in `simulators/aws/sns.go` built the message body with `fmt.Sprintf("...%q...")`, which produced invalid JSON for control characters and omitted `Timestamp`. Fixed by marshaling the envelope with `json.Marshal` and including `Timestamp`. Unit test in `simulators/aws/sns_envelope_test.go` asserts valid JSON for payloads containing newlines and quotes. |
 | ~~2268~~ | P2 | AWS sim — KMS | synthetic / deterministic encryption | KMS `Encrypt`/`Decrypt`/`GenerateDataKey`/`GenerateDataKeyWithoutPlaintext`/`ReEncrypt` used a synthetic envelope with no per-key secret; `ImportKeyMaterial` accepted arbitrary bytes. New `simulators/aws/kms_crypto.go` implements real AES-256-GCM with random 32-byte key material per key, an authenticated opaque blob, and RSA-OAEP unwrapping of imported key material. Key policies are mirrored into `iam_resource_policies` so IAM `Deny` statements are enforced at call time. SDK test in `simulators/aws/sdk-tests/kms_policy_test.go` verifies a `Deny` policy rejects `Encrypt`. |
 | ~~2267~~ | P2 | AWS sim — Route 53 DNS | wildcard record lookup failure | `simulators/aws/route53_dns.go` only matched exact labels, so wildcard records such as `*.example.com` never resolved. Fixed by adding `findWildcardMatch` with exact-match precedence over wildcard expansion. SDK tests in `simulators/aws/sdk-tests/route53_dns_test.go` cover wildcard A records and exact-match precedence. |

@@ -78,10 +78,9 @@ func handleCWQueryPutMetricData(w http.ResponseWriter, r *http.Request) {
 			Unit:       r.FormValue(base + ".Unit"),
 		}
 		key := metricsKey(namespace, name, dims)
-		cwMetrics.Update(key, func(existing *[]CWMetricDatum) { *existing = append(*existing, datum) })
-		if _, ok := cwMetrics.Get(key); !ok {
-			cwMetrics.Put(key, []CWMetricDatum{datum})
-		}
+		cwMetrics.Upsert(key, func(existing *[]CWMetricDatum) {
+			*existing = append(*existing, datum)
+		})
 	}
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<PutMetricDataResponse %s><ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata></PutMetricDataResponse>`,

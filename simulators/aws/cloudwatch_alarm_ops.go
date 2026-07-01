@@ -64,10 +64,9 @@ func cwRecordAlarmHistory(name, alarmType, itemType, summary, data string) {
 		HistorySummary:  summary,
 		HistoryData:     data,
 	}
-	cwAlarmHistory.Update(name, func(h *[]CWAlarmHistoryItem) { *h = append(*h, item) })
-	if _, ok := cwAlarmHistory.Get(name); !ok {
-		cwAlarmHistory.Put(name, []CWAlarmHistoryItem{item})
-	}
+	cwAlarmHistory.Upsert(name, func(h *[]CWAlarmHistoryItem) {
+		*h = append(*h, item)
+	})
 }
 
 func cwCompositeAlarmByArn(arn string) (CWCompositeAlarm, bool) {
