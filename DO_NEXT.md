@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-github-parity-and-admin` — bleephub GitHub API/UI parity continuation + internal admin APIs.
+PR #740 — `feat/bleephub-github-parity-and-admin` — bleephub GitHub API/UI parity continuation + internal admin APIs.
 
 ---
-### Active branch: bleephub GitHub API/UI parity + admin APIs
+### Active branch: bleephub GitHub API/UI parity + admin APIs (PR #740)
 
 Scope:
 - Internal admin users/orgs/teams CRUD and audit-log endpoints (handle_mgmt.go).
