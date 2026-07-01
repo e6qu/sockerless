@@ -43,6 +43,9 @@ import type {
   BleephubAuditEvent,
   BleephubGist,
   BleephubGistFile,
+  GithubProjectClassic,
+  GithubProjectColumn,
+  GithubProjectCard,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -937,3 +940,70 @@ export const updateGist = (
 
 export const deleteGist = (id: string) =>
   internalFetch<void>(`/internal/gists/${id}`, { method: "DELETE" });
+
+// ─── GitHub Projects classic (v1) ───────────────────────────────────────
+
+export const fetchProjectsClassic = (owner: string, repo: string) =>
+  ghFetch<GithubProjectClassic[]>(`/api/v3/repos/${owner}/${repo}/projects`);
+
+export const createProjectClassic = (
+  owner: string,
+  repo: string,
+  payload: { name: string; body?: string; state?: "open" | "closed" },
+) => ghPostJSON<GithubProjectClassic>(`/api/v3/repos/${owner}/${repo}/projects`, payload);
+
+export const updateProjectClassic = (
+  projectId: number,
+  payload: Partial<{ name: string; body: string; state: "open" | "closed" }>,
+) => ghPatchJSON<GithubProjectClassic>(`/api/v3/projects/${projectId}`, payload);
+
+export const deleteProjectClassic = (projectId: number) =>
+  ghDeleteJSON<void>(`/api/v3/projects/${projectId}`, {});
+
+export const fetchProjectColumns = (projectId: number) =>
+  ghFetch<GithubProjectColumn[]>(`/api/v3/projects/${projectId}/columns`);
+
+export const createProjectColumn = (projectId: number, name: string) =>
+  ghPostJSON<GithubProjectColumn>(`/api/v3/projects/${projectId}/columns`, { name });
+
+export const updateProjectColumn = (columnId: number, name: string) =>
+  ghPatchJSON<GithubProjectColumn>(`/api/v3/projects/columns/${columnId}`, { name });
+
+export const deleteProjectColumn = (columnId: number) =>
+  ghDeleteJSON<void>(`/api/v3/projects/columns/${columnId}`, {});
+
+export const moveProjectColumn = (columnId: number, position: string) =>
+  ghPostJSON<{ id: number; url: string }>(`/api/v3/projects/columns/${columnId}/moves`, { position });
+
+export const fetchProjectCards = (columnId: number) =>
+  ghFetch<GithubProjectCard[]>(`/api/v3/projects/columns/${columnId}/cards`);
+
+export const createProjectCard = (
+  columnId: number,
+  payload: { note?: string; content_id?: number; content_type?: "Issue" },
+) => ghPostJSON<GithubProjectCard>(`/api/v3/projects/columns/${columnId}/cards`, payload);
+
+export const updateProjectCard = (cardId: number, note: string) =>
+  ghPatchJSON<GithubProjectCard>(`/api/v3/projects/columns/cards/${cardId}`, { note });
+
+export const deleteProjectCard = (cardId: number) =>
+  ghDeleteJSON<void>(`/api/v3/projects/columns/cards/${cardId}`, {});
+
+export const moveProjectCard = (
+  cardId: number,
+  payload: { position: string; column_id?: number },
+) => ghPostJSON<{ id: number; url: string }>(`/api/v3/projects/columns/cards/${cardId}/moves`, payload);
+
+async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<T>;
+}

@@ -85,6 +85,13 @@ var allowedGHESOnly = map[string]string{
 	"DELETE /repos/{}/{}/branches/{}/protection/allow_force_pushes":  "Branch protection allow-force-pushes setting — real GitHub endpoint, absent from the bundled dotcom description",
 	"PUT /repos/{}/{}/branches/{}/protection/required_status_checks": "Branch protection required status checks update — real GitHub endpoint, absent from the bundled dotcom description",
 	"PUT /repos/{}/{}/branches/{}/protection/restrictions":           "Branch protection push restrictions update — real GitHub endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/projects":                                      "Projects classic (v1) repo-scoped list — real GitHub endpoint, absent from the bundled dotcom description",
+	"POST /repos/{}/{}/projects":                                     "Projects classic (v1) repo-scoped create — real GitHub endpoint, absent from the bundled dotcom description",
+	"GET /projects/{}":                                               "Projects classic (v1) get project — real GitHub endpoint, absent from the bundled dotcom description",
+	"PATCH /projects/{}":                                             "Projects classic (v1) update project — real GitHub endpoint, absent from the bundled dotcom description",
+	"DELETE /projects/{}":                                            "Projects classic (v1) delete project — real GitHub endpoint, absent from the bundled dotcom description",
+	"POST /projects/columns/{}/moves":                                "Projects classic (v1) move column — real GitHub endpoint, absent from the bundled dotcom description",
+	"POST /projects/columns/cards/{}/moves":                          "Projects classic (v1) move card — real GitHub endpoint, absent from the bundled dotcom description",
 }
 
 // dispatchRoutes are real GitHub sub-resource paths served through a single
@@ -102,6 +109,14 @@ var dispatchRoutes = map[string]string{
 	"GET /repos/{}/{}/releases/{}/{}":       "→ GET /repos/{}/{}/releases/{}/assets (list release assets)",
 	"POST /repos/{}/{}/releases/{}/{}":      "→ POST /repos/{}/{}/releases/{}/reactions (react to a release)",
 	"DELETE /repos/{}/{}/releases/{}/{}/{}": "→ DELETE /repos/{}/{}/releases/{}/reactions/{} (remove a release reaction)",
+	"GET /projects/{}/{}":                   "→ GET /projects/{project_id}/columns or GET /projects/columns/{column_id} (Projects classic dispatch)",
+	"POST /projects/{}/{}":                  "→ POST /projects/{project_id}/columns (Projects classic dispatch)",
+	"PATCH /projects/{}/{}":                 "→ PATCH /projects/columns/{column_id} (Projects classic dispatch)",
+	"DELETE /projects/{}/{}":                "→ DELETE /projects/columns/{column_id} (Projects classic dispatch)",
+	"GET /projects/columns/{}/{}":           "→ GET /projects/columns/{column_id}/cards or GET /projects/columns/cards/{card_id} (Projects classic dispatch)",
+	"POST /projects/columns/{}/{}":          "→ POST /projects/columns/{column_id}/cards (Projects classic dispatch)",
+	"PATCH /projects/columns/{}/{}":         "→ PATCH /projects/columns/cards/{card_id} (Projects classic dispatch)",
+	"DELETE /projects/columns/{}/{}":        "→ DELETE /projects/columns/cards/{card_id} (Projects classic dispatch)",
 }
 
 func TestRegisteredAPIv3RoutesExistInGitHubSpec(t *testing.T) {

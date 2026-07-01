@@ -111,36 +111,58 @@ func TestListAuthUserReposSort(t *testing.T) {
 		"name": "sort-zzz",
 	})
 
-	resp := ghGet(t, "/api/v3/user/repos?sort=full_name&direction=asc&per_page=100", defaultToken)
-	if resp.StatusCode != 200 {
-		resp.Body.Close()
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-	repos := decodeJSONArray(t, resp)
-	if len(repos) < 2 {
-		t.Fatalf("expected at least 2 repos, got %d", len(repos))
+	// The shared test server accumulates repos across tests; fetch all pages
+	// until both target repos are found rather than assuming they fit in one
+	// page.
+	var idxAaa, idxZzz = -1, -1
+	url := "/api/v3/user/repos?sort=full_name&direction=asc&per_page=100"
+	seen := 0
+	for url != "" {
+		resp := ghGet(t, url, defaultToken)
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		repos := decodeJSONArray(t, resp)
+		for _, r := range repos {
+			name := r["name"].(string)
+			if name == "sort-aaa" {
+				idxAaa = seen
+			}
+			if name == "sort-zzz" {
+				idxZzz = seen
+			}
+			seen++
+		}
+		link := resp.Header.Get("Link")
+		url = nextLinkURL(link)
 	}
 
-	var idxAaa, idxZzz = -1, -1
-	for i, r := range repos {
-		name := r["name"].(string)
-		if name == "sort-aaa" {
-			idxAaa = i
-		}
-		if name == "sort-zzz" {
-			idxZzz = i
-		}
-	}
 	if idxAaa == -1 || idxZzz == -1 {
-		names := make([]string, 0, len(repos))
-		for _, r := range repos {
-			names = append(names, r["name"].(string))
-		}
-		t.Fatalf("expected sort-aaa and sort-zzz in response, got %d names: %v", len(names), names)
+		t.Fatalf("expected sort-aaa and sort-zzz in response, found at %d and %d", idxAaa, idxZzz)
 	}
 	if idxAaa > idxZzz {
 		t.Fatalf("expected sort-aaa before sort-zzz, got %d and %d", idxAaa, idxZzz)
 	}
+}
+
+// nextLinkURL extracts the rel="next" URL from a GitHub-style Link header.
+func nextLinkURL(link string) string {
+	if link == "" {
+		return ""
+	}
+	for _, part := range strings.Split(link, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.Contains(part, `rel="next"`) {
+			continue
+		}
+		start := strings.Index(part, "<")
+		end := strings.Index(part, ">")
+		if start != -1 && end != -1 && end > start {
+			return strings.TrimPrefix(part[start+1:end], testBaseURL)
+		}
+	}
+	return ""
 }
 
 // TestListUserReposByLogin verifies GET /api/v3/users/{username}/repos filters.

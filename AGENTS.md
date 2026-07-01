@@ -8,13 +8,17 @@ The continuity files are **`STATUS.md`, `PLAN.md`, `DO_NEXT.md`, `WHAT_WE_DID.md
 
 **Before starting a task:** read `STATUS.md` and `DO_NEXT.md` to load the current state, the active branch, and what's next. If they disagree with `git status`/the actual branch, fix them first — a stale continuity file is a bug.
 
-**After finishing a task (in the same commit as the code):** update `STATUS.md` (snapshot), `DO_NEXT.md` (what's next), the `BUGS.md` ledger (file before fixing; strike when fixed; keep the header counts exact), and add/extend the relevant `WHAT_WE_DID.md` entry. Commit code, tests, and continuity files together — never separately.
+**After finishing a task (in the same commit as the code):** update the continuity files together with the code and tests. Never commit continuity files separately from the work they describe.
+- `STATUS.md`: snapshot of the merged state.
+- `DO_NEXT.md`: what is next now that this work is done.
+- `BUGS.md`: strike fixed bugs and keep the header counts exact.
+- `WHAT_WE_DID.md`: add or extend the entry for this change.
 
 **Write them in the past tense, describing the end state — not a diary.** The continuity files, PR descriptions, commit messages, and `WHAT_WE_DID.md` entries must read correctly *at the moment the branch merges*. Describe what the branch *is* and what it *did to the codebase as a whole* — the merged result — not the blow-by-blow history of how you got there within the branch. Never write "first I tried X, then it failed, so I switched to Y"; write "Y does Z." A reader six months later sees only the merged diff and the prose next to it; both must be timeless and accurate then. The same rule governs the `BUGS.md` one-liners: state the defect and the fix as facts, not as a session narrative.
 
 **Update continuity docs as the final step of a task, after the code and tests are green, and always in past tense.** Their job is to describe the merged state, so writing them before the implementation is finished almost always leaves stale claims. Treat them as a post-implementation review of what actually shipped. When the PR merges, the continuity files must already say what the codebase *is*, not what it *will be* or what you *plan* to do.
 
-**Avoid PRs that contain only continuity-file edits.** A standalone continuity PR creates a period where `STATUS.md`/`DO_NEXT.md` describe a state the code has not yet reached, and it forces readers to cross-reference a future PR to understand the current branch. The one exception is a deliberate, user-requested rotation pass whose entire purpose is to reconcile stale continuity files before the next task begins; even then, it should be rare and explicitly described as such.
+**Never create a PR that contains only continuity-file edits.** A standalone continuity PR creates a period where `STATUS.md`/`DO_NEXT.md` describe a state the code has not yet reached, and it forces readers to cross-reference a future PR to understand the current branch. The only allowed exception is a deliberate, user-requested rotation pass whose entire purpose is to reconcile stale continuity files before the next task begins. Even then, that pass must be rare and explicitly described as such. If you are tempted to open a continuity-only PR, stop: instead, update the continuity files as part of the next code PR, or ask the user how to proceed.
 
 **Keep them streamlined.** Old, merged, irrelevant detail belongs in `git log` and PR descriptions, not accreting forever in the continuity files. When a file grows stale, compress the history to a compact summary and keep the live sections (current state, next work, open bugs, durable rules) sharp and actionable.
 

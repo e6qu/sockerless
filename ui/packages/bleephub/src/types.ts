@@ -692,3 +692,44 @@ export interface BleephubGist {
   created_at: string;
   updated_at: string;
 }
+
+// ─── GitHub Projects classic (v1) shapes ────────────────────────────────
+
+export interface GithubProjectClassic {
+  id: number;
+  node_id: string;
+  name: string;
+  body: string;
+  state: "open" | "closed";
+  number: number;
+  creator: { login: string; avatar_url?: string } | null;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  html_url: string;
+  columns_url: string;
+}
+
+export interface GithubProjectColumn {
+  id: number;
+  node_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  project_url: string;
+  cards_url: string;
+}
+
+export interface GithubProjectCard {
+  id: number;
+  node_id: string;
+  note: string | null;
+  creator: { login: string; avatar_url?: string } | null;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  column_url: string;
+  project_url: string;
+  content_url: string | null;
+}

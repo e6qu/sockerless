@@ -4,6 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - GitHub Projects classic (v1) REST API + UI (in progress on `feat/bleephub-api-ui-parity-continuation`)
+
+A single branch (`feat/bleephub-api-ui-parity-continuation`) implements the full GitHub Projects classic (v1) REST API surface for repo-scoped projects, columns, and cards.
+
+**Data model and store.** `bleephub/store_projects_classic.go` introduces `ProjectClassic`, `ProjectColumn`, and `ProjectCard` types, plus store CRUD and move helpers. `bleephub/store.go` adds `ProjectClassic`, `ProjectColumns`, `ProjectCards` maps and next-ID counters, and wires the `projects_classic`, `project_columns`, and `project_cards` persistence buckets into `loadFromPersistence`.
+
+**REST handlers.** `bleephub/gh_projects_classic.go` registers and implements:
+- `GET/POST /api/v3/repos/{owner}/{repo}/projects`
+- `GET/PATCH/DELETE /api/v3/projects/{project_id}`
+- `GET/POST /api/v3/projects/{project_id}/columns`
+- `GET/PATCH/DELETE /api/v3/projects/columns/{column_id}`
+- `POST /api/v3/projects/columns/{column_id}/moves`
+- `GET/POST /api/v3/projects/columns/{column_id}/cards`
+- `GET/PATCH/DELETE /api/v3/projects/columns/cards/{card_id}`
+- `POST /api/v3/projects/columns/cards/{card_id}/moves`
+
+Column and card sub-resource paths share a two-segment slot after `/projects` and `/projects/columns`, so Go 1.22's ServeMux cannot distinguish them directly; dispatchers route to the correct handler. Cards support note cards and issue-linked cards (`content_type`/`content_id`). Column and card moves implement `first`, `last`, and `after:<id>` positioning semantics.
+
+**UI.** `ui/packages/bleephub/src/pages/ProjectsClassicPage.tsx` lists projects, creates projects, and manages columns and cards. It is wired from `ui/packages/bleephub/src/components/Shell.tsx` at `/ui/repos/:owner/:repo/projects-classic` with a Projects tab in the repo header. API helpers live in `ui/packages/bleephub/src/api.ts` and types in `ui/packages/bleephub/src/types.ts`.
+
+**Validation.** `bleephub/gh_projects_classic_test.go` covers project/column/card CRUD, note and issue cards, column/card moves, and 404/auth cases. `bleephub/gh_projects_classic_live_test.go` exercises the endpoints through the shared TestMain server so the OpenAPI response-shape validator observes them. `gh_api_definition_test.go` adds the new paths to `allowedGHESOnly` and `dispatchRoutes`.
+
+`go test ./bleephub -count=1`, `make bleephub/lint`, `make ui/packages/bleephub/lint`, and `make ui/packages/bleephub/test` (88/88) all pass.
+
 ## 2026-07-01 - bleephub branch protection rules API + UI (PR #743)
 
 A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the branch protection surface on bleephub.

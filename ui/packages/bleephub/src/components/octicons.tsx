@@ -406,3 +406,12 @@ export function GistIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function ProjectIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+      <path d="M6 2.5v11M10 2.5v11" />
+    </Svg>
+  );
+}

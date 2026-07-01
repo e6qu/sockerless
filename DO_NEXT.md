@@ -4,7 +4,41 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-(none — PR #743 is open and awaits review/merge)
+`feat/bleephub-api-ui-parity-continuation` — GitHub Projects classic (v1) REST API + UI.
+
+---
+### Prior branch (in progress #744): GitHub Projects classic (v1) REST API + UI
+
+`feat/bleephub-api-ui-parity-continuation` implements the full GitHub Projects classic (v1) REST API surface for repo-scoped projects, columns, and cards.
+
+Scope:
+- Added `ProjectClassic`, `ProjectColumn`, and `ProjectCard` types plus store CRUD/move helpers in new `bleephub/store_projects_classic.go`.
+- Wired `projects_classic`, `project_columns`, and `project_cards` buckets into `Store` persistence (`bleephub/store.go`).
+- Implemented REST endpoints in `bleephub/gh_projects_classic.go` with route dispatchers for the column/card path shapes that Go's mux cannot distinguish directly:
+  - `GET/POST /api/v3/repos/{owner}/{repo}/projects`
+  - `GET/PATCH/DELETE /api/v3/projects/{project_id}`
+  - `GET/POST /api/v3/projects/{project_id}/columns`
+  - `GET/PATCH/DELETE /api/v3/projects/columns/{column_id}`
+  - `POST /api/v3/projects/columns/{column_id}/moves`
+  - `GET/POST /api/v3/projects/columns/{column_id}/cards`
+  - `GET/PATCH/DELETE /api/v3/projects/columns/cards/{card_id}`
+  - `POST /api/v3/projects/columns/cards/{card_id}/moves`
+- Cards support note cards and issue-linked cards (`content_type`/`content_id`); moves implement `first`, `last`, and `after:<id>` positioning for both columns and cards.
+- Added backend HTTP tests in `bleephub/gh_projects_classic_test.go` covering project/column/card CRUD, note vs issue cards, moves, and 404/auth cases.
+- Added live-server shape test in `bleephub/gh_projects_classic_live_test.go` so the OpenAPI response-shape validator observes the new endpoints.
+- Added `ProjectsClassicPage.tsx` wired from `Shell.tsx` at `/ui/repos/:owner/:repo/projects-classic`, plus API helpers in `ui/packages/bleephub/src/api.ts` and types in `ui/packages/bleephub/src/types.ts`.
+- Added project tab to the repository header in `ui/packages/bleephub/src/components/Shell.tsx`.
+- Updated `gh_api_definition_test.go` `allowedGHESOnly` and `dispatchRoutes` for the new Projects classic paths.
+- Hardened `TestListAuthUserReposSort` to paginate through all pages instead of assuming the two target repos fit in a single `per_page=100` page.
+
+Validation:
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` passes.
+- `make ui/packages/bleephub/lint` passes.
+- `make ui/packages/bleephub/test` passes (88/88).
+- OpenAPI shape ratchet reports no new violations.
+
+**Next:** PR merges; continue with remaining bleephub API/UI gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #743): bleephub branch protection rules API + UI
