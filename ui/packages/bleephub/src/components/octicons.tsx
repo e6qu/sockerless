@@ -443,6 +443,16 @@ export function SquareIcon(p: IconProps) {
   );
 }
 
+export function PackageIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8.5 1.5 14 4.75v6.5L8.5 14.5l-5.5-3.25v-6.5L8.5 1.5z" />
+      <path d="M3 4.75 8.5 8 14 4.75" />
+      <path d="M8.5 8v6.5" />
+    </Svg>
+  );
+}
+
 export function CodespaceIcon(p: IconProps) {
   return (
     <Svg {...p}>

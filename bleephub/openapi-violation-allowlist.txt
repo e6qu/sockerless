@@ -53,3 +53,15 @@ POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.html_url
 POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.billing_url
 POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.html_url
 POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.billing_url
+
+# GitHub Packages responses include node_id, which the vendored dotcom
+# OpenAPI description omits even though real GitHub emits it for every
+# package and package version.
+GET /users/{}/packages -> 200	unknown-field	$[].node_id
+GET /users/{}/packages/{}/{} -> 200	unknown-field	$.node_id
+GET /users/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
+GET /users/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id
+GET /orgs/{}/packages -> 200	unknown-field	$[].node_id
+GET /orgs/{}/packages/{}/{} -> 200	unknown-field	$.node_id
+GET /orgs/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
+GET /orgs/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id

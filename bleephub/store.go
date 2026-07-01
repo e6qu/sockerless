@@ -267,6 +267,13 @@ type Store struct {
 	DependabotNextNumber       map[string]int                             // repoKey → next alert number
 	DependabotSecrets          map[string]map[string]*DependabotSecret    // repoKey → name → secret
 	DependabotOrgSecrets       map[string]map[string]*DependabotOrgSecret // orgLogin → name → secret
+	Packages                   map[int]*Package
+	PackageVersions            map[int]*PackageVersion
+	PackageFiles               map[int]*PackageFile
+	PackagesByOwnerKey         map[string]map[string]*Package  // ownerKey → packageKey → package
+	PackageVersionsByPackage   map[int]map[int]*PackageVersion // packageID → versionID → version
+	PackageFilesByVersion      map[int]map[int]*PackageFile    // versionID → fileID → file
+	PackageDataDir             string                          // directory for package file bytes
 	NextGistID                 int
 	NextGistCommentID          int
 	NextAgent                  int
@@ -274,6 +281,9 @@ type Store struct {
 	NextCodeScanningAlertID    int
 	NextCodeScanningAnalysisID int
 	NextDependabotAlertID      int
+	NextPackageID              int
+	NextPackageVersionID       int
+	NextPackageFileID          int
 	NextMsg                    int64
 	NextLog                    int
 	NextReqID                  int64
@@ -472,11 +482,20 @@ func NewStore() *Store {
 		DependabotNextNumber:       make(map[string]int),
 		DependabotSecrets:          make(map[string]map[string]*DependabotSecret),
 		DependabotOrgSecrets:       make(map[string]map[string]*DependabotOrgSecret),
+		Packages:                   map[int]*Package{},
+		PackageVersions:            map[int]*PackageVersion{},
+		PackageFiles:               map[int]*PackageFile{},
+		PackagesByOwnerKey:         map[string]map[string]*Package{},
+		PackageVersionsByPackage:   map[int]map[int]*PackageVersion{},
+		PackageFilesByVersion:      map[int]map[int]*PackageFile{},
 		NextAgent:                  1,
 		NextSecretScanningAlertID:  1,
 		NextCodeScanningAlertID:    1,
 		NextCodeScanningAnalysisID: 1,
 		NextDependabotAlertID:      1,
+		NextPackageID:              1,
+		NextPackageVersionID:       1,
+		NextPackageFileID:          1,
 		NextMsg:                    1,
 		NextLog:                    1,
 		NextReqID:                  1,
@@ -1496,6 +1515,51 @@ func (st *Store) loadFromPersistence() error {
 			st.OrgMigrations[m.ID] = m
 			if m.ID >= st.NextOrgMigrationID {
 				st.NextOrgMigrationID = m.ID + 1
+			}
+			return nil
+		}},
+		{"packages", func(_ string, raw []byte) error {
+			var p Package
+			if err := loadJSON(raw, &p); err != nil {
+				return err
+			}
+			st.Packages[p.ID] = &p
+			if st.PackagesByOwnerKey[p.OwnerKey] == nil {
+				st.PackagesByOwnerKey[p.OwnerKey] = map[string]*Package{}
+			}
+			st.PackagesByOwnerKey[p.OwnerKey][packageKey(p.PackageType, p.Name)] = &p
+			if p.ID >= st.NextPackageID {
+				st.NextPackageID = p.ID + 1
+			}
+			return nil
+		}},
+		{"package_versions", func(_ string, raw []byte) error {
+			var v PackageVersion
+			if err := loadJSON(raw, &v); err != nil {
+				return err
+			}
+			st.PackageVersions[v.ID] = &v
+			if st.PackageVersionsByPackage[v.PackageID] == nil {
+				st.PackageVersionsByPackage[v.PackageID] = map[int]*PackageVersion{}
+			}
+			st.PackageVersionsByPackage[v.PackageID][v.ID] = &v
+			if v.ID >= st.NextPackageVersionID {
+				st.NextPackageVersionID = v.ID + 1
+			}
+			return nil
+		}},
+		{"package_files", func(_ string, raw []byte) error {
+			var f PackageFile
+			if err := loadJSON(raw, &f); err != nil {
+				return err
+			}
+			st.PackageFiles[f.ID] = &f
+			if st.PackageFilesByVersion[f.VersionID] == nil {
+				st.PackageFilesByVersion[f.VersionID] = map[int]*PackageFile{}
+			}
+			st.PackageFilesByVersion[f.VersionID][f.ID] = &f
+			if f.ID >= st.NextPackageFileID {
+				st.NextPackageFileID = f.ID + 1
 			}
 			return nil
 		}},

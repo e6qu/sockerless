@@ -66,6 +66,10 @@ import type {
   GithubCodespaceMachine,
   GithubCodespaceSecret,
   CodespaceCreatePayload,
+  GithubPackage,
+  GithubPackageVersion,
+  GithubPackageFile,
+  GithubPackageVersionCreatePayload,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1295,3 +1299,90 @@ const createUserCodespaceSecret = (name: string, payload: { encrypted_value: str
 
 const deleteUserCodespaceSecret = (name: string) =>
   ghDeleteJSON<void>(`/api/v3/user/codespaces/secrets/${encodeURIComponent(name)}`, {});
+
+export const fetchCurrentUser = () => ghFetch<BleephubUser>("/api/v3/user");
+
+// ─── GitHub Packages REST ───────────────────────────────────────────────
+
+export type PackageScope =
+  | { kind: "user"; username: string }
+  | { kind: "org"; org: string }
+  | { kind: "repo"; owner: string; repo: string };
+
+function packageBasePath(scope: PackageScope, pkgType: string, pkgName: string): string {
+  const pt = encodeURIComponent(pkgType);
+  const pn = encodeURIComponent(pkgName);
+  switch (scope.kind) {
+    case "user":
+      return `/api/v3/users/${scope.username}/packages/${pt}/${pn}`;
+    case "org":
+      return `/api/v3/orgs/${scope.org}/packages/${pt}/${pn}`;
+    case "repo":
+      return `/api/v3/repos/${scope.owner}/${scope.repo}/packages/${pt}/${pn}`;
+  }
+}
+
+export function packageListPath(scope: PackageScope): string {
+  switch (scope.kind) {
+    case "user":
+      return `/api/v3/users/${scope.username}/packages`;
+    case "org":
+      return `/api/v3/orgs/${scope.org}/packages`;
+    case "repo":
+      return `/api/v3/repos/${scope.owner}/${scope.repo}/packages`;
+  }
+}
+
+export const fetchPackages = (scope: PackageScope) =>
+  ghFetch<GithubPackage[]>(packageListPath(scope));
+
+export const fetchPackageVersions = (scope: PackageScope, pkgType: string, pkgName: string) =>
+  ghFetch<GithubPackageVersion[]>(`${packageBasePath(scope, pkgType, pkgName)}/versions`);
+
+export const fetchPackageFiles = (
+  scope: PackageScope,
+  pkgType: string,
+  pkgName: string,
+  versionID: number,
+) =>
+  ghFetch<GithubPackageFile[]>(
+    `${packageBasePath(scope, pkgType, pkgName)}/versions/${versionID}/files`,
+  );
+
+export const deletePackageVersion = (
+  scope: PackageScope,
+  pkgType: string,
+  pkgName: string,
+  versionID: number,
+) => ghDeleteJSON<void>(`${packageBasePath(scope, pkgType, pkgName)}/versions/${versionID}`, {});
+
+export const restorePackageVersion = (
+  scope: PackageScope,
+  pkgType: string,
+  pkgName: string,
+  versionID: number,
+) =>
+  ghPostJSON<void>(
+    `${packageBasePath(scope, pkgType, pkgName)}/versions/${versionID}/restore`,
+    {},
+  );
+
+export const deletePackage = (scope: PackageScope, pkgType: string, pkgName: string) =>
+  ghDeleteJSON<void>(packageBasePath(scope, pkgType, pkgName), {});
+
+export async function uploadPackageVersion(
+  ownerType: "user" | "org" | "repository",
+  owner: string,
+  pkgType: string,
+  pkgName: string,
+  payload: GithubPackageVersionCreatePayload,
+): Promise<GithubPackageVersion> {
+  let path: string;
+  if (ownerType === "repository") {
+    const [o, r] = owner.split("/");
+    path = `/internal/packages/repository/${o}/${r}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
+  } else {
+    path = `/internal/packages/${ownerType}/${owner}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
+  }
+  return ghPostJSON<GithubPackageVersion>(path, payload);
+}

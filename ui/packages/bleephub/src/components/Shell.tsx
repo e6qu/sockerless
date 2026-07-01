@@ -21,6 +21,7 @@ import {
   LockIcon,
   MigrationIcon,
   CodespaceIcon,
+  PackageIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -35,6 +36,7 @@ const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
   { label: "Repos", to: "/ui/repos" },
   { label: "Gists", to: "/ui/gists" },
+  { label: "Packages", to: "/ui/packages" },
   { label: "Migrations", to: "/ui/migrations" },
   { label: "Codespaces", to: "/ui/codespaces" },
   { label: "Runners", to: "/ui/runners" },
@@ -59,6 +61,8 @@ function navIcon(label: string) {
       return <RepoIcon size={14} />;
     case "Gists":
       return <GistIcon size={14} />;
+    case "Packages":
+      return <PackageIcon size={14} />;
     case "Migrations":
       return <MigrationIcon size={14} />;
     case "Codespaces":

@@ -80,6 +80,15 @@ func TestMain(m *testing.M) {
 	srv := NewServer(addr, logger)
 	testServer = srv
 
+	// Give the shared test server a real on-disk packages directory so
+	// package-file upload/download tests exercise real bytes.
+	packageDataDir, err := os.MkdirTemp("", "bleephub-packages-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create packages temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	testServer.store.PackageDataDir = packageDataDir
+
 	// Response-shape validation against the vendored GitHub OpenAPI
 	// description rides the shared server; the ratchet runs after m.Run()
 	// (see openapi_shape_validator_test.go).
@@ -104,6 +113,8 @@ func TestMain(m *testing.M) {
 	}
 
 	code := m.Run()
+
+	_ = os.RemoveAll(packageDataDir)
 
 	if newKeys, total := apiShapeValidator.ratchet(); len(newKeys) > 0 {
 		fmt.Fprintf(os.Stderr, "\nopenapi-shape ratchet: %d NEW response-shape violation(s) vs testdata/github-openapi.json.gz (total observed: %d):\n", len(newKeys), total)

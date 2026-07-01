@@ -1000,3 +1000,60 @@ export interface CodespaceCreatePayload {
   display_name?: string;
   location?: string;
 }
+
+// ─── GitHub Packages REST shapes ────────────────────────────────────────
+
+export type GithubPackageType = "npm" | "maven" | "rubygems" | "nuget" | "docker" | "container";
+export type GithubPackageVisibility = "public" | "private" | "internal";
+
+export interface GithubPackage {
+  id: number;
+  node_id: string;
+  name: string;
+  package_type: GithubPackageType;
+  visibility: GithubPackageVisibility;
+  url: string;
+  html_url: string;
+  version_count: number;
+  created_at: string;
+  updated_at: string;
+  owner: { login: string; type: string; avatar_url?: string } | null;
+  repository: BleephubRepo | null;
+}
+
+export interface GithubPackageVersion {
+  id: number;
+  node_id: string;
+  name: string;
+  url: string;
+  package_html_url: string;
+  html_url: string;
+  license: string | null;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+  metadata: {
+    package_type: GithubPackageType;
+    container?: { tags: string[] };
+    docker?: { tag: string[] };
+  };
+}
+
+export interface GithubPackageFile {
+  id: number;
+  node_id: string;
+  name: string;
+  content_type: string;
+  size: number;
+  url: string;
+  html_url: string;
+  download_url: string;
+}
+
+export interface GithubPackageVersionCreatePayload {
+  version: string;
+  description?: string;
+  metadata?: GithubPackageVersion["metadata"];
+  files: { name: string; content_type: string; content_base64: string }[];
+}

@@ -32,6 +32,7 @@ import { StorageHealthPage } from "./pages/StorageHealthPage.js";
 import { GistsPage } from "./pages/GistsPage.js";
 import { MigrationsPage } from "./pages/MigrationsPage.js";
 import { CodespacesPage } from "./pages/CodespacesPage.js";
+import { PackagesPage } from "./pages/PackagesPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -77,6 +78,9 @@ export function App() {
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
+              <Route path="/ui/packages" element={<PackagesPage />} />
+              <Route path="/ui/orgs/:org/packages" element={<PackagesPage />} />
+              <Route path="/ui/repos/:owner/:repo/packages" element={<PackagesPage />} />
               <Route path="/ui/migrations" element={<MigrationsPage />} />
               <Route path="/ui/codespaces" element={<CodespacesPage />} />
               <Route path="/ui/repos/:owner/:repo/codespaces" element={<CodespacesPage />} />

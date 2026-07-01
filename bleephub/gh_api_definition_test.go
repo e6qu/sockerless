@@ -99,6 +99,18 @@ var allowedGHESOnly = map[string]string{
 	"DELETE /repos/{}/{}/codespaces/{}":                              "GHES repo-scoped codespace deletion — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
 	"POST /repos/{}/{}/codespaces/{}/start":                          "GHES repo-scoped codespace start — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
 	"POST /repos/{}/{}/codespaces/{}/stop":                           "GHES repo-scoped codespace stop — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages":                                      "GHES repo-scoped package list — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages/{}/{}":                                "GHES repo-scoped package get/delete — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"DELETE /repos/{}/{}/packages/{}/{}":                             "GHES repo-scoped package delete — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages/{}/{}/versions":                       "GHES repo-scoped package version list — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages/{}/{}/versions/{}":                    "GHES repo-scoped package version get/delete — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"DELETE /repos/{}/{}/packages/{}/{}/versions/{}":                 "GHES repo-scoped package version delete — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages/{}/{}/versions/{}/files":              "GHES repo-scoped package version file list — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/packages/{}/{}/versions/{}/files/{}":           "GHES repo-scoped package version file download — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /users/{}/packages/{}/{}/versions/{}/files":                 "GHES user-scoped package version file list — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /users/{}/packages/{}/{}/versions/{}/files/{}":              "GHES user-scoped package version file download — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /orgs/{}/packages/{}/{}/versions/{}/files":                  "GHES org-scoped package version file list — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /orgs/{}/packages/{}/{}/versions/{}/files/{}":               "GHES org-scoped package version file download — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
 }
 
 // dispatchRoutes are real GitHub sub-resource paths served through a single
