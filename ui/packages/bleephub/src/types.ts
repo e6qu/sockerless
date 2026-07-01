@@ -541,3 +541,60 @@ export interface GithubRelease {
   published_at: string | null;
   html_url: string;
 }
+
+export interface BleephubUser {
+  id: number;
+  login: string;
+  type: "User" | "Bot" | "Organization";
+  site_admin: boolean;
+  created_at: string;
+  avatar_url?: string;
+}
+
+export interface BleephubOrg {
+  id: number;
+  login: string;
+  name: string;
+  description: string;
+  billing_email?: string;
+  created_at: string;
+  avatar_url?: string;
+}
+
+export interface BleephubTeam {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  privacy: "secret" | "closed";
+  organization?: { id: number; login: string };
+  created_at: string;
+}
+
+export interface BleephubAuditEvent {
+  id: number;
+  actor_login: string;
+  action: string;
+  entity_type: string;
+  entity_id: number | string;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface BleephubGistFile {
+  filename?: string;
+  content?: string;
+  raw_url?: string;
+  size?: number;
+}
+
+export interface BleephubGist {
+  id: string;
+  description: string;
+  public: boolean;
+  owner: { login: string; type: string; avatar_url?: string };
+  files: Record<string, BleephubGistFile>;
+  html_url?: string;
+  created_at: string;
+  updated_at: string;
+}

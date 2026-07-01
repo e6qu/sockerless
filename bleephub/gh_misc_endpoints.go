@@ -203,6 +203,18 @@ type AuditEntry struct {
 	Version   string                 `json:"version"`
 }
 
+type AuditLogEvent struct {
+	ID         int64                  `json:"id"`
+	Timestamp  string                 `json:"timestamp"`
+	Actor      string                 `json:"actor"`
+	Action     string                 `json:"action"`
+	TargetType string                 `json:"target_type"`
+	TargetID   string                 `json:"target_id"`
+	Org        string                 `json:"org,omitempty"`
+	Details    map[string]interface{} `json:"details,omitempty"`
+	createdAt  time.Time              `json:"-"`
+}
+
 type MarketplacePlan struct {
 	ID                  int      `json:"id"`
 	Name                string   `json:"name"`
@@ -237,12 +249,14 @@ type MiscStore struct {
 	pagesBuilds          map[string][]*PagesBuild
 	branchProtection     map[string]BranchProtection
 	auditLog             []*AuditEntry
+	auditLogEvents       []*AuditLogEvent
 	marketplacePlans     map[int]*MarketplacePlan
 	marketplacePurchases map[int]*MarketplacePurchase
 	oidcClaimKeys        []string
 	nextKeyID            int
 	nextGPGKeyID         int
 	nextAuditID          int64
+	nextAdminAuditID     int64
 	oidcKey              *rsa.PrivateKey
 	persist              *Persistence
 }
@@ -259,6 +273,7 @@ func newMiscStore() *MiscStore {
 		branchProtection:     map[string]BranchProtection{},
 		marketplacePlans:     map[int]*MarketplacePlan{},
 		marketplacePurchases: map[int]*MarketplacePurchase{},
+		auditLogEvents:       []*AuditLogEvent{},
 		nextKeyID:            1,
 		nextGPGKeyID:         1,
 	}

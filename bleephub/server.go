@@ -185,6 +185,12 @@ func (s *Server) registerRoutes() {
 	// Checks API (gh_checks_rest.go)
 	s.registerGHChecksRoutes()
 
+	// Commit Statuses API (gh_statuses_rest.go)
+	s.registerGHStatusesRoutes()
+
+	// Commit Comments API (gh_commit_comments_rest.go)
+	s.registerGHCommitCommentsRoutes()
+
 	// Reactions API (gh_reactions.go)
 	s.registerGHReactionsRoutes()
 
@@ -220,10 +226,13 @@ func (s *Server) registerRoutes() {
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
+	s.registerGHRepoAutolinkRoutes()
+	s.registerGHRepoInvitationRoutes()
 	s.registerGHTemplateRoutes()
 	s.registerGHOrgRoutes()
 	s.registerGHIssueRoutes()
 	s.registerGHPullRoutes()
+	s.registerGHGistRoutes()
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
 	s.registerGHActionsRoutes()

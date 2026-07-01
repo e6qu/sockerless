@@ -344,3 +344,65 @@ export function KeyIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function PeopleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="6" cy="5" r="2.2" />
+      <circle cx="12" cy="5" r="2.2" />
+      <path d="M2 14c1-2.5 2.5-3.5 4-3.5s3 1 4 3.5" />
+      <path d="M8 14c1-2.5 2.5-3.5 4-3.5s3 1 4 3.5" />
+    </Svg>
+  );
+}
+
+export function OrganizationIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+      <path d="M6 2.5v11M10 2.5v11M2.5 6h11M2.5 10h11" />
+    </Svg>
+  );
+}
+
+export function TeamIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="5" r="2.2" />
+      <path d="M3 13.5c1-2.8 2.8-4 5-4s4 1.2 5 4" />
+      <circle cx="14" cy="6" r="1.4" />
+      <path d="M12.5 13.5c0.5-1.8 1.5-2.6 2.5-2.6" />
+    </Svg>
+  );
+}
+
+export function AuditLogIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3.5 2.5h9a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" />
+      <path d="M5.5 6h5M5.5 9h3" />
+      <path d="M2.5 5l-1-1M2.5 8l-1-1M2.5 11l-1-1" />
+    </Svg>
+  );
+}
+
+export function ServerIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2" width="11" height="5" rx="1" />
+      <rect x="2.5" y="9" width="11" height="5" rx="1" />
+      <circle cx="5" cy="4.5" r="0.8" fill="currentColor" stroke="none" />
+      <circle cx="5" cy="11.5" r="0.8" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+export function GistIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 2.5h5l3 3v8a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-10a1 1 0 0 1 1-1z" />
+      <path d="M9 2.5v3h3" />
+      <path d="M5.5 8h5M5.5 10.5h5" />
+    </Svg>
+  );
+}

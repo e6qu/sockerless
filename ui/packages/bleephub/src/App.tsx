@@ -19,6 +19,12 @@ import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
 import { OAuthPage } from "./pages/OAuthPage.js";
+import { UsersPage } from "./pages/UsersPage.js";
+import { OrgsPage } from "./pages/OrgsPage.js";
+import { TeamsPage } from "./pages/TeamsPage.js";
+import { AuditLogPage } from "./pages/AuditLogPage.js";
+import { StorageHealthPage } from "./pages/StorageHealthPage.js";
+import { GistsPage } from "./pages/GistsPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -58,6 +64,12 @@ export function App() {
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
+              <Route path="/ui/gists" element={<GistsPage />} />
+              <Route path="/ui/admin/users" element={<UsersPage />} />
+              <Route path="/ui/admin/orgs" element={<OrgsPage />} />
+              <Route path="/ui/admin/teams" element={<TeamsPage />} />
+              <Route path="/ui/admin/audit-log" element={<AuditLogPage />} />
+              <Route path="/ui/admin/storage" element={<StorageHealthPage />} />
               {/* A logged-in user hitting /ui/login (bookmark) or any
                   unknown /ui/* path lands back on the dashboard. */}
               <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />
