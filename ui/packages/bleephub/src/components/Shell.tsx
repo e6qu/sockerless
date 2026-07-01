@@ -11,6 +11,12 @@ import {
   PullRequestIcon,
   PlayIcon,
   GearIcon,
+  PeopleIcon,
+  OrganizationIcon,
+  TeamIcon,
+  AuditLogIcon,
+  ServerIcon,
+  GistIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -24,18 +30,58 @@ export interface NavItem {
 const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
   { label: "Repos", to: "/ui/repos" },
+  { label: "Gists", to: "/ui/gists" },
   { label: "Runners", to: "/ui/runners" },
   { label: "Apps", to: "/ui/apps" },
   { label: "OAuth", to: "/ui/oauth" },
   { label: "Metrics", to: "/ui/metrics" },
 ];
 
+const ADMIN_NAV: NavItem[] = [
+  { label: "Users", to: "/ui/admin/users" },
+  { label: "Orgs", to: "/ui/admin/orgs" },
+  { label: "Teams", to: "/ui/admin/teams" },
+  { label: "Audit log", to: "/ui/admin/audit-log" },
+  { label: "Storage", to: "/ui/admin/storage" },
+];
+
+function navIcon(label: string) {
+  switch (label) {
+    case "Overview":
+      return null;
+    case "Repos":
+      return <RepoIcon size={14} />;
+    case "Gists":
+      return <GistIcon size={14} />;
+    case "Runners":
+      return null;
+    case "Apps":
+      return null;
+    case "OAuth":
+      return null;
+    case "Metrics":
+      return null;
+    case "Users":
+      return <PeopleIcon size={14} />;
+    case "Orgs":
+      return <OrganizationIcon size={14} />;
+    case "Teams":
+      return <TeamIcon size={14} />;
+    case "Audit log":
+      return <AuditLogIcon size={14} />;
+    case "Storage":
+      return <ServerIcon size={14} />;
+    default:
+      return null;
+  }
+}
+
 function HeaderNavLink({ item }: { item: NavItem }) {
   return (
     <NavLink to={item.to} end={item.end} style={{ textDecoration: "none" }}>
       {({ isActive }) => (
         <span
-          className="inline-block"
+          className="inline-flex items-center gap-1.5"
           style={{
             padding: "0.3rem 0.6rem",
             borderRadius: "var(--radius-md)",
@@ -45,6 +91,7 @@ function HeaderNavLink({ item }: { item: NavItem }) {
             background: isActive ? "color-mix(in srgb, var(--color-fg-muted) 12%, transparent)" : "transparent",
           }}
         >
+          {navIcon(item.label)}
           {item.label}
         </span>
       )}
@@ -112,6 +159,11 @@ export function BleephubShell({ children }: { children: ReactNode }) {
           </Link>
           <nav aria-label="Primary" className="flex flex-1 flex-wrap items-center gap-0.5">
             {PRIMARY_NAV.map((item) => (
+              <HeaderNavLink key={item.to} item={item} />
+            ))}
+          </nav>
+          <nav aria-label="Admin" className="flex flex-wrap items-center gap-0.5 border-l pl-3" style={{ borderColor: "var(--color-border)" }}>
+            {ADMIN_NAV.map((item) => (
               <HeaderNavLink key={item.to} item={item} />
             ))}
           </nav>

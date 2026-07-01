@@ -84,6 +84,30 @@ type DeviceCode struct {
 	ExpiresAt time.Time
 }
 
+// RepoAutolink represents a GitHub autolink reference configured on a repository.
+type RepoAutolink struct {
+	ID             int       `json:"id"`
+	NodeID         string    `json:"node_id"`
+	RepoKey        string    `json:"-"`
+	KeyPrefix      string    `json:"key_prefix"`
+	URLTemplate    string    `json:"url_template"`
+	IsAlphanumeric bool      `json:"is_alphanumeric"`
+	CreatedAt      time.Time `json:"created_at"`
+}
+
+// RepoInvitation represents a pending invitation to collaborate on a repository.
+type RepoInvitation struct {
+	ID           int       `json:"id"`
+	NodeID       string    `json:"node_id"`
+	RepoKey      string    `json:"-"`
+	InviteeLogin string    `json:"invitee_login,omitempty"`
+	InviteeEmail string    `json:"invitee_email,omitempty"`
+	InviterID    int       `json:"inviter_id"`
+	Permissions  string    `json:"permissions"`
+	CreatedAt    time.Time `json:"created_at"`
+	Status       string    `json:"status"`
+}
+
 // LoginSession is a browser session created by POST /login.
 // It binds a session cookie to a user and carries the CSRF token
 // embedded in the OAuth authorize consent form.
@@ -91,6 +115,60 @@ type LoginSession struct {
 	UserID    int
 	CSRFToken string
 	ExpiresAt time.Time
+}
+
+// GistFile is a single file inside a gist.
+type GistFile struct {
+	Filename string `json:"filename"`
+	Type     string `json:"type"`
+	Language string `json:"language"`
+	RawURL   string `json:"raw_url"`
+	Size     int    `json:"size"`
+	Content  string `json:"content,omitempty"`
+}
+
+// GistHistory captures one revision of a gist.
+type GistHistory struct {
+	Version      string         `json:"version"`
+	CommittedAt  time.Time      `json:"committed_at"`
+	ChangeStatus map[string]int `json:"change_status"`
+	URL          string         `json:"url"`
+}
+
+// Gist is a GitHub gist.
+type Gist struct {
+	ID          string               `json:"id"`
+	NodeID      string               `json:"node_id"`
+	Description string               `json:"description"`
+	Public      bool                 `json:"public"`
+	OwnerID     int                  `json:"-"`
+	Files       map[string]*GistFile `json:"files"`
+	CreatedAt   time.Time            `json:"created_at"`
+	UpdatedAt   time.Time            `json:"updated_at"`
+	Comments    int                  `json:"comments"`
+	CommentsURL string               `json:"comments_url"`
+	HTMLURL     string               `json:"html_url"`
+	URL         string               `json:"url"`
+	ForksURL    string               `json:"forks_url"`
+	CommitsURL  string               `json:"commits_url"`
+	GitPullURL  string               `json:"git_pull_url"`
+	GitPushURL  string               `json:"git_push_url"`
+	History     []*GistHistory       `json:"history"`
+	ForkOfID    string               `json:"-"`
+	ForkIDs     []string             `json:"-"`
+}
+
+// GistComment is a comment on a gist.
+type GistComment struct {
+	ID                int       `json:"id"`
+	NodeID            string    `json:"node_id"`
+	GistID            string    `json:"-"`
+	UserID            int       `json:"-"`
+	Body              string    `json:"body"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+	AuthorAssociation string    `json:"author_association"`
+	URL               string    `json:"url"`
 }
 
 // Store holds all in-memory state for bleephub.
@@ -124,6 +202,8 @@ type Store struct {
 	RepoSecrets        map[string]map[string]*Secret          // "owner/repo" → name → secret
 	RepoVariables      map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
 	RepoCollaborators  map[string]map[string]string           // "owner/repo" → login → permission (pull/push/admin)
+	RepoAutolinks      map[string]map[int]*RepoAutolink       // "owner/repo" → id → autolink
+	RepoInvitations    map[string]map[int]*RepoInvitation     // "owner/repo" → id → invitation
 	OrgSecrets         map[string]map[string]*OrgSecret       // org login → NAME → org secret
 	OrgVariables       map[string]map[string]*ActionsVariable // org login → NAME → org variable
 	EnvSecrets         map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
@@ -149,6 +229,8 @@ type Store struct {
 	CheckRuns          map[int64]*CheckRun           // id → check run
 	CheckSuites        map[int64]*CheckSuite         // id → check suite
 	CheckSuitePrefs    map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
+	CommitStatuses     *CommitStatusStore            // commit status contexts per repo+ref
+	CommitComments     *CommitCommentStore           // commit comments per repo/commit
 	Reactions          *ReactionStore                // reactions across all parent types
 	Releases           *ReleaseStore                 // release CRUD
 	Deployments        *DeploymentStore              // deployments + statuses + environments
@@ -157,7 +239,12 @@ type Store struct {
 	ProjectsV2         *ProjectV2Store               // GitHub Projects v2
 	NotificationsState map[int]*UserNotificationsState
 	Rulesets           map[int]*Ruleset
-	LogLines           map[string][]string // jobID → captured console log lines
+	LogLines           map[string][]string     // jobID → captured console log lines
+	Gists              map[string]*Gist        // id → gist
+	GistComments       map[int]*GistComment    // id → gist comment
+	StarredGists       map[int]map[string]bool // userID → gistID → starred
+	NextGistID         int
+	NextGistCommentID  int
 	NextAgent          int
 	NextMsg            int64
 	NextLog            int
@@ -180,6 +267,8 @@ type Store struct {
 	NextCheckRunID     int64
 	NextCheckSuiteID   int64
 	NextRulesetID      int
+	NextAutolinkID     int
+	NextInvitationID   int
 	actionsKeyPair     *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist            *Persistence
 	mu                 sync.RWMutex
@@ -287,6 +376,8 @@ func NewStore() *Store {
 		RepoSecrets:        make(map[string]map[string]*Secret),
 		RepoVariables:      make(map[string]map[string]*ActionsVariable),
 		RepoCollaborators:  make(map[string]map[string]string),
+		RepoAutolinks:      make(map[string]map[int]*RepoAutolink),
+		RepoInvitations:    make(map[string]map[int]*RepoInvitation),
 		OrgSecrets:         make(map[string]map[string]*OrgSecret),
 		OrgVariables:       make(map[string]map[string]*ActionsVariable),
 		EnvSecrets:         make(map[string]map[string]*Secret),
@@ -312,6 +403,8 @@ func NewStore() *Store {
 		CheckRuns:          make(map[int64]*CheckRun),
 		CheckSuites:        make(map[int64]*CheckSuite),
 		CheckSuitePrefs:    make(map[string][]*CheckSuitePref),
+		CommitStatuses:     newCommitStatusStore(nil),
+		CommitComments:     newCommitCommentStore(nil),
 		Reactions:          newReactionStore(nil),
 		Releases:           newReleaseStore(nil),
 		Deployments:        newDeploymentStore(nil),
@@ -321,6 +414,9 @@ func NewStore() *Store {
 		NotificationsState: map[int]*UserNotificationsState{},
 		Rulesets:           map[int]*Ruleset{},
 		LogLines:           make(map[string][]string),
+		Gists:              make(map[string]*Gist),
+		GistComments:       make(map[int]*GistComment),
+		StarredGists:       make(map[int]map[string]bool),
 		NextAgent:          1,
 		NextMsg:            1,
 		NextLog:            1,
@@ -343,6 +439,8 @@ func NewStore() *Store {
 		NextCheckRunID:     1,
 		NextCheckSuiteID:   1,
 		NextRulesetID:      1,
+		NextAutolinkID:     1,
+		NextInvitationID:   1,
 	}
 }
 
@@ -368,6 +466,8 @@ func (st *Store) SetPersistence(p *Persistence) error {
 	st.PRReviewComments.persist = p
 	st.ProjectsV2.persist = p
 	st.Misc.persist = p
+	st.CommitStatuses.persist = p
+	st.CommitComments.persist = p
 	st.mu.Unlock()
 	return st.loadFromPersistence()
 }
@@ -725,6 +825,28 @@ func (st *Store) loadFromPersistence() error {
 			st.CheckSuitePrefs[key] = prefs
 			return nil
 		}},
+		{"commit_statuses", func(key string, raw []byte) error {
+			var statuses []*CommitStatus
+			if err := loadJSON(raw, &statuses); err != nil {
+				return err
+			}
+			st.CommitStatuses.byKey[key] = statuses
+			return nil
+		}},
+		{"commit_comments", func(_ string, raw []byte) error {
+			var c CommitComment
+			if err := loadJSON(raw, &c); err != nil {
+				return err
+			}
+			st.CommitComments.byID[c.ID] = &c
+			st.CommitComments.byRepo[c.RepoID] = append(st.CommitComments.byRepo[c.RepoID], &c)
+			ck := commitKey(c.RepoID, c.CommitID)
+			st.CommitComments.byCommit[ck] = append(st.CommitComments.byCommit[ck], &c)
+			if c.ID >= st.CommitComments.nextID {
+				st.CommitComments.nextID = c.ID + 1
+			}
+			return nil
+		}},
 		{"repo_secrets", func(key string, raw []byte) error {
 			var secrets map[string]*Secret
 			if err := loadJSON(raw, &secrets); err != nil {
@@ -739,6 +861,34 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.RepoVariables[key] = vars
+			return nil
+		}},
+		{"repo_autolinks", func(key string, raw []byte) error {
+			var autolinks map[int]*RepoAutolink
+			if err := loadJSON(raw, &autolinks); err != nil {
+				return err
+			}
+			for _, a := range autolinks {
+				a.RepoKey = key
+				if a.ID >= st.NextAutolinkID {
+					st.NextAutolinkID = a.ID + 1
+				}
+			}
+			st.RepoAutolinks[key] = autolinks
+			return nil
+		}},
+		{"repo_invitations", func(key string, raw []byte) error {
+			var invitations map[int]*RepoInvitation
+			if err := loadJSON(raw, &invitations); err != nil {
+				return err
+			}
+			for _, inv := range invitations {
+				inv.RepoKey = key
+				if inv.ID >= st.NextInvitationID {
+					st.NextInvitationID = inv.ID + 1
+				}
+			}
+			st.RepoInvitations[key] = invitations
 			return nil
 		}},
 		{"org_secrets", func(key string, raw []byte) error {
@@ -1080,6 +1230,22 @@ func (st *Store) loadFromPersistence() error {
 			}
 			return nil
 		}},
+		{"admin_audit_log", func(_ string, raw []byte) error {
+			var e AuditLogEvent
+			if err := loadJSON(raw, &e); err != nil {
+				return err
+			}
+			if e.Timestamp != "" {
+				if ts, err := time.Parse(time.RFC3339Nano, e.Timestamp); err == nil {
+					e.createdAt = ts
+				}
+			}
+			st.Misc.auditLogEvents = append(st.Misc.auditLogEvents, &e)
+			if e.ID > st.Misc.nextAdminAuditID {
+				st.Misc.nextAdminAuditID = e.ID
+			}
+			return nil
+		}},
 		{"marketplace_plans", func(_ string, raw []byte) error {
 			var p MarketplacePlan
 			if err := loadJSON(raw, &p); err != nil {
@@ -1129,6 +1295,7 @@ func (st *Store) loadFromPersistence() error {
 	// Audit entries arrive in map-iteration order; the in-memory log is
 	// newest-first (recordAuditEvent prepends), so sort by ID descending.
 	sort.Slice(st.Misc.auditLog, func(i, j int) bool { return st.Misc.auditLog[i].ID > st.Misc.auditLog[j].ID })
+	sort.Slice(st.Misc.auditLogEvents, func(i, j int) bool { return st.Misc.auditLogEvents[i].ID > st.Misc.auditLogEvents[j].ID })
 
 	if v, err := st.persist.GetCounter("next_run_id"); err != nil {
 		return fmt.Errorf("load counter next_run_id: %w", err)
@@ -1286,4 +1453,324 @@ func generateTokenValue() string {
 	b := make([]byte, 20)
 	_, _ = rand.Read(b)
 	return fmt.Sprintf("ghp_%s", hex.EncodeToString(b))
+}
+
+// generateGistID creates a random 20-character hexadecimal gist ID.
+func generateGistID() string {
+	b := make([]byte, 10)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// CreateGist creates a new gist owned by the given user.
+func (st *Store) CreateGist(owner *User, description string, public bool, files map[string]*GistFile) *Gist {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	id := generateGistID()
+	for st.Gists[id] != nil {
+		id = generateGistID()
+	}
+	now := time.Now().UTC()
+	g := &Gist{
+		ID:          id,
+		NodeID:      fmt.Sprintf("G_kwDOB%06d", st.NextGistID),
+		Description: description,
+		Public:      public,
+		OwnerID:     owner.ID,
+		Files:       files,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Comments:    0,
+	}
+	st.Gists[id] = g
+	st.NextGistID++
+	return g
+}
+
+// GetGist returns the gist with the given ID, or nil.
+func (st *Store) GetGist(id string) *Gist {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Gists[id]
+}
+
+// UpdateGist replaces the gist fields and records a history entry.
+func (st *Store) UpdateGist(id string, description *string, files map[string]*GistFile, deleteFiles []string) (*Gist, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	g := st.Gists[id]
+	if g == nil {
+		return nil, false
+	}
+
+	additions, deletions := 0, 0
+	if description != nil {
+		g.Description = *description
+	}
+	for name, f := range files {
+		if _, existed := g.Files[name]; existed {
+			deletions += len(g.Files[name].Content)
+		} else {
+			additions += len(f.Content)
+		}
+		g.Files[name] = f
+	}
+	for _, name := range deleteFiles {
+		if f, ok := g.Files[name]; ok {
+			deletions += len(f.Content)
+			delete(g.Files, name)
+		}
+	}
+	g.UpdatedAt = time.Now().UTC()
+
+	version := generateGistID()
+	g.History = append(g.History, &GistHistory{
+		Version:     version,
+		CommittedAt: g.UpdatedAt,
+		ChangeStatus: map[string]int{
+			"total":     additions + deletions,
+			"additions": additions,
+			"deletions": deletions,
+		},
+	})
+	return g, true
+}
+
+// DeleteGist deletes a gist and all its comments.
+func (st *Store) DeleteGist(id string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.Gists[id] == nil {
+		return false
+	}
+	delete(st.Gists, id)
+	for cid, c := range st.GistComments {
+		if c.GistID == id {
+			delete(st.GistComments, cid)
+		}
+	}
+	for uid, stars := range st.StarredGists {
+		if stars[id] {
+			delete(stars, id)
+			if len(stars) == 0 {
+				delete(st.StarredGists, uid)
+			}
+		}
+	}
+	return true
+}
+
+// ListGistsForUser returns gists owned by the user, optionally filtered by since.
+func (st *Store) ListGistsForUser(userID int, since time.Time) []*Gist {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var out []*Gist
+	for _, g := range st.Gists {
+		if g.OwnerID == userID && !g.UpdatedAt.Before(since) {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
+// ListPublicGists returns all public gists, newest first.
+func (st *Store) ListPublicGists(since time.Time) []*Gist {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var out []*Gist
+	for _, g := range st.Gists {
+		if g.Public && !g.UpdatedAt.Before(since) {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
+// ListStarredGists returns gists starred by the user.
+func (st *Store) ListStarredGists(userID int) []*Gist {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	stars, ok := st.StarredGists[userID]
+	if !ok {
+		return nil
+	}
+	var out []*Gist
+	for id := range stars {
+		if g := st.Gists[id]; g != nil {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
+// StarGist stars a gist for the user.
+func (st *Store) StarGist(userID int, gistID string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.Gists[gistID] == nil {
+		return false
+	}
+	if st.StarredGists[userID] == nil {
+		st.StarredGists[userID] = make(map[string]bool)
+	}
+	st.StarredGists[userID][gistID] = true
+	return true
+}
+
+// UnstarGist unstars a gist for the user.
+func (st *Store) UnstarGist(userID int, gistID string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.Gists[gistID] == nil {
+		return false
+	}
+	if st.StarredGists[userID] != nil {
+		delete(st.StarredGists[userID], gistID)
+		if len(st.StarredGists[userID]) == 0 {
+			delete(st.StarredGists, userID)
+		}
+	}
+	return true
+}
+
+// IsGistStarred reports whether the user has starred the gist.
+func (st *Store) IsGistStarred(userID int, gistID string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if st.Gists[gistID] == nil {
+		return false
+	}
+	return st.StarredGists[userID][gistID]
+}
+
+// ForkGist forks a gist for the given user.
+func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	orig := st.Gists[gistID]
+	if orig == nil {
+		return nil, false
+	}
+	files := make(map[string]*GistFile, len(orig.Files))
+	for name, f := range orig.Files {
+		cp := *f
+		files[name] = &cp
+	}
+	now := time.Now().UTC()
+	id := generateGistID()
+	for st.Gists[id] != nil {
+		id = generateGistID()
+	}
+	fork := &Gist{
+		ID:          id,
+		NodeID:      fmt.Sprintf("G_kwDOB%06d", st.NextGistID),
+		Description: orig.Description,
+		Public:      orig.Public,
+		OwnerID:     user.ID,
+		Files:       files,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Comments:    0,
+		ForkOfID:    orig.ID,
+	}
+	st.Gists[id] = fork
+	orig.ForkIDs = append(orig.ForkIDs, id)
+	st.NextGistID++
+	return fork, true
+}
+
+// ListGistForks returns forks of a gist.
+func (st *Store) ListGistForks(gistID string) []*Gist {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	orig := st.Gists[gistID]
+	if orig == nil {
+		return nil
+	}
+	var out []*Gist
+	for _, fid := range orig.ForkIDs {
+		if f := st.Gists[fid]; f != nil {
+			out = append(out, f)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })
+	return out
+}
+
+// CreateGistComment adds a comment to a gist.
+func (st *Store) CreateGistComment(gistID string, user *User, body string) *GistComment {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	g := st.Gists[gistID]
+	if g == nil {
+		return nil
+	}
+	now := time.Now().UTC()
+	c := &GistComment{
+		ID:                st.NextGistCommentID,
+		NodeID:            fmt.Sprintf("GC_kwDOB%06d", st.NextGistCommentID),
+		GistID:            gistID,
+		UserID:            user.ID,
+		Body:              body,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		AuthorAssociation: "OWNER",
+	}
+	st.GistComments[c.ID] = c
+	st.NextGistCommentID++
+	g.Comments++
+	return c
+}
+
+// GetGistComment returns a comment by ID.
+func (st *Store) GetGistComment(id int) *GistComment {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.GistComments[id]
+}
+
+// UpdateGistComment updates a comment body.
+func (st *Store) UpdateGistComment(id int, body string) (*GistComment, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.GistComments[id]
+	if c == nil {
+		return nil, false
+	}
+	c.Body = body
+	c.UpdatedAt = time.Now().UTC()
+	return c, true
+}
+
+// DeleteGistComment deletes a comment and decrements the gist comment count.
+func (st *Store) DeleteGistComment(id int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c := st.GistComments[id]
+	if c == nil {
+		return false
+	}
+	if g := st.Gists[c.GistID]; g != nil {
+		g.Comments--
+	}
+	delete(st.GistComments, id)
+	return true
+}
+
+// ListGistComments returns comments for a gist, oldest first.
+func (st *Store) ListGistComments(gistID string) []*GistComment {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var out []*GistComment
+	for _, c := range st.GistComments {
+		if c.GistID == gistID {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out
 }

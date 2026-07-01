@@ -36,6 +36,12 @@ import type {
   GithubContentFile,
   GithubOrgVisibility,
   GithubContentItem,
+  BleephubUser,
+  BleephubOrg,
+  BleephubTeam,
+  BleephubAuditEvent,
+  BleephubGist,
+  BleephubGistFile,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -795,3 +801,118 @@ export const updateScopedVariable = (
 
 export const deleteScopedVariable = (scope: SecretsScope, name: string) =>
   ghSend("DELETE", `${scopeBase(scope)}/variables/${encodeURIComponent(name)}`);
+
+// ─── Internal admin endpoints ───────────────────────────────────────────
+
+async function internalFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: { ...authHeaders(), ...(init?.headers || {}) },
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json() as Promise<T>;
+}
+
+export const fetchUsers = () => internalFetch<BleephubUser[]>("/internal/users");
+
+export const createUser = (payload: { login: string; password?: string; site_admin?: boolean }) =>
+  internalFetch<BleephubUser>("/internal/users", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const updateUser = (id: number, payload: Partial<BleephubUser>) =>
+  internalFetch<BleephubUser>(`/internal/users/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteUser = (id: number) =>
+  internalFetch<void>(`/internal/users/${id}`, { method: "DELETE" });
+
+export const fetchOrgs = () => internalFetch<BleephubOrg[]>("/internal/orgs");
+
+export const createOrg = (payload: { login: string; name?: string; description?: string; billing_email?: string }) =>
+  internalFetch<BleephubOrg>("/internal/orgs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const updateOrg = (id: number, payload: Partial<BleephubOrg>) =>
+  internalFetch<BleephubOrg>(`/internal/orgs/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteOrg = (id: number) =>
+  internalFetch<void>(`/internal/orgs/${id}`, { method: "DELETE" });
+
+export const fetchTeams = () => internalFetch<BleephubTeam[]>("/internal/teams");
+
+export const createTeam = (payload: { org: string; name: string; description?: string; privacy?: "secret" | "closed" }) =>
+  internalFetch<BleephubTeam>("/internal/teams", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const updateTeam = (id: number, payload: Partial<BleephubTeam>) =>
+  internalFetch<BleephubTeam>(`/internal/teams/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteTeam = (id: number) =>
+  internalFetch<void>(`/internal/teams/${id}`, { method: "DELETE" });
+
+export const fetchAuditLog = (filters: {
+  actor?: string;
+  action?: string;
+  entity_type?: string;
+  since?: string;
+  until?: string;
+} = {}) => {
+  const params = new URLSearchParams();
+  Object.entries(filters).forEach(([k, v]) => {
+    if (v) params.set(k, v);
+  });
+  const qs = params.toString();
+  return internalFetch<BleephubAuditEvent[]>(`/internal/audit-log${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchGists = () => internalFetch<BleephubGist[]>("/internal/gists");
+
+export const fetchGist = (id: string) => internalFetch<BleephubGist>(`/internal/gists/${id}`);
+
+export const createGist = (payload: {
+  description: string;
+  public: boolean;
+  files: Record<string, { content: string }>;
+}) =>
+  internalFetch<BleephubGist>("/internal/gists", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const updateGist = (
+  id: string,
+  payload: { description?: string; files?: Record<string, BleephubGistFile | null> },
+) =>
+  internalFetch<BleephubGist>(`/internal/gists/${id}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+export const deleteGist = (id: string) =>
+  internalFetch<void>(`/internal/gists/${id}`, { method: "DELETE" });
