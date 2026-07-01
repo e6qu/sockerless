@@ -4,10 +4,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-api-ui-parity-continuation` — GitHub Projects classic (v1) REST API + UI.
+`feat/bleephub-api-ui-parity-continuation` — pushed; GitHub Projects classic (v1) REST API + UI awaits PR/merge.
 
 ---
-### Prior branch (in progress #744): GitHub Projects classic (v1) REST API + UI
+### Prior branch (pushed): GitHub Projects classic (v1) REST API + UI
 
 `feat/bleephub-api-ui-parity-continuation` implements the full GitHub Projects classic (v1) REST API surface for repo-scoped projects, columns, and cards.
 
@@ -38,7 +38,7 @@ Validation:
 - `make ui/packages/bleephub/test` passes (88/88).
 - OpenAPI shape ratchet reports no new violations.
 
-**Next:** PR merges; continue with remaining bleephub API/UI gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
+**Next:** Create PR for the pushed branch; after merge, continue with remaining bleephub API/UI gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #743): bleephub branch protection rules API + UI
