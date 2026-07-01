@@ -4,53 +4,31 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-01 - GitHub Migrations REST API + UI (in progress on `feat/bleephub-api-ui-parity-continuation`)
+## 2026-07-01 - bleephub remaining API/UI parity continuation (PR #744)
 
-A single branch (`feat/bleephub-api-ui-parity-continuation`) implements the GitHub Migrations REST API surface for user and organization repository exports.
+A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the remaining bleephub API/UI gaps called out in `DO_NEXT.md`.
 
-**Data model and store.** `bleephub/store_migrations.go` introduces `UserMigration` and `OrgMigration` types, plus store CRUD helpers. `bleephub/store.go` adds `UserMigrations`, `OrgMigrations`, and next-ID counters, and wires the `user_migrations` and `org_migrations` persistence buckets into `loadFromPersistence`.
+**Projects classic (v1).** `bleephub/gh_projects_classic.go` and `bleephub/store_projects_classic.go` add the full repo-scoped Projects classic REST API: projects, columns, and cards with `first`/`last`/`after:<id>` moves; note cards and issue-linked cards; canonical GitHub response shapes.
 
-**REST handlers.** `bleephub/gh_migrations.go` registers and implements:
-- `POST/GET /api/v3/user/migrations`
-- `GET /api/v3/user/migrations/{id}`
-- `GET/DELETE /api/v3/user/migrations/{id}/archive`
-- `DELETE /api/v3/user/migrations/{id}/repos/{repo_name}/lock`
-- `POST/GET /api/v3/orgs/{org}/migrations`
-- `GET /api/v3/orgs/{org}/migrations/{id}`
-- `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/archive`
-- `GET/DELETE /api/v3/orgs/{org}/migrations/{id}/repos/{repo_name}/lock`
+**Secret scanning.** `bleephub/gh_secret_scanning.go` and `bleephub/store_secret_scanning.go` add repo-scoped secret scanning alerts, bulk update, and locations, with internal seeding for tests.
 
-Migration archives are generated on demand as real `tar.gz` files containing `metadata.json` plus per-repository README/issue/PR/release data. The `{repo_name}` lock path matches the real GitHub endpoint shape.
+**Code scanning.** `bleephub/gh_code_scanning.go` and `bleephub/store_code_scanning.go` add alerts, alert instances, analyses, SARIF upload/status, and default-setup configuration. SARIF ingestion extracts real results and creates alerts and instances.
 
-**Tests.** `bleephub/gh_migrations_test.go` covers user and org migration CRUD, archive download and deletion, lock status, and unlock. `bleephub/gh_migrations_live_test.go` exercises the endpoints through the shared TestMain server so the OpenAPI response-shape validator observes them. `gh_api_definition_test.go` adds the new paths to `allowedGHESOnly`, and `openapi-violation-allowlist.txt` allowlists the GHES-only `html_url` and `exported_at` fields.
+**Dependabot.** `bleephub/gh_dependabot.go` and `bleephub/store_dependabot.go` add Dependabot alerts (list/get/patch) and Dependabot secrets for repos and orgs, including public-key endpoints and selected-repository visibility.
 
-**UI.** `ui/packages/bleephub/src/pages/MigrationsPage.tsx` lists user and organization migrations, starts new migrations with repository selection and exclude options, downloads archives, deletes archives, and unlocks repositories. It is wired from `ui/packages/bleephub/src/components/Shell.tsx` at `/ui/migrations` with a Migrations entry in the global nav. API helpers live in `ui/packages/bleephub/src/api.ts`, types in `ui/packages/bleephub/src/types.ts`, and a `MigrationIcon` in `ui/packages/bleephub/src/components/octicons.tsx`. A Vitest page test (`src/__tests__/MigrationsPage.test.tsx`) covers rendering and org-scope switching.
+**Migrations.** `bleephub/gh_migrations.go` and `bleephub/store_migrations.go` add user and organization migrations with real `tar.gz` archive generation, archive deletion, and repository unlock endpoints.
 
-`go test ./bleephub -count=1`, `make bleephub/lint`, `make ui/packages/bleephub/lint`, `make ui/packages/bleephub/test` (90/90), `make ui/packages/bleephub/build`, and `make bleephub/build` all pass.
+**Codespaces.** `bleephub/gh_codespaces.go` and `bleephub/store_codespaces.go` add user/repo/org Codespaces REST API with real Docker-backed containers. Create reads `.devcontainer/devcontainer.json` or falls back to a default image, runs a container, and tracks its ID; start/stop/delete manage the real container lifecycle. Also adds user/repo/org Codespaces secrets and machine-type listing.
 
-## 2026-07-01 - GitHub Projects classic (v1) REST API + UI (in progress on `feat/bleephub-api-ui-parity-continuation`)
+**Packages.** `bleephub/gh_packages.go` and `bleephub/store_packages.go` add the GitHub Packages REST management API for user/org/repo-scoped packages and versions, with real package file bytes stored on disk and an internal upload endpoint for tests/UI.
 
-A single branch (`feat/bleephub-api-ui-parity-continuation`) implements the full GitHub Projects classic (v1) REST API surface for repo-scoped projects, columns, and cards.
+**Discussions GraphQL.** `bleephub/gh_discussions_graphql.go` and `bleephub/store_discussions.go` add `Repository.discussions`, `Repository.discussionCategories`, Discussion, DiscussionCategory, and DiscussionComment GraphQL types and connections, plus mutations for CRUD, comments, replies, and answer marking. Default discussion categories are created for new repos.
 
-**Data model and store.** `bleephub/store_projects_classic.go` introduces `ProjectClassic`, `ProjectColumn`, and `ProjectCard` types, plus store CRUD and move helpers. `bleephub/store.go` adds `ProjectClassic`, `ProjectColumns`, `ProjectCards` maps and next-ID counters, and wires the `projects_classic`, `project_columns`, and `project_cards` persistence buckets into `loadFromPersistence`.
+**UI.** New pages: `ProjectsClassicPage.tsx`, `SecretScanningPage.tsx`, `CodeScanningPage.tsx`, `DependabotPage.tsx`, `MigrationsPage.tsx`, `CodespacesPage.tsx`, `PackagesPage.tsx`, `DiscussionsPage.tsx`. All are wired into `App.tsx` and the repo navigation in `Shell.tsx`; API helpers and types live in `api.ts` and `types.ts`.
 
-**REST handlers.** `bleephub/gh_projects_classic.go` registers and implements:
-- `GET/POST /api/v3/repos/{owner}/{repo}/projects`
-- `GET/PATCH/DELETE /api/v3/projects/{project_id}`
-- `GET/POST /api/v3/projects/{project_id}/columns`
-- `GET/PATCH/DELETE /api/v3/projects/columns/{column_id}`
-- `POST /api/v3/projects/columns/{column_id}/moves`
-- `GET/POST /api/v3/projects/columns/{column_id}/cards`
-- `GET/PATCH/DELETE /api/v3/projects/columns/cards/{card_id}`
-- `POST /api/v3/projects/columns/cards/{card_id}/moves`
+**Boyscout.** Strengthened the continuity-only PR rule in `AGENTS.md` from "Avoid" to "Never" with explicit stop/ask language. Bumped Go module dependencies across `backends/aws-common`, `backends/ecs`, `backends/lambda`, `bleephub`, `bleeplab`, and `simulators/aws/sdk-tests` so the dependency freshness gate stays clean.
 
-Column and card sub-resource paths share a two-segment slot after `/projects` and `/projects/columns`, so Go 1.22's ServeMux cannot distinguish them directly; dispatchers route to the correct handler. Cards support note cards and issue-linked cards (`content_type`/`content_id`). Column and card moves implement `first`, `last`, and `after:<id>` positioning semantics.
-
-**UI.** `ui/packages/bleephub/src/pages/ProjectsClassicPage.tsx` lists projects, creates projects, and manages columns and cards. It is wired from `ui/packages/bleephub/src/components/Shell.tsx` at `/ui/repos/:owner/:repo/projects-classic` with a Projects tab in the repo header. API helpers live in `ui/packages/bleephub/src/api.ts` and types in `ui/packages/bleephub/src/types.ts`.
-
-**Validation.** `bleephub/gh_projects_classic_test.go` covers project/column/card CRUD, note and issue cards, column/card moves, and 404/auth cases. `bleephub/gh_projects_classic_live_test.go` exercises the endpoints through the shared TestMain server so the OpenAPI response-shape validator observes them. `gh_api_definition_test.go` adds the new paths to `allowedGHESOnly` and `dispatchRoutes`.
-
-`go test ./bleephub -count=1`, `make bleephub/lint`, `make ui/packages/bleephub/lint`, and `make ui/packages/bleephub/test` (88/88) all pass.
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` is clean; `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass (104/104); `bash scripts/check-latest-deps.sh` reports 0 drifts; OpenAPI shape ratchet reports no new violations.
 
 ## 2026-07-01 - bleephub branch protection rules API + UI (PR #743)
 
