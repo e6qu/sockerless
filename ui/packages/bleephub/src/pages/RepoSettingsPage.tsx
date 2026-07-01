@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useParams, Link } from "react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { fetchRepoDetail, updateRepo, fetchRepoTopics, updateRepoTopics } from "../api.js";
@@ -47,6 +47,7 @@ export function RepoSettingsPage() {
       <RepoHeader owner={owner} repo={repo} active="settings" />
       <PageTitle title="General" />
       <RepoSettingsForm repo={data} onSave={(payload) => mutation.mutate(payload)} />
+      <BranchProtectionCard owner={owner} repo={repo} />
       <RepoTopicsForm
         topics={topicsQuery.data?.names ?? []}
         isLoading={topicsQuery.isLoading}
@@ -277,5 +278,18 @@ function RepoSettingsForm({
         </div>
       </Box>
     </form>
+  );
+}
+
+function BranchProtectionCard({ owner, repo }: { owner: string; repo: string }) {
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>Branch protection</span>} className="mt-4">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem" }}>
+        <span style={{ fontSize: "0.9rem" }}>Define merge constraints and required status checks.</span>
+        <Link to={`/ui/repos/${owner}/${repo}/settings/branch-protection`}>
+          <Button variant="secondary" size="sm">Manage branch protection</Button>
+        </Link>
+      </div>
+    </Box>
   );
 }

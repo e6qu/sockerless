@@ -21,7 +21,6 @@ import (
 // long-tail GitHub API surfaces gh CLI / octokit / probot hit.// Users API extras (keys, gpg_keys, emails, followers, following)
 // Actions OIDC (signed token + JWKS + discovery)
 // GitHub Pages (site CRUD + builds stubs)
-// Branch protection (rules CRUD)
 // Org members + audit log
 // Marketplace (listing plans/accounts)
 //
@@ -73,13 +72,6 @@ func (s *Server) registerGHMiscEndpoints() {
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesTriggerBuild))
 	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/latest", s.handlePagesLatestBuild)
 	s.route("GET /api/v3/repos/{owner}/{repo}/pages/builds/{build_id}", s.handlePagesGetBuild)
-
-	// Branch protection
-	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection", s.handleBranchProtectionGet)
-	s.route("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
-		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionPut))
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection",
-		s.requirePerm(scopeAdministration, permWrite, s.handleBranchProtectionDelete))
 
 	// Orgs depth (members listing + memberships CRUD already covered in
 	// gh_members_rest.go — implementation).
@@ -236,8 +228,6 @@ type MarketplacePurchase struct {
 	FreeTrialEnds *time.Time `json:"free_trial_ends_on,omitempty"`
 }
 
-type BranchProtection map[string]interface{}
-
 type MiscStore struct {
 	mu                   sync.RWMutex
 	userKeys             map[int]*UserKey
@@ -247,7 +237,7 @@ type MiscStore struct {
 	follows              map[string]map[string]bool
 	pagesByRepo          map[int]*PagesSite
 	pagesBuilds          map[string][]*PagesBuild
-	branchProtection     map[string]BranchProtection
+	branchProtection     map[string]*BranchProtection
 	auditLog             []*AuditEntry
 	auditLogEvents       []*AuditLogEvent
 	marketplacePlans     map[int]*MarketplacePlan
@@ -270,7 +260,7 @@ func newMiscStore() *MiscStore {
 		follows:              map[string]map[string]bool{},
 		pagesByRepo:          map[int]*PagesSite{},
 		pagesBuilds:          map[string][]*PagesBuild{},
-		branchProtection:     map[string]BranchProtection{},
+		branchProtection:     map[string]*BranchProtection{},
 		marketplacePlans:     map[int]*MarketplacePlan{},
 		marketplacePurchases: map[int]*MarketplacePurchase{},
 		auditLogEvents:       []*AuditLogEvent{},
@@ -1093,63 +1083,6 @@ func (s *Server) handlePagesGetBuild(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.Misc.mu.RUnlock()
 	writeGHError(w, http.StatusNotFound, "Not Found")
-}
-
-// --- Branch protection ---
-
-func (s *Server) handleBranchProtectionGet(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	s.store.Misc.mu.RLock()
-	bp := s.store.Misc.branchProtection[bpKey(repo.ID, r.PathValue("branch"))]
-	s.store.Misc.mu.RUnlock()
-	if bp == nil {
-		writeGHError(w, http.StatusNotFound, "Branch not protected")
-		return
-	}
-	writeJSON(w, http.StatusOK, bp)
-}
-
-func (s *Server) handleBranchProtectionPut(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	var raw map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
-		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
-		return
-	}
-	if raw == nil {
-		raw = map[string]interface{}{}
-	}
-	branch := r.PathValue("branch")
-	s.store.Misc.mu.Lock()
-	s.store.Misc.branchProtection[bpKey(repo.ID, branch)] = BranchProtection(raw)
-	if s.store.Misc.persist != nil {
-		s.store.Misc.persist.MustPut("branch_protection", bpKey(repo.ID, branch), raw)
-	}
-	s.store.Misc.mu.Unlock()
-	writeJSON(w, http.StatusOK, raw)
-}
-
-func (s *Server) handleBranchProtectionDelete(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	s.store.Misc.mu.Lock()
-	delete(s.store.Misc.branchProtection, bpKey(repo.ID, r.PathValue("branch")))
-	if s.store.Misc.persist != nil {
-		s.store.Misc.persist.MustDelete("branch_protection", bpKey(repo.ID, r.PathValue("branch")))
-	}
-	s.store.Misc.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Orgs depth ---

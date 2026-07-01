@@ -339,6 +339,100 @@ export interface GithubBranch {
   commit: { sha: string };
 }
 
+export interface GithubStatusCheck {
+  context: string;
+  app_id: number | null;
+}
+
+export interface GithubBranchProtectionStatusChecks {
+  strict?: boolean;
+  enforcement_level: string;
+  contexts: string[];
+  checks: GithubStatusCheck[];
+  include_admins?: boolean;
+}
+
+export interface GithubBranchProtectionReviewDismissalRestrictions {
+  users: GithubActor[];
+  teams: GithubTeamRef[];
+  apps?: GithubActor[];
+  url?: string;
+  users_url?: string;
+  teams_url?: string;
+}
+
+export interface GithubActor {
+  login: string;
+  id: number;
+  node_id: string;
+  avatar_url: string;
+  html_url: string;
+  type: string;
+  site_admin: boolean;
+}
+
+export interface GithubTeamRef {
+  id: number;
+  node_id: string;
+  url: string;
+  html_url: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  privacy: string;
+  permission: string;
+}
+
+export interface GithubBranchProtectionReviews {
+  url?: string;
+  dismissal_restrictions?: GithubBranchProtectionReviewDismissalRestrictions;
+  dismiss_stale_reviews: boolean;
+  require_code_owner_reviews: boolean;
+  required_approving_review_count: number;
+  bypass_pull_request_allowances?: GithubBranchProtectionBypassAllowances;
+  require_last_push_approval?: boolean;
+  required_review_thread_resolution?: boolean;
+}
+
+export interface GithubBranchProtectionBypassAllowances {
+  users: GithubActor[];
+  teams: GithubTeamRef[];
+  apps?: GithubActor[];
+}
+
+export interface GithubBranchProtectionRestrictions {
+  url: string;
+  users_url: string;
+  teams_url: string;
+  apps_url?: string;
+  users: GithubActor[];
+  teams: GithubTeamRef[];
+  apps?: GithubActor[];
+}
+
+export interface GithubProtectionToggle {
+  enabled: boolean;
+  url?: string;
+  html_url?: string;
+}
+
+/** Branch protection configuration from /api/v3/repos/{o}/{r}/branches/{b}/protection */
+export interface GithubBranchProtection {
+  url: string;
+  html_url: string;
+  required_status_checks: GithubBranchProtectionStatusChecks | null;
+  required_pull_request_reviews: GithubBranchProtectionReviews | null;
+  restrictions: GithubBranchProtectionRestrictions | null;
+  enforce_admins: { url?: string; enabled: boolean } | null;
+  allow_force_pushes: GithubProtectionToggle;
+  allow_deletions: GithubProtectionToggle;
+  required_conversation_resolution?: GithubProtectionToggle;
+  required_linear_history?: GithubProtectionToggle;
+  required_signatures?: GithubProtectionToggle;
+  lock_branch?: GithubProtectionToggle;
+  block_creations?: GithubProtectionToggle;
+}
+
 /** Storage backend info from /internal/storage */
 export interface BleephubStorageInfo {
   persistence: string;

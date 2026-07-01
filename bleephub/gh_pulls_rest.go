@@ -310,6 +310,15 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if ok, msg := s.canMergePullRequest(repo, pr, user); !ok {
+		status := http.StatusMethodNotAllowed
+		if msg == "" {
+			msg = "Pull Request is not mergeable"
+		}
+		writeGHError(w, status, msg)
+		return
+	}
+
 	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 		now := time.Now()
 		p.State = "MERGED"

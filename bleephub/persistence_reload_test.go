@@ -55,7 +55,7 @@ func TestPersistenceReload_OwnerAndCountersAndState(t *testing.T) {
 	st1.Misc.userKeys[key.ID] = key
 	st1.Misc.keysByUser[user.ID] = append(st1.Misc.keysByUser[user.ID], key)
 	p1.MustPut("user_keys", "1", key)
-	bp := BranchProtection{"required_status_checks": nil}
+	bp := &BranchProtection{}
 	st1.Misc.branchProtection[bpKey(repo.ID, "main")] = bp
 	p1.MustPut("branch_protection", bpKey(repo.ID, "main"), bp)
 
@@ -681,7 +681,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		st.RepoSecrets[repoKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", repoKey, st.RepoSecrets[repoKey])
 		st.SetCheckSuitePreferences(repoKey, []*CheckSuitePref{{AppID: 1, Setting: true}})
-		st.Misc.branchProtection[bpKey(repo.ID, "main")] = BranchProtection{"required_status_checks": nil}
+		st.Misc.branchProtection[bpKey(repo.ID, "main")] = &BranchProtection{}
 		p.MustPut("branch_protection", bpKey(repo.ID, "main"), st.Misc.branchProtection[bpKey(repo.ID, "main")])
 		st.Misc.pagesBuilds[repoKey] = []*PagesBuild{{ID: 1, Status: "built"}}
 		p.MustPut("pages_builds", repoKey, st.Misc.pagesBuilds[repoKey])

@@ -73,10 +73,18 @@ func loadGitHubOperations(t *testing.T) map[string]bool {
 // allow-list of real-but-undescribed paths, never a place to hide an invented
 // one. Keyed by normalized "METHOD /path" (without the /api/v3 prefix).
 var allowedGHESOnly = map[string]string{
-	"POST /actions/runner-registration": "GHES runner registration endpoint (actions/runner config.sh)",
-	"POST /admin/organizations":         "GHES admin/staff-tools API (create org)",
-	"GET /orgs/{}/audit-log":            "Org audit log — real GitHub (Enterprise), absent from the dotcom bundled description",
-	"GET /repos/{}/{}/git/refs":         "GHES / real GitHub git-refs listing endpoint, absent from the dotcom bundled description",
+	"POST /actions/runner-registration":                              "GHES runner registration endpoint (actions/runner config.sh)",
+	"POST /admin/organizations":                                      "GHES admin/staff-tools API (create org)",
+	"GET /orgs/{}/audit-log":                                         "Org audit log — real GitHub (Enterprise), absent from the dotcom bundled description",
+	"GET /repos/{}/{}/git/refs":                                      "GHES / real GitHub git-refs listing endpoint, absent from the dotcom bundled description",
+	"GET /repos/{}/{}/branches/{}/protection/allow_deletions":        "Branch protection allow-deletions setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"PUT /repos/{}/{}/branches/{}/protection/allow_deletions":        "Branch protection allow-deletions setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"DELETE /repos/{}/{}/branches/{}/protection/allow_deletions":     "Branch protection allow-deletions setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/branches/{}/protection/allow_force_pushes":     "Branch protection allow-force-pushes setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"PUT /repos/{}/{}/branches/{}/protection/allow_force_pushes":     "Branch protection allow-force-pushes setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"DELETE /repos/{}/{}/branches/{}/protection/allow_force_pushes":  "Branch protection allow-force-pushes setting — real GitHub endpoint, absent from the bundled dotcom description",
+	"PUT /repos/{}/{}/branches/{}/protection/required_status_checks": "Branch protection required status checks update — real GitHub endpoint, absent from the bundled dotcom description",
+	"PUT /repos/{}/{}/branches/{}/protection/restrictions":           "Branch protection push restrictions update — real GitHub endpoint, absent from the bundled dotcom description",
 }
 
 // dispatchRoutes are real GitHub sub-resource paths served through a single

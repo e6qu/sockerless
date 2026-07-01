@@ -207,10 +207,10 @@ func TestMergeGatingByRequiredChecks(t *testing.T) {
 
 	// Protect the base branch with a required status check.
 	testServer.store.mu.Lock()
-	testServer.store.Misc.branchProtection[bpKey(repo.ID, "base")] = BranchProtection{
-		"required_status_checks": map[string]interface{}{
-			"strict":   false,
-			"contexts": []interface{}{"ci-job"},
+	testServer.store.Misc.branchProtection[bpKey(repo.ID, "base")] = &BranchProtection{
+		RequiredStatusChecks: &BPStatusChecks{
+			Strict:   false,
+			Contexts: []string{"ci-job"},
 		},
 	}
 	testServer.store.mu.Unlock()

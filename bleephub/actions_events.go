@@ -356,56 +356,14 @@ func (s *Server) workflowSender(wf *Workflow) *User {
 
 // ── Required status checks (branch protection ∩ check runs) ─────────
 
-// requiredCheckContexts returns the base branch's protected status-check
-// contexts (the union of `contexts` and `checks[].context`).
-func (s *Server) requiredCheckContexts(repoID int, baseBranch string) []string {
-	s.store.mu.RLock()
-	bp := s.store.Misc.branchProtection[bpKey(repoID, baseBranch)]
-	s.store.mu.RUnlock()
-	if bp == nil {
-		return nil
-	}
-	rsc, _ := bp["required_status_checks"].(map[string]interface{})
-	if rsc == nil {
-		return nil
-	}
-	seen := map[string]bool{}
-	var out []string
-	add := func(name string) {
-		if name != "" && !seen[name] {
-			seen[name] = true
-			out = append(out, name)
-		}
-	}
-	if contexts, _ := rsc["contexts"].([]interface{}); contexts != nil {
-		for _, c := range contexts {
-			if name, ok := c.(string); ok {
-				add(name)
-			}
-		}
-	}
-	if checks, _ := rsc["checks"].([]interface{}); checks != nil {
-		for _, c := range checks {
-			if m, ok := c.(map[string]interface{}); ok {
-				if name, ok := m["context"].(string); ok {
-					add(name)
-				}
-			}
-		}
-	}
-	return out
-}
-
-// checksStateForSha summarizes a commit's check runs: every required
-// context green, anything pending, anything failing.
+// evaluateChecksForMerge inspects the head sha's check runs against the
+// base branch's required contexts.
 type checksState struct {
 	MissingRequired []string // required contexts not green (absent/pending/failed)
 	AnyPending      bool
 	AnyFailing      bool
 }
 
-// evaluateChecksForMerge inspects the head sha's check runs against the
-// base branch's required contexts.
 func (s *Server) evaluateChecksForMerge(repo *Repo, baseBranch, headSha string) checksState {
 	state := checksState{}
 	if headSha == "" {

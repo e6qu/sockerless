@@ -1188,7 +1188,7 @@ func (st *Store) loadFromPersistence() error {
 			if err := loadJSON(raw, &bp); err != nil {
 				return err
 			}
-			st.Misc.branchProtection[key] = bp
+			st.Misc.branchProtection[key] = &bp
 			return nil
 		}},
 		{"gpg_keys", func(_ string, raw []byte) error {

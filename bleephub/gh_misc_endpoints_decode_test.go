@@ -22,6 +22,7 @@ func miscEndpointsTestServer(t *testing.T) *Server {
 	t.Helper()
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
+	s.registerGHBranchProtectionRoutes()
 	s.registerGHIssueRoutes()
 	return s
 }
