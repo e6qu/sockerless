@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - CloudWatch alarm SNS→SQS process-mode fix (#741, PR #741)
+
+A single branch (`fix/aws-cloudwatch-sns-sqs-process-mode-741`) closed GitHub issue #741, which reported that a CloudWatch alarm's SNS action was not delivered to SQS when the AWS simulator ran in `SIM_RUNTIME=process` mode.
+
+**Investigation.** The delivery path itself was sound: the alarm evaluator (`startCWAlarmEvaluator`) transitions the alarm to `ALARM`, fans out through SNS (`snsFanout` → `snsDeliverToSQS`), and enqueues the notification in SQS. The reported empty queue was caused by the external adversarial probe script using `echo "$raw"` to emit the received SQS message; on macOS `/bin/sh` this corrupts escaped JSON sequences, so the first `ReceiveMessage` successfully returned the message but the probe's subsequent parsing and polling could not see it. The probe passes when `printf '%s\n' "$raw"` is used instead.
+
+While investigating, two real racy fallback patterns were found in the CloudWatch simulator storage layer:
+
+- **`simulators/aws/cloudwatch_metrics_query.go`**: `handleCWQueryPutMetricData` read a metric row with `Update`, mutated it, and wrote it back with `Put`. Under concurrent evaluator ticks and `PutMetricData` calls this races and can drop datapoints.
+- **`simulators/aws/cloudwatch_alarm_ops.go`**: `cwRecordAlarmHistory` did the same `Update`-then-`Put` dance for alarm-history rows, risking lost history entries.
+
+Both were fixed to use the store's atomic `Upsert` helper.
+
+**Regression test.** `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` starts a fresh simulator subprocess in `SIM_RUNTIME=process`, creates a metric namespace, metric, alarm with an SNS action, SQS queue with a `Principal:"*"` access policy, SNS topic subscription, and asserts the notification is received via `sqs.ReceiveMessage`. The test validates that both the SQS `Body` and the embedded SNS `Message` are valid JSON and that the alarm name round-trips. It uses the same AWS SDK for Go v2 identifiers a real-cloud consumer would use, differing only in the endpoint coordinate.
+
+**Validation.** `GOWORK=off go test ./` passes in `simulators/aws` and `simulators/aws/sdk-tests`; `./scripts/lint-changed.sh` reports 0 issues; `./scripts/check-simulator-tests.sh` passes.
+
 ## 2026-07-01 - bleephub GitHub API/UI parity + internal admin APIs
 
 A single branch (`feat/bleephub-github-parity-and-admin`) closed several commonly-used GitHub API gaps and added the internal admin surface needed to operate a bleephub instance.

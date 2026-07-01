@@ -4,18 +4,36 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #740 — `feat/bleephub-github-parity-and-admin` — bleephub GitHub API/UI parity continuation + internal admin APIs.
+PR #741 — `fix/aws-cloudwatch-sns-sqs-process-mode-741` — CloudWatch alarm SNS action not delivered to SQS in process mode.
 
 ---
-### Active branch: bleephub GitHub API/UI parity + admin APIs (PR #740)
+### Active branch: CloudWatch alarm SNS action not delivered to SQS in process mode (PR #741)
 
 Scope:
-- Internal admin users/orgs/teams CRUD and audit-log endpoints (handle_mgmt.go).
-- Gists REST API with files, stars, forks, and comments (gh_gists_rest.go).
-- Repository autolinks REST API (gh_repos_autolinks.go).
-- Repository invitations REST API with accept/decline (gh_invitations_rest.go).
-- Commit statuses REST API with combined status (gh_statuses_rest.go).
-- Commit comments REST API (gh_commit_comments_rest.go).
+- Fix racy fallback storage patterns in `simulators/aws/cloudwatch_metrics_query.go` (`handleCWQueryPutMetricData`) and `simulators/aws/cloudwatch_alarm_ops.go` (`cwRecordAlarmHistory`) by replacing `Update`-then-`Put` with atomic `Upsert`.
+- Add `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`: a subprocess-based `SIM_RUNTIME=process` regression test that starts a fresh simulator process, creates a CloudWatch alarm with SNS action, lets the background evaluator fire, and asserts the notification is delivered to SQS with valid JSON at both the SQS `Body` and embedded SNS `Message` layers.
+- Keep the test canonical: use the same AWS SDK for Go v2 identifiers and configuration a real-cloud consumer would use, differing only in endpoint coordinates.
+
+Validation:
+- `GOWORK=off go test ./` in `simulators/aws` passes.
+- `GOWORK=off go test ./` in `simulators/aws/sdk-tests` passes.
+- `./scripts/lint-changed.sh <changed files>` reports 0 issues.
+- `./scripts/check-simulator-tests.sh` passes.
+
+**Next:** PR is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #740): bleephub GitHub API/UI parity + internal admin APIs
+
+`feat/bleephub-github-parity-and-admin` closed several commonly-used GitHub API gaps and added the internal admin surface needed to operate a bleephub instance.
+
+Scope:
+- Internal admin users/orgs/teams CRUD and audit-log endpoints (`bleephub/handle_mgmt.go`).
+- Gists REST API with files, stars, forks, and comments (`bleephub/gh_gists_rest.go`).
+- Repository autolinks REST API (`bleephub/gh_repos_autolinks.go`).
+- Repository invitations REST API with accept/decline (`bleephub/gh_invitations_rest.go`).
+- Commit statuses REST API with combined status (`bleephub/gh_statuses_rest.go`).
+- Commit comments REST API (`bleephub/gh_commit_comments_rest.go`).
 - UI admin pages (users, orgs, teams, audit log, storage health) and Gists page.
 - Store support, persistence wiring, and route registration for all new surfaces.
 
@@ -25,7 +43,7 @@ Validation:
 - `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass.
 - OpenAPI shape ratchet reports no new violations.
 
-**Next:** PR is open and awaits review/merge. After merge, continue with remaining GitHub API gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, projects classic, branch protection sub-resources, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
+**Next:** PR #740 merged; continue with the CloudWatch alarm SNS→SQS process-mode fix (#741).
 
 ---
 ### Prior branch (merged #739): CloudWatch→SNS→SQS malformed JSON body regression tests (#734)
