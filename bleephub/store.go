@@ -255,12 +255,18 @@ type Store struct {
 	CodeScanningAnalyses       map[int]*CodeScanningAnalysis
 	CodeScanningAnalysesByRepo map[string]map[int]*CodeScanningAnalysis // repoKey → analysisID → analysis
 	SARIFUploads               map[string]*SARIFUpload                  // uploadID → upload
+	DependabotAlerts           map[int]*DependabotAlert
+	DependabotAlertsByRepo     map[string]map[int]*DependabotAlert        // repoKey → alertNumber → alert
+	DependabotNextNumber       map[string]int                             // repoKey → next alert number
+	DependabotSecrets          map[string]map[string]*DependabotSecret    // repoKey → name → secret
+	DependabotOrgSecrets       map[string]map[string]*DependabotOrgSecret // orgLogin → name → secret
 	NextGistID                 int
 	NextGistCommentID          int
 	NextAgent                  int
 	NextSecretScanningAlertID  int
 	NextCodeScanningAlertID    int
 	NextCodeScanningAnalysisID int
+	NextDependabotAlertID      int
 	NextMsg                    int64
 	NextLog                    int
 	NextReqID                  int64
@@ -447,10 +453,16 @@ func NewStore() *Store {
 		CodeScanningAnalyses:       make(map[int]*CodeScanningAnalysis),
 		CodeScanningAnalysesByRepo: make(map[string]map[int]*CodeScanningAnalysis),
 		SARIFUploads:               make(map[string]*SARIFUpload),
+		DependabotAlerts:           make(map[int]*DependabotAlert),
+		DependabotAlertsByRepo:     make(map[string]map[int]*DependabotAlert),
+		DependabotNextNumber:       make(map[string]int),
+		DependabotSecrets:          make(map[string]map[string]*DependabotSecret),
+		DependabotOrgSecrets:       make(map[string]map[string]*DependabotOrgSecret),
 		NextAgent:                  1,
 		NextSecretScanningAlertID:  1,
 		NextCodeScanningAlertID:    1,
 		NextCodeScanningAnalysisID: 1,
+		NextDependabotAlertID:      1,
 		NextMsg:                    1,
 		NextLog:                    1,
 		NextReqID:                  1,
@@ -1409,6 +1421,40 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.SARIFUploads[key] = &up
+			return nil
+		}},
+		{"dependabot_alerts", func(_ string, raw []byte) error {
+			var a DependabotAlert
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.DependabotAlerts[a.ID] = &a
+			if st.DependabotAlertsByRepo[a.RepoKey] == nil {
+				st.DependabotAlertsByRepo[a.RepoKey] = make(map[int]*DependabotAlert)
+			}
+			st.DependabotAlertsByRepo[a.RepoKey][a.Number] = &a
+			if a.Number >= st.DependabotNextNumber[a.RepoKey] {
+				st.DependabotNextNumber[a.RepoKey] = a.Number + 1
+			}
+			if a.ID >= st.NextDependabotAlertID {
+				st.NextDependabotAlertID = a.ID + 1
+			}
+			return nil
+		}},
+		{"dependabot_secrets", func(key string, raw []byte) error {
+			var m map[string]*DependabotSecret
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.DependabotSecrets[key] = m
+			return nil
+		}},
+		{"dependabot_org_secrets", func(key string, raw []byte) error {
+			var m map[string]*DependabotOrgSecret
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.DependabotOrgSecrets[key] = m
 			return nil
 		}},
 	} {

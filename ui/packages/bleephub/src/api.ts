@@ -56,6 +56,10 @@ import type {
   GithubCodeScanningDismissedReason,
   GithubCodeScanningSARIFStatus,
   GithubCodeScanningSARIFUpload,
+  GithubDependabotAlert,
+  GithubDependabotAlertState,
+  GithubDependabotDismissedReason,
+  GithubDependabotSecret,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1107,3 +1111,88 @@ async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
   }
   return res.json() as Promise<T>;
 }
+
+// ─── GitHub Dependabot ──────────────────────────────────────────────────
+
+export interface DependabotFilters {
+  state?: GithubDependabotAlertState;
+  severity?: string;
+  package_name?: string;
+  ecosystem?: string;
+  manifest?: string;
+  sort?: "created" | "updated";
+  direction?: "asc" | "desc";
+}
+
+export const fetchDependabotAlerts = (
+  owner: string,
+  repo: string,
+  filters: DependabotFilters = {},
+): Promise<GithubDependabotAlert[]> => {
+  const params = new URLSearchParams();
+  if (filters.state) params.set("state", filters.state);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.package_name) params.set("package_name", filters.package_name);
+  if (filters.ecosystem) params.set("ecosystem", filters.ecosystem);
+  if (filters.manifest) params.set("manifest", filters.manifest);
+  if (filters.sort) params.set("sort", filters.sort);
+  if (filters.direction) params.set("direction", filters.direction);
+  const qs = params.toString();
+  return ghFetch<GithubDependabotAlert[]>(`/api/v3/repos/${owner}/${repo}/dependabot/alerts${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchDependabotAlert = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubDependabotAlert>(`/api/v3/repos/${owner}/${repo}/dependabot/alerts/${number}`);
+
+export const updateDependabotAlert = (
+  owner: string,
+  repo: string,
+  number: number,
+  body: {
+    state: "open" | "dismissed";
+    dismissed_reason?: GithubDependabotDismissedReason;
+    dismissed_comment?: string;
+  },
+) => ghPatchJSON<GithubDependabotAlert>(`/api/v3/repos/${owner}/${repo}/dependabot/alerts/${number}`, body);
+
+export const fetchDependabotRepoSecrets = (owner: string, repo: string) =>
+  ghFetchEnvelope<GithubDependabotSecret>(`/api/v3/repos/${owner}/${repo}/dependabot/secrets?per_page=100`, "secrets");
+
+export const fetchDependabotRepoPublicKey = (owner: string, repo: string) =>
+  ghFetch<GithubPublicKey>(`/api/v3/repos/${owner}/${repo}/dependabot/secrets/public-key`);
+
+export const putDependabotRepoSecret = (
+  owner: string,
+  repo: string,
+  name: string,
+  body: { encrypted_value: string; key_id: string },
+) => ghSend("PUT", `/api/v3/repos/${owner}/${repo}/dependabot/secrets/${encodeURIComponent(name)}`, body);
+
+export const deleteDependabotRepoSecret = (owner: string, repo: string, name: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/dependabot/secrets/${encodeURIComponent(name)}`);
+
+const fetchDependabotOrgSecrets = (org: string) =>
+  ghFetchEnvelope<GithubDependabotSecret>(`/api/v3/orgs/${org}/dependabot/secrets?per_page=100`, "secrets");
+
+const fetchDependabotOrgPublicKey = (org: string) =>
+  ghFetch<GithubPublicKey>(`/api/v3/orgs/${org}/dependabot/secrets/public-key`);
+
+const putDependabotOrgSecret = (
+  org: string,
+  name: string,
+  body: { encrypted_value: string; key_id: string; visibility: GithubOrgVisibility; selected_repository_ids?: number[] },
+) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}`, body);
+
+const deleteDependabotOrgSecret = (org: string, name: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}`);
+
+const fetchDependabotOrgSecretRepositories = (org: string, name: string) =>
+  ghFetch<{ total_count: number; repositories: BleephubRepo[] }>(
+    `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`,
+  );
+
+const setDependabotOrgSecretRepositories = (
+  org: string,
+  name: string,
+  selected_repository_ids: number[],
+) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`, { selected_repository_ids });

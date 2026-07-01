@@ -299,6 +299,11 @@ export function RepoHeader({
             label="Code scanning"
             active={location.pathname === `${base}/security/code-scanning`}
           />
+          <RepoTabLink
+            to={`${base}/security/dependabot`}
+            label="Dependabot"
+            active={location.pathname === `${base}/security/dependabot`}
+          />
         </nav>
       )}
     </div>

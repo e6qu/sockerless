@@ -852,3 +852,58 @@ export interface GithubCodeScanningSARIFStatus {
   analyses_url: string | null;
   errors: string[] | null;
 }
+
+// ─── GitHub Dependabot shapes ───────────────────────────────────────────
+
+export type GithubDependabotAlertState = "open" | "dismissed" | "fixed" | "auto_dismissed";
+
+export type GithubDependabotDismissedReason =
+  | "fix_started"
+  | "inaccurate"
+  | "no_bandwidth"
+  | "not_used"
+  | "tolerable_risk";
+
+export interface GithubDependabotAlertPackage {
+  ecosystem: string;
+  name: string;
+}
+
+export interface GithubDependabotAlert {
+  number: number;
+  state: GithubDependabotAlertState;
+  dependency: {
+    package: GithubDependabotAlertPackage;
+    manifest_path: string;
+  };
+  security_advisory: {
+    ghsa_id: string;
+    cve_id: string | null;
+    summary: string;
+    description: string;
+    severity: string;
+  };
+  security_vulnerability: {
+    package: GithubDependabotAlertPackage;
+    severity: string;
+    vulnerable_version_range: string;
+    first_patched_version: { identifier: string } | null;
+  };
+  url: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  dismissed_at: string | null;
+  dismissed_by: { login: string } | null;
+  dismissed_reason: GithubDependabotDismissedReason | null;
+  dismissed_comment: string | null;
+  fixed_at: string | null;
+  auto_dismissed_at: string | null;
+}
+
+export interface GithubDependabotSecret {
+  name: string;
+  created_at: string;
+  updated_at: string;
+  visibility?: GithubOrgVisibility;
+}

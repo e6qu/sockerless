@@ -212,6 +212,9 @@ func (s *Server) registerRoutes() {
 	// Code scanning API (gh_code_scanning.go)
 	s.registerGHCodeScanningRoutes()
 
+	// Dependabot API (gh_dependabot.go)
+	s.registerGHDependabotRoutes()
+
 	// Branch protection API (gh_branch_protection.go)
 	s.registerGHBranchProtectionRoutes()
 
