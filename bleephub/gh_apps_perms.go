@@ -55,6 +55,7 @@ const (
 	scopeOrgAdministration permScope = "organization_administration"
 	scopeSecurityEvents    permScope = "security_events"
 	scopeDependabotSecrets permScope = "dependabot_secrets"
+	scopeCodespaces        permScope = "codespaces"
 )
 
 func parsePermLevel(s string) permLevel {
@@ -238,6 +239,11 @@ func classicScopeCovers(scopes string, scope permScope, level permLevel) bool {
 		return false
 	case scopeSecrets, scopeSecurityEvents, scopeDependabotSecrets:
 		if has("repo") {
+			return level <= permWrite
+		}
+		return false
+	case scopeCodespaces:
+		if has("codespace") || has("repo") {
 			return level <= permWrite
 		}
 		return false

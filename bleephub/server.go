@@ -224,6 +224,9 @@ func (s *Server) registerRoutes() {
 	// Migrations API (gh_migrations.go)
 	s.registerGHMigrationsRoutes()
 
+	// Codespaces API (gh_codespaces.go)
+	s.registerGHCodespacesRoutes()
+
 	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
 	s.registerGHActionsExtrasRoutes()
 

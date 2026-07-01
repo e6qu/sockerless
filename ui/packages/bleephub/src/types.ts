@@ -943,3 +943,60 @@ export interface GithubDependabotSecret {
   updated_at: string;
   visibility?: GithubOrgVisibility;
 }
+
+// ─── GitHub Codespaces shapes ───────────────────────────────────────────
+
+export type GithubCodespaceState =
+  | "Available"
+  | "Shutdown"
+  | "Creating"
+  | "Unavailable";
+
+export interface GithubCodespaceMachine {
+  name: string;
+  display_name: string;
+  operating_system: string;
+  storage_in_bytes: number;
+  memory_in_bytes: number;
+  cpus: number;
+  prebuild_availability: string;
+}
+
+export interface GithubCodespace {
+  id: number;
+  name: string;
+  display_name: string;
+  environment_id: string;
+  owner: { login: string; type: string; avatar_url?: string } | null;
+  billable_owner: { login: string; type: string; avatar_url?: string } | null;
+  repository: { id: number; full_name: string; name: string; owner: { login: string; type: string } } | null;
+  machine: GithubCodespaceMachine;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string;
+  state: GithubCodespaceState;
+  url: string;
+  html_url: string;
+  web_url: string;
+  billing_url: string;
+  git_status: { ahead: number; behind: number; has_uncommitted_changes: boolean; ref: string };
+  devcontainer_path: string;
+  image: string;
+  retention_period_minutes: number;
+}
+
+export interface GithubCodespaceSecret {
+  name: string;
+  key: string;
+  created_at: string;
+  updated_at: string;
+  visibility?: GithubOrgVisibility;
+}
+
+export interface CodespaceCreatePayload {
+  repository_id?: number;
+  ref?: string;
+  machine?: string;
+  display_name?: string;
+  location?: string;
+}

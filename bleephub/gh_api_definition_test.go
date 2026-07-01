@@ -94,6 +94,11 @@ var allowedGHESOnly = map[string]string{
 	"DELETE /projects/{}":                                            "Projects classic (v1) delete project — real GitHub endpoint, absent from the bundled dotcom description",
 	"POST /projects/columns/{}/moves":                                "Projects classic (v1) move column — real GitHub endpoint, absent from the bundled dotcom description",
 	"POST /projects/columns/cards/{}/moves":                          "Projects classic (v1) move card — real GitHub endpoint, absent from the bundled dotcom description",
+	"GET /users/{}/codespaces":                                       "GHES user codespaces list by username — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"GET /repos/{}/{}/codespaces/{}":                                 "GHES repo-scoped codespace fetch — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"DELETE /repos/{}/{}/codespaces/{}":                              "GHES repo-scoped codespace deletion — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"POST /repos/{}/{}/codespaces/{}/start":                          "GHES repo-scoped codespace start — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
+	"POST /repos/{}/{}/codespaces/{}/stop":                           "GHES repo-scoped codespace stop — real GitHub (GHES) endpoint, absent from the bundled dotcom description",
 }
 
 // dispatchRoutes are real GitHub sub-resource paths served through a single

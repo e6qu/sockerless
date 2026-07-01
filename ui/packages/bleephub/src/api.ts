@@ -62,6 +62,10 @@ import type {
   GithubDependabotAlertState,
   GithubDependabotDismissedReason,
   GithubDependabotSecret,
+  GithubCodespace,
+  GithubCodespaceMachine,
+  GithubCodespaceSecret,
+  CodespaceCreatePayload,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1256,3 +1260,38 @@ export async function downloadMigrationArchive(
   a.remove();
   URL.revokeObjectURL(url);
 }
+
+// ─── GitHub Codespaces REST ─────────────────────────────────────────────
+
+export const fetchUserCodespaces = () =>
+  ghFetchEnvelope<GithubCodespace>("/api/v3/user/codespaces", "codespaces");
+
+export const fetchRepoCodespaces = (owner: string, repo: string) =>
+  ghFetchEnvelope<GithubCodespace>(`/api/v3/repos/${owner}/${repo}/codespaces`, "codespaces");
+
+export const createUserCodespace = (payload: CodespaceCreatePayload) =>
+  ghPostJSON<GithubCodespace>("/api/v3/user/codespaces", payload);
+
+export const createRepoCodespace = (owner: string, repo: string, payload: CodespaceCreatePayload) =>
+  ghPostJSON<GithubCodespace>(`/api/v3/repos/${owner}/${repo}/codespaces`, payload);
+
+export const startCodespace = (name: string) =>
+  ghPostJSON<GithubCodespace>(`/api/v3/user/codespaces/${encodeURIComponent(name)}/start`, {});
+
+export const stopCodespace = (name: string) =>
+  ghPostJSON<GithubCodespace>(`/api/v3/user/codespaces/${encodeURIComponent(name)}/stop`, {});
+
+export const deleteCodespace = (name: string) =>
+  ghDeleteJSON<void>(`/api/v3/user/codespaces/${encodeURIComponent(name)}`, {});
+
+export const fetchCodespaceMachines = (owner: string, repo: string) =>
+  ghFetchEnvelope<GithubCodespaceMachine>(`/api/v3/repos/${owner}/${repo}/codespaces/machines`, "machines");
+
+const fetchUserCodespaceSecrets = () =>
+  ghFetchEnvelope<GithubCodespaceSecret>("/api/v3/user/codespaces/secrets", "secrets");
+
+const createUserCodespaceSecret = (name: string, payload: { encrypted_value: string; key_id: string }) =>
+  ghSend("PUT", `/api/v3/user/codespaces/secrets/${encodeURIComponent(name)}`, payload);
+
+const deleteUserCodespaceSecret = (name: string) =>
+  ghDeleteJSON<void>(`/api/v3/user/codespaces/secrets/${encodeURIComponent(name)}`, {});

@@ -425,3 +425,30 @@ export function MigrationIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function TrashIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3 4.5h10M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5" />
+      <path d="M6 6.5v7M10 6.5v7M4.5 13.5h7" />
+    </Svg>
+  );
+}
+
+export function SquareIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1" />
+    </Svg>
+  );
+}
+
+export function CodespaceIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M5 7h6M5 10h4" />
+      <circle cx="11" cy="10" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}

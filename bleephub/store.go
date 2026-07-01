@@ -239,11 +239,16 @@ type Store struct {
 	ProjectsV2                 *ProjectV2Store               // GitHub Projects v2
 	NotificationsState         map[int]*UserNotificationsState
 	Rulesets                   map[int]*Ruleset
-	ProjectClassic             map[int]*ProjectClassic // id → project
-	ProjectColumns             map[int]*ProjectColumn  // id → column
-	ProjectCards               map[int]*ProjectCard    // id → card
-	UserMigrations             map[int]*UserMigration  // id → user migration
-	OrgMigrations              map[int]*OrgMigration   // id → org migration
+	ProjectClassic             map[int]*ProjectClassic                // id → project
+	ProjectColumns             map[int]*ProjectColumn                 // id → column
+	ProjectCards               map[int]*ProjectCard                   // id → card
+	UserMigrations             map[int]*UserMigration                 // id → user migration
+	OrgMigrations              map[int]*OrgMigration                  // id → org migration
+	Codespaces                 map[int]*Codespace                     // id → codespace
+	CodespacesByName           map[string]*Codespace                  // name → codespace
+	CodespaceSecrets           map[string]map[string]*CodespaceSecret // scope\x1fname → secret
+	NextCodespaceID            int
+	NextCodespaceSecretID      int
 	LogLines                   map[string][]string     // jobID → captured console log lines
 	Gists                      map[string]*Gist        // id → gist
 	GistComments               map[int]*GistComment    // id → gist comment
@@ -446,6 +451,9 @@ func NewStore() *Store {
 		ProjectCards:               map[int]*ProjectCard{},
 		UserMigrations:             map[int]*UserMigration{},
 		OrgMigrations:              map[int]*OrgMigration{},
+		Codespaces:                 map[int]*Codespace{},
+		CodespacesByName:           map[string]*Codespace{},
+		CodespaceSecrets:           map[string]map[string]*CodespaceSecret{},
 		LogLines:                   make(map[string][]string),
 		Gists:                      make(map[string]*Gist),
 		GistComments:               make(map[int]*GistComment),
@@ -495,6 +503,8 @@ func NewStore() *Store {
 		NextProjectCardID:          1,
 		NextUserMigrationID:        1,
 		NextOrgMigrationID:         1,
+		NextCodespaceID:            1,
+		NextCodespaceSecretID:      1,
 		NextAutolinkID:             1,
 		NextInvitationID:           1,
 	}
