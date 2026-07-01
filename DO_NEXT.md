@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-api-ui-parity-continuation` — pushed; closes the remaining bleephub API/UI parity gaps and awaits the next PR/merge.
+PR #747 — `feat/bleephub-api-ui-parity-continuation` — pushed; closes the remaining bleephub API/UI parity gaps and awaits merge.
 
 ---
 ### Active branch: bleephub API/UI parity continuation

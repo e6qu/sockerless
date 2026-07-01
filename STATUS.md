@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|
-| Active branch | `feat/bleephub-api-ui-parity-continuation` — pushed; closes the remaining bleephub API/UI parity gaps (Projects classic, secret scanning, code scanning, Dependabot, Migrations, Codespaces, Packages, Discussions GraphQL) and awaits PR/merge. |
+| Active branch | PR #747 — `feat/bleephub-api-ui-parity-continuation` — closes the remaining bleephub API/UI parity gaps (Projects classic, secret scanning, code scanning, Dependabot, Migrations, Codespaces, Packages, Discussions GraphQL) and awaits merge. |
 | Last merged (#743) | `feat/bleephub-api-ui-parity-continuation` — **bleephub branch protection rules API + UI** — replaced the opaque `BranchProtection` blob with a strongly-typed model, implemented the sub-resource endpoints (`required_status_checks`, `required_pull_request_reviews`, `restrictions`, `enforce_admins`, `allow_force_pushes`, `allow_deletions`), enforced the rules at PR merge time, and added a branch protection settings page wired from `RepoSettingsPage.tsx`. |
 | Last merged (#742) | `fix/aws-cloudwatch-sns-sqs-process-mode-741` — **CloudWatch alarm SNS→SQS process-mode fix (#741)** — closed GitHub issue #741 by making CloudWatch metric and alarm-history stores atomic and adding a subprocess-based `SIM_RUNTIME=process` regression test for the full CloudWatch→SNS→SQS delivery chain. |
 | Last merged (#740) | `feat/bleephub-github-parity-and-admin` — **bleephub GitHub API/UI parity + internal admin APIs** — added internal admin users/orgs/teams/audit-log endpoints, Gists, repository autolinks, repository invitations, commit statuses, commit comments, and the supporting admin/gist UI pages. |

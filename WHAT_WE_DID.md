@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-01 - bleephub remaining API/UI parity continuation (PR #744)
+## 2026-07-01 - bleephub remaining API/UI parity continuation (PR #747)
 
 A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the remaining bleephub API/UI gaps called out in `DO_NEXT.md`.
 
