@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/aws-cloudwatch-sns-sqs-body-734` — regression-test lock for GitHub issue #734: CloudWatch alarm SNS notifications delivered to SQS must have a parseable JSON body.
+`fix/aws-cloudwatch-sns-sqs-body-734` — PR #739 — regression-test lock for GitHub issue #734: CloudWatch alarm SNS notifications delivered to SQS must have a parseable JSON body.
 
 ---
 ### Active branch: CloudWatch→SNS→SQS malformed JSON body (#734)
@@ -19,7 +19,7 @@ Validation:
 - `make -C simulators/aws unit-test` passes.
 - AWS SDK regression test `TestCloudWatch_AlarmActionsDispatchedToSNS` passes and now fails loudly if either the SQS `Body` or embedded SNS `Message` is invalid JSON.
 
-**Next:** PR is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+**Next:** PR #739 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #738): bleephub Search, Notifications, and Repository Rulesets APIs

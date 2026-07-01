@@ -4,9 +4,9 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-01 - CloudWatch alarm SNS→SQS body regression tests (#734)
+## 2026-07-01 - CloudWatch alarm SNS→SQS body regression tests (#734, PR #739)
 
-The production fix for issue #734 landed earlier in PR #737: `simulators/aws/sns.go` builds the CloudWatch→SNS→SQS notification envelope with `json.Marshal` and includes `Timestamp`. The open issue remained because the regression coverage was a narrow unit test, so this branch (`fix/aws-cloudwatch-sns-sqs-body-734`) added end-to-end coverage that exercises the real evaluator→SNS fan-out→SQS `ReceiveMessage` path with adversarial alarm fields.
+The production fix for issue #734 landed earlier in PR #737: `simulators/aws/sns.go` builds the CloudWatch→SNS→SQS notification envelope with `json.Marshal` and includes `Timestamp`. The open issue remained because the regression coverage was a narrow unit test, so PR #739 (`fix/aws-cloudwatch-sns-sqs-body-734`) added end-to-end coverage that exercises the real evaluator→SNS fan-out→SQS `ReceiveMessage` path with adversarial alarm fields.
 
 **Unit-level lock.** `simulators/aws/sns_envelope_test.go` gained `TestSNSNotificationEnvelopeQuotesAndBackslashes`, which feeds an alarm payload containing quotes, newlines, and backslashes through `snsNotificationEnvelope` and asserts both the outer envelope and the embedded `Message` string parse as JSON and round-trip exactly.
 
