@@ -12,10 +12,15 @@ import { OrgReposPage } from "./pages/OrgReposPage.js";
 import { RepoDetailPage } from "./pages/RepoDetailPage.js";
 import { IssuesPage } from "./pages/IssuesPage.js";
 import { PullsPage } from "./pages/PullsPage.js";
+import { DiscussionsPage } from "./pages/DiscussionsPage.js";
 import { ActionsPage } from "./pages/ActionsPage.js";
 import { RunDetailPage } from "./pages/RunDetailPage.js";
 import { RepoSettingsPage } from "./pages/RepoSettingsPage.js";
 import { BranchProtectionPage } from "./pages/BranchProtectionPage.js";
+import { SecretScanningPage } from "./pages/SecretScanningPage.js";
+import { CodeScanningPage } from "./pages/CodeScanningPage.js";
+import { DependabotPage } from "./pages/DependabotPage.js";
+import { ProjectsClassicPage } from "./pages/ProjectsClassicPage.js";
 import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
 import { AppsPage } from "./pages/AppsPage.js";
@@ -26,6 +31,9 @@ import { TeamsPage } from "./pages/TeamsPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
 import { StorageHealthPage } from "./pages/StorageHealthPage.js";
 import { GistsPage } from "./pages/GistsPage.js";
+import { MigrationsPage } from "./pages/MigrationsPage.js";
+import { CodespacesPage } from "./pages/CodespacesPage.js";
+import { PackagesPage } from "./pages/PackagesPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -58,15 +66,27 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
+              <Route path="/ui/repos/:owner/:repo/discussions" element={<DiscussionsPage />} />
+              <Route path="/ui/repos/:owner/:repo/discussions/:number" element={<DiscussionsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions" element={<ActionsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions/runs/:runId" element={<RunDetailPage />} />
               <Route path="/ui/repos/:owner/:repo/settings" element={<RepoSettingsPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/branch-protection" element={<BranchProtectionPage />} />
+              <Route path="/ui/repos/:owner/:repo/security/secret-scanning" element={<SecretScanningPage />} />
+              <Route path="/ui/repos/:owner/:repo/security/code-scanning" element={<CodeScanningPage />} />
+              <Route path="/ui/repos/:owner/:repo/security/dependabot" element={<DependabotPage />} />
+              <Route path="/ui/repos/:owner/:repo/projects-classic" element={<ProjectsClassicPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
+              <Route path="/ui/packages" element={<PackagesPage />} />
+              <Route path="/ui/orgs/:org/packages" element={<PackagesPage />} />
+              <Route path="/ui/repos/:owner/:repo/packages" element={<PackagesPage />} />
+              <Route path="/ui/migrations" element={<MigrationsPage />} />
+              <Route path="/ui/codespaces" element={<CodespacesPage />} />
+              <Route path="/ui/repos/:owner/:repo/codespaces" element={<CodespacesPage />} />
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />
               <Route path="/ui/admin/teams" element={<TeamsPage />} />

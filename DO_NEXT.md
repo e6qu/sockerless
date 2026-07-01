@@ -4,7 +4,35 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-(none — PR #743 is open and awaits review/merge)
+PR #747 — `feat/bleephub-api-ui-parity-continuation` — pushed; closes the remaining bleephub API/UI parity gaps and awaits merge.
+
+---
+### Active branch: bleephub API/UI parity continuation
+
+Scope:
+- Projects classic (v1) REST API + UI (`bleephub/gh_projects_classic.go`, `ProjectsClassicPage.tsx`).
+- Secret scanning REST API + UI (`bleephub/gh_secret_scanning.go`, `SecretScanningPage.tsx`).
+- Code scanning REST API + UI (`bleephub/gh_code_scanning.go`, `CodeScanningPage.tsx`).
+- Dependabot alerts and secrets REST API + UI (`bleephub/gh_dependabot.go`, `DependabotPage.tsx`).
+- Migrations REST API + UI (`bleephub/gh_migrations.go`, `MigrationsPage.tsx`).
+- Codespaces REST API + UI with real Docker-backed containers (`bleephub/gh_codespaces.go`, `CodespacesPage.tsx`).
+- Packages REST management API + UI with real file storage (`bleephub/gh_packages.go`, `PackagesPage.tsx`).
+- Discussions GraphQL API + UI (`bleephub/gh_discussions_graphql.go`, `DiscussionsPage.tsx`).
+- AGENTS.md continuity-only PR rule strengthened.
+- Boyscout: bumped Go module deps to latest to satisfy dependency freshness gate.
+
+Validation:
+- `go test ./bleephub -count=1` passes; OpenAPI shape ratchet reports no new violations.
+- `make bleephub/lint` passes.
+- `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass (104/104).
+- `bash scripts/check-latest-deps.sh` reports 0 drifts.
+
+**Next:** PR is open and awaits review/merge. After merge, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (pushed, superseded by PR #744): bleephub API/UI parity continuation
+
+Earlier increments on the same branch landed Projects classic, secret scanning, code scanning, Dependabot, Migrations, Codespaces, Packages, and Discussions. They are now part of PR #744.
 
 ---
 ### Prior branch (merged #743): bleephub branch protection rules API + UI

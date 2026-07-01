@@ -16,3 +16,52 @@ GET /meta -> 200	unknown-field	$.installed_version
 # (/user/{user_id}) and reports a top-level type mismatch. The response is
 # intentionally an array of repository objects.
 GET /user/{} -> 200	type-mismatch	$
+
+# GHES Migration responses include html_url and exported_at, which are not in
+# the vendored dotcom /user/migrations or /orgs/{org}/migrations schemas.
+GET /user/migrations/{} -> 200	unknown-field	$.html_url
+GET /user/migrations/{} -> 200	unknown-field	$.exported_at
+POST /user/migrations -> 201	unknown-field	$.html_url
+POST /user/migrations -> 201	unknown-field	$.exported_at
+GET /orgs/{}/migrations -> 200	unknown-field	$[].html_url
+GET /orgs/{}/migrations -> 200	unknown-field	$[].exported_at
+GET /orgs/{}/migrations/{} -> 200	unknown-field	$.html_url
+GET /orgs/{}/migrations/{} -> 200	unknown-field	$.exported_at
+POST /orgs/{}/migrations -> 201	unknown-field	$.html_url
+POST /orgs/{}/migrations -> 201	unknown-field	$.exported_at
+GET /repos/{}/{}/codespaces -> 200	unknown-field	$.codespaces[].html_url
+GET /repos/{}/{}/codespaces -> 200	unknown-field	$.codespaces[].billing_url
+GET /user/codespaces -> 200	unknown-field	$.codespaces[].html_url
+GET /user/codespaces -> 200	unknown-field	$.codespaces[].billing_url
+POST /user/codespaces -> 201	unknown-field	$.html_url
+POST /user/codespaces -> 201	unknown-field	$.billing_url
+GET /user/codespaces/{} -> 200	unknown-field	$.html_url
+GET /user/codespaces/{} -> 200	unknown-field	$.billing_url
+PATCH /user/codespaces/{} -> 200	unknown-field	$.html_url
+PATCH /user/codespaces/{} -> 200	unknown-field	$.billing_url
+POST /user/codespaces/{}/start -> 202	unknown-field	$.html_url
+POST /user/codespaces/{}/start -> 202	unknown-field	$.billing_url
+POST /user/codespaces/{}/stop -> 202	unknown-field	$.html_url
+POST /user/codespaces/{}/stop -> 202	unknown-field	$.billing_url
+GET /repos/{}/{}/codespaces -> 200	unknown-field	$[].html_url
+GET /repos/{}/{}/codespaces -> 200	unknown-field	$[].billing_url
+POST /repos/{}/{}/codespaces -> 201	unknown-field	$.html_url
+POST /repos/{}/{}/codespaces -> 201	unknown-field	$.billing_url
+GET /repos/{}/{}/codespaces/{} -> 200	unknown-field	$.html_url
+GET /repos/{}/{}/codespaces/{} -> 200	unknown-field	$.billing_url
+POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.html_url
+POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.billing_url
+POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.html_url
+POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.billing_url
+
+# GitHub Packages responses include node_id, which the vendored dotcom
+# OpenAPI description omits even though real GitHub emits it for every
+# package and package version.
+GET /users/{}/packages -> 200	unknown-field	$[].node_id
+GET /users/{}/packages/{}/{} -> 200	unknown-field	$.node_id
+GET /users/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
+GET /users/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id
+GET /orgs/{}/packages -> 200	unknown-field	$[].node_id
+GET /orgs/{}/packages/{}/{} -> 200	unknown-field	$.node_id
+GET /orgs/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
+GET /orgs/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id

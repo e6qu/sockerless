@@ -105,6 +105,9 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		maxConcurrentWorkflows: maxWF,
 		externalURL:            strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"),
 	}
+	if dataDir != "" {
+		s.store.PackageDataDir = dataDir
+	}
 
 	// Wire persistence. PostgreSQL takes priority via BLEEPHUB_DATABASE_URL;
 	// otherwise BLEEPHUB_PERSIST=true enables SQLite. Both fail-loud on open failure.
@@ -206,8 +209,29 @@ func (s *Server) registerRoutes() {
 	// Repository Rulesets API (gh_rulesets.go)
 	s.registerGHRulesetRoutes()
 
+	// Secret scanning API (gh_secret_scanning.go)
+	s.registerGHSecretScanningRoutes()
+
+	// Code scanning API (gh_code_scanning.go)
+	s.registerGHCodeScanningRoutes()
+
+	// Dependabot API (gh_dependabot.go)
+	s.registerGHDependabotRoutes()
+
 	// Branch protection API (gh_branch_protection.go)
 	s.registerGHBranchProtectionRoutes()
+
+	// Projects classic (v1) API (gh_projects_classic.go)
+	s.registerGHProjectsClassicRoutes()
+
+	// Migrations API (gh_migrations.go)
+	s.registerGHMigrationsRoutes()
+
+	// Packages API (gh_packages.go)
+	s.registerGHPackagesRoutes()
+
+	// Codespaces API (gh_codespaces.go)
+	s.registerGHCodespacesRoutes()
 
 	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
 	s.registerGHActionsExtrasRoutes()

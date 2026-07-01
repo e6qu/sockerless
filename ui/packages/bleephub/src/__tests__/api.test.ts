@@ -10,6 +10,14 @@ import {
   dispatchWorkflow,
   setToken,
   clearToken,
+  fetchUserCodespaces,
+  fetchRepoCodespaces,
+  fetchCodespaceMachines,
+  createUserCodespace,
+  createRepoCodespace,
+  startCodespace,
+  stopCodespace,
+  deleteCodespace,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -134,5 +142,104 @@ describe("api auth headers", () => {
     expect(mockFetch).toHaveBeenCalledTimes(1);
     const [, opts] = mockFetch.mock.calls[0];
     expect((opts.headers as Record<string, string>).Authorization).toBe("Bearer ghp_testtoken");
+  });
+});
+
+// ─── GitHub Codespaces REST ─────────────────────────────────────────────
+
+describe("Codespaces API helpers", () => {
+  const machine = {
+    name: "basicLinux32",
+    display_name: "Basic Linux",
+    operating_system: "linux",
+    storage_in_bytes: 34359738368,
+    memory_in_bytes: 4294967296,
+    cpus: 2,
+    prebuild_availability: "none",
+  };
+
+  const codespace = {
+    id: 1,
+    name: "crimson-spoon-abc123",
+    display_name: "my codespace",
+    environment_id: "abc",
+    owner: { login: "admin", type: "User" },
+    billable_owner: { login: "admin", type: "User" },
+    repository: { id: 10, full_name: "admin/test", name: "test", owner: { login: "admin", type: "User" } },
+    machine,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    last_used_at: "2026-01-01T00:00:00Z",
+    state: "Available",
+    url: "/api/v3/user/codespaces/crimson-spoon-abc123",
+    html_url: "/ui/codespaces/crimson-spoon-abc123",
+    web_url: "http://x",
+    billing_url: "http://x/billing",
+    git_status: { ahead: 0, behind: 0, has_uncommitted_changes: false, ref: "main" },
+    devcontainer_path: ".devcontainer/devcontainer.json",
+    image: "mcr.microsoft.com/devcontainers/base",
+    retention_period_minutes: 10080,
+  };
+
+  it("fetchUserCodespaces unwraps the codespaces envelope", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ total_count: 1, codespaces: [codespace] }));
+    const page = await fetchUserCodespaces();
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].name).toBe("crimson-spoon-abc123");
+  });
+
+  it("fetchRepoCodespaces hits the repo-scoped endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ total_count: 1, codespaces: [codespace] }));
+    await fetchRepoCodespaces("admin", "test");
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/admin/test/codespaces");
+  });
+
+  it("fetchCodespaceMachines unwraps the machines envelope", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ total_count: 1, machines: [machine] }));
+    const page = await fetchCodespaceMachines("admin", "test");
+    expect(page.items).toHaveLength(1);
+    expect(page.items[0].name).toBe("basicLinux32");
+  });
+
+  it("createUserCodespace sends repository_id and display_name", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(codespace, 201));
+    await createUserCodespace({ repository_id: 10, machine: "basicLinux32", display_name: "New space" });
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/user/codespaces");
+    expect(opts.method).toBe("POST");
+    const body = JSON.parse(opts.body as string);
+    expect(body.repository_id).toBe(10);
+    expect(body.display_name).toBe("New space");
+    expect(body.machine).toBe("basicLinux32");
+  });
+
+  it("createRepoCodespace hits the repo-scoped endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(codespace, 201));
+    await createRepoCodespace("admin", "test", { machine: "basicLinux32" });
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/admin/test/codespaces");
+  });
+
+  it("startCodespace POSTs to the start subresource", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(codespace));
+    await startCodespace("crimson-spoon-abc123");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/user/codespaces/crimson-spoon-abc123/start");
+    expect(opts.method).toBe("POST");
+  });
+
+  it("stopCodespace POSTs to the stop subresource", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(codespace));
+    await stopCodespace("crimson-spoon-abc123");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/user/codespaces/crimson-spoon-abc123/stop");
+    expect(opts.method).toBe("POST");
+  });
+
+  it("deleteCodespace DELETEs the named codespace", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await deleteCodespace("crimson-spoon-abc123");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/user/codespaces/crimson-spoon-abc123");
+    expect(opts.method).toBe("DELETE");
   });
 });

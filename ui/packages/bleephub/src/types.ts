@@ -110,6 +110,7 @@ export interface RepoListFilters {
 /** Repo represents a GitHub repository. */
 export interface BleephubRepo {
   id: number;
+  node_id: string;
   name: string;
   full_name: string;
   description: string;
@@ -636,6 +637,42 @@ export interface GithubRelease {
   html_url: string;
 }
 
+export type GithubMigrationState = "pending" | "exporting" | "exported" | "failed";
+
+/** Request body for POST /user/migrations and /orgs/{org}/migrations. */
+export interface GithubMigrationStartPayload {
+  repositories: string[];
+  lock_repositories?: boolean;
+  exclude_metadata?: boolean;
+  exclude_git_data?: boolean;
+  exclude_attachments?: boolean;
+  exclude_releases?: boolean;
+  exclude_owner_projects?: boolean;
+  org_metadata_only?: boolean;
+}
+
+/** GitHub migration export object (Migrations REST API). */
+export interface GithubMigration {
+  id: number;
+  node_id: string;
+  guid: string;
+  state: GithubMigrationState;
+  repositories: BleephubRepo[];
+  lock_repositories: boolean;
+  exclude_metadata: boolean;
+  exclude_git_data: boolean;
+  exclude_attachments: boolean;
+  exclude_releases: boolean;
+  exclude_owner_projects: boolean;
+  org_metadata_only: boolean;
+  url: string;
+  html_url: string;
+  archive_url: string;
+  created_at: string;
+  updated_at: string;
+  exported_at: string;
+}
+
 export interface BleephubUser {
   id: number;
   login: string;
@@ -691,4 +728,392 @@ export interface BleephubGist {
   html_url?: string;
   created_at: string;
   updated_at: string;
+}
+
+// ─── GitHub Discussions GraphQL shapes ──────────────────────────────────
+
+export interface GithubDiscussionCategory {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  isAnswerable: boolean;
+}
+
+export interface GithubDiscussionAuthor {
+  login: string;
+  avatarUrl?: string;
+}
+
+export interface GithubDiscussion {
+  id: string;
+  number: number;
+  title: string;
+  body: string;
+  bodyHTML: string;
+  bodyText: string;
+  author: GithubDiscussionAuthor | null;
+  category: GithubDiscussionCategory;
+  createdAt: string;
+  updatedAt: string;
+  comments: { totalCount: number };
+}
+
+export interface GithubDiscussionComment {
+  id: string;
+  databaseId: number;
+  author: GithubDiscussionAuthor | null;
+  body: string;
+  bodyHTML: string;
+  createdAt: string;
+  updatedAt: string;
+  isAnswer: boolean;
+  replies: { nodes: GithubDiscussionComment[] };
+}
+
+export interface GithubDiscussionConnection {
+  nodes: GithubDiscussion[];
+  totalCount: number;
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
+}
+
+export interface GithubDiscussionCategoryConnection {
+  nodes: GithubDiscussionCategory[];
+  totalCount: number;
+}
+
+export interface GithubDiscussionCommentConnection {
+  nodes: GithubDiscussionComment[];
+  totalCount: number;
+}
+
+
+export interface GithubProjectClassic {
+  id: number;
+  node_id: string;
+  name: string;
+  body: string;
+  state: "open" | "closed";
+  number: number;
+  creator: { login: string; avatar_url?: string } | null;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  html_url: string;
+  columns_url: string;
+}
+
+export interface GithubProjectColumn {
+  id: number;
+  node_id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  project_url: string;
+  cards_url: string;
+}
+
+export interface GithubProjectCard {
+  id: number;
+  node_id: string;
+  note: string | null;
+  creator: { login: string; avatar_url?: string } | null;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  column_url: string;
+  project_url: string;
+  content_url: string | null;
+}
+
+export interface GithubSecretScanningLocationDetails {
+  path: string;
+  start_line: number;
+  end_line: number;
+  start_column: number;
+  end_column: number;
+  blob_sha: string;
+  blob_url: string;
+  commit_sha: string;
+  commit_url: string;
+  html_url: string;
+}
+
+export interface GithubSecretScanningLocation {
+  type: "commit";
+  details: GithubSecretScanningLocationDetails;
+}
+
+export interface GithubSecretScanningAlert {
+  number: number;
+  state: "open" | "resolved";
+  resolution: string | null;
+  secret_type: string;
+  secret_type_display_name: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  url: string;
+  html_url: string;
+  locations_url: string;
+}
+
+export type GithubSecretScanningResolution =
+  | "false_positive"
+  | "wont_fix"
+  | "revoked"
+  | "used_in_tests"
+  | "pattern_deleted"
+  | "pattern_edited";
+
+// ─── GitHub Code Scanning shapes ────────────────────────────────────────
+
+export type GithubCodeScanningAlertState = "open" | "dismissed" | "fixed";
+
+export type GithubCodeScanningDismissedReason =
+  | "false_positive"
+  | "won't_fix"
+  | "used_in_tests"
+  | "ignored";
+
+export interface GithubCodeScanningAlertLocation {
+  path: string;
+  start_line: number;
+  end_line: number;
+  start_column: number;
+  end_column: number;
+}
+
+export interface GithubCodeScanningAlertInstance {
+  ref: string;
+  analysis_key: string;
+  category: string;
+  state: GithubCodeScanningAlertState;
+  commit_sha: string;
+  message: { text: string };
+  location: GithubCodeScanningAlertLocation;
+}
+
+export interface GithubCodeScanningAlert {
+  number: number;
+  state: GithubCodeScanningAlertState;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  html_url: string;
+  instances_url: string;
+  fixed_at: string | null;
+  dismissed_at: string | null;
+  dismissed_reason: GithubCodeScanningDismissedReason | null;
+  dismissed_comment: string | null;
+  rule: {
+    id: string;
+    severity: string | null;
+    description: string | null;
+    name: string;
+  };
+  tool: { name: string | null };
+  most_recent_instance: GithubCodeScanningAlertInstance | null;
+}
+
+export interface GithubCodeScanningAnalysis {
+  id: number;
+  ref: string;
+  commit_sha: string;
+  analysis_key: string;
+  environment: string;
+  category: string;
+  error: string;
+  created_at: string;
+  results_count: number;
+  rules_count: number;
+  url: string;
+  sarif_id: string;
+  tool: { name: string | null };
+  deletable: boolean;
+  warning: string;
+}
+
+export interface GithubCodeScanningSARIFUpload {
+  id: string;
+  url: string;
+}
+
+export interface GithubCodeScanningSARIFStatus {
+  processing_status: "pending" | "complete" | "failed";
+  analyses_url: string | null;
+  errors: string[] | null;
+}
+
+// ─── GitHub Dependabot shapes ───────────────────────────────────────────
+
+export type GithubDependabotAlertState = "open" | "dismissed" | "fixed" | "auto_dismissed";
+
+export type GithubDependabotDismissedReason =
+  | "fix_started"
+  | "inaccurate"
+  | "no_bandwidth"
+  | "not_used"
+  | "tolerable_risk";
+
+export interface GithubDependabotAlertPackage {
+  ecosystem: string;
+  name: string;
+}
+
+export interface GithubDependabotAlert {
+  number: number;
+  state: GithubDependabotAlertState;
+  dependency: {
+    package: GithubDependabotAlertPackage;
+    manifest_path: string;
+  };
+  security_advisory: {
+    ghsa_id: string;
+    cve_id: string | null;
+    summary: string;
+    description: string;
+    severity: string;
+  };
+  security_vulnerability: {
+    package: GithubDependabotAlertPackage;
+    severity: string;
+    vulnerable_version_range: string;
+    first_patched_version: { identifier: string } | null;
+  };
+  url: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  dismissed_at: string | null;
+  dismissed_by: { login: string } | null;
+  dismissed_reason: GithubDependabotDismissedReason | null;
+  dismissed_comment: string | null;
+  fixed_at: string | null;
+  auto_dismissed_at: string | null;
+}
+
+export interface GithubDependabotSecret {
+  name: string;
+  created_at: string;
+  updated_at: string;
+  visibility?: GithubOrgVisibility;
+}
+
+// ─── GitHub Codespaces shapes ───────────────────────────────────────────
+
+export type GithubCodespaceState =
+  | "Available"
+  | "Shutdown"
+  | "Creating"
+  | "Unavailable";
+
+export interface GithubCodespaceMachine {
+  name: string;
+  display_name: string;
+  operating_system: string;
+  storage_in_bytes: number;
+  memory_in_bytes: number;
+  cpus: number;
+  prebuild_availability: string;
+}
+
+export interface GithubCodespace {
+  id: number;
+  name: string;
+  display_name: string;
+  environment_id: string;
+  owner: { login: string; type: string; avatar_url?: string } | null;
+  billable_owner: { login: string; type: string; avatar_url?: string } | null;
+  repository: { id: number; full_name: string; name: string; owner: { login: string; type: string } } | null;
+  machine: GithubCodespaceMachine;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string;
+  state: GithubCodespaceState;
+  url: string;
+  html_url: string;
+  web_url: string;
+  billing_url: string;
+  git_status: { ahead: number; behind: number; has_uncommitted_changes: boolean; ref: string };
+  devcontainer_path: string;
+  image: string;
+  retention_period_minutes: number;
+}
+
+export interface GithubCodespaceSecret {
+  name: string;
+  key: string;
+  created_at: string;
+  updated_at: string;
+  visibility?: GithubOrgVisibility;
+}
+
+export interface CodespaceCreatePayload {
+  repository_id?: number;
+  ref?: string;
+  machine?: string;
+  display_name?: string;
+  location?: string;
+}
+
+// ─── GitHub Packages REST shapes ────────────────────────────────────────
+
+export type GithubPackageType = "npm" | "maven" | "rubygems" | "nuget" | "docker" | "container";
+export type GithubPackageVisibility = "public" | "private" | "internal";
+
+export interface GithubPackage {
+  id: number;
+  node_id: string;
+  name: string;
+  package_type: GithubPackageType;
+  visibility: GithubPackageVisibility;
+  url: string;
+  html_url: string;
+  version_count: number;
+  created_at: string;
+  updated_at: string;
+  owner: { login: string; type: string; avatar_url?: string } | null;
+  repository: BleephubRepo | null;
+}
+
+export interface GithubPackageVersion {
+  id: number;
+  node_id: string;
+  name: string;
+  url: string;
+  package_html_url: string;
+  html_url: string;
+  license: string | null;
+  description: string;
+  created_at: string;
+  updated_at: string;
+  deleted_at?: string;
+  metadata: {
+    package_type: GithubPackageType;
+    container?: { tags: string[] };
+    docker?: { tag: string[] };
+  };
+}
+
+export interface GithubPackageFile {
+  id: number;
+  node_id: string;
+  name: string;
+  content_type: string;
+  size: number;
+  url: string;
+  html_url: string;
+  download_url: string;
+}
+
+export interface GithubPackageVersionCreatePayload {
+  version: string;
+  description?: string;
+  metadata?: GithubPackageVersion["metadata"];
+  files: { name: string; content_type: string; content_base64: string }[];
 }

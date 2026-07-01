@@ -124,6 +124,8 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 	st.ReposByName[fullName] = repo
 	st.GitStorages[fullName] = stor
 
+	st.ensureDefaultDiscussionCategoriesLocked(repo.ID)
+
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
@@ -241,6 +243,8 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 	st.ReposByName[fullName] = repo
 	st.GitStorages[fullName] = stor
 
+	st.ensureDefaultDiscussionCategoriesLocked(repo.ID)
+
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
@@ -322,6 +326,20 @@ func (st *Store) RenameRepo(owner, name, newName string) bool {
 		st.CheckSuitePrefs[newFull] = v
 		delete(st.CheckSuitePrefs, oldFull)
 	}
+	if v := st.SecretScanningAlertsByRepo[oldFull]; v != nil {
+		st.SecretScanningAlertsByRepo[newFull] = v
+		for _, alert := range v {
+			alert.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("secret_scanning_alerts", strconv.Itoa(alert.ID), alert)
+			}
+		}
+		delete(st.SecretScanningAlertsByRepo, oldFull)
+	}
+	if v := st.SecretScanningNextNumber[oldFull]; v != 0 {
+		st.SecretScanningNextNumber[newFull] = v
+		delete(st.SecretScanningNextNumber, oldFull)
+	}
 
 	// Environment-scoped secrets/variables keyed "repo\x1fenv".
 	for k, v := range st.EnvSecrets {
@@ -400,10 +418,21 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.Hooks, fullName)
 	delete(st.RepoSecrets, fullName)
 	delete(st.CheckSuitePrefs, fullName)
+	for id, alert := range st.SecretScanningAlerts {
+		if alert.RepoKey == fullName {
+			delete(st.SecretScanningAlerts, id)
+			if st.persist != nil {
+				st.persist.MustDelete("secret_scanning_alerts", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.SecretScanningAlertsByRepo, fullName)
+	delete(st.SecretScanningNextNumber, fullName)
 	if st.persist != nil {
 		st.persist.MustDelete("hooks", fullName)
 		st.persist.MustDelete("repo_secrets", fullName)
 		st.persist.MustDelete("check_suite_prefs", fullName)
+		st.persist.MustDelete("secret_scanning_alerts", fullName)
 	}
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
@@ -422,6 +451,32 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	st.Releases.DeleteAllForRepo(repo.ID)
+
+	// Discussion surfaces — comments first because they reference discussions.
+	for id, c := range st.DiscussionComments {
+		if d := st.Discussions[c.DiscussionID]; d != nil && d.RepoID == repo.ID {
+			delete(st.DiscussionComments, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussion_comments", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, d := range st.Discussions {
+		if d.RepoID == repo.ID {
+			delete(st.Discussions, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussions", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, cat := range st.DiscussionCategories {
+		if cat.RepoID == repo.ID {
+			delete(st.DiscussionCategories, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussion_categories", strconv.Itoa(id))
+			}
+		}
+	}
 
 	// Misc surfaces: branch protection is keyed "repoID:branch", pages
 	// builds by "owner/name".

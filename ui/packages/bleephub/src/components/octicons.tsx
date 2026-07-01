@@ -406,3 +406,68 @@ export function GistIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function ProjectIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+      <path d="M6 2.5v11M10 2.5v11" />
+    </Svg>
+  );
+}
+
+export function MigrationIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2.5" y="2.5" width="11" height="11" rx="1" />
+      <path d="M5 8h6M8 5v6" />
+      <path d="M12.5 3.5l-2-2M12.5 3.5v-2h-2" />
+    </Svg>
+  );
+}
+
+export function TrashIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3 4.5h10M5.5 4.5V3a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1.5" />
+      <path d="M6 6.5v7M10 6.5v7M4.5 13.5h7" />
+    </Svg>
+  );
+}
+
+export function SquareIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="3.5" y="3.5" width="9" height="9" rx="1" />
+    </Svg>
+  );
+}
+
+export function PackageIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8.5 1.5 14 4.75v6.5L8.5 14.5l-5.5-3.25v-6.5L8.5 1.5z" />
+      <path d="M3 4.75 8.5 8 14 4.75" />
+      <path d="M8.5 8v6.5" />
+    </Svg>
+  );
+}
+
+export function DiscussionIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 3.5h11v7h-7l-3.5 3v-3h-0.5z" />
+      <path d="M5.5 6.5h5M5.5 9h3" />
+    </Svg>
+  );
+}
+
+export function CodespaceIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="2" y="3" width="12" height="10" rx="1.5" />
+      <path d="M5 7h6M5 10h4" />
+      <circle cx="11" cy="10" r="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}

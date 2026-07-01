@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { NavLink, Link } from "react-router";
+import { NavLink, Link, useLocation } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import {
   Mark,
@@ -17,6 +17,12 @@ import {
   AuditLogIcon,
   ServerIcon,
   GistIcon,
+  ProjectIcon,
+  LockIcon,
+  MigrationIcon,
+  CodespaceIcon,
+  PackageIcon,
+  DiscussionIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -31,6 +37,9 @@ const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
   { label: "Repos", to: "/ui/repos" },
   { label: "Gists", to: "/ui/gists" },
+  { label: "Packages", to: "/ui/packages" },
+  { label: "Migrations", to: "/ui/migrations" },
+  { label: "Codespaces", to: "/ui/codespaces" },
   { label: "Runners", to: "/ui/runners" },
   { label: "Apps", to: "/ui/apps" },
   { label: "OAuth", to: "/ui/oauth" },
@@ -53,6 +62,12 @@ function navIcon(label: string) {
       return <RepoIcon size={14} />;
     case "Gists":
       return <GistIcon size={14} />;
+    case "Packages":
+      return <PackageIcon size={14} />;
+    case "Migrations":
+      return <MigrationIcon size={14} />;
+    case "Codespaces":
+      return <CodespaceIcon size={14} />;
     case "Runners":
       return null;
     case "Apps":
@@ -200,7 +215,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
 
 // ─── Repo context header + tabs ────────────────────────────────────────
 
-export type RepoTab = "code" | "issues" | "pulls" | "actions" | "settings";
+export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "discussions" | "security" | "settings";
 
 /**
  * Repo context bar: "owner / repo" breadcrumb above the GitHub-style tab
@@ -222,6 +237,8 @@ export function RepoHeader({
   prCount?: number | string;
 }) {
   const base = `/ui/repos/${owner}/${repo}`;
+  const location = useLocation();
+  const onSecurity = active === "security" || location.pathname.startsWith(`${base}/security/`);
   return (
     <div className="mb-5">
       <div className="mb-3 flex items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
@@ -255,10 +272,28 @@ export function RepoHeader({
           active={active === "pulls"}
         />
         <RepoTabLink
+          to={`${base}/discussions`}
+          icon={<DiscussionIcon size={15} />}
+          label="Discussions"
+          active={active === "discussions"}
+        />
+        <RepoTabLink
           to={`${base}/actions`}
           icon={<PlayIcon size={15} />}
           label="Actions"
           active={active === "actions"}
+        />
+        <RepoTabLink
+          to={`${base}/projects-classic`}
+          icon={<ProjectIcon size={15} />}
+          label="Projects"
+          active={active === "projects-classic"}
+        />
+        <RepoTabLink
+          to={`${base}/security/secret-scanning`}
+          icon={<LockIcon size={15} />}
+          label="Security"
+          active={onSecurity}
         />
         <RepoTabLink
           to={`${base}/settings`}
@@ -267,6 +302,29 @@ export function RepoHeader({
           active={active === "settings"}
         />
       </nav>
+      {onSecurity && (
+        <nav
+          aria-label="Security"
+          className="mt-2 flex flex-wrap items-center gap-2"
+          style={{ fontSize: "0.85rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}
+        >
+          <RepoTabLink
+            to={`${base}/security/secret-scanning`}
+            label="Secret scanning"
+            active={location.pathname === `${base}/security/secret-scanning`}
+          />
+          <RepoTabLink
+            to={`${base}/security/code-scanning`}
+            label="Code scanning"
+            active={location.pathname === `${base}/security/code-scanning`}
+          />
+          <RepoTabLink
+            to={`${base}/security/dependabot`}
+            label="Dependabot"
+            active={location.pathname === `${base}/security/dependabot`}
+          />
+        </nav>
+      )}
     </div>
   );
 }
@@ -279,7 +337,7 @@ function RepoTabLink({
   active,
 }: {
   to: string;
-  icon: ReactNode;
+  icon?: ReactNode;
   label: string;
   count?: number | string;
   active: boolean;
@@ -300,7 +358,7 @@ function RepoTabLink({
         textDecoration: "none",
       }}
     >
-      <span style={{ color: active ? "var(--color-fg-muted)" : "var(--color-fg-subtle)" }}>{icon}</span>
+      {icon && <span style={{ color: active ? "var(--color-fg-muted)" : "var(--color-fg-subtle)" }}>{icon}</span>}
       {label}
       {count != null && <Counter>{count}</Counter>}
     </Link>

@@ -4,6 +4,32 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - bleephub remaining API/UI parity continuation (PR #747)
+
+A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the remaining bleephub API/UI gaps called out in `DO_NEXT.md`.
+
+**Projects classic (v1).** `bleephub/gh_projects_classic.go` and `bleephub/store_projects_classic.go` add the full repo-scoped Projects classic REST API: projects, columns, and cards with `first`/`last`/`after:<id>` moves; note cards and issue-linked cards; canonical GitHub response shapes.
+
+**Secret scanning.** `bleephub/gh_secret_scanning.go` and `bleephub/store_secret_scanning.go` add repo-scoped secret scanning alerts, bulk update, and locations, with internal seeding for tests.
+
+**Code scanning.** `bleephub/gh_code_scanning.go` and `bleephub/store_code_scanning.go` add alerts, alert instances, analyses, SARIF upload/status, and default-setup configuration. SARIF ingestion extracts real results and creates alerts and instances.
+
+**Dependabot.** `bleephub/gh_dependabot.go` and `bleephub/store_dependabot.go` add Dependabot alerts (list/get/patch) and Dependabot secrets for repos and orgs, including public-key endpoints and selected-repository visibility.
+
+**Migrations.** `bleephub/gh_migrations.go` and `bleephub/store_migrations.go` add user and organization migrations with real `tar.gz` archive generation, archive deletion, and repository unlock endpoints.
+
+**Codespaces.** `bleephub/gh_codespaces.go` and `bleephub/store_codespaces.go` add user/repo/org Codespaces REST API with real Docker-backed containers. Create reads `.devcontainer/devcontainer.json` or falls back to a default image, runs a container, and tracks its ID; start/stop/delete manage the real container lifecycle. Also adds user/repo/org Codespaces secrets and machine-type listing.
+
+**Packages.** `bleephub/gh_packages.go` and `bleephub/store_packages.go` add the GitHub Packages REST management API for user/org/repo-scoped packages and versions, with real package file bytes stored on disk and an internal upload endpoint for tests/UI.
+
+**Discussions GraphQL.** `bleephub/gh_discussions_graphql.go` and `bleephub/store_discussions.go` add `Repository.discussions`, `Repository.discussionCategories`, Discussion, DiscussionCategory, and DiscussionComment GraphQL types and connections, plus mutations for CRUD, comments, replies, and answer marking. Default discussion categories are created for new repos.
+
+**UI.** New pages: `ProjectsClassicPage.tsx`, `SecretScanningPage.tsx`, `CodeScanningPage.tsx`, `DependabotPage.tsx`, `MigrationsPage.tsx`, `CodespacesPage.tsx`, `PackagesPage.tsx`, `DiscussionsPage.tsx`. All are wired into `App.tsx` and the repo navigation in `Shell.tsx`; API helpers and types live in `api.ts` and `types.ts`.
+
+**Boyscout.** Strengthened the continuity-only PR rule in `AGENTS.md` from "Avoid" to "Never" with explicit stop/ask language. Bumped Go module dependencies across `backends/aws-common`, `backends/ecs`, `backends/lambda`, `bleephub`, `bleeplab`, and `simulators/aws/sdk-tests` so the dependency freshness gate stays clean.
+
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` is clean; `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass (104/104); `bash scripts/check-latest-deps.sh` reports 0 drifts; OpenAPI shape ratchet reports no new violations.
+
 ## 2026-07-01 - bleephub branch protection rules API + UI (PR #743)
 
 A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the branch protection surface on bleephub.

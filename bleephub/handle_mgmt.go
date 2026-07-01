@@ -40,6 +40,8 @@ func (s *Server) registerMgmtRoutes() {
 		{"DELETE /internal/teams/{id}", s.handleDeleteTeamInternal},
 		{"GET /internal/audit-log", s.handleListAuditLogInternal},
 		{"POST /internal/audit-log/events", s.handleCreateAuditLogEventInternal},
+		{"POST /internal/packages/{owner_type}/{owner}/{package_type}/{package_name}/versions", s.handleInternalCreatePackageVersion},
+		{"POST /internal/packages/{owner_type}/{owner}/{repo}/{package_type}/{package_name}/versions", s.handleInternalCreatePackageVersion},
 	}
 	for _, r := range routes {
 		s.route(r.pattern, r.handler)
