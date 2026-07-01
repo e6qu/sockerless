@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-(none — PR #743 is open and awaits review/merge)
+(none — PR #743 merged)
 
 ---
 ### Prior branch (merged #743): bleephub branch protection rules API + UI
