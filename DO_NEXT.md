@@ -4,10 +4,25 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-search-notifications-rulesets` — closing the GitHub Search API, Notifications API, and Repository Rulesets API surfaces on bleephub. Open as next PR.
+`fix/aws-cloudwatch-sns-sqs-body-734` — PR #739 — regression-test lock for GitHub issue #734: CloudWatch alarm SNS notifications delivered to SQS must have a parseable JSON body.
 
 ---
-### Active branch: bleephub Search, Notifications, and Repository Rulesets APIs
+### Active branch: CloudWatch→SNS→SQS malformed JSON body (#734)
+
+Scope:
+- The production fix is already in `main` via PR #737 (`simulators/aws/sns.go` builds the notification envelope with `json.Marshal` and includes `Timestamp`).
+- Add regression tests covering the real evaluator → SNS fan-out → SQS `ReceiveMessage` path, including adversarial characters (quotes, newlines, control characters, backslashes) in alarm fields.
+- Close GitHub issue #734.
+
+Validation:
+- `go test ./simulators/aws -count=1` passes.
+- `make -C simulators/aws unit-test` passes.
+- AWS SDK regression test `TestCloudWatch_AlarmActionsDispatchedToSNS` passes and now fails loudly if either the SQS `Body` or embedded SNS `Message` is invalid JSON.
+
+**Next:** PR #739 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #738): bleephub Search, Notifications, and Repository Rulesets APIs
 
 Scope:
 - **Search API** (`bleephub/gh_search.go`):
@@ -60,9 +75,31 @@ Validation:
 - UI `bun --bun run typecheck` and `bun --bun run test` pass.
 - OpenAPI shape ratchet clean for the new endpoints.
 
-**Next:** PR #737 merged; continue with the Search/Notifications/Rulesets branch.
+**Next:** PR #738 merged; continue with the CloudWatch→SNS→SQS body fix (#734).
 
-`feat/bleephub-repo-phase3-tags-and-refs` added repository tags and git refs listing to the bleephub repo API surface.
+---
+### Prior branch (merged #738): bleephub Search, Notifications, and Repository Rulesets APIs
+
+`feat/bleephub-search-notifications-rulesets` closed three public GitHub API surfaces on bleephub.
+
+Scope:
+- **Search API** (`bleephub/gh_search.go`): `GET /api/v3/search/issues`, `GET /api/v3/search/repositories`, `GET /api/v3/search/code`, `GET /api/v3/search/users` with qualifier parsing and git-tree code search.
+- **Notifications API** (`bleephub/gh_notifications.go`, `bleephub/store_notifications.go`): `GET /api/v3/notifications`, repo-scoped list, mark-read, thread fetch/patch, and thread-subscription CRUD with persistent per-user state.
+- **Repository Rulesets API** (`bleephub/gh_rulesets.go`, `bleephub/store_rulesets.go`): ruleset CRUD, branch-rule evaluation, and versioned history.
+- Persistence added `notifications_state` and `repo_rulesets` buckets; routes wired in `bleephub/server.go`; `issueToJSON` updated for `active_lock_reason`.
+- Backend and live-server OpenAPI shape tests added.
+
+Validation:
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` clean.
+- OpenAPI shape ratchet clean for the new endpoints.
+
+**Next:** PR #738 merged; continue with the next task from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #737): bleephub repo API finale + AWS sim open-issue fixes
+
+`feat/bleephub-finale-and-open-issues` closed the remaining bleephub repository API gaps and fixed three open AWS simulator fidelity issues.
 
 Scope:
 - `GET /api/v3/repos/{owner}/{repo}/tags` returning lightweight tag objects (name, commit SHA, zipball/tarball URLs).

@@ -56,7 +56,7 @@ func TestCloudWatch_AlarmActionsDispatchedToSNS(t *testing.T) {
 
 	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
 		AlarmName:          aws.String(alarmName),
-		AlarmDescription:   aws.String("cpu above 50"),
+		AlarmDescription:   aws.String("cpu above 50 \"adversarial\" line1\nline2 \x01"),
 		Namespace:          aws.String(ns),
 		MetricName:         aws.String("CPUUtilization"),
 		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
@@ -109,23 +109,19 @@ func TestCloudWatch_AlarmActionsDispatchedToSNS(t *testing.T) {
 		})
 		require.NoError(t, err)
 		for _, m := range recv.Messages {
+			bodyStr := aws.ToString(m.Body)
 			var env map[string]any
-			if err := json.Unmarshal([]byte(aws.ToString(m.Body)), &env); err != nil {
-				continue
-			}
+			require.NoError(t, json.Unmarshal([]byte(bodyStr), &env), "SQS Body must be valid JSON: %s", bodyStr)
 			if env["Type"] != "Notification" {
 				continue
 			}
 			inner, ok := env["Message"].(string)
-			if !ok {
-				continue
-			}
+			require.True(t, ok, "SNS Message must be a string")
 			var body map[string]any
-			if err := json.Unmarshal([]byte(inner), &body); err == nil {
-				if body["AlarmName"] == alarmName {
-					notification = body
-					break
-				}
+			require.NoError(t, json.Unmarshal([]byte(inner), &body), "embedded SNS Message must be valid JSON: %s", inner)
+			if body["AlarmName"] == alarmName {
+				notification = body
+				break
 			}
 		}
 		if notification != nil {
@@ -141,6 +137,7 @@ func TestCloudWatch_AlarmActionsDispatchedToSNS(t *testing.T) {
 	assert.Equal(t, "123456789012", notification["AWSAccountId"])
 	assert.Contains(t, notification, "Trigger")
 	assert.Equal(t, []any{topicARN}, notification["AlarmActions"])
+	assert.Equal(t, "cpu above 50 \"adversarial\" line1\nline2 \x01", notification["AlarmDescription"])
 }
 
 // TestCloudWatch_OKActionsDispatchedToSNS verifies the OK transition path:

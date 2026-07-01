@@ -39,3 +39,32 @@ func TestSNSNotificationEnvelopeValidJSON(t *testing.T) {
 		t.Error("envelope should include a Timestamp field")
 	}
 }
+
+func TestSNSNotificationEnvelopeQuotesAndBackslashes(t *testing.T) {
+	// Issue #734: a CloudWatch alarm description containing quotes, newlines,
+	// and backslashes must round-trip through the SNS->SQS envelope as valid
+	// JSON at both the outer envelope layer and the inner Message layer.
+	message := `{"AlarmName":"cpu\"alarm","AlarmDescription":"cpu above 50 \"adversarial\" line1\nline2 \\path","Region":"us-east-1"}`
+	subject := `ALARM: "cpu\"alarm" in us-east-1`
+	envelopeStr := snsNotificationEnvelope("arn:aws:sns:us-east-1:123456789012:t", "msg-id", subject, message)
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(envelopeStr), &envelope); err != nil {
+		t.Fatalf("envelope is not valid JSON: %v\nenvelope: %s", err, envelopeStr)
+	}
+	inner, ok := envelope["Message"].(string)
+	if !ok {
+		t.Fatalf("Message should be a string, got %T", envelope["Message"])
+	}
+	var alarm map[string]any
+	if err := json.Unmarshal([]byte(inner), &alarm); err != nil {
+		t.Fatalf("inner Message is not valid JSON: %v\ninner: %s", err, inner)
+	}
+	if alarm["AlarmName"] != `cpu"alarm` {
+		t.Errorf("alarm name did not round-trip: %v", alarm["AlarmName"])
+	}
+	wantDesc := "cpu above 50 \"adversarial\" line1\nline2 \\path"
+	if alarm["AlarmDescription"] != wantDesc {
+		t.Errorf("alarm description did not round-trip: got %q want %q", alarm["AlarmDescription"], wantDesc)
+	}
+}
