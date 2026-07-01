@@ -249,10 +249,18 @@ type Store struct {
 	SecretScanningAlerts       map[int]*SecretScanningAlert
 	SecretScanningAlertsByRepo map[string]map[int]*SecretScanningAlert // repoKey → alertNumber → alert
 	SecretScanningNextNumber   map[string]int                          // repoKey → next alert number
+	CodeScanningAlerts         map[int]*CodeScanningAlert
+	CodeScanningAlertsByRepo   map[string]map[int]*CodeScanningAlert // repoKey → alertNumber → alert
+	CodeScanningNextNumber     map[string]int                        // repoKey → next alert number
+	CodeScanningAnalyses       map[int]*CodeScanningAnalysis
+	CodeScanningAnalysesByRepo map[string]map[int]*CodeScanningAnalysis // repoKey → analysisID → analysis
+	SARIFUploads               map[string]*SARIFUpload                  // uploadID → upload
 	NextGistID                 int
 	NextGistCommentID          int
 	NextAgent                  int
 	NextSecretScanningAlertID  int
+	NextCodeScanningAlertID    int
+	NextCodeScanningAnalysisID int
 	NextMsg                    int64
 	NextLog                    int
 	NextReqID                  int64
@@ -433,7 +441,16 @@ func NewStore() *Store {
 		SecretScanningAlerts:       make(map[int]*SecretScanningAlert),
 		SecretScanningAlertsByRepo: make(map[string]map[int]*SecretScanningAlert),
 		SecretScanningNextNumber:   make(map[string]int),
+		CodeScanningAlerts:         make(map[int]*CodeScanningAlert),
+		CodeScanningAlertsByRepo:   make(map[string]map[int]*CodeScanningAlert),
+		CodeScanningNextNumber:     make(map[string]int),
+		CodeScanningAnalyses:       make(map[int]*CodeScanningAnalysis),
+		CodeScanningAnalysesByRepo: make(map[string]map[int]*CodeScanningAnalysis),
+		SARIFUploads:               make(map[string]*SARIFUpload),
 		NextAgent:                  1,
+		NextSecretScanningAlertID:  1,
+		NextCodeScanningAlertID:    1,
+		NextCodeScanningAnalysisID: 1,
 		NextMsg:                    1,
 		NextLog:                    1,
 		NextReqID:                  1,
@@ -505,7 +522,8 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	project_v2_fields, misc, user_keys, gpg_keys, pages_sites,
 //	pages_builds, branch_protection, audit_log, marketplace_plans,
 //	notifications_state, repo_rulesets, projects_classic, project_columns,
-//	project_cards.
+//	project_cards, secret_scanning_alerts, code_scanning_alerts,
+//	code_scanning_analyses, sarif_uploads.
 //
 // Other state (workflows, sessions, agents, ephemeral codes) deliberately
 // stays in-memory only — operator restart implies abandoning in-flight runs.
@@ -1350,6 +1368,47 @@ func (st *Store) loadFromPersistence() error {
 			if a.ID >= st.NextSecretScanningAlertID {
 				st.NextSecretScanningAlertID = a.ID + 1
 			}
+			return nil
+		}},
+		{"code_scanning_alerts", func(_ string, raw []byte) error {
+			var a CodeScanningAlert
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.CodeScanningAlerts[a.ID] = &a
+			if st.CodeScanningAlertsByRepo[a.RepoKey] == nil {
+				st.CodeScanningAlertsByRepo[a.RepoKey] = make(map[int]*CodeScanningAlert)
+			}
+			st.CodeScanningAlertsByRepo[a.RepoKey][a.Number] = &a
+			if a.Number >= st.CodeScanningNextNumber[a.RepoKey] {
+				st.CodeScanningNextNumber[a.RepoKey] = a.Number + 1
+			}
+			if a.ID >= st.NextCodeScanningAlertID {
+				st.NextCodeScanningAlertID = a.ID + 1
+			}
+			return nil
+		}},
+		{"code_scanning_analyses", func(_ string, raw []byte) error {
+			var a CodeScanningAnalysis
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.CodeScanningAnalyses[a.ID] = &a
+			if st.CodeScanningAnalysesByRepo[a.RepoKey] == nil {
+				st.CodeScanningAnalysesByRepo[a.RepoKey] = make(map[int]*CodeScanningAnalysis)
+			}
+			st.CodeScanningAnalysesByRepo[a.RepoKey][a.ID] = &a
+			if a.ID >= st.NextCodeScanningAnalysisID {
+				st.NextCodeScanningAnalysisID = a.ID + 1
+			}
+			return nil
+		}},
+		{"sarif_uploads", func(key string, raw []byte) error {
+			var up SARIFUpload
+			if err := loadJSON(raw, &up); err != nil {
+				return err
+			}
+			st.SARIFUploads[key] = &up
 			return nil
 		}},
 	} {

@@ -49,6 +49,13 @@ import type {
   GithubSecretScanningAlert,
   GithubSecretScanningLocation,
   GithubSecretScanningResolution,
+  GithubCodeScanningAlert,
+  GithubCodeScanningAlertInstance,
+  GithubCodeScanningAlertState,
+  GithubCodeScanningAnalysis,
+  GithubCodeScanningDismissedReason,
+  GithubCodeScanningSARIFStatus,
+  GithubCodeScanningSARIFUpload,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1030,6 +1037,62 @@ export const updateSecretScanningAlert = (
   number: number,
   body: { state: "open" | "resolved"; resolution?: GithubSecretScanningResolution; resolution_comment?: string },
 ) => ghPatchJSON<GithubSecretScanningAlert>(`/api/v3/repos/${owner}/${repo}/secret-scanning/alerts/${number}`, body);
+
+// ─── Code scanning ──────────────────────────────────────────────────────
+
+export interface CodeScanningFilters {
+  state?: GithubCodeScanningAlertState;
+  severity?: string;
+  tool_name?: string;
+  rule?: string;
+  sort?: "created" | "updated";
+  direction?: "asc" | "desc";
+}
+
+export const fetchCodeScanningAlerts = (
+  owner: string,
+  repo: string,
+  filters: CodeScanningFilters = {},
+): Promise<GithubCodeScanningAlert[]> => {
+  const params = new URLSearchParams();
+  if (filters.state) params.set("state", filters.state);
+  if (filters.severity) params.set("severity", filters.severity);
+  if (filters.tool_name) params.set("tool_name", filters.tool_name);
+  if (filters.rule) params.set("rule", filters.rule);
+  if (filters.sort) params.set("sort", filters.sort);
+  if (filters.direction) params.set("direction", filters.direction);
+  const qs = params.toString();
+  return ghFetch<GithubCodeScanningAlert[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchCodeScanningAlert = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubCodeScanningAlert>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}`);
+
+export const fetchCodeScanningAlertInstances = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubCodeScanningAlertInstance[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}/instances`);
+
+export const updateCodeScanningAlert = (
+  owner: string,
+  repo: string,
+  number: number,
+  body: { state: GithubCodeScanningAlertState; dismissed_reason?: GithubCodeScanningDismissedReason; dismissed_comment?: string },
+) => ghPatchJSON<GithubCodeScanningAlert>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}`, body);
+
+export const fetchCodeScanningAnalyses = (owner: string, repo: string) =>
+  ghFetch<GithubCodeScanningAnalysis[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/analyses`);
+
+export const deleteCodeScanningAnalysis = (owner: string, repo: string, id: number) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/code-scanning/analyses/${id}`);
+
+export const uploadSARIF = (
+  owner: string,
+  repo: string,
+  body: { commit_sha: string; ref: string; sarif: string; tool_name?: string },
+): Promise<GithubCodeScanningSARIFUpload> =>
+  ghPostJSON<GithubCodeScanningSARIFUpload>(`/api/v3/repos/${owner}/${repo}/code-scanning/sarifs`, body);
+
+export const fetchSARIFStatus = (owner: string, repo: string, id: string) =>
+  ghFetch<GithubCodeScanningSARIFStatus>(`/api/v3/repos/${owner}/${repo}/code-scanning/sarifs/${id}`);
 
 async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {

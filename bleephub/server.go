@@ -209,6 +209,9 @@ func (s *Server) registerRoutes() {
 	// Secret scanning API (gh_secret_scanning.go)
 	s.registerGHSecretScanningRoutes()
 
+	// Code scanning API (gh_code_scanning.go)
+	s.registerGHCodeScanningRoutes()
+
 	// Branch protection API (gh_branch_protection.go)
 	s.registerGHBranchProtectionRoutes()
 

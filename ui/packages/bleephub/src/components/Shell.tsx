@@ -1,5 +1,5 @@
 import { type ReactNode } from "react";
-import { NavLink, Link } from "react-router";
+import { NavLink, Link, useLocation } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import {
   Mark,
@@ -224,6 +224,8 @@ export function RepoHeader({
   prCount?: number | string;
 }) {
   const base = `/ui/repos/${owner}/${repo}`;
+  const location = useLocation();
+  const onSecurity = active === "security" || location.pathname.startsWith(`${base}/security/`);
   return (
     <div className="mb-5">
       <div className="mb-3 flex items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
@@ -272,7 +274,7 @@ export function RepoHeader({
           to={`${base}/security/secret-scanning`}
           icon={<LockIcon size={15} />}
           label="Security"
-          active={active === "security"}
+          active={onSecurity}
         />
         <RepoTabLink
           to={`${base}/settings`}
@@ -281,6 +283,24 @@ export function RepoHeader({
           active={active === "settings"}
         />
       </nav>
+      {onSecurity && (
+        <nav
+          aria-label="Security"
+          className="mt-2 flex flex-wrap items-center gap-2"
+          style={{ fontSize: "0.85rem", borderBottom: "1px solid var(--color-border)", paddingBottom: "0.5rem" }}
+        >
+          <RepoTabLink
+            to={`${base}/security/secret-scanning`}
+            label="Secret scanning"
+            active={location.pathname === `${base}/security/secret-scanning`}
+          />
+          <RepoTabLink
+            to={`${base}/security/code-scanning`}
+            label="Code scanning"
+            active={location.pathname === `${base}/security/code-scanning`}
+          />
+        </nav>
+      )}
     </div>
   );
 }
@@ -293,7 +313,7 @@ function RepoTabLink({
   active,
 }: {
   to: string;
-  icon: ReactNode;
+  icon?: ReactNode;
   label: string;
   count?: number | string;
   active: boolean;
@@ -314,7 +334,7 @@ function RepoTabLink({
         textDecoration: "none",
       }}
     >
-      <span style={{ color: active ? "var(--color-fg-muted)" : "var(--color-fg-subtle)" }}>{icon}</span>
+      {icon && <span style={{ color: active ? "var(--color-fg-muted)" : "var(--color-fg-subtle)" }}>{icon}</span>}
       {label}
       {count != null && <Counter>{count}</Counter>}
     </Link>

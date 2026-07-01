@@ -773,3 +773,82 @@ export type GithubSecretScanningResolution =
   | "used_in_tests"
   | "pattern_deleted"
   | "pattern_edited";
+
+// ─── GitHub Code Scanning shapes ────────────────────────────────────────
+
+export type GithubCodeScanningAlertState = "open" | "dismissed" | "fixed";
+
+export type GithubCodeScanningDismissedReason =
+  | "false_positive"
+  | "won't_fix"
+  | "used_in_tests"
+  | "ignored";
+
+export interface GithubCodeScanningAlertLocation {
+  path: string;
+  start_line: number;
+  end_line: number;
+  start_column: number;
+  end_column: number;
+}
+
+export interface GithubCodeScanningAlertInstance {
+  ref: string;
+  analysis_key: string;
+  category: string;
+  state: GithubCodeScanningAlertState;
+  commit_sha: string;
+  message: { text: string };
+  location: GithubCodeScanningAlertLocation;
+}
+
+export interface GithubCodeScanningAlert {
+  number: number;
+  state: GithubCodeScanningAlertState;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  html_url: string;
+  instances_url: string;
+  fixed_at: string | null;
+  dismissed_at: string | null;
+  dismissed_reason: GithubCodeScanningDismissedReason | null;
+  dismissed_comment: string | null;
+  rule: {
+    id: string;
+    severity: string | null;
+    description: string | null;
+    name: string;
+  };
+  tool: { name: string | null };
+  most_recent_instance: GithubCodeScanningAlertInstance | null;
+}
+
+export interface GithubCodeScanningAnalysis {
+  id: number;
+  ref: string;
+  commit_sha: string;
+  analysis_key: string;
+  environment: string;
+  category: string;
+  error: string;
+  created_at: string;
+  results_count: number;
+  rules_count: number;
+  url: string;
+  sarif_id: string;
+  tool: { name: string | null };
+  deletable: boolean;
+  warning: string;
+}
+
+export interface GithubCodeScanningSARIFUpload {
+  id: string;
+  url: string;
+}
+
+export interface GithubCodeScanningSARIFStatus {
+  processing_status: "pending" | "complete" | "failed";
+  analyses_url: string | null;
+  errors: string[] | null;
+}

@@ -17,6 +17,7 @@ import { RunDetailPage } from "./pages/RunDetailPage.js";
 import { RepoSettingsPage } from "./pages/RepoSettingsPage.js";
 import { BranchProtectionPage } from "./pages/BranchProtectionPage.js";
 import { SecretScanningPage } from "./pages/SecretScanningPage.js";
+import { CodeScanningPage } from "./pages/CodeScanningPage.js";
 import { ProjectsClassicPage } from "./pages/ProjectsClassicPage.js";
 import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
@@ -65,6 +66,7 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/settings" element={<RepoSettingsPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/branch-protection" element={<BranchProtectionPage />} />
               <Route path="/ui/repos/:owner/:repo/security/secret-scanning" element={<SecretScanningPage />} />
+              <Route path="/ui/repos/:owner/:repo/security/code-scanning" element={<CodeScanningPage />} />
               <Route path="/ui/repos/:owner/:repo/projects-classic" element={<ProjectsClassicPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
