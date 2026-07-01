@@ -4,7 +4,30 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-01 - CloudWatch alarm SNS→SQS process-mode fix (#741, PR #741)
+## 2026-07-01 - bleephub branch protection rules API + UI (PR #743)
+
+A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the branch protection surface on bleephub.
+
+**Typed model.** `bleephub/gh_branch_protection.go` introduces `BranchProtection`, `StatusCheck`, `RequiredPullRequestReviews`, `ProtectionRestrictions`, and related sub-resource structs. The old opaque `map[string]interface{}` blob in `bleephub/gh_misc_endpoints.go` and `bleephub/store.go` was removed; `MiscStore.branchProtection` now stores `map[string]*BranchProtection`.
+
+**Sub-resource endpoints.** All real GitHub branch-protection sub-resources are implemented:
+- `required_status_checks` and `/contexts`
+- `required_pull_request_reviews`
+- `restrictions`, `/users`, and `/teams`
+- `enforce_admins`
+- `allow_force_pushes` and `allow_deletions`
+
+The top-level `GET/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection` returns the canonical GitHub REST shape with hydrated URLs.
+
+**Merge enforcement.** `canMergePullRequest` in `bleephub/gh_branch_protection.go` enforces required approving review count and blocks merge when any review is `CHANGES_REQUESTED`; admin bypass applies unless `enforce_admins` is enabled. Existing required-status-check enforcement continues to run in `bleephub/actions_events.go`.
+
+**GraphQL parity.** `bleephub/gh_pulls_graphql.go` `baseRef.branchProtectionRule` now resolves real `isRequiredStatusChecksEnabled` and `requiredApprovingReviewCount` values instead of `nil`.
+
+**UI.** `ui/packages/bleephub/src/pages/BranchProtectionPage.tsx` lets users select a branch and configure protection rules (status checks, required reviews, admin enforcement, force pushes, deletions). It is wired from `RepoSettingsPage.tsx` and routed at `/ui/repos/:owner/:repo/settings/branch-protection`.
+
+**Validation.** `go test ./bleephub -count=1` passes; the OpenAPI shape ratchet reports no new violations; `make bleephub/lint` is clean; `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass (88/88).
+
+## 2026-07-01 - CloudWatch alarm SNS→SQS process-mode fix (#741, PR #742)
 
 A single branch (`fix/aws-cloudwatch-sns-sqs-process-mode-741`) closed GitHub issue #741, which reported that a CloudWatch alarm's SNS action was not delivered to SQS when the AWS simulator ran in `SIM_RUNTIME=process` mode.
 

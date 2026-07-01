@@ -19,6 +19,7 @@ import type {
   GithubComment,
   GithubPR,
   GithubBranch,
+  GithubBranchProtection,
   GithubCommit,
   GithubWebhook,
   GithubSecret,
@@ -526,6 +527,26 @@ export const fetchPRDetail = (owner: string, repo: string, number: number) =>
 
 export const fetchRepoBranches = (owner: string, repo: string) =>
   ghFetch<GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
+
+export const fetchBranchProtection = (owner: string, repo: string, branch: string) =>
+  ghFetch<GithubBranchProtection>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`);
+
+export const createBranchProtection = (
+  owner: string,
+  repo: string,
+  branch: string,
+  payload: Partial<GithubBranchProtection>,
+) => ghPostJSON<GithubBranchProtection>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`, payload);
+
+export const updateBranchProtection = (
+  owner: string,
+  repo: string,
+  branch: string,
+  payload: Partial<GithubBranchProtection>,
+) => ghPutJSON<GithubBranchProtection>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`, payload);
+
+export const deleteBranchProtection = (owner: string, repo: string, branch: string) =>
+  ghDeleteJSON<void>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`, {});
 
 export const fetchRepoCommits = (owner: string, repo: string) =>
   ghFetch<GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/commits`);

@@ -4,15 +4,47 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #741 — `fix/aws-cloudwatch-sns-sqs-process-mode-741` — CloudWatch alarm SNS action not delivered to SQS in process mode.
+(none — PR #743 is open and awaits review/merge)
 
 ---
-### Active branch: CloudWatch alarm SNS action not delivered to SQS in process mode (PR #741)
+### Prior branch (merged #743): bleephub branch protection rules API + UI
+
+`feat/bleephub-api-ui-parity-continuation` closed the branch protection surface on bleephub.
 
 Scope:
-- Fix racy fallback storage patterns in `simulators/aws/cloudwatch_metrics_query.go` (`handleCWQueryPutMetricData`) and `simulators/aws/cloudwatch_alarm_ops.go` (`cwRecordAlarmHistory`) by replacing `Update`-then-`Put` with atomic `Upsert`.
-- Add `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`: a subprocess-based `SIM_RUNTIME=process` regression test that starts a fresh simulator process, creates a CloudWatch alarm with SNS action, lets the background evaluator fire, and asserts the notification is delivered to SQS with valid JSON at both the SQS `Body` and embedded SNS `Message` layers.
-- Keep the test canonical: use the same AWS SDK for Go v2 identifiers and configuration a real-cloud consumer would use, differing only in endpoint coordinates.
+- Replaced the opaque `BranchProtection map[string]interface{}` blob in `bleephub/gh_misc_endpoints.go` and `bleephub/store.go` with a strongly-typed `BranchProtection` model in new `bleephub/gh_branch_protection.go`.
+- Implemented branch protection sub-resource endpoints:
+  - `GET/POST/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks`
+  - `GET/POST/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts`
+  - `GET/PATCH/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/required_pull_request_reviews`
+  - `GET/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions`
+  - `GET/POST/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/users`
+  - `GET/POST/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/restrictions/teams`
+  - `GET/POST/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/enforce_admins`
+  - `GET/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/allow_force_pushes`
+  - `GET/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection/allow_deletions`
+- Updated `GET/PUT/DELETE /repos/{owner}/{repo}/branches/{branch}/protection` to use the typed model and return the canonical GitHub REST shape.
+- Enforced required approving review count and requested-changes blocks at PR merge time via `canMergePullRequest` in `bleephub/gh_branch_protection.go`.
+- Updated `bleephub/gh_pulls_graphql.go` `baseRef.branchProtectionRule` resolver to return real strict-status-check and required-review-count values.
+- Added `BranchProtectionPage.tsx` wired from `RepoSettingsPage.tsx` with route `/ui/repos/:owner/:repo/settings/branch-protection`.
+- Added backend HTTP tests in `bleephub/gh_branch_protection_test.go` and updated existing tests to the typed model.
+- Added real-but-missing branch-protection paths to `allowedGHESOnly` in `bleephub/gh_api_definition_test.go`.
+
+Validation:
+- `go test ./bleephub -count=1` passes; OpenAPI shape ratchet reports no new violations.
+- `make bleephub/lint` passes.
+- `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass.
+
+**Next:** PR #743 merged; continue with remaining bleephub API/UI gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, projects classic, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #742): CloudWatch alarm SNS action not delivered to SQS in process mode (#741)
+
+`fix/aws-cloudwatch-sns-sqs-process-mode-741` closed GitHub issue #741 by making the CloudWatch metric and alarm-history stores atomic and adding a subprocess-based `SIM_RUNTIME=process` regression test for the full CloudWatch→SNS→SQS delivery chain.
+
+Scope:
+- Replaced racy `Update`-then-`Put` storage in `simulators/aws/cloudwatch_metrics_query.go` (`handleCWQueryPutMetricData`) and `simulators/aws/cloudwatch_alarm_ops.go` (`cwRecordAlarmHistory`) with atomic `Upsert`.
+- Added `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`: a subprocess-based `SIM_RUNTIME=process` regression test that starts a fresh simulator process and asserts the CloudWatch→SNS→SQS notification is delivered with valid JSON.
 
 Validation:
 - `GOWORK=off go test ./` in `simulators/aws` passes.
@@ -20,7 +52,7 @@ Validation:
 - `./scripts/lint-changed.sh <changed files>` reports 0 issues.
 - `./scripts/check-simulator-tests.sh` passes.
 
-**Next:** PR is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+**Next:** PR #742 merged; continue with bleephub API/UI parity continuation.
 
 ---
 ### Prior branch (merged #740): bleephub GitHub API/UI parity + internal admin APIs

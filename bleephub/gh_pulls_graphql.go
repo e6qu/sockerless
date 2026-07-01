@@ -1127,8 +1127,8 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return pr["mergeStateStatus"], nil
 				},
 			},
-			// gh pr status selects baseRef{branchProtectionRule{...}}; no
-			// GraphQL-modeled protection rules → null rule on a real ref.
+			// gh pr status selects baseRef{branchProtectionRule{...}}; resolve
+			// from the typed branch-protection model.
 			"baseRef": &graphql.Field{
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "PRBaseRef",
@@ -1143,7 +1143,20 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 								},
 							}),
 							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-								return nil, nil
+								pr, ok := p.Source.(map[string]interface{})
+								if !ok {
+									return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+								}
+								prID, _ := pr["databaseId"].(int)
+								prObj := s.store.GetPullRequest(prID)
+								if prObj == nil {
+									return nil, nil
+								}
+								repo := s.store.GetRepoByID(prObj.RepoID)
+								if repo == nil {
+									return nil, nil
+								}
+								return s.branchProtectionRuleForPR(repo, prObj.BaseRefName), nil
 							},
 						},
 					},
