@@ -4,6 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - CloudWatch alarm SNS→SQS body regression tests (#734)
+
+The production fix for issue #734 landed earlier in PR #737: `simulators/aws/sns.go` builds the CloudWatch→SNS→SQS notification envelope with `json.Marshal` and includes `Timestamp`. The open issue remained because the regression coverage was a narrow unit test, so this branch (`fix/aws-cloudwatch-sns-sqs-body-734`) added end-to-end coverage that exercises the real evaluator→SNS fan-out→SQS `ReceiveMessage` path with adversarial alarm fields.
+
+**Unit-level lock.** `simulators/aws/sns_envelope_test.go` gained `TestSNSNotificationEnvelopeQuotesAndBackslashes`, which feeds an alarm payload containing quotes, newlines, and backslashes through `snsNotificationEnvelope` and asserts both the outer envelope and the embedded `Message` string parse as JSON and round-trip exactly.
+
+**End-to-end lock.** `simulators/aws/sdk-tests/cloudwatch_alarm_actions_test.go` was hardened:
+- `TestCloudWatch_AlarmActionsDispatchedToSNS` now creates the alarm with `"cpu above 50 \"adversarial\" line1\nline2 \x01"` as the description.
+- The SQS receive loop now fails loudly (`require.NoError`) if the SQS `Body` or embedded SNS `Message` is not valid JSON, instead of silently continuing.
+- It asserts the adversarial `AlarmDescription` round-trips unchanged from the CloudWatch alarm through SNS to SQS.
+
+**Validation.** AWS sim `make unit-test` and `make lint` pass; the targeted SDK test `TestCloudWatch_AlarmActionsDispatchedToSNS` passes; the related alarm-action SDK tests (`TestCloudWatch_OKActionsDispatchedToSNS`, `TestCloudWatch_ActionsDisabledSkipsDispatch`) continue to pass.
+
 ## 2026-07-01 - bleephub Search, Notifications, and Repository Rulesets APIs
 
 A single branch (`feat/bleephub-search-notifications-rulesets`) closed three public GitHub API surfaces on bleephub.
