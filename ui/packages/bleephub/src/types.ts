@@ -733,3 +733,43 @@ export interface GithubProjectCard {
   project_url: string;
   content_url: string | null;
 }
+
+export interface GithubSecretScanningLocationDetails {
+  path: string;
+  start_line: number;
+  end_line: number;
+  start_column: number;
+  end_column: number;
+  blob_sha: string;
+  blob_url: string;
+  commit_sha: string;
+  commit_url: string;
+  html_url: string;
+}
+
+export interface GithubSecretScanningLocation {
+  type: "commit";
+  details: GithubSecretScanningLocationDetails;
+}
+
+export interface GithubSecretScanningAlert {
+  number: number;
+  state: "open" | "resolved";
+  resolution: string | null;
+  secret_type: string;
+  secret_type_display_name: string;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+  url: string;
+  html_url: string;
+  locations_url: string;
+}
+
+export type GithubSecretScanningResolution =
+  | "false_positive"
+  | "wont_fix"
+  | "revoked"
+  | "used_in_tests"
+  | "pattern_deleted"
+  | "pattern_edited";

@@ -18,6 +18,7 @@ import {
   ServerIcon,
   GistIcon,
   ProjectIcon,
+  LockIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -201,7 +202,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
 
 // ─── Repo context header + tabs ────────────────────────────────────────
 
-export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "settings";
+export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "security" | "settings";
 
 /**
  * Repo context bar: "owner / repo" breadcrumb above the GitHub-style tab
@@ -266,6 +267,12 @@ export function RepoHeader({
           icon={<ProjectIcon size={15} />}
           label="Projects"
           active={active === "projects-classic"}
+        />
+        <RepoTabLink
+          to={`${base}/security/secret-scanning`}
+          icon={<LockIcon size={15} />}
+          label="Security"
+          active={active === "security"}
         />
         <RepoTabLink
           to={`${base}/settings`}

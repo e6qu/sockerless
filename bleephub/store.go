@@ -173,111 +173,115 @@ type GistComment struct {
 
 // Store holds all in-memory state for bleephub.
 type Store struct {
-	Agents               map[int]*Agent
-	Sessions             map[string]*Session
-	Jobs                 map[string]*Job
-	Users                map[int]*User
-	UsersByLogin         map[string]*User
-	Tokens               map[string]*Token
-	DeviceCodes          map[string]*DeviceCode
-	AuthCodes            map[string]*authCode     // OAuth web-flow codes
-	LoginSessions        map[string]*LoginSession // _gh_sess cookie value → session
-	Repos                map[int]*Repo
-	ReposByName          map[string]*Repo                       // "owner/name" → repo
-	GitStorages          map[string]gitStorage.Storer           // "owner/name" → go-git storage (memory or filesystem)
-	Orgs                 map[int]*Org                           // id → org
-	OrgsByLogin          map[string]*Org                        // login → org
-	Teams                map[int]*Team                          // id → team
-	TeamsBySlug          map[string]*Team                       // "org/slug" → team
-	Memberships          map[string]*Membership                 // "org/user" → membership
-	Issues               map[int]*Issue                         // id → issue
-	Labels               map[int]*IssueLabel                    // id → label
-	Milestones           map[int]*Milestone                     // id → milestone
-	Comments             map[int]*Comment                       // id → comment
-	PullRequests         map[int]*PullRequest                   // id → PR
-	PRReviews            map[int]*PullRequestReview             // id → review
-	Workflows            map[string]*Workflow                   // id → workflow (run-level)
-	WorkflowFiles        map[int64]*WorkflowFile                // id → workflow file (file-level)
-	PendingMessages      []*TaskAgentMessage                    // messages awaiting delivery
-	RepoSecrets          map[string]map[string]*Secret          // "owner/repo" → name → secret
-	RepoVariables        map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
-	RepoCollaborators    map[string]map[string]string           // "owner/repo" → login → permission (pull/push/admin)
-	RepoAutolinks        map[string]map[int]*RepoAutolink       // "owner/repo" → id → autolink
-	RepoInvitations      map[string]map[int]*RepoInvitation     // "owner/repo" → id → invitation
-	OrgSecrets           map[string]map[string]*OrgSecret       // org login → NAME → org secret
-	OrgVariables         map[string]map[string]*ActionsVariable // org login → NAME → org variable
-	EnvSecrets           map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
-	EnvVariables         map[string]map[string]*ActionsVariable // envScopeKey(repo, env) → NAME → variable
-	TimelineRecords      map[string][]*TimelineRecord           // planID → runner-uploaded timeline records
-	LogFiles             map[int][]byte                         // logID → uploaded runner log content
-	WorkflowAttempts     map[int][]*Workflow                    // runID → prior attempts (oldest first)
-	RunnerGroups         map[int]*RunnerGroup                   // org runner groups (global pool overlay)
-	NextRunnerGroupID    int
-	Hooks                map[string][]*Webhook         // "owner/repo" → hooks
-	OrgHooks             map[string][]*Webhook         // org login → org-level hooks
-	HookDeliveries       map[int][]*WebhookDelivery    // hookID → deliveries
-	Apps                 map[int]*App                  // id → app
-	AppsBySlug           map[string]*App               // slug → app
-	AppsByClientID       map[string]*App               // OAuth client_id → app
-	OAuthApps            map[string]*OAuthApp          // OAuth client_id → OAuth app (distinct from GitHub App)
-	Installations        map[int]*Installation         // id → installation
-	InstallationTokens   map[string]*InstallationToken // token value → token
-	UserToServerTokens   map[string]*UserToServerToken // gho_/ghu_ token value → token
-	RefreshTokens        map[string]*RefreshToken      // ghr_ token value → refresh token
-	AppHookDeliveries    map[int][]*WebhookDelivery    // appID → app-level webhook deliveries
-	ManifestCodes        map[string]int                // code → appID (one-time-use)
-	CheckRuns            map[int64]*CheckRun           // id → check run
-	CheckSuites          map[int64]*CheckSuite         // id → check suite
-	CheckSuitePrefs      map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
-	CommitStatuses       *CommitStatusStore            // commit status contexts per repo+ref
-	CommitComments       *CommitCommentStore           // commit comments per repo/commit
-	Reactions            *ReactionStore                // reactions across all parent types
-	Releases             *ReleaseStore                 // release CRUD
-	Deployments          *DeploymentStore              // deployments + statuses + environments
-	PRReviewComments     *PRReviewCommentStore         // PR review comments (inline / threads)
-	Misc                 *MiscStore                    // long-tail surfaces
-	ProjectsV2           *ProjectV2Store               // GitHub Projects v2
-	NotificationsState   map[int]*UserNotificationsState
-	Rulesets             map[int]*Ruleset
-	ProjectClassic       map[int]*ProjectClassic // id → project
-	ProjectColumns       map[int]*ProjectColumn  // id → column
-	ProjectCards         map[int]*ProjectCard    // id → card
-	LogLines             map[string][]string     // jobID → captured console log lines
-	Gists                map[string]*Gist        // id → gist
-	GistComments         map[int]*GistComment    // id → gist comment
-	StarredGists         map[int]map[string]bool // userID → gistID → starred
-	NextGistID           int
-	NextGistCommentID    int
-	NextAgent            int
-	NextMsg              int64
-	NextLog              int
-	NextReqID            int64
-	NextUser             int
-	NextRepo             int
-	NextOrg              int
-	NextTeam             int
-	NextIssue            int
-	NextLabel            int
-	NextMilestone        int
-	NextComment          int
-	NextPR               int
-	NextPRReview         int
-	NextRunID            int
-	NextHookID           int
-	NextDeliveryID       int
-	NextAppID            int
-	NextInstallationID   int
-	NextCheckRunID       int64
-	NextCheckSuiteID     int64
-	NextRulesetID        int
-	NextProjectClassicID int
-	NextProjectColumnID  int
-	NextProjectCardID    int
-	NextAutolinkID       int
-	NextInvitationID     int
-	actionsKeyPair       *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
-	persist              *Persistence
-	mu                   sync.RWMutex
+	Agents                     map[int]*Agent
+	Sessions                   map[string]*Session
+	Jobs                       map[string]*Job
+	Users                      map[int]*User
+	UsersByLogin               map[string]*User
+	Tokens                     map[string]*Token
+	DeviceCodes                map[string]*DeviceCode
+	AuthCodes                  map[string]*authCode     // OAuth web-flow codes
+	LoginSessions              map[string]*LoginSession // _gh_sess cookie value → session
+	Repos                      map[int]*Repo
+	ReposByName                map[string]*Repo                       // "owner/name" → repo
+	GitStorages                map[string]gitStorage.Storer           // "owner/name" → go-git storage (memory or filesystem)
+	Orgs                       map[int]*Org                           // id → org
+	OrgsByLogin                map[string]*Org                        // login → org
+	Teams                      map[int]*Team                          // id → team
+	TeamsBySlug                map[string]*Team                       // "org/slug" → team
+	Memberships                map[string]*Membership                 // "org/user" → membership
+	Issues                     map[int]*Issue                         // id → issue
+	Labels                     map[int]*IssueLabel                    // id → label
+	Milestones                 map[int]*Milestone                     // id → milestone
+	Comments                   map[int]*Comment                       // id → comment
+	PullRequests               map[int]*PullRequest                   // id → PR
+	PRReviews                  map[int]*PullRequestReview             // id → review
+	Workflows                  map[string]*Workflow                   // id → workflow (run-level)
+	WorkflowFiles              map[int64]*WorkflowFile                // id → workflow file (file-level)
+	PendingMessages            []*TaskAgentMessage                    // messages awaiting delivery
+	RepoSecrets                map[string]map[string]*Secret          // "owner/repo" → name → secret
+	RepoVariables              map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
+	RepoCollaborators          map[string]map[string]string           // "owner/repo" → login → permission (pull/push/admin)
+	RepoAutolinks              map[string]map[int]*RepoAutolink       // "owner/repo" → id → autolink
+	RepoInvitations            map[string]map[int]*RepoInvitation     // "owner/repo" → id → invitation
+	OrgSecrets                 map[string]map[string]*OrgSecret       // org login → NAME → org secret
+	OrgVariables               map[string]map[string]*ActionsVariable // org login → NAME → org variable
+	EnvSecrets                 map[string]map[string]*Secret          // envScopeKey(repo, env) → NAME → secret
+	EnvVariables               map[string]map[string]*ActionsVariable // envScopeKey(repo, env) → NAME → variable
+	TimelineRecords            map[string][]*TimelineRecord           // planID → runner-uploaded timeline records
+	LogFiles                   map[int][]byte                         // logID → uploaded runner log content
+	WorkflowAttempts           map[int][]*Workflow                    // runID → prior attempts (oldest first)
+	RunnerGroups               map[int]*RunnerGroup                   // org runner groups (global pool overlay)
+	NextRunnerGroupID          int
+	Hooks                      map[string][]*Webhook         // "owner/repo" → hooks
+	OrgHooks                   map[string][]*Webhook         // org login → org-level hooks
+	HookDeliveries             map[int][]*WebhookDelivery    // hookID → deliveries
+	Apps                       map[int]*App                  // id → app
+	AppsBySlug                 map[string]*App               // slug → app
+	AppsByClientID             map[string]*App               // OAuth client_id → app
+	OAuthApps                  map[string]*OAuthApp          // OAuth client_id → OAuth app (distinct from GitHub App)
+	Installations              map[int]*Installation         // id → installation
+	InstallationTokens         map[string]*InstallationToken // token value → token
+	UserToServerTokens         map[string]*UserToServerToken // gho_/ghu_ token value → token
+	RefreshTokens              map[string]*RefreshToken      // ghr_ token value → refresh token
+	AppHookDeliveries          map[int][]*WebhookDelivery    // appID → app-level webhook deliveries
+	ManifestCodes              map[string]int                // code → appID (one-time-use)
+	CheckRuns                  map[int64]*CheckRun           // id → check run
+	CheckSuites                map[int64]*CheckSuite         // id → check suite
+	CheckSuitePrefs            map[string][]*CheckSuitePref  // repoKey → autoTrigger prefs
+	CommitStatuses             *CommitStatusStore            // commit status contexts per repo+ref
+	CommitComments             *CommitCommentStore           // commit comments per repo/commit
+	Reactions                  *ReactionStore                // reactions across all parent types
+	Releases                   *ReleaseStore                 // release CRUD
+	Deployments                *DeploymentStore              // deployments + statuses + environments
+	PRReviewComments           *PRReviewCommentStore         // PR review comments (inline / threads)
+	Misc                       *MiscStore                    // long-tail surfaces
+	ProjectsV2                 *ProjectV2Store               // GitHub Projects v2
+	NotificationsState         map[int]*UserNotificationsState
+	Rulesets                   map[int]*Ruleset
+	ProjectClassic             map[int]*ProjectClassic // id → project
+	ProjectColumns             map[int]*ProjectColumn  // id → column
+	ProjectCards               map[int]*ProjectCard    // id → card
+	LogLines                   map[string][]string     // jobID → captured console log lines
+	Gists                      map[string]*Gist        // id → gist
+	GistComments               map[int]*GistComment    // id → gist comment
+	StarredGists               map[int]map[string]bool // userID → gistID → starred
+	SecretScanningAlerts       map[int]*SecretScanningAlert
+	SecretScanningAlertsByRepo map[string]map[int]*SecretScanningAlert // repoKey → alertNumber → alert
+	SecretScanningNextNumber   map[string]int                          // repoKey → next alert number
+	NextGistID                 int
+	NextGistCommentID          int
+	NextAgent                  int
+	NextSecretScanningAlertID  int
+	NextMsg                    int64
+	NextLog                    int
+	NextReqID                  int64
+	NextUser                   int
+	NextRepo                   int
+	NextOrg                    int
+	NextTeam                   int
+	NextIssue                  int
+	NextLabel                  int
+	NextMilestone              int
+	NextComment                int
+	NextPR                     int
+	NextPRReview               int
+	NextRunID                  int
+	NextHookID                 int
+	NextDeliveryID             int
+	NextAppID                  int
+	NextInstallationID         int
+	NextCheckRunID             int64
+	NextCheckSuiteID           int64
+	NextRulesetID              int
+	NextProjectClassicID       int
+	NextProjectColumnID        int
+	NextProjectCardID          int
+	NextAutolinkID             int
+	NextInvitationID           int
+	actionsKeyPair             *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
+	persist                    *Persistence
+	mu                         sync.RWMutex
 }
 
 // Agent represents a registered runner agent.
@@ -354,105 +358,108 @@ type Job struct {
 // NewStore creates an initialized store.
 func NewStore() *Store {
 	return &Store{
-		Agents:               make(map[int]*Agent),
-		Sessions:             make(map[string]*Session),
-		Jobs:                 make(map[string]*Job),
-		Users:                make(map[int]*User),
-		UsersByLogin:         make(map[string]*User),
-		Tokens:               make(map[string]*Token),
-		DeviceCodes:          make(map[string]*DeviceCode),
-		AuthCodes:            make(map[string]*authCode),
-		LoginSessions:        make(map[string]*LoginSession),
-		Repos:                make(map[int]*Repo),
-		ReposByName:          make(map[string]*Repo),
-		GitStorages:          make(map[string]gitStorage.Storer),
-		Orgs:                 make(map[int]*Org),
-		OrgsByLogin:          make(map[string]*Org),
-		Teams:                make(map[int]*Team),
-		TeamsBySlug:          make(map[string]*Team),
-		Memberships:          make(map[string]*Membership),
-		Issues:               make(map[int]*Issue),
-		Labels:               make(map[int]*IssueLabel),
-		Milestones:           make(map[int]*Milestone),
-		Comments:             make(map[int]*Comment),
-		PullRequests:         make(map[int]*PullRequest),
-		PRReviews:            make(map[int]*PullRequestReview),
-		Workflows:            make(map[string]*Workflow),
-		WorkflowFiles:        make(map[int64]*WorkflowFile),
-		RepoSecrets:          make(map[string]map[string]*Secret),
-		RepoVariables:        make(map[string]map[string]*ActionsVariable),
-		RepoCollaborators:    make(map[string]map[string]string),
-		RepoAutolinks:        make(map[string]map[int]*RepoAutolink),
-		RepoInvitations:      make(map[string]map[int]*RepoInvitation),
-		OrgSecrets:           make(map[string]map[string]*OrgSecret),
-		OrgVariables:         make(map[string]map[string]*ActionsVariable),
-		EnvSecrets:           make(map[string]map[string]*Secret),
-		EnvVariables:         make(map[string]map[string]*ActionsVariable),
-		TimelineRecords:      make(map[string][]*TimelineRecord),
-		LogFiles:             make(map[int][]byte),
-		WorkflowAttempts:     make(map[int][]*Workflow),
-		RunnerGroups:         make(map[int]*RunnerGroup),
-		NextRunnerGroupID:    2,
-		Hooks:                make(map[string][]*Webhook),
-		OrgHooks:             make(map[string][]*Webhook),
-		HookDeliveries:       make(map[int][]*WebhookDelivery),
-		Apps:                 make(map[int]*App),
-		AppsBySlug:           make(map[string]*App),
-		AppsByClientID:       make(map[string]*App),
-		OAuthApps:            make(map[string]*OAuthApp),
-		Installations:        make(map[int]*Installation),
-		InstallationTokens:   make(map[string]*InstallationToken),
-		UserToServerTokens:   make(map[string]*UserToServerToken),
-		RefreshTokens:        make(map[string]*RefreshToken),
-		AppHookDeliveries:    make(map[int][]*WebhookDelivery),
-		ManifestCodes:        make(map[string]int),
-		CheckRuns:            make(map[int64]*CheckRun),
-		CheckSuites:          make(map[int64]*CheckSuite),
-		CheckSuitePrefs:      make(map[string][]*CheckSuitePref),
-		CommitStatuses:       newCommitStatusStore(nil),
-		CommitComments:       newCommitCommentStore(nil),
-		Reactions:            newReactionStore(nil),
-		Releases:             newReleaseStore(nil),
-		Deployments:          newDeploymentStore(nil),
-		PRReviewComments:     newPRReviewCommentStore(nil),
-		Misc:                 newMiscStore(),
-		ProjectsV2:           newProjectV2Store(nil),
-		NotificationsState:   map[int]*UserNotificationsState{},
-		Rulesets:             map[int]*Ruleset{},
-		ProjectClassic:       map[int]*ProjectClassic{},
-		ProjectColumns:       map[int]*ProjectColumn{},
-		ProjectCards:         map[int]*ProjectCard{},
-		LogLines:             make(map[string][]string),
-		Gists:                make(map[string]*Gist),
-		GistComments:         make(map[int]*GistComment),
-		StarredGists:         make(map[int]map[string]bool),
-		NextAgent:            1,
-		NextMsg:              1,
-		NextLog:              1,
-		NextReqID:            1,
-		NextUser:             1,
-		NextRepo:             1,
-		NextOrg:              1,
-		NextTeam:             1,
-		NextIssue:            1,
-		NextLabel:            1,
-		NextMilestone:        1,
-		NextComment:          1,
-		NextPR:               1,
-		NextPRReview:         1,
-		NextRunID:            1,
-		NextHookID:           1,
-		NextDeliveryID:       1,
-		NextAppID:            1,
-		NextInstallationID:   1,
-		NextCheckRunID:       1,
-		NextCheckSuiteID:     1,
-		NextRulesetID:        1,
-		NextProjectClassicID: 1,
-		NextProjectColumnID:  1,
-		NextProjectCardID:    1,
-		NextAutolinkID:       1,
-		NextInvitationID:     1,
+		Agents:                     make(map[int]*Agent),
+		Sessions:                   make(map[string]*Session),
+		Jobs:                       make(map[string]*Job),
+		Users:                      make(map[int]*User),
+		UsersByLogin:               make(map[string]*User),
+		Tokens:                     make(map[string]*Token),
+		DeviceCodes:                make(map[string]*DeviceCode),
+		AuthCodes:                  make(map[string]*authCode),
+		LoginSessions:              make(map[string]*LoginSession),
+		Repos:                      make(map[int]*Repo),
+		ReposByName:                make(map[string]*Repo),
+		GitStorages:                make(map[string]gitStorage.Storer),
+		Orgs:                       make(map[int]*Org),
+		OrgsByLogin:                make(map[string]*Org),
+		Teams:                      make(map[int]*Team),
+		TeamsBySlug:                make(map[string]*Team),
+		Memberships:                make(map[string]*Membership),
+		Issues:                     make(map[int]*Issue),
+		Labels:                     make(map[int]*IssueLabel),
+		Milestones:                 make(map[int]*Milestone),
+		Comments:                   make(map[int]*Comment),
+		PullRequests:               make(map[int]*PullRequest),
+		PRReviews:                  make(map[int]*PullRequestReview),
+		Workflows:                  make(map[string]*Workflow),
+		WorkflowFiles:              make(map[int64]*WorkflowFile),
+		RepoSecrets:                make(map[string]map[string]*Secret),
+		RepoVariables:              make(map[string]map[string]*ActionsVariable),
+		RepoCollaborators:          make(map[string]map[string]string),
+		RepoAutolinks:              make(map[string]map[int]*RepoAutolink),
+		RepoInvitations:            make(map[string]map[int]*RepoInvitation),
+		OrgSecrets:                 make(map[string]map[string]*OrgSecret),
+		OrgVariables:               make(map[string]map[string]*ActionsVariable),
+		EnvSecrets:                 make(map[string]map[string]*Secret),
+		EnvVariables:               make(map[string]map[string]*ActionsVariable),
+		TimelineRecords:            make(map[string][]*TimelineRecord),
+		LogFiles:                   make(map[int][]byte),
+		WorkflowAttempts:           make(map[int][]*Workflow),
+		RunnerGroups:               make(map[int]*RunnerGroup),
+		NextRunnerGroupID:          2,
+		Hooks:                      make(map[string][]*Webhook),
+		OrgHooks:                   make(map[string][]*Webhook),
+		HookDeliveries:             make(map[int][]*WebhookDelivery),
+		Apps:                       make(map[int]*App),
+		AppsBySlug:                 make(map[string]*App),
+		AppsByClientID:             make(map[string]*App),
+		OAuthApps:                  make(map[string]*OAuthApp),
+		Installations:              make(map[int]*Installation),
+		InstallationTokens:         make(map[string]*InstallationToken),
+		UserToServerTokens:         make(map[string]*UserToServerToken),
+		RefreshTokens:              make(map[string]*RefreshToken),
+		AppHookDeliveries:          make(map[int][]*WebhookDelivery),
+		ManifestCodes:              make(map[string]int),
+		CheckRuns:                  make(map[int64]*CheckRun),
+		CheckSuites:                make(map[int64]*CheckSuite),
+		CheckSuitePrefs:            make(map[string][]*CheckSuitePref),
+		CommitStatuses:             newCommitStatusStore(nil),
+		CommitComments:             newCommitCommentStore(nil),
+		Reactions:                  newReactionStore(nil),
+		Releases:                   newReleaseStore(nil),
+		Deployments:                newDeploymentStore(nil),
+		PRReviewComments:           newPRReviewCommentStore(nil),
+		Misc:                       newMiscStore(),
+		ProjectsV2:                 newProjectV2Store(nil),
+		NotificationsState:         map[int]*UserNotificationsState{},
+		Rulesets:                   map[int]*Ruleset{},
+		ProjectClassic:             map[int]*ProjectClassic{},
+		ProjectColumns:             map[int]*ProjectColumn{},
+		ProjectCards:               map[int]*ProjectCard{},
+		LogLines:                   make(map[string][]string),
+		Gists:                      make(map[string]*Gist),
+		GistComments:               make(map[int]*GistComment),
+		StarredGists:               make(map[int]map[string]bool),
+		SecretScanningAlerts:       make(map[int]*SecretScanningAlert),
+		SecretScanningAlertsByRepo: make(map[string]map[int]*SecretScanningAlert),
+		SecretScanningNextNumber:   make(map[string]int),
+		NextAgent:                  1,
+		NextMsg:                    1,
+		NextLog:                    1,
+		NextReqID:                  1,
+		NextUser:                   1,
+		NextRepo:                   1,
+		NextOrg:                    1,
+		NextTeam:                   1,
+		NextIssue:                  1,
+		NextLabel:                  1,
+		NextMilestone:              1,
+		NextComment:                1,
+		NextPR:                     1,
+		NextPRReview:               1,
+		NextRunID:                  1,
+		NextHookID:                 1,
+		NextDeliveryID:             1,
+		NextAppID:                  1,
+		NextInstallationID:         1,
+		NextCheckRunID:             1,
+		NextCheckSuiteID:           1,
+		NextRulesetID:              1,
+		NextProjectClassicID:       1,
+		NextProjectColumnID:        1,
+		NextProjectCardID:          1,
+		NextAutolinkID:             1,
+		NextInvitationID:           1,
 	}
 }
 
@@ -1324,6 +1331,24 @@ func (st *Store) loadFromPersistence() error {
 			st.ProjectCards[c.ID] = &c
 			if c.ID >= st.NextProjectCardID {
 				st.NextProjectCardID = c.ID + 1
+			}
+			return nil
+		}},
+		{"secret_scanning_alerts", func(_ string, raw []byte) error {
+			var a SecretScanningAlert
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.SecretScanningAlerts[a.ID] = &a
+			if st.SecretScanningAlertsByRepo[a.RepoKey] == nil {
+				st.SecretScanningAlertsByRepo[a.RepoKey] = make(map[int]*SecretScanningAlert)
+			}
+			st.SecretScanningAlertsByRepo[a.RepoKey][a.Number] = &a
+			if a.Number >= st.SecretScanningNextNumber[a.RepoKey] {
+				st.SecretScanningNextNumber[a.RepoKey] = a.Number + 1
+			}
+			if a.ID >= st.NextSecretScanningAlertID {
+				st.NextSecretScanningAlertID = a.ID + 1
 			}
 			return nil
 		}},

@@ -46,6 +46,9 @@ import type {
   GithubProjectClassic,
   GithubProjectColumn,
   GithubProjectCard,
+  GithubSecretScanningAlert,
+  GithubSecretScanningLocation,
+  GithubSecretScanningResolution,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -993,6 +996,40 @@ export const moveProjectCard = (
   cardId: number,
   payload: { position: string; column_id?: number },
 ) => ghPostJSON<{ id: number; url: string }>(`/api/v3/projects/columns/cards/${cardId}/moves`, payload);
+
+// ─── Secret scanning ────────────────────────────────────────────────────
+
+export interface SecretScanningFilters {
+  state?: "open" | "resolved";
+  secret_type?: string;
+  resolution?: string;
+}
+
+export const fetchSecretScanningAlerts = (
+  owner: string,
+  repo: string,
+  filters: SecretScanningFilters = {},
+): Promise<GithubSecretScanningAlert[]> => {
+  const params = new URLSearchParams();
+  if (filters.state) params.set("state", filters.state);
+  if (filters.secret_type) params.set("secret_type", filters.secret_type);
+  if (filters.resolution) params.set("resolution", filters.resolution);
+  const qs = params.toString();
+  return ghFetch<GithubSecretScanningAlert[]>(`/api/v3/repos/${owner}/${repo}/secret-scanning/alerts${qs ? `?${qs}` : ""}`);
+};
+
+export const fetchSecretScanningAlert = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubSecretScanningAlert>(`/api/v3/repos/${owner}/${repo}/secret-scanning/alerts/${number}`);
+
+export const fetchSecretScanningAlertLocations = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubSecretScanningLocation[]>(`/api/v3/repos/${owner}/${repo}/secret-scanning/alerts/${number}/locations`);
+
+export const updateSecretScanningAlert = (
+  owner: string,
+  repo: string,
+  number: number,
+  body: { state: "open" | "resolved"; resolution?: GithubSecretScanningResolution; resolution_comment?: string },
+) => ghPatchJSON<GithubSecretScanningAlert>(`/api/v3/repos/${owner}/${repo}/secret-scanning/alerts/${number}`, body);
 
 async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {

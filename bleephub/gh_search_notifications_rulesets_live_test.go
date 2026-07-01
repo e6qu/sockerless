@@ -159,3 +159,65 @@ func TestLiveRulesets_CRUD(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+func TestLiveSecretScanning_CRUD(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	testServer.store.CreateRepo(admin, "live-secret-scanning-repo", "", false)
+
+	seed, _ := json.Marshal(map[string]any{
+		"secret_type": "github_personal_access_token",
+		"locations": []map[string]any{
+			{
+				"type": "commit",
+				"details": map[string]any{
+					"path":         "config/secrets.txt",
+					"start_line":   1,
+					"end_line":     1,
+					"start_column": 0,
+					"end_column":   40,
+					"blob_sha":     "af5626b4a114abcb82d63db7c8082c3c4756e51b",
+					"blob_url":     "https://example.com/blob",
+					"commit_sha":   "af5626b4a114abcb82d63db7c8082c3c4756e51b",
+					"commit_url":   "https://example.com/commit",
+					"html_url":     "https://example.com/html",
+				},
+			},
+		},
+	})
+	resp, _ := authedPost("/internal/repos/admin/live-secret-scanning-repo/secret-scanning/alerts", "application/json", strings.NewReader(string(seed)))
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("seed alert: %d body=%s", resp.StatusCode, body)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		t.Fatalf("decode seeded alert: %v", err)
+	}
+	resp.Body.Close()
+	number := int(created["number"].(float64))
+
+	resp = authedGet(t, "/api/v3/repos/admin/live-secret-scanning-repo/secret-scanning/alerts")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("list alerts: %d body=%s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = authedGet(t, "/api/v3/repos/admin/live-secret-scanning-repo/secret-scanning/alerts/"+itoa(number))
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("get alert: %d body=%s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	resp = authedGet(t, "/api/v3/repos/admin/live-secret-scanning-repo/secret-scanning/alerts/"+itoa(number)+"/locations")
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("get locations: %d body=%s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+}

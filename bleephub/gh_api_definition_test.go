@@ -87,6 +87,7 @@ var allowedGHESOnly = map[string]string{
 	"PUT /repos/{}/{}/branches/{}/protection/restrictions":           "Branch protection push restrictions update — real GitHub endpoint, absent from the bundled dotcom description",
 	"GET /repos/{}/{}/projects":                                      "Projects classic (v1) repo-scoped list — real GitHub endpoint, absent from the bundled dotcom description",
 	"POST /repos/{}/{}/projects":                                     "Projects classic (v1) repo-scoped create — real GitHub endpoint, absent from the bundled dotcom description",
+	"PATCH /repos/{}/{}/secret-scanning/alerts":                      "Secret scanning bulk update by query — real GitHub endpoint, absent from the bundled dotcom description",
 	"GET /projects/{}":                                               "Projects classic (v1) get project — real GitHub endpoint, absent from the bundled dotcom description",
 	"PATCH /projects/{}":                                             "Projects classic (v1) update project — real GitHub endpoint, absent from the bundled dotcom description",
 	"DELETE /projects/{}":                                            "Projects classic (v1) delete project — real GitHub endpoint, absent from the bundled dotcom description",

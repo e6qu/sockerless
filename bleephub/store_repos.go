@@ -322,6 +322,20 @@ func (st *Store) RenameRepo(owner, name, newName string) bool {
 		st.CheckSuitePrefs[newFull] = v
 		delete(st.CheckSuitePrefs, oldFull)
 	}
+	if v := st.SecretScanningAlertsByRepo[oldFull]; v != nil {
+		st.SecretScanningAlertsByRepo[newFull] = v
+		for _, alert := range v {
+			alert.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("secret_scanning_alerts", strconv.Itoa(alert.ID), alert)
+			}
+		}
+		delete(st.SecretScanningAlertsByRepo, oldFull)
+	}
+	if v := st.SecretScanningNextNumber[oldFull]; v != 0 {
+		st.SecretScanningNextNumber[newFull] = v
+		delete(st.SecretScanningNextNumber, oldFull)
+	}
 
 	// Environment-scoped secrets/variables keyed "repo\x1fenv".
 	for k, v := range st.EnvSecrets {
@@ -400,10 +414,21 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.Hooks, fullName)
 	delete(st.RepoSecrets, fullName)
 	delete(st.CheckSuitePrefs, fullName)
+	for id, alert := range st.SecretScanningAlerts {
+		if alert.RepoKey == fullName {
+			delete(st.SecretScanningAlerts, id)
+			if st.persist != nil {
+				st.persist.MustDelete("secret_scanning_alerts", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.SecretScanningAlertsByRepo, fullName)
+	delete(st.SecretScanningNextNumber, fullName)
 	if st.persist != nil {
 		st.persist.MustDelete("hooks", fullName)
 		st.persist.MustDelete("repo_secrets", fullName)
 		st.persist.MustDelete("check_suite_prefs", fullName)
+		st.persist.MustDelete("secret_scanning_alerts", fullName)
 	}
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {

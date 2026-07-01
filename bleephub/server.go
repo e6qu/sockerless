@@ -206,6 +206,9 @@ func (s *Server) registerRoutes() {
 	// Repository Rulesets API (gh_rulesets.go)
 	s.registerGHRulesetRoutes()
 
+	// Secret scanning API (gh_secret_scanning.go)
+	s.registerGHSecretScanningRoutes()
+
 	// Branch protection API (gh_branch_protection.go)
 	s.registerGHBranchProtectionRoutes()
 
