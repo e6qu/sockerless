@@ -110,6 +110,7 @@ export interface RepoListFilters {
 /** Repo represents a GitHub repository. */
 export interface BleephubRepo {
   id: number;
+  node_id: string;
   name: string;
   full_name: string;
   description: string;
@@ -729,7 +730,66 @@ export interface BleephubGist {
   updated_at: string;
 }
 
-// ─── GitHub Projects classic (v1) shapes ────────────────────────────────
+// ─── GitHub Discussions GraphQL shapes ──────────────────────────────────
+
+export interface GithubDiscussionCategory {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+  isAnswerable: boolean;
+}
+
+export interface GithubDiscussionAuthor {
+  login: string;
+  avatarUrl?: string;
+}
+
+export interface GithubDiscussion {
+  id: string;
+  number: number;
+  title: string;
+  body: string;
+  bodyHTML: string;
+  bodyText: string;
+  author: GithubDiscussionAuthor | null;
+  category: GithubDiscussionCategory;
+  createdAt: string;
+  updatedAt: string;
+  comments: { totalCount: number };
+}
+
+export interface GithubDiscussionComment {
+  id: string;
+  databaseId: number;
+  author: GithubDiscussionAuthor | null;
+  body: string;
+  bodyHTML: string;
+  createdAt: string;
+  updatedAt: string;
+  isAnswer: boolean;
+  replies: { nodes: GithubDiscussionComment[] };
+}
+
+export interface GithubDiscussionConnection {
+  nodes: GithubDiscussion[];
+  totalCount: number;
+  pageInfo: {
+    hasNextPage: boolean;
+    endCursor: string | null;
+  };
+}
+
+export interface GithubDiscussionCategoryConnection {
+  nodes: GithubDiscussionCategory[];
+  totalCount: number;
+}
+
+export interface GithubDiscussionCommentConnection {
+  nodes: GithubDiscussionComment[];
+  totalCount: number;
+}
+
 
 export interface GithubProjectClassic {
   id: number;

@@ -124,6 +124,8 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 	st.ReposByName[fullName] = repo
 	st.GitStorages[fullName] = stor
 
+	st.ensureDefaultDiscussionCategoriesLocked(repo.ID)
+
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
@@ -240,6 +242,8 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 	st.Repos[repo.ID] = repo
 	st.ReposByName[fullName] = repo
 	st.GitStorages[fullName] = stor
+
+	st.ensureDefaultDiscussionCategoriesLocked(repo.ID)
 
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
@@ -447,6 +451,32 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	st.Releases.DeleteAllForRepo(repo.ID)
+
+	// Discussion surfaces — comments first because they reference discussions.
+	for id, c := range st.DiscussionComments {
+		if d := st.Discussions[c.DiscussionID]; d != nil && d.RepoID == repo.ID {
+			delete(st.DiscussionComments, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussion_comments", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, d := range st.Discussions {
+		if d.RepoID == repo.ID {
+			delete(st.Discussions, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussions", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, cat := range st.DiscussionCategories {
+		if cat.RepoID == repo.ID {
+			delete(st.DiscussionCategories, id)
+			if st.persist != nil {
+				st.persist.MustDelete("discussion_categories", strconv.Itoa(id))
+			}
+		}
+	}
 
 	// Misc surfaces: branch protection is keyed "repoID:branch", pages
 	// builds by "owner/name".

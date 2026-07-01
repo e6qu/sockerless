@@ -70,6 +70,11 @@ import type {
   GithubPackageVersion,
   GithubPackageFile,
   GithubPackageVersionCreatePayload,
+  GithubDiscussion,
+  GithubDiscussionCategory,
+  GithubDiscussionCategoryConnection,
+  GithubDiscussionConnection,
+  GithubDiscussionCommentConnection,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1369,6 +1374,247 @@ export const restorePackageVersion = (
 
 export const deletePackage = (scope: PackageScope, pkgType: string, pkgName: string) =>
   ghDeleteJSON<void>(packageBasePath(scope, pkgType, pkgName), {});
+
+// ─── GitHub GraphQL ─────────────────────────────────────────────────────
+
+interface GraphQLResponse<T> {
+  data?: T;
+  errors?: Array<{ message: string; type?: string }>;
+}
+
+async function ghGraphQL<T>(query: string, variables?: Record<string, unknown>): Promise<T> {
+  const res = await fetch("/api/graphql", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify({ query, variables }),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  const json = (await res.json()) as GraphQLResponse<T>;
+  if (json.errors && json.errors.length > 0) {
+    const first = json.errors[0];
+    throw new Error(first.type === "NOT_FOUND" ? "Not found" : first.message);
+  }
+  if (json.data === undefined) {
+    throw new Error("graphql response missing data");
+  }
+  return json.data;
+}
+
+// ─── GitHub Discussions GraphQL ─────────────────────────────────────────
+
+const DISCUSSION_LIST_FRAGMENT = `
+  id
+  number
+  title
+  bodyText
+  author { login avatarUrl }
+  category { id name emoji isAnswerable }
+  createdAt
+  updatedAt
+  comments(first: 0) { totalCount }
+`;
+
+export async function fetchDiscussionCategories(
+  owner: string,
+  repo: string,
+): Promise<GithubDiscussionCategory[]> {
+  const data = await ghGraphQL<{
+    repository: { discussionCategories: GithubDiscussionCategoryConnection };
+  }>(
+    `query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        discussionCategories(first: 100) {
+          nodes { id name emoji description isAnswerable }
+        }
+      }
+    }`,
+    { owner, repo },
+  );
+  return data.repository.discussionCategories.nodes;
+}
+
+export async function fetchDiscussionsPage(
+  owner: string,
+  repo: string,
+  categoryId: string | null,
+  after: string | null,
+): Promise<GithubDiscussionConnection> {
+  const data = await ghGraphQL<{
+    repository: { discussions: GithubDiscussionConnection };
+  }>(
+    `query($owner: String!, $repo: String!, $categoryId: ID, $after: String) {
+      repository(owner: $owner, name: $repo) {
+        discussions(first: 30, categoryId: $categoryId, after: $after, orderBy: {field: CREATED_AT, direction: DESC}) {
+          nodes { ${DISCUSSION_LIST_FRAGMENT} }
+          totalCount
+          pageInfo { hasNextPage endCursor }
+        }
+      }
+    }`,
+    { owner, repo, categoryId, after },
+  );
+  return data.repository.discussions;
+}
+
+export async function fetchDiscussionDetail(
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<GithubDiscussion & { comments: GithubDiscussionCommentConnection }> {
+  const data = await ghGraphQL<{
+    repository: {
+      discussion: GithubDiscussion & { comments: GithubDiscussionCommentConnection };
+    };
+  }>(
+    `query($owner: String!, $repo: String!, $number: Int!) {
+      repository(owner: $owner, name: $repo) {
+        discussion(number: $number) {
+          id
+          number
+          title
+          body
+          bodyHTML
+          bodyText
+          author { login avatarUrl }
+          category { id name emoji isAnswerable }
+          createdAt
+          updatedAt
+          comments(first: 100) {
+            nodes {
+              id
+              databaseId
+              author { login avatarUrl }
+              body
+              bodyHTML
+              createdAt
+              updatedAt
+              isAnswer
+              replies(first: 100) {
+                nodes {
+                  id
+                  databaseId
+                  author { login avatarUrl }
+                  body
+                  bodyHTML
+                  createdAt
+                  updatedAt
+                  isAnswer
+                }
+              }
+            }
+            totalCount
+          }
+        }
+      }
+    }`,
+    { owner, repo, number },
+  );
+  return data.repository.discussion;
+}
+
+export async function createDiscussion(
+  repoNodeId: string,
+  categoryId: string,
+  title: string,
+  body: string,
+): Promise<GithubDiscussion> {
+  const data = await ghGraphQL<{ createDiscussion: { discussion: GithubDiscussion } }>(
+    `mutation($input: CreateDiscussionInput!) {
+      createDiscussion(input: $input) {
+        discussion {
+          id
+          number
+          title
+          bodyText
+          author { login avatarUrl }
+          category { id name emoji isAnswerable }
+          createdAt
+          updatedAt
+          comments(first: 0) { totalCount }
+        }
+      }
+    }`,
+    { input: { repositoryId: repoNodeId, categoryId, title, body } },
+  );
+  return data.createDiscussion.discussion;
+}
+
+export async function addDiscussionComment(
+  discussionId: string,
+  body: string,
+  replyToId?: string,
+): Promise<{ id: string; databaseId: number }> {
+  const data = await ghGraphQL<{ addDiscussionComment: { comment: { id: string; databaseId: number } } }>(
+    `mutation($input: AddDiscussionCommentInput!) {
+      addDiscussionComment(input: $input) {
+        comment { id databaseId }
+      }
+    }`,
+    { input: { discussionId, body, replyToId } },
+  );
+  return data.addDiscussionComment.comment;
+}
+
+export async function markDiscussionCommentAsAnswer(commentId: string): Promise<void> {
+  await ghGraphQL<{ markDiscussionCommentAsAnswer: unknown }>(
+    `mutation($input: MarkDiscussionCommentAsAnswerInput!) {
+      markDiscussionCommentAsAnswer(input: $input) { clientMutationId }
+    }`,
+    { input: { commentId } },
+  );
+}
+
+export async function unmarkDiscussionCommentAsAnswer(commentId: string): Promise<void> {
+  await ghGraphQL<{ unmarkDiscussionCommentAsAnswer: unknown }>(
+    `mutation($input: UnmarkDiscussionCommentAsAnswerInput!) {
+      unmarkDiscussionCommentAsAnswer(input: $input) { clientMutationId }
+    }`,
+    { input: { commentId } },
+  );
+}
+
+export async function deleteDiscussion(discussionId: string): Promise<void> {
+  await ghGraphQL<{ deleteDiscussion: unknown }>(
+    `mutation($input: DeleteDiscussionInput!) {
+      deleteDiscussion(input: $input) { clientMutationId }
+    }`,
+    { input: { discussionId } },
+  );
+}
+
+export async function deleteDiscussionComment(commentId: string): Promise<void> {
+  await ghGraphQL<{ deleteDiscussionComment: unknown }>(
+    `mutation($input: DeleteDiscussionCommentInput!) {
+      deleteDiscussionComment(input: $input) { clientMutationId }
+    }`,
+    { input: { commentId } },
+  );
+}
+
+export async function updateDiscussionComment(commentId: string, body: string): Promise<void> {
+  await ghGraphQL<{ updateDiscussionComment: unknown }>(
+    `mutation($input: UpdateDiscussionCommentInput!) {
+      updateDiscussionComment(input: $input) { clientMutationId }
+    }`,
+    { input: { commentId, body } },
+  );
+}
+
+async function updateDiscussion(
+  discussionId: string,
+  patch: { title?: string; body?: string; categoryId?: string },
+): Promise<void> {
+  await ghGraphQL<{ updateDiscussion: unknown }>(
+    `mutation($input: UpdateDiscussionInput!) {
+      updateDiscussion(input: $input) { clientMutationId }
+    }`,
+    { input: { discussionId, ...patch } },
+  );
+}
+
 
 export async function uploadPackageVersion(
   ownerType: "user" | "org" | "repository",

@@ -12,6 +12,7 @@ import { OrgReposPage } from "./pages/OrgReposPage.js";
 import { RepoDetailPage } from "./pages/RepoDetailPage.js";
 import { IssuesPage } from "./pages/IssuesPage.js";
 import { PullsPage } from "./pages/PullsPage.js";
+import { DiscussionsPage } from "./pages/DiscussionsPage.js";
 import { ActionsPage } from "./pages/ActionsPage.js";
 import { RunDetailPage } from "./pages/RunDetailPage.js";
 import { RepoSettingsPage } from "./pages/RepoSettingsPage.js";
@@ -65,6 +66,8 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
+              <Route path="/ui/repos/:owner/:repo/discussions" element={<DiscussionsPage />} />
+              <Route path="/ui/repos/:owner/:repo/discussions/:number" element={<DiscussionsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions" element={<ActionsPage />} />
               <Route path="/ui/repos/:owner/:repo/actions/runs/:runId" element={<RunDetailPage />} />
               <Route path="/ui/repos/:owner/:repo/settings" element={<RepoSettingsPage />} />

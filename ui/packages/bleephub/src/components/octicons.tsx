@@ -453,6 +453,15 @@ export function PackageIcon(p: IconProps) {
   );
 }
 
+export function DiscussionIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 3.5h11v7h-7l-3.5 3v-3h-0.5z" />
+      <path d="M5.5 6.5h5M5.5 9h3" />
+    </Svg>
+  );
+}
+
 export function CodespaceIcon(p: IconProps) {
   return (
     <Svg {...p}>

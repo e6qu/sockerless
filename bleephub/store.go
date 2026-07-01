@@ -312,6 +312,12 @@ type Store struct {
 	NextOrgMigrationID         int
 	NextAutolinkID             int
 	NextInvitationID           int
+	Discussions                map[int]*Discussion
+	DiscussionCategories       map[int]*DiscussionCategory
+	DiscussionComments         map[int]*DiscussionComment
+	NextDiscussionID           int
+	NextDiscussionCategoryID   int
+	NextDiscussionCommentID    int
 	actionsKeyPair             *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist                    *Persistence
 	mu                         sync.RWMutex
@@ -488,6 +494,9 @@ func NewStore() *Store {
 		PackagesByOwnerKey:         map[string]map[string]*Package{},
 		PackageVersionsByPackage:   map[int]map[int]*PackageVersion{},
 		PackageFilesByVersion:      map[int]map[int]*PackageFile{},
+		Discussions:                map[int]*Discussion{},
+		DiscussionCategories:       map[int]*DiscussionCategory{},
+		DiscussionComments:         map[int]*DiscussionComment{},
 		NextAgent:                  1,
 		NextSecretScanningAlertID:  1,
 		NextCodeScanningAlertID:    1,
@@ -526,6 +535,9 @@ func NewStore() *Store {
 		NextCodespaceSecretID:      1,
 		NextAutolinkID:             1,
 		NextInvitationID:           1,
+		NextDiscussionID:           1,
+		NextDiscussionCategoryID:   1,
+		NextDiscussionCommentID:    1,
 	}
 }
 
@@ -572,7 +584,8 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	pages_builds, branch_protection, audit_log, marketplace_plans,
 //	notifications_state, repo_rulesets, projects_classic, project_columns,
 //	project_cards, secret_scanning_alerts, code_scanning_alerts,
-//	code_scanning_analyses, sarif_uploads, user_migrations, org_migrations.
+//	code_scanning_analyses, sarif_uploads, user_migrations, org_migrations,
+//	discussions, discussion_categories, discussion_comments.
 //
 // Other state (workflows, sessions, agents, ephemeral codes) deliberately
 // stays in-memory only — operator restart implies abandoning in-flight runs.
@@ -1515,6 +1528,39 @@ func (st *Store) loadFromPersistence() error {
 			st.OrgMigrations[m.ID] = m
 			if m.ID >= st.NextOrgMigrationID {
 				st.NextOrgMigrationID = m.ID + 1
+			}
+			return nil
+		}},
+		{"discussion_categories", func(_ string, raw []byte) error {
+			var cat DiscussionCategory
+			if err := loadJSON(raw, &cat); err != nil {
+				return err
+			}
+			st.DiscussionCategories[cat.ID] = &cat
+			if cat.ID >= st.NextDiscussionCategoryID {
+				st.NextDiscussionCategoryID = cat.ID + 1
+			}
+			return nil
+		}},
+		{"discussions", func(_ string, raw []byte) error {
+			var d Discussion
+			if err := loadJSON(raw, &d); err != nil {
+				return err
+			}
+			st.Discussions[d.ID] = &d
+			if d.ID >= st.NextDiscussionID {
+				st.NextDiscussionID = d.ID + 1
+			}
+			return nil
+		}},
+		{"discussion_comments", func(_ string, raw []byte) error {
+			var c DiscussionComment
+			if err := loadJSON(raw, &c); err != nil {
+				return err
+			}
+			st.DiscussionComments[c.ID] = &c
+			if c.ID >= st.NextDiscussionCommentID {
+				st.NextDiscussionCommentID = c.ID + 1
 			}
 			return nil
 		}},

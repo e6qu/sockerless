@@ -116,6 +116,9 @@ func (s *Server) initGraphQLSchema() {
 	// Add pull request types, queries, and mutations
 	s.addPullRequestFieldsToSchema(userType, issueType, repoType, mutationType, queryType)
 
+	// Add discussion types, queries, and mutations
+	s.addDiscussionFieldsToSchema(userType, repoType, mutationType)
+
 	// Add moderation mutations (minimize/unminimize comment, lock/unlock).
 	s.addModerationMutationsToSchema(mutationType)
 

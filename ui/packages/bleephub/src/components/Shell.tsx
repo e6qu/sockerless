@@ -22,6 +22,7 @@ import {
   MigrationIcon,
   CodespaceIcon,
   PackageIcon,
+  DiscussionIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -214,7 +215,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
 
 // ─── Repo context header + tabs ────────────────────────────────────────
 
-export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "security" | "settings";
+export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "discussions" | "security" | "settings";
 
 /**
  * Repo context bar: "owner / repo" breadcrumb above the GitHub-style tab
@@ -269,6 +270,12 @@ export function RepoHeader({
           label="Pull requests"
           count={prCount}
           active={active === "pulls"}
+        />
+        <RepoTabLink
+          to={`${base}/discussions`}
+          icon={<DiscussionIcon size={15} />}
+          label="Discussions"
+          active={active === "discussions"}
         />
         <RepoTabLink
           to={`${base}/actions`}
