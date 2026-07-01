@@ -191,6 +191,15 @@ func (s *Server) registerRoutes() {
 	// Releases API (gh_releases.go)
 	s.registerGHReleasesRoutes()
 
+	// Search API (gh_search.go)
+	s.registerGHSearchRoutes()
+
+	// Notifications API (gh_notifications.go)
+	s.registerGHNotificationsRoutes()
+
+	// Repository Rulesets API (gh_rulesets.go)
+	s.registerGHRulesetRoutes()
+
 	// Actions extras (gh_actions_extras.go) — repository_dispatch, logs, timing
 	s.registerGHActionsExtrasRoutes()
 
