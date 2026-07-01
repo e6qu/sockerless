@@ -4,6 +4,26 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-01 - bleephub GitHub API/UI parity + internal admin APIs
+
+A single branch (`feat/bleephub-github-parity-and-admin`) closed several commonly-used GitHub API gaps and added the internal admin surface needed to operate a bleephub instance.
+
+**Internal admin API.** `bleephub/handle_mgmt.go` gained `/internal/users`, `/internal/orgs`, `/internal/teams` CRUD endpoints, plus `/internal/audit-log` and `/internal/audit-log/events`. The endpoints are gated to the admin token surface and return operator-facing JSON shapes. `gh_misc_endpoints.go` added the `AuditLogEvent` type; `store.go` persists the audit log bucket.
+
+**Gists.** `bleephub/gh_gists_rest.go` adds the full Gists REST API: list auth/public/starred, create/get/update/delete, star/unstar/check, fork/list forks, and gist comments CRUD. Store support includes `Gist`, `GistFile`, `GistHistory`, and `GistComment` types.
+
+**Repository autolinks.** `bleephub/gh_repos_autolinks.go` adds `GET/POST/GET/DELETE /repos/{owner}/{repo}/autolinks` for managing repo autolink references.
+
+**Repository invitations.** `bleephub/gh_invitations_rest.go` adds admin list/update/cancel endpoints plus user-facing accept/decline endpoints. Accepting an invitation adds the user to `RepoCollaborators`.
+
+**Commit statuses.** `bleephub/gh_statuses_rest.go` adds `POST .../statuses/{sha}`, `GET .../commits/{ref}/statuses`, and `GET .../commits/{ref}/status` (combined status).
+
+**Commit comments.** `bleephub/gh_commit_comments_rest.go` adds list-by-repo, list-by-commit, create, get, update, and delete for commit comments.
+
+**UI pages.** `ui/packages/bleephub/src/pages/` gained `UsersPage.tsx`, `OrgsPage.tsx`, `TeamsPage.tsx`, `AuditLogPage.tsx`, `StorageHealthPage.tsx`, and `GistsPage.tsx`. `App.tsx`, `Shell.tsx`, `api.ts`, `types.ts`, and `octicons.tsx` were updated with routes, navigation, and types.
+
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` is clean; `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass (88/88); the OpenAPI shape ratchet reports no new violations.
+
 ## 2026-07-01 - CloudWatch alarm SNS→SQS body regression tests (#734, PR #739)
 
 The production fix for issue #734 landed earlier in PR #737: `simulators/aws/sns.go` builds the CloudWatch→SNS→SQS notification envelope with `json.Marshal` and includes `Timestamp`. The open issue remained because the regression coverage was a narrow unit test, so PR #739 (`fix/aws-cloudwatch-sns-sqs-body-734`) added end-to-end coverage that exercises the real evaluator→SNS fan-out→SQS `ReceiveMessage` path with adversarial alarm fields.

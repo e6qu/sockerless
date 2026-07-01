@@ -4,33 +4,51 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/aws-cloudwatch-sns-sqs-body-734` — PR #739 — regression-test lock for GitHub issue #734: CloudWatch alarm SNS notifications delivered to SQS must have a parseable JSON body.
+`feat/bleephub-github-parity-and-admin` — bleephub GitHub API/UI parity continuation + internal admin APIs.
 
 ---
-### Active branch: CloudWatch→SNS→SQS malformed JSON body (#734)
+### Active branch: bleephub GitHub API/UI parity + admin APIs
 
 Scope:
-- The production fix is already in `main` via PR #737 (`simulators/aws/sns.go` builds the notification envelope with `json.Marshal` and includes `Timestamp`).
-- Add regression tests covering the real evaluator → SNS fan-out → SQS `ReceiveMessage` path, including adversarial characters (quotes, newlines, control characters, backslashes) in alarm fields.
-- Close GitHub issue #734.
+- Internal admin users/orgs/teams CRUD and audit-log endpoints (handle_mgmt.go).
+- Gists REST API with files, stars, forks, and comments (gh_gists_rest.go).
+- Repository autolinks REST API (gh_repos_autolinks.go).
+- Repository invitations REST API with accept/decline (gh_invitations_rest.go).
+- Commit statuses REST API with combined status (gh_statuses_rest.go).
+- Commit comments REST API (gh_commit_comments_rest.go).
+- UI admin pages (users, orgs, teams, audit log, storage health) and Gists page.
+- Store support, persistence wiring, and route registration for all new surfaces.
+
+Validation:
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` passes.
+- `make ui/packages/bleephub/lint` and `make ui/packages/bleephub/test` pass.
+- OpenAPI shape ratchet reports no new violations.
+
+**Next:** PR is open and awaits review/merge. After merge, continue with remaining GitHub API gaps (codespaces, packages, migrations, code scanning, secret scanning, dependabot, projects classic, branch protection sub-resources, remaining GraphQL surfaces) or pick from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged #739): CloudWatch→SNS→SQS malformed JSON body regression tests (#734)
+
+`fix/aws-cloudwatch-sns-sqs-body-734` closed GitHub issue #734 with regression coverage.
+
+Scope:
+- Hardened `TestCloudWatch_AlarmActionsDispatchedToSNS` with an adversarial `AlarmDescription` (quotes, newline, control character) and required valid JSON at both the SQS `Body` and embedded SNS `Message` layers.
+- Added `TestSNSNotificationEnvelopeQuotesAndBackslashes` for unit-level round-trip coverage of quotes, newlines, and backslashes.
+- Updated continuity files for the merged #738 and active #734 branch.
 
 Validation:
 - `go test ./simulators/aws -count=1` passes.
 - `make -C simulators/aws unit-test` passes.
-- AWS SDK regression test `TestCloudWatch_AlarmActionsDispatchedToSNS` passes and now fails loudly if either the SQS `Body` or embedded SNS `Message` is invalid JSON.
+- AWS SDK regression test `TestCloudWatch_AlarmActionsDispatchedToSNS` passes and fails loudly if either the SQS `Body` or embedded SNS `Message` is invalid JSON.
 
-**Next:** PR #739 is open and awaits review/merge. After merge, pick the next task from PLAN.md / open issues / BUGS.md.
+**Next:** PR #739 merged; pick the next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged #738): bleephub Search, Notifications, and Repository Rulesets APIs
 
 Scope:
 - **Search API** (`bleephub/gh_search.go`):
-  - `GET /api/v3/search/issues` with simple qualifier parsing (`repo:`, `user:`, `org:`, `language:`, `label:`, `state:`, `is:`, `in:`) and `sort`/`order`.
-  - `GET /api/v3/search/repositories` with repo/user/org qualifiers and text matching.
-  - `GET /api/v3/search/code` walking the default-branch git tree and matching path/content with `path:`, `extension:`, `filename:`, and free-text terms.
-  - `GET /api/v3/search/users` matching users and organizations.
-- **Notifications API** (`bleephub/gh_notifications.go`, `bleephub/store_notifications.go`):
   - `GET /api/v3/notifications` and `GET /api/v3/repos/{owner}/{repo}/notifications` with `all`, `participating`, `since`, `before`.
   - `PUT /api/v3/notifications` and `PUT /api/v3/repos/{owner}/{repo}/notifications` to mark notifications read.
   - `GET /api/v3/notifications/threads/{thread_id}` and `PATCH` (read/done).
