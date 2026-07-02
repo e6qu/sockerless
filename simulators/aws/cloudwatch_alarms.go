@@ -313,6 +313,10 @@ func handleCWJSONPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		InsufficientDataActions: req.InsufficientDataActions,
 		Tags:                    cwResolveAlarmTags(req.Tags, req.AlarmName),
 	})
+	// A new or updated alarm is a fresh entity: reset any remembered
+	// dispatched state so the next evaluator pass treats it as
+	// INSUFFICIENT_DATA and dispatches actions on the first real transition.
+	cwAlarmLastState.Delete(req.AlarmName)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{})
 }
 
@@ -498,6 +502,10 @@ func handleCWCBORPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		InsufficientDataActions: req.InsufficientDataActions,
 		Tags:                    cwResolveAlarmTags(req.Tags, req.AlarmName),
 	})
+	// A new or updated alarm is a fresh entity: reset any remembered
+	// dispatched state so the next evaluator pass treats it as
+	// INSUFFICIENT_DATA and dispatches actions on the first real transition.
+	cwAlarmLastState.Delete(req.AlarmName)
 	cwWriteCBOR(w, map[string]any{})
 }
 
@@ -877,6 +885,10 @@ func handleCWQueryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		InsufficientDataActions: cwQueryStringList(r, "InsufficientDataActions"),
 		Tags:                    cwResolveAlarmTags(tags, name),
 	})
+	// A new or updated alarm is a fresh entity: reset any remembered
+	// dispatched state so the next evaluator pass treats it as
+	// INSUFFICIENT_DATA and dispatches actions on the first real transition.
+	cwAlarmLastState.Delete(name)
 	w.Header().Set("Content-Type", "text/xml")
 	fmt.Fprintf(w, `<PutMetricAlarmResponse %s><ResponseMetadata><RequestId>%s</RequestId></ResponseMetadata></PutMetricAlarmResponse>`,
 		cwQueryXmlns, generateUUID())
