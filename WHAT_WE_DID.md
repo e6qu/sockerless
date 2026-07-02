@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-02 - CloudWatch metric alarm state reset on PutMetricAlarm (PR #751, closes #749)
+
+The `fix/aws-cloudwatch-alarm-recreate-state-749` branch closed GitHub issue #749: a CloudWatch alarm that had previously reached `ALARM` would not dispatch `AlarmActions` again when it was re-created via `PutMetricAlarm` (for example, after repeated Terraform apply cycles that reuse alarm names).
+
+**Root cause.** The background alarm evaluator stores the last dispatched state in `cwAlarmLastState`, keyed by alarm name. `DeleteAlarms` correctly cleared that entry, but `PutMetricAlarm` did not. A re-created alarm therefore inherited the old `ALARM` remembered state, so the first evaluator pass saw `prev == newState` and skipped dispatch.
+
+**Fix.** All three CloudWatch alarm wire protocols (awsJson1.0, rpc-v2-cbor, and awsQuery) now call `cwAlarmLastState.Delete(name)` immediately after storing the new alarm configuration. A new or updated alarm is treated as a fresh entity whose next transition is from `INSUFFICIENT_DATA`, matching real CloudWatch behavior for a newly created alarm.
+
+**Regression test.** `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`. It starts a fresh `SIM_RUNTIME=process` simulator subprocess, creates an alarm, pumps a breaching datapoint, asserts the SQS subscriber receives the first notification, purges the queue, re-creates the same alarm, pumps another datapoint, and asserts a second notification arrives with `OldStateValue: INSUFFICIENT_DATA`.
+
+**Validation.**
+- `make unit-test` in `simulators/aws` passes.
+- `make sdk-test SDK_TEST_ARGS='-run TestCloudWatch_AlarmSNSActionToSQS -v'` passes.
+- `GOWORK=off go test -run TestCloudWatch -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `golangci-lint` reports 0 issues in `simulators/aws` and `simulators/aws/sdk-tests`.
+- `./scripts/check-simulator-tests.sh` passes.
+
 ## 2026-07-02 - bleephub API/UI parity tranche: Teams, issues, PR reviews, Git data, releases, repo settings, rulesets, Dependabot, secret scanning, security advisories, Actions permissions, gists, users, notifications (PR #750)
 
 The `feat/bleephub-full-api-ui-parity` branch closed a large set of remaining GitHub API/UI parity gaps. Coverage against the vendored GitHub OpenAPI description moved from 543/1190 operations (46%) to 665/1190 operations (56%).

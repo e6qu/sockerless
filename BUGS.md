@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2276 filed - 2232 fixed - 3 open - 16 false positives.**
+**2277 filed - 2233 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2277 | P2 | AWS sim — CloudWatch metric alarms | stale state across alarm re-creation | `PutMetricAlarm` did not reset `cwAlarmLastState`, so re-creating an alarm that had previously reached `ALARM` inherited the old remembered state and skipped dispatching `AlarmActions` on the next breach. Fixed by deleting the remembered state in all three `PutMetricAlarm` handlers (awsJson1.0, rpc-v2-cbor, awsQuery). Regression test `TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState` verifies the second `ALARM` transition still delivers to SQS. |
 | ~~2276~~ | P3 | bleephub OpenAPI ratchet | response-shape mismatch on user events and social accounts | Restoring `gh_misc_endpoints_users.go` exposed user-events and social-accounts responses to the OpenAPI shape validator. `GET /users/{}/events` reported unknown `node_id`/`html_url`/`type`/`site_admin` on the event actor, and `GET /users/{}/social_accounts` reported unknown `id` on account objects. Fixed by slimming `eventActorToJSON` to the GitHub event-actor schema (`login`, `id`, `avatar_url`, `gravatar_id`, `url`) and removing the synthetic `id` field from `SetUserSocialAccounts`; `handleCreateMySocialAccounts` now reads the request body once and supports both URL arrays and `{url}` objects. |
 | ~~2275~~ | P3 | bleephub tests | non-hermetic assertion in shared-server test | `TestRepoStargazersREST` asserted `len(user/starred) == 1`, but the shared TestMain server inherits stars from earlier tests (e.g., `TestUserExtras_StarredRepo`). The assertion failed whenever another test had starred a repo that still exists. Fixed by asserting the target repo `admin/stargazers-rest` is present in the starred list rather than requiring a singleton list. |
 | ~~2274~~ | P3 | bleephub API-definition ratchet | invented /api/v3 paths for ProjectsV2 REST extensions | The new ProjectsV2 REST convenience endpoints (`/orgs/{}/projectsV2/*` and `/users/{}/projectsV2/*`) are GraphQL-only in real GitHub; registering them under `/api/v3` violated the rule that every `/api/v3` path must be a real GitHub endpoint. Fixed by removing the invented ProjectsV2 REST routes, the `allowedBleephubExtensions` escape hatch, and their OpenAPI allowlist entries. The underlying GraphQL ProjectV2 surface remains available at `/api/graphql`. |

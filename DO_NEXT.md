@@ -4,9 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #750 — `feat/bleephub-full-api-ui-parity` — large bleephub API/UI parity tranche. Coverage moved from 543/1190 to 665/1190 vendored GitHub REST operations (56%). Implemented and tested: Teams, issue management, PR reviews, Git data writes, release assets/reactions, repository settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runner labels, gist extras, users extras, notifications. UI: TeamsPage, RepoSettingsPage, SecurityAdvisoriesPage, RulesetsPage, NotificationsPage, GistsPage. Awaiting review/merge.
+PR #751 — `fix/aws-cloudwatch-alarm-recreate-state-749` — closes GitHub issue #749. CloudWatch metric alarms created or updated via `PutMetricAlarm` now reset the background evaluator's remembered dispatched state, so a re-created alarm transitions from `INSUFFICIENT_DATA` and dispatches `AlarmActions` on the first real `ALARM` transition. Adds a `SIM_RUNTIME=process` SDK regression test (`TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`) that exercises the same shape as the adversarial CLI probe. Awaiting review/merge.
 
-**Next:** after PR #750 merges, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
+**Next:** after PR #751 merges, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
+
+---
+### Prior branch (merged, PR #750): bleephub API/UI parity tranche
+
+Closed a large set of remaining GitHub API/UI parity gaps. Coverage moved from 543/1190 to 665/1190 vendored GitHub REST operations (56%). Implemented and tested: Teams, issue management, PR reviews, Git data writes, release assets/reactions, repository settings, org rulesets, Dependabot org/repo, secret scanning org/repo, repository security advisories, Actions permissions/runner labels, gist extras, users extras, notifications. UI: TeamsPage, RepoSettingsPage, SecurityAdvisoriesPage, RulesetsPage, NotificationsPage, GistsPage.
+
+**Next:** PR #751 is the active branch.
 
 ---
 ### Prior branch (merged, PR #747): bleephub API/UI parity continuation
