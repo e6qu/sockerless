@@ -3,48 +3,53 @@ package bleephub
 import (
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // PullRequest represents a GitHub pull request.
 type PullRequest struct {
-	ID               int
-	NodeID           string
-	Number           int // per-repo, SHARED with issues via NextIssueNumber
-	RepoID           int
-	Title            string
-	Body             string
-	State            string // "OPEN", "CLOSED", "MERGED"
-	IsDraft          bool
-	HeadRefName      string // source branch name
-	BaseRefName      string // target branch name
-	AuthorID         int
-	AssigneeIDs      []int
-	LabelIDs         []int
-	MilestoneID      int    // 0 = none
-	Mergeable        string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
-	Additions        int
-	Deletions        int
-	ChangedFiles     int
-	MergedByID       int // 0 = not merged
-	Locked           bool
-	ActiveLockReason string // "", "off-topic", "too heated", "resolved", "spam"
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	ClosedAt         *time.Time
-	MergedAt         *time.Time
+	ID                   int
+	NodeID               string
+	Number               int // per-repo, SHARED with issues via NextIssueNumber
+	RepoID               int
+	Title                string
+	Body                 string
+	State                string // "OPEN", "CLOSED", "MERGED"
+	IsDraft              bool
+	HeadRefName          string // source branch name
+	BaseRefName          string // target branch name
+	AuthorID             int
+	AssigneeIDs          []int
+	LabelIDs             []int
+	RequestedReviewerIDs []int
+	MilestoneID          int    // 0 = none
+	Mergeable            string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
+	Additions            int
+	Deletions            int
+	ChangedFiles         int
+	MergedByID           int // 0 = not merged
+	Locked               bool
+	ActiveLockReason     string // "", "off-topic", "too heated", "resolved", "spam"
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+	ClosedAt             *time.Time
+	MergedAt             *time.Time
 }
 
 // PullRequestReview represents a review on a pull request.
 type PullRequestReview struct {
-	ID        int
-	NodeID    string
-	PRID      int // PullRequest.ID
-	AuthorID  int
-	State     string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"
-	Body      string
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID               int
+	NodeID           string
+	PRID             int // PullRequest.ID
+	AuthorID         int
+	State            string // "APPROVED", "CHANGES_REQUESTED", "COMMENTED", "PENDING", "DISMISSED"
+	Body             string
+	SubmittedAt      *time.Time
+	DismissedAt      *time.Time
+	DismissalMessage string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // CreatePullRequest creates a new pull request in the given repository.
@@ -158,25 +163,34 @@ func (st *Store) UpdatePullRequest(id int, fn func(*PullRequest)) bool {
 	return true
 }
 
-// CreatePRReview creates a new review on a pull request.
+// CreatePRReview creates a new review on a pull request (legacy prID-based API).
 func (st *Store) CreatePRReview(prID, authorID int, state, body string) *PullRequestReview {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	return st.createPRReviewLocked(prID, authorID, state, body)
+}
 
+// createPRReviewLocked creates a review while holding st.mu.
+func (st *Store) createPRReviewLocked(prID, authorID int, state, body string) *PullRequestReview {
 	if _, ok := st.PullRequests[prID]; !ok {
 		return nil
 	}
 
 	now := time.Now().UTC()
+	var submittedAt *time.Time
+	if state != "PENDING" {
+		submittedAt = &now
+	}
 	review := &PullRequestReview{
-		ID:        st.NextPRReview,
-		NodeID:    fmt.Sprintf("PRR_kgDO%08d", st.NextPRReview),
-		PRID:      prID,
-		AuthorID:  authorID,
-		State:     state,
-		Body:      body,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:          st.NextPRReview,
+		NodeID:      fmt.Sprintf("PRR_kgDO%08d", st.NextPRReview),
+		PRID:        prID,
+		AuthorID:    authorID,
+		State:       state,
+		Body:        body,
+		SubmittedAt: submittedAt,
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	st.NextPRReview++
 	st.PRReviews[review.ID] = review
@@ -184,6 +198,208 @@ func (st *Store) CreatePRReview(prID, authorID int, state, body string) *PullReq
 		st.persist.MustPut("pr_reviews", strconv.Itoa(review.ID), review)
 	}
 	return review
+}
+
+// CreatePullRequestReview creates a review addressed by repo key and PR number.
+func (st *Store) CreatePullRequestReview(repoKey string, pullNumber int, userID int, body string, state string) *PullRequestReview {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	repo := st.ReposByName[repoKey]
+	if repo == nil {
+		return nil
+	}
+	var pr *PullRequest
+	for _, p := range st.PullRequests {
+		if p.RepoID == repo.ID && p.Number == pullNumber {
+			pr = p
+			break
+		}
+	}
+	if pr == nil {
+		return nil
+	}
+	return st.createPRReviewLocked(pr.ID, userID, state, body)
+}
+
+// GetPullRequestReview returns a review by global ID.
+func (st *Store) GetPullRequestReview(id int) *PullRequestReview {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.PRReviews[id]
+}
+
+// ListPullRequestReviews returns all reviews for a repo/PR number.
+func (st *Store) ListPullRequestReviews(repoKey string, pullNumber int) []*PullRequestReview {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	repo := st.ReposByName[repoKey]
+	if repo == nil {
+		return nil
+	}
+	var pr *PullRequest
+	for _, p := range st.PullRequests {
+		if p.RepoID == repo.ID && p.Number == pullNumber {
+			pr = p
+			break
+		}
+	}
+	if pr == nil {
+		return nil
+	}
+	var reviews []*PullRequestReview
+	for _, r := range st.PRReviews {
+		if r.PRID == pr.ID {
+			reviews = append(reviews, r)
+		}
+	}
+	return reviews
+}
+
+// UpdatePullRequestReview updates a review's body.
+func (st *Store) UpdatePullRequestReview(id int, body string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	r, ok := st.PRReviews[id]
+	if !ok {
+		return false
+	}
+	r.Body = body
+	r.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("pr_reviews", strconv.Itoa(r.ID), r)
+	}
+	return true
+}
+
+// DeletePullRequestReview deletes a pending review.
+func (st *Store) DeletePullRequestReview(id int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	r, ok := st.PRReviews[id]
+	if !ok {
+		return false
+	}
+	if r.State != "PENDING" {
+		return false
+	}
+	delete(st.PRReviews, id)
+	if st.persist != nil {
+		st.persist.MustDelete("pr_reviews", strconv.Itoa(id))
+	}
+	return true
+}
+
+// SubmitPullRequestReview transitions a pending review to an event state.
+func (st *Store) SubmitPullRequestReview(id int, event string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	r, ok := st.PRReviews[id]
+	if !ok {
+		return false
+	}
+	if r.State != "PENDING" {
+		return false
+	}
+	now := time.Now().UTC()
+	switch strings.ToUpper(event) {
+	case "APPROVE":
+		r.State = "APPROVED"
+	case "REQUEST_CHANGES":
+		r.State = "CHANGES_REQUESTED"
+	case "COMMENT":
+		r.State = "COMMENTED"
+	default:
+		return false
+	}
+	r.SubmittedAt = &now
+	r.UpdatedAt = now
+	if st.persist != nil {
+		st.persist.MustPut("pr_reviews", strconv.Itoa(r.ID), r)
+	}
+	return true
+}
+
+// DismissPullRequestReview marks a review as dismissed.
+func (st *Store) DismissPullRequestReview(id int, message string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	r, ok := st.PRReviews[id]
+	if !ok {
+		return false
+	}
+	now := time.Now().UTC()
+	r.State = "DISMISSED"
+	r.DismissalMessage = message
+	r.DismissedAt = &now
+	r.UpdatedAt = now
+	if st.persist != nil {
+		st.persist.MustPut("pr_reviews", strconv.Itoa(r.ID), r)
+	}
+	return true
+}
+
+func (st *Store) findPRByRepoNumberLocked(repoKey string, pullNumber int) *PullRequest {
+	repo := st.ReposByName[repoKey]
+	if repo == nil {
+		return nil
+	}
+	for _, p := range st.PullRequests {
+		if p.RepoID == repo.ID && p.Number == pullNumber {
+			return p
+		}
+	}
+	return nil
+}
+
+// RequestReviewers adds reviewer IDs to a PR's requested reviewers list.
+func (st *Store) RequestReviewers(repoKey string, pullNumber int, reviewerIDs []int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.findPRByRepoNumberLocked(repoKey, pullNumber)
+	if pr == nil {
+		return false
+	}
+	existing := map[int]struct{}{}
+	for _, id := range pr.RequestedReviewerIDs {
+		existing[id] = struct{}{}
+	}
+	for _, id := range reviewerIDs {
+		if _, ok := existing[id]; !ok {
+			pr.RequestedReviewerIDs = append(pr.RequestedReviewerIDs, id)
+			existing[id] = struct{}{}
+		}
+	}
+	pr.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+	}
+	return true
+}
+
+// RemoveRequestedReviewers removes reviewer IDs from a PR's requested reviewers list.
+func (st *Store) RemoveRequestedReviewers(repoKey string, pullNumber int, reviewerIDs []int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.findPRByRepoNumberLocked(repoKey, pullNumber)
+	if pr == nil {
+		return false
+	}
+	remove := map[int]struct{}{}
+	for _, id := range reviewerIDs {
+		remove[id] = struct{}{}
+	}
+	var kept []int
+	for _, id := range pr.RequestedReviewerIDs {
+		if _, ok := remove[id]; !ok {
+			kept = append(kept, id)
+		}
+	}
+	pr.RequestedReviewerIDs = kept
+	pr.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+	}
+	return true
 }
 
 // ListPRReviews returns all reviews for a pull request.

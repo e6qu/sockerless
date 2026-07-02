@@ -529,10 +529,12 @@ func TestPersistenceReload_OrgMembershipAndTeams(t *testing.T) {
 		}
 		team := st.CreateTeam("acme", "Platform", TeamOptions{Privacy: TeamPrivacyClosed, Permission: TeamPermissionPush})
 		teamID = team.ID
-		st.AddTeamMember("acme", "platform", admin.ID, TeamRoleMaintainer)
-		st.AddTeamMember("acme", "platform", dev.ID, TeamRoleMember)
-		st.AddTeamRepo("acme", "platform", "acme/infra")
-		st.AddTeamRepo("acme", "platform", "acme/app")
+		st.CreateOrgRepo(org, admin, "infra", "", false)
+		st.CreateOrgRepo(org, admin, "app", "", false)
+		st.SetTeamMembership("acme", "platform", admin.ID, TeamRoleMaintainer)
+		st.SetTeamMembership("acme", "platform", dev.ID, TeamRoleMember)
+		st.SetTeamRepoPermission("acme", "platform", "acme/infra", "")
+		st.SetTeamRepoPermission("acme", "platform", "acme/app", "")
 		st.RemoveTeamRepo("acme", "platform", "acme/infra")
 		// Removing the org membership also strips the user from org teams.
 		if !st.RemoveMembership("acme", dev.ID) {
@@ -812,7 +814,7 @@ func TestPersistenceReload_OrgProfileMembershipFlagsAndOrgHooks(t *testing.T) {
 		parentID = parent.ID
 		child := st.CreateTeam("persist-org", "Core Infra", TeamOptions{ParentID: parent.ID})
 		childID = child.ID
-		st.AddTeamMember("persist-org", "core", admin.ID, TeamRoleMaintainer)
+		st.SetTeamMembership("persist-org", "core", admin.ID, TeamRoleMaintainer)
 
 		hook := st.CreateOrgHook("persist-org", "https://hooks.example.test/x", "s3cret", "json", "0", []string{"push", "organization"}, true)
 		hookID = hook.ID

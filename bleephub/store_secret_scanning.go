@@ -237,3 +237,89 @@ func (st *Store) persistSecretScanningAlert(a *SecretScanningAlert) {
 		st.persist.MustPut("secret_scanning_alerts", strconv.Itoa(a.ID), a)
 	}
 }
+
+// ListSecretScanningAlertsByOrg returns all secret scanning alerts for
+// repositories owned by the given organization, sorted by creation time descending.
+func (st *Store) ListSecretScanningAlertsByOrg(orgID int) []*SecretScanningAlert {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var out []*SecretScanningAlert
+	for repoKey, byNumber := range st.SecretScanningAlertsByRepo {
+		repo := st.ReposByName[repoKey]
+		if repo == nil || repo.OwnerType != "Organization" || repo.OwnerID != orgID {
+			continue
+		}
+		for _, a := range byNumber {
+			out = append(out, a)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
+}
+
+// ListSecretScanningAlertsByUser returns all secret scanning alerts for
+// repositories owned by the given user, sorted by creation time descending.
+func (st *Store) ListSecretScanningAlertsByUser(userID int) []*SecretScanningAlert {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var out []*SecretScanningAlert
+	for repoKey, byNumber := range st.SecretScanningAlertsByRepo {
+		repo := st.ReposByName[repoKey]
+		if repo == nil || repo.OwnerID != userID {
+			continue
+		}
+		for _, a := range byNumber {
+			out = append(out, a)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
+}
+
+// ListSecretScanningPatternConfigurations returns the default secret scanning
+// pattern overrides exposed by GitHub's pattern-configurations endpoint. The
+// shape is an object grouping partner patterns under provider_pattern_overrides.
+func (st *Store) ListSecretScanningPatternConfigurations() map[string]interface{} {
+	patterns := []struct {
+		patternID   string
+		slug        string
+		displayName string
+	}{
+		{"ghp", "github_personal_access_token", "GitHub Personal Access Token"},
+		{"gho", "github_oauth_access_token", "GitHub OAuth Access Token"},
+		{"ghu", "github_user_to_server_token", "GitHub User-to-Server Token"},
+		{"ghs", "github_server_to_server_token", "GitHub Server-to-Server Token"},
+		{"ghr", "github_refresh_token", "GitHub Refresh Token"},
+		{"aws", "aws_access_key_id", "AWS Access Key ID"},
+		{"google", "google_api_key", "Google API Key"},
+		{"slack", "slack_incoming_webhook_url", "Slack Incoming Webhook URL"},
+	}
+	overrides := make([]map[string]interface{}, 0, len(patterns))
+	for _, p := range patterns {
+		overrides = append(overrides, map[string]interface{}{
+			"token_type":             p.patternID,
+			"custom_pattern_version": nil,
+			"slug":                   p.slug,
+			"display_name":           p.displayName,
+			"alert_total":            0,
+			"alert_total_percentage": 0,
+			"false_positives":        0,
+			"false_positive_rate":    0,
+			"bypass_rate":            0,
+			"default_setting":        "enabled",
+			"enterprise_setting":     nil,
+			"setting":                "not-set",
+		})
+	}
+	return map[string]interface{}{
+		"pattern_config_version":     nil,
+		"provider_pattern_overrides": overrides,
+		"custom_pattern_overrides":   []map[string]interface{}{},
+	}
+}

@@ -4,10 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #747 — `feat/bleephub-api-ui-parity-continuation` — pushed; closes the remaining bleephub API/UI parity gaps and awaits merge.
+PR #750 — `feat/bleephub-full-api-ui-parity` — large bleephub API/UI parity tranche. Coverage moved from 543/1190 to 665/1190 vendored GitHub REST operations (56%). Implemented and tested: Teams, issue management, PR reviews, Git data writes, release assets/reactions, repository settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runner labels, gist extras, users extras, notifications. UI: TeamsPage, RepoSettingsPage, SecurityAdvisoriesPage, RulesetsPage, NotificationsPage, GistsPage. Awaiting review/merge.
+
+**Next:** after PR #750 merges, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
 
 ---
-### Active branch: bleephub API/UI parity continuation
+### Prior branch (merged, PR #747): bleephub API/UI parity continuation
+
+Earlier increments on the merged branch landed Projects classic, secret scanning, code scanning, Dependabot, Migrations, Codespaces, Packages, Discussions GraphQL, organization rulesets, PR reviews, team members, release assets/reactions, and repository settings.
 
 Scope:
 - Projects classic (v1) REST API + UI (`bleephub/gh_projects_classic.go`, `ProjectsClassicPage.tsx`).
@@ -18,6 +22,11 @@ Scope:
 - Codespaces REST API + UI with real Docker-backed containers (`bleephub/gh_codespaces.go`, `CodespacesPage.tsx`).
 - Packages REST management API + UI with real file storage (`bleephub/gh_packages.go`, `PackagesPage.tsx`).
 - Discussions GraphQL API + UI (`bleephub/gh_discussions_graphql.go`, `DiscussionsPage.tsx`).
+- **Organization Rulesets REST endpoints (`bleephub/gh_rulesets.go`, `bleephub/store_rulesets.go`).** Done: added org-scoped ruleset CRUD, rule-suites list/get, and versioned history under `/api/v3/orgs/{org}/rulesets`, gated by `requireOrgAdmin(scopeOrgAdministration, permRead/permWrite)`; wired through 2-/3-segment dispatchers to avoid Go 1.22 mux conflicts between `/rulesets/rule-suites/{id}` and `/rulesets/{id}/history`.
+- **Pull Request review REST endpoints (`bleephub/gh_pulls_rest.go`, `bleephub/store_pulls.go`).** Done: list/get/create/update/delete/submit/dismiss reviews, request/remove requested reviewers, and update-branch; wired through a 3-segment pull dispatcher to avoid Go 1.22 mux conflicts with PR-comment reactions.
+- **Team member/repo REST endpoints (`bleephub/gh_teams_rest.go`, `bleephub/store_orgs.go`).** Done: moved team members, memberships, and repo grants into `gh_teams_rest.go`, wrapped in `requirePerm(scopeMembers, permRead/permWrite)`; reads require active org membership, writes require org admin or team maintainer (only admins can promote to maintainer); team membership response now includes `user`, `team`, and `organization_url`; per-repo permission overrides honored when adding a repo.
+- **Repository settings REST endpoints (`bleephub/gh_repos_rest.go`, `bleephub/store_repos.go`).** Done: deploy keys, transfer, branch rename, subscription, vulnerability alerts, automated security fixes, private vulnerability reporting, interaction limits, merge-upstream; persistence and tests wired.
+- **Issue management REST endpoints (`bleephub/gh_issues_rest.go`, `bleephub/store_issues.go`).** Done: issue comments (list/get/create/update/delete, repo-level list, pin/unpin), label assignment (add/set/clear), assignee add/remove, issue events (per-issue, repo-level, single event), and timeline; wired through shared issue dispatchers to avoid Go 1.22 mux conflicts; response shapes validated against the vendored OpenAPI description.
 - AGENTS.md continuity-only PR rule strengthened.
 - Boyscout: bumped Go module deps to latest to satisfy dependency freshness gate.
 

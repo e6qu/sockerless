@@ -15,6 +15,69 @@ func (s *Server) registerGHRulesetRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/rules/branches/{branch}", s.handleListBranchRules)
 	s.route("GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history", s.handleListRulesetHistory)
 	s.route("GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history/{version_id}", s.handleGetRulesetVersion)
+
+	s.registerGHOrgRulesetRoutes()
+}
+
+func (s *Server) registerGHOrgRulesetRoutes() {
+	s.route("GET /api/v3/orgs/{org}/rulesets", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgRulesets))
+	s.route("POST /api/v3/orgs/{org}/rulesets", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleCreateOrgRuleset))
+	s.route("GET /api/v3/orgs/{org}/rulesets/rule-suites", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleListOrgRuleSuites))
+	s.route("GET /api/v3/orgs/{org}/rulesets/{ruleset_id}", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleGetOrgRuleset))
+	s.route("PUT /api/v3/orgs/{org}/rulesets/{ruleset_id}", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleUpdateOrgRuleset))
+	s.route("DELETE /api/v3/orgs/{org}/rulesets/{ruleset_id}", s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleDeleteOrgRuleset))
+	s.route("GET /api/v3/orgs/{org}/rulesets/{p1}/{p2}", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleOrgRulesetTwoSegDispatch("GET")))
+	s.route("GET /api/v3/orgs/{org}/rulesets/{p1}/{p2}/{p3}", s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleOrgRulesetThreeSegDispatch("GET")))
+}
+
+func (s *Server) handleOrgRulesetTwoSegDispatch(method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p1 := r.PathValue("p1")
+		p2 := r.PathValue("p2")
+		switch {
+		case p1 == "rule-suites":
+			r.SetPathValue("rule_suite_id", p2)
+			s.handleGetOrgRuleSuite(w, r)
+		case p2 == "history":
+			r.SetPathValue("ruleset_id", p1)
+			s.handleListOrgRulesetHistory(w, r)
+		default:
+			writeGHError(w, http.StatusNotFound, "Not Found")
+		}
+	}
+}
+
+func (s *Server) handleOrgRulesetThreeSegDispatch(method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p1 := r.PathValue("p1")
+		p2 := r.PathValue("p2")
+		p3 := r.PathValue("p3")
+		if p2 == "history" {
+			r.SetPathValue("ruleset_id", p1)
+			r.SetPathValue("version_id", p3)
+			s.handleGetOrgRulesetVersion(w, r)
+			return
+		}
+		writeGHError(w, http.StatusNotFound, "Not Found")
+	}
+}
+
+// requireOrgAdmin enforces an organization-administration permission and
+// verifies the caller is an admin of the target organization.
+func (s *Server) requireOrgAdmin(scope permScope, level permLevel, next http.HandlerFunc) http.HandlerFunc {
+	return s.requirePerm(scope, level, func(w http.ResponseWriter, r *http.Request) {
+		user := ghUserFromContext(r.Context())
+		org := s.store.GetOrg(r.PathValue("org"))
+		if org == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		if !canAdminOrg(s.store, user, org) {
+			writeGHError(w, http.StatusForbidden, "Must have admin rights to Organization.")
+			return
+		}
+		next(w, r)
+	})
 }
 
 func (s *Server) resolveRepo(w http.ResponseWriter, r *http.Request) *Repo {
@@ -270,4 +333,216 @@ func rulesetToJSON(rs *Ruleset, includeBody bool) map[string]interface{} {
 		m["rules"] = rs.Rules
 	}
 	return m
+}
+
+func (s *Server) handleListOrgRulesets(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rulesets := s.store.ListOrgRulesets(org.ID)
+	out := make([]map[string]interface{}, len(rulesets))
+	for i, rs := range rulesets {
+		out[i] = rulesetToJSON(rs, false)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateOrgRuleset(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var body Ruleset
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if body.Name == "" {
+		writeGHValidationError(w, "ruleset", "name", "missing_field")
+		return
+	}
+	rs := s.store.CreateOrgRuleset(org.ID, body.Name, body.Target, body.Enforcement, body.Conditions, body.Rules)
+	writeJSON(w, http.StatusCreated, rulesetToJSON(rs, true))
+}
+
+func (s *Server) handleGetOrgRuleset(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rs := s.lookupOrgRuleset(w, r, org)
+	if rs == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesetToJSON(rs, true))
+}
+
+func (s *Server) handleUpdateOrgRuleset(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rs := s.lookupOrgRuleset(w, r, org)
+	if rs == nil {
+		return
+	}
+	var body Ruleset
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if !s.store.UpdateOrgRuleset(rs.ID, func(rs *Ruleset) {
+		if body.Name != "" {
+			rs.Name = body.Name
+		}
+		if body.Target != "" {
+			rs.Target = body.Target
+		}
+		if body.Enforcement != "" {
+			rs.Enforcement = body.Enforcement
+		}
+		if body.BypassActors != nil {
+			rs.BypassActors = body.BypassActors
+		}
+		if body.CurrentUserCanBypass != "" {
+			rs.CurrentUserCanBypass = body.CurrentUserCanBypass
+		}
+		if len(body.Conditions.RefName.Include) > 0 || len(body.Conditions.RefName.Exclude) > 0 {
+			rs.Conditions = body.Conditions
+		}
+		if body.Rules != nil {
+			rs.Rules = body.Rules
+		}
+	}) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	updated := s.store.GetRuleset(rs.ID)
+	writeJSON(w, http.StatusOK, rulesetToJSON(updated, true))
+}
+
+func (s *Server) handleDeleteOrgRuleset(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rs := s.lookupOrgRuleset(w, r, org)
+	if rs == nil {
+		return
+	}
+	s.store.DeleteOrgRuleset(rs.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListOrgRuleSuites(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	suites := s.store.ListOrgRulesetSuites(org.ID)
+	out := make([]map[string]interface{}, len(suites))
+	for i, suite := range suites {
+		out[i] = rulesetSuiteToJSON(&suite)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetOrgRuleSuite(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	suiteID, err := strconv.Atoi(r.PathValue("rule_suite_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	suite := s.store.GetOrgRulesetSuite(org.ID, suiteID)
+	if suite == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesetSuiteToJSON(suite))
+}
+
+func (s *Server) handleListOrgRulesetHistory(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rs := s.lookupOrgRuleset(w, r, org)
+	if rs == nil {
+		return
+	}
+	versions := s.store.GetRulesetHistory(rs)
+	out := make([]map[string]interface{}, len(versions))
+	for i, v := range versions {
+		out[i] = map[string]interface{}{
+			"version_id": v.VersionID,
+			"ruleset":    rulesetToJSON(&v.Ruleset, true),
+			"created_at": v.CreatedAt.UTC().Format(time.RFC3339),
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetOrgRulesetVersion(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rs := s.lookupOrgRuleset(w, r, org)
+	if rs == nil {
+		return
+	}
+	versionID, err := strconv.Atoi(r.PathValue("version_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	version := s.store.GetRulesetVersion(rs, versionID)
+	if version == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"version_id": version.VersionID,
+		"ruleset":    rulesetToJSON(&version.Ruleset, true),
+		"created_at": version.CreatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func (s *Server) lookupOrgRuleset(w http.ResponseWriter, r *http.Request, org *Org) *Ruleset {
+	idStr := r.PathValue("ruleset_id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	rs := s.store.GetOrgRuleset(id)
+	if rs == nil || rs.OrgID != org.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	return rs
+}
+
+func rulesetSuiteToJSON(suite *RulesetSuite) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         suite.ID,
+		"node_id":    suite.NodeID,
+		"ruleset_id": suite.RulesetID,
+		"status":     suite.Status,
+		"created_at": suite.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at": suite.UpdatedAt.UTC().Format(time.RFC3339),
+	}
 }

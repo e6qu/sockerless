@@ -343,3 +343,127 @@ func (st *Store) SetDependabotOrgSecretSelectedRepos(orgLogin, name string, ids 
 	}
 	return sec, true
 }
+
+// --- user secrets ---
+
+// DependabotUserSecret is a user-level Dependabot secret.
+type DependabotUserSecret struct {
+	DependabotSecret
+}
+
+// UpsertDependabotUserSecret creates or updates a user-level Dependabot secret.
+func (st *Store) UpsertDependabotUserSecret(userLogin, name, value, keyID string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	now := time.Now().UTC()
+	m := st.DependabotUserSecrets[userLogin]
+	if m == nil {
+		m = make(map[string]*DependabotUserSecret)
+		st.DependabotUserSecrets[userLogin] = m
+	}
+	existing := m[name]
+	if existing != nil {
+		existing.Value = value
+		existing.KeyID = keyID
+		existing.UpdatedAt = now
+	} else {
+		m[name] = &DependabotUserSecret{DependabotSecret{Name: name, Value: value, KeyID: keyID, CreatedAt: now, UpdatedAt: now}}
+	}
+	if st.persist != nil {
+		st.persist.MustPut("dependabot_user_secrets", userLogin, m)
+	}
+	return existing == nil
+}
+
+// DeleteDependabotUserSecret removes a user-level Dependabot secret.
+func (st *Store) DeleteDependabotUserSecret(userLogin, name string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	m, ok := st.DependabotUserSecrets[userLogin]
+	if !ok || m[name] == nil {
+		return false
+	}
+	delete(m, name)
+	if st.persist != nil {
+		if len(m) > 0 {
+			st.persist.MustPut("dependabot_user_secrets", userLogin, m)
+		} else {
+			st.persist.MustDelete("dependabot_user_secrets", userLogin)
+		}
+	}
+	return true
+}
+
+// GetDependabotUserSecret returns a user-level Dependabot secret by name.
+func (st *Store) GetDependabotUserSecret(userLogin, name string) *DependabotUserSecret {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.DependabotUserSecrets[userLogin][name]
+}
+
+// ListDependabotUserSecrets returns all user-level Dependabot secrets sorted by name.
+func (st *Store) ListDependabotUserSecrets(userLogin string) []*DependabotUserSecret {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	m := st.DependabotUserSecrets[userLogin]
+	out := make([]*DependabotUserSecret, 0, len(m))
+	for _, sec := range m {
+		out = append(out, sec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// --- org repository access ---
+
+// SetDependabotRepositoryAccess replaces the repository access list for an org.
+// Returns true when the list did not previously exist.
+func (st *Store) SetDependabotRepositoryAccess(orgLogin string, repoIDs []int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	_, existed := st.DependabotRepositoryAccess[orgLogin]
+	st.DependabotRepositoryAccess[orgLogin] = append([]int(nil), repoIDs...)
+	if st.persist != nil {
+		if len(repoIDs) > 0 {
+			st.persist.MustPut("dependabot_repo_access", orgLogin, st.DependabotRepositoryAccess[orgLogin])
+		} else {
+			st.persist.MustDelete("dependabot_repo_access", orgLogin)
+		}
+	}
+	return !existed
+}
+
+// GetDependabotRepositoryAccess returns the repository access list for an org.
+func (st *Store) GetDependabotRepositoryAccess(orgLogin string) []int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return append([]int(nil), st.DependabotRepositoryAccess[orgLogin]...)
+}
+
+// --- org alerts ---
+
+// ListDependabotAlertsByOrg returns all Dependabot alerts for repositories owned
+// by the given organization, sorted by creation time descending.
+func (st *Store) ListDependabotAlertsByOrg(orgID int) []*DependabotAlert {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var out []*DependabotAlert
+	for repoKey, byNumber := range st.DependabotAlertsByRepo {
+		repo := st.ReposByName[repoKey]
+		if repo == nil || repo.OwnerType != "Organization" || repo.OwnerID != orgID {
+			continue
+		}
+		for _, a := range byNumber {
+			out = append(out, a)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out
+}

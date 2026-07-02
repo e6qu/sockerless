@@ -7,13 +7,23 @@ import (
 )
 
 func (s *Server) registerGHTeamRoutes() {
-	s.route("GET /api/v3/user/teams", s.handleListAuthUserTeams)
-	s.route("POST /api/v3/orgs/{org}/teams", s.handleCreateTeam)
-	s.route("GET /api/v3/orgs/{org}/teams", s.handleListTeams)
-	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}", s.handleGetTeam)
-	s.route("PATCH /api/v3/orgs/{org}/teams/{team_slug}", s.handleUpdateTeam)
-	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}", s.handleDeleteTeam)
-	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/teams", s.handleListChildTeams)
+	s.route("GET /api/v3/user/teams", s.requirePerm(scopeMembers, permRead, s.handleListAuthUserTeams))
+	s.route("POST /api/v3/orgs/{org}/teams", s.requirePerm(scopeMembers, permWrite, s.handleCreateTeam))
+	s.route("GET /api/v3/orgs/{org}/teams", s.requirePerm(scopeMembers, permRead, s.handleListTeams))
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}", s.requirePerm(scopeMembers, permRead, s.handleGetTeam))
+	s.route("PATCH /api/v3/orgs/{org}/teams/{team_slug}", s.requirePerm(scopeMembers, permWrite, s.handleUpdateTeam))
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}", s.requirePerm(scopeMembers, permWrite, s.handleDeleteTeam))
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/teams", s.requirePerm(scopeMembers, permRead, s.handleListChildTeams))
+
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/members", s.requirePerm(scopeMembers, permRead, s.handleListTeamMembers))
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.requirePerm(scopeMembers, permRead, s.handleGetTeamMembership))
+	s.route("PUT /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.requirePerm(scopeMembers, permWrite, s.handleAddTeamMember))
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}", s.requirePerm(scopeMembers, permWrite, s.handleRemoveTeamMember))
+
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/repos", s.requirePerm(scopeMembers, permRead, s.handleListTeamRepos))
+	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.requirePerm(scopeMembers, permRead, s.handleCheckTeamRepo))
+	s.route("PUT /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.requirePerm(scopeMembers, permWrite, s.handleAddTeamRepo))
+	s.route("DELETE /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}", s.requirePerm(scopeMembers, permWrite, s.handleRemoveTeamRepo))
 }
 
 // validTeamEnums checks the privacy / permission / notification_setting
@@ -118,10 +128,10 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for _, id := range maintainerIDs {
-		s.store.AddTeamMember(orgLogin, team.Slug, id, TeamRoleMaintainer)
+		s.store.SetTeamMembership(orgLogin, team.Slug, id, TeamRoleMaintainer)
 	}
 	for _, fullName := range req.RepoNames {
-		s.store.AddTeamRepo(orgLogin, team.Slug, fullName)
+		s.store.SetTeamRepoPermission(orgLogin, team.Slug, fullName, "")
 	}
 
 	s.recordAuditEvent("team.create", user.Login, orgLogin, map[string]interface{}{"team_id": team.ID, "team_slug": team.Slug})
@@ -355,6 +365,398 @@ func (s *Server) handleListAuthUserTeams(w http.ResponseWriter, r *http.Request)
 		result = append(result, teamToJSON(team, org, s.store, base))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+// canManageTeam reports whether a user may mutate team membership or repo
+// grants. Organization owners always can; team maintainers can too, except
+// only owners may promote another user to maintainer.
+func (s *Server) canManageTeam(user *User, org *Org, team *Team, addingMaintainer bool) bool {
+	if canAdminOrg(s.store, user, org) {
+		return true
+	}
+	role, isMember := team.roleOf(user.ID)
+	return isMember && role == TeamRoleMaintainer && !addingMaintainer
+}
+
+func (s *Server) handleListTeamMembers(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	orgLogin := r.PathValue("org")
+	if s.store.GetOrg(orgLogin) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	members := s.store.ListTeamMembers(orgLogin, slug)
+	result := make([]map[string]interface{}, 0, len(members))
+	for _, u := range members {
+		result = append(result, userToJSON(u))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+func (s *Server) handleAddTeamMember(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	orgLogin := r.PathValue("org")
+	org := s.store.GetOrg(orgLogin)
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	username := r.PathValue("username")
+	target := s.store.LookupUserByLogin(username)
+	if target == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Role string `json:"role"`
+	}
+	if !decodeJSONBodyOptional(w, r, &req) {
+		return
+	}
+	role := TeamRole(req.Role)
+	if role == "" {
+		role = TeamRoleMember
+	}
+	if role != TeamRoleMember && role != TeamRoleMaintainer {
+		writeGHValidationError(w, "TeamMembership", "role", "invalid")
+		return
+	}
+
+	if !s.canManageTeam(user, org, team, role == TeamRoleMaintainer) {
+		writeGHError(w, http.StatusForbidden, "Must be an organization owner or team maintainer.")
+		return
+	}
+
+	orgMembership := s.store.GetMembership(orgLogin, target.ID)
+	if orgMembership == nil {
+		orgMembership = s.store.SetMembership(orgLogin, target.ID, OrgRoleMember, MembershipStatePending)
+		s.emitOrgMembershipEvent(org, "member_invited", orgMembership, target, user)
+	}
+
+	s.store.SetTeamMembership(orgLogin, slug, target.ID, role)
+
+	writeJSON(w, http.StatusOK, teamMembershipJSON(s.baseURL(r), orgLogin, slug, target, team, org, role, orgMembership.State))
+}
+
+// handleGetTeamMembership — GET /api/v3/orgs/{org}/teams/{team_slug}/memberships/{username}.
+// The membership state mirrors the user's org membership: a team member
+// whose org invitation is still pending reads as pending.
+func (s *Server) handleGetTeamMembership(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	orgLogin := r.PathValue("org")
+	org := s.store.GetOrg(orgLogin)
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	username := r.PathValue("username")
+	target := s.store.LookupUserByLogin(username)
+	if target == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	role, isMember := s.store.GetTeamMembership(orgLogin, slug, target.ID)
+	if !isMember {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	state := MembershipStateActive
+	if m := s.store.GetMembership(orgLogin, target.ID); m != nil {
+		state = m.State
+	}
+	writeJSON(w, http.StatusOK, teamMembershipJSON(s.baseURL(r), orgLogin, slug, target, team, org, role, state))
+}
+
+func teamMembershipJSON(baseURL, orgLogin, slug string, user *User, team *Team, org *Org, role TeamRole, state MembershipState) map[string]interface{} {
+	api := baseURL + "/api/v3/orgs/" + orgLogin + "/teams/" + slug
+	return map[string]interface{}{
+		"url":              api + "/memberships/" + user.Login,
+		"role":             role,
+		"state":            state,
+		"user":             userToJSON(user),
+		"team":             teamRefJSON(team, org, baseURL),
+		"organization_url": baseURL + "/api/v3/orgs/" + orgLogin,
+	}
+}
+
+func (s *Server) handleRemoveTeamMember(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	orgLogin := r.PathValue("org")
+	org := s.store.GetOrg(orgLogin)
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if !s.canManageTeam(user, org, team, false) {
+		writeGHError(w, http.StatusForbidden, "Must be an organization owner or team maintainer.")
+		return
+	}
+
+	username := r.PathValue("username")
+	target := s.store.LookupUserByLogin(username)
+	if target == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if !s.store.RemoveTeamMembership(orgLogin, slug, target.ID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListTeamRepos — GET /api/v3/orgs/{org}/teams/{team_slug}/repos.
+func (s *Server) handleListTeamRepos(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	orgLogin := r.PathValue("org")
+	if s.store.GetOrg(orgLogin) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	team := s.store.GetTeam(orgLogin, r.PathValue("team_slug"))
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repos := s.store.ListTeamRepos(orgLogin, team.Slug)
+	page := paginateAndLink(w, r, repos)
+	base := s.baseURL(r)
+	result := make([]map[string]interface{}, 0, len(page))
+	for _, repo := range page {
+		perm, _ := s.store.GetTeamRepoPermission(orgLogin, team.Slug, repo.FullName)
+		perms, roleName := teamRepoPermissionsJSON(perm)
+		j := repoToJSON(repo, s.store, base)
+		j["permissions"] = perms
+		j["role_name"] = roleName
+		result = append(result, j)
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+// handleCheckTeamRepo — GET /api/v3/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}.
+// 204 when the team manages the repo; 200 with the repository body when the
+// client asks via the repository media type (go-github's IsTeamRepoBySlug
+// sends Accept: application/vnd.github.v3.repository+json); 404 otherwise.
+func (s *Server) handleCheckTeamRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	orgLogin := r.PathValue("org")
+	if s.store.GetOrg(orgLogin) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !isActiveOrgMember(s.store, user, orgLogin) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	team := s.store.GetTeam(orgLogin, r.PathValue("team_slug"))
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	owner, name := r.PathValue("owner"), r.PathValue("repo")
+	fullName := owner + "/" + name
+	if _, linked := s.store.GetTeamRepoPermission(orgLogin, team.Slug, fullName); !linked {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "vnd.github.v3.repository") {
+		j := repoToJSON(repo, s.store, s.baseURL(r))
+		perm, _ := s.store.GetTeamRepoPermission(orgLogin, team.Slug, fullName)
+		perms, roleName := teamRepoPermissionsJSON(perm)
+		j["permissions"] = perms
+		j["role_name"] = roleName
+		// team-repository (unlike repository / minimal-repository) does
+		// not carry has_discussions or has_pull_requests.
+		delete(j, "has_discussions")
+		delete(j, "has_pull_requests")
+		writeJSON(w, http.StatusOK, j)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAddTeamRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	orgLogin := r.PathValue("org")
+	org := s.store.GetOrg(orgLogin)
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if !s.canManageTeam(user, org, team, false) {
+		writeGHError(w, http.StatusForbidden, "Must be an organization owner or team maintainer.")
+		return
+	}
+
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	fullName := owner + "/" + repo
+
+	if s.store.GetRepo(owner, repo) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Permission string `json:"permission"`
+	}
+	decodeJSONBodyOptional(w, r, &req)
+	perm := TeamPermission(req.Permission)
+	switch perm {
+	case "", TeamPermissionPull, TeamPermissionPush, TeamPermissionAdmin:
+	default:
+		writeGHValidationError(w, "TeamRepo", "permission", "invalid")
+		return
+	}
+
+	s.store.SetTeamRepoPermission(orgLogin, slug, fullName, perm)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRemoveTeamRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	orgLogin := r.PathValue("org")
+	org := s.store.GetOrg(orgLogin)
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	slug := r.PathValue("team_slug")
+	team := s.store.GetTeam(orgLogin, slug)
+	if team == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if !s.canManageTeam(user, org, team, false) {
+		writeGHError(w, http.StatusForbidden, "Must be an organization owner or team maintainer.")
+		return
+	}
+
+	owner := r.PathValue("owner")
+	repo := r.PathValue("repo")
+	fullName := owner + "/" + repo
+
+	if !s.store.RemoveTeamRepo(orgLogin, slug, fullName) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// teamRepoPermissionsJSON expands a team's permission level into the
+// boolean permissions object + role_name GitHub serves on team repos.
+func teamRepoPermissionsJSON(perm TeamPermission) (map[string]interface{}, string) {
+	perms := map[string]interface{}{
+		"pull":     true,
+		"triage":   perm == TeamPermissionPush || perm == TeamPermissionAdmin,
+		"push":     perm == TeamPermissionPush || perm == TeamPermissionAdmin,
+		"maintain": perm == TeamPermissionAdmin,
+		"admin":    perm == TeamPermissionAdmin,
+	}
+	switch perm {
+	case TeamPermissionPush:
+		return perms, "write"
+	case TeamPermissionAdmin:
+		return perms, "admin"
+	default:
+		return perms, "read"
+	}
 }
 
 // teamRefJSON converts a Team to the GitHub `team-simple` shape — the

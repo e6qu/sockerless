@@ -3,9 +3,13 @@ package bleephub
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,24 +66,31 @@ type ReleaseAsset struct {
 
 // ReleaseStore wraps release CRUD with a mutex.
 type ReleaseStore struct {
-	mu        sync.RWMutex
-	byID      map[int]*Release
-	byRepo    map[int][]*Release
-	assetByID map[int]*ReleaseAsset
-	nextID    int
-	nextAsset int
-	persist   *Persistence
+	mu           sync.RWMutex
+	byID         map[int]*Release
+	byRepo       map[int][]*Release
+	assetByID    map[int]*ReleaseAsset
+	assetData    map[int][]byte
+	assetDataDir string
+	nextID       int
+	nextAsset    int
+	persist      *Persistence
 }
 
 func newReleaseStore(p *Persistence) *ReleaseStore {
-	return &ReleaseStore{
+	rs := &ReleaseStore{
 		byID:      map[int]*Release{},
 		byRepo:    map[int][]*Release{},
 		assetByID: map[int]*ReleaseAsset{},
+		assetData: map[int][]byte{},
 		nextID:    1,
 		nextAsset: 1,
 		persist:   p,
 	}
+	if d := os.Getenv("BLEEPHUB_DATA_DIR"); d != "" {
+		rs.assetDataDir = filepath.Join(d, "release_assets")
+	}
+	return rs
 }
 
 func (rs *ReleaseStore) Create(repoID, authorID int, tagName, target, name, body string, draft, prerelease bool) *Release {
@@ -183,10 +194,7 @@ func (rs *ReleaseStore) DeleteAllForRepo(repoID int) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	for _, r := range rs.byRepo[repoID] {
-		delete(rs.byID, r.ID)
-		if rs.persist != nil {
-			rs.persist.MustDelete("releases", strconv.Itoa(r.ID))
-		}
+		rs.deleteReleaseLocked(r)
 	}
 	delete(rs.byRepo, repoID)
 }
@@ -198,7 +206,7 @@ func (rs *ReleaseStore) Delete(id int) bool {
 	if r == nil {
 		return false
 	}
-	delete(rs.byID, id)
+	rs.deleteReleaseLocked(r)
 	src := rs.byRepo[r.RepoID]
 	for i, x := range src {
 		if x.ID == id {
@@ -206,8 +214,178 @@ func (rs *ReleaseStore) Delete(id int) bool {
 			break
 		}
 	}
+	return true
+}
+
+// --- Asset methods ---
+
+func (rs *ReleaseStore) assetFilePath(id int) string {
+	if rs.assetDataDir == "" {
+		return ""
+	}
+	return filepath.Join(rs.assetDataDir, strconv.Itoa(id))
+}
+
+func (rs *ReleaseStore) saveAssetDataLocked(id int, data []byte) error {
+	if rs.assetDataDir != "" {
+		if err := os.MkdirAll(rs.assetDataDir, 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(rs.assetFilePath(id), data, 0o644)
+	}
+	rs.assetData[id] = data
+	return nil
+}
+
+func (rs *ReleaseStore) loadAssetDataLocked(id int) ([]byte, bool) {
+	if rs.assetDataDir != "" {
+		path := rs.assetFilePath(id)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, false
+		}
+		return data, true
+	}
+	data, ok := rs.assetData[id]
+	return data, ok
+}
+
+func (rs *ReleaseStore) removeAssetDataLocked(id int) {
+	if rs.assetDataDir != "" {
+		_ = os.Remove(rs.assetFilePath(id))
+		return
+	}
+	delete(rs.assetData, id)
+}
+
+func (rs *ReleaseStore) deleteAssetLocked(a *ReleaseAsset) {
+	delete(rs.assetByID, a.ID)
+	rs.removeAssetDataLocked(a.ID)
+	if rel := rs.byID[a.ReleaseID]; rel != nil {
+		src := rel.Assets
+		for i, x := range src {
+			if x.ID == a.ID {
+				rel.Assets = append(src[:i], src[i+1:]...)
+				break
+			}
+		}
+	}
 	if rs.persist != nil {
-		rs.persist.MustDelete("releases", strconv.Itoa(id))
+		rs.persist.MustDelete("release_assets", strconv.Itoa(a.ID))
+	}
+}
+
+func (rs *ReleaseStore) deleteReleaseLocked(r *Release) {
+	for _, a := range r.Assets {
+		rs.deleteAssetLocked(a)
+	}
+	delete(rs.byID, r.ID)
+	if rs.persist != nil {
+		rs.persist.MustDelete("releases", strconv.Itoa(r.ID))
+	}
+}
+
+func (rs *ReleaseStore) CreateReleaseAsset(releaseID, uploaderID int, name, label, contentType string, data []byte) (*ReleaseAsset, error) {
+	if name == "" {
+		return nil, fmt.Errorf("name required")
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	if rs.byID[releaseID] == nil {
+		return nil, fmt.Errorf("release not found")
+	}
+	now := time.Now().UTC()
+	id := rs.nextAsset
+	rs.nextAsset++
+	asset := &ReleaseAsset{
+		ID:          id,
+		NodeID:      fmt.Sprintf("RA_kgDO%08d", id),
+		ReleaseID:   releaseID,
+		Name:        name,
+		Label:       label,
+		State:       "uploaded",
+		ContentType: contentType,
+		Size:        len(data),
+		UploaderID:  uploaderID,
+		CreatedAt:   now,
+		UpdatedAt:   now,
+	}
+	rs.assetByID[id] = asset
+	rs.byID[releaseID].Assets = append(rs.byID[releaseID].Assets, asset)
+	if err := rs.saveAssetDataLocked(id, data); err != nil {
+		// Rollback maps and disk on write failure.
+		rs.deleteAssetLocked(asset)
+		return nil, err
+	}
+	if rs.persist != nil {
+		rs.persist.MustPut("release_assets", strconv.Itoa(id), asset)
+	}
+	return asset, nil
+}
+
+func (rs *ReleaseStore) GetReleaseAsset(id int) *ReleaseAsset {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	return rs.assetByID[id]
+}
+
+func (rs *ReleaseStore) GetAssetData(id int) ([]byte, bool) {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	return rs.loadAssetDataLocked(id)
+}
+
+func (rs *ReleaseStore) UpdateReleaseAsset(id int, name, label string) *ReleaseAsset {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	a := rs.assetByID[id]
+	if a == nil {
+		return nil
+	}
+	if name != "" {
+		a.Name = name
+	}
+	a.Label = label
+	a.UpdatedAt = time.Now().UTC()
+	if rs.persist != nil {
+		rs.persist.MustPut("release_assets", strconv.Itoa(id), a)
+	}
+	return a
+}
+
+func (rs *ReleaseStore) DeleteReleaseAsset(id int) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	a := rs.assetByID[id]
+	if a == nil {
+		return false
+	}
+	rs.deleteAssetLocked(a)
+	return true
+}
+
+func (rs *ReleaseStore) ListReleaseAssets(releaseID int) []*ReleaseAsset {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	rel := rs.byID[releaseID]
+	if rel == nil {
+		return nil
+	}
+	out := make([]*ReleaseAsset, len(rel.Assets))
+	copy(out, rel.Assets)
+	return out
+}
+
+func (rs *ReleaseStore) IncrementAssetDownloads(id int) bool {
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	a := rs.assetByID[id]
+	if a == nil {
+		return false
+	}
+	a.DownloadCount++
+	if rs.persist != nil {
+		rs.persist.MustPut("release_assets", strconv.Itoa(id), a)
 	}
 	return true
 }
@@ -233,21 +411,32 @@ func (s *Server) registerGHReleasesRoutes() {
 
 	// `/releases/{p1}/{p2}` dispatches by segment value:
 	//   p1=="tags"      → GET release-by-tag (real GH path: releases/tags/{tag})
-	//   p1==numeric     → reactions on release {p1} when p2 == "reactions"
+	//   p1=="assets"    → GET/PATCH/DELETE asset by id
+	//   p2=="assets"    → POST upload / GET list assets for release {p1}
+	//   p2=="reactions" → GET/POST reactions on release {p1}
 	// Go 1.22's mux refuses to register the two distinct patterns directly,
-	// so a single dispatcher handles both real-GH paths.
+	// so a single dispatcher handles all real-GH paths under this prefix.
 	s.route("GET /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("GET"))
 	s.route("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("POST"))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+		s.handleReleaseTwoSegDispatch("PATCH"))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
+		s.handleReleaseTwoSegDispatch("DELETE"))
+
+	// `/releases/{p1}/{p2}/{p3}` is only used for release-reaction deletion
+	// (reactions have a three-segment path while assets stop at two).
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}/{p3}",
 		s.handleReleaseThreeSegDispatch("DELETE"))
 }
 
-// handleReleaseTwoSegDispatch resolves either
+// handleReleaseTwoSegDispatch resolves
 //
-//	GET /releases/tags/{tag}           (real-GH path)
-//	GET|POST /releases/{release_id}/reactions
+//	GET /releases/tags/{tag}
+//	GET/PATCH/DELETE /releases/assets/{asset_id}
+//	GET/POST /releases/{release_id}/assets
+//	GET/POST /releases/{release_id}/reactions
 func (s *Server) handleReleaseTwoSegDispatch(method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p1 := r.PathValue("p1")
@@ -257,13 +446,37 @@ func (s *Server) handleReleaseTwoSegDispatch(method string) http.HandlerFunc {
 			// Stash the tag back into the {tag} slot via r.SetPathValue.
 			r.SetPathValue("tag", p2)
 			s.handleGetReleaseByTag(w, r)
+		case p1 == "assets":
+			r.SetPathValue("asset_id", p2)
+			switch method {
+			case "GET":
+				s.handleGetReleaseAsset(w, r)
+			case "PATCH":
+				s.requirePerm(scopeContents, permWrite, s.handleUpdateReleaseAsset)(w, r)
+			case "DELETE":
+				s.requirePerm(scopeContents, permWrite, s.handleDeleteReleaseAsset)(w, r)
+			default:
+				writeGHError(w, http.StatusNotFound, "Not Found")
+			}
+		case p2 == "assets":
+			r.SetPathValue("release_id", p1)
+			switch method {
+			case "GET":
+				s.handleListReleaseAssets(w, r)
+			case "POST":
+				s.requirePerm(scopeContents, permWrite, s.handleUploadReleaseAsset)(w, r)
+			default:
+				writeGHError(w, http.StatusNotFound, "Not Found")
+			}
 		case p2 == "reactions":
 			r.SetPathValue("release_id", p1)
 			switch method {
 			case "GET":
 				s.handleListReactions("release", "release_id")(w, r)
 			case "POST":
-				s.requirePerm(scopeContents, permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
+				s.requirePerm(scopeReactions, permWrite, s.handleCreateReaction("release", "release_id"))(w, r)
+			default:
+				writeGHError(w, http.StatusNotFound, "Not Found")
 			}
 		default:
 			writeGHError(w, http.StatusNotFound, "Not Found")
@@ -282,7 +495,7 @@ func (s *Server) handleReleaseThreeSegDispatch(method string) http.HandlerFunc {
 		if p2 == "reactions" && method == "DELETE" {
 			r.SetPathValue("release_id", p1)
 			r.SetPathValue("reaction_id", p3)
-			s.requirePerm(scopeContents, permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
+			s.requirePerm(scopeReactions, permWrite, s.handleDeleteReaction("release", "release_id"))(w, r)
 			return
 		}
 		writeGHError(w, http.StatusNotFound, "Not Found")
@@ -496,6 +709,223 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func readUploadAssetBody(r *http.Request) (name, label, contentType string, data []byte, ok bool) {
+	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		return "", "", "", nil, false
+	}
+	name = r.FormValue("name")
+	label = r.FormValue("label")
+	contentType = r.FormValue("content_type")
+	if files := r.MultipartForm.File["file"]; len(files) > 0 {
+		fh := files[0]
+		f, err := fh.Open()
+		if err != nil {
+			return "", "", "", nil, false
+		}
+		defer f.Close()
+		data, _ = io.ReadAll(f)
+		// Form-supplied content_type wins over the file header default.
+		if contentType == "" {
+			contentType = fh.Header.Get("Content-Type")
+		}
+	} else {
+		// Fallback: raw bytes in any non-metadata form value.
+		for key, values := range r.MultipartForm.Value {
+			if key == "name" || key == "label" || key == "content_type" {
+				continue
+			}
+			if len(values) > 0 {
+				data = []byte(values[0])
+				break
+			}
+		}
+	}
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	if name == "" {
+		return "", "", "", nil, false
+	}
+	return name, label, contentType, data, true
+}
+
+func (s *Server) handleUploadReleaseAsset(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	releaseID, err := strconv.Atoi(r.PathValue("release_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rel := s.store.Releases.Get(releaseID)
+	if rel == nil || rel.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	name, label, contentType, data, ok := readUploadAssetBody(r)
+	if !ok {
+		writeGHValidationError(w, "ReleaseAsset", "name", "missing_field")
+		return
+	}
+	asset, err := s.store.Releases.CreateReleaseAsset(releaseID, user.ID, name, label, contentType, data)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusCreated, releaseAssetToJSON(asset, s.store, s.baseURL(r), repo, rel))
+}
+
+func (s *Server) handleListReleaseAssets(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	releaseID, err := strconv.Atoi(r.PathValue("release_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rel := s.store.Releases.Get(releaseID)
+	if rel == nil || rel.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	assets := s.store.Releases.ListReleaseAssets(releaseID)
+	out := make([]map[string]interface{}, 0, len(assets))
+	for _, a := range assets {
+		out = append(out, releaseAssetToJSON(a, s.store, s.baseURL(r), repo, rel))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetReleaseAsset(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	assetID, err := strconv.Atoi(r.PathValue("asset_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	asset := s.store.Releases.GetReleaseAsset(assetID)
+	if asset == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rel := s.store.Releases.Get(asset.ReleaseID)
+	if rel == nil || rel.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if strings.Contains(r.Header.Get("Accept"), "application/octet-stream") {
+		data, ok := s.store.Releases.GetAssetData(assetID)
+		if !ok {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		s.store.Releases.IncrementAssetDownloads(assetID)
+		w.Header().Set("Content-Type", asset.ContentType)
+		w.Header().Set("Content-Length", strconv.Itoa(len(data)))
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(data)
+		return
+	}
+	writeJSON(w, http.StatusOK, releaseAssetToJSON(asset, s.store, s.baseURL(r), repo, rel))
+}
+
+func (s *Server) handleUpdateReleaseAsset(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	assetID, err := strconv.Atoi(r.PathValue("asset_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	asset := s.store.Releases.GetReleaseAsset(assetID)
+	if asset == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rel := s.store.Releases.Get(asset.ReleaseID)
+	if rel == nil || rel.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		Name  *string `json:"name"`
+		Label *string `json:"label"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	name := asset.Name
+	label := asset.Label
+	if req.Name != nil {
+		name = *req.Name
+	}
+	if req.Label != nil {
+		label = *req.Label
+	}
+	updated := s.store.Releases.UpdateReleaseAsset(assetID, name, label)
+	writeJSON(w, http.StatusOK, releaseAssetToJSON(updated, s.store, s.baseURL(r), repo, rel))
+}
+
+func (s *Server) handleDeleteReleaseAsset(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	assetID, err := strconv.Atoi(r.PathValue("asset_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	asset := s.store.Releases.GetReleaseAsset(assetID)
+	if asset == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	rel := s.store.Releases.Get(asset.ReleaseID)
+	if rel == nil || rel.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.Releases.DeleteReleaseAsset(assetID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func releaseAssetToJSON(asset *ReleaseAsset, st *Store, baseURL string, repo *Repo, rel *Release) map[string]interface{} {
+	var uploader map[string]interface{}
+	if user := st.Users[asset.UploaderID]; user != nil {
+		uploader = userToJSON(user)
+	}
+	downloadURL := fmt.Sprintf("%s/api/v3/repos/%s/releases/assets/%d", baseURL, repo.FullName, asset.ID)
+	return map[string]interface{}{
+		"id":                   asset.ID,
+		"node_id":              asset.NodeID,
+		"name":                 asset.Name,
+		"label":                asset.Label,
+		"content_type":         asset.ContentType,
+		"state":                asset.State,
+		"size":                 asset.Size,
+		"download_count":       asset.DownloadCount,
+		"created_at":           asset.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":           asset.UpdatedAt.UTC().Format(time.RFC3339),
+		"url":                  downloadURL,
+		"browser_download_url": downloadURL,
+		"uploader":             uploader,
+	}
+}
+
 // handleGenerateReleaseNotes — sim returns a deterministic body. Real GH
 // summarises merged PRs since the previous tag; bleephub doesn't model
 // commit ranges deeply, so the body lists the previous tag + a placeholder.
@@ -536,6 +966,10 @@ func releaseToJSON(rel *Release, st *Store, baseURL string, repo *Repo) map[stri
 	}
 	reactions := st.Reactions.SummarizeReactions("release", rel.ID)
 	reactions["url"] = fmt.Sprintf("%s/api/v3/repos/%s/releases/%d/reactions", baseURL, repo.FullName, rel.ID)
+	assets := make([]interface{}, 0, len(rel.Assets))
+	for _, a := range rel.Assets {
+		assets = append(assets, releaseAssetToJSON(a, st, baseURL, repo, rel))
+	}
 	return map[string]interface{}{
 		"id":               rel.ID,
 		"node_id":          rel.NodeID,
@@ -554,7 +988,7 @@ func releaseToJSON(rel *Release, st *Store, baseURL string, repo *Repo) map[stri
 		"upload_url":       fmt.Sprintf("%s/api/uploads/repos/%s/releases/%d/assets{?name,label}", baseURL, repo.FullName, rel.ID),
 		"tarball_url":      fmt.Sprintf("%s/api/v3/repos/%s/tarball/%s", baseURL, repo.FullName, rel.TagName),
 		"zipball_url":      fmt.Sprintf("%s/api/v3/repos/%s/zipball/%s", baseURL, repo.FullName, rel.TagName),
-		"assets":           []interface{}{},
+		"assets":           assets,
 		"reactions":        reactions,
 	}
 }

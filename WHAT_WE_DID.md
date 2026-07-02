@@ -4,6 +4,274 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-02 - bleephub API/UI parity tranche: Teams, issues, PR reviews, Git data, releases, repo settings, rulesets, Dependabot, secret scanning, security advisories, Actions permissions, gists, users, notifications (PR #750)
+
+The `feat/bleephub-full-api-ui-parity` branch closed a large set of remaining GitHub API/UI parity gaps. Coverage against the vendored GitHub OpenAPI description moved from 543/1190 operations (46%) to 665/1190 operations (56%).
+
+**API surfaces added**
+- **Teams** (`bleephub/gh_teams_rest.go`, `bleephub/store_orgs.go`): team members, memberships, repo grants, and per-repo permission overrides; gated by `scopeMembers`.
+- **Issue management** (`bleephub/gh_issues_rest.go`, `bleephub/store_issues.go`, `bleephub/gh_labels_rest.go`, `bleephub/gh_issue_moderation.go`): issue comments (repo-level and per-issue), comment pin, label assignment (add/set/clear), assignee add/remove, issue lock/unlock, issue events, and timeline; wired through shared dispatchers to avoid Go 1.22 mux conflicts.
+- **Pull Request reviews** (`bleephub/gh_pulls_rest.go`, `bleephub/store_pulls.go`): review create/list/get/update/delete, submit/dismiss events, requested reviewers, and update-branch; wired through a 3-segment pull dispatcher.
+- **Git data REST writes** (`bleephub/gh_repos_git.go`): blob, tree, commit, tag, and ref create/get/update/delete using go-git.
+- **Releases** (`bleephub/gh_releases.go`): release asset upload/download/update/delete and release reactions.
+- **Repository settings** (`bleephub/gh_repos_rest.go`, `bleephub/store_repos.go`): deploy keys, transfer, branch rename, subscription, vulnerability alerts, automated security fixes, private vulnerability reporting, interaction limits, merge-upstream.
+- **Org rulesets** (`bleephub/gh_rulesets.go`, `bleephub/store_rulesets.go`): org-scoped ruleset CRUD, rule suites, and history; wired through 2-/3-segment dispatchers.
+- **Dependabot** (`bleephub/gh_dependabot.go`, `bleephub/store_dependabot.go`): org/repo Dependabot alerts and secrets (repo/org-level; user-scoped secrets removed because they are not real public GitHub endpoints).
+- **Secret scanning** (`bleephub/gh_secret_scanning.go`, `bleephub/store_secret_scanning.go`): org/repo secret-scanning alerts and pattern configurations (user-scoped alerts removed).
+- **Security advisories** (`bleephub/gh_security_advisories.go`, `bleephub/store_security_advisories.go`): repo-scoped advisory CRUD, CVE request, vulnerability report, and temporary private fork.
+- **Actions permissions and runner labels** (`bleephub/gh_actions_permissions.go`): org/repo Actions permissions, selected repos, allowed actions, workflow permissions, cache limits, fork PR settings, artifact/log retention, run-logs delete, and runner label CRUD.
+- **User/gist extras** (`bleephub/gh_misc_endpoints_users.go`, `bleephub/gh_gists_rest.go`, `bleephub/store.go`): users list, user events/blocks/social accounts/SSH signing keys/starred/subscriptions, gist commits/forks/star/public/starred.
+- **Notifications** (`bleephub/gh_notifications.go`, `bleephub/store_notifications.go`): notification thread subscriptions.
+
+**Removed from /api/v3**
+- Projects v2 REST endpoints and user-scoped Dependabot/secret-scanning endpoints were removed because they are not documented public GitHub `/api/v3` paths. The GraphQL ProjectV2 surface remains available at `/api/graphql`. The `allowedBleephubExtensions` escape hatch in `gh_api_definition_test.go` was removed.
+
+**UI additions**
+- `src/pages/TeamsPage.tsx`: detail modal with members, repos, and child-team tabs.
+- `src/pages/RepoSettingsPage.tsx`: reorganized into tabs covering general, deploy keys, security toggles, interaction limits, transfer, and branch rename.
+- `src/pages/SecurityAdvisoriesPage.tsx`: new page for repo security advisories.
+- `src/pages/RulesetsPage.tsx`: new page for org rulesets.
+- `src/pages/NotificationsPage.tsx`: new page for notification threads.
+- `src/pages/GistsPage.tsx`: improved with public/starred/yours tabs, detail tabs, star/fork actions.
+- `src/components/Shell.tsx`: navigation links for notifications, org rulesets, and repo security advisories.
+
+**Validation**
+- `go test ./bleephub -count=1` passes.
+- `make bleephub/lint` reports 0 issues.
+- `make ui/packages/bleephub/lint` passes.
+- `make ui/packages/bleephub/test` passes (127 tests).
+- OpenAPI shape ratchet reports no new violations.
+
+See the detailed per-surface entries below for implementation specifics.
+
+## 2026-07-02 - bleephub Projects v2 REST expansion, gist extras, and notification thread subscriptions (PR #747)
+
+The active `feat/bleephub-full-api-ui-parity` branch gained the Projects v2 REST surface, gist extras, notification thread subscriptions, and OAuth scope wiring needed by the new endpoints.
+
+**Store.** `bleephub/store_projects_v2.go` added `ListProjectsForOwner`, `UpdateProject`, `DeleteProject`, `ListProjectFields`, `CreateProjectField`, `UpdateProjectField`, `DeleteProjectField`, `ListProjectItems`, `CreateProjectItem`, `UpdateProjectItem`, `DeleteProjectItem`, and `ListProjectViews`/`CreateProjectView`/`GetProjectView` so the GraphQL ProjectV2 store can be driven from REST. `bleephub/store.go` added gist-history seeding in `CreateGist`, `ListUsers`, event helpers, blocked-user/social-account/SSH-signing-key helpers, and persistence loaders for `blocked_users`, `social_accounts`, and `ssh_signing_keys`. `bleephub/store_notifications.go` added int-ID thread subscription wrappers.
+
+**REST handlers.** New `bleephub/gh_projects_v2_rest.go` implements:
+- `GET/POST/PATCH/DELETE /api/v3/users/{username}/projectsV2` and `/api/v3/orgs/{org}/projectsV2`.
+- `GET/POST/PATCH/DELETE /api/v3/.../projectsV2/{project_id}/fields`.
+- `GET/POST/PATCH/DELETE /api/v3/.../projectsV2/{project_id}/items` (draft items via title/body, issue/PR items via content_id).
+- `POST/GET /api/v3/.../projectsV2/{project_id}/views` and `GET /api/v3/.../projectsV2/{project_id}/views/{view_id}/items`.
+
+`bleephub/gh_gists_rest.go` added `GET /gists/{gist_id}/commits`, `GET /gists/{gist_id}/{sha}`, `GET /gists/public`, `GET /gists/starred`, `PUT/DELETE /gists/{gist_id}/star`, and `POST /gists/{gist_id}/forks`.
+
+`bleephub/gh_misc_endpoints_users.go` (restored from a stub) implements user-extras: `GET /users`, `GET /users/{username}/gists|events|received_events|subscriptions`, `GET/PUT/DELETE /user/blocks/{username}`, `GET/POST/DELETE /user/social_accounts`, `GET/POST/DELETE /user/ssh_signing_keys`, `GET/PUT/DELETE /user/starred/{owner}/{repo}`, and `GET /user/subscriptions`.
+
+`bleephub/gh_notifications.go` added `GET/PUT/DELETE /api/v3/notifications/threads/{thread_id}/subscription`.
+
+**OAuth scopes.** `bleephub/gh_apps_perms.go` added `scopeProjects` and mapped the `project` OAuth scope.
+
+**Routing.** `bleephub/server.go` calls `registerProjectsV2RESTRoutes()`; user-extras routes are registered from `gh_misc_endpoints.go`.
+
+**OpenAPI ratchet.** `bleephub/openapi-violation-allowlist.txt` allowlisted the 16 shape deviations on the bleephub-specific ProjectsV2 REST endpoints (BUG-2274). `eventActorToJSON` was slimmed to the GitHub event-actor schema to clear `GET /users/{}/events` violations (BUG-2276).
+
+**Tests.** `bleephub/gh_projects_v2_rest_test.go` covers user/org project CRUD, fields, draft items, and views. `bleephub/gh_gists_rest_test.go` covers commits, revision, public/starred lists, star, and fork. `bleephub/gh_misc_endpoints_users_test.go` covers users, blocks, social accounts, SSH signing keys, following, events, gists, starred repos, and subscriptions. `bleephub/gh_notifications_test.go` covers thread subscriptions.
+
+**Fixes.** `handleCreateMySocialAccounts` now resets the URL slice between unmarshal attempts so a failed `[]string` unmarshal does not leak an empty string into the saved accounts. `SetUserSocialAccounts` filters empty URLs. `TestRepoStargazersREST` no longer assumes the user's starred list is a singleton (BUG-2275).
+
+**Validation.** `go test ./bleephub -count=1 -timeout 15m` passes; `make bleephub/lint` reports 0 issues; the OpenAPI shape ratchet reports no new violations.
+
+## 2026-07-02 - bleephub Actions permissions and runner label endpoints (PR #747)
+
+The active `feat/bleephub-full-api-ui-parity` branch gained the Actions permissions and runner-label REST surfaces, plus the latent store-lock deadlock and test body-close issues that blocked the new tests were fixed.
+
+**Store.** `bleephub/store.go` added `OrgActionsPermissions` and `RepoActionsPermissions` maps, persistence loaders for the `org_actions_permissions` and `repo_actions_permissions` buckets, and placeholder `SecurityAdvisory`/`SecurityAdvisoryReport` types needed by the branch. `bleephub/store_repos.go` added `ListRepoSubscriptionsForUser` and fixed the repo-deletion cleanup loop. `bleephub/store.go` also added `ListBlockedUsers`.
+
+**REST handlers.** `bleephub/gh_actions_permissions.go` implemented:
+- `GET/PUT /api/v3/orgs/{org}/actions/permissions` and org selected repositories (`GET/PUT /orgs/{org}/actions/permissions/repositories`, `PUT/DELETE /orgs/{org}/actions/permissions/repositories/{repository_id}`).
+- `GET/PUT /api/v3/orgs/{org}/actions/permissions/selected-actions` and `GET/PUT /api/v3/orgs/{org}/actions/permissions/workflow`.
+- Org Actions cache retention/storage limits: `GET/PUT /api/v3/orgs/{org}/actions/cache/retention-limit` and `GET/PUT /api/v3/orgs/{org}/actions/cache/storage-limit`.
+- `GET/PUT /api/v3/repos/{owner}/{repo}/actions/permissions`, `GET/PUT /api/v3/repos/{owner}/{repo}/actions/permissions/access`, `GET/PUT /api/v3/repos/{owner}/{repo}/actions/permissions/selected-actions`, and `GET/PUT /api/v3/repos/{owner}/{repo}/actions/permissions/workflow`.
+- Repo Actions fork PR settings, artifact/log retention, and cache limits.
+- `DELETE /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/logs`.
+- Repo and org runner labels: `GET/PUT/DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}/labels` and `GET/PUT/DELETE /api/v3/orgs/{org}/actions/runners/{runner_id}/labels`.
+
+Org endpoints use `requirePerm(scopeAdministration, permRead/permWrite)`; repo endpoints use `requirePerm(scopeActions, permRead/permWrite)`.
+
+**Agent labels.** `bleephub/gh_actions_permissions.go` added `Agent.SetLabels`, `AddLabels`, `RemoveLabels`, `ClearLabels`, and `labelTypeForName` so runner label mutations preserve system/read-only labels.
+
+**Routing.** `bleephub/server.go` calls `registerGHActionsPermissionsRoutes()`; the new handler file registers all Actions-permissions and runner-label routes.
+
+**OpenAPI ratchet.** `bleephub/gh_api_definition_test.go` added the four org Actions cache-limit routes to `allowedGHESOnly` because they are absent from the bundled dotcom description.
+
+**Tests.** `bleephub/gh_actions_test.go` added `TestActionsPermissions_Org_GetSet`, `TestActionsPermissions_Org_SelectedRepos`, `TestActionsPermissions_Org_AllowedActions`, `TestActionsPermissions_Org_WorkflowPermissions`, `TestActionsPermissions_Org_CacheLimits`, `TestActionsPermissions_Repo_GetSet`, `TestActionsPermissions_Repo_AccessLevel`, `TestActionsPermissions_Repo_AllowedActions`, `TestActionsPermissions_Repo_WorkflowPermissions`, `TestActionsPermissions_Repo_ForkPRSettings`, `TestActionsPermissions_Repo_ArtifactAndLogRetention`, `TestActionsPermissions_Repo_CacheLimits`, and `TestActionsRunLogs_Delete`. `bleephub/gh_runner_groups_test.go` added `TestRunnerLabels_Repo_ListSetDelete`, `TestRunnerLabels_Org_ListSet`, `TestRunnerLabels_Org_UnknownOrg`, and `TestRunnerLabels_Repo_UnknownRunner`.
+
+**Test helpers.** Added `decodeJSONWithStatus` and `requireStatus` helpers in `gh_actions_test.go` to avoid reading already-closed response bodies.
+
+**Fixes.** The new store helpers used `getOrgActionsPermissionsLocked`/`getRepoActionsPermissionsLocked` internally to avoid a recursive `sync.RWMutex` deadlock in `AddOrgSelectedRepo`, `RemoveOrgSelectedRepo`, `SetOrgSelectedRepos`, and `ListOrgSelectedRepos`. The `gh_misc_endpoints_users.go` file was restored with real handlers for the user-extras surface (`/users`, `/users/{username}/gists`, `/users/{username}/events`, `/users/{username}/received_events`, `/users/{username}/subscriptions`, `/user/blocks`, `/user/social_accounts`, `/user/ssh_signing_keys`, `/user/starred`, `/user/subscriptions`) after an accidental deletion left the branch uncompilable; `bleephub/store.go` gained `ListBlockedUsers` and `bleephub/store_repos.go` gained `ListRepoSubscriptionsForUser` to support them. `eventActorToJSON` was slimmed to the GitHub event-actor schema (`login`, `id`, `avatar_url`, `gravatar_id`, `url`) so user-events responses pass the OpenAPI shape ratchet. Social-account objects dropped the synthetic `id` field and `handleCreateMySocialAccounts`/`handleDeleteMySocialAccounts` now read the body once and support URL arrays, `{url}` objects, and clear-all deletes. `TestRepoStargazersREST` was hardened to tolerate stars left by earlier shared-server tests.
+
+**Validation.** `go test ./bleephub -run 'TestAction|TestRunner' -count=1` passes; `go test ./bleephub -count=1` passes; `make bleephub/lint` reports 0 issues; the OpenAPI shape ratchet reports no new violations.
+
+## 2026-07-02 - bleephub repository security advisories REST endpoints (PR #747)
+
+The active `feat/bleephub-full-api-ui-parity` branch gained the repository-scoped security-advisories REST surface and the API-definition ratchet was updated to account for intentional bleephub extensions.
+
+**Store.** New `bleephub/store_security_advisories.go` adds `SecurityAdvisory`, `SecurityAdvisoryReport`, `CreateAdvisoryReq`, and store methods `CreateSecurityAdvisory`, `ListSecurityAdvisories`, `GetSecurityAdvisoryByGHSA`, `UpdateSecurityAdvisory`, `RequestCVE`, and `CreateTemporaryFork`. `bleephub/store.go` loads the `security_advisories` and `security_advisory_reports` persistence buckets; `bleephub/store_repos.go` cascades advisory deletion and rename.
+
+**REST handlers.** New `bleephub/gh_security_advisories.go` implements:
+- `GET /api/v3/repos/{owner}/{repo}/security-advisories` — list repository advisories.
+- `POST /api/v3/repos/{owner}/{repo}/security-advisories` — create a draft advisory.
+- `GET /api/v3/repos/{owner}/{repo}/security-advisories/{ghsa_id}` — get a single advisory.
+- `PATCH /api/v3/repos/{owner}/{repo}/security-advisories/{ghsa_id}` — update an advisory.
+- `POST /api/v3/repos/{owner}/{repo}/security-advisories/{ghsa_id}/cve` — request a CVE (returns 202).
+- `POST /api/v3/repos/{owner}/{repo}/security-advisories/reports` — report a vulnerability (dispatched through the `{ghsa_id}` wildcard to avoid a Go 1.22 mux conflict).
+- `POST /api/v3/repos/{owner}/{repo}/security-advisories/{ghsa_id}/forks` — create a temporary private fork.
+
+Write endpoints are gated by `requirePerm(scopeSecurityEvents, permWrite)`; reads use `requirePerm(scopeSecurityEvents, permRead)`. Response bodies conform to the vendored `repository-advisory` schema, using `minimalRepoJSON` for the embedded `private_fork` and `fullRepoJSON` for the temporary-fork response. The report endpoint creates a `triage` advisory and records a `SecurityAdvisoryReport`.
+
+**Routing.** The `POST .../reports` path is dispatched through the existing `{ghsa_id}` wildcard because Go 1.22's `http.ServeMux` cannot host a literal `reports` segment at the same position as a wildcard.
+
+**Tests.** New `bleephub/gh_security_advisories_test.go` covers CRUD, CVE request, report, and temporary fork.
+
+**API-definition ratchet.** `bleephub/gh_api_definition_test.go` gained an `allowedBleephubExtensions` map and consults it in `TestRegisteredAPIv3RoutesExistInGitHubSpec`. This lets the test stay green for intentional bleephub surfaces (ProjectsV2 write endpoints, user-scoped Dependabot secrets, and user-scoped secret-scanning alerts) that are implemented on the branch but absent from the vendored dotcom GitHub OpenAPI description. The security-advisory `/reports` route is recorded in `dispatchRoutes`.
+
+**Build/test fixes.** Restored and wired the untracked `bleephub/gh_misc_endpoints_users.go` user-extras implementations by uncommenting their route registrations in `bleephub/gh_misc_endpoints.go`, fixed a pre-existing unused-function lint issue in `bleephub/gh_actions_permissions.go`, and ran `gofmt` on affected files.
+
+**Validation.** `go test ./bleephub -count=1 -timeout 15m` passes; `make bleephub/lint` reports 0 issues; `go test ./bleephub -run TestSecurityAdvisory -count=1` passes.
+
+## 2026-07-02 - bleephub issue management REST endpoints (PR #747)
+
+The active `feat/bleephub-api-ui-parity-continuation` branch gained the missing issue-management REST surface and the response shapes for issue events/timeline were brought into line with the vendored GitHub OpenAPI description.
+
+**Store.** `bleephub/store_issues.go` added `Comment.Pinned` plus issue event fields `LockReason`, `RenameFrom`, and `RenameTo`; added store methods `GetIssueComment`, `ListRepoIssueComments`, `DeleteIssueComment`, `SetIssueLabels`, `ClearIssueLabels`, `AddIssueAssignees`, `RemoveIssueAssignees`, `PinIssueComment`, `UnpinIssueComment`, `RecordIssueEvent`, `ListRepoIssueEvents`, and `BuildIssueTimeline`. `bleephub/store.go` loads the `issue_events` persistence bucket.
+
+**REST handlers.** `bleephub/gh_issues_rest.go` implemented:
+- `GET /api/v3/repos/{owner}/{repo}/issues/{number}/comments` and `POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments`.
+- `GET /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}` and `PATCH /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}`.
+- `GET /api/v3/repos/{owner}/{repo}/issues/comments` (repo-level comment list).
+- `PUT /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/pin` and `DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/pin`.
+- `POST /api/v3/repos/{owner}/{repo}/issues/{number}/labels`, `PUT /api/v3/repos/{owner}/{repo}/issues/{number}/labels`, and `DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/labels`.
+- `POST /api/v3/repos/{owner}/{repo}/issues/{number}/assignees` and `DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/assignees`.
+- `GET /api/v3/repos/{owner}/{repo}/issues/{number}/events`.
+- `GET /api/v3/repos/{owner}/{repo}/issues/events` and `GET /api/v3/repos/{owner}/{repo}/issues/events/{event_id}`.
+- `GET /api/v3/repos/{owner}/{repo}/issues/{number}/timeline`.
+- Stubs for sub-issues, dependencies, and issue-field-values.
+
+All write endpoints are gated by `requirePerm(scopeIssues, permRead/permWrite)`. Label and assignee mutations record the real actor and emit labeled/unlabeled/assigned/unassigned issue events.
+
+**Routing.** `bleephub/gh_labels_rest.go` centralizes ambiguous issue sub-resource paths in `handleIssuesTwoSegGetDispatch`, `handleIssuesDeleteDispatch`, and `handleIssuesThreeSegDeleteDispatch` to avoid Go 1.22 `http.ServeMux` conflicts between comments, reactions, labels, lock, and pin paths. `gh_reactions.go` removed the conflicting `GET /issues/{number}/reactions` and `DELETE /issues/{number}/reactions/{reaction_id}` registrations because they are now dispatched from the issue routes.
+
+**Response shapes.** Added `issueEventForIssueToJSON`, `issueEventForTimelineToJSON`, and slim `issueEventLabelToJSON`/`issueEventMilestoneToJSON` helpers so per-issue events match the `issue-event-for-issue` union and timeline items match the `timeline-issue-events` union. Timeline comments now include `actor`, `author_association`, and `performed_via_github_app`. This cleared the OpenAPI shape violations on `GET /repos/{}/{}/issues/{}/events` and `GET /repos/{}/{}/issues/{}/timeline`.
+
+**Lock events.** `gh_issue_moderation.go` now records lock events with the correct issue ID and `lock_reason`; the moderation delete dispatcher routes `DELETE /issues/{number}/sub_issues` to `handleRemoveSubIssue`. Removed a duplicate `opened` event from `handleCreateIssue` because `Store.CreateIssue` already records one.
+
+**Tests.** `bleephub/gh_issues_test.go` added REST tests for comments, labels, assignees, pin, timeline, and events.
+
+**Validation.** `go test ./bleephub -run TestIssue -count=1` passes; `go test ./bleephub -count=1` passes; `make bleephub/lint` reports 0 issues.
+
+## 2026-07-02 - bleephub repository settings endpoints (PR #747)
+
+The active `feat/bleephub-full-api-ui-parity` branch gained the missing repository settings REST surface and the latent build/test blockers that prevented the bleephub package from compiling were cleared.
+
+**Store.** `bleephub/store_repos.go` added repository settings fields (`AutomatedSecurityFixesEnabled`, `PrivateVulnerabilityReportingEnabled`, `VulnerabilityAlertsEnabled`, `InteractionLimit`, `InteractionLimitExpiry`) and new types/methods: `RepoDeployKey`, `RepoSubscription`, `ListRepoDeployKeys`, `GetRepoDeployKey`, `CreateRepoDeployKey`, `DeleteRepoDeployKey`, `TransferRepo`, `RenameBranch`, `SetRepoSubscription`, `DeleteRepoSubscription`, `GetRepoSubscription`, `SetRepoFlag`, and `SetRepoInteractionLimit`. `bleephub/store.go` added persistence maps/loaders for `RepoDeployKeys` and `RepoSubscriptions`.
+
+**REST handlers.** `bleephub/gh_repos_rest.go` implemented:
+- `GET/POST /api/v3/repos/{owner}/{repo}/keys` and `GET/DELETE /api/v3/repos/{owner}/{repo}/keys/{key_id}` (deploy keys).
+- `POST /api/v3/repos/{owner}/{repo}/transfer` (repository transfer).
+- `POST /api/v3/repos/{owner}/{repo}/branches/{branch}/rename` (branch rename).
+- `PUT /api/v3/repos/{owner}/{repo}/subscription` and `DELETE /api/v3/repos/{owner}/{repo}/subscription` (watching/subscription).
+- `PUT/DELETE /api/v3/repos/{owner}/{repo}/automated-security-fixes`.
+- `PUT/DELETE /api/v3/repos/{owner}/{repo}/private-vulnerability-reporting`.
+- `PUT/DELETE /api/v3/repos/{owner}/{repo}/vulnerability-alerts`.
+- `PUT/DELETE /api/v3/repos/{owner}/{repo}/interaction-limits`.
+- `POST /api/v3/repos/{owner}/{repo}/merge-upstream` (fast-forward upstream merge for forks).
+
+Admin routes use `requirePerm(scopeAdministration, permRead/permWrite)`; subscription uses `scopeContents`. `handleTransferRepo` returns a `minimal-repository` shape; `handleRenameBranch` returns a canonical `branch-with-protection` shape.
+
+**Tests.** `bleephub/gh_repos_test.go` added `TestRepoDeployKeysCRUD`, `TestRepoTransfer`, `TestRepoRenameBranch`, `TestRepoSubscription`, `TestRepoVulnerabilityAlerts`, and `TestRepoInteractionLimits`.
+
+**Build/test fixes.** The branch had latent compile failures that had to be fixed before tests would run:
+- Reconciled duplicate/overlapping issue two-segment GET dispatchers in `bleephub/gh_labels_rest.go` and `bleephub/gh_issue_moderation.go`; consolidated issue sub-resource dispatch (comments, reactions, events, timeline, sub-issues, dependencies) into one dispatcher.
+- Removed the broken three-segment DELETE dispatcher that referenced a non-existent `handleUnpinIssueComment`; replaced it with a clean dispatcher for issue reactions and comment-reaction deletes.
+- Implemented missing release-asset handlers in `bleephub/gh_releases.go` that other code referenced.
+- Fixed org ruleset route registration and changed `PATCH /orgs/{org}/rulesets/{ruleset_id}` to the real GitHub `PUT` method.
+- Added missing `RenameFrom`/`RenameTo` fields to `IssueEvent` and fixed a `timelineCommentToJSON` call-site mismatch.
+- Issue creation now records a real `opened` issue event, and `TestGetIssueEventREST` looks up the event id from the repo event list instead of hardcoding `1`.
+- Updated `bleephub/gh_api_definition_test.go` `dispatchRoutes` to cover the new issue dispatchers, release asset dispatchers, and org ruleset dispatchers.
+
+**Validation.** `go test ./bleephub -count=1` passes; `make bleephub/lint` reports 0 issues. BUG-2272 (branch rename / repo transfer OpenAPI shape violations) is fixed and moved to `BUGS.md` resolved history.
+
+## 2026-07-02 - bleephub Organization Rulesets REST endpoints (PR #747)
+
+The active `feat/bleephub-api-ui-parity-continuation` branch gained the missing organization-scoped GitHub Rulesets REST surface.
+
+**Store.** `bleephub/store_rulesets.go` added an `OrgID` field to `Ruleset`, a `RulesetSuite` type, and org ruleset methods: `CreateOrgRuleset`, `ListOrgRulesets`, `GetOrgRuleset`, `UpdateOrgRuleset`, `DeleteOrgRuleset`, `ListOrgRulesetSuites`, and `GetOrgRulesetSuite`. Org and repo rulesets share the same `Rulesets` map and `repo_rulesets` persistence bucket; org rulesets set `RepoID = 0` and `source_type = "Organization"`.
+
+**REST handlers.** `bleephub/gh_rulesets.go` implemented:
+- `GET/POST /api/v3/orgs/{org}/rulesets`
+- `GET/PATCH/DELETE /api/v3/orgs/{org}/rulesets/{ruleset_id}`
+- `GET /api/v3/orgs/{org}/rulesets/rule-suites`
+- `GET /api/v3/orgs/{org}/rulesets/rule-suites/{rule_suite_id}`
+- `GET /api/v3/orgs/{org}/rulesets/{ruleset_id}/history`
+- `GET /api/v3/orgs/{org}/rulesets/{ruleset_id}/history/{version_id}`
+
+All endpoints are gated by `requireOrgAdmin(scopeOrgAdministration, permRead/permWrite)`, which checks the token/app permission and then verifies the caller is an org admin. Rule suites return an empty list for now.
+
+**Routing.** Go 1.22's `http.ServeMux` cannot host both `/rulesets/rule-suites/{id}` and `/rulesets/{ruleset_id}/history` directly, so org rulesets use shared 2-segment and 3-segment dispatchers (`handleOrgRulesetTwoSegDispatch`, `handleOrgRulesetThreeSegDispatch`) that resolve by segment value.
+
+**Tests.** `bleephub/gh_rulesets_test.go` added `TestRulesets_OrgFullLifecycle` (create, list, get, patch, history, rule-suites list, delete) and `TestRulesets_OrgNonAdminCannotCreate`.
+
+**Validation.** `go test ./bleephub -run TestRuleset -count=1` passes; `make bleephub/lint` is clean.
+
+## 2026-07-02 - bleephub release asset upload/download and release reactions (PR #747)
+
+The active `feat/bleephub-api-ui-parity-continuation` branch gained the missing release-asset and release-reaction REST surfaces.
+
+**Store.** `bleephub/gh_releases.go` (which already housed `ReleaseStore`) added `ReleaseAsset` and asset-data fields to `ReleaseStore`, plus methods `CreateReleaseAsset`, `GetReleaseAsset`, `UpdateReleaseAsset`, `DeleteReleaseAsset`, `ListReleaseAssets`, and `IncrementAssetDownloads`. Asset bytes are stored on disk under `$BLEEPHUB_DATA_DIR/release_assets` when a data directory is configured, with an in-memory fallback for tests. Release delete cascades to asset metadata and bytes. The persistence loader now restores the `release_assets` bucket and relinks assets onto their releases.
+
+**REST handlers.** `bleephub/gh_releases.go` implemented:
+- `POST /api/v3/repos/{owner}/{repo}/releases/{release_id}/assets` — multipart upload with `name`, `label`, and `content_type` fields.
+- `GET /api/v3/repos/{owner}/{repo}/releases/{release_id}/assets` — list assets.
+- `GET /api/v3/repos/{owner}/{repo}/releases/assets/{asset_id}` — asset metadata, or binary when `Accept: application/octet-stream`.
+- `PATCH /api/v3/repos/{owner}/{repo}/releases/assets/{asset_id}` — rename/label update.
+- `DELETE /api/v3/repos/{owner}/{repo}/releases/assets/{asset_id}` — delete asset.
+- `POST /api/v3/repos/{owner}/{repo}/releases/{release_id}/reactions` — create reaction.
+- `DELETE /api/v3/repos/{owner}/{repo}/releases/{release_id}/reactions/{reaction_id}` — delete reaction.
+
+Asset routes use `requirePerm(scopeContents, permRead/permWrite)`; reaction routes use the new `scopeReactions` permission. The release two-segment dispatcher was extended to disambiguate `/releases/tags/{tag}`, `/releases/assets/{asset_id}`, `/releases/{id}/assets`, and `/releases/{id}/reactions`.
+
+**Permissions.** `bleephub/gh_apps_perms.go` added `scopeReactions` and mapped it under classic OAuth `repo` scope.
+
+**JSON shapes.** `releaseToJSON` now populates the `assets` array with canonical asset objects (`id`, `node_id`, `name`, `label`, `content_type`, `state`, `size`, `download_count`, `created_at`, `updated_at`, `url`, `browser_download_url`, `uploader`).
+
+**Tests.** `bleephub/gh_releases_test.go` added `TestReleases_AssetLifecycle` (upload, list, metadata, download with `Accept: application/octet-stream`, update, delete) and `TestReleases_ReleaseReactionsLifecycle` (create, idempotent repeat, list, delete, delete-again 404).
+
+**Boyscout fixes.** Corrected the stale `handleIssuesTwoSegDispatchGET` reference in `bleephub/gh_labels_rest.go`, removed the unused `handleUnpinIssueComment` function that could not be registered due to a mux conflict, and fixed a `staticcheck` S1009 warning in `bleephub/gh_rulesets_test.go`.
+
+**Validation.** `go test ./bleephub -run TestRelease -count=1` passes; `make bleephub/lint` is clean. The full `./bleephub` suite currently shows unrelated pre-existing OpenAPI shape violations for branch rename and repository transfer endpoints.
+
+## 2026-07-02 - bleephub Pull Request review REST endpoints + team member/repo REST surface (PR #747)
+
+The active `feat/bleephub-api-ui-parity-continuation` branch gained the missing Pull Request review REST surface and consolidated the org team member/repo REST surface under `scopeMembers` permission checks.
+
+**Store.** `bleephub/store_pulls.go` added `PullRequestReview` fields (`SubmittedAt`, `DismissedAt`, `DismissalMessage`) and `PullRequest.RequestedReviewerIDs`, plus store methods for review CRUD (`CreatePullRequestReview`, `ListPullRequestReviews`, `GetPullRequestReview`, `UpdatePullRequestReview`, `DeletePullRequestReview`, `SubmitPullRequestReview`, `DismissPullRequestReview`) and requested-reviewer management (`RequestReviewers`, `RemoveRequestedReviewers`). `bleephub/store_orgs.go` added `RepoPermissions` to `Team` for per-repo permission overrides and new helper methods: `ListTeamMembers`, `GetTeamMembership`, `SetTeamMembership`, `RemoveTeamMembership`, `ListTeamRepos`, `GetTeamRepoPermission`, and `SetTeamRepoPermission`.
+
+**REST handlers.** `bleephub/gh_pulls_rest.go` implemented:
+- `GET/POST /repos/{owner}/{repo}/pulls/{number}/reviews`
+- `GET/PUT/DELETE /repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}`
+- `POST /repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/events` (submit/dismiss)
+- `POST/DELETE /repos/{owner}/{repo}/pulls/{number}/requested_reviewers`
+- `PUT /repos/{owner}/{repo}/pulls/{number}/update-branch`
+
+Permission checks use `requirePerm(scopePullRequests, permRead/permWrite)`. Review JSON includes `submitted_at`, dismissal state, and `author_association`. Requested-reviewer endpoints return the `pull-request-simple` shape to match the OpenAPI contract; update-branch returns the async `message`/`url` 202 shape.
+
+`bleephub/gh_teams_rest.go` now owns the team member/repo endpoints:
+- `GET /orgs/{org}/teams/{team_slug}/members`
+- `GET/PUT/DELETE /orgs/{org}/teams/{team_slug}/memberships/{username}`
+- `GET /orgs/{org}/teams/{team_slug}/repos`
+- `GET/PUT/DELETE /orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}`
+
+All team routes are wrapped in `requirePerm(scopeMembers, permRead/permWrite)`. Read endpoints require active org membership; write endpoints require org admin or team maintainer, with only admins allowed to promote a user to maintainer. The team membership response includes the full GitHub shape: `user`, `team`, and `organization_url`. Per-repo permission overrides are honored when adding a repo to a team. The duplicate handlers were removed from `bleephub/gh_members_rest.go`.
+
+**Routing.** Go 1.22's `http.ServeMux` cannot host both `/pulls/{number}/reviews/{review_id}` and the existing `/pulls/comments/{comment_id}/reactions` directly, so `bleephub/gh_reactions.go` registers a shared 3-segment dispatcher (`handlePullsThreeSegDispatch`) that resolves reviews vs. PR-comment reactions by segment value.
+
+**Tests.** `bleephub/gh_pulls_test.go` added `TestPRReviewCRUDREST`, `TestPRReviewDeletePendingREST`, `TestPRReviewRequestReviewersREST`, and `TestPRUpdateBranchREST`, and updated `TestListPRReviewsREST`. `bleephub/gh_api_definition_test.go` added the 3-segment pull dispatch routes to `dispatchRoutes` so the API-definition ratchet recognizes them as real GitHub paths. `bleephub/gh_teams_rest_test.go` added `TestTeamMembersList`, `TestTeamMembershipGet`, `TestTeamMembershipAddUpdateRemove`, `TestTeamMembershipRequiresAuth`, `TestTeamReposCRUD`, and `TestTeamRepoPermissionOverride`. `bleephub/persistence_reload_test.go` creates real repos for the team-repo persistence round-trip.
+
+**Validation.** `go test ./bleephub -count=1` passes; `go test ./bleephub -run TestTeam -count=1` passes; `go test ./bleephub -run TestPull -count=1` passes; `make bleephub/lint` is clean; the OpenAPI shape ratchet reports no new violations (team membership `user`/`team`/`organization_url` added to `bleephub/openapi-violation-allowlist.txt` because real GitHub emits them while the vendored dotcom spec omits them).
+
 ## 2026-07-01 - bleephub remaining API/UI parity continuation (PR #747)
 
 A single branch (`feat/bleephub-api-ui-parity-continuation`) closed the remaining bleephub API/UI gaps called out in `DO_NEXT.md`.

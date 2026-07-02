@@ -3,12 +3,19 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, InlineError, Spinner } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import {
+  addTeamMember,
+  addTeamRepo,
   createTeam,
   deleteTeam,
+  fetchChildTeams,
+  fetchTeamMembers,
+  fetchTeamRepos,
   fetchTeams,
+  removeTeamMember,
+  removeTeamRepo,
   updateTeam,
 } from "../api.js";
-import type { BleephubTeam } from "../types.js";
+import type { BleephubTeam, GithubTeamMember, GithubTeamRepo } from "../types.js";
 import {
   Button,
   Modal,
@@ -16,6 +23,8 @@ import {
   ErrorBanner,
   DialogActions,
   PageTitle,
+  Tabs,
+  Box,
 } from "../components/ui.js";
 
 const col = createColumnHelper<BleephubTeam>();
@@ -44,6 +53,7 @@ function TeamsTable() {
   const queryClient = useQueryClient();
   const [mutationError, setMutationError] = useState<string | null>(null);
   const [editing, setEditing] = useState<BleephubTeam | null>(null);
+  const [viewing, setViewing] = useState<BleephubTeam | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["teams"],
@@ -102,6 +112,9 @@ function TeamsTable() {
         const team = info.row.original;
         return (
           <div className="flex gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setViewing(team)}>
+              view
+            </Button>
             <Button size="sm" variant="ghost" onClick={() => setEditing(team)}>
               edit
             </Button>
@@ -133,6 +146,7 @@ function TeamsTable() {
         emptyMessage="No teams yet."
       />
       {editing && <EditTeamDialog team={editing} onClose={() => setEditing(null)} />}
+      {viewing && <TeamDetailDialog team={viewing} onClose={() => setViewing(null)} />}
     </>
   );
 }
@@ -291,5 +305,303 @@ function EditTeamDialog({ team, onClose }: { team: BleephubTeam; onClose: () => 
         </Button>
       </DialogActions>
     </Modal>
+  );
+}
+
+function TeamDetailDialog({ team, onClose }: { team: BleephubTeam; onClose: () => void }) {
+  const [tab, setTab] = useState<"members" | "repos" | "children">("members");
+  const org = team.organization?.login ?? "";
+  const slug = team.slug;
+
+  const tabs = [
+    { key: "members" as const, label: "Members" },
+    { key: "repos" as const, label: "Repositories" },
+    { key: "children" as const, label: "Child teams" },
+  ];
+
+  return (
+    <Modal title={`${team.name} (@${team.slug})`} onClose={onClose}>
+      <div className="mb-4" style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+        {team.description || "No description."} · {team.privacy}
+      </div>
+      <Tabs items={tabs} active={tab} onChange={setTab} />
+      {tab === "members" && <TeamMembersPanel org={org} slug={slug} />}
+      {tab === "repos" && <TeamReposPanel org={org} slug={slug} />}
+      {tab === "children" && <TeamChildrenPanel org={org} slug={slug} />}
+    </Modal>
+  );
+}
+
+function TeamMembersPanel({ org, slug }: { org: string; slug: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [role, setRole] = useState("member");
+
+  const query = useQuery({
+    queryKey: ["team-members", org, slug],
+    queryFn: () => fetchTeamMembers(org, slug),
+    enabled: !!org && !!slug,
+  });
+
+  const addMut = useMutation({
+    mutationFn: () => addTeamMember(org, slug, username.trim(), role),
+    onSuccess: () => {
+      setError(null);
+      setUsername("");
+      queryClient.invalidateQueries({ queryKey: ["team-members", org, slug] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (username: string) => removeTeamMember(org, slug, username),
+    onSuccess: () => {
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ["team-members", org, slug] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  if (query.isLoading) return <Spinner label="loading members" />;
+  if (query.isError) return <InlineError title="Failed to load members" />;
+
+  const members = query.data ?? [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <Box header={<span style={{ fontWeight: 600 }}>Add member</span>}>
+        <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              className="w-full"
+            />
+            <select value={role} onChange={(e) => setRole(e.target.value)}>
+              <option value="member">member</option>
+              <option value="maintainer">maintainer</option>
+            </select>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setError(null);
+                addMut.mutate();
+              }}
+              disabled={addMut.isPending || !username.trim()}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      </Box>
+      <Box header={<span style={{ fontWeight: 600 }}>Members</span>}>
+        <div style={{ padding: "0" }}>
+          {members.length === 0 ? (
+            <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+              No members.
+            </div>
+          ) : (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {members.map((m: GithubTeamMember) => (
+                <li
+                  key={m.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0.6rem 1rem",
+                    borderBottom: "1px solid var(--color-border)",
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>@{m.login}</span>
+                  <span style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+                    {m.role ?? "member"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => {
+                      if (confirm(`Remove ${m.login} from team?`)) {
+                        removeMut.mutate(m.login);
+                      }
+                    }}
+                    disabled={removeMut.isPending}
+                  >
+                    remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Box>
+    </div>
+  );
+}
+
+function TeamReposPanel({ org, slug }: { org: string; slug: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [repoInput, setRepoInput] = useState("");
+  const [permission, setPermission] = useState("push");
+
+  const query = useQuery({
+    queryKey: ["team-repos", org, slug],
+    queryFn: () => fetchTeamRepos(org, slug),
+    enabled: !!org && !!slug,
+  });
+
+  const addMut = useMutation({
+    mutationFn: () => {
+      const [owner, repo] = repoInput.trim().split("/");
+      if (!owner || !repo) throw new Error("Enter repo as owner/name");
+      return addTeamRepo(org, slug, owner, repo, permission);
+    },
+    onSuccess: () => {
+      setError(null);
+      setRepoInput("");
+      queryClient.invalidateQueries({ queryKey: ["team-repos", org, slug] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const removeMut = useMutation({
+    mutationFn: ({ owner, repo }: { owner: string; repo: string }) => removeTeamRepo(org, slug, owner, repo),
+    onSuccess: () => {
+      setError(null);
+      queryClient.invalidateQueries({ queryKey: ["team-repos", org, slug] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  if (query.isLoading) return <Spinner label="loading repos" />;
+  if (query.isError) return <InlineError title="Failed to load repos" />;
+
+  const repos = query.data ?? [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <Box header={<span style={{ fontWeight: 600 }}>Add repository</span>}>
+        <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="owner/name"
+              value={repoInput}
+              onChange={(e) => setRepoInput(e.target.value)}
+              className="w-full"
+            />
+            <select value={permission} onChange={(e) => setPermission(e.target.value)}>
+              <option value="pull">pull</option>
+              <option value="triage">triage</option>
+              <option value="push">push</option>
+              <option value="maintain">maintain</option>
+              <option value="admin">admin</option>
+            </select>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setError(null);
+                addMut.mutate();
+              }}
+              disabled={addMut.isPending || !repoInput.includes("/")}
+            >
+              Add
+            </Button>
+          </div>
+        </div>
+      </Box>
+      <Box header={<span style={{ fontWeight: 600 }}>Repositories</span>}>
+        <div style={{ padding: "0" }}>
+          {repos.length === 0 ? (
+            <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+              No repositories.
+            </div>
+          ) : (
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+              {repos.map((r: GithubTeamRepo) => (
+                <li
+                  key={r.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    padding: "0.6rem 1rem",
+                    borderBottom: "1px solid var(--color-border)",
+                  }}
+                >
+                  <span style={{ fontWeight: 500 }}>{r.full_name}</span>
+                  <span style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+                    {r.role_name ?? "—"}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => {
+                      if (confirm(`Remove ${r.full_name} from team?`)) {
+                        removeMut.mutate({ owner: r.owner.login, repo: r.name });
+                      }
+                    }}
+                    disabled={removeMut.isPending}
+                  >
+                    remove
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </Box>
+    </div>
+  );
+}
+
+function TeamChildrenPanel({ org, slug }: { org: string; slug: string }) {
+  const query = useQuery({
+    queryKey: ["team-children", org, slug],
+    queryFn: () => fetchChildTeams(org, slug),
+    enabled: !!org && !!slug,
+  });
+
+  if (query.isLoading) return <Spinner label="loading child teams" />;
+  if (query.isError) return <InlineError title="Failed to load child teams" />;
+
+  const children = query.data ?? [];
+
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>Child teams</span>}>
+      <div style={{ padding: "0" }}>
+        {children.length === 0 ? (
+          <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+            No child teams.
+          </div>
+        ) : (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {children.map((t: BleephubTeam) => (
+              <li
+                key={t.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "0.6rem 1rem",
+                  borderBottom: "1px solid var(--color-border)",
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>@{t.slug}</span>
+                <span style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+                  {t.privacy}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Box>
   );
 }

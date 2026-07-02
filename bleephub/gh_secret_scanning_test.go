@@ -251,3 +251,77 @@ func TestSecretScanning_BulkUpdate(t *testing.T) {
 		}
 	}
 }
+
+func TestSecretScanning_OrgAlerts(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "ss-org-alerts", "SS Org Alerts", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	repo1 := testServer.store.CreateOrgRepo(org, admin, "ss-org-repo1", "", false)
+	repo2 := testServer.store.CreateOrgRepo(org, admin, "ss-org-repo2", "", false)
+	if repo1 == nil || repo2 == nil {
+		t.Fatal("create org repo failed")
+	}
+	userRepo := testServer.store.CreateRepo(admin, "ss-user-repo", "", false)
+	if userRepo == nil {
+		t.Fatal("create repo failed")
+	}
+
+	seedSecretAlert(t, org.Login, repo1.Name, "github_personal_access_token")
+	seedSecretAlert(t, org.Login, repo2.Name, "aws_access_key_id")
+	seedSecretAlert(t, "admin", userRepo.Name, "slack_incoming_webhook_url")
+
+	resp := authedGet(t, "/api/v3/orgs/ss-org-alerts/secret-scanning/alerts")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("list org alerts: %d body=%s", resp.StatusCode, b)
+	}
+	var list []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("decode org alerts: %v", err)
+	}
+	resp.Body.Close()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 org alerts, got %d", len(list))
+	}
+}
+
+func TestSecretScanning_PatternConfigurations(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "ss-patterns", "SS Patterns", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+
+	resp := authedGet(t, "/api/v3/orgs/ss-patterns/secret-scanning/pattern-configurations")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("list patterns: %d body=%s", resp.StatusCode, b)
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode patterns: %v", err)
+	}
+	resp.Body.Close()
+	overrides, ok := body["provider_pattern_overrides"].([]any)
+	if !ok || len(overrides) == 0 {
+		t.Fatalf("expected provider_pattern_overrides, got %+v", body)
+	}
+	found := false
+	for _, po := range overrides {
+		m, ok := po.(map[string]any)
+		if !ok {
+			continue
+		}
+		if m["token_type"] == "ghp" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected pattern ghp in %+v", overrides)
+	}
+}

@@ -42,9 +42,16 @@ import type {
   BleephubUser,
   BleephubOrg,
   BleephubTeam,
+  GithubTeamMember,
+  GithubTeamMembership,
+  GithubTeamRepo,
+  GithubDeployKey,
   BleephubAuditEvent,
   BleephubGist,
   BleephubGistFile,
+  GithubGistCommit,
+  GithubNotificationThread,
+  GithubThreadSubscription,
   GithubProjectClassic,
   GithubProjectColumn,
   GithubProjectCard,
@@ -75,6 +82,11 @@ import type {
   GithubDiscussionCategoryConnection,
   GithubDiscussionConnection,
   GithubDiscussionCommentConnection,
+  GithubSecurityAdvisory,
+  GithubSecurityAdvisoryCreatePayload,
+  GithubVulnerabilityReportPayload,
+  GithubRuleset,
+  GithubRulesetCreatePayload,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -927,6 +939,69 @@ export const updateTeam = (id: number, payload: Partial<BleephubTeam>) =>
 export const deleteTeam = (id: number) =>
   internalFetch<void>(`/internal/teams/${id}`, { method: "DELETE" });
 
+export const fetchTeamMembers = (org: string, slug: string) =>
+  ghFetch<GithubTeamMember[]>(`/api/v3/orgs/${org}/teams/${slug}/members`);
+
+export const addTeamMember = (org: string, slug: string, username: string, role: string) =>
+  ghPutJSON<GithubTeamMembership>(`/api/v3/orgs/${org}/teams/${slug}/memberships/${username}`, { role });
+
+export const removeTeamMember = (org: string, slug: string, username: string) =>
+  ghDeleteJSON<void>(`/api/v3/orgs/${org}/teams/${slug}/memberships/${username}`, {});
+
+export const fetchTeamRepos = (org: string, slug: string) =>
+  ghFetch<GithubTeamRepo[]>(`/api/v3/orgs/${org}/teams/${slug}/repos`);
+
+export const addTeamRepo = (org: string, slug: string, owner: string, repo: string, permission: string) =>
+  ghPutJSON<void>(`/api/v3/orgs/${org}/teams/${slug}/repos/${owner}/${repo}`, { permission });
+
+export const removeTeamRepo = (org: string, slug: string, owner: string, repo: string) =>
+  ghDeleteJSON<void>(`/api/v3/orgs/${org}/teams/${slug}/repos/${owner}/${repo}`, {});
+
+export const fetchChildTeams = (org: string, slug: string) =>
+  ghFetch<BleephubTeam[]>(`/api/v3/orgs/${org}/teams/${slug}/teams`);
+
+export const fetchRepoDeployKeys = (owner: string, repo: string) =>
+  ghFetch<GithubDeployKey[]>(`/api/v3/repos/${owner}/${repo}/keys`);
+
+export const addRepoDeployKey = (owner: string, repo: string, title: string, key: string, readOnly: boolean) =>
+  ghPostJSON<GithubDeployKey>(`/api/v3/repos/${owner}/${repo}/keys`, { title, key, read_only: readOnly });
+
+export const deleteRepoDeployKey = (owner: string, repo: string, keyId: number) =>
+  ghDeleteJSON<void>(`/api/v3/repos/${owner}/${repo}/keys/${keyId}`, {});
+
+export async function setRepoFlag(owner: string, repo: string, flag: string, enabled: boolean): Promise<void> {
+  const path = `/api/v3/repos/${owner}/${repo}`;
+  let body: Record<string, unknown>;
+  switch (flag) {
+    case "automated_security_fixes":
+      body = { security_and_analysis: { automated_security_fixes: { status: enabled ? "enabled" : "disabled" } } };
+      break;
+    case "vulnerability_alerts":
+      body = { security_and_analysis: { advanced_security: { status: enabled ? "enabled" : "disabled" } } };
+      break;
+    case "private_vulnerability_reporting":
+      body = { security_and_analysis: { secret_scanning_non_provider_patterns: { status: enabled ? "enabled" : "disabled" } } };
+      break;
+    default:
+      body = { [flag]: enabled };
+  }
+  await ghPatchJSON<void>(path, body);
+}
+
+export const setRepoInteractionLimit = (owner: string, repo: string, limit: string | null) => {
+  const path = `/api/v3/repos/${owner}/${repo}/interaction-limits`;
+  if (limit === null) {
+    return ghDeleteJSON<void>(path, {});
+  }
+  return ghPutJSON<void>(path, { limit, expiry: "one_month" });
+};
+
+export const transferRepo = (owner: string, repo: string, newOwner: string) =>
+  ghPostJSON<BleephubRepo>(`/api/v3/repos/${owner}/${repo}/transfer`, { new_owner: newOwner });
+
+export const renameBranch = (owner: string, repo: string, branch: string, newName: string) =>
+  ghPostJSON<{ url: string }>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/rename`, { new_name: newName });
+
 export const fetchAuditLog = (filters: {
   actor?: string;
   action?: string;
@@ -942,33 +1017,76 @@ export const fetchAuditLog = (filters: {
   return internalFetch<BleephubAuditEvent[]>(`/internal/audit-log${qs ? `?${qs}` : ""}`);
 };
 
-export const fetchGists = () => internalFetch<BleephubGist[]>("/internal/gists");
+export const fetchNotifications = () =>
+  ghFetch<GithubNotificationThread[]>("/api/v3/notifications");
 
-export const fetchGist = (id: string) => internalFetch<BleephubGist>(`/internal/gists/${id}`);
+export const markThreadRead = (threadId: string) =>
+  ghSend("PATCH", `/api/v3/notifications/threads/${threadId}`);
+
+export async function getThreadSubscription(
+  threadId: string,
+): Promise<GithubThreadSubscription | null> {
+  const res = await fetch(`/api/v3/notifications/threads/${threadId}/subscription`, {
+    headers: authHeaders(),
+  });
+  if (res.status === 404) return null;
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  return res.json() as Promise<GithubThreadSubscription>;
+}
+
+export const setThreadSubscription = (threadId: string, subscribed: boolean) =>
+  ghPutJSON<GithubThreadSubscription>(`/api/v3/notifications/threads/${threadId}/subscription`, {
+    subscribed,
+    ignored: false,
+  });
+
+export const deleteThreadSubscription = (threadId: string) =>
+  ghSend("DELETE", `/api/v3/notifications/threads/${threadId}/subscription`);
+
+export const fetchGists = () => ghFetch<BleephubGist[]>("/api/v3/gists");
+
+export const fetchPublicGists = () => ghFetch<BleephubGist[]>("/api/v3/gists/public");
+
+export const fetchStarredGists = () => ghFetch<BleephubGist[]>("/api/v3/gists/starred");
+
+export const fetchGist = (id: string) => ghFetch<BleephubGist>(`/api/v3/gists/${id}`);
+
+export const fetchGistCommits = (id: string) => ghFetch<GithubGistCommit[]>(`/api/v3/gists/${id}/commits`);
+
+export const fetchGistForks = (id: string) => ghFetch<BleephubGist[]>(`/api/v3/gists/${id}/forks`);
+
+export const forkGist = (id: string) => ghPostJSON<BleephubGist>(`/api/v3/gists/${id}/forks`, {});
+
+export async function isGistStarred(id: string): Promise<boolean> {
+  const res = await fetch(`/api/v3/gists/${id}/star`, { headers: authHeaders() });
+  if (res.status === 204) return true;
+  if (res.status === 404) return false;
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  return false;
+}
+
+export const starGist = (id: string) => ghSend("PUT", `/api/v3/gists/${id}/star`);
+
+export const unstarGist = (id: string) => ghSend("DELETE", `/api/v3/gists/${id}/star`);
 
 export const createGist = (payload: {
   description: string;
   public: boolean;
   files: Record<string, { content: string }>;
-}) =>
-  internalFetch<BleephubGist>("/internal/gists", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+}) => ghPostJSON<BleephubGist>("/api/v3/gists", payload);
 
 export const updateGist = (
   id: string,
   payload: { description?: string; files?: Record<string, BleephubGistFile | null> },
-) =>
-  internalFetch<BleephubGist>(`/internal/gists/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+) => ghPatchJSON<BleephubGist>(`/api/v3/gists/${id}`, payload);
 
-export const deleteGist = (id: string) =>
-  internalFetch<void>(`/internal/gists/${id}`, { method: "DELETE" });
+export const deleteGist = (id: string) => ghSend("DELETE", `/api/v3/gists/${id}`);
 
 // ─── GitHub Projects classic (v1) ───────────────────────────────────────
 
@@ -1211,6 +1329,40 @@ const setDependabotOrgSecretRepositories = (
   name: string,
   selected_repository_ids: number[],
 ) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`, { selected_repository_ids });
+
+// ─── GitHub Security Advisories REST ────────────────────────────────────
+
+export const fetchSecurityAdvisories = (owner: string, repo: string) =>
+  ghFetch<GithubSecurityAdvisory[]>(`/api/v3/repos/${owner}/${repo}/security-advisories`);
+
+export const createSecurityAdvisory = (
+  owner: string,
+  repo: string,
+  payload: GithubSecurityAdvisoryCreatePayload,
+) => ghPostJSON<GithubSecurityAdvisory>(`/api/v3/repos/${owner}/${repo}/security-advisories`, payload);
+
+export const requestCVE = (owner: string, repo: string, ghsaId: string) =>
+  ghPostJSON<GithubSecurityAdvisory>(`/api/v3/repos/${owner}/${repo}/security-advisories/${encodeURIComponent(ghsaId)}/cve`, {});
+
+export const reportVulnerability = (
+  owner: string,
+  repo: string,
+  payload: GithubVulnerabilityReportPayload,
+) => ghPostJSON<GithubSecurityAdvisory>(`/api/v3/repos/${owner}/${repo}/security-advisories/reports`, payload);
+
+// ─── GitHub Organization Rulesets REST ──────────────────────────────────
+
+export const fetchOrgRulesets = (org: string) =>
+  ghFetch<GithubRuleset[]>(`/api/v3/orgs/${org}/rulesets`);
+
+export const createOrgRuleset = (org: string, payload: GithubRulesetCreatePayload) =>
+  ghPostJSON<GithubRuleset>(`/api/v3/orgs/${org}/rulesets`, payload);
+
+export const updateOrgRuleset = (org: string, rulesetId: number, payload: GithubRulesetCreatePayload) =>
+  ghPutJSON<GithubRuleset>(`/api/v3/orgs/${org}/rulesets/${rulesetId}`, payload);
+
+export const deleteOrgRuleset = (org: string, rulesetId: number) =>
+  ghDeleteJSON<void>(`/api/v3/orgs/${org}/rulesets/${rulesetId}`, {});
 
 // ─── GitHub Migrations REST ─────────────────────────────────────────────
 

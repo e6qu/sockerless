@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -75,6 +76,152 @@ type Comment struct {
 	EditorID        int        // user who performed the last edit; 0 when never edited
 	MinimizedReason string     // "" when not minimized; otherwise OFF_TOPIC / OUTDATED / RESOLVED / DUPLICATE / SPAM / ABUSE
 	MinimizedByID   int        // user who minimized; 0 when not minimized
+	Pinned          bool       // pinned comments appear first in some GitHub UIs
+}
+
+// IssueEvent represents an event in an issue's timeline. The Event field
+// matches the GitHub issue-event type names used by the REST API
+// ("opened", "closed", "reopened", "locked", "unlocked", "commented",
+// "labeled", "unlabeled", "assigned", "unassigned", ...).
+type IssueEvent struct {
+	ID          int
+	NodeID      string
+	RepoID      int
+	IssueID     int
+	ActorID     int
+	Event       string
+	CommitID    string
+	CommitURL   string
+	CreatedAt   time.Time
+	LabelID     int
+	AssigneeID  int
+	AssignerID  int
+	MilestoneID int
+	CommentID   int
+	LockReason  string
+	RenameFrom  string
+	RenameTo    string
+}
+
+// recordIssueEventLocked creates an IssueEvent while st.mu is already held.
+func (st *Store) recordIssueEventLocked(repoID, issueID, actorID int, event string) *IssueEvent {
+	e := &IssueEvent{
+		ID:        st.NextIssueEventID,
+		NodeID:    fmt.Sprintf("IE_kgDO%08d", st.NextIssueEventID),
+		RepoID:    repoID,
+		IssueID:   issueID,
+		ActorID:   actorID,
+		Event:     event,
+		CreatedAt: time.Now().UTC(),
+	}
+	st.NextIssueEventID++
+	st.IssueEvents[e.ID] = e
+	if st.persist != nil {
+		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
+	}
+	return e
+}
+
+// recordIssueEventWithIDsLocked creates an IssueEvent with optional related IDs
+// while st.mu is already held.
+func (st *Store) recordIssueEventWithIDsLocked(repoID, issueID, actorID int, event string, labelID, assigneeID, assignerID, milestoneID, commentID int) *IssueEvent {
+	e := st.recordIssueEventLocked(repoID, issueID, actorID, event)
+	e.LabelID = labelID
+	e.AssigneeID = assigneeID
+	e.AssignerID = assignerID
+	e.MilestoneID = milestoneID
+	e.CommentID = commentID
+	if st.persist != nil {
+		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
+	}
+	return e
+}
+
+// RecordIssueEvent creates a public issue event. The payload map may contain
+// optional related IDs using the same keys GitHub uses: label_id, assignee_id,
+// assigner_id, milestone_id, comment_id, commit_id, commit_url.
+func (st *Store) RecordIssueEvent(repoID, issueID, actorID int, event string, payload map[string]interface{}) *IssueEvent {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	labelID := intFromPayload(payload, "label_id")
+	assigneeID := intFromPayload(payload, "assignee_id")
+	assignerID := intFromPayload(payload, "assigner_id")
+	milestoneID := intFromPayload(payload, "milestone_id")
+	commentID := intFromPayload(payload, "comment_id")
+
+	e := st.recordIssueEventWithIDsLocked(repoID, issueID, actorID, event, labelID, assigneeID, assignerID, milestoneID, commentID)
+	if v, ok := payload["commit_id"].(string); ok {
+		e.CommitID = v
+	}
+	if v, ok := payload["commit_url"].(string); ok {
+		e.CommitURL = v
+	}
+	if v, ok := payload["lock_reason"].(string); ok {
+		e.LockReason = v
+	}
+	if v, ok := payload["rename_from"].(string); ok {
+		e.RenameFrom = v
+	}
+	if v, ok := payload["rename_to"].(string); ok {
+		e.RenameTo = v
+	}
+	if st.persist != nil {
+		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
+	}
+	return e
+}
+
+// intFromPayload extracts an int from a payload map, tolerating float64
+// (the default JSON number type) and int.
+func intFromPayload(payload map[string]interface{}, key string) int {
+	v, ok := payload[key]
+	if !ok {
+		return 0
+	}
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	case string:
+		if i, err := strconv.Atoi(n); err == nil {
+			return i
+		}
+	}
+	return 0
+}
+
+// ListIssueEvents returns all issue events for a repo, optionally filtered
+// by issue ID (pass 0 to get all repo issue events).
+func (st *Store) ListIssueEvents(repoID, issueID int) []*IssueEvent {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var events []*IssueEvent
+	for _, e := range st.IssueEvents {
+		if e.RepoID != repoID {
+			continue
+		}
+		if issueID != 0 && e.IssueID != issueID {
+			continue
+		}
+		events = append(events, e)
+	}
+	return events
+}
+
+// ListRepoIssueEvents returns all issue events for a repository.
+func (st *Store) ListRepoIssueEvents(repoID int) []*IssueEvent {
+	return st.ListIssueEvents(repoID, 0)
+}
+
+// GetIssueEvent returns an issue event by global ID.
+func (st *Store) GetIssueEvent(id int) *IssueEvent {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.IssueEvents[id]
 }
 
 // --- Label CRUD ---
@@ -338,6 +485,7 @@ func (st *Store) CreateIssue(repoID, authorID int, title, body string, labelIDs,
 	if st.persist != nil {
 		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
 	}
+	st.recordIssueEventLocked(repoID, issue.ID, authorID, "opened")
 	return issue
 }
 
@@ -396,6 +544,398 @@ func (st *Store) UpdateIssue(id int, fn func(*Issue)) bool {
 	return true
 }
 
+// issueByRepoKeyAndNumber resolves an issue by its repo key and number while
+// holding the store lock. Returns nil when not found.
+func (st *Store) issueByRepoKeyAndNumber(repoKey string, number int) *Issue {
+	repo := st.ReposByName[repoKey]
+	if repo == nil {
+		return nil
+	}
+	for _, issue := range st.Issues {
+		if issue.RepoID == repo.ID && issue.Number == number {
+			return issue
+		}
+	}
+	return nil
+}
+
+// issueByRepoIDAndNumber resolves an issue by its repo ID and number while
+// holding the store lock. Returns nil when not found.
+func (st *Store) issueByRepoIDAndNumber(repoID, number int) *Issue {
+	for _, issue := range st.Issues {
+		if issue.RepoID == repoID && issue.Number == number {
+			return issue
+		}
+	}
+	return nil
+}
+
+// AddIssueAssignees adds assignees to an issue, returning true when the issue
+// exists. Duplicate IDs are ignored; events are recorded for each addition.
+func (st *Store) AddIssueAssignees(repoID int, issueNumber int, assigneeIDs []int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoIDAndNumber(repoID, issueNumber)
+	if issue == nil {
+		return false
+	}
+	added := false
+	for _, uid := range assigneeIDs {
+		found := false
+		for _, existing := range issue.AssigneeIDs {
+			if existing == uid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			issue.AssigneeIDs = append(issue.AssigneeIDs, uid)
+			st.recordIssueEventWithIDsLocked(repoID, issue.ID, actorID, "assigned", 0, uid, actorID, 0, 0)
+			added = true
+		}
+	}
+	if added {
+		issue.UpdatedAt = time.Now().UTC()
+		if st.persist != nil {
+			st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+		}
+	}
+	return true
+}
+
+// RemoveIssueAssignees removes assignees from an issue, returning true when
+// the issue exists. Events are recorded for each removal.
+func (st *Store) RemoveIssueAssignees(repoID int, issueNumber int, assigneeIDs []int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoIDAndNumber(repoID, issueNumber)
+	if issue == nil {
+		return false
+	}
+	removed := false
+	for _, uid := range assigneeIDs {
+		for idx, existing := range issue.AssigneeIDs {
+			if existing == uid {
+				issue.AssigneeIDs = append(issue.AssigneeIDs[:idx], issue.AssigneeIDs[idx+1:]...)
+				st.recordIssueEventWithIDsLocked(repoID, issue.ID, actorID, "unassigned", 0, uid, actorID, 0, 0)
+				removed = true
+				break
+			}
+		}
+	}
+	if removed {
+		issue.UpdatedAt = time.Now().UTC()
+		if st.persist != nil {
+			st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+		}
+	}
+	return true
+}
+
+// SetIssueLabels replaces all labels on an issue, recording labeled/unlabeled
+// events for the deltas. Returns true when the issue exists.
+func (st *Store) SetIssueLabels(repoID int, issueNumber int, labelIDs []int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoIDAndNumber(repoID, issueNumber)
+	if issue == nil {
+		return false
+	}
+	old := make(map[int]bool, len(issue.LabelIDs))
+	for _, lid := range issue.LabelIDs {
+		old[lid] = true
+	}
+	newSet := make(map[int]bool, len(labelIDs))
+	for _, lid := range labelIDs {
+		newSet[lid] = true
+	}
+	for _, lid := range issue.LabelIDs {
+		if !newSet[lid] {
+			st.recordIssueEventWithIDsLocked(repoID, issue.ID, actorID, "unlabeled", lid, 0, 0, 0, 0)
+		}
+	}
+	for _, lid := range labelIDs {
+		if !old[lid] {
+			st.recordIssueEventWithIDsLocked(repoID, issue.ID, actorID, "labeled", lid, 0, 0, 0, 0)
+		}
+	}
+	issue.LabelIDs = labelIDs
+	issue.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+	}
+	return true
+}
+
+// ClearIssueLabels removes every label from an issue, recording an unlabeled
+// event for each previously-attached label.
+func (st *Store) ClearIssueLabels(repoID int, issueNumber int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoIDAndNumber(repoID, issueNumber)
+	if issue == nil {
+		return false
+	}
+	if len(issue.LabelIDs) == 0 {
+		return true
+	}
+	for _, lid := range issue.LabelIDs {
+		st.recordIssueEventWithIDsLocked(repoID, issue.ID, actorID, "unlabeled", lid, 0, 0, 0, 0)
+	}
+	issue.LabelIDs = nil
+	issue.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+	}
+	return true
+}
+
+// AddIssueLabels adds labels to an issue, returning true when the issue
+// exists. Duplicate IDs are ignored; events are recorded for each addition.
+func (st *Store) AddIssueLabels(repoKey string, issueNumber int, labelIDs []int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoKeyAndNumber(repoKey, issueNumber)
+	if issue == nil {
+		return false
+	}
+	repo := st.ReposByName[repoKey]
+	added := false
+	for _, lid := range labelIDs {
+		found := false
+		for _, existing := range issue.LabelIDs {
+			if existing == lid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			issue.LabelIDs = append(issue.LabelIDs, lid)
+			st.recordIssueEventWithIDsLocked(repo.ID, issue.ID, 0, "labeled", lid, 0, 0, 0, 0)
+			added = true
+		}
+	}
+	if added {
+		issue.UpdatedAt = time.Now().UTC()
+		if st.persist != nil {
+			st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+		}
+	}
+	return true
+}
+
+// RemoveIssueLabel removes a single label from an issue by name, returning
+// true when the issue and label exist and the label was attached.
+func (st *Store) RemoveIssueLabel(repoKey string, issueNumber int, labelName string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoKeyAndNumber(repoKey, issueNumber)
+	if issue == nil {
+		return false
+	}
+	repo := st.ReposByName[repoKey]
+	var label *IssueLabel
+	for _, l := range st.Labels {
+		if l.RepoID == repo.ID && l.Name == labelName {
+			label = l
+			break
+		}
+	}
+	if label == nil {
+		return false
+	}
+	for idx, lid := range issue.LabelIDs {
+		if lid == label.ID {
+			issue.LabelIDs = append(issue.LabelIDs[:idx], issue.LabelIDs[idx+1:]...)
+			issue.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+			}
+			st.recordIssueEventWithIDsLocked(repo.ID, issue.ID, 0, "unlabeled", label.ID, 0, 0, 0, 0)
+			return true
+		}
+	}
+	return true
+}
+
+// LockIssue locks an issue, optionally recording a lock reason. Returns true
+// when the issue exists.
+func (st *Store) LockIssue(repoKey string, issueNumber int, lockReason string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoKeyAndNumber(repoKey, issueNumber)
+	if issue == nil {
+		return false
+	}
+	issue.Locked = true
+	issue.ActiveLockReason = lockReason
+	issue.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+	}
+	st.recordIssueEventLocked(issue.RepoID, issue.ID, 0, "locked")
+	return true
+}
+
+// UnlockIssue unlocks an issue. Returns true when the issue exists.
+func (st *Store) UnlockIssue(repoKey string, issueNumber int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	issue := st.issueByRepoKeyAndNumber(repoKey, issueNumber)
+	if issue == nil {
+		return false
+	}
+	issue.Locked = false
+	issue.ActiveLockReason = ""
+	issue.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
+	}
+	st.recordIssueEventLocked(issue.RepoID, issue.ID, 0, "unlocked")
+	return true
+}
+
+// ListIssueComments returns all conversation comments for the issue with the
+// given repo key and number.
+func (st *Store) ListIssueComments(repoKey string, issueNumber int) []*Comment {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	issue := st.issueByRepoKeyAndNumber(repoKey, issueNumber)
+	if issue == nil {
+		return nil
+	}
+	var comments []*Comment
+	for _, c := range st.Comments {
+		if c.ParentType == "issue" && c.IssueID == issue.ID {
+			comments = append(comments, c)
+		}
+	}
+	return comments
+}
+
+// GetIssueComment returns a comment by global ID.
+func (st *Store) GetIssueComment(id int) *Comment {
+	return st.GetComment(id)
+}
+
+// DeleteIssueComment removes a comment by id. Returns true if removed.
+func (st *Store) DeleteIssueComment(id int) bool {
+	return st.DeleteComment(id)
+}
+
+// ListRepoIssueComments returns all issue comments across the repo, oldest
+// first.
+func (st *Store) ListRepoIssueComments(repoID int) []*Comment {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var comments []*Comment
+	for _, c := range st.Comments {
+		if c.ParentType == "issue" && st.Issues[c.IssueID] != nil && st.Issues[c.IssueID].RepoID == repoID {
+			comments = append(comments, c)
+		}
+	}
+	sort.Slice(comments, func(i, j int) bool { return comments[i].CreatedAt.Before(comments[j].CreatedAt) })
+	return comments
+}
+
+// PinIssueComment marks a comment as pinned. Returns true when the comment
+// exists.
+func (st *Store) PinIssueComment(commentID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c, ok := st.Comments[commentID]
+	if !ok {
+		return false
+	}
+	c.Pinned = true
+	c.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("comments", strconv.Itoa(c.ID), c)
+	}
+	return true
+}
+
+// UnpinIssueComment clears a comment's pinned flag. Returns true when the
+// comment exists.
+func (st *Store) UnpinIssueComment(commentID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	c, ok := st.Comments[commentID]
+	if !ok {
+		return false
+	}
+	c.Pinned = false
+	c.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("comments", strconv.Itoa(c.ID), c)
+	}
+	return true
+}
+
+// BuildIssueTimeline returns a synthesized timeline for an issue by
+// interleaving issue events and issue comments ordered by created_at.
+func (st *Store) BuildIssueTimeline(repo *Repo, issueID int, baseURL string) []map[string]interface{} {
+	st.mu.RLock()
+	events := st.ListIssueEvents(repo.ID, issueID)
+	comments := st.ListCommentsFor("issue", issueID)
+	st.mu.RUnlock()
+
+	items := make([]timelineItem, 0, len(events)+len(comments))
+	for _, e := range events {
+		items = append(items, timelineItem{createdAt: e.CreatedAt, kind: "event", event: e})
+	}
+	for _, c := range comments {
+		items = append(items, timelineItem{createdAt: c.CreatedAt, kind: "comment", comment: c})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if !items[i].createdAt.Equal(items[j].createdAt) {
+			return items[i].createdAt.Before(items[j].createdAt)
+		}
+		// Events before comments at identical timestamps for stability.
+		if items[i].kind != items[j].kind {
+			return items[i].kind == "event"
+		}
+		return items[i].id() < items[j].id()
+	})
+
+	out := make([]map[string]interface{}, 0, len(items))
+	for _, ti := range items {
+		switch ti.kind {
+		case "event":
+			out = append(out, issueEventForTimelineToJSON(ti.event, st, baseURL, repo.FullName))
+		case "comment":
+			parentNumber := 0
+			if issue := st.GetIssue(ti.comment.IssueID); issue != nil {
+				parentNumber = issue.Number
+			}
+			out = append(out, timelineCommentToJSON(ti.comment, st, baseURL, repo.FullName, parentNumber, repo))
+		}
+	}
+	return out
+}
+
+// timelineItem is a helper used only by BuildIssueTimeline.
+type timelineItem struct {
+	createdAt time.Time
+	kind      string
+	event     *IssueEvent
+	comment   *Comment
+}
+
+func (ti timelineItem) id() int {
+	switch ti.kind {
+	case "event":
+		if ti.event != nil {
+			return ti.event.ID
+		}
+	case "comment":
+		if ti.comment != nil {
+			return ti.comment.ID
+		}
+	}
+	return 0
+}
+
 // --- Comment CRUD ---
 
 // CreateComment creates a new conversation comment on an issue. Use
@@ -440,12 +980,26 @@ func (st *Store) CreateCommentFor(parentType string, parentID, authorID int, bod
 	if st.persist != nil {
 		st.persist.MustPut("comments", strconv.Itoa(c.ID), c)
 	}
+	// Record a timeline event for issue comments (PR comments get their own
+	// review-comment machinery elsewhere).
+	if parentType == "issue" {
+		if issue := st.Issues[parentID]; issue != nil {
+			st.recordIssueEventWithIDsLocked(issue.RepoID, issue.ID, authorID, "commented", 0, 0, 0, 0, c.ID)
+		}
+	}
 	return c
 }
 
 // ListComments returns all conversation comments for an issue.
 func (st *Store) ListComments(issueID int) []*Comment {
 	return st.ListCommentsFor("issue", issueID)
+}
+
+// GetComment returns a comment by global ID.
+func (st *Store) GetComment(id int) *Comment {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Comments[id]
 }
 
 // DeleteComment removes a comment by id. Returns true if removed.
@@ -460,6 +1014,26 @@ func (st *Store) DeleteComment(id int) bool {
 		st.persist.MustDelete("comments", strconv.Itoa(id))
 	}
 	return true
+}
+
+// GetIssueOrPullRequestIDByNumber returns the global ID of the issue or
+// pull request with the given repo + number, or 0 when neither exists.
+// PRs share the issue number namespace in GitHub, so the same number can
+// identify either kind of object.
+func (st *Store) GetIssueOrPullRequestIDByNumber(repoID, number int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, i := range st.Issues {
+		if i.RepoID == repoID && i.Number == number {
+			return i.ID
+		}
+	}
+	for _, pr := range st.PullRequests {
+		if pr.RepoID == repoID && pr.Number == number {
+			return pr.ID
+		}
+	}
+	return 0
 }
 
 // SetIssueOrPRLock toggles the locked flag on the issue or PR with the

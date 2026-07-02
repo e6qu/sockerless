@@ -16,9 +16,21 @@ func (s *Server) registerGHPullRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}", s.handleGetPullRequest)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/pulls/{number}", s.requirePerm(scopePullRequests, permWrite, s.handleUpdatePullRequest))
 	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/merge", s.requirePerm(scopeContents, permWrite, s.handleMergePullRequest))
+
+	// PR reviews. The 3-segment GET/PUT/DELETE paths conflict with PR
+	// review-comment reaction routes under Go 1.22's mux, so they are
+	// dispatched via handlePullsThreeSegDispatch in gh_reactions.go.
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.requirePerm(scopePullRequests, permRead, s.handleListPRReviews))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.requirePerm(scopePullRequests, permWrite, s.handleCreatePRReview))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews", s.handleListPRReviews)
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/events", s.requirePerm(scopePullRequests, permWrite, s.handleSubmitPRReview))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/dismissals", s.requirePerm(scopePullRequests, permWrite, s.handleDismissPRReview))
+
+	// Requested reviewers
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRequestReviewers))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRemoveRequestedReviewers))
+
+	// Update branch (merge base into PR head)
+	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/update-branch", s.requirePerm(scopePullRequests, permWrite, s.handleUpdateBranch))
 }
 
 func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request) {
@@ -348,16 +360,13 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	owner := r.PathValue("owner")
-	repoName := r.PathValue("repo")
-	numStr := r.PathValue("number")
-	repo := s.store.GetRepo(owner, repoName)
+	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 
-	num, err := strconv.Atoi(numStr)
+	num, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -377,7 +386,7 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := "COMMENTED"
+	state := "PENDING"
 	switch strings.ToUpper(req.Event) {
 	case "APPROVE":
 		state = "APPROVED"
@@ -387,7 +396,7 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 		state = "COMMENTED"
 	}
 
-	review := s.store.CreatePRReview(pr.ID, user.ID, state, req.Body)
+	review := s.store.CreatePullRequestReview(repo.FullName, pr.Number, user.ID, req.Body, state)
 	if review == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Review creation failed")
 		return
@@ -397,20 +406,12 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleListPRReviews(w http.ResponseWriter, r *http.Request) {
-	owner := r.PathValue("owner")
-	repoName := r.PathValue("repo")
-	numStr := r.PathValue("number")
-	repo := s.store.GetRepo(owner, repoName)
+	repo := s.lookupReadableRepoFromPath(w, r)
 	if repo == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
-		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 
-	num, err := strconv.Atoi(numStr)
+	num, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -422,13 +423,282 @@ func (s *Server) handleListPRReviews(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reviews := s.store.ListPRReviews(pr.ID)
+	reviews := s.store.ListPullRequestReviews(repo.FullName, pr.Number)
 	base := s.baseURL(r)
 	result := make([]map[string]interface{}, 0, len(reviews))
 	for _, review := range reviews {
 		result = append(result, reviewToJSON(review, s.store, base, repo.FullName, pr.Number))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+// handlePullsThreeSegDispatch routes the ambiguous 3-segment paths under
+// /repos/{owner}/{repo}/pulls/{a}/{b}/{c}. The PR review surface
+// (/pulls/{number}/reviews/{review_id}) and PR review-comment reactions
+// (/pulls/comments/{comment_id}/reactions) both occupy three path segments
+// after /pulls and cannot both be registered directly with Go 1.22's mux.
+// The dispatcher inspects the literal segments and sets the correct path
+// values for the delegated handler. It is registered from gh_reactions.go
+// so that reaction-only test servers also provide the dispatch surface.
+func (s *Server) handlePullsThreeSegDispatch(method string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		p1 := r.PathValue("p1")
+		p2 := r.PathValue("p2")
+		p3 := r.PathValue("p3")
+
+		// PR review: /pulls/{number}/reviews/{review_id}
+		if p2 == "reviews" {
+			r.SetPathValue("number", p1)
+			r.SetPathValue("review_id", p3)
+			switch method {
+			case "GET":
+				s.handleGetPRReview(w, r)
+			case "PUT":
+				s.handleUpdatePRReview(w, r)
+			case "DELETE":
+				s.handleDeletePRReview(w, r)
+			default:
+				writeGHError(w, http.StatusNotFound, "Not Found")
+			}
+			return
+		}
+
+		// PR review-comment reactions: /pulls/comments/{comment_id}/reactions
+		if p1 == "comments" && p3 == "reactions" {
+			r.SetPathValue("comment_id", p2)
+			switch method {
+			case "GET":
+				s.handleListReactions("pull_request_review_comment", "comment_id")(w, r)
+			case "POST":
+				s.handleCreateReaction("pull_request_review_comment", "comment_id")(w, r)
+			default:
+				writeGHError(w, http.StatusNotFound, "Not Found")
+			}
+			return
+		}
+
+		writeGHError(w, http.StatusNotFound, "Not Found")
+	}
+}
+
+func (s *Server) handleGetPRReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, reviewToJSON(review, s.store, s.baseURL(r), repo.FullName, pr.Number))
+}
+
+func (s *Server) handleUpdatePRReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Body string `json:"body"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	if !s.store.UpdatePullRequestReview(reviewID, req.Body) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, reviewToJSON(review, s.store, s.baseURL(r), repo.FullName, pr.Number))
+}
+
+func (s *Server) handleDeletePRReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if review.State != "PENDING" {
+		writeGHError(w, http.StatusUnprocessableEntity, "Review must be pending to delete")
+		return
+	}
+
+	if !s.store.DeletePullRequestReview(reviewID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSubmitPRReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Event string `json:"event"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if review.State != "PENDING" {
+		writeGHError(w, http.StatusUnprocessableEntity, "Review must be pending to submit")
+		return
+	}
+
+	if !s.store.SubmitPullRequestReview(reviewID, req.Event) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Invalid review event")
+		return
+	}
+
+	review = s.store.GetPullRequestReview(reviewID)
+	writeJSON(w, http.StatusOK, reviewToJSON(review, s.store, s.baseURL(r), repo.FullName, pr.Number))
+}
+
+func (s *Server) handleDismissPRReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Message string `json:"message"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if !s.store.DismissPullRequestReview(reviewID, req.Message) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	review = s.store.GetPullRequestReview(reviewID)
+	writeJSON(w, http.StatusOK, reviewToJSON(review, s.store, s.baseURL(r), repo.FullName, pr.Number))
 }
 
 func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) {
@@ -438,16 +708,13 @@ func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	owner := r.PathValue("owner")
-	repoName := r.PathValue("repo")
-	numStr := r.PathValue("number")
-	repo := s.store.GetRepo(owner, repoName)
+	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 
-	num, err := strconv.Atoi(numStr)
+	num, err := strconv.Atoi(r.PathValue("number"))
 	if err != nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -459,12 +726,131 @@ func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// PR-merge endpoint: bleephub doesn't materialise the merge; the
-	// body's commit-title/method fields are GitHub-spec but not consumed
-	// here. Drain explicitly so the no-decode intent is visible.
-	_, _ = io.Copy(io.Discard, r.Body)
+	var req struct {
+		Reviewers     []interface{} `json:"reviewers"`
+		TeamReviewers []string      `json:"team_reviewers"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
 
-	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
+	reviewerIDs := reviewerIDsFromRequest(s.store, req.Reviewers)
+	if len(reviewerIDs) == 0 && len(req.TeamReviewers) == 0 {
+		writeGHValidationError(w, "PullRequest", "reviewers", "missing_field")
+		return
+	}
+
+	if len(reviewerIDs) > 0 {
+		if !s.store.RequestReviewers(repo.FullName, pr.Number, reviewerIDs) {
+			writeGHError(w, http.StatusUnprocessableEntity, "Unable to request reviewers")
+			return
+		}
+	}
+
+	updated := s.store.GetPullRequestByNumber(repo.ID, num)
+	writeJSON(w, http.StatusCreated, pullRequestSimpleJSON(updated, s.store, s.baseURL(r), repo.FullName))
+}
+
+func (s *Server) handleRemoveRequestedReviewers(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Reviewers     []interface{} `json:"reviewers"`
+		TeamReviewers []string      `json:"team_reviewers"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	reviewerIDs := reviewerIDsFromRequest(s.store, req.Reviewers)
+	if len(reviewerIDs) > 0 {
+		if !s.store.RemoveRequestedReviewers(repo.FullName, pr.Number, reviewerIDs) {
+			writeGHError(w, http.StatusUnprocessableEntity, "Unable to remove reviewers")
+			return
+		}
+	}
+
+	updated := s.store.GetPullRequestByNumber(repo.ID, num)
+	writeJSON(w, http.StatusOK, pullRequestSimpleJSON(updated, s.store, s.baseURL(r), repo.FullName))
+}
+
+func (s *Server) handleUpdateBranch(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// bleephub does not materialise branch merges; accept the request and
+	// return the message and URL documented for the async 202 response.
+	_, _ = io.Copy(io.Discard, r.Body)
+	writeJSON(w, http.StatusAccepted, map[string]interface{}{
+		"message": "Updating pull request branch.",
+		"url":     fmt.Sprintf("%s/api/v3/repos/%s/pulls/%d", s.baseURL(r), repo.FullName, pr.Number),
+	})
+}
+
+// reviewerIDsFromRequest normalises the GitHub request reviewers field,
+// which may be an array of logins (strings) or objects with an id/login key.
+func reviewerIDsFromRequest(st *Store, reviewers []interface{}) []int {
+	var ids []int
+	for _, v := range reviewers {
+		switch x := v.(type) {
+		case string:
+			if u := st.LookupUserByLogin(x); u != nil {
+				ids = append(ids, u.ID)
+			}
+		case map[string]interface{}:
+			if id, ok := x["id"].(float64); ok {
+				ids = append(ids, int(id))
+			} else if login, ok := x["login"].(string); ok {
+				if u := st.LookupUserByLogin(login); u != nil {
+					ids = append(ids, u.ID)
+				}
+			}
+		}
+	}
+	return ids
 }
 
 // --- JSON converters ---
@@ -502,6 +888,14 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 	for _, aid := range pr.AssigneeIDs {
 		if u, ok := st.Users[aid]; ok {
 			assignees = append(assignees, userToJSON(u))
+		}
+	}
+
+	// Resolve requested reviewers
+	requestedReviewers := make([]map[string]interface{}, 0)
+	for _, rid := range pr.RequestedReviewerIDs {
+		if u, ok := st.Users[rid]; ok {
+			requestedReviewers = append(requestedReviewers, userToJSON(u))
 		}
 	}
 
@@ -608,7 +1002,8 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		"assignee":            assignee,
 		"assignees":           assignees,
 		"milestone":           milestoneJSON,
-		"requested_reviewers": []interface{}{},
+		"requested_reviewers": requestedReviewers,
+		"requested_teams":     []interface{}{},
 		"author_association":  authorAssociation,
 		"auto_merge":          nil,
 		"merged_at":           mergedAt,
@@ -677,30 +1072,41 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 
 func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName string, prNumber int) map[string]interface{} {
 	var authorJSON map[string]interface{}
+	var authorAssociation string
 	st.mu.RLock()
 	if u, ok := st.Users[review.AuthorID]; ok {
 		authorJSON = userToJSON(u)
+	}
+	repo := st.ReposByName[repoFullName]
+	if repo != nil && repo.Owner != nil && repo.Owner.ID == review.AuthorID {
+		authorAssociation = "OWNER"
+	} else {
+		authorAssociation = "CONTRIBUTOR"
 	}
 	st.mu.RUnlock()
 
 	htmlURL := baseURL + "/" + repoFullName + "/pull/" + strconv.Itoa(prNumber) + "#pullrequestreview-" + strconv.Itoa(review.ID)
 	pullURL := baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + strconv.Itoa(prNumber)
+
+	var submittedAt interface{}
+	if review.SubmittedAt != nil {
+		submittedAt = review.SubmittedAt.Format(time.RFC3339)
+	}
+
 	return map[string]interface{}{
-		"id":      review.ID,
-		"node_id": review.NodeID,
-		"user":    authorJSON,
-		"body":    review.Body,
-		"state":   review.State,
-		// commit_id is the PR head the review was submitted against —
-		// bleephub's deterministic synthetic head SHA for the PR.
-		"commit_id":        prHeadSHA(review.PRID),
-		"html_url":         htmlURL,
-		"pull_request_url": pullURL,
+		"id":                 review.ID,
+		"node_id":            review.NodeID,
+		"user":               authorJSON,
+		"body":               review.Body,
+		"state":              review.State,
+		"commit_id":          prHeadSHA(review.PRID),
+		"html_url":           htmlURL,
+		"pull_request_url":   pullURL,
+		"author_association": authorAssociation,
+		"submitted_at":       submittedAt,
 		"_links": map[string]interface{}{
 			"html":         map[string]interface{}{"href": htmlURL},
 			"pull_request": map[string]interface{}{"href": pullURL},
 		},
-		"author_association": "OWNER",
-		"submitted_at":       review.CreatedAt.Format(time.RFC3339),
 	}
 }

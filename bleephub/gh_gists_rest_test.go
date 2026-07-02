@@ -387,3 +387,40 @@ func TestGistPagination(t *testing.T) {
 		t.Fatal("expected Link header for pagination")
 	}
 }
+
+func TestListGistCommits(t *testing.T) {
+	created := createTestGist(t, defaultToken, true)
+	id := created["id"].(string)
+
+	resp := ghGet(t, "/api/v3/gists/"+id+"/commits", defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSONArray(t, resp)
+	if len(data) == 0 {
+		t.Fatal("expected at least one commit")
+	}
+	if data[0]["version"] == nil {
+		t.Fatal("expected version in commit")
+	}
+}
+
+func TestGetGistAtRevision(t *testing.T) {
+	created := createTestGist(t, defaultToken, true)
+	id := created["id"].(string)
+
+	commitsResp := ghGet(t, "/api/v3/gists/"+id+"/commits", defaultToken)
+	commits := decodeJSONArray(t, commitsResp)
+	sha := commits[0]["version"].(string)
+
+	resp := ghGet(t, "/api/v3/gists/"+id+"/"+sha, defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["id"] != id {
+		t.Fatalf("expected id=%s, got %v", id, data["id"])
+	}
+}

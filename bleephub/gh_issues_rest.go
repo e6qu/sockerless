@@ -71,7 +71,6 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "Issue creation failed")
 		return
 	}
-
 	repoKey := owner + "/" + name
 	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(repo, issue, user, "opened"))
 
@@ -477,6 +476,422 @@ func (s *Server) handleRemoveIssueLabel(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// --- Repo-level comment handlers ---
+
+func (s *Server) handleListRepoIssueComments(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	comments := s.store.ListRepoIssueComments(repo.ID)
+	base := s.baseURL(r)
+	result := make([]map[string]interface{}, 0, len(comments))
+	for _, c := range comments {
+		parentNumber := 0
+		if issue := s.store.GetIssue(c.IssueID); issue != nil {
+			parentNumber = issue.Number
+		}
+		result = append(result, commentToJSON(c, s.store, base, repo.FullName, parentNumber))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+func (s *Server) handleGetIssueComment(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	idStr := r.PathValue("comment_id")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	comment := s.store.GetIssueComment(id)
+	if comment == nil || comment.ParentType != "issue" || s.store.GetIssue(comment.IssueID) == nil || s.store.GetIssue(comment.IssueID).RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	parentNumber := commentParentNumber(s.store, comment)
+	writeJSON(w, http.StatusOK, commentToJSON(comment, s.store, s.baseURL(r), repo.FullName, parentNumber))
+}
+
+// --- Issue label set/clear handlers ---
+
+func (s *Server) handleSetIssueLabels(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	numStr := r.PathValue("number")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	issue := s.store.GetIssueByNumber(repo.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	labelNames, ok := decodeIssueLabelsBody(w, r)
+	if !ok {
+		return
+	}
+
+	var labelIDs []int
+	for _, name := range labelNames {
+		if l := s.store.GetLabelByName(repo.ID, name); l != nil {
+			labelIDs = append(labelIDs, l.ID)
+		}
+	}
+
+	s.store.SetIssueLabels(repo.ID, issue.Number, labelIDs, user.ID)
+
+	updated := s.store.GetIssue(issue.ID)
+	base := s.baseURL(r)
+	labels := make([]map[string]interface{}, 0, len(updated.LabelIDs))
+	for _, lid := range updated.LabelIDs {
+		if l := s.store.GetLabel(lid); l != nil {
+			labels = append(labels, issueLabelToJSON(l, base, repo.FullName))
+		}
+	}
+	writeJSON(w, http.StatusOK, labels)
+}
+
+func (s *Server) handleClearIssueLabels(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	numStr := r.PathValue("number")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	issue := s.store.GetIssueByNumber(repo.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	s.store.ClearIssueLabels(repo.ID, issue.Number, user.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Issue assignee handlers ---
+
+func (s *Server) handleAddIssueAssignees(w http.ResponseWriter, r *http.Request) {
+	repo, issue, ok := s.resolveRepoIssue(w, r)
+	if !ok {
+		return
+	}
+	user := ghUserFromContext(r.Context())
+
+	var req struct {
+		Assignees []string `json:"assignees"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	assigneeIDs := resolveUserIDs(s.store, req.Assignees)
+	s.store.AddIssueAssignees(repo.ID, issue.Number, assigneeIDs, user.ID)
+	writeJSON(w, http.StatusOK, issueToJSON(s.store.GetIssue(issue.ID), s.store, s.baseURL(r), repo.FullName))
+}
+
+func (s *Server) handleRemoveIssueAssignees(w http.ResponseWriter, r *http.Request) {
+	repo, issue, ok := s.resolveRepoIssue(w, r)
+	if !ok {
+		return
+	}
+	user := ghUserFromContext(r.Context())
+
+	var req struct {
+		Assignees []string `json:"assignees"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	assigneeIDs := resolveUserIDs(s.store, req.Assignees)
+	s.store.RemoveIssueAssignees(repo.ID, issue.Number, assigneeIDs, user.ID)
+	writeJSON(w, http.StatusOK, issueToJSON(s.store.GetIssue(issue.ID), s.store, s.baseURL(r), repo.FullName))
+}
+
+// --- Comment pin handlers ---
+
+func (s *Server) handlePinIssueComment(w http.ResponseWriter, r *http.Request) {
+	repo, comment, ok := s.resolveRepoIssueComment(w, r)
+	if !ok {
+		return
+	}
+
+	s.store.PinIssueComment(comment.ID)
+	parentNumber := commentParentNumber(s.store, comment)
+	writeJSON(w, http.StatusOK, commentToJSON(s.store.GetIssueComment(comment.ID), s.store, s.baseURL(r), repo.FullName, parentNumber))
+}
+
+func (s *Server) handleUnpinIssueComment(w http.ResponseWriter, r *http.Request) {
+	repo, comment, ok := s.resolveRepoIssueComment(w, r)
+	if !ok {
+		return
+	}
+
+	s.store.UnpinIssueComment(comment.ID)
+	parentNumber := commentParentNumber(s.store, comment)
+	writeJSON(w, http.StatusOK, commentToJSON(s.store.GetIssueComment(comment.ID), s.store, s.baseURL(r), repo.FullName, parentNumber))
+}
+
+// resolveRepoIssue resolves owner/repo/{number} and returns the repo + issue,
+// writing the appropriate error response on failure.
+func (s *Server) resolveRepoIssue(w http.ResponseWriter, r *http.Request) (*Repo, *Issue, bool) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	numStr := r.PathValue("number")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+
+	issue := s.store.GetIssueByNumber(repo.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+	return repo, issue, true
+}
+
+// resolveRepoIssueComment resolves owner/repo/{comment_id} and returns the repo
+// + issue comment, writing the appropriate error response on failure.
+func (s *Server) resolveRepoIssueComment(w http.ResponseWriter, r *http.Request) (*Repo, *Comment, bool) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	idStr := r.PathValue("comment_id")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+
+	comment := s.store.GetIssueComment(id)
+	if comment == nil || comment.ParentType != "issue" {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+	issue := s.store.GetIssue(comment.IssueID)
+	if issue == nil || issue.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil, false
+	}
+	return repo, comment, true
+}
+
+func resolveUserIDs(st *Store, logins []string) []int {
+	var ids []int
+	for _, login := range logins {
+		if u := st.LookupUserByLogin(login); u != nil {
+			ids = append(ids, u.ID)
+		}
+	}
+	return ids
+}
+
+// --- Issue timeline + events handlers ---
+
+func (s *Server) handleListIssueTimeline(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	numStr := r.PathValue("number")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	issue := s.store.GetIssueByNumber(repo.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	timeline := s.store.BuildIssueTimeline(repo, issue.ID, s.baseURL(r))
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, timeline))
+}
+
+func (s *Server) handleListIssueEvents(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	numStr := r.PathValue("number")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	num, err := strconv.Atoi(numStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	issue := s.store.GetIssueByNumber(repo.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	events := s.store.ListIssueEvents(repo.ID, issue.ID)
+	base := s.baseURL(r)
+	result := make([]map[string]interface{}, 0, len(events))
+	for _, e := range events {
+		result = append(result, issueEventForIssueToJSON(e, s.store, base, repo.FullName))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+func (s *Server) handleListRepoIssueEvents(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	events := s.store.ListRepoIssueEvents(repo.ID)
+	base := s.baseURL(r)
+	result := make([]map[string]interface{}, 0, len(events))
+	for _, e := range events {
+		result = append(result, issueEventToJSON(e, s.store, base, repo.FullName))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
+}
+
+func (s *Server) handleGetIssueEvent(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	idStr := r.PathValue("event_id")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	event := s.store.GetIssueEvent(id)
+	if event == nil || event.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, issueEventToJSON(event, s.store, s.baseURL(r), repo.FullName))
+}
+
+// --- Sub-issues / dependencies / issue-field-values stubs ---
+
+func (s *Server) handleListSubIssues(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []map[string]interface{}{})
+}
+
+func (s *Server) handleCreateSubIssue(w http.ResponseWriter, r *http.Request) {
+	writeGHError(w, http.StatusUnprocessableEntity, "Sub-issues are not enabled for this repository")
+}
+
+func (s *Server) handleRemoveSubIssue(w http.ResponseWriter, r *http.Request) {
+	writeGHError(w, http.StatusUnprocessableEntity, "Sub-issues are not enabled for this repository")
+}
+
+func (s *Server) handleListIssueDependenciesBlockedBy(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []map[string]interface{}{})
+}
+
+func (s *Server) handleListIssueFieldValues(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, []map[string]interface{}{})
+}
+
 // --- JSON converters ---
 
 func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[string]interface{} {
@@ -592,6 +1007,200 @@ func commentToJSON(c *Comment, st *Store, baseURL, repoFullName string, issueNum
 		"created_at": c.CreatedAt.Format(time.RFC3339),
 		"updated_at": c.UpdatedAt.Format(time.RFC3339),
 	}
+}
+
+// timelineCommentToJSON renders a comment as it appears inside an issue
+// timeline, including the "event": "commented" discriminator.
+func timelineCommentToJSON(c *Comment, st *Store, baseURL, repoFullName string, issueNumber int, repo *Repo) map[string]interface{} {
+	out := commentToJSON(c, st, baseURL, repoFullName, issueNumber)
+	out["event"] = "commented"
+	out["actor"] = out["user"]
+	out["author_association"] = authorAssociationForComment(st, c, repo)
+	out["performed_via_github_app"] = nil
+	return out
+}
+
+// issueEventBase returns the common fields shared by every issue-event
+// response shape.
+func issueEventBase(e *IssueEvent, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	st.mu.RLock()
+	var actorJSON map[string]interface{}
+	if u, ok := st.Users[e.ActorID]; ok {
+		actorJSON = userToJSON(u)
+	}
+	st.mu.RUnlock()
+
+	var commitID interface{}
+	if e.CommitID != "" {
+		commitID = e.CommitID
+	}
+	var commitURL interface{}
+	if e.CommitURL != "" {
+		commitURL = e.CommitURL
+	} else if e.CommitID != "" {
+		commitURL = baseURL + "/api/v3/repos/" + repoFullName + "/commits/" + e.CommitID
+	}
+
+	return map[string]interface{}{
+		"id":         e.ID,
+		"node_id":    e.NodeID,
+		"url":        baseURL + "/api/v3/repos/" + repoFullName + "/issues/events/" + strconv.Itoa(e.ID),
+		"actor":      actorJSON,
+		"event":      e.Event,
+		"commit_id":  commitID,
+		"commit_url": commitURL,
+		"created_at": e.CreatedAt.Format(time.RFC3339),
+	}
+}
+
+// issueEventLabelToJSON returns the slim label shape used inside issue
+// events (name + color only).
+func issueEventLabelToJSON(l *IssueLabel) map[string]interface{} {
+	return map[string]interface{}{
+		"name":  l.Name,
+		"color": l.Color,
+	}
+}
+
+// issueEventMilestoneToJSON returns the slim milestone shape used inside
+// issue events (title only).
+func issueEventMilestoneToJSON(ms *Milestone) map[string]interface{} {
+	return map[string]interface{}{
+		"title": ms.Title,
+	}
+}
+
+// issueEventToJSON renders an IssueEvent to the repo-level GitHub
+// issue-event shape.
+func issueEventToJSON(e *IssueEvent, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	st.mu.RLock()
+	var labelJSON interface{}
+	if l, ok := st.Labels[e.LabelID]; ok {
+		labelJSON = issueEventLabelToJSON(l)
+	}
+	var assigneeJSON interface{}
+	if u, ok := st.Users[e.AssigneeID]; ok {
+		assigneeJSON = userToJSON(u)
+	}
+	var assignerJSON interface{}
+	if u, ok := st.Users[e.AssignerID]; ok {
+		assignerJSON = userToJSON(u)
+	}
+	var milestoneJSON interface{}
+	if ms, ok := st.Milestones[e.MilestoneID]; ok {
+		milestoneJSON = issueEventMilestoneToJSON(ms)
+	}
+	st.mu.RUnlock()
+
+	out := issueEventBase(e, st, baseURL, repoFullName)
+	out["performed_via_github_app"] = nil
+	out["label"] = labelJSON
+	out["assignee"] = assigneeJSON
+	out["assigner"] = assignerJSON
+	out["milestone"] = milestoneJSON
+	return out
+}
+
+// issueEventForIssueToJSON renders an IssueEvent to the per-issue
+// issue-event-for-issue shape, which is a discriminated union of specific
+// event schemas rather than a generic object.
+func issueEventForIssueToJSON(e *IssueEvent, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	out := issueEventBase(e, st, baseURL, repoFullName)
+	out["performed_via_github_app"] = nil
+
+	switch e.Event {
+	case "labeled", "unlabeled":
+		st.mu.RLock()
+		var labelJSON interface{}
+		if l, ok := st.Labels[e.LabelID]; ok {
+			labelJSON = issueEventLabelToJSON(l)
+		}
+		st.mu.RUnlock()
+		out["label"] = labelJSON
+	case "assigned", "unassigned":
+		st.mu.RLock()
+		var assigneeJSON, assignerJSON interface{}
+		if u, ok := st.Users[e.AssigneeID]; ok {
+			assigneeJSON = userToJSON(u)
+		}
+		if u, ok := st.Users[e.AssignerID]; ok {
+			assignerJSON = userToJSON(u)
+		}
+		st.mu.RUnlock()
+		out["assignee"] = assigneeJSON
+		out["assigner"] = assignerJSON
+	case "milestoned", "demilestoned":
+		st.mu.RLock()
+		var milestoneJSON interface{}
+		if ms, ok := st.Milestones[e.MilestoneID]; ok {
+			milestoneJSON = issueEventMilestoneToJSON(ms)
+		}
+		st.mu.RUnlock()
+		out["milestone"] = milestoneJSON
+	case "renamed":
+		out["rename"] = map[string]interface{}{
+			"from": e.RenameFrom,
+			"to":   e.RenameTo,
+		}
+	default:
+		// opened, closed, reopened, locked, unlocked, etc. map to the
+		// locked-issue-event schema which only adds a nullable lock_reason.
+		lockReason := interface{}(nil)
+		if e.Event == "locked" && e.LockReason != "" {
+			lockReason = e.LockReason
+		}
+		out["lock_reason"] = lockReason
+	}
+	return out
+}
+
+// issueEventForTimelineToJSON renders an IssueEvent to the timeline-event
+// shape (timeline-issue-events union).
+func issueEventForTimelineToJSON(e *IssueEvent, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	out := issueEventBase(e, st, baseURL, repoFullName)
+	out["performed_via_github_app"] = nil
+
+	switch e.Event {
+	case "labeled", "unlabeled":
+		st.mu.RLock()
+		var labelJSON interface{}
+		if l, ok := st.Labels[e.LabelID]; ok {
+			labelJSON = issueEventLabelToJSON(l)
+		}
+		st.mu.RUnlock()
+		out["label"] = labelJSON
+	case "assigned", "unassigned":
+		st.mu.RLock()
+		var assigneeJSON interface{}
+		if u, ok := st.Users[e.AssigneeID]; ok {
+			assigneeJSON = userToJSON(u)
+		}
+		st.mu.RUnlock()
+		out["assignee"] = assigneeJSON
+	case "milestoned", "demilestoned":
+		st.mu.RLock()
+		var milestoneJSON interface{}
+		if ms, ok := st.Milestones[e.MilestoneID]; ok {
+			milestoneJSON = issueEventMilestoneToJSON(ms)
+		}
+		st.mu.RUnlock()
+		out["milestone"] = milestoneJSON
+	case "renamed":
+		out["rename"] = map[string]interface{}{
+			"from": e.RenameFrom,
+			"to":   e.RenameTo,
+		}
+	case "locked", "unlocked":
+		lockReason := interface{}(nil)
+		if e.Event == "locked" && e.LockReason != "" {
+			lockReason = e.LockReason
+		}
+		out["lock_reason"] = lockReason
+	default:
+		// opened, closed, reopened, etc. map to state-change-issue-event.
+		out["state_reason"] = nil
+	}
+	return out
 }
 
 // issueHasAllLabels checks if an issue has all the given label names.

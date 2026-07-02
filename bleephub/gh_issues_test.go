@@ -1,6 +1,8 @@
 package bleephub
 
 import (
+	"encoding/json"
+	"strconv"
 	"testing"
 )
 
@@ -379,6 +381,268 @@ func TestRemoveIssueLabelREST(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != 204 {
 		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+}
+
+// --- Issue label set/clear tests ---
+
+func TestSetIssueLabelsREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-setlabels")
+	ghPost(t, "/api/v3/repos/admin/issue-setlabels/labels", defaultToken, map[string]interface{}{
+		"name": "bug", "color": "d73a4a",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-setlabels/labels", defaultToken, map[string]interface{}{
+		"name": "feature", "color": "a2eeef",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-setlabels/issues", defaultToken, map[string]interface{}{
+		"title":  "Set labels test",
+		"labels": []string{"bug"},
+	}).Body.Close()
+
+	resp := ghPut(t, "/api/v3/repos/admin/issue-setlabels/issues/1/labels", defaultToken, map[string]interface{}{
+		"labels": []string{"feature"},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	labels := decodeJSONArray(t, resp)
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label, got %d", len(labels))
+	}
+	if labels[0]["name"] != "feature" {
+		t.Fatalf("expected feature, got %v", labels[0]["name"])
+	}
+}
+
+func TestClearIssueLabelsREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-clearlabels")
+	ghPost(t, "/api/v3/repos/admin/issue-clearlabels/labels", defaultToken, map[string]interface{}{
+		"name": "bug", "color": "d73a4a",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-clearlabels/issues", defaultToken, map[string]interface{}{
+		"title":  "Clear labels test",
+		"labels": []string{"bug"},
+	}).Body.Close()
+
+	resp := ghDelete(t, "/api/v3/repos/admin/issue-clearlabels/issues/1/labels", defaultToken)
+	defer resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+
+	resp2 := ghGet(t, "/api/v3/repos/admin/issue-clearlabels/issues/1", "")
+	data := decodeJSON(t, resp2)
+	if labels, _ := data["labels"].([]interface{}); len(labels) != 0 {
+		t.Fatalf("expected 0 labels, got %d", len(labels))
+	}
+}
+
+// --- Issue assignee tests ---
+
+func TestAddIssueAssigneesREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-addassignees")
+	ghPost(t, "/api/v3/repos/admin/issue-addassignees/issues", defaultToken, map[string]interface{}{
+		"title": "Assignee test",
+	}).Body.Close()
+
+	resp := ghPost(t, "/api/v3/repos/admin/issue-addassignees/issues/1/assignees", defaultToken, map[string]interface{}{
+		"assignees": []string{"admin"},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	assignees, _ := data["assignees"].([]interface{})
+	if len(assignees) != 1 {
+		t.Fatalf("expected 1 assignee, got %d", len(assignees))
+	}
+}
+
+func TestRemoveIssueAssigneesREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-rmassignees")
+	ghPost(t, "/api/v3/repos/admin/issue-rmassignees/issues", defaultToken, map[string]interface{}{
+		"title":     "Remove assignee test",
+		"assignees": []string{"admin"},
+	}).Body.Close()
+
+	resp := ghDeleteWithBody(t, "/api/v3/repos/admin/issue-rmassignees/issues/1/assignees", defaultToken, map[string]interface{}{
+		"assignees": []string{"admin"},
+	})
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+}
+
+// --- Repo-level comment tests ---
+
+func TestListRepoIssueCommentsREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-repo-comments")
+	ghPost(t, "/api/v3/repos/admin/issue-repo-comments/issues", defaultToken, map[string]interface{}{
+		"title": "Repo comments test",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-repo-comments/issues/1/comments", defaultToken, map[string]interface{}{
+		"body": "Comment 1",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-repo-comments/issues/comments", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	comments := decodeJSONArray(t, resp)
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 comment, got %d", len(comments))
+	}
+}
+
+func TestGetIssueCommentREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-get-comment")
+	ghPost(t, "/api/v3/repos/admin/issue-get-comment/issues", defaultToken, map[string]interface{}{
+		"title": "Get comment test",
+	}).Body.Close()
+	resp := ghPost(t, "/api/v3/repos/admin/issue-get-comment/issues/1/comments", defaultToken, map[string]interface{}{
+		"body": "A comment",
+	})
+	data := decodeJSON(t, resp)
+	commentID := int(data["id"].(float64))
+
+	resp2 := ghGet(t, "/api/v3/repos/admin/issue-get-comment/issues/comments/"+strconv.Itoa(commentID), "")
+	if resp2.StatusCode != 200 {
+		resp2.Body.Close()
+		t.Fatalf("expected 200, got %d", resp2.StatusCode)
+	}
+	got := decodeJSON(t, resp2)
+	if got["body"] != "A comment" {
+		t.Fatalf("expected body='A comment', got %v", got["body"])
+	}
+}
+
+func TestPinIssueCommentREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-pin-comment")
+	ghPost(t, "/api/v3/repos/admin/issue-pin-comment/issues", defaultToken, map[string]interface{}{
+		"title": "Pin comment test",
+	}).Body.Close()
+	resp := ghPost(t, "/api/v3/repos/admin/issue-pin-comment/issues/1/comments", defaultToken, map[string]interface{}{
+		"body": "Pin me",
+	})
+	data := decodeJSON(t, resp)
+	commentID := int(data["id"].(float64))
+
+	resp2 := ghPut(t, "/api/v3/repos/admin/issue-pin-comment/issues/comments/"+strconv.Itoa(commentID)+"/pin", defaultToken, nil)
+	if resp2.StatusCode != 200 {
+		resp2.Body.Close()
+		t.Fatalf("expected 200, got %d", resp2.StatusCode)
+	}
+}
+
+// --- Issue timeline + events tests ---
+
+func TestListIssueTimelineREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-timeline")
+	ghPost(t, "/api/v3/repos/admin/issue-timeline/issues", defaultToken, map[string]interface{}{
+		"title": "Timeline test",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-timeline/issues/1/comments", defaultToken, map[string]interface{}{
+		"body": "Timeline comment",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-timeline/issues/1/timeline", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	timeline := decodeJSONArray(t, resp)
+	if len(timeline) == 0 {
+		t.Fatal("expected non-empty timeline")
+	}
+}
+
+func TestListIssueEventsREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-events")
+	ghPost(t, "/api/v3/repos/admin/issue-events/issues", defaultToken, map[string]interface{}{
+		"title": "Events test",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-events/issues/1/events", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	events := decodeJSONArray(t, resp)
+	if len(events) == 0 {
+		t.Fatal("expected non-empty events")
+	}
+}
+
+func TestListRepoIssueEventsREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-repo-events")
+	ghPost(t, "/api/v3/repos/admin/issue-repo-events/issues", defaultToken, map[string]interface{}{
+		"title": "Repo events test",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-repo-events/issues/events", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	events := decodeJSONArray(t, resp)
+	if len(events) == 0 {
+		t.Fatal("expected non-empty events")
+	}
+}
+
+func TestGetIssueEventREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-event-get")
+	ghPost(t, "/api/v3/repos/admin/issue-event-get/issues", defaultToken, map[string]interface{}{
+		"title": "Get event test",
+	}).Body.Close()
+
+	listResp := ghGet(t, "/api/v3/repos/admin/issue-event-get/issues/events", "")
+	if listResp.StatusCode != 200 {
+		listResp.Body.Close()
+		t.Fatalf("expected 200 listing events, got %d", listResp.StatusCode)
+	}
+	var events []map[string]interface{}
+	if err := json.NewDecoder(listResp.Body).Decode(&events); err != nil {
+		listResp.Body.Close()
+		t.Fatal(err)
+	}
+	listResp.Body.Close()
+	if len(events) == 0 {
+		t.Fatal("expected non-empty events")
+	}
+	eventID := strconv.Itoa(int(events[0]["id"].(float64)))
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-event-get/issues/events/"+eventID, "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["event"] != "opened" {
+		t.Fatalf("expected event=opened, got %v", data["event"])
+	}
+}
+
+// --- Sub-issues / dependencies stubs ---
+
+func TestSubIssuesStubREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-subissues")
+	ghPost(t, "/api/v3/repos/admin/issue-subissues/issues", defaultToken, map[string]interface{}{
+		"title": "Sub issues test",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/issue-subissues/issues/1/sub_issues", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	items := decodeJSONArray(t, resp)
+	if len(items) != 0 {
+		t.Fatalf("expected empty sub_issues, got %d", len(items))
 	}
 }
 

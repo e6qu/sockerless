@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -804,4 +805,334 @@ jobs:
 	if user == nil || user["login"] != "admin" {
 		t.Fatalf("approval user = %v", approvals[0]["user"])
 	}
+}
+
+func createTestOrg(t *testing.T) string {
+	t.Helper()
+	login := "test-org-actions-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
+		"login":       login,
+		"name":        "Test Org Actions",
+		"description": "actions permissions test org",
+	})
+	if resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create org: %d %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+	return login
+}
+
+func createTestRepo(t *testing.T) string {
+	t.Helper()
+	name := "test-repo-actions-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":    name,
+		"private": false,
+	})
+	if resp.StatusCode != 201 {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create repo: %d %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+	return "admin/" + name
+}
+
+func TestActionsPermissions_Org_GetSet(t *testing.T) {
+	org := createTestOrg(t)
+
+	resp := ghGet(t, "/api/v3/orgs/"+org+"/actions/permissions", defaultToken)
+	data := decodeJSONWithStatus(t, resp, 200)
+	if data["enabled_repositories"] != "all" {
+		t.Errorf("enabled_repositories = %v, want all", data["enabled_repositories"])
+	}
+	if data["allowed_actions"] != "all" {
+		t.Errorf("allowed_actions = %v, want all", data["allowed_actions"])
+	}
+
+	putResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/permissions", defaultToken, map[string]interface{}{
+		"enabled_repositories": "selected",
+		"allowed_actions":      "selected",
+	})
+	data = decodeJSONWithStatus(t, putResp, 200)
+	if data["enabled_repositories"] != "selected" {
+		t.Errorf("enabled_repositories after put = %v, want selected", data["enabled_repositories"])
+	}
+	if data["selected_repositories_url"] == nil {
+		t.Error("expected selected_repositories_url when enabled_repositories=selected")
+	}
+	if data["selected_actions_url"] == nil {
+		t.Error("expected selected_actions_url when allowed_actions=selected")
+	}
+}
+
+func TestActionsPermissions_Org_SelectedRepos(t *testing.T) {
+	org := createTestOrg(t)
+	repoKey := createTestRepo(t)
+
+	// Resolve repo numeric id.
+	repoResp := ghGet(t, "/api/v3/repos/"+repoKey, defaultToken)
+	repoData := decodeJSONWithStatus(t, repoResp, 200)
+	repoID := int(repoData["id"].(float64))
+
+	putResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/permissions", defaultToken, map[string]interface{}{
+		"enabled_repositories": "selected",
+	})
+	decodeJSONWithStatus(t, putResp, 200)
+
+	setResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/permissions/repositories", defaultToken, map[string]interface{}{
+		"selected_repository_ids": []int{repoID},
+	})
+	requireStatus(t, setResp, 204)
+
+	listResp := ghGet(t, "/api/v3/orgs/"+org+"/actions/permissions/repositories", defaultToken)
+	listData := decodeJSONWithStatus(t, listResp, 200)
+	repos, _ := listData["repositories"].([]interface{})
+	if len(repos) != 1 {
+		t.Fatalf("selected repos = %d, want 1", len(repos))
+	}
+
+	addResp := ghPut(t, fmt.Sprintf("/api/v3/orgs/%s/actions/permissions/repositories/%d", org, repoID), defaultToken, nil)
+	requireStatus(t, addResp, 204)
+
+	delResp := ghDelete(t, fmt.Sprintf("/api/v3/orgs/%s/actions/permissions/repositories/%d", org, repoID), defaultToken)
+	requireStatus(t, delResp, 204)
+
+	listResp = ghGet(t, "/api/v3/orgs/"+org+"/actions/permissions/repositories", defaultToken)
+	listData = decodeJSON(t, listResp)
+	repos, _ = listData["repositories"].([]interface{})
+	if len(repos) != 0 {
+		t.Errorf("selected repos after remove = %d, want 0", len(repos))
+	}
+}
+
+func TestActionsPermissions_Org_AllowedActions(t *testing.T) {
+	org := createTestOrg(t)
+
+	putResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/permissions/selected-actions", defaultToken, map[string]interface{}{
+		"github_owned_allowed": true,
+		"verified_allowed":     true,
+		"patterns_allowed":     []string{"octo-org/"},
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["github_owned_allowed"] != true {
+		t.Errorf("github_owned_allowed = %v", data["github_owned_allowed"])
+	}
+	patterns, _ := data["patterns_allowed"].([]interface{})
+	if len(patterns) != 1 || patterns[0] != "octo-org/" {
+		t.Errorf("patterns_allowed = %v", patterns)
+	}
+
+	getResp := ghGet(t, "/api/v3/orgs/"+org+"/actions/permissions/selected-actions", defaultToken)
+	decodeJSONWithStatus(t, getResp, 200)
+}
+
+func TestActionsPermissions_Org_WorkflowPermissions(t *testing.T) {
+	org := createTestOrg(t)
+
+	putResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/permissions/workflow", defaultToken, map[string]interface{}{
+		"default_workflow_permissions":     "write",
+		"can_approve_pull_request_reviews": true,
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["default_workflow_permissions"] != "write" {
+		t.Errorf("default_workflow_permissions = %v", data["default_workflow_permissions"])
+	}
+	if data["can_approve_pull_request_reviews"] != true {
+		t.Errorf("can_approve_pull_request_reviews = %v", data["can_approve_pull_request_reviews"])
+	}
+}
+
+func TestActionsPermissions_Org_CacheLimits(t *testing.T) {
+	org := createTestOrg(t)
+
+	retResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/cache/retention-limit", defaultToken, map[string]interface{}{
+		"retention_limit_in_days": 45,
+	})
+	data := decodeJSONWithStatus(t, retResp, 200)
+	if data["retention_limit_in_days"] != float64(45) {
+		t.Errorf("retention_limit_in_days = %v", data["retention_limit_in_days"])
+	}
+
+	storResp := ghPut(t, "/api/v3/orgs/"+org+"/actions/cache/storage-limit", defaultToken, map[string]interface{}{
+		"storage_limit_in_bytes": 1024 * 1024 * 1024,
+	})
+	data = decodeJSONWithStatus(t, storResp, 200)
+	if data["storage_limit_in_bytes"] != float64(1024*1024*1024) {
+		t.Errorf("storage_limit_in_bytes = %v", data["storage_limit_in_bytes"])
+	}
+}
+
+func TestActionsPermissions_Repo_GetSet(t *testing.T) {
+	repo := createTestRepo(t)
+
+	resp := ghGet(t, "/api/v3/repos/"+repo+"/actions/permissions", defaultToken)
+	data := decodeJSONWithStatus(t, resp, 200)
+	if data["enabled"] != true {
+		t.Errorf("enabled = %v, want true", data["enabled"])
+	}
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions", defaultToken, map[string]interface{}{
+		"enabled":         false,
+		"allowed_actions": "selected",
+	})
+	data = decodeJSONWithStatus(t, putResp, 200)
+	if data["enabled"] != false {
+		t.Errorf("enabled after put = %v, want false", data["enabled"])
+	}
+	if data["selected_actions_url"] == nil {
+		t.Error("expected selected_actions_url when allowed_actions=selected")
+	}
+}
+
+func TestActionsPermissions_Repo_AccessLevel(t *testing.T) {
+	repo := createTestRepo(t)
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/access", defaultToken, map[string]interface{}{
+		"access_level": "organization",
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["access_level"] != "organization" {
+		t.Errorf("access_level = %v", data["access_level"])
+	}
+}
+
+func TestActionsPermissions_Repo_AllowedActions(t *testing.T) {
+	repo := createTestRepo(t)
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/selected-actions", defaultToken, map[string]interface{}{
+		"github_owned_allowed": true,
+		"patterns_allowed":     []string{"actions/"},
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	patterns, _ := data["patterns_allowed"].([]interface{})
+	if len(patterns) != 1 {
+		t.Errorf("patterns_allowed = %v", patterns)
+	}
+}
+
+func TestActionsPermissions_Repo_WorkflowPermissions(t *testing.T) {
+	repo := createTestRepo(t)
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/workflow", defaultToken, map[string]interface{}{
+		"default_workflow_permissions":     "write",
+		"can_approve_pull_request_reviews": true,
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["default_workflow_permissions"] != "write" {
+		t.Errorf("default_workflow_permissions = %v", data["default_workflow_permissions"])
+	}
+}
+
+func TestActionsPermissions_Repo_ForkPRSettings(t *testing.T) {
+	repo := createTestRepo(t)
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/fork-pr-contributor-approval", defaultToken, map[string]interface{}{
+		"require_approval": "all",
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["require_approval"] != "all" {
+		t.Errorf("require_approval = %v", data["require_approval"])
+	}
+
+	putResp = ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/fork-pr-workflows-private-repos", defaultToken, map[string]interface{}{
+		"policy": "run",
+	})
+	data = decodeJSONWithStatus(t, putResp, 200)
+	if data["policy"] != "run" {
+		t.Errorf("policy = %v", data["policy"])
+	}
+}
+
+func TestActionsPermissions_Repo_ArtifactAndLogRetention(t *testing.T) {
+	repo := createTestRepo(t)
+
+	putResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/permissions/artifact-and-log-retention", defaultToken, map[string]interface{}{
+		"artifact_and_log_retention_days": 30,
+	})
+	data := decodeJSONWithStatus(t, putResp, 200)
+	if data["artifact_and_log_retention_days"] != float64(30) {
+		t.Errorf("artifact_and_log_retention_days = %v", data["artifact_and_log_retention_days"])
+	}
+}
+
+func TestActionsPermissions_Repo_CacheLimits(t *testing.T) {
+	repo := createTestRepo(t)
+
+	retResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/cache/retention-limit", defaultToken, map[string]interface{}{
+		"retention_limit_in_days": 60,
+	})
+	data := decodeJSONWithStatus(t, retResp, 200)
+	if data["retention_limit_in_days"] != float64(60) {
+		t.Errorf("retention_limit_in_days = %v", data["retention_limit_in_days"])
+	}
+
+	storResp := ghPut(t, "/api/v3/repos/"+repo+"/actions/cache/storage-limit", defaultToken, map[string]interface{}{
+		"storage_limit_in_bytes": 500 * 1024 * 1024,
+	})
+	data = decodeJSONWithStatus(t, storResp, 200)
+	if data["storage_limit_in_bytes"] != float64(500*1024*1024) {
+		t.Errorf("storage_limit_in_bytes = %v", data["storage_limit_in_bytes"])
+	}
+}
+
+func TestActionsRunLogs_Delete(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	s.registerGHActionsPermissionsRoutes()
+	s.registerTimelineRoutes()
+	repo := "admin/rr-logs"
+	s.store.CreateRepo(s.store.LookupUserByLogin("admin"), "rr-logs", "", false)
+	wf, wfJob := seedRun(t, s, repo, "completed", "success")
+	planID, _ := linkJobToPlan(t, s, wfJob)
+	// Seed a timeline record with a log file so deletion has something to remove.
+	s.store.mu.Lock()
+	s.store.TimelineRecords[planID] = append(s.store.TimelineRecords[planID], &TimelineRecord{
+		Type: "Task",
+		Name: "Step",
+		Log:  &TimelineLogRef{ID: 1},
+	})
+	s.store.LogFiles[1] = []byte("step log")
+	s.store.mu.Unlock()
+
+	w := runAuthedRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/%s/actions/runs/%d/logs", repo, wf.RunID))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete logs status = %d, body=%s", w.Code, w.Body.String())
+	}
+	s.store.mu.RLock()
+	_, hasLogLines := s.store.LogLines[wfJob.JobID]
+	_, hasTimeline := s.store.TimelineRecords[planID]
+	_, hasLogFile := s.store.LogFiles[1]
+	s.store.mu.RUnlock()
+	if hasLogLines {
+		t.Error("log lines should be deleted")
+	}
+	if hasTimeline {
+		t.Error("timeline records should be deleted")
+	}
+	if hasLogFile {
+		t.Error("log file should be deleted")
+	}
+}
+
+func decodeJSONWithStatus(t *testing.T, resp *http.Response, want int) map[string]interface{} {
+	t.Helper()
+	if resp.StatusCode != want {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("status = %d, want %d: %s", resp.StatusCode, want, body)
+	}
+	return decodeJSON(t, resp)
+}
+
+func requireStatus(t *testing.T, resp *http.Response, want int) {
+	t.Helper()
+	if resp.StatusCode != want {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("status = %d, want %d: %s", resp.StatusCode, want, body)
+	}
+	resp.Body.Close()
 }

@@ -407,6 +407,23 @@ export function GistIcon(p: IconProps) {
   );
 }
 
+export function StarIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 1.5l1.8 4.6h4.9l-3.9 2.9 1.5 4.6L8 10.6 4.7 13.6l1.5-4.6L2.3 6.1h4.9z" />
+    </Svg>
+  );
+}
+
+export function NotificationBellIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 1.5c-2.5 0-4 2-4 4.5v3l-1.5 2h11L12 9V6c0-2.5-1.5-4.5-4-4.5z" />
+      <path d="M6 13.5a2 2 0 0 0 4 0" />
+    </Svg>
+  );
+}
+
 export function ProjectIcon(p: IconProps) {
   return (
     <Svg {...p}>

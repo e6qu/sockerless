@@ -20,6 +20,7 @@ import { BranchProtectionPage } from "./pages/BranchProtectionPage.js";
 import { SecretScanningPage } from "./pages/SecretScanningPage.js";
 import { CodeScanningPage } from "./pages/CodeScanningPage.js";
 import { DependabotPage } from "./pages/DependabotPage.js";
+import { SecurityAdvisoriesPage } from "./pages/SecurityAdvisoriesPage.js";
 import { ProjectsClassicPage } from "./pages/ProjectsClassicPage.js";
 import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
 import { MetricsPage } from "./pages/MetricsPage.js";
@@ -28,9 +29,11 @@ import { OAuthPage } from "./pages/OAuthPage.js";
 import { UsersPage } from "./pages/UsersPage.js";
 import { OrgsPage } from "./pages/OrgsPage.js";
 import { TeamsPage } from "./pages/TeamsPage.js";
+import { RulesetsPage } from "./pages/RulesetsPage.js";
 import { AuditLogPage } from "./pages/AuditLogPage.js";
 import { StorageHealthPage } from "./pages/StorageHealthPage.js";
 import { GistsPage } from "./pages/GistsPage.js";
+import { NotificationsPage } from "./pages/NotificationsPage.js";
 import { MigrationsPage } from "./pages/MigrationsPage.js";
 import { CodespacesPage } from "./pages/CodespacesPage.js";
 import { PackagesPage } from "./pages/PackagesPage.js";
@@ -61,6 +64,7 @@ export function App() {
               <Route path="/ui/runners" element={<RunnersPage />} />
               <Route path="/ui/repos" element={<ReposPage />} />
               <Route path="/ui/orgs/:org/repos" element={<OrgReposPage />} />
+              <Route path="/ui/orgs/:org/rulesets" element={<RulesetsPage />} />
               <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
               <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
@@ -75,12 +79,14 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/security/secret-scanning" element={<SecretScanningPage />} />
               <Route path="/ui/repos/:owner/:repo/security/code-scanning" element={<CodeScanningPage />} />
               <Route path="/ui/repos/:owner/:repo/security/dependabot" element={<DependabotPage />} />
+              <Route path="/ui/repos/:owner/:repo/security/advisories" element={<SecurityAdvisoriesPage />} />
               <Route path="/ui/repos/:owner/:repo/projects-classic" element={<ProjectsClassicPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
+              <Route path="/ui/notifications" element={<NotificationsPage />} />
               <Route path="/ui/packages" element={<PackagesPage />} />
               <Route path="/ui/orgs/:org/packages" element={<PackagesPage />} />
               <Route path="/ui/repos/:owner/:repo/packages" element={<PackagesPage />} />

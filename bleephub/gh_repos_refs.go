@@ -16,9 +16,6 @@ func (s *Server) registerGHRepoRefRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches", s.handleListBranches)
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}", s.handleGetBranch)
 	s.route("GET /api/v3/repos/{owner}/{repo}/tags", s.handleListTags)
-	s.route("GET /api/v3/repos/{owner}/{repo}/git/refs", s.handleListRefs)
-	s.route("GET /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleGetRefs)
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/git/refs/{ref...}", s.handleDeleteRef)
 }
 
 func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
@@ -303,12 +300,6 @@ func (s *Server) handleGetBranch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
-		return
-	}
-
 	owner := r.PathValue("owner")
 	repoName := r.PathValue("repo")
 	refPath := r.PathValue("ref")
@@ -316,10 +307,6 @@ func (s *Server) handleDeleteRef(w http.ResponseWriter, r *http.Request) {
 	repo := s.store.GetRepo(owner, repoName)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	if repo.Owner.ID != user.ID {
-		writeGHError(w, http.StatusForbidden, "Must have admin rights to Repository.")
 		return
 	}
 

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1003,5 +1004,202 @@ func TestLicenseTemplates(t *testing.T) {
 	defer missingResp.Body.Close()
 	if missingResp.StatusCode != 404 {
 		t.Fatalf("expected 404, got %d", missingResp.StatusCode)
+	}
+}
+
+// TestRepoDeployKeys exercises deploy key CRUD.
+func TestRepoDeployKeys(t *testing.T) {
+	repoName := "deploy-keys-repo"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": repoName})
+
+	resp := ghPost(t, "/api/v3/repos/admin/"+repoName+"/keys", defaultToken, map[string]interface{}{
+		"title":     "laptop",
+		"key":       "ssh-rsa AAAA test",
+		"read_only": true,
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	created := decodeJSON(t, resp)
+	keyID := int(created["id"].(float64))
+	if created["title"] != "laptop" || created["read_only"] != true {
+		t.Fatalf("unexpected created key: %v", created)
+	}
+
+	listResp := ghGet(t, "/api/v3/repos/admin/"+repoName+"/keys", defaultToken)
+	if listResp.StatusCode != 200 {
+		listResp.Body.Close()
+		t.Fatalf("expected 200, got %d", listResp.StatusCode)
+	}
+	var keys []map[string]interface{}
+	if err := json.NewDecoder(listResp.Body).Decode(&keys); err != nil {
+		t.Fatal(err)
+	}
+	listResp.Body.Close()
+	if len(keys) != 1 {
+		t.Fatalf("expected 1 key, got %d", len(keys))
+	}
+
+	getResp := ghGet(t, "/api/v3/repos/admin/"+repoName+"/keys/"+strconv.Itoa(keyID), defaultToken)
+	if getResp.StatusCode != 200 {
+		getResp.Body.Close()
+		t.Fatalf("expected 200, got %d", getResp.StatusCode)
+	}
+	got := decodeJSON(t, getResp)
+	if got["id"] != float64(keyID) {
+		t.Fatalf("expected id %d, got %v", keyID, got["id"])
+	}
+
+	delResp := ghDelete(t, "/api/v3/repos/admin/"+repoName+"/keys/"+strconv.Itoa(keyID), defaultToken)
+	defer delResp.Body.Close()
+	if delResp.StatusCode != 204 {
+		t.Fatalf("expected 204, got %d", delResp.StatusCode)
+	}
+
+	getAfter := ghGet(t, "/api/v3/repos/admin/"+repoName+"/keys/"+strconv.Itoa(keyID), defaultToken)
+	defer getAfter.Body.Close()
+	if getAfter.StatusCode != 404 {
+		t.Fatalf("expected 404 after delete, got %d", getAfter.StatusCode)
+	}
+}
+
+// TestRepoTransfer verifies transferring a repo to another user.
+func TestRepoTransfer(t *testing.T) {
+	repoName := "transfer-repo"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": repoName})
+
+	userResp, err := authedPost("/internal/users", "application/json", bytes.NewReader([]byte(`{"login":"alice","email":"alice@local"}`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userResp.StatusCode != 201 {
+		userResp.Body.Close()
+		t.Fatalf("expected 201 for user create, got %d", userResp.StatusCode)
+	}
+	userResp.Body.Close()
+
+	resp := ghPost(t, "/api/v3/repos/admin/"+repoName+"/transfer", defaultToken, map[string]interface{}{
+		"new_owner": "alice",
+	})
+	if resp.StatusCode != 202 {
+		resp.Body.Close()
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["full_name"] != "alice/"+repoName {
+		t.Fatalf("expected full_name=alice/%s, got %v", repoName, data["full_name"])
+	}
+
+	getOld := ghGet(t, "/api/v3/repos/admin/"+repoName, defaultToken)
+	defer getOld.Body.Close()
+	if getOld.StatusCode != 404 {
+		t.Fatalf("expected 404 for old owner, got %d", getOld.StatusCode)
+	}
+
+	getNew := ghGet(t, "/api/v3/repos/alice/"+repoName, defaultToken)
+	if getNew.StatusCode != 200 {
+		getNew.Body.Close()
+		t.Fatalf("expected 200 for new owner, got %d", getNew.StatusCode)
+	}
+}
+
+// TestRepoRenameBranch verifies branch rename.
+func TestRepoRenameBranch(t *testing.T) {
+	repoName := "rename-branch-repo"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":      repoName,
+		"auto_init": true,
+	})
+
+	resp := ghPost(t, "/api/v3/repos/admin/"+repoName+"/branches/main/rename", defaultToken, map[string]interface{}{
+		"new_name": "trunk",
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["name"] != "trunk" {
+		t.Fatalf("expected name=trunk, got %v", data["name"])
+	}
+	commit, _ := data["commit"].(map[string]interface{})
+	if commit["sha"] == nil {
+		t.Fatal("missing commit.sha")
+	}
+
+	branchesResp := ghGet(t, "/api/v3/repos/admin/"+repoName+"/branches", defaultToken)
+	if branchesResp.StatusCode != 200 {
+		branchesResp.Body.Close()
+		t.Fatalf("expected 200, got %d", branchesResp.StatusCode)
+	}
+	var branches []map[string]interface{}
+	if err := json.NewDecoder(branchesResp.Body).Decode(&branches); err != nil {
+		t.Fatal(err)
+	}
+	branchesResp.Body.Close()
+	found := false
+	for _, b := range branches {
+		if b["name"] == "trunk" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected trunk branch, got %v", branches)
+	}
+}
+
+// TestRepoSubscription verifies subscribe/unsubscribe endpoints.
+func TestRepoSubscription(t *testing.T) {
+	repoName := "subscription-repo"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": repoName})
+
+	resp := ghPut(t, "/api/v3/repos/admin/"+repoName+"/subscription", defaultToken, map[string]interface{}{
+		"subscribed": true,
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["subscribed"] != true {
+		t.Fatalf("expected subscribed=true, got %v", data["subscribed"])
+	}
+	if data["repository_url"] == nil {
+		t.Fatal("missing repository_url")
+	}
+
+	delResp := ghDelete(t, "/api/v3/repos/admin/"+repoName+"/subscription", defaultToken)
+	defer delResp.Body.Close()
+	if delResp.StatusCode != 204 {
+		t.Fatalf("expected 204, got %d", delResp.StatusCode)
+	}
+}
+
+// TestRepoVulnerabilityAlerts verifies enabling/disabling vulnerability alerts.
+func TestRepoVulnerabilityAlerts(t *testing.T) {
+	repoName := "vuln-alerts-repo"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": repoName})
+
+	putResp := ghPut(t, "/api/v3/repos/admin/"+repoName+"/vulnerability-alerts", defaultToken, nil)
+	if putResp.StatusCode != 204 {
+		putResp.Body.Close()
+		t.Fatalf("expected 204, got %d", putResp.StatusCode)
+	}
+	putResp.Body.Close()
+	repo := testServer.store.GetRepo("admin", repoName)
+	if repo == nil || !repo.VulnerabilityAlertsEnabled {
+		t.Fatal("expected vulnerability alerts enabled")
+	}
+
+	delResp := ghDelete(t, "/api/v3/repos/admin/"+repoName+"/vulnerability-alerts", defaultToken)
+	defer delResp.Body.Close()
+	if delResp.StatusCode != 204 {
+		t.Fatalf("expected 204, got %d", delResp.StatusCode)
+	}
+	repo = testServer.store.GetRepo("admin", repoName)
+	if repo == nil || repo.VulnerabilityAlertsEnabled {
+		t.Fatal("expected vulnerability alerts disabled")
 	}
 }

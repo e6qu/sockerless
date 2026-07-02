@@ -182,29 +182,26 @@ func (rs *ReactionStore) SummarizeReactions(parentType string, parentID int) map
 // --- HTTP surface ---
 
 func (s *Server) registerGHReactionsRoutes() {
-	// Issue reactions
+	// Issue reactions. GET /issues/{number}/reactions,
+	// GET /issues/comments/{comment_id}/reactions, and the corresponding
+	// DELETE /.../reactions/{reaction_id} paths are dispatched from
+	// registerGHIssueRoutes because Go's mux cannot disambiguate literal
+	// segments (comments) from wildcard segments (number) at the same depth.
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue", "number")))
-	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
-		s.handleListReactions("issue", "number"))
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/reactions/{reaction_id}",
-		s.requirePerm(scopeIssues, permWrite, s.handleDeleteReaction("issue", "number")))
 
 	// Issue comment reactions
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue_comment", "comment_id")))
-	s.route("GET /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
-		s.handleListReactions("issue_comment", "comment_id"))
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}",
-		s.requirePerm(scopeIssues, permWrite, s.handleDeleteReaction("issue_comment", "comment_id")))
 
-	// PR review-comment reactions
-	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
-		s.requirePerm(scopePullRequests, permWrite, s.handleCreateReaction("pull_request_review_comment", "comment_id")))
-	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions",
-		s.handleListReactions("pull_request_review_comment", "comment_id"))
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}",
-		s.requirePerm(scopePullRequests, permWrite, s.handleDeleteReaction("pull_request_review_comment", "comment_id")))
+	// PR review-comment reactions. The 3-segment GET/POST routes
+	// (/pulls/comments/{comment_id}/reactions) conflict with the PR review
+	// routes (/pulls/{number}/reviews/{review_id}) under Go 1.22's mux, so
+	// they are dispatched via handlePullsThreeSegDispatch.
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}/{p3}", s.handlePullsThreeSegDispatch("GET"))
+	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}/{p3}", s.requirePerm(scopePullRequests, permWrite, s.handlePullsThreeSegDispatch("POST")))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}/{p3}", s.requirePerm(scopePullRequests, permWrite, s.handlePullsThreeSegDispatch("PUT")))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{p1}/{p2}/{p3}", s.requirePerm(scopePullRequests, permWrite, s.handlePullsThreeSegDispatch("DELETE")))
 
 	// Commit comment reactions
 	s.route("POST /api/v3/repos/{owner}/{repo}/comments/{comment_id}/reactions",
