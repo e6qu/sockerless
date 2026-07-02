@@ -4,17 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-full-api-ui-parity` — large bleephub API/UI parity tranche. Coverage moved from 543/1190 to 665/1190 vendored GitHub REST operations (56%). Implemented and tested: Teams (members/memberships/repos), issue management (comments/labels/assignees/lock/events/timeline), PR reviews (create/submit/dismiss/requested reviewers/update-branch), Git data REST writes (blobs/commits/refs/tags/trees), release assets/reactions, repository settings (deploy keys/transfer/rename/subscription/alerts/interaction limits), org rulesets, Dependabot org/repo alerts and secrets, secret scanning org/repo alerts, repository security advisories, Actions permissions and runner labels, gist extras (commits/forks/star/public/starred), user extras (blocks/social accounts/SSH signing keys/starred/events/subscriptions), notification thread subscriptions. UI additions: expanded TeamsPage and RepoSettingsPage, new SecurityAdvisoriesPage, RulesetsPage, NotificationsPage, and GistsPage improvements.
+PR #750 — `feat/bleephub-full-api-ui-parity` — large bleephub API/UI parity tranche. Coverage moved from 543/1190 to 665/1190 vendored GitHub REST operations (56%). Implemented and tested: Teams, issue management, PR reviews, Git data writes, release assets/reactions, repository settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runner labels, gist extras, users extras, notifications. UI: TeamsPage, RepoSettingsPage, SecurityAdvisoriesPage, RulesetsPage, NotificationsPage, GistsPage. Awaiting review/merge.
 
-Removed from the branch before final validation: Projects v2 REST endpoints and user-scoped Dependabot/secret-scanning endpoints, because they are not real public GitHub `/api/v3` paths and therefore cannot be served under the GitHub namespace.
-
-Validation:
-- `go test ./bleephub -count=1` passes.
-- `make bleephub/lint` reports 0 issues.
-- `make ui/packages/bleephub/lint` passes.
-- `make ui/packages/bleephub/test` passes (127 tests).
-
-**Next:** rebase the branch on `origin/main`, push for review/merge, then resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
+**Next:** after PR #750 merges, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged, PR #747): bleephub API/UI parity continuation

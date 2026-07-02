@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-02 - bleephub API/UI parity tranche: Teams, issues, PR reviews, Git data, releases, repo settings, rulesets, Dependabot, secret scanning, security advisories, Actions permissions, gists, users, notifications (PR number pending)
+## 2026-07-02 - bleephub API/UI parity tranche: Teams, issues, PR reviews, Git data, releases, repo settings, rulesets, Dependabot, secret scanning, security advisories, Actions permissions, gists, users, notifications (PR #750)
 
 The `feat/bleephub-full-api-ui-parity` branch closed a large set of remaining GitHub API/UI parity gaps. Coverage against the vendored GitHub OpenAPI description moved from 543/1190 operations (46%) to 665/1190 operations (56%).
 
