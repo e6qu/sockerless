@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -18,10 +17,11 @@ import (
 // SQS / Lambda subscribers receive it exactly as a client-side Publish
 // would deliver.
 
-// cwAlarmLastState records the last state the background evaluator
-// dispatched actions for, keyed by alarm name. An absent entry is treated
-// as INSUFFICIENT_DATA — the state real CloudWatch creates an alarm in.
-var cwAlarmLastState sync.Map
+// The last dispatched state is stored on each alarm's StateValue field.
+// PutMetricAlarm replaces the alarm record, so a new or updated alarm
+// naturally starts with an empty StateValue that the evaluator treats as
+// INSUFFICIENT_DATA. This is more robust than a separate map that must be
+// manually reset on every PutMetricAlarm path.
 
 // startCWAlarmEvaluator launches the background goroutine that re-derives
 // every metric alarm's state every cwAlarmEvalInterval and dispatches the
@@ -43,40 +43,42 @@ const cwAlarmEvalInterval = 2 * time.Second
 // and persist the dispatched state. Manual SetAlarmState overrides do not
 // dispatch actions here — SetAlarmState is a testing/admin knob that real
 // CloudWatch does not route through AlarmActions.
+//
+// A panic while evaluating or dispatching a single alarm is recovered so
+// one misbehaving alarm/resource cannot kill the background evaluator and
+// silently break action delivery for all other alarms.
 func cwEvaluateAlarmsOnce() {
 	for _, a := range cwAlarms.List() {
-		newState, reason := cwEvaluateAlarmState(a)
-		prev := cwAlarmRememberedState(a.AlarmName)
-		if prev == newState {
-			continue
-		}
-		cwAlarmLastState.Store(a.AlarmName, newState)
-		cwDispatchAlarmActions(a, prev, newState, reason)
-		historyData, _ := json.Marshal(map[string]string{
-			"previousState": prev,
-			"newState":      newState,
-			"stateReason":   reason,
-		})
-		cwRecordAlarmHistory(a.AlarmName, "MetricAlarm", "StateUpdate",
-			fmt.Sprintf("Alarm updated from %s to %s", prev, newState), string(historyData))
-		ts := time.Now().UTC().Unix()
-		cwAlarms.Update(a.AlarmName, func(x *CWAlarm) {
-			x.StateValue = newState
-			x.StateReason = reason
-			x.StateUpdatedTimestamp = ts
-		})
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					cwEvalLogger.Error().Str("alarmName", a.AlarmName).Interface("recover", r).Msg("CloudWatch alarm evaluator panic recovered")
+				}
+			}()
+			newState, reason := cwEvaluateAlarmState(a)
+			prev := a.StateValue
+			if prev == "" {
+				prev = "INSUFFICIENT_DATA"
+			}
+			if prev == newState {
+				return
+			}
+			cwDispatchAlarmActions(a, prev, newState, reason)
+			historyData, _ := json.Marshal(map[string]string{
+				"previousState": prev,
+				"newState":      newState,
+				"stateReason":   reason,
+			})
+			cwRecordAlarmHistory(a.AlarmName, "MetricAlarm", "StateUpdate",
+				fmt.Sprintf("Alarm updated from %s to %s", prev, newState), string(historyData))
+			ts := time.Now().UTC().Unix()
+			cwAlarms.Update(a.AlarmName, func(x *CWAlarm) {
+				x.StateValue = newState
+				x.StateReason = reason
+				x.StateUpdatedTimestamp = ts
+			})
+		}()
 	}
-}
-
-// cwAlarmRememberedState returns the last dispatched state for an alarm,
-// defaulting to INSUFFICIENT_DATA when the evaluator has not seen it yet.
-func cwAlarmRememberedState(name string) string {
-	if v, ok := cwAlarmLastState.Load(name); ok {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return "INSUFFICIENT_DATA"
 }
 
 // cwDispatchAlarmActions fans the alarm notification out to each configured

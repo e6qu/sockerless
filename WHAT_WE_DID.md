@@ -4,6 +4,22 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-02 - Open issue fixes: bleephub /user/teams OAuth scope regression (#754) and CloudWatch alarm evaluator resilience (#753)
+
+The `fix/open-issues-753-754-after-755` branch closed the two open issues that surfaced after merging PR #755.
+
+**bleephub `GET /api/v3/user/teams` no longer requires `read:org`.** Parity tranche #750 had wrapped the route in `requirePerm(scopeMembers, permRead)`, which rejected OAuth tokens that lacked the `read:org` scope. Real GitHub does not require `read:org` for this endpoint because it returns the authenticated user's own team memberships. Fixed by removing the permission gate from `GET /api/v3/user/teams` while keeping the gate on org-scoped team routes. Added `TestListAuthUserTeams_RequiresAuthNotReadOrgScope` to prove a classic OAuth token with only `repo` can list the user's teams, while unauthenticated requests still get 401.
+
+**CloudWatch alarm evaluator is resilient to single-alarm failures.** After #751 reset `cwAlarmLastState` on `PutMetricAlarm`, integrated terraform-sim probes still saw no `SNS.Publish` even though `DescribeAlarms` reported `ALARM`. The evaluator tracked last-dispatched state in a standalone `sync.Map` (`cwAlarmLastState`) that had to be manually reset on every `PutMetricAlarm` path; more importantly, a panic while evaluating or dispatching one alarm could kill the background evaluator goroutine and silently break AlarmActions for every other alarm. Fixed by moving the last-dispatched state onto each alarm's own `StateValue` field (so `PutMetricAlarm` replacement naturally resets it to `INSUFFICIENT_DATA`) and adding per-alarm panic recovery in `cwEvaluateAlarmsOnce`. Removed the now-redundant `cwAlarmLastState` map and its manual deletions from all three `PutMetricAlarm` handlers and `cwDeleteAlarms`. Added `TestCloudWatch_AlarmSNSActionToSQS_ResilientToOneBadAlarm` in `SIM_RUNTIME=process` to verify that an alarm with an unresolvable action target does not prevent a sibling alarm from delivering its notification.
+
+**Files changed.** `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`, `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/cloudwatch_alarms.go`, `simulators/aws/cloudwatch_metrics.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`.
+
+**Validation.**
+- `go test ./bleephub -count=1` passes.
+- `GOWORK=off go test -run TestCloudWatch -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go test -run TestBehavioralGate -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go build -tags noui -o /tmp/simulator-aws .` in `simulators/aws` succeeds.
+
 ## 2026-07-02 - AWS behavioral coverage gate + GCP push→pull cleanup (PR #755, closes BUG-2252, advances BUG-1785)
 
 The `feat/big-behavioral-gcp-topology` branch closed the behavioral-coverage gap identified in BUG-2252 and moved the GCP Cloud Build push→pull path away from local-daemon shortcuts.

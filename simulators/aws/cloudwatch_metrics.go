@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
+	"github.com/rs/zerolog"
 	sim "github.com/sockerless/simulator"
 )
 
@@ -54,9 +55,13 @@ type CWDimension struct {
 }
 
 // State store for metrics
-var cwMetrics sim.Store[[]CWMetricDatum]
+var (
+	cwMetrics    sim.Store[[]CWMetricDatum]
+	cwEvalLogger zerolog.Logger
+)
 
 func registerCloudWatchMetrics(srv *sim.Server) {
+	cwEvalLogger = srv.Logger()
 	cwMetrics = sim.MakeStore[[]CWMetricDatum](srv.DB(), "cw_metrics")
 	cwAlarms = sim.MakeStore[CWAlarm](srv.DB(), "cw_alarms")
 	cwCompositeAlarms = sim.MakeStore[CWCompositeAlarm](srv.DB(), "cw_composite_alarms")

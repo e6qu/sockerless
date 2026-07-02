@@ -276,3 +276,120 @@ func TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState(t *testing.T) 
 	assert.Equal(t, "ALARM", body["NewStateValue"])
 	assert.Equal(t, "INSUFFICIENT_DATA", body["OldStateValue"])
 }
+
+// TestCloudWatch_AlarmSNSActionToSQS_ResilientToOneBadAlarm is the regression
+// test for issue #753. A panic while evaluating or dispatching one alarm must
+// not kill the background evaluator goroutine; subsequent alarms must still
+// dispatch their AlarmActions.
+func TestCloudWatch_AlarmSNSActionToSQS_ResilientToOneBadAlarm(t *testing.T) {
+	url := startProcessModeSim(t)
+
+	cw := cloudwatch.NewFromConfig(sdkConfig(), func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	snsC := sns.NewFromConfig(sdkConfig(), func(o *sns.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	sqsC := sqs.NewFromConfig(sdkConfig(), func(o *sqs.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+
+	ns := "Custom/AlarmResilienceRepro"
+	badAlarmName := "bad-alarm-panics"
+	goodAlarmName := "good-alarm-still-delivers"
+
+	tpc, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("resilience-t")})
+	require.NoError(t, err)
+	topicARN := aws.ToString(tpc.TopicArn)
+	t.Cleanup(func() {
+		_, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: tpc.TopicArn})
+	})
+
+	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("resilience-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl})
+	})
+	queueAttrs, err := sqsC.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+	})
+	require.NoError(t, err)
+	queueARN := queueAttrs.Attributes["QueueArn"]
+
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"sqs:SendMessage","Resource":"%s"}]}`, queueARN)
+	_, err = sqsC.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl: q.QueueUrl,
+		Attributes: map[string]string{
+			"Policy": policy,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: tpc.TopicArn,
+		Protocol: aws.String("sqs"),
+		Endpoint: aws.String(queueARN),
+	})
+	require.NoError(t, err)
+
+	time.Sleep(3 * time.Second)
+
+	// Create a "bad" alarm whose action target is an ARN the evaluator cannot
+	// resolve to a known SNS topic. Real CloudWatch would silently drop the
+	// action; the sim must not panic and must continue evaluating other alarms.
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(badAlarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("BadMetric"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(50),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{"arn:aws:sns:us-east-1:123456789012:does-not-exist"},
+	})
+	require.NoError(t, err)
+
+	// Create the "good" alarm pointing at the real topic.
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(goodAlarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("GoodMetric"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(50),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{topicARN},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = cw.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{AlarmNames: []string{badAlarmName, goodAlarmName}})
+	})
+
+	// Breach the good alarm only; the bad alarm has no datapoints and stays OK.
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String(ns),
+		MetricData: []cwtypes.MetricDatum{
+			{MetricName: aws.String("GoodMetric"), Value: aws.Float64(100), Timestamp: aws.Time(time.Now().UTC())},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{goodAlarmName}})
+		require.NoError(t, err)
+		return len(desc.MetricAlarms) == 1 && desc.MetricAlarms[0].StateValue == cwtypes.StateValueAlarm
+	}, 15*time.Second, 500*time.Millisecond, "good alarm should reach ALARM")
+
+	time.Sleep(2 * time.Second)
+
+	recv, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 1, "good alarm must still deliver even when a sibling alarm has an invalid action target")
+}
