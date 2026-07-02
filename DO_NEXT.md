@@ -4,9 +4,25 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #751 — `fix/aws-cloudwatch-alarm-recreate-state-749` — closes GitHub issue #749. CloudWatch metric alarms created or updated via `PutMetricAlarm` now reset the background evaluator's remembered dispatched state, so a re-created alarm transitions from `INSUFFICIENT_DATA` and dispatches `AlarmActions` on the first real `ALARM` transition. Adds a `SIM_RUNTIME=process` SDK regression test (`TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`) that exercises the same shape as the adversarial CLI probe. Awaiting review/merge.
+No active branch. PR #751 merged. Pick next work from PLAN.md / open issues / BUGS.md.
 
-**Next:** after PR #751 merges, resume sim/cloud coverage work from PLAN.md / open issues / BUGS.md.
+---
+### Prior branch (merged, PR #751): CloudWatch metric alarm state reset on PutMetricAlarm (#749)
+
+`fix/aws-cloudwatch-alarm-recreate-state-749` closed GitHub issue #749. CloudWatch metric alarms created or updated via `PutMetricAlarm` now reset the background evaluator's remembered dispatched state, so a re-created alarm transitions from `INSUFFICIENT_DATA` and dispatches `AlarmActions` on the first real `ALARM` transition.
+
+Scope:
+- `simulators/aws/cloudwatch_alarms.go`: all three `PutMetricAlarm` handlers (awsJson1.0, rpc-v2-cbor, awsQuery) now call `cwAlarmLastState.Delete(name)` after storing the alarm.
+- `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`: added `TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`, a subprocess `SIM_RUNTIME=process` regression test for re-created alarms.
+
+Validation:
+- `make unit-test` in `simulators/aws` passes.
+- `make sdk-test SDK_TEST_ARGS='-run TestCloudWatch_AlarmSNSActionToSQS -v'` passes.
+- `GOWORK=off go test -run TestCloudWatch -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `golangci-lint` reports 0 issues in `simulators/aws` and `simulators/aws/sdk-tests`.
+- `./scripts/check-simulator-tests.sh` passes.
+
+**Next:** PR #751 merged; pick next task from PLAN.md / open issues / BUGS.md.
 
 ---
 ### Prior branch (merged, PR #750): bleephub API/UI parity tranche
