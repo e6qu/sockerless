@@ -1016,6 +1016,26 @@ func (st *Store) DeleteComment(id int) bool {
 	return true
 }
 
+// GetIssueOrPullRequestIDByNumber returns the global ID of the issue or
+// pull request with the given repo + number, or 0 when neither exists.
+// PRs share the issue number namespace in GitHub, so the same number can
+// identify either kind of object.
+func (st *Store) GetIssueOrPullRequestIDByNumber(repoID, number int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, i := range st.Issues {
+		if i.RepoID == repoID && i.Number == number {
+			return i.ID
+		}
+	}
+	for _, pr := range st.PullRequests {
+		if pr.RepoID == repoID && pr.Number == number {
+			return pr.ID
+		}
+	}
+	return 0
+}
+
 // SetIssueOrPRLock toggles the locked flag on the issue or PR with the
 // given repo + number. Returns true if a target was found and updated;
 // false when no issue or PR matches. The reason is recorded only when
