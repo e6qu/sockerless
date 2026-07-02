@@ -353,6 +353,20 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		failClean("ERROR: docker client: %v\n", err)
 	}
 
+	// Pull the eval-arithmetic image through the backend so its config
+	// (ENTRYPOINT=/usr/local/bin/eval-arithmetic) lands in the backend's
+	// image store. The image was already pushed to the sim registry; this
+	// exercises the same pull path production uses and gives
+	// ContainerCreate the metadata it needs to merge defaults.
+	pullCtx, pullCancel := context.WithTimeout(context.Background(), 60*time.Second)
+	if rc, err := dockerClient.ImagePull(pullCtx, evalImageName, image.PullOptions{}); err != nil {
+		failClean("ERROR: pull %s through backend: %v\n", evalImageName, err)
+	} else {
+		_, _ = io.Copy(io.Discard, rc)
+		rc.Close()
+	}
+	pullCancel()
+
 	code := m.Run()
 	cleanup()
 	os.Exit(code)
