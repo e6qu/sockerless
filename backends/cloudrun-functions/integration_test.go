@@ -280,6 +280,22 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		project = "sockerless-test"
 		buildBucket = "sockerless-test-build"
 
+		// Push the locally-built test images into the sim's /v2/ registry so
+		// the backend pulls them faithfully over the registry API instead of
+		// relying on the ImageLoad local-daemon shortcut.
+		step("push eval-arithmetic to sim registry")
+		if err := pushLocalImageToRegistryGCF(evalImageName, arRegistryEndpoint, project); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to push eval-arithmetic to sim registry: %v\n", err)
+			cleanup()
+			os.Exit(1)
+		}
+		step("push alpine to sim registry")
+		if err := pushLocalImageToRegistryGCF("alpine:latest", arRegistryEndpoint, project); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to push alpine to sim registry: %v\n", err)
+			cleanup()
+			os.Exit(1)
+		}
+
 		// Pre-create the GCS bucket the backend uses for Cloud Build
 		// context uploads. Real GCS doesn't auto-create buckets; the
 		// backend doesn't either (operator infrastructure — terraform
@@ -412,50 +428,6 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to create docker client: %v\n", err)
-		cleanup()
-		os.Exit(1)
-	}
-
-	// Pre-load the eval-arithmetic image into the backend's image
-	// store via `docker save | dockerClient.ImageLoad`. This exercises
-	// the backend's existing general-purpose `ImageLoad` capability —
-	// the same code path used to load images in any deployment where
-	// the operator has a tarball but no live registry. The backend's
-	// `ImageLoad` handler parses the tar and registers the image
-	// (with its full Config: Entrypoint, Cmd, Env, WorkingDir) in
-	// `core.Store.Images`. After this, `Store.ResolveImage(ref)` finds
-	// the image, so backend's `ContainerCreate` correctly inherits
-	// ENTRYPOINT/CMD defaults when the user didn't override them —
-	// necessary for arithmetic tests where the user passes only
-	// `Cmd: ["3 + 4 * 2"]` and expects the image's
-	// `/usr/local/bin/eval-arithmetic` ENTRYPOINT to consume it. Real
-	// cloud achieves the same effect by querying Artifact Registry
-	// for the image's manifest; tests use ImageLoad as the local
-	// equivalent.
-	step("docker save eval-arithmetic | dockerClient.ImageLoad (pre-populate s.Store)")
-	if err := preloadImageIntoBackend(evalImageName); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to preload %s into backend image store: %v\n", evalImageName, err)
-		cleanup()
-		os.Exit(1)
-	}
-
-	// Verify the backend resolved the image with its real ENTRYPOINT
-	// — without the entrypoint baked into the overlay, the bootstrap
-	// would run user CMD as a shell command and fail. Surface this
-	// upfront with a clear error rather than letting tests fail with
-	// an opaque "exit code 1".
-	step("verify backend resolved eval-arithmetic ENTRYPOINT")
-	verifyCtx, verifyCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer verifyCancel()
-	inspected, _, inspErr := dockerClient.ImageInspectWithRaw(verifyCtx, evalImageName)
-	if inspErr != nil {
-		fmt.Fprintf(os.Stderr, "[testmain] preload verification failed: backend can't inspect %s: %v\n", evalImageName, inspErr)
-		cleanup()
-		os.Exit(1)
-	}
-	fmt.Fprintf(os.Stderr, "[testmain] backend image inspect: id=%s entrypoint=%v cmd=%v\n", inspected.ID, inspected.Config.Entrypoint, inspected.Config.Cmd)
-	if len(inspected.Config.Entrypoint) == 0 {
-		fmt.Fprintf(os.Stderr, "[testmain] preload verification failed: backend has no ENTRYPOINT for %s (config=%+v)\n", evalImageName, inspected.Config)
 		cleanup()
 		os.Exit(1)
 	}
@@ -945,29 +917,20 @@ func TestGCFContainerLifecycle(t *testing.T) {
 // envs, air-gapped clusters, CI pipelines that build images locally
 // before deployment). It parses the tar and registers the image
 // with its full Config in `core.Store.Images`.
-func preloadImageIntoBackend(ref string) error {
-	saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer saveCancel()
-	save := exec.CommandContext(saveCtx, "docker", "save", ref)
-	stdout, err := save.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("docker save stdout pipe: %w", err)
+// pushLocalImageToRegistryGCF tags a locally-built image with its
+// Artifact-Registry-remote-repository form at the sim registry and pushes it,
+// then removes the local tag so later pulls must come from the registry.
+func pushLocalImageToRegistryGCF(ref, registryHost, project string) error {
+	arRef := fmt.Sprintf("%s/%s/docker-hub/library/%s", registryHost, project, ref)
+	if out, err := exec.Command("docker", "tag", ref, arRef).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker tag %s -> %s: %w: %s", ref, arRef, err, out)
 	}
-	if err := save.Start(); err != nil {
-		return fmt.Errorf("docker save start: %w", err)
+	if out, err := exec.Command("docker", "push", arRef).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker push %s: %w: %s", arRef, err, out)
 	}
-	loadCtx, loadCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer loadCancel()
-	resp, err := dockerClient.ImageLoad(loadCtx, stdout)
-	if err != nil {
-		_ = save.Wait()
-		return fmt.Errorf("dockerClient.ImageLoad: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if err := save.Wait(); err != nil {
-		return fmt.Errorf("docker save wait: %w", err)
-	}
+	// Best-effort: drop the local registry tag so the backend cannot fall
+	// back to the daemon copy. The source image (e.g. alpine:latest) remains.
+	_, _ = exec.Command("docker", "rmi", "-f", arRef).CombinedOutput()
 	return nil
 }
 

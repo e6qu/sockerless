@@ -224,6 +224,16 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 		project = "sim-project"
 		buildBucket = "sockerless-test-build"
 
+		// Push the locally-built test images into the sim's /v2/ registry so
+		// the backend pulls them faithfully over the registry API instead of
+		// relying on the ImageLoad local-daemon shortcut.
+		if err := pushLocalImageToRegistryCloudrun(evalImageName, arRegistryEndpoint, project); err != nil {
+			failClean("ERROR: push eval-arithmetic to sim registry: %v\n", err)
+		}
+		if err := pushLocalImageToRegistryCloudrun("alpine:latest", arRegistryEndpoint, project); err != nil {
+			failClean("ERROR: push alpine to sim registry: %v\n", err)
+		}
+
 		// Pre-create the GCS bucket the backend uses for Cloud Build
 		// context uploads (overlay path). Real GCS doesn't auto-create
 		// buckets; the backend doesn't either.
@@ -341,16 +351,6 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 	)
 	if err != nil {
 		failClean("ERROR: docker client: %v\n", err)
-	}
-
-	// Pre-load the eval-arithmetic image into the backend's image
-	// store via `docker save | dockerClient.ImageLoad`. The backend's
-	// Store.ResolveImage(ref) then finds the image with its full
-	// Config (Entrypoint=/usr/local/bin/eval-arithmetic) so the
-	// overlay path can preserve it into SOCKERLESS_USER_ENTRYPOINT
-	// for the bootstrap to exec. Mirrors the cloudrun-functions setup.
-	if err := preloadImageIntoBackendCloudrun(evalImageName); err != nil {
-		failClean("ERROR: preload eval-arithmetic into backend: %v\n", err)
 	}
 
 	code := m.Run()
@@ -803,28 +803,19 @@ func writeFakeSAJSONCloudrun(tokenURI string) (string, error) {
 // the tar and registers the image with full Config in Store.Images,
 // so subsequent overlay-path Container Creates preserve the image's
 // ENTRYPOINT/CMD. Mirror of cloudrun-functions/preloadImageIntoBackend.
-func preloadImageIntoBackendCloudrun(ref string) error {
-	saveCtx, saveCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer saveCancel()
-	save := exec.CommandContext(saveCtx, "docker", "save", ref)
-	stdout, err := save.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("docker save stdout pipe: %w", err)
+// pushLocalImageToRegistryCloudrun tags a locally-built image with its
+// Artifact-Registry-remote-repository form at the sim registry and pushes it,
+// then removes the local tag so later pulls must come from the registry.
+func pushLocalImageToRegistryCloudrun(ref, registryHost, project string) error {
+	arRef := fmt.Sprintf("%s/%s/docker-hub/library/%s", registryHost, project, ref)
+	if out, err := exec.Command("docker", "tag", ref, arRef).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker tag %s -> %s: %w: %s", ref, arRef, err, out)
 	}
-	if err := save.Start(); err != nil {
-		return fmt.Errorf("docker save start: %w", err)
+	if out, err := exec.Command("docker", "push", arRef).CombinedOutput(); err != nil {
+		return fmt.Errorf("docker push %s: %w: %s", arRef, err, out)
 	}
-	loadCtx, loadCancel := context.WithTimeout(context.Background(), 60*time.Second)
-	defer loadCancel()
-	resp, err := dockerClient.ImageLoad(loadCtx, stdout)
-	if err != nil {
-		_ = save.Wait()
-		return fmt.Errorf("dockerClient.ImageLoad: %w", err)
-	}
-	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, resp.Body)
-	if err := save.Wait(); err != nil {
-		return fmt.Errorf("docker save wait: %w", err)
-	}
+	// Best-effort: drop the local registry tag so the backend cannot fall
+	// back to the daemon copy. The source image (e.g. alpine:latest) remains.
+	_, _ = exec.Command("docker", "rmi", "-f", arRef).CombinedOutput()
 	return nil
 }

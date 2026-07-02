@@ -6,7 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|---|
-| Active branch | PR #751 — `fix/aws-cloudwatch-alarm-recreate-state-749` — closes GitHub issue #749. CloudWatch metric alarms created or updated via `PutMetricAlarm` now reset the background evaluator's remembered dispatched state, so a re-created alarm transitions from `INSUFFICIENT_DATA` and dispatches `AlarmActions` on the first real `ALARM` transition. Adds a `SIM_RUNTIME=process` SDK regression test (`TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`). Awaiting review/merge. |
+| Active branch | PR #752 — `feat/big-behavioral-gcp-topology` — closes BUG-2252 and advances BUG-1785 (GCP Cloud Build faithful push→pull). Adds AWS behavioral coverage gate (`simulators/aws/sdk-tests/behavioral_gate_test.go`), a registry-enforcement pre-commit check (`scripts/check-behavioral-coverage.sh` + `specs/AWS_BEHAVIORAL_PATTERNS.md`), and replaces the cloudrun/cloudrun-functions integration-test `ImageLoad` shortcut with real pushes into the simulator's `/v2/` registry so the backend pulls faithfully. Awaiting review/merge. |
+| Last merged (#751) | `fix/aws-cloudwatch-alarm-recreate-state-749` — closes GitHub issue #749. CloudWatch metric alarms created or updated via `PutMetricAlarm` now reset the background evaluator's remembered dispatched state, so a re-created alarm transitions from `INSUFFICIENT_DATA` and dispatches `AlarmActions` on the first real `ALARM` transition. Adds a `SIM_RUNTIME=process` SDK regression test (`TestCloudWatch_AlarmSNSActionToSQS_RecreatedAlarmResetsState`). |
 | Last merged (#750) | `feat/bleephub-full-api-ui-parity` — **bleephub API/UI parity tranche** — closed Teams, issue management, PR reviews, Git data writes, releases/repo settings, org rulesets, Dependabot, secret scanning, security advisories, Actions permissions/runner labels, gists, users, and notifications. Coverage 665/1190 vendored GitHub REST operations (56%). |
 | Last merged (#748) | `fix/aws-cloudwatch-alarm-sns-process-745` — **CloudWatch alarm SNS→SQS process-mode regression test (#745)** — added a CLI test that exercises the full CloudWatch→SNS→SQS delivery chain in `SIM_RUNTIME=process` and closes GitHub issue #745. |
 | Last merged (#747) | `feat/bleephub-api-ui-parity-continuation` — **bleephub remaining API/UI parity gaps** — closed Projects classic, secret scanning, code scanning, Dependabot, Migrations, Codespaces, Packages, and Discussions GraphQL surfaces, plus UI pages and navigation for each. |
@@ -47,7 +48,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 | Last merged (#670) | `feat/ratchet-up-services` — **ratchet-up the floored services + measure the restJson1 services (BUG-2194)** — EC2/RDS/ElastiCache/Glue/Route53/EFS +77 ops; Lambda/Batch/API Gateway/Amplify/Scheduler measured. |
 | Earlier merged | #665–#669 built the AWS service-conformance gate; #574–#664 = the runner/cell + audit + IAM-enforcement + sim-fidelity arc. Full history in `git log` and [WHAT_WE_DID.md](WHAT_WE_DID.md). |
 | Open GitHub issues | #394 azuread Terraform Graph override — upstream-blocked (BUG-1345). |
-| Bugs | See [BUGS.md](BUGS.md) header (2276 filed · 2232 fixed · 3 open · 16 FP). 3 open: BUG-2252 (behavioral coverage gate), BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
+| Bugs | See [BUGS.md](BUGS.md) header (2277 filed · 2234 fixed · 2 open · 16 FP). 2 open: BUG-1345 (azuread upstream), BUG-1075 (live-cloud) — all externally gated or architectural. |
 | Live infra | None up. |
 
 ## What's next

@@ -60,6 +60,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: behavioral-coverage
+        name: AWS behavioral pattern coverage registry
+        entry: bash scripts/check-behavioral-coverage.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: simulator-coverage-matrix
         name: Simulator SDK/CLI/Terraform coverage matrix
         entry: bash scripts/check-simulator-coverage-matrix.sh

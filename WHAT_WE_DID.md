@@ -4,6 +4,28 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-02 - AWS behavioral coverage gate + GCP push→pull cleanup (PR #752, closes BUG-2252, advances BUG-1785)
+
+The `feat/big-behavioral-gcp-topology` branch closed the behavioral-coverage gap identified in BUG-2252 and moved the GCP Cloud Build push→pull path away from local-daemon shortcuts.
+
+**AWS behavioral coverage gate.** Added `simulators/aws/sdk-tests/behavioral_gate_test.go`, a canonical-SDK test suite that asserts the side effects of background evaluators, listeners, and cross-service dispatch actually resolve end-to-end:
+- CloudWatch alarm evaluator → SNS topic fan-out → SQS subscriber receives canonical alarm JSON.
+- SQS dead-letter queue redrive after `maxReceiveCount` failed receipts.
+- Application Auto Scaling target-tracking evaluator raises/lowers ECS service `DesiredCount`.
+- Route 53 DNS listener serves created records over UDP/TCP.
+- ECS service scheduler reconciles `RunningCount` to `DesiredCount`.
+- CloudWatch Logs metric-filter evaluation publishes metrics on `PutLogEvents`.
+
+**Registry enforcement.** Added `specs/AWS_BEHAVIORAL_PATTERNS.md` (pattern → classification → source file → behavioral test) and `scripts/check-behavioral-coverage.sh`. The script is wired into `.pre-commit-config.yaml`; it validates every registry row, requires every `*behavioral*_test.go` to be registered, and detects newly-added persistent background loops/listeners in `simulators/aws/*.go` that are not yet classified.
+
+**GCP push→pull cleanup.** Replaced the `docker save | dockerClient.ImageLoad` shortcut in `backends/cloudrun/integration_test.go` and `backends/cloudrun-functions/integration_test.go` with real `docker tag` + `docker push` into the simulator's own `/v2/` Artifact Registry endpoint. The backend now pulls the `eval-arithmetic` and `alpine` test images through the same AR rewrite path it uses in production, with `SOCKERLESS_GCP_AR_ENDPOINT` routing the registry host to the sim. This matches the faithful build→push→pull pattern already proven by `simulators/gcp/sdk-tests/cloudbuild_push_test.go`.
+
+**Validation.**
+- `GOWORK=off go test -run TestBehavioralGate -count=1 ./...` in `simulators/aws/sdk-tests` passes.
+- `scripts/check-behavioral-coverage.sh` passes on the changed set.
+- `go test -tags integration -run '^$' ./...` compiles in `backends/cloudrun` and `backends/cloudrun-functions`.
+- Full `make test-integration` requires a Docker host that auto-trusts loopback registries (Podman hosts need a scoped insecure-registries drop-in, as documented in the existing `cloudbuild_push_test.go` comment).
+
 ## 2026-07-02 - CloudWatch metric alarm state reset on PutMetricAlarm (PR #751, closes #749)
 
 The `fix/aws-cloudwatch-alarm-recreate-state-749` branch closed GitHub issue #749: a CloudWatch alarm that had previously reached `ALARM` would not dispatch `AlarmActions` again when it was re-created via `PutMetricAlarm` (for example, after repeated Terraform apply cycles that reuse alarm names).
