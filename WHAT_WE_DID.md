@@ -14,7 +14,14 @@ The `fix/open-issues-753-754-after-755` branch closed the two open issues that s
 
 **Files changed.** `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`, `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/cloudwatch_alarms.go`, `simulators/aws/cloudwatch_metrics.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`.
 
+**Boyscout fix.** `tests/main_test.go` built the `linux/arm64` `sockerless-eval-arithmetic:test` image with `docker build`, but the BuildKit `docker-container` driver leaves the result in the build cache unless `--load` is passed. CI `test (core)` and local runs then failed with `No such image` because the test backend could not resolve the locally-built tag. Fixed by adding `--load` to the `docker build` invocation so the image is loaded into the local store.
+
 **Validation.**
+- `go test ./bleephub -count=1` passes.
+- `GOWORK=off go test -run TestCloudWatch -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go test -run TestBehavioralGate -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go build -tags noui -o /tmp/simulator-aws .` in `simulators/aws` succeeds.
+- `go test ./tests/... -run TestArithmeticEvalBinary -count=1` passes after removing the image.
 - `go test ./bleephub -count=1` passes.
 - `GOWORK=off go test -run TestCloudWatch -count=1 ./` in `simulators/aws/sdk-tests` passes.
 - `GOWORK=off go test -run TestBehavioralGate -count=1 ./` in `simulators/aws/sdk-tests` passes.

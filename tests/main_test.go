@@ -51,6 +51,7 @@ ENTRYPOINT ["/usr/local/bin/eval-arithmetic"]
 `
 	dockerBuild := exec.Command("docker", "build",
 		"--platform", "linux/arm64",
+		"--load",
 		"-t", evalImageName, "-f", "-", evalDir)
 	dockerBuild.Stdin = strings.NewReader(dockerfile)
 	if out, err := dockerBuild.CombinedOutput(); err != nil {
