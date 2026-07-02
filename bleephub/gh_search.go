@@ -382,6 +382,17 @@ func authorAssociationForPR(st *Store, pr *PullRequest, repo *Repo) string {
 	return "CONTRIBUTOR"
 }
 
+func authorAssociationForComment(st *Store, comment *Comment, repo *Repo) string {
+	author := st.Users[comment.AuthorID]
+	if author == nil {
+		return "NONE"
+	}
+	if repo.Owner != nil && repo.Owner.ID == author.ID {
+		return "OWNER"
+	}
+	return "CONTRIBUTOR"
+}
+
 func issueHasLabelNames(st *Store, issue *Issue, names []string) bool {
 	for _, name := range names {
 		found := false

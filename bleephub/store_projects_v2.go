@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 	"time"
@@ -84,6 +85,18 @@ type ProjectV2ItemFieldValue struct {
 	NumberValue float64 // NUMBER
 }
 
+// ProjectV2View is a board/table view inside a project.
+type ProjectV2View struct {
+	ID        int
+	NodeID    string
+	ProjectID int
+	Name      string
+	Layout    string
+	Filters   map[string]interface{}
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // ProjectV2Store is the in-memory store. Concurrency-safe via mu.
 type ProjectV2Store struct {
 	mu             sync.RWMutex
@@ -92,10 +105,13 @@ type ProjectV2Store struct {
 	itemsByOwner   map[int][]*ProjectV2Item // contentID → items it appears in
 	fields         map[int]*ProjectV2Field
 	fieldsByProj   map[int][]*ProjectV2Field
+	views          map[int]*ProjectV2View
+	viewsByProj    map[int][]*ProjectV2View
 	nextProjectID  int
 	nextItemID     int
 	nextFieldID    int
 	nextOptionSeed int
+	nextViewID     int
 	persist        *Persistence
 }
 
@@ -106,10 +122,13 @@ func newProjectV2Store(p *Persistence) *ProjectV2Store {
 		itemsByOwner:   map[int][]*ProjectV2Item{},
 		fields:         map[int]*ProjectV2Field{},
 		fieldsByProj:   map[int][]*ProjectV2Field{},
+		views:          map[int]*ProjectV2View{},
+		viewsByProj:    map[int][]*ProjectV2View{},
 		nextProjectID:  1,
 		nextItemID:     1,
 		nextFieldID:    1,
 		nextOptionSeed: 1,
+		nextViewID:     1,
 		persist:        p,
 	}
 }
@@ -192,6 +211,32 @@ func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID in
 	}
 	s.items[id] = it
 	s.itemsByOwner[contentID] = append(s.itemsByOwner[contentID], it)
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_items", strconv.Itoa(id), it)
+	}
+	return it
+}
+
+// AddDraftItem adds a draft issue to a project.
+func (s *ProjectV2Store) AddDraftItem(projectID int, title, body string) *ProjectV2Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.projects[projectID]; !ok {
+		return nil
+	}
+	id := s.nextItemID
+	s.nextItemID++
+	it := &ProjectV2Item{
+		ID:          id,
+		NodeID:      fmt.Sprintf("PVTI_kgDO%08d", id),
+		ProjectID:   projectID,
+		ContentType: "DraftIssue",
+		DraftTitle:  title,
+		DraftBody:   body,
+		FieldValues: map[int]*ProjectV2ItemFieldValue{},
+		CreatedAt:   time.Now(),
+	}
+	s.items[id] = it
 	if s.persist != nil {
 		s.persist.MustPut("project_v2_items", strconv.Itoa(id), it)
 	}
@@ -372,4 +417,230 @@ func (s *ProjectV2Store) SetFieldValue(itemID, fieldID int, optionID, textValue 
 		s.persist.MustPut("project_v2_items", strconv.Itoa(itemID), item)
 	}
 	return val, nil
+}
+
+// ListProjectsForOwner returns all projects owned by a user or organization.
+func (s *ProjectV2Store) ListProjectsForOwner(ownerID int, ownerType string) []*ProjectV2 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*ProjectV2, 0)
+	for _, p := range s.projects {
+		if p.OwnerID == ownerID && p.OwnerType == ownerType {
+			out = append(out, p)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Number < out[j].Number })
+	return out
+}
+
+// UpdateProject patches a project's title/closed/public fields.
+func (s *ProjectV2Store) UpdateProject(id int, title *string, closed, public *bool) *ProjectV2 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p := s.projects[id]
+	if p == nil {
+		return nil
+	}
+	if title != nil {
+		p.Title = *title
+	}
+	if closed != nil {
+		p.Closed = *closed
+	}
+	if public != nil {
+		p.Public = *public
+	}
+	p.UpdatedAt = time.Now()
+	if s.persist != nil {
+		s.persist.MustPut("projects_v2", strconv.Itoa(id), p)
+	}
+	return p
+}
+
+// DeleteProject removes a project and its fields/items/views.
+func (s *ProjectV2Store) DeleteProject(id int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.projects[id] == nil {
+		return false
+	}
+	delete(s.projects, id)
+	for fid := range s.fields {
+		if s.fields[fid].ProjectID == id {
+			delete(s.fields, fid)
+			if s.persist != nil {
+				s.persist.MustDelete("project_v2_fields", strconv.Itoa(fid))
+			}
+		}
+	}
+	delete(s.fieldsByProj, id)
+	for iid, it := range s.items {
+		if it.ProjectID == id {
+			delete(s.items, iid)
+			if s.persist != nil {
+				s.persist.MustDelete("project_v2_items", strconv.Itoa(iid))
+			}
+		}
+	}
+	delete(s.viewsByProj, id)
+	for vid := range s.views {
+		if s.views[vid].ProjectID == id {
+			delete(s.views, vid)
+		}
+	}
+	if s.persist != nil {
+		s.persist.MustDelete("projects_v2", strconv.Itoa(id))
+	}
+	return true
+}
+
+// ListItemsForProject returns every item on a project.
+func (s *ProjectV2Store) ListItemsForProject(projectID int) []*ProjectV2Item {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*ProjectV2Item, 0)
+	for _, it := range s.items {
+		if it.ProjectID == projectID {
+			out = append(out, it)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// UpdateItem patches an item's draft title/body or field values.
+func (s *ProjectV2Store) UpdateItem(id int, draftTitle, draftBody *string) *ProjectV2Item {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it := s.items[id]
+	if it == nil {
+		return nil
+	}
+	if draftTitle != nil {
+		it.DraftTitle = *draftTitle
+	}
+	if draftBody != nil {
+		it.DraftBody = *draftBody
+	}
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_items", strconv.Itoa(id), it)
+	}
+	return it
+}
+
+// DeleteItem removes an item from a project.
+func (s *ProjectV2Store) DeleteItem(id int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	it := s.items[id]
+	if it == nil {
+		return false
+	}
+	delete(s.items, id)
+	if it.ContentID != 0 {
+		owner := s.itemsByOwner[it.ContentID]
+		filtered := make([]*ProjectV2Item, 0, len(owner))
+		for _, x := range owner {
+			if x.ID != id {
+				filtered = append(filtered, x)
+			}
+		}
+		s.itemsByOwner[it.ContentID] = filtered
+	}
+	if s.persist != nil {
+		s.persist.MustDelete("project_v2_items", strconv.Itoa(id))
+	}
+	return true
+}
+
+// UpdateField patches a field's name/options.
+func (s *ProjectV2Store) UpdateField(id int, name *string, options []string) *ProjectV2Field {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.fields[id]
+	if f == nil {
+		return nil
+	}
+	if name != nil {
+		f.Name = *name
+	}
+	if options != nil && f.DataType == ProjectV2FieldSingleSelect {
+		f.Options = nil
+		for _, optName := range options {
+			optID := fmt.Sprintf("%08x", s.nextOptionSeed)
+			s.nextOptionSeed++
+			f.Options = append(f.Options, &ProjectV2SingleSelectOption{
+				ID:   optID,
+				Name: optName,
+			})
+		}
+	}
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_fields", strconv.Itoa(id), f)
+	}
+	return f
+}
+
+// DeleteField removes a field from a project.
+func (s *ProjectV2Store) DeleteField(id int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	f := s.fields[id]
+	if f == nil {
+		return false
+	}
+	delete(s.fields, id)
+	projFields := s.fieldsByProj[f.ProjectID]
+	filtered := make([]*ProjectV2Field, 0, len(projFields))
+	for _, x := range projFields {
+		if x.ID != id {
+			filtered = append(filtered, x)
+		}
+	}
+	s.fieldsByProj[f.ProjectID] = filtered
+	if s.persist != nil {
+		s.persist.MustDelete("project_v2_fields", strconv.Itoa(id))
+	}
+	return true
+}
+
+// CreateView adds a view to a project.
+func (s *ProjectV2Store) CreateView(projectID int, name, layout string, filters map[string]interface{}) *ProjectV2View {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.projects[projectID] == nil {
+		return nil
+	}
+	id := s.nextViewID
+	s.nextViewID++
+	now := time.Now()
+	v := &ProjectV2View{
+		ID:        id,
+		NodeID:    fmt.Sprintf("PVTV_kgDO%08d", id),
+		ProjectID: projectID,
+		Name:      name,
+		Layout:    layout,
+		Filters:   filters,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	s.views[id] = v
+	s.viewsByProj[projectID] = append(s.viewsByProj[projectID], v)
+	return v
+}
+
+// GetView returns a view by id.
+func (s *ProjectV2Store) GetView(id int) *ProjectV2View {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.views[id]
+}
+
+// ViewsForProject returns every view on a project.
+func (s *ProjectV2Store) ViewsForProject(projectID int) []*ProjectV2View {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make([]*ProjectV2View, 0, len(s.viewsByProj[projectID]))
+	out = append(out, s.viewsByProj[projectID]...)
+	return out
 }

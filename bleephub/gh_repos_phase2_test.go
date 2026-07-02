@@ -323,7 +323,7 @@ func TestRepoStargazersREST(t *testing.T) {
 		t.Fatalf("expected stargazer admin, got %v", stargazers2[0]["login"])
 	}
 
-	// List user's starred repos.
+	// List user's starred repos (may include repos starred by earlier tests).
 	starredResp := ghGet(t, "/api/v3/user/starred", defaultToken)
 	defer starredResp.Body.Close()
 	if starredResp.StatusCode != 200 {
@@ -333,8 +333,15 @@ func TestRepoStargazersREST(t *testing.T) {
 	if err := json.NewDecoder(starredResp.Body).Decode(&starred); err != nil {
 		t.Fatal(err)
 	}
-	if len(starred) != 1 {
-		t.Fatalf("expected 1 starred repo, got %d", len(starred))
+	found := false
+	for _, r := range starred {
+		if full, _ := r["full_name"].(string); full == "admin/stargazers-rest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected admin/stargazers-rest in starred repos, got %+v", starred)
 	}
 
 	// Unstar.

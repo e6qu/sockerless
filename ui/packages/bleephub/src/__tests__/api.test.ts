@@ -18,6 +18,19 @@ import {
   startCodespace,
   stopCodespace,
   deleteCodespace,
+  fetchNotifications,
+  markThreadRead,
+  getThreadSubscription,
+  setThreadSubscription,
+  deleteThreadSubscription,
+  fetchGistCommits,
+  fetchGistForks,
+  forkGist,
+  starGist,
+  unstarGist,
+  isGistStarred,
+  fetchPublicGists,
+  fetchStarredGists,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -240,6 +253,160 @@ describe("Codespaces API helpers", () => {
     await deleteCodespace("crimson-spoon-abc123");
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toBe("/api/v3/user/codespaces/crimson-spoon-abc123");
+    expect(opts.method).toBe("DELETE");
+  });
+});
+
+// ─── Notifications REST ─────────────────────────────────────────────────
+
+describe("Notifications API helpers", () => {
+  const thread = {
+    id: "t1",
+    repository: { full_name: "admin/repo" },
+    subject: { title: "Issue title", url: "/api/v3/repos/admin/repo/issues/1", latest_comment_url: "", type: "Issue" },
+    reason: "subscribed",
+    unread: true,
+    updated_at: "2026-01-01T00:00:00Z",
+    last_read_at: null,
+    subscription_url: "/api/v3/notifications/threads/t1/subscription",
+    url: "/api/v3/notifications/threads/t1",
+  };
+
+  const subscription = {
+    subscribed: true,
+    ignored: false,
+    reason: "subscribed",
+    created_at: "2026-01-01T00:00:00Z",
+    url: "/api/v3/notifications/threads/t1/subscription",
+    thread_url: "/api/v3/notifications/threads/t1/subscription",
+  };
+
+  it("fetchNotifications lists threads", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([thread]));
+    const threads = await fetchNotifications();
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/notifications");
+    expect(threads).toHaveLength(1);
+    expect(threads[0].id).toBe("t1");
+  });
+
+  it("markThreadRead PATCHes the thread", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 205 }));
+    await markThreadRead("t1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/notifications/threads/t1");
+    expect(opts.method).toBe("PATCH");
+  });
+
+  it("getThreadSubscription returns subscription JSON", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(subscription));
+    const sub = await getThreadSubscription("t1");
+    expect(sub?.subscribed).toBe(true);
+  });
+
+  it("getThreadSubscription returns null on 404", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
+    const sub = await getThreadSubscription("t1");
+    expect(sub).toBeNull();
+  });
+
+  it("setThreadSubscription PUTs subscription state", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(subscription));
+    await setThreadSubscription("t1", true);
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/notifications/threads/t1/subscription");
+    expect(opts.method).toBe("PUT");
+    expect(JSON.parse(opts.body as string)).toEqual({ subscribed: true, ignored: false });
+  });
+
+  it("deleteThreadSubscription DELETEs the subscription", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await deleteThreadSubscription("t1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/notifications/threads/t1/subscription");
+    expect(opts.method).toBe("DELETE");
+  });
+});
+
+// ─── Gists REST ─────────────────────────────────────────────────────────
+
+describe("Gists API helpers", () => {
+  const gist = {
+    id: "g1",
+    description: "hello",
+    public: true,
+    owner: { login: "admin", type: "User" },
+    files: {},
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  const commit = {
+    url: "/api/v3/gists/g1/abc123",
+    version: "abc123",
+    user: { login: "admin", type: "User" },
+    change_status: { additions: 1, deletions: 0, total: 1 },
+    committed_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("fetchPublicGists hits the public endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([gist]));
+    const gists = await fetchPublicGists();
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/gists/public");
+    expect(gists).toHaveLength(1);
+  });
+
+  it("fetchStarredGists hits the starred endpoint", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([gist]));
+    const gists = await fetchStarredGists();
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/gists/starred");
+    expect(gists).toHaveLength(1);
+  });
+
+  it("fetchGistCommits lists commits", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([commit]));
+    const commits = await fetchGistCommits("g1");
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/gists/g1/commits");
+    expect(commits[0].version).toBe("abc123");
+  });
+
+  it("fetchGistForks lists forks", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([gist]));
+    const forks = await fetchGistForks("g1");
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/gists/g1/forks");
+    expect(forks).toHaveLength(1);
+  });
+
+  it("forkGist POSTs to forks", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(gist, 201));
+    await forkGist("g1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/gists/g1/forks");
+    expect(opts.method).toBe("POST");
+  });
+
+  it("isGistStarred returns true on 204", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    expect(await isGistStarred("g1")).toBe(true);
+  });
+
+  it("isGistStarred returns false on 404", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 404 }));
+    expect(await isGistStarred("g1")).toBe(false);
+  });
+
+  it("starGist PUTs the star endpoint", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await starGist("g1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/gists/g1/star");
+    expect(opts.method).toBe("PUT");
+  });
+
+  it("unstarGist DELETEs the star endpoint", async () => {
+    mockFetch.mockResolvedValue(new Response(null, { status: 204 }));
+    await unstarGist("g1");
+    const [url, opts] = mockFetch.mock.calls[0];
+    expect(url).toBe("/api/v3/gists/g1/star");
     expect(opts.method).toBe("DELETE");
   });
 });

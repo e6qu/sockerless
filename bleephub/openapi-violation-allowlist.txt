@@ -65,3 +65,13 @@ GET /orgs/{}/packages -> 200	unknown-field	$[].node_id
 GET /orgs/{}/packages/{}/{} -> 200	unknown-field	$.node_id
 GET /orgs/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
 GET /orgs/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id
+
+# Team membership responses (GET /orgs/{org}/teams/{team_slug}/memberships/{username}
+# and PUT) include the user, team, and organization_url members on real GitHub,
+# but the vendored dotcom OpenAPI description only declares url, role, and state.
+GET /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.organization_url
+GET /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.team
+GET /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.user
+PUT /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.organization_url
+PUT /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.team
+PUT /orgs/{}/teams/{}/memberships/{} -> 200	unknown-field	$.user

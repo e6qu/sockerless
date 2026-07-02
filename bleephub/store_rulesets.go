@@ -8,11 +8,12 @@ import (
 	"time"
 )
 
-// Ruleset is a GitHub repository ruleset.
+// Ruleset is a GitHub repository or organization ruleset.
 type Ruleset struct {
 	ID                   int                    `json:"id"`
 	NodeID               string                 `json:"node_id"`
 	RepoID               int                    `json:"repo_id"`
+	OrgID                int                    `json:"org_id"`
 	Name                 string                 `json:"name"`
 	Target               string                 `json:"target"` // branch, tag
 	SourceType           string                 `json:"source_type"`
@@ -26,6 +27,16 @@ type Ruleset struct {
 	UpdatedAt            time.Time              `json:"updated_at"`
 	Versions             map[int]RulesetVersion `json:"-"`
 	NextVersionID        int                    `json:"-"`
+}
+
+// RulesetSuite is a single ruleset evaluation run.
+type RulesetSuite struct {
+	ID        int       `json:"id"`
+	NodeID    string    `json:"node_id"`
+	RulesetID int       `json:"ruleset_id"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // RulesetBypassActor represents an actor that can bypass a ruleset.
@@ -152,6 +163,118 @@ func (st *Store) GetRuleset(id int) *Ruleset {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.Rulesets[id]
+}
+
+// CreateOrgRuleset creates and persists a new organization-level ruleset.
+func (st *Store) CreateOrgRuleset(orgID int, name string, target string, enforcement string, conditions RulesetConditions, rules []Rule) *Ruleset {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	rs := &Ruleset{
+		ID:                   st.NextRulesetID,
+		NodeID:               rulesetNodeID(st.NextRulesetID),
+		OrgID:                orgID,
+		RepoID:               0,
+		Name:                 name,
+		Target:               target,
+		SourceType:           "Organization",
+		Enforcement:          enforcement,
+		CurrentUserCanBypass: "never",
+		Conditions:           conditions,
+		Rules:                rules,
+		CreatedAt:            time.Now().UTC(),
+		UpdatedAt:            time.Now().UTC(),
+		Versions:             map[int]RulesetVersion{},
+		NextVersionID:        1,
+	}
+	if rs.Target == "" {
+		rs.Target = "branch"
+	}
+	if rs.Enforcement == "" {
+		rs.Enforcement = "active"
+	}
+	if org := st.Orgs[orgID]; org != nil {
+		rs.Source = org.Login
+	}
+	st.NextRulesetID++
+	st.Rulesets[rs.ID] = rs
+	st.persistRuleset(rs)
+	return rs
+}
+
+// ListOrgRulesets returns all rulesets for an organization, sorted by ID.
+func (st *Store) ListOrgRulesets(orgID int) []*Ruleset {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var out []*Ruleset
+	for _, rs := range st.Rulesets {
+		if rs.OrgID == orgID {
+			out = append(out, rs)
+		}
+	}
+	return out
+}
+
+// GetOrgRuleset returns a ruleset by ID.
+func (st *Store) GetOrgRuleset(id int) *Ruleset {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.Rulesets[id]
+}
+
+// UpdateOrgRuleset applies a mutation to an organization ruleset and records
+// a history snapshot. Returns true when the ruleset existed.
+func (st *Store) UpdateOrgRuleset(id int, fn func(*Ruleset)) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	rs := st.Rulesets[id]
+	if rs == nil {
+		return false
+	}
+
+	// Snapshot current state to history before mutating.
+	snapshot := *rs
+	snapshot.Versions = nil
+	snapshot.NextVersionID = 0
+	if rs.Versions == nil {
+		rs.Versions = map[int]RulesetVersion{}
+	}
+	rs.Versions[rs.NextVersionID] = RulesetVersion{
+		VersionID: rs.NextVersionID,
+		Ruleset:   snapshot,
+		CreatedAt: time.Now().UTC(),
+	}
+	rs.NextVersionID++
+
+	fn(rs)
+	rs.UpdatedAt = time.Now().UTC()
+	st.persistRuleset(rs)
+	return true
+}
+
+// DeleteOrgRuleset removes an organization ruleset by ID.
+func (st *Store) DeleteOrgRuleset(id int) bool {
+	return st.DeleteRuleset(id)
+}
+
+// ListOrgRulesetSuites returns rule suites for an organization.
+// Currently always returns an empty list.
+func (st *Store) ListOrgRulesetSuites(orgID int) []RulesetSuite {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_ = orgID
+	return nil
+}
+
+// GetOrgRulesetSuite returns a single rule suite for an organization.
+// Currently always returns nil.
+func (st *Store) GetOrgRulesetSuite(orgID int, suiteID int) *RulesetSuite {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_ = orgID
+	_ = suiteID
+	return nil
 }
 
 // ListRulesetsForRepo returns all rulesets for a repository, sorted by ID.

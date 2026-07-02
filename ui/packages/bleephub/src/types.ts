@@ -702,6 +702,39 @@ export interface BleephubTeam {
   created_at: string;
 }
 
+export interface GithubTeamMember {
+  id: number;
+  login: string;
+  avatar_url: string;
+  type: string;
+  role?: "member" | "maintainer" | "all";
+}
+
+export interface GithubTeamMembership {
+  state: "active" | "pending";
+  role: "member" | "maintainer";
+  url: string;
+}
+
+export interface GithubTeamRepo {
+  id: number;
+  full_name: string;
+  name: string;
+  owner: { login: string; type: string };
+  permissions?: Record<string, boolean>;
+  role_name?: string;
+}
+
+export interface GithubDeployKey {
+  id: number;
+  key: string;
+  title: string;
+  url: string;
+  verified: boolean;
+  created_at: string;
+  read_only: boolean;
+}
+
 export interface BleephubAuditEvent {
   id: number;
   actor_login: string;
@@ -717,6 +750,8 @@ export interface BleephubGistFile {
   content?: string;
   raw_url?: string;
   size?: number;
+  type?: string;
+  language?: string;
 }
 
 export interface BleephubGist {
@@ -728,6 +763,44 @@ export interface BleephubGist {
   html_url?: string;
   created_at: string;
   updated_at: string;
+  history?: GithubGistCommit[];
+  forks?: BleephubGist[];
+  forks_url?: string;
+  commits_url?: string;
+}
+
+export interface GithubGistCommit {
+  url: string;
+  version: string;
+  user: { login: string; type: string; avatar_url?: string } | null;
+  change_status: Record<string, number>;
+  committed_at: string;
+}
+
+export interface GithubNotificationThread {
+  id: string;
+  repository: Record<string, unknown>;
+  subject: {
+    title: string;
+    url: string;
+    latest_comment_url: string;
+    type: string;
+  };
+  reason: string;
+  unread: boolean;
+  updated_at: string;
+  last_read_at: string | null;
+  subscription_url: string;
+  url: string;
+}
+
+export interface GithubThreadSubscription {
+  subscribed: boolean;
+  ignored: boolean;
+  reason: string;
+  created_at: string;
+  url: string;
+  thread_url: string;
 }
 
 // ─── GitHub Discussions GraphQL shapes ──────────────────────────────────
@@ -1116,4 +1189,79 @@ export interface GithubPackageVersionCreatePayload {
   description?: string;
   metadata?: GithubPackageVersion["metadata"];
   files: { name: string; content_type: string; content_base64: string }[];
+}
+
+// ─── GitHub Security Advisories shapes ──────────────────────────────────
+
+export type GithubSecurityAdvisorySeverity = "critical" | "high" | "medium" | "low";
+export type GithubSecurityAdvisoryState = "draft" | "published" | "closed";
+
+export interface GithubSecurityAdvisory {
+  id: number;
+  ghsa_id: string;
+  cve_id: string | null;
+  summary: string;
+  description: string;
+  severity: GithubSecurityAdvisorySeverity;
+  cwe_ids?: string[];
+  state: GithubSecurityAdvisoryState;
+  author: { login: string } | null;
+  created_at: string;
+  updated_at: string;
+  published_at: string | null;
+  url: string;
+  html_url: string;
+}
+
+export interface GithubSecurityAdvisoryCreatePayload {
+  summary: string;
+  description: string;
+  severity: GithubSecurityAdvisorySeverity;
+  cwe_ids?: string[];
+}
+
+export interface GithubVulnerabilityReportPayload {
+  summary: string;
+  description: string;
+  severity?: GithubSecurityAdvisorySeverity;
+  cwe_ids?: string[];
+}
+
+// ─── GitHub Repository Rulesets shapes ──────────────────────────────────
+
+export type GithubRulesetTarget = "branch" | "tag";
+export type GithubRulesetEnforcement = "disabled" | "active" | "evaluate";
+
+export interface GithubRuleset {
+  id: number;
+  name: string;
+  target: GithubRulesetTarget;
+  source_type: "Repository" | "Organization";
+  source: string;
+  enforcement: GithubRulesetEnforcement;
+  bypass_actors?: Array<{
+    actor_id: number;
+    actor_type: string;
+    bypass_mode: string;
+  }>;
+  conditions?: Record<string, unknown>;
+  rules?: Array<{
+    type: string;
+    parameters?: Record<string, unknown>;
+  }>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface GithubRulesetCreatePayload {
+  name: string;
+  target: GithubRulesetTarget;
+  enforcement: GithubRulesetEnforcement;
+  rules?: Array<{ type: string; parameters?: Record<string, unknown> }>;
+  conditions?: Record<string, unknown>;
+  bypass_actors?: Array<{
+    actor_id: number;
+    actor_type: string;
+    bypass_mode: string;
+  }>;
 }

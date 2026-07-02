@@ -26,6 +26,47 @@ func (s *Server) registerGHGistRoutes() {
 	s.route("GET /api/v3/gists/{gist_id}/comments/{comment_id}", s.handleGetGistComment)
 	s.route("PATCH /api/v3/gists/{gist_id}/comments/{comment_id}", s.handleUpdateGistComment)
 	s.route("DELETE /api/v3/gists/{gist_id}/comments/{comment_id}", s.handleDeleteGistComment)
+	s.route("GET /api/v3/gists/{gist_id}/commits", s.handleListGistCommits)
+	s.route("GET /api/v3/gists/{gist_id}/{sha}", s.handleGetGistAtRevision)
+}
+
+func (s *Server) handleListGistCommits(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("gist_id")
+	commits := s.store.ListGistCommits(id)
+	if commits == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	base := s.baseURL(r)
+	gist := s.store.GetGist(id)
+	var ownerJSON interface{}
+	if gist != nil {
+		if owner := s.store.GetUserByID(gist.OwnerID); owner != nil {
+			ownerJSON = userToJSON(owner)
+		}
+	}
+	items := make([]map[string]interface{}, len(commits))
+	for i, h := range commits {
+		items[i] = map[string]interface{}{
+			"url":           base + "/api/v3/gists/" + id + "/" + h.Version,
+			"version":       h.Version,
+			"user":          ownerJSON,
+			"change_status": h.ChangeStatus,
+			"committed_at":  h.CommittedAt.Format(time.RFC3339),
+		}
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, items))
+}
+
+func (s *Server) handleGetGistAtRevision(w http.ResponseWriter, r *http.Request) {
+	id, sha := r.PathValue("gist_id"), r.PathValue("sha")
+	g := s.store.GetGistAtRevision(id, sha)
+	if g == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.populateGistURLs(g, r)
+	writeJSON(w, http.StatusOK, s.gistToJSON(g, r, true))
 }
 
 func (s *Server) handleListGists(w http.ResponseWriter, r *http.Request) {

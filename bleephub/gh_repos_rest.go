@@ -1,11 +1,14 @@
 package bleephub
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 func (s *Server) registerGHRepoRoutes() {
@@ -34,6 +37,405 @@ func (s *Server) registerGHRepoRoutes() {
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/collaborators/{username}", s.requirePerm(scopeAdministration, permWrite, s.handleRemoveCollaborator))
 	s.registerGHRepoRefRoutes()
 	s.registerGHRepoObjectRoutes()
+	s.registerGHGitDataRoutes()
+	s.registerGHRepoSettingsRoutes()
+}
+
+func (s *Server) registerGHRepoSettingsRoutes() {
+	s.route("GET /api/v3/repos/{owner}/{repo}/keys", s.requirePerm(scopeAdministration, permRead, s.handleListRepoDeployKeys))
+	s.route("POST /api/v3/repos/{owner}/{repo}/keys", s.requirePerm(scopeAdministration, permWrite, s.handleCreateRepoDeployKey))
+	s.route("GET /api/v3/repos/{owner}/{repo}/keys/{key_id}", s.requirePerm(scopeAdministration, permRead, s.handleGetRepoDeployKey))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/keys/{key_id}", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteRepoDeployKey))
+	s.route("POST /api/v3/repos/{owner}/{repo}/transfer", s.requirePerm(scopeAdministration, permWrite, s.handleTransferRepo))
+	s.route("POST /api/v3/repos/{owner}/{repo}/merge-upstream", s.requirePerm(scopeContents, permWrite, s.handleMergeUpstream))
+	s.route("POST /api/v3/repos/{owner}/{repo}/branches/{branch}/rename", s.requirePerm(scopeAdministration, permWrite, s.handleRenameBranch))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/subscription", s.requirePerm(scopeContents, permRead, s.handleSetRepoSubscription))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/subscription", s.requirePerm(scopeContents, permRead, s.handleDeleteRepoSubscription))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/automated-security-fixes", s.requirePerm(scopeAdministration, permWrite, s.handleEnableAutomatedSecurityFixes))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/automated-security-fixes", s.requirePerm(scopeAdministration, permWrite, s.handleDisableAutomatedSecurityFixes))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/private-vulnerability-reporting", s.requirePerm(scopeAdministration, permWrite, s.handleEnablePrivateVulnerabilityReporting))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/private-vulnerability-reporting", s.requirePerm(scopeAdministration, permWrite, s.handleDisablePrivateVulnerabilityReporting))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/vulnerability-alerts", s.requirePerm(scopeAdministration, permWrite, s.handleEnableVulnerabilityAlerts))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/vulnerability-alerts", s.requirePerm(scopeAdministration, permWrite, s.handleDisableVulnerabilityAlerts))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/interaction-limits", s.requirePerm(scopeAdministration, permWrite, s.handleSetInteractionLimits))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/interaction-limits", s.requirePerm(scopeAdministration, permWrite, s.handleDeleteInteractionLimits))
+}
+
+func (s *Server) repoFromRequest(w http.ResponseWriter, r *http.Request) *Repo {
+	owner := r.PathValue("owner")
+	name := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, name)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	return repo
+}
+
+func (s *Server) handleListRepoDeployKeys(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	keys := s.store.ListRepoDeployKeys(repo.ID)
+	out := make([]map[string]interface{}, 0, len(keys))
+	base := s.baseURL(r)
+	for _, k := range keys {
+		out = append(out, deployKeyToJSON(k, repo.FullName, base))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateRepoDeployKey(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	var req struct {
+		Title    string `json:"title"`
+		Key      string `json:"key"`
+		ReadOnly bool   `json:"read_only"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Title == "" || req.Key == "" {
+		writeGHValidationError(w, "DeployKey", "key", "missing_field")
+		return
+	}
+	key := s.store.CreateRepoDeployKey(repo.ID, req.Title, req.Key, req.ReadOnly)
+	writeJSON(w, http.StatusCreated, deployKeyToJSON(key, repo.FullName, s.baseURL(r)))
+}
+
+func (s *Server) handleGetRepoDeployKey(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("key_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	key := s.store.GetRepoDeployKey(id)
+	if key == nil || key.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, deployKeyToJSON(key, repo.FullName, s.baseURL(r)))
+}
+
+func (s *Server) handleDeleteRepoDeployKey(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("key_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	key := s.store.GetRepoDeployKey(id)
+	if key == nil || key.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !s.store.DeleteRepoDeployKey(id) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func deployKeyToJSON(k *RepoDeployKey, fullName, base string) map[string]interface{} {
+	return map[string]interface{}{
+		"id":         k.ID,
+		"key":        k.Key,
+		"url":        base + "/api/v3/repos/" + fullName + "/keys/" + strconv.Itoa(k.ID),
+		"title":      k.Title,
+		"verified":   k.Verified,
+		"created_at": k.CreatedAt.Format(time.RFC3339),
+		"read_only":  k.ReadOnly,
+	}
+}
+
+func (s *Server) handleTransferRepo(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if !canAdminRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have admin rights to Repository.")
+		return
+	}
+	var req struct {
+		NewOwner string `json:"new_owner"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.NewOwner == "" {
+		writeGHValidationError(w, "Transfer", "new_owner", "missing_field")
+		return
+	}
+	owner, _, _ := splitRepoFullName(repo.FullName)
+	if !s.store.TransferRepo(owner, repo.Name, req.NewOwner) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Repository transfer failed.")
+		return
+	}
+	updated := s.store.GetRepo(req.NewOwner, repo.Name)
+	s.recordAuditEvent("repo.transfer", user.Login, "", map[string]interface{}{"repo": updated.FullName, "repo_id": updated.ID})
+	writeJSON(w, http.StatusAccepted, minimalRepoJSON(updated, s.store, s.baseURL(r)))
+}
+
+func (s *Server) handleMergeUpstream(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	var req struct {
+		Branch string `json:"branch"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	branch := req.Branch
+	if branch == "" {
+		branch = repo.DefaultBranch
+	}
+	if !repo.Fork {
+		writeGHError(w, http.StatusUnprocessableEntity, "Repository is not a fork.")
+		return
+	}
+
+	sourceID := repo.SourceID
+	if sourceID == 0 {
+		sourceID = repo.ParentID
+	}
+	source := s.store.GetRepoByID(sourceID)
+	if source == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	owner, name, _ := splitRepoFullName(repo.FullName)
+	targetStor := s.store.GetGitStorage(owner, name)
+	srcOwner, srcName, _ := splitRepoFullName(source.FullName)
+	srcStor := s.store.GetGitStorage(srcOwner, srcName)
+	if targetStor == nil || srcStor == nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Branch not found")
+		return
+	}
+
+	srcRef, err := srcStor.Reference(plumbing.NewBranchReferenceName(branch))
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Branch not found")
+		return
+	}
+	if _, err := targetStor.Reference(plumbing.NewBranchReferenceName(branch)); err != nil {
+		if err := targetStor.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), srcRef.Hash())); err != nil {
+			writeGHError(w, http.StatusUnprocessableEntity, "Merge failed")
+			return
+		}
+	} else {
+		if err := targetStor.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), srcRef.Hash())); err != nil {
+			writeGHError(w, http.StatusUnprocessableEntity, "Merge failed")
+			return
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"message":     fmt.Sprintf("Successfully merged upstream branch %s into %s", branch, branch),
+		"merge_type":  "fast-forward",
+		"base_branch": branch,
+	})
+}
+
+func (s *Server) handleRenameBranch(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	branch := r.PathValue("branch")
+	var req struct {
+		NewName string `json:"new_name"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.NewName == "" {
+		writeGHValidationError(w, "Branch", "new_name", "missing_field")
+		return
+	}
+	if !s.store.RenameBranch(repo.ID, branch, req.NewName) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Branch rename failed.")
+		return
+	}
+
+	owner, name, _ := splitRepoFullName(repo.FullName)
+	stor := s.store.GetGitStorage(owner, name)
+	base := s.baseURL(r)
+	api := base + "/api/v3/repos/" + repo.FullName
+	branchURL := api + "/branches/" + req.NewName
+	result := map[string]interface{}{
+		"name":           req.NewName,
+		"protected":      false,
+		"protection":     map[string]interface{}{},
+		"protection_url": branchURL + "/protection",
+		"_links": map[string]interface{}{
+			"self": branchURL,
+			"html": base + "/" + repo.FullName + "/tree/" + req.NewName,
+		},
+	}
+	if stor != nil {
+		if ref, err := stor.Reference(plumbing.NewBranchReferenceName(req.NewName)); err == nil {
+			if commit := resolveCommit(stor, ref.Hash()); commit != nil {
+				result["commit"] = commitToJSON(commit, repo, base)
+			} else {
+				result["commit"] = map[string]interface{}{"sha": ref.Hash().String()}
+			}
+		}
+	}
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) handleSetRepoSubscription(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		Subscribed bool `json:"subscribed"`
+		Ignored    bool `json:"ignored"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if !s.store.SetRepoSubscription(user.ID, repo.ID, req.Subscribed) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, subscriptionToJSON(s.store.GetRepoSubscription(user.ID, repo.ID), repo, s.baseURL(r)))
+}
+
+func (s *Server) handleDeleteRepoSubscription(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if !s.store.DeleteRepoSubscription(user.ID, repo.ID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func subscriptionToJSON(sub *RepoSubscription, repo *Repo, base string) map[string]interface{} {
+	createdAt := repo.CreatedAt
+	subscribed := false
+	ignored := false
+	if sub != nil {
+		createdAt = sub.CreatedAt
+		subscribed = sub.Subscribed
+		ignored = sub.Ignored
+	}
+	return map[string]interface{}{
+		"subscribed":     subscribed,
+		"ignored":        ignored,
+		"reason":         nil,
+		"created_at":     createdAt.Format(time.RFC3339),
+		"url":            base + "/api/v3/repos/" + repo.FullName + "/subscription",
+		"repository_url": base + "/api/v3/repos/" + repo.FullName,
+	}
+}
+
+func (s *Server) handleEnableAutomatedSecurityFixes(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "automated_security_fixes_enabled", true)
+}
+
+func (s *Server) handleDisableAutomatedSecurityFixes(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "automated_security_fixes_enabled", false)
+}
+
+func (s *Server) handleEnablePrivateVulnerabilityReporting(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "private_vulnerability_reporting_enabled", true)
+}
+
+func (s *Server) handleDisablePrivateVulnerabilityReporting(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "private_vulnerability_reporting_enabled", false)
+}
+
+func (s *Server) handleEnableVulnerabilityAlerts(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "vulnerability_alerts_enabled", true)
+}
+
+func (s *Server) handleDisableVulnerabilityAlerts(w http.ResponseWriter, r *http.Request) {
+	s.setRepoFlag(w, r, "vulnerability_alerts_enabled", false)
+}
+
+func (s *Server) setRepoFlag(w http.ResponseWriter, r *http.Request, field string, value bool) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if !s.store.SetRepoFlag(repo.ID, field, value) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Setting update failed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSetInteractionLimits(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	var req struct {
+		Limit  string     `json:"limit"`
+		Expiry *time.Time `json:"expiry"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Limit == "" {
+		writeGHValidationError(w, "InteractionLimit", "limit", "missing_field")
+		return
+	}
+	if !s.store.SetRepoInteractionLimit(repo.ID, req.Limit, req.Expiry) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Interaction limit update failed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleDeleteInteractionLimits(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if !s.store.SetRepoInteractionLimit(repo.ID, "", nil) {
+		writeGHError(w, http.StatusUnprocessableEntity, "Interaction limit update failed.")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
@@ -922,5 +1324,60 @@ func collaboratorPermsJSON(perm string) map[string]bool {
 		"pull":  level >= 1,
 		"push":  level >= 2,
 		"admin": level >= 3,
+	}
+}
+
+// simpleRepoJSON returns a GitHub `simple-repository`-shaped map. It is a
+// trimmed subset of repoToJSON with only the fields the simple-repository
+// schema allows, used by alert/list surfaces that embed a repository object.
+func simpleRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
+	api := baseURL + "/api/v3/repos/" + repo.FullName
+	return map[string]interface{}{
+		"id":                repo.ID,
+		"node_id":           repo.NodeID,
+		"name":              repo.Name,
+		"full_name":         repo.FullName,
+		"owner":             repoOwnerREST(repo, st, baseURL),
+		"private":           repo.Private,
+		"html_url":          baseURL + "/" + repo.FullName,
+		"description":       repo.Description,
+		"fork":              repo.Fork,
+		"url":               api,
+		"archive_url":       api + "/{archive_format}{/ref}",
+		"assignees_url":     api + "/assignees{/user}",
+		"blobs_url":         api + "/git/blobs{/sha}",
+		"branches_url":      api + "/branches{/branch}",
+		"collaborators_url": api + "/collaborators{/collaborator}",
+		"comments_url":      api + "/comments{/number}",
+		"commits_url":       api + "/commits{/sha}",
+		"compare_url":       api + "/compare/{base}...{head}",
+		"contents_url":      api + "/contents/{+path}",
+		"contributors_url":  api + "/contributors",
+		"deployments_url":   api + "/deployments",
+		"downloads_url":     api + "/downloads",
+		"events_url":        api + "/events",
+		"forks_url":         api + "/forks",
+		"git_commits_url":   api + "/git/commits{/sha}",
+		"git_refs_url":      api + "/git/refs{/sha}",
+		"git_tags_url":      api + "/git/tags{/sha}",
+		"hooks_url":         api + "/hooks",
+		"issue_comment_url": api + "/issues/comments{/number}",
+		"issue_events_url":  api + "/issues/events{/number}",
+		"issues_url":        api + "/issues{/number}",
+		"keys_url":          api + "/keys{/key_id}",
+		"labels_url":        api + "/labels{/name}",
+		"languages_url":     api + "/languages",
+		"merges_url":        api + "/merges",
+		"milestones_url":    api + "/milestones{/number}",
+		"notifications_url": api + "/notifications{?since,all,participating}",
+		"pulls_url":         api + "/pulls{/number}",
+		"releases_url":      api + "/releases{/id}",
+		"stargazers_url":    api + "/stargazers",
+		"statuses_url":      api + "/statuses/{sha}",
+		"subscribers_url":   api + "/subscribers",
+		"subscription_url":  api + "/subscription",
+		"tags_url":          api + "/tags",
+		"teams_url":         api + "/teams",
+		"trees_url":         api + "/git/trees{/sha}",
 	}
 }

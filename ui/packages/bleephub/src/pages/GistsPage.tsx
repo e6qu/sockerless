@@ -6,10 +6,18 @@ import {
   createGist,
   deleteGist,
   fetchGist,
+  fetchGistCommits,
+  fetchGistForks,
   fetchGists,
+  fetchPublicGists,
+  fetchStarredGists,
+  forkGist,
+  isGistStarred,
+  starGist,
+  unstarGist,
   updateGist,
 } from "../api.js";
-import type { BleephubGist, BleephubGistFile } from "../types.js";
+import type { BleephubGist, BleephubGistFile, GithubGistCommit } from "../types.js";
 import {
   Box,
   Button,
@@ -20,39 +28,68 @@ import {
   Modal,
   PageTitle,
   StateLabel,
+  Tabs,
 } from "../components/ui.js";
+import { GistIcon, StarIcon, BranchIcon } from "../components/octicons.js";
+
+type GistScope = "yours" | "public" | "starred";
 
 const col = createColumnHelper<BleephubGist>();
 
 export function GistsPage() {
+  const [scope, setScope] = useState<GistScope>("yours");
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   return (
     <div>
       <PageTitle
+        icon={<GistIcon size={20} />}
         title="Gists"
-        meta="Authenticated user's snippets."
+        meta="Code snippets and notes."
         actions={
           <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
             New gist
           </Button>
         }
       />
-      <GistsTable onSelect={(id) => setSelectedId(id)} />
+
+      <Tabs<GistScope>
+        items={[
+          { key: "yours", label: "Yours" },
+          { key: "public", label: "Public" },
+          { key: "starred", label: "Starred" },
+        ]}
+        active={scope}
+        onChange={setScope}
+      />
+
+      <GistsTable scope={scope} onSelect={(id) => setSelectedId(id)} />
       {showCreate && <CreateGistDialog onClose={() => setShowCreate(false)} />}
       {selectedId && <GistDetail id={selectedId} onClose={() => setSelectedId(null)} />}
     </div>
   );
 }
 
-function GistsTable({ onSelect }: { onSelect: (id: string) => void }) {
+function gistsQueryFn(scope: GistScope) {
+  switch (scope) {
+    case "public":
+      return fetchPublicGists;
+    case "starred":
+      return fetchStarredGists;
+    case "yours":
+    default:
+      return fetchGists;
+  }
+}
+
+function GistsTable({ scope, onSelect }: { scope: GistScope; onSelect: (id: string) => void }) {
   const queryClient = useQueryClient();
   const [mutationError, setMutationError] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery({
-    queryKey: ["gists"],
-    queryFn: fetchGists,
+    queryKey: ["gists", scope],
+    queryFn: gistsQueryFn(scope),
     refetchInterval: 5000,
   });
 
@@ -98,6 +135,12 @@ function GistsTable({ onSelect }: { onSelect: (id: string) => void }) {
       header: "Files",
       cell: (info) => (
         <span style={{ color: "var(--color-fg-muted)" }}>{Object.keys(info.getValue()).length}</span>
+      ),
+    }),
+    col.accessor("owner", {
+      header: "Owner",
+      cell: (info) => (
+        <span style={{ color: "var(--color-fg-muted)", fontSize: "0.82rem" }}>{info.getValue()?.login}</span>
       ),
     }),
     col.accessor("created_at", {
@@ -147,10 +190,36 @@ function GistsTable({ onSelect }: { onSelect: (id: string) => void }) {
 function GistDetail({ id, onClose }: { id: string; onClose: () => void }) {
   const queryClient = useQueryClient();
   const [editing, setEditing] = useState<BleephubGist | null>(null);
+  const [detailTab, setDetailTab] = useState<"files" | "commits" | "forks">("files");
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["gists", id],
     queryFn: () => fetchGist(id),
+  });
+
+  const { data: starred, isLoading: starLoading } = useQuery({
+    queryKey: ["gists", id, "starred"],
+    queryFn: () => isGistStarred(id),
+  });
+
+  const starMut = useMutation({
+    mutationFn: () => (starred ? unstarGist(id) : starGist(id)),
+    onSuccess: () => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: ["gists", id, "starred"] });
+      queryClient.invalidateQueries({ queryKey: ["gists", "starred"] });
+    },
+    onError: (err: Error) => setActionError(err.message),
+  });
+
+  const forkMut = useMutation({
+    mutationFn: () => forkGist(id),
+    onSuccess: () => {
+      setActionError(null);
+      queryClient.invalidateQueries({ queryKey: ["gists"] });
+    },
+    onError: (err: Error) => setActionError(err.message),
   });
 
   if (isError) return <InlineError title="Failed to load gist" />;
@@ -160,7 +229,9 @@ function GistDetail({ id, onClose }: { id: string; onClose: () => void }) {
 
   return (
     <Modal title={data.description || `Gist ${data.id}`} onClose={onClose}>
-      <div className="mb-4 flex items-center gap-2">
+      {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
         {data.public ? (
           <StateLabel state="open">public</StateLabel>
         ) : (
@@ -169,32 +240,65 @@ function GistDetail({ id, onClose }: { id: string; onClose: () => void }) {
         <span style={{ fontSize: "0.82rem", color: "var(--color-fg-muted)" }}>
           {files.length} file{files.length === 1 ? "" : "s"}
         </span>
+        <Button
+          size="sm"
+          variant={starred ? "primary" : "secondary"}
+          onClick={() => starMut.mutate()}
+          disabled={starLoading || starMut.isPending}
+        >
+          <StarIcon size={14} /> {starred ? "Unstar" : "Star"}
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={() => forkMut.mutate()}
+          disabled={forkMut.isPending}
+        >
+          <BranchIcon size={14} /> Fork
+        </Button>
+        <Button onClick={() => setEditing(data)} variant="ghost" size="sm">
+          Edit
+        </Button>
       </div>
 
-      {files.map(([filename, file]) => (
-        <Box key={filename} header={filename} className="mb-4">
-          {file.content != null ? (
-            <CodeBlock>{file.content}</CodeBlock>
-          ) : (
-            <div
-              style={{
-                padding: "1rem",
-                color: "var(--color-fg-muted)",
-                fontSize: "0.85rem",
-              }}
-            >
-              Content unavailable
-            </div>
-          )}
-        </Box>
-      ))}
+      <Tabs<"files" | "commits" | "forks">
+        items={[
+          { key: "files", label: "Files" },
+          { key: "commits", label: "History" },
+          { key: "forks", label: "Forks" },
+        ]}
+        active={detailTab}
+        onChange={setDetailTab}
+      />
+
+      {detailTab === "files" && (
+        <div>
+          {files.map(([filename, file]) => (
+            <Box key={filename} header={filename} className="mb-4">
+              {file.content != null ? (
+                <CodeBlock>{file.content}</CodeBlock>
+              ) : (
+                <div
+                  style={{
+                    padding: "1rem",
+                    color: "var(--color-fg-muted)",
+                    fontSize: "0.85rem",
+                  }}
+                >
+                  Content unavailable
+                </div>
+              )}
+            </Box>
+          ))}
+        </div>
+      )}
+
+      {detailTab === "commits" && <GistCommits id={id} />}
+      {detailTab === "forks" && <GistForks id={id} />}
 
       <DialogActions>
         <Button onClick={onClose} variant="ghost">
           Close
-        </Button>
-        <Button onClick={() => setEditing(data)} variant="secondary">
-          Edit
         </Button>
       </DialogActions>
 
@@ -210,6 +314,91 @@ function GistDetail({ id, onClose }: { id: string; onClose: () => void }) {
         />
       )}
     </Modal>
+  );
+}
+
+function GistCommits({ id }: { id: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["gists", id, "commits"],
+    queryFn: () => fetchGistCommits(id),
+  });
+
+  if (isError) return <InlineError title="Failed to load history" />;
+  if (isLoading || !data) return <Spinner label="loading history" />;
+
+  if (data.length === 0) {
+    return (
+      <div style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>No history available.</div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {data.map((commit) => (
+        <CommitRow key={commit.version} commit={commit} />
+      ))}
+    </div>
+  );
+}
+
+function CommitRow({ commit }: { commit: GithubGistCommit }) {
+  const additions = commit.change_status?.additions ?? 0;
+  const deletions = commit.change_status?.deletions ?? 0;
+  return (
+    <div
+      className="flex flex-col gap-1 rounded border p-3"
+      style={{ borderColor: "var(--color-border)" }}
+    >
+      <div className="flex items-center justify-between">
+        <span className="font-mono text-sm" style={{ color: "var(--color-fg)" }}>
+          {commit.version.slice(0, 7)}
+        </span>
+        <span style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+          {new Date(commit.committed_at).toLocaleString()}
+        </span>
+      </div>
+      <div style={{ fontSize: "0.82rem", color: "var(--color-fg-muted)" }}>
+        {commit.user?.login ?? "unknown"}
+      </div>
+      {(additions > 0 || deletions > 0) && (
+        <div className="flex gap-3" style={{ fontSize: "0.78rem" }}>
+          <span style={{ color: "var(--gh-open-solid)" }}>+{additions}</span>
+          <span style={{ color: "var(--color-status-error)" }}>-{deletions}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GistForks({ id }: { id: string }) {
+  const { data, isLoading, isError } = useQuery({
+    queryKey: ["gists", id, "forks"],
+    queryFn: () => fetchGistForks(id),
+  });
+
+  if (isError) return <InlineError title="Failed to load forks" />;
+  if (isLoading || !data) return <Spinner label="loading forks" />;
+
+  if (data.length === 0) {
+    return (
+      <div style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>No forks yet.</div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {data.map((fork) => (
+        <Box key={fork.id} header={fork.owner?.login ?? "unknown"} className="p-3">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-sm" style={{ color: "var(--color-fg-muted)" }}>{fork.id}</span>
+            <span style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+              {new Date(fork.created_at).toLocaleString()}
+            </span>
+          </div>
+          <div style={{ fontSize: "0.82rem" }}>{fork.description || "(no description)"}</div>
+        </Box>
+      ))}
+    </div>
   );
 }
 

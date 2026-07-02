@@ -270,6 +270,69 @@ func (st *Store) GetNotificationThread(user *User, baseURL, threadID string) *No
 	return nil
 }
 
+// GetNotificationThreadByID returns a single synthetic thread by numeric ID.
+func (st *Store) GetNotificationThreadByID(userID int, baseURL string, threadID int) *NotificationThread {
+	user := st.GetUserByID(userID)
+	if user == nil {
+		return nil
+	}
+	return st.GetNotificationThread(user, baseURL, strconv.Itoa(threadID))
+}
+
+// MarkThreadReadByID records a thread as read for the user by numeric ID.
+func (st *Store) MarkThreadReadByID(userID int, threadID int, at time.Time) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	state := st.notificationsStateFor(userID)
+	if state.ReadThreadIDs == nil {
+		state.ReadThreadIDs = map[string]time.Time{}
+	}
+	state.ReadThreadIDs[strconv.Itoa(threadID)] = at
+	st.persistNotificationsState(userID, state)
+	return true
+}
+
+// GetThreadSubscriptionByID returns the user's subscription for a numeric thread ID.
+func (st *Store) GetThreadSubscriptionByID(userID int, threadID int) *ThreadSubscription {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	state := st.notificationsStateFor(userID)
+	return state.Subscriptions[strconv.Itoa(threadID)]
+}
+
+// SetThreadSubscriptionByID sets a thread subscription for the user by numeric ID.
+func (st *Store) SetThreadSubscriptionByID(userID int, threadID int, subscribed bool) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	state := st.notificationsStateFor(userID)
+	if state.Subscriptions == nil {
+		state.Subscriptions = map[string]*ThreadSubscription{}
+	}
+	state.Subscriptions[strconv.Itoa(threadID)] = &ThreadSubscription{
+		Subscribed: subscribed,
+		CreatedAt:  time.Now().UTC(),
+	}
+	st.persistNotificationsState(userID, state)
+	return true
+}
+
+// DeleteThreadSubscriptionByID removes a thread subscription for the user by numeric ID.
+func (st *Store) DeleteThreadSubscriptionByID(userID int, threadID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	state := st.notificationsStateFor(userID)
+	if state.Subscriptions == nil {
+		return false
+	}
+	id := strconv.Itoa(threadID)
+	if state.Subscriptions[id] == nil {
+		return false
+	}
+	delete(state.Subscriptions, id)
+	st.persistNotificationsState(userID, state)
+	return true
+}
+
 // MarkNotificationsRead sets the global last-read timestamp for the user.
 func (st *Store) MarkNotificationsRead(userID int, at time.Time, repoScope string) {
 	st.mu.Lock()

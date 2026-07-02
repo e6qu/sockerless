@@ -49,6 +49,14 @@ func (s *Server) registerGHDependabotRoutes() {
 		s.requirePerm(scopeDependabotSecrets, permRead, s.handleListDependabotOrgSecretRepos))
 	s.route("PUT /api/v3/orgs/{org}/dependabot/secrets/{secret_name}/repositories",
 		s.requirePerm(scopeDependabotSecrets, permWrite, s.handleSetDependabotOrgSecretRepos))
+
+	// Organization-level alerts and repository access
+	s.route("GET /api/v3/orgs/{org}/dependabot/alerts",
+		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListDependabotOrgAlerts))
+	s.route("GET /api/v3/orgs/{org}/dependabot/repository-access",
+		s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleGetDependabotRepositoryAccess))
+	s.route("PATCH /api/v3/orgs/{org}/dependabot/repository-access",
+		s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleUpdateDependabotRepositoryAccess))
 }
 
 // --- alerts ---
@@ -637,5 +645,182 @@ func (s *Server) writeDependabotSelectedReposResponse(w http.ResponseWriter, r *
 func dependabotMinimalRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 	out := repoToJSON(repo, st, baseURL)
 	delete(out, "has_pull_requests")
+	return out
+}
+
+// --- org alerts and repository access ---
+
+func (s *Server) handleListDependabotOrgAlerts(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.resolveOrgForDependabot(w, r)
+	if !ok {
+		return
+	}
+
+	alerts := s.store.ListDependabotAlertsByOrg(org.ID)
+	page := paginateAndLink(w, r, alerts)
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(page))
+	for _, a := range page {
+		repo := s.store.ReposByName[a.RepoKey]
+		if repo == nil {
+			continue
+		}
+		alertJSON := dependabotAlertToJSON(a, baseURL, repo)
+		alertJSON["repository"] = simpleRepoJSON(repo, s.store, baseURL)
+		out = append(out, alertJSON)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetDependabotRepositoryAccess(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.resolveOrgForDependabot(w, r)
+	if !ok {
+		return
+	}
+	ids := s.store.GetDependabotRepositoryAccess(org.Login)
+	repos := s.dependabotAccessibleRepos(r, ids)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"default_level":           nil,
+		"accessible_repositories": repos,
+	})
+}
+
+func (s *Server) handleUpdateDependabotRepositoryAccess(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.resolveOrgForDependabot(w, r)
+	if !ok {
+		return
+	}
+
+	var body struct {
+		RepositoryIDsToAdd    []int `json:"repository_ids_to_add"`
+		RepositoryIDsToRemove []int `json:"repository_ids_to_remove"`
+	}
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+
+	existing := s.store.GetDependabotRepositoryAccess(org.Login)
+	set := make(map[int]struct{}, len(existing))
+	for _, id := range existing {
+		set[id] = struct{}{}
+	}
+	for _, id := range body.RepositoryIDsToAdd {
+		if s.store.GetRepoByID(id) == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		set[id] = struct{}{}
+	}
+	for _, id := range body.RepositoryIDsToRemove {
+		delete(set, id)
+	}
+
+	ids := make([]int, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	sort.Ints(ids)
+	s.store.SetDependabotRepositoryAccess(org.Login, ids)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- user secrets (commented out: user-scoped Dependabot secrets are not a
+// real GitHub REST surface; only repo/org-scoped secrets are documented) ---
+
+// func (s *Server) handleListDependabotUserSecrets(w http.ResponseWriter, r *http.Request) {
+// 	username := r.PathValue("username")
+// 	list := make([]map[string]interface{}, 0)
+// 	for _, sec := range s.store.ListDependabotUserSecrets(username) {
+// 		list = append(list, dependabotSecretJSON(&sec.DependabotSecret))
+// 	}
+// 	writeJSON(w, http.StatusOK, map[string]interface{}{
+// 		"total_count": len(list),
+// 		"secrets":     list,
+// 	})
+// }
+
+// func (s *Server) handleGetDependabotUserSecretsPublicKey(w http.ResponseWriter, _ *http.Request) {
+// 	s.writeActionsPublicKey(w)
+// }
+
+// func (s *Server) handleGetDependabotUserSecret(w http.ResponseWriter, r *http.Request) {
+// 	username := r.PathValue("username")
+// 	name := strings.ToUpper(r.PathValue("secret_name"))
+
+// 	sec := s.store.GetDependabotUserSecret(username, name)
+// 	if sec == nil {
+// 		writeGHError(w, http.StatusNotFound, "Not Found")
+// 		return
+// 	}
+// 	writeJSON(w, http.StatusOK, dependabotSecretJSON(&sec.DependabotSecret))
+// }
+
+// func (s *Server) handlePutDependabotUserSecret(w http.ResponseWriter, r *http.Request) {
+// 	username := r.PathValue("username")
+// 	rawName := r.PathValue("secret_name")
+// 	if msg := actionsItemNameError("Secret", rawName); msg != "" {
+// 		writeGHError(w, http.StatusUnprocessableEntity, msg)
+// 		return
+// 	}
+// 	name := strings.ToUpper(rawName)
+
+// 	var body struct {
+// 		EncryptedValue string `json:"encrypted_value"`
+// 		KeyID          string `json:"key_id"`
+// 	}
+// 	if !decodeJSONBody(w, r, &body) {
+// 		return
+// 	}
+// 	if ok := s.validateDependabotSecretKeyID(w, body.KeyID); !ok {
+// 		return
+// 	}
+// 	if body.EncryptedValue == "" {
+// 		writeGHError(w, http.StatusUnprocessableEntity, "encrypted_value is required")
+// 		return
+// 	}
+
+// 	created := s.store.UpsertDependabotUserSecret(username, name, body.EncryptedValue, body.KeyID)
+// 	s.recordAuditEvent("dependabot_secret.create", auditActor(r), "", map[string]interface{}{
+// 		"scope": "user", "user": username, "secret_name": name,
+// 	})
+// 	if created {
+// 		writeJSON(w, http.StatusCreated, map[string]interface{}{})
+// 	} else {
+// 		w.WriteHeader(http.StatusNoContent)
+// 	}
+// }
+
+// func (s *Server) handleDeleteDependabotUserSecret(w http.ResponseWriter, r *http.Request) {
+// 	username := r.PathValue("username")
+// 	name := strings.ToUpper(r.PathValue("secret_name"))
+
+// 	if !s.store.DeleteDependabotUserSecret(username, name) {
+// 		writeGHError(w, http.StatusNotFound, "Not Found")
+// 		return
+// 	}
+// 	s.recordAuditEvent("dependabot_secret.destroy", auditActor(r), "", map[string]interface{}{
+// 		"scope": "user", "user": username, "secret_name": name,
+// 	})
+// 	w.WriteHeader(http.StatusNoContent)
+// }
+
+// dependabotAccessibleRepos returns a sorted array of repository JSON objects
+// for the given repository IDs, omitting IDs that do not resolve.
+func (s *Server) dependabotAccessibleRepos(r *http.Request, ids []int) []map[string]interface{} {
+	s.store.mu.RLock()
+	repos := make([]*Repo, 0, len(ids))
+	for _, id := range ids {
+		if repo := s.store.Repos[id]; repo != nil {
+			repos = append(repos, repo)
+		}
+	}
+	s.store.mu.RUnlock()
+	sort.Slice(repos, func(i, j int) bool { return repos[i].ID < repos[j].ID })
+
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(repos))
+	for _, repo := range repos {
+		out = append(out, simpleRepoJSON(repo, s.store, base))
+	}
 	return out
 }

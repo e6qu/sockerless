@@ -62,7 +62,7 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // tokens, apps (incl. credentials + webhook config), OAuth apps,
 // installations (incl. selected repos), installation / user-to-server /
 // refresh tokens, repos, orgs, teams, memberships, issues, labels,
-// milestones, comments, pull requests, PR reviews + review comments,
+// milestones, comments, issue events, pull requests, PR reviews + review comments,
 // hooks (incl. secrets) + deliveries, app hook deliveries, repo secrets
 // (incl. values), check suites/runs/prefs, workflow files, releases,
 // deployments + statuses + environments (incl. reviewers/wait timer),
@@ -253,6 +253,7 @@ func (s *Server) registerRoutes() {
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
 	s.registerGHRepoRoutes()
+	s.registerGHSecurityAdvisoriesRoutes()
 	s.registerGHRepoAutolinkRoutes()
 	s.registerGHRepoInvitationRoutes()
 	s.registerGHTemplateRoutes()
@@ -263,6 +264,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHOAuthRoutes()
 	s.registerGHGraphQLRoutes()
 	s.registerGHActionsRoutes()
+	s.registerGHActionsPermissionsRoutes()
 	s.registerGHWorkflowsRoutes()
 
 	// Org runner groups (gh_runner_groups.go)

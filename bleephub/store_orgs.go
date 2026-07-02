@@ -97,21 +97,22 @@ type Membership struct {
 
 // Team represents a team within an organization.
 type Team struct {
-	ID                  int                     `json:"id"`
-	NodeID              string                  `json:"node_id"`
-	OrgID               int                     `json:"org_id"`
-	Name                string                  `json:"name"`
-	Slug                string                  `json:"slug"`
-	Description         string                  `json:"description"`
-	Privacy             TeamPrivacy             `json:"privacy"`
-	Permission          TeamPermission          `json:"permission"`
-	NotificationSetting TeamNotificationSetting `json:"notification_setting"`
-	ParentID            int                     `json:"parent_id"` // 0 = no parent team
-	MemberIDs           []int                   `json:"member_ids"`
-	MaintainerIDs       []int                   `json:"maintainer_ids"` // subset of MemberIDs with the maintainer role
-	RepoNames           []string                `json:"repo_names"`     // "owner/name" entries
-	CreatedAt           time.Time               `json:"created_at"`
-	UpdatedAt           time.Time               `json:"updated_at"`
+	ID                  int                       `json:"id"`
+	NodeID              string                    `json:"node_id"`
+	OrgID               int                       `json:"org_id"`
+	Name                string                    `json:"name"`
+	Slug                string                    `json:"slug"`
+	Description         string                    `json:"description"`
+	Privacy             TeamPrivacy               `json:"privacy"`
+	Permission          TeamPermission            `json:"permission"`
+	NotificationSetting TeamNotificationSetting   `json:"notification_setting"`
+	ParentID            int                       `json:"parent_id"` // 0 = no parent team
+	MemberIDs           []int                     `json:"member_ids"`
+	MaintainerIDs       []int                     `json:"maintainer_ids"`   // subset of MemberIDs with the maintainer role
+	RepoNames           []string                  `json:"repo_names"`       // "owner/name" entries
+	RepoPermissions     map[string]TeamPermission `json:"repo_permissions"` // per-repo override; nil/missing entry uses Permission
+	CreatedAt           time.Time                 `json:"created_at"`
+	UpdatedAt           time.Time                 `json:"updated_at"`
 }
 
 // membershipKey returns the map key for org/user membership lookups.
@@ -497,6 +498,7 @@ func (st *Store) CreateTeam(orgLogin, name string, opts TeamOptions) *Team {
 		MemberIDs:           []int{},
 		MaintainerIDs:       []int{},
 		RepoNames:           []string{},
+		RepoPermissions:     map[string]TeamPermission{},
 		CreatedAt:           now,
 		UpdatedAt:           now,
 	}
@@ -635,10 +637,39 @@ func (st *Store) ListTeams(orgLogin string) []*Team {
 	return teams
 }
 
-// AddTeamMember upserts a user's team membership with the given role.
-// A maintainer downgraded to member is removed from the maintainer list;
-// a member upgraded joins it.
-func (st *Store) AddTeamMember(orgLogin, slug string, userID int, role TeamRole) bool {
+// ListTeamMembers returns the users who are members of a team.
+func (st *Store) ListTeamMembers(orgLogin, slug string) []*User {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	team := st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
+	if team == nil {
+		return nil
+	}
+	members := make([]*User, 0, len(team.MemberIDs))
+	for _, uid := range team.MemberIDs {
+		if u, ok := st.Users[uid]; ok {
+			members = append(members, u)
+		}
+	}
+	return members
+}
+
+// GetTeamMembership returns a user's role in a team and whether they are a
+// member at all. The role is empty when the user is not a member.
+func (st *Store) GetTeamMembership(orgLogin, slug string, userID int) (TeamRole, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	team := st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
+	if team == nil {
+		return "", false
+	}
+	return team.roleOf(userID)
+}
+
+// SetTeamMembership upserts a user's team membership with the given role.
+func (st *Store) SetTeamMembership(orgLogin, slug string, userID int, role TeamRole) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -665,8 +696,8 @@ func (st *Store) AddTeamMember(orgLogin, slug string, userID int, role TeamRole)
 	return true
 }
 
-// RemoveTeamMember removes a user from a team (both role lists).
-func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
+// RemoveTeamMembership removes a user from a team.
+func (st *Store) RemoveTeamMembership(orgLogin, slug string, userID int) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -674,12 +705,93 @@ func (st *Store) RemoveTeamMember(orgLogin, slug string, userID int) bool {
 	if team == nil {
 		return false
 	}
-
 	if !slices.Contains(team.MemberIDs, userID) {
 		return false
 	}
 	team.MemberIDs = intSliceRemove(team.MemberIDs, userID)
 	team.MaintainerIDs = intSliceRemove(team.MaintainerIDs, userID)
+	team.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+	}
+	return true
+}
+
+// ListTeamRepos returns the repositories linked to a team.
+func (st *Store) ListTeamRepos(orgLogin, slug string) []*Repo {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	team := st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
+	if team == nil {
+		return nil
+	}
+	repos := make([]*Repo, 0, len(team.RepoNames))
+	for _, fullName := range team.RepoNames {
+		owner, name, ok := strings.Cut(fullName, "/")
+		if !ok {
+			continue
+		}
+		if repo := st.ReposByName[owner+"/"+name]; repo != nil {
+			repos = append(repos, repo)
+		}
+	}
+	return repos
+}
+
+// GetTeamRepoPermission returns the effective permission a team confers on a
+// repository. The second value is false when the repository is not linked to
+// the team. A nil/missing per-repo override falls back to the team's default
+// Permission.
+func (st *Store) GetTeamRepoPermission(orgLogin, slug, fullName string) (TeamPermission, bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	team := st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
+	if team == nil {
+		return "", false
+	}
+	if !slices.Contains(team.RepoNames, fullName) {
+		return "", false
+	}
+	if team.RepoPermissions != nil {
+		if perm, ok := team.RepoPermissions[fullName]; ok {
+			return perm, true
+		}
+	}
+	return team.Permission, true
+}
+
+// SetTeamRepoPermission links a repository to a team and records an explicit
+// permission override. An empty permission uses the team's default.
+func (st *Store) SetTeamRepoPermission(orgLogin, slug, fullName string, perm TeamPermission) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	team := st.TeamsBySlug[teamSlugKey(orgLogin, slug)]
+	if team == nil {
+		return false
+	}
+	if st.ReposByName[fullName] == nil {
+		return false
+	}
+
+	found := false
+	for _, rn := range team.RepoNames {
+		if rn == fullName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		team.RepoNames = append(team.RepoNames, fullName)
+	}
+	if perm != "" {
+		if team.RepoPermissions == nil {
+			team.RepoPermissions = map[string]TeamPermission{}
+		}
+		team.RepoPermissions[fullName] = perm
+	}
 	team.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
@@ -722,6 +834,9 @@ func (st *Store) AddTeamRepo(orgLogin, slug, repoFullName string) bool {
 	}
 
 	team.RepoNames = append(team.RepoNames, repoFullName)
+	if team.RepoPermissions == nil {
+		team.RepoPermissions = map[string]TeamPermission{}
+	}
 	team.UpdatedAt = time.Now().UTC()
 	if st.persist != nil {
 		st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
@@ -742,6 +857,9 @@ func (st *Store) RemoveTeamRepo(orgLogin, slug, repoFullName string) bool {
 	for i, rn := range team.RepoNames {
 		if rn == repoFullName {
 			team.RepoNames = append(team.RepoNames[:i], team.RepoNames[i+1:]...)
+			if team.RepoPermissions != nil {
+				delete(team.RepoPermissions, repoFullName)
+			}
 			team.UpdatedAt = time.Now().UTC()
 			if st.persist != nil {
 				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)

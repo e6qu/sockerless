@@ -47,6 +47,32 @@ func (s *Server) registerGHMiscEndpoints() {
 	s.route("PUT /api/v3/user/following/{username}", s.handleFollowUser)
 	s.route("DELETE /api/v3/user/following/{username}", s.handleUnfollowUser)
 
+	// Users extras
+	s.route("GET /api/v3/users", s.handleListUsers)
+	s.route("GET /api/v3/users/{username}/gists", s.handleListUserGists)
+	s.route("GET /api/v3/users/{username}/events", s.handleListUserEvents)
+	s.route("GET /api/v3/users/{username}/events/public", s.handleListUserEventsPublic)
+	s.route("GET /api/v3/users/{username}/events/orgs/{org}", s.handleListUserEventsForOrg)
+	s.route("GET /api/v3/users/{username}/received_events", s.handleListUserReceivedEvents)
+	s.route("GET /api/v3/users/{username}/received_events/public", s.handleListUserReceivedEventsPublic)
+	s.route("GET /api/v3/users/{username}/following/{target_user}", s.handleCheckUserFollowing)
+	s.route("GET /api/v3/users/{username}/social_accounts", s.handleListUserSocialAccounts)
+	s.route("GET /api/v3/users/{username}/ssh_signing_keys", s.handleListUserSSHSigningKeys)
+	s.route("GET /api/v3/users/{username}/subscriptions", s.handleListUserSubscriptions)
+	s.route("GET /api/v3/user/blocks", s.handleListUserBlocks)
+	s.route("GET /api/v3/user/blocks/{username}", s.handleCheckUserBlocked)
+	s.route("PUT /api/v3/user/blocks/{username}", s.handleBlockUser)
+	s.route("DELETE /api/v3/user/blocks/{username}", s.handleUnblockUser)
+	s.route("GET /api/v3/user/following/{username}", s.handleCheckMyFollowing)
+	s.route("GET /api/v3/user/social_accounts", s.handleListMySocialAccounts)
+	s.route("POST /api/v3/user/social_accounts", s.handleCreateMySocialAccounts)
+	s.route("DELETE /api/v3/user/social_accounts", s.handleDeleteMySocialAccounts)
+	s.route("GET /api/v3/user/ssh_signing_keys", s.handleListMySSHSigningKeys)
+	s.route("POST /api/v3/user/ssh_signing_keys", s.handleCreateMySSHSigningKey)
+	s.route("DELETE /api/v3/user/ssh_signing_keys/{ssh_signing_key_id}", s.handleDeleteMySSHSigningKey)
+	s.route("GET /api/v3/user/starred/{owner}/{repo}", s.handleCheckMyStarredRepo)
+	s.route("GET /api/v3/user/subscriptions", s.handleListMySubscriptions)
+
 	// Actions OIDC
 	s.route("GET /token", s.handleActionsOIDCToken)
 	s.route("GET /.well-known/openid-configuration", s.handleOIDCDiscovery)
@@ -249,6 +275,10 @@ type MiscStore struct {
 	nextAdminAuditID     int64
 	oidcKey              *rsa.PrivateKey
 	persist              *Persistence
+	blockedUsers         map[int]map[int]bool // userID -> targetID -> blocked
+	socialAccounts       map[int][]map[string]interface{}
+	sshSigningKeys       map[int][]map[string]interface{}
+	nextSSHSigningKeyID  int
 }
 
 func newMiscStore() *MiscStore {
@@ -266,6 +296,10 @@ func newMiscStore() *MiscStore {
 		auditLogEvents:       []*AuditLogEvent{},
 		nextKeyID:            1,
 		nextGPGKeyID:         1,
+		blockedUsers:         map[int]map[int]bool{},
+		socialAccounts:       map[int][]map[string]interface{}{},
+		sshSigningKeys:       map[int][]map[string]interface{}{},
+		nextSSHSigningKeyID:  1,
 	}
 }
 

@@ -15,6 +15,12 @@ func (s *Server) registerGHSecretScanningRoutes() {
 
 	// Internal seeding endpoint: real GitHub creates alerts by scanning pushed code.
 	s.route("POST /internal/repos/{owner}/{repo}/secret-scanning/alerts", s.handleSeedSecretScanningAlert)
+
+	// Organization-level alerts and pattern configurations
+	s.route("GET /api/v3/orgs/{org}/secret-scanning/alerts",
+		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningOrgAlerts))
+	s.route("GET /api/v3/orgs/{org}/secret-scanning/pattern-configurations",
+		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningPatternConfigurations))
 }
 
 func (s *Server) handleListSecretScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -199,6 +205,48 @@ func (s *Server) handleSeedSecretScanningAlert(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusCreated, secretScanningAlertToJSON(a, s.baseURL(r), repo))
 }
 
+func (s *Server) handleListSecretScanningOrgAlerts(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.resolveOrgForSecretScanning(w, r)
+	if !ok {
+		return
+	}
+
+	alerts := s.store.ListSecretScanningAlertsByOrg(org.ID)
+	page := paginateAndLink(w, r, alerts)
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(page))
+	for _, a := range page {
+		repo := s.store.ReposByName[a.RepoKey]
+		if repo == nil {
+			continue
+		}
+		alertJSON := secretScanningAlertToJSON(a, baseURL, repo)
+		alertJSON["repository"] = simpleRepoJSON(repo, s.store, baseURL)
+		out = append(out, alertJSON)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleListSecretScanningPatternConfigurations(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.store.ListSecretScanningPatternConfigurations())
+}
+
+// func (s *Server) handleListSecretScanningUserAlerts(w http.ResponseWriter, r *http.Request) {
+// 	user := ghUserFromContext(r.Context())
+// 	alerts := s.store.ListSecretScanningAlertsByUser(user.ID)
+// 	page := paginateAndLink(w, r, alerts)
+// 	baseURL := s.baseURL(r)
+// 	out := make([]map[string]interface{}, 0, len(page))
+// 	for _, a := range page {
+// 		repo := s.store.ReposByName[a.RepoKey]
+// 		if repo == nil {
+// 			continue
+// 		}
+// 		out = append(out, secretScanningAlertToJSON(a, baseURL, repo))
+// 	}
+// 	writeJSON(w, http.StatusOK, out)
+// }
+
 func (s *Server) lookupSecretScanningAlert(w http.ResponseWriter, r *http.Request, repo *Repo) *SecretScanningAlert {
 	number, err := strconv.Atoi(r.PathValue("alert_number"))
 	if err != nil {
@@ -261,4 +309,29 @@ func nullOrString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+// requireUserSelf ensures the authenticated user is the user named in the
+// {username} path segment. It returns 404 for mismatches, matching real
+// GitHub's behavior for user-scoped resources.
+// func (s *Server) requireUserSelf(next http.HandlerFunc) http.HandlerFunc {
+// 	return func(w http.ResponseWriter, r *http.Request) {
+// 		user := ghUserFromContext(r.Context())
+// 		target := s.store.LookupUserByLogin(r.PathValue("username"))
+// 		if target == nil || user == nil || target.ID != user.ID {
+// 			writeGHError(w, http.StatusNotFound, "Not Found")
+// 			return
+// 		}
+// 		next(w, r)
+// 	}
+// }
+
+// resolveOrgForSecretScanning resolves {org} for secret-scanning handlers.
+func (s *Server) resolveOrgForSecretScanning(w http.ResponseWriter, r *http.Request) (*Org, bool) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, false
+	}
+	return org, true
 }

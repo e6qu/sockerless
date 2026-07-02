@@ -28,9 +28,13 @@ func (s *Server) registerGHIssueRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{number}", s.handleGetIssue)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/issues/{number}", s.requirePerm(scopeIssues, permWrite, s.handleUpdateIssue))
 
-	// Issue comments
+	// Issue comments. GET /issues/comments/{id} conflicts with
+	// GET /issues/{number}/reactions (and GET /issues/events/{id}) under
+	// Go 1.22's mux, so all two-segment issue GET paths dispatch via
+	// handleIssuesTwoSegGetDispatch.
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{p1}/{p2}", s.handleIssuesTwoSegGetDispatch)
+
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.requirePerm(scopeIssues, permWrite, s.handleCreateIssueComment))
-	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{number}/comments", s.handleListIssueComments)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}", s.requirePerm(scopeIssues, permWrite, s.handleUpdateIssueComment))
 
 	// Issue + PR moderation — comment-by-id delete + lock/unlock collide at
@@ -42,7 +46,32 @@ func (s *Server) registerGHIssueRoutes() {
 
 	// Issue label management
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.requirePerm(scopeIssues, permWrite, s.handleAddIssueLabels))
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/labels/{name}", s.requirePerm(scopeIssues, permWrite, s.handleRemoveIssueLabel))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.requirePerm(scopeIssues, permWrite, s.handleSetIssueLabels))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/labels", s.requirePerm(scopeIssues, permWrite, s.handleClearIssueLabels))
+
+	// Issue comments (repo-level)
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/comments", s.handleListRepoIssueComments)
+	s.route("PUT /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/pin", s.requirePerm(scopeIssues, permWrite, s.handlePinIssueComment))
+
+	// Issue assignees
+	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/assignees", s.requirePerm(scopeIssues, permWrite, s.handleAddIssueAssignees))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/assignees", s.requirePerm(scopeIssues, permWrite, s.handleRemoveIssueAssignees))
+
+	// Issue timeline + events
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/events", s.handleListRepoIssueEvents)
+
+	// Sub-issues / dependencies / issue-field-values (feature not modeled)
+	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/sub_issues", s.requirePerm(scopeIssues, permWrite, s.handleCreateSubIssue))
+
+	// Go's mux cannot disambiguate 3-segment issue DELETE paths (e.g.
+	// /issues/{n}/labels/{name} vs /issues/{n}/reactions/{id}), so they
+	// dispatch from one handler. Direct routes for labels/sub-issues are more
+	// specific and take precedence.
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{p1}/{p2}/{p3}", s.requirePerm(scopeIssues, permWrite, s.handleIssuesThreeSegDeleteDispatch))
+
+	// 3-segment issue GET paths (e.g. /issues/comments/{id}/reactions vs
+	// /issues/{n}/dependencies/blocked_by) also dispatch from one handler.
+	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{p1}/{p2}/{p3}", s.handleIssuesThreeSegGetDispatch)
 }
 
 // --- Label handlers ---
@@ -454,5 +483,91 @@ func milestoneToJSON(ms *Milestone, st *Store, baseURL, repoFullName string) map
 		"closed_at":     closedAt,
 		"created_at":    ms.CreatedAt.Format(time.RFC3339),
 		"updated_at":    ms.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+// handleIssuesTwoSegDispatchGET resolves GET /repos/{}/issues/{p1}/{p2} to
+// either an issue-comment lookup (/issues/comments/{id}), an issue-event
+// lookup (/issues/events/{id}), or one of the per-issue sub-resources
+// (comments, timeline, events, reactions, sub-issues, issue-field-values).
+// Go 1.22's mux cannot disambiguate these literal-and-wildcard mixtures.
+func (s *Server) handleIssuesTwoSegGetDispatch(w http.ResponseWriter, r *http.Request) {
+	p1 := r.PathValue("p1")
+	p2 := r.PathValue("p2")
+	switch {
+	case p1 == "comments":
+		r.SetPathValue("comment_id", p2)
+		s.handleGetIssueComment(w, r)
+	case p1 == "events":
+		r.SetPathValue("event_id", p2)
+		s.handleGetIssueEvent(w, r)
+	case p2 == "comments":
+		r.SetPathValue("number", p1)
+		s.handleListIssueComments(w, r)
+	case p2 == "timeline":
+		r.SetPathValue("number", p1)
+		s.handleListIssueTimeline(w, r)
+	case p2 == "events":
+		r.SetPathValue("number", p1)
+		s.handleListIssueEvents(w, r)
+	case p2 == "reactions":
+		r.SetPathValue("number", p1)
+		s.handleListReactions("issue", "number")(w, r)
+	case p2 == "sub_issues" || p2 == "sub_issue":
+		r.SetPathValue("number", p1)
+		s.handleListSubIssues(w, r)
+	case p2 == "issue-field-values":
+		r.SetPathValue("number", p1)
+		s.handleListIssueFieldValues(w, r)
+	default:
+		writeGHError(w, http.StatusNotFound, "Not Found")
+	}
+}
+
+// handleIssuesThreeSegDeleteDispatch resolves DELETE /repos/{}/issues/{p1}/{p2}/{p3}
+// to the correct handler. Go 1.22's mux cannot disambiguate literal segments
+// from wildcard segments at the same depth, so issue reaction deletes live here
+// alongside the (more specific) direct routes for labels and sub-issues.
+func (s *Server) handleIssuesThreeSegDeleteDispatch(w http.ResponseWriter, r *http.Request) {
+	p1 := r.PathValue("p1")
+	p2 := r.PathValue("p2")
+	p3 := r.PathValue("p3")
+	switch {
+	case p1 == "comments" && p3 == "pin":
+		r.SetPathValue("comment_id", p2)
+		s.handleUnpinIssueComment(w, r)
+	case p1 == "comments" && p3 == "reactions":
+		r.SetPathValue("comment_id", p2)
+		r.SetPathValue("reaction_id", p3)
+		s.handleDeleteReaction("issue_comment", "comment_id")(w, r)
+	case p2 == "reactions":
+		r.SetPathValue("number", p1)
+		r.SetPathValue("reaction_id", p3)
+		s.handleDeleteReaction("issue", "number")(w, r)
+	case p2 == "labels":
+		r.SetPathValue("number", p1)
+		r.SetPathValue("name", p3)
+		s.handleRemoveIssueLabel(w, r)
+	default:
+		writeGHError(w, http.StatusNotFound, "Not Found")
+	}
+}
+
+// handleIssuesThreeSegGetDispatch resolves GET /repos/{}/issues/{p1}/{p2}/{p3}
+// to the correct handler. Go 1.22's mux cannot disambiguate literal segments
+// (comments) from wildcard segments (number) at the same depth.
+func (s *Server) handleIssuesThreeSegGetDispatch(w http.ResponseWriter, r *http.Request) {
+	p1 := r.PathValue("p1")
+	p2 := r.PathValue("p2")
+	p3 := r.PathValue("p3")
+	switch {
+	case p1 == "comments" && p3 == "reactions":
+		r.SetPathValue("comment_id", p2)
+		s.handleListReactions("issue_comment", "comment_id")(w, r)
+	case p2 == "dependencies" && p3 == "blocked_by":
+		r.SetPathValue("number", p1)
+		s.handleListIssueDependenciesBlockedBy(w, r)
+	default:
+		writeGHError(w, http.StatusNotFound, "Not Found")
 	}
 }

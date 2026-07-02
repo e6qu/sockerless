@@ -441,3 +441,118 @@ func TestDependabot_404(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+func TestDependabot_OrgAlerts(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "dependabot-org-alerts", "Dependabot Org Alerts", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	repo1 := testServer.store.CreateOrgRepo(org, admin, "dependabot-org-repo1", "", false)
+	repo2 := testServer.store.CreateOrgRepo(org, admin, "dependabot-org-repo2", "", false)
+	if repo1 == nil || repo2 == nil {
+		t.Fatal("create org repo failed")
+	}
+	userRepo := testServer.store.CreateRepo(admin, "dependabot-user-repo", "", false)
+	if userRepo == nil {
+		t.Fatal("create repo failed")
+	}
+
+	seedDependabotAlert(t, org.Login, repo1.Name, map[string]any{"package_name": "pkg1"})
+	seedDependabotAlert(t, org.Login, repo2.Name, map[string]any{"package_name": "pkg2"})
+	seedDependabotAlert(t, "admin", userRepo.Name, map[string]any{"package_name": "pkg3"})
+
+	resp := authedGet(t, "/api/v3/orgs/dependabot-org-alerts/dependabot/alerts")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("list org alerts: %d body=%s", resp.StatusCode, b)
+	}
+	var list []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&list); err != nil {
+		t.Fatalf("decode org alerts: %v", err)
+	}
+	resp.Body.Close()
+	if len(list) != 2 {
+		t.Fatalf("expected 2 org alerts, got %d", len(list))
+	}
+}
+
+func TestDependabot_RepositoryAccess(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "dependabot-org-access", "Dependabot Org Access", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	repo1 := testServer.store.CreateOrgRepo(org, admin, "dependabot-org-access-1", "", false)
+	repo2 := testServer.store.CreateOrgRepo(org, admin, "dependabot-org-access-2", "", false)
+	if repo1 == nil || repo2 == nil {
+		t.Fatal("create org repo failed")
+	}
+
+	resp := authedGet(t, "/api/v3/orgs/dependabot-org-access/dependabot/repository-access")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("get repository access: %d body=%s", resp.StatusCode, b)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode repository access: %v", err)
+	}
+	resp.Body.Close()
+	if got["default_level"] != nil {
+		t.Fatalf("expected nil default_level, got %v", got["default_level"])
+	}
+	if len(got["accessible_repositories"].([]any)) != 0 {
+		t.Fatalf("expected 0 accessible repos, got %v", got["accessible_repositories"])
+	}
+
+	patch := func(body map[string]any) {
+		req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/orgs/dependabot-org-access/dependabot/repository-access", bytes.NewReader(mustJSON(body)))
+		req.Header.Set("Authorization", "Bearer "+defaultToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("patch repository access: %v", err)
+		}
+		if resp.StatusCode != http.StatusNoContent {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("patch repository access: %d body=%s", resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+
+	patch(map[string]any{"repository_ids_to_add": []int{repo1.ID, repo2.ID}})
+
+	resp = authedGet(t, "/api/v3/orgs/dependabot-org-access/dependabot/repository-access")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("get repository access after add: %d body=%s", resp.StatusCode, b)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode repository access: %v", err)
+	}
+	resp.Body.Close()
+	if len(got["accessible_repositories"].([]any)) != 2 {
+		t.Fatalf("expected 2 accessible repos, got %v", got["accessible_repositories"])
+	}
+
+	patch(map[string]any{"repository_ids_to_remove": []int{repo2.ID}})
+
+	resp = authedGet(t, "/api/v3/orgs/dependabot-org-access/dependabot/repository-access")
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("get repository access after remove: %d body=%s", resp.StatusCode, b)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode repository access: %v", err)
+	}
+	resp.Body.Close()
+	if len(got["accessible_repositories"].([]any)) != 1 {
+		t.Fatalf("expected 1 accessible repo, got %v", got["accessible_repositories"])
+	}
+}

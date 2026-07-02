@@ -23,6 +23,7 @@ import {
   CodespaceIcon,
   PackageIcon,
   DiscussionIcon,
+  NotificationBellIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -41,6 +42,7 @@ const PRIMARY_NAV: NavItem[] = [
   { label: "Migrations", to: "/ui/migrations" },
   { label: "Codespaces", to: "/ui/codespaces" },
   { label: "Runners", to: "/ui/runners" },
+  { label: "Notifications", to: "/ui/notifications" },
   { label: "Apps", to: "/ui/apps" },
   { label: "OAuth", to: "/ui/oauth" },
   { label: "Metrics", to: "/ui/metrics" },
@@ -70,6 +72,8 @@ function navIcon(label: string) {
       return <CodespaceIcon size={14} />;
     case "Runners":
       return null;
+    case "Notifications":
+      return <NotificationBellIcon size={14} />;
     case "Apps":
       return null;
     case "OAuth":
@@ -323,8 +327,39 @@ export function RepoHeader({
             label="Dependabot"
             active={location.pathname === `${base}/security/dependabot`}
           />
+          <RepoTabLink
+            to={`${base}/security/advisories`}
+            label="Advisories"
+            active={location.pathname === `${base}/security/advisories`}
+          />
         </nav>
       )}
+    </div>
+  );
+}
+
+export type OrgTab = "repos" | "packages" | "rulesets";
+
+/** Org context bar: organization login breadcrumb with org-level tabs. */
+export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
+  const base = `/ui/orgs/${org}`;
+  return (
+    <div className="mb-5">
+      <div className="mb-3 flex items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
+        <OrganizationIcon size={18} style={{ color: "var(--color-fg-muted)" }} />
+        <Link to="/ui/admin/orgs" style={{ color: "var(--color-accent)", textDecoration: "none" }}>
+          {org}
+        </Link>
+      </div>
+      <nav
+        aria-label="Organization"
+        className="flex flex-wrap items-center gap-1"
+        style={{ borderBottom: "1px solid var(--color-border)" }}
+      >
+        <RepoTabLink to={`${base}/repos`} icon={<RepoIcon size={15} />} label="Repositories" active={active === "repos"} />
+        <RepoTabLink to={`${base}/packages`} icon={<PackageIcon size={15} />} label="Packages" active={active === "packages"} />
+        <RepoTabLink to={`${base}/rulesets`} icon={<GearIcon size={15} />} label="Rulesets" active={active === "rulesets"} />
+      </nav>
     </div>
   );
 }

@@ -11,56 +11,62 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing"
 	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 type Repo struct {
-	ID                        int          `json:"id"`
-	NodeID                    string       `json:"node_id"`
-	Name                      string       `json:"name"`
-	FullName                  string       `json:"full_name"`
-	Description               string       `json:"description"`
-	Homepage                  string       `json:"homepage"`
-	DefaultBranch             string       `json:"default_branch"`
-	Visibility                string       `json:"visibility"`
-	Language                  string       `json:"language"`
-	Owner                     *User        `json:"-"`
-	OwnerID                   int          `json:"owner_id"`   // serialized so Owner can be relinked on reload
-	OwnerType                 string       `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
-	Private                   bool         `json:"private"`
-	Fork                      bool         `json:"fork"`
-	Archived                  bool         `json:"archived"`
-	IsTemplate                bool         `json:"is_template"`
-	WebCommitSignoffRequired  bool         `json:"web_commit_signoff_required"`
-	HasIssues                 bool         `json:"has_issues"`
-	HasProjects               bool         `json:"has_projects"`
-	HasWiki                   bool         `json:"has_wiki"`
-	HasPullRequests           bool         `json:"has_pull_requests"`
-	AllowSquashMerge          bool         `json:"allow_squash_merge"`
-	AllowMergeCommit          bool         `json:"allow_merge_commit"`
-	AllowRebaseMerge          bool         `json:"allow_rebase_merge"`
-	AllowAutoMerge            bool         `json:"allow_auto_merge"`
-	AllowUpdateBranch         bool         `json:"allow_update_branch"`
-	DeleteBranchOnMerge       bool         `json:"delete_branch_on_merge"`
-	UseSquashPRTitleAsDefault bool         `json:"use_squash_pr_title_as_default"`
-	SquashMergeCommitTitle    string       `json:"squash_merge_commit_title"`
-	SquashMergeCommitMessage  string       `json:"squash_merge_commit_message"`
-	MergeCommitTitle          string       `json:"merge_commit_title"`
-	MergeCommitMessage        string       `json:"merge_commit_message"`
-	PullRequestCreationPolicy string       `json:"pull_request_creation_policy"`
-	LicenseKey                string       `json:"license_key"`
-	LicenseName               string       `json:"license_name"`
-	LicenseSPDX               string       `json:"license_spdx"`
-	StargazersCount           int          `json:"stargazers_count"`
-	Topics                    []string     `json:"topics"`
-	Stargazers                map[int]bool `json:"stargazers,omitempty"`
-	ParentID                  int          `json:"parent_id"`
-	SourceID                  int          `json:"source_id"`
-	NextIssueNumber           int          `json:"-"`
-	NextMilestoneNumber       int          `json:"-"`
-	CreatedAt                 time.Time    `json:"created_at"`
-	UpdatedAt                 time.Time    `json:"updated_at"`
-	PushedAt                  time.Time    `json:"pushed_at"`
+	ID                                   int          `json:"id"`
+	NodeID                               string       `json:"node_id"`
+	Name                                 string       `json:"name"`
+	FullName                             string       `json:"full_name"`
+	Description                          string       `json:"description"`
+	Homepage                             string       `json:"homepage"`
+	DefaultBranch                        string       `json:"default_branch"`
+	Visibility                           string       `json:"visibility"`
+	Language                             string       `json:"language"`
+	Owner                                *User        `json:"-"`
+	OwnerID                              int          `json:"owner_id"`   // serialized so Owner can be relinked on reload
+	OwnerType                            string       `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
+	Private                              bool         `json:"private"`
+	Fork                                 bool         `json:"fork"`
+	Archived                             bool         `json:"archived"`
+	IsTemplate                           bool         `json:"is_template"`
+	WebCommitSignoffRequired             bool         `json:"web_commit_signoff_required"`
+	HasIssues                            bool         `json:"has_issues"`
+	HasProjects                          bool         `json:"has_projects"`
+	HasWiki                              bool         `json:"has_wiki"`
+	HasPullRequests                      bool         `json:"has_pull_requests"`
+	AllowSquashMerge                     bool         `json:"allow_squash_merge"`
+	AllowMergeCommit                     bool         `json:"allow_merge_commit"`
+	AllowRebaseMerge                     bool         `json:"allow_rebase_merge"`
+	AllowAutoMerge                       bool         `json:"allow_auto_merge"`
+	AllowUpdateBranch                    bool         `json:"allow_update_branch"`
+	DeleteBranchOnMerge                  bool         `json:"delete_branch_on_merge"`
+	UseSquashPRTitleAsDefault            bool         `json:"use_squash_pr_title_as_default"`
+	SquashMergeCommitTitle               string       `json:"squash_merge_commit_title"`
+	SquashMergeCommitMessage             string       `json:"squash_merge_commit_message"`
+	MergeCommitTitle                     string       `json:"merge_commit_title"`
+	MergeCommitMessage                   string       `json:"merge_commit_message"`
+	PullRequestCreationPolicy            string       `json:"pull_request_creation_policy"`
+	LicenseKey                           string       `json:"license_key"`
+	LicenseName                          string       `json:"license_name"`
+	LicenseSPDX                          string       `json:"license_spdx"`
+	StargazersCount                      int          `json:"stargazers_count"`
+	Topics                               []string     `json:"topics"`
+	Stargazers                           map[int]bool `json:"stargazers,omitempty"`
+	ParentID                             int          `json:"parent_id"`
+	SourceID                             int          `json:"source_id"`
+	NextIssueNumber                      int          `json:"-"`
+	NextMilestoneNumber                  int          `json:"-"`
+	AutomatedSecurityFixesEnabled        bool         `json:"automated_security_fixes_enabled"`
+	PrivateVulnerabilityReportingEnabled bool         `json:"private_vulnerability_reporting_enabled"`
+	VulnerabilityAlertsEnabled           bool         `json:"vulnerability_alerts_enabled"`
+	InteractionLimit                     string       `json:"interaction_limit"`
+	InteractionLimitExpiry               *time.Time   `json:"interaction_limit_expiry,omitempty"`
+	CreatedAt                            time.Time    `json:"created_at"`
+	UpdatedAt                            time.Time    `json:"updated_at"`
+	PushedAt                             time.Time    `json:"pushed_at"`
 }
 
 func (st *Store) CreateRepo(owner *User, name, description string, private bool) *Repo {
@@ -433,6 +439,18 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		st.persist.MustDelete("repo_secrets", fullName)
 		st.persist.MustDelete("check_suite_prefs", fullName)
 		st.persist.MustDelete("secret_scanning_alerts", fullName)
+	}
+	for id, alert := range st.SecurityAdvisories {
+		if alert.RepoID == repo.ID {
+			delete(st.SecurityAdvisories, id)
+			if st.persist != nil {
+				st.persist.MustDelete("security_advisories", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.SecurityAdvisoriesByRepo, fullName)
+	if st.persist != nil {
+		st.persist.MustDelete("security_advisories", fullName)
 	}
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
@@ -1051,4 +1069,561 @@ func (st *Store) ListStarredRepos(userID int) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// RepoDeployKey represents a deploy key configured on a repository.
+type RepoDeployKey struct {
+	ID        int       `json:"id"`
+	NodeID    string    `json:"node_id"`
+	RepoID    int       `json:"repo_id"`
+	Title     string    `json:"title"`
+	Key       string    `json:"key"`
+	ReadOnly  bool      `json:"read_only"`
+	Verified  bool      `json:"verified"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// ListRepoDeployKeys returns deploy keys for a repo, sorted by ID.
+func (st *Store) ListRepoDeployKeys(repoID int) []*RepoDeployKey {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return nil
+	}
+	keys := st.RepoDeployKeys[repo.FullName]
+	out := make([]*RepoDeployKey, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// GetRepoDeployKey returns a deploy key by ID.
+func (st *Store) GetRepoDeployKey(id int) *RepoDeployKey {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	for _, keys := range st.RepoDeployKeys {
+		if k := keys[id]; k != nil {
+			return k
+		}
+	}
+	return nil
+}
+
+// CreateRepoDeployKey adds a deploy key to a repo.
+func (st *Store) CreateRepoDeployKey(repoID int, title, key string, readOnly bool) *RepoDeployKey {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return nil
+	}
+	if st.RepoDeployKeys[repo.FullName] == nil {
+		st.RepoDeployKeys[repo.FullName] = map[int]*RepoDeployKey{}
+	}
+	k := &RepoDeployKey{
+		ID:        st.NextDeployKeyID,
+		NodeID:    fmt.Sprintf("RkEAxNNa%07d", st.NextDeployKeyID),
+		RepoID:    repoID,
+		Title:     title,
+		Key:       key,
+		ReadOnly:  readOnly,
+		Verified:  true,
+		CreatedAt: time.Now().UTC(),
+	}
+	st.RepoDeployKeys[repo.FullName][k.ID] = k
+	st.NextDeployKeyID++
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repo_deploy_keys", repo.FullName, st.RepoDeployKeys[repo.FullName])
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return k
+}
+
+// DeleteRepoDeployKey removes a deploy key by ID.
+func (st *Store) DeleteRepoDeployKey(id int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	for repoKey, keys := range st.RepoDeployKeys {
+		if k := keys[id]; k != nil {
+			delete(keys, id)
+			repo := st.Repos[k.RepoID]
+			if repo != nil {
+				repo.UpdatedAt = time.Now().UTC()
+				if st.persist != nil {
+					st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+				}
+			}
+			if st.persist != nil {
+				st.persist.MustPut("repo_deploy_keys", repoKey, st.RepoDeployKeys[repoKey])
+			}
+			return true
+		}
+	}
+	return false
+}
+
+// RepoSubscription records a user's watch subscription for a repo.
+type RepoSubscription struct {
+	UserID     int       `json:"user_id"`
+	RepoID     int       `json:"repo_id"`
+	Subscribed bool      `json:"subscribed"`
+	Ignored    bool      `json:"ignored"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func repoSubscriptionKey(userID, repoID int) string {
+	return strconv.Itoa(userID) + ":" + strconv.Itoa(repoID)
+}
+
+// SetRepoSubscription creates or updates a subscription.
+func (st *Store) SetRepoSubscription(userID int, repoID int, subscribed bool) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	if st.Repos[repoID] == nil {
+		return false
+	}
+	key := repoSubscriptionKey(userID, repoID)
+	sub := &RepoSubscription{
+		UserID:     userID,
+		RepoID:     repoID,
+		Subscribed: subscribed,
+		Ignored:    false,
+		CreatedAt:  time.Now().UTC(),
+	}
+	if existing := st.RepoSubscriptions[key]; existing != nil {
+		sub.CreatedAt = existing.CreatedAt
+	}
+	st.RepoSubscriptions[key] = sub
+	if st.persist != nil {
+		st.persist.MustPut("repo_subscriptions", key, sub)
+	}
+	return true
+}
+
+// DeleteRepoSubscription removes a subscription.
+func (st *Store) DeleteRepoSubscription(userID int, repoID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	key := repoSubscriptionKey(userID, repoID)
+	if st.RepoSubscriptions[key] == nil {
+		return false
+	}
+	delete(st.RepoSubscriptions, key)
+	if st.persist != nil {
+		st.persist.MustDelete("repo_subscriptions", key)
+	}
+	return true
+}
+
+// GetRepoSubscription returns a subscription or nil.
+func (st *Store) GetRepoSubscription(userID int, repoID int) *RepoSubscription {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	return st.RepoSubscriptions[repoSubscriptionKey(userID, repoID)]
+}
+
+// ListRepoSubscriptionsForUser returns the repositories subscribed by userID.
+func (st *Store) ListRepoSubscriptionsForUser(userID int) []*Repo {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	out := make([]*Repo, 0)
+	for key, sub := range st.RepoSubscriptions {
+		if sub == nil || sub.UserID != userID || !sub.Subscribed {
+			continue
+		}
+		parts := strings.SplitN(key, ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		repoID, _ := strconv.Atoi(parts[1])
+		if repo := st.Repos[repoID]; repo != nil {
+			out = append(out, repo)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// TransferRepo transfers ownership of a repository to a new owner account.
+// It returns true on success.
+func (st *Store) TransferRepo(owner, name, newOwner string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	oldFull := owner + "/" + name
+	newFull := newOwner + "/" + name
+	if oldFull == newFull {
+		return true
+	}
+	repo, ok := st.ReposByName[oldFull]
+	if !ok {
+		return false
+	}
+	if _, exists := st.ReposByName[newFull]; exists {
+		return false
+	}
+
+	newOwnerUser := st.UsersByLogin[newOwner]
+	var newOwnerOrg *Org
+	if newOwnerUser == nil {
+		newOwnerOrg = st.OrgsByLogin[newOwner]
+	}
+	if newOwnerUser == nil && newOwnerOrg == nil {
+		return false
+	}
+
+	if GitDataDir() != "" {
+		oldDir := filepath.Join(GitDataDir(), filepath.FromSlash(oldFull))
+		newDir := filepath.Join(GitDataDir(), filepath.FromSlash(newFull))
+		if err := os.Rename(oldDir, newDir); err != nil && os.IsExist(err) {
+			log.Printf("bleephub: transfer repo %s -> %s: move git dir: %v", oldFull, newFull, err)
+			return false
+		}
+	}
+	if IsS3GitStorage() {
+		s3fs, err := getS3FS(context.Background())
+		if err != nil {
+			log.Printf("bleephub: transfer repo %s -> %s: resolve s3 fs: %v", oldFull, newFull, err)
+			return false
+		}
+		if s3fs != nil {
+			if err := s3fs.renameRepoPrefix(oldFull, newFull); err != nil {
+				log.Printf("bleephub: transfer repo %s -> %s: move s3 prefix: %v", oldFull, newFull, err)
+				return false
+			}
+		}
+	}
+
+	repo.FullName = newFull
+	repo.UpdatedAt = time.Now().UTC()
+	if newOwnerOrg != nil {
+		repo.OwnerType = "Organization"
+		repo.OwnerID = newOwnerOrg.ID
+		repo.Owner = nil
+	} else if newOwnerUser != nil {
+		repo.OwnerType = "User"
+		repo.OwnerID = newOwnerUser.ID
+		repo.Owner = newOwnerUser
+	}
+
+	st.ReposByName[newFull] = repo
+	delete(st.ReposByName, oldFull)
+
+	if stor := st.GitStorages[oldFull]; stor != nil {
+		st.GitStorages[newFull] = stor
+		delete(st.GitStorages, oldFull)
+	}
+
+	st.moveRepoKeyLocked(oldFull, newFull)
+
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+		st.persist.MustDelete("repos", strconv.Itoa(repo.ID))
+	}
+	return true
+}
+
+// moveRepoKeyLocked renames all in-memory maps keyed by repo full name from
+// oldFull to newFull. Caller must hold st.mu.
+func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
+	if v := st.RepoSecrets[oldFull]; v != nil {
+		st.RepoSecrets[newFull] = v
+		delete(st.RepoSecrets, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_secrets", newFull, v)
+			st.persist.MustDelete("repo_secrets", oldFull)
+		}
+	}
+	if v := st.RepoVariables[oldFull]; v != nil {
+		st.RepoVariables[newFull] = v
+		delete(st.RepoVariables, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_variables", newFull, v)
+			st.persist.MustDelete("repo_variables", oldFull)
+		}
+	}
+	if v := st.RepoCollaborators[oldFull]; v != nil {
+		st.RepoCollaborators[newFull] = v
+		delete(st.RepoCollaborators, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_collaborators", newFull, v)
+			st.persist.MustDelete("repo_collaborators", oldFull)
+		}
+	}
+	if v := st.Hooks[oldFull]; v != nil {
+		st.Hooks[newFull] = v
+		delete(st.Hooks, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("hooks", newFull, v)
+			st.persist.MustDelete("hooks", oldFull)
+		}
+	}
+	if v := st.CheckSuitePrefs[oldFull]; v != nil {
+		st.CheckSuitePrefs[newFull] = v
+		delete(st.CheckSuitePrefs, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("check_suite_prefs", newFull, v)
+			st.persist.MustDelete("check_suite_prefs", oldFull)
+		}
+	}
+	if v := st.RepoAutolinks[oldFull]; v != nil {
+		for _, a := range v {
+			a.RepoKey = newFull
+		}
+		st.RepoAutolinks[newFull] = v
+		delete(st.RepoAutolinks, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_autolinks", newFull, v)
+			st.persist.MustDelete("repo_autolinks", oldFull)
+		}
+	}
+	if v := st.RepoInvitations[oldFull]; v != nil {
+		for _, inv := range v {
+			inv.RepoKey = newFull
+		}
+		st.RepoInvitations[newFull] = v
+		delete(st.RepoInvitations, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_invitations", newFull, v)
+			st.persist.MustDelete("repo_invitations", oldFull)
+		}
+	}
+	if v := st.RepoDeployKeys[oldFull]; v != nil {
+		st.RepoDeployKeys[newFull] = v
+		delete(st.RepoDeployKeys, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_deploy_keys", newFull, v)
+			st.persist.MustDelete("repo_deploy_keys", oldFull)
+		}
+	}
+	if v := st.SecretScanningAlertsByRepo[oldFull]; v != nil {
+		st.SecretScanningAlertsByRepo[newFull] = v
+		for _, alert := range v {
+			alert.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("secret_scanning_alerts", strconv.Itoa(alert.ID), alert)
+			}
+		}
+		delete(st.SecretScanningAlertsByRepo, oldFull)
+		if st.persist != nil {
+			st.persist.MustDelete("secret_scanning_alerts", oldFull)
+		}
+	}
+	if v := st.SecretScanningNextNumber[oldFull]; v != 0 {
+		st.SecretScanningNextNumber[newFull] = v
+		delete(st.SecretScanningNextNumber, oldFull)
+	}
+	if v := st.CodeScanningAlertsByRepo[oldFull]; v != nil {
+		st.CodeScanningAlertsByRepo[newFull] = v
+		for _, alert := range v {
+			alert.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("code_scanning_alerts", strconv.Itoa(alert.ID), alert)
+			}
+		}
+		delete(st.CodeScanningAlertsByRepo, oldFull)
+		if st.persist != nil {
+			st.persist.MustDelete("code_scanning_alerts", oldFull)
+		}
+	}
+	if v := st.CodeScanningNextNumber[oldFull]; v != 0 {
+		st.CodeScanningNextNumber[newFull] = v
+		delete(st.CodeScanningNextNumber, oldFull)
+	}
+	if v := st.CodeScanningAnalysesByRepo[oldFull]; v != nil {
+		st.CodeScanningAnalysesByRepo[newFull] = v
+		for _, a := range v {
+			a.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("code_scanning_analyses", strconv.Itoa(a.ID), a)
+			}
+		}
+		delete(st.CodeScanningAnalysesByRepo, oldFull)
+		if st.persist != nil {
+			st.persist.MustDelete("code_scanning_analyses", oldFull)
+		}
+	}
+	if v := st.DependabotAlertsByRepo[oldFull]; v != nil {
+		st.DependabotAlertsByRepo[newFull] = v
+		for _, alert := range v {
+			alert.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("dependabot_alerts", strconv.Itoa(alert.ID), alert)
+			}
+		}
+		delete(st.DependabotAlertsByRepo, oldFull)
+		if st.persist != nil {
+			st.persist.MustDelete("dependabot_alerts", oldFull)
+		}
+	}
+	if v := st.DependabotNextNumber[oldFull]; v != 0 {
+		st.DependabotNextNumber[newFull] = v
+		delete(st.DependabotNextNumber, oldFull)
+	}
+	if v := st.DependabotSecrets[oldFull]; v != nil {
+		st.DependabotSecrets[newFull] = v
+		delete(st.DependabotSecrets, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("dependabot_secrets", newFull, v)
+			st.persist.MustDelete("dependabot_secrets", oldFull)
+		}
+	}
+
+	if v := st.SecurityAdvisoriesByRepo[oldFull]; v != nil {
+		st.SecurityAdvisoriesByRepo[newFull] = v
+		for _, a := range v {
+			if st.persist != nil {
+				st.persist.MustPut("security_advisories", strconv.Itoa(a.ID), a)
+			}
+		}
+		delete(st.SecurityAdvisoriesByRepo, oldFull)
+		if st.persist != nil {
+			st.persist.MustDelete("security_advisories", oldFull)
+		}
+	}
+
+	for k, v := range st.EnvSecrets {
+		repoKey, envName, found := strings.Cut(k, "\x1f")
+		if found && repoKey == oldFull {
+			newKey := newFull + "\x1f" + envName
+			st.EnvSecrets[newKey] = v
+			delete(st.EnvSecrets, k)
+			if st.persist != nil {
+				st.persist.MustPut("env_secrets", newKey, v)
+				st.persist.MustDelete("env_secrets", k)
+			}
+		}
+	}
+	for k, v := range st.EnvVariables {
+		repoKey, envName, found := strings.Cut(k, "\x1f")
+		if found && repoKey == oldFull {
+			newKey := newFull + "\x1f" + envName
+			st.EnvVariables[newKey] = v
+			delete(st.EnvVariables, k)
+			if st.persist != nil {
+				st.persist.MustPut("env_variables", newKey, v)
+				st.persist.MustDelete("env_variables", k)
+			}
+		}
+	}
+
+	for _, wf := range st.Workflows {
+		if wf.RepoFullName == oldFull {
+			wf.RepoFullName = newFull
+		}
+	}
+	for _, wf := range st.WorkflowFiles {
+		if wf.RepoFullName == oldFull {
+			wf.RepoFullName = newFull
+		}
+	}
+
+	st.Misc.mu.Lock()
+	if v := st.Misc.pagesBuilds[oldFull]; v != nil {
+		st.Misc.pagesBuilds[newFull] = v
+		delete(st.Misc.pagesBuilds, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("pages_builds", newFull, v)
+			st.persist.MustDelete("pages_builds", oldFull)
+		}
+	}
+	st.Misc.mu.Unlock()
+}
+
+// RenameBranch renames a git branch in a repository.
+func (st *Store) RenameBranch(repoID int, branch, newName string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return false
+	}
+	owner, name, ok := splitRepoFullName(repo.FullName)
+	if !ok {
+		return false
+	}
+	stor := st.GitStorages[owner+"/"+name]
+	if stor == nil {
+		return false
+	}
+
+	oldRef := plumbing.NewBranchReferenceName(branch)
+	newRef := plumbing.NewBranchReferenceName(newName)
+	ref, err := stor.Reference(oldRef)
+	if err != nil {
+		return false
+	}
+	if _, err := stor.Reference(newRef); err == nil {
+		return false
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(newRef, ref.Hash())); err != nil {
+		return false
+	}
+	if err := stor.RemoveReference(oldRef); err != nil {
+		return false
+	}
+	if repo.DefaultBranch == branch {
+		repo.DefaultBranch = newName
+	}
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return true
+}
+
+// SetRepoFlag sets a boolean flag field on a repo by name.
+func (st *Store) SetRepoFlag(repoID int, field string, value bool) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return false
+	}
+	switch field {
+	case "automated_security_fixes_enabled":
+		repo.AutomatedSecurityFixesEnabled = value
+	case "private_vulnerability_reporting_enabled":
+		repo.PrivateVulnerabilityReportingEnabled = value
+	case "vulnerability_alerts_enabled":
+		repo.VulnerabilityAlertsEnabled = value
+	default:
+		return false
+	}
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return true
+}
+
+// SetRepoInteractionLimit sets the interaction limit for a repo.
+func (st *Store) SetRepoInteractionLimit(repoID int, limit string, expiry *time.Time) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return false
+	}
+	repo.InteractionLimit = limit
+	repo.InteractionLimitExpiry = expiry
+	repo.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
+	}
+	return true
 }

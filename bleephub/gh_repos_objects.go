@@ -14,8 +14,6 @@ import (
 
 func (s *Server) registerGHRepoObjectRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/commits", s.handleListCommits)
-	s.route("GET /api/v3/repos/{owner}/{repo}/git/trees/{sha}", s.handleGetTree)
-	s.route("GET /api/v3/repos/{owner}/{repo}/git/blobs/{sha}", s.handleGetBlob)
 	s.route("GET /api/v3/repos/{owner}/{repo}/readme", s.handleGetReadme)
 	s.route("GET /api/v3/repos/{owner}/{repo}/contents/{path...}", s.handleGetContents)
 	s.route("PUT /api/v3/repos/{owner}/{repo}/contents/{path...}", s.requirePerm(scopeContents, permWrite, s.handlePutContents))

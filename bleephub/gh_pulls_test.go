@@ -1,6 +1,10 @@
 package bleephub
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
 	"testing"
 )
 
@@ -261,7 +265,7 @@ func TestListPRReviewsREST(t *testing.T) {
 		"body": "OK", "event": "APPROVE",
 	}).Body.Close()
 
-	resp := ghGet(t, "/api/v3/repos/admin/pr-reviews-list/pulls/1/reviews", "")
+	resp := ghGet(t, "/api/v3/repos/admin/pr-reviews-list/pulls/1/reviews", defaultToken)
 	if resp.StatusCode != 200 {
 		resp.Body.Close()
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -269,6 +273,178 @@ func TestListPRReviewsREST(t *testing.T) {
 	reviews := decodeJSONArray(t, resp)
 	if len(reviews) == 0 {
 		t.Fatal("expected at least 1 review")
+	}
+}
+
+func TestPRReviewCRUDREST(t *testing.T) {
+	createTestPRRepo(t, "pr-review-crud")
+	ghPost(t, "/api/v3/repos/admin/pr-review-crud/pulls", defaultToken, map[string]interface{}{
+		"title": "Review CRUD", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	// Create a pending review (no event)
+	resp := ghPost(t, "/api/v3/repos/admin/pr-review-crud/pulls/1/reviews", defaultToken, map[string]interface{}{
+		"body": "Pending feedback",
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("create review: expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["state"] != "PENDING" {
+		t.Fatalf("expected state=PENDING, got %v", data["state"])
+	}
+	if data["submitted_at"] != nil {
+		t.Fatalf("expected submitted_at=null for pending, got %v", data["submitted_at"])
+	}
+	reviewID := int(data["id"].(float64))
+
+	// Get review
+	resp = ghGet(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-crud/pulls/1/reviews/%d", reviewID), defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("get review: expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	if data["body"] != "Pending feedback" {
+		t.Fatalf("expected body='Pending feedback', got %v", data["body"])
+	}
+
+	// Update review body
+	resp = ghPut(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-crud/pulls/1/reviews/%d", reviewID), defaultToken, map[string]interface{}{
+		"body": "Updated feedback",
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("update review: expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	if data["body"] != "Updated feedback" {
+		t.Fatalf("expected body='Updated feedback', got %v", data["body"])
+	}
+
+	// Submit review as APPROVED
+	resp = ghPost(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-crud/pulls/1/reviews/%d/events", reviewID), defaultToken, map[string]interface{}{
+		"event": "APPROVE",
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("submit review: expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	if data["state"] != "APPROVED" {
+		t.Fatalf("expected state=APPROVED, got %v", data["state"])
+	}
+	if data["submitted_at"] == nil {
+		t.Fatal("expected submitted_at to be set after submit")
+	}
+
+	// Dismiss review
+	resp = ghPut(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-crud/pulls/1/reviews/%d/dismissals", reviewID), defaultToken, map[string]interface{}{
+		"message": "Dismissed via test",
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("dismiss review: expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	if data["state"] != "DISMISSED" {
+		t.Fatalf("expected state=DISMISSED, got %v", data["state"])
+	}
+}
+
+func TestPRReviewDeletePendingREST(t *testing.T) {
+	createTestPRRepo(t, "pr-review-delete")
+	ghPost(t, "/api/v3/repos/admin/pr-review-delete/pulls", defaultToken, map[string]interface{}{
+		"title": "Review delete", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	resp := ghPost(t, "/api/v3/repos/admin/pr-review-delete/pulls/1/reviews", defaultToken, map[string]interface{}{
+		"body": "To delete",
+	})
+	data := decodeJSON(t, resp)
+	reviewID := int(data["id"].(float64))
+
+	resp = ghDelete(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-delete/pulls/1/reviews/%d", reviewID), defaultToken)
+	if resp.StatusCode != 204 {
+		resp.Body.Close()
+		t.Fatalf("expected 204, got %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Verify deleted
+	resp = ghGet(t, fmt.Sprintf("/api/v3/repos/admin/pr-review-delete/pulls/1/reviews/%d", reviewID), defaultToken)
+	defer resp.Body.Close()
+	if resp.StatusCode != 404 {
+		t.Fatalf("expected 404 after delete, got %d", resp.StatusCode)
+	}
+}
+
+func TestPRReviewRequestReviewersREST(t *testing.T) {
+	createTestPRRepo(t, "pr-reviewers")
+	ghPost(t, "/api/v3/repos/admin/pr-reviewers/pulls", defaultToken, map[string]interface{}{
+		"title": "Reviewers", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	// Create a second user to request as reviewer
+	ghPost(t, "/internal/users", defaultToken, map[string]interface{}{
+		"login": "reviewer1", "name": "Reviewer One", "email": "r1@example.com",
+	}).Body.Close()
+
+	// Request reviewer by login
+	resp := ghPost(t, "/api/v3/repos/admin/pr-reviewers/pulls/1/requested_reviewers", defaultToken, map[string]interface{}{
+		"reviewers": []string{"reviewer1"},
+	})
+	if resp.StatusCode != 201 {
+		resp.Body.Close()
+		t.Fatalf("request reviewers: expected 201, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	reviewers, _ := data["requested_reviewers"].([]interface{})
+	if len(reviewers) != 1 {
+		t.Fatalf("expected 1 requested reviewer, got %d", len(reviewers))
+	}
+	reviewer := reviewers[0].(map[string]interface{})
+	if reviewer["login"] != "reviewer1" {
+		t.Fatalf("expected login=reviewer1, got %v", reviewer["login"])
+	}
+
+	// Remove requested reviewer
+	body, _ := json.Marshal(map[string]interface{}{
+		"reviewers": []string{"reviewer1"},
+	})
+	req, _ := http.NewRequest("DELETE", testBaseURL+"/api/v3/repos/admin/pr-reviewers/pulls/1/requested_reviewers", bytes.NewReader(body))
+	req.Header.Set("Authorization", "token "+defaultToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("remove reviewers: expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	reviewers, _ = data["requested_reviewers"].([]interface{})
+	if len(reviewers) != 0 {
+		t.Fatalf("expected 0 requested reviewers after removal, got %d", len(reviewers))
+	}
+}
+
+func TestPRUpdateBranchREST(t *testing.T) {
+	createTestPRRepo(t, "pr-update-branch")
+	ghPost(t, "/api/v3/repos/admin/pr-update-branch/pulls", defaultToken, map[string]interface{}{
+		"title": "Update branch", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	resp := ghPut(t, "/api/v3/repos/admin/pr-update-branch/pulls/1/update-branch", defaultToken, map[string]interface{}{})
+	if resp.StatusCode != 202 {
+		resp.Body.Close()
+		t.Fatalf("expected 202, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if data["message"] == nil || data["message"] == "" {
+		t.Fatal("expected message in update-branch response")
 	}
 }
 

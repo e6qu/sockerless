@@ -96,6 +96,11 @@ func (s *Server) handleIssuesDeleteDispatch(w http.ResponseWriter, r *http.Reque
 		s.handleUnlockIssue(w, r, p1)
 		return
 	}
+	if p2 == "sub_issues" || p2 == "sub_issue" {
+		r.SetPathValue("number", p1)
+		s.handleRemoveSubIssue(w, r)
+		return
+	}
 	writeGHError(w, http.StatusNotFound, "Not Found")
 }
 
@@ -157,6 +162,14 @@ func (s *Server) handleLockIssue(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	issue := s.store.GetIssueByNumber(repoObj.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	// Record a discrete lock event with the actor so the timeline reflects
+	// who performed the lock.
+	s.store.RecordIssueEvent(repoObj.ID, issue.ID, user.ID, "locked", map[string]interface{}{"lock_reason": req.LockReason})
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -176,9 +189,15 @@ func (s *Server) handleUnlockIssue(w http.ResponseWriter, r *http.Request, numbe
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	issue := s.store.GetIssueByNumber(repoObj.ID, num)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	if !s.store.SetIssueOrPRLock(repoObj.ID, num, false, "") {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.store.RecordIssueEvent(repoObj.ID, issue.ID, user.ID, "unlocked", map[string]interface{}{})
 	w.WriteHeader(http.StatusNoContent)
 }
