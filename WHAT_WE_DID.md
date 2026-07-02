@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-02 - AWS behavioral coverage gate + GCP push→pull cleanup (PR #752, closes BUG-2252, advances BUG-1785)
+## 2026-07-02 - AWS behavioral coverage gate + GCP push→pull cleanup (PR #755, closes BUG-2252, advances BUG-1785)
 
 The `feat/big-behavioral-gcp-topology` branch closed the behavioral-coverage gap identified in BUG-2252 and moved the GCP Cloud Build push→pull path away from local-daemon shortcuts.
 
@@ -18,13 +18,14 @@ The `feat/big-behavioral-gcp-topology` branch closed the behavioral-coverage gap
 
 **Registry enforcement.** Added `specs/AWS_BEHAVIORAL_PATTERNS.md` (pattern → classification → source file → behavioral test) and `scripts/check-behavioral-coverage.sh`. The script is wired into `.pre-commit-config.yaml`; it validates every registry row, requires every `*behavioral*_test.go` to be registered, and detects newly-added persistent background loops/listeners in `simulators/aws/*.go` that are not yet classified.
 
-**GCP push→pull cleanup.** Replaced the `docker save | dockerClient.ImageLoad` shortcut in `backends/cloudrun/integration_test.go` and `backends/cloudrun-functions/integration_test.go` with real `docker tag` + `docker push` into the simulator's own `/v2/` Artifact Registry endpoint. The backend now pulls the `eval-arithmetic` and `alpine` test images through the same AR rewrite path it uses in production, with `SOCKERLESS_GCP_AR_ENDPOINT` routing the registry host to the sim. This matches the faithful build→push→pull pattern already proven by `simulators/gcp/sdk-tests/cloudbuild_push_test.go`.
+**GCP push→pull cleanup.** Replaced the `docker save | dockerClient.ImageLoad` shortcut in `backends/cloudrun/integration_test.go` and `backends/cloudrun-functions/integration_test.go` with real `docker tag` + `docker push` into the simulator's own `/v2/` Artifact Registry endpoint, followed by a backend `ImagePull` so the image config (ENTRYPOINT/CMD) is populated through the same registry path used in production. The backend now pulls the `eval-arithmetic` and `alpine` test images through the AR rewrite path, with `SOCKERLESS_GCP_AR_ENDPOINT` routing the registry host to the sim. This matches the faithful build→push→pull pattern already proven by `simulators/gcp/sdk-tests/cloudbuild_push_test.go`.
 
 **Validation.**
 - `GOWORK=off go test -run TestBehavioralGate -count=1 ./...` in `simulators/aws/sdk-tests` passes.
 - `scripts/check-behavioral-coverage.sh` passes on the changed set.
 - `go test -tags integration -run '^$' ./...` compiles in `backends/cloudrun` and `backends/cloudrun-functions`.
-- Full `make test-integration` requires a Docker host that auto-trusts loopback registries (Podman hosts need a scoped insecure-registries drop-in, as documented in the existing `cloudbuild_push_test.go` comment).
+- Full CI on PR #755 is green.
+- Local `make test-integration` requires a Docker host that auto-trusts loopback registries (Podman hosts need a scoped insecure-registries drop-in, as documented in the existing `cloudbuild_push_test.go` comment).
 
 ## 2026-07-02 - CloudWatch metric alarm state reset on PutMetricAlarm (PR #751, closes #749)
 

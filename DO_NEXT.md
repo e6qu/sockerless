@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-PR #752 — `feat/big-behavioral-gcp-topology` — closes BUG-2252 and advances BUG-1785. Adds an AWS behavioral coverage gate (`simulators/aws/sdk-tests/behavioral_gate_test.go`) for background-evaluator/listener/dispatch patterns, a pre-commit registry enforcement script (`scripts/check-behavioral-coverage.sh` + `specs/AWS_BEHAVIORAL_PATTERNS.md`), and replaces the cloudrun/cloudrun-functions integration-test `ImageLoad` shortcut with real pushes into the simulator's `/v2/` registry. Awaiting review/merge.
+PR #755 — `feat/big-behavioral-gcp-topology` — closes BUG-2252 and advances BUG-1785. Adds an AWS behavioral coverage gate (`simulators/aws/sdk-tests/behavioral_gate_test.go`) for background-evaluator/listener/dispatch patterns, a pre-commit registry enforcement script (`scripts/check-behavioral-coverage.sh` + `specs/AWS_BEHAVIORAL_PATTERNS.md`), and replaces the cloudrun/cloudrun-functions integration-test `ImageLoad` shortcut with real pushes into the simulator's `/v2/` registry. CI green; awaiting user merge.
 
-**Next:** after PR #752 merges, resume PLAN.md task C (extend runner topology sweep to Cloud Run + GCF cells) and continue sim/cloud coverage work.
+**Next:** after PR #755 merges, resume PLAN.md task C (extend runner topology sweep to Cloud Run + GCF cells) and continue sim/cloud coverage work.
 
 ---
 ### Prior branch (merged, PR #751): CloudWatch metric alarm state reset on PutMetricAlarm
