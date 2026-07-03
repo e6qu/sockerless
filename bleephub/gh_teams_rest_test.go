@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func setupTeamTestServer(t *testing.T) (*Server, *User, *User, *User, *User, *Org, *Team) {
@@ -38,6 +39,45 @@ func setupTeamTestServer(t *testing.T) (*Server, *User, *User, *User, *User, *Or
 func teamTestToken(s *Server, u *User, scopes string) string {
 	tok := s.store.CreateToken(u.ID, scopes)
 	return tok.Value
+}
+
+func TestListAuthUserTeams_RequiresAuthNotReadOrgScope(t *testing.T) {
+	s := newTestServer()
+	s.registerGHTeamRoutes()
+
+	admin := s.store.LookupUserByLogin("admin")
+	org := s.store.CreateOrg(admin, "auth-user-teams-org", "Auth User Teams Org", "")
+	team := s.store.CreateTeam(org.Login, "engineers", TeamOptions{})
+	s.store.SetMembership(org.Login, admin.ID, OrgRoleMember, MembershipStateActive)
+	s.store.SetTeamMembership(org.Login, team.Slug, admin.ID, TeamRoleMaintainer)
+
+	// A classic OAuth token with only "repo" (no read:org) must still be
+	// able to list the authenticated user's own teams. Regression for #754.
+	oapp := s.store.CreateOAuthApp(admin.ID, "ScopeRegressor", "", "", "")
+	tokRepoOnly, _ := s.store.CreateUserToServerToken(admin.ID, 0, oapp.ClientID, "repo", 8*time.Hour, false)
+
+	req := httptest.NewRequest("GET", "/api/v3/user/teams", nil)
+	req.Header.Set("Authorization", "Bearer "+tokRepoOnly.Token)
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET /user/teams with repo-only OAuth token = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var listed []map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed %d teams, want 1", len(listed))
+	}
+
+	// Unauthenticated requests still get 401.
+	req2 := httptest.NewRequest("GET", "/api/v3/user/teams", nil)
+	w2 := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w2, req2)
+	if w2.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /user/teams without token = %d, want 401", w2.Code)
+	}
 }
 
 func TestTeamMembersList(t *testing.T) {

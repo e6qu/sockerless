@@ -7,7 +7,7 @@ import (
 )
 
 func (s *Server) registerGHTeamRoutes() {
-	s.route("GET /api/v3/user/teams", s.requirePerm(scopeMembers, permRead, s.handleListAuthUserTeams))
+	s.route("GET /api/v3/user/teams", s.handleListAuthUserTeams)
 	s.route("POST /api/v3/orgs/{org}/teams", s.requirePerm(scopeMembers, permWrite, s.handleCreateTeam))
 	s.route("GET /api/v3/orgs/{org}/teams", s.requirePerm(scopeMembers, permRead, s.handleListTeams))
 	s.route("GET /api/v3/orgs/{org}/teams/{team_slug}", s.requirePerm(scopeMembers, permRead, s.handleGetTeam))
