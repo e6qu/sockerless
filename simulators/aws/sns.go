@@ -620,10 +620,12 @@ func snsFanout(topicARN, msgID, subject, message string) {
 // (arn:aws:sqs:<region>:<account>:<queue-name>).
 func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iamServiceSource) {
 	if !iamAuthorizeServiceDelivery(queueARN, "sqs:SendMessage", src) {
+		cwEvalLogger.Info().Str("queueARN", queueARN).Str("topicARN", topicARN).Str("sourceService", src.Service).Msg("SNS to SQS delivery denied by resource policy")
 		return
 	}
 	queueName := snsTopicNameFromARN(queueARN)
 	if _, ok := sqsQueues.Get(queueName); !ok {
+		cwEvalLogger.Info().Str("queueARN", queueARN).Str("queueName", queueName).Msg("SNS to SQS delivery target queue not found")
 		return
 	}
 	envelope := snsNotificationEnvelope(topicARN, msgID, subject, message)

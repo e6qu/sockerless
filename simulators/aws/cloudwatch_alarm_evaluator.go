@@ -49,35 +49,46 @@ const cwAlarmEvalInterval = 2 * time.Second
 // silently break action delivery for all other alarms.
 func cwEvaluateAlarmsOnce() {
 	for _, a := range cwAlarms.List() {
-		func() {
+		func(alarm CWAlarm) {
 			defer func() {
 				if r := recover(); r != nil {
-					cwEvalLogger.Error().Str("alarmName", a.AlarmName).Interface("recover", r).Msg("CloudWatch alarm evaluator panic recovered")
+					cwEvalLogger.Error().Str("alarmName", alarm.AlarmName).Interface("recover", r).Msg("CloudWatch alarm evaluator panic recovered")
 				}
 			}()
-			newState, reason := cwEvaluateAlarmState(a)
-			prev := a.StateValue
-			if prev == "" {
-				prev = "INSUFFICIENT_DATA"
-			}
-			if prev == newState {
+			// Evaluate and dispatch under the alarm store lock so a
+			// concurrent PutMetricAlarm replacement cannot race the
+			// state read / dispatch / state write. Without this, a
+			// freshly-recreated alarm could inherit a stale StateValue
+			// from an in-flight evaluator tick and never dispatch.
+			var prev, newState, reason string
+			dispatched := false
+			updated := cwAlarms.Update(alarm.AlarmName, func(x *CWAlarm) {
+				newState, reason = cwEvaluateAlarmState(*x)
+				prev = x.StateValue
+				if prev == "" {
+					prev = "INSUFFICIENT_DATA"
+				}
+				if prev == newState {
+					return
+				}
+				cwDispatchAlarmActions(*x, prev, newState, reason)
+				x.StateValue = newState
+				x.StateReason = reason
+				x.StateUpdatedTimestamp = time.Now().UTC().Unix()
+				dispatched = true
+			})
+			if !updated || !dispatched {
 				return
 			}
-			cwDispatchAlarmActions(a, prev, newState, reason)
+			cwEvalLogger.Info().Str("alarmName", alarm.AlarmName).Str("oldState", prev).Str("newState", newState).Msg("CloudWatch alarm transitioned")
 			historyData, _ := json.Marshal(map[string]string{
 				"previousState": prev,
 				"newState":      newState,
 				"stateReason":   reason,
 			})
-			cwRecordAlarmHistory(a.AlarmName, "MetricAlarm", "StateUpdate",
+			cwRecordAlarmHistory(alarm.AlarmName, "MetricAlarm", "StateUpdate",
 				fmt.Sprintf("Alarm updated from %s to %s", prev, newState), string(historyData))
-			ts := time.Now().UTC().Unix()
-			cwAlarms.Update(a.AlarmName, func(x *CWAlarm) {
-				x.StateValue = newState
-				x.StateReason = reason
-				x.StateUpdatedTimestamp = ts
-			})
-		}()
+		}(a)
 	}
 }
 
@@ -87,6 +98,7 @@ func cwEvaluateAlarmsOnce() {
 // CloudWatch silently dropping a deleted action target.
 func cwDispatchAlarmActions(a CWAlarm, oldState, newState, reason string) {
 	if !a.ActionsEnabled {
+		cwEvalLogger.Info().Str("alarmName", a.AlarmName).Str("newState", newState).Msg("CloudWatch alarm actions disabled")
 		return
 	}
 	var targets []string
@@ -103,9 +115,11 @@ func cwDispatchAlarmActions(a CWAlarm, oldState, newState, reason string) {
 	}
 	message := cwAlarmNotificationMessage(a, oldState, newState, reason)
 	subject := cwAlarmNotificationSubject(newState, a.AlarmName)
+	cwEvalLogger.Info().Str("alarmName", a.AlarmName).Str("newState", newState).Int("targetCount", len(targets)).Msg("CloudWatch alarm dispatching actions")
 	for _, topicARN := range targets {
 		name := snsTopicNameFromARN(topicARN)
 		if _, ok := snsTopics.Get(name); !ok {
+			cwEvalLogger.Info().Str("alarmName", a.AlarmName).Str("topicARN", topicARN).Msg("CloudWatch alarm action topic not found")
 			continue
 		}
 		snsFanout(topicARN, generateUUID(), subject, message)

@@ -534,3 +534,152 @@ func TestCloudWatch_AlarmSNSActionToSQS_AfterDanglingAlarms(t *testing.T) {
 	assert.Equal(t, "ALARM", body["NewStateValue"])
 	assert.Equal(t, "INSUFFICIENT_DATA", body["OldStateValue"])
 }
+
+// TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate verifies that
+// deleting an alarm and then recreating it with the same name does not leave
+// stale evaluator state that prevents the new alarm from dispatching.
+func TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate(t *testing.T) {
+	url := startProcessModeSim(t)
+
+	cw := cloudwatch.NewFromConfig(sdkConfig(), func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	snsC := sns.NewFromConfig(sdkConfig(), func(o *sns.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	sqsC := sqs.NewFromConfig(sdkConfig(), func(o *sqs.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+
+	ns := "Custom/AlarmDeleteRecreateRepro"
+	alarmName := "alarm-delete-recreate"
+
+	tpc, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("delete-recreate-t")})
+	require.NoError(t, err)
+	topicARN := aws.ToString(tpc.TopicArn)
+	t.Cleanup(func() {
+		_, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: tpc.TopicArn})
+	})
+
+	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("delete-recreate-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl})
+	})
+	queueAttrs, err := sqsC.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+	})
+	require.NoError(t, err)
+	queueARN := queueAttrs.Attributes["QueueArn"]
+
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":"*","Action":"sqs:SendMessage","Resource":"%s"}]}`, queueARN)
+	_, err = sqsC.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl: q.QueueUrl,
+		Attributes: map[string]string{
+			"Policy": policy,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: tpc.TopicArn,
+		Protocol: aws.String("sqs"),
+		Endpoint: aws.String(queueARN),
+	})
+	require.NoError(t, err)
+
+	time.Sleep(3 * time.Second)
+
+	// First incarnation: create alarm, breach it, receive notification.
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(alarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("CPUUtilization"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(50),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{topicARN},
+	})
+	require.NoError(t, err)
+
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String(ns),
+		MetricData: []cwtypes.MetricDatum{
+			{MetricName: aws.String("CPUUtilization"), Value: aws.Float64(100), Unit: cwtypes.StandardUnitPercent, Timestamp: aws.Time(time.Now().UTC())},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{alarmName}})
+		require.NoError(t, err)
+		return len(desc.MetricAlarms) == 1 && desc.MetricAlarms[0].StateValue == cwtypes.StateValueAlarm
+	}, 15*time.Second, 500*time.Millisecond, "first alarm should reach ALARM")
+
+	time.Sleep(2 * time.Second)
+
+	var recv *sqs.ReceiveMessageOutput
+	recv, err = sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 1, "first incarnation must deliver")
+
+	// Delete the alarm, then recreate it with the same name.
+	_, err = cw.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{AlarmNames: []string{alarmName}})
+	require.NoError(t, err)
+
+	_, err = sqsC.PurgeQueue(ctx, &sqs.PurgeQueueInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+
+	// Recreate with a higher threshold and a fresh metric name so the first
+	// incarnation's datapoint cannot pollute the second alarm's 60-second
+	// evaluation bucket.
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(alarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("CPUUtilizationAfterRecreate"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(150),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{topicARN},
+	})
+	require.NoError(t, err)
+
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String(ns),
+		MetricData: []cwtypes.MetricDatum{
+			{MetricName: aws.String("CPUUtilizationAfterRecreate"), Value: aws.Float64(200), Unit: cwtypes.StandardUnitPercent, Timestamp: aws.Time(time.Now().UTC())},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{alarmName}})
+		require.NoError(t, err)
+		return len(desc.MetricAlarms) == 1 && desc.MetricAlarms[0].StateValue == cwtypes.StateValueAlarm
+	}, 15*time.Second, 500*time.Millisecond, "recreated alarm should reach ALARM")
+
+	time.Sleep(2 * time.Second)
+
+	recv, err = sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+	require.Len(t, recv.Messages, 1, "recreated alarm must deliver after delete+recreate")
+
+	var env2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(aws.ToString(recv.Messages[0].Body)), &env2))
+	inner2, ok2 := env2["Message"].(string)
+	require.True(t, ok2)
+	var body2 map[string]any
+	require.NoError(t, json.Unmarshal([]byte(inner2), &body2))
+	assert.Equal(t, alarmName, body2["AlarmName"])
+	assert.Equal(t, "ALARM", body2["NewStateValue"])
+	assert.Equal(t, "INSUFFICIENT_DATA", body2["OldStateValue"])
+}
