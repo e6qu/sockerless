@@ -171,6 +171,110 @@ func TestListAuthUserTeams_ViaOAuthWebFlow(t *testing.T) {
 	}
 }
 
+// TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope verifies that GET
+// /api/v3/user/teams returns the authenticated user's teams when the OAuth
+// web flow is authorized with only read:org, and the team was created without
+// an explicit add-member call. Real GitHub auto-adds the team creator as a
+// maintainer, so /user/teams must reflect that membership. Regression for
+// #763/#765.
+func TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope(t *testing.T) {
+	s := newTestServer()
+	s.registerGHTeamRoutes()
+	s.registerGHOAuthRoutes()
+
+	admin := s.store.LookupUserByLogin("admin")
+	s.store.CreateOrg(admin, "oauth-readorg-org", "OAuth ReadOrg Org", "")
+	// Create the team through the API as the admin user; the creator must
+	// become a maintainer automatically so /user/teams lists it without an
+	// explicit membership call.
+	reqCreate := httptest.NewRequest("POST", "/api/v3/orgs/oauth-readorg-org/teams", strings.NewReader(`{"name":"platform-admins"}`))
+	reqCreate.Header.Set("Authorization", "Bearer "+s.store.CreateToken(admin.ID, "admin:org").Value)
+	reqCreate.Header.Set("Content-Type", "application/json")
+	wCreate := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(wCreate, reqCreate)
+	if wCreate.Code != http.StatusCreated {
+		t.Fatalf("create team status = %d, want 201; body=%s", wCreate.Code, wCreate.Body.String())
+	}
+	var createdTeam map[string]interface{}
+	if err := json.Unmarshal(wCreate.Body.Bytes(), &createdTeam); err != nil {
+		t.Fatal(err)
+	}
+	if createdTeam["members_count"] != float64(1) {
+		t.Fatalf("expected members_count=1, got %v", createdTeam["members_count"])
+	}
+
+	oapp := s.store.CreateOAuthApp(admin.ID, "AuthJSReadOrg", "", "", "http://localhost:3000/api/auth/callback/github")
+
+	// Step 1: authorize with read:org only.
+	authorizeURL := fmt.Sprintf("/login/oauth/authorize?auto=1&client_id=%s&redirect_uri=%s&scope=read:org&state=xyz",
+		url.QueryEscape(oapp.ClientID),
+		url.QueryEscape("http://localhost:3000/api/auth/callback/github"))
+	req := httptest.NewRequest("GET", authorizeURL, nil)
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, want 302; body=%s", w.Code, w.Body.String())
+	}
+	loc, err := w.Result().Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := loc.Query().Get("code")
+	if code == "" {
+		t.Fatalf("authorize redirect missing code: %s", loc.String())
+	}
+
+	// Step 2: exchange the code for an access token.
+	form := url.Values{}
+	form.Set("client_id", oapp.ClientID)
+	form.Set("client_secret", oapp.ClientSecret)
+	form.Set("code", code)
+	form.Set("redirect_uri", "http://localhost:3000/api/auth/callback/github")
+	form.Set("grant_type", "authorization_code")
+	req2 := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(form.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Accept", "application/json")
+	w2 := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("access_token status = %d, want 200; body=%s", w2.Code, w2.Body.String())
+	}
+	var tokenResp map[string]interface{}
+	if err := json.Unmarshal(w2.Body.Bytes(), &tokenResp); err != nil {
+		t.Fatal(err)
+	}
+	accessToken, _ := tokenResp["access_token"].(string)
+	if accessToken == "" {
+		t.Fatalf("access_token response missing access_token: %s", w2.Body.String())
+	}
+
+	// Step 3: call GET /api/v3/user/teams with the web-flow token.
+	req3 := httptest.NewRequest("GET", "/api/v3/user/teams?per_page=100", nil)
+	req3.Header.Set("Authorization", "Bearer "+accessToken)
+	w3 := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("GET /user/teams status = %d, want 200; body=%s", w3.Code, w3.Body.String())
+	}
+	var listed []map[string]interface{}
+	if err := json.Unmarshal(w3.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed %d teams, want 1; body=%s", len(listed), w3.Body.String())
+	}
+	if listed[0]["slug"] != "platform-admins" {
+		t.Fatalf("expected slug platform-admins, got %v", listed[0]["slug"])
+	}
+	if listed[0]["members_count"] != float64(1) {
+		t.Fatalf("expected members_count=1, got %v", listed[0]["members_count"])
+	}
+	orgObj, _ := listed[0]["organization"].(map[string]interface{})
+	if orgObj == nil || orgObj["login"] != "oauth-readorg-org" {
+		t.Fatalf("expected organization.login=oauth-readorg-org, got %v", listed[0]["organization"])
+	}
+}
+
 func TestTeamMembersList(t *testing.T) {
 	s, _, _, member, outsider, _, team := setupTeamTestServer(t)
 
