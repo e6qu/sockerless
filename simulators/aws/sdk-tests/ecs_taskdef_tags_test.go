@@ -61,3 +61,53 @@ func tagPairs(tags []ecstypes.Tag) [][2]string {
 	}
 	return out
 }
+
+// TestECS_DescribeTasksTagsIncludePath verifies that DescribeTasks surfaces
+// task tags only when Include=[TAGS] is passed, matching real AWS. Without
+// Include, the tags field is absent from each task object.
+func TestECS_DescribeTasksTagsIncludePath(t *testing.T) {
+	c := ecsClient()
+
+	reg, err := c.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:               aws.String("task-tags-include"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("nginx")}},
+	})
+	require.NoError(t, err)
+
+	cluster, err := c.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String("task-tags-include-cluster")})
+	require.NoError(t, err)
+	clusterArn := cluster.Cluster.ClusterArn
+
+	run, err := c.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        clusterArn,
+		TaskDefinition: reg.TaskDefinition.TaskDefinitionArn,
+		Tags: []ecstypes.Tag{
+			{Key: aws.String("app"), Value: aws.String("billing")},
+			{Key: aws.String("env"), Value: aws.String("prod")},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, run.Tasks, 1)
+	taskArn := run.Tasks[0].TaskArn
+
+	// With Include=TAGS, the tags appear on the task.
+	withTags, err := c.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: clusterArn,
+		Tasks:   []string{aws.ToString(taskArn)},
+		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
+	})
+	require.NoError(t, err)
+	require.Len(t, withTags.Tasks, 1)
+	assert.NotEmpty(t, withTags.Tasks[0].Tags, "DescribeTasks with Include=TAGS must return tags")
+
+	// Without Include, tags are absent.
+	noTags, err := c.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+		Cluster: clusterArn,
+		Tasks:   []string{aws.ToString(taskArn)},
+	})
+	require.NoError(t, err)
+	require.Len(t, noTags.Tasks, 1)
+	assert.Empty(t, noTags.Tasks[0].Tags, "DescribeTasks without Include=TAGS must omit tags")
+
+	_, _ = c.StopTask(ctx, &ecs.StopTaskInput{Cluster: clusterArn, Task: taskArn})
+}

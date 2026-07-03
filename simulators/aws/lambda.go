@@ -609,17 +609,52 @@ func handleLambdaListFunctions(w http.ResponseWriter, r *http.Request) {
 			maxItems = n
 		}
 	}
-	page, next := awsPage(stored, marker, maxItems, 50)
+	allVersions := strings.EqualFold(r.URL.Query().Get("FunctionVersion"), "ALL")
 
-	functions := make([]lambdaFunctionConfiguration, 0, len(page))
-	for _, fn := range page {
-		functions = append(functions, lambdaConfiguration(fn))
+	// Build the full result list. Default (no FunctionVersion) returns
+	// $LATEST for each function; FunctionVersion=ALL additionally
+	// includes every published version with a version-qualified ARN.
+	var all []lambdaFunctionConfiguration
+	for _, fn := range stored {
+		all = append(all, lambdaConfiguration(fn))
+		if allVersions {
+			lambdaVersionsMu.Lock()
+			published := append([]LambdaVersion(nil), lambdaVersions[fn.FunctionName]...)
+			lambdaVersionsMu.Unlock()
+			for _, v := range published {
+				all = append(all, lambdaConfigurationFromVersion(v))
+			}
+		}
 	}
-	out := map[string]any{"Functions": functions}
+
+	page, next := awsPage(all, marker, maxItems, 50)
+
+	out := map[string]any{"Functions": page}
 	if next != "" {
 		out["NextMarker"] = next
 	}
 	sim.WriteJSON(w, http.StatusOK, out)
+}
+
+func lambdaConfigurationFromVersion(v LambdaVersion) lambdaFunctionConfiguration {
+	return lambdaFunctionConfiguration{
+		FunctionName:     v.FunctionName,
+		FunctionArn:      v.FunctionArn,
+		Runtime:          v.Runtime,
+		Role:             v.Role,
+		Handler:          v.Handler,
+		CodeSha256:       v.CodeSha256,
+		CodeSize:         v.CodeSize,
+		Description:      v.Description,
+		MemorySize:       v.MemorySize,
+		Timeout:          v.Timeout,
+		State:            v.State,
+		LastUpdateStatus: v.LastUpdateStatus,
+		LastModified:     v.LastModified,
+		RevisionId:       v.RevisionId,
+		Version:          v.Version,
+		PackageType:      v.PackageType,
+	}
 }
 
 // injectLambdaLogs creates a CloudWatch log group, stream, and initial log
