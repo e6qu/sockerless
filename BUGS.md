@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2280 filed - 2237 fixed - 2 open - 16 false positives.**
+**2281 filed - 2238 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2281 | P2 | AWS sim — CloudWatch alarm evaluator | race between evaluator tick and PutMetricAlarm replacement | `cwEvaluateAlarmsOnce` evaluated alarm state from a `cwAlarms.List()` snapshot, then dispatched actions and wrote the new state back via a separate `Update`. A concurrent `PutMetricAlarm` could replace the alarm record between the snapshot and the write, causing a freshly-created alarm to inherit the old `StateValue` (e.g. `ALARM`) and skip dispatching `AlarmActions`. Fixed by moving the state read, dispatch, and state write into a single `cwAlarms.Update` callback and deriving `newState` from the live alarm record inside that callback. Added `TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate`. Closes GitHub issues #758 and #760. |
 | 2280 | P3 | tests — eval-arithmetic image build | CI-caught test infra | `tests/main_test.go` built the `linux/arm64` `sockerless-eval-arithmetic:test` image with `docker build`, but the BuildKit `docker-container` driver leaves the result in the build cache unless `--load` is passed. CI `test (core)` and local runs then failed with `No such image` because the test backend could not resolve the locally-built tag. Fixed by adding `--load` to the `docker build` invocation so the image is loaded into the local store. |
 | 2279 | P2 | bleephub — GET /api/v3/user/teams | permission regression | Parity tranche #750 wrapped `GET /api/v3/user/teams` in `requirePerm(scopeMembers, permRead)`, so OAuth tokens without `read:org` (e.g., Auth.js defaults) received 403. Real GitHub does not require `read:org` for this endpoint because it returns the authenticated user's own teams. Fixed by removing the permission gate from that route only; other team routes keep their gates. Regression test `TestListAuthUserTeams_RequiresAuthNotReadOrgScope` verifies a `repo`-only OAuth token can list the user's teams. |
 | 2278 | P2 | AWS sim — CloudWatch alarm evaluator | background goroutine death | After #751 reset `cwAlarmLastState` on `PutMetricAlarm`, integrated terraform-sim probes still saw no `SNS.Publish` even though `DescribeAlarms` reported `ALARM`. The evaluator tracked last-dispatched state in a standalone `sync.Map` that had to be manually reset on every `PutMetricAlarm` path; a panic while evaluating/dispatching one alarm could also kill the background goroutine and silently break all subsequent alarm actions. Fixed by moving the last-dispatched state onto each alarm's own `StateValue` field (so `PutMetricAlarm` replacement naturally resets it) and adding per-alarm panic recovery in the evaluator loop. Added `TestCloudWatch_AlarmSNSActionToSQS_ResilientToOneBadAlarm`. |

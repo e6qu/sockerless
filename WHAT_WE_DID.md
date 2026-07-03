@@ -4,6 +4,23 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-03 - CloudWatch alarm evaluator atomic state transition closes #758 and #760 (PR #759)
+
+The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #758 and #760.
+
+**Root cause.** The CloudWatch alarm evaluator in `cwEvaluateAlarmsOnce` took a snapshot of every alarm via `cwAlarms.List()`, derived the new state, dispatched actions, and only then wrote the new state back to the alarm record through a separate `cwAlarms.Update`. A concurrent `PutMetricAlarm` request could replace the alarm record between the snapshot and the write, leaving a freshly-created alarm with a stale `StateValue` inherited from the evaluator's in-flight tick. The alarm therefore never transitioned from the stale state and `AlarmActions` were not dispatched.
+
+**Fix.** Moved the entire evaluate / dispatch / persist sequence into a single `cwAlarms.Update` callback so it runs atomically under the alarm store lock. The new state is derived from the live alarm record inside the callback, and the transition is recorded only when the live state differs from the live `StateValue`. Captured the per-alarm closure argument by value so the panic-recovery logger reports the correct alarm name. Added Info-level logging in `cwDispatchAlarmActions` for disabled actions and missing action topics, and in `snsDeliverToSQS` for resource-policy denials and missing target queues.
+
+**Regression test.** `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate`, which starts a fresh `SIM_RUNTIME=process` simulator subprocess, creates an alarm, pumps a breaching datapoint, asserts the SQS subscriber receives the first notification, deletes the alarm, purges the queue, recreates the same alarm name with a fresh metric, pumps another breaching datapoint, and asserts a second notification arrives with `OldStateValue: INSUFFICIENT_DATA`.
+
+**Files changed.** `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/sns.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`.
+
+**Validation.**
+- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go test -count=1 ./` in `simulators/aws` passes.
+- `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
+
 ## 2026-07-02 - Open issue fixes: bleephub /user/teams OAuth scope regression (#754) and CloudWatch alarm evaluator resilience (#753)
 
 The `fix/open-issues-753-754-after-755` branch closed the two open issues that surfaced after merging PR #755.
