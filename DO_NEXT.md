@@ -4,38 +4,42 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/cloudwatch-alarm-evaluator-758`. PR #764 will close GitHub issues #762 and #763.
+`fix/open-issues-765-766`. PR #767 will close GitHub issues #765 and #766, and fully resolve #763.
 
 **Scope**
-- Full fan-out observability for CloudWatch→SNS→SQS (#762).
-- bleephub `/user/teams` OAuth web-flow fidelity + `X-OAuth-Scopes` for `gho_`/`ghu_` tokens (#763).
+- bleephub `POST /orgs/{org}/teams` now auto-adds the authenticated creator as a team maintainer, matching real GitHub (#763/#765).
+- SQS `ReceiveMessage` and `sqsEnqueueBody` debug logging to diagnose empty-receive cases (#766).
+- CLI regression test that polls `receive-message` repeatedly after a CloudWatch alarm reaches `ALARM` (#766).
 
 **Validation**
-- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
-- `GOWORK=off go test -run TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode -count=1 ./` in `simulators/aws/cli-tests` passes.
-- `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
+- `go test -run 'TestListAuthUserTeams|TestCreateTeam|TestTeamMembersList' -count=1 ./bleephub` passes.
+- `GOWORK=off go test -run 'TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode' -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
 - `pre-commit run --files <changed files>` passes.
 
-**Next:** merge PR #764 and resume PLAN.md / open issues / BUGS.md work.
+**Next:** create the new PR and update continuity files with its number.
 
 ---
-### Prior branch (open, PR #764): CloudWatch SNS fan-out observability + bleephub OAuth team fidelity
+### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics
 
-The `fix/cloudwatch-alarm-evaluator-758` branch will close GitHub issues #762 and #763.
+The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and fully resolve #763.
 
-**CloudWatch→SNS→SQS fan-out observability (#762).** Added Info-level logging at every fan-out decision point: subscription count, matching subscriptions, each delivery attempt, policy-denied skips, missing-target skips, and successful SQS enqueue / Lambda invoke. Added `TestCloudWatch_AlarmSNSActionToSQS_NoSubscription` and `TestCloudWatch_AlarmSNSActionToSQS_PolicyDenied`.
+**Team creator auto-maintainer (#763/#765).** Real GitHub's `POST /orgs/{org}/teams` makes the authenticated creator a team maintainer automatically. bleephub's `handleCreateTeam` now calls `SetTeamMembership` for the authenticated user with `TeamRoleMaintainer` after creating the team, so downstream OAuth web-flow tests that create a team and then call `/user/teams` see the expected membership. Added `TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope` which creates a team via the API and asserts a `read:org` OAuth token lists it.
 
-**bleephub `/user/teams` OAuth fidelity (#763).** `ghHeadersMiddleware` now emits `X-OAuth-Scopes` for `gho_`/`ghu_` user-to-server tokens, matching real GitHub. Added `TestListAuthUserTeams_ViaOAuthWebFlow` to lock in the full authorize→access_token→/user/teams path. Added a debug log recording the authenticated user and team count to help diagnose any remaining e2e setup mismatches.
+**SQS receive diagnostics (#766).** Added Debug-level logging in `sqsEnqueueBody` (queue name and message count after enqueue) and in `handleSQSReceiveMessage` (queue name, total messages, visible messages, picked count, redrived count, visibility timeout). This helps diagnose cases where SNS reports a successful delivery but downstream `ReceiveMessage` calls return an empty `Messages` array.
 
-**Files changed.** `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/sns.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`, `bleephub/gh_middleware.go`, `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`.
+**Repeated-poll CLI regression test (#766).** `simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode_PollLoop`, which mirrors the downstream probe by polling `receive-message` once per second for up to 15 seconds after the alarm reaches `ALARM` (with no up-front sleep).
+
+**Files changed.** `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`, `simulators/aws/sqs.go`, `simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go`.
 
 **Validation.**
-- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
-- `GOWORK=off go test -run TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode -count=1 ./` in `simulators/aws/cli-tests` passes.
-- `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
-- `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go bleephub/gh_middleware.go bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go` passes.
+- `go test -run 'TestListAuthUserTeams|TestCreateTeam|TestTeamMembersList' -count=1 ./bleephub` passes.
+- `go test -count=1 ./bleephub` passes.
+- `GOWORK=off go test -run 'TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode' -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `pre-commit run --files bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go simulators/aws/sqs.go simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
 
-**Next:** merge PR #764.
+**Next:** create the new PR.
 
 ---
 ### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758

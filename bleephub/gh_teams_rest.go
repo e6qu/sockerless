@@ -127,8 +127,13 @@ func (s *Server) handleCreateTeam(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return
 	}
+	// Real GitHub makes the authenticated creator a team maintainer
+	// automatically, even when the request omits them from maintainers.
+	s.store.SetTeamMembership(orgLogin, team.Slug, user.ID, TeamRoleMaintainer)
 	for _, id := range maintainerIDs {
-		s.store.SetTeamMembership(orgLogin, team.Slug, id, TeamRoleMaintainer)
+		if id != user.ID {
+			s.store.SetTeamMembership(orgLogin, team.Slug, id, TeamRoleMaintainer)
+		}
 	}
 	for _, fullName := range req.RepoNames {
 		s.store.SetTeamRepoPermission(orgLogin, team.Slug, fullName, "")

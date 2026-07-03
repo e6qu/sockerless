@@ -4,6 +4,29 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-03 - Team creator auto-maintainer and SQS receive diagnostics close #763, #765, and #766 (PR #767)
+
+The `fix/open-issues-765-766` branch closed GitHub issues #763 and #765 and addressed #766. The preceding PR #764 closed #762.
+
+**Root cause (#763/#765).** Real GitHub's `POST /api/v3/orgs/{org}/teams` automatically makes the authenticated creator a team maintainer. bleephub's `handleCreateTeam` only added users from the optional `maintainers` array, so downstream OAuth web-flow tests that created a team and then called `/user/teams` received an empty list.
+
+**Fix (#763/#765).** `handleCreateTeam` now calls `s.store.SetTeamMembership(orgLogin, team.Slug, user.ID, TeamRoleMaintainer)` for the authenticated creator after the team is created. The explicit `maintainers` list is still applied, with a duplicate guard so the creator is not double-counted.
+
+**Regression test (#763/#765).** `bleephub/gh_teams_rest_test.go` gained `TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope`, which creates an org and team via the API, runs the OAuth web flow with `scope=read:org`, and asserts `/api/v3/user/teams` returns the team with `members_count=1`.
+
+**SQS receive diagnostics (#766).** Downstream probes reported SNS→SQS delivery logs showed success but `ReceiveMessage` returned empty for 30 seconds. Added Debug-level logging in `simulators/aws/sqs.go`: `sqsEnqueueBody` logs queue name and post-enqueue message count; `handleSQSReceiveMessage` logs queue name, total messages, visible messages, picked count, redrived count, and visibility timeout.
+
+**Repeated-poll CLI regression test (#766).** `simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode_PollLoop`, which mirrors the downstream probe by polling `receive-message` once per second for up to 15 seconds after the alarm reaches `ALARM` (with no up-front sleep).
+
+**Files changed.** `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`, `simulators/aws/sqs.go`, `simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go`.
+
+**Validation.**
+- `go test -run 'TestListAuthUserTeams|TestCreateTeam|TestTeamMembersList' -count=1 ./bleephub` passes.
+- `go test -count=1 ./bleephub` passes.
+- `GOWORK=off go test -run 'TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode' -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `pre-commit run --files bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go simulators/aws/sqs.go simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
+
 ## 2026-07-03 - CloudWatch SNS fan-out observability and bleephub OAuth team fidelity closes #762 and #763 (PR #764)
 
 The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #762 and #763. The related CloudWatch alarm evaluator race (#760) was closed by the preceding PR #761, and the dangling-alarm report #758 was closed by PR #759.

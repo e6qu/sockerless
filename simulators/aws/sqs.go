@@ -669,6 +669,9 @@ func sqsEnqueueBody(queueName, body string) {
 			SentTimestamp: time.Now().Unix(),
 		})
 	})
+	if q, ok := sqsQueues.Get(queueName); ok {
+		cwEvalLogger.Debug().Str("queueName", queueName).Int("messageCount", len(q.Messages)).Msg("SQS enqueue body completed")
+	}
 }
 
 func handleSQSSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -830,9 +833,14 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		var hasRedrive bool
 		var maxReceiveCount int
 		dlqARN, maxReceiveCount, hasRedrive = sqsParseRedrivePolicy(qq.Attributes)
+		originalCount := len(qq.Messages)
+		visibleCount := 0
 		kept := qq.Messages[:0]
 		for i := range qq.Messages {
 			m := qq.Messages[i]
+			if m.VisibleAt <= now {
+				visibleCount++
+			}
 			if len(picked) >= maxN || m.VisibleAt > now {
 				kept = append(kept, m)
 				continue
@@ -851,6 +859,7 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 			picked = append(picked, m)
 		}
 		qq.Messages = kept
+		cwEvalLogger.Debug().Str("queueName", name).Int("totalMessages", originalCount).Int("visibleMessages", visibleCount).Int("picked", len(picked)).Int("redrived", len(redrived)).Int("visibilityTimeout", visTimeout).Msg("SQS ReceiveMessage scanned queue")
 	})
 	sqsEnqueueRedrives(dlqARN, redrived)
 
