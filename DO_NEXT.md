@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/open-issues-765-766`. A new PR will close GitHub issues #765 and #766, and fully resolve #763.
+`fix/open-issues-765-766`. PR #767 will close GitHub issues #765 and #766, and fully resolve #763.
 
 **Scope**
 - bleephub `POST /orgs/{org}/teams` now auto-adds the authenticated creator as a team maintainer, matching real GitHub (#763/#765).
@@ -20,7 +20,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 **Next:** create the new PR and update continuity files with its number.
 
 ---
-### Prior branch (open, new PR): Team creator auto-maintainer + SQS receive diagnostics
+### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics
 
 The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and fully resolve #763.
 

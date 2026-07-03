@@ -6,7 +6,7 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|---|
-| Active branch | `fix/open-issues-765-766` — new PR will close #765 and #766; also resolves the underlying cause of #763. |
+| Active branch | `fix/open-issues-765-766` — PR #767 will close #765 and #766; also resolves the underlying cause of #763. |
 | Last merged (#764) | `fix/cloudwatch-alarm-evaluator-758` — closed GitHub issue #762 (CloudWatch→SNS→SQS fan-out observability) and attempted to close #763 (bleephub `/user/teams` OAuth `X-OAuth-Scopes` header + OAuth web-flow test). |
 | Last merged (#759) | `fix/cloudwatch-alarm-evaluator-758` — closed GitHub issue #758 (CloudWatch alarm evaluator dangling-alarm regression test: alarms with deleted action targets no longer hang the background evaluator). |
 | Last merged (#756) | `fix/open-issues-753-754-after-755` — closed GitHub issues #754 (bleephub `GET /api/v3/user/teams` no longer requires `read:org`) and #753 (CloudWatch alarm evaluator resilience: moved last-dispatched state onto each alarm's `StateValue` and added per-alarm panic recovery). Boyscout fix: added `--load` to the eval-arithmetic image build in `tests/main_test.go` so the image is loaded into the local store. |

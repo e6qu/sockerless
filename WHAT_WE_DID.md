@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-03 - Team creator auto-maintainer and SQS receive diagnostics close #763, #765, and #766 (PR #TBD)
+## 2026-07-03 - Team creator auto-maintainer and SQS receive diagnostics close #763, #765, and #766 (PR #767)
 
 The `fix/open-issues-765-766` branch closed GitHub issues #763 and #765 and addressed #766. The preceding PR #764 closed #762.
 
