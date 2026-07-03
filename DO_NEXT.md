@@ -4,25 +4,38 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-None. PR #761 (`fix/cloudwatch-alarm-evaluator-758`) is merged. It closed GitHub issue #760 (CloudWatch alarm evaluator race between background tick and `PutMetricAlarm` replacement).
+`fix/cloudwatch-alarm-evaluator-758`. A new PR will close GitHub issues #762 and #763.
 
-**Next:** resume work from [PLAN.md](PLAN.md), open issues, and [BUGS.md](BUGS.md).
+**Scope**
+- Full fan-out observability for CloudWatch→SNS→SQS (#762).
+- bleephub `/user/teams` OAuth web-flow fidelity + `X-OAuth-Scopes` for `gho_`/`ghu_` tokens (#763).
+
+**Validation**
+- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go test -run TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
+- `pre-commit run --files <changed files>` passes.
+
+**Next:** create the new PR, update this file with its number, then merge and resume PLAN.md / open issues / BUGS.md work.
 
 ---
-### Prior branch (merged, PR #761): CloudWatch alarm evaluator atomic state transition closes #760
+### Prior branch (open, new PR): CloudWatch SNS fan-out observability + bleephub OAuth team fidelity
 
-The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issue #760.
+The `fix/cloudwatch-alarm-evaluator-758` branch will close GitHub issues #762 and #763.
 
-**CloudWatch alarm evaluator now holds the evaluate/dispatch/write sequence under the alarm store lock.** `cwEvaluateAlarmsOnce` previously took a snapshot of every alarm with `cwAlarms.List()`, derived the new state, dispatched actions, and wrote the new state back through a separate `cwAlarms.Update`. A concurrent `PutMetricAlarm` could replace the alarm record between the snapshot and the write, leaving a freshly-created alarm with a stale `StateValue` (for example, `ALARM`) and causing it to skip `AlarmActions` on the next breach. Fixed by moving state derivation, dispatch, and persistence into a single `cwAlarms.Update` callback so the live alarm record is both read and written under the same lock. Added per-alarm closure capture by value for correct panic-recovery logging. Added Info-level logging for disabled actions, missing action topics, and SQS delivery skips.
+**CloudWatch→SNS→SQS fan-out observability (#762).** Added Info-level logging at every fan-out decision point: subscription count, matching subscriptions, each delivery attempt, policy-denied skips, missing-target skips, and successful SQS enqueue / Lambda invoke. Added `TestCloudWatch_AlarmSNSActionToSQS_NoSubscription` and `TestCloudWatch_AlarmSNSActionToSQS_PolicyDenied`.
 
-**Regression test.** `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate` under `SIM_RUNTIME=process`: create an alarm, breach it, receive the notification, delete the alarm, recreate the same alarm name, breach it again, and assert a second notification arrives with `OldStateValue: INSUFFICIENT_DATA`.
+**bleephub `/user/teams` OAuth fidelity (#763).** `ghHeadersMiddleware` now emits `X-OAuth-Scopes` for `gho_`/`ghu_` user-to-server tokens, matching real GitHub. Added `TestListAuthUserTeams_ViaOAuthWebFlow` to lock in the full authorize→access_token→/user/teams path. Added a debug log recording the authenticated user and team count to help diagnose any remaining e2e setup mismatches.
+
+**Files changed.** `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/sns.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`, `bleephub/gh_middleware.go`, `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`.
 
 **Validation.**
 - `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
-- `GOWORK=off go test -count=1 ./` in `simulators/aws` passes.
-- `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
+- `GOWORK=off go test -run TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
+- `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go bleephub/gh_middleware.go bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go` passes.
 
-**Next:** resume PLAN.md / open issues / BUGS.md work.
+**Next:** create the new PR and update continuity files with its number.
 
 ---
 ### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758

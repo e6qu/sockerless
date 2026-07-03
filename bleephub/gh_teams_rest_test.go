@@ -3,8 +3,11 @@ package bleephub
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
 )
@@ -63,6 +66,10 @@ func TestListAuthUserTeams_RequiresAuthNotReadOrgScope(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET /user/teams with repo-only OAuth token = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
+	// X-OAuth-Scopes must reflect the OAuth token's scopes (real GitHub emits it).
+	if got := w.Header().Get("X-OAuth-Scopes"); got != "repo" {
+		t.Fatalf("X-OAuth-Scopes = %q, want repo", got)
+	}
 	var listed []map[string]interface{}
 	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
@@ -77,6 +84,90 @@ func TestListAuthUserTeams_RequiresAuthNotReadOrgScope(t *testing.T) {
 	s.ghHeadersMiddleware(s.mux).ServeHTTP(w2, req2)
 	if w2.Code != http.StatusUnauthorized {
 		t.Fatalf("GET /user/teams without token = %d, want 401", w2.Code)
+	}
+}
+
+// TestListAuthUserTeams_ViaOAuthWebFlow verifies that GET /api/v3/user/teams
+// returns the authenticated user's teams when the caller authenticated through
+// the real OAuth web-flow (authorize → access_token), the path Auth.js's
+// GitHub provider uses. Regression for #763.
+func TestListAuthUserTeams_ViaOAuthWebFlow(t *testing.T) {
+	s := newTestServer()
+	s.registerGHTeamRoutes()
+	s.registerGHOAuthRoutes()
+
+	admin := s.store.LookupUserByLogin("admin")
+	org := s.store.CreateOrg(admin, "oauth-webflow-org", "OAuth WebFlow Org", "")
+	team := s.store.CreateTeam(org.Login, "platform-admins", TeamOptions{})
+	s.store.SetMembership(org.Login, admin.ID, OrgRoleMember, MembershipStateActive)
+	s.store.SetTeamMembership(org.Login, team.Slug, admin.ID, TeamRoleMaintainer)
+
+	oapp := s.store.CreateOAuthApp(admin.ID, "AuthJSReproducer", "", "", "http://localhost:3000/api/auth/callback/github")
+
+	// Step 1: authorize (auto=1 test shortcut) returns a code.
+	authorizeURL := fmt.Sprintf("/login/oauth/authorize?auto=1&client_id=%s&redirect_uri=%s&scope=repo&state=xyz",
+		url.QueryEscape(oapp.ClientID),
+		url.QueryEscape("http://localhost:3000/api/auth/callback/github"))
+	req := httptest.NewRequest("GET", authorizeURL, nil)
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	if w.Code != http.StatusFound {
+		t.Fatalf("authorize status = %d, want 302; body=%s", w.Code, w.Body.String())
+	}
+	loc, err := w.Result().Location()
+	if err != nil {
+		t.Fatal(err)
+	}
+	code := loc.Query().Get("code")
+	if code == "" {
+		t.Fatalf("authorize redirect missing code: %s", loc.String())
+	}
+
+	// Step 2: exchange the code for an access token (JSON Accept, like Auth.js).
+	form := url.Values{}
+	form.Set("client_id", oapp.ClientID)
+	form.Set("client_secret", oapp.ClientSecret)
+	form.Set("code", code)
+	form.Set("redirect_uri", "http://localhost:3000/api/auth/callback/github")
+	form.Set("grant_type", "authorization_code")
+	req2 := httptest.NewRequest("POST", "/login/oauth/access_token", strings.NewReader(form.Encode()))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Accept", "application/json")
+	w2 := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w2, req2)
+	if w2.Code != http.StatusOK {
+		t.Fatalf("access_token status = %d, want 200; body=%s", w2.Code, w2.Body.String())
+	}
+	var tokenResp map[string]interface{}
+	if err := json.Unmarshal(w2.Body.Bytes(), &tokenResp); err != nil {
+		t.Fatal(err)
+	}
+	accessToken, _ := tokenResp["access_token"].(string)
+	if accessToken == "" {
+		t.Fatalf("access_token response missing access_token: %s", w2.Body.String())
+	}
+
+	// Step 3: call GET /api/v3/user/teams with the web-flow token.
+	req3 := httptest.NewRequest("GET", "/api/v3/user/teams?per_page=100", nil)
+	req3.Header.Set("Authorization", "Bearer "+accessToken)
+	w3 := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w3, req3)
+	if w3.Code != http.StatusOK {
+		t.Fatalf("GET /user/teams status = %d, want 200; body=%s", w3.Code, w3.Body.String())
+	}
+	var listed []map[string]interface{}
+	if err := json.Unmarshal(w3.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("listed %d teams, want 1; body=%s", len(listed), w3.Body.String())
+	}
+	if listed[0]["slug"] != "platform-admins" {
+		t.Fatalf("expected slug platform-admins, got %v", listed[0]["slug"])
+	}
+	orgObj, _ := listed[0]["organization"].(map[string]interface{})
+	if orgObj == nil || orgObj["login"] != "oauth-webflow-org" {
+		t.Fatalf("expected organization.login=oauth-webflow-org, got %v", listed[0]["organization"])
 	}
 }
 

@@ -4,6 +4,24 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-03 - CloudWatch SNS fan-out observability and bleephub OAuth team fidelity closes #762 and #763 (PR #TBD)
+
+The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #762 and #763. The related CloudWatch alarm evaluator race (#760) was closed by the preceding PR #761, and the dangling-alarm report #758 was closed by PR #759.
+
+**Fan-out observability (#762).** After #761 made the evaluator atomic, downstream probes still saw no SQS message even though the evaluator logged "dispatching actions". The SNS fan-out path silently did nothing when a topic had no subscriptions, and silently skipped deliveries denied by resource policy or missing queues. Added Info-level logging at every fan-out decision point in `sns.go`: subscription count, matching subscriptions, each delivery attempt, policy-denied skips, missing-target skips, and successful SQS enqueue / Lambda invoke.
+
+**Regression tests (#762).** `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` gained `TestCloudWatch_AlarmSNSActionToSQS_NoSubscription` (asserts no panic and correct logs when an alarm action targets a topic with zero subscriptions) and `TestCloudWatch_AlarmSNSActionToSQS_PolicyDenied` (asserts the SQS queue is not modified when the topic resource policy denies `SQS:SendMessage`).
+
+**OAuth team fidelity (#763).** Downstream Auth.js probes reported `/user/teams` returning an empty list. Investigation showed the endpoint returns the correct teams when the OAuth web flow authenticates the expected user. Fixed the related fidelity gap where `ghHeadersMiddleware` did not emit `X-OAuth-Scopes` for `gho_`/`ghu_` user-to-server tokens (real GitHub emits it), and added `TestListAuthUserTeams_ViaOAuthWebFlow` to lock in the full authorize→access_token→/user/teams path. Added a debug log in `handleListAuthUserTeams` recording the authenticated user and team count to help diagnose any remaining e2e setup mismatches.
+
+**Files changed.** `simulators/aws/cloudwatch_alarm_evaluator.go`, `simulators/aws/sns.go`, `simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go`, `bleephub/gh_middleware.go`, `bleephub/gh_teams_rest.go`, `bleephub/gh_teams_rest_test.go`.
+
+**Validation.**
+- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS -count=1 ./` in `simulators/aws/sdk-tests` passes.
+- `GOWORK=off go test -run TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode -count=1 ./` in `simulators/aws/cli-tests` passes.
+- `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
+- `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go bleephub/gh_middleware.go bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go` passes.
+
 ## 2026-07-03 - CloudWatch alarm evaluator atomic state transition closes #760 (PR #761)
 
 The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issue #760. The related dangling-alarm report #758 was closed by the preceding PR #759.

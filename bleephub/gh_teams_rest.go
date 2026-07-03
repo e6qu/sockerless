@@ -355,6 +355,7 @@ func (s *Server) handleListAuthUserTeams(w http.ResponseWriter, r *http.Request)
 	}
 
 	teams := s.store.ListTeamsByUser(user.ID)
+	s.logger.Debug().Int("user_id", user.ID).Str("user_login", user.Login).Int("team_count", len(teams)).Msg("GET /api/v3/user/teams")
 	result := make([]map[string]interface{}, 0, len(teams))
 	base := s.baseURL(r)
 	for _, team := range teams {

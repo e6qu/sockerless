@@ -596,7 +596,19 @@ func snsNotificationEnvelope(topicARN, msgID, subject, message string) string {
 // SNS event payload.
 func snsFanout(topicARN, msgID, subject, message string) {
 	srcAccount := snsARNAccount(topicARN)
-	for _, sub := range snsSubscriptions.List() {
+	subs := snsSubscriptions.List()
+	matching := 0
+	for _, sub := range subs {
+		if sub.TopicARN == topicARN {
+			matching++
+		}
+	}
+	cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Int("totalSubscriptions", len(subs)).Int("matchingSubscriptions", matching).Msg("SNS fanout starting")
+	if matching == 0 {
+		cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Msg("SNS fanout found no subscriptions for topic")
+		return
+	}
+	for _, sub := range subs {
 		if sub.TopicARN != topicARN {
 			continue
 		}
@@ -605,11 +617,14 @@ func snsFanout(topicARN, msgID, subject, message string) {
 			SourceArn:     topicARN,
 			SourceAccount: srcAccount,
 		}
+		cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout delivering to subscription")
 		switch sub.Protocol {
 		case "sqs":
 			snsDeliverToSQS(sub.Endpoint, topicARN, msgID, subject, message, src)
 		case "lambda":
 			snsDeliverToLambda(sub.Endpoint, topicARN, msgID, subject, message, src)
+		default:
+			cwEvalLogger.Info().Str("topicARN", topicARN).Str("msgID", msgID).Str("protocol", sub.Protocol).Str("endpoint", sub.Endpoint).Msg("SNS fanout skipping unsupported subscription protocol")
 		}
 	}
 }
@@ -630,6 +645,7 @@ func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iam
 	}
 	envelope := snsNotificationEnvelope(topicARN, msgID, subject, message)
 	sqsEnqueueBody(queueName, envelope)
+	cwEvalLogger.Info().Str("queueARN", queueARN).Str("queueName", queueName).Str("topicARN", topicARN).Str("msgID", msgID).Msg("SNS to SQS delivery succeeded")
 }
 
 // snsDeliverToLambda performs a real in-process Lambda invoke with the
@@ -639,15 +655,18 @@ func snsDeliverToSQS(queueARN, topicARN, msgID, subject, message string, src iam
 // the function ARN (arn:aws:lambda:<region>:<account>:function:<name>).
 func snsDeliverToLambda(functionARN, topicARN, msgID, subject, message string, src iamServiceSource) {
 	if !iamAuthorizeServiceDelivery(functionARN, "lambda:InvokeFunction", src) {
+		cwEvalLogger.Info().Str("functionARN", functionARN).Str("topicARN", topicARN).Str("sourceService", src.Service).Msg("SNS to Lambda delivery denied by resource policy")
 		return
 	}
 	name := snsTopicNameFromARN(functionARN)
 	fn, ok := lambdaFunctions.Get(name)
 	if !ok {
+		cwEvalLogger.Info().Str("functionARN", functionARN).Str("functionName", name).Msg("SNS to Lambda delivery target function not found")
 		return
 	}
 	payload := snsLambdaEventPayload(functionARN, topicARN, msgID, subject, message)
 	go func() { _, _, _ = invokeLambdaViaRuntimeAPI(fn, payload) }()
+	cwEvalLogger.Info().Str("functionARN", functionARN).Str("functionName", name).Str("topicARN", topicARN).Str("msgID", msgID).Msg("SNS to Lambda delivery initiated")
 }
 
 // snsLambdaEventPayload builds the SNS event a Lambda subscriber

@@ -97,8 +97,17 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 			if scheme == "token" || scheme == "bearer" {
 				tokenStr = cred
 			}
-			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, tokenPrefixInstallation) && !strings.HasPrefix(tokenStr, tokenPrefixOAuthUser) && !strings.HasPrefix(tokenStr, tokenPrefixAppUser) && !strings.HasPrefix(tokenStr, tokenPrefixRefresh) {
-				token, _ = s.store.LookupToken(tokenStr)
+			if tokenStr != "" && !looksLikeJWT(tokenStr) && !strings.HasPrefix(tokenStr, tokenPrefixInstallation) && !strings.HasPrefix(tokenStr, tokenPrefixRefresh) {
+				if strings.HasPrefix(tokenStr, tokenPrefixOAuthUser) || strings.HasPrefix(tokenStr, tokenPrefixAppUser) {
+					if utsTok, _ := s.store.LookupUserToServerToken(tokenStr); utsTok != nil {
+						// Materialize a transient classic token so the response
+						// writer can emit X-OAuth-Scopes for OAuth/GitHub-App
+						// user-to-server tokens, matching real GitHub.
+						token = &Token{Value: utsTok.Token, UserID: utsTok.UserID, Scopes: utsTok.Scopes}
+					}
+				} else {
+					token, _ = s.store.LookupToken(tokenStr)
+				}
 			} else if scheme == "basic" {
 				decoded, err := base64.StdEncoding.DecodeString(cred)
 				if err == nil {
