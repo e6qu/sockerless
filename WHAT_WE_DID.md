@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-03 - Sim fidelity audit round 2: ACA PATCH merge + DELETE LRO, Cloud Run v2 sub-path updateMask (PR #TBD)
+## 2026-07-03 - Sim fidelity audit round 2: ACA PATCH merge + DELETE LRO, Cloud Run v2 sub-path updateMask (PR #769)
 
 The `fix/sim-fidelity-audit-round2` branch closed two high-blast-radius Azure Container Apps fidelity gaps and one GCP Cloud Run v2 updateMask gap.
 
