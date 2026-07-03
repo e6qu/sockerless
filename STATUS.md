@@ -6,8 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|---|
-| Active branch | `fix/sim-fidelity-audit-round1` — PR #768 open; closes BUG-2286/2287/2288/2289 and BUG-1785. |
-| Last merged (#767) | `fix/open-issues-765-766` — closed GitHub issues #763, #765, and #766 (team creator auto-maintainer + SQS receive diagnostics). |
+| Active branch | `fix/sim-fidelity-audit-round2` — ACA PATCH merge + DELETE LRO, Cloud Run v2 sub-path updateMask. |
+| Last merged (#768) | `fix/sim-fidelity-audit-round1` — closed BUG-2286/2287/2288/2289 (ECS DescribeTasks Include=[TAGS], Lambda FunctionVersion=ALL, ECS ListTasks filters, RunTask startedBy) and BUG-1785 (GCP Cloud Build push→pull). |
 | Last merged (#759) | `fix/cloudwatch-alarm-evaluator-758` — closed GitHub issue #758 (CloudWatch alarm evaluator dangling-alarm regression test: alarms with deleted action targets no longer hang the background evaluator). |
 | Last merged (#756) | `fix/open-issues-753-754-after-755` — closed GitHub issues #754 (bleephub `GET /api/v3/user/teams` no longer requires `read:org`) and #753 (CloudWatch alarm evaluator resilience: moved last-dispatched state onto each alarm's `StateValue` and added per-alarm panic recovery). Boyscout fix: added `--load` to the eval-arithmetic image build in `tests/main_test.go` so the image is loaded into the local store. |
 | Last merged (#750) | `feat/bleephub-full-api-ui-parity` — **bleephub API/UI parity tranche** — closed Teams, issue management, PR reviews, Git data writes, releases/repo settings, org rulesets, Dependabot, secret scanning, security advisories, Actions permissions/runner labels, gists, users, and notifications. Coverage 665/1190 vendored GitHub REST operations (56%). |

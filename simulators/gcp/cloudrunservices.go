@@ -134,6 +134,42 @@ type RevisionTemplate struct {
 	Timeout     string            `json:"timeout,omitempty"`
 }
 
+// mergeRevisionTemplate merges only the sub-paths of the template that
+// appear in the updateMask (e.g. "template.containers" replaces only
+// Containers, preserving Volumes, Scaling, etc.). The `has` closure
+// tests a dot-path against the mask fields.
+func mergeRevisionTemplate(existing, update *RevisionTemplate, has func(string) bool) *RevisionTemplate {
+	if existing == nil {
+		return update
+	}
+	if update == nil {
+		return existing
+	}
+	out := *existing
+	if has("template.containers") {
+		out.Containers = update.Containers
+	}
+	if has("template.volumes") {
+		out.Volumes = update.Volumes
+	}
+	if has("template.scaling") {
+		out.Scaling = update.Scaling
+	}
+	if has("template.vpcAccess") || has("template.vpc_access") {
+		out.VpcAccess = update.VpcAccess
+	}
+	if has("template.timeout") {
+		out.Timeout = update.Timeout
+	}
+	if has("template.labels") {
+		out.Labels = update.Labels
+	}
+	if has("template.annotations") {
+		out.Annotations = update.Annotations
+	}
+	return &out
+}
+
 // RevisionScaling caps min/max instance counts for a Cloud Run service
 // revision. The backend pins both to 1 today (long-running, single-
 // instance pattern) but the proto-JSON shape always carries them.
@@ -693,10 +729,12 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 			return
 		}
 
-		// Honor updateMask: real Cloud Run v2 merges only the masked top-level
-		// fields into the existing service (terraform-provider-google always
-		// sends one); an absent mask replaces all mutable fields. Without this a
-		// masked PATCH dropped every unlisted field, causing terraform drift.
+		// Honor updateMask: real Cloud Run v2 merges only the masked
+		// fields into the existing service. A top-level mask like
+		// "template" replaces the whole template; a sub-path mask like
+		// "template.containers" replaces only that leaf, preserving the
+		// rest of the template. terraform-provider-google always sends
+		// a mask; an absent mask replaces all mutable fields.
 		if mask := r.URL.Query().Get("updateMask"); mask != "" {
 			fields := strings.Split(mask, ",")
 			has := func(p string) bool {
@@ -708,9 +746,19 @@ func registerCloudRunServicesV2(srv *sim.Server) {
 				}
 				return false
 			}
+			exactHas := func(p string) bool {
+				for _, f := range fields {
+					if strings.TrimSpace(f) == p {
+						return true
+					}
+				}
+				return false
+			}
 			merged := existing
-			if has("template") {
+			if exactHas("template") {
 				merged.Template = update.Template
+			} else if has("template") {
+				merged.Template = mergeRevisionTemplate(existing.Template, update.Template, has)
 			}
 			if has("labels") {
 				merged.Labels = update.Labels

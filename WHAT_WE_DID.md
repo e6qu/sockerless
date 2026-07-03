@@ -4,6 +4,16 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-03 - Sim fidelity audit round 2: ACA PATCH merge + DELETE LRO, Cloud Run v2 sub-path updateMask (PR #TBD)
+
+The `fix/sim-fidelity-audit-round2` branch closed two high-blast-radius Azure Container Apps fidelity gaps and one GCP Cloud Run v2 updateMask gap.
+
+**ACA PATCH merge semantics (BUG-2291).** The PATCH handler replaced Configuration and Template wholesale, so a partial PATCH (e.g. only `template.containers`) wiped secrets, ingress, volumes, and scale. Fixed by merging sub-fields individually via `patchContainerAppConfig` and `patchContainerAppTemplate`. Tags now merge key-by-key instead of replacing the whole map.
+
+**ACA DELETE LRO envelope (BUG-2290).** DELETE returned 200 OK with no headers. Real Azure ARM returns 202 Accepted with `Azure-AsyncOperation` and `Location` headers. Fixed to match the PUT handler's LRO envelope.
+
+**Cloud Run v2 sub-path updateMask (BUG-2290a).** `updateMask=template.containers` replaced the entire `RevisionTemplate` instead of merging only `Containers`, wiping `Volumes`, `Scaling`, `VpcAccess`, and `Timeout`. Fixed by distinguishing exact `template` mask (full swap) from sub-path masks (per-field merge via `mergeRevisionTemplate`).
+
 ## 2026-07-03 - Sim fidelity audit round 1: ECS/Lambda field gating and filters (PR #768)
 
 The `fix/sim-fidelity-audit-round1` branch closed four AWS sim fidelity gaps discovered by a systematic audit, and closed out BUG-1785 (GCP Cloud Build push→pull, already shipped in PR #755).
