@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-03 - CloudWatch SNS fan-out observability and bleephub OAuth team fidelity closes #762 and #763 (PR #TBD)
+## 2026-07-03 - CloudWatch SNS fan-out observability and bleephub OAuth team fidelity closes #762 and #763 (PR #764)
 
 The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #762 and #763. The related CloudWatch alarm evaluator race (#760) was closed by the preceding PR #761, and the dangling-alarm report #758 was closed by PR #759.
 

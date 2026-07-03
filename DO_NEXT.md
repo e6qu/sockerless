@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/cloudwatch-alarm-evaluator-758`. A new PR will close GitHub issues #762 and #763.
+`fix/cloudwatch-alarm-evaluator-758`. PR #764 will close GitHub issues #762 and #763.
 
 **Scope**
 - Full fan-out observability for CloudWatch→SNS→SQS (#762).
@@ -16,10 +16,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
 - `pre-commit run --files <changed files>` passes.
 
-**Next:** create the new PR, update this file with its number, then merge and resume PLAN.md / open issues / BUGS.md work.
+**Next:** merge PR #764 and resume PLAN.md / open issues / BUGS.md work.
 
 ---
-### Prior branch (open, new PR): CloudWatch SNS fan-out observability + bleephub OAuth team fidelity
+### Prior branch (open, PR #764): CloudWatch SNS fan-out observability + bleephub OAuth team fidelity
 
 The `fix/cloudwatch-alarm-evaluator-758` branch will close GitHub issues #762 and #763.
 
@@ -35,7 +35,7 @@ The `fix/cloudwatch-alarm-evaluator-758` branch will close GitHub issues #762 an
 - `go test -run TestListAuthUserTeams -count=1 ./bleephub` passes.
 - `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go bleephub/gh_middleware.go bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go` passes.
 
-**Next:** create the new PR and update continuity files with its number.
+**Next:** merge PR #764.
 
 ---
 ### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758
