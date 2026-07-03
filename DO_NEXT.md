@@ -4,9 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/open-issues-753-754-after-755` — closes GitHub issues #753 and #754. Restores `GET /api/v3/user/teams` access for OAuth tokens without `read:org` (bleephub), and hardens the AWS CloudWatch alarm evaluator so a single bad alarm cannot kill the background goroutine and break action delivery for all other alarms (#753). Adds regression tests for both fixes.
+None. PR #756 (`fix/open-issues-753-754-after-755`) is merged. It closed GitHub issue #754 (bleephub `GET /api/v3/user/teams` OAuth scope regression) and #753 (AWS CloudWatch alarm evaluator resilience to single-alarm failures), plus a boyscout fix for the eval-arithmetic test image build (`docker build --load`).
 
-**Next:** after this PR merges, resume PLAN.md task C (extend runner topology sweep to Cloud Run + GCF cells) and continue sim/cloud coverage work.
+**Next:** resume work from [PLAN.md](PLAN.md), open issues, and [BUGS.md](BUGS.md).
+
+---
+### Prior branch (merged, PR #756): Open issue fixes — bleephub /user/teams OAuth scope regression and CloudWatch alarm evaluator resilience
+
+The `fix/open-issues-753-754-after-755` branch closed the two open issues that surfaced after merging PR #755.
+
+**bleephub `GET /api/v3/user/teams` no longer requires `read:org`.** Parity tranche #750 had wrapped the route in `requirePerm(scopeMembers, permRead)`, which rejected OAuth tokens that lacked the `read:org` scope. Real GitHub does not require `read:org` for this endpoint because it returns the authenticated user's own team memberships. Fixed by removing the permission gate from `GET /api/v3/user/teams` while keeping the gate on org-scoped team routes. Added `TestListAuthUserTeams_RequiresAuthNotReadOrgScope` to prove a classic OAuth token with only `repo` can list the user's teams, while unauthenticated requests still get 401.
+
+**CloudWatch alarm evaluator is resilient to single-alarm failures.** After #751 reset `cwAlarmLastState` on `PutMetricAlarm`, integrated terraform-sim probes still saw no `SNS.Publish` even though `DescribeAlarms` reported `ALARM`. The evaluator tracked last-dispatched state in a standalone `sync.Map` (`cwAlarmLastState`) that had to be manually reset on every `PutMetricAlarm` path; a panic while evaluating or dispatching one alarm could kill the background evaluator goroutine and silently break AlarmActions for every other alarm. Fixed by moving the last-dispatched state onto each alarm's own `StateValue` field (so `PutMetricAlarm` replacement naturally resets it to `INSUFFICIENT_DATA`) and adding per-alarm panic recovery in `cwEvaluateAlarmsOnce`. Removed the now-redundant `cwAlarmLastState` map and its manual deletions from all three `PutMetricAlarm` handlers and `cwDeleteAlarms`. Added `TestCloudWatch_AlarmSNSActionToSQS_ResilientToOneBadAlarm` in `SIM_RUNTIME=process` to verify that an alarm with an unresolvable action target does not prevent a sibling alarm from delivering its notification.
+
+**Boyscout fix.** `tests/main_test.go` built the `linux/arm64` `sockerless-eval-arithmetic:test` image with `docker build`, but the BuildKit `docker-container` driver leaves the result in the build cache unless `--load` is passed. CI `test (core)` and local runs then failed with `No such image` because the test backend could not resolve the locally-built tag. Fixed by adding `--load` to the `docker build` invocation so the image is loaded into the local store.
+
+**Next:** resume PLAN.md / open issues / BUGS.md work.
 
 ---
 ### Prior branch (merged, PR #751): CloudWatch metric alarm state reset on PutMetricAlarm
