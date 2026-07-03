@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-03 - Sim fidelity audit round 1: ECS/Lambda field gating and filters (PR #TBD)
+## 2026-07-03 - Sim fidelity audit round 1: ECS/Lambda field gating and filters (PR #768)
 
 The `fix/sim-fidelity-audit-round1` branch closed four AWS sim fidelity gaps discovered by a systematic audit, and closed out BUG-1785 (GCP Cloud Build push→pull, already shipped in PR #755).
 
