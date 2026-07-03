@@ -298,6 +298,7 @@ type ECSTaskVpcConfig struct {
 // it from API responses.
 type ecsTaskWire struct {
 	ECSTask
+	includeTags bool
 }
 
 func (t ecsTaskWire) MarshalJSON() ([]byte, error) {
@@ -310,13 +311,20 @@ func (t ecsTaskWire) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	delete(m, "networkConfiguration")
+	if !t.includeTags {
+		delete(m, "tags")
+	}
 	return json.Marshal(m)
 }
 
 func ecsTasksWire(tasks []ECSTask) []ecsTaskWire {
+	return ecsTasksWireInclude(tasks, true)
+}
+
+func ecsTasksWireInclude(tasks []ECSTask, includeTags bool) []ecsTaskWire {
 	out := make([]ecsTaskWire, 0, len(tasks))
 	for _, task := range tasks {
-		out = append(out, ecsTaskWire{task})
+		out = append(out, ecsTaskWire{ECSTask: task, includeTags: includeTags})
 	}
 	return out
 }
@@ -1174,6 +1182,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		Count                int                          `json:"count"`
 		LaunchType           string                       `json:"launchType"`
 		Group                string                       `json:"group"`
+		StartedBy            string                       `json:"startedBy"`
 		Tags                 []ECSTag                     `json:"tags,omitempty"`
 		PropagateTags        string                       `json:"propagateTags,omitempty"`
 		EnableExecuteCommand bool                         `json:"enableExecuteCommand,omitempty"`
@@ -1204,6 +1213,7 @@ func handleECSRunTask(w http.ResponseWriter, r *http.Request) {
 		Count:                req.Count,
 		Group:                req.Group,
 		LaunchType:           req.LaunchType,
+		StartedBy:            req.StartedBy,
 		Tags:                 req.Tags,
 		PropagateTags:        req.PropagateTags,
 		EnableExecuteCommand: req.EnableExecuteCommand,
@@ -1974,6 +1984,7 @@ func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Cluster string   `json:"cluster"`
 		Tasks   []string `json:"tasks"`
+		Include []string `json:"include"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
 		sim.AWSError(w, "InvalidParameterException", "Invalid request body", http.StatusBadRequest)
@@ -2013,7 +2024,7 @@ func handleECSDescribeTasks(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"tasks":    ecsTasksWire(tasks),
+		"tasks":    ecsTasksWireInclude(tasks, ecsIncludeHasTags(req.Include)),
 		"failures": failures,
 	})
 }
@@ -2044,7 +2055,7 @@ func handleECSStopTask(w http.ResponseWriter, r *http.Request) {
 	}
 	task, _ := ecsTasks.Get(taskID)
 	sim.WriteJSON(w, http.StatusOK, map[string]any{
-		"task": ecsTaskWire{task},
+		"task": ecsTaskWire{ECSTask: task, includeTags: true},
 	})
 }
 
@@ -2100,6 +2111,8 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 		Family        string `json:"family"`
 		DesiredStatus string `json:"desiredStatus"`
 		LaunchType    string `json:"launchType"`
+		ServiceName   string `json:"serviceName"`
+		StartedBy     string `json:"startedBy"`
 		NextToken     string `json:"nextToken"`
 		MaxResults    int    `json:"maxResults"`
 	}
@@ -2139,6 +2152,15 @@ func handleECSListTasks(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.LaunchType != "" && t.LaunchType != req.LaunchType {
 			return false
+		}
+		if req.StartedBy != "" && t.StartedBy != req.StartedBy {
+			return false
+		}
+		if req.ServiceName != "" {
+			group := t.Group
+			if !strings.HasPrefix(group, "service:") || group[len("service:"):] != req.ServiceName {
+				return false
+			}
 		}
 		return true
 	})

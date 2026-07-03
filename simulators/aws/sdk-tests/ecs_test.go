@@ -1155,3 +1155,56 @@ func TestECS_RunTask_ClusterNotFound_ErrorClassification(t *testing.T) {
 	assert.True(t, errors.As(err, &notFound),
 		"ECS ClusterNotFoundException must be parsed by SDK errors.As; got %T: %v", err, err)
 }
+
+// TestECS_ListTasks_StartedByAndServiceFilters verifies that the StartedBy
+// and ServiceName filters narrow ListTasks to matching tasks, matching real
+// AWS which supports both filter dimensions.
+func TestECS_ListTasks_StartedByAndServiceFilters(t *testing.T) {
+	client := ecsClient()
+	cluster := "listtasks-filters"
+	_, err := client.CreateCluster(ctx, &ecs.CreateClusterInput{ClusterName: aws.String(cluster)})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = client.DeleteCluster(ctx, &ecs.DeleteClusterInput{Cluster: aws.String(cluster)})
+	})
+
+	td, err := client.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+		Family:               aws.String("listtasks-filters-td"),
+		ContainerDefinitions: []ecstypes.ContainerDefinition{{Name: aws.String("app"), Image: aws.String("alpine:latest")}},
+	})
+	require.NoError(t, err)
+	tdArn := aws.ToString(td.TaskDefinition.TaskDefinitionArn)
+
+	runA, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(cluster),
+		TaskDefinition: aws.String(tdArn),
+		StartedBy:      aws.String("deployment-A"),
+	})
+	require.NoError(t, err)
+	require.Len(t, runA.Tasks, 1)
+
+	runB, err := client.RunTask(ctx, &ecs.RunTaskInput{
+		Cluster:        aws.String(cluster),
+		TaskDefinition: aws.String(tdArn),
+		StartedBy:      aws.String("deployment-B"),
+	})
+	require.NoError(t, err)
+	require.Len(t, runB.Tasks, 1)
+
+	// Filter by StartedBy=deployment-A → only the first task.
+	filtered, err := client.ListTasks(ctx, &ecs.ListTasksInput{
+		Cluster:   aws.String(cluster),
+		StartedBy: aws.String("deployment-A"),
+	})
+	require.NoError(t, err)
+	assert.Len(t, filtered.TaskArns, 1, "StartedBy filter should match exactly one task")
+	assert.Equal(t, aws.ToString(runA.Tasks[0].TaskArn), filtered.TaskArns[0])
+
+	// No filter → both tasks.
+	all, err := client.ListTasks(ctx, &ecs.ListTasksInput{Cluster: aws.String(cluster)})
+	require.NoError(t, err)
+	assert.Len(t, all.TaskArns, 2, "no filter should return both tasks")
+
+	_, _ = client.StopTask(ctx, &ecs.StopTaskInput{Cluster: aws.String(cluster), Task: runA.Tasks[0].TaskArn})
+	_, _ = client.StopTask(ctx, &ecs.StopTaskInput{Cluster: aws.String(cluster), Task: runB.Tasks[0].TaskArn})
+}

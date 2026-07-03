@@ -4,20 +4,16 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/open-issues-765-766`. PR #767 will close GitHub issues #765 and #766, and fully resolve #763.
+`fix/sim-fidelity-audit-round1`. Sim fidelity audit round 1: ECS/Lambda field-gating and filter gaps.
 
 **Scope**
-- bleephub `POST /orgs/{org}/teams` now auto-adds the authenticated creator as a team maintainer, matching real GitHub (#763/#765).
-- SQS `ReceiveMessage` and `sqsEnqueueBody` debug logging to diagnose empty-receive cases (#766).
-- CLI regression test that polls `receive-message` repeatedly after a CloudWatch alarm reaches `ALARM` (#766).
+- ECS `DescribeTasks` now honors `Include=[TAGS]` (BUG-2286).
+- Lambda `ListFunctions` now honors `FunctionVersion=ALL` (BUG-2287).
+- ECS `ListTasks` now supports `serviceName` and `startedBy` filters (BUG-2288).
+- ECS `RunTask` now parses and stores `startedBy` from the request body (BUG-2289).
+- BUG-1785 (GCP Cloud Build push→pull) closed — already shipped in PR #755.
 
-**Validation**
-- `go test -run 'TestListAuthUserTeams|TestCreateTeam|TestTeamMembersList' -count=1 ./bleephub` passes.
-- `GOWORK=off go test -run 'TestCloudWatchCLI_AlarmSNSActionToSQS_ProcessMode' -count=1 ./` in `simulators/aws/cli-tests` passes.
-- `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
-- `pre-commit run --files <changed files>` passes.
-
-**Next:** create the new PR and update continuity files with its number.
+**Next:** merge and continue the sim fidelity audit (round 2: ACA PATCH merge semantics, Cloud Run v2 updateMask whitelist).
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics

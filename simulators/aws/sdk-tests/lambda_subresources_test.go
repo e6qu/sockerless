@@ -58,6 +58,48 @@ func TestLambda_PublishVersion(t *testing.T) {
 	}
 }
 
+// TestLambda_ListFunctions_FunctionVersionAll verifies that ListFunctions
+// with FunctionVersion=ALL returns both $LATEST and every published version,
+// while the default call returns only $LATEST.
+func TestLambda_ListFunctions_FunctionVersionAll(t *testing.T) {
+	c := lambdaClient()
+	ctx := context.Background()
+	name := "listfn-all-ver"
+	lambdaCreateFn(t, c, name)
+
+	_, err := c.PublishVersion(ctx, &lambda.PublishVersionInput{FunctionName: aws.String(name)})
+	require.NoError(t, err)
+	_, err = c.PublishVersion(ctx, &lambda.PublishVersionInput{FunctionName: aws.String(name)})
+	require.NoError(t, err)
+
+	// Default: only $LATEST for this function.
+	defList, err := c.ListFunctions(ctx, &lambda.ListFunctionsInput{})
+	require.NoError(t, err)
+	var defForName *types.FunctionConfiguration
+	for i := range defList.Functions {
+		if aws.ToString(defList.Functions[i].FunctionName) == name {
+			defForName = &defList.Functions[i]
+		}
+	}
+	require.NotNil(t, defForName, "default list must include the function")
+	assert.Equal(t, "$LATEST", aws.ToString(defForName.Version), "default list must show $LATEST only")
+
+	// FunctionVersion=ALL: should include $LATEST + 2 published versions for this function.
+	all, err := c.ListFunctions(ctx, &lambda.ListFunctionsInput{
+		FunctionVersion: types.FunctionVersionAll,
+	})
+	require.NoError(t, err)
+	var seen []string
+	for _, fc := range all.Functions {
+		if aws.ToString(fc.FunctionName) == name {
+			seen = append(seen, aws.ToString(fc.Version))
+		}
+	}
+	assert.Contains(t, seen, "$LATEST", "FunctionVersion=ALL must include $LATEST")
+	assert.Contains(t, seen, "1", "FunctionVersion=ALL must include published version 1")
+	assert.Contains(t, seen, "2", "FunctionVersion=ALL must include published version 2")
+}
+
 // TestLambda_AliasCRUD exercises the full alias lifecycle.
 func TestLambda_AliasCRUD(t *testing.T) {
 	c := lambdaClient()

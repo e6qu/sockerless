@@ -4,6 +4,20 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-03 - Sim fidelity audit round 1: ECS/Lambda field gating and filters (PR #768)
+
+The `fix/sim-fidelity-audit-round1` branch closed four AWS sim fidelity gaps discovered by a systematic audit, and closed out BUG-1785 (GCP Cloud Build push→pull, already shipped in PR #755).
+
+**ECS DescribeTasks `Include=[TAGS]` (BUG-2286).** `handleECSDescribeTasks` did not parse the `Include` field; task `tags` always appeared in the response. Real AWS surfaces tags only when `Include=[TAGS]`. Fixed by adding `includeTags` to `ecsTaskWire` and gating the field. SDK test: `TestECS_DescribeTasksTagsIncludePath`.
+
+**Lambda ListFunctions `FunctionVersion=ALL` (BUG-2287).** `handleLambdaListFunctions` always returned `$LATEST` only. Fixed by expanding the result to include all published versions with version-qualified ARNs. SDK test: `TestLambda_ListFunctions_FunctionVersionAll`.
+
+**ECS ListTasks `serviceName`/`startedBy` filters (BUG-2288).** `handleECSListTasks` only filtered by `cluster`, `family`, `desiredStatus`, and `launchType`. Added both `serviceName` (matches `group` with `service:` prefix) and `startedBy` filters. SDK test: `TestECS_ListTasks_StartedByAndServiceFilters`.
+
+**ECS RunTask `startedBy` field drop (BUG-2289).** `handleECSRunTask` did not parse `startedBy` from the request body, so the field was always empty on stored tasks. Fixed by adding the field to the request struct and passing it through `ecsRunTaskInput`.
+
+**BUG-1785 closure.** GCP Cloud Build push→pull was already fully shipped in PR #755. No remaining code gap; BUGS.md entry added.
+
 ## 2026-07-03 - Team creator auto-maintainer and SQS receive diagnostics close #763, #765, and #766 (PR #767)
 
 The `fix/open-issues-765-766` branch closed GitHub issues #763 and #765 and addressed #766. The preceding PR #764 closed #762.
