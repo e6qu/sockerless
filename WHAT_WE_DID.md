@@ -4,9 +4,9 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-03 - CloudWatch alarm evaluator atomic state transition closes #758 and #760 (PR #759)
+## 2026-07-03 - CloudWatch alarm evaluator atomic state transition closes #760 (PR #761)
 
-The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #758 and #760.
+The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issue #760. The related dangling-alarm report #758 was closed by the preceding PR #759.
 
 **Root cause.** The CloudWatch alarm evaluator in `cwEvaluateAlarmsOnce` took a snapshot of every alarm via `cwAlarms.List()`, derived the new state, dispatched actions, and only then wrote the new state back to the alarm record through a separate `cwAlarms.Update`. A concurrent `PutMetricAlarm` request could replace the alarm record between the snapshot and the write, leaving a freshly-created alarm with a stale `StateValue` inherited from the evaluator's in-flight tick. The alarm therefore never transitioned from the stale state and `AlarmActions` were not dispatched.
 

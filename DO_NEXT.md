@@ -4,14 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-None. PR #759 (`fix/cloudwatch-alarm-evaluator-758`) is merged. It closed GitHub issues #758 and #760 (CloudWatch alarm evaluator race between background tick and `PutMetricAlarm` replacement).
+None. PR #761 (`fix/cloudwatch-alarm-evaluator-758`) is merged. It closed GitHub issue #760 (CloudWatch alarm evaluator race between background tick and `PutMetricAlarm` replacement).
 
 **Next:** resume work from [PLAN.md](PLAN.md), open issues, and [BUGS.md](BUGS.md).
 
 ---
-### Prior branch (merged, PR #759): CloudWatch alarm evaluator atomic state transition closes #758 and #760
+### Prior branch (merged, PR #761): CloudWatch alarm evaluator atomic state transition closes #760
 
-The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #758 and #760.
+The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issue #760.
 
 **CloudWatch alarm evaluator now holds the evaluate/dispatch/write sequence under the alarm store lock.** `cwEvaluateAlarmsOnce` previously took a snapshot of every alarm with `cwAlarms.List()`, derived the new state, dispatched actions, and wrote the new state back through a separate `cwAlarms.Update`. A concurrent `PutMetricAlarm` could replace the alarm record between the snapshot and the write, leaving a freshly-created alarm with a stale `StateValue` (for example, `ALARM`) and causing it to skip `AlarmActions` on the next breach. Fixed by moving state derivation, dispatch, and persistence into a single `cwAlarms.Update` callback so the live alarm record is both read and written under the same lock. Added per-alarm closure capture by value for correct panic-recovery logging. Added Info-level logging for disabled actions, missing action topics, and SQS delivery skips.
 
@@ -23,6 +23,18 @@ The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issues #758 and #7
 - `pre-commit run --files simulators/aws/cloudwatch_alarm_evaluator.go simulators/aws/sns.go simulators/aws/sdk-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
 
 **Next:** resume PLAN.md / open issues / BUGS.md work.
+
+---
+### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758
+
+The `fix/cloudwatch-alarm-evaluator-758` branch closed GitHub issue #758.
+
+**Alarms whose SNS topics have been deleted no longer hang the background evaluator.** A regression test seeds the simulator with ten dangling alarms pointing at deleted topics, pumps a breaching datapoint, and asserts the evaluator goroutine remains alive and a subsequently-created alarm still dispatches its `AlarmActions` to SQS. The test runs in `SIM_RUNTIME=process` so it exercises the subprocess path independently of the shared TestMain simulator.
+
+**Validation.**
+- `GOWORK=off go test -run TestCloudWatch_AlarmSNSActionToSQS_AfterDanglingAlarms -count=1 ./` in `simulators/aws/sdk-tests` passes.
+
+**Next:** PR #761 closed the follow-up issue #760.
 
 ---
 ### Prior branch (merged, PR #756): Open issue fixes — bleephub /user/teams OAuth scope regression and CloudWatch alarm evaluator resilience
