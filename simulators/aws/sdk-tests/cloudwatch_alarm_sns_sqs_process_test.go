@@ -683,3 +683,174 @@ func TestCloudWatch_AlarmSNSActionToSQS_AfterDeleteAndRecreate(t *testing.T) {
 	assert.Equal(t, "ALARM", body2["NewStateValue"])
 	assert.Equal(t, "INSUFFICIENT_DATA", body2["OldStateValue"])
 }
+
+// TestCloudWatch_AlarmSNSActionToSQS_NoSubscription verifies that an alarm
+// whose action topic has no subscribers delivers nothing, and that the fan-out
+// path logs the empty subscription set rather than silently doing nothing.
+func TestCloudWatch_AlarmSNSActionToSQS_NoSubscription(t *testing.T) {
+	url := startProcessModeSim(t)
+
+	cw := cloudwatch.NewFromConfig(sdkConfig(), func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	snsC := sns.NewFromConfig(sdkConfig(), func(o *sns.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	sqsC := sqs.NewFromConfig(sdkConfig(), func(o *sqs.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+
+	ns := "Custom/AlarmNoSubRepro"
+	alarmName := "alarm-no-subscription"
+
+	tpc, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("no-sub-t")})
+	require.NoError(t, err)
+	topicARN := aws.ToString(tpc.TopicArn)
+	t.Cleanup(func() {
+		_, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: tpc.TopicArn})
+	})
+
+	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("no-sub-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl})
+	})
+
+	// Intentionally no subscription.
+
+	time.Sleep(3 * time.Second)
+
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(alarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("CPUUtilization"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(50),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{topicARN},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = cw.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{AlarmNames: []string{alarmName}})
+	})
+
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String(ns),
+		MetricData: []cwtypes.MetricDatum{
+			{MetricName: aws.String("CPUUtilization"), Value: aws.Float64(100), Unit: cwtypes.StandardUnitPercent, Timestamp: aws.Time(time.Now().UTC())},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{alarmName}})
+		require.NoError(t, err)
+		return len(desc.MetricAlarms) == 1 && desc.MetricAlarms[0].StateValue == cwtypes.StateValueAlarm
+	}, 15*time.Second, 500*time.Millisecond, "alarm should reach ALARM")
+
+	time.Sleep(2 * time.Second)
+
+	recv, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+	require.Empty(t, recv.Messages, "alarm with no topic subscriptions must not deliver")
+}
+
+// TestCloudWatch_AlarmSNSActionToSQS_PolicyDenied verifies that an alarm whose
+// subscriber queue policy denies sns:SendMessage delivers nothing. Real AWS
+// drops the message; the sim must do the same and must log the denial.
+func TestCloudWatch_AlarmSNSActionToSQS_PolicyDenied(t *testing.T) {
+	url := startProcessModeSim(t)
+
+	cw := cloudwatch.NewFromConfig(sdkConfig(), func(o *cloudwatch.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	snsC := sns.NewFromConfig(sdkConfig(), func(o *sns.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+	sqsC := sqs.NewFromConfig(sdkConfig(), func(o *sqs.Options) {
+		o.BaseEndpoint = aws.String(url)
+	})
+
+	ns := "Custom/AlarmPolicyDeniedRepro"
+	alarmName := "alarm-policy-denied"
+
+	tpc, err := snsC.CreateTopic(ctx, &sns.CreateTopicInput{Name: aws.String("policy-denied-t")})
+	require.NoError(t, err)
+	topicARN := aws.ToString(tpc.TopicArn)
+	t.Cleanup(func() {
+		_, _ = snsC.DeleteTopic(ctx, &sns.DeleteTopicInput{TopicArn: tpc.TopicArn})
+	})
+
+	q, err := sqsC.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("policy-denied-q")})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = sqsC.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: q.QueueUrl})
+	})
+	queueAttrs, err := sqsC.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       q.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameQueueArn},
+	})
+	require.NoError(t, err)
+	queueARN := queueAttrs.Attributes["QueueArn"]
+
+	// Policy explicitly denies sns:SendMessage from the action topic.
+	policy := fmt.Sprintf(`{"Version":"2012-10-17","Statement":[{"Effect":"Deny","Principal":"*","Action":"sqs:SendMessage","Resource":"%s","Condition":{"ArnEquals":{"aws:SourceArn":"%s"}}}]}`, queueARN, topicARN)
+	_, err = sqsC.SetQueueAttributes(ctx, &sqs.SetQueueAttributesInput{
+		QueueUrl: q.QueueUrl,
+		Attributes: map[string]string{
+			"Policy": policy,
+		},
+	})
+	require.NoError(t, err)
+
+	_, err = snsC.Subscribe(ctx, &sns.SubscribeInput{
+		TopicArn: tpc.TopicArn,
+		Protocol: aws.String("sqs"),
+		Endpoint: aws.String(queueARN),
+	})
+	require.NoError(t, err)
+
+	time.Sleep(3 * time.Second)
+
+	_, err = cw.PutMetricAlarm(ctx, &cloudwatch.PutMetricAlarmInput{
+		AlarmName:          aws.String(alarmName),
+		Namespace:          aws.String(ns),
+		MetricName:         aws.String("CPUUtilization"),
+		ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		EvaluationPeriods:  aws.Int32(1),
+		Period:             aws.Int32(60),
+		Threshold:          aws.Float64(50),
+		Statistic:          cwtypes.StatisticAverage,
+		TreatMissingData:   aws.String("notBreaching"),
+		ActionsEnabled:     aws.Bool(true),
+		AlarmActions:       []string{topicARN},
+	})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = cw.DeleteAlarms(ctx, &cloudwatch.DeleteAlarmsInput{AlarmNames: []string{alarmName}})
+	})
+
+	_, err = cw.PutMetricData(ctx, &cloudwatch.PutMetricDataInput{
+		Namespace: aws.String(ns),
+		MetricData: []cwtypes.MetricDatum{
+			{MetricName: aws.String("CPUUtilization"), Value: aws.Float64(100), Unit: cwtypes.StandardUnitPercent, Timestamp: aws.Time(time.Now().UTC())},
+		},
+	})
+	require.NoError(t, err)
+
+	require.Eventually(t, func() bool {
+		desc, err := cw.DescribeAlarms(ctx, &cloudwatch.DescribeAlarmsInput{AlarmNames: []string{alarmName}})
+		require.NoError(t, err)
+		return len(desc.MetricAlarms) == 1 && desc.MetricAlarms[0].StateValue == cwtypes.StateValueAlarm
+	}, 15*time.Second, 500*time.Millisecond, "alarm should reach ALARM")
+
+	time.Sleep(2 * time.Second)
+
+	recv, err := sqsC.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: q.QueueUrl})
+	require.NoError(t, err)
+	require.Empty(t, recv.Messages, "alarm with denying queue policy must not deliver")
+}

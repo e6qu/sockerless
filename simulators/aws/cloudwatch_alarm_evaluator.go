@@ -111,6 +111,7 @@ func cwDispatchAlarmActions(a CWAlarm, oldState, newState, reason string) {
 		targets = a.InsufficientDataActions
 	}
 	if len(targets) == 0 {
+		cwEvalLogger.Info().Str("alarmName", a.AlarmName).Str("newState", newState).Msg("CloudWatch alarm has no action targets for state")
 		return
 	}
 	message := cwAlarmNotificationMessage(a, oldState, newState, reason)
