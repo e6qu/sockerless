@@ -1,9 +1,16 @@
 package bleephub
 
 import (
+	"encoding/base64"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
+	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 func (s *Server) registerGHCodeScanningRoutes() {
@@ -26,8 +33,34 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/default-setup", s.handleGetCodeScanningDefaultSetup)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/code-scanning/default-setup", s.handleUpdateCodeScanningDefaultSetup)
 
+	// Copilot Autofix
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/autofix", s.handleGetCodeScanningAutofix)
+	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/autofix", s.handleCreateCodeScanningAutofix)
+	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/autofix/commits", s.handleCommitCodeScanningAutofix)
+
+	// CodeQL databases
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleListCodeQLDatabases)
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleGetCodeQLDatabase)
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleDeleteCodeQLDatabase)
+
+	// CodeQL variant analyses
+	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses", s.handleCreateCodeQLVariantAnalysis)
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}", s.handleGetCodeQLVariantAnalysis)
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}/repos/{repo_owner}/{repo_name}", s.handleGetCodeQLVariantAnalysisRepoTask)
+
+	// Organization alerts
+	s.route("GET /api/v3/orgs/{org}/code-scanning/alerts",
+		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListOrgCodeScanningAlerts))
+
 	// Internal seeding endpoint: real GitHub creates alerts by uploading SARIF.
 	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/alerts", s.handleSeedCodeScanningAlert)
+
+	// Internal seeding + download endpoints for CodeQL entities: real GitHub
+	// receives databases from CodeQL analysis uploads and serves them (and
+	// variant-analysis query packs) from signed blob-storage URLs.
+	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleSeedCodeQLDatabase)
+	s.route("GET /internal/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}/download", s.handleDownloadCodeQLDatabase)
+	s.route("GET /internal/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}/query-pack", s.handleDownloadCodeQLVariantAnalysisQueryPack)
 }
 
 func (s *Server) handleListCodeScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -289,13 +322,46 @@ func (s *Server) handleGetCodeScanningDefaultSetup(w http.ResponseWriter, r *htt
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"state":       "configured",
-		"languages":   []string{"go", "python", "javascript-typescript"},
-		"schedule":    "weekly",
-		"query_suite": "default",
-		"updated_at":  repo.UpdatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
-	})
+	out := map[string]interface{}{
+		"state":      "not-configured",
+		"languages":  []string{},
+		"updated_at": nil,
+		"schedule":   nil,
+	}
+	if setup := s.store.GetCodeScanningDefaultSetup(repo.FullName); setup != nil {
+		out["updated_at"] = setup.UpdatedAt.UTC().Format(time.RFC3339)
+		if setup.State == "configured" {
+			out["state"] = "configured"
+			out["languages"] = setup.Languages
+			out["query_suite"] = setup.QuerySuite
+			// Default setup runs on GitHub's weekly periodic schedule.
+			out["schedule"] = "weekly"
+			if setup.RunnerType != "" {
+				out["runner_type"] = setup.RunnerType
+			}
+			if setup.RunnerLabel != "" {
+				out["runner_label"] = setup.RunnerLabel
+			}
+			if setup.ThreatModel != "" {
+				out["threat_model"] = setup.ThreatModel
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// codeQLDefaultSetupLanguages is the language set accepted by the update
+// endpoint (the code-scanning-default-setup-update schema enum).
+var codeQLDefaultSetupLanguages = map[string]bool{
+	"actions":               true,
+	"c-cpp":                 true,
+	"csharp":                true,
+	"go":                    true,
+	"java-kotlin":           true,
+	"javascript-typescript": true,
+	"python":                true,
+	"ruby":                  true,
+	"swift":                 true,
 }
 
 func (s *Server) handleUpdateCodeScanningDefaultSetup(w http.ResponseWriter, r *http.Request) {
@@ -315,15 +381,94 @@ func (s *Server) handleUpdateCodeScanningDefaultSetup(w http.ResponseWriter, r *
 	}
 
 	var req struct {
-		State      string   `json:"state"`
-		QuerySuite string   `json:"query_suite"`
-		Languages  []string `json:"languages"`
+		State       string   `json:"state"`
+		QuerySuite  string   `json:"query_suite"`
+		RunnerType  string   `json:"runner_type"`
+		RunnerLabel string   `json:"runner_label"`
+		ThreatModel string   `json:"threat_model"`
+		Languages   []string `json:"languages"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
 
-	_ = req
+	if req.State != "" && req.State != "configured" && req.State != "not-configured" {
+		writeGHValidationError(w, "CodeScanningDefaultSetup", "state", "invalid")
+		return
+	}
+	if req.QuerySuite != "" && req.QuerySuite != "default" && req.QuerySuite != "extended" {
+		writeGHValidationError(w, "CodeScanningDefaultSetup", "query_suite", "invalid")
+		return
+	}
+	if req.RunnerType != "" && req.RunnerType != "standard" && req.RunnerType != "labeled" {
+		writeGHValidationError(w, "CodeScanningDefaultSetup", "runner_type", "invalid")
+		return
+	}
+	if req.ThreatModel != "" && req.ThreatModel != "remote" && req.ThreatModel != "remote_and_local" {
+		writeGHValidationError(w, "CodeScanningDefaultSetup", "threat_model", "invalid")
+		return
+	}
+	for _, lang := range req.Languages {
+		if !codeQLDefaultSetupLanguages[lang] {
+			writeGHValidationError(w, "CodeScanningDefaultSetup", "languages", "invalid")
+			return
+		}
+	}
+
+	current := s.store.GetCodeScanningDefaultSetup(repo.FullName)
+	configured := current != nil && current.State == "configured"
+
+	if req.State == "not-configured" {
+		if !configured {
+			writeGHError(w, http.StatusConflict, "Code scanning default setup is already disabled")
+			return
+		}
+		s.store.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{
+			RepoKey: repo.FullName,
+			State:   "not-configured",
+		})
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		return
+	}
+	if req.State == "" && !configured {
+		writeGHError(w, http.StatusConflict, "Code scanning default setup must be enabled before its configuration can be changed")
+		return
+	}
+
+	setup := &CodeScanningDefaultSetup{
+		RepoKey:    repo.FullName,
+		State:      "configured",
+		QuerySuite: "default",
+	}
+	if configured {
+		*setup = *current
+	}
+	if req.QuerySuite != "" {
+		setup.QuerySuite = req.QuerySuite
+	}
+	if req.RunnerType != "" {
+		setup.RunnerType = req.RunnerType
+	}
+	if req.RunnerLabel != "" {
+		setup.RunnerLabel = req.RunnerLabel
+	}
+	if req.ThreatModel != "" {
+		setup.ThreatModel = req.ThreatModel
+	}
+	if len(req.Languages) > 0 {
+		setup.Languages = req.Languages
+	} else if len(setup.Languages) == 0 {
+		setup.Languages = s.store.detectCodeQLLanguages(repo)
+	}
+	if setup.RunnerType == "labeled" && setup.RunnerLabel == "" {
+		writeGHValidationError(w, "CodeScanningDefaultSetup", "runner_label", "missing_field")
+		return
+	}
+	if len(setup.Languages) == 0 {
+		writeGHError(w, http.StatusUnprocessableEntity, "CodeQL default setup cannot be enabled because no CodeQL-supported languages were detected in this repository")
+		return
+	}
+	s.store.SetCodeScanningDefaultSetup(setup)
 	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }
 
@@ -439,6 +584,645 @@ func codeScanningInstanceToJSON(inst CodeScanningAlertInstance) map[string]inter
 			"end_column":   inst.EndColumn,
 		},
 	}
+}
+
+// --- organization alerts ---
+
+func (s *Server) handleListOrgCodeScanningAlerts(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	q := r.URL.Query()
+	alerts := s.store.ListCodeScanningAlertsByOrg(org.ID, q.Get("state"), q.Get("severity"), q.Get("tool_name"), q.Get("sort"), q.Get("direction"))
+	page := paginateAndLink(w, r, alerts)
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(page))
+	for _, a := range page {
+		repo := s.store.ReposByName[a.RepoKey]
+		if repo == nil {
+			continue
+		}
+		alertJSON := codeScanningAlertToJSON(a, baseURL, repo)
+		alertJSON["repository"] = simpleRepoJSON(repo, s.store, baseURL)
+		out = append(out, alertJSON)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// --- Copilot Autofix ---
+
+func codeScanningAutofixJSON(fix *CodeScanningAutofix) map[string]interface{} {
+	return map[string]interface{}{
+		"status":      fix.Status,
+		"description": fix.Description,
+		"started_at":  fix.StartedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func (s *Server) handleGetCodeScanningAutofix(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	a := s.lookupCodeScanningAlert(w, r, repo)
+	if a == nil {
+		return
+	}
+
+	fix := s.store.GetCodeScanningAutofix(repo.FullName, a.Number)
+	if fix == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, codeScanningAutofixJSON(fix))
+}
+
+func (s *Server) handleCreateCodeScanningAutofix(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
+		return
+	}
+	a := s.lookupCodeScanningAlert(w, r, repo)
+	if a == nil {
+		return
+	}
+	if a.State != "open" {
+		writeGHError(w, http.StatusUnprocessableEntity, "It is not possible to generate an autofix for this alert because it is not open")
+		return
+	}
+	if len(a.Instances) == 0 || a.Instances[len(a.Instances)-1].Path == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "It is not possible to generate an autofix for this alert because it has no source location")
+		return
+	}
+
+	fix, created := s.store.CreateCodeScanningAutofix(a)
+	status := http.StatusOK
+	if created {
+		status = http.StatusAccepted
+	}
+	writeJSON(w, status, codeScanningAutofixJSON(fix))
+}
+
+func (s *Server) handleCommitCodeScanningAutofix(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
+		return
+	}
+	a := s.lookupCodeScanningAlert(w, r, repo)
+	if a == nil {
+		return
+	}
+	fix := s.store.GetCodeScanningAutofix(repo.FullName, a.Number)
+	if fix == nil || fix.Status != "success" {
+		writeGHError(w, http.StatusBadRequest, "The autofix for this alert is not available for committing")
+		return
+	}
+
+	// The body is optional on real GitHub; target_ref defaults to the
+	// repository's default branch.
+	var req struct {
+		TargetRef string `json:"target_ref"`
+		Message   string `json:"message"`
+	}
+	if r.Body != nil && r.ContentLength != 0 {
+		if !decodeJSONBody(w, r, &req) {
+			return
+		}
+	}
+	branch := strings.TrimPrefix(req.TargetRef, "refs/heads/")
+	if branch == "" {
+		branch = repo.DefaultBranch
+	}
+	message := req.Message
+	if message == "" {
+		message = fmt.Sprintf("Autofix for code scanning alert #%d", a.Number)
+	}
+
+	owner, repoName, ok := splitRepoFullName(repo.FullName)
+	if !ok {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	stor := s.store.GetGitStorage(owner, repoName)
+	if stor == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// The target branch must already exist.
+	branchRef := plumbing.NewBranchReferenceName(branch)
+	ref, err := stor.Reference(branchRef)
+	if err != nil || ref == nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Branch "+branch+" does not exist")
+		return
+	}
+
+	inst := a.Instances[len(a.Instances)-1]
+	content := ""
+	commit, err := object.GetCommit(stor, ref.Hash())
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "resolve branch head: "+err.Error())
+		return
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "resolve branch tree: "+err.Error())
+		return
+	}
+	// A FindEntry failure means the branch does not carry the flagged file;
+	// the autofix commit then creates it. Every other read failure is a real
+	// storage error and fails loud.
+	if entry, findErr := tree.FindEntry(inst.Path); findErr == nil {
+		blob, err := object.GetBlob(stor, entry.Hash)
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, "read flagged file blob: "+err.Error())
+			return
+		}
+		reader, err := blob.Reader()
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, "open flagged file blob: "+err.Error())
+			return
+		}
+		raw, readErr := io.ReadAll(reader)
+		if closeErr := reader.Close(); readErr == nil {
+			readErr = closeErr
+		}
+		if readErr != nil {
+			writeGHError(w, http.StatusInternalServerError, "read flagged file: "+readErr.Error())
+			return
+		}
+		content = string(raw)
+	}
+
+	fixed := applyAutofixEdit(content, inst, fix.Description)
+	sig := repoSignature(user.Login, "bleephub@local")
+	commitHash, err := createFileCommit(stor, branch, inst.Path, fixed, message, sig)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	s.store.UpdateRepo(owner, repoName, func(r *Repo) {
+		r.PushedAt = time.Now().UTC()
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"target_ref": "refs/heads/" + branch,
+		"sha":        commitHash.String(),
+	})
+}
+
+// applyAutofixEdit produces the fixed file content for an autofix commit:
+// the generated remediation line is inserted immediately above the alert's
+// flagged start line (or at the top of a file the branch does not have yet).
+func applyAutofixEdit(content string, inst CodeScanningAlertInstance, description string) string {
+	lines := strings.Split(content, "\n")
+	idx := inst.StartLine - 1
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(lines) {
+		idx = len(lines)
+	}
+	fixed := make([]string, 0, len(lines)+1)
+	fixed = append(fixed, lines[:idx]...)
+	fixed = append(fixed, "// autofix: "+description)
+	fixed = append(fixed, lines[idx:]...)
+	return strings.Join(fixed, "\n")
+}
+
+// --- CodeQL databases ---
+
+// codeQLLanguages are the languages the CodeQL variant-analysis API
+// accepts, matching GitHub's code-scanning-variant-analysis-language enum.
+var codeQLLanguages = map[string]bool{
+	"actions": true, "cpp": true, "csharp": true, "go": true, "java": true,
+	"javascript": true, "python": true, "ruby": true, "rust": true, "swift": true,
+}
+
+func (s *Server) codeQLDatabaseJSON(db *CodeQLDatabase, baseURL string, repo *Repo) map[string]interface{} {
+	uploader := s.store.GetUserByID(db.UploaderID)
+	var uploaderJSON map[string]interface{}
+	if uploader != nil {
+		uploaderJSON = userToJSON(uploader)
+	}
+	return map[string]interface{}{
+		"id":           db.ID,
+		"name":         db.Name,
+		"language":     db.Language,
+		"uploader":     uploaderJSON,
+		"content_type": db.ContentType,
+		"size":         len(db.Content),
+		"created_at":   db.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":   db.UpdatedAt.UTC().Format(time.RFC3339),
+		"url":          fmt.Sprintf("%s/api/v3/repos/%s/code-scanning/codeql/databases/%s", baseURL, repo.FullName, db.Language),
+		"commit_oid":   nullOrString(db.CommitOID),
+	}
+}
+
+func (s *Server) handleListCodeQLDatabases(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+
+	baseURL := s.baseURL(r)
+	dbs := s.store.ListCodeQLDatabases(repo.FullName)
+	out := make([]map[string]interface{}, 0, len(dbs))
+	for _, db := range dbs {
+		out = append(out, s.codeQLDatabaseJSON(db, baseURL, repo))
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleGetCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	db := s.store.GetCodeQLDatabase(repo.FullName, r.PathValue("language"))
+	if db == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	// With the Accept header set to the database's content type, real
+	// GitHub redirects to a download URL for the archive bytes.
+	if strings.Contains(r.Header.Get("Accept"), db.ContentType) {
+		loc := fmt.Sprintf("%s/internal/repos/%s/code-scanning/codeql/databases/%s/download", s.baseURL(r), repo.FullName, db.Language)
+		http.Redirect(w, r, loc, http.StatusFound)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.codeQLDatabaseJSON(db, s.baseURL(r), repo))
+}
+
+func (s *Server) handleDeleteCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canAdminRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !s.store.DeleteCodeQLDatabase(repo.FullName, r.PathValue("language")) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleSeedCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
+	user := s.internalTokenUser(r)
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+
+	var req struct {
+		Language  string `json:"language"`
+		Name      string `json:"name"`
+		Content   string `json:"content"` // base64 database archive bytes
+		CommitOID string `json:"commit_oid"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Language == "" || req.Content == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "language and content are required"})
+		return
+	}
+	content, err := base64.StdEncoding.DecodeString(req.Content)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "content must be valid base64"})
+		return
+	}
+	name := req.Name
+	if name == "" {
+		name = "database.zip"
+	}
+
+	db := s.store.UpsertCodeQLDatabase(repo.FullName, req.Language, name, "application/zip", req.CommitOID, content, user.ID)
+	writeJSON(w, http.StatusCreated, s.codeQLDatabaseJSON(db, s.baseURL(r), repo))
+}
+
+func (s *Server) handleDownloadCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	db := s.store.GetCodeQLDatabase(repo.FullName, r.PathValue("language"))
+	if db == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	w.Header().Set("Content-Type", db.ContentType)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(db.Content)
+}
+
+// --- CodeQL variant analyses ---
+
+// variantAnalysisRepoIdentifierJSON renders the compact repository
+// identifier shape (code-scanning-variant-analysis-repository) used in
+// scanned/skipped repository groups.
+func variantAnalysisRepoIdentifierJSON(repo *Repo) map[string]interface{} {
+	return map[string]interface{}{
+		"id":               repo.ID,
+		"name":             repo.Name,
+		"full_name":        repo.FullName,
+		"private":          repo.Private,
+		"stargazers_count": repo.StargazersCount,
+		"updated_at":       repo.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func variantAnalysisSkippedGroupJSON(repos []map[string]interface{}) map[string]interface{} {
+	if repos == nil {
+		repos = []map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"repository_count": len(repos),
+		"repositories":     repos,
+	}
+}
+
+func (s *Server) variantAnalysisJSON(va *CodeQLVariantAnalysis, baseURL string, controllerRepo *Repo) map[string]interface{} {
+	actor := s.store.GetUserByID(va.ActorID)
+	var actorJSON map[string]interface{}
+	if actor != nil {
+		actorJSON = userToJSON(actor)
+	}
+
+	scanned := make([]map[string]interface{}, 0, len(va.ScannedRepositories))
+	for _, task := range va.ScannedRepositories {
+		repo := s.store.GetRepoByID(task.RepoID)
+		if repo == nil {
+			continue
+		}
+		scanned = append(scanned, map[string]interface{}{
+			"repository":      variantAnalysisRepoIdentifierJSON(repo),
+			"analysis_status": task.AnalysisStatus,
+			"result_count":    task.ResultCount,
+		})
+	}
+
+	noDBRepos := make([]map[string]interface{}, 0, len(va.NoCodeQLDBRepos))
+	for _, id := range va.NoCodeQLDBRepos {
+		if repo := s.store.GetRepoByID(id); repo != nil {
+			noDBRepos = append(noDBRepos, variantAnalysisRepoIdentifierJSON(repo))
+		}
+	}
+	notFound := va.NotFoundRepos
+	if notFound == nil {
+		notFound = []string{}
+	}
+
+	var completedAt interface{}
+	if va.CompletedAt != nil {
+		completedAt = va.CompletedAt.UTC().Format(time.RFC3339)
+	}
+
+	out := map[string]interface{}{
+		"id":                   va.ID,
+		"controller_repo":      simpleRepoJSON(controllerRepo, s.store, baseURL),
+		"actor":                actorJSON,
+		"query_language":       va.QueryLanguage,
+		"query_pack_url":       fmt.Sprintf("%s/internal/repos/%s/code-scanning/codeql/variant-analyses/%d/query-pack", baseURL, controllerRepo.FullName, va.ID),
+		"created_at":           va.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":           va.UpdatedAt.UTC().Format(time.RFC3339),
+		"completed_at":         completedAt,
+		"status":               va.Status,
+		"scanned_repositories": scanned,
+		"skipped_repositories": map[string]interface{}{
+			"access_mismatch_repos": variantAnalysisSkippedGroupJSON(nil),
+			"not_found_repos": map[string]interface{}{
+				"repository_count":      len(notFound),
+				"repository_full_names": notFound,
+			},
+			"no_codeql_db_repos": variantAnalysisSkippedGroupJSON(noDBRepos),
+			"over_limit_repos":   variantAnalysisSkippedGroupJSON(nil),
+		},
+	}
+	if va.FailureReason != "" {
+		out["failure_reason"] = va.FailureReason
+	}
+	return out
+}
+
+func (s *Server) handleCreateCodeQLVariantAnalysis(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	var req struct {
+		Language         string   `json:"language"`
+		QueryPack        string   `json:"query_pack"`
+		Repositories     []string `json:"repositories"`
+		RepositoryLists  []string `json:"repository_lists"`
+		RepositoryOwners []string `json:"repository_owners"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if !codeQLLanguages[req.Language] {
+		writeGHValidationError(w, "VariantAnalysis", "language", "invalid")
+		return
+	}
+	if req.QueryPack == "" {
+		writeGHValidationError(w, "VariantAnalysis", "query_pack", "missing_field")
+		return
+	}
+	if _, err := base64.StdEncoding.DecodeString(req.QueryPack); err != nil {
+		writeGHValidationError(w, "VariantAnalysis", "query_pack", "invalid")
+		return
+	}
+	sources := 0
+	if req.Repositories != nil {
+		sources++
+	}
+	if req.RepositoryLists != nil {
+		sources++
+	}
+	if req.RepositoryOwners != nil {
+		sources++
+	}
+	if sources != 1 {
+		writeGHValidationError(w, "VariantAnalysis", "repositories", "invalid")
+		return
+	}
+	if len(req.RepositoryLists) > 1 || len(req.RepositoryOwners) > 1 {
+		writeGHValidationError(w, "VariantAnalysis", "repositories", "invalid")
+		return
+	}
+
+	targets := req.Repositories
+	for _, owner := range req.RepositoryOwners {
+		targets = append(targets, s.store.ListRepoFullNamesByOwner(owner)...)
+	}
+	// Repository lists are a github.com saved-list feature bleephub does not
+	// model; a named list resolves to no repositories, so an analysis driven
+	// only by lists fails with no_repos_queried below.
+
+	va := s.store.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, req.Language, req.QueryPack, targets)
+	writeJSON(w, http.StatusCreated, s.variantAnalysisJSON(va, s.baseURL(r), repo))
+}
+
+func (s *Server) lookupCodeQLVariantAnalysis(w http.ResponseWriter, r *http.Request, repo *Repo) *CodeQLVariantAnalysis {
+	id, err := strconv.Atoi(r.PathValue("codeql_variant_analysis_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	va := s.store.GetCodeQLVariantAnalysis(repo.FullName, id)
+	if va == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	return va
+}
+
+func (s *Server) handleGetCodeQLVariantAnalysis(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	va := s.lookupCodeQLVariantAnalysis(w, r, repo)
+	if va == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.variantAnalysisJSON(va, s.baseURL(r), repo))
+}
+
+func (s *Server) handleGetCodeQLVariantAnalysisRepoTask(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	va := s.lookupCodeQLVariantAnalysis(w, r, repo)
+	if va == nil {
+		return
+	}
+
+	fullName := r.PathValue("repo_owner") + "/" + r.PathValue("repo_name")
+	for _, task := range va.ScannedRepositories {
+		if task.FullName != fullName {
+			continue
+		}
+		taskRepo := s.store.GetRepoByID(task.RepoID)
+		if taskRepo == nil {
+			break
+		}
+		out := map[string]interface{}{
+			"repository":      simpleRepoJSON(taskRepo, s.store, s.baseURL(r)),
+			"analysis_status": task.AnalysisStatus,
+		}
+		if task.AnalysisStatus == "succeeded" {
+			out["result_count"] = task.ResultCount
+			if task.DatabaseCommitSHA != "" {
+				out["database_commit_sha"] = task.DatabaseCommitSHA
+			}
+		}
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	writeGHError(w, http.StatusNotFound, "Not Found")
+}
+
+func (s *Server) handleDownloadCodeQLVariantAnalysisQueryPack(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("codeql_variant_analysis_id"))
+	if err != nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	va := s.store.GetCodeQLVariantAnalysis(repo.FullName, id)
+	if va == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	pack, err := base64.StdEncoding.DecodeString(va.QueryPack)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "stored query pack is corrupt")
+		return
+	}
+	w.Header().Set("Content-Type", "application/gzip")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(pack)
 }
 
 func codeScanningAnalysisToJSON(a *CodeScanningAnalysis, baseURL string, repo *Repo) map[string]interface{} {

@@ -44,20 +44,24 @@ func (bp *BranchProtection) IsProtected() bool {
 		bp.RequiredSignatures != nil
 }
 
-// BPStatusChecks is the required_status_checks object.
+// BPStatusChecks is the required_status_checks object. contexts and checks
+// are required members of the published status-check-policy shape, so they
+// serialize even when empty (hydrateBranchProtectionURLs normalizes nil
+// slices before responses are written).
 type BPStatusChecks struct {
 	URL              string    `json:"url,omitempty"`
 	EnforcementLevel string    `json:"enforcement_level,omitempty"`
-	Contexts         []string  `json:"contexts,omitempty"`
-	Checks           []BPCheck `json:"checks,omitempty"`
+	Contexts         []string  `json:"contexts"`
+	Checks           []BPCheck `json:"checks"`
 	Strict           bool      `json:"strict"`
 	ContextsURL      string    `json:"contexts_url,omitempty"`
 }
 
-// BPCheck is an entry in required_status_checks.checks.
+// BPCheck is an entry in required_status_checks.checks. app_id is a
+// required, nullable member — it serializes as null when no app is pinned.
 type BPCheck struct {
 	Context string `json:"context"`
-	AppID   *int64 `json:"app_id,omitempty"`
+	AppID   *int64 `json:"app_id"`
 }
 
 // BPPullRequestReviews is the required_pull_request_reviews object.
@@ -76,11 +80,13 @@ type BPEnforceAdmins struct {
 	Enabled bool   `json:"enabled"`
 }
 
-// BPRestrictions is the restrictions object (push + dismissal).
+// BPRestrictions is the restrictions object (push + dismissal). users,
+// teams, and apps are required members of the published
+// branch-restriction-policy shape, so they serialize even when empty.
 type BPRestrictions struct {
-	Users    []BPActor `json:"users,omitempty"`
-	Teams    []BPActor `json:"teams,omitempty"`
-	Apps     []BPActor `json:"apps,omitempty"`
+	Users    []BPActor `json:"users"`
+	Teams    []BPActor `json:"teams"`
+	Apps     []BPActor `json:"apps"`
 	URL      string    `json:"url,omitempty"`
 	UsersURL string    `json:"users_url,omitempty"`
 	TeamsURL string    `json:"teams_url,omitempty"`
@@ -141,8 +147,26 @@ func (s *Server) registerGHBranchProtectionRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks", s.handleBPStatusChecksGet)
 	s.route("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks",
 		s.requirePerm(scopeAdministration, permWrite, s.handleBPStatusChecksPut))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPStatusChecksPatch))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks",
 		s.requirePerm(scopeAdministration, permWrite, s.handleBPStatusChecksDelete))
+
+	// Required commit signatures
+	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_signatures", s.handleBPRequiredSignaturesGet)
+	s.route("POST /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_signatures",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPRequiredSignaturesPost))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_signatures",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPRequiredSignaturesDelete))
+
+	// Restrictions apps
+	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps", s.handleBPRestrictionsAppsGet)
+	s.route("POST /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPRestrictionsAppsPost))
+	s.route("PUT /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPRestrictionsAppsPut))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/restrictions/apps",
+		s.requirePerm(scopeAdministration, permWrite, s.handleBPRestrictionsAppsDelete))
 
 	// Required status checks contexts
 	s.route("GET /api/v3/repos/{owner}/{repo}/branches/{branch}/protection/required_status_checks/contexts", s.handleBPContextsGet)
@@ -403,6 +427,12 @@ func (s *Server) hydrateBranchProtectionURLs(bp *BranchProtection, repo *Repo, b
 	if bp.RequiredStatusChecks != nil {
 		bp.RequiredStatusChecks.URL = s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_status_checks")
 		bp.RequiredStatusChecks.ContextsURL = s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_status_checks/contexts")
+		if bp.RequiredStatusChecks.Contexts == nil {
+			bp.RequiredStatusChecks.Contexts = []string{}
+		}
+		if bp.RequiredStatusChecks.Checks == nil {
+			bp.RequiredStatusChecks.Checks = []BPCheck{}
+		}
 	}
 	if bp.RequiredPullRequestReviews != nil {
 		bp.RequiredPullRequestReviews.URL = s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_pull_request_reviews")
@@ -427,6 +457,15 @@ func (s *Server) hydrateRestrictionsURLs(r *BPRestrictions, baseURL, fullName, b
 	r.UsersURL = s.branchProtectionSubURL(baseURL, fullName, branch, sub+"/users")
 	r.TeamsURL = s.branchProtectionSubURL(baseURL, fullName, branch, sub+"/teams")
 	r.AppsURL = s.branchProtectionSubURL(baseURL, fullName, branch, sub+"/apps")
+	if r.Users == nil {
+		r.Users = []BPActor{}
+	}
+	if r.Teams == nil {
+		r.Teams = []BPActor{}
+	}
+	if r.Apps == nil {
+		r.Apps = []BPActor{}
+	}
 }
 
 // --- Required status checks ---
@@ -441,10 +480,66 @@ func (s *Server) handleBPStatusChecksGet(w http.ResponseWriter, r *http.Request)
 		s.branchProtectionNotFound(w)
 		return
 	}
-	sc := *bp.RequiredStatusChecks
-	sc.URL = s.branchProtectionSubURL(s.baseURL(r), repo.FullName, branch, "required_status_checks")
-	sc.ContextsURL = s.branchProtectionSubURL(s.baseURL(r), repo.FullName, branch, "required_status_checks/contexts")
-	writeJSON(w, http.StatusOK, sc)
+	writeJSON(w, http.StatusOK, s.statusCheckPolicyJSON(bp.RequiredStatusChecks, repo, branch, s.baseURL(r)))
+}
+
+// statusCheckPolicyJSON renders required_status_checks in the published
+// status-check-policy shape: url, strict, contexts, checks, and contexts_url
+// are all required members — contexts/checks are present even when empty.
+func (s *Server) statusCheckPolicyJSON(sc *BPStatusChecks, repo *Repo, branch, baseURL string) map[string]interface{} {
+	contexts := sc.Contexts
+	if contexts == nil {
+		contexts = []string{}
+	}
+	checks := make([]map[string]interface{}, 0, len(sc.Checks))
+	for _, c := range sc.Checks {
+		var appID interface{}
+		if c.AppID != nil {
+			appID = *c.AppID
+		}
+		checks = append(checks, map[string]interface{}{"context": c.Context, "app_id": appID})
+	}
+	return map[string]interface{}{
+		"url":          s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_status_checks"),
+		"strict":       sc.Strict,
+		"contexts":     contexts,
+		"checks":       checks,
+		"contexts_url": s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_status_checks/contexts"),
+	}
+}
+
+// handleBPStatusChecksPatch merges a partial update into an existing
+// required_status_checks rule. Absent members are left unchanged; present
+// members replace the stored value.
+func (s *Server) handleBPStatusChecksPatch(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil || bp.RequiredStatusChecks == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	var req struct {
+		Strict   *bool      `json:"strict"`
+		Contexts *[]string  `json:"contexts"`
+		Checks   *[]BPCheck `json:"checks"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Strict != nil {
+		bp.RequiredStatusChecks.Strict = *req.Strict
+	}
+	if req.Contexts != nil {
+		bp.RequiredStatusChecks.Contexts = *req.Contexts
+	}
+	if req.Checks != nil {
+		bp.RequiredStatusChecks.Checks = *req.Checks
+	}
+	s.setBranchProtection(repo, branch, bp)
+	writeJSON(w, http.StatusOK, s.statusCheckPolicyJSON(bp.RequiredStatusChecks, repo, branch, s.baseURL(r)))
 }
 
 func (s *Server) handleBPStatusChecksPut(w http.ResponseWriter, r *http.Request) {
@@ -904,6 +999,196 @@ func (s *Server) handleBPAllowDeletionsDelete(w http.ResponseWriter, r *http.Req
 	bp.AllowDeletions = nil
 	s.setBranchProtection(repo, branch, bp)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Required commit signatures ---
+
+func (s *Server) requiredSignaturesJSON(bp *BranchProtection, repo *Repo, branch, baseURL string) map[string]interface{} {
+	enabled := bp.RequiredSignatures != nil && bp.RequiredSignatures.Enabled
+	return map[string]interface{}{
+		"url":     s.branchProtectionSubURL(baseURL, repo.FullName, branch, "required_signatures"),
+		"enabled": enabled,
+	}
+}
+
+func (s *Server) handleBPRequiredSignaturesGet(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.requiredSignaturesJSON(bp, repo, branch, s.baseURL(r)))
+}
+
+func (s *Server) handleBPRequiredSignaturesPost(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	bp.RequiredSignatures = &BPEnabledURL{Enabled: true}
+	s.setBranchProtection(repo, branch, bp)
+	writeJSON(w, http.StatusOK, s.requiredSignaturesJSON(bp, repo, branch, s.baseURL(r)))
+}
+
+func (s *Server) handleBPRequiredSignaturesDelete(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	bp.RequiredSignatures = nil
+	s.setBranchProtection(repo, branch, bp)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Restrictions apps ---
+
+// bpRestrictedAppsJSON renders the restriction's app actors as full GitHub
+// App (integration) objects, the shape the restrictions/apps endpoints
+// return.
+func (s *Server) bpRestrictedAppsJSON(actors []BPActor) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(actors))
+	for _, actor := range actors {
+		s.store.mu.RLock()
+		app := s.store.AppsBySlug[actor.Login]
+		s.store.mu.RUnlock()
+		if app != nil {
+			out = append(out, appToJSON(s.store, app, false))
+		}
+	}
+	return out
+}
+
+// decodeBPAppSlugs decodes the {"apps": ["slug", ...]} body shared by the
+// restrictions/apps mutation endpoints and resolves every slug to a
+// registered GitHub App. Writes a 422 and returns nil when a slug does not
+// resolve.
+func (s *Server) decodeBPAppSlugs(w http.ResponseWriter, r *http.Request) ([]BPActor, bool) {
+	var req struct {
+		Apps []string `json:"apps"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return nil, false
+	}
+	actors := make([]BPActor, 0, len(req.Apps))
+	for _, slug := range req.Apps {
+		s.store.mu.RLock()
+		app := s.store.AppsBySlug[slug]
+		s.store.mu.RUnlock()
+		if app == nil {
+			writeGHError(w, http.StatusUnprocessableEntity, "Could not resolve to a GitHub App: "+slug)
+			return nil, false
+		}
+		actors = append(actors, BPActor{Login: app.Slug, ID: app.ID, Type: "App"})
+	}
+	return actors, true
+}
+
+func (s *Server) handleBPRestrictionsAppsGet(w http.ResponseWriter, r *http.Request) {
+	repo, _, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil || bp.Restrictions == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	writeJSON(w, http.StatusOK, s.bpRestrictedAppsJSON(bp.Restrictions.Apps))
+}
+
+func (s *Server) handleBPRestrictionsAppsPost(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil || bp.Restrictions == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	actors, ok := s.decodeBPAppSlugs(w, r)
+	if !ok {
+		return
+	}
+	for _, actor := range actors {
+		exists := false
+		for _, cur := range bp.Restrictions.Apps {
+			if cur.ID == actor.ID {
+				exists = true
+				break
+			}
+		}
+		if !exists {
+			bp.Restrictions.Apps = append(bp.Restrictions.Apps, actor)
+		}
+	}
+	s.setBranchProtection(repo, branch, bp)
+	writeJSON(w, http.StatusOK, s.bpRestrictedAppsJSON(bp.Restrictions.Apps))
+}
+
+func (s *Server) handleBPRestrictionsAppsPut(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil || bp.Restrictions == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	actors, ok := s.decodeBPAppSlugs(w, r)
+	if !ok {
+		return
+	}
+	bp.Restrictions.Apps = actors
+	s.setBranchProtection(repo, branch, bp)
+	writeJSON(w, http.StatusOK, s.bpRestrictedAppsJSON(bp.Restrictions.Apps))
+}
+
+func (s *Server) handleBPRestrictionsAppsDelete(w http.ResponseWriter, r *http.Request) {
+	repo, branch, bp := s.getBranchProtection(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if bp == nil || bp.Restrictions == nil {
+		s.branchProtectionNotFound(w)
+		return
+	}
+	actors, ok := s.decodeBPAppSlugs(w, r)
+	if !ok {
+		return
+	}
+	remaining := bp.Restrictions.Apps[:0]
+	for _, cur := range bp.Restrictions.Apps {
+		removed := false
+		for _, actor := range actors {
+			if cur.ID == actor.ID {
+				removed = true
+				break
+			}
+		}
+		if !removed {
+			remaining = append(remaining, cur)
+		}
+	}
+	bp.Restrictions.Apps = remaining
+	s.setBranchProtection(repo, branch, bp)
+	writeJSON(w, http.StatusOK, s.bpRestrictedAppsJSON(bp.Restrictions.Apps))
 }
 
 // --- Helpers ---

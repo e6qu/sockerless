@@ -194,17 +194,27 @@ func TestOrgPublicMembers(t *testing.T) {
 func TestOrganizationsGlobalList(t *testing.T) {
 	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "global-list-org"}).Body.Close()
 
-	resp := ghGet(t, "/api/v3/organizations", defaultToken)
-	var orgs []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&orgs); err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
+	// Walk the since cursor the way a real client enumerates
+	// /organizations: the shared test server accumulates organizations
+	// from every test, so the created one may sit past the first page.
 	var orgID float64
-	for _, o := range orgs {
-		if o["login"] == "global-list-org" {
-			orgID = o["id"].(float64)
+	since := 0
+	for orgID == 0 {
+		resp := ghGet(t, "/api/v3/organizations?per_page=100&since="+jsonNumber(float64(since)), defaultToken)
+		var orgs []map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&orgs); err != nil {
+			t.Fatal(err)
 		}
+		resp.Body.Close()
+		if len(orgs) == 0 {
+			break
+		}
+		for _, o := range orgs {
+			if o["login"] == "global-list-org" {
+				orgID = o["id"].(float64)
+			}
+		}
+		since = int(orgs[len(orgs)-1]["id"].(float64))
 	}
 	if orgID == 0 {
 		t.Fatal("created org missing from /organizations")

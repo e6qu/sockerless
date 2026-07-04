@@ -87,6 +87,28 @@ import type {
   GithubVulnerabilityReportPayload,
   GithubRuleset,
   GithubRulesetCreatePayload,
+  GithubContributor,
+  GithubTrafficViews,
+  GithubTrafficClones,
+  GithubTrafficPath,
+  GithubTrafficReferrer,
+  GithubCommitActivityWeek,
+  GithubCommunityProfile,
+  GithubLabel,
+  GithubMilestone,
+  GithubAccount,
+  GithubOrgInvitation,
+  GithubCustomProperty,
+  GithubCustomPropertyValueType,
+  GithubIssueType,
+  GithubOrgRole,
+  GithubOrgRoleTeam,
+  GithubOrgRoleUser,
+  GithubEnterpriseTeam,
+  GithubEnterpriseDependabotAccess,
+  GithubCopilotBilling,
+  GithubCopilotSeat,
+  GithubCopilotSpace,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -1783,4 +1805,289 @@ export async function uploadPackageVersion(
     path = `/internal/packages/${ownerType}/${owner}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
   }
   return ghPostJSON<GithubPackageVersion>(path, payload);
+}
+
+// ─── Repo insights ───────────────────────────────────────────────────────
+
+/** GET /contributors returns 204 with an empty body for a repo with no
+ * commits — that reads as an honest empty list, not a parse error. */
+export async function fetchRepoContributors(owner: string, repo: string): Promise<GithubContributor[]> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/contributors`, { headers: authHeaders() });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  if (res.status === 204) return [];
+  return res.json() as Promise<GithubContributor[]>;
+}
+
+export const fetchTrafficViews = (owner: string, repo: string) =>
+  ghFetch<GithubTrafficViews>(`/api/v3/repos/${owner}/${repo}/traffic/views`);
+
+export const fetchTrafficClones = (owner: string, repo: string) =>
+  ghFetch<GithubTrafficClones>(`/api/v3/repos/${owner}/${repo}/traffic/clones`);
+
+export const fetchTrafficPopularPaths = (owner: string, repo: string) =>
+  ghFetch<GithubTrafficPath[]>(`/api/v3/repos/${owner}/${repo}/traffic/popular/paths`);
+
+export const fetchTrafficPopularReferrers = (owner: string, repo: string) =>
+  ghFetch<GithubTrafficReferrer[]>(`/api/v3/repos/${owner}/${repo}/traffic/popular/referrers`);
+
+export const fetchCommitActivity = (owner: string, repo: string) =>
+  ghFetch<GithubCommitActivityWeek[]>(`/api/v3/repos/${owner}/${repo}/stats/commit_activity`);
+
+export const fetchCommunityProfile = (owner: string, repo: string) =>
+  ghFetch<GithubCommunityProfile>(`/api/v3/repos/${owner}/${repo}/community/profile`);
+
+// ─── Labels + milestones ────────────────────────────────────────────────
+
+export const fetchRepoLabels = (owner: string, repo: string) =>
+  ghFetch<GithubLabel[]>(`/api/v3/repos/${owner}/${repo}/labels?per_page=100`);
+
+export const createRepoLabel = (
+  owner: string,
+  repo: string,
+  payload: { name: string; color?: string; description?: string },
+): Promise<GithubLabel> => ghPostJSON(`/api/v3/repos/${owner}/${repo}/labels`, payload);
+
+export const updateRepoLabel = (
+  owner: string,
+  repo: string,
+  name: string,
+  payload: { new_name?: string; color?: string; description?: string },
+): Promise<GithubLabel> =>
+  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`, payload);
+
+export const deleteRepoLabel = (owner: string, repo: string, name: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/labels/${encodeURIComponent(name)}`);
+
+export const fetchRepoMilestones = (owner: string, repo: string, state: "open" | "closed" | "all") =>
+  ghFetch<GithubMilestone[]>(`/api/v3/repos/${owner}/${repo}/milestones?state=${state}&per_page=100`);
+
+export const createRepoMilestone = (
+  owner: string,
+  repo: string,
+  payload: { title: string; description?: string; due_on?: string },
+): Promise<GithubMilestone> => ghPostJSON(`/api/v3/repos/${owner}/${repo}/milestones`, payload);
+
+export const updateRepoMilestone = (
+  owner: string,
+  repo: string,
+  number: number,
+  payload: { title?: string; description?: string; state?: "open" | "closed" },
+): Promise<GithubMilestone> =>
+  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/milestones/${number}`, payload);
+
+export const deleteRepoMilestone = (owner: string, repo: string, number: number) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/milestones/${number}`);
+
+export const addIssueLabels = (
+  owner: string,
+  repo: string,
+  number: number,
+  labels: string[],
+): Promise<GithubLabel[]> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}/labels`, { labels });
+
+export const removeIssueLabel = (owner: string, repo: string, number: number, name: string) =>
+  ghSend(
+    "DELETE",
+    `/api/v3/repos/${owner}/${repo}/issues/${number}/labels/${encodeURIComponent(name)}`,
+  );
+
+/** PATCH the issue's milestone: a milestone number sets it, null clears it. */
+export const setIssueMilestone = (
+  owner: string,
+  repo: string,
+  number: number,
+  milestone: number | null,
+): Promise<GithubIssue> =>
+  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}`, { milestone });
+
+// ─── Organization governance ────────────────────────────────────────────
+
+export const fetchOrgInvitations = (org: string) =>
+  ghFetch<GithubOrgInvitation[]>(`/api/v3/orgs/${org}/invitations`);
+
+export const fetchFailedOrgInvitations = (org: string) =>
+  ghFetch<GithubOrgInvitation[]>(`/api/v3/orgs/${org}/failed_invitations`);
+
+export const createOrgInvitation = (
+  org: string,
+  payload: { email: string; role: string },
+): Promise<GithubOrgInvitation> => ghPostJSON(`/api/v3/orgs/${org}/invitations`, payload);
+
+export const cancelOrgInvitation = (org: string, invitationId: number) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/invitations/${invitationId}`);
+
+export const fetchOutsideCollaborators = (org: string) =>
+  ghFetch<GithubAccount[]>(`/api/v3/orgs/${org}/outside_collaborators`);
+
+export const removeOutsideCollaborator = (org: string, username: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/outside_collaborators/${encodeURIComponent(username)}`);
+
+export const fetchOrgBlocks = (org: string) =>
+  ghFetch<GithubAccount[]>(`/api/v3/orgs/${org}/blocks`);
+
+export const blockOrgUser = (org: string, username: string) =>
+  ghSend("PUT", `/api/v3/orgs/${org}/blocks/${encodeURIComponent(username)}`);
+
+export const unblockOrgUser = (org: string, username: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/blocks/${encodeURIComponent(username)}`);
+
+export const fetchOrgCustomProperties = (org: string) =>
+  ghFetch<GithubCustomProperty[]>(`/api/v3/orgs/${org}/properties/schema`);
+
+/** Batch-upsert definitions through the schema PATCH endpoint. */
+export const upsertOrgCustomProperties = (
+  org: string,
+  properties: {
+    property_name: string;
+    value_type: GithubCustomPropertyValueType;
+    required?: boolean;
+    default_value?: string | null;
+    description?: string | null;
+    allowed_values?: string[];
+  }[],
+): Promise<GithubCustomProperty[]> =>
+  ghPatchJSON(`/api/v3/orgs/${org}/properties/schema`, { properties });
+
+export const deleteOrgCustomProperty = (org: string, name: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/properties/schema/${encodeURIComponent(name)}`);
+
+export const fetchOrgIssueTypes = (org: string) =>
+  ghFetch<GithubIssueType[]>(`/api/v3/orgs/${org}/issue-types`);
+
+export const createOrgIssueType = (
+  org: string,
+  payload: { name: string; is_enabled: boolean; description?: string; color?: string },
+): Promise<GithubIssueType> => ghPostJSON(`/api/v3/orgs/${org}/issue-types`, payload);
+
+export const updateOrgIssueType = (
+  org: string,
+  issueTypeId: number,
+  payload: { name: string; is_enabled: boolean; description?: string; color?: string },
+): Promise<GithubIssueType> =>
+  ghPutJSON(`/api/v3/orgs/${org}/issue-types/${issueTypeId}`, payload);
+
+export const deleteOrgIssueType = (org: string, issueTypeId: number) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/issue-types/${issueTypeId}`);
+
+export const fetchOrgRoles = (org: string) =>
+  ghFetchEnvelope<GithubOrgRole>(`/api/v3/orgs/${org}/organization-roles`, "roles");
+
+export const fetchOrgRoleTeams = (org: string, roleId: number) =>
+  ghFetch<GithubOrgRoleTeam[]>(`/api/v3/orgs/${org}/organization-roles/${roleId}/teams`);
+
+export const fetchOrgRoleUsers = (org: string, roleId: number) =>
+  ghFetch<GithubOrgRoleUser[]>(`/api/v3/orgs/${org}/organization-roles/${roleId}/users`);
+
+export const assignOrgRoleToTeam = (org: string, teamSlug: string, roleId: number) =>
+  ghSend("PUT", `/api/v3/orgs/${org}/organization-roles/teams/${encodeURIComponent(teamSlug)}/${roleId}`);
+
+export const revokeOrgRoleFromTeam = (org: string, teamSlug: string, roleId: number) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/organization-roles/teams/${encodeURIComponent(teamSlug)}/${roleId}`);
+
+export const assignOrgRoleToUser = (org: string, username: string, roleId: number) =>
+  ghSend("PUT", `/api/v3/orgs/${org}/organization-roles/users/${encodeURIComponent(username)}/${roleId}`);
+
+export const revokeOrgRoleFromUser = (org: string, username: string, roleId: number) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/organization-roles/users/${encodeURIComponent(username)}/${roleId}`);
+
+// ─── Enterprise administration ──────────────────────────────────────────
+
+/** The instance-wide enterprise slug bleephub serves by default. */
+export const ENTERPRISE_SLUG = "bleephub";
+
+const enterpriseBase = `/api/v3/enterprises/${ENTERPRISE_SLUG}`;
+
+export const fetchEnterpriseTeams = () =>
+  ghFetch<GithubEnterpriseTeam[]>(`${enterpriseBase}/teams`);
+
+export const createEnterpriseTeam = (payload: {
+  name: string;
+  description?: string;
+  organization_selection_type?: string;
+}): Promise<GithubEnterpriseTeam> => ghPostJSON(`${enterpriseBase}/teams`, payload);
+
+export const updateEnterpriseTeam = (
+  slug: string,
+  payload: { name?: string; description?: string; organization_selection_type?: string },
+): Promise<GithubEnterpriseTeam> =>
+  ghPatchJSON(`${enterpriseBase}/teams/${encodeURIComponent(slug)}`, payload);
+
+export const deleteEnterpriseTeam = (slug: string) =>
+  ghSend("DELETE", `${enterpriseBase}/teams/${encodeURIComponent(slug)}`);
+
+export const fetchEnterpriseTeamMembers = (slug: string) =>
+  ghFetch<GithubAccount[]>(`${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships`);
+
+export const addEnterpriseTeamMember = (slug: string, username: string): Promise<GithubAccount> =>
+  ghPutJSON(
+    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`,
+    {},
+  );
+
+export const removeEnterpriseTeamMember = (slug: string, username: string) =>
+  ghSend(
+    "DELETE",
+    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`,
+  );
+
+export const fetchEnterpriseActionsCacheLimit = () =>
+  ghFetch<{ max_cache_size_gb: number }>(`${enterpriseBase}/actions/cache/storage-limit`);
+
+export const setEnterpriseActionsCacheLimit = (maxCacheSizeGB: number) =>
+  ghSend("PUT", `${enterpriseBase}/actions/cache/storage-limit`, {
+    max_cache_size_gb: maxCacheSizeGB,
+  });
+
+export const fetchEnterpriseDependabotAccess = () =>
+  ghFetch<GithubEnterpriseDependabotAccess>(`${enterpriseBase}/dependabot/repository-access`);
+
+export const updateEnterpriseDependabotAccess = (payload: {
+  repository_ids_to_add?: number[];
+  repository_ids_to_remove?: number[];
+}) => ghSend("PATCH", `${enterpriseBase}/dependabot/repository-access`, payload);
+
+export const setEnterpriseDependabotDefaultLevel = (level: "public" | "internal") =>
+  ghSend("PUT", `${enterpriseBase}/dependabot/repository-access/default-level`, {
+    default_level: level,
+  });
+
+// ─── Copilot ────────────────────────────────────────────────────────────
+
+export const fetchCopilotBilling = (org: string) =>
+  ghFetch<GithubCopilotBilling>(`/api/v3/orgs/${org}/copilot/billing`);
+
+/** Envelope list ({total_seats, seats}); keyed like ghFetchEnvelope but the
+ * endpoint names its count total_seats rather than total_count. */
+export async function fetchCopilotSeats(
+  org: string,
+): Promise<{ totalSeats: number; seats: GithubCopilotSeat[] }> {
+  const body = await ghFetch<{ total_seats: number; seats: GithubCopilotSeat[] }>(
+    `/api/v3/orgs/${org}/copilot/billing/seats`,
+  );
+  if (!Array.isArray(body.seats)) {
+    throw new Error(`malformed response: missing "seats" array`);
+  }
+  return { totalSeats: body.total_seats, seats: body.seats };
+}
+
+export const addCopilotSeats = (org: string, usernames: string[]): Promise<{ seats_created: number }> =>
+  ghPostJSON(`/api/v3/orgs/${org}/copilot/billing/selected_users`, {
+    selected_usernames: usernames,
+  });
+
+export const cancelCopilotSeats = (org: string, usernames: string[]) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/copilot/billing/selected_users`, {
+    selected_usernames: usernames,
+  });
+
+export async function fetchCopilotSpaces(org: string): Promise<GithubCopilotSpace[]> {
+  const body = await ghFetch<{ spaces: GithubCopilotSpace[] }>(`/api/v3/orgs/${org}/copilot-spaces`);
+  if (!Array.isArray(body.spaces)) {
+    throw new Error(`malformed response: missing "spaces" array`);
+  }
+  return body.spaces;
 }

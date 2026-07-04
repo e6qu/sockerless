@@ -24,6 +24,11 @@ const (
 	// WorkflowStatusWaiting holds runs whose environment-targeting jobs
 	// await a deployment review (required reviewers on the environment).
 	WorkflowStatusWaiting WorkflowStatus = "waiting"
+	// WorkflowStatusActionRequired holds runs triggered by a pull request
+	// from a fork when the repository's fork-PR contributor-approval
+	// policy requires a maintainer to approve the run before any job
+	// dispatches (POST .../runs/{run_id}/approve releases it).
+	WorkflowStatusActionRequired WorkflowStatus = "action_required"
 )
 
 // JobStatus is the lifecycle state of a [WorkflowJob].
@@ -81,6 +86,10 @@ type Workflow struct {
 	Inputs             map[string]string    `json:"inputs,omitempty"`
 	ConcurrencyGroup   string               `json:"concurrencyGroup,omitempty"`
 	CancelInProgress   bool                 `json:"-"`
+	// ConcurrencyAcquiredAt records when this run took its concurrency
+	// group's lease (started running while holding the group); zero for
+	// runs without a group or still queued behind the group.
+	ConcurrencyAcquiredAt time.Time `json:"-"`
 	// Attempt is the 1-based run_attempt; zero means first attempt
 	// (reruns bump it and archive the prior attempt in
 	// Store.WorkflowAttempts).
@@ -320,6 +329,20 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	// path), which are constant across every run produced from the file.
 	workflow.WorkflowFileID, workflow.WorkflowFilePath = s.resolveWorkflowFileForRun(workflow)
 
+	// Fork-PR contributor approval: a run triggered by a pull request
+	// whose head repository differs from the base repository holds in
+	// action_required until a maintainer approves it (POST
+	// .../runs/{run_id}/approve), when the repository policy requires
+	// contributor approval — matching real GitHub's fork-PR gating.
+	if workflowNeedsForkPRApproval(workflow, s.store) {
+		workflow.Status = WorkflowStatusActionRequired
+		s.store.mu.Lock()
+		s.store.Workflows[workflow.ID] = workflow
+		s.store.mu.Unlock()
+		s.queueActionsEvent(evRunRequested, workflow, nil)
+		return workflow, nil
+	}
+
 	// Handle concurrency control
 	if workflow.ConcurrencyGroup != "" {
 		s.store.mu.RLock()
@@ -353,6 +376,9 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	}
 
 	// Store the workflow
+	if workflow.ConcurrencyGroup != "" {
+		workflow.ConcurrencyAcquiredAt = time.Now().UTC()
+	}
 	s.store.mu.Lock()
 	s.store.Workflows[workflow.ID] = workflow
 	s.store.mu.Unlock()
@@ -1056,6 +1082,7 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 	}
 
 	pendingWf.Status = WorkflowStatusRunning
+	pendingWf.ConcurrencyAcquiredAt = time.Now().UTC()
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -1069,6 +1096,35 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 			s.dispatchReadyJobs(context.Background(), pendingWf, serverURL, defaultImage)
 		}
 	}
+}
+
+// workflowNeedsForkPRApproval reports whether the run must hold in
+// action_required for a maintainer's approval: it was triggered by a
+// pull_request event whose head repository is a fork of (differs from)
+// the base repository, and the base repository's fork-PR
+// contributor-approval policy requires approval.
+func workflowNeedsForkPRApproval(wf *Workflow, st *Store) bool {
+	if wf.EventName != "pull_request" || wf.RepoFullName == "" || wf.EventPayload == nil {
+		return false
+	}
+	pr, _ := wf.EventPayload["pull_request"].(map[string]interface{})
+	if pr == nil {
+		return false
+	}
+	head, _ := pr["head"].(map[string]interface{})
+	if head == nil {
+		return false
+	}
+	headRepo, _ := head["repo"].(map[string]interface{})
+	if headRepo == nil {
+		return false
+	}
+	headFullName, _ := headRepo["full_name"].(string)
+	if headFullName == "" || strings.EqualFold(headFullName, wf.RepoFullName) {
+		return false
+	}
+	policy := st.GetRepoActionsPermissions(wf.RepoFullName).ForkPRContributorApproval
+	return policy != "" && policy != "none"
 }
 
 // normalizeResult converts runner result strings to consistent format.

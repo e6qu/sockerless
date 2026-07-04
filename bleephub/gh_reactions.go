@@ -190,9 +190,17 @@ func (s *Server) registerGHReactionsRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue", "number")))
 
-	// Issue comment reactions
+	// Issue comment reactions. The DELETE path has four segments after
+	// /issues, so it does not collide with the issue three-segment dispatch.
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions",
 		s.requirePerm(scopeIssues, permWrite, s.handleCreateReaction("issue_comment", "comment_id")))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/comments/{comment_id}/reactions/{reaction_id}",
+		s.requirePerm(scopeIssues, permWrite, s.handleDeleteReaction("issue_comment", "comment_id")))
+
+	// PR review-comment reaction deletion. Four segments after /pulls, so it
+	// does not collide with the pulls three-segment dispatch below.
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/comments/{comment_id}/reactions/{reaction_id}",
+		s.requirePerm(scopePullRequests, permWrite, s.handleDeleteReaction("pull_request_review_comment", "comment_id")))
 
 	// PR review-comment reactions. The 3-segment GET/POST routes
 	// (/pulls/comments/{comment_id}/reactions) conflict with the PR review

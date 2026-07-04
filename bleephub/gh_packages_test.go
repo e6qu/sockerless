@@ -52,8 +52,8 @@ func TestPackages_UserCRUD(t *testing.T) {
 	admin := testServer.store.UsersByLogin["admin"]
 	pkgID, versionID := seedPackageVersion(t, "user", admin.Login, "container", "user-pkg", "1.0.0")
 
-	// List user packages
-	resp := ghGet(t, "/api/v3/users/"+admin.Login+"/packages", defaultToken)
+	// List user packages (package_type is a required query parameter)
+	resp := ghGet(t, "/api/v3/users/"+admin.Login+"/packages?package_type=container", defaultToken)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -217,7 +217,7 @@ func TestPackages_OrgCRUD(t *testing.T) {
 	org := testServer.store.CreateOrg(admin, "pkg-org", "Pkg Org", "")
 	pkgID, versionID := seedPackageVersion(t, "org", org.Login, "npm", "org-pkg", "2.0.0")
 
-	resp := ghGet(t, "/api/v3/orgs/"+org.Login+"/packages", defaultToken)
+	resp := ghGet(t, "/api/v3/orgs/"+org.Login+"/packages?package_type=npm", defaultToken)
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -420,4 +420,124 @@ func TestPackages_InternalUploadValidation(t *testing.T) {
 		t.Fatalf("expected 404 missing owner, got %d %s", resp.StatusCode, b)
 	}
 	resp.Body.Close()
+}
+
+func TestPackages_OrgPackageRestore(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "pkg-restore-org", "Pkg Restore Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	_, versionID := seedPackageVersion(t, "org", org.Login, "npm", "restorable-pkg", "1.0.0")
+
+	// Delete the whole package: gone from every read surface.
+	resp := ghDelete(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete package: %d, want 204", resp.StatusCode)
+	}
+	resp = ghGet(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("get deleted package: %d, want 404", resp.StatusCode)
+	}
+
+	// Restore brings it back with its versions intact.
+	resp = ghPost(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg/restore", defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("restore package: %d, want 204", resp.StatusCode)
+	}
+	resp = ghGet(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("get restored package: %d", resp.StatusCode)
+	}
+	restored := decodeJSON(t, resp)
+	if restored["version_count"] != float64(1) {
+		t.Fatalf("restored package version_count = %v, want 1", restored["version_count"])
+	}
+	resp = ghGet(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg/versions/"+strconv.Itoa(versionID), defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("get restored package version: %d", resp.StatusCode)
+	}
+
+	// A live package cannot be restored again; unknown names are not found.
+	resp = ghPost(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg/restore", defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("restore live package: %d, want 404", resp.StatusCode)
+	}
+	resp = ghPost(t, "/api/v3/orgs/pkg-restore-org/packages/npm/never-existed/restore", defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("restore unknown package: %d, want 404", resp.StatusCode)
+	}
+
+	// Reusing the namespace forfeits restore: deleting and republishing the
+	// same name purges the old package for good.
+	resp = ghDelete(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("re-delete package: %d, want 204", resp.StatusCode)
+	}
+	seedPackageVersion(t, "org", org.Login, "npm", "restorable-pkg", "2.0.0")
+	resp = ghGet(t, "/api/v3/orgs/pkg-restore-org/packages/npm/restorable-pkg", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("get republished package: %d", resp.StatusCode)
+	}
+	republished := decodeJSON(t, resp)
+	if republished["version_count"] != float64(1) {
+		t.Fatalf("republished package version_count = %v, want 1 (old versions purged)", republished["version_count"])
+	}
+}
+
+func TestPackages_OrgDockerConflicts(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "docker-conflicts-org", "Docker Conflicts Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+
+	// No packages → honestly empty.
+	resp := ghGet(t, "/api/v3/orgs/docker-conflicts-org/docker/conflicts", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("docker conflicts (empty): %d", resp.StatusCode)
+	}
+	if conflicts := decodeJSONArray(t, resp); len(conflicts) != 0 {
+		t.Fatalf("expected no conflicts, got %v", conflicts)
+	}
+
+	// A docker package alone does not conflict.
+	seedPackageVersion(t, "org", org.Login, "docker", "shared-image", "1.0.0")
+	resp = ghGet(t, "/api/v3/orgs/docker-conflicts-org/docker/conflicts", defaultToken)
+	if conflicts := decodeJSONArray(t, resp); len(conflicts) != 0 {
+		t.Fatalf("expected no conflicts with docker package alone, got %v", conflicts)
+	}
+
+	// A container package with the same name makes the docker package a
+	// migration conflict.
+	seedPackageVersion(t, "org", org.Login, "container", "shared-image", "1.0.0")
+	resp = ghGet(t, "/api/v3/orgs/docker-conflicts-org/docker/conflicts", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("docker conflicts: %d", resp.StatusCode)
+	}
+	conflicts := decodeJSONArray(t, resp)
+	if len(conflicts) != 1 {
+		t.Fatalf("expected 1 conflict, got %v", conflicts)
+	}
+	if conflicts[0]["name"] != "shared-image" || conflicts[0]["package_type"] != "docker" {
+		t.Fatalf("conflict row wrong: %v", conflicts[0])
+	}
+
+	// Requires authentication.
+	resp = ghGet(t, "/api/v3/orgs/docker-conflicts-org/docker/conflicts", "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated docker conflicts: %d, want 401", resp.StatusCode)
+	}
 }

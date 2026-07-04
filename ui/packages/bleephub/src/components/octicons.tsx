@@ -488,3 +488,21 @@ export function CodespaceIcon(p: IconProps) {
     </Svg>
   );
 }
+
+export function GraphIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 2.5v11h11" />
+      <path d="M5.5 10.5v-3M8.5 10.5v-6M11.5 10.5v-4.5" />
+    </Svg>
+  );
+}
+
+export function GlobeIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="8" r="5.5" />
+      <path d="M2.5 8h11M8 2.5c-1.8 1.5-2.7 3.4-2.7 5.5s0.9 4 2.7 5.5c1.8-1.5 2.7-3.4 2.7-5.5s-0.9-4-2.7-5.5z" />
+    </Svg>
+  );
+}

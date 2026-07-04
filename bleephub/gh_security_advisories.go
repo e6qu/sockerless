@@ -3,6 +3,7 @@ package bleephub
 import (
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -17,6 +18,82 @@ func (s *Server) registerGHSecurityAdvisoriesRoutes() {
 	// The literal /reports path conflicts with the {ghsa_id} wildcard in Go 1.22's mux,
 	// so the wildcard dispatches to the real /security-advisories/reports endpoint.
 	s.route("POST /api/v3/repos/{owner}/{repo}/security-advisories/{ghsa_id}", s.requirePerm(scopeSecurityEvents, permWrite, s.handleSecurityAdvisoryReportsDispatch))
+	s.route("GET /api/v3/orgs/{org}/security-advisories", s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListOrgSecurityAdvisories))
+}
+
+// handleListOrgSecurityAdvisories implements GET /orgs/{org}/security-advisories:
+// the union of every advisory filed against the organization's repositories.
+func (s *Server) handleListOrgSecurityAdvisories(w http.ResponseWriter, r *http.Request) {
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	type advisoryRow struct {
+		advisory *SecurityAdvisory
+		repo     *Repo
+	}
+	s.store.mu.RLock()
+	var rows []advisoryRow
+	for repoKey, byGHSA := range s.store.SecurityAdvisoriesByRepo {
+		repo := s.store.ReposByName[repoKey]
+		if repo == nil || repo.OwnerType != "Organization" || repo.OwnerID != org.ID {
+			continue
+		}
+		for _, a := range byGHSA {
+			rows = append(rows, advisoryRow{advisory: a, repo: repo})
+		}
+	}
+	s.store.mu.RUnlock()
+
+	if state := r.URL.Query().Get("state"); state != "" {
+		kept := rows[:0]
+		for _, row := range rows {
+			if row.advisory.State == state {
+				kept = append(kept, row)
+			}
+		}
+		rows = kept
+	}
+
+	sortKey := r.URL.Query().Get("sort")
+	asc := r.URL.Query().Get("direction") == "asc"
+	sortTime := func(row advisoryRow) time.Time {
+		switch sortKey {
+		case "updated":
+			return row.advisory.UpdatedAt
+		case "published":
+			if row.advisory.PublishedAt != nil {
+				return *row.advisory.PublishedAt
+			}
+			return time.Time{}
+		default: // created
+			return row.advisory.CreatedAt
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		ti, tj := sortTime(rows[i]), sortTime(rows[j])
+		if ti.Equal(tj) {
+			// Tiebreak equal timestamps by ID for a stable order.
+			if asc {
+				return rows[i].advisory.ID < rows[j].advisory.ID
+			}
+			return rows[i].advisory.ID > rows[j].advisory.ID
+		}
+		if asc {
+			return ti.Before(tj)
+		}
+		return tj.Before(ti)
+	})
+
+	page := paginateAndLink(w, r, rows)
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, len(page))
+	for i, row := range page {
+		out[i] = securityAdvisoryToJSON(row.advisory, row.repo, baseURL, s.store)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleListSecurityAdvisories(w http.ResponseWriter, r *http.Request) {

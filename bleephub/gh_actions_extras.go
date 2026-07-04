@@ -112,6 +112,14 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.writeRunLogsZip(w, wf, runID)
+}
+
+// writeRunLogsZip renders the run's log archive (real GitHub's layout:
+// per job a top-level "0_<jobname>.txt" full job log plus a
+// "<jobname>/" folder with per-step files) and writes it as the
+// response. Shared by the run-level and attempt-level log endpoints.
+func (s *Server) writeRunLogsZip(w http.ResponseWriter, wf *Workflow, runID int) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	s.store.mu.RLock()

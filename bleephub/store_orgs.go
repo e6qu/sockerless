@@ -262,7 +262,11 @@ func (st *Store) DeleteOrg(login string) bool {
 	return true
 }
 
-// ListOrgsByUser returns all organizations the user belongs to.
+// ListOrgsByUser returns all organizations the user belongs to, in
+// ascending id order like real GitHub. The memberships map iterates in
+// random order; the /user/orgs handlers paginate over this list, and
+// offset pagination over an unstable order would skip or duplicate orgs
+// across pages.
 func (st *Store) ListOrgsByUser(userID int) []*Org {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -275,6 +279,7 @@ func (st *Store) ListOrgsByUser(userID int) []*Org {
 			}
 		}
 	}
+	sort.Slice(orgs, func(i, j int) bool { return orgs[i].ID < orgs[j].ID })
 	return orgs
 }
 
@@ -300,6 +305,12 @@ func (st *Store) SetMembership(orgLogin string, userID int, role OrgRole, state 
 	m.State = state
 	if st.persist != nil {
 		st.persist.MustPut("memberships", key, m)
+	}
+	// An activated membership completes any organization invitation the
+	// user held: the invitee joins the invited teams and the invitation
+	// row is consumed.
+	if state == MembershipStateActive {
+		st.consumeOrgInvitationsForUserLocked(orgLogin, userID)
 	}
 	return m
 }

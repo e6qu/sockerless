@@ -4,16 +4,19 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`fix/sim-fidelity-audit-round1`. Sim fidelity audit round 1: ECS/Lambda field-gating and filter gaps.
+`feat/bleephub-api-ui-completeness` — bleephub GitHub REST API 100% coverage + UI completeness. PR pending.
 
 **Scope**
-- ECS `DescribeTasks` now honors `Include=[TAGS]` (BUG-2286).
-- Lambda `ListFunctions` now honors `FunctionVersion=ALL` (BUG-2287).
-- ECS `ListTasks` now supports `serviceName` and `startedBy` filters (BUG-2288).
-- ECS `RunTask` now parses and stores `startedBy` from the request body (BUG-2289).
-- BUG-1785 (GCP Cloud Build push→pull) closed — already shipped in PR #755.
+- Implemented all 542 remaining vendored GitHub REST operations (1190/1190 registered, was 665/1190) across 12 work packages: enterprises, Copilot + Copilot Spaces, coding-agent secrets/variables/tasks + code scanning autofix/CodeQL, Actions hosted runners/permissions/concurrency/run controls, Projects v2 REST + attestations + artifact metadata, user surface (profile/emails/codespaces/packages/billing), legacy teams + org people/roles, code security configurations + custom properties + issue types/fields + campaigns + private registries + network configurations + immutable releases, billing budgets/usage + API insights + PAT admin + org events, repo writes (pages deployments, environment policies, branch protection extras, template generate, import, sub-issues, dependencies, dependency-graph SBOM), repo reads (single commit with diffs, contributors, stats, traffic, archives, license, activity/events), and top-level misc (markdown via goldmark, emojis, zen/octocat, codes of conduct, global advisories, classroom, search commits/labels/topics, marketplace).
+- Every response validated by the OpenAPI shape ratchet with zero allowlist additions; every route validated against the vendored spec.
+- UI: fixed the unreachable org context, orphaned repo Secrets/Codespaces/Packages/Workflows routes, and the repo-scope package restore action; added the repo Insights tab, issue labels/milestones management + triage panel, org Governance page, Enterprise admin section, and org Copilot page. Server fix: PATCH issues now honors milestone/labels/assignees.
+- Boyscout fixes BUG-2292–2302 (see BUGS.md), including packages/codespaces/Projects-v2-views persistence, real code-scanning default setup, real user-event derivation, and the nonexistent-branch contents PUT that advanced the default branch.
 
-**Next:** merge and continue the sim fidelity audit (round 2: ACA PATCH merge semantics, Cloud Run v2 updateMask whitelist).
+**Next after merge**
+- BUG-2303 (open, needs a user decision): emoji catalog image URLs are unserved; pick an asset source (openly-licensed emoji image set vs runtime rasterization from an open emoji font).
+- UI follow-ups the pages pass named: Copilot Spaces CRUD/collaborators, enterprise-team organization assignments, custom-property default/required editing.
+- Remaining pre-existing UI gaps from the audit: PR reviews workflow, deployments view, webhook delivery inspection, search UI, git data plane views.
+- Live-cloud track (BUG-1075); azuread upstream (BUG-1345).
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics

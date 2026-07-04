@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 func (s *Server) registerGHRepoObjectRoutes() {
@@ -295,12 +296,19 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 		sig = repoSignature(req.Author.Name, req.Author.Email)
 	}
 
-	// Determine whether this is the first commit on the branch.
+	// Determine whether this commit initializes an empty repository. A
+	// missing branch on a repository that already has branches is a 404 on
+	// real GitHub — PUT contents never creates branches (and committing via
+	// an unrelated worktree would silently advance the current branch).
 	branchRef := plumbing.NewBranchReferenceName(branch)
 	ref, refErr := stor.Reference(branchRef)
 	var commitHash plumbing.Hash
 	var isInitial bool
 	if refErr != nil || ref == nil {
+		if repoHasAnyBranch(stor) {
+			writeGHError(w, http.StatusNotFound, "Branch not found")
+			return
+		}
 		isInitial = true
 	}
 
@@ -631,4 +639,21 @@ func writeTreeListing(w http.ResponseWriter, tree *object.Tree, prefix string) {
 	}
 
 	writeJSON(w, http.StatusOK, items)
+}
+
+// repoHasAnyBranch reports whether the repository has at least one branch.
+func repoHasAnyBranch(stor gitStorage.Storer) bool {
+	refs, err := stor.IterReferences()
+	if err != nil {
+		return false
+	}
+	defer refs.Close()
+	found := false
+	_ = refs.ForEach(func(ref *plumbing.Reference) error {
+		if ref.Name().IsBranch() && !ref.Hash().IsZero() {
+			found = true
+		}
+		return nil
+	})
+	return found
 }

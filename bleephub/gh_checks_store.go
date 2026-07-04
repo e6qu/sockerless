@@ -213,6 +213,22 @@ func (st *Store) GetCheckRun(id int64) *CheckRun {
 	return &cp
 }
 
+// UpdateCheckSuite mutates a check suite via callback. Returns false if not found.
+func (st *Store) UpdateCheckSuite(id int64, fn func(*CheckSuite)) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	suite := st.CheckSuites[id]
+	if suite == nil {
+		return false
+	}
+	fn(suite)
+	suite.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("check_suites", strconv.FormatInt(id, 10), suite)
+	}
+	return true
+}
+
 // UpdateCheckRun mutates a check run via callback. Returns false if not found.
 func (st *Store) UpdateCheckRun(id int64, fn func(*CheckRun)) bool {
 	st.mu.Lock()

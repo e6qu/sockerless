@@ -230,3 +230,72 @@ func TestSecurityAdvisory_TemporaryFork(t *testing.T) {
 		t.Fatalf("expected private_fork set, got nil")
 	}
 }
+
+func TestSecurityAdvisories_OrgWideList(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "sa-org-list", "SA Org List", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	r1 := testServer.store.CreateOrgRepo(org, admin, "sa-org-repo-1", "", false)
+	r2 := testServer.store.CreateOrgRepo(org, admin, "sa-org-repo-2", "", false)
+	if r1 == nil || r2 == nil {
+		t.Fatal("create org repos failed")
+	}
+
+	// Honest empty list before any advisories.
+	resp := ghGet(t, "/api/v3/orgs/sa-org-list/security-advisories", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("list org advisories (empty): %d", resp.StatusCode)
+	}
+	if list := decodeJSONArray(t, resp); len(list) != 0 {
+		t.Fatalf("expected empty advisory list, got %v", list)
+	}
+
+	for _, repoName := range []string{"sa-org-repo-1", "sa-org-repo-2"} {
+		resp := ghPost(t, "/api/v3/repos/sa-org-list/"+repoName+"/security-advisories", defaultToken, map[string]interface{}{
+			"summary":     "org-wide advisory in " + repoName,
+			"description": "details",
+			"severity":    "high",
+		})
+		if resp.StatusCode != http.StatusCreated {
+			b, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			t.Fatalf("create advisory in %s: %d body=%s", repoName, resp.StatusCode, b)
+		}
+		resp.Body.Close()
+	}
+
+	resp = ghGet(t, "/api/v3/orgs/sa-org-list/security-advisories", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("list org advisories: %d", resp.StatusCode)
+	}
+	list := decodeJSONArray(t, resp)
+	if len(list) != 2 {
+		t.Fatalf("expected 2 org advisories, got %v", list)
+	}
+	for _, a := range list {
+		if ghsa, _ := a["ghsa_id"].(string); !strings.HasPrefix(ghsa, "GHSA-") {
+			t.Fatalf("advisory missing ghsa_id: %v", a)
+		}
+	}
+
+	// State filter.
+	resp = ghGet(t, "/api/v3/orgs/sa-org-list/security-advisories?state=draft", defaultToken)
+	if drafts := decodeJSONArray(t, resp); len(drafts) != 2 {
+		t.Fatalf("draft filter = %d advisories, want 2", len(drafts))
+	}
+	resp = ghGet(t, "/api/v3/orgs/sa-org-list/security-advisories?state=published", defaultToken)
+	if published := decodeJSONArray(t, resp); len(published) != 0 {
+		t.Fatalf("published filter = %d advisories, want 0", len(published))
+	}
+
+	// Unknown org.
+	resp = ghGet(t, "/api/v3/orgs/no-such-sa-org/security-advisories", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown org advisories: %d, want 404", resp.StatusCode)
+	}
+}

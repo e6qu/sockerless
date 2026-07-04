@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -501,8 +502,8 @@ func TestDependabot_RepositoryAccess(t *testing.T) {
 		t.Fatalf("decode repository access: %v", err)
 	}
 	resp.Body.Close()
-	if got["default_level"] != nil {
-		t.Fatalf("expected nil default_level, got %v", got["default_level"])
+	if got["default_level"] != "public" {
+		t.Fatalf("expected default_level public before any update, got %v", got["default_level"])
 	}
 	if len(got["accessible_repositories"].([]any)) != 0 {
 		t.Fatalf("expected 0 accessible repos, got %v", got["accessible_repositories"])
@@ -554,5 +555,139 @@ func TestDependabot_RepositoryAccess(t *testing.T) {
 	resp.Body.Close()
 	if len(got["accessible_repositories"].([]any)) != 1 {
 		t.Fatalf("expected 1 accessible repo, got %v", got["accessible_repositories"])
+	}
+}
+
+func TestDependabot_RepositoryAccessDefaultLevel(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "dependabot-default-level", "Dependabot Default Level", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+
+	// Invalid level.
+	resp := ghPut(t, "/api/v3/orgs/dependabot-default-level/dependabot/repository-access/default-level", defaultToken, map[string]any{
+		"default_level": "top-secret",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid default level: %d, want 422", resp.StatusCode)
+	}
+
+	// Set to internal and read it back through the repository-access GET.
+	resp = ghPut(t, "/api/v3/orgs/dependabot-default-level/dependabot/repository-access/default-level", defaultToken, map[string]any{
+		"default_level": "internal",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set default level: %d, want 204", resp.StatusCode)
+	}
+	resp = authedGet(t, "/api/v3/orgs/dependabot-default-level/dependabot/repository-access")
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("get repository access: %d", resp.StatusCode)
+	}
+	var got map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode repository access: %v", err)
+	}
+	resp.Body.Close()
+	if got["default_level"] != "internal" {
+		t.Fatalf("default_level = %v, want internal", got["default_level"])
+	}
+
+	// Unknown org.
+	resp = ghPut(t, "/api/v3/orgs/no-such-dependabot-org/dependabot/repository-access/default-level", defaultToken, map[string]any{
+		"default_level": "public",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown org default level: %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDependabot_OrgSecretSelectedRepoAddRemove(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "dependabot-repo-sel", "Dependabot Repo Sel", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	r1 := testServer.store.CreateOrgRepo(org, admin, "dependabot-repo-sel-1", "", false)
+	r2 := testServer.store.CreateOrgRepo(org, admin, "dependabot-repo-sel-2", "", false)
+	if r1 == nil || r2 == nil {
+		t.Fatal("create org repos failed")
+	}
+
+	resp := authedGet(t, "/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/public-key")
+	var pk map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&pk); err != nil {
+		t.Fatalf("decode public key: %v", err)
+	}
+	resp.Body.Close()
+	keyID, _ := pk["key_id"].(string)
+
+	resp = ghPut(t, "/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/SELECTED_SECRET", defaultToken, map[string]any{
+		"encrypted_value":         base64.StdEncoding.EncodeToString([]byte("selected-secret")),
+		"key_id":                  keyID,
+		"visibility":              "selected",
+		"selected_repository_ids": []int{r1.ID},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("put org secret: %d, want 201", resp.StatusCode)
+	}
+
+	// Add the second repository.
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/SELECTED_SECRET/repositories/%d", r2.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("add selected repo: %d, want 204", resp.StatusCode)
+	}
+	resp = authedGet(t, "/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/SELECTED_SECRET/repositories")
+	var repos map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		t.Fatalf("decode selected repos: %v", err)
+	}
+	resp.Body.Close()
+	if repos["total_count"] != float64(2) {
+		t.Fatalf("selected repos after add = %v, want 2", repos["total_count"])
+	}
+
+	// Remove the first repository.
+	resp = ghDelete(t, fmt.Sprintf("/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/SELECTED_SECRET/repositories/%d", r1.ID), defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove selected repo: %d, want 204", resp.StatusCode)
+	}
+	resp = authedGet(t, "/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/SELECTED_SECRET/repositories")
+	if err := json.NewDecoder(resp.Body).Decode(&repos); err != nil {
+		t.Fatalf("decode selected repos: %v", err)
+	}
+	resp.Body.Close()
+	if repos["total_count"] != float64(1) {
+		t.Fatalf("selected repos after remove = %v, want 1", repos["total_count"])
+	}
+
+	// A secret with visibility all conflicts.
+	resp = ghPut(t, "/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/ALL_SECRET", defaultToken, map[string]any{
+		"encrypted_value": base64.StdEncoding.EncodeToString([]byte("all-secret")),
+		"key_id":          keyID,
+		"visibility":      "all",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("put all-visibility secret: %d, want 201", resp.StatusCode)
+	}
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/ALL_SECRET/repositories/%d", r1.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("add repo to all-visibility secret: %d, want 409", resp.StatusCode)
+	}
+
+	// Unknown secret.
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/dependabot-repo-sel/dependabot/secrets/NO_SUCH/repositories/%d", r1.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown secret add repo: %d, want 404", resp.StatusCode)
 	}
 }

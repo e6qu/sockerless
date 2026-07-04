@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 )
@@ -18,6 +19,7 @@ func (s *Server) registerGHIssueRoutes() {
 	// Milestones
 	s.route("POST /api/v3/repos/{owner}/{repo}/milestones", s.requirePerm(scopeIssues, permWrite, s.handleCreateMilestone))
 	s.route("GET /api/v3/repos/{owner}/{repo}/milestones", s.handleListMilestones)
+	s.route("GET /api/v3/repos/{owner}/{repo}/milestones/{number}/labels", s.handleListMilestoneLabels)
 	s.route("GET /api/v3/repos/{owner}/{repo}/milestones/{number}", s.handleGetMilestone)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/milestones/{number}", s.requirePerm(scopeIssues, permWrite, s.handleUpdateMilestone))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/milestones/{number}", s.requirePerm(scopeIssues, permWrite, s.handleDeleteMilestone))
@@ -25,6 +27,7 @@ func (s *Server) registerGHIssueRoutes() {
 	// Issues
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues", s.requirePerm(scopeIssues, permWrite, s.handleCreateIssue))
 	s.route("GET /api/v3/repos/{owner}/{repo}/issues", s.handleListIssues)
+	s.route("GET /api/v3/orgs/{org}/issues", s.handleListOrgIssues)
 	s.route("GET /api/v3/repos/{owner}/{repo}/issues/{number}", s.handleGetIssue)
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/issues/{number}", s.requirePerm(scopeIssues, permWrite, s.handleUpdateIssue))
 
@@ -60,8 +63,14 @@ func (s *Server) registerGHIssueRoutes() {
 	// Issue timeline + events
 	s.route("GET /api/v3/repos/{owner}/{repo}/issues/events", s.handleListRepoIssueEvents)
 
-	// Sub-issues / dependencies / issue-field-values (feature not modeled)
+	// Sub-issues + issue dependencies (gh_sub_issues.go); issue-field-values
+	// POST/PUT live in gh_issue_fields.go. List GETs and the sub-issue
+	// removal dispatch through the shared two-/three-segment wildcard
+	// handlers below.
 	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/sub_issues", s.requirePerm(scopeIssues, permWrite, s.handleCreateSubIssue))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/issues/{number}/sub_issues/priority", s.requirePerm(scopeIssues, permWrite, s.handleReprioritizeSubIssue))
+	s.route("POST /api/v3/repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by", s.requirePerm(scopeIssues, permWrite, s.handleAddIssueDependencyBlockedBy))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/issues/{number}/dependencies/blocked_by/{issue_id}", s.requirePerm(scopeIssues, permWrite, s.handleRemoveIssueDependencyBlockedBy))
 
 	// Go's mux cannot disambiguate 3-segment issue DELETE paths (e.g.
 	// /issues/{n}/labels/{name} vs /issues/{n}/reactions/{id}), so they
@@ -410,6 +419,63 @@ func (s *Server) handleDeleteMilestone(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleListMilestoneLabels — GET /repos/{o}/{r}/milestones/{number}/labels.
+// Lists the labels on every issue (and pull request — PRs are issues) in
+// the milestone, each label once.
+func (s *Server) handleListMilestoneLabels(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	ms := s.store.GetMilestoneByNumber(repo.ID, num)
+	if ms == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	s.store.mu.RLock()
+	seen := map[int]bool{}
+	var labels []*IssueLabel
+	collect := func(labelIDs []int) {
+		for _, lid := range labelIDs {
+			if seen[lid] {
+				continue
+			}
+			if l, ok := s.store.Labels[lid]; ok {
+				seen[lid] = true
+				labels = append(labels, l)
+			}
+		}
+	}
+	for _, issue := range s.store.Issues {
+		if issue.MilestoneID == ms.ID {
+			collect(issue.LabelIDs)
+		}
+	}
+	for _, pr := range s.store.PullRequests {
+		if pr.MilestoneID == ms.ID {
+			collect(pr.LabelIDs)
+		}
+	}
+	s.store.mu.RUnlock()
+
+	sort.Slice(labels, func(i, j int) bool { return labels[i].ID < labels[j].ID })
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(labels))
+	for _, l := range labels {
+		out = append(out, issueLabelToJSON(l, base, repo.FullName))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
+}
+
 // --- JSON converters ---
 
 func issueLabelToJSON(l *IssueLabel, baseURL, repoFullName string) map[string]interface{} {
@@ -536,10 +602,6 @@ func (s *Server) handleIssuesThreeSegDeleteDispatch(w http.ResponseWriter, r *ht
 	case p1 == "comments" && p3 == "pin":
 		r.SetPathValue("comment_id", p2)
 		s.handleUnpinIssueComment(w, r)
-	case p1 == "comments" && p3 == "reactions":
-		r.SetPathValue("comment_id", p2)
-		r.SetPathValue("reaction_id", p3)
-		s.handleDeleteReaction("issue_comment", "comment_id")(w, r)
 	case p2 == "reactions":
 		r.SetPathValue("number", p1)
 		r.SetPathValue("reaction_id", p3)

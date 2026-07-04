@@ -46,7 +46,9 @@ type Server struct {
 // never silently swallowed by the fallback.
 func (s *Server) route(pattern string, handler http.HandlerFunc) {
 	s.routePatterns = append(s.routePatterns, pattern)
-	s.mux.HandleFunc(pattern, handler)
+	// /api/v3 routes are instrumented so served requests feed the API
+	// insights stats (gh_api_insights.go); other patterns pass through.
+	s.mux.HandleFunc(pattern, s.instrumentAPIRoute(pattern, handler))
 }
 
 // NewServer creates a bleephub server with all routes registered.
@@ -270,6 +272,78 @@ func (s *Server) registerRoutes() {
 	// Org runner groups (gh_runner_groups.go)
 	s.registerRunnerGroupRoutes()
 
+	s.registerGHEnterpriseRoutes()
+	s.registerGHProjectsV2Routes()
+	s.registerGHAttestationsRoutes()
+	s.registerGHOrgArtifactMetadataRoutes()
+	s.registerGHCopilotRoutes()
+	s.registerGHCopilotSpacesRoutes()
+	s.registerGHCodeQualityRoutes()
+	s.registerGHIssueTypeRoutes()
+	s.registerGHIssueFieldRoutes()
+	s.registerGHCustomPropertyRoutes()
+	s.registerGHCodeSecurityConfigurationRoutes()
+	s.registerGHCampaignRoutes()
+	s.registerGHPrivateRegistryRoutes()
+	s.registerGHNetworkConfigurationRoutes()
+	s.registerGHImmutableReleaseRoutes()
+	// GitHub-hosted runners (gh_actions_hosted_runners.go)
+	s.registerGHHostedRunnerRoutes()
+	// Actions OIDC custom property inclusions (gh_actions_oidc_properties.go)
+	s.registerGHActionsOIDCPropertyRoutes()
+	// Actions concurrency groups (gh_actions_concurrency.go)
+	s.registerGHActionsConcurrencyRoutes()
+	// Workflow-run control extras (gh_actions_run_control.go)
+	s.registerGHActionsRunControlRoutes()
+	// GitHub Copilot coding agent secrets + variables (gh_agents_secrets.go)
+	s.registerGHAgentsSecretsRoutes()
+
+	// GitHub Copilot coding agent tasks (gh_agents_tasks.go)
+	s.registerGHAgentsTasksRoutes()
+	// Org people: invitations, outside collaborators, blocks, interaction
+	// limits, organization roles, security managers (gh_orgs_people_rest.go)
+	s.registerGHOrgsPeopleRoutes()
+
+	// Legacy ID-addressed team endpoints (gh_teams_legacy_rest.go)
+	s.registerGHLegacyTeamRoutes()
+	// Organization billing budgets + usage reports (gh_org_billing.go)
+	s.registerGHOrgBillingRoutes()
+
+	// API insights (gh_api_insights.go)
+	s.registerGHAPIInsightsRoutes()
+
+	// Fine-grained personal access token administration (gh_org_pat_admin.go)
+	s.registerGHOrgPATAdminRoutes()
+
+	// Organization activity events feed (gh_org_events.go)
+	s.registerGHOrgEventsRoutes()
+	// User-account surface: profile, emails, interaction limits,
+	// Marketplace purchases, billing usage, hovercards (gh_user_surface.go)
+	s.registerGHUserSurfaceRoutes()
+	// GitHub Pages deployments + health check (gh_pages_deployments.go)
+	s.registerGHPagesDeploymentRoutes()
+
+	// Environment deployment branch policies + protection rules (gh_environment_policies.go)
+	s.registerGHEnvironmentPolicyRoutes()
+
+	// Repository generation from a template repository (gh_repos_generate.go)
+	s.registerGHRepoGenerateRoutes()
+
+	// Source Import API (gh_import.go)
+	s.registerGHImportRoutes()
+
+	// Dependency graph: snapshots, SBOM, compare (gh_dependency_graph.go)
+	s.registerGHDependencyGraphRoutes()
+	s.registerGHMarkdownRoutes()
+	s.registerGHMetaExtrasRoutes()
+	s.registerGHCodesOfConductRoutes()
+	s.registerGHGlobalAdvisoriesRoutes()
+	s.registerGHClassroomRoutes()
+	s.registerGHEventsFeedsRoutes()
+	s.registerGHUserIssuesRoutes()
+	// Repository read surfaces (gh_repos_reads.go)
+	s.registerGHRepoReadsRoutes()
+
 	// Management API (metrics, status, dashboard data)
 	s.route("GET /internal/metrics", s.handleInternalMetrics)
 	s.route("GET /internal/status", s.handleInternalStatus)
@@ -290,6 +364,11 @@ func (s *Server) registerRoutes() {
 func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 	// Try smart HTTP git protocol
 	if s.tryHandleGitRequest(w, r) {
+		return
+	}
+
+	// Codeload-style source archive downloads (legacy.tar.gz / legacy.zip)
+	if s.tryHandleArchiveRequest(w, r) {
 		return
 	}
 

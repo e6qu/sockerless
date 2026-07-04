@@ -287,6 +287,25 @@ func (ds *DeploymentStore) SetEnvironmentProtection(repoID int, name string, wai
 	}
 }
 
+// SetEnvironmentBranchPolicyConfig sets an environment's deployment branch
+// policy configuration. nil clears it (all branches may deploy) — the PUT
+// environment body treats an absent/null field as a reset, matching real
+// GitHub's full-replace semantics for this member.
+func (ds *DeploymentStore) SetEnvironmentBranchPolicyConfig(repoID int, name string, policy *DeploymentBranchPolicy) {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+	key := fmt.Sprintf("%d:%s", repoID, name)
+	env := ds.environments[key]
+	if env == nil {
+		return
+	}
+	env.DeploymentBranchPolicy = policy
+	env.UpdatedAt = time.Now().UTC()
+	if ds.persist != nil {
+		ds.persist.MustPut("environments", key, env)
+	}
+}
+
 func (ds *DeploymentStore) GetEnvironment(repoID int, name string) *Environment {
 	ds.mu.RLock()
 	defer ds.mu.RUnlock()
@@ -567,6 +586,7 @@ func (s *Server) handleUpsertEnvironment(w http.ResponseWriter, r *http.Request)
 			Type string `json:"type"`
 			ID   int    `json:"id"`
 		} `json:"reviewers"`
+		DeploymentBranchPolicy *DeploymentBranchPolicy `json:"deployment_branch_policy"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = no protection config
 
@@ -583,6 +603,7 @@ func (s *Server) handleUpsertEnvironment(w http.ResponseWriter, r *http.Request)
 		}
 		s.store.Deployments.SetEnvironmentProtection(repo.ID, env.Name, body.WaitTimer, reviewers)
 	}
+	s.store.Deployments.SetEnvironmentBranchPolicyConfig(repo.ID, env.Name, body.DeploymentBranchPolicy)
 	writeJSON(w, http.StatusOK, environmentToJSON(env, s.store, s.baseURL(r), repo))
 }
 
@@ -592,10 +613,12 @@ func (s *Server) handleDeleteEnvironment(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if !s.store.Deployments.DeleteEnvironment(repo.ID, r.PathValue("env_name")) {
+	env := s.store.Deployments.GetEnvironment(repo.ID, r.PathValue("env_name"))
+	if env == nil || !s.store.Deployments.DeleteEnvironment(repo.ID, env.Name) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.store.PruneEnvironmentPolicies(env.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -663,6 +686,13 @@ func environmentToJSON(e *Environment, st *Store, baseURL string, repo *Repo) ma
 	if e == nil {
 		return nil
 	}
+	var branchPolicy interface{}
+	if e.DeploymentBranchPolicy != nil {
+		branchPolicy = map[string]interface{}{
+			"protected_branches":     e.DeploymentBranchPolicy.ProtectedBranches,
+			"custom_branch_policies": e.DeploymentBranchPolicy.CustomBranchPolicies,
+		}
+	}
 	out := map[string]interface{}{
 		"id":                       e.ID,
 		"node_id":                  e.NodeID,
@@ -671,7 +701,7 @@ func environmentToJSON(e *Environment, st *Store, baseURL string, repo *Repo) ma
 		"html_url":                 fmt.Sprintf("%s/%s/deployments/activity_log?environments_filter=%s", baseURL, repo.FullName, e.Name),
 		"created_at":               e.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":               e.UpdatedAt.UTC().Format(time.RFC3339),
-		"deployment_branch_policy": nil,
+		"deployment_branch_policy": branchPolicy,
 	}
 	rules := []map[string]interface{}{}
 	if e.WaitTimer > 0 {

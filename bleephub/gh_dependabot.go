@@ -49,6 +49,10 @@ func (s *Server) registerGHDependabotRoutes() {
 		s.requirePerm(scopeDependabotSecrets, permRead, s.handleListDependabotOrgSecretRepos))
 	s.route("PUT /api/v3/orgs/{org}/dependabot/secrets/{secret_name}/repositories",
 		s.requirePerm(scopeDependabotSecrets, permWrite, s.handleSetDependabotOrgSecretRepos))
+	s.route("PUT /api/v3/orgs/{org}/dependabot/secrets/{secret_name}/repositories/{repository_id}",
+		s.requirePerm(scopeDependabotSecrets, permWrite, s.handleAddDependabotOrgSecretRepo))
+	s.route("DELETE /api/v3/orgs/{org}/dependabot/secrets/{secret_name}/repositories/{repository_id}",
+		s.requirePerm(scopeDependabotSecrets, permWrite, s.handleRemoveDependabotOrgSecretRepo))
 
 	// Organization-level alerts and repository access
 	s.route("GET /api/v3/orgs/{org}/dependabot/alerts",
@@ -57,6 +61,8 @@ func (s *Server) registerGHDependabotRoutes() {
 		s.requireOrgAdmin(scopeOrgAdministration, permRead, s.handleGetDependabotRepositoryAccess))
 	s.route("PATCH /api/v3/orgs/{org}/dependabot/repository-access",
 		s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleUpdateDependabotRepositoryAccess))
+	s.route("PUT /api/v3/orgs/{org}/dependabot/repository-access/default-level",
+		s.requireOrgAdmin(scopeOrgAdministration, permWrite, s.handleSetDependabotRepositoryAccessDefaultLevel))
 }
 
 // --- alerts ---
@@ -680,9 +686,89 @@ func (s *Server) handleGetDependabotRepositoryAccess(w http.ResponseWriter, r *h
 	ids := s.store.GetDependabotRepositoryAccess(org.Login)
 	repos := s.dependabotAccessibleRepos(r, ids)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"default_level":           nil,
+		"default_level":           s.store.GetDependabotRepositoryAccessDefaultLevel(org.Login),
 		"accessible_repositories": repos,
 	})
+}
+
+// handleSetDependabotRepositoryAccessDefaultLevel implements
+// PUT /orgs/{org}/dependabot/repository-access/default-level.
+func (s *Server) handleSetDependabotRepositoryAccessDefaultLevel(w http.ResponseWriter, r *http.Request) {
+	org, ok := s.resolveOrgForDependabot(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		DefaultLevel string `json:"default_level"`
+	}
+	if !decodeJSONBody(w, r, &body) {
+		return
+	}
+	if body.DefaultLevel != "public" && body.DefaultLevel != "internal" {
+		writeGHValidationError(w, "DependabotRepositoryAccess", "default_level", "invalid")
+		return
+	}
+	s.store.SetDependabotRepositoryAccessDefaultLevel(org.Login, body.DefaultLevel)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// GetDependabotRepositoryAccessDefaultLevel returns the org's default
+// repository access level for Dependabot updates ("public" until changed).
+func (st *Store) GetDependabotRepositoryAccessDefaultLevel(orgLogin string) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	if level := st.DependabotRepoAccessDefaultLevel[orgLogin]; level != "" {
+		return level
+	}
+	return "public"
+}
+
+// SetDependabotRepositoryAccessDefaultLevel stores the org's default
+// repository access level for Dependabot updates.
+func (st *Store) SetDependabotRepositoryAccessDefaultLevel(orgLogin, level string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.DependabotRepoAccessDefaultLevel[orgLogin] = level
+	if st.persist != nil {
+		st.persist.MustPut("dependabot_repo_access_default_level", orgLogin, level)
+	}
+}
+
+// ─── org Dependabot secret selected-repository add/remove ────────────────
+
+func (sec *DependabotOrgSecret) itemVisibility() string     { return sec.Visibility }
+func (sec *DependabotOrgSecret) selectedIDs() []int         { return sec.SelectedRepoIDs }
+func (sec *DependabotOrgSecret) setSelectedIDs(ids []int)   { sec.SelectedRepoIDs = ids }
+func (sec *DependabotOrgSecret) touchUpdated(now time.Time) { sec.UpdatedAt = now }
+
+// dependabotOrgSecretSelectionChange adapts the shared per-repository
+// selection core to the org Dependabot secrets table.
+func (s *Server) dependabotOrgSecretSelectionChange(w http.ResponseWriter, r *http.Request, add bool) {
+	org, ok := s.resolveOrgForDependabot(w, r)
+	if !ok {
+		return
+	}
+	name := strings.ToUpper(r.PathValue("secret_name"))
+	s.handleOrgSelectionChange(w, r, name, add,
+		func() orgScopedItem {
+			if sec := s.store.DependabotOrgSecrets[org.Login][name]; sec != nil {
+				return sec
+			}
+			return nil
+		},
+		func() {
+			if s.store.persist != nil {
+				s.store.persist.MustPut("dependabot_org_secrets", org.Login, s.store.DependabotOrgSecrets[org.Login])
+			}
+		})
+}
+
+func (s *Server) handleAddDependabotOrgSecretRepo(w http.ResponseWriter, r *http.Request) {
+	s.dependabotOrgSecretSelectionChange(w, r, true)
+}
+
+func (s *Server) handleRemoveDependabotOrgSecretRepo(w http.ResponseWriter, r *http.Request) {
+	s.dependabotOrgSecretSelectionChange(w, r, false)
 }
 
 func (s *Server) handleUpdateDependabotRepositoryAccess(w http.ResponseWriter, r *http.Request) {

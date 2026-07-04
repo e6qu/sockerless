@@ -294,6 +294,70 @@ func TestUpdateIssueREST(t *testing.T) {
 	}
 }
 
+func TestUpdateIssueMilestoneLabelsAssigneesREST(t *testing.T) {
+	createTestIssueRepo(t, "issue-update-fields")
+	ghPost(t, "/api/v3/repos/admin/issue-update-fields/labels", defaultToken, map[string]interface{}{
+		"name": "bug", "color": "d73a4a",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-update-fields/milestones", defaultToken, map[string]interface{}{
+		"title": "v1.0",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/issue-update-fields/issues", defaultToken, map[string]interface{}{
+		"title": "Field update test",
+	}).Body.Close()
+
+	// PATCH sets milestone (by number), labels, and assignees.
+	resp := ghPatch(t, "/api/v3/repos/admin/issue-update-fields/issues/1", defaultToken, map[string]interface{}{
+		"milestone": 1,
+		"labels":    []string{"bug"},
+		"assignees": []string{"admin"},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	ms, _ := data["milestone"].(map[string]interface{})
+	if ms == nil || ms["title"] != "v1.0" {
+		t.Fatalf("expected milestone v1.0, got %v", data["milestone"])
+	}
+	labels, _ := data["labels"].([]interface{})
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label, got %v", data["labels"])
+	}
+	assignees, _ := data["assignees"].([]interface{})
+	if len(assignees) != 1 {
+		t.Fatalf("expected 1 assignee, got %v", data["assignees"])
+	}
+
+	// An explicit null milestone clears it; empty arrays clear labels/assignees.
+	resp = ghPatch(t, "/api/v3/repos/admin/issue-update-fields/issues/1", defaultToken, map[string]interface{}{
+		"milestone": nil,
+		"labels":    []string{},
+		"assignees": []string{},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	if data["milestone"] != nil {
+		t.Fatalf("expected milestone cleared, got %v", data["milestone"])
+	}
+	if cleared, _ := data["labels"].([]interface{}); len(cleared) != 0 {
+		t.Fatalf("expected labels cleared, got %v", data["labels"])
+	}
+
+	// An unknown milestone number 422s without mutating the issue.
+	resp = ghPatch(t, "/api/v3/repos/admin/issue-update-fields/issues/1", defaultToken, map[string]interface{}{
+		"milestone": 99,
+	})
+	resp.Body.Close()
+	if resp.StatusCode != 422 {
+		t.Fatalf("expected 422 for unknown milestone, got %d", resp.StatusCode)
+	}
+}
+
 // --- Comment REST tests ---
 
 func TestCreateCommentREST(t *testing.T) {
@@ -449,9 +513,9 @@ func TestAddIssueAssigneesREST(t *testing.T) {
 	resp := ghPost(t, "/api/v3/repos/admin/issue-addassignees/issues/1/assignees", defaultToken, map[string]interface{}{
 		"assignees": []string{"admin"},
 	})
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != 201 {
 		resp.Body.Close()
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+		t.Fatalf("expected 201, got %d", resp.StatusCode)
 	}
 	data := decodeJSON(t, resp)
 	assignees, _ := data["assignees"].([]interface{})

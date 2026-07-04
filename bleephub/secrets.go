@@ -698,7 +698,29 @@ func (s *Server) handleSetOrgSecretRepos(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	name := strings.ToUpper(r.PathValue("secret_name"))
+	s.setOrgItemSelectedRepos(w, r, name, false,
+		func() orgScopedItem {
+			if sec := s.store.OrgSecrets[org.Login][name]; sec != nil {
+				return sec
+			}
+			return nil
+		},
+		func() {
+			if s.store.persist != nil {
+				s.store.persist.MustPut("org_secrets", org.Login, s.store.OrgSecrets[org.Login])
+			}
+		})
+}
 
+// setOrgItemSelectedRepos implements the set-selected-repositories
+// endpoints (PUT .../{name}/repositories) shared by organization secrets
+// and organization variables across the Actions and Copilot coding agent
+// surfaces: 404 for a missing item or an unknown repository id, and —
+// where the surface documents it (variables) — 409 unless the item's
+// visibility is "selected". lookup and persistLocked run under the store
+// write lock, mirroring handleOrgSelectionChange.
+func (s *Server) setOrgItemSelectedRepos(w http.ResponseWriter, r *http.Request, name string, requireSelected bool,
+	lookup func() orgScopedItem, persistLocked func()) {
 	var body struct {
 		SelectedRepositoryIDs []int `json:"selected_repository_ids"`
 	}
@@ -707,10 +729,15 @@ func (s *Server) handleSetOrgSecretRepos(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.store.mu.Lock()
-	sec := s.store.OrgSecrets[org.Login][name]
-	if sec == nil {
+	item := lookup()
+	if item == nil {
 		s.store.mu.Unlock()
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if requireSelected && item.itemVisibility() != "selected" {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusConflict, "Conflict: visibility of "+name+" is not set to selected")
 		return
 	}
 	for _, id := range body.SelectedRepositoryIDs {
@@ -720,11 +747,9 @@ func (s *Server) handleSetOrgSecretRepos(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	sec.SelectedRepoIDs = append([]int(nil), body.SelectedRepositoryIDs...)
-	sec.UpdatedAt = time.Now().UTC()
-	if s.store.persist != nil {
-		s.store.persist.MustPut("org_secrets", org.Login, s.store.OrgSecrets[org.Login])
-	}
+	item.setSelectedIDs(append([]int(nil), body.SelectedRepositoryIDs...))
+	item.touchUpdated(time.Now().UTC())
+	persistLocked()
 	s.store.mu.Unlock()
 
 	w.WriteHeader(http.StatusNoContent)

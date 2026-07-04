@@ -199,6 +199,20 @@ func (s *PRReviewCommentStore) Reply(prID, rootID, authorID int, body string) *P
 	return c
 }
 
+// AttachToReview links a review comment to the pull request review that
+// created it (the create-review API's comments array).
+func (s *PRReviewCommentStore) AttachToReview(commentID, reviewID int) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	c := s.byID[commentID]
+	if c == nil {
+		return false
+	}
+	c.ReviewID = reviewID
+	s.persistComment(c)
+	return true
+}
+
 func (s *PRReviewCommentStore) Get(id int) *PRReviewComment {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -304,6 +318,11 @@ func (s *Server) registerGHPRCommentsRoutes() {
 		s.handleListPRComments)
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/comments/{comment_id}/replies",
 		s.requirePerm(scopePullRequests, permWrite, s.handleReplyPRComment))
+
+	// `/pulls/{number}/reviews/{review_id}/comments` (4 segments; no clash
+	// with the 3-segment dispatch in gh_reactions.go)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/comments",
+		s.handleListPRReviewCommentsForReview)
 
 	// Listing review threads has no REST equivalent on real GitHub (GraphQL
 	// only), so it lives under /internal/ alongside the resolve/unresolve
@@ -543,6 +562,44 @@ func (s *Server) handleListReviewThreads(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, threads)
 }
 
+// handleListPRReviewCommentsForReview serves
+// GET /repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/comments —
+// the review comments that belong to one submitted pull request review.
+func (s *Server) handleListPRReviewCommentsForReview(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	reviewID, err := strconv.Atoi(r.PathValue("review_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	review := s.store.GetPullRequestReview(reviewID)
+	if review == nil || review.PRID != pr.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	out := []map[string]interface{}{}
+	for _, c := range s.store.PRReviewComments.ListForPR(pr.ID) {
+		if c.ReviewID != reviewID {
+			continue
+		}
+		out = append(out, prReviewCommentToJSON(c, s.store, s.baseURL(r), repo, pr))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
+}
+
 func prReviewCommentToJSON(c *PRReviewComment, st *Store, baseURL string, repo *Repo, pr *PullRequest) map[string]interface{} {
 	if c == nil {
 		return nil
@@ -585,6 +642,11 @@ func prReviewCommentToJSON(c *PRReviewComment, st *Store, baseURL string, repo *
 	if pr != nil {
 		out["pull_request_url"] = fmt.Sprintf("%s/api/v3/repos/%s/pulls/%d", baseURL, repo.FullName, pr.Number)
 		out["html_url"] = fmt.Sprintf("%s/%s/pull/%d#discussion_r%d", baseURL, repo.FullName, pr.Number, c.ID)
+		out["_links"] = map[string]interface{}{
+			"self":         map[string]interface{}{"href": out["url"]},
+			"html":         map[string]interface{}{"href": out["html_url"]},
+			"pull_request": map[string]interface{}{"href": out["pull_request_url"]},
+		}
 	}
 	return out
 }

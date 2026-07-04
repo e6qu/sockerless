@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -280,4 +281,53 @@ func TestMigrations_StartValidation(t *testing.T) {
 		t.Fatalf("expected 422 invalid repo, got %d %s", resp.StatusCode, b)
 	}
 	resp.Body.Close()
+}
+
+func TestMigrations_OrgMigrationRepositories(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "migration-repos-org", "Migration Repos Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	r1 := testServer.store.CreateOrgRepo(org, admin, "migration-repos-1", "", false)
+	r2 := testServer.store.CreateOrgRepo(org, admin, "migration-repos-2", "", false)
+	if r1 == nil || r2 == nil {
+		t.Fatal("create org repos failed")
+	}
+
+	resp := ghPost(t, "/api/v3/orgs/migration-repos-org/migrations", defaultToken, map[string]any{
+		"repositories": []string{r1.FullName, r2.FullName},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("start org migration: %d %s", resp.StatusCode, b)
+	}
+	created := decodeJSON(t, resp)
+	migrationID := int(created["id"].(float64))
+
+	resp = ghGet(t, fmt.Sprintf("/api/v3/orgs/migration-repos-org/migrations/%d/repositories", migrationID), defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("list migration repositories: %d", resp.StatusCode)
+	}
+	repos := decodeJSONArray(t, resp)
+	if len(repos) != 2 {
+		t.Fatalf("expected 2 migration repositories, got %v", repos)
+	}
+	names := map[string]bool{}
+	for _, repo := range repos {
+		fullName, _ := repo["full_name"].(string)
+		names[fullName] = true
+	}
+	if !names[r1.FullName] || !names[r2.FullName] {
+		t.Fatalf("migration repositories wrong: %v", names)
+	}
+
+	// Unknown migration.
+	resp = ghGet(t, "/api/v3/orgs/migration-repos-org/migrations/999999/repositories", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown migration repositories: %d, want 404", resp.StatusCode)
+	}
 }

@@ -11,8 +11,23 @@ import (
 )
 
 func (s *Server) registerGHPackagesRoutes() {
+	// Authenticated-user scoped
+	s.route("GET /api/v3/user/packages", s.handleListAuthUserPackages)
+	s.route("GET /api/v3/user/packages/{package_type}/{package_name}", s.handleGetAuthUserPackage)
+	s.route("DELETE /api/v3/user/packages/{package_type}/{package_name}", s.handleDeleteAuthUserPackage)
+	s.route("POST /api/v3/user/packages/{package_type}/{package_name}/restore", s.handleRestoreAuthUserPackage)
+	s.route("GET /api/v3/user/packages/{package_type}/{package_name}/versions", s.handleListAuthUserPackageVersions)
+	s.route("GET /api/v3/user/packages/{package_type}/{package_name}/versions/{package_version_id}", s.handleGetAuthUserPackageVersion)
+	s.route("DELETE /api/v3/user/packages/{package_type}/{package_name}/versions/{package_version_id}", s.handleDeleteAuthUserPackageVersion)
+	s.route("POST /api/v3/user/packages/{package_type}/{package_name}/versions/{package_version_id}/restore", s.handleRestoreAuthUserPackageVersion)
+
+	// Docker registry migration conflicts
+	s.route("GET /api/v3/user/docker/conflicts", s.handleListAuthUserDockerConflicts)
+	s.route("GET /api/v3/users/{username}/docker/conflicts", s.handleListUserDockerConflicts)
+
 	// User-scoped
 	s.route("GET /api/v3/users/{username}/packages", s.handleListUserPackages)
+	s.route("POST /api/v3/users/{username}/packages/{package_type}/{package_name}/restore", s.handleRestoreUserPackage)
 	s.route("GET /api/v3/users/{username}/packages/{package_type}/{package_name}", s.handleGetUserPackage)
 	s.route("DELETE /api/v3/users/{username}/packages/{package_type}/{package_name}", s.handleDeleteUserPackage)
 	s.route("GET /api/v3/users/{username}/packages/{package_type}/{package_name}/versions", s.handleListUserPackageVersions)
@@ -24,8 +39,10 @@ func (s *Server) registerGHPackagesRoutes() {
 
 	// Org-scoped
 	s.route("GET /api/v3/orgs/{org}/packages", s.handleListOrgPackages)
+	s.route("POST /api/v3/orgs/{org}/packages/{package_type}/{package_name}/restore", s.handleRestoreOrgPackage)
 	s.route("GET /api/v3/orgs/{org}/packages/{package_type}/{package_name}", s.handleGetOrgPackage)
 	s.route("DELETE /api/v3/orgs/{org}/packages/{package_type}/{package_name}", s.handleDeleteOrgPackage)
+	s.route("GET /api/v3/orgs/{org}/docker/conflicts", s.handleListOrgDockerConflicts)
 	s.route("GET /api/v3/orgs/{org}/packages/{package_type}/{package_name}/versions", s.handleListOrgPackageVersions)
 	s.route("GET /api/v3/orgs/{org}/packages/{package_type}/{package_name}/versions/{package_version_id}", s.handleGetOrgPackageVersion)
 	s.route("DELETE /api/v3/orgs/{org}/packages/{package_type}/{package_name}/versions/{package_version_id}", s.handleDeleteOrgPackageVersion)
@@ -157,16 +174,11 @@ func (s *Server) handleListUserPackages(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	pkgs := s.store.ListPackages(u.Login)
-	out := make([]map[string]interface{}, 0, len(pkgs))
-	baseURL := s.baseURL(r)
-	for _, p := range pkgs {
-		if !s.canViewPackage(user, p) {
-			continue
-		}
-		out = append(out, s.packageToJSON(p, baseURL))
+	pkgType, visibility, ok := packageListFilters(w, r)
+	if !ok {
+		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, s.listOwnerPackagesJSON(r, user, u.Login, pkgType, visibility)))
 }
 
 func (s *Server) handleGetUserPackage(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +303,272 @@ func (s *Server) handleDownloadUserPackageFile(w http.ResponseWriter, r *http.Re
 	s.servePackageFile(w, f)
 }
 
+// ─── Authenticated-user scoped handlers ─────────────────────────────────
+
+// packageListFilters parses the package_type (required by GitHub's list
+// endpoints) and visibility query parameters.
+func packageListFilters(w http.ResponseWriter, r *http.Request) (pkgType, visibility string, ok bool) {
+	pkgType = r.URL.Query().Get("package_type")
+	if pkgType == "" {
+		writeGHError(w, http.StatusBadRequest, "Invalid request.\n\n\"package_type\" wasn't supplied.")
+		return "", "", false
+	}
+	if !isPackageType(pkgType) {
+		writeGHError(w, http.StatusBadRequest, "Invalid request.\n\n\"package_type\" isn't a valid package type.")
+		return "", "", false
+	}
+	return pkgType, r.URL.Query().Get("visibility"), true
+}
+
+// listOwnerPackagesJSON renders the packages of one owner scope filtered
+// by type, visibility, and viewer access.
+func (s *Server) listOwnerPackagesJSON(r *http.Request, user *User, ownerKey, pkgType, visibility string) []map[string]interface{} {
+	pkgs := s.store.ListPackages(ownerKey)
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(pkgs))
+	for _, p := range pkgs {
+		if p.PackageType != pkgType {
+			continue
+		}
+		if visibility != "" && p.Visibility != visibility {
+			continue
+		}
+		if !s.canViewPackage(user, p) {
+			continue
+		}
+		out = append(out, s.packageToJSON(p, baseURL))
+	}
+	return out
+}
+
+func (s *Server) handleListAuthUserPackages(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	pkgType, visibility, ok := packageListFilters(w, r)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, s.listOwnerPackagesJSON(r, user, user.Login, pkgType, visibility)))
+}
+
+// resolveAuthUserPackage resolves {package_type}/{package_name} within
+// the authenticated user's own package namespace.
+func (s *Server) resolveAuthUserPackage(w http.ResponseWriter, r *http.Request, user *User) (*Package, bool) {
+	pkgType := r.PathValue("package_type")
+	pkgName := r.PathValue("package_name")
+	if !isPackageType(pkgType) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, false
+	}
+	p := s.store.GetPackage(user.Login, pkgType, pkgName)
+	if p == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, false
+	}
+	return p, true
+}
+
+func (s *Server) handleGetAuthUserPackage(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	p, ok := s.resolveAuthUserPackage(w, r, user)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.packageToJSON(p, s.baseURL(r)))
+}
+
+func (s *Server) handleDeleteAuthUserPackage(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	p, ok := s.resolveAuthUserPackage(w, r, user)
+	if !ok {
+		return
+	}
+	if !s.store.DeletePackage(p.OwnerKey, p.PackageType, p.Name) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRestoreAuthUserPackage(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	s.restorePackageForOwner(w, r, user, user.Login)
+}
+
+func (s *Server) handleListAuthUserPackageVersions(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	p, ok := s.resolveAuthUserPackage(w, r, user)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listVersionsJSON(p, r))
+}
+
+func (s *Server) resolveAuthUserPackageVersion(w http.ResponseWriter, r *http.Request, user *User) (*Package, *PackageVersion, bool) {
+	p, ok := s.resolveAuthUserPackage(w, r, user)
+	if !ok {
+		return nil, nil, false
+	}
+	v, ok := s.resolveVersion(w, r)
+	if !ok || v.PackageID != p.ID {
+		return nil, nil, false
+	}
+	return p, v, true
+}
+
+func (s *Server) handleGetAuthUserPackageVersion(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	p, v, ok := s.resolveAuthUserPackageVersion(w, r, user)
+	if !ok {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.packageVersionToJSON(v, p, s.baseURL(r), packageScopePath(p.OwnerType, p.OwnerKey)))
+}
+
+func (s *Server) handleDeleteAuthUserPackageVersion(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	_, v, ok := s.resolveAuthUserPackageVersion(w, r, user)
+	if !ok {
+		return
+	}
+	if !s.store.DeletePackageVersion(v.ID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRestoreAuthUserPackageVersion(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	_, v, ok := s.resolveAuthUserPackageVersion(w, r, user)
+	if !ok {
+		return
+	}
+	if !s.store.RestorePackageVersion(v.ID) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ─── Package restore (owner-scoped) ─────────────────────────────────────
+
+// restorePackageForOwner restores a soft-deleted package in an owner
+// namespace after checking the caller may administer it.
+func (s *Server) restorePackageForOwner(w http.ResponseWriter, r *http.Request, user *User, ownerKey string) {
+	pkgType := r.PathValue("package_type")
+	pkgName := r.PathValue("package_name")
+	if !isPackageType(pkgType) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	p := s.store.GetDeletedPackage(ownerKey, pkgType, pkgName)
+	if p == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !s.canAdminPackage(user, p) {
+		writeGHError(w, http.StatusForbidden, "Forbidden")
+		return
+	}
+	if !s.store.RestorePackage(ownerKey, pkgType, pkgName) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRestoreUserPackage(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	u := s.store.LookupUserByLogin(r.PathValue("username"))
+	if u == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.restorePackageForOwner(w, r, user, u.Login)
+}
+
+func (s *Server) handleRestoreOrgPackage(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.restorePackageForOwner(w, r, user, org.Login)
+}
+
+// ─── Docker registry migration conflicts ────────────────────────────────
+
+// listDockerConflicts returns Docker-registry packages whose names
+// collide with a GitHub Container registry package in the same owner
+// namespace — the packages that cannot migrate off the legacy Docker
+// registry. Empty when there are no conflicts.
+func (s *Server) listDockerConflicts(r *http.Request, ownerKey string) []map[string]interface{} {
+	pkgs := s.store.ListPackages(ownerKey)
+	baseURL := s.baseURL(r)
+	out := []map[string]interface{}{}
+	for _, p := range pkgs {
+		if p.PackageType != "docker" {
+			continue
+		}
+		if s.store.GetPackage(ownerKey, "container", p.Name) != nil {
+			out = append(out, s.packageToJSON(p, baseURL))
+		}
+	}
+	return out
+}
+
+func (s *Server) handleListAuthUserDockerConflicts(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listDockerConflicts(r, user.Login))
+}
+
+func (s *Server) handleListUserDockerConflicts(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	u := s.store.LookupUserByLogin(r.PathValue("username"))
+	if u == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.listDockerConflicts(r, u.Login))
+}
+
 // ─── Org-scoped handlers ────────────────────────────────────────────────
 
 func (s *Server) handleListOrgPackages(w http.ResponseWriter, r *http.Request) {
@@ -303,16 +581,11 @@ func (s *Server) handleListOrgPackages(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	pkgs := s.store.ListPackages(org.Login)
-	out := make([]map[string]interface{}, 0, len(pkgs))
-	baseURL := s.baseURL(r)
-	for _, p := range pkgs {
-		if !s.canViewPackage(user, p) {
-			continue
-		}
-		out = append(out, s.packageToJSON(p, baseURL))
+	pkgType, visibility, ok := packageListFilters(w, r)
+	if !ok {
+		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, s.listOwnerPackagesJSON(r, user, org.Login, pkgType, visibility)))
 }
 
 func (s *Server) handleGetOrgPackage(w http.ResponseWriter, r *http.Request) {
@@ -345,6 +618,47 @@ func (s *Server) handleDeleteOrgPackage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListOrgDockerConflicts implements GET /orgs/{org}/docker/conflicts:
+// the org's docker-type packages whose names collide with a container-type
+// package in the same namespace — the packages a Docker registry migration
+// to the GitHub Container registry cannot move. Computed from the real
+// package store; empty when nothing conflicts.
+func (s *Server) handleListOrgDockerConflicts(w http.ResponseWriter, r *http.Request) {
+	user := s.requireUser(w, r)
+	if user == nil {
+		return
+	}
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	pkgs := s.store.ListPackages(org.Login)
+	containerNames := map[string]bool{}
+	for _, p := range pkgs {
+		if p.PackageType == "container" {
+			containerNames[p.Name] = true
+		}
+	}
+	baseURL := s.baseURL(r)
+	out := make([]map[string]interface{}, 0)
+	for _, p := range pkgs {
+		if p.PackageType != "docker" || !containerNames[p.Name] {
+			continue
+		}
+		if !s.canViewPackage(user, p) {
+			continue
+		}
+		row := s.packageToJSON(p, baseURL)
+		// The vendored OpenAPI description's package schema does not
+		// declare node_id, and this endpoint emits exactly the documented
+		// members.
+		delete(row, "node_id")
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleListOrgPackageVersions(w http.ResponseWriter, r *http.Request) {

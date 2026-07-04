@@ -53,6 +53,10 @@ POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.html_url
 POST /repos/{}/{}/codespaces/{}/start -> 202	unknown-field	$.billing_url
 POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.html_url
 POST /repos/{}/{}/codespaces/{}/stop -> 202	unknown-field	$.billing_url
+POST /repos/{}/{}/pulls/{}/codespaces -> 201	unknown-field	$.html_url
+POST /repos/{}/{}/pulls/{}/codespaces -> 201	unknown-field	$.billing_url
+POST /user/codespaces/{}/publish -> 201	unknown-field	$.html_url
+POST /user/codespaces/{}/publish -> 201	unknown-field	$.billing_url
 
 # GitHub Packages responses include node_id, which the vendored dotcom
 # OpenAPI description omits even though real GitHub emits it for every
@@ -65,6 +69,12 @@ GET /orgs/{}/packages -> 200	unknown-field	$[].node_id
 GET /orgs/{}/packages/{}/{} -> 200	unknown-field	$.node_id
 GET /orgs/{}/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
 GET /orgs/{}/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id
+GET /user/packages -> 200	unknown-field	$[].node_id
+GET /user/packages/{}/{} -> 200	unknown-field	$.node_id
+GET /user/packages/{}/{}/versions -> 200	unknown-field	$[].node_id
+GET /user/packages/{}/{}/versions/{} -> 200	unknown-field	$.node_id
+GET /user/docker/conflicts -> 200	unknown-field	$[].node_id
+GET /users/{}/docker/conflicts -> 200	unknown-field	$[].node_id
 
 # Team membership responses (GET /orgs/{org}/teams/{team_slug}/memberships/{username}
 # and PUT) include the user, team, and organization_url members on real GitHub,

@@ -288,6 +288,8 @@ export interface GithubIssue {
   user: { login: string; avatar_url: string } | null;
   labels: { name: string; color: string }[];
   assignees: { login: string }[];
+  /** null when the issue is not in a milestone. */
+  milestone?: GithubMilestone | null;
   comments: number;
   created_at: string;
   updated_at: string;
@@ -1264,4 +1266,244 @@ export interface GithubRulesetCreatePayload {
     actor_type: string;
     bypass_mode: string;
   }>;
+}
+
+// ─── Repo insights ───────────────────────────────────────────────────────
+
+/** One entry of GET /repos/{o}/{r}/contributors — a resolved account or an
+ * anonymous git author (type "Anonymous", identified by name/email). */
+export interface GithubContributor {
+  login?: string;
+  avatar_url?: string;
+  type: string;
+  contributions: number;
+  name?: string;
+  email?: string;
+}
+
+export interface GithubTrafficBucket {
+  timestamp: string;
+  count: number;
+  uniques: number;
+}
+
+export interface GithubTrafficViews {
+  count: number;
+  uniques: number;
+  views: GithubTrafficBucket[];
+}
+
+export interface GithubTrafficClones {
+  count: number;
+  uniques: number;
+  clones: GithubTrafficBucket[];
+}
+
+export interface GithubTrafficPath {
+  path: string;
+  title: string;
+  count: number;
+  uniques: number;
+}
+
+export interface GithubTrafficReferrer {
+  referrer: string;
+  count: number;
+  uniques: number;
+}
+
+/** One week of GET /repos/{o}/{r}/stats/commit_activity: Unix week start,
+ * per-weekday commit counts (Sunday first), and the week total. */
+export interface GithubCommitActivityWeek {
+  week: number;
+  days: number[];
+  total: number;
+}
+
+export interface GithubCommunityFile {
+  url: string;
+  html_url: string;
+}
+
+export interface GithubCommunityProfile {
+  health_percentage: number;
+  description: string | null;
+  documentation: string | null;
+  files: {
+    code_of_conduct: { key: string; name: string } | null;
+    code_of_conduct_file: GithubCommunityFile | null;
+    license: { key: string; name: string; spdx_id: string } | null;
+    contributing: GithubCommunityFile | null;
+    readme: GithubCommunityFile | null;
+    issue_template: GithubCommunityFile | null;
+    pull_request_template: GithubCommunityFile | null;
+  };
+  updated_at: string;
+}
+
+// ─── Labels + milestones ────────────────────────────────────────────────
+
+export interface GithubLabel {
+  id: number;
+  name: string;
+  color: string;
+  description: string;
+  default: boolean;
+}
+
+export interface GithubMilestone {
+  id: number;
+  number: number;
+  title: string;
+  description: string;
+  state: "open" | "closed";
+  creator: { login: string; avatar_url: string } | null;
+  open_issues: number;
+  closed_issues: number;
+  due_on: string | null;
+  closed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Organization governance ────────────────────────────────────────────
+
+/** GitHub `simple-user` — the shape people-management lists return. */
+export interface GithubAccount {
+  id: number;
+  login: string;
+  avatar_url: string;
+  type: string;
+  site_admin: boolean;
+}
+
+export interface GithubOrgInvitation {
+  id: number;
+  login: string | null;
+  email: string | null;
+  role: string;
+  created_at: string;
+  failed_at: string | null;
+  failed_reason: string | null;
+  inviter: GithubAccount | null;
+  team_count: number;
+  invitation_source: string;
+}
+
+export type GithubCustomPropertyValueType =
+  | "string"
+  | "single_select"
+  | "multi_select"
+  | "true_false"
+  | "url";
+
+export interface GithubCustomProperty {
+  property_name: string;
+  value_type: GithubCustomPropertyValueType;
+  required: boolean;
+  default_value: unknown;
+  description: string | null;
+  allowed_values?: string[];
+  values_editable_by: string;
+  require_explicit_values: boolean;
+}
+
+export interface GithubIssueType {
+  id: number;
+  node_id: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+  is_enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GithubOrgRole {
+  id: number;
+  name: string;
+  description: string;
+  base_role: string;
+  source: string;
+  permissions: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** Team assigned an organization role (team-simple + assignment). */
+export interface GithubOrgRoleTeam {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  assignment: string;
+}
+
+/** User assigned an organization role (simple-user + assignment). */
+export interface GithubOrgRoleUser extends GithubAccount {
+  assignment: string;
+}
+
+// ─── Enterprise administration ──────────────────────────────────────────
+
+export interface GithubEnterpriseTeam {
+  id: number;
+  name: string;
+  slug: string;
+  description: string | null;
+  organization_selection_type: string;
+  group_id: string | null;
+  notification_setting: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface GithubEnterpriseDependabotAccess {
+  default_level: string | null;
+  accessible_repositories: BleephubRepo[];
+}
+
+// ─── Copilot ────────────────────────────────────────────────────────────
+
+export interface GithubCopilotSeatBreakdown {
+  total: number;
+  added_this_cycle: number;
+  pending_cancellation: number;
+  pending_invitation: number;
+  active_this_cycle: number;
+  inactive_this_cycle: number;
+}
+
+export interface GithubCopilotBilling {
+  seat_breakdown: GithubCopilotSeatBreakdown;
+  public_code_suggestions: string;
+  ide_chat: string;
+  platform_chat: string;
+  cli: string;
+  seat_management_setting: string;
+  plan_type: string;
+}
+
+export interface GithubCopilotSeat {
+  assignee: GithubAccount | null;
+  assigning_team: { slug: string; name: string } | null;
+  pending_cancellation_date: string | null;
+  last_activity_at: string | null;
+  last_activity_editor: string | null;
+  created_at: string;
+  updated_at: string;
+  plan_type: string;
+}
+
+export interface GithubCopilotSpace {
+  id: number;
+  number: number;
+  name: string;
+  description: string | null;
+  general_instructions: string | null;
+  base_role: string;
+  owner: { login: string } | null;
+  creator: GithubAccount | null;
+  created_at: string;
+  updated_at: string;
 }

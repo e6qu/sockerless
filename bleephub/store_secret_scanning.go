@@ -4,7 +4,10 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // SecretScanningLocation describes where a secret was detected.
@@ -282,44 +285,274 @@ func (st *Store) ListSecretScanningAlertsByUser(userID int) []*SecretScanningAle
 	return out
 }
 
-// ListSecretScanningPatternConfigurations returns the default secret scanning
-// pattern overrides exposed by GitHub's pattern-configurations endpoint. The
-// shape is an object grouping partner patterns under provider_pattern_overrides.
-func (st *Store) ListSecretScanningPatternConfigurations() map[string]interface{} {
-	patterns := []struct {
-		patternID   string
-		slug        string
-		displayName string
-	}{
-		{"ghp", "github_personal_access_token", "GitHub Personal Access Token"},
-		{"gho", "github_oauth_access_token", "GitHub OAuth Access Token"},
-		{"ghu", "github_user_to_server_token", "GitHub User-to-Server Token"},
-		{"ghs", "github_server_to_server_token", "GitHub Server-to-Server Token"},
-		{"ghr", "github_refresh_token", "GitHub Refresh Token"},
-		{"aws", "aws_access_key_id", "AWS Access Key ID"},
-		{"google", "google_api_key", "Google API Key"},
-		{"slack", "slack_incoming_webhook_url", "Slack Incoming Webhook URL"},
+// secretScanningProviderPatterns is the catalog of partner patterns the
+// pattern-configurations surface exposes and validates against.
+var secretScanningProviderPatterns = []struct {
+	patternID   string
+	slug        string
+	displayName string
+}{
+	{"ghp", "github_personal_access_token", "GitHub Personal Access Token"},
+	{"gho", "github_oauth_access_token", "GitHub OAuth Access Token"},
+	{"ghu", "github_user_to_server_token", "GitHub User-to-Server Token"},
+	{"ghs", "github_server_to_server_token", "GitHub Server-to-Server Token"},
+	{"ghr", "github_refresh_token", "GitHub Refresh Token"},
+	{"aws", "aws_access_key_id", "AWS Access Key ID"},
+	{"google", "google_api_key", "Google API Key"},
+	{"slack", "slack_incoming_webhook_url", "Slack Incoming Webhook URL"},
+}
+
+func isSecretScanningProviderPattern(tokenType string) bool {
+	for _, p := range secretScanningProviderPatterns {
+		if p.patternID == tokenType {
+			return true
+		}
 	}
-	overrides := make([]map[string]interface{}, 0, len(patterns))
-	for _, p := range patterns {
+	return false
+}
+
+// OrgSecretScanningPatternConfig holds an organization's push-protection
+// pattern settings and the optimistic-concurrency row version updates must
+// present.
+type OrgSecretScanningPatternConfig struct {
+	Version          string            `json:"version"`
+	ProviderSettings map[string]string `json:"provider_settings"` // token_type → not-set | disabled | enabled
+	CustomSettings   map[string]string `json:"custom_settings"`   // token_type → disabled | enabled
+	UpdatedAt        time.Time         `json:"updated_at"`
+}
+
+// ListSecretScanningPatternConfigurations returns the secret scanning
+// pattern overrides exposed by GitHub's pattern-configurations endpoint for
+// the org, reflecting any stored push-protection settings and computing the
+// alert totals from the org's real alerts.
+func (st *Store) ListSecretScanningPatternConfigurations(orgLogin string) map[string]interface{} {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	cfg := st.SecretScanningPatternConfigs[orgLogin]
+	org := st.OrgsByLogin[orgLogin]
+
+	alertTotals := map[string]int{}
+	falsePositives := map[string]int{}
+	orgAlertTotal := 0
+	if org != nil {
+		for repoKey, byNumber := range st.SecretScanningAlertsByRepo {
+			repo := st.ReposByName[repoKey]
+			if repo == nil || repo.OwnerType != "Organization" || repo.OwnerID != org.ID {
+				continue
+			}
+			for _, a := range byNumber {
+				alertTotals[a.SecretType]++
+				orgAlertTotal++
+				if a.Resolution == "false_positive" {
+					falsePositives[a.SecretType]++
+				}
+			}
+		}
+	}
+
+	overrides := make([]map[string]interface{}, 0, len(secretScanningProviderPatterns))
+	for _, p := range secretScanningProviderPatterns {
+		setting := "not-set"
+		if cfg != nil && cfg.ProviderSettings[p.patternID] != "" {
+			setting = cfg.ProviderSettings[p.patternID]
+		}
+		total := alertTotals[p.slug] + alertTotals[p.patternID]
+		fps := falsePositives[p.slug] + falsePositives[p.patternID]
+		totalPct := 0.0
+		if orgAlertTotal > 0 {
+			totalPct = float64(total) / float64(orgAlertTotal) * 100
+		}
+		fpRate := 0.0
+		if total > 0 {
+			fpRate = float64(fps) / float64(total)
+		}
 		overrides = append(overrides, map[string]interface{}{
 			"token_type":             p.patternID,
 			"custom_pattern_version": nil,
 			"slug":                   p.slug,
 			"display_name":           p.displayName,
-			"alert_total":            0,
-			"alert_total_percentage": 0,
-			"false_positives":        0,
-			"false_positive_rate":    0,
+			"alert_total":            total,
+			"alert_total_percentage": totalPct,
+			"false_positives":        fps,
+			"false_positive_rate":    fpRate,
 			"bypass_rate":            0,
 			"default_setting":        "enabled",
 			"enterprise_setting":     nil,
-			"setting":                "not-set",
+			"setting":                setting,
 		})
 	}
+	var version interface{}
+	if cfg != nil {
+		version = cfg.Version
+	}
 	return map[string]interface{}{
-		"pattern_config_version":     nil,
+		"pattern_config_version":     version,
 		"provider_pattern_overrides": overrides,
 		"custom_pattern_overrides":   []map[string]interface{}{},
 	}
+}
+
+// UpdateSecretScanningPatternConfig applies push-protection setting changes
+// for the org. expectedVersion, when non-nil, must match the current row
+// version — a mismatch reports a conflict without changing anything.
+// Returns the new version.
+func (st *Store) UpdateSecretScanningPatternConfig(orgLogin string, expectedVersion *string, provider, custom map[string]string) (string, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	cfg := st.SecretScanningPatternConfigs[orgLogin]
+	current := ""
+	if cfg != nil {
+		current = cfg.Version
+	}
+	if expectedVersion != nil && *expectedVersion != current {
+		return "", false
+	}
+	if cfg == nil {
+		cfg = &OrgSecretScanningPatternConfig{
+			ProviderSettings: map[string]string{},
+			CustomSettings:   map[string]string{},
+		}
+		st.SecretScanningPatternConfigs[orgLogin] = cfg
+	}
+	for tokenType, setting := range provider {
+		if setting == "not-set" {
+			delete(cfg.ProviderSettings, tokenType)
+			continue
+		}
+		cfg.ProviderSettings[tokenType] = setting
+	}
+	for tokenType, setting := range custom {
+		cfg.CustomSettings[tokenType] = setting
+	}
+	cfg.Version = uuid.New().String()
+	cfg.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("secret_scanning_pattern_configs", orgLogin, cfg)
+	}
+	return cfg.Version, true
+}
+
+// SecretScanningPushProtectionPlaceholder is one blocked-push placeholder:
+// the identity a pusher presents when requesting a push protection bypass.
+type SecretScanningPushProtectionPlaceholder struct {
+	ID        string    `json:"id"`
+	RepoKey   string    `json:"repo_key"`
+	TokenType string    `json:"token_type"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SecretScanningPushProtectionBypass is a granted push protection bypass.
+type SecretScanningPushProtectionBypass struct {
+	PlaceholderID string    `json:"placeholder_id"`
+	RepoKey       string    `json:"repo_key"`
+	Reason        string    `json:"reason"`
+	TokenType     string    `json:"token_type"`
+	ExpireAt      time.Time `json:"expire_at"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// CreateSecretScanningPushProtectionPlaceholder records a blocked push's
+// placeholder for the repository.
+func (st *Store) CreateSecretScanningPushProtectionPlaceholder(repoKey, tokenType string) *SecretScanningPushProtectionPlaceholder {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	ph := &SecretScanningPushProtectionPlaceholder{
+		ID:        uuid.New().String(),
+		RepoKey:   repoKey,
+		TokenType: tokenType,
+		CreatedAt: time.Now().UTC(),
+	}
+	if st.SecretScanningPushPlaceholders[repoKey] == nil {
+		st.SecretScanningPushPlaceholders[repoKey] = map[string]*SecretScanningPushProtectionPlaceholder{}
+	}
+	st.SecretScanningPushPlaceholders[repoKey][ph.ID] = ph
+	if st.persist != nil {
+		st.persist.MustPut("secret_scanning_push_placeholders", repoKey, st.SecretScanningPushPlaceholders[repoKey])
+	}
+	return ph
+}
+
+// secretScanningPushProtectionBypassTTL is how long a granted bypass stays
+// valid for the pusher to complete the push.
+const secretScanningPushProtectionBypassTTL = 2 * time.Hour
+
+// CreateSecretScanningPushProtectionBypass consumes a placeholder and grants
+// the bypass. Returns nil when the placeholder does not exist for the repo.
+func (st *Store) CreateSecretScanningPushProtectionBypass(repoKey, placeholderID, reason string) *SecretScanningPushProtectionBypass {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	ph := st.SecretScanningPushPlaceholders[repoKey][placeholderID]
+	if ph == nil {
+		return nil
+	}
+	delete(st.SecretScanningPushPlaceholders[repoKey], placeholderID)
+	now := time.Now().UTC()
+	bypass := &SecretScanningPushProtectionBypass{
+		PlaceholderID: placeholderID,
+		RepoKey:       repoKey,
+		Reason:        reason,
+		TokenType:     ph.TokenType,
+		ExpireAt:      now.Add(secretScanningPushProtectionBypassTTL),
+		CreatedAt:     now,
+	}
+	st.SecretScanningPushBypasses[repoKey] = append(st.SecretScanningPushBypasses[repoKey], bypass)
+	if st.persist != nil {
+		st.persist.MustPut("secret_scanning_push_placeholders", repoKey, st.SecretScanningPushPlaceholders[repoKey])
+		st.persist.MustPut("secret_scanning_push_bypasses", repoKey, st.SecretScanningPushBypasses[repoKey])
+	}
+	return bypass
+}
+
+// SecretScanningScanHistory derives the repository's scan history from the
+// recorded alert state: each alert-producing scan event appears as a
+// completed incremental scan, the earliest as the initial backfill, and an
+// org-level pattern configuration update as a pattern-update scan. A
+// repository with no recorded scanning activity has an honestly empty
+// history.
+func (st *Store) SecretScanningScanHistory(repo *Repo) (incremental, patternUpdate, backfill []*SecretScanningScanRecord) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var alertTimes []time.Time
+	seen := map[time.Time]bool{}
+	for _, a := range st.SecretScanningAlertsByRepo[repo.FullName] {
+		t := a.CreatedAt.UTC().Truncate(time.Second)
+		if !seen[t] {
+			seen[t] = true
+			alertTimes = append(alertTimes, t)
+		}
+	}
+	sort.Slice(alertTimes, func(i, j int) bool { return alertTimes[i].Before(alertTimes[j]) })
+
+	incremental = []*SecretScanningScanRecord{}
+	backfill = []*SecretScanningScanRecord{}
+	patternUpdate = []*SecretScanningScanRecord{}
+	for i, t := range alertTimes {
+		rec := &SecretScanningScanRecord{Type: "incremental", Status: "completed", StartedAt: t, CompletedAt: t}
+		if i == 0 {
+			backfill = append(backfill, &SecretScanningScanRecord{Type: "backfill", Status: "completed", StartedAt: t, CompletedAt: t})
+		}
+		incremental = append(incremental, rec)
+	}
+
+	if repo.OwnerType == "Organization" {
+		ownerLogin, _, _ := strings.Cut(repo.FullName, "/")
+		if cfg := st.SecretScanningPatternConfigs[ownerLogin]; cfg != nil {
+			t := cfg.UpdatedAt.UTC().Truncate(time.Second)
+			patternUpdate = append(patternUpdate, &SecretScanningScanRecord{Type: "pattern_update", Status: "completed", StartedAt: t, CompletedAt: t})
+		}
+	}
+	return incremental, patternUpdate, backfill
+}
+
+// SecretScanningScanRecord is one scan in the repository's scan history.
+type SecretScanningScanRecord struct {
+	Type        string
+	Status      string
+	StartedAt   time.Time
+	CompletedAt time.Time
 }

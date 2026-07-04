@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGPGKeyCRUD(t *testing.T) {
@@ -382,17 +383,33 @@ func TestMarketplacePlansFromStore(t *testing.T) {
 
 func TestMarketplaceAccount(t *testing.T) {
 	s := newTestServer()
+	s.store.SeedDefaultUser()
 	s.registerGHMiscEndpoints()
 	s.seedDefaultMarketplacePlans()
 
+	// An account with no purchase is 404 — no fabricated purchase.
 	w := doMiscReq(s, "GET", "/api/v3/marketplace_listing/accounts/42", "")
+	if w.Code != 404 {
+		t.Fatalf("purchase-less account status = %d, want 404", w.Code)
+	}
+
+	// Give the default admin user (ID 1) a real purchase of the Free plan.
+	s.store.Misc.mu.Lock()
+	purchaseUpdated := time.Now().UTC()
+	s.store.Misc.marketplacePurchases[1] = &MarketplacePurchase{
+		AccountID: 1, BillingCycle: "monthly", PlanID: 1, PlanName: "Free",
+		UpdatedAt: &purchaseUpdated,
+	}
+	s.store.Misc.mu.Unlock()
+
+	w = doMiscReq(s, "GET", "/api/v3/marketplace_listing/accounts/1", "")
 	if w.Code != 200 {
 		t.Fatalf("account status = %d", w.Code)
 	}
 	var acct map[string]interface{}
 	json.Unmarshal(w.Body.Bytes(), &acct)
-	if acct["id"] != float64(42) {
-		t.Fatalf("id = %v, want 42", acct["id"])
+	if acct["id"] != float64(1) || acct["login"] != "admin" || acct["type"] != "User" {
+		t.Fatalf("account = %v", acct)
 	}
 	purchase := acct["marketplace_purchase"].(map[string]interface{})
 	plan := purchase["plan"].(map[string]interface{})

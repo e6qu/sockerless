@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"testing"
+	"time"
 )
 
 func createTestUser(t *testing.T, login string) *User {
@@ -155,16 +156,54 @@ func TestUserExtras_Events(t *testing.T) {
 	if repo == nil {
 		t.Fatal("create repo failed")
 	}
-	testServer.store.CreateIssue(repo.ID, admin.ID, "Issue title", "body", nil, nil, 0)
+	issue := testServer.store.CreateIssue(repo.ID, admin.ID, "Issue title", "body", nil, nil, 0)
 
-	resp := ghGet(t, "/api/v3/users/admin/events", defaultToken)
-	if resp.StatusCode != 200 {
-		resp.Body.Close()
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	fetchIssueEvent := func() map[string]interface{} {
+		t.Helper()
+		resp := ghGet(t, "/api/v3/users/admin/events?per_page=100", defaultToken)
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		for _, ev := range decodeJSONArray(t, resp) {
+			if ev["type"] != "IssuesEvent" {
+				continue
+			}
+			payload, _ := ev["payload"].(map[string]interface{})
+			embedded, _ := payload["issue"].(map[string]interface{})
+			if embedded != nil && embedded["title"] == "Issue title" && payload["action"] == "opened" {
+				return ev
+			}
+		}
+		t.Fatal("expected an IssuesEvent for the created issue")
+		return nil
 	}
-	events := decodeJSONArray(t, resp)
-	if len(events) == 0 {
-		t.Fatal("expected events")
+
+	first := fetchIssueEvent()
+	second := fetchIssueEvent()
+
+	// The event derives from the stored issue: its ID and timestamp are
+	// stable across requests, and created_at is the issue's recorded
+	// creation time — not the render time.
+	if id, _ := first["id"].(string); id == "" {
+		t.Fatalf("event id missing: %v", first)
+	}
+	if second["id"] != first["id"] {
+		t.Fatalf("event id not stable across requests: %v vs %v", first["id"], second["id"])
+	}
+	if second["created_at"] != first["created_at"] {
+		t.Fatalf("event created_at not stable across requests: %v vs %v", first["created_at"], second["created_at"])
+	}
+	if want := issue.CreatedAt.UTC().Format(time.RFC3339); first["created_at"] != want {
+		t.Fatalf("event created_at = %v, want the issue's recorded creation time %s", first["created_at"], want)
+	}
+	actor, _ := first["actor"].(map[string]interface{})
+	if actor == nil || actor["login"] != "admin" {
+		t.Fatalf("event actor = %v", first["actor"])
+	}
+	repoJSON, _ := first["repo"].(map[string]interface{})
+	if repoJSON == nil || repoJSON["name"] != "admin/event-repo" {
+		t.Fatalf("event repo = %v", first["repo"])
 	}
 }
 

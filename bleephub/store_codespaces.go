@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +40,18 @@ type Codespace struct {
 	ImageName              string    `json:"image_name"`
 	RetentionPeriodMinutes int       `json:"retention_period_minutes"`
 	WorkspaceMount         string    `json:"workspace_mount,omitempty"`
+	// LatestExport records the most recent export of this codespace.
+	LatestExport *CodespaceExport `json:"latest_export,omitempty"`
+}
+
+// CodespaceExport captures one export of a codespace to a repository
+// branch. GitHub addresses export details with the id "latest".
+type CodespaceExport struct {
+	ID          string    `json:"id"`
+	State       string    `json:"state"`
+	Branch      string    `json:"branch"`
+	SHA         string    `json:"sha"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 // CodespaceSecret is a user/repo/org-level Codespaces secret.
@@ -51,18 +64,37 @@ type CodespaceSecret struct {
 	Visibility      string    `json:"visibility,omitempty"`
 }
 
-// codespaceMachine describes a machine type offered for Codespaces.
+// codespaceMachine describes a machine type offered for Codespaces,
+// including the per-machine resources the codespace-machine schema
+// reports (cpus, memory_in_bytes, storage_in_bytes).
 type codespaceMachine struct {
-	Name        string
-	DisplayName string
-	Type        string // "standard" or "premium"
+	Name         string
+	DisplayName  string
+	Type         string // "standard" or "premium"
+	CPUs         int
+	MemoryBytes  int64
+	StorageBytes int64
 }
 
+const codespaceGiB = int64(1) << 30
+
 var codespaceMachines = []codespaceMachine{
-	{Name: "basicLinux32", DisplayName: "2 cores, 4 GB RAM, 32 GB storage", Type: "standard"},
-	{Name: "standardLinux32", DisplayName: "4 cores, 8 GB RAM, 32 GB storage", Type: "standard"},
-	{Name: "premiumLinux64", DisplayName: "8 cores, 16 GB RAM, 64 GB storage", Type: "premium"},
-	{Name: "largeLinux64", DisplayName: "16 cores, 32 GB RAM, 64 GB storage", Type: "premium"},
+	{Name: "basicLinux32", DisplayName: "2 cores, 4 GB RAM, 32 GB storage", Type: "standard", CPUs: 2, MemoryBytes: 4 * codespaceGiB, StorageBytes: 32 * codespaceGiB},
+	{Name: "standardLinux32", DisplayName: "4 cores, 8 GB RAM, 32 GB storage", Type: "standard", CPUs: 4, MemoryBytes: 8 * codespaceGiB, StorageBytes: 32 * codespaceGiB},
+	{Name: "premiumLinux64", DisplayName: "8 cores, 16 GB RAM, 64 GB storage", Type: "premium", CPUs: 8, MemoryBytes: 16 * codespaceGiB, StorageBytes: 64 * codespaceGiB},
+	{Name: "largeLinux64", DisplayName: "16 cores, 32 GB RAM, 64 GB storage", Type: "premium", CPUs: 16, MemoryBytes: 32 * codespaceGiB, StorageBytes: 64 * codespaceGiB},
+}
+
+// codespaceMachineByName resolves a catalog machine by name; unknown
+// names fall back to the default machine (CreateCodespace snaps every
+// codespace onto a catalog entry, so lookups always resolve).
+func codespaceMachineByName(name string) codespaceMachine {
+	for _, m := range codespaceMachines {
+		if m.Name == name {
+			return m
+		}
+	}
+	return codespaceDefaultMachine()
 }
 
 const (
@@ -70,6 +102,29 @@ const (
 	codespaceDefaultImage    = "mcr.microsoft.com/devcontainers/universal:latest"
 	codespaceFallbackImage   = "ubuntu:latest"
 )
+
+// persistCodespaceLocked writes a codespace row through to persistence.
+// Caller must hold st.mu.
+func (st *Store) persistCodespaceLocked(cs *Codespace) {
+	if st.persist != nil {
+		st.persist.MustPut("codespaces", strconv.Itoa(cs.ID), cs)
+	}
+}
+
+// persistCodespaceSecretScopeLocked writes a whole secret scope through
+// to persistence — the scope map is the bucket row, mirroring the
+// Dependabot secret buckets. Caller must hold st.mu.
+func (st *Store) persistCodespaceSecretScopeLocked(scope string) {
+	if st.persist == nil {
+		return
+	}
+	m := st.CodespaceSecrets[scope]
+	if len(m) == 0 {
+		st.persist.MustDelete("codespace_secrets", scope)
+		return
+	}
+	st.persist.MustPut("codespace_secrets", scope, m)
+}
 
 // CreateCodespace records a new codespace and starts its backing container.
 func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displayName string) (*Codespace, error) {
@@ -121,6 +176,7 @@ func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displ
 	repoDir, cleanup, err := st.prepareWorkspaceLocked(repoKey, gitRef)
 	if err != nil {
 		cs.State = "Unavailable"
+		st.persistCodespaceLocked(cs)
 		return cs, fmt.Errorf("prepare workspace: %w", err)
 	}
 	cs.WorkspaceMount = repoDir
@@ -132,12 +188,14 @@ func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displ
 	containerID, err := dockerRunCodespace(ctx, containerName, image, repoDir, repoNameFromRepoKey(repoKey))
 	if err != nil {
 		cs.State = "Unavailable"
+		st.persistCodespaceLocked(cs)
 		cleanup()
 		return cs, fmt.Errorf("docker run: %w", err)
 	}
 	cs.ContainerID = containerID
 	cs.ContainerName = containerName
 	cs.State = dockerStateToCodespaceState(containerID)
+	st.persistCodespaceLocked(cs)
 	return cs, nil
 }
 
@@ -201,6 +259,9 @@ func (st *Store) DeleteCodespace(id int) bool {
 	}
 	delete(st.Codespaces, id)
 	delete(st.CodespacesByName, cs.Name)
+	if st.persist != nil {
+		st.persist.MustDelete("codespaces", strconv.Itoa(id))
+	}
 	return true
 }
 
@@ -230,6 +291,7 @@ func (st *Store) UpdateCodespace(id int, displayName, machineName string, retent
 	}
 	cs.UpdatedAt = time.Now().UTC()
 	cs.LastUsedAt = time.Now().UTC()
+	st.persistCodespaceLocked(cs)
 	return cs, true
 }
 
@@ -243,9 +305,11 @@ func (st *Store) RefreshCodespaceState(id int) string {
 	}
 	if cs.ContainerID == "" {
 		cs.State = "Unavailable"
+		st.persistCodespaceLocked(cs)
 		return cs.State
 	}
 	cs.State = dockerStateToCodespaceState(cs.ContainerID)
+	st.persistCodespaceLocked(cs)
 	return cs.State
 }
 
@@ -259,6 +323,23 @@ func (st *Store) SetCodespaceContainerState(id int, containerID, state string) {
 	}
 	cs.ContainerID = containerID
 	cs.State = state
+	st.persistCodespaceLocked(cs)
+}
+
+// SetCodespaceState records the observed state of a codespace; markUsed
+// additionally bumps LastUsedAt (a successful start counts as use).
+func (st *Store) SetCodespaceState(id int, state string, markUsed bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	cs := st.Codespaces[id]
+	if cs == nil {
+		return
+	}
+	cs.State = state
+	if markUsed {
+		cs.LastUsedAt = time.Now().UTC()
+	}
+	st.persistCodespaceLocked(cs)
 }
 
 // --- secret helpers ---
@@ -280,6 +361,7 @@ func (st *Store) CreateCodespaceSecret(scope, name, value, visibility string, se
 		existing.UpdatedAt = now
 		existing.SelectedRepoIDs = selectedRepoIDs
 		existing.Visibility = visibility
+		st.persistCodespaceSecretScopeLocked(scope)
 		return existing
 	}
 	sec := &CodespaceSecret{
@@ -291,6 +373,7 @@ func (st *Store) CreateCodespaceSecret(scope, name, value, visibility string, se
 		Visibility:      visibility,
 	}
 	m[name] = sec
+	st.persistCodespaceSecretScopeLocked(scope)
 	return sec
 }
 
@@ -330,6 +413,7 @@ func (st *Store) DeleteCodespaceSecret(scope, name string) bool {
 		return false
 	}
 	delete(m, name)
+	st.persistCodespaceSecretScopeLocked(scope)
 	return true
 }
 
@@ -343,7 +427,132 @@ func (st *Store) SetCodespaceSecretSelectedRepos(scope, name string, ids []int) 
 	}
 	m[name].SelectedRepoIDs = ids
 	m[name].UpdatedAt = time.Now().UTC()
+	st.persistCodespaceSecretScopeLocked(scope)
 	return true
+}
+
+// AddCodespaceSecretSelectedRepo adds one repository to a secret's
+// selected list; adding an already-selected repository is a no-op.
+func (st *Store) AddCodespaceSecretSelectedRepo(scope, name string, repoID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	m := st.CodespaceSecrets[scope]
+	if m == nil || m[name] == nil {
+		return false
+	}
+	sec := m[name]
+	for _, id := range sec.SelectedRepoIDs {
+		if id == repoID {
+			return true
+		}
+	}
+	sec.SelectedRepoIDs = append(sec.SelectedRepoIDs, repoID)
+	sec.UpdatedAt = time.Now().UTC()
+	st.persistCodespaceSecretScopeLocked(scope)
+	return true
+}
+
+// RemoveCodespaceSecretSelectedRepo removes one repository from a
+// secret's selected list; removing an unselected repository is a no-op.
+func (st *Store) RemoveCodespaceSecretSelectedRepo(scope, name string, repoID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	m := st.CodespaceSecrets[scope]
+	if m == nil || m[name] == nil {
+		return false
+	}
+	sec := m[name]
+	for i, id := range sec.SelectedRepoIDs {
+		if id == repoID {
+			sec.SelectedRepoIDs = append(sec.SelectedRepoIDs[:i], sec.SelectedRepoIDs[i+1:]...)
+			sec.UpdatedAt = time.Now().UTC()
+			st.persistCodespaceSecretScopeLocked(scope)
+			return true
+		}
+	}
+	return true
+}
+
+// ─── export + publish ───────────────────────────────────────────────────
+
+// Codespace export / publish failure modes surfaced to handlers.
+var (
+	errCodespaceNotFound     = fmt.Errorf("codespace not found")
+	errCodespaceNoRepository = fmt.Errorf("codespace has no repository")
+	errCodespacePublished    = fmt.Errorf("codespace already has a repository")
+	errRepoNameTaken         = fmt.Errorf("repository name already exists")
+)
+
+// ExportCodespace exports the codespace's current git ref to a new
+// branch (codespace-<name>) in its repository — the same state
+// transition GitHub performs when exporting unpushed codespace changes —
+// and records the export details under the id "latest".
+func (st *Store) ExportCodespace(id int) (*CodespaceExport, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	cs := st.Codespaces[id]
+	if cs == nil {
+		return nil, errCodespaceNotFound
+	}
+	if cs.RepoKey == "" {
+		return nil, errCodespaceNoRepository
+	}
+	stor := st.GitStorages[cs.RepoKey]
+	if stor == nil {
+		return nil, fmt.Errorf("git storage not found for %s", cs.RepoKey)
+	}
+	refName := cs.GitRef
+	if refName == "" {
+		if repo := st.ReposByName[cs.RepoKey]; repo != nil {
+			refName = repo.DefaultBranch
+		} else {
+			refName = "main"
+		}
+	}
+	ref, err := stor.Reference(plumbing.NewBranchReferenceName(refName))
+	if err != nil {
+		return nil, fmt.Errorf("resolve ref %s: %w", refName, err)
+	}
+	branch := "codespace-" + cs.Name
+	if err := stor.SetReference(plumbing.NewHashReference(plumbing.NewBranchReferenceName(branch), ref.Hash())); err != nil {
+		return nil, fmt.Errorf("create branch %s: %w", branch, err)
+	}
+	export := &CodespaceExport{
+		ID:          "latest",
+		State:       "succeeded",
+		Branch:      branch,
+		SHA:         ref.Hash().String(),
+		CompletedAt: time.Now().UTC(),
+	}
+	cs.LatestExport = export
+	cs.UpdatedAt = time.Now().UTC()
+	st.persistCodespaceLocked(cs)
+	return export, nil
+}
+
+// PublishCodespace creates a repository for an unpublished codespace and
+// associates the codespace with it.
+func (st *Store) PublishCodespace(id int, owner *User, name string, private bool) (*Codespace, error) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	cs := st.Codespaces[id]
+	if cs == nil {
+		return nil, errCodespaceNotFound
+	}
+	if cs.RepoKey != "" {
+		return nil, errCodespacePublished
+	}
+	if name == "" {
+		name = cs.Name
+	}
+	repo := st.createRepoLocked(owner.Login+"/"+name, name, "", private, owner.ID, "User", owner)
+	if repo == nil {
+		return nil, errRepoNameTaken
+	}
+	cs.RepoKey = repo.FullName
+	cs.UpdatedAt = time.Now().UTC()
+	st.persistCodespaceLocked(cs)
+	return cs, nil
 }
 
 // --- internal helpers ---

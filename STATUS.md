@@ -6,7 +6,8 @@ Roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md) - bugs [BUGS.md](BU
 
 | | |
 |---|---|---|
-| Active branch | `fix/sim-fidelity-audit-round2` — PR #769 open; ACA PATCH merge + DELETE LRO, Cloud Run v2 sub-path updateMask. |
+| Active branch | `feat/bleephub-api-ui-completeness` — **bleephub GitHub REST API 100% coverage + UI completeness** — implemented all 542 remaining vendored GitHub REST operations (1190/1190, was 665/1190) across 12 parallel work packages, added UI pages (repo Insights, labels/milestones management, org Governance, Enterprise admin, Copilot), fixed the UI's unreachable org context and orphaned routes, and closed 10 boyscout defects (BUG-2292–2302) incl. the code-scanning default-setup stub, fabricated user-event ids, codespaces/packages persistence, and a silent default-branch write on a nonexistent-branch contents PUT. |
+| Last merged (#769) | `fix/sim-fidelity-audit-round2` — closed BUG-2290/2290a/2291 (ACA PATCH merge + DELETE LRO envelope, Cloud Run v2 sub-path updateMask merge). |
 | Last merged (#768) | `fix/sim-fidelity-audit-round1` — closed BUG-2286/2287/2288/2289 (ECS DescribeTasks Include=[TAGS], Lambda FunctionVersion=ALL, ECS ListTasks filters, RunTask startedBy) and BUG-1785 (GCP Cloud Build push→pull). |
 | Last merged (#759) | `fix/cloudwatch-alarm-evaluator-758` — closed GitHub issue #758 (CloudWatch alarm evaluator dangling-alarm regression test: alarms with deleted action targets no longer hang the background evaluator). |
 | Last merged (#756) | `fix/open-issues-753-754-after-755` — closed GitHub issues #754 (bleephub `GET /api/v3/user/teams` no longer requires `read:org`) and #753 (CloudWatch alarm evaluator resilience: moved last-dispatched state onto each alarm's `StateValue` and added per-alarm panic recovery). Boyscout fix: added `--load` to the eval-arithmetic image build in `tests/main_test.go` so the image is loaded into the local store. |

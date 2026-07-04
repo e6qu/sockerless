@@ -142,6 +142,7 @@ var dispatchRoutes = map[string]string{
 	"DELETE /repos/{}/{}/releases/{}/{}":       "→ DELETE /repos/{}/{}/releases/assets/{asset_id} (delete a release asset)",
 	"DELETE /repos/{}/{}/releases/{}/{}/{}":    "→ DELETE /repos/{}/{}/releases/{}/reactions/{} (remove a release reaction)",
 	"GET /orgs/{}/rulesets/{}/{}":              "→ GET /orgs/{org}/rulesets/rule-suites/{rule_suite_id} or /orgs/{org}/rulesets/{ruleset_id}/history",
+	"GET /repos/{}/{}/rulesets/{}/{}":          "→ GET /repos/{}/{}/rulesets/rule-suites/{rule_suite_id} or /repos/{}/{}/rulesets/{ruleset_id}/history",
 	"GET /orgs/{}/rulesets/{}/{}/{}":           "→ GET /orgs/{org}/rulesets/{ruleset_id}/history/{version_id}",
 	"GET /projects/{}/{}":                      "→ GET /projects/{project_id}/columns or GET /projects/columns/{column_id} (Projects classic dispatch)",
 	"POST /projects/{}/{}":                     "→ POST /projects/{project_id}/columns (Projects classic dispatch)",
@@ -152,6 +153,8 @@ var dispatchRoutes = map[string]string{
 	"PATCH /projects/columns/{}/{}":            "→ PATCH /projects/columns/cards/{card_id} (Projects classic dispatch)",
 	"DELETE /projects/columns/{}/{}":           "→ DELETE /projects/columns/cards/{card_id} (Projects classic dispatch)",
 	"POST /repos/{}/{}/security-advisories/{}": "→ POST /repos/{}/{}/security-advisories/reports (report vulnerability)",
+	"GET /user/codespaces/{}/{}":               "→ GET /user/codespaces/{codespace_name}/machines (conflicts with the literal /user/codespaces/secrets/{secret_name})",
+	"GET /user/codespaces/{}/{}/{}":            "→ GET /user/codespaces/{codespace_name}/exports/{export_id} (conflicts with the literal /user/codespaces/secrets/{secret_name}/repositories)",
 }
 
 func TestRegisteredAPIv3RoutesExistInGitHubSpec(t *testing.T) {

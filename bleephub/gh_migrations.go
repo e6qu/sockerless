@@ -20,12 +20,14 @@ func (s *Server) registerGHMigrationsRoutes() {
 	s.route("GET /api/v3/user/migrations/{migration_id}", s.handleGetUserMigration)
 	s.route("GET /api/v3/user/migrations/{migration_id}/archive", s.handleDownloadUserMigrationArchive)
 	s.route("DELETE /api/v3/user/migrations/{migration_id}/archive", s.handleDeleteUserMigrationArchive)
+	s.route("GET /api/v3/user/migrations/{migration_id}/repositories", s.handleListUserMigrationRepositories)
 	s.route("DELETE /api/v3/user/migrations/{migration_id}/repos/{repo_name}/lock", s.handleUnlockUserMigrationRepo)
 
 	// Organization migrations
 	s.route("POST /api/v3/orgs/{org}/migrations", s.handleStartOrgMigration)
 	s.route("GET /api/v3/orgs/{org}/migrations", s.handleListOrgMigrations)
 	s.route("GET /api/v3/orgs/{org}/migrations/{migration_id}", s.handleGetOrgMigration)
+	s.route("GET /api/v3/orgs/{org}/migrations/{migration_id}/repositories", s.handleListOrgMigrationRepositories)
 	s.route("GET /api/v3/orgs/{org}/migrations/{migration_id}/archive", s.handleDownloadOrgMigrationArchive)
 	s.route("DELETE /api/v3/orgs/{org}/migrations/{migration_id}/archive", s.handleDeleteOrgMigrationArchive)
 	s.route("GET /api/v3/orgs/{org}/migrations/{migration_id}/repos/{repo_name}/lock", s.handleGetOrgMigrationLock)
@@ -122,6 +124,29 @@ func (s *Server) handleGetUserMigration(w http.ResponseWriter, r *http.Request) 
 		out["exclude"] = exclude
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleListUserMigrationRepositories lists the repositories captured by
+// a user migration in GitHub's minimal-repository shape. Repositories
+// deleted since the export are no longer listable.
+func (s *Server) handleListUserMigrationRepositories(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	m, ok := s.resolveUserMigration(w, r, user.ID)
+	if !ok {
+		return
+	}
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(m.Repositories))
+	for _, fullName := range m.Repositories {
+		if repo := s.store.GetRepoByFullName(fullName); repo != nil {
+			out = append(out, minimalRepoJSON(repo, s.store, base))
+		}
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
 }
 
 func (s *Server) handleDownloadUserMigrationArchive(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +274,29 @@ func (s *Server) handleGetOrgMigration(w http.ResponseWriter, r *http.Request) {
 		out["exclude"] = exclude
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// handleListOrgMigrationRepositories implements
+// GET /orgs/{org}/migrations/{migration_id}/repositories: the repositories
+// locked into the migration, in the minimal-repository shape.
+func (s *Server) handleListOrgMigrationRepositories(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	m, _, ok := s.resolveOrgMigration(w, r, user)
+	if !ok {
+		return
+	}
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(m.Repositories))
+	for _, fullName := range m.Repositories {
+		if repo := s.store.GetRepoByFullName(fullName); repo != nil {
+			out = append(out, migrationRepoJSON(repo, s.store, base))
+		}
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
 }
 
 func (s *Server) handleDownloadOrgMigrationArchive(w http.ResponseWriter, r *http.Request) {
