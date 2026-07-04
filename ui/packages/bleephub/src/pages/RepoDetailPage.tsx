@@ -20,6 +20,7 @@ import {
   fetchReleases,
 } from "../api.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
+import { decodeContentsBase64 } from "../utils/workflowDispatch.js";
 import type {
   GithubBranch,
   GithubCommit,
@@ -312,7 +313,12 @@ function CodeView({
     isError: readmeError,
   } = useQuery({
     queryKey: ["readme", owner, repo, branch],
-    queryFn: () => fetchRepoReadme(owner, repo, branch),
+    // Decode here so a corrupt base64 payload surfaces as readmeError
+    // instead of throwing mid-render.
+    queryFn: async () => {
+      const file = await fetchRepoReadme(owner, repo, branch);
+      return { name: file.name, text: decodeContentsBase64(file.content) };
+    },
     enabled: commits.length > 0 && path === "",
   });
 
@@ -384,7 +390,7 @@ function CodeView({
             className="markdown-body"
           >
             <Markdown remarkPlugins={[remarkGfm]}>
-              {decodeBase64(readme.content)}
+              {readme.text}
             </Markdown>
           </div>
         </Box>
@@ -825,15 +831,4 @@ function TagsList({ tags }: { tags: GithubTag[] }) {
       ))}
     </Box>
   );
-}
-
-function decodeBase64(s: string): string {
-  try {
-    if (typeof window !== "undefined" && window.atob) {
-      return window.atob(s);
-    }
-    return Buffer.from(s, "base64").toString("utf-8");
-  } catch {
-    return "";
-  }
 }

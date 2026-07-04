@@ -37,20 +37,34 @@ type notificationThreadSource struct {
 	AssigneeIDs []int
 }
 
+// notificationThreadRow is one accepted thread source gathered under the
+// read lock, carrying everything buildThread needs so rendering can happen
+// after the lock is released.
+type notificationThreadRow struct {
+	src        notificationThreadSource
+	repo       *Repo
+	threadID   string
+	reason     string
+	unread     bool
+	lastReadAt *time.Time
+}
+
 // ListNotifications builds notification threads for the given user.
+// Thread sources are gathered under the read lock; rendering happens after
+// release because buildThread embeds the repository via repoToJSON, which
+// derives counters under the store lock itself.
 func (st *Store) ListNotifications(user *User, baseURL string, opts NotificationListOptions) []*NotificationThread {
 	st.mu.RLock()
-	defer st.mu.RUnlock()
 
-	state := st.notificationsStateFor(user.ID)
-	var threads []*NotificationThread
+	state := st.notificationsStateViewLocked(user.ID)
+	var rows []notificationThreadRow
 
 	add := func(src notificationThreadSource) {
 		repo := st.Repos[src.RepoID]
 		if repo == nil {
 			return
 		}
-		if !canReadRepo(st, user, repo) {
+		if !canReadRepoLocked(st, user, repo) {
 			return
 		}
 		if opts.RepoScope != "" && repo.FullName != opts.RepoScope {
@@ -93,7 +107,7 @@ func (st *Store) ListNotifications(user *User, baseURL string, opts Notification
 			return
 		}
 
-		threads = append(threads, st.buildThread(src, repo, threadID, reason, unread, baseURL, state))
+		rows = append(rows, notificationThreadRow{src, repo, threadID, reason, unread, lastReadAtFor(state, threadID)})
 	}
 
 	for _, issue := range st.Issues {
@@ -121,6 +135,13 @@ func (st *Store) ListNotifications(user *User, baseURL string, opts Notification
 		})
 	}
 
+	st.mu.RUnlock()
+
+	threads := make([]*NotificationThread, 0, len(rows))
+	for _, row := range rows {
+		threads = append(threads, st.buildThread(row, baseURL))
+	}
+
 	sort.Slice(threads, func(i, j int) bool {
 		return threads[i].UpdatedAt.After(threads[j].UpdatedAt)
 	})
@@ -128,6 +149,8 @@ func (st *Store) ListNotifications(user *User, baseURL string, opts Notification
 	return threads
 }
 
+// notificationReason derives the thread reason for the user. Callers hold
+// st.mu (it reads st.Comments directly).
 func notificationReason(st *Store, user *User, src notificationThreadSource) string {
 	if src.AuthorID == user.ID {
 		return "author"
@@ -147,7 +170,26 @@ func notificationReason(st *Store, user *User, src notificationThreadSource) str
 	return "subscribed"
 }
 
-func (st *Store) buildThread(src notificationThreadSource, repo *Repo, threadID, reason string, unread bool, baseURL string, state *UserNotificationsState) *NotificationThread {
+// lastReadAtFor derives the thread's last-read timestamp from the user's
+// notification state. Callers hold st.mu (state is store-owned).
+func lastReadAtFor(state *UserNotificationsState, threadID string) *time.Time {
+	if readAt, ok := state.ReadThreadIDs[threadID]; ok {
+		t := readAt
+		return &t
+	}
+	if !state.LastReadAt.IsZero() {
+		t := state.LastReadAt
+		return &t
+	}
+	return nil
+}
+
+// buildThread renders one gathered notification thread row. Must not be
+// called with st.mu held: it scans comments under its own read lock and
+// embeds the repository via repoToJSON, which derives counters under the
+// store lock itself.
+func (st *Store) buildThread(row notificationThreadRow, baseURL string) *NotificationThread {
+	src, repo, threadID := row.src, row.repo, row.threadID
 	base := baseURL
 	var subjectURL, latestCommentURL, htmlURL string
 	if src.Type == "Issue" {
@@ -161,26 +203,21 @@ func (st *Store) buildThread(src notificationThreadSource, repo *Repo, threadID,
 	}
 
 	// Find the most recent comment to set latest_comment_url to a concrete comment when available.
-	var latestComment *Comment
+	var latestCommentID int
+	var latestCommentAt time.Time
+	st.mu.RLock()
 	for _, c := range st.Comments {
 		parentType := strings.ToLower(src.Type)
 		if c.ParentType == parentType && c.IssueID == src.ID {
-			if latestComment == nil || c.CreatedAt.After(latestComment.CreatedAt) {
-				latestComment = c
+			if latestCommentID == 0 || c.CreatedAt.After(latestCommentAt) {
+				latestCommentID = c.ID
+				latestCommentAt = c.CreatedAt
 			}
 		}
 	}
-	if latestComment != nil {
-		latestCommentURL = fmt.Sprintf("%s/api/v3/repos/%s/issues/comments/%d", base, repo.FullName, latestComment.ID)
-	}
-
-	var lastReadAt *time.Time
-	if readAt, ok := state.ReadThreadIDs[threadID]; ok {
-		t := readAt
-		lastReadAt = &t
-	} else if !state.LastReadAt.IsZero() {
-		t := state.LastReadAt
-		lastReadAt = &t
+	st.mu.RUnlock()
+	if latestCommentID != 0 {
+		latestCommentURL = fmt.Sprintf("%s/api/v3/repos/%s/issues/comments/%d", base, repo.FullName, latestCommentID)
 	}
 
 	return &NotificationThread{
@@ -191,32 +228,36 @@ func (st *Store) buildThread(src notificationThreadSource, repo *Repo, threadID,
 		SubjectType:      src.Type,
 		LatestCommentURL: latestCommentURL,
 		HTMLURL:          htmlURL,
-		Reason:           reason,
-		Unread:           unread,
+		Reason:           row.reason,
+		Unread:           row.unread,
 		UpdatedAt:        src.UpdatedAt,
-		LastReadAt:       lastReadAt,
+		LastReadAt:       row.lastReadAt,
 		SubscriptionURL:  fmt.Sprintf("%s/notifications/threads/%s/subscription", base, threadID),
 		URL:              fmt.Sprintf("%s/notifications/threads/%s", base, threadID),
 	}
 }
 
 // GetNotificationThread returns a single synthetic thread by ID.
+// The thread source is gathered under the read lock; rendering happens after
+// release because buildThread embeds the repository via repoToJSON, which
+// derives counters under the store lock itself.
 func (st *Store) GetNotificationThread(user *User, baseURL, threadID string) *NotificationThread {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-
 	id, err := strconv.Atoi(threadID)
 	if err != nil {
 		return nil
 	}
+
+	var row *notificationThreadRow
+	matchedIssue := false
+	st.mu.RLock()
 	for _, issue := range st.Issues {
 		if issue.ID == id {
-			state := st.notificationsStateFor(user.ID)
+			matchedIssue = true
 			repo := st.Repos[issue.RepoID]
-			if repo == nil || !canReadRepo(st, user, repo) {
-				return nil
+			if repo == nil || !canReadRepoLocked(st, user, repo) {
+				break
 			}
-			reason := notificationReason(st, user, notificationThreadSource{
+			src := notificationThreadSource{
 				Type:        "Issue",
 				ID:          issue.ID,
 				RepoID:      issue.RepoID,
@@ -225,49 +266,41 @@ func (st *Store) GetNotificationThread(user *User, baseURL, threadID string) *No
 				UpdatedAt:   issue.UpdatedAt,
 				AuthorID:    issue.AuthorID,
 				AssigneeIDs: issue.AssigneeIDs,
-			})
-			return st.buildThread(notificationThreadSource{
-				Type:        "Issue",
-				ID:          issue.ID,
-				RepoID:      issue.RepoID,
-				Number:      issue.Number,
-				Title:       issue.Title,
-				UpdatedAt:   issue.UpdatedAt,
-				AuthorID:    issue.AuthorID,
-				AssigneeIDs: issue.AssigneeIDs,
-			}, repo, threadID, reason, true, baseURL, state)
-		}
-	}
-	for _, pr := range st.PullRequests {
-		if pr.ID == id {
-			state := st.notificationsStateFor(user.ID)
-			repo := st.Repos[pr.RepoID]
-			if repo == nil || !canReadRepo(st, user, repo) {
-				return nil
 			}
-			reason := notificationReason(st, user, notificationThreadSource{
-				Type:        "PullRequest",
-				ID:          pr.ID,
-				RepoID:      pr.RepoID,
-				Number:      pr.Number,
-				Title:       pr.Title,
-				UpdatedAt:   pr.UpdatedAt,
-				AuthorID:    pr.AuthorID,
-				AssigneeIDs: pr.AssigneeIDs,
-			})
-			return st.buildThread(notificationThreadSource{
-				Type:        "PullRequest",
-				ID:          pr.ID,
-				RepoID:      pr.RepoID,
-				Number:      pr.Number,
-				Title:       pr.Title,
-				UpdatedAt:   pr.UpdatedAt,
-				AuthorID:    pr.AuthorID,
-				AssigneeIDs: pr.AssigneeIDs,
-			}, repo, threadID, reason, true, baseURL, state)
+			state := st.notificationsStateViewLocked(user.ID)
+			row = &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
+			break
 		}
 	}
-	return nil
+	if row == nil && !matchedIssue {
+		for _, pr := range st.PullRequests {
+			if pr.ID == id {
+				repo := st.Repos[pr.RepoID]
+				if repo == nil || !canReadRepoLocked(st, user, repo) {
+					break
+				}
+				src := notificationThreadSource{
+					Type:        "PullRequest",
+					ID:          pr.ID,
+					RepoID:      pr.RepoID,
+					Number:      pr.Number,
+					Title:       pr.Title,
+					UpdatedAt:   pr.UpdatedAt,
+					AuthorID:    pr.AuthorID,
+					AssigneeIDs: pr.AssigneeIDs,
+				}
+				state := st.notificationsStateViewLocked(user.ID)
+				row = &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
+				break
+			}
+		}
+	}
+	st.mu.RUnlock()
+
+	if row == nil {
+		return nil
+	}
+	return st.buildThread(*row, baseURL)
 }
 
 // GetNotificationThreadByID returns a single synthetic thread by numeric ID.
@@ -296,7 +329,7 @@ func (st *Store) MarkThreadReadByID(userID int, threadID int, at time.Time) bool
 func (st *Store) GetThreadSubscriptionByID(userID int, threadID int) *ThreadSubscription {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	state := st.notificationsStateFor(userID)
+	state := st.notificationsStateViewLocked(userID)
 	return state.Subscriptions[strconv.Itoa(threadID)]
 }
 
@@ -377,7 +410,7 @@ func (st *Store) MarkThreadDone(userID int, threadID string) {
 func (st *Store) GetThreadSubscription(userID int, threadID string) *ThreadSubscription {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	state := st.notificationsStateFor(userID)
+	state := st.notificationsStateViewLocked(userID)
 	return state.Subscriptions[threadID]
 }
 
@@ -397,6 +430,21 @@ func (st *Store) SetThreadSubscription(userID int, threadID string, sub *ThreadS
 	st.persistNotificationsState(userID, state)
 }
 
+// notificationsStateViewLocked returns the user's notification state for
+// reading. Callers hold st.mu (read or write). Unlike notificationsStateFor
+// it never mutates the store: a user with no recorded state gets a fresh
+// zero-value view that is not inserted into the map (nil inner maps are safe
+// to read).
+func (st *Store) notificationsStateViewLocked(userID int) *UserNotificationsState {
+	if state, ok := st.NotificationsState[userID]; ok {
+		return state
+	}
+	return &UserNotificationsState{}
+}
+
+// notificationsStateFor returns the user's notification state, lazily
+// creating and normalizing it. Callers hold st.mu for WRITING — it inserts
+// into st.NotificationsState and repairs nil inner maps.
 func (st *Store) notificationsStateFor(userID int) *UserNotificationsState {
 	if st.NotificationsState == nil {
 		st.NotificationsState = map[int]*UserNotificationsState{}

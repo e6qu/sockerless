@@ -263,11 +263,10 @@ func (s *Server) handleGetOrgMigration(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
 		return
 	}
-	m, org, ok := s.resolveOrgMigration(w, r, user)
+	m, _, ok := s.resolveOrgMigration(w, r, user)
 	if !ok {
 		return
 	}
-	_ = org
 	exclude := parseExcludeQuery(r)
 	out := s.orgMigrationToJSON(m, s.baseURL(r), shouldExcludeRepos(exclude))
 	if len(exclude) > 0 {

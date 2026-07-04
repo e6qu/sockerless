@@ -687,19 +687,20 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 		if oldRef.Type() == plumbing.HashReference {
 			oldHash := oldRef.Hash()
 			if newTarget != oldHash {
-				commit, err := object.GetCommit(stor, newTarget)
-				if err == nil {
-					isFF := false
+				// A target that isn't a commit (tag/tree/blob) can never be a
+				// fast-forward of the old head, so a failed commit load rejects too.
+				isFF := false
+				if commit, err := object.GetCommit(stor, newTarget); err == nil {
 					for _, p := range commit.ParentHashes {
 						if p == oldHash {
 							isFF = true
 							break
 						}
 					}
-					if !isFF {
-						writeGHError(w, http.StatusUnprocessableEntity, "Update is not a fast forward")
-						return
-					}
+				}
+				if !isFF {
+					writeGHError(w, http.StatusUnprocessableEntity, "Update is not a fast forward")
+					return
 				}
 			}
 		}
@@ -732,14 +733,16 @@ func gitCommitToJSON(baseURL, fullName, sha string, c *object.Commit) map[string
 	parents := make([]map[string]interface{}, 0, len(c.ParentHashes))
 	for _, h := range c.ParentHashes {
 		parents = append(parents, map[string]interface{}{
-			"sha": h.String(),
-			"url": baseURL + "/api/v3/repos/" + fullName + "/commits/" + h.String(),
+			"sha":      h.String(),
+			"url":      baseURL + "/api/v3/repos/" + fullName + "/commits/" + h.String(),
+			"html_url": baseURL + "/" + fullName + "/commit/" + h.String(),
 		})
 	}
 	return map[string]interface{}{
 		"sha":       sha,
 		"node_id":   encodeNodeID("Commit", 0, sha),
 		"url":       baseURL + "/api/v3/repos/" + fullName + "/git/commits/" + sha,
+		"html_url":  baseURL + "/" + fullName + "/commit/" + sha,
 		"author":    author,
 		"committer": committer,
 		"message":   c.Message,
@@ -748,6 +751,13 @@ func gitCommitToJSON(baseURL, fullName, sha string, c *object.Commit) map[string
 			"url": baseURL + "/api/v3/repos/" + fullName + "/git/trees/" + c.TreeHash.String(),
 		},
 		"parents": parents,
+		"verification": map[string]interface{}{
+			"verified":    false,
+			"reason":      "unsigned",
+			"signature":   nil,
+			"payload":     nil,
+			"verified_at": nil,
+		},
 	}
 }
 

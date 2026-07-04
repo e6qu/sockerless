@@ -1120,14 +1120,6 @@ export interface GithubCodespace {
   retention_period_minutes: number;
 }
 
-export interface GithubCodespaceSecret {
-  name: string;
-  key: string;
-  created_at: string;
-  updated_at: string;
-  visibility?: GithubOrgVisibility;
-}
-
 export interface CodespaceCreatePayload {
   repository_id?: number;
   ref?: string;

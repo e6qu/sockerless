@@ -19,6 +19,8 @@ type PullRequest struct {
 	IsDraft              bool
 	HeadRefName          string // source branch name
 	BaseRefName          string // target branch name
+	BaseSHA              string // base branch commit at PR creation ("" when the repo had no git objects)
+	MergeCommitSHA       string // merge result commit ("" until merged, or when merged without git refs)
 	AuthorID             int
 	AssigneeIDs          []int
 	LabelIDs             []int
@@ -86,6 +88,10 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 		IsDraft:     isDraft,
 		HeadRefName: headRefName,
 		BaseRefName: baseRefName,
+		// GitHub records the base commit at PR creation; the PR's commit
+		// range stays anchored to it even after the base branch advances
+		// (including past the PR's own merge commit).
+		BaseSHA:     resolveBranchSha(st.GitStorages[repo.FullName], baseRefName),
 		AuthorID:    authorID,
 		AssigneeIDs: assigneeIDs,
 		LabelIDs:    labelIDs,
@@ -351,8 +357,10 @@ func (st *Store) findPRByRepoNumberLocked(repoKey string, pullNumber int) *PullR
 	return nil
 }
 
-// RequestReviewers adds reviewer IDs to a PR's requested reviewers list.
-func (st *Store) RequestReviewers(repoKey string, pullNumber int, reviewerIDs []int) bool {
+// RequestReviewers adds reviewer IDs to a PR's requested reviewers list and
+// records a review_requested issue event for each newly added reviewer,
+// attributed to actorID (the review requester).
+func (st *Store) RequestReviewers(repoKey string, pullNumber int, reviewerIDs []int, actorID int) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	pr := st.findPRByRepoNumberLocked(repoKey, pullNumber)
@@ -367,6 +375,7 @@ func (st *Store) RequestReviewers(repoKey string, pullNumber int, reviewerIDs []
 		if _, ok := existing[id]; !ok {
 			pr.RequestedReviewerIDs = append(pr.RequestedReviewerIDs, id)
 			existing[id] = struct{}{}
+			st.recordPullRequestEventLocked(pr.RepoID, pr.ID, actorID, "review_requested", "", id)
 		}
 	}
 	pr.UpdatedAt = time.Now().UTC()
@@ -376,8 +385,10 @@ func (st *Store) RequestReviewers(repoKey string, pullNumber int, reviewerIDs []
 	return true
 }
 
-// RemoveRequestedReviewers removes reviewer IDs from a PR's requested reviewers list.
-func (st *Store) RemoveRequestedReviewers(repoKey string, pullNumber int, reviewerIDs []int) bool {
+// RemoveRequestedReviewers removes reviewer IDs from a PR's requested
+// reviewers list and records a review_request_removed issue event for each
+// reviewer actually removed, attributed to actorID.
+func (st *Store) RemoveRequestedReviewers(repoKey string, pullNumber int, reviewerIDs []int, actorID int) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	pr := st.findPRByRepoNumberLocked(repoKey, pullNumber)
@@ -392,7 +403,9 @@ func (st *Store) RemoveRequestedReviewers(repoKey string, pullNumber int, review
 	for _, id := range pr.RequestedReviewerIDs {
 		if _, ok := remove[id]; !ok {
 			kept = append(kept, id)
+			continue
 		}
+		st.recordPullRequestEventLocked(pr.RepoID, pr.ID, actorID, "review_request_removed", "", id)
 	}
 	pr.RequestedReviewerIDs = kept
 	pr.UpdatedAt = time.Now().UTC()

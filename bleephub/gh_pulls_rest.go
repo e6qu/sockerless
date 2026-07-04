@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -9,6 +10,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
 func (s *Server) registerGHPullRoutes() {
@@ -30,6 +34,9 @@ func (s *Server) registerGHPullRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permRead, s.handleListRequestedReviewers))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRequestReviewers))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRemoveRequestedReviewers))
+
+	// PR commits (the commits_url every PR response advertises)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/commits", s.handleListPullRequestCommits)
 
 	// Update branch (merge base into PR head)
 	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/update-branch", s.requirePerm(scopePullRequests, permWrite, s.handleUpdateBranch))
@@ -232,6 +239,7 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	priorState := pr.State
 	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 		if v, ok := req["title"].(string); ok {
 			p.Title = v
@@ -260,6 +268,13 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 	})
 
 	updated := s.store.GetPullRequest(pr.ID)
+
+	switch {
+	case priorState == "OPEN" && updated.State == "CLOSED":
+		s.store.RecordPullRequestEvent(repo.ID, pr.ID, user.ID, "closed", "", 0)
+	case priorState == "CLOSED" && updated.State == "OPEN":
+		s.store.RecordPullRequestEvent(repo.ID, pr.ID, user.ID, "reopened", "", 0)
+	}
 
 	if v, ok := req["state"].(string); ok {
 		action := "edited"
@@ -314,6 +329,32 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	var req struct {
+		CommitTitle   string `json:"commit_title"`
+		CommitMessage string `json:"commit_message"`
+		SHA           string `json:"sha"`
+		MergeMethod   string `json:"merge_method"`
+	}
+	if raw, err := io.ReadAll(r.Body); err == nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, &req); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+			return
+		}
+	}
+	switch req.MergeMethod {
+	case "", "merge", "squash", "rebase":
+	default:
+		writeGHValidationError(w, "PullRequest", "merge_method", "invalid")
+		return
+	}
+	// Expected-head guard: merging against a stale head SHA is a 409.
+	if req.SHA != "" {
+		if head := s.prHeadSha(repo, pr); head != "" && head != req.SHA {
+			writeGHError(w, http.StatusConflict, "Head branch was modified. Review and try the merge again.")
+			return
+		}
+	}
+
 	// Branch protection: required status checks must be green on the
 	// head commit before the merge API succeeds (405, real GitHub).
 	if headSha := s.prHeadSha(repo, pr); headSha != "" {
@@ -333,13 +374,11 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
-		now := time.Now()
-		p.State = "MERGED"
-		p.MergedAt = &now
-		p.ClosedAt = &now
-		p.MergedByID = user.ID
-	})
+	mergeSha, errMsg := s.completePullRequestMerge(repo, pr, user, req.MergeMethod, req.CommitTitle, req.CommitMessage)
+	if errMsg != "" {
+		writeGHError(w, http.StatusMethodNotAllowed, errMsg)
+		return
+	}
 
 	merged := s.store.GetPullRequest(pr.ID)
 	repoKey := owner + "/" + repoName
@@ -347,12 +386,89 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
 	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
-	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
+	sha := mergeSha
+	if sha == "" {
+		// Metadata-only PRs (no git objects behind the branches) have no
+		// real merge commit, but the merge-result contract requires a sha;
+		// a synthetic value fills it for that model only.
+		sha = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
+	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sha":     sha,
 		"merged":  true,
 		"message": "Pull Request successfully merged",
 	})
+}
+
+// completePullRequestMerge materialises the merge in the repository's git
+// storage when the pull request's branches exist there (merge commit,
+// squash commit, or rebased commits per method), marks the PR merged, and
+// records the merged and closed timeline events. It returns the resulting
+// merge commit SHA ("" when the repository holds no git objects for the
+// PR's branches) or a non-empty error message when the merge cannot be
+// performed (e.g. a merge conflict).
+func (s *Server) completePullRequestMerge(repo *Repo, pr *PullRequest, user *User, method, commitTitle, commitMessage string) (string, string) {
+	owner, name, _ := splitRepoFullName(repo.FullName)
+	stor := s.store.GetGitStorage(owner, name)
+	var mergeSha string
+	if stor != nil {
+		headHash, headErr := resolveGitRef(stor, pr.HeadRefName)
+		baseRef := plumbing.NewBranchReferenceName(pr.BaseRefName)
+		_, baseErr := stor.Reference(baseRef)
+		if headErr == nil && baseErr == nil {
+			email := user.Email
+			if email == "" {
+				email = user.Login + "@users.noreply.bleephub.local"
+			}
+			author := repoSignature(user.Login, email)
+			var hash plumbing.Hash
+			var err error
+			switch method {
+			case "squash":
+				message := commitTitle
+				if message == "" {
+					message = fmt.Sprintf("%s (#%d)", pr.Title, pr.Number)
+				}
+				if commitMessage != "" {
+					message += "\n\n" + commitMessage
+				}
+				hash, err = performSquashMerge(stor, baseRef, headHash, message, author, author)
+			case "rebase":
+				hash, err = performRebaseMerge(stor, baseRef, headHash, author)
+			default: // "merge"
+				message := commitTitle
+				if message == "" {
+					message = fmt.Sprintf("Merge pull request #%d from %s/%s", pr.Number, owner, pr.HeadRefName)
+				}
+				body := commitMessage
+				if body == "" {
+					body = pr.Title
+				}
+				hash, err = performMergeCommit(stor, baseRef, headHash, message+"\n\n"+body, author)
+			}
+			if err != nil {
+				return "", "Pull Request is not mergeable"
+			}
+			mergeSha = hash.String()
+			s.store.UpdateRepo(owner, name, func(r *Repo) {
+				r.PushedAt = time.Now().UTC()
+			})
+		}
+	}
+
+	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
+		now := time.Now()
+		p.State = "MERGED"
+		p.MergedAt = &now
+		p.ClosedAt = &now
+		p.MergedByID = user.ID
+		p.MergeCommitSHA = mergeSha
+	})
+	// GitHub's timeline for a merged PR carries a merged event (with the
+	// merge commit) immediately followed by a closed event.
+	s.store.RecordPullRequestEvent(repo.ID, pr.ID, user.ID, "merged", mergeSha, 0)
+	s.store.RecordPullRequestEvent(repo.ID, pr.ID, user.ID, "closed", "", 0)
+	return mergeSha, ""
 }
 
 func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
@@ -768,7 +884,7 @@ func (s *Server) handleRequestReviewers(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if len(reviewerIDs) > 0 {
-		if !s.store.RequestReviewers(repo.FullName, pr.Number, reviewerIDs) {
+		if !s.store.RequestReviewers(repo.FullName, pr.Number, reviewerIDs, user.ID) {
 			writeGHError(w, http.StatusUnprocessableEntity, "Unable to request reviewers")
 			return
 		}
@@ -813,7 +929,7 @@ func (s *Server) handleRemoveRequestedReviewers(w http.ResponseWriter, r *http.R
 
 	reviewerIDs := reviewerIDsFromRequest(s.store, req.Reviewers)
 	if len(reviewerIDs) > 0 {
-		if !s.store.RemoveRequestedReviewers(repo.FullName, pr.Number, reviewerIDs) {
+		if !s.store.RemoveRequestedReviewers(repo.FullName, pr.Number, reviewerIDs, user.ID) {
 			writeGHError(w, http.StatusUnprocessableEntity, "Unable to remove reviewers")
 			return
 		}
@@ -861,23 +977,42 @@ func (s *Server) handleListRequestedReviewers(w http.ResponseWriter, r *http.Req
 }
 
 // buildPullRequestTimeline assembles the issue-timeline union for a pull
-// request: conversation comments ("commented" items) interleaved with
-// submitted reviews ("reviewed" items), ordered by creation time. Pending
-// reviews are not part of the public timeline on real GitHub and are
-// excluded here too.
-func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL string) []map[string]interface{} {
+// request: the PR's real git commits ("committed" items, interleaved by
+// commit author date), conversation comments ("commented"), submitted
+// reviews ("reviewed"), and recorded issue events (review_requested,
+// review_request_removed, merged, closed, reopened), ordered by creation
+// time. Pending reviews are not part of the public timeline on real GitHub
+// and are excluded here too.
+func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL string) ([]map[string]interface{}, error) {
 	comments := s.store.ListCommentsFor("pull_request", pr.ID)
 	reviews := s.store.ListPullRequestReviews(repo.FullName, pr.Number)
+	events := s.store.ListPullRequestEvents(repo.ID, pr.ID)
+	commits, err := pullRequestCommitObjects(s.store, repo, pr)
+	if err != nil {
+		return nil, err
+	}
 
 	type timelineEntry struct {
-		at   time.Time
+		at time.Time
+		// Committed items sort before same-instant events/comments: the
+		// commits exist before anything reacting to them.
+		rank int
 		id   int
 		json map[string]interface{}
 	}
-	entries := make([]timelineEntry, 0, len(comments)+len(reviews))
+	entries := make([]timelineEntry, 0, len(commits)+len(comments)+len(reviews)+len(events))
+	for i, c := range commits {
+		entries = append(entries, timelineEntry{
+			at:   c.Author.When.UTC(),
+			rank: 0,
+			id:   i,
+			json: timelineCommittedEventJSON(c, repo.FullName, baseURL),
+		})
+	}
 	for _, c := range comments {
 		entries = append(entries, timelineEntry{
 			at:   c.CreatedAt,
+			rank: 1,
 			id:   c.ID,
 			json: timelineCommentToJSON(c, s.store, baseURL, repo.FullName, pr.Number, repo),
 		})
@@ -892,11 +1027,22 @@ func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL s
 		if review.SubmittedAt != nil {
 			at = *review.SubmittedAt
 		}
-		entries = append(entries, timelineEntry{at: at, id: review.ID, json: j})
+		entries = append(entries, timelineEntry{at: at, rank: 1, id: review.ID, json: j})
 	}
-	sort.Slice(entries, func(i, j int) bool {
+	for _, e := range events {
+		entries = append(entries, timelineEntry{
+			at:   e.CreatedAt,
+			rank: 1,
+			id:   e.ID,
+			json: issueEventForTimelineToJSON(e, s.store, baseURL, repo.FullName),
+		})
+	}
+	sort.SliceStable(entries, func(i, j int) bool {
 		if !entries[i].at.Equal(entries[j].at) {
 			return entries[i].at.Before(entries[j].at)
+		}
+		if entries[i].rank != entries[j].rank {
+			return entries[i].rank < entries[j].rank
 		}
 		return entries[i].id < entries[j].id
 	})
@@ -905,7 +1051,136 @@ func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL s
 	for _, e := range entries {
 		out = append(out, e.json)
 	}
-	return out
+	return out, nil
+}
+
+// pullRequestCommitObjects derives a pull request's commits from the
+// repository's real git history: the commits reachable from the head branch
+// but not from the merge base against the PR's recorded creation-time base
+// commit, oldest first — the same range GitHub's pulls/{n}/commits lists.
+// The recorded base keeps the range stable after the base branch advances,
+// including past the PR's own merge commit. The result is empty (with a nil
+// error) when the repository holds no git objects for the PR's branches.
+func pullRequestCommitObjects(st *Store, repo *Repo, pr *PullRequest) ([]*object.Commit, error) {
+	owner, name, ok := splitRepoFullName(repo.FullName)
+	if !ok {
+		return nil, nil
+	}
+	stor := st.GetGitStorage(owner, name)
+	if stor == nil {
+		return nil, nil
+	}
+	headHash, err := resolveGitRef(stor, pr.HeadRefName)
+	if err != nil {
+		return nil, nil
+	}
+	var baseHash plumbing.Hash
+	if pr.BaseSHA != "" {
+		baseHash = plumbing.NewHash(pr.BaseSHA)
+	} else {
+		baseHash, err = resolveGitRef(stor, pr.BaseRefName)
+		if err != nil {
+			return nil, nil
+		}
+	}
+	mergeBase, err := findMergeBase(stor, baseHash, headHash)
+	if err != nil {
+		return nil, err
+	}
+	if mergeBase.IsZero() {
+		return nil, nil
+	}
+	if mergeBase == headHash {
+		return nil, nil
+	}
+	commits, err := commitsBetween(stor, mergeBase, headHash)
+	if err != nil {
+		return nil, err
+	}
+	// commitsBetween is newest-first; the API lists oldest first.
+	for i, j := 0, len(commits)-1; i < j; i, j = i+1, j-1 {
+		commits[i], commits[j] = commits[j], commits[i]
+	}
+	return commits, nil
+}
+
+// timelineCommittedEventJSON renders a real git commit as the GitHub
+// timeline-committed-event shape ("event": "committed").
+func timelineCommittedEventJSON(c *object.Commit, repoFullName, baseURL string) map[string]interface{} {
+	sha := c.Hash.String()
+	parents := make([]map[string]interface{}, 0, len(c.ParentHashes))
+	for _, h := range c.ParentHashes {
+		parents = append(parents, map[string]interface{}{
+			"sha":      h.String(),
+			"url":      baseURL + "/api/v3/repos/" + repoFullName + "/git/commits/" + h.String(),
+			"html_url": baseURL + "/" + repoFullName + "/commit/" + h.String(),
+		})
+	}
+	return map[string]interface{}{
+		"event":    "committed",
+		"sha":      sha,
+		"node_id":  encodeNodeID("Commit", 0, sha),
+		"url":      baseURL + "/api/v3/repos/" + repoFullName + "/git/commits/" + sha,
+		"html_url": baseURL + "/" + repoFullName + "/commit/" + sha,
+		"author": map[string]interface{}{
+			"name":  c.Author.Name,
+			"email": c.Author.Email,
+			"date":  c.Author.When.UTC().Format(time.RFC3339),
+		},
+		"committer": map[string]interface{}{
+			"name":  c.Committer.Name,
+			"email": c.Committer.Email,
+			"date":  c.Committer.When.UTC().Format(time.RFC3339),
+		},
+		"message": c.Message,
+		"tree": map[string]interface{}{
+			"sha": c.TreeHash.String(),
+			"url": baseURL + "/api/v3/repos/" + repoFullName + "/git/trees/" + c.TreeHash.String(),
+		},
+		"parents": parents,
+		"verification": map[string]interface{}{
+			"verified":    false,
+			"reason":      "unsigned",
+			"signature":   nil,
+			"payload":     nil,
+			"verified_at": nil,
+		},
+	}
+}
+
+// handleListPullRequestCommits serves GET
+// /repos/{owner}/{repo}/pulls/{number}/commits — the PR's commits derived
+// from the repository's real git history (the commits_url every PR
+// response advertises).
+func (s *Server) handleListPullRequestCommits(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	commits, err := pullRequestCommitObjects(s.store, repo, pr)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "commit lookup failed")
+		return
+	}
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(commits))
+	for _, c := range commits {
+		out = append(out, commitToJSON(c, repo, base))
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
 }
 
 func (s *Server) handleUpdateBranch(w http.ResponseWriter, r *http.Request) {
@@ -1018,8 +1293,20 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		milestone = st.Milestones[pr.MilestoneID]
 	}
 	repo := st.ReposByName[repoFullName]
+	stor := st.GitStorages[repoFullName]
 
 	st.mu.RUnlock()
+
+	// Real branch shas when the repository has git objects behind the PR's
+	// branches; the deterministic pseudo-shas cover metadata-only PRs.
+	headSHA := resolveBranchSha(stor, pr.HeadRefName)
+	if headSHA == "" {
+		headSHA = prHeadSHA(pr.ID)
+	}
+	baseSHA := pr.BaseSHA
+	if baseSHA == "" {
+		baseSHA = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40]
+	}
 
 	var milestoneJSON interface{}
 	if milestone != nil {
@@ -1061,6 +1348,10 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 	if pr.MergedAt != nil {
 		mergedAt = pr.MergedAt.Format(time.RFC3339)
 	}
+	var mergeCommitSHA interface{}
+	if pr.MergeCommitSHA != "" {
+		mergeCommitSHA = pr.MergeCommitSHA
+	}
 
 	numStr := strconv.Itoa(pr.Number)
 	api := baseURL + "/api/v3/repos/" + repoFullName + "/pulls/" + numStr
@@ -1078,7 +1369,7 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		"review_comments_url": api + "/comments",
 		"review_comment_url":  baseURL + "/api/v3/repos/" + repoFullName + "/pulls/comments{/number}",
 		"comments_url":        issueAPI + "/comments",
-		"statuses_url":        baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + prHeadSHA(pr.ID),
+		"statuses_url":        baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + headSHA,
 		"number":              pr.Number,
 		"title":               pr.Title,
 		"body":                pr.Body,
@@ -1088,14 +1379,14 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		"user":                authorJSON,
 		"head": map[string]interface{}{
 			"ref":   pr.HeadRefName,
-			"sha":   prHeadSHA(pr.ID),
+			"sha":   headSHA,
 			"label": repoFullName + ":" + pr.HeadRefName,
 			"repo":  repoJSON,
 			"user":  repoOwnerJSON,
 		},
 		"base": map[string]interface{}{
 			"ref":   pr.BaseRefName,
-			"sha":   fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40],
+			"sha":   baseSHA,
 			"label": repoFullName + ":" + pr.BaseRefName,
 			"repo":  repoJSON,
 			"user":  repoOwnerJSON,
@@ -1119,7 +1410,7 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		"author_association":  authorAssociation,
 		"auto_merge":          nil,
 		"merged_at":           mergedAt,
-		"merge_commit_sha":    nil,
+		"merge_commit_sha":    mergeCommitSHA,
 		"created_at":          pr.CreatedAt.Format(time.RFC3339),
 		"updated_at":          pr.UpdatedAt.Format(time.RFC3339),
 		"closed_at":           closedAt,
@@ -1128,10 +1419,8 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 
 // pullRequestToJSON converts a PullRequest to the full GitHub
 // `pull-request` shape served by single-PR operations: the simple shape
-// plus merge state, diff stats, and conversation counters. Bleephub
-// does not materialise merges, so merge_commit_sha stays null (as on
-// real GitHub before mergeability is computed). Must not be called with
-// st.mu held.
+// plus merge state, diff stats, and conversation counters. Must not be
+// called with st.mu held.
 func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
 	out := pullRequestSimpleJSON(pr, st, baseURL, repoFullName)
 
@@ -1178,7 +1467,16 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 	out["changed_files"] = pr.ChangedFiles
 	out["comments"] = commentCount
 	out["review_comments"] = reviewCount
-	out["commits"] = 1
+	// Real commit count when the repository has git objects behind the
+	// PR's branches; metadata-only PRs report the 1 their pseudo-head
+	// implies.
+	commitCount := 1
+	if repo := st.GetRepoByID(pr.RepoID); repo != nil {
+		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil && len(commits) > 0 {
+			commitCount = len(commits)
+		}
+	}
+	out["commits"] = commitCount
 	return out
 }
 

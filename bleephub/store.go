@@ -354,7 +354,22 @@ type Store struct {
 	RepoActionsPermissions       map[string]*RepoActionsPermissions
 	actionsKeyPair               *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist                      *Persistence
-	mu                           sync.RWMutex
+	// mu guards the Store's maps and counters. sync.RWMutex read locks are
+	// NOT reentrant: once a writer queues on Lock, new RLock calls block, so
+	// a goroutine that re-acquires mu while already holding it deadlocks.
+	// The invariants that keep that impossible:
+	//   - Public Store methods and JSON serializers (repoToJSON, issueToJSON,
+	//     canReadRepo, …) acquire mu themselves and must never be called with
+	//     mu held.
+	//   - Helpers named xxxLocked (and helpers documented "callers hold
+	//     st.mu") never acquire mu; they run under the caller's lock.
+	//   - Handlers and store methods that need both a coherent scan AND
+	//     rendered JSON gather rows under one RLock, release, then render
+	//     with the self-locking serializers (see deriveActivityEvents).
+	//   - Lock order between mutexes: Store.mu is acquired before any
+	//     sub-store mutex (Misc.mu, Reactions.mu, Releases.mu, persistence),
+	//     never the reverse.
+	mu sync.RWMutex
 	// enterprises
 	EnterpriseTeams                    map[int]*EnterpriseTeam
 	EnterpriseTeamsBySlug              map[string]*EnterpriseTeam
@@ -701,6 +716,7 @@ func NewStore() *Store {
 		NextCodespaceSecretID:        1,
 		NextAutolinkID:               1,
 		NextInvitationID:             1,
+		NextIssueEventID:             1,
 		NextDeployKeyID:              1,
 		NextSecurityAdvisoryID:       1,
 		NextSecurityAdvisoryReportID: 1,

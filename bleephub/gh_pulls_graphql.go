@@ -1562,11 +1562,15 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				return nil, fmt.Errorf("could not resolve to a PullRequest")
 			}
 
+			priorState := pr.State
 			s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 				p.State = "CLOSED"
 				now := time.Now()
 				p.ClosedAt = &now
 			})
+			if priorState == "OPEN" {
+				s.store.RecordPullRequestEvent(pr.RepoID, pr.ID, user.ID, "closed", "", 0)
+			}
 
 			updated := s.store.GetPullRequest(pr.ID)
 			return map[string]interface{}{
@@ -1612,10 +1616,14 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				return nil, fmt.Errorf("pull request is merged and cannot be reopened")
 			}
 
+			priorState := pr.State
 			s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 				p.State = "OPEN"
 				p.ClosedAt = nil
 			})
+			if priorState == "CLOSED" {
+				s.store.RecordPullRequestEvent(pr.RepoID, pr.ID, user.ID, "reopened", "", 0)
+			}
 
 			updated := s.store.GetPullRequest(pr.ID)
 			return map[string]interface{}{
@@ -1680,15 +1688,26 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				return nil, fmt.Errorf("pull request is not open")
 			}
 
-			s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
-				now := time.Now()
-				p.State = "MERGED"
-				p.MergedAt = &now
-				p.ClosedAt = &now
-				p.MergedByID = user.ID
-			})
+			repo := s.store.GetRepoByID(pr.RepoID)
+			if repo == nil {
+				return nil, fmt.Errorf("could not resolve to a Repository")
+			}
+
+			method := "merge"
+			if v, ok := input["mergeMethod"].(string); ok && v != "" {
+				method = strings.ToLower(v)
+			}
+			commitHeadline, _ := input["commitHeadline"].(string)
+			commitBody, _ := input["commitBody"].(string)
+			if _, errMsg := s.completePullRequestMerge(repo, pr, user, method, commitHeadline, commitBody); errMsg != "" {
+				return nil, fmt.Errorf("%s", errMsg)
+			}
 
 			updated := s.store.GetPullRequest(pr.ID)
+			mergedPayload := buildPullRequestPayload(repo, updated, user, "closed")
+			s.emitWebhookEvent(repo.FullName, "pull_request", "closed", mergedPayload)
+			go s.triggerWorkflowsForEvent(repo.FullName, "pull_request", "closed", "refs/heads/"+updated.HeadRefName, mergedPayload)
+
 			var clientMutationID interface{}
 			if v, ok := input["clientMutationId"].(string); ok && v != "" {
 				clientMutationID = v
@@ -2007,7 +2026,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	if repo != nil {
 		headRepository = repoToGraphQL(repo)
 	}
-	headRepositoryOwner := repoOwnerGraphQL(repo, st)
+	headRepositoryOwner := repoOwnerGraphQLLocked(repo, st)
 
 	// The PR's single synthetic head commit, carrying the real check-run
 	// rollup recorded against its sha.

@@ -720,9 +720,8 @@ func (s *Server) handlePutUserCodespaceSecret(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	sec := s.store.CreateCodespaceSecret(codespaceSecretScopeKey("user", user.Login), name, value, "", nil)
+	s.store.CreateCodespaceSecret(codespaceSecretScopeKey("user", user.Login), name, value, "", nil)
 	w.WriteHeader(http.StatusNoContent)
-	_ = sec
 }
 
 func (s *Server) handleDeleteUserCodespaceSecret(w http.ResponseWriter, r *http.Request) {
@@ -774,9 +773,8 @@ func (s *Server) handlePutRepoCodespaceSecret(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	sec := s.store.CreateCodespaceSecret(codespaceSecretScopeKey("repo", repo.FullName), name, value, "", nil)
+	s.store.CreateCodespaceSecret(codespaceSecretScopeKey("repo", repo.FullName), name, value, "", nil)
 	w.WriteHeader(http.StatusNoContent)
-	_ = sec
 }
 
 func (s *Server) handleDeleteRepoCodespaceSecret(w http.ResponseWriter, r *http.Request) {
@@ -835,9 +833,8 @@ func (s *Server) handlePutOrgCodespaceSecret(w http.ResponseWriter, r *http.Requ
 			req.Visibility = "all"
 		}
 	}
-	sec := s.store.CreateCodespaceSecret(codespaceSecretScopeKey("org", org), name, plain, req.Visibility, req.SelectedRepositoryIDs)
+	s.store.CreateCodespaceSecret(codespaceSecretScopeKey("org", org), name, plain, req.Visibility, req.SelectedRepositoryIDs)
 	w.WriteHeader(http.StatusNoContent)
-	_ = sec
 }
 
 func (s *Server) handleDeleteOrgCodespaceSecret(w http.ResponseWriter, r *http.Request) {

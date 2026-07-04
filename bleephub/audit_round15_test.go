@@ -36,7 +36,7 @@ func seedTestUser(s *Server, login string) *User {
 // runner-group surface. Real GitHub requires the `administration` permission
 // (admin:org) for every runner-group endpoint, GETs included; an installation
 // token without it gets 403 "Resource not accessible by integration", and an
-// anonymous caller gets 401. Only the write siblings were gated previously.
+// anonymous caller gets 401.
 func TestRunnerGroupReadsRequireAdministration(t *testing.T) {
 	s := newTestServer()
 	s.registerRunnerGroupRoutes()

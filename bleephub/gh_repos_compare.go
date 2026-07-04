@@ -573,15 +573,6 @@ func performMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHa
 		return baseHash, true, nil
 	}
 
-	baseCommit, err := object.GetCommit(stor, baseHash)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	headCommit, err := object.GetCommit(stor, headHash)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-
 	mergeBase, err := findMergeBase(stor, baseHash, headHash)
 	if err != nil {
 		return plumbing.ZeroHash, false, err
@@ -603,42 +594,7 @@ func performMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHa
 	}
 
 	// True three-way merge.
-	mergeBaseCommit, err := object.GetCommit(stor, mergeBase)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	baseTree, err := mergeBaseCommit.Tree()
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	oursTree, err := baseCommit.Tree()
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	theirsTree, err := headCommit.Tree()
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-
-	baseFiles, err := flattenTree(baseTree)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	oursFiles, err := flattenTree(oursTree)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	theirsFiles, err := flattenTree(theirsTree)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-
-	mergedFiles, err := threeWayMergePaths(baseFiles, oursFiles, theirsFiles)
-	if err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-
-	mergedTreeHash, err := buildTreeFromPaths(stor, mergedFiles)
+	mergedTreeHash, err := threeWayMergedTree(stor, mergeBase, baseHash, headHash)
 	if err != nil {
 		return plumbing.ZeroHash, false, err
 	}
@@ -646,18 +602,13 @@ func performMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHa
 	if message == "" {
 		message = fmt.Sprintf("Merge branch '%s'", headName)
 	}
-	commit := &object.Commit{
+	commitHash, err := writeCommit(stor, &object.Commit{
 		Author:       *sig,
 		Committer:    *sig,
 		Message:      message,
 		TreeHash:     mergedTreeHash,
 		ParentHashes: []plumbing.Hash{baseHash, headHash},
-	}
-	obj := stor.NewEncodedObject()
-	if err := commit.Encode(obj); err != nil {
-		return plumbing.ZeroHash, false, err
-	}
-	commitHash, err := stor.SetEncodedObject(obj)
+	})
 	if err != nil {
 		return plumbing.ZeroHash, false, err
 	}
@@ -665,6 +616,213 @@ func performMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHa
 		return plumbing.ZeroHash, false, err
 	}
 	return commitHash, false, nil
+}
+
+// threeWayMergedTree merges the trees of ours and theirs relative to their
+// common ancestor mergeBase and stores the resulting tree, returning its
+// hash. A conflicting path yields the "merge conflict" error from
+// threeWayMergePaths.
+func threeWayMergedTree(stor gitStorage.Storer, mergeBase, ours, theirs plumbing.Hash) (plumbing.Hash, error) {
+	files := map[string]map[string]object.TreeEntry{}
+	for name, hash := range map[string]plumbing.Hash{"base": mergeBase, "ours": ours, "theirs": theirs} {
+		commit, err := object.GetCommit(stor, hash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		tree, err := commit.Tree()
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		flat, err := flattenTree(tree)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		files[name] = flat
+	}
+	mergedFiles, err := threeWayMergePaths(files["base"], files["ours"], files["theirs"])
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return buildTreeFromPaths(stor, mergedFiles)
+}
+
+// writeCommit encodes a commit object into storage and returns its hash.
+func writeCommit(stor gitStorage.Storer, commit *object.Commit) (plumbing.Hash, error) {
+	obj := stor.NewEncodedObject()
+	if err := commit.Encode(obj); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return stor.SetEncodedObject(obj)
+}
+
+// performMergeCommit creates a two-parent merge commit updating baseRef to
+// incorporate headHash, the way GitHub's "merge" method merges a pull
+// request: unlike performMerge it never fast-forwards — a merge commit is
+// created even when base is an ancestor of head. Returns the merge commit
+// hash.
+func performMergeCommit(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHash plumbing.Hash, message string, sig *object.Signature) (plumbing.Hash, error) {
+	baseRefObj, err := stor.Reference(baseRef)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("resolve base ref: %w", err)
+	}
+	baseHash := baseRefObj.Hash()
+
+	mergeBase, err := findMergeBase(stor, baseHash, headHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if mergeBase.IsZero() {
+		return plumbing.ZeroHash, errors.New("no merge base")
+	}
+	if mergeBase == headHash {
+		// Nothing to merge: head is already contained in base.
+		return baseHash, nil
+	}
+
+	var treeHash plumbing.Hash
+	if mergeBase == baseHash {
+		headCommit, err := object.GetCommit(stor, headHash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		treeHash = headCommit.TreeHash
+	} else {
+		treeHash, err = threeWayMergedTree(stor, mergeBase, baseHash, headHash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+
+	commitHash, err := writeCommit(stor, &object.Commit{
+		Author:       *sig,
+		Committer:    *sig,
+		Message:      message,
+		TreeHash:     treeHash,
+		ParentHashes: []plumbing.Hash{baseHash, headHash},
+	})
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(baseRef, commitHash)); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return commitHash, nil
+}
+
+// performSquashMerge condenses everything reachable from headHash but not
+// from baseRef into a single commit on baseRef, the way GitHub's squash
+// merge does: one commit whose tree is the merged result and whose sole
+// parent is the previous base head. Returns the squash commit hash.
+func performSquashMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHash plumbing.Hash, message string, author, committer *object.Signature) (plumbing.Hash, error) {
+	baseRefObj, err := stor.Reference(baseRef)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("resolve base ref: %w", err)
+	}
+	baseHash := baseRefObj.Hash()
+
+	mergeBase, err := findMergeBase(stor, baseHash, headHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if mergeBase.IsZero() {
+		return plumbing.ZeroHash, errors.New("no merge base")
+	}
+	if mergeBase == headHash {
+		// Nothing to squash: head is already contained in base.
+		return baseHash, nil
+	}
+
+	var treeHash plumbing.Hash
+	if mergeBase == baseHash {
+		headCommit, err := object.GetCommit(stor, headHash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+		treeHash = headCommit.TreeHash
+	} else {
+		treeHash, err = threeWayMergedTree(stor, mergeBase, baseHash, headHash)
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+
+	commitHash, err := writeCommit(stor, &object.Commit{
+		Author:       *author,
+		Committer:    *committer,
+		Message:      message,
+		TreeHash:     treeHash,
+		ParentHashes: []plumbing.Hash{baseHash},
+	})
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(baseRef, commitHash)); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return commitHash, nil
+}
+
+// performRebaseMerge replays the commits reachable from headHash but not
+// from baseRef on top of baseRef, the way GitHub's rebase merge does: each
+// commit keeps its author and message but gets a new parent chain and the
+// merger as committer. Returns the new base head (the rebased tip).
+func performRebaseMerge(stor gitStorage.Storer, baseRef plumbing.ReferenceName, headHash plumbing.Hash, committer *object.Signature) (plumbing.Hash, error) {
+	baseRefObj, err := stor.Reference(baseRef)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("resolve base ref: %w", err)
+	}
+	baseHash := baseRefObj.Hash()
+
+	mergeBase, err := findMergeBase(stor, baseHash, headHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	if mergeBase.IsZero() {
+		return plumbing.ZeroHash, errors.New("no merge base")
+	}
+	if mergeBase == headHash {
+		// Nothing to replay: head is already contained in base.
+		return baseHash, nil
+	}
+
+	commits, err := commitsBetween(stor, mergeBase, headHash)
+	if err != nil {
+		return plumbing.ZeroHash, err
+	}
+	// commitsBetween is newest-first; replay oldest-first.
+	newParent := baseHash
+	for i := len(commits) - 1; i >= 0; i-- {
+		c := commits[i]
+		var treeHash plumbing.Hash
+		if len(c.ParentHashes) != 1 {
+			// Merge commits within the range are dropped, as on GitHub.
+			continue
+		}
+		if c.ParentHashes[0] == newParent {
+			treeHash = c.TreeHash
+		} else {
+			// Replay the commit's change (parent → commit) onto the new
+			// base side via a three-way tree merge.
+			treeHash, err = threeWayMergedTree(stor, c.ParentHashes[0], newParent, c.Hash)
+			if err != nil {
+				return plumbing.ZeroHash, err
+			}
+		}
+		newParent, err = writeCommit(stor, &object.Commit{
+			Author:       c.Author,
+			Committer:    *committer,
+			Message:      c.Message,
+			TreeHash:     treeHash,
+			ParentHashes: []plumbing.Hash{newParent},
+		})
+		if err != nil {
+			return plumbing.ZeroHash, err
+		}
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(baseRef, newParent)); err != nil {
+		return plumbing.ZeroHash, err
+	}
+	return newParent, nil
 }
 
 func (s *Server) handleMergeRefs(w http.ResponseWriter, r *http.Request) {

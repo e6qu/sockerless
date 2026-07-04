@@ -209,6 +209,50 @@ func TestGitDataRefsAndTag(t *testing.T) {
 	}
 }
 
+// TestUpdateRefNonCommitTargetRejected: a non-force branch update to a target
+// that is not a commit (an annotated tag object) can never be a fast-forward,
+// so it must be rejected with 422 and leave the ref untouched.
+func TestUpdateRefNonCommitTargetRejected(t *testing.T) {
+	s := gitDataTestServer(t)
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "gitdata-nonff", "", false)
+	stor := s.store.GetGitStorage(admin.Login, repo.Name)
+
+	sig := repoSignature(admin.Login, "bleephub@local")
+	commitHash, err := initRepoWithFiles(stor, "main", "init", map[string]string{"a.txt": "a"}, sig)
+	if err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"tag":     "v1.0.0",
+		"message": "release",
+		"object":  commitHash.String(),
+		"type":    "commit",
+	})
+	w := doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/git/tags", string(body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create tag status = %d, want 201; body = %s", w.Code, w.Body.String())
+	}
+	var tagResp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &tagResp)
+	tagSHA := tagResp["sha"].(string)
+
+	body, _ = json.Marshal(map[string]any{"sha": tagSHA})
+	w = doMiscReq(s, "PATCH", "/api/v3/repos/"+repo.FullName+"/git/refs/heads/main", string(body))
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("update ref to tag object status = %d, want 422; body = %s", w.Code, w.Body.String())
+	}
+
+	ref, err := stor.Reference(plumbing.ReferenceName("refs/heads/main"))
+	if err != nil {
+		t.Fatalf("main ref lookup: %v", err)
+	}
+	if ref.Hash() != commitHash {
+		t.Errorf("main = %s after rejected update, want %s", ref.Hash(), commitHash)
+	}
+}
+
 func treeHashFromCommit(t *testing.T, stor gitStorage.Storer, h plumbing.Hash) string {
 	t.Helper()
 	c, err := object.GetCommit(stor, h)

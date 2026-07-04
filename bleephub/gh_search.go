@@ -13,6 +13,7 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 func (s *Server) registerGHSearchRoutes() {
@@ -167,18 +168,30 @@ func (s *Server) handleSearchIssues(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	q := parseSearchQuery(r)
 
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
+	// Matching rows are gathered under the read lock; rendering happens
+	// after release because the JSON builders (issueToJSON, repoToJSON and
+	// friends) take the store lock themselves.
+	type issueRow struct {
+		issue *Issue
+		repo  *Repo
+		assoc string
+	}
+	type prRow struct {
+		pr    *PullRequest
+		repo  *Repo
+		assoc string
+	}
+	var issueRows []issueRow
+	var prRows []prRow
 
-	var results []map[string]interface{}
-	base := s.baseURL(r)
+	s.store.mu.RLock()
 
 	for _, issue := range s.store.Issues {
 		repo := s.store.Repos[issue.RepoID]
 		if repo == nil {
 			continue
 		}
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
@@ -220,13 +233,7 @@ func (s *Server) handleSearchIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		item := issueToJSON(issue, s.store, base, repo.FullName)
-		item["score"] = 1.0
-		item["author_association"] = authorAssociationForIssue(s.store, issue, repo)
-		item["draft"] = false
-		item["pull_request"] = nil
-		item["repository"] = repoToJSON(repo, s.store, base)
-		results = append(results, item)
+		issueRows = append(issueRows, issueRow{issue, repo, authorAssociationLocked(s.store, issue.AuthorID, repo)})
 	}
 
 	for _, pr := range s.store.PullRequests {
@@ -234,7 +241,7 @@ func (s *Server) handleSearchIssues(w http.ResponseWriter, r *http.Request) {
 		if repo == nil {
 			continue
 		}
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
@@ -278,10 +285,27 @@ func (s *Server) handleSearchIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		item := issueToJSONForPR(pr, s.store, base, repo.FullName)
+		prRows = append(prRows, prRow{pr, repo, authorAssociationLocked(s.store, pr.AuthorID, repo)})
+	}
+
+	s.store.mu.RUnlock()
+
+	base := s.baseURL(r)
+	var results []map[string]interface{}
+	for _, row := range issueRows {
+		item := issueToJSON(row.issue, s.store, base, row.repo.FullName)
 		item["score"] = 1.0
-		item["author_association"] = authorAssociationForPR(s.store, pr, repo)
-		item["repository"] = repoToJSON(repo, s.store, base)
+		item["author_association"] = row.assoc
+		item["draft"] = false
+		item["pull_request"] = nil
+		item["repository"] = repoToJSON(row.repo, s.store, base)
+		results = append(results, item)
+	}
+	for _, row := range prRows {
+		item := issueToJSONForPR(row.pr, s.store, base, row.repo.FullName)
+		item["score"] = 1.0
+		item["author_association"] = row.assoc
+		item["repository"] = repoToJSON(row.repo, s.store, base)
 		results = append(results, item)
 	}
 
@@ -301,7 +325,11 @@ func issueToJSONForPR(pr *PullRequest, st *Store, baseURL, repoFullName string) 
 	return out
 }
 
+// issueToJSONForPullRequest renders a pull request in the issue shape.
+// Must not be called with st.mu held: it takes the read lock itself and
+// derives milestone issue counts via milestoneToJSON, which locks too.
 func issueToJSONForPullRequest(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	st.mu.RLock()
 	authorJSON := userToJSON(st.Users[pr.AuthorID])
 
 	labels := make([]map[string]interface{}, 0)
@@ -320,9 +348,23 @@ func issueToJSONForPullRequest(pr *PullRequest, st *Store, baseURL, repoFullName
 	if len(assignees) > 0 {
 		assignee = assignees[0]
 	}
-	var milestoneJSON interface{}
+	// Grab the milestone pointer; conversion happens after unlock because
+	// milestoneToJSON derives issue counts under its own lock.
+	var milestone *Milestone
 	if pr.MilestoneID > 0 {
-		milestoneJSON = milestoneToJSON(st.Milestones[pr.MilestoneID], st, baseURL, repoFullName)
+		milestone = st.Milestones[pr.MilestoneID]
+	}
+	commentCount := 0
+	for _, c := range st.Comments {
+		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
+			commentCount++
+		}
+	}
+	st.mu.RUnlock()
+
+	var milestoneJSON interface{}
+	if milestone != nil {
+		milestoneJSON = milestoneToJSON(milestone, st, baseURL, repoFullName)
 	}
 	var closedAt interface{}
 	if pr.ClosedAt != nil {
@@ -331,12 +373,6 @@ func issueToJSONForPullRequest(pr *PullRequest, st *Store, baseURL, repoFullName
 	var activeLockReason interface{}
 	if pr.Locked {
 		activeLockReason = pr.ActiveLockReason
-	}
-	commentCount := 0
-	for _, c := range st.Comments {
-		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
-			commentCount++
-		}
 	}
 	numStr := strconv.Itoa(pr.Number)
 	api := baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr
@@ -369,8 +405,19 @@ func issueToJSONForPullRequest(pr *PullRequest, st *Store, baseURL, repoFullName
 	}
 }
 
-func authorAssociationForIssue(st *Store, issue *Issue, repo *Repo) string {
-	author := st.Users[issue.AuthorID]
+// authorAssociation returns the author_association value for the author of
+// an issue, pull request or comment within repo. Must not be called with
+// st.mu held; it takes the read lock itself.
+func authorAssociation(st *Store, authorID int, repo *Repo) string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return authorAssociationLocked(st, authorID, repo)
+}
+
+// authorAssociationLocked is authorAssociation for callers that already hold
+// st.mu; it never acquires the lock itself.
+func authorAssociationLocked(st *Store, authorID int, repo *Repo) string {
+	author := st.Users[authorID]
 	if author == nil {
 		return "NONE"
 	}
@@ -380,28 +427,8 @@ func authorAssociationForIssue(st *Store, issue *Issue, repo *Repo) string {
 	return "CONTRIBUTOR"
 }
 
-func authorAssociationForPR(st *Store, pr *PullRequest, repo *Repo) string {
-	author := st.Users[pr.AuthorID]
-	if author == nil {
-		return "NONE"
-	}
-	if repo.Owner != nil && repo.Owner.ID == author.ID {
-		return "OWNER"
-	}
-	return "CONTRIBUTOR"
-}
-
-func authorAssociationForComment(st *Store, comment *Comment, repo *Repo) string {
-	author := st.Users[comment.AuthorID]
-	if author == nil {
-		return "NONE"
-	}
-	if repo.Owner != nil && repo.Owner.ID == author.ID {
-		return "OWNER"
-	}
-	return "CONTRIBUTOR"
-}
-
+// issueHasLabelNames reports whether the issue carries every named label.
+// Callers hold st.mu (it reads st.Labels directly).
 func issueHasLabelNames(st *Store, issue *Issue, names []string) bool {
 	for _, name := range names {
 		found := false
@@ -418,6 +445,8 @@ func issueHasLabelNames(st *Store, issue *Issue, names []string) bool {
 	return true
 }
 
+// prHasLabelNames reports whether the pull request carries every named
+// label. Callers hold st.mu (it reads st.Labels directly).
 func prHasLabelNames(st *Store, pr *PullRequest, names []string) bool {
 	for _, name := range names {
 		found := false
@@ -438,14 +467,12 @@ func (s *Server) handleSearchRepositories(w http.ResponseWriter, r *http.Request
 	user := ghUserFromContext(r.Context())
 	q := parseSearchQuery(r)
 
+	// Matching repos are gathered under the read lock; rendering happens
+	// after release because repoToJSON takes the store lock itself.
+	var matched []*Repo
 	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-
-	base := s.baseURL(r)
-	var results []map[string]interface{}
-
 	for _, repo := range s.store.Repos {
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
@@ -483,6 +510,13 @@ func (s *Server) handleSearchRepositories(w http.ResponseWriter, r *http.Request
 		if !q.matchesText(text) {
 			continue
 		}
+		matched = append(matched, repo)
+	}
+	s.store.mu.RUnlock()
+
+	base := s.baseURL(r)
+	var results []map[string]interface{}
+	for _, repo := range matched {
 		item := repoToJSON(repo, s.store, base)
 		item["score"] = 1.0
 		results = append(results, item)
@@ -501,14 +535,17 @@ func (s *Server) handleSearchCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Readable repos and their git storages are gathered under the read
+	// lock; the tree walk and rendering happen after release because
+	// repoToJSON takes the store lock itself.
+	type codeSearchRepo struct {
+		repo *Repo
+		stor gitStorage.Storer
+	}
+	var searchRepos []codeSearchRepo
 	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-
-	base := s.baseURL(r)
-	var results []map[string]interface{}
-
 	for _, repo := range s.store.Repos {
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
@@ -530,12 +567,20 @@ func (s *Server) handleSearchCode(w http.ResponseWriter, r *http.Request) {
 		if q.Language != "" && !strings.EqualFold(repo.Language, q.Language) {
 			continue
 		}
-
 		stor, ok := s.store.GitStorages[repo.FullName]
 		if !ok {
 			continue
 		}
-		gr, err := git.Open(stor, nil)
+		searchRepos = append(searchRepos, codeSearchRepo{repo, stor})
+	}
+	s.store.mu.RUnlock()
+
+	base := s.baseURL(r)
+	var results []map[string]interface{}
+
+	for _, sr := range searchRepos {
+		repo := sr.repo
+		gr, err := git.Open(sr.stor, nil)
 		if err != nil {
 			continue
 		}
@@ -617,14 +662,14 @@ func (s *Server) handleSearchCode(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
-	_ = ghUserFromContext(r.Context())
 	q := parseSearchQuery(r)
 
+	// Matching users and orgs are gathered under the read lock; rendering
+	// happens after release because fullUserJSON derives follower and repo
+	// counts under the store and misc locks itself.
+	var users []*User
+	var orgs []*Org
 	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-
-	var results []map[string]interface{}
-
 	for _, u := range s.store.Users {
 		if q.Type == "org" {
 			continue
@@ -633,11 +678,7 @@ func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 		if !q.matchesText(text) {
 			continue
 		}
-		item := s.fullUserJSON(u)
-		// user-search-result-item carries no twitter_username member.
-		delete(item, "twitter_username")
-		item["score"] = 1.0
-		results = append(results, item)
+		users = append(users, u)
 	}
 	for _, org := range s.store.Orgs {
 		if q.Type == "user" {
@@ -647,6 +688,19 @@ func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 		if !q.matchesText(text) {
 			continue
 		}
+		orgs = append(orgs, org)
+	}
+	s.store.mu.RUnlock()
+
+	var results []map[string]interface{}
+	for _, u := range users {
+		item := s.fullUserJSON(u)
+		// user-search-result-item carries no twitter_username member.
+		delete(item, "twitter_username")
+		item["score"] = 1.0
+		results = append(results, item)
+	}
+	for _, org := range orgs {
 		item := orgAsSimpleUserJSON(org)
 		item["score"] = 1.0
 		results = append(results, item)
@@ -825,14 +879,18 @@ func (s *Server) handleSearchCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Readable repos and their git storages are gathered under the read
+	// lock; the log walk and rendering happen after release because
+	// commitSearchItemJSON and commitAuthorMatches take the store lock
+	// themselves.
+	type commitSearchRepo struct {
+		repo *Repo
+		stor gitStorage.Storer
+	}
+	var searchRepos []commitSearchRepo
 	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
-
-	base := s.baseURL(r)
-	var results []map[string]interface{}
-
 	for _, repo := range s.store.Repos {
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
@@ -847,12 +905,20 @@ func (s *Server) handleSearchCommits(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-
 		stor, ok := s.store.GitStorages[repo.FullName]
 		if !ok {
 			continue
 		}
-		gr, err := git.Open(stor, nil)
+		searchRepos = append(searchRepos, commitSearchRepo{repo, stor})
+	}
+	s.store.mu.RUnlock()
+
+	base := s.baseURL(r)
+	var results []map[string]interface{}
+
+	for _, sr := range searchRepos {
+		repo := sr.repo
+		gr, err := git.Open(sr.stor, nil)
 		if err != nil {
 			continue
 		}
@@ -892,7 +958,8 @@ func (s *Server) handleSearchCommits(w http.ResponseWriter, r *http.Request) {
 
 // commitAuthorMatches matches the author: qualifier against the commit's
 // git author name/email and against the login of a store user with the
-// commit author's email. Callers hold the store read lock.
+// commit author's email. Must not be called with st.mu held; it takes the
+// read lock itself.
 func commitAuthorMatches(st *Store, commit *object.Commit, author string) bool {
 	if strings.EqualFold(commit.Author.Name, author) {
 		return true
@@ -900,6 +967,8 @@ func commitAuthorMatches(st *Store, commit *object.Commit, author string) bool {
 	if strings.EqualFold(commit.Author.Email, author) {
 		return true
 	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
 	for _, u := range st.Users {
 		if strings.EqualFold(u.Login, author) && strings.EqualFold(u.Email, commit.Author.Email) {
 			return true
@@ -909,7 +978,9 @@ func commitAuthorMatches(st *Store, commit *object.Commit, author string) bool {
 }
 
 // commitSearchItemJSON renders the spec `commit-search-result-item` shape.
-// Callers hold the store read lock.
+// Must not be called with the store lock held: it resolves the author under
+// its own read lock and embeds the repository via repoToJSON, which derives
+// counters under the store lock itself.
 func (s *Server) commitSearchItemJSON(commit *object.Commit, repo *Repo, base string) map[string]interface{} {
 	sha := commit.Hash.String()
 	api := base + "/api/v3/repos/" + repo.FullName
@@ -917,12 +988,14 @@ func (s *Server) commitSearchItemJSON(commit *object.Commit, repo *Repo, base st
 	// The top-level author is the GitHub account behind the commit author
 	// email (null when the email matches no account).
 	var authorJSON interface{}
+	s.store.mu.RLock()
 	for _, u := range s.store.Users {
 		if u.Email != "" && strings.EqualFold(u.Email, commit.Author.Email) {
 			authorJSON = userToJSON(u)
 			break
 		}
 	}
+	s.store.mu.RUnlock()
 
 	parents := make([]map[string]interface{}, 0, len(commit.ParentHashes))
 	for _, p := range commit.ParentHashes {
@@ -1069,7 +1142,7 @@ func (s *Server) handleSearchTopics(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.RLock()
 	agg := map[string]*topicAgg{}
 	for _, repo := range s.store.Repos {
-		if !canReadRepo(s.store, user, repo) {
+		if !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		for _, topic := range repo.Topics {

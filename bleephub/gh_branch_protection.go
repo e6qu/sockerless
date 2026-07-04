@@ -904,8 +904,7 @@ func (s *Server) handleBPEnforceAdminsDelete(w http.ResponseWriter, r *http.Requ
 // --- Allow force pushes ---
 
 func (s *Server) handleBPAllowForcePushesGet(w http.ResponseWriter, r *http.Request) {
-	repo, branch, bp := s.getBranchProtection(r)
-	_ = branch
+	repo, _, bp := s.getBranchProtection(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -954,8 +953,7 @@ func (s *Server) handleBPAllowForcePushesDelete(w http.ResponseWriter, r *http.R
 // --- Allow deletions ---
 
 func (s *Server) handleBPAllowDeletionsGet(w http.ResponseWriter, r *http.Request) {
-	repo, branch, bp := s.getBranchProtection(r)
-	_ = branch
+	repo, _, bp := s.getBranchProtection(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

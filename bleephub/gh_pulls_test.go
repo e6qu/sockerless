@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -1128,5 +1129,256 @@ func TestPullRequestTimelineREST(t *testing.T) {
 	}
 	if reviewed["submitted_at"] == nil {
 		t.Fatal("expected reviewed submitted_at to be set")
+	}
+}
+
+// TestPullRequestTimelineFullFlowREST drives a git-backed pull request
+// through reviewer request/removal and merge, and asserts the issue
+// timeline carries the committed / review_requested /
+// review_request_removed / merged / closed entries GitHub documents, in
+// order, with stable ids and recorded timestamps.
+func TestPullRequestTimelineFullFlowREST(t *testing.T) {
+	repoPath := "/api/v3/repos/admin/pr-timeline-flow"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "pr-timeline-flow", "auto_init": true,
+	}).Body.Close()
+	createTestUser(t, "flow-reviewer")
+
+	// Branch feat off main and add two real commits via the contents API.
+	refResp := ghGet(t, repoPath+"/git/refs/heads/main", defaultToken)
+	refData := decodeJSON(t, refResp)
+	mainObj, _ := refData["object"].(map[string]interface{})
+	mainSha, _ := mainObj["sha"].(string)
+	if mainSha == "" {
+		t.Fatalf("main ref sha missing: %v", refData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/heads/feat", "sha": mainSha,
+	}).Body.Close()
+
+	var commitShas []string
+	for _, f := range []struct{ path, content, message string }{
+		{"alpha.txt", "alpha", "add alpha"},
+		{"beta.txt", "beta", "add beta"},
+	} {
+		resp := ghPut(t, repoPath+"/contents/"+f.path, defaultToken, map[string]interface{}{
+			"message": f.message,
+			"content": base64.StdEncoding.EncodeToString([]byte(f.content)),
+			"branch":  "feat",
+		})
+		data := decodeJSON(t, resp)
+		commit, _ := data["commit"].(map[string]interface{})
+		sha, _ := commit["sha"].(string)
+		if sha == "" {
+			t.Fatalf("contents PUT %s returned no commit sha: %v", f.path, data)
+		}
+		commitShas = append(commitShas, sha)
+	}
+
+	ghPost(t, repoPath+"/pulls", defaultToken, map[string]interface{}{
+		"title": "Timeline flow", "head": "feat", "base": "main",
+	}).Body.Close()
+	ghPost(t, repoPath+"/pulls/1/requested_reviewers", defaultToken, map[string]interface{}{
+		"reviewers": []string{"flow-reviewer"},
+	}).Body.Close()
+	ghDeleteWithBody(t, repoPath+"/pulls/1/requested_reviewers", defaultToken, map[string]interface{}{
+		"reviewers": []string{"flow-reviewer"},
+	}).Body.Close()
+
+	// GET /pulls/1/commits lists the two real commits, oldest first.
+	commitsResp := ghGet(t, repoPath+"/pulls/1/commits", defaultToken)
+	if commitsResp.StatusCode != 200 {
+		commitsResp.Body.Close()
+		t.Fatalf("pulls/1/commits: expected 200, got %d", commitsResp.StatusCode)
+	}
+	commitList := decodeJSONArray(t, commitsResp)
+	if len(commitList) != 2 {
+		t.Fatalf("expected 2 PR commits, got %d: %v", len(commitList), commitList)
+	}
+	for i := range commitList {
+		if commitList[i]["sha"] != commitShas[i] {
+			t.Fatalf("PR commit %d sha = %v, want %s", i, commitList[i]["sha"], commitShas[i])
+		}
+	}
+
+	mergeResp := ghPut(t, repoPath+"/pulls/1/merge", defaultToken, map[string]interface{}{
+		"merge_method": "merge",
+	})
+	if mergeResp.StatusCode != 200 {
+		mergeResp.Body.Close()
+		t.Fatalf("merge: expected 200, got %d", mergeResp.StatusCode)
+	}
+	mergeData := decodeJSON(t, mergeResp)
+	if mergeData["merged"] != true {
+		t.Fatalf("expected merged=true, got %v", mergeData["merged"])
+	}
+	mergeSha, _ := mergeData["sha"].(string)
+	if mergeSha == "" {
+		t.Fatalf("merge returned no sha: %v", mergeData)
+	}
+
+	// The merge commit is real: resolvable through the git data API, with
+	// the old base head and the PR head as its parents.
+	mcResp := ghGet(t, repoPath+"/git/commits/"+mergeSha, defaultToken)
+	if mcResp.StatusCode != 200 {
+		mcResp.Body.Close()
+		t.Fatalf("git/commits/%s: expected 200, got %d", mergeSha, mcResp.StatusCode)
+	}
+	mc := decodeJSON(t, mcResp)
+	parents, _ := mc["parents"].([]interface{})
+	parentShas := map[string]bool{}
+	for _, p := range parents {
+		pm, _ := p.(map[string]interface{})
+		sha, _ := pm["sha"].(string)
+		parentShas[sha] = true
+	}
+	if !parentShas[mainSha] || !parentShas[commitShas[1]] {
+		t.Fatalf("merge commit parents = %v, want base %s and head %s", parents, mainSha, commitShas[1])
+	}
+
+	// PR read-back carries the real shas and commit count.
+	prResp := ghGet(t, repoPath+"/pulls/1", defaultToken)
+	prData := decodeJSON(t, prResp)
+	if prData["merge_commit_sha"] != mergeSha {
+		t.Fatalf("merge_commit_sha = %v, want %s", prData["merge_commit_sha"], mergeSha)
+	}
+	if prData["commits"] != 2.0 {
+		t.Fatalf("commits = %v, want 2", prData["commits"])
+	}
+	head, _ := prData["head"].(map[string]interface{})
+	if head["sha"] != commitShas[1] {
+		t.Fatalf("head.sha = %v, want %s", head["sha"], commitShas[1])
+	}
+	base, _ := prData["base"].(map[string]interface{})
+	if base["sha"] != mainSha {
+		t.Fatalf("base.sha = %v, want %s", base["sha"], mainSha)
+	}
+
+	// Timeline: committed ×2, review_requested, review_request_removed,
+	// merged, closed — in that order.
+	tlResp := ghGet(t, repoPath+"/issues/1/timeline", defaultToken)
+	if tlResp.StatusCode != 200 {
+		tlResp.Body.Close()
+		t.Fatalf("timeline: expected 200, got %d", tlResp.StatusCode)
+	}
+	items := decodeJSONArray(t, tlResp)
+	var gotEvents []string
+	for _, item := range items {
+		ev, _ := item["event"].(string)
+		gotEvents = append(gotEvents, ev)
+	}
+	wantEvents := []string{"committed", "committed", "review_requested", "review_request_removed", "merged", "closed"}
+	if len(gotEvents) != len(wantEvents) {
+		t.Fatalf("timeline events = %v, want %v", gotEvents, wantEvents)
+	}
+	for i := range wantEvents {
+		if gotEvents[i] != wantEvents[i] {
+			t.Fatalf("timeline events = %v, want %v", gotEvents, wantEvents)
+		}
+	}
+
+	// Committed entries are the PR's real commits, oldest first, in the
+	// documented git-commit shape.
+	for i := 0; i < 2; i++ {
+		c := items[i]
+		if c["sha"] != commitShas[i] {
+			t.Fatalf("committed[%d].sha = %v, want %s", i, c["sha"], commitShas[i])
+		}
+		author, _ := c["author"].(map[string]interface{})
+		if author == nil || author["email"] == "" || author["name"] == "" || author["date"] == "" {
+			t.Fatalf("committed[%d].author incomplete: %v", i, c["author"])
+		}
+		if _, ok := c["committer"].(map[string]interface{}); !ok {
+			t.Fatalf("committed[%d] missing committer: %v", i, c)
+		}
+		msg, _ := c["message"].(string)
+		if msg == "" {
+			t.Fatalf("committed[%d] missing message", i)
+		}
+		tree, _ := c["tree"].(map[string]interface{})
+		if tree == nil || tree["sha"] == "" {
+			t.Fatalf("committed[%d] missing tree: %v", i, c)
+		}
+		cparents, _ := c["parents"].([]interface{})
+		if len(cparents) != 1 {
+			t.Fatalf("committed[%d].parents = %v, want 1 parent", i, c["parents"])
+		}
+	}
+	firstParent, _ := items[0]["parents"].([]interface{})[0].(map[string]interface{})
+	if firstParent["sha"] != mainSha {
+		t.Fatalf("committed[0] parent = %v, want %s", firstParent["sha"], mainSha)
+	}
+	secondParent, _ := items[1]["parents"].([]interface{})[0].(map[string]interface{})
+	if secondParent["sha"] != commitShas[0] {
+		t.Fatalf("committed[1] parent = %v, want %s", secondParent["sha"], commitShas[0])
+	}
+
+	// review_requested / review_request_removed carry the documented
+	// review_requester + requested_reviewer payload.
+	for i, ev := range []string{"review_requested", "review_request_removed"} {
+		item := items[2+i]
+		requester, _ := item["review_requester"].(map[string]interface{})
+		if requester == nil || requester["login"] != "admin" {
+			t.Fatalf("%s.review_requester = %v, want admin", ev, item["review_requester"])
+		}
+		reviewer, _ := item["requested_reviewer"].(map[string]interface{})
+		if reviewer == nil || reviewer["login"] != "flow-reviewer" {
+			t.Fatalf("%s.requested_reviewer = %v, want flow-reviewer", ev, item["requested_reviewer"])
+		}
+		if id, ok := item["id"].(float64); !ok || id <= 0 {
+			t.Fatalf("%s.id = %v, want positive integer", ev, item["id"])
+		}
+		if at, _ := item["created_at"].(string); at == "" {
+			t.Fatalf("%s.created_at missing", ev)
+		}
+	}
+
+	// merged carries the merge commit; closed follows it.
+	mergedItem := items[4]
+	if mergedItem["commit_id"] != mergeSha {
+		t.Fatalf("merged.commit_id = %v, want %s", mergedItem["commit_id"], mergeSha)
+	}
+	actor, _ := mergedItem["actor"].(map[string]interface{})
+	if actor == nil || actor["login"] != "admin" {
+		t.Fatalf("merged.actor = %v, want admin", mergedItem["actor"])
+	}
+	closedItem := items[5]
+	if closedItem["commit_id"] != nil {
+		t.Fatalf("closed.commit_id = %v, want null", closedItem["commit_id"])
+	}
+
+	// The issue-events endpoint serves the PR's recorded events too (PRs
+	// share the issue number space on real GitHub).
+	evResp := ghGet(t, repoPath+"/issues/1/events", defaultToken)
+	if evResp.StatusCode != 200 {
+		evResp.Body.Close()
+		t.Fatalf("issues/1/events: expected 200, got %d", evResp.StatusCode)
+	}
+	evItems := decodeJSONArray(t, evResp)
+	var evNames []string
+	for _, item := range evItems {
+		ev, _ := item["event"].(string)
+		evNames = append(evNames, ev)
+	}
+	wantEvNames := []string{"review_requested", "review_request_removed", "merged", "closed"}
+	if len(evNames) != len(wantEvNames) {
+		t.Fatalf("issue events = %v, want %v", evNames, wantEvNames)
+	}
+	for i := range wantEvNames {
+		if evNames[i] != wantEvNames[i] {
+			t.Fatalf("issue events = %v, want %v", evNames, wantEvNames)
+		}
+	}
+
+	// Ids and timestamps are recorded state, identical across reads.
+	tlResp2 := ghGet(t, repoPath+"/issues/1/timeline", defaultToken)
+	items2 := decodeJSONArray(t, tlResp2)
+	if len(items2) != len(items) {
+		t.Fatalf("second timeline read has %d items, want %d", len(items2), len(items))
+	}
+	for i := range items {
+		if items[i]["id"] != items2[i]["id"] || items[i]["created_at"] != items2[i]["created_at"] || items[i]["sha"] != items2[i]["sha"] {
+			t.Fatalf("timeline item %d unstable across reads: %v vs %v", i, items[i], items2[i])
+		}
 	}
 }
