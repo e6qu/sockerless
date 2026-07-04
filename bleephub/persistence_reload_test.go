@@ -465,8 +465,8 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 	}
 }
 
-// G9: installation selected-repo lists and token repo scoping survive,
-// including the add/remove mutations that previously never persisted.
+// G9: installation selected-repo lists and token repo scoping survive reload,
+// including the state left by add/remove mutations.
 func TestPersistenceReload_InstallationSelectedRepos(t *testing.T) {
 	var instID, r1ID, r2ID int
 	var tokValue string

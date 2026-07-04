@@ -4,16 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-emoji-assets-ui-sweep` — emoji image assets (BUG-2303) + UI sweep + boyscout fixes. PR pending.
+`feat/bleephub-timeline-locking-boyscout` — PR timeline events (BUG-2310) + store-locking audit (BUG-2311) + boyscout sweep. PR pending.
 
 **Scope**
-- **Emoji assets (BUG-2303):** `GET /images/icons/emoji/{path...}` serves every image URL the `GET /api/v3/emojis` catalog advertises from the embedded reproducible archive `bleephub/emoji_assets.tar.gz` (~1.4 MB): 1870 Twemoji v17.0.3 rasters (jdecked/twemoji, CC-BY 4.0, attribution embedded) + 23 bleephub-original deterministic badges for GitHub-custom names (GitHub's art is not redistributable). `internal/emojigen` (go:generate) rebuilds the archive byte-identically; a full-catalog enumeration test asserts 200 + image/png + 72×72 decode for all 1936 entries.
-- **UI sweep (BUG-2312):** global search (`/ui/search`, all seven /search tabs), PR reviews workflow on the PR detail view (reviews with submit/dismiss, review-comment threads with diff hunks and replies/resolution, requested reviewers, merge-box combined status + check runs, reaction pills, timeline-driven conversation), deployments page (`/ui/repos/{o}/{r}/deployments`: statuses timeline, environments with protection rules, pending workflow approvals), webhook delivery inspection with redelivery (repo + new org Webhooks tab), GitHub Pages settings panel, repo collaborators management with real invitations, repo social reads (stargazers/watchers/forks/languages/branches/tags), Account page (`/ui/account`: SSH/GPG/signing keys, emails, blocks), Copilot Spaces CRUD with collaborators/resources, enterprise team organization assignments, custom-property required/default editing + org repository-values panel.
-- **Boyscout fixes (BUG-2304–2309):** unpaginated repo hook deliveries + missing branch_policy protection rule; missing `GET /pulls/{n}/requested_reviewers`, PR timeline 404, `BuildIssueTimeline` recursive-RLock deadlock; fabricated collaborator invitation replaced with the real pending-invitation flow + hardcoded zero forks/subscribers counts derived from real state; thin `{login}` shapes → simple-user; cross-repo issue-reaction leakage fixed by resolving through the repository; reaction rollups added to issue/comment JSON.
+- **BUG-2310:** PR timelines carry the documented `committed`/`review_requested`/`review_request_removed`/`merged`/`closed`/`reopened` entries. Reviewer request/removal, close/reopen, and merge (REST + GraphQL) record real issue events; `committed` entries derive at render time from the PR's real base..head git commits. `PUT /pulls/{n}/merge` materialises a real merge/squash/rebase commit in git storage (merge_method validated, commit_title/message honored, expected-`sha` 409), so `merge_commit_sha`, `commits`, head/base shas, and the merged event's `commit_id` are real for git-backed PRs. Added the documented `GET /pulls/{n}/commits`; `GET /issues/{n}/events` serves PR numbers. Test: `TestPullRequestTimelineFullFlowREST`.
+- **BUG-2311:** a type-aware lock-graph analysis eliminated ten recursive-RLock paths and a Store.mu↔Misc.mu ABBA inversion via `*Locked` helper variants and two-phase gather/render restructures; lock order documented; `scripts/check-locked-helpers.sh` pre-commit guard; `TestStoreLockReentrancyUnderWriterPressure` deadlocks pre-fix, passes post-fix incl. `-race`. Two real data races fixed along the way.
+- **Boyscout sweep:** three error swallows fixed (environment upsert accepted malformed JSON; release-asset upload could 201 truncated content; a non-commit ref target bypassed the fast-forward check), dead code deleted in Go and the UI, the README renderer's swallow-to-blank base64 decoder replaced, stale comments rewritten timeless.
 
 **Next after merge**
-- BUG-2310: record issue events for PR-side actions (create/review-request/merge) so PR timelines carry `committed`/`merged`/`review_requested` events.
-- BUG-2311: store-locking audit — introduce `*Locked` helper variants so serializers never re-enter `st.mu` (the `BuildIssueTimeline` deadlock class).
+- BUG-2313: derive generate-release-notes "What's Changed" from PRs merged in the previous_tag..tag commit range.
+- BUG-2314: require real refs at PR creation and delete the `prHeadSHA` pseudo-sha rendering (migrate metadata-only PR fixtures).
+- BUG-2315: render GraphQL `PullRequest.reviewRequests` from the real requested-reviewer state.
 - Live-cloud track (BUG-1075); azuread upstream (BUG-1345).
 
 ---

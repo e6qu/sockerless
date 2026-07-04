@@ -588,7 +588,11 @@ func (s *Server) handleUpsertEnvironment(w http.ResponseWriter, r *http.Request)
 		} `json:"reviewers"`
 		DeploymentBranchPolicy *DeploymentBranchPolicy `json:"deployment_branch_policy"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body) // empty body = no protection config
+	// An absent body is valid (environment with no protection config), but
+	// malformed JSON is still a 400 like real GitHub.
+	if !decodeJSONBodyOptional(w, r, &body) {
+		return
+	}
 
 	env := s.store.Deployments.UpsertEnvironment(repo.ID, r.PathValue("env_name"))
 

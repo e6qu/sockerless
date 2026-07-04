@@ -870,7 +870,11 @@ func (s *Server) handleListIssueTimeline(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	timeline := s.buildPullRequestTimeline(repo, pr, s.baseURL(r))
+	timeline, err := s.buildPullRequestTimeline(repo, pr, s.baseURL(r))
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "timeline derivation failed")
+		return
+	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, timeline))
 }
 
@@ -894,13 +898,18 @@ func (s *Server) handleListIssueEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	issue := s.store.GetIssueByNumber(repo.ID, num)
-	if issue == nil {
+	// Pull requests share the issue number space; their events serve
+	// through this endpoint too, as on real GitHub.
+	var events []*IssueEvent
+	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
+		events = s.store.ListIssueEvents(repo.ID, issue.ID)
+	} else if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
+		events = s.store.ListPullRequestEvents(repo.ID, pr.ID)
+	} else {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 
-	events := s.store.ListIssueEvents(repo.ID, issue.ID)
 	base := s.baseURL(r)
 	result := make([]map[string]interface{}, 0, len(events))
 	for _, e := range events {
@@ -1091,7 +1100,7 @@ func timelineCommentToJSON(c *Comment, st *Store, baseURL, repoFullName string, 
 	out := commentToJSON(c, st, baseURL, repoFullName, issueNumber)
 	out["event"] = "commented"
 	out["actor"] = out["user"]
-	out["author_association"] = authorAssociationForComment(st, c, repo)
+	out["author_association"] = authorAssociation(st, c.AuthorID, repo)
 	out["performed_via_github_app"] = nil
 	return out
 }
@@ -1218,9 +1227,23 @@ func issueEventForIssueToJSON(e *IssueEvent, st *Store, baseURL, repoFullName st
 			"from": e.RenameFrom,
 			"to":   e.RenameTo,
 		}
+	case "review_requested", "review_request_removed":
+		st.mu.RLock()
+		var requesterJSON, reviewerJSON interface{}
+		if u, ok := st.Users[e.ActorID]; ok {
+			requesterJSON = userToJSON(u)
+		}
+		if u, ok := st.Users[e.RequestedReviewerID]; ok {
+			reviewerJSON = userToJSON(u)
+		}
+		st.mu.RUnlock()
+		// GitHub's actor on review-request events is the requester.
+		out["review_requester"] = requesterJSON
+		out["requested_reviewer"] = reviewerJSON
 	default:
-		// opened, closed, reopened, locked, unlocked, etc. map to the
-		// locked-issue-event schema which only adds a nullable lock_reason.
+		// opened, closed, reopened, merged, locked, unlocked, etc. map to
+		// the locked-issue-event schema which only adds a nullable
+		// lock_reason.
 		lockReason := interface{}(nil)
 		if e.Event == "locked" && e.LockReason != "" {
 			lockReason = e.LockReason
@@ -1272,8 +1295,22 @@ func issueEventForTimelineToJSON(e *IssueEvent, st *Store, baseURL, repoFullName
 			lockReason = e.LockReason
 		}
 		out["lock_reason"] = lockReason
+	case "review_requested", "review_request_removed":
+		st.mu.RLock()
+		var requesterJSON, reviewerJSON interface{}
+		if u, ok := st.Users[e.ActorID]; ok {
+			requesterJSON = userToJSON(u)
+		}
+		if u, ok := st.Users[e.RequestedReviewerID]; ok {
+			reviewerJSON = userToJSON(u)
+		}
+		st.mu.RUnlock()
+		// GitHub's actor on review-request events is the requester.
+		out["review_requester"] = requesterJSON
+		out["requested_reviewer"] = reviewerJSON
 	default:
-		// opened, closed, reopened, etc. map to state-change-issue-event.
+		// opened, closed, reopened, merged, etc. map to
+		// state-change-issue-event.
 		out["state_reason"] = nil
 	}
 	return out

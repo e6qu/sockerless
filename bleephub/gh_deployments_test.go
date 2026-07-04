@@ -106,6 +106,28 @@ func TestDeployments_Lifecycle(t *testing.T) {
 	}
 }
 
+// TestUpsertEnvironmentBodyValidation: PUT /environments/{name} accepts an
+// absent body (environment with no protection config) but rejects malformed
+// JSON with 400 like real GitHub.
+func TestUpsertEnvironmentBodyValidation(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerGHDeploymentsRoutes()
+
+	user := s.store.UsersByLogin["admin"]
+	_ = s.store.CreateRepo(user, "env-body-repo", "", false)
+
+	w := do(s, "PUT", "/api/v3/repos/admin/env-body-repo/environments/staging", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("put env with no body: %d body=%s", w.Code, w.Body.String())
+	}
+
+	w = do(s, "PUT", "/api/v3/repos/admin/env-body-repo/environments/staging", []byte(`{"wait_timer": `))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("put env with malformed JSON: %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+}
+
 func TestRepositoryDispatch(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()

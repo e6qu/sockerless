@@ -723,7 +723,10 @@ func readUploadAssetBody(r *http.Request) (name, label, contentType string, data
 			return "", "", "", nil, false
 		}
 		defer f.Close()
-		data, _ = io.ReadAll(f)
+		data, err = io.ReadAll(f)
+		if err != nil {
+			return "", "", "", nil, false
+		}
 		// Form-supplied content_type wins over the file header default.
 		if contentType == "" {
 			contentType = fh.Header.Get("Content-Type")
@@ -926,9 +929,10 @@ func releaseAssetToJSON(asset *ReleaseAsset, st *Store, baseURL string, repo *Re
 	}
 }
 
-// handleGenerateReleaseNotes — sim returns a deterministic body. Real GH
-// summarises merged PRs since the previous tag; bleephub doesn't model
-// commit ranges deeply, so the body lists the previous tag + a placeholder.
+// handleGenerateReleaseNotes returns a deterministic changelog skeleton built
+// from the request's tag names. Real GitHub summarises the PRs merged in the
+// previous_tag..tag commit range; bleephub doesn't model commit ranges, so the
+// body carries only the "What's Changed" header and the Full Changelog line.
 func (s *Server) handleGenerateReleaseNotes(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		TagName           string `json:"tag_name"`

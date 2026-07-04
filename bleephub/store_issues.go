@@ -79,40 +79,47 @@ type Comment struct {
 	Pinned          bool       // pinned comments appear first in some GitHub UIs
 }
 
-// IssueEvent represents an event in an issue's timeline. The Event field
-// matches the GitHub issue-event type names used by the REST API
-// ("opened", "closed", "reopened", "locked", "unlocked", "commented",
-// "labeled", "unlabeled", "assigned", "unassigned", ...).
+// IssueEvent represents an event in an issue's or a pull request's
+// timeline. The Event field matches the GitHub issue-event type names used
+// by the REST API ("opened", "closed", "reopened", "locked", "unlocked",
+// "commented", "labeled", "unlabeled", "assigned", "unassigned",
+// "review_requested", "review_request_removed", "merged", ...).
+// ParentType says which ID space IssueID refers to: "issue" (st.Issues) or
+// "pull_request" (st.PullRequests) — issues and PRs share the per-repo
+// number sequence but have independent global ID sequences.
 type IssueEvent struct {
-	ID          int
-	NodeID      string
-	RepoID      int
-	IssueID     int
-	ActorID     int
-	Event       string
-	CommitID    string
-	CommitURL   string
-	CreatedAt   time.Time
-	LabelID     int
-	AssigneeID  int
-	AssignerID  int
-	MilestoneID int
-	CommentID   int
-	LockReason  string
-	RenameFrom  string
-	RenameTo    string
+	ID                  int
+	NodeID              string
+	RepoID              int
+	ParentType          string
+	IssueID             int
+	ActorID             int
+	Event               string
+	CommitID            string
+	CommitURL           string
+	CreatedAt           time.Time
+	LabelID             int
+	AssigneeID          int
+	AssignerID          int
+	MilestoneID         int
+	CommentID           int
+	RequestedReviewerID int
+	LockReason          string
+	RenameFrom          string
+	RenameTo            string
 }
 
 // recordIssueEventLocked creates an IssueEvent while st.mu is already held.
 func (st *Store) recordIssueEventLocked(repoID, issueID, actorID int, event string) *IssueEvent {
 	e := &IssueEvent{
-		ID:        st.NextIssueEventID,
-		NodeID:    fmt.Sprintf("IE_kgDO%08d", st.NextIssueEventID),
-		RepoID:    repoID,
-		IssueID:   issueID,
-		ActorID:   actorID,
-		Event:     event,
-		CreatedAt: time.Now().UTC(),
+		ID:         st.NextIssueEventID,
+		NodeID:     fmt.Sprintf("IE_kgDO%08d", st.NextIssueEventID),
+		RepoID:     repoID,
+		ParentType: "issue",
+		IssueID:    issueID,
+		ActorID:    actorID,
+		Event:      event,
+		CreatedAt:  time.Now().UTC(),
 	}
 	st.NextIssueEventID++
 	st.IssueEvents[e.ID] = e
@@ -120,6 +127,28 @@ func (st *Store) recordIssueEventLocked(repoID, issueID, actorID int, event stri
 		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
 	}
 	return e
+}
+
+// recordPullRequestEventLocked creates an IssueEvent attached to a pull
+// request while st.mu is already held. commitID and requestedReviewerID are
+// optional (zero-valued when the event type carries neither).
+func (st *Store) recordPullRequestEventLocked(repoID, prID, actorID int, event, commitID string, requestedReviewerID int) *IssueEvent {
+	e := st.recordIssueEventLocked(repoID, prID, actorID, event)
+	e.ParentType = "pull_request"
+	e.CommitID = commitID
+	e.RequestedReviewerID = requestedReviewerID
+	if st.persist != nil {
+		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
+	}
+	return e
+}
+
+// RecordPullRequestEvent creates a public issue event attached to a pull
+// request ("merged", "closed", "reopened", "review_requested", ...).
+func (st *Store) RecordPullRequestEvent(repoID, prID, actorID int, event, commitID string, requestedReviewerID int) *IssueEvent {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.recordPullRequestEventLocked(repoID, prID, actorID, event, commitID, requestedReviewerID)
 }
 
 // recordIssueEventWithIDsLocked creates an IssueEvent with optional related IDs
@@ -194,8 +223,11 @@ func intFromPayload(payload map[string]interface{}, key string) int {
 	return 0
 }
 
-// ListIssueEvents returns all issue events for a repo, optionally filtered
-// by issue ID (pass 0 to get all repo issue events).
+// ListIssueEvents returns issue events for a repo, optionally filtered by
+// issue ID (pass 0 to get all repo issue events, pull-request events
+// included — GitHub's repo-level events listing spans both). Per-issue
+// listings exclude pull-request events: a PR's global ID can collide with
+// an issue's. Results are ordered by event ID so pagination is stable.
 func (st *Store) ListIssueEvents(repoID, issueID int) []*IssueEvent {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -204,11 +236,28 @@ func (st *Store) ListIssueEvents(repoID, issueID int) []*IssueEvent {
 		if e.RepoID != repoID {
 			continue
 		}
-		if issueID != 0 && e.IssueID != issueID {
+		if issueID != 0 && (e.IssueID != issueID || e.ParentType == "pull_request") {
 			continue
 		}
 		events = append(events, e)
 	}
+	sort.Slice(events, func(i, j int) bool { return events[i].ID < events[j].ID })
+	return events
+}
+
+// ListPullRequestEvents returns the issue events attached to a pull
+// request, ordered by event ID.
+func (st *Store) ListPullRequestEvents(repoID, prID int) []*IssueEvent {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var events []*IssueEvent
+	for _, e := range st.IssueEvents {
+		if e.RepoID != repoID || e.ParentType != "pull_request" || e.IssueID != prID {
+			continue
+		}
+		events = append(events, e)
+	}
+	sort.Slice(events, func(i, j int) bool { return events[i].ID < events[j].ID })
 	return events
 }
 

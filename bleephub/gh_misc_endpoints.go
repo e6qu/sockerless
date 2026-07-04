@@ -556,69 +556,67 @@ func (s *Server) handleListUserKeysByLogin(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) handleListFollowers(w http.ResponseWriter, r *http.Request) {
-	target := r.PathValue("username")
-	s.store.Misc.mu.RLock()
-	followers := []map[string]interface{}{}
-	if s.store.Misc.follows != nil {
-		for user, follows := range s.store.Misc.follows {
-			if follows[target] {
-				if u := s.store.LookupUserByLogin(user); u != nil {
-					followers = append(followers, userToJSON(u))
-				}
-			}
+// resolveLoginsJSON converts a list of logins to user JSON, skipping logins
+// with no store user. Must not be called with Misc.mu held: LookupUserByLogin
+// takes Store.mu, and Store.mu is never acquired under Misc.mu (the lock
+// order is Store.mu before Misc.mu).
+func (s *Server) resolveLoginsJSON(logins []string) []map[string]interface{} {
+	out := []map[string]interface{}{}
+	for _, login := range logins {
+		if u := s.store.LookupUserByLogin(login); u != nil {
+			out = append(out, userToJSON(u))
 		}
 	}
-	s.store.Misc.mu.RUnlock()
-	writeJSON(w, http.StatusOK, followers)
+	return out
+}
+
+// followerLogins returns the logins that follow target. Gathered under
+// Misc.mu; the caller resolves logins to users after release.
+func (s *Server) followerLogins(target string) []string {
+	s.store.Misc.mu.RLock()
+	defer s.store.Misc.mu.RUnlock()
+	var logins []string
+	for user, follows := range s.store.Misc.follows {
+		if follows[target] {
+			logins = append(logins, user)
+		}
+	}
+	return logins
+}
+
+// followingLogins returns the logins that login follows. Gathered under
+// Misc.mu; the caller resolves logins to users after release.
+func (s *Server) followingLogins(login string) []string {
+	s.store.Misc.mu.RLock()
+	defer s.store.Misc.mu.RUnlock()
+	var logins []string
+	for target := range s.store.Misc.follows[login] {
+		logins = append(logins, target)
+	}
+	return logins
+}
+
+func (s *Server) handleListFollowers(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.resolveLoginsJSON(s.followerLogins(r.PathValue("username"))))
 }
 func (s *Server) handleListFollowing(w http.ResponseWriter, r *http.Request) {
-	target := r.PathValue("username")
-	s.store.Misc.mu.RLock()
-	following := []map[string]interface{}{}
-	if s.store.Misc.follows != nil {
-		if follows, ok := s.store.Misc.follows[target]; ok {
-			for user := range follows {
-				if u := s.store.LookupUserByLogin(user); u != nil {
-					following = append(following, userToJSON(u))
-				}
-			}
-		}
-	}
-	s.store.Misc.mu.RUnlock()
-	writeJSON(w, http.StatusOK, following)
+	writeJSON(w, http.StatusOK, s.resolveLoginsJSON(s.followingLogins(r.PathValue("username"))))
 }
 func (s *Server) handleListMyFollowers(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
-	s.store.Misc.mu.RLock()
-	followers := []map[string]interface{}{}
-	if user != nil && s.store.Misc.follows != nil {
-		for follower, follows := range s.store.Misc.follows {
-			if follows[user.Login] {
-				if u := s.store.LookupUserByLogin(follower); u != nil {
-					followers = append(followers, userToJSON(u))
-				}
-			}
-		}
+	if user == nil {
+		writeJSON(w, http.StatusOK, []map[string]interface{}{})
+		return
 	}
-	s.store.Misc.mu.RUnlock()
-	writeJSON(w, http.StatusOK, followers)
+	writeJSON(w, http.StatusOK, s.resolveLoginsJSON(s.followerLogins(user.Login)))
 }
 func (s *Server) handleListMyFollowing(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
-	s.store.Misc.mu.RLock()
-	following := []map[string]interface{}{}
-	if user != nil && s.store.Misc.follows != nil {
-		if follows, ok := s.store.Misc.follows[user.Login]; ok {
-			for target := range follows {
-				if u := s.store.LookupUserByLogin(target); u != nil {
-					following = append(following, userToJSON(u))
-				}
-			}
-		}
+	if user == nil {
+		writeJSON(w, http.StatusOK, []map[string]interface{}{})
+		return
 	}
-	s.store.Misc.mu.RUnlock()
-	writeJSON(w, http.StatusOK, following)
+	writeJSON(w, http.StatusOK, s.resolveLoginsJSON(s.followingLogins(user.Login)))
 }
 
 func (s *Server) handleFollowUser(w http.ResponseWriter, r *http.Request) {

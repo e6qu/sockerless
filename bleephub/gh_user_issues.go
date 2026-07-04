@@ -64,7 +64,7 @@ func (s *Server) handleListGlobalUserIssues(w http.ResponseWriter, r *http.Reque
 	rows := make([]row, 0)
 	for _, issue := range s.store.Issues {
 		repo := s.store.Repos[issue.RepoID]
-		if repo == nil || !canReadRepo(s.store, user, repo) {
+		if repo == nil || !canReadRepoLocked(s.store, user, repo) {
 			continue
 		}
 		if !issueMatchesUserFilter(s.store, issue, repo, user, filter) {
@@ -140,7 +140,7 @@ func issueMatchesUserFilter(st *Store, issue *Issue, repo *Repo, user *User, fil
 		}
 		return assigned || created || issueMentionsUser(st, issue, user)
 	case "repos":
-		return repo.OwnerID == user.ID || repoCollaboratorPermissionAtLeast(st, repo.FullName, user.Login, "pull")
+		return repo.OwnerID == user.ID || repoCollaboratorPermissionAtLeastLocked(st, repo.FullName, user.Login, "pull")
 	case "all":
 		return assigned || created || issueMentionsUser(st, issue, user)
 	}

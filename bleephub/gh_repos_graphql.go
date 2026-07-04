@@ -812,19 +812,18 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 	}
 }
 
-// repoOwnerGraphQL returns a User-shaped map for the owner of repo. For
-// org-owned repositories it resolves the organization from the repo's full
-// name and converts it with the same field names userToGraphQL uses, so
+// repoOwnerGraphQLLocked returns a User-shaped map for the owner of repo.
+// For org-owned repositories it resolves the organization from the repo's
+// full name and converts it with the same field names userToGraphQL uses, so
 // callers that embed the owner under REST/GraphQL repo shapes get a
-// consistent User-type object.
-func repoOwnerGraphQL(repo *Repo, st *Store) map[string]interface{} {
+// consistent User-type object. Callers already hold st.mu; it never acquires
+// the lock itself.
+func repoOwnerGraphQLLocked(repo *Repo, st *Store) map[string]interface{} {
 	if repo == nil {
 		return nil
 	}
 	ownerLogin, _, _ := strings.Cut(repo.FullName, "/")
-	st.mu.RLock()
 	org := st.OrgsByLogin[ownerLogin]
-	st.mu.RUnlock()
 	if org != nil {
 		return map[string]interface{}{
 			"nodeID":     org.NodeID,
@@ -839,8 +838,6 @@ func repoOwnerGraphQL(repo *Repo, st *Store) map[string]interface{} {
 			"updatedAt":  org.UpdatedAt.Format(time.RFC3339),
 		}
 	}
-	st.mu.RLock()
-	defer st.mu.RUnlock()
 	if repo.Owner != nil {
 		return userToGraphQL(repo.Owner)
 	}

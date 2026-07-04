@@ -71,7 +71,6 @@ import type {
   GithubDependabotSecret,
   GithubCodespace,
   GithubCodespaceMachine,
-  GithubCodespaceSecret,
   CodespaceCreatePayload,
   GithubPackage,
   GithubPackageVersion,
@@ -1349,32 +1348,6 @@ export const putDependabotRepoSecret = (
 export const deleteDependabotRepoSecret = (owner: string, repo: string, name: string) =>
   ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/dependabot/secrets/${encodeURIComponent(name)}`);
 
-const fetchDependabotOrgSecrets = (org: string) =>
-  ghFetchEnvelope<GithubDependabotSecret>(`/api/v3/orgs/${org}/dependabot/secrets?per_page=100`, "secrets");
-
-const fetchDependabotOrgPublicKey = (org: string) =>
-  ghFetch<GithubPublicKey>(`/api/v3/orgs/${org}/dependabot/secrets/public-key`);
-
-const putDependabotOrgSecret = (
-  org: string,
-  name: string,
-  body: { encrypted_value: string; key_id: string; visibility: GithubOrgVisibility; selected_repository_ids?: number[] },
-) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}`, body);
-
-const deleteDependabotOrgSecret = (org: string, name: string) =>
-  ghSend("DELETE", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}`);
-
-const fetchDependabotOrgSecretRepositories = (org: string, name: string) =>
-  ghFetch<{ total_count: number; repositories: BleephubRepo[] }>(
-    `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`,
-  );
-
-const setDependabotOrgSecretRepositories = (
-  org: string,
-  name: string,
-  selected_repository_ids: number[],
-) => ghSend("PUT", `/api/v3/orgs/${org}/dependabot/secrets/${encodeURIComponent(name)}/repositories`, { selected_repository_ids });
-
 // ─── GitHub Security Advisories REST ────────────────────────────────────
 
 export const fetchSecurityAdvisories = (owner: string, repo: string) =>
@@ -1492,15 +1465,6 @@ export const deleteCodespace = (name: string) =>
 
 export const fetchCodespaceMachines = (owner: string, repo: string) =>
   ghFetchEnvelope<GithubCodespaceMachine>(`/api/v3/repos/${owner}/${repo}/codespaces/machines`, "machines");
-
-const fetchUserCodespaceSecrets = () =>
-  ghFetchEnvelope<GithubCodespaceSecret>("/api/v3/user/codespaces/secrets", "secrets");
-
-const createUserCodespaceSecret = (name: string, payload: { encrypted_value: string; key_id: string }) =>
-  ghSend("PUT", `/api/v3/user/codespaces/secrets/${encodeURIComponent(name)}`, payload);
-
-const deleteUserCodespaceSecret = (name: string) =>
-  ghDeleteJSON<void>(`/api/v3/user/codespaces/secrets/${encodeURIComponent(name)}`, {});
 
 export const fetchCurrentUser = () => ghFetch<BleephubUser>("/api/v3/user");
 
@@ -1799,19 +1763,6 @@ export async function updateDiscussionComment(commentId: string, body: string): 
     { input: { commentId, body } },
   );
 }
-
-async function updateDiscussion(
-  discussionId: string,
-  patch: { title?: string; body?: string; categoryId?: string },
-): Promise<void> {
-  await ghGraphQL<{ updateDiscussion: unknown }>(
-    `mutation($input: UpdateDiscussionInput!) {
-      updateDiscussion(input: $input) { clientMutationId }
-    }`,
-    { input: { discussionId, ...patch } },
-  );
-}
-
 
 export async function uploadPackageVersion(
   ownerType: "user" | "org" | "repository",
