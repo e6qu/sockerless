@@ -89,6 +89,40 @@ type ContainerAppSecret struct {
 	KeyVaultURL string `json:"keyVaultUrl,omitempty"` // external (operator-supplied): KV secret reference; ACA App runtime doesn't auto-resolve
 }
 
+// patchContainerAppConfig merges non-zero fields from src into dst.
+// This mirrors Azure ARM RFC-7396 JSON Merge Patch: fields the client
+// sends replace existing values; omitted fields are preserved.
+func patchContainerAppConfig(dst, src *ContainerAppConfig) {
+	if src.ActiveRevisionsMode != "" {
+		dst.ActiveRevisionsMode = src.ActiveRevisionsMode
+	}
+	if src.Ingress != nil {
+		dst.Ingress = src.Ingress
+	}
+	if src.Registries != nil {
+		dst.Registries = src.Registries
+	}
+	if src.Secrets != nil {
+		dst.Secrets = src.Secrets
+	}
+}
+
+// patchContainerAppTemplate merges non-zero fields from src into dst.
+func patchContainerAppTemplate(dst, src *ContainerAppTemplate) {
+	if src.Containers != nil {
+		dst.Containers = src.Containers
+	}
+	if src.InitContainers != nil {
+		dst.InitContainers = src.InitContainers
+	}
+	if src.Volumes != nil {
+		dst.Volumes = src.Volumes
+	}
+	if src.Scale != nil {
+		dst.Scale = src.Scale
+	}
+}
+
 // ContainerAppTemplate mirrors armappcontainers.Template.
 type ContainerAppTemplate struct {
 	Containers     []JobContainer     `json:"containers,omitempty"`
@@ -399,19 +433,27 @@ func registerContainerAppsApps(srv *sim.Server) {
 		sim.WriteJSON(w, http.StatusOK, map[string]any{"value": secrets})
 	})
 
-	// DELETE - Delete containerApp
+	// DELETE - Delete containerApp. Real Azure ARM returns 202 Accepted
+	// with Azure-AsyncOperation + Location headers; the SDK poller follows
+	// the operation-status endpoint until Succeeded.
 	srv.HandleFunc("DELETE "+basePath+"/containerApps/{appName}", func(w http.ResponseWriter, r *http.Request) {
 		sub := sim.PathParam(r, "subscriptionId")
 		rg := sim.PathParam(r, "resourceGroupName")
 		name := sim.PathParam(r, "appName")
 		resourceID := fmt.Sprintf("/subscriptions/%s/resourceGroups/%s/providers/Microsoft.App/containerApps/%s", sub, rg, name)
-		if !apps.Delete(resourceID) {
+		app, ok := apps.Get(resourceID)
+		if !ok {
 			sim.AzureErrorf(w, "ResourceNotFound", http.StatusNotFound,
 				"The Resource 'Microsoft.App/containerApps/%s' under resource group '%s' was not found.", name, rg)
 			return
 		}
+		apps.Delete(resourceID)
 		stopACAAppReplicas(resourceID)
-		w.WriteHeader(http.StatusOK)
+		opID := acaIssueAsyncOp(app.Location)
+		w.Header().Set("Azure-AsyncOperation", acaAsyncOpHeader(r, sub, app.Location, opID))
+		w.Header().Set("Location", resourceID)
+		app.Properties.ProvisioningState = "Succeeded"
+		sim.WriteJSON(w, http.StatusAccepted, app)
 	})
 
 	// GET - List containerApps by subscription. ARM exposes a
@@ -453,13 +495,24 @@ func registerContainerAppsApps(srv *sim.Server) {
 			return
 		}
 		if req.Tags != nil {
-			app.Tags = req.Tags
+			if app.Tags == nil {
+				app.Tags = map[string]string{}
+			}
+			for k, v := range req.Tags {
+				app.Tags[k] = v
+			}
 		}
 		if req.Properties.Configuration != nil {
-			app.Properties.Configuration = req.Properties.Configuration
+			if app.Properties.Configuration == nil {
+				app.Properties.Configuration = &ContainerAppConfig{}
+			}
+			patchContainerAppConfig(app.Properties.Configuration, req.Properties.Configuration)
 		}
 		if req.Properties.Template != nil {
-			app.Properties.Template = req.Properties.Template
+			if app.Properties.Template == nil {
+				app.Properties.Template = &ContainerAppTemplate{}
+			}
+			patchContainerAppTemplate(app.Properties.Template, req.Properties.Template)
 		}
 		if app.SystemData != nil {
 			app.SystemData.LastModifiedAt = time.Now().UTC().Format(time.RFC3339Nano)

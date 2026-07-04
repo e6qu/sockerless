@@ -1,6 +1,9 @@
 package azure_sdk_test
 
 import (
+	"encoding/json"
+	"io"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -346,4 +349,118 @@ func TestSDK_WebApps_UpdateAzureStorageAccounts(t *testing.T) {
 	require.NotNil(t, resp.Properties["data"])
 	assert.Equal(t, "data-share", *resp.Properties["data"].ShareName)
 	assert.Equal(t, "/mnt/data", *resp.Properties["data"].MountPath)
+}
+
+// TestSDK_ContainerAppsApps_PatchMergesNotReplaces verifies that the
+// PATCH route merges Configuration and Template sub-fields rather than
+// wholesale-replacing them. A PATCH that only changes containers must
+// preserve the existing secrets, ingress, and scale. Uses raw HTTP
+// because the Azure SDK only exposes CreateOrUpdate (PUT), not PATCH.
+func TestSDK_ContainerAppsApps_PatchMergesNotReplaces(t *testing.T) {
+	rg := "sdk-aca-patch-rg"
+	ensureRG(t, rg)
+
+	cred := &fakeCredential{}
+	client, err := armappcontainers.NewContainerAppsClient(subscriptionID, cred, clientOpts())
+	require.NoError(t, err)
+
+	envID := "/subscriptions/" + subscriptionID + "/resourceGroups/" + rg +
+		"/providers/Microsoft.App/managedEnvironments/sim-env"
+
+	// Create with full Configuration (secrets, ingress) + Template (scale, volumes) via PUT.
+	createPoller, err := client.BeginCreateOrUpdate(ctx, rg, "patch-merge-app", armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Configuration: &armappcontainers.Configuration{
+				ActiveRevisionsMode: to.Ptr(armappcontainers.ActiveRevisionsModeSingle),
+				Secrets: []*armappcontainers.Secret{
+					{Name: to.Ptr("db-password"), Value: to.Ptr("supersecret")},
+				},
+				Ingress: &armappcontainers.Ingress{
+					External:   to.Ptr(false),
+					TargetPort: to.Ptr[int32](8080),
+					Transport:  to.Ptr(armappcontainers.IngressTransportMethodAuto),
+				},
+			},
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{
+					{Name: to.Ptr("main"), Image: to.Ptr("alpine:latest")},
+				},
+				Volumes: []*armappcontainers.Volume{
+					{Name: to.Ptr("data"), StorageType: to.Ptr(armappcontainers.StorageType("EmptyDirectory"))},
+				},
+				Scale: &armappcontainers.Scale{
+					MinReplicas: to.Ptr[int32](1),
+					MaxReplicas: to.Ptr[int32](3),
+				},
+			},
+		},
+	}, nil)
+	require.NoError(t, err)
+	_, err = createPoller.PollUntilDone(ctx, nil)
+	require.NoError(t, err)
+	defer func() {
+		delPoller, _ := client.BeginDelete(ctx, rg, "patch-merge-app", nil)
+		if delPoller != nil {
+			_, _ = delPoller.PollUntilDone(ctx, nil)
+		}
+	}()
+
+	// PATCH only the template.containers image. The PATCH body omits
+	// secrets, ingress, scale, and volumes — those must be preserved.
+	patchURL := baseURL + "/subscriptions/" + subscriptionID +
+		"/resourceGroups/" + rg + "/providers/Microsoft.App/containerApps/patch-merge-app?api-version=2025-01-01"
+	patchBody := `{
+		"properties": {
+			"template": {
+				"containers": [{"name":"main","image":"nginx:latest"}]
+			}
+		}
+	}`
+	req, err := http.NewRequest("PATCH", patchURL, strings.NewReader(patchBody))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	patchResp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	patchBytes, _ := io.ReadAll(patchResp.Body)
+	patchResp.Body.Close()
+	require.Equal(t, 200, patchResp.StatusCode, "PATCH response: %s", patchBytes)
+
+	var patched struct {
+		Properties struct {
+			Configuration struct {
+				Secrets []struct {
+					Name string `json:"name"`
+				} `json:"secrets"`
+			} `json:"configuration"`
+			Template struct {
+				Containers []struct {
+					Image string `json:"image"`
+				} `json:"containers"`
+				Volumes []struct {
+					Name string `json:"name"`
+				} `json:"volumes"`
+				Scale struct {
+					MaxReplicas int `json:"maxReplicas"`
+				} `json:"scale"`
+			} `json:"template"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(patchBytes, &patched))
+
+	// Secrets preserved despite being absent from the PATCH body.
+	require.NotEmpty(t, patched.Properties.Configuration.Secrets, "Secrets must be preserved across PATCH")
+	assert.Equal(t, "db-password", patched.Properties.Configuration.Secrets[0].Name)
+
+	// Volumes preserved.
+	require.NotEmpty(t, patched.Properties.Template.Volumes, "Volumes must be preserved across PATCH")
+	assert.Equal(t, "data", patched.Properties.Template.Volumes[0].Name)
+
+	// Scale preserved.
+	assert.Equal(t, 3, patched.Properties.Template.Scale.MaxReplicas, "Scale must be preserved across PATCH")
+
+	// Container image updated.
+	require.NotEmpty(t, patched.Properties.Template.Containers)
+	assert.Equal(t, "nginx:latest", patched.Properties.Template.Containers[0].Image)
 }
