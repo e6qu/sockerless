@@ -325,3 +325,221 @@ func TestSecretScanning_PatternConfigurations(t *testing.T) {
 		t.Fatalf("expected pattern ghp in %+v", overrides)
 	}
 }
+
+func TestSecretScanning_PatternConfigurationsUpdate(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "ss-pattern-org", "SS Pattern Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+
+	// Fresh org: no configuration version yet, every pattern not-set.
+	resp := ghGet(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("get pattern configurations: %d", resp.StatusCode)
+	}
+	initial := decodeJSON(t, resp)
+	if initial["pattern_config_version"] != nil {
+		t.Fatalf("fresh pattern_config_version = %v, want null", initial["pattern_config_version"])
+	}
+
+	// Update the aws pattern's push protection setting.
+	resp = ghPatch(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": "aws", "push_protection_setting": "enabled"},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("patch pattern configurations: %d", resp.StatusCode)
+	}
+	updated := decodeJSON(t, resp)
+	version, _ := updated["pattern_config_version"].(string)
+	if version == "" {
+		t.Fatalf("update did not return a pattern_config_version: %v", updated)
+	}
+
+	// The stored setting and version read back.
+	resp = ghGet(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken)
+	after := decodeJSON(t, resp)
+	if after["pattern_config_version"] != version {
+		t.Fatalf("pattern_config_version = %v, want %s", after["pattern_config_version"], version)
+	}
+	overrides, _ := after["provider_pattern_overrides"].([]any)
+	var awsSetting string
+	for _, o := range overrides {
+		row, _ := o.(map[string]any)
+		if row["token_type"] == "aws" {
+			awsSetting, _ = row["setting"].(string)
+		}
+	}
+	if awsSetting != "enabled" {
+		t.Fatalf("aws pattern setting = %q, want enabled", awsSetting)
+	}
+
+	// Optimistic concurrency: a stale version conflicts, the current one wins.
+	resp = ghPatch(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"pattern_config_version": "stale-version",
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": "aws", "push_protection_setting": "disabled"},
+		},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("stale version patch: %d, want 409", resp.StatusCode)
+	}
+	resp = ghPatch(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"pattern_config_version": version,
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": "aws", "push_protection_setting": "disabled"},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("current version patch: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	// Validation: unknown pattern, invalid setting.
+	resp = ghPatch(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": "made-up-pattern", "push_protection_setting": "enabled"},
+		},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown pattern: %d, want 422", resp.StatusCode)
+	}
+	resp = ghPatch(t, "/api/v3/orgs/ss-pattern-org/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": "aws", "push_protection_setting": "sometimes"},
+		},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid setting: %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	if testServer.store.CreateRepo(admin, "ss-bypass-repo", "", false) == nil {
+		t.Fatal("create repo failed")
+	}
+
+	// Unknown placeholder → 404.
+	resp := ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+		"reason":         "false_positive",
+		"placeholder_id": "no-such-placeholder",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown placeholder: %d, want 404", resp.StatusCode)
+	}
+
+	// A blocked push mints a placeholder; bypassing it succeeds once.
+	seedResp, err := authedPost("/internal/repos/admin/ss-bypass-repo/secret-scanning/push-protection-placeholders", "application/json",
+		bytes.NewReader(mustJSON(map[string]any{"token_type": "aws_access_key_id"})))
+	if err != nil {
+		t.Fatalf("seed placeholder: %v", err)
+	}
+	if seedResp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(seedResp.Body)
+		seedResp.Body.Close()
+		t.Fatalf("seed placeholder: %d body=%s", seedResp.StatusCode, b)
+	}
+	seeded := decodeJSON(t, seedResp)
+	placeholderID, _ := seeded["placeholder_id"].(string)
+	if placeholderID == "" {
+		t.Fatal("seed returned no placeholder_id")
+	}
+
+	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+		"reason":         "used_in_tests",
+		"placeholder_id": placeholderID,
+	})
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("create bypass: %d", resp.StatusCode)
+	}
+	bypass := decodeJSON(t, resp)
+	if bypass["reason"] != "used_in_tests" || bypass["token_type"] != "aws_access_key_id" {
+		t.Fatalf("bypass fields wrong: %v", bypass)
+	}
+	if expireAt, _ := bypass["expire_at"].(string); expireAt == "" {
+		t.Fatalf("bypass missing expire_at: %v", bypass)
+	}
+
+	// The placeholder is consumed by the bypass.
+	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+		"reason":         "used_in_tests",
+		"placeholder_id": placeholderID,
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("re-bypass consumed placeholder: %d, want 404", resp.StatusCode)
+	}
+
+	// Invalid reason.
+	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+		"reason":         "because",
+		"placeholder_id": placeholderID,
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid reason: %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestSecretScanning_ScanHistory(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	if testServer.store.CreateRepo(admin, "ss-history-repo", "", false) == nil {
+		t.Fatal("create repo failed")
+	}
+
+	// A repository with no recorded scanning activity has an empty history.
+	resp := ghGet(t, "/api/v3/repos/admin/ss-history-repo/secret-scanning/scan-history", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("scan history (empty): %d", resp.StatusCode)
+	}
+	empty := decodeJSON(t, resp)
+	for _, key := range []string{"incremental_scans", "pattern_update_scans", "backfill_scans", "custom_pattern_backfill_scans", "generic_secrets_backfill_scans"} {
+		scans, ok := empty[key].([]any)
+		if !ok || len(scans) != 0 {
+			t.Fatalf("expected empty %s, got %v", key, empty[key])
+		}
+	}
+
+	// Recorded alerts imply completed scans.
+	seedSecretAlert(t, "admin", "ss-history-repo", "aws_access_key_id")
+	resp = ghGet(t, "/api/v3/repos/admin/ss-history-repo/secret-scanning/scan-history", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("scan history: %d", resp.StatusCode)
+	}
+	history := decodeJSON(t, resp)
+	backfills, _ := history["backfill_scans"].([]any)
+	if len(backfills) != 1 {
+		t.Fatalf("expected 1 backfill scan, got %v", history["backfill_scans"])
+	}
+	incrementals, _ := history["incremental_scans"].([]any)
+	if len(incrementals) == 0 {
+		t.Fatalf("expected incremental scans, got %v", history["incremental_scans"])
+	}
+	first, _ := incrementals[0].(map[string]any)
+	if first["type"] != "incremental" || first["status"] != "completed" {
+		t.Fatalf("incremental scan row wrong: %v", first)
+	}
+	if ts, _ := first["completed_at"].(string); ts == "" {
+		t.Fatalf("incremental scan missing completed_at: %v", first)
+	}
+
+	// Unknown repository.
+	resp = ghGet(t, "/api/v3/repos/admin/no-such-history-repo/secret-scanning/scan-history", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown repo scan history: %d, want 404", resp.StatusCode)
+	}
+}

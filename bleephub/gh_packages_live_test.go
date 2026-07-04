@@ -57,12 +57,12 @@ func TestLivePackages_UserOrgRepo(t *testing.T) {
 	cases := []struct {
 		path string
 	}{
-		{"/api/v3/users/" + admin.Login + "/packages"},
+		{"/api/v3/users/" + admin.Login + "/packages?package_type=container"},
 		{"/api/v3/users/" + admin.Login + "/packages/container/live-user-pkg"},
 		{"/api/v3/users/" + admin.Login + "/packages/container/live-user-pkg/versions"},
 		{"/api/v3/users/" + admin.Login + "/packages/container/live-user-pkg/versions/" + strconv.Itoa(userVersionID)},
 		{"/api/v3/users/" + admin.Login + "/packages/container/live-user-pkg/versions/" + strconv.Itoa(userVersionID) + "/files"},
-		{"/api/v3/orgs/" + org.Login + "/packages"},
+		{"/api/v3/orgs/" + org.Login + "/packages?package_type=npm"},
 		{"/api/v3/orgs/" + org.Login + "/packages/npm/live-org-pkg"},
 		{"/api/v3/orgs/" + org.Login + "/packages/npm/live-org-pkg/versions"},
 		{"/api/v3/orgs/" + org.Login + "/packages/npm/live-org-pkg/versions/" + strconv.Itoa(orgVersionID)},

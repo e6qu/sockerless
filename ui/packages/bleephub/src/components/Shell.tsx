@@ -24,6 +24,8 @@ import {
   PackageIcon,
   DiscussionIcon,
   NotificationBellIcon,
+  GraphIcon,
+  GlobeIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -36,6 +38,7 @@ export interface NavItem {
 
 const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
+  { label: "Workflows", to: "/ui/workflows" },
   { label: "Repos", to: "/ui/repos" },
   { label: "Gists", to: "/ui/gists" },
   { label: "Packages", to: "/ui/packages" },
@@ -52,6 +55,7 @@ const ADMIN_NAV: NavItem[] = [
   { label: "Users", to: "/ui/admin/users" },
   { label: "Orgs", to: "/ui/admin/orgs" },
   { label: "Teams", to: "/ui/admin/teams" },
+  { label: "Enterprise", to: "/ui/admin/enterprise" },
   { label: "Audit log", to: "/ui/admin/audit-log" },
   { label: "Storage", to: "/ui/admin/storage" },
 ];
@@ -86,6 +90,8 @@ function navIcon(label: string) {
       return <OrganizationIcon size={14} />;
     case "Teams":
       return <TeamIcon size={14} />;
+    case "Enterprise":
+      return <GlobeIcon size={14} />;
     case "Audit log":
       return <AuditLogIcon size={14} />;
     case "Storage":
@@ -219,7 +225,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
 
 // ─── Repo context header + tabs ────────────────────────────────────────
 
-export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "discussions" | "security" | "settings";
+export type RepoTab = "code" | "issues" | "pulls" | "actions" | "projects-classic" | "discussions" | "insights" | "security" | "settings";
 
 /**
  * Repo context bar: "owner / repo" breadcrumb above the GitHub-style tab
@@ -294,6 +300,12 @@ export function RepoHeader({
           active={active === "projects-classic"}
         />
         <RepoTabLink
+          to={`${base}/insights`}
+          icon={<GraphIcon size={15} />}
+          label="Insights"
+          active={active === "insights"}
+        />
+        <RepoTabLink
           to={`${base}/security/secret-scanning`}
           icon={<LockIcon size={15} />}
           label="Security"
@@ -338,7 +350,7 @@ export function RepoHeader({
   );
 }
 
-export type OrgTab = "repos" | "packages" | "rulesets";
+export type OrgTab = "repos" | "packages" | "rulesets" | "governance" | "copilot";
 
 /** Org context bar: organization login breadcrumb with org-level tabs. */
 export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
@@ -359,6 +371,8 @@ export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
         <RepoTabLink to={`${base}/repos`} icon={<RepoIcon size={15} />} label="Repositories" active={active === "repos"} />
         <RepoTabLink to={`${base}/packages`} icon={<PackageIcon size={15} />} label="Packages" active={active === "packages"} />
         <RepoTabLink to={`${base}/rulesets`} icon={<GearIcon size={15} />} label="Rulesets" active={active === "rulesets"} />
+        <RepoTabLink to={`${base}/governance`} icon={<PeopleIcon size={15} />} label="Governance" active={active === "governance"} />
+        <RepoTabLink to={`${base}/copilot`} icon={<CommentIcon size={15} />} label="Copilot" active={active === "copilot"} />
       </nav>
     </div>
   );

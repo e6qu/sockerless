@@ -13,10 +13,59 @@ func (s *Server) registerGHRulesetRoutes() {
 	s.route("PUT /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}", s.handleUpdateRuleset)
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}", s.handleDeleteRuleset)
 	s.route("GET /api/v3/repos/{owner}/{repo}/rules/branches/{branch}", s.handleListBranchRules)
-	s.route("GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history", s.handleListRulesetHistory)
+	// /rulesets/{ruleset_id}/history and /rulesets/rule-suites/{rule_suite_id}
+	// both occupy two segments after /rulesets and cannot both be registered
+	// directly with Go 1.22's mux; dispatch on the literal segments.
+	s.route("GET /api/v3/repos/{owner}/{repo}/rulesets/{p1}/{p2}", s.handleRepoRulesetTwoSegDispatch)
 	s.route("GET /api/v3/repos/{owner}/{repo}/rulesets/{ruleset_id}/history/{version_id}", s.handleGetRulesetVersion)
 
 	s.registerGHOrgRulesetRoutes()
+}
+
+func (s *Server) handleRepoRulesetTwoSegDispatch(w http.ResponseWriter, r *http.Request) {
+	p1 := r.PathValue("p1")
+	p2 := r.PathValue("p2")
+	switch {
+	case p1 == "rule-suites":
+		r.SetPathValue("rule_suite_id", p2)
+		s.handleGetRepoRuleSuite(w, r)
+	case p2 == "history":
+		r.SetPathValue("ruleset_id", p1)
+		s.handleListRulesetHistory(w, r)
+	default:
+		writeGHError(w, http.StatusNotFound, "Not Found")
+	}
+}
+
+// handleGetRepoRuleSuite serves GET /repos/{owner}/{repo}/rulesets/rule-suites/{rule_suite_id}.
+// bleephub does not evaluate rulesets on push, so no rule suites are ever
+// recorded and every lookup is a real 404 — the same truthful empty state the
+// organization-level rule-suite surface serves.
+func (s *Server) handleGetRepoRuleSuite(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.resolveRepo(w, r)
+	if repo == nil {
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	suiteID, err := strconv.Atoi(r.PathValue("rule_suite_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	suite := s.store.GetRepoRulesetSuite(repo.ID, suiteID)
+	if suite == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, rulesetSuiteToJSON(suite))
 }
 
 func (s *Server) registerGHOrgRulesetRoutes() {
@@ -185,7 +234,7 @@ func (s *Server) handleUpdateRuleset(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
-	updated := s.store.UpdateRuleset(repo, rs, &body)
+	updated := s.store.UpdateRuleset(repo, rs, &body, user.ID)
 	writeJSON(w, http.StatusOK, rulesetToJSON(updated, true))
 }
 
@@ -254,13 +303,28 @@ func (s *Server) handleListRulesetHistory(w http.ResponseWriter, r *http.Request
 	versions := s.store.GetRulesetHistory(rs)
 	out := make([]map[string]interface{}, len(versions))
 	for i, v := range versions {
-		out[i] = map[string]interface{}{
-			"version_id": v.VersionID,
-			"ruleset":    rulesetToJSON(&v.Ruleset, true),
-			"created_at": v.CreatedAt.UTC().Format(time.RFC3339),
-		}
+		out[i] = rulesetVersionJSON(v, false)
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// rulesetVersionJSON renders the GitHub ruleset-version shape (plus the
+// ruleset snapshot as `state` for the single-version endpoints).
+func rulesetVersionJSON(v RulesetVersion, withState bool) map[string]interface{} {
+	actor := map[string]interface{}{}
+	if v.ActorID != 0 {
+		actor["id"] = v.ActorID
+		actor["type"] = "User"
+	}
+	out := map[string]interface{}{
+		"version_id": v.VersionID,
+		"actor":      actor,
+		"updated_at": v.CreatedAt.UTC().Format(time.RFC3339),
+	}
+	if withState {
+		out["state"] = rulesetToJSON(&v.Ruleset, true)
+	}
+	return out
 }
 
 func (s *Server) handleGetRulesetVersion(w http.ResponseWriter, r *http.Request) {
@@ -292,11 +356,7 @@ func (s *Server) handleGetRulesetVersion(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version_id": version.VersionID,
-		"ruleset":    rulesetToJSON(&version.Ruleset, true),
-		"created_at": version.CreatedAt.UTC().Format(time.RFC3339),
-	})
+	writeJSON(w, http.StatusOK, rulesetVersionJSON(*version, true))
 }
 
 func (s *Server) lookupRuleset(w http.ResponseWriter, r *http.Request, repo *Repo) *Ruleset {
@@ -382,6 +442,11 @@ func (s *Server) handleGetOrgRuleset(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateOrgRuleset(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
 	org := s.store.GetOrg(r.PathValue("org"))
 	if org == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
@@ -395,7 +460,7 @@ func (s *Server) handleUpdateOrgRuleset(w http.ResponseWriter, r *http.Request) 
 	if !decodeJSONBody(w, r, &body) {
 		return
 	}
-	if !s.store.UpdateOrgRuleset(rs.ID, func(rs *Ruleset) {
+	if !s.store.UpdateOrgRuleset(rs.ID, user.ID, func(rs *Ruleset) {
 		if body.Name != "" {
 			rs.Name = body.Name
 		}
@@ -485,11 +550,7 @@ func (s *Server) handleListOrgRulesetHistory(w http.ResponseWriter, r *http.Requ
 	versions := s.store.GetRulesetHistory(rs)
 	out := make([]map[string]interface{}, len(versions))
 	for i, v := range versions {
-		out[i] = map[string]interface{}{
-			"version_id": v.VersionID,
-			"ruleset":    rulesetToJSON(&v.Ruleset, true),
-			"created_at": v.CreatedAt.UTC().Format(time.RFC3339),
-		}
+		out[i] = rulesetVersionJSON(v, false)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -514,11 +575,7 @@ func (s *Server) handleGetOrgRulesetVersion(w http.ResponseWriter, r *http.Reque
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"version_id": version.VersionID,
-		"ruleset":    rulesetToJSON(&version.Ruleset, true),
-		"created_at": version.CreatedAt.UTC().Format(time.RFC3339),
-	})
+	writeJSON(w, http.StatusOK, rulesetVersionJSON(*version, true))
 }
 
 func (s *Server) lookupOrgRuleset(w http.ResponseWriter, r *http.Request, org *Org) *Ruleset {

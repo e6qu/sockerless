@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -103,9 +104,17 @@ func (s *Server) registerGHMiscEndpoints() {
 	// gh_members_rest.go — implementation).
 	s.route("GET /api/v3/orgs/{org}/audit-log", s.handleOrgAuditLog)
 
-	// Marketplace
+	// Marketplace. The stubbed variants serve the same real plan/purchase
+	// state as the production routes, per the documented stubbed semantics.
 	s.route("GET /api/v3/marketplace_listing/plans", s.handleMarketplacePlans)
 	s.route("GET /api/v3/marketplace_listing/accounts/{account_id}", s.handleMarketplaceAccount)
+	s.route("GET /api/v3/marketplace_listing/plans/{plan_id}/accounts", s.handleMarketplacePlanAccounts)
+	s.route("GET /api/v3/marketplace_listing/stubbed/plans", s.handleMarketplacePlans)
+	s.route("GET /api/v3/marketplace_listing/stubbed/plans/{plan_id}/accounts", s.handleMarketplacePlanAccounts)
+	s.route("GET /api/v3/marketplace_listing/stubbed/accounts/{account_id}", s.handleMarketplaceAccount)
+	// GitHub Marketplace purchases are created on github.com/marketplace,
+	// not through the REST API, so bleephub seeds them internally.
+	s.route("POST /internal/marketplace/purchases", s.handleSeedMarketplacePurchase)
 
 	// Meta — gh CLI's GHES feature detection resolves the host version from
 	// GET /meta installed_version before search-backed listing commands
@@ -235,12 +244,14 @@ type AuditLogEvent struct {
 
 type MarketplacePlan struct {
 	ID                  int      `json:"id"`
+	Number              int      `json:"number"`
 	Name                string   `json:"name"`
 	Description         string   `json:"description"`
 	MonthlyPriceInCents int      `json:"monthly_price_in_cents"`
 	YearlyPriceInCents  int      `json:"yearly_price_in_cents"`
 	PriceModel          string   `json:"price_model"`
 	HasFreeTrial        bool     `json:"has_free_trial"`
+	UnitName            string   `json:"unit_name"`
 	State               string   `json:"state"`
 	Bullets             []string `json:"bullets"`
 }
@@ -252,6 +263,10 @@ type MarketplacePurchase struct {
 	PlanName      string     `json:"plan_name"`
 	OnFreeTrial   bool       `json:"on_free_trial"`
 	FreeTrialEnds *time.Time `json:"free_trial_ends_on,omitempty"`
+	// user-marketplace-purchase members surfaced by GET /user/marketplace_purchases.
+	UnitCount       *int       `json:"unit_count,omitempty"`
+	NextBillingDate *time.Time `json:"next_billing_date,omitempty"`
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`
 }
 
 type MiscStore struct {
@@ -518,9 +533,12 @@ func (s *Server) handleListUserEmails(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
-	writeJSON(w, http.StatusOK, []map[string]interface{}{
-		{"email": user.Email, "primary": true, "verified": true, "visibility": "private"},
-	})
+	emails := s.store.ListUserEmails(user.ID)
+	out := make([]map[string]interface{}, len(emails))
+	for i, e := range emails {
+		out[i] = userEmailJSON(e)
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
 }
 
 func (s *Server) handleListUserKeysByLogin(w http.ResponseWriter, r *http.Request) {
@@ -1180,7 +1198,7 @@ func (s *Server) seedDefaultMarketplacePlans() {
 	defer s.store.Misc.mu.Unlock()
 	if len(s.store.Misc.marketplacePlans) == 0 {
 		free := &MarketplacePlan{
-			ID: 1, Name: "Free", Description: "Free tier",
+			ID: 1, Number: 1, Name: "Free", Description: "Free tier",
 			PriceModel: "FREE", State: "published",
 			Bullets: []string{"All features"},
 		}
@@ -1191,19 +1209,77 @@ func (s *Server) seedDefaultMarketplacePlans() {
 	}
 }
 
+// marketplacePlanToJSON renders the spec `marketplace-listing-plan` shape.
+func marketplacePlanToJSON(p *MarketplacePlan, baseURL string) map[string]interface{} {
+	api := baseURL + "/api/v3/marketplace_listing/plans/" + strconv.Itoa(p.ID)
+	return map[string]interface{}{
+		"url":                    api,
+		"accounts_url":           api + "/accounts",
+		"id":                     p.ID,
+		"number":                 p.Number,
+		"name":                   p.Name,
+		"description":            p.Description,
+		"monthly_price_in_cents": p.MonthlyPriceInCents,
+		"yearly_price_in_cents":  p.YearlyPriceInCents,
+		"price_model":            p.PriceModel,
+		"has_free_trial":         p.HasFreeTrial,
+		"unit_name":              nullOrString(p.UnitName),
+		"state":                  p.State,
+		"bullets":                p.Bullets,
+	}
+}
+
+// marketplaceAccountJSON renders the spec `marketplace-purchase` shape.
+// The account is a real user or organization from the store.
+func (s *Server) marketplaceAccountJSON(purchase *MarketplacePurchase, plan *MarketplacePlan, baseURL string) map[string]interface{} {
+	accountType := "User"
+	login := ""
+	var email interface{}
+	if u := s.store.GetUserByID(purchase.AccountID); u != nil {
+		login = u.Login
+		email = nullOrString(u.Email)
+	} else if org := s.store.GetOrgByID(purchase.AccountID); org != nil {
+		accountType = "Organization"
+		login = org.Login
+		email = nullOrString(org.Email)
+	}
+	var freeTrialEnds interface{}
+	if purchase.FreeTrialEnds != nil {
+		freeTrialEnds = purchase.FreeTrialEnds.UTC().Format(time.RFC3339)
+	}
+	return map[string]interface{}{
+		"url":                        baseURL + "/api/v3/users/" + login,
+		"type":                       accountType,
+		"id":                         purchase.AccountID,
+		"login":                      login,
+		"email":                      email,
+		"marketplace_pending_change": nil,
+		"marketplace_purchase": map[string]interface{}{
+			"billing_cycle":      purchase.BillingCycle,
+			"next_billing_date":  nil,
+			"is_installed":       true,
+			"unit_count":         purchase.UnitCount,
+			"on_free_trial":      purchase.OnFreeTrial,
+			"free_trial_ends_on": freeTrialEnds,
+			"updated_at":         purchase.UpdatedAt.UTC().Format(time.RFC3339),
+			"plan":               marketplacePlanToJSON(plan, baseURL),
+		},
+	}
+}
+
 func (s *Server) handleMarketplacePlans(w http.ResponseWriter, r *http.Request) {
+	base := s.baseURL(r)
 	s.store.Misc.mu.RLock()
-	out := make([]map[string]interface{}, 0, len(s.store.Misc.marketplacePlans))
+	plans := make([]*MarketplacePlan, 0, len(s.store.Misc.marketplacePlans))
 	for _, p := range s.store.Misc.marketplacePlans {
-		out = append(out, map[string]interface{}{
-			"id": p.ID, "name": p.Name, "description": p.Description,
-			"monthly_price_in_cents": p.MonthlyPriceInCents,
-			"yearly_price_in_cents":  p.YearlyPriceInCents,
-			"price_model":            p.PriceModel, "has_free_trial": p.HasFreeTrial,
-			"state": p.State, "bullets": p.Bullets,
-		})
+		plans = append(plans, p)
 	}
 	s.store.Misc.mu.RUnlock()
+	sort.Slice(plans, func(i, j int) bool { return plans[i].ID < plans[j].ID })
+	out := make([]map[string]interface{}, 0, len(plans))
+	for _, p := range plans {
+		out = append(out, marketplacePlanToJSON(p, base))
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -1211,29 +1287,111 @@ func (s *Server) handleMarketplaceAccount(w http.ResponseWriter, r *http.Request
 	accountID, _ := strconv.Atoi(r.PathValue("account_id"))
 	s.store.Misc.mu.RLock()
 	purchase := s.store.Misc.marketplacePurchases[accountID]
+	var plan *MarketplacePlan
+	if purchase != nil {
+		plan = s.store.Misc.marketplacePlans[purchase.PlanID]
+	}
 	s.store.Misc.mu.RUnlock()
-	if purchase == nil {
-		purchase = &MarketplacePurchase{
-			AccountID: accountID, BillingCycle: "monthly", PlanID: 1, PlanName: "Free",
+	if purchase == nil || plan == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.marketplaceAccountJSON(purchase, plan, s.baseURL(r)))
+}
+
+// handleMarketplacePlanAccounts implements GET
+// /marketplace_listing/plans/{plan_id}/accounts (and its stubbed variant):
+// the accounts holding an active purchase of the plan.
+func (s *Server) handleMarketplacePlanAccounts(w http.ResponseWriter, r *http.Request) {
+	planID, _ := strconv.Atoi(r.PathValue("plan_id"))
+	s.store.Misc.mu.RLock()
+	plan := s.store.Misc.marketplacePlans[planID]
+	purchases := make([]*MarketplacePurchase, 0)
+	for _, pu := range s.store.Misc.marketplacePurchases {
+		if pu.PlanID == planID {
+			purchases = append(purchases, pu)
 		}
 	}
-	resp := map[string]interface{}{
-		"id":                         accountID,
-		"type":                       "User",
-		"marketplace_pending_change": nil,
-		"marketplace_purchase": map[string]interface{}{
-			"billing_cycle": purchase.BillingCycle,
-			"on_free_trial": purchase.OnFreeTrial,
-			"plan":          map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
-		},
+	s.store.Misc.mu.RUnlock()
+	if plan == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
 	}
-	if purchase.FreeTrialEnds != nil {
-		resp["marketplace_pending_change"] = map[string]interface{}{
-			"old_plan": map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
-			"new_plan": map[string]interface{}{"id": purchase.PlanID, "name": purchase.PlanName},
+	direction := r.URL.Query().Get("direction")
+	sort.Slice(purchases, func(i, j int) bool {
+		var ti, tj time.Time
+		if purchases[i].UpdatedAt != nil {
+			ti = *purchases[i].UpdatedAt
 		}
+		if purchases[j].UpdatedAt != nil {
+			tj = *purchases[j].UpdatedAt
+		}
+		if direction == "desc" {
+			return ti.After(tj)
+		}
+		return ti.Before(tj)
+	})
+
+	page := paginateAndLink(w, r, purchases)
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(page))
+	for _, pu := range page {
+		out = append(out, s.marketplaceAccountJSON(pu, plan, base))
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// handleSeedMarketplacePurchase is the internal seeding path for GitHub
+// Marketplace purchases, which real GitHub creates on github.com/marketplace
+// rather than through the REST API.
+func (s *Server) handleSeedMarketplacePurchase(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Account      string `json:"account"`
+		PlanID       int    `json:"plan_id"`
+		BillingCycle string `json:"billing_cycle"`
+		UnitCount    int    `json:"unit_count"`
+		OnFreeTrial  bool   `json:"on_free_trial"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+		return
+	}
+	var accountID int
+	if u := s.store.LookupUserByLogin(req.Account); u != nil {
+		accountID = u.ID
+	} else if org := s.store.GetOrg(req.Account); org != nil {
+		accountID = org.ID
+	} else {
+		writeGHError(w, http.StatusUnprocessableEntity, "Account not found: "+req.Account)
+		return
+	}
+	if req.BillingCycle != "monthly" && req.BillingCycle != "yearly" {
+		writeGHValidationError(w, "MarketplacePurchase", "billing_cycle", "invalid")
+		return
+	}
+	s.store.Misc.mu.Lock()
+	plan := s.store.Misc.marketplacePlans[req.PlanID]
+	if plan == nil {
+		s.store.Misc.mu.Unlock()
+		writeGHError(w, http.StatusUnprocessableEntity, "Plan not found")
+		return
+	}
+	purchase := &MarketplacePurchase{
+		AccountID:    accountID,
+		BillingCycle: req.BillingCycle,
+		PlanID:       plan.ID,
+		PlanName:     plan.Name,
+		OnFreeTrial:  req.OnFreeTrial,
+	}
+	purchase.UnitCount = &req.UnitCount
+	now := time.Now().UTC()
+	purchase.UpdatedAt = &now
+	s.store.Misc.marketplacePurchases[accountID] = purchase
+	if s.store.Misc.persist != nil {
+		s.store.Misc.persist.MustPut("marketplace_purchases", strconv.Itoa(accountID), purchase)
+	}
+	s.store.Misc.mu.Unlock()
+	writeJSON(w, http.StatusCreated, s.marketplaceAccountJSON(purchase, plan, s.baseURL(r)))
 }
 
 // --- Helpers ---

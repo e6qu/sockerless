@@ -8,6 +8,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 )
 
 // CodeScanningAlertInstance is one occurrence of a code-scanning alert.
@@ -569,6 +573,114 @@ func intNumber(v interface{}) int {
 	return 0
 }
 
+// CodeScanningDefaultSetup is one repository's code scanning default
+// setup configuration. Repositories without a row have never had default
+// setup touched and report "not-configured".
+type CodeScanningDefaultSetup struct {
+	RepoKey     string    `json:"repo_key"`
+	State       string    `json:"state"` // "configured" or "not-configured"
+	QuerySuite  string    `json:"query_suite"`
+	Languages   []string  `json:"languages"`
+	RunnerType  string    `json:"runner_type,omitempty"`
+	RunnerLabel string    `json:"runner_label,omitempty"`
+	ThreatModel string    `json:"threat_model,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// GetCodeScanningDefaultSetup returns the default setup configuration
+// recorded for a repo, or nil when default setup was never configured.
+func (st *Store) GetCodeScanningDefaultSetup(repoKey string) *CodeScanningDefaultSetup {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.CodeScanningDefaultSetups[repoKey]
+}
+
+// SetCodeScanningDefaultSetup records (and persists) a repo's default
+// setup configuration, stamping UpdatedAt.
+func (st *Store) SetCodeScanningDefaultSetup(setup *CodeScanningDefaultSetup) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	setup.UpdatedAt = time.Now().UTC()
+	st.CodeScanningDefaultSetups[setup.RepoKey] = setup
+	if st.persist != nil {
+		st.persist.MustPut("code_scanning_default_setups", setup.RepoKey, setup)
+	}
+}
+
+// linguistToCodeQLLanguage maps a Linguist language (as detected by
+// languageForFilename) to the CodeQL default-setup language it is
+// analyzed as. Languages CodeQL default setup does not support are absent.
+var linguistToCodeQLLanguage = map[string]string{
+	"Go":         "go",
+	"JavaScript": "javascript-typescript",
+	"TypeScript": "javascript-typescript",
+	"JSX":        "javascript-typescript",
+	"TSX":        "javascript-typescript",
+	"Python":     "python",
+	"Ruby":       "ruby",
+	"Java":       "java-kotlin",
+	"Kotlin":     "java-kotlin",
+	"C":          "c-cpp",
+	"C++":        "c-cpp",
+	"C#":         "csharp",
+	"Swift":      "swift",
+}
+
+// detectCodeQLLanguages derives the CodeQL default-setup languages for a
+// repo from its real git content on the default branch: the CodeQL
+// mapping of every Linguist-detected language, plus "actions" when the
+// repository carries GitHub Actions workflow files. The result is sorted.
+func (st *Store) detectCodeQLLanguages(repo *Repo) []string {
+	set := map[string]bool{}
+	for lang := range st.computeRepoLanguages(repo) {
+		if ql := linguistToCodeQLLanguage[lang]; ql != "" {
+			set[ql] = true
+		}
+	}
+	if st.repoHasWorkflowFiles(repo) {
+		set["actions"] = true
+	}
+	out := make([]string, 0, len(set))
+	for l := range set {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// repoHasWorkflowFiles reports whether the repo's default branch carries
+// any GitHub Actions workflow file under .github/workflows.
+func (st *Store) repoHasWorkflowFiles(repo *Repo) bool {
+	st.mu.RLock()
+	stor := st.GitStorages[repo.FullName]
+	st.mu.RUnlock()
+	if stor == nil {
+		return false
+	}
+	ref, err := stor.Reference(plumbing.NewBranchReferenceName(repo.DefaultBranch))
+	if err != nil {
+		return false
+	}
+	commit, err := object.GetCommit(stor, ref.Hash())
+	if err != nil {
+		return false
+	}
+	tree, err := commit.Tree()
+	if err != nil {
+		return false
+	}
+	found := false
+	_ = tree.Files().ForEach(func(f *object.File) error {
+		if strings.HasPrefix(f.Name, ".github/workflows/") &&
+			(strings.HasSuffix(f.Name, ".yml") || strings.HasSuffix(f.Name, ".yaml")) {
+			found = true
+			return storer.ErrStop
+		}
+		return nil
+	})
+	return found
+}
+
 // GetSARIFUpload returns a SARIF upload by ID.
 func (st *Store) GetSARIFUpload(repoKey, id string) *SARIFUpload {
 	st.mu.RLock()
@@ -590,4 +702,321 @@ func (st *Store) persistCodeScanningAnalysis(a *CodeScanningAnalysis) {
 	if st.persist != nil {
 		st.persist.MustPut("code_scanning_analyses", strconv.Itoa(a.ID), a)
 	}
+}
+
+// ListCodeScanningAlertsByOrg returns all code scanning alerts for
+// repositories owned by the given organization, sorted per GitHub's
+// organization list endpoint.
+func (st *Store) ListCodeScanningAlertsByOrg(orgID int, state, severity, toolName, sortField, direction string) []*CodeScanningAlert {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	var out []*CodeScanningAlert
+	for repoKey, byNumber := range st.CodeScanningAlertsByRepo {
+		repo := st.ReposByName[repoKey]
+		if repo == nil || repo.OwnerType != "Organization" || repo.OwnerID != orgID {
+			continue
+		}
+		for _, a := range byNumber {
+			if state != "" && a.State != state {
+				continue
+			}
+			if severity != "" && a.RuleSeverity != severity {
+				continue
+			}
+			if toolName != "" && a.ToolName != toolName {
+				continue
+			}
+			out = append(out, a)
+		}
+	}
+
+	if sortField == "" {
+		sortField = "created"
+	}
+	if direction == "" {
+		direction = "desc"
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		var less bool
+		switch sortField {
+		case "updated":
+			less = out[i].UpdatedAt.Before(out[j].UpdatedAt)
+		default:
+			less = out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		if direction == "asc" {
+			return less
+		}
+		return !less
+	})
+	return out
+}
+
+// --- Copilot Autofix ---
+
+// CodeScanningAutofix is a Copilot Autofix suggestion for one code
+// scanning alert. Real GitHub generates the fix asynchronously; bleephub
+// generates it synchronously from the alert's stored rule and location,
+// so a created autofix is immediately in "success" status.
+type CodeScanningAutofix struct {
+	RepoKey     string    `json:"repo_key"`
+	AlertNumber int       `json:"alert_number"`
+	Status      string    `json:"status"` // pending | error | success | outdated
+	Description string    `json:"description"`
+	StartedAt   time.Time `json:"started_at"`
+}
+
+// autofixKey keys Store.CodeScanningAutofixes and the persistence bucket.
+// The unit separator cannot appear in an "owner/repo" key.
+func autofixKey(repoKey string, number int) string {
+	return repoKey + "\x1f" + strconv.Itoa(number)
+}
+
+// GetCodeScanningAutofix returns the autofix for an alert, or nil.
+func (st *Store) GetCodeScanningAutofix(repoKey string, number int) *CodeScanningAutofix {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.CodeScanningAutofixes[autofixKey(repoKey, number)]
+}
+
+// CreateCodeScanningAutofix generates and stores the autofix for an
+// alert. Returns (autofix, created); created is false when an autofix
+// already existed, in which case the existing one is returned unchanged.
+func (st *Store) CreateCodeScanningAutofix(a *CodeScanningAlert) (*CodeScanningAutofix, bool) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	key := autofixKey(a.RepoKey, a.Number)
+	if existing := st.CodeScanningAutofixes[key]; existing != nil {
+		return existing, false
+	}
+
+	inst := a.Instances[len(a.Instances)-1]
+	fix := &CodeScanningAutofix{
+		RepoKey:     a.RepoKey,
+		AlertNumber: a.Number,
+		Status:      "success",
+		Description: fmt.Sprintf("Remediates %s at %s:%d.", a.RuleID, inst.Path, inst.StartLine),
+		StartedAt:   time.Now().UTC(),
+	}
+	st.CodeScanningAutofixes[key] = fix
+	if st.persist != nil {
+		st.persist.MustPut("code_scanning_autofixes", key, fix)
+	}
+	return fix, true
+}
+
+// --- CodeQL databases ---
+
+// CodeQLDatabase is a CodeQL database uploaded for one repository +
+// language pair. Content holds the real database archive bytes; the REST
+// entity's size/url derive from it.
+type CodeQLDatabase struct {
+	ID          int       `json:"id"`
+	RepoKey     string    `json:"repo_key"`
+	Name        string    `json:"name"`
+	Language    string    `json:"language"`
+	UploaderID  int       `json:"uploader_id"`
+	ContentType string    `json:"content_type"`
+	Content     []byte    `json:"content"`
+	CommitOID   string    `json:"commit_oid"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}
+
+// UpsertCodeQLDatabase creates or replaces the CodeQL database for a
+// repo + language, mirroring how a new analysis upload supersedes the
+// previous database on real GitHub.
+func (st *Store) UpsertCodeQLDatabase(repoKey, language, name, contentType, commitOID string, content []byte, uploaderID int) *CodeQLDatabase {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	now := time.Now().UTC()
+	if st.CodeQLDatabasesByRepo[repoKey] == nil {
+		st.CodeQLDatabasesByRepo[repoKey] = make(map[string]*CodeQLDatabase)
+	}
+	db := st.CodeQLDatabasesByRepo[repoKey][language]
+	if db == nil {
+		db = &CodeQLDatabase{
+			ID:        st.NextCodeQLDatabaseID,
+			RepoKey:   repoKey,
+			Language:  language,
+			CreatedAt: now,
+		}
+		st.NextCodeQLDatabaseID++
+		st.CodeQLDatabases[db.ID] = db
+		st.CodeQLDatabasesByRepo[repoKey][language] = db
+	}
+	db.Name = name
+	db.ContentType = contentType
+	db.Content = content
+	db.CommitOID = commitOID
+	db.UploaderID = uploaderID
+	db.UpdatedAt = now
+	if st.persist != nil {
+		st.persist.MustPut("codeql_databases", strconv.Itoa(db.ID), db)
+	}
+	return db
+}
+
+// GetCodeQLDatabase returns the CodeQL database for a repo + language.
+func (st *Store) GetCodeQLDatabase(repoKey, language string) *CodeQLDatabase {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.CodeQLDatabasesByRepo[repoKey][language]
+}
+
+// ListCodeQLDatabases returns a repo's CodeQL databases sorted by language.
+func (st *Store) ListCodeQLDatabases(repoKey string) []*CodeQLDatabase {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	m := st.CodeQLDatabasesByRepo[repoKey]
+	langs := make([]string, 0, len(m))
+	for l := range m {
+		langs = append(langs, l)
+	}
+	sort.Strings(langs)
+	out := make([]*CodeQLDatabase, 0, len(langs))
+	for _, l := range langs {
+		out = append(out, m[l])
+	}
+	return out
+}
+
+// DeleteCodeQLDatabase removes the CodeQL database for a repo + language.
+func (st *Store) DeleteCodeQLDatabase(repoKey, language string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	db := st.CodeQLDatabasesByRepo[repoKey][language]
+	if db == nil {
+		return false
+	}
+	delete(st.CodeQLDatabasesByRepo[repoKey], language)
+	delete(st.CodeQLDatabases, db.ID)
+	if st.persist != nil {
+		st.persist.MustDelete("codeql_databases", strconv.Itoa(db.ID))
+	}
+	return true
+}
+
+// --- CodeQL variant analyses ---
+
+// CodeQLVariantAnalysisRepoTask is the per-repository result row of a
+// variant analysis.
+type CodeQLVariantAnalysisRepoTask struct {
+	RepoID            int    `json:"repo_id"`
+	FullName          string `json:"full_name"`
+	AnalysisStatus    string `json:"analysis_status"` // pending | in_progress | succeeded | failed | canceled | timed_out
+	ResultCount       int    `json:"result_count"`
+	DatabaseCommitSHA string `json:"database_commit_sha"`
+}
+
+// CodeQLVariantAnalysis is a multi-repository variant analysis run for a
+// CodeQL query pack, controlled by one repository. Real GitHub executes
+// the query via a GitHub Actions workflow run; bleephub resolves the
+// target repositories against its store synchronously (a repository is
+// queryable only when it has a CodeQL database for the requested
+// language) and completes the analysis immediately.
+type CodeQLVariantAnalysis struct {
+	ID                  int                             `json:"id"`
+	ControllerRepoKey   string                          `json:"controller_repo_key"`
+	ActorID             int                             `json:"actor_id"`
+	QueryLanguage       string                          `json:"query_language"`
+	QueryPack           string                          `json:"query_pack"` // base64 tarball as uploaded
+	Status              string                          `json:"status"`     // in_progress | succeeded | failed | cancelled
+	FailureReason       string                          `json:"failure_reason"`
+	ScannedRepositories []CodeQLVariantAnalysisRepoTask `json:"scanned_repositories"`
+	NotFoundRepos       []string                        `json:"not_found_repos"`    // full names
+	NoCodeQLDBRepos     []int                           `json:"no_codeql_db_repos"` // repo IDs
+	CreatedAt           time.Time                       `json:"created_at"`
+	UpdatedAt           time.Time                       `json:"updated_at"`
+	CompletedAt         *time.Time                      `json:"completed_at"`
+}
+
+// CreateCodeQLVariantAnalysis resolves the requested repositories and
+// stores a completed variant analysis. Repositories that do not exist go
+// to NotFoundRepos; repositories without a CodeQL database for the
+// requested language go to NoCodeQLDBRepos; the rest are scanned. When
+// no repository is scannable the analysis fails with no_repos_queried.
+func (st *Store) CreateCodeQLVariantAnalysis(controllerRepoKey string, actorID int, language, queryPack string, repoFullNames []string) *CodeQLVariantAnalysis {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	now := time.Now().UTC()
+	va := &CodeQLVariantAnalysis{
+		ID:                st.NextCodeQLVariantAnalysisID,
+		ControllerRepoKey: controllerRepoKey,
+		ActorID:           actorID,
+		QueryLanguage:     language,
+		QueryPack:         queryPack,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+	}
+	st.NextCodeQLVariantAnalysisID++
+
+	for _, full := range repoFullNames {
+		repo := st.ReposByName[full]
+		if repo == nil {
+			va.NotFoundRepos = append(va.NotFoundRepos, full)
+			continue
+		}
+		db := st.CodeQLDatabasesByRepo[full][language]
+		if db == nil {
+			va.NoCodeQLDBRepos = append(va.NoCodeQLDBRepos, repo.ID)
+			continue
+		}
+		va.ScannedRepositories = append(va.ScannedRepositories, CodeQLVariantAnalysisRepoTask{
+			RepoID:            repo.ID,
+			FullName:          full,
+			AnalysisStatus:    "succeeded",
+			DatabaseCommitSHA: db.CommitOID,
+		})
+	}
+
+	completed := now
+	va.CompletedAt = &completed
+	if len(va.ScannedRepositories) == 0 {
+		va.Status = "failed"
+		va.FailureReason = "no_repos_queried"
+	} else {
+		va.Status = "succeeded"
+	}
+
+	st.CodeQLVariantAnalyses[va.ID] = va
+	if st.persist != nil {
+		st.persist.MustPut("codeql_variant_analyses", strconv.Itoa(va.ID), va)
+	}
+	return va
+}
+
+// ListRepoFullNamesByOwner returns the sorted full names of every
+// repository owned by the given user or organization login. The CodeQL
+// variant-analysis repository_owners selector resolves through this.
+func (st *Store) ListRepoFullNamesByOwner(owner string) []string {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	prefix := owner + "/"
+	var out []string
+	for full := range st.ReposByName {
+		if strings.HasPrefix(full, prefix) {
+			out = append(out, full)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// GetCodeQLVariantAnalysis returns a variant analysis scoped to its
+// controller repository.
+func (st *Store) GetCodeQLVariantAnalysis(controllerRepoKey string, id int) *CodeQLVariantAnalysis {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	va := st.CodeQLVariantAnalyses[id]
+	if va == nil || va.ControllerRepoKey != controllerRepoKey {
+		return nil
+	}
+	return va
 }

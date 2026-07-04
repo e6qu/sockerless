@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"testing"
+	"time"
 )
 
 func seedCodeScanningAlert(t *testing.T, owner, repo, ruleID, severity, toolName string) map[string]any {
@@ -409,14 +411,23 @@ func TestCodeScanning_Analyses(t *testing.T) {
 	resp.Body.Close()
 }
 
-func TestCodeScanning_DefaultSetup(t *testing.T) {
-	admin := testServer.store.UsersByLogin["admin"]
-	repo := testServer.store.CreateRepo(admin, "cs-default", "", false)
-	if repo == nil {
-		t.Fatal("create repo failed")
+// patchDefaultSetup PATCHes a repo's default setup and returns the response.
+func patchDefaultSetup(t *testing.T, repoKey string, body map[string]any) *http.Response {
+	t.Helper()
+	payload, _ := json.Marshal(body)
+	req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/repos/"+repoKey+"/code-scanning/default-setup", bytes.NewReader(payload))
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("patch default setup: %v", err)
 	}
+	return resp
+}
 
-	resp := authedGet(t, "/api/v3/repos/admin/cs-default/code-scanning/default-setup")
+func getDefaultSetup(t *testing.T, repoKey string) map[string]any {
+	t.Helper()
+	resp := authedGet(t, "/api/v3/repos/"+repoKey+"/code-scanning/default-setup")
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -427,24 +438,139 @@ func TestCodeScanning_DefaultSetup(t *testing.T) {
 		t.Fatalf("decode default setup: %v", err)
 	}
 	resp.Body.Close()
-	if got["state"] != "configured" {
-		t.Fatalf("expected configured, got %v", got["state"])
+	return got
+}
+
+func TestCodeScanning_DefaultSetup(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "cs-default", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+	// Real repository content: languages are detected from the git tree.
+	stor := testServer.store.GitStorages[repo.FullName]
+	if _, err := initRepoWithFiles(stor, repo.DefaultBranch, "init", map[string]string{
+		"main.go":                  "package main\n\nfunc main() {}\n",
+		"tool/script.py":           "print('hi')\n",
+		".github/workflows/ci.yml": "name: ci\non: push\njobs: {}\n",
+	}, repoSignature("admin", "admin@bleephub.local")); err != nil {
+		t.Fatalf("init repo files: %v", err)
 	}
 
-	patch, _ := json.Marshal(map[string]any{"state": "configured"})
-	req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/repos/admin/cs-default/code-scanning/default-setup", bytes.NewReader(patch))
-	req.Header.Set("Authorization", "Bearer "+defaultToken)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("patch default setup: %v", err)
+	// Before any configuration the repo reports not-configured.
+	got := getDefaultSetup(t, "admin/cs-default")
+	if got["state"] != "not-configured" {
+		t.Fatalf("expected not-configured before enabling, got %v", got["state"])
 	}
+	if langs, ok := got["languages"].([]any); !ok || len(langs) != 0 {
+		t.Fatalf("expected empty languages before enabling, got %v", got["languages"])
+	}
+	if got["updated_at"] != nil {
+		t.Fatalf("expected null updated_at before enabling, got %v", got["updated_at"])
+	}
+
+	// Changing options while default setup is disabled is a state conflict.
+	resp := patchDefaultSetup(t, "admin/cs-default", map[string]any{"query_suite": "extended"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("patch without enabling: %d want 409", resp.StatusCode)
+	}
+
+	// Enable with an explicit query suite; the 200 body is the documented
+	// empty object.
+	resp = patchDefaultSetup(t, "admin/cs-default", map[string]any{"state": "configured", "query_suite": "extended"})
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("patch default setup: %d body=%s", resp.StatusCode, b)
+		t.Fatalf("enable default setup: %d body=%s", resp.StatusCode, b)
+	}
+	var patchBody map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&patchBody); err != nil {
+		t.Fatalf("decode patch body: %v", err)
 	}
 	resp.Body.Close()
+	if len(patchBody) != 0 {
+		t.Fatalf("expected empty object body, got %v", patchBody)
+	}
+
+	// GET reads back the persisted configuration with the languages
+	// derived from the repository's real content.
+	got = getDefaultSetup(t, "admin/cs-default")
+	if got["state"] != "configured" {
+		t.Fatalf("expected configured, got %v", got["state"])
+	}
+	if got["query_suite"] != "extended" {
+		t.Fatalf("expected query_suite extended, got %v", got["query_suite"])
+	}
+	if got["schedule"] != "weekly" {
+		t.Fatalf("expected weekly schedule, got %v", got["schedule"])
+	}
+	updatedAt, _ := got["updated_at"].(string)
+	if _, err := time.Parse(time.RFC3339, updatedAt); err != nil {
+		t.Fatalf("updated_at %q is not RFC 3339: %v", got["updated_at"], err)
+	}
+	langs := make([]string, 0)
+	for _, l := range got["languages"].([]any) {
+		langs = append(langs, l.(string))
+	}
+	if want := []string{"actions", "go", "python"}; !reflect.DeepEqual(langs, want) {
+		t.Fatalf("derived languages = %v want %v", langs, want)
+	}
+
+	// Explicit languages override detection.
+	resp = patchDefaultSetup(t, "admin/cs-default", map[string]any{"languages": []string{"go"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("patch languages: %d", resp.StatusCode)
+	}
+	got = getDefaultSetup(t, "admin/cs-default")
+	if l, _ := got["languages"].([]any); len(l) != 1 || l[0] != "go" {
+		t.Fatalf("expected languages [go], got %v", got["languages"])
+	}
+	// query_suite persisted across the partial update.
+	if got["query_suite"] != "extended" {
+		t.Fatalf("expected query_suite extended after partial update, got %v", got["query_suite"])
+	}
+
+	// A language outside the documented enum is rejected.
+	resp = patchDefaultSetup(t, "admin/cs-default", map[string]any{"languages": []string{"cobol"}})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid language: %d want 422", resp.StatusCode)
+	}
+
+	// Disable; GET reads back not-configured with the update timestamp.
+	resp = patchDefaultSetup(t, "admin/cs-default", map[string]any{"state": "not-configured"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("disable default setup: %d", resp.StatusCode)
+	}
+	got = getDefaultSetup(t, "admin/cs-default")
+	if got["state"] != "not-configured" {
+		t.Fatalf("expected not-configured after disable, got %v", got["state"])
+	}
+
+	// Disabling again is a state conflict.
+	resp = patchDefaultSetup(t, "admin/cs-default", map[string]any{"state": "not-configured"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("double disable: %d want 409", resp.StatusCode)
+	}
+}
+
+// TestCodeScanning_DefaultSetupNoLanguages verifies enabling fails when
+// the repository has no CodeQL-supported languages to analyze.
+func TestCodeScanning_DefaultSetupNoLanguages(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "cs-default-empty", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+	resp := patchDefaultSetup(t, "admin/cs-default-empty", map[string]any{"state": "configured"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("enable on empty repo: %d want 422", resp.StatusCode)
+	}
 }
 
 func TestCodeScanning_404(t *testing.T) {

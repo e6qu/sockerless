@@ -25,26 +25,32 @@ var packageTypes = map[string]bool{
 func isPackageType(t string) bool { return packageTypes[t] }
 
 // Package is a GitHub software package (npm, container, maven, ...).
+// The struct's JSON tags define the persistence row shape (API responses
+// are built by packageToJSON); linkage fields must round-trip through
+// persistence so packages survive a restart.
 type Package struct {
-	ID           int       `json:"id"`
-	NodeID       string    `json:"node_id"`
-	Name         string    `json:"name"`
-	PackageType  string    `json:"package_type"`
-	OwnerType    string    `json:"-"` // "User", "Organization", "Repository"
-	OwnerKey     string    `json:"-"` // username, org login, or owner/repo
-	Visibility   string    `json:"visibility"`
-	URL          string    `json:"url"`
-	HTMLURL      string    `json:"html_url"`
-	VersionCount int       `json:"version_count"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID           int        `json:"id"`
+	NodeID       string     `json:"node_id"`
+	Name         string     `json:"name"`
+	PackageType  string     `json:"package_type"`
+	OwnerType    string     `json:"owner_type"` // "User", "Organization", "Repository"
+	OwnerKey     string     `json:"owner_key"`  // username, org login, or owner/repo
+	Visibility   string     `json:"visibility"`
+	URL          string     `json:"url"`
+	HTMLURL      string     `json:"html_url"`
+	VersionCount int        `json:"version_count"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
+	Deleted      bool       `json:"deleted,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 }
 
-// PackageVersion is a version of a package.
+// PackageVersion is a version of a package. JSON tags define the
+// persistence row shape.
 type PackageVersion struct {
 	ID          int                    `json:"id"`
 	NodeID      string                 `json:"node_id"`
-	PackageID   int                    `json:"-"`
+	PackageID   int                    `json:"package_id"`
 	Version     string                 `json:"name"` // GitHub calls the version "name"
 	Description string                 `json:"description"`
 	Metadata    map[string]interface{} `json:"metadata"`
@@ -53,22 +59,23 @@ type PackageVersion struct {
 	PackageURL  string                 `json:"package_html_url"`
 	CreatedAt   time.Time              `json:"created_at"`
 	UpdatedAt   time.Time              `json:"updated_at"`
-	Deleted     bool                   `json:"-"`
+	Deleted     bool                   `json:"deleted,omitempty"`
 	DeletedAt   *time.Time             `json:"deleted_at,omitempty"`
 }
 
-// PackageFile is a single file attached to a package version.
+// PackageFile is a single file attached to a package version. JSON tags
+// define the persistence row shape.
 type PackageFile struct {
 	ID          int    `json:"id"`
 	NodeID      string `json:"node_id"`
-	VersionID   int    `json:"-"`
+	VersionID   int    `json:"version_id"`
 	Name        string `json:"name"`
 	ContentType string `json:"content_type"`
 	Size        int64  `json:"size"`
 	URL         string `json:"url"`
 	HTMLURL     string `json:"html_url"`
 	DownloadURL string `json:"download_url"`
-	StoragePath string `json:"-"`
+	StoragePath string `json:"storage_path,omitempty"`
 }
 
 func packageNodeID(id int) string        { return fmt.Sprintf("P_kgDO%08d", id) }
@@ -170,7 +177,10 @@ func (st *Store) ListPackages(ownerKey string) []*Package {
 	return out
 }
 
-// DeletePackage removes a package, all its versions, and all files.
+// DeletePackage soft-deletes a package: it leaves the by-owner key map
+// (so lists and gets no longer see it, and the name can be reused) while
+// keeping the row, its versions, and its files so the package remains
+// restorable — GitHub's delete/restore contract for packages.
 func (st *Store) DeletePackage(ownerKey, pkgType, name string) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -180,23 +190,57 @@ func (st *Store) DeletePackage(ownerKey, pkgType, name string) bool {
 	if p == nil {
 		return false
 	}
-	for _, v := range st.PackageVersionsByPackage[p.ID] {
-		for _, f := range st.PackageFilesByVersion[v.ID] {
-			delete(st.PackageFiles, f.ID)
-			if f.StoragePath != "" {
-				_ = os.Remove(f.StoragePath)
-			}
-		}
-		delete(st.PackageVersions, v.ID)
-	}
-	delete(st.Packages, p.ID)
+	now := time.Now().UTC()
+	p.Deleted = true
+	p.DeletedAt = &now
+	p.UpdatedAt = now
 	delete(st.PackagesByOwnerKey[ownerKey], key)
-	if base := st.packageStorageBase(p.OwnerType, p.OwnerKey, p.PackageType, p.Name); base != "" {
-		_ = os.RemoveAll(base)
+	st.persistPackage(p)
+	return true
+}
+
+// GetDeletedPackage returns a soft-deleted package for an owner scope,
+// or nil.
+func (st *Store) GetDeletedPackage(ownerKey, pkgType, name string) *Package {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, p := range st.Packages {
+		if p.Deleted && p.OwnerKey == ownerKey && p.PackageType == pkgType && p.Name == name {
+			return p
+		}
 	}
-	if st.persist != nil {
-		st.persist.MustDelete("packages", strconv.Itoa(p.ID))
+	return nil
+}
+
+// RestorePackage un-deletes a soft-deleted package together with its
+// versions and files. Restore fails when no deleted package exists or
+// when a live package has since claimed the same name.
+func (st *Store) RestorePackage(ownerKey, pkgType, name string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	key := packageKey(pkgType, name)
+	if st.PackagesByOwnerKey[ownerKey][key] != nil {
+		return false
 	}
+	var p *Package
+	for _, cand := range st.Packages {
+		if cand.Deleted && cand.OwnerKey == ownerKey && cand.PackageType == pkgType && cand.Name == name {
+			p = cand
+			break
+		}
+	}
+	if p == nil {
+		return false
+	}
+	p.Deleted = false
+	p.DeletedAt = nil
+	p.UpdatedAt = time.Now().UTC()
+	if st.PackagesByOwnerKey[ownerKey] == nil {
+		st.PackagesByOwnerKey[ownerKey] = map[string]*Package{}
+	}
+	st.PackagesByOwnerKey[ownerKey][key] = p
+	st.persistPackage(p)
 	return true
 }
 
@@ -258,6 +302,7 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 		}
 		st.PackageFilesByVersion[v.ID][fid] = pf
 		st.NextPackageFileID++
+		st.persistPackageFile(pf)
 	}
 
 	st.recomputeVersionCountLocked(p)
@@ -374,6 +419,12 @@ func (st *Store) persistPackage(p *Package) {
 func (st *Store) persistPackageVersion(v *PackageVersion) {
 	if st.persist != nil {
 		st.persist.MustPut("package_versions", strconv.Itoa(v.ID), v)
+	}
+}
+
+func (st *Store) persistPackageFile(f *PackageFile) {
+	if st.persist != nil {
+		st.persist.MustPut("package_files", strconv.Itoa(f.ID), f)
 	}
 }
 

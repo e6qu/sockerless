@@ -17,6 +17,9 @@ func (s *Server) registerGHHookRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}", s.requirePerm(scopeAdministration, permRead, s.handleGetHookDelivery))
 	s.route("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/deliveries/{delivery_id}/attempts", s.requirePerm(scopeAdministration, permWrite, s.handleRedeliverHookDelivery))
 	s.route("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/pings", s.requirePerm(scopeAdministration, permWrite, s.handlePingHook))
+	s.route("GET /api/v3/repos/{owner}/{repo}/hooks/{id}/config", s.requirePerm(scopeAdministration, permRead, s.handleGetHookConfig))
+	s.route("PATCH /api/v3/repos/{owner}/{repo}/hooks/{id}/config", s.requirePerm(scopeAdministration, permWrite, s.handleUpdateHookConfig))
+	s.route("POST /api/v3/repos/{owner}/{repo}/hooks/{id}/tests", s.requirePerm(scopeAdministration, permWrite, s.handleTestHook))
 }
 
 func (s *Server) handleCreateHook(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +266,113 @@ func (s *Server) handlePingHook(w http.ResponseWriter, r *http.Request) {
 
 	go s.deliverWebhook(hook, "ping", "", mustMarshal(payload))
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// hookConfigJSON renders a webhook's config sub-object in the published
+// webhook-config shape. The secret is never echoed back in cleartext — real
+// GitHub masks a configured secret as "********".
+func hookConfigJSON(h *Webhook) map[string]interface{} {
+	config := map[string]interface{}{
+		"url":          h.URL,
+		"content_type": coalesceStr(h.ContentType, "form"),
+		"insecure_ssl": coalesceStr(h.InsecureSSL, "0"),
+	}
+	if h.Secret != "" {
+		config["secret"] = "********"
+	}
+	return config
+}
+
+// handleGetHookConfig — GET /repos/{o}/{r}/hooks/{id}/config.
+func (s *Server) handleGetHookConfig(w http.ResponseWriter, r *http.Request) {
+	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
+	hookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	hook := s.store.GetHook(repoKey, hookID)
+	if hook == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, hookConfigJSON(hook))
+}
+
+// handleUpdateHookConfig — PATCH /repos/{o}/{r}/hooks/{id}/config. Updates
+// the config sub-view of the webhook: present members replace the stored
+// value, absent members are left unchanged.
+func (s *Server) handleUpdateHookConfig(w http.ResponseWriter, r *http.Request) {
+	repoKey := r.PathValue("owner") + "/" + r.PathValue("repo")
+	hookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		URL         *string     `json:"url"`
+		ContentType *string     `json:"content_type"`
+		Secret      *string     `json:"secret"`
+		InsecureSSL interface{} `json:"insecure_ssl"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	found := s.store.UpdateHook(repoKey, hookID, func(h *Webhook) {
+		if req.URL != nil {
+			h.URL = *req.URL
+		}
+		if req.ContentType != nil {
+			h.ContentType = *req.ContentType
+		}
+		if req.Secret != nil {
+			h.Secret = *req.Secret
+		}
+		if ssl := normalizeInsecureSSL(req.InsecureSSL); ssl != "" {
+			h.InsecureSSL = ssl
+		}
+	})
+	if !found {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, hookConfigJSON(s.store.GetHook(repoKey, hookID)))
+}
+
+// handleTestHook — POST /repos/{o}/{r}/hooks/{id}/tests. Triggers the hook
+// with a push event for the repository's latest push (the default branch
+// head). When the hook is not subscribed to push events no delivery is
+// generated, but the response is still 204 — matching real GitHub.
+func (s *Server) handleTestHook(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("owner")
+	repoName := r.PathValue("repo")
+	repoKey := owner + "/" + repoName
+	hookID, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	hook := s.store.GetHook(repoKey, hookID)
+	if hook == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	repo := s.store.GetRepo(owner, repoName)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if hookMatchesEvent(hook, "push") {
+		sender := ghUserFromContext(r.Context())
+		branch := repo.DefaultBranch
+		headSha := resolveBranchSha(s.store.GetGitStorage(owner, repoName), branch)
+		if headSha == "" {
+			headSha = "0000000000000000000000000000000000000000"
+		}
+		payload := buildPushPayload(repo, sender, "refs/heads/"+branch, headSha, headSha)
+		go s.deliverWebhook(hook, "push", "", mustMarshal(payload))
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

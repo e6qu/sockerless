@@ -90,14 +90,15 @@ func (s *Server) handleGHApiRoot(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleGHUser returns the authenticated user.
+// handleGHUser returns the authenticated user in the private-user shape
+// (the account owner sees their own private counters).
 func (s *Server) handleGHUser(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	if user == nil {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
-	writeJSON(w, http.StatusOK, s.fullUserJSON(user))
+	writeJSON(w, http.StatusOK, s.privateUserJSON(user))
 }
 
 // handleGHUserByLogin returns a user by login name.
@@ -197,18 +198,25 @@ func userToJSON(u *User) map[string]interface{} {
 }
 
 // fullUserJSON converts a User to the GitHub `public-user` shape served
-// by GET /user and GET /users/{username}: the simple-user members plus
-// profile fields and counters. Followers/following and repository
-// counts are derived live from the store; profile members bleephub does
-// not model (blog, company, location, hireable) are null, and gists are
-// not a bleephub feature so public_gists is 0.
+// by GET /user, GET /users/{username}, and GET /user/{account_id}: the
+// simple-user members plus profile fields and counters. Profile members
+// (blog, company, location, hireable, twitter_username) come from the
+// stored user profile (mutable via PATCH /user); unset company/location/
+// twitter_username are null, matching real GitHub. Followers/following
+// and repository counts are derived live from the store; gists are not a
+// bleephub feature so public_gists is 0.
 func (s *Server) fullUserJSON(u *User) map[string]interface{} {
 	out := userToJSON(u)
 	out["bio"] = u.Bio
-	out["blog"] = nil
-	out["company"] = nil
-	out["location"] = nil
-	out["hireable"] = nil
+	out["blog"] = u.Blog
+	out["company"] = nullableString(u.Company)
+	out["location"] = nullableString(u.Location)
+	out["twitter_username"] = nullableString(u.TwitterUsername)
+	if u.Hireable != nil {
+		out["hireable"] = *u.Hireable
+	} else {
+		out["hireable"] = nil
+	}
 	out["followers"] = s.store.CountFollowers(u.Login)
 	out["following"] = s.store.CountFollowing(u.Login)
 	out["public_repos"] = s.store.CountPublicRepos(u.Login)

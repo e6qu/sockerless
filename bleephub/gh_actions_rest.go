@@ -135,6 +135,8 @@ func runStatus(wf *Workflow) string {
 		return "queued"
 	case "waiting":
 		return "waiting"
+	case "action_required":
+		return "action_required"
 	default:
 		return "queued"
 	}

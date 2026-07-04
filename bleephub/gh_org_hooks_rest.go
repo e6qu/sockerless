@@ -19,6 +19,8 @@ func (s *Server) registerGHOrgHookRoutes() {
 	s.route("GET /api/v3/orgs/{org}/hooks/{id}", s.handleGetOrgHook)
 	s.route("PATCH /api/v3/orgs/{org}/hooks/{id}", s.handleUpdateOrgHook)
 	s.route("DELETE /api/v3/orgs/{org}/hooks/{id}", s.handleDeleteOrgHook)
+	s.route("GET /api/v3/orgs/{org}/hooks/{hook_id}/config", s.handleGetOrgHookConfig)
+	s.route("PATCH /api/v3/orgs/{org}/hooks/{hook_id}/config", s.handleUpdateOrgHookConfig)
 	s.route("GET /api/v3/orgs/{org}/hooks/{id}/deliveries", s.handleListOrgHookDeliveries)
 	s.route("GET /api/v3/orgs/{org}/hooks/{id}/deliveries/{delivery_id}", s.handleGetOrgHookDelivery)
 	s.route("POST /api/v3/orgs/{org}/hooks/{id}/deliveries/{delivery_id}/attempts", s.handleRedeliverOrgHookDelivery)
@@ -181,6 +183,87 @@ func (s *Server) handleUpdateOrgHook(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 	writeJSON(w, http.StatusOK, orgHookToJSON(s.store.GetOrgHook(org.Login, hook.ID), org, s.baseURL(r)))
+}
+
+// orgHookFromConfigRequest resolves {org} + {hook_id} for the webhook
+// config sub-resource routes.
+func (s *Server) orgHookFromConfigRequest(w http.ResponseWriter, r *http.Request) (*Org, *Webhook) {
+	org := s.orgHookGate(w, r)
+	if org == nil {
+		return nil, nil
+	}
+	hookID, err := strconv.Atoi(r.PathValue("hook_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil
+	}
+	hook := s.store.GetOrgHook(org.Login, hookID)
+	if hook == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, nil
+	}
+	return org, hook
+}
+
+// orgHookConfigJSON renders the webhook-config shape. The secret is masked,
+// as on real GitHub, since the raw value is never surfaced after creation.
+func orgHookConfigJSON(h *Webhook) map[string]interface{} {
+	contentType := h.ContentType
+	if contentType == "" {
+		contentType = "form"
+	}
+	insecureSSL := h.InsecureSSL
+	if insecureSSL == "" {
+		insecureSSL = "0"
+	}
+	out := map[string]interface{}{
+		"url":          h.URL,
+		"content_type": contentType,
+		"insecure_ssl": insecureSSL,
+	}
+	if h.Secret != "" {
+		out["secret"] = "********"
+	}
+	return out
+}
+
+func (s *Server) handleGetOrgHookConfig(w http.ResponseWriter, r *http.Request) {
+	_, hook := s.orgHookFromConfigRequest(w, r)
+	if hook == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, orgHookConfigJSON(hook))
+}
+
+func (s *Server) handleUpdateOrgHookConfig(w http.ResponseWriter, r *http.Request) {
+	org, hook := s.orgHookFromConfigRequest(w, r)
+	if hook == nil {
+		return
+	}
+	var req struct {
+		URL         string      `json:"url"`
+		ContentType string      `json:"content_type"`
+		Secret      string      `json:"secret"`
+		InsecureSSL interface{} `json:"insecure_ssl"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	s.store.UpdateOrgHook(org.Login, hook.ID, func(h *Webhook) {
+		if req.URL != "" {
+			h.URL = req.URL
+		}
+		if req.ContentType != "" {
+			h.ContentType = req.ContentType
+		}
+		if req.Secret != "" {
+			h.Secret = req.Secret
+		}
+		if ssl := normalizeInsecureSSL(req.InsecureSSL); ssl != "" {
+			h.InsecureSSL = ssl
+		}
+	})
+	writeJSON(w, http.StatusOK, orgHookConfigJSON(s.store.GetOrgHook(org.Login, hook.ID)))
 }
 
 func (s *Server) handleDeleteOrgHook(w http.ResponseWriter, r *http.Request) {

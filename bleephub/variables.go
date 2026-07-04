@@ -547,6 +547,21 @@ func (s *Server) handlePatchOrgVariable(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	t := variableTable{s, "org_variables", org.Login}
+	if name, applied := s.patchOrgScopedVariable(w, r, t.patch); applied {
+		s.recordAuditEvent("variable.update", auditActor(r), org.Login, map[string]interface{}{
+			"scope": "organization", "org": org.Login, "variable_name": name,
+		})
+	}
+}
+
+// patchOrgScopedVariable implements the organization-variable PATCH body
+// (value, visibility, selected repository ids, optional rename) shared by
+// the Actions and Copilot coding agent surfaces. patch is the scope
+// table's locked mutate-or-rename core; the upper-cased variable name and
+// whether the patch applied are returned so the caller can audit.
+func (s *Server) patchOrgScopedVariable(w http.ResponseWriter, r *http.Request,
+	patch func(name, newName string, apply func(*ActionsVariable)) int) (string, bool) {
 	var body struct {
 		Name                  *string `json:"name"`
 		Value                 *string `json:"value"`
@@ -554,24 +569,23 @@ func (s *Server) handlePatchOrgVariable(w http.ResponseWriter, r *http.Request) 
 		SelectedRepositoryIDs []int   `json:"selected_repository_ids"`
 	}
 	if !decodeJSONBodyOptional(w, r, &body) {
-		return
+		return "", false
 	}
 	newName := ""
 	if body.Name != nil && *body.Name != "" {
 		if msg := actionsItemNameError("Variable", *body.Name); msg != "" {
 			writeGHError(w, http.StatusUnprocessableEntity, msg)
-			return
+			return "", false
 		}
 		newName = strings.ToUpper(*body.Name)
 	}
 	if body.Visibility != nil && !validOrgItemVisibility(*body.Visibility) {
 		writeGHError(w, http.StatusUnprocessableEntity, "visibility must be one of: all, private, selected")
-		return
+		return "", false
 	}
 
 	name := strings.ToUpper(r.PathValue("name"))
-	t := variableTable{s, "org_variables", org.Login}
-	status := t.patch(name, newName, func(v *ActionsVariable) {
+	status := patch(name, newName, func(v *ActionsVariable) {
 		if body.Value != nil {
 			v.Value = *body.Value
 		}
@@ -584,11 +598,7 @@ func (s *Server) handlePatchOrgVariable(w http.ResponseWriter, r *http.Request) 
 			v.SelectedRepoIDs = append([]int(nil), body.SelectedRepositoryIDs...)
 		}
 	})
-	if writeVariablePatchStatus(w, status) {
-		s.recordAuditEvent("variable.update", auditActor(r), org.Login, map[string]interface{}{
-			"scope": "organization", "org": org.Login, "variable_name": name,
-		})
-	}
+	return name, writeVariablePatchStatus(w, status)
 }
 
 func (s *Server) handleDeleteOrgVariable(w http.ResponseWriter, r *http.Request) {
@@ -647,41 +657,18 @@ func (s *Server) handleSetOrgVariableRepos(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	name := strings.ToUpper(r.PathValue("name"))
-
-	var body struct {
-		SelectedRepositoryIDs []int `json:"selected_repository_ids"`
-	}
-	if !decodeJSONBody(w, r, &body) {
-		return
-	}
-
-	s.store.mu.Lock()
-	v := s.store.OrgVariables[org.Login][name]
-	if v == nil {
-		s.store.mu.Unlock()
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	if v.Visibility != "selected" {
-		s.store.mu.Unlock()
-		writeGHError(w, http.StatusConflict, "Conflict: visibility of "+name+" is not set to selected")
-		return
-	}
-	for _, id := range body.SelectedRepositoryIDs {
-		if s.store.Repos[id] == nil {
-			s.store.mu.Unlock()
-			writeGHError(w, http.StatusNotFound, "Not Found")
-			return
-		}
-	}
-	v.SelectedRepoIDs = append([]int(nil), body.SelectedRepositoryIDs...)
-	v.UpdatedAt = time.Now().UTC()
-	if s.store.persist != nil {
-		s.store.persist.MustPut("org_variables", org.Login, s.store.OrgVariables[org.Login])
-	}
-	s.store.mu.Unlock()
-
-	w.WriteHeader(http.StatusNoContent)
+	s.setOrgItemSelectedRepos(w, r, name, true,
+		func() orgScopedItem {
+			if v := s.store.OrgVariables[org.Login][name]; v != nil {
+				return v
+			}
+			return nil
+		},
+		func() {
+			if s.store.persist != nil {
+				s.store.persist.MustPut("org_variables", org.Login, s.store.OrgVariables[org.Login])
+			}
+		})
 }
 
 // orgVariableSelectionChange adapts the shared per-repo add/remove core

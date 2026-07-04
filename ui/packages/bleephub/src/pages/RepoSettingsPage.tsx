@@ -88,6 +88,7 @@ function GeneralSettingsTab({ owner, repo, repoData }: { owner: string; repo: st
     <>
       <RepoSettingsForm repo={repoData} onSave={(payload) => mutation.mutate(payload)} />
       <BranchProtectionCard owner={owner} repo={repo} />
+      <SecretsAndVariablesCard owner={owner} repo={repo} />
       <RepoTopicsForm
         topics={topicsQuery.data?.names ?? []}
         isLoading={topicsQuery.isLoading}
@@ -335,6 +336,19 @@ function BranchProtectionCard({ owner, repo }: { owner: string; repo: string }) 
   );
 }
 
+function SecretsAndVariablesCard({ owner, repo }: { owner: string; repo: string }) {
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>Secrets and variables</span>} className="mt-4">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "1rem" }}>
+        <span style={{ fontSize: "0.9rem" }}>Manage Actions secrets and variables across repository, environment, and organization scopes.</span>
+        <Link to={`/ui/repos/${owner}/${repo}/settings/secrets`}>
+          <Button variant="secondary" size="sm">Manage secrets and variables</Button>
+        </Link>
+      </div>
+    </Box>
+  );
+}
+
 function DeployKeysTab({ owner, repo }: { owner: string; repo: string }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
@@ -475,7 +489,6 @@ function DeployKeysTab({ owner, repo }: { owner: string; repo: string }) {
 }
 
 function SecurityTab({ owner, repo }: { owner: string; repo: string }) {
-  const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 

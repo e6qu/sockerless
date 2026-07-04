@@ -310,7 +310,7 @@ func (s *Server) emitCheckRunEvent(repoKey string, checkRunID int64, action stri
 	}
 	payload := map[string]interface{}{
 		"action":     action,
-		"check_run":  checkRunToJSON(cr),
+		"check_run":  s.checkRunToJSON(cr, s.externalURL),
 		"repository": repoJSON,
 		"sender":     ghostSenderPayload(),
 	}
@@ -329,7 +329,7 @@ func (s *Server) emitCheckSuiteEvent(repoKey string, suiteID int64, action strin
 	}
 	payload := map[string]interface{}{
 		"action":      action,
-		"check_suite": checkSuiteToJSON(suite),
+		"check_suite": s.checkSuiteToJSON(suite, s.externalURL),
 		"repository":  repoJSON,
 		"sender":      ghostSenderPayload(),
 	}

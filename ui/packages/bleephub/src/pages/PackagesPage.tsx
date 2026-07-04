@@ -16,12 +16,10 @@ import {
 } from "../api.js";
 import type {
   GithubPackage,
-  GithubPackageFile,
   GithubPackageVersion,
   GithubPackageType,
 } from "../types.js";
 import {
-  Blankslate,
   Box,
   Button,
   DialogActions,
@@ -44,7 +42,6 @@ const PACKAGE_TYPES: GithubPackageType[] = [
 
 const pkgCol = createColumnHelper<GithubPackage>();
 const verCol = createColumnHelper<GithubPackageVersion>();
-const fileCol = createColumnHelper<GithubPackageFile>();
 
 export function PackagesPage() {
   const params = useParams<{ org?: string; owner?: string; repo?: string }>();
@@ -304,14 +301,18 @@ function PackageDetailDialog({
           return (
             <div className="flex flex-wrap items-center gap-2">
               {deleted ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => restoreMut.mutate(v)}
-                  disabled={restoreMut.isPending}
-                >
-                  Restore
-                </Button>
+                // GitHub has no repository-scoped package-version restore endpoint —
+                // restore is only available for user- and organization-scoped packages.
+                scope.kind !== "repo" && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => restoreMut.mutate(v)}
+                    disabled={restoreMut.isPending}
+                  >
+                    Restore
+                  </Button>
+                )
               ) : (
                 <Button
                   size="sm"
@@ -515,12 +516,4 @@ function UploadPackageVersionDialog({
       </DialogActions>
     </Modal>
   );
-}
-
-async function fetchUser(): Promise<{ login: string }> {
-  const res = await fetch("/api/v3/user", {
-    headers: { Authorization: `Bearer ${localStorage.getItem("bleephub_token")}` },
-  });
-  if (!res.ok) throw new Error(`${res.status}`);
-  return res.json();
 }

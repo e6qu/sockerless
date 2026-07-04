@@ -51,6 +51,10 @@ func (s *Server) registerGHRepoSettingsRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/branches/{branch}/rename", s.requirePerm(scopeAdministration, permWrite, s.handleRenameBranch))
 	s.route("PUT /api/v3/repos/{owner}/{repo}/subscription", s.requirePerm(scopeContents, permRead, s.handleSetRepoSubscription))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/subscription", s.requirePerm(scopeContents, permRead, s.handleDeleteRepoSubscription))
+	s.route("GET /api/v3/repos/{owner}/{repo}/automated-security-fixes", s.requirePerm(scopeAdministration, permRead, s.handleCheckAutomatedSecurityFixes))
+	s.route("GET /api/v3/repos/{owner}/{repo}/private-vulnerability-reporting", s.handleCheckPrivateVulnerabilityReporting)
+	s.route("GET /api/v3/repos/{owner}/{repo}/vulnerability-alerts", s.requirePerm(scopeAdministration, permRead, s.handleCheckVulnerabilityAlerts))
+	s.route("GET /api/v3/repos/{owner}/{repo}/interaction-limits", s.requirePerm(scopeAdministration, permRead, s.handleGetInteractionLimits))
 	s.route("PUT /api/v3/repos/{owner}/{repo}/automated-security-fixes", s.requirePerm(scopeAdministration, permWrite, s.handleEnableAutomatedSecurityFixes))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/automated-security-fixes", s.requirePerm(scopeAdministration, permWrite, s.handleDisableAutomatedSecurityFixes))
 	s.route("PUT /api/v3/repos/{owner}/{repo}/private-vulnerability-reporting", s.requirePerm(scopeAdministration, permWrite, s.handleEnablePrivateVulnerabilityReporting))
@@ -403,14 +407,71 @@ func (s *Server) setRepoFlag(w http.ResponseWriter, r *http.Request, field strin
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleCheckAutomatedSecurityFixes — GET /repos/{o}/{r}/automated-security-fixes.
+func (s *Server) handleCheckAutomatedSecurityFixes(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"enabled": repo.AutomatedSecurityFixesEnabled,
+		"paused":  false,
+	})
+}
+
+// handleCheckPrivateVulnerabilityReporting — GET /repos/{o}/{r}/private-vulnerability-reporting.
+func (s *Server) handleCheckPrivateVulnerabilityReporting(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"enabled": repo.PrivateVulnerabilityReportingEnabled,
+	})
+}
+
+// handleCheckVulnerabilityAlerts — GET /repos/{o}/{r}/vulnerability-alerts.
+// The check is a status code, not a body: 204 when Dependabot alerts are
+// enabled, 404 when disabled.
+func (s *Server) handleCheckVulnerabilityAlerts(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if !repo.VulnerabilityAlertsEnabled {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleGetInteractionLimits — GET /repos/{o}/{r}/interaction-limits.
+// Returns the active restriction, or an empty object when none is in
+// effect (an expired restriction is no longer in effect).
+func (s *Server) handleGetInteractionLimits(w http.ResponseWriter, r *http.Request) {
+	repo := s.repoFromRequest(w, r)
+	if repo == nil {
+		return
+	}
+	if repo.InteractionLimit == "" || repo.InteractionLimitExpiry == nil || time.Now().After(*repo.InteractionLimitExpiry) {
+		writeJSON(w, http.StatusOK, map[string]interface{}{})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"limit":      repo.InteractionLimit,
+		"origin":     "repository",
+		"expires_at": repo.InteractionLimitExpiry.UTC().Format(time.RFC3339),
+	})
+}
+
 func (s *Server) handleSetInteractionLimits(w http.ResponseWriter, r *http.Request) {
 	repo := s.repoFromRequest(w, r)
 	if repo == nil {
 		return
 	}
 	var req struct {
-		Limit  string     `json:"limit"`
-		Expiry *time.Time `json:"expiry"`
+		Limit  string `json:"limit"`
+		Expiry string `json:"expiry"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -419,11 +480,24 @@ func (s *Server) handleSetInteractionLimits(w http.ResponseWriter, r *http.Reque
 		writeGHValidationError(w, "InteractionLimit", "limit", "missing_field")
 		return
 	}
-	if !s.store.SetRepoInteractionLimit(repo.ID, req.Limit, req.Expiry) {
+	if !isInteractionGroup(req.Limit) {
+		writeGHValidationError(w, "InteractionLimit", "limit", "invalid")
+		return
+	}
+	expiresAt, ok := interactionLimitExpiry(req.Expiry, time.Now().UTC())
+	if !ok {
+		writeGHValidationError(w, "InteractionLimit", "expiry", "invalid")
+		return
+	}
+	if !s.store.SetRepoInteractionLimit(repo.ID, req.Limit, &expiresAt) {
 		writeGHError(w, http.StatusUnprocessableEntity, "Interaction limit update failed.")
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"limit":      req.Limit,
+		"origin":     "repository",
+		"expires_at": expiresAt.Format(time.RFC3339),
+	})
 }
 
 func (s *Server) handleDeleteInteractionLimits(w http.ResponseWriter, r *http.Request) {

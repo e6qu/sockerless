@@ -63,10 +63,12 @@ type Rule struct {
 	Parameters map[string]interface{} `json:"parameters,omitempty"`
 }
 
-// RulesetVersion is a historical snapshot of a ruleset.
+// RulesetVersion is a historical snapshot of a ruleset. ActorID records the
+// user who performed the update that superseded this version.
 type RulesetVersion struct {
 	VersionID int       `json:"version_id"`
 	Ruleset   Ruleset   `json:"ruleset"`
+	ActorID   int       `json:"actor_id"`
 	CreatedAt time.Time `json:"created_at"`
 }
 
@@ -99,8 +101,9 @@ func (st *Store) CreateRuleset(repo *Repo, rs *Ruleset) *Ruleset {
 	return rs
 }
 
-// UpdateRuleset updates an existing ruleset and records a history snapshot.
-func (st *Store) UpdateRuleset(repo *Repo, rs *Ruleset, updates *Ruleset) *Ruleset {
+// UpdateRuleset updates an existing ruleset and records a history snapshot
+// attributed to actorID.
+func (st *Store) UpdateRuleset(repo *Repo, rs *Ruleset, updates *Ruleset, actorID int) *Ruleset {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -114,6 +117,7 @@ func (st *Store) UpdateRuleset(repo *Repo, rs *Ruleset, updates *Ruleset) *Rules
 	rs.Versions[rs.NextVersionID] = RulesetVersion{
 		VersionID: rs.NextVersionID,
 		Ruleset:   snapshot,
+		ActorID:   actorID,
 		CreatedAt: time.Now().UTC(),
 	}
 	rs.NextVersionID++
@@ -223,8 +227,9 @@ func (st *Store) GetOrgRuleset(id int) *Ruleset {
 }
 
 // UpdateOrgRuleset applies a mutation to an organization ruleset and records
-// a history snapshot. Returns true when the ruleset existed.
-func (st *Store) UpdateOrgRuleset(id int, fn func(*Ruleset)) bool {
+// a history snapshot attributed to actorID. Returns true when the ruleset
+// existed.
+func (st *Store) UpdateOrgRuleset(id int, actorID int, fn func(*Ruleset)) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
@@ -243,6 +248,7 @@ func (st *Store) UpdateOrgRuleset(id int, fn func(*Ruleset)) bool {
 	rs.Versions[rs.NextVersionID] = RulesetVersion{
 		VersionID: rs.NextVersionID,
 		Ruleset:   snapshot,
+		ActorID:   actorID,
 		CreatedAt: time.Now().UTC(),
 	}
 	rs.NextVersionID++
@@ -273,6 +279,17 @@ func (st *Store) GetOrgRulesetSuite(orgID int, suiteID int) *RulesetSuite {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	_ = orgID
+	_ = suiteID
+	return nil
+}
+
+// GetRepoRulesetSuite returns a single rule suite for a repository.
+// bleephub does not evaluate rulesets on push, so no suites are ever
+// recorded — mirrors GetOrgRulesetSuite.
+func (st *Store) GetRepoRulesetSuite(repoID int, suiteID int) *RulesetSuite {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	_ = repoID
 	_ = suiteID
 	return nil
 }

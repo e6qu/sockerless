@@ -18,6 +18,7 @@ func (s *Server) registerGHAppsRoutes() {
 	s.route("GET /api/v3/app", s.handleGetAuthenticatedApp)
 	s.route("GET /api/v3/apps/{app_slug}", s.handleGetAppBySlug)
 	s.route("GET /api/v3/app/installations", s.handleListAppInstallations)
+	s.route("GET /api/v3/app/installation-requests", s.handleListAppInstallationRequests)
 	s.route("GET /api/v3/app/installations/{id}", s.handleGetAppInstallation)
 	s.route("POST /api/v3/app/installations/{id}/access_tokens", s.handleCreateInstallationToken)
 	s.route("DELETE /api/v3/app/installations/{id}", s.handleDeleteAppInstallation)
@@ -34,6 +35,13 @@ func (s *Server) registerGHAppsRoutes() {
 	// POST /api/v3/app-manifests/{code}/conversions redeems.
 	s.route("POST /settings/apps/new", s.handleManifestSubmission)
 
+	s.registerGHAppsUserAndOperatorRoutes()
+}
+
+// registerGHAppsUserAndOperatorRoutes mounts the authenticated-user
+// installation views and the operator-facing /internal app management
+// surface.
+func (s *Server) registerGHAppsUserAndOperatorRoutes() {
 	// installations from the authenticated user's perspective.
 	s.route("GET /api/v3/user/installations", s.handleListUserInstallations)
 	s.route("GET /api/v3/user/installations/{id}/repositories", s.handleListUserInstallationRepos)
@@ -1072,4 +1080,17 @@ func (s *Server) handleRevokeInstallationToken(w http.ResponseWriter, r *http.Re
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleListAppInstallationRequests implements GET /app/installation-requests.
+// Installation requests exist on GitHub only when a non-admin asks an owner
+// to install the app; bleephub installations are created directly by their
+// owners, so the store never holds a pending request and the list is empty.
+func (s *Server) handleListAppInstallationRequests(w http.ResponseWriter, r *http.Request) {
+	app := ghAppFromContext(r.Context())
+	if app == nil {
+		writeGHError(w, http.StatusUnauthorized, "A JSON web token could not be decoded")
+		return
+	}
+	writeJSON(w, http.StatusOK, []map[string]interface{}{})
 }

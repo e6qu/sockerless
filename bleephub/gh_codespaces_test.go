@@ -393,3 +393,311 @@ func TestCodespaces_404Cases(t *testing.T) {
 }
 
 // runDockerCLI is already defined in store_codespaces.go.
+
+// TestCodespaces_OrgMemberAdministration exercises the org-owner view of
+// a member's codespaces on the organization's repositories:
+// list → stop (200 with the codespace body) → delete (202).
+func TestCodespaces_OrgMemberAdministration(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "cs-admin-org"}).Body.Close()
+	org := testServer.store.GetOrg("cs-admin-org")
+	repo := testServer.store.CreateOrgRepo(org, admin, "cs-admin-repo", "org codespace repo", false)
+	if repo == nil {
+		t.Fatal("create org repo")
+	}
+	stor := testServer.store.GitStorages[repo.FullName]
+	if _, err := initRepoWithFiles(stor, repo.DefaultBranch, "init", map[string]string{
+		".devcontainer/devcontainer.json": fmt.Sprintf(`{"image":%q}`, codespaceTestImage),
+	}, repoSignature(admin.Login, "bleephub@local")); err != nil {
+		t.Fatalf("init repo files: %v", err)
+	}
+
+	_, memberToken := newSharedServerUser(t, "cs-org-member")
+	activateOrgMember(t, "cs-admin-org", "cs-org-member", memberToken)
+
+	created := ghPost(t, "/api/v3/user/codespaces", memberToken, map[string]any{
+		"repository_id": repo.ID,
+		"machine":       "basicLinux32",
+	})
+	if created.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(created.Body)
+		created.Body.Close()
+		t.Fatalf("member creates codespace: %d %s", created.StatusCode, b)
+	}
+	name := decodeJSON(t, created)["name"].(string)
+	t.Cleanup(func() { cleanupCodespaceContainer(t, name) })
+
+	list := ghGet(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces", defaultToken)
+	if list.StatusCode != http.StatusOK {
+		list.Body.Close()
+		t.Fatalf("org member codespaces list: %d", list.StatusCode)
+	}
+	listing := decodeJSON(t, list)
+	if listing["total_count"] != float64(1) {
+		t.Fatalf("total_count = %v, want 1", listing["total_count"])
+	}
+	first := listing["codespaces"].([]interface{})[0].(map[string]interface{})
+	if first["name"] != name {
+		t.Fatalf("listed codespace = %v", first)
+	}
+	if _, has := first["html_url"]; has {
+		t.Fatalf("org-scoped codespace carries undocumented html_url: %v", first)
+	}
+
+	stopped := ghPost(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces/"+name+"/stop", defaultToken, nil)
+	if stopped.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(stopped.Body)
+		stopped.Body.Close()
+		t.Fatalf("org member codespace stop: %d %s", stopped.StatusCode, b)
+	}
+	if body := decodeJSON(t, stopped); body["name"] != name {
+		t.Fatalf("stop response = %v", body)
+	}
+
+	// The member and codespace must both resolve within the org.
+	resp := ghGet(t, "/api/v3/orgs/cs-admin-org/members/nobody-here/codespaces", defaultToken)
+	if resp.StatusCode != http.StatusNotFound {
+		resp.Body.Close()
+		t.Fatalf("unknown member list: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	resp = ghDelete(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces/no-such-codespace", defaultToken)
+	if resp.StatusCode != http.StatusNotFound {
+		resp.Body.Close()
+		t.Fatalf("unknown codespace delete: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+	// Only org owners administer member codespaces.
+	resp = ghGet(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces", memberToken)
+	if resp.StatusCode != http.StatusForbidden {
+		resp.Body.Close()
+		t.Fatalf("member lists own org codespaces: %d, want 403", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	deleted := ghDelete(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces/"+name, defaultToken)
+	if deleted.StatusCode != http.StatusAccepted {
+		b, _ := io.ReadAll(deleted.Body)
+		deleted.Body.Close()
+		t.Fatalf("org member codespace delete: %d %s", deleted.StatusCode, b)
+	}
+	deleted.Body.Close()
+	after := decodeJSON(t, ghGet(t, "/api/v3/orgs/cs-admin-org/members/cs-org-member/codespaces", defaultToken))
+	if after["total_count"] != float64(0) {
+		t.Fatalf("codespaces after delete = %v", after)
+	}
+}
+
+func TestCodespaces_OrgList(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "cs-list-org", "Codespaces List Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+
+	// Honest empty list before any member codespace exists... except that
+	// the admin may own codespaces created by earlier tests, so assert
+	// against membership: every returned codespace belongs to an org member.
+	repo := createTestCodespaceRepo(t, "cs-org-list-repo")
+	resp := ghPost(t, "/api/v3/user/codespaces", defaultToken, map[string]any{
+		"repository_id": repo.ID,
+		"machine":       "basicLinux32",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create codespace: %d %s", resp.StatusCode, b)
+	}
+	created := decodeJSON(t, resp)
+	name, _ := created["name"].(string)
+	defer cleanupCodespaceContainer(t, name)
+
+	resp = ghGet(t, "/api/v3/orgs/cs-list-org/codespaces", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("list org codespaces: %d", resp.StatusCode)
+	}
+	var listResp struct {
+		TotalCount int              `json:"total_count"`
+		Codespaces []map[string]any `json:"codespaces"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode org codespaces: %v", err)
+	}
+	resp.Body.Close()
+	if listResp.TotalCount != len(listResp.Codespaces) {
+		t.Fatalf("total_count %d != len(codespaces) %d", listResp.TotalCount, len(listResp.Codespaces))
+	}
+	found := false
+	for _, cs := range listResp.Codespaces {
+		if cs["name"] == name {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("member codespace %s missing from org list", name)
+	}
+
+	// Non-admin callers are forbidden.
+	outsider := createTestUser(t, "cs-outsider")
+	testServer.store.Tokens["ghp_cs_outsider"] = &Token{Value: "ghp_cs_outsider", UserID: outsider.ID}
+	resp = ghGet(t, "/api/v3/orgs/cs-list-org/codespaces", "ghp_cs_outsider")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin org codespaces: %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestCodespaces_OrgAccessControls(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "cs-access-org", "Codespaces Access Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	member := createTestUser(t, "cs-access-member")
+	testServer.store.SetMembership(org.Login, member.ID, OrgRoleMember, MembershipStateActive)
+	member2 := createTestUser(t, "cs-access-member2")
+	testServer.store.SetMembership(org.Login, member2.ID, OrgRoleMember, MembershipStateActive)
+
+	// Invalid visibility.
+	resp := ghPut(t, "/api/v3/orgs/cs-access-org/codespaces/access", defaultToken, map[string]any{
+		"visibility": "everyone-on-earth",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid visibility: %d, want 422", resp.StatusCode)
+	}
+
+	// Usernames that are neither members nor collaborators are rejected.
+	resp = ghPut(t, "/api/v3/orgs/cs-access-org/codespaces/access", defaultToken, map[string]any{
+		"visibility":         "selected_members",
+		"selected_usernames": []string{"total-stranger"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("stranger username: %d, want 400", resp.StatusCode)
+	}
+
+	// Set selected_members with one member.
+	resp = ghPut(t, "/api/v3/orgs/cs-access-org/codespaces/access", defaultToken, map[string]any{
+		"visibility":         "selected_members",
+		"selected_usernames": []string{"cs-access-member"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set access: %d, want 204", resp.StatusCode)
+	}
+
+	// Add and remove selected users.
+	resp = ghPost(t, "/api/v3/orgs/cs-access-org/codespaces/access/selected_users", defaultToken, map[string]any{
+		"selected_usernames": []string{"cs-access-member2"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("add selected user: %d, want 204", resp.StatusCode)
+	}
+	access := testServer.store.OrgCodespacesAccess["cs-access-org"]
+	if access == nil || len(access.SelectedUsernames) != 2 {
+		t.Fatalf("selected usernames after add: %+v", access)
+	}
+	resp = ghDeleteWithBody(t, "/api/v3/orgs/cs-access-org/codespaces/access/selected_users", defaultToken, map[string]interface{}{
+		"selected_usernames": []interface{}{"cs-access-member"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove selected user: %d, want 204", resp.StatusCode)
+	}
+	access = testServer.store.OrgCodespacesAccess["cs-access-org"]
+	if access == nil || len(access.SelectedUsernames) != 1 || access.SelectedUsernames[0] != "cs-access-member2" {
+		t.Fatalf("selected usernames after remove: %+v", access)
+	}
+
+	// Disabling access makes the selected-users endpoints invalid.
+	resp = ghPut(t, "/api/v3/orgs/cs-access-org/codespaces/access", defaultToken, map[string]any{
+		"visibility": "disabled",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("disable access: %d, want 204", resp.StatusCode)
+	}
+	resp = ghPost(t, "/api/v3/orgs/cs-access-org/codespaces/access/selected_users", defaultToken, map[string]any{
+		"selected_usernames": []string{"cs-access-member"},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		t.Fatalf("add selected user while disabled: %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestCodespaces_OrgSecretSelectedRepoAddRemove(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	org := testServer.store.CreateOrg(admin, "cs-secret-repo-org", "Codespaces Secret Repo Org", "")
+	if org == nil {
+		t.Fatal("create org failed")
+	}
+	r1 := testServer.store.CreateOrgRepo(org, admin, "cs-secret-repo-1", "", false)
+	r2 := testServer.store.CreateOrgRepo(org, admin, "cs-secret-repo-2", "", false)
+	if r1 == nil || r2 == nil {
+		t.Fatal("create org repos failed")
+	}
+
+	enc, keyID := sealForServer(t, "org codespace secret value")
+	resp := ghPut(t, "/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_SELECTED", defaultToken, map[string]any{
+		"encrypted_value":         enc,
+		"key_id":                  keyID,
+		"visibility":              "selected",
+		"selected_repository_ids": []int{r1.ID},
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put org codespace secret: %d, want 204", resp.StatusCode)
+	}
+
+	// Add the second repository.
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_SELECTED/repositories/%d", r2.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("add selected repo: %d, want 204", resp.StatusCode)
+	}
+	resp = ghGet(t, "/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_SELECTED/repositories", defaultToken)
+	repos := decodeJSON(t, resp)
+	if repos["total_count"] != float64(2) {
+		t.Fatalf("selected repos after add = %v, want 2", repos["total_count"])
+	}
+
+	// Remove the first repository.
+	resp = ghDelete(t, fmt.Sprintf("/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_SELECTED/repositories/%d", r1.ID), defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("remove selected repo: %d, want 204", resp.StatusCode)
+	}
+	resp = ghGet(t, "/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_SELECTED/repositories", defaultToken)
+	repos = decodeJSON(t, resp)
+	if repos["total_count"] != float64(1) {
+		t.Fatalf("selected repos after remove = %v, want 1", repos["total_count"])
+	}
+
+	// A secret with visibility all conflicts.
+	enc, keyID = sealForServer(t, "all visibility value")
+	resp = ghPut(t, "/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_ALL", defaultToken, map[string]any{
+		"encrypted_value": enc,
+		"key_id":          keyID,
+		"visibility":      "all",
+	})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("put all-visibility secret: %d, want 204", resp.StatusCode)
+	}
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/CS_ALL/repositories/%d", r1.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("add repo to all-visibility secret: %d, want 409", resp.StatusCode)
+	}
+
+	// Unknown secret.
+	resp = ghPut(t, fmt.Sprintf("/api/v3/orgs/cs-secret-repo-org/codespaces/secrets/NO_SUCH/repositories/%d", r1.ID), defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown secret add repo: %d, want 404", resp.StatusCode)
+	}
+}

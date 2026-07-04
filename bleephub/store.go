@@ -64,6 +64,25 @@ type User struct {
 	StarredRepos map[string]bool `json:"starred_repos,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
+	// user-surface profile fields (PATCH /user), email addresses, and
+	// account-level interaction limits.
+	Blog                   string      `json:"blog,omitempty"`
+	Company                string      `json:"company,omitempty"`
+	Location               string      `json:"location,omitempty"`
+	TwitterUsername        string      `json:"twitter_username,omitempty"`
+	Hireable               *bool       `json:"hireable,omitempty"`
+	Emails                 []UserEmail `json:"emails,omitempty"`
+	InteractionLimit       string      `json:"interaction_limit,omitempty"`
+	InteractionLimitExpiry *time.Time  `json:"interaction_limit_expiry,omitempty"`
+}
+
+// UserEmail is one email address on a user account, matching GitHub's
+// `email` schema (primary/verified/visibility).
+type UserEmail struct {
+	Email      string `json:"email"`
+	Primary    bool   `json:"primary"`
+	Verified   bool   `json:"verified"`
+	Visibility string `json:"visibility,omitempty"` // "public", "private", or "" (null)
 }
 
 // Token represents a personal access token.
@@ -264,6 +283,7 @@ type Store struct {
 	CodeScanningNextNumber       map[string]int                        // repoKey → next alert number
 	CodeScanningAnalyses         map[int]*CodeScanningAnalysis
 	CodeScanningAnalysesByRepo   map[string]map[int]*CodeScanningAnalysis // repoKey → analysisID → analysis
+	CodeScanningDefaultSetups    map[string]*CodeScanningDefaultSetup     // repoKey → default setup
 	SARIFUploads                 map[string]*SARIFUpload                  // uploadID → upload
 	DependabotAlerts             map[int]*DependabotAlert
 	DependabotAlertsByRepo       map[string]map[int]*DependabotAlert         // repoKey → alertNumber → alert
@@ -335,6 +355,127 @@ type Store struct {
 	actionsKeyPair               *SecretsKeyPair // lazily generated sealed-box keypair (persisted)
 	persist                      *Persistence
 	mu                           sync.RWMutex
+	// enterprises
+	EnterpriseTeams                    map[int]*EnterpriseTeam
+	EnterpriseTeamsBySlug              map[string]*EnterpriseTeam
+	EnterpriseCodeSecurityConfigs      map[int]*EnterpriseCodeSecurityConfiguration
+	EnterpriseCodeSecurityRepoConfigs  map[int]int // repoID → attached config ID
+	EnterpriseSettings                 *EnterpriseSettings
+	NextEnterpriseTeamID               int
+	NextEnterpriseCodeSecurityConfigID int
+
+	// attestations + org artifact metadata
+	Attestations                   map[int]*Attestation // id → attestation
+	NextAttestationID              int
+	ArtifactStorageRecords         map[int]*ArtifactStorageRecord // id → storage record
+	NextArtifactStorageRecordID    int
+	ArtifactDeploymentRecords      map[int]*ArtifactDeploymentRecord // id → deployment record
+	NextArtifactDeploymentRecordID int
+
+	// copilot + code quality (gh_copilot.go, gh_copilot_spaces.go, gh_code_quality.go)
+	CopilotSeats             map[string]map[int]*CopilotSeat           // org login → user ID → seat
+	CopilotContentExclusions map[string]*CopilotContentExclusion       // org login → rules
+	CopilotCodingAgentPerms  map[string]*CopilotCodingAgentPermissions // org login → policy
+	CopilotSpaces            map[int64]*CopilotSpace                   // space ID → space
+	NextCopilotSpaceID       int64
+	CodeQualitySetups        map[string]*CodeQualitySetup // repo full name → setup
+
+	// org governance surfaces (code security configurations, custom
+	// properties, issue types, issue fields, security campaigns, private
+	// registries, hosted compute network configurations, immutable releases)
+	CodeSecurityConfigs         map[string]map[int]*CodeSecurityConfiguration // org login → id → configuration
+	CodeSecurityRepoAttachments map[string]map[int]int                        // org login → repo ID → configuration ID
+	NextCodeSecurityConfigID    int
+	OrgCustomProperties         map[string]map[string]*CustomProperty // org login → property name → definition
+	RepoCustomPropertyValues    map[string]map[string]interface{}     // "owner/repo" → property name → value
+	OrgIssueTypes               map[string]map[int]*IssueType         // org login → id → issue type
+	NextIssueTypeID             int
+	OrgIssueFields              map[string]map[int]*IssueField // org login → id → issue field
+	NextIssueFieldID            int
+	NextIssueFieldOptionID      int
+	IssueFieldValues            map[int]map[int]interface{}                         // issue ID → field ID → raw value
+	OrgCampaigns                map[string]map[int]*Campaign                        // org login → campaign number → campaign
+	OrgPrivateRegistries        map[string]map[string]*PrivateRegistryConfiguration // org login → name → configuration
+	OrgNetworkConfigurations    map[string]map[string]*NetworkConfiguration         // org login → id → configuration
+	OrgNetworkSettings          map[string]map[string]*NetworkSettingsResource      // org login → id → settings resource
+	OrgImmutableReleases        map[string]*OrgImmutableReleasesSettings            // org login → enforcement policy
+	RepoImmutableReleases       map[string]bool                                     // "owner/repo" → repo-level enablement
+
+	// hosted-runners
+	HostedRunners            map[int]*HostedRunner
+	NextHostedRunnerID       int
+	HostedRunnerCustomImages map[int]*HostedRunnerCustomImage
+	NextHostedRunnerImageID  int
+	// actions-oidc-properties
+	OrgOIDCPropertyInclusions map[string][]string
+
+	// agents-codescan: GitHub Copilot coding agent secrets/variables/tasks
+	// and CodeQL databases/variant analyses.
+	AgentsRepoSecrets           map[string]map[string]*Secret          // "owner/repo" → NAME → secret
+	AgentsOrgSecrets            map[string]map[string]*OrgSecret       // org login → NAME → org secret
+	AgentsRepoVariables         map[string]map[string]*ActionsVariable // "owner/repo" → NAME → variable
+	AgentsOrgVariables          map[string]map[string]*ActionsVariable // org login → NAME → org variable
+	AgentTasks                  map[string]*AgentTask                  // task ID (UUID) → task
+	CodeScanningAutofixes       map[string]*CodeScanningAutofix        // autofixKey(repoKey, number) → autofix
+	CodeQLDatabases             map[int]*CodeQLDatabase                // id → database
+	CodeQLDatabasesByRepo       map[string]map[string]*CodeQLDatabase  // repoKey → language → database
+	CodeQLVariantAnalyses       map[int]*CodeQLVariantAnalysis         // id → variant analysis
+	NextCodeQLDatabaseID        int
+	NextCodeQLVariantAnalysisID int
+	// teams-people
+	OrgInvitations         map[int]*OrgInvitation          // id → org invitation
+	NextOrgInvitationID    int                             //
+	OrgBlocks              map[string]map[int]time.Time    // orgLogin → blocked userID → blocked-at
+	OrgInteractionLimits   map[string]*OrgInteractionLimit // orgLogin → active interaction limit
+	OrgRoleTeamAssignments map[string]map[int][]int        // orgLogin → roleID → team IDs
+	OrgRoleUserAssignments map[string]map[int][]int        // orgLogin → roleID → user IDs
+	// org billing budgets (gh_org_billing.go)
+	OrgBudgets map[string]map[string]*OrgBudget // org login → budget ID → budget
+	// API insights (gh_api_insights.go)
+	APIRequestRecords []*APIRequestRecord // ordered by ID (oldest first)
+	NextAPIRequestID  int64
+	// fine-grained personal access token administration (gh_org_pat_admin.go)
+	OrgPATGrantRequests map[string]map[int]*OrgPATGrantRequest // org login → request ID → request
+	OrgPATGrants        map[string]map[int]*OrgPATGrant        // org login → grant ID → grant
+	NextPATRequestID    int
+	NextPATGrantID      int
+	NextPATTokenID      int
+	// org codespaces access settings (gh_codespaces.go)
+	OrgCodespacesAccess map[string]*OrgCodespacesAccess // org login → access settings
+	// Dependabot repository access default level (gh_dependabot.go)
+	DependabotRepoAccessDefaultLevel map[string]string // org login → "public" | "internal"
+	// secret scanning pattern configurations + push protection (gh_secret_scanning.go)
+	SecretScanningPatternConfigs   map[string]*OrgSecretScanningPatternConfig                     // org login → config
+	SecretScanningPushPlaceholders map[string]map[string]*SecretScanningPushProtectionPlaceholder // repoKey → placeholder ID → placeholder
+	SecretScanningPushBypasses     map[string][]*SecretScanningPushProtectionBypass               // repoKey → bypasses
+
+	// repo-write surfaces
+	PagesDeployments         map[int]map[int]*PagesDeploymentRecord // repoID → deployment ID → record
+	NextPagesDeploymentID    int
+	EnvBranchPolicies        map[int][]*DeploymentBranchPolicyRule // environment ID → ordered branch/tag policies
+	NextEnvBranchPolicyID    int
+	EnvProtectionRules       map[int][]*EnvCustomProtectionRule // environment ID → enabled custom protection rules
+	NextEnvProtectionRuleID  int
+	SubIssueLists            map[int][]int                 // parent issue ID → ordered sub-issue IDs
+	SubIssueParent           map[int]int                   // sub-issue ID → parent issue ID
+	IssueBlockedBy           map[int][]int                 // issue ID → IDs of the issues blocking it
+	RepoImports              map[int]*RepoImport           // repoID → source import
+	DependencySnapshots      map[int][]*DependencySnapshot // repoID → submitted snapshots (oldest first)
+	NextDependencySnapshotID int
+	SBOMExports              map[string]*SBOMExport // export uuid → SBOM report export
+
+	// GitHub Classroom
+	Classrooms                   map[int]*Classroom
+	ClassroomAssignments         map[int]*ClassroomAssignment
+	ClassroomAcceptedAssignments map[int]*ClassroomAcceptedAssignment
+	NextClassroomID              int
+	NextClassroomAssignmentID    int
+	NextClassroomAcceptedID      int
+
+	// repo-reads
+	RepoActivities   map[int]*RepoActivity         // id → recorded ref update (push activity)
+	NextRepoActivity int                           // next RepoActivity ID
+	RepoCloneTraffic map[string]*RepoTrafficBucket // "repoID:YYYY-MM-DD" → clone counters
 }
 
 // Agent represents a registered runner agent.
@@ -499,6 +640,7 @@ func NewStore() *Store {
 		CodeScanningNextNumber:       make(map[string]int),
 		CodeScanningAnalyses:         make(map[int]*CodeScanningAnalysis),
 		CodeScanningAnalysesByRepo:   make(map[string]map[int]*CodeScanningAnalysis),
+		CodeScanningDefaultSetups:    make(map[string]*CodeScanningDefaultSetup),
 		SARIFUploads:                 make(map[string]*SARIFUpload),
 		DependabotAlerts:             make(map[int]*DependabotAlert),
 		DependabotAlertsByRepo:       make(map[string]map[int]*DependabotAlert),
@@ -565,6 +707,121 @@ func NewStore() *Store {
 		NextDiscussionID:             1,
 		NextDiscussionCategoryID:     1,
 		NextDiscussionCommentID:      1,
+		// enterprises
+		EnterpriseTeams:                    map[int]*EnterpriseTeam{},
+		EnterpriseTeamsBySlug:              map[string]*EnterpriseTeam{},
+		EnterpriseCodeSecurityConfigs:      map[int]*EnterpriseCodeSecurityConfiguration{},
+		EnterpriseCodeSecurityRepoConfigs:  map[int]int{},
+		EnterpriseSettings:                 defaultEnterpriseSettings(),
+		NextEnterpriseTeamID:               1,
+		NextEnterpriseCodeSecurityConfigID: 1,
+
+		// attestations + org artifact metadata
+		Attestations:                   map[int]*Attestation{},
+		NextAttestationID:              1,
+		ArtifactStorageRecords:         map[int]*ArtifactStorageRecord{},
+		NextArtifactStorageRecordID:    1,
+		ArtifactDeploymentRecords:      map[int]*ArtifactDeploymentRecord{},
+		NextArtifactDeploymentRecordID: 1,
+
+		// copilot + code quality
+		CopilotSeats:             make(map[string]map[int]*CopilotSeat),
+		CopilotContentExclusions: make(map[string]*CopilotContentExclusion),
+		CopilotCodingAgentPerms:  make(map[string]*CopilotCodingAgentPermissions),
+		CopilotSpaces:            make(map[int64]*CopilotSpace),
+		NextCopilotSpaceID:       1,
+		CodeQualitySetups:        make(map[string]*CodeQualitySetup),
+
+		// org governance surfaces
+		CodeSecurityConfigs:         map[string]map[int]*CodeSecurityConfiguration{},
+		CodeSecurityRepoAttachments: map[string]map[int]int{},
+		NextCodeSecurityConfigID:    1,
+		OrgCustomProperties:         map[string]map[string]*CustomProperty{},
+		RepoCustomPropertyValues:    map[string]map[string]interface{}{},
+		OrgIssueTypes:               map[string]map[int]*IssueType{},
+		NextIssueTypeID:             1,
+		OrgIssueFields:              map[string]map[int]*IssueField{},
+		NextIssueFieldID:            1,
+		NextIssueFieldOptionID:      1,
+		IssueFieldValues:            map[int]map[int]interface{}{},
+		OrgCampaigns:                map[string]map[int]*Campaign{},
+		OrgPrivateRegistries:        map[string]map[string]*PrivateRegistryConfiguration{},
+		OrgNetworkConfigurations:    map[string]map[string]*NetworkConfiguration{},
+		OrgNetworkSettings:          map[string]map[string]*NetworkSettingsResource{},
+		OrgImmutableReleases:        map[string]*OrgImmutableReleasesSettings{},
+		RepoImmutableReleases:       map[string]bool{},
+
+		// hosted-runners
+		HostedRunners:            map[int]*HostedRunner{},
+		NextHostedRunnerID:       1,
+		HostedRunnerCustomImages: map[int]*HostedRunnerCustomImage{},
+		NextHostedRunnerImageID:  1,
+		// actions-oidc-properties
+		OrgOIDCPropertyInclusions: map[string][]string{},
+
+		// agents-codescan
+		AgentsRepoSecrets:           make(map[string]map[string]*Secret),
+		AgentsOrgSecrets:            make(map[string]map[string]*OrgSecret),
+		AgentsRepoVariables:         make(map[string]map[string]*ActionsVariable),
+		AgentsOrgVariables:          make(map[string]map[string]*ActionsVariable),
+		AgentTasks:                  make(map[string]*AgentTask),
+		CodeScanningAutofixes:       make(map[string]*CodeScanningAutofix),
+		CodeQLDatabases:             make(map[int]*CodeQLDatabase),
+		CodeQLDatabasesByRepo:       make(map[string]map[string]*CodeQLDatabase),
+		CodeQLVariantAnalyses:       make(map[int]*CodeQLVariantAnalysis),
+		NextCodeQLDatabaseID:        1,
+		NextCodeQLVariantAnalysisID: 1,
+		// teams-people
+		OrgInvitations:         map[int]*OrgInvitation{},
+		NextOrgInvitationID:    1,
+		OrgBlocks:              map[string]map[int]time.Time{},
+		OrgInteractionLimits:   map[string]*OrgInteractionLimit{},
+		OrgRoleTeamAssignments: map[string]map[int][]int{},
+		OrgRoleUserAssignments: map[string]map[int][]int{},
+		// org billing budgets
+		OrgBudgets: map[string]map[string]*OrgBudget{},
+		// API insights
+		NextAPIRequestID: 1,
+		// fine-grained personal access token administration
+		OrgPATGrantRequests: map[string]map[int]*OrgPATGrantRequest{},
+		OrgPATGrants:        map[string]map[int]*OrgPATGrant{},
+		NextPATRequestID:    1,
+		NextPATGrantID:      1,
+		NextPATTokenID:      1,
+		// org codespaces access settings
+		OrgCodespacesAccess: map[string]*OrgCodespacesAccess{},
+		// Dependabot repository access default level
+		DependabotRepoAccessDefaultLevel: map[string]string{},
+		// secret scanning pattern configurations + push protection
+		SecretScanningPatternConfigs:   map[string]*OrgSecretScanningPatternConfig{},
+		SecretScanningPushPlaceholders: map[string]map[string]*SecretScanningPushProtectionPlaceholder{},
+		SecretScanningPushBypasses:     map[string][]*SecretScanningPushProtectionBypass{},
+		// repo-write surfaces
+		PagesDeployments:         map[int]map[int]*PagesDeploymentRecord{},
+		NextPagesDeploymentID:    1,
+		EnvBranchPolicies:        map[int][]*DeploymentBranchPolicyRule{},
+		NextEnvBranchPolicyID:    1,
+		EnvProtectionRules:       map[int][]*EnvCustomProtectionRule{},
+		NextEnvProtectionRuleID:  1,
+		SubIssueLists:            map[int][]int{},
+		SubIssueParent:           map[int]int{},
+		IssueBlockedBy:           map[int][]int{},
+		RepoImports:              map[int]*RepoImport{},
+		DependencySnapshots:      map[int][]*DependencySnapshot{},
+		NextDependencySnapshotID: 1,
+		SBOMExports:              map[string]*SBOMExport{},
+		// GitHub Classroom
+		Classrooms:                   map[int]*Classroom{},
+		ClassroomAssignments:         map[int]*ClassroomAssignment{},
+		ClassroomAcceptedAssignments: map[int]*ClassroomAcceptedAssignment{},
+		NextClassroomID:              1,
+		NextClassroomAssignmentID:    1,
+		NextClassroomAcceptedID:      1,
+
+		// repo-reads
+		RepoActivities:   make(map[int]*RepoActivity),
+		NextRepoActivity: 1,
+		RepoCloneTraffic: make(map[string]*RepoTrafficBucket),
 	}
 }
 
@@ -611,11 +868,13 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	pages_builds, branch_protection, audit_log, marketplace_plans,
 //	notifications_state, repo_rulesets, projects_classic, project_columns,
 //	project_cards, secret_scanning_alerts, code_scanning_alerts,
-//	code_scanning_analyses, sarif_uploads, dependabot_alerts,
+//	code_scanning_analyses, code_scanning_default_setups, sarif_uploads,
+//	dependabot_alerts,
 //	dependabot_secrets, dependabot_org_secrets, dependabot_user_secrets,
 //	dependabot_repository_access, security_advisories, security_advisory_reports,
 //	user_migrations, org_migrations, discussions, discussion_categories,
-//	discussion_comments, packages, package_versions, package_files.
+//	discussion_comments, packages, package_versions, package_files,
+//	codespaces, codespace_secrets.
 //
 // Other state (workflows, sessions, agents, ephemeral codes) deliberately
 // stays in-memory only — operator restart implies abandoning in-flight runs.
@@ -1561,6 +1820,14 @@ func (st *Store) loadFromPersistence() error {
 			}
 			return nil
 		}},
+		{"code_scanning_default_setups", func(_ string, raw []byte) error {
+			var setup CodeScanningDefaultSetup
+			if err := loadJSON(raw, &setup); err != nil {
+				return err
+			}
+			st.CodeScanningDefaultSetups[setup.RepoKey] = &setup
+			return nil
+		}},
 		{"sarif_uploads", func(key string, raw []byte) error {
 			var up SARIFUpload
 			if err := loadJSON(raw, &up); err != nil {
@@ -1698,10 +1965,14 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Packages[p.ID] = &p
-			if st.PackagesByOwnerKey[p.OwnerKey] == nil {
-				st.PackagesByOwnerKey[p.OwnerKey] = map[string]*Package{}
+			// Soft-deleted packages stay out of the by-owner key map so
+			// lists/gets skip them while restore can still find them.
+			if !p.Deleted {
+				if st.PackagesByOwnerKey[p.OwnerKey] == nil {
+					st.PackagesByOwnerKey[p.OwnerKey] = map[string]*Package{}
+				}
+				st.PackagesByOwnerKey[p.OwnerKey][packageKey(p.PackageType, p.Name)] = &p
 			}
-			st.PackagesByOwnerKey[p.OwnerKey][packageKey(p.PackageType, p.Name)] = &p
 			if p.ID >= st.NextPackageID {
 				st.NextPackageID = p.ID + 1
 			}
@@ -1765,6 +2036,103 @@ func (st *Store) loadFromPersistence() error {
 			}
 			return nil
 		}},
+		// org billing budgets
+		{"org_budgets", func(key string, raw []byte) error {
+			var m map[string]*OrgBudget
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgBudgets[key] = m
+			return nil
+		}},
+		// API insights
+		{"api_insights_requests", func(_ string, raw []byte) error {
+			var rec APIRequestRecord
+			if err := loadJSON(raw, &rec); err != nil {
+				return err
+			}
+			st.APIRequestRecords = append(st.APIRequestRecords, &rec)
+			if rec.ID >= st.NextAPIRequestID {
+				st.NextAPIRequestID = rec.ID + 1
+			}
+			return nil
+		}},
+		// fine-grained personal access token administration
+		{"org_pat_grant_requests", func(key string, raw []byte) error {
+			var m map[int]*OrgPATGrantRequest
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgPATGrantRequests[key] = m
+			for _, req := range m {
+				if req.ID >= st.NextPATRequestID {
+					st.NextPATRequestID = req.ID + 1
+				}
+				if req.TokenID >= st.NextPATTokenID {
+					st.NextPATTokenID = req.TokenID + 1
+				}
+			}
+			return nil
+		}},
+		{"org_pat_grants", func(key string, raw []byte) error {
+			var m map[int]*OrgPATGrant
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgPATGrants[key] = m
+			for _, g := range m {
+				if g.ID >= st.NextPATGrantID {
+					st.NextPATGrantID = g.ID + 1
+				}
+				if g.TokenID >= st.NextPATTokenID {
+					st.NextPATTokenID = g.TokenID + 1
+				}
+			}
+			return nil
+		}},
+		// org codespaces access settings
+		{"org_codespaces_access", func(key string, raw []byte) error {
+			var a OrgCodespacesAccess
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.OrgCodespacesAccess[key] = &a
+			return nil
+		}},
+		// Dependabot repository access default level
+		{"dependabot_repo_access_default_level", func(key string, raw []byte) error {
+			var level string
+			if err := loadJSON(raw, &level); err != nil {
+				return err
+			}
+			st.DependabotRepoAccessDefaultLevel[key] = level
+			return nil
+		}},
+		// secret scanning pattern configurations + push protection
+		{"secret_scanning_pattern_configs", func(key string, raw []byte) error {
+			var cfg OrgSecretScanningPatternConfig
+			if err := loadJSON(raw, &cfg); err != nil {
+				return err
+			}
+			st.SecretScanningPatternConfigs[key] = &cfg
+			return nil
+		}},
+		{"secret_scanning_push_placeholders", func(key string, raw []byte) error {
+			var m map[string]*SecretScanningPushProtectionPlaceholder
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.SecretScanningPushPlaceholders[key] = m
+			return nil
+		}},
+		{"secret_scanning_push_bypasses", func(key string, raw []byte) error {
+			var list []*SecretScanningPushProtectionBypass
+			if err := loadJSON(raw, &list); err != nil {
+				return err
+			}
+			st.SecretScanningPushBypasses[key] = list
+			return nil
+		}},
 	} {
 		rows, err := st.persist.List(loadFn.name)
 		if err != nil {
@@ -1782,10 +2150,762 @@ func (st *Store) loadFromPersistence() error {
 	sort.Slice(st.Misc.auditLog, func(i, j int) bool { return st.Misc.auditLog[i].ID > st.Misc.auditLog[j].ID })
 	sort.Slice(st.Misc.auditLogEvents, func(i, j int) bool { return st.Misc.auditLogEvents[i].ID > st.Misc.auditLogEvents[j].ID })
 
+	// API request records arrive in map-iteration order; the in-memory log
+	// is oldest-first (RecordAPIRequest appends), so sort by ID ascending.
+	sort.Slice(st.APIRequestRecords, func(i, j int) bool { return st.APIRequestRecords[i].ID < st.APIRequestRecords[j].ID })
+
 	if v, err := st.persist.GetCounter("next_run_id"); err != nil {
 		return fmt.Errorf("load counter next_run_id: %w", err)
 	} else if int(v) > st.NextRunID {
 		st.NextRunID = int(v)
+	}
+
+	// enterprises
+	if err := st.loadBucket("enterprise_teams", func(raw []byte) error {
+		var t EnterpriseTeam
+		if err := loadJSON(raw, &t); err != nil {
+			return err
+		}
+		st.EnterpriseTeams[t.ID] = &t
+		st.EnterpriseTeamsBySlug[t.Slug] = &t
+		if t.ID >= st.NextEnterpriseTeamID {
+			st.NextEnterpriseTeamID = t.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// teams-people
+	if err := st.loadBucket("org_invitations", func(raw []byte) error {
+		var inv OrgInvitation
+		if err := loadJSON(raw, &inv); err != nil {
+			return err
+		}
+		st.OrgInvitations[inv.ID] = &inv
+		if inv.ID >= st.NextOrgInvitationID {
+			st.NextOrgInvitationID = inv.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// hosted-runners
+	if err := st.loadBucket("hosted_runners", func(raw []byte) error {
+		var hr HostedRunner
+		if err := loadJSON(raw, &hr); err != nil {
+			return err
+		}
+		st.HostedRunners[hr.ID] = &hr
+		if hr.ID >= st.NextHostedRunnerID {
+			st.NextHostedRunnerID = hr.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("enterprise_code_security_configs", func(raw []byte) error {
+		var c EnterpriseCodeSecurityConfiguration
+		if err := loadJSON(raw, &c); err != nil {
+			return err
+		}
+		st.EnterpriseCodeSecurityConfigs[c.ID] = &c
+		if c.ID >= st.NextEnterpriseCodeSecurityConfigID {
+			st.NextEnterpriseCodeSecurityConfigID = c.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("hosted_runner_custom_images", func(raw []byte) error {
+		var img HostedRunnerCustomImage
+		if err := loadJSON(raw, &img); err != nil {
+			return err
+		}
+		st.HostedRunnerCustomImages[img.ID] = &img
+		if img.ID >= st.NextHostedRunnerImageID {
+			st.NextHostedRunnerImageID = img.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("enterprise_code_security_attachments", func(raw []byte) error {
+		var a EnterpriseCodeSecurityAttachment
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.EnterpriseCodeSecurityRepoConfigs[a.RepoID] = a.ConfigID
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("enterprise_settings", func(raw []byte) error {
+		var s EnterpriseSettings
+		if err := loadJSON(raw, &s); err != nil {
+			return err
+		}
+		st.EnterpriseSettings = &s
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// projects-v2 views
+	if err := st.loadBucket("project_v2_views", func(raw []byte) error {
+		var v ProjectV2View
+		if err := loadJSON(raw, &v); err != nil {
+			return err
+		}
+		st.ProjectsV2.views[v.ID] = &v
+		st.ProjectsV2.viewsByProj[v.ProjectID] = append(st.ProjectsV2.viewsByProj[v.ProjectID], &v)
+		if v.ID >= st.ProjectsV2.nextViewID {
+			st.ProjectsV2.nextViewID = v.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// Rows arrive in map-iteration order; restore per-project creation
+	// (ID) order for fields, views, and per-content item slices. Iteration
+	// IDs share the option-seed space with single-select option IDs, so
+	// resume the seed past them too.
+	for _, views := range st.ProjectsV2.viewsByProj {
+		sort.Slice(views, func(i, j int) bool { return views[i].ID < views[j].ID })
+	}
+	for _, fields := range st.ProjectsV2.fieldsByProj {
+		sort.Slice(fields, func(i, j int) bool { return fields[i].ID < fields[j].ID })
+	}
+	for _, items := range st.ProjectsV2.itemsByOwner {
+		sort.Slice(items, func(i, j int) bool { return items[i].ID < items[j].ID })
+	}
+	for _, f := range st.ProjectsV2.fields {
+		if f.Iteration == nil {
+			continue
+		}
+		for _, iter := range f.Iteration.Iterations {
+			if n, err := strconv.ParseInt(iter.ID, 16, 64); err == nil && int(n) >= st.ProjectsV2.nextOptionSeed {
+				st.ProjectsV2.nextOptionSeed = int(n) + 1
+			}
+		}
+	}
+
+	// org governance surfaces
+	// agents-codescan: GitHub Copilot coding agent secrets/variables/tasks
+	// and CodeQL databases/variant analyses.
+	for _, loadFn := range []struct {
+		name string
+		fn   func(key string, raw []byte) error
+	}{
+		{"code_security_configurations", func(key string, raw []byte) error {
+			var m map[int]*CodeSecurityConfiguration
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.CodeSecurityConfigs[key] = m
+			for id := range m {
+				if id >= st.NextCodeSecurityConfigID {
+					st.NextCodeSecurityConfigID = id + 1
+				}
+			}
+			return nil
+		}},
+		{"code_security_repo_attachments", func(key string, raw []byte) error {
+			var m map[int]int
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.CodeSecurityRepoAttachments[key] = m
+			return nil
+		}},
+		{"org_custom_properties", func(key string, raw []byte) error {
+			var m map[string]*CustomProperty
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgCustomProperties[key] = m
+			return nil
+		}},
+		{"repo_custom_property_values", func(key string, raw []byte) error {
+			var m map[string]interface{}
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.RepoCustomPropertyValues[key] = m
+			return nil
+		}},
+		{"org_issue_types", func(key string, raw []byte) error {
+			var m map[int]*IssueType
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgIssueTypes[key] = m
+			for id := range m {
+				if id >= st.NextIssueTypeID {
+					st.NextIssueTypeID = id + 1
+				}
+			}
+			return nil
+		}},
+		{"org_issue_fields", func(key string, raw []byte) error {
+			var m map[int]*IssueField
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgIssueFields[key] = m
+			for id, f := range m {
+				if id >= st.NextIssueFieldID {
+					st.NextIssueFieldID = id + 1
+				}
+				for _, opt := range f.Options {
+					if opt.ID >= st.NextIssueFieldOptionID {
+						st.NextIssueFieldOptionID = opt.ID + 1
+					}
+				}
+			}
+			return nil
+		}},
+		{"issue_field_values", func(key string, raw []byte) error {
+			issueID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("issue_field_values key %q: %w", key, err)
+			}
+			var m map[int]interface{}
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.IssueFieldValues[issueID] = m
+			return nil
+		}},
+		{"org_campaigns", func(key string, raw []byte) error {
+			var m map[int]*Campaign
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgCampaigns[key] = m
+			return nil
+		}},
+		{"org_private_registries", func(key string, raw []byte) error {
+			var m map[string]*PrivateRegistryConfiguration
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgPrivateRegistries[key] = m
+			return nil
+		}},
+		{"org_network_configurations", func(key string, raw []byte) error {
+			var m map[string]*NetworkConfiguration
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgNetworkConfigurations[key] = m
+			return nil
+		}},
+		{"org_network_settings", func(key string, raw []byte) error {
+			var m map[string]*NetworkSettingsResource
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.OrgNetworkSettings[key] = m
+			return nil
+		}},
+		{"org_immutable_releases", func(key string, raw []byte) error {
+			var s OrgImmutableReleasesSettings
+			if err := loadJSON(raw, &s); err != nil {
+				return err
+			}
+			st.OrgImmutableReleases[key] = &s
+			return nil
+		}},
+		{"repo_immutable_releases", func(key string, raw []byte) error {
+			var enabled bool
+			if err := loadJSON(raw, &enabled); err != nil {
+				return err
+			}
+			st.RepoImmutableReleases[key] = enabled
+			return nil
+		}},
+		{"agents_repo_secrets", func(key string, raw []byte) error {
+			var m map[string]*Secret
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.AgentsRepoSecrets[key] = m
+			return nil
+		}},
+		{"agents_org_secrets", func(key string, raw []byte) error {
+			var m map[string]*OrgSecret
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.AgentsOrgSecrets[key] = m
+			return nil
+		}},
+		{"agents_repo_variables", func(key string, raw []byte) error {
+			var m map[string]*ActionsVariable
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.AgentsRepoVariables[key] = m
+			return nil
+		}},
+		{"agents_org_variables", func(key string, raw []byte) error {
+			var m map[string]*ActionsVariable
+			if err := loadJSON(raw, &m); err != nil {
+				return err
+			}
+			st.AgentsOrgVariables[key] = m
+			return nil
+		}},
+		{"agent_tasks", func(key string, raw []byte) error {
+			var task AgentTask
+			if err := loadJSON(raw, &task); err != nil {
+				return err
+			}
+			st.AgentTasks[key] = &task
+			return nil
+		}},
+		{"code_scanning_autofixes", func(key string, raw []byte) error {
+			var a CodeScanningAutofix
+			if err := loadJSON(raw, &a); err != nil {
+				return err
+			}
+			st.CodeScanningAutofixes[key] = &a
+			return nil
+		}},
+		{"codeql_databases", func(_ string, raw []byte) error {
+			var db CodeQLDatabase
+			if err := loadJSON(raw, &db); err != nil {
+				return err
+			}
+			st.CodeQLDatabases[db.ID] = &db
+			if st.CodeQLDatabasesByRepo[db.RepoKey] == nil {
+				st.CodeQLDatabasesByRepo[db.RepoKey] = make(map[string]*CodeQLDatabase)
+			}
+			st.CodeQLDatabasesByRepo[db.RepoKey][db.Language] = &db
+			if db.ID >= st.NextCodeQLDatabaseID {
+				st.NextCodeQLDatabaseID = db.ID + 1
+			}
+			return nil
+		}},
+		{"codeql_variant_analyses", func(_ string, raw []byte) error {
+			var va CodeQLVariantAnalysis
+			if err := loadJSON(raw, &va); err != nil {
+				return err
+			}
+			st.CodeQLVariantAnalyses[va.ID] = &va
+			if va.ID >= st.NextCodeQLVariantAnalysisID {
+				st.NextCodeQLVariantAnalysisID = va.ID + 1
+			}
+			return nil
+		}},
+	} {
+		rows, err := st.persist.List(loadFn.name)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", loadFn.name, err)
+		}
+		for k, raw := range rows {
+			if err := loadFn.fn(k, raw); err != nil {
+				return fmt.Errorf("decode %s row: %w", loadFn.name, err)
+			}
+		}
+	}
+
+	// attestations
+	if err := st.loadBucket("attestations", func(raw []byte) error {
+		var a Attestation
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.Attestations[a.ID] = &a
+		if a.ID >= st.NextAttestationID {
+			st.NextAttestationID = a.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// org artifact metadata records
+	if err := st.loadBucket("artifact_storage_records", func(raw []byte) error {
+		var rec ArtifactStorageRecord
+		if err := loadJSON(raw, &rec); err != nil {
+			return err
+		}
+		st.ArtifactStorageRecords[rec.ID] = &rec
+		if rec.ID >= st.NextArtifactStorageRecordID {
+			st.NextArtifactStorageRecordID = rec.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("artifact_deployment_records", func(raw []byte) error {
+		var rec ArtifactDeploymentRecord
+		if err := loadJSON(raw, &rec); err != nil {
+			return err
+		}
+		st.ArtifactDeploymentRecords[rec.ID] = &rec
+		if rec.ID >= st.NextArtifactDeploymentRecordID {
+			st.NextArtifactDeploymentRecordID = rec.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// copilot + code quality
+	if err := st.loadBucket("copilot_seats", func(raw []byte) error {
+		var seat CopilotSeat
+		if err := loadJSON(raw, &seat); err != nil {
+			return err
+		}
+		if st.CopilotSeats[seat.OrgLogin] == nil {
+			st.CopilotSeats[seat.OrgLogin] = map[int]*CopilotSeat{}
+		}
+		st.CopilotSeats[seat.OrgLogin][seat.UserID] = &seat
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("copilot_content_exclusions", func(raw []byte) error {
+		var ce CopilotContentExclusion
+		if err := loadJSON(raw, &ce); err != nil {
+			return err
+		}
+		st.CopilotContentExclusions[ce.OrgLogin] = &ce
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("copilot_coding_agent_permissions", func(raw []byte) error {
+		var p CopilotCodingAgentPermissions
+		if err := loadJSON(raw, &p); err != nil {
+			return err
+		}
+		st.CopilotCodingAgentPerms[p.OrgLogin] = &p
+		return nil
+	}); err != nil {
+		return err
+	}
+	// user-surface: GitHub Marketplace purchases (account ID → purchase).
+	if err := st.loadBucket("marketplace_purchases", func(raw []byte) error {
+		var p MarketplacePurchase
+		if err := loadJSON(raw, &p); err != nil {
+			return err
+		}
+		st.Misc.marketplacePurchases[p.AccountID] = &p
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("copilot_spaces", func(raw []byte) error {
+		var space CopilotSpace
+		if err := loadJSON(raw, &space); err != nil {
+			return err
+		}
+		st.CopilotSpaces[space.ID] = &space
+		if space.ID >= st.NextCopilotSpaceID {
+			st.NextCopilotSpaceID = space.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("code_quality_setups", func(raw []byte) error {
+		var setup CodeQualitySetup
+		if err := loadJSON(raw, &setup); err != nil {
+			return err
+		}
+		st.CodeQualitySetups[setup.RepoFullName] = &setup
+		return nil
+	}); err != nil {
+		return err
+	}
+	// actions-oidc-properties (keyed by org login, so List directly)
+	if rows, err := st.persist.List("org_oidc_property_inclusions"); err != nil {
+		return fmt.Errorf("load org_oidc_property_inclusions: %w", err)
+	} else {
+		for org, raw := range rows {
+			var names []string
+			if err := loadJSON(raw, &names); err != nil {
+				return fmt.Errorf("decode org_oidc_property_inclusions row: %w", err)
+			}
+			st.OrgOIDCPropertyInclusions[org] = names
+		}
+	}
+	if rows, err := st.persist.List("org_blocks"); err != nil {
+		return fmt.Errorf("load org_blocks: %w", err)
+	} else {
+		for orgLogin, raw := range rows {
+			blocks := map[int]time.Time{}
+			if err := loadJSON(raw, &blocks); err != nil {
+				return fmt.Errorf("decode org_blocks row: %w", err)
+			}
+			st.OrgBlocks[orgLogin] = blocks
+		}
+	}
+	if rows, err := st.persist.List("org_interaction_limits"); err != nil {
+		return fmt.Errorf("load org_interaction_limits: %w", err)
+	} else {
+		for orgLogin, raw := range rows {
+			var lim OrgInteractionLimit
+			if err := loadJSON(raw, &lim); err != nil {
+				return fmt.Errorf("decode org_interaction_limits row: %w", err)
+			}
+			st.OrgInteractionLimits[orgLogin] = &lim
+		}
+	}
+	for bucket, dst := range map[string]map[string]map[int][]int{
+		"org_role_team_assignments": st.OrgRoleTeamAssignments,
+		"org_role_user_assignments": st.OrgRoleUserAssignments,
+	} {
+		rows, err := st.persist.List(bucket)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", bucket, err)
+		}
+		for orgLogin, raw := range rows {
+			assignments := map[int][]int{}
+			if err := loadJSON(raw, &assignments); err != nil {
+				return fmt.Errorf("decode %s row: %w", bucket, err)
+			}
+			dst[orgLogin] = assignments
+		}
+	}
+
+	// repo-write surfaces
+	for _, loadFn := range []struct {
+		name string
+		fn   func(string, []byte) error
+	}{
+		{"pages_deployments", func(key string, raw []byte) error {
+			repoID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("pages_deployments key %q: %w", key, err)
+			}
+			var byID map[int]*PagesDeploymentRecord
+			if err := loadJSON(raw, &byID); err != nil {
+				return err
+			}
+			st.PagesDeployments[repoID] = byID
+			for id := range byID {
+				if id >= st.NextPagesDeploymentID {
+					st.NextPagesDeploymentID = id + 1
+				}
+			}
+			return nil
+		}},
+		{"env_branch_policies", func(key string, raw []byte) error {
+			envID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("env_branch_policies key %q: %w", key, err)
+			}
+			var policies []*DeploymentBranchPolicyRule
+			if err := loadJSON(raw, &policies); err != nil {
+				return err
+			}
+			st.EnvBranchPolicies[envID] = policies
+			for _, p := range policies {
+				if p.ID >= st.NextEnvBranchPolicyID {
+					st.NextEnvBranchPolicyID = p.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"env_protection_rules", func(key string, raw []byte) error {
+			envID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("env_protection_rules key %q: %w", key, err)
+			}
+			var rules []*EnvCustomProtectionRule
+			if err := loadJSON(raw, &rules); err != nil {
+				return err
+			}
+			st.EnvProtectionRules[envID] = rules
+			for _, rule := range rules {
+				if rule.ID >= st.NextEnvProtectionRuleID {
+					st.NextEnvProtectionRuleID = rule.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"sub_issues", func(key string, raw []byte) error {
+			parentID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("sub_issues key %q: %w", key, err)
+			}
+			var children []int
+			if err := loadJSON(raw, &children); err != nil {
+				return err
+			}
+			st.SubIssueLists[parentID] = children
+			for _, childID := range children {
+				st.SubIssueParent[childID] = parentID
+			}
+			return nil
+		}},
+		{"issue_blocked_by", func(key string, raw []byte) error {
+			issueID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("issue_blocked_by key %q: %w", key, err)
+			}
+			var blockers []int
+			if err := loadJSON(raw, &blockers); err != nil {
+				return err
+			}
+			st.IssueBlockedBy[issueID] = blockers
+			return nil
+		}},
+		{"repo_imports", func(key string, raw []byte) error {
+			repoID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("repo_imports key %q: %w", key, err)
+			}
+			var imp RepoImport
+			if err := loadJSON(raw, &imp); err != nil {
+				return err
+			}
+			st.RepoImports[repoID] = &imp
+			return nil
+		}},
+		{"dependency_snapshots", func(key string, raw []byte) error {
+			repoID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("dependency_snapshots key %q: %w", key, err)
+			}
+			var snapshots []*DependencySnapshot
+			if err := loadJSON(raw, &snapshots); err != nil {
+				return err
+			}
+			st.DependencySnapshots[repoID] = snapshots
+			for _, snap := range snapshots {
+				if snap.ID >= st.NextDependencySnapshotID {
+					st.NextDependencySnapshotID = snap.ID + 1
+				}
+			}
+			return nil
+		}},
+		{"sbom_exports", func(key string, raw []byte) error {
+			var exp SBOMExport
+			if err := loadJSON(raw, &exp); err != nil {
+				return err
+			}
+			st.SBOMExports[key] = &exp
+			return nil
+		}},
+	} {
+		rows, err := st.persist.List(loadFn.name)
+		if err != nil {
+			return fmt.Errorf("load %s: %w", loadFn.name, err)
+		}
+		for k, raw := range rows {
+			if err := loadFn.fn(k, raw); err != nil {
+				return fmt.Errorf("decode %s row: %w", loadFn.name, err)
+			}
+		}
+	}
+
+	// GitHub Classroom
+	if err := st.loadBucket("classrooms", func(raw []byte) error {
+		var c Classroom
+		if err := loadJSON(raw, &c); err != nil {
+			return err
+		}
+		st.Classrooms[c.ID] = &c
+		if c.ID >= st.NextClassroomID {
+			st.NextClassroomID = c.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("classroom_assignments", func(raw []byte) error {
+		var a ClassroomAssignment
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.ClassroomAssignments[a.ID] = &a
+		if a.ID >= st.NextClassroomAssignmentID {
+			st.NextClassroomAssignmentID = a.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("classroom_accepted_assignments", func(raw []byte) error {
+		var a ClassroomAcceptedAssignment
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.ClassroomAcceptedAssignments[a.ID] = &a
+		if a.ID >= st.NextClassroomAcceptedID {
+			st.NextClassroomAcceptedID = a.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	// GitHub Marketplace purchases
+	if err := st.loadBucket("marketplace_purchases", func(raw []byte) error {
+		var p MarketplacePurchase
+		if err := loadJSON(raw, &p); err != nil {
+			return err
+		}
+		st.Misc.marketplacePurchases[p.AccountID] = &p
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// repo-reads
+	if err := st.loadBucket("repo_activity", func(raw []byte) error {
+		var a RepoActivity
+		if err := loadJSON(raw, &a); err != nil {
+			return err
+		}
+		st.RepoActivities[a.ID] = &a
+		if a.ID >= st.NextRepoActivity {
+			st.NextRepoActivity = a.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("repo_traffic_clones", func(raw []byte) error {
+		var b RepoTrafficBucket
+		if err := loadJSON(raw, &b); err != nil {
+			return err
+		}
+		st.RepoCloneTraffic[repoTrafficKey(b.RepoID, b.Day)] = &b
+		return nil
+	}); err != nil {
+		return err
+	}
+
+	// codespaces
+	if err := st.loadBucket("codespaces", func(raw []byte) error {
+		var cs Codespace
+		if err := loadJSON(raw, &cs); err != nil {
+			return err
+		}
+		st.Codespaces[cs.ID] = &cs
+		st.CodespacesByName[cs.Name] = &cs
+		if cs.ID >= st.NextCodespaceID {
+			st.NextCodespaceID = cs.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	codespaceSecretRows, err := st.persist.List("codespace_secrets")
+	if err != nil {
+		return fmt.Errorf("load codespace_secrets: %w", err)
+	}
+	for scope, raw := range codespaceSecretRows {
+		var m map[string]*CodespaceSecret
+		if err := loadJSON(raw, &m); err != nil {
+			return fmt.Errorf("decode codespace_secrets row: %w", err)
+		}
+		st.CodespaceSecrets[scope] = m
 	}
 
 	return nil
@@ -2313,101 +3433,6 @@ func (st *Store) ListUsers() []*User {
 	return out
 }
 
-// ListUserEvents returns synthetic public events for a user.
-func (st *Store) ListUserEvents(userLogin string) []map[string]interface{} {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	user := st.UsersByLogin[userLogin]
-	if user == nil {
-		return nil
-	}
-	var out []map[string]interface{}
-	for _, issue := range st.Issues {
-		if issue.AuthorID == user.ID {
-			out = append(out, st.eventToJSON(issue.RepoID, user, "IssuesEvent", map[string]interface{}{"action": "opened"}))
-		}
-	}
-	for _, pr := range st.PullRequests {
-		if pr.AuthorID == user.ID {
-			out = append(out, st.eventToJSON(pr.RepoID, user, "PullRequestEvent", map[string]interface{}{"action": "opened"}))
-		}
-	}
-	for _, c := range st.Comments {
-		if c.AuthorID == user.ID {
-			repoID := st.repoIDForComment(c)
-			if repoID != 0 {
-				out = append(out, st.eventToJSON(repoID, user, "IssueCommentEvent", map[string]interface{}{"action": "created"}))
-			}
-		}
-	}
-	return out
-}
-
-// repoIDForComment returns the repository ID for an issue or PR comment.
-func (st *Store) repoIDForComment(c *Comment) int {
-	switch c.ParentType {
-	case "issue":
-		if issue := st.Issues[c.IssueID]; issue != nil {
-			return issue.RepoID
-		}
-	case "pull_request":
-		if pr := st.PullRequests[c.IssueID]; pr != nil {
-			return pr.RepoID
-		}
-	}
-	return 0
-}
-
-// ListUserReceivedEvents returns synthetic events for repositories the user owns.
-func (st *Store) ListUserReceivedEvents(userLogin string) []map[string]interface{} {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	user := st.UsersByLogin[userLogin]
-	if user == nil {
-		return nil
-	}
-	var out []map[string]interface{}
-	for _, issue := range st.Issues {
-		if repo := st.Repos[issue.RepoID]; repo != nil && repo.OwnerID == user.ID && issue.AuthorID != user.ID {
-			if author := st.Users[issue.AuthorID]; author != nil {
-				out = append(out, st.eventToJSON(issue.RepoID, author, "IssuesEvent", map[string]interface{}{"action": "opened"}))
-			}
-		}
-	}
-	return out
-}
-
-func eventActorToJSON(u *User) map[string]interface{} {
-	return map[string]interface{}{
-		"login":       u.Login,
-		"id":          u.ID,
-		"avatar_url":  u.AvatarURL,
-		"gravatar_id": "",
-		"url":         "/api/v3/users/" + u.Login,
-	}
-}
-
-func (st *Store) eventToJSON(repoID int, actor *User, typ string, payload map[string]interface{}) map[string]interface{} {
-	repo := st.Repos[repoID]
-	var repoJSON interface{}
-	if repo != nil {
-		repoJSON = map[string]interface{}{
-			"id":   repo.ID,
-			"name": repo.FullName,
-			"url":  "/api/v3/repos/" + repo.FullName,
-		}
-	}
-	return map[string]interface{}{
-		"id":         strconv.FormatInt(time.Now().UnixNano(), 10),
-		"type":       typ,
-		"actor":      eventActorToJSON(actor),
-		"repo":       repoJSON,
-		"payload":    payload,
-		"public":     true,
-		"created_at": time.Now().UTC().Format(time.RFC3339),
-	}
-}
-
 // ListBlockedUsers returns the logins of users blocked by userID.
 func (st *Store) ListBlockedUsers(userID int) []string {
 	st.Misc.mu.RLock()
@@ -2544,13 +3569,26 @@ func (st *Store) AddUserSSHSigningKey(userID int, key string) map[string]interfa
 	return entry
 }
 
+// sshSigningKeyEntryID extracts the numeric key ID from an SSH signing key
+// entry. Freshly created entries store an int; entries reloaded from
+// persistence decode JSON numbers as float64, so both shapes must resolve.
+func sshSigningKeyEntryID(entry map[string]interface{}) int {
+	switch v := entry["id"].(type) {
+	case int:
+		return v
+	case float64:
+		return int(v)
+	}
+	return 0
+}
+
 // DeleteUserSSHSigningKey deletes an SSH signing key for a user.
 func (st *Store) DeleteUserSSHSigningKey(userID, keyID int) bool {
 	st.Misc.mu.Lock()
 	defer st.Misc.mu.Unlock()
 	keys := st.Misc.sshSigningKeys[userID]
 	for i, k := range keys {
-		if kid, _ := k["id"].(int); kid == keyID {
+		if sshSigningKeyEntryID(k) == keyID {
 			st.Misc.sshSigningKeys[userID] = append(keys[:i], keys[i+1:]...)
 			if st.Misc.persist != nil {
 				st.Misc.persist.MustPut("misc", "ssh_signing_keys", st.Misc.sshSigningKeys)

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, InlineError, Spinner } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
@@ -74,7 +75,14 @@ function OrgsTable() {
     }),
     col.accessor("login", {
       header: "Login",
-      cell: (info) => <span style={{ fontWeight: 500, color: "var(--color-fg)" }}>{info.getValue()}</span>,
+      cell: (info) => (
+        <Link
+          to={`/ui/orgs/${info.getValue()}/repos`}
+          style={{ fontWeight: 500, color: "var(--color-accent)", textDecoration: "none" }}
+        >
+          {info.getValue()}
+        </Link>
+      ),
     }),
     col.accessor("name", {
       header: "Name",

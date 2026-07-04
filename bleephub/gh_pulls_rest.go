@@ -379,8 +379,17 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Body  string `json:"body"`
-		Event string `json:"event"`
+		Body     string `json:"body"`
+		Event    string `json:"event"`
+		CommitID string `json:"commit_id"`
+		Comments []struct {
+			Path      string  `json:"path"`
+			Body      string  `json:"body"`
+			Line      flexInt `json:"line"`
+			StartLine flexInt `json:"start_line"`
+			Side      string  `json:"side"`
+			Position  flexInt `json:"position"`
+		} `json:"comments"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -400,6 +409,22 @@ func (s *Server) handleCreatePRReview(w http.ResponseWriter, r *http.Request) {
 	if review == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Review creation failed")
 		return
+	}
+
+	// The create-review API attaches its draft comments to the review; they
+	// surface through GET /pulls/{number}/reviews/{review_id}/comments and
+	// the regular review-comment endpoints.
+	for _, rc := range req.Comments {
+		if rc.Path == "" || rc.Body == "" {
+			writeGHValidationError(w, "PullRequestReviewComment", "comments", "invalid")
+			return
+		}
+		line := int(rc.Line)
+		if line == 0 {
+			line = int(rc.Position)
+		}
+		c := s.store.PRReviewComments.CreateRootComment(pr.ID, user.ID, rc.Path, rc.Body, req.CommitID, rc.Side, line, int(rc.StartLine))
+		s.store.PRReviewComments.AttachToReview(c.ID, review.ID)
 	}
 
 	writeJSON(w, http.StatusOK, reviewToJSON(review, s.store, s.baseURL(r), repo.FullName, pr.Number))

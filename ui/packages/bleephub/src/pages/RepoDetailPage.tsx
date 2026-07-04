@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { deleteRepoContent } from "../api.js";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
@@ -20,7 +20,6 @@ import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type {
   GithubCommit,
   GithubContentItem,
-  GithubContentFile,
   GithubWebhook,
   GithubSecret,
   GithubEnvironment,
@@ -112,6 +111,18 @@ export function RepoDetailPage() {
           <BranchIcon size={14} />{" "}
           {branches.length > 0 ? branches.map((b) => b.name).join(", ") : repoData.default_branch}
         </span>
+        <Link
+          to={`/ui/repos/${owner}/${repo}/packages`}
+          style={{ color: "var(--color-accent)", textDecoration: "none" }}
+        >
+          Packages
+        </Link>
+        <Link
+          to={`/ui/repos/${owner}/${repo}/codespaces`}
+          style={{ color: "var(--color-accent)", textDecoration: "none" }}
+        >
+          Codespaces
+        </Link>
       </div>
 
       {/* Secondary (repo-admin) tab strip */}

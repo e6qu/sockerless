@@ -41,8 +41,15 @@ func (s *Server) handleListUserEvents(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	events := s.store.ListUserEvents(user.Login)
-	writeJSON(w, http.StatusOK, paginateAndLink(w, r, events))
+	events := s.deriveActivityEvents(s.baseURL(r), s.publicReposByID(), nil)
+	own := events[:0]
+	for _, ev := range events {
+		if ev.actorID == user.ID {
+			own = append(own, ev)
+		}
+	}
+	sortActivityEvents(own)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, activityEventsJSON(own)))
 }
 
 func (s *Server) handleListUserEventsPublic(w http.ResponseWriter, r *http.Request) {
@@ -56,16 +63,21 @@ func (s *Server) handleListUserEventsForOrg(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	org := r.PathValue("org")
-	all := s.store.ListUserEvents(user.Login)
-	filtered := make([]map[string]interface{}, 0, len(all))
-	for _, ev := range all {
-		repo, _ := ev["repo"].(map[string]interface{})
-		name, _ := repo["name"].(string)
-		if strings.HasPrefix(name, org+"/") {
-			filtered = append(filtered, ev)
+	repos := s.publicReposByID()
+	for id, repo := range repos {
+		if !strings.HasPrefix(repo.FullName, org+"/") {
+			delete(repos, id)
 		}
 	}
-	writeJSON(w, http.StatusOK, paginateAndLink(w, r, filtered))
+	events := s.deriveActivityEvents(s.baseURL(r), repos, nil)
+	own := events[:0]
+	for _, ev := range events {
+		if ev.actorID == user.ID {
+			own = append(own, ev)
+		}
+	}
+	sortActivityEvents(own)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, activityEventsJSON(own)))
 }
 
 func (s *Server) handleListUserReceivedEvents(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +86,25 @@ func (s *Server) handleListUserReceivedEvents(w http.ResponseWriter, r *http.Req
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	events := s.store.ListUserReceivedEvents(user.Login)
-	writeJSON(w, http.StatusOK, paginateAndLink(w, r, events))
+	// Received events are other users' activity on the user's own public
+	// repositories.
+	s.store.mu.RLock()
+	repos := map[int]*Repo{}
+	for _, repo := range s.store.Repos {
+		if (repo.OwnerType == "User" || repo.OwnerType == "") && repo.OwnerID == user.ID && !repo.Private {
+			repos[repo.ID] = repo
+		}
+	}
+	s.store.mu.RUnlock()
+	events := s.deriveActivityEvents(s.baseURL(r), repos, nil)
+	received := events[:0]
+	for _, ev := range events {
+		if ev.actorID != user.ID {
+			received = append(received, ev)
+		}
+	}
+	sortActivityEvents(received)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, activityEventsJSON(received)))
 }
 
 func (s *Server) handleListUserReceivedEventsPublic(w http.ResponseWriter, r *http.Request) {

@@ -224,6 +224,17 @@ func (s *Server) handleUpdateTeam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.applyTeamUpdate(w, r, org, team)
+}
+
+// applyTeamUpdate validates and applies a team PATCH body against an
+// already-resolved team, writing the team-full response (or a
+// validation error). Shared by the slug-addressed and the legacy
+// ID-addressed update endpoints so both surfaces stay identical.
+func (s *Server) applyTeamUpdate(w http.ResponseWriter, r *http.Request, org *Org, team *Team) {
+	orgLogin := org.Login
+	slug := team.Slug
+
 	var req map[string]interface{}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -630,6 +641,14 @@ func (s *Server) handleCheckTeamRepo(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.writeTeamRepoCheck(w, r, orgLogin, team)
+}
+
+// writeTeamRepoCheck answers a team-manages-repository check for an
+// already-resolved team: 204 when linked, 200 with the team-repository
+// body under the repository media type, 404 otherwise. Shared by the
+// slug-addressed and the legacy ID-addressed check endpoints.
+func (s *Server) writeTeamRepoCheck(w http.ResponseWriter, r *http.Request, orgLogin string, team *Team) {
 	owner, name := r.PathValue("owner"), r.PathValue("repo")
 	fullName := owner + "/" + name
 	if _, linked := s.store.GetTeamRepoPermission(orgLogin, team.Slug, fullName); !linked {

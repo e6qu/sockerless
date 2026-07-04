@@ -3,6 +3,7 @@ package bleephub
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -211,18 +212,25 @@ func TestListAuthUserOrgs(t *testing.T) {
 		"login": "testorg-list",
 	})
 
-	resp := ghGet(t, "/api/v3/user/orgs", defaultToken)
-	if resp.StatusCode != 200 {
-		resp.Body.Close()
-		t.Fatalf("expected 200, got %d", resp.StatusCode)
-	}
-
-	orgs := decodeJSONArray(t, resp)
+	// Walk the pages the way a real client does: the shared test server
+	// accumulates admin-owned organizations from every test, so the
+	// created one may sit past the first page.
 	found := false
-	for _, o := range orgs {
-		if o["login"] == "testorg-list" {
-			found = true
+	for page := 1; !found; page++ {
+		resp := ghGet(t, fmt.Sprintf("/api/v3/user/orgs?per_page=100&page=%d", page), defaultToken)
+		if resp.StatusCode != 200 {
+			resp.Body.Close()
+			t.Fatalf("expected 200, got %d", resp.StatusCode)
+		}
+		orgs := decodeJSONArray(t, resp)
+		if len(orgs) == 0 {
 			break
+		}
+		for _, o := range orgs {
+			if o["login"] == "testorg-list" {
+				found = true
+				break
+			}
 		}
 	}
 	if !found {

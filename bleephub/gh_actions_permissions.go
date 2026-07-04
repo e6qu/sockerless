@@ -28,6 +28,34 @@ type OrgActionsPermissions struct {
 	WorkflowPermissions     *WorkflowPermissions
 	CacheRetentionLimitDays int
 	CacheStorageLimitBytes  int64
+	// ArtifactAndLogRetentionDays is the org-wide artifact/log retention
+	// setting (GET/PUT /orgs/{org}/actions/permissions/artifact-and-log-retention).
+	ArtifactAndLogRetentionDays int
+	// ForkPRApprovalPolicy controls when fork PR workflows require
+	// maintainer approval (actions-fork-pr-contributor-approval enum).
+	ForkPRApprovalPolicy string
+	// ForkPRWorkflowsPrivateRepos holds the org's fork-PR-workflow policy
+	// for private repositories (four booleans).
+	ForkPRWorkflowsPrivateRepos *ForkPRWorkflowsPrivateRepos
+	// SelfHostedRunnersEnabledRepositories is the org policy controlling
+	// which repositories may use repository-level self-hosted runners
+	// (all | selected | none) with its selected repository ids.
+	SelfHostedRunnersEnabledRepositories string
+	SelfHostedRunnersSelectedRepoIDs     []int
+	// MaxCacheRetentionDays / MaxCacheSizeGB back the
+	// /organizations/{org}/actions/cache/{retention,storage}-limit
+	// policy endpoints.
+	MaxCacheRetentionDays int
+	MaxCacheSizeGB        int
+}
+
+// ForkPRWorkflowsPrivateRepos is the actions-fork-pr-workflows-private-repos
+// settings shape.
+type ForkPRWorkflowsPrivateRepos struct {
+	RunWorkflowsFromForkPullRequests  bool `json:"run_workflows_from_fork_pull_requests"`
+	SendWriteTokensToWorkflows        bool `json:"send_write_tokens_to_workflows"`
+	SendSecretsAndVariables           bool `json:"send_secrets_and_variables"`
+	RequireApprovalForForkPRWorkflows bool `json:"require_approval_for_fork_pr_workflows"`
 }
 
 // RepoActionsPermissions models the repository-level Actions settings.
@@ -61,13 +89,22 @@ type WorkflowPermissions struct {
 // defaultOrgActionsPermissions returns the GitHub-default org settings.
 func defaultOrgActionsPermissions() *OrgActionsPermissions {
 	return &OrgActionsPermissions{
-		EnabledRepositories:     "all",
-		AllowedActions:          "all",
-		SelectedRepositoryIDs:   []int{},
-		CacheRetentionLimitDays: 90,
-		CacheStorageLimitBytes:  0,
+		EnabledRepositories:                  "all",
+		AllowedActions:                       "all",
+		SelectedRepositoryIDs:                []int{},
+		CacheRetentionLimitDays:              90,
+		CacheStorageLimitBytes:               0,
+		ArtifactAndLogRetentionDays:          90,
+		ForkPRApprovalPolicy:                 "first_time_contributors",
+		SelfHostedRunnersEnabledRepositories: "all",
+		MaxCacheRetentionDays:                90,
+		MaxCacheSizeGB:                       10,
 	}
 }
+
+// orgArtifactAndLogRetentionMaxDays is the maximum artifact/log
+// retention GitHub allows an organization to configure.
+const orgArtifactAndLogRetentionMaxDays = 400
 
 // defaultRepoActionsPermissions returns the GitHub-default repo settings.
 func defaultRepoActionsPermissions() *RepoActionsPermissions {
@@ -88,6 +125,23 @@ func (st *Store) getOrgActionsPermissionsLocked(orgLogin string) *OrgActionsPerm
 		st.OrgActionsPermissions = map[string]*OrgActionsPermissions{}
 	}
 	if p, ok := st.OrgActionsPermissions[orgLogin]; ok && p != nil {
+		// Materialize defaults for settings whose zero value is not a
+		// valid configuration (enum-shaped policies and limits).
+		if p.ArtifactAndLogRetentionDays == 0 {
+			p.ArtifactAndLogRetentionDays = 90
+		}
+		if p.ForkPRApprovalPolicy == "" {
+			p.ForkPRApprovalPolicy = "first_time_contributors"
+		}
+		if p.SelfHostedRunnersEnabledRepositories == "" {
+			p.SelfHostedRunnersEnabledRepositories = "all"
+		}
+		if p.MaxCacheRetentionDays == 0 {
+			p.MaxCacheRetentionDays = 90
+		}
+		if p.MaxCacheSizeGB == 0 {
+			p.MaxCacheSizeGB = 10
+		}
 		return p
 	}
 	p := defaultOrgActionsPermissions()
@@ -323,6 +377,45 @@ func (s *Server) registerGHActionsPermissionsRoutes() {
 		s.requirePerm(scopeAdministration, permRead, s.orgGated(s.handleGetOrgCacheStorageLimit)))
 	s.route("PUT /api/v3/orgs/{org}/actions/cache/storage-limit",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleSetOrgCacheStorageLimit)))
+	s.route("GET /api/v3/orgs/{org}/actions/permissions/artifact-and-log-retention",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgArtifactAndLogRetention)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/artifact-and-log-retention",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgArtifactAndLogRetention)))
+	s.route("GET /api/v3/orgs/{org}/actions/permissions/fork-pr-contributor-approval",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgForkPRContributorApproval)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/fork-pr-contributor-approval",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgForkPRContributorApproval)))
+	s.route("GET /api/v3/orgs/{org}/actions/permissions/fork-pr-workflows-private-repos",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgForkPRWorkflowsPrivateRepos)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/fork-pr-workflows-private-repos",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgForkPRWorkflowsPrivateRepos)))
+	s.route("GET /api/v3/orgs/{org}/actions/permissions/self-hosted-runners",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgSelfHostedRunnersSettings)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/self-hosted-runners",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgSelfHostedRunnersSettings)))
+	s.route("GET /api/v3/orgs/{org}/actions/permissions/self-hosted-runners/repositories",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleListOrgSelfHostedRunnerRepos)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/self-hosted-runners/repositories",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgSelfHostedRunnerRepos)))
+	s.route("PUT /api/v3/orgs/{org}/actions/permissions/self-hosted-runners/repositories/{repository_id}",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleAddOrgSelfHostedRunnerRepo)))
+	s.route("DELETE /api/v3/orgs/{org}/actions/permissions/self-hosted-runners/repositories/{repository_id}",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleRemoveOrgSelfHostedRunnerRepo)))
+	s.route("GET /api/v3/orgs/{org}/actions/cache/usage",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleOrgCacheUsage)))
+	s.route("GET /api/v3/orgs/{org}/actions/cache/usage-by-repository",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleOrgCacheUsageByRepository)))
+
+	// Org cache policy limits at the /organizations/{org} path (the
+	// dotcom REST description's path for these settings).
+	s.route("GET /api/v3/organizations/{org}/actions/cache/retention-limit",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgMaxCacheRetention)))
+	s.route("PUT /api/v3/organizations/{org}/actions/cache/retention-limit",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgMaxCacheRetention)))
+	s.route("GET /api/v3/organizations/{org}/actions/cache/storage-limit",
+		s.requirePerm(scopeOrgAdministration, permRead, s.orgGated(s.handleGetOrgMaxCacheSize)))
+	s.route("PUT /api/v3/organizations/{org}/actions/cache/storage-limit",
+		s.requirePerm(scopeOrgAdministration, permWrite, s.orgGated(s.handleSetOrgMaxCacheSize)))
 
 	// Repo permissions.
 	s.route("GET /api/v3/repos/{owner}/{repo}/actions/permissions",
@@ -379,6 +472,14 @@ func (s *Server) registerGHActionsPermissionsRoutes() {
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleSetRunnerLabels)))
 	s.route("DELETE /api/v3/orgs/{org}/actions/runners/{runner_id}/labels",
 		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleRemoveAllRunnerLabels)))
+	s.route("POST /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}/labels",
+		s.requirePerm(scopeAdministration, permWrite, s.handleAddRunnerLabels))
+	s.route("POST /api/v3/orgs/{org}/actions/runners/{runner_id}/labels",
+		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleAddRunnerLabels)))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/actions/runners/{runner_id}/labels/{name}",
+		s.requirePerm(scopeAdministration, permWrite, s.handleRemoveRunnerLabel))
+	s.route("DELETE /api/v3/orgs/{org}/actions/runners/{runner_id}/labels/{name}",
+		s.requirePerm(scopeAdministration, permWrite, s.orgGated(s.handleRemoveRunnerLabel)))
 }
 
 // --- Org permissions handlers ---
@@ -555,6 +656,345 @@ func (s *Server) handleSetOrgCacheStorageLimit(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, map[string]int64{
 		"storage_limit_in_bytes": p.CacheStorageLimitBytes,
 	})
+}
+
+// --- Org permissions extras ---
+
+func (s *Server) handleGetOrgArtifactAndLogRetention(w http.ResponseWriter, r *http.Request) {
+	p := s.store.GetOrgActionsPermissions(r.PathValue("org"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"days":                 p.ArtifactAndLogRetentionDays,
+		"maximum_allowed_days": orgArtifactAndLogRetentionMaxDays,
+	})
+}
+
+func (s *Server) handleSetOrgArtifactAndLogRetention(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Days *int `json:"days"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.Days == nil || *req.Days < 1 || *req.Days > orgArtifactAndLogRetentionMaxDays {
+		writeGHValidationError(w, "ActionsArtifactAndLogRetention", "days", "invalid")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.ArtifactAndLogRetentionDays = *req.Days
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// forkPRApprovalPolicies are the actions-fork-pr-contributor-approval
+// approval_policy enum values.
+var forkPRApprovalPolicies = map[string]bool{
+	"first_time_contributors_new_to_github": true,
+	"first_time_contributors":               true,
+	"all_external_contributors":             true,
+}
+
+func (s *Server) handleGetOrgForkPRContributorApproval(w http.ResponseWriter, r *http.Request) {
+	p := s.store.GetOrgActionsPermissions(r.PathValue("org"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"approval_policy": p.ForkPRApprovalPolicy,
+	})
+}
+
+func (s *Server) handleSetOrgForkPRContributorApproval(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		ApprovalPolicy string `json:"approval_policy"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if !forkPRApprovalPolicies[req.ApprovalPolicy] {
+		writeGHValidationError(w, "ActionsForkPRContributorApproval", "approval_policy", "invalid")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.ForkPRApprovalPolicy = req.ApprovalPolicy
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetOrgForkPRWorkflowsPrivateRepos(w http.ResponseWriter, r *http.Request) {
+	p := s.store.GetOrgActionsPermissions(r.PathValue("org"))
+	settings := p.ForkPRWorkflowsPrivateRepos
+	if settings == nil {
+		settings = &ForkPRWorkflowsPrivateRepos{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"run_workflows_from_fork_pull_requests":  settings.RunWorkflowsFromForkPullRequests,
+		"send_write_tokens_to_workflows":         settings.SendWriteTokensToWorkflows,
+		"send_secrets_and_variables":             settings.SendSecretsAndVariables,
+		"require_approval_for_fork_pr_workflows": settings.RequireApprovalForForkPRWorkflows,
+	})
+}
+
+func (s *Server) handleSetOrgForkPRWorkflowsPrivateRepos(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RunWorkflowsFromForkPullRequests  *bool `json:"run_workflows_from_fork_pull_requests"`
+		SendWriteTokensToWorkflows        *bool `json:"send_write_tokens_to_workflows"`
+		SendSecretsAndVariables           *bool `json:"send_secrets_and_variables"`
+		RequireApprovalForForkPRWorkflows *bool `json:"require_approval_for_fork_pr_workflows"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.RunWorkflowsFromForkPullRequests == nil {
+		writeGHValidationError(w, "ActionsForkPRWorkflowsPrivateRepos", "run_workflows_from_fork_pull_requests", "missing_field")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	settings := p.ForkPRWorkflowsPrivateRepos
+	if settings == nil {
+		settings = &ForkPRWorkflowsPrivateRepos{}
+		p.ForkPRWorkflowsPrivateRepos = settings
+	}
+	settings.RunWorkflowsFromForkPullRequests = *req.RunWorkflowsFromForkPullRequests
+	if req.SendWriteTokensToWorkflows != nil {
+		settings.SendWriteTokensToWorkflows = *req.SendWriteTokensToWorkflows
+	}
+	if req.SendSecretsAndVariables != nil {
+		settings.SendSecretsAndVariables = *req.SendSecretsAndVariables
+	}
+	if req.RequireApprovalForForkPRWorkflows != nil {
+		settings.RequireApprovalForForkPRWorkflows = *req.RequireApprovalForForkPRWorkflows
+	}
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetOrgSelfHostedRunnersSettings(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	out := map[string]any{
+		"enabled_repositories": p.SelfHostedRunnersEnabledRepositories,
+	}
+	if p.SelfHostedRunnersEnabledRepositories == "selected" {
+		out["selected_repositories_url"] = fmt.Sprintf(
+			"%s/api/v3/orgs/%s/actions/permissions/self-hosted-runners/repositories", s.baseURL(r), org)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleSetOrgSelfHostedRunnersSettings(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		EnabledRepositories string `json:"enabled_repositories"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	switch req.EnabledRepositories {
+	case "all", "selected", "none":
+	default:
+		writeGHValidationError(w, "SelfHostedRunnersSettings", "enabled_repositories", "invalid")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.SelfHostedRunnersEnabledRepositories = req.EnabledRepositories
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleListOrgSelfHostedRunnerRepos(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	base := s.baseURL(r)
+	repos := make([]map[string]any, 0, len(p.SelfHostedRunnersSelectedRepoIDs))
+	for _, id := range p.SelfHostedRunnersSelectedRepoIDs {
+		s.store.mu.RLock()
+		repo := s.store.Repos[id]
+		s.store.mu.RUnlock()
+		if repo != nil {
+			repos = append(repos, repoToJSON(repo, s.store, base))
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_count":  len(repos),
+		"repositories": repos,
+	})
+}
+
+func (s *Server) handleSetOrgSelfHostedRunnerRepos(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SelectedRepositoryIDs []int `json:"selected_repository_ids"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.SelectedRepositoryIDs == nil {
+		writeGHValidationError(w, "SelfHostedRunnersSettings", "selected_repository_ids", "missing_field")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.SelfHostedRunnersSelectedRepoIDs = req.SelectedRepositoryIDs
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAddOrgSelfHostedRunnerRepo(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("org")
+	repoID, err := strconv.Atoi(r.PathValue("repository_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.mu.RLock()
+	exists := s.store.Repos[repoID] != nil
+	s.store.mu.RUnlock()
+	if !exists {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	p := s.store.GetOrgActionsPermissions(org)
+	for _, id := range p.SelfHostedRunnersSelectedRepoIDs {
+		if id == repoID {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+	p.SelfHostedRunnersSelectedRepoIDs = append(p.SelfHostedRunnersSelectedRepoIDs, repoID)
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleRemoveOrgSelfHostedRunnerRepo(w http.ResponseWriter, r *http.Request) {
+	org := r.PathValue("org")
+	repoID, err := strconv.Atoi(r.PathValue("repository_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	p := s.store.GetOrgActionsPermissions(org)
+	kept := p.SelfHostedRunnersSelectedRepoIDs[:0]
+	for _, id := range p.SelfHostedRunnersSelectedRepoIDs {
+		if id != repoID {
+			kept = append(kept, id)
+		}
+	}
+	p.SelfHostedRunnersSelectedRepoIDs = kept
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- Org cache usage + policy limits ---
+
+// orgCacheUsageByRepo aggregates the finalized Actions cache entries of
+// every repository owned by the org: repo full name → (count, bytes),
+// plus the sorted repo names for stable listing.
+func (s *Server) orgCacheUsageByRepo(org string) (map[string]struct {
+	Count int
+	Bytes int64
+}, []string) {
+	usage := map[string]struct {
+		Count int
+		Bytes int64
+	}{}
+	prefix := strings.ToLower(org) + "/"
+	s.artifactStore.mu.RLock()
+	for _, entry := range s.artifactStore.caches {
+		if !entry.Finalized || !strings.HasPrefix(strings.ToLower(entry.Repo), prefix) {
+			continue
+		}
+		u := usage[entry.Repo]
+		u.Count++
+		u.Bytes += entry.Size
+		usage[entry.Repo] = u
+	}
+	s.artifactStore.mu.RUnlock()
+	names := make([]string, 0, len(usage))
+	for name := range usage {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return usage, names
+}
+
+func (s *Server) handleOrgCacheUsage(w http.ResponseWriter, r *http.Request) {
+	usage, names := s.orgCacheUsageByRepo(r.PathValue("org"))
+	count := 0
+	var bytes int64
+	for _, name := range names {
+		count += usage[name].Count
+		bytes += usage[name].Bytes
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_active_caches_count":         count,
+		"total_active_caches_size_in_bytes": bytes,
+	})
+}
+
+func (s *Server) handleOrgCacheUsageByRepository(w http.ResponseWriter, r *http.Request) {
+	usage, names := s.orgCacheUsageByRepo(r.PathValue("org"))
+	page := paginateAndLink(w, r, names)
+	out := make([]map[string]any, 0, len(page))
+	for _, name := range page {
+		out = append(out, map[string]any{
+			"full_name":                   name,
+			"active_caches_size_in_bytes": usage[name].Bytes,
+			"active_caches_count":         usage[name].Count,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"total_count":             len(names),
+		"repository_cache_usages": out,
+	})
+}
+
+func (s *Server) handleGetOrgMaxCacheRetention(w http.ResponseWriter, r *http.Request) {
+	p := s.store.GetOrgActionsPermissions(r.PathValue("org"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"max_cache_retention_days": p.MaxCacheRetentionDays,
+	})
+}
+
+func (s *Server) handleSetOrgMaxCacheRetention(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxCacheRetentionDays *int `json:"max_cache_retention_days"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.MaxCacheRetentionDays == nil || *req.MaxCacheRetentionDays < 1 {
+		writeGHError(w, http.StatusBadRequest, "max_cache_retention_days must be a positive integer")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.MaxCacheRetentionDays = *req.MaxCacheRetentionDays
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleGetOrgMaxCacheSize(w http.ResponseWriter, r *http.Request) {
+	p := s.store.GetOrgActionsPermissions(r.PathValue("org"))
+	writeJSON(w, http.StatusOK, map[string]any{
+		"max_cache_size_gb": p.MaxCacheSizeGB,
+	})
+}
+
+func (s *Server) handleSetOrgMaxCacheSize(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		MaxCacheSizeGB *int `json:"max_cache_size_gb"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.MaxCacheSizeGB == nil || *req.MaxCacheSizeGB < 1 {
+		writeGHError(w, http.StatusBadRequest, "max_cache_size_gb must be a positive integer")
+		return
+	}
+	org := r.PathValue("org")
+	p := s.store.GetOrgActionsPermissions(org)
+	p.MaxCacheSizeGB = *req.MaxCacheSizeGB
+	s.store.SetOrgActionsPermissions(org, p)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // --- Repo permissions handlers ---
@@ -867,6 +1307,85 @@ func (s *Server) handleRemoveAllRunnerLabels(w http.ResponseWriter, r *http.Requ
 	s.store.mu.Unlock()
 	if a == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, runnerLabelsJSON(a.Labels))
+}
+
+// handleAddRunnerLabels — POST .../actions/runners/{runner_id}/labels
+// (repo + org scope): appends custom labels to the runner, returning
+// the full label set.
+func (s *Server) handleAddRunnerLabels(w http.ResponseWriter, r *http.Request) {
+	if org := r.PathValue("org"); org != "" && s.store.GetOrg(org) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("runner_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	var req struct {
+		Labels []string `json:"labels"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if len(req.Labels) == 0 {
+		writeGHValidationError(w, "RunnerLabel", "labels", "missing_field")
+		return
+	}
+	s.store.mu.Lock()
+	a := s.store.Agents[id]
+	if a != nil {
+		a.AddLabels(req.Labels)
+	}
+	s.store.mu.Unlock()
+	if a == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, runnerLabelsJSON(a.Labels))
+}
+
+// handleRemoveRunnerLabel — DELETE .../actions/runners/{runner_id}/labels/{name}
+// (repo + org scope): removes one custom label. Read-only (system)
+// labels cannot be removed (422); an absent label is 404.
+func (s *Server) handleRemoveRunnerLabel(w http.ResponseWriter, r *http.Request) {
+	if org := r.PathValue("org"); org != "" && s.store.GetOrg(org) == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	id, err := strconv.Atoi(r.PathValue("runner_id"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	name := r.PathValue("name")
+	s.store.mu.Lock()
+	a := s.store.Agents[id]
+	found := false
+	readOnly := false
+	if a != nil {
+		for _, l := range a.Labels {
+			if l.Name == name {
+				found = true
+				readOnly = l.Type == "system"
+				break
+			}
+		}
+		if found && !readOnly {
+			a.RemoveLabels([]string{name})
+		}
+	}
+	s.store.mu.Unlock()
+	if a == nil || !found {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if readOnly {
+		writeGHError(w, http.StatusUnprocessableEntity,
+			fmt.Sprintf("Label %q is a read-only label and cannot be removed", name))
 		return
 	}
 	writeJSON(w, http.StatusOK, runnerLabelsJSON(a.Labels))

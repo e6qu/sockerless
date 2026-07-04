@@ -20,6 +20,9 @@ func (s *Server) registerGHSearchRoutes() {
 	s.route("GET /api/v3/search/repositories", s.handleSearchRepositories)
 	s.route("GET /api/v3/search/code", s.handleSearchCode)
 	s.route("GET /api/v3/search/users", s.handleSearchUsers)
+	s.route("GET /api/v3/search/commits", s.handleSearchCommits)
+	s.route("GET /api/v3/search/labels", s.handleSearchLabels)
+	s.route("GET /api/v3/search/topics", s.handleSearchTopics)
 }
 
 // searchQuery holds the parsed pieces of a GitHub search query.
@@ -45,6 +48,8 @@ type searchQuery struct {
 	Extension string
 	Filename  string
 	Type      string // user search type: user/org
+	Author    string // commit search: author qualifier
+	Hash      string // commit search: hash qualifier
 }
 
 func parseSearchQuery(r *http.Request) searchQuery {
@@ -133,6 +138,10 @@ func parseSearchQuery(r *http.Request) searchQuery {
 				q.Filename = val
 			case "type":
 				q.Type = strings.ToLower(val)
+			case "author":
+				q.Author = val
+			case "hash":
+				q.Hash = val
 			}
 			continue
 		}
@@ -625,6 +634,8 @@ func (s *Server) handleSearchUsers(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		item := s.fullUserJSON(u)
+		// user-search-result-item carries no twitter_username member.
+		delete(item, "twitter_username")
 		item["score"] = 1.0
 		results = append(results, item)
 	}
@@ -799,4 +810,310 @@ func sortUserSearchResults(items []map[string]interface{}, sortKey, order string
 		})
 	}
 	return items
+}
+
+// handleSearchCommits implements GET /search/commits: a real search across
+// the git commit history of every repository the caller can read, matching
+// query terms against commit messages with repo:/user:/org:/author:/hash:
+// qualifiers.
+func (s *Server) handleSearchCommits(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	q := parseSearchQuery(r)
+
+	if len(q.Terms) == 0 && q.Repo == "" && q.Author == "" && q.Hash == "" && q.User == "" && q.Org == "" {
+		writeGHValidationError(w, "Search", "q", "missing_field")
+		return
+	}
+
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+
+	base := s.baseURL(r)
+	var results []map[string]interface{}
+
+	for _, repo := range s.store.Repos {
+		if !canReadRepo(s.store, user, repo) {
+			continue
+		}
+		if q.Repo != "" && !strings.EqualFold(repo.FullName, q.Repo) {
+			continue
+		}
+		if q.User != "" || q.Org != "" {
+			owner, _, _ := strings.Cut(repo.FullName, "/")
+			if q.User != "" && !strings.EqualFold(owner, q.User) {
+				continue
+			}
+			if q.Org != "" && (repo.OwnerType != "Organization" || !strings.EqualFold(owner, q.Org)) {
+				continue
+			}
+		}
+
+		stor, ok := s.store.GitStorages[repo.FullName]
+		if !ok {
+			continue
+		}
+		gr, err := git.Open(stor, nil)
+		if err != nil {
+			continue
+		}
+		head, err := gr.Head()
+		if err != nil {
+			continue
+		}
+		iter, err := gr.Log(&git.LogOptions{From: head.Hash()})
+		if err != nil {
+			continue
+		}
+		err = iter.ForEach(func(commit *object.Commit) error {
+			if !q.matchesText(commit.Message) {
+				return nil
+			}
+			sha := commit.Hash.String()
+			if q.Hash != "" && !strings.HasPrefix(sha, q.Hash) {
+				return nil
+			}
+			if q.Author != "" && !commitAuthorMatches(s.store, commit, q.Author) {
+				return nil
+			}
+			results = append(results, s.commitSearchItemJSON(commit, repo, base))
+			if len(results) >= 1000 {
+				return fmt.Errorf("result limit")
+			}
+			return nil
+		})
+		if err != nil && err.Error() != "result limit" {
+			s.logger.Debug().Err(err).Str("repo", repo.FullName).Msg("commit search log walk")
+		}
+	}
+
+	sortCommitSearchResults(results, q.Sort, q.Order)
+	writeJSON(w, http.StatusOK, searchEnvelope("", results, q.Page, q.PerPage))
+}
+
+// commitAuthorMatches matches the author: qualifier against the commit's
+// git author name/email and against the login of a store user with the
+// commit author's email. Callers hold the store read lock.
+func commitAuthorMatches(st *Store, commit *object.Commit, author string) bool {
+	if strings.EqualFold(commit.Author.Name, author) {
+		return true
+	}
+	if strings.EqualFold(commit.Author.Email, author) {
+		return true
+	}
+	for _, u := range st.Users {
+		if strings.EqualFold(u.Login, author) && strings.EqualFold(u.Email, commit.Author.Email) {
+			return true
+		}
+	}
+	return false
+}
+
+// commitSearchItemJSON renders the spec `commit-search-result-item` shape.
+// Callers hold the store read lock.
+func (s *Server) commitSearchItemJSON(commit *object.Commit, repo *Repo, base string) map[string]interface{} {
+	sha := commit.Hash.String()
+	api := base + "/api/v3/repos/" + repo.FullName
+
+	// The top-level author is the GitHub account behind the commit author
+	// email (null when the email matches no account).
+	var authorJSON interface{}
+	for _, u := range s.store.Users {
+		if u.Email != "" && strings.EqualFold(u.Email, commit.Author.Email) {
+			authorJSON = userToJSON(u)
+			break
+		}
+	}
+
+	parents := make([]map[string]interface{}, 0, len(commit.ParentHashes))
+	for _, p := range commit.ParentHashes {
+		parents = append(parents, map[string]interface{}{
+			"sha":      p.String(),
+			"url":      api + "/commits/" + p.String(),
+			"html_url": base + "/" + repo.FullName + "/commit/" + p.String(),
+		})
+	}
+
+	return map[string]interface{}{
+		"sha":          sha,
+		"node_id":      "C_" + sha[:16],
+		"url":          api + "/commits/" + sha,
+		"html_url":     base + "/" + repo.FullName + "/commit/" + sha,
+		"comments_url": api + "/commits/" + sha + "/comments",
+		"commit": map[string]interface{}{
+			"author": map[string]interface{}{
+				"name":  commit.Author.Name,
+				"email": commit.Author.Email,
+				"date":  commit.Author.When.UTC().Format(time.RFC3339),
+			},
+			"committer": map[string]interface{}{
+				"name":  commit.Committer.Name,
+				"email": commit.Committer.Email,
+				"date":  commit.Committer.When.UTC().Format(time.RFC3339),
+			},
+			"comment_count": 0,
+			"message":       strings.TrimRight(commit.Message, "\n"),
+			"tree": map[string]interface{}{
+				"sha": commit.TreeHash.String(),
+				"url": api + "/git/trees/" + commit.TreeHash.String(),
+			},
+			"url": api + "/git/commits/" + sha,
+		},
+		"author": authorJSON,
+		"committer": map[string]interface{}{
+			"name":  commit.Committer.Name,
+			"email": commit.Committer.Email,
+			"date":  commit.Committer.When.UTC().Format(time.RFC3339),
+		},
+		"parents":    parents,
+		"repository": repoToJSON(repo, s.store, base),
+		"score":      1.0,
+	}
+}
+
+// sortCommitSearchResults orders commit results for the documented sort
+// keys (author-date, committer-date); default is best-match order.
+func sortCommitSearchResults(items []map[string]interface{}, sortKey, order string) {
+	if sortKey != "author-date" && sortKey != "committer-date" {
+		return
+	}
+	role := "author"
+	if sortKey == "committer-date" {
+		role = "committer"
+	}
+	dateOf := func(item map[string]interface{}) string {
+		commit, _ := item["commit"].(map[string]interface{})
+		gitUser, _ := commit[role].(map[string]interface{})
+		d, _ := gitUser["date"].(string)
+		return d
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if order == "asc" {
+			return dateOf(items[i]) < dateOf(items[j])
+		}
+		return dateOf(items[i]) > dateOf(items[j])
+	})
+}
+
+// handleSearchLabels implements GET /search/labels: a real search over the
+// labels of the repository named by the required repository_id parameter.
+func (s *Server) handleSearchLabels(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	repoIDStr := r.URL.Query().Get("repository_id")
+	if repoIDStr == "" {
+		writeGHValidationError(w, "Search", "repository_id", "missing_field")
+		return
+	}
+	if r.URL.Query().Get("q") == "" {
+		writeGHValidationError(w, "Search", "q", "missing_field")
+		return
+	}
+	repoID, err := strconv.Atoi(repoIDStr)
+	if err != nil {
+		writeGHValidationError(w, "Search", "repository_id", "invalid")
+		return
+	}
+	repo := s.store.GetRepoByID(repoID)
+	if repo == nil || !canReadRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	q := parseSearchQuery(r)
+
+	s.store.mu.RLock()
+	labels := make([]*IssueLabel, 0)
+	for _, l := range s.store.Labels {
+		if l.RepoID != repo.ID {
+			continue
+		}
+		if !q.matchesText(l.Name + " " + l.Description) {
+			continue
+		}
+		labels = append(labels, l)
+	}
+	s.store.mu.RUnlock()
+	sort.Slice(labels, func(i, j int) bool { return labels[i].ID < labels[j].ID })
+
+	base := s.baseURL(r)
+	items := make([]map[string]interface{}, 0, len(labels))
+	for _, l := range labels {
+		items = append(items, map[string]interface{}{
+			"id":          l.ID,
+			"node_id":     l.NodeID,
+			"url":         base + "/api/v3/repos/" + repo.FullName + "/labels/" + l.Name,
+			"name":        l.Name,
+			"color":       l.Color,
+			"default":     l.Default,
+			"description": nullOrString(l.Description),
+			"score":       1.0,
+		})
+	}
+	writeJSON(w, http.StatusOK, searchEnvelope("", items, q.Page, q.PerPage))
+}
+
+// handleSearchTopics implements GET /search/topics: a real search over the
+// topics applied to repositories the caller can read.
+func (s *Server) handleSearchTopics(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if r.URL.Query().Get("q") == "" {
+		writeGHValidationError(w, "Search", "q", "missing_field")
+		return
+	}
+	q := parseSearchQuery(r)
+
+	type topicAgg struct {
+		name      string
+		count     int
+		createdAt time.Time
+		updatedAt time.Time
+	}
+	s.store.mu.RLock()
+	agg := map[string]*topicAgg{}
+	for _, repo := range s.store.Repos {
+		if !canReadRepo(s.store, user, repo) {
+			continue
+		}
+		for _, topic := range repo.Topics {
+			if !q.matchesText(topic) {
+				continue
+			}
+			t := agg[topic]
+			if t == nil {
+				t = &topicAgg{name: topic, createdAt: repo.CreatedAt, updatedAt: repo.UpdatedAt}
+				agg[topic] = t
+			}
+			t.count++
+			if repo.CreatedAt.Before(t.createdAt) {
+				t.createdAt = repo.CreatedAt
+			}
+			if repo.UpdatedAt.After(t.updatedAt) {
+				t.updatedAt = repo.UpdatedAt
+			}
+		}
+	}
+	s.store.mu.RUnlock()
+
+	topics := make([]*topicAgg, 0, len(agg))
+	for _, t := range agg {
+		topics = append(topics, t)
+	}
+	sort.Slice(topics, func(i, j int) bool { return topics[i].name < topics[j].name })
+
+	items := make([]map[string]interface{}, 0, len(topics))
+	for _, t := range topics {
+		items = append(items, map[string]interface{}{
+			"name":              t.name,
+			"display_name":      nil,
+			"short_description": nil,
+			"description":       nil,
+			"created_by":        nil,
+			"released":          nil,
+			"created_at":        t.createdAt.UTC().Format(time.RFC3339),
+			"updated_at":        t.updatedAt.UTC().Format(time.RFC3339),
+			"featured":          false,
+			"curated":           false,
+			"score":             1.0,
+			"repository_count":  t.count,
+		})
+	}
+	writeJSON(w, http.StatusOK, searchEnvelope("", items, q.Page, q.PerPage))
 }

@@ -752,12 +752,14 @@ func TestPersistenceReload_ProjectV2OptionSeed(t *testing.T) {
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
-		proj := st.ProjectsV2.CreateProject(user.ID, "User", "Roadmap")
+		proj := st.ProjectsV2.CreateProject(user.ID, "User", "Roadmap", user.ID)
 		projID = proj.ID
-		st.ProjectsV2.CreateField(proj.ID, "Status", ProjectV2FieldSingleSelect, []string{"Todo", "Done"})
+		st.ProjectsV2.CreateField(proj.ID, "Status", ProjectV2FieldSingleSelect,
+			[]*ProjectV2SingleSelectOption{{Name: "Todo"}, {Name: "Done"}}, nil)
 	})
 
-	f2 := st2.ProjectsV2.CreateField(projID, "Priority", ProjectV2FieldSingleSelect, []string{"High"})
+	f2 := st2.ProjectsV2.CreateField(projID, "Priority", ProjectV2FieldSingleSelect,
+		[]*ProjectV2SingleSelectOption{{Name: "High"}}, nil)
 	if f2 == nil {
 		t.Fatal("CreateField after reload failed")
 	}
@@ -864,5 +866,113 @@ func TestPersistenceReload_OrgProfileMembershipFlagsAndOrgHooks(t *testing.T) {
 	}
 	if st2.NextHookID <= hookID {
 		t.Errorf("NextHookID after reload = %d, want > %d", st2.NextHookID, hookID)
+	}
+}
+
+// Codespaces and codespace secrets survive a restart; the reloaded
+// codespace reports the real Docker container state.
+func TestPersistenceReload_CodespacesAndSecrets(t *testing.T) {
+	var (
+		cs        *Codespace
+		userScope string
+		orgScope  = codespaceSecretScopeKey("org", "cs-reload-org")
+		repoID    int
+	)
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		userScope = codespaceSecretScopeKey("user", user.Login)
+		repo := st.CreateRepo(user, "cs-reload-repo", "", false)
+		if repo == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		repoID = repo.ID
+		stor := st.GitStorages[repo.FullName]
+		if _, err := initRepoWithFiles(stor, repo.DefaultBranch, "init", map[string]string{
+			".devcontainer/devcontainer.json": `{"image":"` + codespaceTestImage + `"}`,
+		}, repoSignature("admin", "admin@bleephub.local")); err != nil {
+			t.Fatalf("init repo files: %v", err)
+		}
+		var err error
+		cs, err = st.CreateCodespace(user.Login, repo.FullName, "", "basicLinux32", "Reload Codespace")
+		if err != nil {
+			t.Fatalf("CreateCodespace: %v", err)
+		}
+		st.CreateCodespaceSecret(userScope, "RELOAD_TOKEN", "v1", "", nil)
+		st.CreateCodespaceSecret(orgScope, "ORG_TOKEN", "v2", "selected", []int{repo.ID})
+	})
+	t.Cleanup(func() { cleanupCodespaceContainer(t, cs.Name) })
+
+	got := st2.GetCodespace(cs.ID)
+	if got == nil {
+		t.Fatal("codespace did not persist")
+	}
+	if got.Name != cs.Name || got.OwnerLogin != "admin" || got.RepoKey != "admin/cs-reload-repo" {
+		t.Errorf("codespace identity did not round-trip: %+v", got)
+	}
+	if got.MachineName != "basicLinux32" || got.DisplayName != "Reload Codespace" || got.ContainerID != cs.ContainerID {
+		t.Errorf("codespace metadata did not round-trip: %+v", got)
+	}
+	if st2.GetCodespaceByName(cs.Name) != got {
+		t.Error("CodespacesByName index not rebuilt on reload")
+	}
+	if st2.NextCodespaceID <= cs.ID {
+		t.Errorf("NextCodespaceID after reload = %d, want > %d (counter must not restart)", st2.NextCodespaceID, cs.ID)
+	}
+
+	// The backing container survived the restart, so the codespace
+	// reports its real Docker state.
+	if state := st2.RefreshCodespaceState(cs.ID); state != "Available" {
+		t.Errorf("reloaded codespace state = %q, want Available (container still running)", state)
+	}
+	// Once the container is gone the codespace honestly reports the
+	// container-lost state instead of the stale persisted one.
+	ctx, cancel := contextWithTimeout(30 * time.Second)
+	err := dockerRemoveContainer(ctx, got.ContainerID)
+	cancel()
+	if err != nil {
+		t.Fatalf("remove container: %v", err)
+	}
+	if state := st2.RefreshCodespaceState(cs.ID); state != "Unavailable" {
+		t.Errorf("state after container removal = %q, want Unavailable", state)
+	}
+
+	if st2.GetCodespaceSecret(userScope, "RELOAD_TOKEN") == nil {
+		t.Fatal("user codespace secret did not persist")
+	}
+	orgSec := st2.GetCodespaceSecret(orgScope, "ORG_TOKEN")
+	if orgSec == nil {
+		t.Fatal("org codespace secret did not persist")
+	}
+	if orgSec.Visibility != "selected" || len(orgSec.SelectedRepoIDs) != 1 || orgSec.SelectedRepoIDs[0] != repoID {
+		t.Errorf("org secret visibility/selected repos did not round-trip: %+v", orgSec)
+	}
+}
+
+// Code scanning default setup configuration survives a restart.
+func TestPersistenceReload_CodeScanningDefaultSetup(t *testing.T) {
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "csds-reload", "", false)
+		if repo == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		st.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{
+			RepoKey:    repo.FullName,
+			State:      "configured",
+			QuerySuite: "extended",
+			Languages:  []string{"go"},
+		})
+	})
+	got := st2.GetCodeScanningDefaultSetup("admin/csds-reload")
+	if got == nil {
+		t.Fatal("code scanning default setup did not persist")
+	}
+	if got.State != "configured" || got.QuerySuite != "extended" || len(got.Languages) != 1 || got.Languages[0] != "go" {
+		t.Errorf("default setup did not round-trip: %+v", got)
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Error("default setup UpdatedAt did not persist")
 	}
 }

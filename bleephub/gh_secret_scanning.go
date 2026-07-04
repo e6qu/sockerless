@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 func (s *Server) registerGHSecretScanningRoutes() {
@@ -21,6 +22,16 @@ func (s *Server) registerGHSecretScanningRoutes() {
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningOrgAlerts))
 	s.route("GET /api/v3/orgs/{org}/secret-scanning/pattern-configurations",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningPatternConfigurations))
+	s.route("PATCH /api/v3/orgs/{org}/secret-scanning/pattern-configurations",
+		s.requireOrgAdmin(scopeSecurityEvents, permWrite, s.handleUpdateSecretScanningPatternConfigurations))
+
+	// Push protection bypasses + scan history
+	s.route("POST /api/v3/repos/{owner}/{repo}/secret-scanning/push-protection-bypasses", s.handleCreateSecretScanningPushProtectionBypass)
+	s.route("GET /api/v3/repos/{owner}/{repo}/secret-scanning/scan-history", s.handleGetSecretScanningScanHistory)
+
+	// Internal seeding endpoint: real GitHub mints a bypass placeholder when
+	// push protection blocks a push on the git plane.
+	s.route("POST /internal/repos/{owner}/{repo}/secret-scanning/push-protection-placeholders", s.handleSeedSecretScanningPushProtectionPlaceholder)
 }
 
 func (s *Server) handleListSecretScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -228,7 +239,178 @@ func (s *Server) handleListSecretScanningOrgAlerts(w http.ResponseWriter, r *htt
 }
 
 func (s *Server) handleListSecretScanningPatternConfigurations(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, s.store.ListSecretScanningPatternConfigurations())
+	writeJSON(w, http.StatusOK, s.store.ListSecretScanningPatternConfigurations(r.PathValue("org")))
+}
+
+func validPushProtectionSetting(setting string, allowNotSet bool) bool {
+	switch setting {
+	case "enabled", "disabled":
+		return true
+	case "not-set":
+		return allowNotSet
+	}
+	return false
+}
+
+func (s *Server) handleUpdateSecretScanningPatternConfigurations(w http.ResponseWriter, r *http.Request) {
+	orgLogin := r.PathValue("org")
+	var req struct {
+		PatternConfigVersion    *string `json:"pattern_config_version"`
+		ProviderPatternSettings []struct {
+			TokenType             string `json:"token_type"`
+			PushProtectionSetting string `json:"push_protection_setting"`
+		} `json:"provider_pattern_settings"`
+		CustomPatternSettings []struct {
+			TokenType             string  `json:"token_type"`
+			CustomPatternVersion  *string `json:"custom_pattern_version"`
+			PushProtectionSetting string  `json:"push_protection_setting"`
+		} `json:"custom_pattern_settings"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+
+	provider := map[string]string{}
+	for _, setting := range req.ProviderPatternSettings {
+		if !isSecretScanningProviderPattern(setting.TokenType) {
+			writeGHValidationError(w, "SecretScanningPatternConfiguration", "token_type", "invalid")
+			return
+		}
+		if !validPushProtectionSetting(setting.PushProtectionSetting, true) {
+			writeGHValidationError(w, "SecretScanningPatternConfiguration", "push_protection_setting", "invalid")
+			return
+		}
+		provider[setting.TokenType] = setting.PushProtectionSetting
+	}
+	custom := map[string]string{}
+	for _, setting := range req.CustomPatternSettings {
+		if setting.TokenType == "" {
+			writeGHValidationError(w, "SecretScanningPatternConfiguration", "token_type", "missing_field")
+			return
+		}
+		if !validPushProtectionSetting(setting.PushProtectionSetting, false) {
+			writeGHValidationError(w, "SecretScanningPatternConfiguration", "push_protection_setting", "invalid")
+			return
+		}
+		custom[setting.TokenType] = setting.PushProtectionSetting
+	}
+
+	newVersion, ok := s.store.UpdateSecretScanningPatternConfig(orgLogin, req.PatternConfigVersion, provider, custom)
+	if !ok {
+		writeGHError(w, http.StatusConflict, "pattern_config_version does not match the current configuration version")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"pattern_config_version": newVersion,
+	})
+}
+
+func (s *Server) handleCreateSecretScanningPushProtectionBypass(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if !canPushRepo(s.store, user, repo) {
+		writeGHError(w, http.StatusForbidden, "User does not have enough permissions to perform this action.")
+		return
+	}
+
+	var req struct {
+		Reason        string `json:"reason"`
+		PlaceholderID string `json:"placeholder_id"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	switch req.Reason {
+	case "false_positive", "used_in_tests", "will_fix_later":
+	default:
+		writeGHValidationError(w, "SecretScanningPushProtectionBypass", "reason", "invalid")
+		return
+	}
+	if req.PlaceholderID == "" {
+		writeGHValidationError(w, "SecretScanningPushProtectionBypass", "placeholder_id", "missing_field")
+		return
+	}
+
+	bypass := s.store.CreateSecretScanningPushProtectionBypass(repo.FullName, req.PlaceholderID, req.Reason)
+	if bypass == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"reason":     bypass.Reason,
+		"expire_at":  bypass.ExpireAt.UTC().Format(time.RFC3339),
+		"token_type": bypass.TokenType,
+	})
+}
+
+func secretScanningScanRecordsJSON(records []*SecretScanningScanRecord) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(records))
+	for _, rec := range records {
+		out = append(out, map[string]interface{}{
+			"type":         rec.Type,
+			"status":       rec.Status,
+			"started_at":   rec.StartedAt.UTC().Format(time.RFC3339),
+			"completed_at": rec.CompletedAt.UTC().Format(time.RFC3339),
+		})
+	}
+	return out
+}
+
+func (s *Server) handleGetSecretScanningScanHistory(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+	incremental, patternUpdate, backfill := s.store.SecretScanningScanHistory(repo)
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"incremental_scans":              secretScanningScanRecordsJSON(incremental),
+		"pattern_update_scans":           secretScanningScanRecordsJSON(patternUpdate),
+		"backfill_scans":                 secretScanningScanRecordsJSON(backfill),
+		"custom_pattern_backfill_scans":  []map[string]interface{}{},
+		"generic_secrets_backfill_scans": []map[string]interface{}{},
+	})
+}
+
+func (s *Server) handleSeedSecretScanningPushProtectionPlaceholder(w http.ResponseWriter, r *http.Request) {
+	user := s.internalTokenUser(r)
+	if user == nil {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
+		return
+	}
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	var req struct {
+		TokenType string `json:"token_type"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	if req.TokenType == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "token_type is required"})
+		return
+	}
+	ph := s.store.CreateSecretScanningPushProtectionPlaceholder(repo.FullName, req.TokenType)
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"placeholder_id": ph.ID,
+		"token_type":     ph.TokenType,
+		"created_at":     ph.CreatedAt.UTC().Format(time.RFC3339),
+	})
 }
 
 // func (s *Server) handleListSecretScanningUserAlerts(w http.ResponseWriter, r *http.Request) {

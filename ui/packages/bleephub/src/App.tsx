@@ -37,6 +37,10 @@ import { NotificationsPage } from "./pages/NotificationsPage.js";
 import { MigrationsPage } from "./pages/MigrationsPage.js";
 import { CodespacesPage } from "./pages/CodespacesPage.js";
 import { PackagesPage } from "./pages/PackagesPage.js";
+import { InsightsPage } from "./pages/InsightsPage.js";
+import { OrgGovernancePage } from "./pages/OrgGovernancePage.js";
+import { CopilotPage } from "./pages/CopilotPage.js";
+import { EnterprisePage } from "./pages/EnterprisePage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -65,9 +69,14 @@ export function App() {
               <Route path="/ui/repos" element={<ReposPage />} />
               <Route path="/ui/orgs/:org/repos" element={<OrgReposPage />} />
               <Route path="/ui/orgs/:org/rulesets" element={<RulesetsPage />} />
+              <Route path="/ui/orgs/:org/governance" element={<OrgGovernancePage />} />
+              <Route path="/ui/orgs/:org/copilot" element={<CopilotPage />} />
               <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
               <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
+              <Route path="/ui/repos/:owner/:repo/labels" element={<IssuesPage view="labels" />} />
+              <Route path="/ui/repos/:owner/:repo/milestones" element={<IssuesPage view="milestones" />} />
+              <Route path="/ui/repos/:owner/:repo/insights" element={<InsightsPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/pulls/:number" element={<PullsPage />} />
               <Route path="/ui/repos/:owner/:repo/discussions" element={<DiscussionsPage />} />
@@ -96,6 +105,7 @@ export function App() {
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />
               <Route path="/ui/admin/teams" element={<TeamsPage />} />
+              <Route path="/ui/admin/enterprise" element={<EnterprisePage />} />
               <Route path="/ui/admin/audit-log" element={<AuditLogPage />} />
               <Route path="/ui/admin/storage" element={<StorageHealthPage />} />
               {/* A logged-in user hitting /ui/login (bookmark) or any

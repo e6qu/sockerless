@@ -22,8 +22,10 @@ type ProjectV2 struct {
 	Number    int    // per-owner sequential
 	OwnerID   int    // user/org ID
 	OwnerType string // "User" or "Organization"
+	CreatorID int    // user who created the project
 	Title     string
 	Closed    bool
+	ClosedAt  *time.Time
 	Public    bool
 	URL       string
 	CreatedAt time.Time
@@ -38,25 +40,32 @@ type ProjectV2Item struct {
 	ProjectID   int
 	ContentType string
 	ContentID   int // 0 for DraftIssue
+	CreatorID   int
 	DraftTitle  string
 	DraftBody   string
 	FieldValues map[int]*ProjectV2ItemFieldValue // fieldID → value
 	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	ArchivedAt  *time.Time
 }
 
-// ProjectV2FieldDataType matches real GitHub's narrow set. Single-select
-// + text + number cover what gh CLI / Octokit primarily exercise; date
-// + iteration are deferred until a real consumer needs them.
+// ProjectV2FieldDataType is the custom-field data type. The values are
+// the REST enum spelled uppercase, matching the GraphQL
+// ProjectV2CustomFieldType enum spellings for the types both surfaces
+// share; REST handlers lowercase them on the wire.
 type ProjectV2FieldDataType string
 
 const (
 	ProjectV2FieldSingleSelect ProjectV2FieldDataType = "SINGLE_SELECT"
 	ProjectV2FieldText         ProjectV2FieldDataType = "TEXT"
 	ProjectV2FieldNumber       ProjectV2FieldDataType = "NUMBER"
+	ProjectV2FieldDate         ProjectV2FieldDataType = "DATE"
+	ProjectV2FieldIteration    ProjectV2FieldDataType = "ITERATION"
 )
 
 // ProjectV2Field is a column on a project. SINGLE_SELECT carries
-// per-option metadata in Options.
+// per-option metadata in Options; ITERATION carries its schedule in
+// Iteration.
 type ProjectV2Field struct {
 	ID        int
 	NodeID    string
@@ -64,37 +73,64 @@ type ProjectV2Field struct {
 	Name      string
 	DataType  ProjectV2FieldDataType
 	Options   []*ProjectV2SingleSelectOption
+	Iteration *ProjectV2IterationConfiguration
 	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // ProjectV2SingleSelectOption is one selectable value on a
 // SINGLE_SELECT field (e.g. Status: Todo / In Progress / Done).
 type ProjectV2SingleSelectOption struct {
-	ID   string // GitHub uses 8-char alnum IDs ("47fc9ee4"); we generate similar
-	Name string
+	ID          string // GitHub uses 8-char alnum IDs ("47fc9ee4"); we generate similar
+	Name        string
+	Color       string // GitHub's option color enum (BLUE, GRAY, GREEN, ...)
+	Description string
+}
+
+// ProjectV2IterationConfiguration is the schedule of an ITERATION
+// field: a default duration plus the concrete iterations.
+type ProjectV2IterationConfiguration struct {
+	StartDate  string // date of the first iteration, YYYY-MM-DD
+	Duration   int    // default iteration length in days
+	Iterations []*ProjectV2Iteration
+}
+
+// ProjectV2Iteration is one concrete iteration on an ITERATION field.
+type ProjectV2Iteration struct {
+	ID        string // same 8-char ID space as single-select options
+	Title     string
+	StartDate string // YYYY-MM-DD
+	Duration  int    // days
 }
 
 // ProjectV2ItemFieldValue is the value an item has for one field. For
 // SINGLE_SELECT, OptionID points at one of the field's options. For
-// TEXT, TextValue holds the body. For NUMBER, NumberValue.
+// TEXT, TextValue holds the body. For NUMBER, NumberValue. For DATE,
+// DateValue. For ITERATION, IterationID points at one of the field's
+// iterations.
 type ProjectV2ItemFieldValue struct {
 	FieldID     int
 	OptionID    string  // SINGLE_SELECT
 	OptionName  string  // denormalised so reads don't need to chase the field
 	TextValue   string  // TEXT
 	NumberValue float64 // NUMBER
+	DateValue   string  // DATE, YYYY-MM-DD
+	IterationID string  // ITERATION
 }
 
-// ProjectV2View is a board/table view inside a project.
+// ProjectV2View is a board/table/roadmap view inside a project.
 type ProjectV2View struct {
-	ID        int
-	NodeID    string
-	ProjectID int
-	Name      string
-	Layout    string
-	Filters   map[string]interface{}
-	CreatedAt time.Time
-	UpdatedAt time.Time
+	ID            int
+	NodeID        string
+	ProjectID     int
+	Number        int // per-project sequential
+	Name          string
+	Layout        string // "table", "board", or "roadmap"
+	CreatorID     int
+	Filter        *string // the view's filter query, nil when unset
+	VisibleFields []int   // field IDs shown in the view
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // ProjectV2Store is the in-memory store. Concurrency-safe via mu.
@@ -133,8 +169,9 @@ func newProjectV2Store(p *Persistence) *ProjectV2Store {
 	}
 }
 
-// CreateProject creates a new ProjectV2 owned by the given user or org.
-func (s *ProjectV2Store) CreateProject(ownerID int, ownerType, title string) *ProjectV2 {
+// CreateProject creates a new ProjectV2 owned by the given user or org,
+// recording the creating user.
+func (s *ProjectV2Store) CreateProject(ownerID int, ownerType, title string, creatorID int) *ProjectV2 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	id := s.nextProjectID
@@ -153,6 +190,7 @@ func (s *ProjectV2Store) CreateProject(ownerID int, ownerType, title string) *Pr
 		Number:    number,
 		OwnerID:   ownerID,
 		OwnerType: ownerType,
+		CreatorID: creatorID,
 		Title:     title,
 		Public:    false,
 		CreatedAt: now,
@@ -186,7 +224,7 @@ func (s *ProjectV2Store) LookupProjectByNodeID(nodeID string) *ProjectV2 {
 
 // AddItem adds an Issue or PullRequest to the given project. contentID is
 // the issue or PR database ID; contentType is "Issue" or "PullRequest".
-func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID int) *ProjectV2Item {
+func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID, creatorID int) *ProjectV2Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.projects[projectID]; !ok {
@@ -200,14 +238,17 @@ func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID in
 	}
 	id := s.nextItemID
 	s.nextItemID++
+	now := time.Now()
 	it := &ProjectV2Item{
 		ID:          id,
 		NodeID:      fmt.Sprintf("PVTI_kgDO%08d", id),
 		ProjectID:   projectID,
 		ContentType: contentType,
 		ContentID:   contentID,
+		CreatorID:   creatorID,
 		FieldValues: map[int]*ProjectV2ItemFieldValue{},
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	s.items[id] = it
 	s.itemsByOwner[contentID] = append(s.itemsByOwner[contentID], it)
@@ -218,7 +259,7 @@ func (s *ProjectV2Store) AddItem(projectID int, contentType string, contentID in
 }
 
 // AddDraftItem adds a draft issue to a project.
-func (s *ProjectV2Store) AddDraftItem(projectID int, title, body string) *ProjectV2Item {
+func (s *ProjectV2Store) AddDraftItem(projectID int, title, body string, creatorID int) *ProjectV2Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.projects[projectID]; !ok {
@@ -226,15 +267,18 @@ func (s *ProjectV2Store) AddDraftItem(projectID int, title, body string) *Projec
 	}
 	id := s.nextItemID
 	s.nextItemID++
+	now := time.Now()
 	it := &ProjectV2Item{
 		ID:          id,
 		NodeID:      fmt.Sprintf("PVTI_kgDO%08d", id),
 		ProjectID:   projectID,
 		ContentType: "DraftIssue",
+		CreatorID:   creatorID,
 		DraftTitle:  title,
 		DraftBody:   body,
 		FieldValues: map[int]*ProjectV2ItemFieldValue{},
-		CreatedAt:   time.Now(),
+		CreatedAt:   now,
+		UpdatedAt:   now,
 	}
 	s.items[id] = it
 	if s.persist != nil {
@@ -290,8 +334,11 @@ func (s *ProjectV2Store) LookupItemByNodeID(nodeID string) *ProjectV2Item {
 	return nil
 }
 
-// CreateField adds a field column to a project.
-func (s *ProjectV2Store) CreateField(projectID int, name string, dataType ProjectV2FieldDataType, options []string) *ProjectV2Field {
+// CreateField adds a field column to a project. options applies to
+// SINGLE_SELECT fields (IDs are assigned here; Name/Color/Description
+// are caller-supplied) and iteration to ITERATION fields (iteration IDs
+// are assigned here too).
+func (s *ProjectV2Store) CreateField(projectID int, name string, dataType ProjectV2FieldDataType, options []*ProjectV2SingleSelectOption, iteration *ProjectV2IterationConfiguration) *ProjectV2Field {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, ok := s.projects[projectID]; !ok {
@@ -299,23 +346,44 @@ func (s *ProjectV2Store) CreateField(projectID int, name string, dataType Projec
 	}
 	id := s.nextFieldID
 	s.nextFieldID++
+	now := time.Now()
 	f := &ProjectV2Field{
 		ID:        id,
 		NodeID:    fmt.Sprintf("PVTF_kgDO%08d", id),
 		ProjectID: projectID,
 		Name:      name,
 		DataType:  dataType,
-		CreatedAt: time.Now(),
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 	if dataType == ProjectV2FieldSingleSelect {
-		for _, optName := range options {
-			optID := fmt.Sprintf("%08x", s.nextOptionSeed)
-			s.nextOptionSeed++
+		for _, opt := range options {
+			color := opt.Color
+			if color == "" {
+				color = "GRAY" // real GitHub's default option color
+			}
 			f.Options = append(f.Options, &ProjectV2SingleSelectOption{
-				ID:   optID,
-				Name: optName,
+				ID:          s.nextOptionIDLocked(),
+				Name:        opt.Name,
+				Color:       color,
+				Description: opt.Description,
 			})
 		}
+	}
+	if dataType == ProjectV2FieldIteration && iteration != nil {
+		cfg := &ProjectV2IterationConfiguration{
+			StartDate: iteration.StartDate,
+			Duration:  iteration.Duration,
+		}
+		for _, it := range iteration.Iterations {
+			cfg.Iterations = append(cfg.Iterations, &ProjectV2Iteration{
+				ID:        s.nextOptionIDLocked(),
+				Title:     it.Title,
+				StartDate: it.StartDate,
+				Duration:  it.Duration,
+			})
+		}
+		f.Iteration = cfg
 	}
 	s.fields[id] = f
 	s.fieldsByProj[projectID] = append(s.fieldsByProj[projectID], f)
@@ -323,6 +391,14 @@ func (s *ProjectV2Store) CreateField(projectID int, name string, dataType Projec
 		s.persist.MustPut("project_v2_fields", strconv.Itoa(id), f)
 	}
 	return f
+}
+
+// nextOptionIDLocked mints the next 8-char hex ID shared by
+// single-select options and iterations. Callers must hold s.mu.
+func (s *ProjectV2Store) nextOptionIDLocked() string {
+	id := fmt.Sprintf("%08x", s.nextOptionSeed)
+	s.nextOptionSeed++
+	return id
 }
 
 // GetField returns the field by id.
@@ -445,6 +521,13 @@ func (s *ProjectV2Store) UpdateProject(id int, title *string, closed, public *bo
 		p.Title = *title
 	}
 	if closed != nil {
+		if *closed && !p.Closed {
+			now := time.Now()
+			p.ClosedAt = &now
+		}
+		if !*closed {
+			p.ClosedAt = nil
+		}
 		p.Closed = *closed
 	}
 	if public != nil {
@@ -486,6 +569,9 @@ func (s *ProjectV2Store) DeleteProject(id int) bool {
 	for vid := range s.views {
 		if s.views[vid].ProjectID == id {
 			delete(s.views, vid)
+			if s.persist != nil {
+				s.persist.MustDelete("project_v2_views", strconv.Itoa(vid))
+			}
 		}
 	}
 	if s.persist != nil {
@@ -522,10 +608,109 @@ func (s *ProjectV2Store) UpdateItem(id int, draftTitle, draftBody *string) *Proj
 	if draftBody != nil {
 		it.DraftBody = *draftBody
 	}
+	it.UpdatedAt = time.Now()
 	if s.persist != nil {
 		s.persist.MustPut("project_v2_items", strconv.Itoa(id), it)
 	}
 	return it
+}
+
+// SetFieldValueAny writes a field value from a REST update, dispatching
+// on the field's data type: string for TEXT/DATE, float64 for NUMBER,
+// option ID string for SINGLE_SELECT, iteration ID string for
+// ITERATION. A nil value clears the field.
+func (s *ProjectV2Store) SetFieldValueAny(itemID, fieldID int, value interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	item, ok := s.items[itemID]
+	if !ok {
+		return fmt.Errorf("item %d not found", itemID)
+	}
+	field, ok := s.fields[fieldID]
+	if !ok {
+		return fmt.Errorf("field %d not found", fieldID)
+	}
+	if field.ProjectID != item.ProjectID {
+		return fmt.Errorf("field %d belongs to a different project than item %d", fieldID, itemID)
+	}
+	if item.FieldValues == nil {
+		item.FieldValues = map[int]*ProjectV2ItemFieldValue{}
+	}
+	if value == nil {
+		delete(item.FieldValues, fieldID)
+		item.UpdatedAt = time.Now()
+		if s.persist != nil {
+			s.persist.MustPut("project_v2_items", strconv.Itoa(itemID), item)
+		}
+		return nil
+	}
+	val := &ProjectV2ItemFieldValue{FieldID: fieldID}
+	switch field.DataType {
+	case ProjectV2FieldText:
+		str, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("field %q expects a string value", field.Name)
+		}
+		val.TextValue = str
+	case ProjectV2FieldDate:
+		str, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("field %q expects a date string value", field.Name)
+		}
+		if _, err := time.Parse("2006-01-02", str); err != nil {
+			return fmt.Errorf("field %q expects a YYYY-MM-DD date, got %q", field.Name, str)
+		}
+		val.DateValue = str
+	case ProjectV2FieldNumber:
+		num, ok := value.(float64)
+		if !ok {
+			return fmt.Errorf("field %q expects a number value", field.Name)
+		}
+		val.NumberValue = num
+	case ProjectV2FieldSingleSelect:
+		optionID, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("field %q expects a single select option ID", field.Name)
+		}
+		var match *ProjectV2SingleSelectOption
+		for _, opt := range field.Options {
+			if opt.ID == optionID {
+				match = opt
+				break
+			}
+		}
+		if match == nil {
+			return fmt.Errorf("option %q not found on field %q", optionID, field.Name)
+		}
+		val.OptionID = match.ID
+		val.OptionName = match.Name
+	case ProjectV2FieldIteration:
+		iterationID, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("field %q expects an iteration ID", field.Name)
+		}
+		found := false
+		if field.Iteration != nil {
+			for _, it := range field.Iteration.Iterations {
+				if it.ID == iterationID {
+					found = true
+					break
+				}
+			}
+		}
+		if !found {
+			return fmt.Errorf("iteration %q not found on field %q", iterationID, field.Name)
+		}
+		val.IterationID = iterationID
+	default:
+		return fmt.Errorf("field %q of type %q cannot be set directly", field.Name, field.DataType)
+	}
+	item.FieldValues[fieldID] = val
+	item.UpdatedAt = time.Now()
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_items", strconv.Itoa(itemID), item)
+	}
+	return nil
 }
 
 // DeleteItem removes an item from a project.
@@ -554,7 +739,7 @@ func (s *ProjectV2Store) DeleteItem(id int) bool {
 }
 
 // UpdateField patches a field's name/options.
-func (s *ProjectV2Store) UpdateField(id int, name *string, options []string) *ProjectV2Field {
+func (s *ProjectV2Store) UpdateField(id int, name *string, options []*ProjectV2SingleSelectOption) *ProjectV2Field {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f := s.fields[id]
@@ -566,15 +751,20 @@ func (s *ProjectV2Store) UpdateField(id int, name *string, options []string) *Pr
 	}
 	if options != nil && f.DataType == ProjectV2FieldSingleSelect {
 		f.Options = nil
-		for _, optName := range options {
-			optID := fmt.Sprintf("%08x", s.nextOptionSeed)
-			s.nextOptionSeed++
+		for _, opt := range options {
+			color := opt.Color
+			if color == "" {
+				color = "GRAY"
+			}
 			f.Options = append(f.Options, &ProjectV2SingleSelectOption{
-				ID:   optID,
-				Name: optName,
+				ID:          s.nextOptionIDLocked(),
+				Name:        opt.Name,
+				Color:       color,
+				Description: opt.Description,
 			})
 		}
 	}
+	f.UpdatedAt = time.Now()
 	if s.persist != nil {
 		s.persist.MustPut("project_v2_fields", strconv.Itoa(id), f)
 	}
@@ -605,7 +795,7 @@ func (s *ProjectV2Store) DeleteField(id int) bool {
 }
 
 // CreateView adds a view to a project.
-func (s *ProjectV2Store) CreateView(projectID int, name, layout string, filters map[string]interface{}) *ProjectV2View {
+func (s *ProjectV2Store) CreateView(projectID int, name, layout string, filter *string, visibleFields []int, creatorID int) *ProjectV2View {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.projects[projectID] == nil {
@@ -613,19 +803,31 @@ func (s *ProjectV2Store) CreateView(projectID int, name, layout string, filters 
 	}
 	id := s.nextViewID
 	s.nextViewID++
+	number := 1
+	for _, v := range s.viewsByProj[projectID] {
+		if v.Number >= number {
+			number = v.Number + 1
+		}
+	}
 	now := time.Now()
 	v := &ProjectV2View{
-		ID:        id,
-		NodeID:    fmt.Sprintf("PVTV_kgDO%08d", id),
-		ProjectID: projectID,
-		Name:      name,
-		Layout:    layout,
-		Filters:   filters,
-		CreatedAt: now,
-		UpdatedAt: now,
+		ID:            id,
+		NodeID:        fmt.Sprintf("PVTV_kgDO%08d", id),
+		ProjectID:     projectID,
+		Number:        number,
+		Name:          name,
+		Layout:        layout,
+		CreatorID:     creatorID,
+		Filter:        filter,
+		VisibleFields: visibleFields,
+		CreatedAt:     now,
+		UpdatedAt:     now,
 	}
 	s.views[id] = v
 	s.viewsByProj[projectID] = append(s.viewsByProj[projectID], v)
+	if s.persist != nil {
+		s.persist.MustPut("project_v2_views", strconv.Itoa(id), v)
+	}
 	return v
 }
 
@@ -636,6 +838,19 @@ func (s *ProjectV2Store) GetView(id int) *ProjectV2View {
 	return s.views[id]
 }
 
+// GetViewByNumber returns the project's view with the given per-project
+// number, or nil.
+func (s *ProjectV2Store) GetViewByNumber(projectID, number int) *ProjectV2View {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, v := range s.viewsByProj[projectID] {
+		if v.Number == number {
+			return v
+		}
+	}
+	return nil
+}
+
 // ViewsForProject returns every view on a project.
 func (s *ProjectV2Store) ViewsForProject(projectID int) []*ProjectV2View {
 	s.mu.RLock()
@@ -643,4 +858,17 @@ func (s *ProjectV2Store) ViewsForProject(projectID int) []*ProjectV2View {
 	out := make([]*ProjectV2View, 0, len(s.viewsByProj[projectID]))
 	out = append(out, s.viewsByProj[projectID]...)
 	return out
+}
+
+// GetProjectByOwnerNumber returns the owner's project with the given
+// per-owner number, or nil.
+func (s *ProjectV2Store) GetProjectByOwnerNumber(ownerID int, ownerType string, number int) *ProjectV2 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.projects {
+		if p.OwnerID == ownerID && p.OwnerType == ownerType && p.Number == number {
+			return p
+		}
+	}
+	return nil
 }

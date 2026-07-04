@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -210,12 +211,94 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve milestone, labels, and assignees before taking the write
+	// lock so an invalid milestone number 422s without mutating anything.
+	// An explicit `"milestone": null` clears the milestone; an absent
+	// member keeps it — the map lookup distinguishes the two.
+	var milestoneID *int
+	if v, present := req["milestone"]; present {
+		switch mv := v.(type) {
+		case nil:
+			cleared := 0
+			milestoneID = &cleared
+		case float64:
+			ms := s.store.GetMilestoneByNumber(repo.ID, int(mv))
+			if ms == nil {
+				writeGHValidationError(w, "Issue", "milestone", "invalid")
+				return
+			}
+			milestoneID = &ms.ID
+		default:
+			writeGHValidationError(w, "Issue", "milestone", "invalid")
+			return
+		}
+	}
+	var labelIDs *[]int
+	if v, present := req["labels"]; present {
+		entries, ok := v.([]interface{})
+		if !ok {
+			writeGHValidationError(w, "Issue", "labels", "invalid")
+			return
+		}
+		ids := make([]int, 0, len(entries))
+		for _, entry := range entries {
+			// The documented body allows bare strings or {"name": ...}
+			// objects; unknown label names are dropped, matching the
+			// add-labels endpoint's semantics.
+			name, ok := entry.(string)
+			if !ok {
+				obj, isObj := entry.(map[string]interface{})
+				if !isObj {
+					writeGHValidationError(w, "Issue", "labels", "invalid")
+					return
+				}
+				if name, ok = obj["name"].(string); !ok {
+					writeGHValidationError(w, "Issue", "labels", "invalid")
+					return
+				}
+			}
+			if l := s.store.GetLabelByName(repo.ID, name); l != nil {
+				ids = append(ids, l.ID)
+			}
+		}
+		labelIDs = &ids
+	}
+	var assigneeIDs *[]int
+	if v, present := req["assignees"]; present {
+		entries, ok := v.([]interface{})
+		if !ok {
+			writeGHValidationError(w, "Issue", "assignees", "invalid")
+			return
+		}
+		ids := make([]int, 0, len(entries))
+		for _, entry := range entries {
+			login, ok := entry.(string)
+			if !ok {
+				writeGHValidationError(w, "Issue", "assignees", "invalid")
+				return
+			}
+			if u := s.store.LookupUserByLogin(login); u != nil {
+				ids = append(ids, u.ID)
+			}
+		}
+		assigneeIDs = &ids
+	}
+
 	s.store.UpdateIssue(issue.ID, func(i *Issue) {
 		if v, ok := req["title"].(string); ok {
 			i.Title = v
 		}
 		if v, ok := req["body"].(string); ok {
 			i.Body = v
+		}
+		if milestoneID != nil {
+			i.MilestoneID = *milestoneID
+		}
+		if labelIDs != nil {
+			i.LabelIDs = *labelIDs
+		}
+		if assigneeIDs != nil {
+			i.AssigneeIDs = *assigneeIDs
 		}
 		if v, ok := req["state"].(string); ok {
 			switch v {
@@ -639,7 +722,8 @@ func (s *Server) handleAddIssueAssignees(w http.ResponseWriter, r *http.Request)
 
 	assigneeIDs := resolveUserIDs(s.store, req.Assignees)
 	s.store.AddIssueAssignees(repo.ID, issue.Number, assigneeIDs, user.ID)
-	writeJSON(w, http.StatusOK, issueToJSON(s.store.GetIssue(issue.ID), s.store, s.baseURL(r), repo.FullName))
+	// Real GitHub responds 201 Created when adding assignees.
+	writeJSON(w, http.StatusCreated, issueToJSON(s.store.GetIssue(issue.ID), s.store, s.baseURL(r), repo.FullName))
 }
 
 func (s *Server) handleRemoveIssueAssignees(w http.ResponseWriter, r *http.Request) {
@@ -868,28 +952,6 @@ func (s *Server) handleGetIssueEvent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, issueEventToJSON(event, s.store, s.baseURL(r), repo.FullName))
-}
-
-// --- Sub-issues / dependencies / issue-field-values stubs ---
-
-func (s *Server) handleListSubIssues(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []map[string]interface{}{})
-}
-
-func (s *Server) handleCreateSubIssue(w http.ResponseWriter, r *http.Request) {
-	writeGHError(w, http.StatusUnprocessableEntity, "Sub-issues are not enabled for this repository")
-}
-
-func (s *Server) handleRemoveSubIssue(w http.ResponseWriter, r *http.Request) {
-	writeGHError(w, http.StatusUnprocessableEntity, "Sub-issues are not enabled for this repository")
-}
-
-func (s *Server) handleListIssueDependenciesBlockedBy(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []map[string]interface{}{})
-}
-
-func (s *Server) handleListIssueFieldValues(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, []map[string]interface{}{})
 }
 
 // --- JSON converters ---
@@ -1219,4 +1281,161 @@ func issueHasAllLabels(st *Store, issue *Issue, labelNames []string, repoID int)
 		}
 	}
 	return true
+}
+
+// handleListOrgIssues implements GET /orgs/{org}/issues: issues across the
+// organization's repositories that involve the authenticated user, selected
+// by the `filter` parameter exactly as on real GitHub (assigned is the
+// default; `repos`/`all` widen to every org-repo issue the user can see).
+func (s *Server) handleListOrgIssues(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	org := s.store.GetOrg(r.PathValue("org"))
+	if org == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	q := r.URL.Query()
+	filter := q.Get("filter")
+	if filter == "" {
+		filter = "assigned"
+	}
+	stateFilter := q.Get("state")
+	if stateFilter == "" {
+		stateFilter = "open"
+	}
+	var since time.Time
+	if v := q.Get("since"); v != "" {
+		t, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			writeGHValidationError(w, "Issue", "since", "invalid")
+			return
+		}
+		since = t
+	}
+	var labelNames []string
+	if v := q.Get("labels"); v != "" {
+		labelNames = strings.Split(v, ",")
+	}
+
+	// Gather the org's issues under the read lock, render outside it.
+	s.store.mu.RLock()
+	orgRepos := map[int]*Repo{}
+	for _, repo := range s.store.Repos {
+		if repo.OwnerType == "Organization" && repo.OwnerID == org.ID {
+			orgRepos[repo.ID] = repo
+		}
+	}
+	type issueRow struct {
+		issue *Issue
+		repo  *Repo
+	}
+	commentedIssueIDs := map[int]bool{}
+	for _, c := range s.store.Comments {
+		if c.ParentType == "issue" && c.AuthorID == user.ID {
+			commentedIssueIDs[c.IssueID] = true
+		}
+	}
+	var rows []issueRow
+	for _, issue := range s.store.Issues {
+		repo := orgRepos[issue.RepoID]
+		if repo == nil {
+			continue
+		}
+		switch stateFilter {
+		case "open":
+			if issue.State != "OPEN" {
+				continue
+			}
+		case "closed":
+			if issue.State != "CLOSED" {
+				continue
+			}
+		}
+		assigned := false
+		for _, aid := range issue.AssigneeIDs {
+			if aid == user.ID {
+				assigned = true
+				break
+			}
+		}
+		switch filter {
+		case "assigned":
+			if !assigned {
+				continue
+			}
+		case "created":
+			if issue.AuthorID != user.ID {
+				continue
+			}
+		case "mentioned":
+			if !strings.Contains(issue.Body, "@"+user.Login) {
+				continue
+			}
+		case "subscribed":
+			// Participation auto-subscribes on real GitHub: authored,
+			// assigned, or commented issues.
+			if issue.AuthorID != user.ID && !assigned && !commentedIssueIDs[issue.ID] {
+				continue
+			}
+		case "repos", "all":
+			// Every issue across the org's repositories.
+		default:
+			continue
+		}
+		if !since.IsZero() && issue.UpdatedAt.Before(since) {
+			continue
+		}
+		rows = append(rows, issueRow{issue: issue, repo: repo})
+	}
+	s.store.mu.RUnlock()
+
+	if len(labelNames) > 0 {
+		kept := rows[:0]
+		for _, row := range rows {
+			if issueHasAllLabels(s.store, row.issue, labelNames, row.repo.ID) {
+				kept = append(kept, row)
+			}
+		}
+		rows = kept
+	}
+	// Private repos the caller cannot read never surface.
+	readable := rows[:0]
+	for _, row := range rows {
+		if canReadRepo(s.store, user, row.repo) {
+			readable = append(readable, row)
+		}
+	}
+	rows = readable
+
+	sortKey := q.Get("sort")
+	asc := q.Get("direction") == "asc"
+	sort.SliceStable(rows, func(i, j int) bool {
+		var before bool
+		switch sortKey {
+		case "updated":
+			before = rows[i].issue.UpdatedAt.Before(rows[j].issue.UpdatedAt)
+		case "comments":
+			before = rows[i].issue.ID < rows[j].issue.ID
+		default: // created
+			before = rows[i].issue.CreatedAt.Before(rows[j].issue.CreatedAt)
+		}
+		if asc {
+			return before
+		}
+		return !before
+	})
+
+	base := s.baseURL(r)
+	out := make([]map[string]interface{}, 0, len(rows))
+	for _, row := range rows {
+		issueJSON := issueToJSON(row.issue, s.store, base, row.repo.FullName)
+		issueJSON["repository"] = repoToJSON(row.repo, s.store, base)
+		out = append(out, issueJSON)
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
 }

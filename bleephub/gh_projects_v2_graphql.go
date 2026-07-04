@@ -50,7 +50,7 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			if !ok {
 				return nil, fmt.Errorf("could not resolve to an owner with the global id of '%s'", ownerNodeID)
 			}
-			proj := s.store.ProjectsV2.CreateProject(ownerID, ownerType, title)
+			proj := s.store.ProjectsV2.CreateProject(ownerID, ownerType, title, user.ID)
 			return map[string]interface{}{
 				"projectV2": projectV2ToGQL(proj),
 			}, nil
@@ -110,7 +110,7 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			if !ok {
 				return nil, fmt.Errorf("could not resolve to an issue or pull request with the global id of '%s'", contentNodeID)
 			}
-			item := s.store.ProjectsV2.AddItem(proj.ID, contentType, contentID)
+			item := s.store.ProjectsV2.AddItem(proj.ID, contentType, contentID, user.ID)
 			return map[string]interface{}{
 				"item": map[string]interface{}{
 					"nodeID": item.NodeID,
@@ -187,21 +187,21 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			name, _ := input["name"].(string)
 			dataType, _ := input["dataType"].(string)
 			rawOptions, _ := input["singleSelectOptions"].([]interface{})
-			optionNames := make([]string, 0, len(rawOptions))
+			options := make([]*ProjectV2SingleSelectOption, 0, len(rawOptions))
 			for _, raw := range rawOptions {
 				m, ok := raw.(map[string]interface{})
 				if !ok {
 					continue
 				}
 				n, _ := m["name"].(string)
-				optionNames = append(optionNames, n)
+				options = append(options, &ProjectV2SingleSelectOption{Name: n})
 			}
 
 			proj := s.store.ProjectsV2.LookupProjectByNodeID(projectNodeID)
 			if proj == nil {
 				return nil, fmt.Errorf("could not resolve to a project with the global id of '%s'", projectNodeID)
 			}
-			field := s.store.ProjectsV2.CreateField(proj.ID, name, ProjectV2FieldDataType(dataType), optionNames)
+			field := s.store.ProjectsV2.CreateField(proj.ID, name, ProjectV2FieldDataType(dataType), options, nil)
 			return map[string]interface{}{
 				"projectV2Field": map[string]interface{}{
 					"nodeID":   field.NodeID,

@@ -12,6 +12,7 @@ func (s *Server) registerGHNotificationsRoutes() {
 	s.route("PUT /api/v3/repos/{owner}/{repo}/notifications", s.handleMarkRepoNotificationsRead)
 	s.route("GET /api/v3/notifications/threads/{thread_id}", s.handleGetThread)
 	s.route("PATCH /api/v3/notifications/threads/{thread_id}", s.handlePatchThread)
+	s.route("DELETE /api/v3/notifications/threads/{thread_id}", s.handleDeleteThread)
 	s.route("GET /api/v3/notifications/threads/{thread_id}/subscription", s.handleGetThreadSubscription)
 	s.route("PUT /api/v3/notifications/threads/{thread_id}/subscription", s.handleSetThreadSubscription)
 	s.route("DELETE /api/v3/notifications/threads/{thread_id}/subscription", s.handleDeleteThreadSubscription)
@@ -278,4 +279,24 @@ func threadSubscriptionToJSON(sub *ThreadSubscription, url string) map[string]in
 		"url":        url,
 		"thread_url": url,
 	}
+}
+
+// handleDeleteThread implements DELETE /notifications/threads/{thread_id}
+// ("Mark a thread as done"): the thread is dismissed from the user's
+// notification list.
+func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+
+	threadID := r.PathValue("thread_id")
+	thread := s.store.GetNotificationThread(user, s.baseURL(r), threadID)
+	if thread == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	s.store.MarkThreadDone(user.ID, threadID)
+	w.WriteHeader(http.StatusNoContent)
 }

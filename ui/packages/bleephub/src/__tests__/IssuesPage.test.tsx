@@ -29,6 +29,8 @@ function renderAt(path: string) {
         <Routes>
           <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
           <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
+          <Route path="/ui/repos/:owner/:repo/labels" element={<IssuesPage view="labels" />} />
+          <Route path="/ui/repos/:owner/:repo/milestones" element={<IssuesPage view="milestones" />} />
         </Routes>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -145,6 +147,155 @@ describe("IssuesPage list pagination", () => {
     renderAt("/ui/repos/admin/test/issues");
     await waitFor(() => {
       expect(screen.getByText("2+")).toBeInTheDocument();
+    });
+  });
+});
+
+const bugLabel = { id: 1, name: "bug", color: "d73a4a", description: "Broken", default: false };
+
+function milestone(number: number, title: string, state = "open") {
+  return {
+    id: number,
+    number,
+    title,
+    description: "",
+    state,
+    creator: { login: "admin", avatar_url: "" },
+    open_issues: 1,
+    closed_issues: 3,
+    due_on: null,
+    closed_at: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+}
+
+describe("IssuesPage labels view", () => {
+  it("lists repo labels with descriptions", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/labels")) return Promise.resolve(jsonResponse([bugLabel]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/labels");
+    await waitFor(() => {
+      expect(screen.getByText("bug")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Broken")).toBeInTheDocument();
+  });
+
+  it("shows an empty state when the repo has no labels", async () => {
+    mockFetch.mockImplementation(() => Promise.resolve(jsonResponse([])));
+    renderAt("/ui/repos/admin/test/labels");
+    await waitFor(() => {
+      expect(screen.getByText(/no labels yet/i)).toBeInTheDocument();
+    });
+  });
+
+  it("creates a label through the dialog", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/labels") && init?.method === "POST") {
+        return Promise.resolve(jsonResponse(bugLabel, 201));
+      }
+      if (u.includes("/labels")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/labels");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /new label/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /new label/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "bug" } });
+    fireEvent.click(screen.getByRole("button", { name: /create label/i }));
+    await waitFor(() => {
+      const post = mockFetch.mock.calls.find(
+        (c) => c[0].toString().includes("/api/v3/repos/admin/test/labels") && c[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toMatchObject({ name: "bug" });
+    });
+  });
+});
+
+describe("IssuesPage milestones view", () => {
+  it("lists milestones with progress and supports closing", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/milestones/1") && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse(milestone(1, "v1.0", "closed")));
+      }
+      if (u.includes("/milestones?")) return Promise.resolve(jsonResponse([milestone(1, "v1.0")]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/milestones");
+    await waitFor(() => {
+      expect(screen.getByText("v1.0")).toBeInTheDocument();
+    });
+    expect(screen.getByText(/75% complete · 1 open · 3 closed/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "close" }));
+    await waitFor(() => {
+      const patch = mockFetch.mock.calls.find(
+        (c) => c[0].toString().includes("/milestones/1") && c[1]?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1]!.body))).toMatchObject({ state: "closed" });
+    });
+  });
+});
+
+describe("IssuesPage detail triage", () => {
+  function mockDetailEndpoints() {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/issues/7") && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse({ ...issue(7, "Triaged"), milestone: milestone(2, "v2.0") }));
+      }
+      if (u.includes("/issues/7/labels") && init?.method === "POST") {
+        return Promise.resolve(jsonResponse([bugLabel]));
+      }
+      if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues/7")) return Promise.resolve(jsonResponse(issue(7, "Triaged")));
+      if (u.includes("/milestones?")) {
+        return Promise.resolve(jsonResponse([milestone(2, "v2.0")]));
+      }
+      if (u.includes("/api/v3/repos/admin/test/labels")) {
+        return Promise.resolve(jsonResponse([bugLabel]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+  }
+
+  it("adds a label from the repo label list", async () => {
+    mockDetailEndpoints();
+    renderAt("/ui/repos/admin/test/issues/7");
+    await waitFor(() => {
+      expect(screen.getByLabelText("Add label")).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("Add label"), { target: { value: "bug" } });
+    await waitFor(() => {
+      const post = mockFetch.mock.calls.find(
+        (c) => c[0].toString().includes("/issues/7/labels") && c[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({ labels: ["bug"] });
+    });
+  });
+
+  it("sets the milestone via PATCH", async () => {
+    mockDetailEndpoints();
+    renderAt("/ui/repos/admin/test/issues/7");
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "v2.0" })).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("Set milestone"), { target: { value: "2" } });
+    await waitFor(() => {
+      const patch = mockFetch.mock.calls.find(
+        (c) => c[0].toString().endsWith("/issues/7") && c[1]?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1]!.body))).toEqual({ milestone: 2 });
     });
   });
 });

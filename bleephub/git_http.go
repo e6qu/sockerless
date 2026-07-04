@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 
@@ -253,6 +254,20 @@ func (s *Server) handleGitUploadPack(w http.ResponseWriter, r *http.Request, own
 		return
 	}
 
+	// A fetch with no haves is a full clone; count it for the traffic API.
+	// The actor identity is the authenticated login, or the remote host for
+	// anonymous clones of public repos.
+	if len(upreq.Haves) == 0 {
+		actor := r.RemoteAddr
+		if host, _, splitErr := net.SplitHostPort(r.RemoteAddr); splitErr == nil {
+			actor = host
+		}
+		if user != nil {
+			actor = user.Login
+		}
+		s.store.RecordRepoClone(repo.ID, actor)
+	}
+
 	w.Header().Set("Content-Type", "application/x-git-upload-pack-result")
 	if err := resp.Encode(w); err != nil {
 		s.logger.Error().Err(err).Msg("failed to encode upload-pack response")
@@ -348,10 +363,18 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 
 	// Emit webhook events for each pushed ref
 	repoKey := owner + "/" + repoName
+	pusherID := 0
+	if user != nil {
+		pusherID = user.ID
+	}
+	gitStor := s.store.GetGitStorage(owner, repoName)
 	for _, cmd := range req.Commands {
 		ref := cmd.Name.String()
 		before := cmd.Old.String()
 		after := cmd.New.String()
+		// Record the ref update so the repository activity, events, and
+		// statistics surfaces reflect real pushes.
+		s.store.RecordRepoActivity(repo.ID, ref, before, after, pusherID, classifyRefUpdate(gitStor, cmd.Old, cmd.New))
 		payload := buildPushPayload(repo, nil, ref, before, after)
 		s.emitWebhookEvent(repoKey, "push", "", payload)
 		go s.triggerWorkflowsForEvent(repoKey, "push", "", ref, payload)
