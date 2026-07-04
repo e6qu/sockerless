@@ -137,6 +137,91 @@ describe("EnterprisePage teams tab", () => {
       expect(put).toBeTruthy();
     });
   });
+
+  it("manages organization assignments for a selected-type team", async () => {
+    const selectedTeam = { ...platformTeam, organization_selection_type: "selected" };
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/teams/platform/organizations/acme") && init?.method === "PUT") {
+        return Promise.resolve(
+          jsonResponse({ id: 12, login: "acme", avatar_url: "", description: null }, 201),
+        );
+      }
+      if (u.includes("/teams/platform/organizations/legacy") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (u.includes("/teams/platform/organizations")) {
+        return Promise.resolve(
+          jsonResponse([{ id: 11, login: "legacy", avatar_url: "", description: "Old org" }]),
+        );
+      }
+      if (u.includes("/enterprises/bleephub/teams")) {
+        return Promise.resolve(jsonResponse([selectedTeam]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "organizations" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "organizations" }));
+    await waitFor(() => {
+      expect(screen.getByText("@legacy")).toBeInTheDocument();
+    });
+
+    fireEvent.change(screen.getByLabelText("Organization to assign"), {
+      target: { value: "acme" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Assign" }));
+    await waitFor(() => {
+      const put = mockFetch.mock.calls.find(
+        (c) =>
+          c[0].toString().includes("/teams/platform/organizations/acme") &&
+          c[1]?.method === "PUT",
+      );
+      expect(put).toBeTruthy();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "unassign" }));
+    await waitFor(() => {
+      const del = mockFetch.mock.calls.find(
+        (c) =>
+          c[0].toString().includes("/teams/platform/organizations/legacy") &&
+          c[1]?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    confirmSpy.mockRestore();
+  });
+
+  it("disables organization assignment editing unless the selection type is selected", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/teams/platform/organizations")) {
+        return Promise.resolve(
+          jsonResponse([{ id: 11, login: "legacy", avatar_url: "", description: null }]),
+        );
+      }
+      if (u.includes("/enterprises/bleephub/teams")) {
+        return Promise.resolve(jsonResponse([platformTeam]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "organizations" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "organizations" }));
+    await waitFor(() => {
+      expect(screen.getByText("@legacy")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByText(/assignments can only be edited when the selection type is "selected"/i),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("Organization to assign")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "unassign" })).toBeDisabled();
+  });
 });
 
 describe("EnterprisePage settings tab", () => {

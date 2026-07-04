@@ -231,7 +231,7 @@ func (s *Server) handleListHookDeliveries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	deliveries := s.store.ListDeliveries(hookID)
+	deliveries := paginateAndLink(w, r, s.store.ListDeliveries(hookID))
 	result := make([]map[string]interface{}, 0, len(deliveries))
 	for _, d := range deliveries {
 		result = append(result, deliveryToJSON(d))

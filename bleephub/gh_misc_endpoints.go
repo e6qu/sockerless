@@ -563,7 +563,9 @@ func (s *Server) handleListFollowers(w http.ResponseWriter, r *http.Request) {
 	if s.store.Misc.follows != nil {
 		for user, follows := range s.store.Misc.follows {
 			if follows[target] {
-				followers = append(followers, map[string]interface{}{"login": user})
+				if u := s.store.LookupUserByLogin(user); u != nil {
+					followers = append(followers, userToJSON(u))
+				}
 			}
 		}
 	}
@@ -577,7 +579,9 @@ func (s *Server) handleListFollowing(w http.ResponseWriter, r *http.Request) {
 	if s.store.Misc.follows != nil {
 		if follows, ok := s.store.Misc.follows[target]; ok {
 			for user := range follows {
-				following = append(following, map[string]interface{}{"login": user})
+				if u := s.store.LookupUserByLogin(user); u != nil {
+					following = append(following, userToJSON(u))
+				}
 			}
 		}
 	}
@@ -591,7 +595,9 @@ func (s *Server) handleListMyFollowers(w http.ResponseWriter, r *http.Request) {
 	if user != nil && s.store.Misc.follows != nil {
 		for follower, follows := range s.store.Misc.follows {
 			if follows[user.Login] {
-				followers = append(followers, map[string]interface{}{"login": follower})
+				if u := s.store.LookupUserByLogin(follower); u != nil {
+					followers = append(followers, userToJSON(u))
+				}
 			}
 		}
 	}
@@ -605,7 +611,9 @@ func (s *Server) handleListMyFollowing(w http.ResponseWriter, r *http.Request) {
 	if user != nil && s.store.Misc.follows != nil {
 		if follows, ok := s.store.Misc.follows[user.Login]; ok {
 			for target := range follows {
-				following = append(following, map[string]interface{}{"login": target})
+				if u := s.store.LookupUserByLogin(target); u != nil {
+					following = append(following, userToJSON(u))
+				}
 			}
 		}
 	}

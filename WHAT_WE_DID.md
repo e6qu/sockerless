@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-04 - Emoji image assets, UI sweep, boyscout fixes (feat/bleephub-emoji-assets-ui-sweep)
+
+The `feat/bleephub-emoji-assets-ui-sweep` branch closed BUG-2303 and BUG-2304–2309/2312, and filed BUG-2310/2311 with fix shapes.
+
+**Emoji assets (BUG-2303).** `GET /images/icons/emoji/{path...}` serves every image URL the emoji catalog advertises, from a single embedded reproducible archive (~1.4 MB): 1,870 Twemoji v17.0.3 72×72 rasters (jdecked/twemoji, CC-BY 4.0, license + attribution embedded) with the gemoji↔Twemoji filename conventions reconciled programmatically (zero-padding, fe0f/200d tokens; collision-checked across all 4,009 Twemoji rasters), plus 23 bleephub-original deterministic badge images for the GitHub-custom names whose GitHub artwork is not redistributable. `internal/emojigen` rebuilds the archive byte-identically; `TestEmojiCatalogImagesAllServed` enumerates the full catalog (no sampling).
+
+**UI sweep (BUG-2312).** Eleven surfaces gained UI: global search (all seven /search tabs, URL-driven state); the PR detail view grew the full review workflow (submit/dismiss reviews, review-comment threads with diff hunks + replies + resolution, requested reviewers, a merge-box rendering combined status and check runs, reaction pills, and a timeline-driven conversation); a deployments page (statuses timelines, environments with protection rules and branch policies, pending workflow-run approvals); webhook delivery inspection with redelivery for repo and org hooks (new org Webhooks tab); a GitHub Pages settings panel; repo collaborators management driving the real invitation flow; repo social reads (stargazers/watchers/forks, languages bar, branches, tags with archive downloads); an Account page (SSH/GPG/signing keys, emails with visibility, blocked users); Copilot Spaces CRUD with collaborators and resources; enterprise team organization assignments honoring the selection-type gate; custom-property required/default editing and an org repository-values panel.
+
+**Boyscout fixes (BUG-2304–2309).** Repo hook deliveries now paginate like the org/app variants and environments emit the `branch_policy` protection rule (2304); the documented `GET /pulls/{n}/requested_reviewers` was unregistered, PR numbers 404'd on the issue-timeline endpoint, and `Store.BuildIssueTimeline` held a recursive RLock — all fixed (2305); `PUT /collaborators/{username}` fabricated an invitation and added the collaborator instantly — replaced with the real pending-invitation flow, and hardcoded zero forks/subscribers counters now derive from real state (2306); blocks/followers/following listings emit the documented simple-user shape (2307); issue reactions were keyed by bare issue number, leaking across repositories that share numbers, and now resolve through the repository with 404s for unknown issues (2308); issues and issue comments carry the documented reactions rollup (2309).
+
+**Filed open.** BUG-2310: PR timelines lack committed/merged/review_requested events (record issue events for PR-side actions). BUG-2311: recursive-RLock audit for serializers running under `st.mu`.
+
 ## 2026-07-04 - bleephub GitHub REST API 100% coverage + UI completeness (feat/bleephub-api-ui-completeness)
 
 The `feat/bleephub-api-ui-completeness` branch took bleephub's GitHub-compatible REST surface from 665/1190 to **1190/1190 vendored GitHub REST operations** and closed the UI's structural gaps.

@@ -169,6 +169,17 @@ describe("OrgGovernancePage roles tab", () => {
   });
 });
 
+const envProperty = {
+  property_name: "env",
+  value_type: "single_select",
+  required: true,
+  default_value: "dev",
+  description: "Deployment environment",
+  allowed_values: ["dev", "prod"],
+  values_editable_by: "org_actors",
+  require_explicit_values: false,
+};
+
 describe("OrgGovernancePage custom properties tab", () => {
   it("lists the schema and deletes a property", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
@@ -177,20 +188,7 @@ describe("OrgGovernancePage custom properties tab", () => {
         return Promise.resolve(new Response(null, { status: 204 }));
       }
       if (u.includes("/properties/schema")) {
-        return Promise.resolve(
-          jsonResponse([
-            {
-              property_name: "env",
-              value_type: "single_select",
-              required: true,
-              default_value: "dev",
-              description: "Deployment environment",
-              allowed_values: ["dev", "prod"],
-              values_editable_by: "org_actors",
-              require_explicit_values: false,
-            },
-          ]),
-        );
+        return Promise.resolve(jsonResponse([envProperty]));
       }
       return Promise.resolve(jsonResponse([]));
     });
@@ -199,9 +197,10 @@ describe("OrgGovernancePage custom properties tab", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Custom properties" }));
     await waitFor(() => {
-      expect(screen.getByText("env")).toBeInTheDocument();
+      expect(
+        screen.getByText(/single_select · required · default: dev · \[dev, prod\]/),
+      ).toBeInTheDocument();
     });
-    expect(screen.getByText(/single_select · required · \[dev, prod\]/)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "delete" }));
     await waitFor(() => {
@@ -211,6 +210,97 @@ describe("OrgGovernancePage custom properties tab", () => {
       expect(del).toBeTruthy();
     });
     confirmSpy.mockRestore();
+  });
+
+  it("edits required and default_value through the schema PATCH", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/properties/schema") && init?.method === "PATCH") {
+        return Promise.resolve(jsonResponse([{ ...envProperty, default_value: "prod" }]));
+      }
+      if (u.includes("/properties/schema")) {
+        return Promise.resolve(jsonResponse([envProperty]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/orgs/acme/governance");
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom properties" }));
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "edit" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "edit" }));
+
+    const requiredBox = screen.getByLabelText(/repositories without an explicit value/i);
+    expect(requiredBox).toBeChecked();
+    fireEvent.change(screen.getByLabelText("Default value"), { target: { value: "prod" } });
+    fireEvent.click(screen.getByRole("button", { name: /save property/i }));
+
+    await waitFor(() => {
+      const patch = mockFetch.mock.calls.find(
+        (c) => c[0].toString().endsWith("/properties/schema") && c[1]?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1]!.body))).toEqual({
+        properties: [
+          {
+            property_name: "env",
+            value_type: "single_select",
+            required: true,
+            default_value: "prod",
+            description: "Deployment environment",
+            allowed_values: ["dev", "prod"],
+          },
+        ],
+      });
+    });
+  });
+
+  it("lists repository values and sets a value on selected repositories", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/properties/values") && init?.method === "PATCH") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (u.includes("/properties/values")) {
+        return Promise.resolve(
+          jsonResponse([
+            {
+              repository_id: 7,
+              repository_name: "api",
+              repository_full_name: "acme/api",
+              properties: [{ property_name: "env", value: "dev" }],
+            },
+          ]),
+        );
+      }
+      if (u.includes("/properties/schema")) {
+        return Promise.resolve(jsonResponse([envProperty]));
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/orgs/acme/governance");
+
+    fireEvent.click(screen.getByRole("button", { name: "Custom properties" }));
+    await waitFor(() => {
+      expect(screen.getByText("acme/api")).toBeInTheDocument();
+    });
+    expect(screen.getByText("env=dev")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Select acme/api"));
+    fireEvent.change(screen.getByLabelText("Property value"), { target: { value: "prod" } });
+    fireEvent.click(screen.getByRole("button", { name: /set on selected/i }));
+
+    await waitFor(() => {
+      const patch = mockFetch.mock.calls.find(
+        (c) => c[0].toString().endsWith("/properties/values") && c[1]?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1]!.body))).toEqual({
+        repository_names: ["api"],
+        properties: [{ property_name: "env", value: "prod" }],
+      });
+    });
   });
 });
 

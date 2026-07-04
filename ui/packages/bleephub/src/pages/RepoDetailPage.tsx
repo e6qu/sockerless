@@ -10,7 +10,10 @@ import {
   fetchRepoBranches,
   fetchRepoCommits,
   fetchRepoContents,
+  fetchRepoLanguages,
   fetchRepoReadme,
+  fetchRepoSocialCounts,
+  fetchRepoTags,
   fetchWebhooks,
   fetchSecrets,
   fetchEnvironments,
@@ -18,8 +21,10 @@ import {
 } from "../api.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type {
+  GithubBranch,
   GithubCommit,
   GithubContentItem,
+  GithubTag,
   GithubWebhook,
   GithubSecret,
   GithubEnvironment,
@@ -34,13 +39,16 @@ import {
   CommentIcon,
   FileIcon,
   DirectoryIcon,
+  StarIcon,
 } from "../components/octicons.js";
 
-type SubTab = "code" | "commits" | "releases" | "webhooks" | "secrets" | "environments";
+type SubTab = "code" | "commits" | "branches" | "tags" | "releases" | "webhooks" | "secrets" | "environments";
 
 const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: "code", label: "Code" },
   { key: "commits", label: "Commits" },
+  { key: "branches", label: "Branches" },
+  { key: "tags", label: "Tags" },
   { key: "releases", label: "Releases" },
   { key: "webhooks", label: "Webhooks" },
   { key: "secrets", label: "Secrets" },
@@ -92,6 +100,21 @@ export function RepoDetailPage() {
     queryFn: () => fetchReleases(owner, repo),
     enabled: tab === "releases" && !!owner && !!repo,
   });
+  const { data: tags = [], isError: tagsError, error: tagsErr } = useQuery({
+    queryKey: ["repo-tags", owner, repo],
+    queryFn: () => fetchRepoTags(owner, repo),
+    enabled: tab === "tags" && !!owner && !!repo,
+  });
+  const { data: socialCounts } = useQuery({
+    queryKey: ["repo-social-counts", owner, repo],
+    queryFn: () => fetchRepoSocialCounts(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+  const { data: languages } = useQuery({
+    queryKey: ["repo-languages", owner, repo],
+    queryFn: () => fetchRepoLanguages(owner, repo),
+    enabled: !!owner && !!repo,
+  });
 
   if (isLoading) return <Spinner label={`loading ${owner}/${repo}`} />;
   if (isError || !repoData)
@@ -124,6 +147,38 @@ export function RepoDetailPage() {
           Codespaces
         </Link>
       </div>
+
+      {/* Social counters (star/watch/fork) linking to their list views. */}
+      {socialCounts && (
+        <div
+          className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1"
+          style={{ fontSize: "0.85rem" }}
+        >
+          <Link
+            to={`/ui/repos/${owner}/${repo}/stargazers`}
+            className="inline-flex items-center gap-1"
+            style={{ color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            <StarIcon size={14} /> {socialCounts.stargazers_count}{" "}
+            {socialCounts.stargazers_count === 1 ? "star" : "stars"}
+          </Link>
+          <Link
+            to={`/ui/repos/${owner}/${repo}/watchers`}
+            style={{ color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            {socialCounts.subscribers_count}{" "}
+            {socialCounts.subscribers_count === 1 ? "watcher" : "watchers"}
+          </Link>
+          <Link
+            to={`/ui/repos/${owner}/${repo}/forks`}
+            style={{ color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            {socialCounts.forks_count} {socialCounts.forks_count === 1 ? "fork" : "forks"}
+          </Link>
+        </div>
+      )}
+
+      {languages && Object.keys(languages).length > 0 && <LanguagesBar languages={languages} />}
 
       {/* Secondary (repo-admin) tab strip */}
       <div
@@ -171,6 +226,15 @@ export function RepoDetailPage() {
         ) : (
           <CommitsList commits={commits} loading={commitsLoading} />
         ))}
+      {tab === "branches" && (
+        <BranchesList branches={branches} defaultBranch={repoData.default_branch} />
+      )}
+      {tab === "tags" &&
+        (tagsError ? (
+          <InlineError title="Failed to load tags" detail={String(tagsErr)} />
+        ) : (
+          <TagsList tags={tags} />
+        ))}
       {tab === "releases" &&
         (releasesError ? (
           <InlineError title="Failed to load releases" detail={String(releasesErr)} />
@@ -181,7 +245,7 @@ export function RepoDetailPage() {
         (webhooksError ? (
           <InlineError title="Failed to load webhooks" detail={String(webhooksErr)} />
         ) : (
-          <WebhooksList hooks={webhooks} />
+          <WebhooksList owner={owner} repo={repo} hooks={webhooks} />
         ))}
       {tab === "secrets" &&
         (secretsError ? (
@@ -193,7 +257,17 @@ export function RepoDetailPage() {
         (environmentsError ? (
           <InlineError title="Failed to load environments" detail={String(environmentsErr)} />
         ) : (
-          <EnvironmentsList environments={environments} />
+          <>
+            <div className="mb-3" style={{ fontSize: "0.85rem" }}>
+              <Link
+                to={`/ui/repos/${owner}/${repo}/deployments`}
+                style={{ color: "var(--color-accent)", textDecoration: "none" }}
+              >
+                View deployments, protection rules, and pending approvals →
+              </Link>
+            </div>
+            <EnvironmentsList environments={environments} />
+          </>
         ))}
     </div>
   );
@@ -491,7 +565,15 @@ function CommitsList({ commits, loading }: { commits: GithubCommit[]; loading: b
   );
 }
 
-function WebhooksList({ hooks }: { hooks: GithubWebhook[] }) {
+function WebhooksList({
+  owner,
+  repo,
+  hooks,
+}: {
+  owner: string;
+  repo: string;
+  hooks: GithubWebhook[];
+}) {
   if (hooks.length === 0) return <Blankslate icon={<CommentIcon size={26} />} title="No webhooks configured" />;
   return (
     <Box>
@@ -523,6 +605,12 @@ function WebhooksList({ hooks }: { hooks: GithubWebhook[] }) {
               {h.config?.url || "no url"} · events: {h.events?.join(", ") || "none"}
             </div>
           </div>
+          <Link
+            to={`/ui/repos/${owner}/${repo}/hooks/${h.id}/deliveries`}
+            style={{ color: "var(--color-accent)", fontSize: "0.8rem", textDecoration: "none", flexShrink: 0 }}
+          >
+            Deliveries
+          </Link>
         </div>
       ))}
     </Box>
@@ -607,6 +695,132 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
                 : `published ${new Date(r.published_at).toLocaleDateString()}`}
             </div>
           </div>
+        </div>
+      ))}
+    </Box>
+  );
+}
+
+/** Fixed palette cycled across languages, largest share first. */
+const LANGUAGE_BAR_COLORS = ["#3572A5", "#F1E05A", "#E34C26", "#563D7C", "#00ADD8", "#B07219", "#701516", "#178600"];
+
+function LanguagesBar({ languages }: { languages: Record<string, number> }) {
+  const entries = Object.entries(languages);
+  const total = entries.reduce((sum, [, bytes]) => sum + bytes, 0);
+  if (total === 0) return null;
+  return (
+    <div className="mb-4">
+      <div
+        className="flex overflow-hidden"
+        style={{ height: 8, borderRadius: "var(--radius-md)", border: "1px solid var(--color-border)" }}
+      >
+        {entries.map(([lang, bytes], i) => (
+          <span
+            key={lang}
+            title={`${lang} ${((bytes / total) * 100).toFixed(1)}%`}
+            style={{
+              width: `${(bytes / total) * 100}%`,
+              background: LANGUAGE_BAR_COLORS[i % LANGUAGE_BAR_COLORS.length],
+            }}
+          />
+        ))}
+      </div>
+      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1" style={{ fontSize: "0.78rem" }}>
+        {entries.map(([lang, bytes], i) => (
+          <span key={lang} className="inline-flex items-center gap-1.5">
+            <span
+              aria-hidden
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: "999px",
+                background: LANGUAGE_BAR_COLORS[i % LANGUAGE_BAR_COLORS.length],
+              }}
+            />
+            <span style={{ fontWeight: 500 }}>{lang}</span>
+            <span style={{ color: "var(--color-fg-muted)" }}>
+              {((bytes / total) * 100).toFixed(1)}%
+            </span>
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BranchesList({ branches, defaultBranch }: { branches: GithubBranch[]; defaultBranch: string }) {
+  if (branches.length === 0) return <Blankslate icon={<BranchIcon size={26} />} title="No branches" />;
+  return (
+    <Box>
+      {branches.map((b, i) => (
+        <div
+          key={b.name}
+          className="flex items-center gap-3"
+          style={{
+            padding: "0.65rem 1rem",
+            borderBottom: i < branches.length - 1 ? "1px solid var(--color-border)" : "none",
+          }}
+        >
+          <BranchIcon size={14} style={{ color: "var(--color-fg-muted)" }} />
+          <span className="font-mono" style={{ fontSize: "0.85rem", fontWeight: 500, flex: 1 }}>
+            {b.name}
+            {b.name === defaultBranch && (
+              <span
+                style={{
+                  marginLeft: "0.6rem",
+                  fontSize: "0.72rem",
+                  fontWeight: 600,
+                  color: "var(--color-accent)",
+                  border: "1px solid var(--color-accent)",
+                  borderRadius: "2rem",
+                  padding: "0.05rem 0.5rem",
+                }}
+              >
+                default
+              </span>
+            )}
+          </span>
+          <span className="font-mono" style={{ fontSize: "0.74rem", color: "var(--color-fg-muted)" }}>
+            {b.commit.sha.slice(0, 7)}
+          </span>
+        </div>
+      ))}
+    </Box>
+  );
+}
+
+function TagsList({ tags }: { tags: GithubTag[] }) {
+  if (tags.length === 0) return <Blankslate icon={<TagIcon size={26} />} title="No tags" />;
+  return (
+    <Box>
+      {tags.map((t, i) => (
+        <div
+          key={t.name}
+          className="flex items-center gap-3"
+          style={{
+            padding: "0.65rem 1rem",
+            borderBottom: i < tags.length - 1 ? "1px solid var(--color-border)" : "none",
+          }}
+        >
+          <TagIcon size={14} style={{ color: "var(--color-fg-muted)" }} />
+          <span className="font-mono" style={{ fontSize: "0.85rem", fontWeight: 500, flex: 1 }}>
+            {t.name}
+          </span>
+          <span className="font-mono" style={{ fontSize: "0.74rem", color: "var(--color-fg-muted)" }}>
+            {t.commit.sha.slice(0, 7)}
+          </span>
+          <a
+            href={t.zipball_url}
+            style={{ fontSize: "0.78rem", color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            zip
+          </a>
+          <a
+            href={t.tarball_url}
+            style={{ fontSize: "0.78rem", color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            tar.gz
+          </a>
         </div>
       ))}
     </Box>

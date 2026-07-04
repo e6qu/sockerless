@@ -1001,6 +1001,7 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 	}
 	api := baseURL + "/api/v3/repos/" + repo.FullName
 	openIssues := st.CountOpenIssues(repo.ID)
+	forks := st.CountForks(repo.ID)
 
 	return map[string]interface{}{
 		"id":                repo.ID,
@@ -1061,8 +1062,8 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		"language":          repo.Language,
 		"archived":          repo.Archived,
 		"disabled":          false,
-		"forks":             0,
-		"forks_count":       0,
+		"forks":             forks,
+		"forks_count":       forks,
 		"size":              st.RepoSize(repo.FullName),
 		"stargazers_count":  repo.StargazersCount,
 		"watchers":          repo.StargazersCount,
@@ -1091,12 +1092,12 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 // fullRepoJSON converts a Repo to the GitHub `full-repository` shape
 // served by single-repo operations (GET/PATCH /repos/{owner}/{repo},
 // repo creation). It is the repository shape plus the network/subscriber
-// counters that exist only on full-repository — bleephub models neither
-// forks networks nor watch subscriptions, so both are truthfully 0.
+// counters that exist only on full-repository, both derived from real
+// store state: the fork network and the watch subscriptions.
 func fullRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 	out := repoToJSON(repo, st, baseURL)
-	out["network_count"] = 0
-	out["subscribers_count"] = 0
+	out["network_count"] = out["forks_count"]
+	out["subscribers_count"] = len(st.ListRepoSubscribers(repo.ID))
 	out["organization"] = repoOrganizationJSON(repo, st)
 	out["allow_squash_merge"] = repo.AllowSquashMerge
 	out["allow_merge_commit"] = repo.AllowMergeCommit
@@ -1333,27 +1334,39 @@ func (s *Server) handleAddCollaborator(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if !s.store.AddRepoCollaborator(owner, name, username, req.Permission) {
-		writeGHError(w, http.StatusNotFound, "Not Found")
+	// A PUT naming an existing collaborator (or the owner, who always has
+	// admin) updates the permission in place and answers 204, as on real
+	// GitHub.
+	isOwner := repo.Owner != nil && strings.EqualFold(repo.Owner.Login, username)
+	if isOwner || s.store.GetRepoCollaboratorPermission(owner, name, username) != "" {
+		if !isOwner && !s.store.AddRepoCollaborator(owner, name, username, req.Permission) {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	perm := s.store.GetRepoCollaboratorPermission(owner, name, username)
-	inviter := actor
-	if inviter == nil {
-		inviter = repo.Owner
+	// Inviting a new user creates a pending repository invitation — the
+	// invitee joins the collaborator list when they accept it. Re-inviting
+	// while an invitation is pending updates that invitation instead of
+	// creating a second one.
+	inviterID := 0
+	if actor != nil {
+		inviterID = actor.ID
+	} else if repo.Owner != nil {
+		inviterID = repo.Owner.ID
 	}
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"id":          0,
-		"node_id":     "",
-		"repository":  repoToJSON(repo, s.store, s.baseURL(r)),
-		"invitee":     userToJSON(u),
-		"inviter":     userToJSON(inviter),
-		"permissions": githubRoleName(perm),
-		"created_at":  time.Now().UTC().Format(time.RFC3339),
-		"url":         s.baseURL(r) + "/user/repository-invitations/0",
-		"html_url":    s.baseURL(r) + "/" + repo.FullName + "/invitations",
-		"expired":     false,
-	})
+	var inv *RepoInvitation
+	for _, pending := range s.store.ListPendingRepoInvitations(repo.FullName) {
+		if strings.EqualFold(pending.InviteeLogin, username) {
+			inv = s.store.UpdateRepoInvitation(repo.FullName, pending.ID, req.Permission)
+			break
+		}
+	}
+	if inv == nil {
+		inv = s.store.CreateRepoInvitation(repo.FullName, u.Login, "", inviterID, req.Permission)
+	}
+	writeJSON(w, http.StatusCreated, invitationJSON(inv, repo, s.store, s.baseURL(r)))
 }
 
 func githubRoleName(perm string) string {

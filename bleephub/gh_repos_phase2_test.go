@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -378,7 +379,8 @@ func TestRepoCollaboratorsREST(t *testing.T) {
 	testServer.store.Tokens[otherTok.Value] = otherTok
 	testServer.store.mu.Unlock()
 
-	// Add collaborator with push permission.
+	// Inviting a new collaborator answers 201 with a pending repository
+	// invitation carrying the invitee, inviter, and requested role.
 	addResp := ghPut(t, "/api/v3/repos/admin/collab-rest/collaborators/collab-user", defaultToken, map[string]interface{}{
 		"permission": "push",
 	})
@@ -386,7 +388,43 @@ func TestRepoCollaboratorsREST(t *testing.T) {
 		addResp.Body.Close()
 		t.Fatalf("expected 201 for add collaborator, got %d", addResp.StatusCode)
 	}
-	addResp.Body.Close()
+	invitation := decodeJSON(t, addResp)
+	invID, _ := invitation["id"].(float64)
+	if invID <= 0 {
+		t.Fatalf("expected real invitation id, got %v", invitation["id"])
+	}
+	if invitee, _ := invitation["invitee"].(map[string]interface{}); invitee == nil || invitee["login"] != "collab-user" {
+		t.Fatalf("expected invitee collab-user, got %v", invitation["invitee"])
+	}
+	if invitation["permissions"] != "write" {
+		t.Fatalf("expected write role on invitation, got %v", invitation["permissions"])
+	}
+
+	// The pending invitation is listed on the repository until accepted.
+	pendingResp := ghGet(t, "/api/v3/repos/admin/collab-rest/invitations", defaultToken)
+	if pendingResp.StatusCode != 200 {
+		pendingResp.Body.Close()
+		t.Fatalf("expected 200 for list invitations, got %d", pendingResp.StatusCode)
+	}
+	if pending := decodeJSONArray(t, pendingResp); len(pending) != 1 {
+		t.Fatalf("expected 1 pending invitation, got %d", len(pending))
+	}
+
+	// The invitee accepts, becoming a collaborator.
+	acceptResp := ghPatch(t, fmt.Sprintf("/api/v3/user/repository_invitations/%d", int(invID)), otherTok.Value, nil)
+	acceptResp.Body.Close()
+	if acceptResp.StatusCode != 204 {
+		t.Fatalf("expected 204 for accept invitation, got %d", acceptResp.StatusCode)
+	}
+
+	// Re-PUT on an existing collaborator updates the permission in place (204).
+	updateResp := ghPut(t, "/api/v3/repos/admin/collab-rest/collaborators/collab-user", defaultToken, map[string]interface{}{
+		"permission": "push",
+	})
+	updateResp.Body.Close()
+	if updateResp.StatusCode != 204 {
+		t.Fatalf("expected 204 for permission update on existing collaborator, got %d", updateResp.StatusCode)
+	}
 
 	// List collaborators includes the owner and the new collaborator.
 	listResp := ghGet(t, "/api/v3/repos/admin/collab-rest/collaborators", defaultToken)

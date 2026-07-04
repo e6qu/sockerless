@@ -26,6 +26,9 @@ import {
   NotificationBellIcon,
   GraphIcon,
   GlobeIcon,
+  WebhookIcon,
+  SearchIcon,
+  KeyIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { clearToken } from "../api.js";
@@ -38,6 +41,7 @@ export interface NavItem {
 
 const PRIMARY_NAV: NavItem[] = [
   { label: "Overview", to: "/ui/", end: true },
+  { label: "Search", to: "/ui/search" },
   { label: "Workflows", to: "/ui/workflows" },
   { label: "Repos", to: "/ui/repos" },
   { label: "Gists", to: "/ui/gists" },
@@ -49,6 +53,7 @@ const PRIMARY_NAV: NavItem[] = [
   { label: "Apps", to: "/ui/apps" },
   { label: "OAuth", to: "/ui/oauth" },
   { label: "Metrics", to: "/ui/metrics" },
+  { label: "Account", to: "/ui/account" },
 ];
 
 const ADMIN_NAV: NavItem[] = [
@@ -64,6 +69,10 @@ function navIcon(label: string) {
   switch (label) {
     case "Overview":
       return null;
+    case "Search":
+      return <SearchIcon size={14} />;
+    case "Account":
+      return <KeyIcon size={14} />;
     case "Repos":
       return <RepoIcon size={14} />;
     case "Gists":
@@ -350,7 +359,7 @@ export function RepoHeader({
   );
 }
 
-export type OrgTab = "repos" | "packages" | "rulesets" | "governance" | "copilot";
+export type OrgTab = "repos" | "packages" | "rulesets" | "governance" | "copilot" | "hooks";
 
 /** Org context bar: organization login breadcrumb with org-level tabs. */
 export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
@@ -372,6 +381,7 @@ export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
         <RepoTabLink to={`${base}/packages`} icon={<PackageIcon size={15} />} label="Packages" active={active === "packages"} />
         <RepoTabLink to={`${base}/rulesets`} icon={<GearIcon size={15} />} label="Rulesets" active={active === "rulesets"} />
         <RepoTabLink to={`${base}/governance`} icon={<PeopleIcon size={15} />} label="Governance" active={active === "governance"} />
+        <RepoTabLink to={`${base}/hooks`} icon={<WebhookIcon size={15} />} label="Webhooks" active={active === "hooks"} />
         <RepoTabLink to={`${base}/copilot`} icon={<CommentIcon size={15} />} label="Copilot" active={active === "copilot"} />
       </nav>
     </div>

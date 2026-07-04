@@ -875,10 +875,11 @@ func (st *Store) UnpinIssueComment(commentID int) bool {
 // BuildIssueTimeline returns a synthesized timeline for an issue by
 // interleaving issue events and issue comments ordered by created_at.
 func (st *Store) BuildIssueTimeline(repo *Repo, issueID int, baseURL string) []map[string]interface{} {
-	st.mu.RLock()
+	// ListIssueEvents and ListCommentsFor take st.mu.RLock themselves;
+	// holding it across the calls would re-acquire the read lock and can
+	// deadlock against a queued writer.
 	events := st.ListIssueEvents(repo.ID, issueID)
 	comments := st.ListCommentsFor("issue", issueID)
-	st.mu.RUnlock()
 
 	items := make([]timelineItem, 0, len(events)+len(comments))
 	for _, e := range events {

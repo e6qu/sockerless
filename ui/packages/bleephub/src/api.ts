@@ -109,6 +109,29 @@ import type {
   GithubCopilotBilling,
   GithubCopilotSeat,
   GithubCopilotSpace,
+  GithubPRReview,
+  GithubPRReviewComment,
+  GithubPRReviewThread,
+  GithubReviewRequest,
+  GithubCombinedStatus,
+  GithubReaction,
+  GithubReactionContent,
+  GithubTimelineItem,
+  GithubSearchIssueItem,
+  GithubSearchCodeItem,
+  GithubSearchUserItem,
+  GithubSearchCommitItem,
+  GithubSearchLabelItem,
+  GithubSearchTopicItem,
+  GithubCollaborator,
+  GithubRepoInvitation,
+  GithubTag,
+  GithubRepoSocialCounts,
+  GithubUserEmail,
+  GithubSSHKey,
+  GithubGPGKey,
+  GithubSSHSigningKey,
+  GithubBlockedUser,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -2091,3 +2114,678 @@ export async function fetchCopilotSpaces(org: string): Promise<GithubCopilotSpac
   }
   return body.spaces;
 }
+
+// ─── Copilot Spaces CRUD · enterprise team orgs · custom property values ─
+
+import type {
+  GithubCopilotSpaceCollaborator,
+  GithubCopilotSpaceResource,
+  GithubOrgSimple,
+  GithubOrgRepoCustomPropertyValues,
+} from "./types.js";
+
+const copilotSpacesBase = (org: string) => `/api/v3/orgs/${org}/copilot-spaces`;
+
+export const createCopilotSpace = (
+  org: string,
+  payload: {
+    name: string;
+    description?: string;
+    general_instructions?: string;
+    base_role?: string;
+  },
+): Promise<GithubCopilotSpace> => ghPostJSON(copilotSpacesBase(org), payload);
+
+export const updateCopilotSpace = (
+  org: string,
+  spaceNumber: number,
+  payload: {
+    name?: string;
+    description?: string;
+    general_instructions?: string;
+    base_role?: string;
+  },
+): Promise<GithubCopilotSpace> =>
+  ghPutJSON(`${copilotSpacesBase(org)}/${spaceNumber}`, payload);
+
+export const deleteCopilotSpace = (org: string, spaceNumber: number) =>
+  ghSend("DELETE", `${copilotSpacesBase(org)}/${spaceNumber}`);
+
+export async function fetchCopilotSpaceCollaborators(
+  org: string,
+  spaceNumber: number,
+): Promise<GithubCopilotSpaceCollaborator[]> {
+  const body = await ghFetch<{ collaborators: GithubCopilotSpaceCollaborator[] }>(
+    `${copilotSpacesBase(org)}/${spaceNumber}/collaborators`,
+  );
+  if (!Array.isArray(body.collaborators)) {
+    throw new Error(`malformed response: missing "collaborators" array`);
+  }
+  return body.collaborators;
+}
+
+export const addCopilotSpaceCollaborator = (
+  org: string,
+  spaceNumber: number,
+  payload: { actor_type: "User" | "Team"; actor_identifier: string; role: string },
+): Promise<GithubCopilotSpaceCollaborator> =>
+  ghPostJSON(`${copilotSpacesBase(org)}/${spaceNumber}/collaborators`, payload);
+
+/** Role "no_access" removes the collaborator grant (the endpoint's contract). */
+export const updateCopilotSpaceCollaborator = (
+  org: string,
+  spaceNumber: number,
+  actorType: "User" | "Team",
+  identifier: string,
+  role: string,
+) =>
+  ghSend(
+    "PUT",
+    `${copilotSpacesBase(org)}/${spaceNumber}/collaborators/${actorType}/${encodeURIComponent(identifier)}`,
+    { role },
+  );
+
+export const removeCopilotSpaceCollaborator = (
+  org: string,
+  spaceNumber: number,
+  actorType: "User" | "Team",
+  identifier: string,
+) =>
+  ghSend(
+    "DELETE",
+    `${copilotSpacesBase(org)}/${spaceNumber}/collaborators/${actorType}/${encodeURIComponent(identifier)}`,
+  );
+
+export async function fetchCopilotSpaceResources(
+  org: string,
+  spaceNumber: number,
+): Promise<GithubCopilotSpaceResource[]> {
+  const body = await ghFetch<{ resources: GithubCopilotSpaceResource[] }>(
+    `${copilotSpacesBase(org)}/${spaceNumber}/resources`,
+  );
+  if (!Array.isArray(body.resources)) {
+    throw new Error(`malformed response: missing "resources" array`);
+  }
+  return body.resources;
+}
+
+export const addCopilotSpaceResource = (
+  org: string,
+  spaceNumber: number,
+  payload: { resource_type: string; metadata: Record<string, unknown> },
+): Promise<GithubCopilotSpaceResource> =>
+  ghPostJSON(`${copilotSpacesBase(org)}/${spaceNumber}/resources`, payload);
+
+export const updateCopilotSpaceResource = (
+  org: string,
+  spaceNumber: number,
+  resourceId: number,
+  metadata: Record<string, unknown>,
+): Promise<GithubCopilotSpaceResource> =>
+  ghPutJSON(`${copilotSpacesBase(org)}/${spaceNumber}/resources/${resourceId}`, { metadata });
+
+export const removeCopilotSpaceResource = (
+  org: string,
+  spaceNumber: number,
+  resourceId: number,
+) => ghSend("DELETE", `${copilotSpacesBase(org)}/${spaceNumber}/resources/${resourceId}`);
+
+export const fetchEnterpriseTeamOrgs = (slug: string) =>
+  ghFetch<GithubOrgSimple[]>(`${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations`);
+
+export const assignEnterpriseTeamOrg = (slug: string, org: string): Promise<GithubOrgSimple> =>
+  ghPutJSON(
+    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`,
+    {},
+  );
+
+export const unassignEnterpriseTeamOrg = (slug: string, org: string) =>
+  ghSend(
+    "DELETE",
+    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`,
+  );
+
+export const fetchOrgRepoCustomPropertyValues = (
+  org: string,
+  repositoryQuery?: string,
+): Promise<GithubOrgRepoCustomPropertyValues[]> => {
+  const qs = repositoryQuery ? `?repository_query=${encodeURIComponent(repositoryQuery)}` : "";
+  return ghFetch(`/api/v3/orgs/${org}/properties/values${qs}`);
+};
+
+/** A null value unsets the property on each named repository. */
+export const setOrgRepoCustomPropertyValues = (
+  org: string,
+  repositoryNames: string[],
+  properties: { property_name: string; value: unknown }[],
+) =>
+  ghSend("PATCH", `/api/v3/orgs/${org}/properties/values`, {
+    repository_names: repositoryNames,
+    properties,
+  });
+// ─── Deployments + webhook deliveries + Pages ───────────────────────────
+
+import type {
+  GithubDeployment,
+  GithubDeploymentState,
+  GithubDeploymentStatus,
+  GithubEnvironmentDetail,
+  GithubDeploymentBranchPolicy,
+  GithubEnvCustomProtectionRule,
+  GithubHookDelivery,
+  GithubHookDeliveryDetail,
+  GithubOrgWebhook,
+  GithubPagesSite,
+  GithubPagesBuild,
+  GithubPagesHealth,
+} from "./types.js";
+
+/**
+ * Full environment objects (protection rules + branch-policy config) from
+ * the same envelope endpoint fetchEnvironments unwraps into slim rows.
+ */
+export const fetchEnvironmentsDetail = (owner: string, repo: string) =>
+  ghFetch<{ environments: GithubEnvironmentDetail[] }>(
+    `/api/v3/repos/${owner}/${repo}/environments`,
+  ).then((r) => {
+    if (!Array.isArray(r.environments)) {
+      throw new Error(`malformed response: missing "environments" array`);
+    }
+    return r.environments;
+  });
+
+export const fetchEnvBranchPolicies = (owner: string, repo: string, envName: string) =>
+  ghFetch<{ total_count: number; branch_policies: GithubDeploymentBranchPolicy[] }>(
+    `/api/v3/repos/${owner}/${repo}/environments/${encodeURIComponent(envName)}/deployment-branch-policies`,
+  ).then((r) => {
+    if (!Array.isArray(r.branch_policies)) {
+      throw new Error(`malformed response: missing "branch_policies" array`);
+    }
+    return r.branch_policies;
+  });
+
+export const fetchEnvProtectionRules = (owner: string, repo: string, envName: string) =>
+  ghFetch<{
+    total_count: number;
+    custom_deployment_protection_rules: GithubEnvCustomProtectionRule[];
+  }>(
+    `/api/v3/repos/${owner}/${repo}/environments/${encodeURIComponent(envName)}/deployment_protection_rules`,
+  ).then((r) => {
+    if (!Array.isArray(r.custom_deployment_protection_rules)) {
+      throw new Error(
+        `malformed response: missing "custom_deployment_protection_rules" array`,
+      );
+    }
+    return r.custom_deployment_protection_rules;
+  });
+
+/** First page of a repo's deployments; follow pages via the Link header. */
+export const fetchDeploymentsPage = (
+  owner: string,
+  repo: string,
+  pageUrl?: string,
+): Promise<Page<GithubDeployment>> =>
+  ghFetchPage<GithubDeployment>(
+    pageUrl ?? `/api/v3/repos/${owner}/${repo}/deployments?per_page=30`,
+  );
+
+export const fetchDeploymentStatuses = (owner: string, repo: string, deploymentId: number) =>
+  ghFetch<GithubDeploymentStatus[]>(
+    `/api/v3/repos/${owner}/${repo}/deployments/${deploymentId}/statuses`,
+  );
+
+export const createDeploymentStatus = (
+  owner: string,
+  repo: string,
+  deploymentId: number,
+  payload: {
+    state: GithubDeploymentState;
+    description?: string;
+    environment?: string;
+    environment_url?: string;
+    log_url?: string;
+  },
+): Promise<GithubDeploymentStatus> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/deployments/${deploymentId}/statuses`, payload);
+
+/** Where a webhook lives: a repository or an organization. */
+export type HookScope =
+  | { kind: "repo"; owner: string; repo: string }
+  | { kind: "org"; org: string };
+
+function hookBasePath(scope: HookScope, hookId: number): string {
+  return scope.kind === "repo"
+    ? `/api/v3/repos/${scope.owner}/${scope.repo}/hooks/${hookId}`
+    : `/api/v3/orgs/${scope.org}/hooks/${hookId}`;
+}
+
+/** First page of a hook's deliveries; follow pages via the Link header. */
+export const fetchHookDeliveriesPage = (
+  scope: HookScope,
+  hookId: number,
+  pageUrl?: string,
+): Promise<Page<GithubHookDelivery>> =>
+  ghFetchPage<GithubHookDelivery>(
+    pageUrl ?? `${hookBasePath(scope, hookId)}/deliveries?per_page=30`,
+  );
+
+export const fetchHookDelivery = (
+  scope: HookScope,
+  hookId: number,
+  deliveryId: number,
+): Promise<GithubHookDeliveryDetail> =>
+  ghFetch(`${hookBasePath(scope, hookId)}/deliveries/${deliveryId}`);
+
+/** POST .../deliveries/{id}/attempts — the server answers 202, no body. */
+export const redeliverHookDelivery = (scope: HookScope, hookId: number, deliveryId: number) =>
+  ghSend("POST", `${hookBasePath(scope, hookId)}/deliveries/${deliveryId}/attempts`);
+
+/** First page of an organization's webhooks; follow pages via Link header. */
+export const fetchOrgHooksPage = (
+  org: string,
+  pageUrl?: string,
+): Promise<Page<GithubOrgWebhook>> =>
+  ghFetchPage<GithubOrgWebhook>(pageUrl ?? `/api/v3/orgs/${org}/hooks?per_page=30`);
+
+/** Pages site, or null when Pages is not enabled on the repo (404). */
+export async function fetchPagesSite(
+  owner: string,
+  repo: string,
+): Promise<GithubPagesSite | null> {
+  try {
+    return await ghFetch<GithubPagesSite>(`/api/v3/repos/${owner}/${repo}/pages`);
+  } catch (err) {
+    if (isNotFound(err)) return null;
+    throw err;
+  }
+}
+
+export const createPagesSite = (
+  owner: string,
+  repo: string,
+  payload: {
+    source?: { branch: string; path?: string };
+    cname?: string;
+    build_type?: "legacy" | "workflow";
+  },
+): Promise<GithubPagesSite> => ghPostJSON(`/api/v3/repos/${owner}/${repo}/pages`, payload);
+
+/** PUT /pages — the server answers 204, no body. */
+export const updatePagesSite = (
+  owner: string,
+  repo: string,
+  payload: {
+    cname?: string | null;
+    https_enforced?: boolean;
+    build_type?: "legacy" | "workflow";
+    source?: { branch: string; path?: string };
+  },
+) => ghSend("PUT", `/api/v3/repos/${owner}/${repo}/pages`, payload);
+
+export const deletePagesSite = (owner: string, repo: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/pages`);
+
+export const fetchPagesBuilds = (owner: string, repo: string) =>
+  ghFetch<GithubPagesBuild[]>(`/api/v3/repos/${owner}/${repo}/pages/builds`);
+
+export const requestPagesBuild = (
+  owner: string,
+  repo: string,
+): Promise<{ status: string; url: string }> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/pages/builds`, {});
+
+/**
+ * Pages custom-domain health check. Unlike ghFetch this surfaces the
+ * response body's message — the endpoint answers 400 with an explanation
+ * ("There isn't a custom domain on this Pages site") the panel must show.
+ */
+export async function fetchPagesHealth(owner: string, repo: string): Promise<GithubPagesHealth> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/pages/health`, {
+    headers: authHeaders(),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    let message = text || res.statusText;
+    try {
+      const body = JSON.parse(text) as { message?: string };
+      if (body.message) message = body.message;
+    } catch {
+      // Non-JSON error body: keep the raw text.
+    }
+    throw new ApiError(res.status, message);
+  }
+  return res.json() as Promise<GithubPagesHealth>;
+}
+
+/** Status of one GitHub Pages deployment (GET /pages/deployments/{id}). */
+export const fetchPagesDeploymentStatus = (
+  owner: string,
+  repo: string,
+  deploymentId: number,
+): Promise<{ status: string }> =>
+  ghFetch(`/api/v3/repos/${owner}/${repo}/pages/deployments/${deploymentId}`);
+// ─── PR reviews, statuses, reactions & timeline ─────────────────────────
+
+/** The token's own user — reaction toggles need to know "my" reactions. */
+export const fetchAuthenticatedUser = () => ghFetch<GithubAccount>("/api/v3/user");
+
+export const fetchPRReviews = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubPRReview[]>(`/api/v3/repos/${owner}/${repo}/pulls/${number}/reviews`);
+
+/** Create + submit a review in one call (event APPROVE/REQUEST_CHANGES/COMMENT). */
+export const createPRReview = (
+  owner: string,
+  repo: string,
+  number: number,
+  payload: { body: string; event: "APPROVE" | "REQUEST_CHANGES" | "COMMENT" },
+): Promise<GithubPRReview> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/pulls/${number}/reviews`, payload);
+
+export const dismissPRReview = (
+  owner: string,
+  repo: string,
+  number: number,
+  reviewId: number,
+  message: string,
+): Promise<GithubPRReview> =>
+  ghPutJSON(`/api/v3/repos/${owner}/${repo}/pulls/${number}/reviews/${reviewId}/dismissals`, {
+    message,
+  });
+
+export const fetchPRReviewComments = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubPRReviewComment[]>(`/api/v3/repos/${owner}/${repo}/pulls/${number}/comments`);
+
+export const replyToPRReviewComment = (
+  owner: string,
+  repo: string,
+  number: number,
+  inReplyTo: number,
+  body: string,
+): Promise<GithubPRReviewComment> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/pulls/${number}/comments`, {
+    body,
+    in_reply_to: inReplyTo,
+  });
+
+/**
+ * Review-thread listing/resolution is GraphQL-only on real GitHub; bleephub
+ * exposes it as a token-gated /internal/ convenience.
+ */
+export const fetchPRReviewThreads = (owner: string, repo: string, number: number) =>
+  fetchJSON<GithubPRReviewThread[]>(
+    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads`,
+  );
+
+export const setPRReviewThreadResolved = (
+  owner: string,
+  repo: string,
+  number: number,
+  threadId: number,
+  resolved: boolean,
+): Promise<GithubPRReviewThread> =>
+  ghPostJSON(
+    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
+    {},
+  );
+
+export async function fetchPRRequestedReviewers(
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<GithubReviewRequest> {
+  const body = await ghFetch<GithubReviewRequest>(
+    `/api/v3/repos/${owner}/${repo}/pulls/${number}/requested_reviewers`,
+  );
+  // No `?? []`: a missing member is a contract break that must surface.
+  if (!Array.isArray(body.users) || !Array.isArray(body.teams)) {
+    throw new Error('malformed response: missing "users"/"teams" arrays');
+  }
+  return body;
+}
+
+export const requestPRReviewers = (
+  owner: string,
+  repo: string,
+  number: number,
+  logins: string[],
+): Promise<GithubPR> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/pulls/${number}/requested_reviewers`, {
+    reviewers: logins,
+  });
+
+export const removePRRequestedReviewers = (
+  owner: string,
+  repo: string,
+  number: number,
+  logins: string[],
+): Promise<GithubPR> =>
+  ghDeleteJSON(`/api/v3/repos/${owner}/${repo}/pulls/${number}/requested_reviewers`, {
+    reviewers: logins,
+  });
+
+export async function fetchCombinedStatus(
+  owner: string,
+  repo: string,
+  ref: string,
+): Promise<GithubCombinedStatus> {
+  const body = await ghFetch<GithubCombinedStatus>(
+    `/api/v3/repos/${owner}/${repo}/commits/${ref}/status`,
+  );
+  // No `?? []`: a missing member is a contract break that must surface.
+  if (!Array.isArray(body.statuses)) {
+    throw new Error('malformed response: missing "statuses" array');
+  }
+  return body;
+}
+
+export const fetchIssueTimeline = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubTimelineItem[]>(`/api/v3/repos/${owner}/${repo}/issues/${number}/timeline`);
+
+export const fetchIssueReactions = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubReaction[]>(`/api/v3/repos/${owner}/${repo}/issues/${number}/reactions`);
+
+export const addIssueReaction = (
+  owner: string,
+  repo: string,
+  number: number,
+  content: GithubReactionContent,
+): Promise<GithubReaction> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}/reactions`, { content });
+
+export const removeIssueReaction = (
+  owner: string,
+  repo: string,
+  number: number,
+  reactionId: number,
+) => ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/issues/${number}/reactions/${reactionId}`);
+
+export const fetchIssueCommentReactions = (owner: string, repo: string, commentId: number) =>
+  ghFetch<GithubReaction[]>(
+    `/api/v3/repos/${owner}/${repo}/issues/comments/${commentId}/reactions`,
+  );
+
+export const addIssueCommentReaction = (
+  owner: string,
+  repo: string,
+  commentId: number,
+  content: GithubReactionContent,
+): Promise<GithubReaction> =>
+  ghPostJSON(`/api/v3/repos/${owner}/${repo}/issues/comments/${commentId}/reactions`, {
+    content,
+  });
+
+export const removeIssueCommentReaction = (
+  owner: string,
+  repo: string,
+  commentId: number,
+  reactionId: number,
+) =>
+  ghSend(
+    "DELETE",
+    `/api/v3/repos/${owner}/${repo}/issues/comments/${commentId}/reactions/${reactionId}`,
+  );
+// ─── Search + repo social + account ─────────────────────────────────────
+
+/** One page of a /search/* envelope ({total_count, incomplete_results, items}). */
+export interface SearchResultPage<T> {
+  totalCount: number;
+  incompleteResults: boolean;
+  items: T[];
+}
+
+export const SEARCH_PER_PAGE = 30;
+
+async function ghSearch<T>(
+  endpoint: string,
+  q: string,
+  page: number,
+  extra?: Record<string, string>,
+): Promise<SearchResultPage<T>> {
+  const params = new URLSearchParams({ q, page: String(page), per_page: String(SEARCH_PER_PAGE) });
+  for (const [k, v] of Object.entries(extra ?? {})) params.set(k, v);
+  const body = await ghFetch<{ total_count: number; incomplete_results: boolean; items: T[] }>(
+    `/api/v3/search/${endpoint}?${params}`,
+  );
+  // No `?? []`: a missing items array is a contract break, not "no results".
+  if (!Array.isArray(body.items)) {
+    throw new Error(`malformed response: missing "items" array`);
+  }
+  return {
+    totalCount: body.total_count,
+    incompleteResults: body.incomplete_results,
+    items: body.items,
+  };
+}
+
+export const searchRepositories = (q: string, page = 1) =>
+  ghSearch<BleephubRepo>("repositories", q, page);
+
+export const searchCode = (q: string, page = 1) =>
+  ghSearch<GithubSearchCodeItem>("code", q, page);
+
+export const searchIssues = (q: string, page = 1) =>
+  ghSearch<GithubSearchIssueItem>("issues", q, page);
+
+export const searchUsers = (q: string, page = 1) =>
+  ghSearch<GithubSearchUserItem>("users", q, page);
+
+export const searchCommits = (q: string, page = 1) =>
+  ghSearch<GithubSearchCommitItem>("commits", q, page);
+
+/** Label search is scoped to one repository via the required repository_id. */
+export const searchLabels = (q: string, repositoryId: number, page = 1) =>
+  ghSearch<GithubSearchLabelItem>("labels", q, page, { repository_id: String(repositoryId) });
+
+export const searchTopics = (q: string, page = 1) =>
+  ghSearch<GithubSearchTopicItem>("topics", q, page);
+
+export const fetchRepoCollaborators = (owner: string, repo: string) =>
+  ghFetch<GithubCollaborator[]>(`/api/v3/repos/${owner}/${repo}/collaborators`);
+
+/**
+ * PUT /collaborators/{username}: inviting a new user answers 201 with the
+ * pending invitation; naming an existing collaborator updates the
+ * permission in place and answers 204 (returned here as null).
+ */
+export async function inviteRepoCollaborator(
+  owner: string,
+  repo: string,
+  username: string,
+  permission: string,
+): Promise<GithubRepoInvitation | null> {
+  const res = await fetch(
+    `/api/v3/repos/${owner}/${repo}/collaborators/${encodeURIComponent(username)}`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ permission }),
+    },
+  );
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  if (res.status === 204) return null;
+  return res.json() as Promise<GithubRepoInvitation>;
+}
+
+export const removeRepoCollaborator = (owner: string, repo: string, username: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/collaborators/${encodeURIComponent(username)}`);
+
+export const fetchRepoInvitations = (owner: string, repo: string) =>
+  ghFetch<GithubRepoInvitation[]>(`/api/v3/repos/${owner}/${repo}/invitations`);
+
+export const cancelRepoInvitation = (owner: string, repo: string, invitationId: number) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/invitations/${invitationId}`);
+
+export const fetchRepoStargazers = (owner: string, repo: string) =>
+  ghFetch<GithubAccount[]>(`/api/v3/repos/${owner}/${repo}/stargazers`);
+
+/** First page of watchers; follow pages via the Link rel="next" URL. */
+export const fetchRepoSubscribersPage = (owner: string, repo: string, pageUrl?: string) =>
+  ghFetchPage<GithubAccount>(pageUrl ?? `/api/v3/repos/${owner}/${repo}/subscribers?per_page=50`);
+
+/** First page of forks; follow pages via the Link rel="next" URL. */
+export const fetchRepoForksPage = (owner: string, repo: string, pageUrl?: string) =>
+  ghFetchPage<BleephubRepo>(pageUrl ?? `/api/v3/repos/${owner}/${repo}/forks?per_page=50`);
+
+/** Language name → byte count, sorted by the server descending by bytes. */
+export const fetchRepoLanguages = (owner: string, repo: string) =>
+  ghFetch<Record<string, number>>(`/api/v3/repos/${owner}/${repo}/languages`);
+
+export const fetchRepoTags = (owner: string, repo: string) =>
+  ghFetch<GithubTag[]>(`/api/v3/repos/${owner}/${repo}/tags`);
+
+/** Star/watch/fork counters from the full-repository shape. */
+export const fetchRepoSocialCounts = (owner: string, repo: string) =>
+  ghFetch<GithubRepoSocialCounts>(`/api/v3/repos/${owner}/${repo}`);
+
+export const fetchUserSSHKeys = () => ghFetch<GithubSSHKey[]>("/api/v3/user/keys");
+
+export const createUserSSHKey = (title: string, key: string) =>
+  ghPostJSON<GithubSSHKey>("/api/v3/user/keys", { title, key });
+
+export const deleteUserSSHKey = (keyId: number) =>
+  ghSend("DELETE", `/api/v3/user/keys/${keyId}`);
+
+export const fetchUserGPGKeys = () => ghFetch<GithubGPGKey[]>("/api/v3/user/gpg_keys");
+
+export const createUserGPGKey = (armoredPublicKey: string, name?: string) =>
+  ghPostJSON<GithubGPGKey>("/api/v3/user/gpg_keys", {
+    armored_public_key: armoredPublicKey,
+    ...(name ? { name } : {}),
+  });
+
+export const deleteUserGPGKey = (gpgKeyId: number) =>
+  ghSend("DELETE", `/api/v3/user/gpg_keys/${gpgKeyId}`);
+
+export const fetchUserSSHSigningKeys = () =>
+  ghFetch<GithubSSHSigningKey[]>("/api/v3/user/ssh_signing_keys");
+
+export const createUserSSHSigningKey = (title: string, key: string) =>
+  ghPostJSON<GithubSSHSigningKey>("/api/v3/user/ssh_signing_keys", { title, key });
+
+export const deleteUserSSHSigningKey = (sshSigningKeyId: number) =>
+  ghSend("DELETE", `/api/v3/user/ssh_signing_keys/${sshSigningKeyId}`);
+
+export const fetchBlockedUsers = () => ghFetch<GithubBlockedUser[]>("/api/v3/user/blocks");
+
+export const blockUser = (username: string) =>
+  ghSend("PUT", `/api/v3/user/blocks/${encodeURIComponent(username)}`);
+
+export const unblockUser = (username: string) =>
+  ghSend("DELETE", `/api/v3/user/blocks/${encodeURIComponent(username)}`);
+
+export const fetchUserEmails = () => ghFetch<GithubUserEmail[]>("/api/v3/user/emails");
+
+export const addUserEmails = (emails: string[]) =>
+  ghPostJSON<GithubUserEmail[]>("/api/v3/user/emails", { emails });
+
+export const deleteUserEmails = (emails: string[]) =>
+  ghSend("DELETE", "/api/v3/user/emails", { emails });
+
+/** Sets the primary email's visibility; returns the updated email rows. */
+export const setUserEmailVisibility = (visibility: "public" | "private") =>
+  ghPatchJSON<GithubUserEmail[]>("/api/v3/user/email/visibility", { visibility });

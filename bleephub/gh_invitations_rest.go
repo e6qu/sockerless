@@ -186,7 +186,6 @@ func invitationJSON(inv *RepoInvitation, repo *Repo, st *Store, baseURL string) 
 		"invitee":     invitee,
 		"inviter":     inviter,
 		"permissions": roleName,
-		"role_name":   roleName,
 		"created_at":  inv.CreatedAt.Format(time.RFC3339),
 		"url":         baseURL + "/user/repository-invitations/" + strconv.Itoa(inv.ID),
 		"html_url":    baseURL + "/" + inv.RepoKey + "/invitations",

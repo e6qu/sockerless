@@ -4,23 +4,43 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import {
   addRepoDeployKey,
+  createPagesSite,
+  deletePagesSite,
+  cancelRepoInvitation,
   deleteRepoDeployKey,
+  fetchPagesBuilds,
+  fetchPagesDeploymentStatus,
+  fetchPagesHealth,
+  fetchPagesSite,
   fetchRepoBranches,
+  fetchRepoCollaborators,
   fetchRepoDeployKeys,
   fetchRepoDetail,
+  fetchRepoInvitations,
   fetchRepoTopics,
+  inviteRepoCollaborator,
+  removeRepoCollaborator,
   renameBranch,
+  requestPagesBuild,
   setRepoFlag,
   setRepoInteractionLimit,
   transferRepo,
+  updatePagesSite,
   updateRepo,
   updateRepoTopics,
 } from "../api.js";
-import type { BleephubRepo, GithubDeployKey } from "../types.js";
+import type {
+  BleephubRepo,
+  GithubCollaborator,
+  GithubDeployKey,
+  GithubPagesBuild,
+  GithubPagesSite,
+  GithubRepoInvitation,
+} from "../types.js";
 import { RepoHeader } from "../components/Shell.js";
 import { PageTitle, Button, Box, Tabs, FormLabel, ErrorBanner } from "../components/ui.js";
 
-type SettingsTab = "general" | "deploy-keys" | "security" | "interaction" | "transfer" | "rename";
+type SettingsTab = "general" | "collaborators" | "deploy-keys" | "pages" | "security" | "interaction" | "transfer" | "rename";
 
 export function RepoSettingsPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
@@ -38,7 +58,9 @@ export function RepoSettingsPage() {
 
   const tabs = [
     { key: "general" as const, label: "General" },
+    { key: "collaborators" as const, label: "Collaborators" },
     { key: "deploy-keys" as const, label: "Deploy keys" },
+    { key: "pages" as const, label: "Pages" },
     { key: "security" as const, label: "Security" },
     { key: "interaction" as const, label: "Interaction limits" },
     { key: "transfer" as const, label: "Transfer" },
@@ -51,7 +73,9 @@ export function RepoSettingsPage() {
       <PageTitle title="Settings" />
       <Tabs items={tabs} active={tab} onChange={setTab} />
       {tab === "general" && <GeneralSettingsTab owner={owner} repo={repo} repoData={data} />}
+      {tab === "collaborators" && <CollaboratorsTab owner={owner} repo={repo} />}
       {tab === "deploy-keys" && <DeployKeysTab owner={owner} repo={repo} />}
+      {tab === "pages" && <PagesTab owner={owner} repo={repo} />}
       {tab === "security" && <SecurityTab owner={owner} repo={repo} />}
       {tab === "interaction" && <InteractionTab owner={owner} repo={repo} />}
       {tab === "transfer" && <TransferTab owner={owner} repo={repo} />}
@@ -346,6 +370,190 @@ function SecretsAndVariablesCard({ owner, repo }: { owner: string; repo: string 
         </Link>
       </div>
     </Box>
+  );
+}
+
+function CollaboratorsTab({ owner, repo }: { owner: string; repo: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [permission, setPermission] = useState("push");
+
+  const collaboratorsQuery = useQuery({
+    queryKey: ["repo-collaborators", owner, repo],
+    queryFn: () => fetchRepoCollaborators(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+  const invitationsQuery = useQuery({
+    queryKey: ["repo-invitations", owner, repo],
+    queryFn: () => fetchRepoInvitations(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+
+  const invalidate = () => {
+    queryClient.invalidateQueries({ queryKey: ["repo-collaborators", owner, repo] });
+    queryClient.invalidateQueries({ queryKey: ["repo-invitations", owner, repo] });
+  };
+
+  const inviteMut = useMutation({
+    mutationFn: () => inviteRepoCollaborator(owner, repo, username.trim(), permission),
+    onSuccess: (invitation) => {
+      setError(null);
+      setNotice(
+        invitation
+          ? `Invitation sent to ${invitation.invitee?.login ?? username.trim()}.`
+          : `Updated ${username.trim()}'s permission.`,
+      );
+      setUsername("");
+      invalidate();
+    },
+    onError: (err: Error) => {
+      setNotice(null);
+      setError(err.message);
+    },
+  });
+
+  const removeMut = useMutation({
+    mutationFn: (login: string) => removeRepoCollaborator(owner, repo, login),
+    onSuccess: () => {
+      setError(null);
+      setNotice(null);
+      invalidate();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const cancelMut = useMutation({
+    mutationFn: (invitationId: number) => cancelRepoInvitation(owner, repo, invitationId),
+    onSuccess: () => {
+      setError(null);
+      setNotice(null);
+      invalidate();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  if (collaboratorsQuery.isLoading || invitationsQuery.isLoading)
+    return <Spinner label="loading collaborators" />;
+  if (collaboratorsQuery.isError)
+    return <InlineError title="Failed to load collaborators" detail={String(collaboratorsQuery.error)} />;
+  if (invitationsQuery.isError)
+    return <InlineError title="Failed to load invitations" detail={String(invitationsQuery.error)} />;
+
+  const collaborators = collaboratorsQuery.data ?? [];
+  const invitations = invitationsQuery.data ?? [];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {notice && <div style={{ color: "var(--gh-open)", fontSize: "0.85rem" }}>{notice}</div>}
+      <Box header={<span style={{ fontWeight: 600 }}>Invite a collaborator</span>}>
+        <div style={{ padding: "1rem", display: "flex", flexWrap: "wrap", gap: "0.75rem", alignItems: "center" }}>
+          <input
+            type="text"
+            aria-label="Username to invite"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="username"
+            className="flex-1"
+            style={{ fontSize: "0.9rem", padding: "0.4rem 0.5rem", minWidth: "12rem" }}
+          />
+          <select
+            aria-label="Role"
+            value={permission}
+            onChange={(e) => setPermission(e.target.value)}
+            style={{ fontSize: "0.9rem", padding: "0.4rem 0.5rem" }}
+          >
+            <option value="pull">Read</option>
+            <option value="push">Write</option>
+            <option value="admin">Admin</option>
+          </select>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setError(null);
+              setNotice(null);
+              inviteMut.mutate();
+            }}
+            disabled={inviteMut.isPending || !username.trim()}
+          >
+            Invite
+          </Button>
+        </div>
+      </Box>
+      <Box header={<span style={{ fontWeight: 600 }}>Collaborators</span>}>
+        {collaborators.length === 0 ? (
+          <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+            No collaborators.
+          </div>
+        ) : (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {collaborators.map((c: GithubCollaborator) => (
+              <li
+                key={c.login}
+                className="flex items-center justify-between gap-4"
+                style={{ padding: "0.6rem 1rem", borderBottom: "1px solid var(--color-border)" }}
+              >
+                <div>
+                  <span style={{ fontWeight: 500 }}>{c.login}</span>
+                  <span style={{ marginLeft: "0.5rem", fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+                    {c.role_name}
+                  </span>
+                </div>
+                {c.login !== owner && (
+                  <Button
+                    size="sm"
+                    variant="danger"
+                    onClick={() => {
+                      if (confirm(`Remove ${c.login} from ${owner}/${repo}?`)) {
+                        removeMut.mutate(c.login);
+                      }
+                    }}
+                    disabled={removeMut.isPending}
+                  >
+                    remove
+                  </Button>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Box>
+      <Box header={<span style={{ fontWeight: 600 }}>Pending invitations</span>}>
+        {invitations.length === 0 ? (
+          <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+            No pending invitations.
+          </div>
+        ) : (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {invitations.map((inv: GithubRepoInvitation) => (
+              <li
+                key={inv.id}
+                className="flex items-center justify-between gap-4"
+                style={{ padding: "0.6rem 1rem", borderBottom: "1px solid var(--color-border)" }}
+              >
+                <div>
+                  <span style={{ fontWeight: 500 }}>{inv.invitee?.login ?? "unknown"}</span>
+                  <span style={{ marginLeft: "0.5rem", fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+                    {inv.permissions} · invited by {inv.inviter?.login ?? "unknown"} on{" "}
+                    {new Date(inv.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  onClick={() => cancelMut.mutate(inv.id)}
+                  disabled={cancelMut.isPending}
+                >
+                  cancel
+                </Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Box>
+    </div>
   );
 }
 
@@ -744,6 +952,449 @@ function RenameBranchTab({ owner, repo }: { owner: string; repo: string }) {
             Rename branch
           </Button>
         </div>
+      </div>
+    </Box>
+  );
+}
+
+// ─── GitHub Pages panel ──────────────────────────────────────────────────
+
+function PagesTab({ owner, repo }: { owner: string; repo: string }) {
+  const queryClient = useQueryClient();
+  const siteQ = useQuery({
+    queryKey: ["pages-site", owner, repo],
+    queryFn: () => fetchPagesSite(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+
+  if (siteQ.isLoading) return <Spinner label="loading Pages site" />;
+  if (siteQ.isError)
+    return <InlineError title="Failed to load Pages site" detail={String(siteQ.error)} />;
+
+  const site = siteQ.data ?? null;
+  const invalidate = () => {
+    void queryClient.invalidateQueries({ queryKey: ["pages-site", owner, repo] });
+    void queryClient.invalidateQueries({ queryKey: ["pages-builds", owner, repo] });
+    void queryClient.invalidateQueries({ queryKey: ["pages-health", owner, repo] });
+  };
+
+  if (site === null) return <PagesEnableForm owner={owner} repo={repo} onEnabled={invalidate} />;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+      <PagesSiteCard owner={owner} repo={repo} site={site} onChanged={invalidate} />
+      <PagesBuildsCard owner={owner} repo={repo} />
+      <PagesHealthCard owner={owner} repo={repo} hasCustomDomain={!!site.cname} />
+      <PagesDeploymentLookupCard owner={owner} repo={repo} />
+    </div>
+  );
+}
+
+function PagesEnableForm({
+  owner,
+  repo,
+  onEnabled,
+}: {
+  owner: string;
+  repo: string;
+  onEnabled: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [branch, setBranch] = useState("");
+  const [path, setPath] = useState("/");
+  const [buildType, setBuildType] = useState<"legacy" | "workflow">("legacy");
+
+  const enableMut = useMutation({
+    mutationFn: () =>
+      createPagesSite(owner, repo, {
+        build_type: buildType,
+        ...(buildType === "legacy"
+          ? { source: { branch: branch.trim(), path: path.trim() || "/" } }
+          : branch.trim()
+            ? { source: { branch: branch.trim(), path: path.trim() || "/" } }
+            : {}),
+      }),
+    onSuccess: () => {
+      setError(null);
+      onEnabled();
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>GitHub Pages</span>}>
+      <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        <p style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
+          Pages is not enabled for this repository.
+        </p>
+        <FormLabel id="pages-build-type">Build type</FormLabel>
+        <select
+          id="pages-build-type"
+          value={buildType}
+          onChange={(e) => setBuildType(e.target.value as "legacy" | "workflow")}
+          className="w-full"
+        >
+          <option value="legacy">Deploy from a branch (legacy)</option>
+          <option value="workflow">GitHub Actions workflow</option>
+        </select>
+        <FormLabel id="pages-source-branch">Source branch</FormLabel>
+        <input
+          id="pages-source-branch"
+          type="text"
+          value={branch}
+          onChange={(e) => setBranch(e.target.value)}
+          placeholder={buildType === "workflow" ? "optional for workflow builds" : "main"}
+          className="w-full"
+        />
+        <FormLabel id="pages-source-path">Source path</FormLabel>
+        <input
+          id="pages-source-path"
+          type="text"
+          value={path}
+          onChange={(e) => setPath(e.target.value)}
+          className="w-full"
+        />
+        <div className="flex justify-end">
+          <Button
+            variant="primary"
+            onClick={() => {
+              setError(null);
+              enableMut.mutate();
+            }}
+            disabled={enableMut.isPending || (buildType === "legacy" && !branch.trim())}
+          >
+            Enable Pages
+          </Button>
+        </div>
+      </div>
+    </Box>
+  );
+}
+
+function PagesSiteCard({
+  owner,
+  repo,
+  site,
+  onChanged,
+}: {
+  owner: string;
+  repo: string;
+  site: GithubPagesSite;
+  onChanged: () => void;
+}) {
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [cname, setCname] = useState(site.cname);
+  const [httpsEnforced, setHttpsEnforced] = useState(site.https_enforced);
+
+  const updateMut = useMutation({
+    mutationFn: () =>
+      updatePagesSite(owner, repo, {
+        cname: cname.trim() || null,
+        https_enforced: httpsEnforced,
+      }),
+    onSuccess: () => {
+      setError(null);
+      setSuccess("Pages settings saved.");
+      onChanged();
+    },
+    onError: (err: Error) => {
+      setSuccess(null);
+      setError(err.message);
+    },
+  });
+
+  const disableMut = useMutation({
+    mutationFn: () => deletePagesSite(owner, repo),
+    onSuccess: () => {
+      setError(null);
+      onChanged();
+    },
+    onError: (err: Error) => {
+      setSuccess(null);
+      setError(err.message);
+    },
+  });
+
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>GitHub Pages</span>}>
+      <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        {success && <div style={{ color: "var(--gh-open)" }}>{success}</div>}
+        <div style={{ fontSize: "0.85rem" }}>
+          Status: <span className="font-mono">{site.status}</span>
+          {" · "}
+          Site:{" "}
+          <a href={site.html_url} style={{ color: "var(--color-accent)" }}>
+            {site.html_url}
+          </a>
+        </div>
+        <div style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)" }}>
+          Build type: {site.build_type ?? "legacy"}
+          {site.source?.branch ? ` · source: ${site.source.branch} at ${site.source.path ?? "/"}` : ""}
+          {" · "}
+          {site.public ? "public" : "private"} site
+        </div>
+        <FormLabel id="pages-cname">Custom domain (CNAME)</FormLabel>
+        <input
+          id="pages-cname"
+          type="text"
+          value={cname}
+          onChange={(e) => setCname(e.target.value)}
+          placeholder="www.example.com"
+          className="w-full"
+        />
+        <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem" }}>
+          <input
+            type="checkbox"
+            checked={httpsEnforced}
+            onChange={(e) => setHttpsEnforced(e.target.checked)}
+          />
+          Enforce HTTPS
+        </label>
+        <div className="flex justify-end gap-2">
+          <Button
+            variant="danger"
+            onClick={() => {
+              if (confirm("Disable GitHub Pages for this repository?")) {
+                setError(null);
+                setSuccess(null);
+                disableMut.mutate();
+              }
+            }}
+            disabled={disableMut.isPending}
+          >
+            Disable Pages
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => {
+              setError(null);
+              setSuccess(null);
+              updateMut.mutate();
+            }}
+            disabled={updateMut.isPending}
+          >
+            Save Pages settings
+          </Button>
+        </div>
+      </div>
+    </Box>
+  );
+}
+
+function PagesBuildsCard({ owner, repo }: { owner: string; repo: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+
+  const buildsQ = useQuery({
+    queryKey: ["pages-builds", owner, repo],
+    queryFn: () => fetchPagesBuilds(owner, repo),
+  });
+
+  const requestMut = useMutation({
+    mutationFn: () => requestPagesBuild(owner, repo),
+    onSuccess: () => {
+      setError(null);
+      void queryClient.invalidateQueries({ queryKey: ["pages-builds", owner, repo] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <Box
+      header={
+        <div className="flex w-full items-center justify-between">
+          <span style={{ fontWeight: 600 }}>Builds</span>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => {
+              setError(null);
+              requestMut.mutate();
+            }}
+            disabled={requestMut.isPending}
+          >
+            Request build
+          </Button>
+        </div>
+      }
+    >
+      <div style={{ padding: "0" }}>
+        {error && (
+          <div style={{ padding: "0.75rem 1rem" }}>
+            <ErrorBanner>{error}</ErrorBanner>
+          </div>
+        )}
+        {buildsQ.isLoading ? (
+          <div style={{ padding: "1rem" }}>
+            <Spinner label="loading builds" />
+          </div>
+        ) : buildsQ.isError ? (
+          <div style={{ padding: "1rem" }}>
+            <InlineError title="Failed to load Pages builds" detail={String(buildsQ.error)} />
+          </div>
+        ) : (buildsQ.data ?? []).length === 0 ? (
+          <div style={{ padding: "1rem", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+            No builds yet.
+          </div>
+        ) : (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {(buildsQ.data ?? []).map((b: GithubPagesBuild, i: number) => (
+              <li
+                key={b.url}
+                className="flex items-center gap-3"
+                style={{
+                  padding: "0.6rem 1rem",
+                  borderBottom:
+                    i < (buildsQ.data ?? []).length - 1 ? "1px solid var(--color-border)" : "none",
+                }}
+              >
+                <span
+                  className="font-mono"
+                  style={{
+                    fontSize: "0.74rem",
+                    color: b.status === "built" ? "var(--gh-open)" : "var(--color-fg-muted)",
+                    border: "1px solid var(--color-border)",
+                    borderRadius: "999px",
+                    padding: "0.05rem 0.5rem",
+                    flexShrink: 0,
+                  }}
+                >
+                  {b.status}
+                </span>
+                <div className="min-w-0 flex-1" style={{ fontSize: "0.8rem" }}>
+                  <span className="font-mono">{b.commit.slice(0, 7)}</span>
+                  {b.pusher ? ` · by ${b.pusher.login}` : ""} ·{" "}
+                  {new Date(b.created_at).toLocaleString()}
+                  {b.error?.message ? (
+                    <span style={{ color: "var(--color-danger-fg)" }}> · {b.error.message}</span>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Box>
+  );
+}
+
+function PagesHealthCard({
+  owner,
+  repo,
+  hasCustomDomain,
+}: {
+  owner: string;
+  repo: string;
+  hasCustomDomain: boolean;
+}) {
+  const healthQ = useQuery({
+    queryKey: ["pages-health", owner, repo],
+    queryFn: () => fetchPagesHealth(owner, repo),
+    enabled: hasCustomDomain,
+    retry: false,
+  });
+
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>Custom domain health check</span>}>
+      <div style={{ padding: "1rem", fontSize: "0.85rem" }}>
+        {!hasCustomDomain ? (
+          <span style={{ color: "var(--color-fg-muted)" }}>
+            No custom domain configured — set a CNAME above to run the health check.
+          </span>
+        ) : healthQ.isLoading ? (
+          <Spinner label="running health check" />
+        ) : healthQ.isError ? (
+          <InlineError title="Health check failed" detail={String(healthQ.error)} />
+        ) : healthQ.data?.domain == null ? (
+          <span style={{ color: "var(--color-fg-muted)" }}>No domain checks reported.</span>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+            <div>
+              <span className="font-mono">{healthQ.data.domain.host}</span> —{" "}
+              {healthQ.data.domain.is_valid ? (
+                <span style={{ color: "var(--gh-open)" }}>healthy</span>
+              ) : (
+                <span style={{ color: "var(--color-danger-fg)" }}>
+                  unhealthy{healthQ.data.domain.reason ? ` (${healthQ.data.domain.reason})` : ""}
+                </span>
+              )}
+            </div>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0, color: "var(--color-fg-muted)", fontSize: "0.8rem" }}>
+              <li>DNS resolves: {healthQ.data.domain.dns_resolves ? "yes" : "no"}</li>
+              <li>Valid domain: {healthQ.data.domain.is_valid_domain ? "yes" : "no"}</li>
+              <li>Apex domain: {healthQ.data.domain.is_apex_domain ? "yes" : "no"}</li>
+              <li>Pages domain: {healthQ.data.domain.is_pages_domain ? "yes" : "no"}</li>
+              <li>Enforces HTTPS: {healthQ.data.domain.enforces_https ? "yes" : "no"}</li>
+            </ul>
+          </div>
+        )}
+      </div>
+    </Box>
+  );
+}
+
+function PagesDeploymentLookupCard({ owner, repo }: { owner: string; repo: string }) {
+  const [error, setError] = useState<string | null>(null);
+  const [deploymentId, setDeploymentId] = useState("");
+  const [result, setResult] = useState<{ id: number; status: string } | null>(null);
+
+  const lookupMut = useMutation({
+    mutationFn: (id: number) => fetchPagesDeploymentStatus(owner, repo, id),
+    onSuccess: (data, id) => {
+      setError(null);
+      setResult({ id, status: data.status });
+    },
+    onError: (err: Error) => {
+      setResult(null);
+      setError(err.message);
+    },
+  });
+
+  return (
+    <Box header={<span style={{ fontWeight: 600 }}>Pages deployment status</span>}>
+      <div style={{ padding: "1rem", display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        {error && <ErrorBanner>{error}</ErrorBanner>}
+        <p style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)" }}>
+          Look up the status of a Pages deployment created via POST /pages/deployments
+          (e.g. by the actions/deploy-pages workflow step).
+        </p>
+        <FormLabel id="pages-deployment-id">Deployment ID</FormLabel>
+        <div className="flex gap-2">
+          <input
+            id="pages-deployment-id"
+            type="text"
+            inputMode="numeric"
+            value={deploymentId}
+            onChange={(e) => setDeploymentId(e.target.value)}
+            placeholder="e.g. 1"
+            style={{ flex: 1 }}
+          />
+          <Button
+            variant="secondary"
+            onClick={() => {
+              const id = parseInt(deploymentId.trim(), 10);
+              if (Number.isNaN(id)) {
+                setResult(null);
+                setError("Deployment ID must be a number.");
+                return;
+              }
+              setError(null);
+              lookupMut.mutate(id);
+            }}
+            disabled={lookupMut.isPending || !deploymentId.trim()}
+          >
+            Check status
+          </Button>
+        </div>
+        {result && (
+          <div style={{ fontSize: "0.85rem" }}>
+            Deployment <span className="font-mono">#{result.id}</span>:{" "}
+            <span className="font-mono">{result.status}</span>
+          </div>
+        )}
       </div>
     </Box>
   );

@@ -1507,3 +1507,468 @@ export interface GithubCopilotSpace {
   created_at: string;
   updated_at: string;
 }
+
+// ─── Copilot Spaces CRUD · enterprise team orgs · custom property values ─
+
+/** Copilot Space collaborator: `simple-user` or team-simple plus actor_type + role. */
+export interface GithubCopilotSpaceCollaborator {
+  actor_type: "User" | "Team";
+  role: string;
+  id: number;
+  /** Present when actor_type is "User". */
+  login?: string;
+  /** Present when actor_type is "Team". */
+  slug?: string;
+  name?: string;
+}
+
+export interface GithubCopilotSpaceResource {
+  id: number;
+  resource_type: string;
+  metadata: Record<string, unknown>;
+}
+
+// ─── Deployments + webhook deliveries + Pages ───────────────────────────
+
+/** Deployment — GET /repos/{o}/{r}/deployments (items). */
+export interface GithubDeployment {
+  id: number;
+  node_id: string;
+  sha: string;
+  ref: string;
+  task: string;
+  environment: string;
+  original_environment: string;
+  description: string;
+  creator: { login: string } | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+  transient_environment: boolean;
+  production_environment: boolean;
+  statuses_url: string;
+}
+
+/** Deployment status state (the POST statuses `state` enum). */
+export type GithubDeploymentState =
+  | "error"
+  | "failure"
+  | "inactive"
+  | "in_progress"
+  | "queued"
+  | "pending"
+  | "success";
+
+/** Deployment status — GET .../deployments/{id}/statuses (items). */
+export interface GithubDeploymentStatus {
+  id: number;
+  node_id: string;
+  state: GithubDeploymentState;
+  creator: { login: string } | null;
+  description: string;
+  environment: string;
+  target_url: string;
+  log_url: string;
+  environment_url: string;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── PR reviews, statuses, reactions & timeline ─────────────────────────
+
+export type GithubReviewState =
+  | "APPROVED"
+  | "CHANGES_REQUESTED"
+  | "COMMENTED"
+  | "DISMISSED"
+  | "PENDING";
+
+/** Pull request review — GET .../pulls/{n}/reviews (items). */
+export interface GithubPRReview {
+  id: number;
+  /** null when the authoring user no longer resolves (GitHub parity). */
+  user: { login: string; avatar_url: string } | null;
+  body: string;
+  state: GithubReviewState;
+  commit_id: string;
+  submitted_at: string | null;
+}
+
+/** Pull request review comment — GET .../pulls/{n}/comments (items). */
+export interface GithubPRReviewComment {
+  id: number;
+  pull_request_review_id: number;
+  in_reply_to_id?: number;
+  diff_hunk: string;
+  path: string;
+  line: number | null;
+  side: string;
+  body: string;
+  /** null when the authoring user no longer resolves (GitHub parity). */
+  user: { login: string; avatar_url: string } | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** GitHub `organization-simple` — enterprise team organization assignments. */
+export interface GithubOrgSimple {
+  id: number;
+  login: string;
+  avatar_url: string;
+  description: string | null;
+}
+
+/** One repository row of GET /orgs/{org}/properties/values. */
+export interface GithubOrgRepoCustomPropertyValues {
+  repository_id: number;
+  repository_name: string;
+  repository_full_name: string;
+  properties: { property_name: string; value: unknown }[];
+}
+
+/** Wait-timer / required-reviewers rule nested in the environment object. */
+export interface GithubEnvironmentProtectionRule {
+  id: number;
+  node_id: string;
+  type: string;
+  wait_timer?: number;
+  reviewers?: { type: string; reviewer?: { login?: string } }[];
+}
+
+/**
+ * Full environment — GET /repos/{o}/{r}/environments (items). Carries the
+ * protection config the slim GithubEnvironment omits.
+ */
+export interface GithubEnvironmentDetail {
+  id: number;
+  node_id: string;
+  name: string;
+  url: string;
+  html_url: string;
+  created_at: string;
+  updated_at: string;
+  deployment_branch_policy: {
+    protected_branches: boolean;
+    custom_branch_policies: boolean;
+  } | null;
+  protection_rules: GithubEnvironmentProtectionRule[];
+}
+
+/** Branch/tag pattern — GET .../environments/{env}/deployment-branch-policies. */
+export interface GithubDeploymentBranchPolicy {
+  id: number;
+  node_id: string;
+  name: string;
+  type: "branch" | "tag";
+}
+
+/** Custom (app-backed) rule — GET .../environments/{env}/deployment_protection_rules. */
+export interface GithubEnvCustomProtectionRule {
+  id: number;
+  node_id: string;
+  enabled: boolean;
+  app: { id: number; slug: string; integration_url: string; node_id: string } | null;
+}
+
+/** Delivery summary — GET {hook}/deliveries (items). */
+export interface GithubHookDelivery {
+  id: number;
+  guid: string;
+  delivered_at: string;
+  redelivery: boolean;
+  duration: number;
+  status: string;
+  status_code: number;
+  event: string;
+  action: string | null;
+  installation_id: number | null;
+  repository_id: number | null;
+  throttled_at: string | null;
+}
+
+/** Full delivery — GET {hook}/deliveries/{id} (adds request/response). */
+export interface GithubHookDeliveryDetail extends GithubHookDelivery {
+  url: string;
+  request: { headers: Record<string, string> | null; payload: unknown };
+  response: { headers: Record<string, string> | null; payload: string | null };
+}
+
+/** Organization webhook — GET /orgs/{org}/hooks (items). */
+export interface GithubOrgWebhook {
+  id: number;
+  type: string;
+  name: string;
+  active: boolean;
+  events: string[];
+  config: { url: string; content_type: string; insecure_ssl: string };
+  created_at: string;
+  updated_at: string;
+  url: string;
+  ping_url: string;
+  deliveries_url: string;
+}
+
+/** Pages site — GET /repos/{o}/{r}/pages. */
+export interface GithubPagesSite {
+  cname: string;
+  url: string;
+  html_url: string;
+  status: string;
+  source: { branch?: string; path?: string } | null;
+  public: boolean;
+  custom_404: boolean;
+  protected_domain_state: string | null;
+  build_type: string | null;
+  https_enforced: boolean;
+}
+
+/** Pages build — GET /repos/{o}/{r}/pages/builds (items). */
+export interface GithubPagesBuild {
+  url: string;
+  status: string;
+  pusher: { login: string; id: number; type: string } | null;
+  commit: string;
+  created_at: string;
+  updated_at: string;
+  duration: number;
+  error: { message: string | null } | null;
+}
+
+/** One domain's checks inside the Pages health-check response. */
+export interface GithubPagesDomainHealth {
+  host: string;
+  uri: string;
+  nameservers: string;
+  dns_resolves: boolean;
+  is_valid_domain: boolean;
+  is_apex_domain: boolean;
+  is_pages_domain: boolean;
+  is_valid: boolean;
+  reason: string | null;
+  enforces_https: boolean;
+}
+
+/** Pages health check — GET /repos/{o}/{r}/pages/health. */
+export interface GithubPagesHealth {
+  domain: GithubPagesDomainHealth | null;
+  alt_domain: GithubPagesDomainHealth | null;
+}
+
+/** Review thread — GET /internal/.../pulls/{n}/review-threads (items). */
+export interface GithubPRReviewThread {
+  id: number;
+  isResolved: boolean;
+  comments: { id: number }[];
+}
+
+/** Requested reviewers — GET .../pulls/{n}/requested_reviewers. */
+export interface GithubReviewRequest {
+  users: GithubAccount[];
+  teams: { id: number; slug: string; name: string }[];
+}
+
+export type GithubCommitStatusState = "success" | "failure" | "error" | "pending";
+
+/** One status context inside the combined commit status. */
+export interface GithubCommitStatus {
+  context: string;
+  state: GithubCommitStatusState;
+  description: string | null;
+  target_url: string | null;
+}
+
+/** Combined commit status — GET .../commits/{ref}/status. */
+export interface GithubCombinedStatus {
+  state: GithubCommitStatusState;
+  sha: string;
+  total_count: number;
+  statuses: GithubCommitStatus[];
+}
+
+export type GithubReactionContent =
+  | "+1"
+  | "-1"
+  | "laugh"
+  | "confused"
+  | "heart"
+  | "hooray"
+  | "rocket"
+  | "eyes";
+
+/** Reaction — GET .../reactions (items). */
+export interface GithubReaction {
+  id: number;
+  content: GithubReactionContent;
+  /** null when the reacting user no longer resolves (GitHub parity). */
+  user: { login: string } | null;
+  created_at: string;
+}
+
+/**
+ * Issue-timeline union member — GET .../issues/{n}/timeline (items).
+ * Only `event` is guaranteed; every other member depends on the event
+ * variant (commented, reviewed, labeled, assigned, renamed, …).
+ */
+export interface GithubTimelineItem {
+  event: string;
+  id?: number;
+  actor?: { login: string; avatar_url: string } | null;
+  user?: { login: string; avatar_url: string } | null;
+  body?: string;
+  created_at?: string;
+  submitted_at?: string | null;
+  state?: string;
+  label?: { name: string; color: string } | null;
+  assignee?: { login: string } | null;
+  rename?: { from: string; to: string } | null;
+  commit_id?: string | null;
+}
+
+// ─── Search + repo social + account ─────────────────────────────────────
+
+/** Item from GET /search/issues: issue shape plus PR marker + repository. */
+export interface GithubSearchIssueItem {
+  id: number;
+  number: number;
+  title: string;
+  state: string;
+  user: { login: string } | null;
+  comments: number;
+  created_at: string;
+  updated_at: string;
+  /** null for plain issues; set when the result is a pull request. */
+  pull_request: { url: string } | null;
+  repository: { full_name: string };
+}
+
+/** Item from GET /search/code. */
+export interface GithubSearchCodeItem {
+  name: string;
+  path: string;
+  sha: string;
+  html_url: string;
+  language: string | null;
+  repository: { full_name: string };
+}
+
+/** Item from GET /search/users (users and orgs share the shape). */
+export interface GithubSearchUserItem {
+  id: number;
+  login: string;
+  type: string;
+  name?: string | null;
+  bio?: string | null;
+}
+
+/** Item from GET /search/commits. */
+export interface GithubSearchCommitItem {
+  sha: string;
+  commit: {
+    message: string;
+    author: { name: string; email: string; date: string };
+  };
+  author: { login: string } | null;
+  repository: { full_name: string };
+}
+
+/** Item from GET /search/labels. */
+export interface GithubSearchLabelItem {
+  id: number;
+  name: string;
+  color: string;
+  default: boolean;
+  description: string | null;
+}
+
+/** Item from GET /search/topics. */
+export interface GithubSearchTopicItem {
+  name: string;
+  repository_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Repo collaborator: simple user plus permission grants. */
+export interface GithubCollaborator {
+  id: number;
+  login: string;
+  type: string;
+  role_name: string;
+  permissions: { pull: boolean; push: boolean; admin: boolean };
+}
+
+/** Pending repository invitation. */
+export interface GithubRepoInvitation {
+  id: number;
+  invitee: { login: string } | null;
+  inviter: { login: string } | null;
+  permissions: string;
+  created_at: string;
+  expired: boolean;
+}
+
+/** Git tag with source-archive download links. */
+export interface GithubTag {
+  name: string;
+  zipball_url: string;
+  tarball_url: string;
+  commit: { sha: string; url: string };
+}
+
+/** Social counters served on the full-repository shape. */
+export interface GithubRepoSocialCounts {
+  stargazers_count: number;
+  subscribers_count: number;
+  forks_count: number;
+}
+
+/** Email address on the authenticated user's account. */
+export interface GithubUserEmail {
+  email: string;
+  primary: boolean;
+  verified: boolean;
+  visibility: string | null;
+}
+
+/** SSH authentication key on the authenticated user's account. */
+export interface GithubSSHKey {
+  id: number;
+  key: string;
+  title: string;
+  verified: boolean;
+  created_at: string;
+  read_only: boolean;
+}
+
+export interface GithubGPGKeyEmail {
+  email: string;
+  verified: boolean;
+  primary: boolean;
+}
+
+/** GPG key on the authenticated user's account. */
+export interface GithubGPGKey {
+  id: number;
+  key_id: string;
+  public_key: string;
+  can_sign: boolean;
+  can_encrypt_commits: boolean;
+  can_certify: boolean;
+  created_at: string;
+  name?: string;
+  emails?: GithubGPGKeyEmail[];
+  expires_at?: string;
+}
+
+/** SSH signing key on the authenticated user's account. */
+export interface GithubSSHSigningKey {
+  id: number;
+  key: string;
+  title: string;
+  created_at: string;
+}
+
+/** Entry in GET /user/blocks. */
+export interface GithubBlockedUser {
+  login: string;
+}

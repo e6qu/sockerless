@@ -547,6 +547,21 @@ func (st *Store) ListForks(sourceRepoID int, opts RepoListOptions) []*Repo {
 	return filterSortPaginateRepos(repos, opts)
 }
 
+// CountForks returns how many repositories were forked from the given
+// repository (matched by ParentID or SourceID lineage).
+func (st *Store) CountForks(sourceRepoID int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	n := 0
+	for _, r := range st.Repos {
+		if r.Fork && (r.ParentID == sourceRepoID || r.SourceID == sourceRepoID) {
+			n++
+		}
+	}
+	return n
+}
+
 func (st *Store) ListReposByOwner(login string) []*Repo {
 	st.mu.RLock()
 	defer st.mu.RUnlock()

@@ -137,6 +137,193 @@ describe("CopilotPage", () => {
     confirmSpy.mockRestore();
   });
 
+  it("creates a Copilot Space through the dialog", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.endsWith("/copilot-spaces") && init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse(
+            {
+              id: 2,
+              number: 5,
+              name: "onboarding",
+              description: null,
+              general_instructions: null,
+              base_role: "reader",
+              owner: { login: "acme" },
+              creator: null,
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+            },
+            201,
+          ),
+        );
+      }
+      if (u.includes("/copilot-spaces")) return Promise.resolve(jsonResponse({ spaces: [] }));
+      if (u.includes("/copilot/billing/seats")) {
+        return Promise.resolve(jsonResponse({ total_seats: 0, seats: [] }));
+      }
+      if (u.includes("/copilot/billing")) return Promise.resolve(jsonResponse(billing));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/orgs/acme/copilot");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /new space/i })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: /new space/i }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "onboarding" } });
+    fireEvent.change(screen.getByLabelText("Base role for organization members"), {
+      target: { value: "reader" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /create space/i }));
+    await waitFor(() => {
+      const post = mockFetch.mock.calls.find(
+        (c) => c[0].toString().endsWith("/copilot-spaces") && c[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toMatchObject({
+        name: "onboarding",
+        base_role: "reader",
+      });
+    });
+  });
+
+  const detailSpace = {
+    id: 1,
+    number: 4,
+    name: "onboarding",
+    description: "New-hire context",
+    general_instructions: null,
+    base_role: "reader",
+    owner: { login: "acme" },
+    creator: null,
+    created_at: "2026-06-01T00:00:00Z",
+    updated_at: "2026-06-02T00:00:00Z",
+  };
+
+  function mockSpaceDetailEndpoints() {
+    mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+      const u = url.toString();
+      if (u.includes("/copilot-spaces/4/collaborators") && init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse(
+            { actor_type: "User", role: "reader", id: 3, login: "dev2", avatar_url: "" },
+            201,
+          ),
+        );
+      }
+      if (u.includes("/copilot-spaces/4/collaborators")) {
+        return Promise.resolve(
+          jsonResponse({
+            collaborators: [
+              { actor_type: "User", role: "writer", id: 2, login: "dev1", avatar_url: "" },
+            ],
+          }),
+        );
+      }
+      if (u.includes("/copilot-spaces/4/resources") && init?.method === "POST") {
+        return Promise.resolve(
+          jsonResponse(
+            {
+              id: 2,
+              resource_type: "repository",
+              metadata: { repository_id: 42 },
+              created_at: "2026-07-01T00:00:00Z",
+              updated_at: "2026-07-01T00:00:00Z",
+            },
+            201,
+          ),
+        );
+      }
+      if (u.includes("/copilot-spaces/4/resources")) {
+        return Promise.resolve(
+          jsonResponse({
+            resources: [
+              {
+                id: 1,
+                resource_type: "free_text",
+                metadata: { text: "Deploy checklist" },
+                created_at: "2026-06-01T00:00:00Z",
+                updated_at: "2026-06-01T00:00:00Z",
+              },
+            ],
+          }),
+        );
+      }
+      if (u.includes("/copilot-spaces/4") && init?.method === "DELETE") {
+        return Promise.resolve(new Response(null, { status: 204 }));
+      }
+      if (u.includes("/copilot-spaces")) {
+        return Promise.resolve(jsonResponse({ spaces: [detailSpace] }));
+      }
+      if (u.includes("/copilot/billing/seats")) {
+        return Promise.resolve(jsonResponse({ total_seats: 0, seats: [] }));
+      }
+      if (u.includes("/copilot/billing")) return Promise.resolve(jsonResponse(billing));
+      return Promise.resolve(jsonResponse([]));
+    });
+  }
+
+  it("manages collaborators and resources in the space detail", async () => {
+    mockSpaceDetailEndpoints();
+    renderAt("/ui/orgs/acme/copilot");
+    await waitFor(() => {
+      expect(screen.getByText("onboarding")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("onboarding"));
+    await waitFor(() => {
+      expect(screen.getByText("@dev1")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Deploy checklist")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Collaborator username or team slug"), {
+      target: { value: "dev2" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    await waitFor(() => {
+      const post = mockFetch.mock.calls.find(
+        (c) =>
+          c[0].toString().includes("/copilot-spaces/4/collaborators") && c[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({
+        actor_type: "User",
+        actor_identifier: "dev2",
+        role: "reader",
+      });
+    });
+
+    fireEvent.change(screen.getByLabelText("Resource repository ID"), { target: { value: "42" } });
+    fireEvent.click(screen.getByRole("button", { name: "Attach" }));
+    await waitFor(() => {
+      const post = mockFetch.mock.calls.find(
+        (c) => c[0].toString().includes("/copilot-spaces/4/resources") && c[1]?.method === "POST",
+      );
+      expect(post).toBeTruthy();
+      expect(JSON.parse(String(post![1]!.body))).toEqual({
+        resource_type: "repository",
+        metadata: { repository_id: 42 },
+      });
+    });
+  });
+
+  it("deletes a space after confirmation", async () => {
+    mockSpaceDetailEndpoints();
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderAt("/ui/orgs/acme/copilot");
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "delete" })).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "delete" }));
+    await waitFor(() => {
+      const del = mockFetch.mock.calls.find(
+        (c) => c[0].toString().includes("/copilot-spaces/4") && c[1]?.method === "DELETE",
+      );
+      expect(del).toBeTruthy();
+    });
+    confirmSpy.mockRestore();
+  });
+
   it("lists Copilot Spaces when present and surfaces billing errors", async () => {
     mockCopilotEndpoints({
       "/copilot/billing/seats": () => jsonResponse({ total_seats: 0, seats: [] }),
