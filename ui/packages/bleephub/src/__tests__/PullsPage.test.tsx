@@ -56,6 +56,36 @@ function pr(number: number, title: string, overrides: Record<string, unknown> = 
 }
 
 const noChecks = { total_count: 0, check_runs: [] };
+const emptyStatus = { state: "pending", sha: "abc", total_count: 0, statuses: [] };
+const emptyReviewers = { users: [], teams: [] };
+const viewer = { id: 1, login: "admin", avatar_url: "", type: "User", site_admin: true };
+
+/**
+ * Detail-view mock: overrides() is consulted first; everything else gets an
+ * honest empty response of the right shape for PR #9 on admin/test.
+ */
+function mockPRApis(overrides: (u: string, init?: RequestInit) => Response | undefined = () => undefined) {
+  mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
+    const u = url.toString();
+    const o = overrides(u, init);
+    if (o) return Promise.resolve(o);
+    if (u.includes("/check-runs")) return Promise.resolve(jsonResponse(noChecks));
+    if (u.includes("/commits/abc/status")) return Promise.resolve(jsonResponse(emptyStatus));
+    if (u.includes("/requested_reviewers")) return Promise.resolve(jsonResponse(emptyReviewers));
+    if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse(viewer));
+    if (u.endsWith("/pulls/9")) return Promise.resolve(jsonResponse(pr(9, "Feature PR")));
+    return Promise.resolve(jsonResponse([]));
+  });
+}
+
+function findCall(pathSuffix: string, method?: string): RequestInit | undefined {
+  const call = mockFetch.mock.calls.find((c) => {
+    const init = c[1] as RequestInit | undefined;
+    return c[0].toString().endsWith(pathSuffix) && init?.method === method;
+  });
+  if (!call) return undefined;
+  return (call[1] as RequestInit | undefined) ?? {};
+}
 
 function checkRun(id: number, name: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -150,11 +180,12 @@ describe("PullsPage list pagination", () => {
 });
 
 describe("PullsPage checks section", () => {
-  function mockDetail(prData: unknown, checks: unknown) {
+  function mockDetail(prData: unknown, checks: unknown, combinedStatus: unknown = emptyStatus) {
     mockFetch.mockImplementation((url: RequestInfo | URL) => {
       const u = url.toString();
       if (u.includes("/commits/abc/check-runs")) return Promise.resolve(jsonResponse(checks));
-      if (u.includes("/issues/9/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/commits/abc/status")) return Promise.resolve(jsonResponse(combinedStatus));
+      if (u.includes("/requested_reviewers")) return Promise.resolve(jsonResponse(emptyReviewers));
       if (u.endsWith("/pulls/9")) return Promise.resolve(jsonResponse(prData));
       return Promise.resolve(jsonResponse([]));
     });
@@ -223,5 +254,317 @@ describe("PullsPage checks section", () => {
     renderAt("/ui/repos/admin/test/pulls/9");
     expect(await screen.findByText(/merging is blocked — required checks must pass/i)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /merge pull request/i })).toBeDisabled();
+  });
+});
+
+function review(id: number, login: string, state: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    user: { login, avatar_url: "" },
+    body: "",
+    state,
+    commit_id: "abc",
+    submitted_at: "2026-01-02T00:00:00Z",
+    ...overrides,
+  };
+}
+
+describe("PullsPage reviews", () => {
+  it("lists reviews with state badges and dismisses via the dismissals endpoint", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/pulls/9/reviews") && init?.method === undefined) {
+        return jsonResponse([
+          review(1, "alice", "APPROVED", { body: "ship it" }),
+          review(2, "bob", "CHANGES_REQUESTED"),
+          review(3, "carol", "COMMENTED"),
+        ]);
+      }
+      if (u.endsWith("/pulls/9/reviews/1/dismissals") && init?.method === "PUT") {
+        return jsonResponse(review(1, "alice", "DISMISSED"));
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    expect(await screen.findByText("Approved")).toBeInTheDocument();
+    expect(screen.getByText("Changes requested")).toBeInTheDocument();
+    expect(screen.getByText("Commented")).toBeInTheDocument();
+    expect(screen.getByText("ship it")).toBeInTheDocument();
+
+    // Only APPROVED / CHANGES_REQUESTED reviews are dismissable.
+    const dismissButtons = screen.getAllByRole("button", { name: /^dismiss$/i });
+    expect(dismissButtons.length).toBe(2);
+
+    fireEvent.click(dismissButtons[0]);
+    fireEvent.change(screen.getByLabelText("dismissal message for review 1"), {
+      target: { value: "stale approval" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /confirm dismiss/i }));
+
+    await waitFor(() => {
+      expect(findCall("/pulls/9/reviews/1/dismissals", "PUT")).toBeDefined();
+    });
+    const init = findCall("/pulls/9/reviews/1/dismissals", "PUT");
+    expect(JSON.parse(String(init?.body))).toEqual({ message: "stale approval" });
+  });
+
+  it("submits a review with the chosen event", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/pulls/9/reviews") && init?.method === "POST") {
+        return jsonResponse(review(9, "admin", "CHANGES_REQUESTED"));
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    const textarea = await screen.findByPlaceholderText(/leave a review comment/i);
+    // REQUEST_CHANGES / COMMENT need a body; APPROVE does not.
+    expect(screen.getByRole("button", { name: /request changes/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^approve$/i })).toBeEnabled();
+
+    fireEvent.change(textarea, { target: { value: "needs tests" } });
+    fireEvent.click(screen.getByRole("button", { name: /request changes/i }));
+
+    await waitFor(() => {
+      expect(findCall("/pulls/9/reviews", "POST")).toBeDefined();
+    });
+    const init = findCall("/pulls/9/reviews", "POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      body: "needs tests",
+      event: "REQUEST_CHANGES",
+    });
+  });
+});
+
+describe("PullsPage review comment threads", () => {
+  function reviewComment(id: number, overrides: Record<string, unknown> = {}) {
+    return {
+      id,
+      pull_request_review_id: 1,
+      diff_hunk: "@@ -1,2 +1,2 @@\n-old line\n+new line",
+      path: "main.go",
+      line: 3,
+      side: "RIGHT",
+      body: `comment ${id}`,
+      user: { login: "carol", avatar_url: "" },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function mockThreads() {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/pulls/9/comments") && init?.method === undefined) {
+        return jsonResponse([
+          reviewComment(11),
+          reviewComment(12, { in_reply_to_id: 11, created_at: "2026-01-01T01:00:00Z" }),
+        ]);
+      }
+      if (u.endsWith("/internal/repos/admin/test/pulls/9/review-threads")) {
+        return jsonResponse([{ id: 11, isResolved: false, comments: [{ id: 11 }, { id: 12 }] }]);
+      }
+      if (u.endsWith("/review-threads/11/resolve") && init?.method === "POST") {
+        return jsonResponse({ id: 11, isResolved: true, comments: [{ id: 11 }, { id: 12 }] });
+      }
+      if (u.endsWith("/pulls/9/comments") && init?.method === "POST") {
+        return jsonResponse(reviewComment(13, { in_reply_to_id: 11 }), 201);
+      }
+      return undefined;
+    });
+  }
+
+  it("groups comments by file/line, renders the diff hunk, and resolves the thread", async () => {
+    mockThreads();
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    expect(await screen.findByText("main.go:3")).toBeInTheDocument();
+    expect(screen.getByText(/@@ -1,2 \+1,2 @@/)).toBeInTheDocument();
+    expect(screen.getByText("comment 11")).toBeInTheDocument();
+    expect(screen.getByText("comment 12")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /^resolve$/i }));
+    await waitFor(() => {
+      expect(findCall("/review-threads/11/resolve", "POST")).toBeDefined();
+    });
+  });
+
+  it("replies to a thread with in_reply_to", async () => {
+    mockThreads();
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    const input = await screen.findByLabelText("reply to thread on main.go");
+    fireEvent.change(input, { target: { value: "done in latest push" } });
+    fireEvent.click(screen.getByRole("button", { name: /^reply$/i }));
+
+    await waitFor(() => {
+      expect(findCall("/pulls/9/comments", "POST")).toBeDefined();
+    });
+    const init = findCall("/pulls/9/comments", "POST");
+    expect(JSON.parse(String(init?.body))).toEqual({
+      body: "done in latest push",
+      in_reply_to: 11,
+    });
+  });
+});
+
+describe("PullsPage requested reviewers", () => {
+  it("shows, adds, and removes requested reviewers", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/pulls/9/requested_reviewers") && init?.method === undefined) {
+        return jsonResponse({
+          users: [{ id: 3, login: "carol", avatar_url: "", type: "User", site_admin: false }],
+          teams: [],
+        });
+      }
+      if (u.endsWith("/pulls/9/requested_reviewers") && init?.method === "POST") {
+        return jsonResponse(pr(9, "Feature PR"), 201);
+      }
+      if (u.endsWith("/pulls/9/requested_reviewers") && init?.method === "DELETE") {
+        return jsonResponse(pr(9, "Feature PR"));
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    expect(await screen.findByText("carol")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("reviewer login"), { target: { value: "dave" } });
+    fireEvent.click(screen.getByRole("button", { name: /request review/i }));
+    await waitFor(() => {
+      expect(findCall("/pulls/9/requested_reviewers", "POST")).toBeDefined();
+    });
+    const post = findCall("/pulls/9/requested_reviewers", "POST");
+    expect(JSON.parse(String(post?.body))).toEqual({ reviewers: ["dave"] });
+
+    fireEvent.click(screen.getByLabelText("remove reviewer carol"));
+    await waitFor(() => {
+      expect(findCall("/pulls/9/requested_reviewers", "DELETE")).toBeDefined();
+    });
+    const del = findCall("/pulls/9/requested_reviewers", "DELETE");
+    expect(JSON.parse(String(del?.body))).toEqual({ reviewers: ["carol"] });
+  });
+});
+
+describe("PullsPage combined status merge box", () => {
+  it("renders commit-status contexts alongside check runs with a shared summary", async () => {
+    mockPRApis((u) => {
+      if (u.includes("/commits/abc/status")) {
+        return jsonResponse({
+          state: "failure",
+          sha: "abc",
+          total_count: 1,
+          statuses: [
+            { context: "ci/lint", state: "failure", description: "lint failed", target_url: null },
+          ],
+        });
+      }
+      if (u.includes("/commits/abc/check-runs")) {
+        return jsonResponse({ total_count: 1, check_runs: [checkRun(1, "build")] });
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    expect(await screen.findByText(/some checks were not successful/i)).toBeInTheDocument();
+    expect(screen.getByText(/ci\/lint/)).toBeInTheDocument();
+    expect(screen.getByText(/lint failed/)).toBeInTheDocument();
+    expect(screen.getByText("build")).toBeInTheDocument();
+  });
+});
+
+describe("PullsPage reactions", () => {
+  it("toggles off my existing reaction via DELETE", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/issues/9/reactions") && init?.method === undefined) {
+        return jsonResponse([
+          { id: 5, content: "+1", user: { login: "admin" }, created_at: "2026-01-01T00:00:00Z" },
+          { id: 6, content: "+1", user: { login: "bob" }, created_at: "2026-01-01T00:00:00Z" },
+        ]);
+      }
+      if (u.endsWith("/issues/9/reactions/5") && init?.method === "DELETE") {
+        return new Response(null, { status: 204 });
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    const pill = await screen.findByRole("button", { name: "toggle +1 reaction" });
+    expect(pill.textContent).toContain("2");
+    fireEvent.click(pill);
+    await waitFor(() => {
+      expect(findCall("/issues/9/reactions/5", "DELETE")).toBeDefined();
+    });
+  });
+
+  it("adds a reaction from the picker via POST", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/issues/9/reactions") && init?.method === "POST") {
+        return jsonResponse(
+          { id: 7, content: "heart", user: { login: "admin" }, created_at: "2026-01-01T00:00:00Z" },
+          201,
+        );
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    fireEvent.click(await screen.findByRole("button", { name: "add reaction" }));
+    fireEvent.click(screen.getByRole("button", { name: "react with heart" }));
+    await waitFor(() => {
+      expect(findCall("/issues/9/reactions", "POST")).toBeDefined();
+    });
+    const init = findCall("/issues/9/reactions", "POST");
+    expect(JSON.parse(String(init?.body))).toEqual({ content: "heart" });
+  });
+});
+
+describe("PullsPage conversation timeline", () => {
+  it("interleaves comments with label, review, and assignment events", async () => {
+    mockPRApis((u) => {
+      if (u.endsWith("/issues/9/timeline")) {
+        return jsonResponse([
+          {
+            event: "commented",
+            id: 21,
+            user: { login: "admin", avatar_url: "" },
+            body: "conversation comment",
+            created_at: "2026-01-01T00:00:00Z",
+          },
+          {
+            event: "labeled",
+            id: 22,
+            actor: { login: "admin", avatar_url: "" },
+            label: { name: "bug", color: "ff0000" },
+            created_at: "2026-01-01T01:00:00Z",
+          },
+          {
+            event: "assigned",
+            id: 23,
+            actor: { login: "admin", avatar_url: "" },
+            assignee: { login: "bob" },
+            created_at: "2026-01-01T02:00:00Z",
+          },
+          {
+            event: "reviewed",
+            id: 24,
+            user: { login: "alice", avatar_url: "" },
+            state: "APPROVED",
+            body: "",
+            submitted_at: "2026-01-01T03:00:00Z",
+          },
+        ]);
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+
+    expect(await screen.findByText("conversation comment")).toBeInTheDocument();
+    expect(screen.getByText(/added the/)).toBeInTheDocument();
+    expect(screen.getByText("bug")).toBeInTheDocument();
+    expect(screen.getByText(/assigned/)).toBeInTheDocument();
+    expect(screen.getByText("bob")).toBeInTheDocument();
+    expect(screen.getByText(/approved these changes/)).toBeInTheDocument();
+    expect(screen.getByText("alice")).toBeInTheDocument();
   });
 });

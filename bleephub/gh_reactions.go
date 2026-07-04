@@ -225,6 +225,34 @@ func (s *Server) registerGHReactionsRoutes() {
 	// The dispatcher routes by segment-2 ("tags" vs numeric release_id).
 }
 
+// resolveReactionParentID converts the reaction path parameter into the
+// store-level parent ID. Issue reactions arrive keyed by issue *number*,
+// which is only unique within one repository — they resolve through the
+// repository to the issue's global ID so reactions never leak between
+// repositories that happen to share issue numbers. Writes the error
+// response and returns false when the repository or issue does not exist.
+func (s *Server) resolveReactionParentID(w http.ResponseWriter, r *http.Request, parentType, pathParam string) (int, bool) {
+	parentID, err := strconv.Atoi(r.PathValue(pathParam))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s", pathParam))
+		return 0, false
+	}
+	if parentType != "issue" {
+		return parentID, true
+	}
+	repo := s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return 0, false
+	}
+	issue := s.store.GetIssueByNumber(repo.ID, parentID)
+	if issue == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return 0, false
+	}
+	return issue.ID, true
+}
+
 func (s *Server) handleCreateReaction(parentType, pathParam string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		user := ghUserFromContext(r.Context())
@@ -232,9 +260,8 @@ func (s *Server) handleCreateReaction(parentType, pathParam string) http.Handler
 			writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 			return
 		}
-		parentID, err := strconv.Atoi(r.PathValue(pathParam))
-		if err != nil {
-			writeGHError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s", pathParam))
+		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		if !ok {
 			return
 		}
 		var body struct {
@@ -259,9 +286,8 @@ func (s *Server) handleCreateReaction(parentType, pathParam string) http.Handler
 
 func (s *Server) handleListReactions(parentType, pathParam string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parentID, err := strconv.Atoi(r.PathValue(pathParam))
-		if err != nil {
-			writeGHError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s", pathParam))
+		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		if !ok {
 			return
 		}
 		contentFilter := r.URL.Query().Get("content")
@@ -283,9 +309,8 @@ func (s *Server) handleDeleteReaction(parentType, pathParam string) http.Handler
 			writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 			return
 		}
-		parentID, err := strconv.Atoi(r.PathValue(pathParam))
-		if err != nil {
-			writeGHError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s", pathParam))
+		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		if !ok {
 			return
 		}
 		reactionID, err := strconv.Atoi(r.PathValue("reaction_id"))

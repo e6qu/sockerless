@@ -41,6 +41,12 @@ import { InsightsPage } from "./pages/InsightsPage.js";
 import { OrgGovernancePage } from "./pages/OrgGovernancePage.js";
 import { CopilotPage } from "./pages/CopilotPage.js";
 import { EnterprisePage } from "./pages/EnterprisePage.js";
+import { DeploymentsPage } from "./pages/DeploymentsPage.js";
+import { WebhookDeliveriesPage } from "./pages/WebhookDeliveriesPage.js";
+import { OrgHooksPage } from "./pages/OrgHooksPage.js";
+import { SearchPage } from "./pages/SearchPage.js";
+import { AccountPage } from "./pages/AccountPage.js";
+import { RepoSocialPage } from "./pages/RepoSocialPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -108,6 +114,17 @@ export function App() {
               <Route path="/ui/admin/enterprise" element={<EnterprisePage />} />
               <Route path="/ui/admin/audit-log" element={<AuditLogPage />} />
               <Route path="/ui/admin/storage" element={<StorageHealthPage />} />
+              {/* Deployments + webhook deliveries + Pages */}
+              <Route path="/ui/repos/:owner/:repo/deployments" element={<DeploymentsPage />} />
+              <Route path="/ui/repos/:owner/:repo/hooks/:hookId/deliveries" element={<WebhookDeliveriesPage />} />
+              <Route path="/ui/orgs/:org/hooks" element={<OrgHooksPage />} />
+              <Route path="/ui/orgs/:org/hooks/:hookId/deliveries" element={<WebhookDeliveriesPage />} />
+              {/* Search + repo social + account */}
+              <Route path="/ui/search" element={<SearchPage />} />
+              <Route path="/ui/account" element={<AccountPage />} />
+              <Route path="/ui/repos/:owner/:repo/stargazers" element={<RepoSocialPage kind="stargazers" />} />
+              <Route path="/ui/repos/:owner/:repo/watchers" element={<RepoSocialPage kind="watchers" />} />
+              <Route path="/ui/repos/:owner/:repo/forks" element={<RepoSocialPage kind="forks" />} />
               {/* A logged-in user hitting /ui/login (bookmark) or any
                   unknown /ui/* path lands back on the dashboard. */}
               <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />

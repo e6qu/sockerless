@@ -52,6 +52,9 @@ func (s *Server) registerGHMetaExtrasRoutes() {
 	s.route("GET /api/v3/octocat", s.handleGHOctocat)
 	s.route("GET /api/v3/versions", s.handleGHAPIVersions)
 	s.route("POST /api/v3/credentials/revoke", s.handleGHCredentialsRevoke)
+	// Instance-hosted emoji images the /emojis catalog URLs point at — a
+	// top-level asset path on the GHES host, not part of /api/v3.
+	s.route("GET /images/icons/emoji/{path...}", s.handleGHEmojiImage)
 }
 
 // handleGHEmojis serves the full GitHub emoji catalog with image URLs

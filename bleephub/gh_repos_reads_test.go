@@ -156,11 +156,21 @@ func TestRepoAssigneesAndCollaboratorCheck(t *testing.T) {
 	createTestUser(t, "reads-collab")
 	createTestUser(t, "reads-stranger")
 
+	// Inviting a new user answers 201 with a pending repository invitation;
+	// the invitee becomes a collaborator once the invitation is accepted.
 	resp := ghPut(t, "/api/v3/repos/admin/reads-assign/collaborators/reads-collab", defaultToken,
 		map[string]interface{}{"permission": "push"})
-	resp.Body.Close()
 	if resp.StatusCode != 201 {
+		resp.Body.Close()
 		t.Fatalf("add collaborator: %d", resp.StatusCode)
+	}
+	inv := decodeJSON(t, resp)
+	invID, _ := inv["id"].(float64)
+	if invID <= 0 {
+		t.Fatalf("expected real invitation id, got %v", inv["id"])
+	}
+	if !testServer.store.AcceptRepoInvitation(int(invID), testServer.store.UsersByLogin["reads-collab"]) {
+		t.Fatalf("accept invitation %d failed", int(invID))
 	}
 
 	resp = ghGet(t, "/api/v3/repos/admin/reads-assign/assignees", defaultToken)

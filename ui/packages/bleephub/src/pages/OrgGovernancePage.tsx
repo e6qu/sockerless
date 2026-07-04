@@ -15,6 +15,8 @@ import {
   fetchOrgCustomProperties,
   upsertOrgCustomProperties,
   deleteOrgCustomProperty,
+  fetchOrgRepoCustomPropertyValues,
+  setOrgRepoCustomPropertyValues,
   fetchOrgIssueTypes,
   createOrgIssueType,
   updateOrgIssueType,
@@ -34,6 +36,7 @@ import type {
   GithubIssueType,
   GithubOrgInvitation,
   GithubOrgRole,
+  GithubOrgRepoCustomPropertyValues,
 } from "../types.js";
 import { OrgHeader } from "../components/Shell.js";
 import {
@@ -537,6 +540,7 @@ function PropertiesPanel({ org }: { org: string }) {
               <span style={{ color: "var(--color-fg-muted)", fontSize: "0.82rem" }} className="min-w-0 flex-1">
                 {p.value_type}
                 {p.required && " · required"}
+                {p.default_value != null && ` · default: ${formatPropertyValue(p.default_value)}`}
                 {p.allowed_values && p.allowed_values.length > 0 && ` · [${p.allowed_values.join(", ")}]`}
                 {p.description && ` · ${p.description}`}
               </span>
@@ -567,8 +571,14 @@ function PropertiesPanel({ org }: { org: string }) {
           }}
         />
       )}
+      <RepoValuesPanel org={org} properties={properties} />
     </div>
   );
+}
+
+/** Renders a custom property value (string or multi_select array) for display. */
+function formatPropertyValue(value: unknown): string {
+  return Array.isArray(value) ? value.join(", ") : String(value);
 }
 
 function PropertyDialog({
@@ -587,9 +597,17 @@ function PropertyDialog({
   );
   const [description, setDescription] = useState(property?.description ?? "");
   const [allowedValues, setAllowedValues] = useState(property?.allowed_values?.join(", ") ?? "");
+  const [required, setRequired] = useState(property?.required ?? false);
+  const [defaultValue, setDefaultValue] = useState(
+    property?.default_value != null ? formatPropertyValue(property.default_value) : "",
+  );
   const [error, setError] = useState<string | null>(null);
 
   const isSelect = valueType === "single_select" || valueType === "multi_select";
+  const parsedAllowed = allowedValues
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
 
   const mutation = useMutation({
     mutationFn: () =>
@@ -597,13 +615,10 @@ function PropertyDialog({
         {
           property_name: name.trim(),
           value_type: valueType,
+          required,
+          default_value: defaultValue.trim() === "" ? undefined : defaultValue.trim(),
           description: description || undefined,
-          allowed_values: isSelect
-            ? allowedValues
-                .split(",")
-                .map((v) => v.trim())
-                .filter(Boolean)
-            : undefined,
+          allowed_values: isSelect ? parsedAllowed : undefined,
         },
       ]),
     onSuccess: () => {
@@ -652,8 +667,52 @@ function PropertyDialog({
         id="prop-desc"
         value={description}
         onChange={(e) => setDescription(e.target.value)}
-        className="mb-4 w-full"
+        className="mb-3 w-full"
       />
+      <label className="mb-3 flex items-center gap-2" style={{ fontSize: "0.85rem" }}>
+        <input
+          type="checkbox"
+          checked={required}
+          onChange={(e) => setRequired(e.target.checked)}
+        />
+        Required (repositories without an explicit value get the default)
+      </label>
+      <FormLabel id="prop-default">
+        {required ? "Default value" : "Default value (optional)"}
+      </FormLabel>
+      {valueType === "true_false" ? (
+        <select
+          id="prop-default"
+          value={defaultValue}
+          onChange={(e) => setDefaultValue(e.target.value)}
+          className="mb-4 w-full"
+        >
+          <option value="">no default</option>
+          <option value="true">true</option>
+          <option value="false">false</option>
+        </select>
+      ) : valueType === "single_select" ? (
+        <select
+          id="prop-default"
+          value={defaultValue}
+          onChange={(e) => setDefaultValue(e.target.value)}
+          className="mb-4 w-full"
+        >
+          <option value="">no default</option>
+          {parsedAllowed.map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
+          ))}
+        </select>
+      ) : (
+        <input
+          id="prop-default"
+          value={defaultValue}
+          onChange={(e) => setDefaultValue(e.target.value)}
+          className="mb-4 w-full"
+        />
+      )}
       {error && <ErrorBanner>{error}</ErrorBanner>}
       <DialogActions>
         <Button variant="ghost" size="sm" onClick={onClose} disabled={mutation.isPending}>
@@ -662,7 +721,7 @@ function PropertyDialog({
         <Button
           variant="primary"
           size="sm"
-          disabled={!name.trim() || mutation.isPending}
+          disabled={!name.trim() || (required && !defaultValue.trim()) || mutation.isPending}
           onClick={() => {
             setError(null);
             mutation.mutate();
@@ -672,6 +731,189 @@ function PropertyDialog({
         </Button>
       </DialogActions>
     </Modal>
+  );
+}
+
+function RepoValuesPanel({ org, properties }: { org: string; properties: GithubCustomProperty[] }) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [queryInput, setQueryInput] = useState("");
+  const [repoQuery, setRepoQuery] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [propName, setPropName] = useState(properties[0]?.property_name ?? "");
+  const [valueInput, setValueInput] = useState("");
+
+  const valuesQuery = useQuery({
+    queryKey: ["org-property-values", org, repoQuery],
+    queryFn: () => fetchOrgRepoCustomPropertyValues(org, repoQuery || undefined),
+  });
+
+  const selectedProp = properties.find((p) => p.property_name === propName);
+
+  const setMut = useMutation({
+    mutationFn: () => {
+      // An empty input unsets the property (the PATCH's null-value contract).
+      let value: unknown;
+      if (valueInput.trim() === "") {
+        value = null;
+      } else if (selectedProp?.value_type === "multi_select") {
+        value = valueInput
+          .split(",")
+          .map((v) => v.trim())
+          .filter(Boolean);
+      } else {
+        value = valueInput.trim();
+      }
+      return setOrgRepoCustomPropertyValues(org, selected, [{ property_name: propName, value }]);
+    },
+    onSuccess: () => {
+      setError(null);
+      setSelected([]);
+      qc.invalidateQueries({ queryKey: ["org-property-values", org] });
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+
+  const toggleRepo = (name: string) =>
+    setSelected((cur) => (cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
+
+  const rowSummary = (row: GithubOrgRepoCustomPropertyValues) =>
+    row.properties.map((p) => `${p.property_name}=${formatPropertyValue(p.value)}`).join(", ");
+
+  return (
+    <div className="mt-4">
+      <Box header={<span style={{ fontWeight: 600 }}>Repository values</span>}>
+        <div style={{ padding: "0.75rem 1rem" }}>
+          {error && <ErrorBanner>{error}</ErrorBanner>}
+          <div className="mb-3 flex gap-2">
+            <input
+              aria-label="Repository search query"
+              placeholder="filter repositories (repo:owner/name for an exact match)"
+              value={queryInput}
+              onChange={(e) => setQueryInput(e.target.value)}
+              className="w-full"
+            />
+            <Button size="sm" onClick={() => setRepoQuery(queryInput.trim())}>
+              Search
+            </Button>
+          </div>
+          {valuesQuery.isLoading && <Spinner label="loading repository property values" />}
+          {valuesQuery.isError && (
+            <InlineError
+              title="Failed to load repository property values"
+              detail={String(valuesQuery.error)}
+            />
+          )}
+          {valuesQuery.data &&
+            (valuesQuery.data.length === 0 ? (
+              <div style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+                No repositories matched.
+              </div>
+            ) : (
+              <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {valuesQuery.data.map((row) => (
+                  <li
+                    key={row.repository_id}
+                    className="flex flex-wrap items-center gap-2"
+                    style={{
+                      padding: "0.45rem 0",
+                      borderBottom: "1px solid var(--color-border)",
+                      fontSize: "0.88rem",
+                    }}
+                  >
+                    <label className="flex min-w-0 flex-1 items-center gap-2">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${row.repository_full_name}`}
+                        checked={selected.includes(row.repository_name)}
+                        onChange={() => toggleRepo(row.repository_name)}
+                      />
+                      <span style={{ fontWeight: 500 }}>{row.repository_full_name}</span>
+                      <span style={{ color: "var(--color-fg-muted)", fontSize: "0.8rem" }}>
+                        {row.properties.length === 0 ? "no values" : rowSummary(row)}
+                      </span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            ))}
+          {properties.length === 0 ? (
+            <div className="mt-3" style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+              Define a custom property above to set values on repositories.
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <select
+                aria-label="Property to set"
+                value={propName}
+                onChange={(e) => {
+                  setPropName(e.target.value);
+                  setValueInput("");
+                }}
+              >
+                {properties.map((p) => (
+                  <option key={p.property_name} value={p.property_name}>
+                    {p.property_name}
+                  </option>
+                ))}
+              </select>
+              {selectedProp?.value_type === "single_select" ? (
+                <select
+                  aria-label="Property value"
+                  value={valueInput}
+                  onChange={(e) => setValueInput(e.target.value)}
+                >
+                  <option value="">unset</option>
+                  {(selectedProp.allowed_values ?? []).map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              ) : selectedProp?.value_type === "true_false" ? (
+                <select
+                  aria-label="Property value"
+                  value={valueInput}
+                  onChange={(e) => setValueInput(e.target.value)}
+                >
+                  <option value="">unset</option>
+                  <option value="true">true</option>
+                  <option value="false">false</option>
+                </select>
+              ) : (
+                <input
+                  aria-label="Property value"
+                  placeholder={
+                    selectedProp?.value_type === "multi_select"
+                      ? "values, comma-separated (empty unsets)"
+                      : "value (empty unsets)"
+                  }
+                  value={valueInput}
+                  onChange={(e) => setValueInput(e.target.value)}
+                  className="min-w-0 flex-1"
+                />
+              )}
+              <Button
+                size="sm"
+                variant="primary"
+                disabled={
+                  setMut.isPending || !propName || selected.length === 0 || selected.length > 30
+                }
+                onClick={() => {
+                  setError(null);
+                  setMut.mutate();
+                }}
+              >
+                {valueInput.trim() === "" ? "Unset on selected" : "Set on selected"}
+              </Button>
+              <span style={{ color: "var(--color-fg-muted)", fontSize: "0.78rem" }}>
+                {selected.length} selected (max 30)
+              </span>
+            </div>
+          )}
+        </div>
+      </Box>
+    </div>
   );
 }
 

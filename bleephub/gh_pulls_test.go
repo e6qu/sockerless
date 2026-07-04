@@ -1025,3 +1025,108 @@ func TestGraphQLCannotMergeClosed(t *testing.T) {
 		t.Fatalf("expected errors when merging closed PR, got none: %v", data)
 	}
 }
+
+func TestListRequestedReviewersREST(t *testing.T) {
+	createTestPRRepo(t, "pr-req-reviewers-get")
+	ghPost(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls", defaultToken, map[string]interface{}{
+		"title": "Reviewer request PR", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	// Empty before any request.
+	resp := ghGet(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls/1/requested_reviewers", defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	users, ok := data["users"].([]interface{})
+	if !ok {
+		t.Fatalf("expected users array, got %T", data["users"])
+	}
+	if len(users) != 0 {
+		t.Fatalf("expected no requested reviewers, got %d", len(users))
+	}
+	if _, ok := data["teams"].([]interface{}); !ok {
+		t.Fatalf("expected teams array, got %T", data["teams"])
+	}
+
+	// Request the admin user, read it back.
+	ghPost(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls/1/requested_reviewers", defaultToken, map[string]interface{}{
+		"reviewers": []string{"admin"},
+	}).Body.Close()
+	resp = ghGet(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls/1/requested_reviewers", defaultToken)
+	data = decodeJSON(t, resp)
+	users, _ = data["users"].([]interface{})
+	if len(users) != 1 {
+		t.Fatalf("expected 1 requested reviewer, got %d", len(users))
+	}
+	u, _ := users[0].(map[string]interface{})
+	if u["login"] != "admin" {
+		t.Fatalf("expected requested reviewer admin, got %v", u["login"])
+	}
+
+	// Remove it again.
+	ghDeleteWithBody(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls/1/requested_reviewers", defaultToken, map[string]interface{}{
+		"reviewers": []string{"admin"},
+	}).Body.Close()
+	resp = ghGet(t, "/api/v3/repos/admin/pr-req-reviewers-get/pulls/1/requested_reviewers", defaultToken)
+	data = decodeJSON(t, resp)
+	users, _ = data["users"].([]interface{})
+	if len(users) != 0 {
+		t.Fatalf("expected requested reviewers cleared, got %d", len(users))
+	}
+}
+
+func TestPullRequestTimelineREST(t *testing.T) {
+	createTestPRRepo(t, "pr-timeline")
+	ghPost(t, "/api/v3/repos/admin/pr-timeline/pulls", defaultToken, map[string]interface{}{
+		"title": "Timeline PR", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	// A conversation comment plus a submitted review.
+	ghPost(t, "/api/v3/repos/admin/pr-timeline/issues/1/comments", defaultToken, map[string]interface{}{
+		"body": "first conversation comment",
+	}).Body.Close()
+	ghPost(t, "/api/v3/repos/admin/pr-timeline/pulls/1/reviews", defaultToken, map[string]interface{}{
+		"body": "review body", "event": "APPROVE",
+	}).Body.Close()
+	// A pending review must NOT surface in the timeline.
+	ghPost(t, "/api/v3/repos/admin/pr-timeline/pulls/1/reviews", defaultToken, map[string]interface{}{
+		"body": "still drafting",
+	}).Body.Close()
+
+	resp := ghGet(t, "/api/v3/repos/admin/pr-timeline/issues/1/timeline", defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	items := decodeJSONArray(t, resp)
+	if len(items) != 2 {
+		t.Fatalf("expected 2 timeline items (commented + reviewed), got %d: %v", len(items), items)
+	}
+	byEvent := map[string]map[string]interface{}{}
+	for _, item := range items {
+		ev, _ := item["event"].(string)
+		byEvent[ev] = item
+	}
+	commented := byEvent["commented"]
+	if commented == nil {
+		t.Fatalf("expected a commented timeline item, got %v", items)
+	}
+	if commented["body"] != "first conversation comment" {
+		t.Fatalf("expected comment body, got %v", commented["body"])
+	}
+	reviewed := byEvent["reviewed"]
+	if reviewed == nil {
+		t.Fatalf("expected a reviewed timeline item, got %v", items)
+	}
+	if reviewed["state"] != "APPROVED" {
+		t.Fatalf("expected reviewed state APPROVED, got %v", reviewed["state"])
+	}
+	if reviewed["body"] != "review body" {
+		t.Fatalf("expected review body, got %v", reviewed["body"])
+	}
+	if reviewed["submitted_at"] == nil {
+		t.Fatal("expected reviewed submitted_at to be set")
+	}
+}

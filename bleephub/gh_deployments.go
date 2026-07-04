@@ -720,6 +720,13 @@ func environmentToJSON(e *Environment, st *Store, baseURL string, repo *Repo) ma
 			"reviewers": environmentReviewersJSON(e, st),
 		})
 	}
+	if branchPolicy != nil {
+		rules = append(rules, map[string]interface{}{
+			"id":      e.ID*10 + 3,
+			"node_id": fmt.Sprintf("GA_kwDO%08d", e.ID*10+3),
+			"type":    "branch_policy",
+		})
+	}
 	out["protection_rules"] = rules
 	return out
 }

@@ -116,8 +116,14 @@ func TestReactions_AllParentTypes(t *testing.T) {
 	s.registerGHReactionsRoutes()
 	s.registerGHReleasesRoutes() // release-reactions live under the release dispatcher
 
+	// Issue reactions resolve through the repository to a real issue; the
+	// other parent types are keyed by globally-unique comment/release ids.
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "r", "", false)
+	issue := s.store.CreateIssue(repo.ID, admin.ID, "reaction target", "", nil, nil, 0)
+
 	parents := []string{
-		"/api/v3/repos/admin/r/issues/1/reactions",
+		"/api/v3/repos/admin/r/issues/" + itoa(issue.Number) + "/reactions",
 		"/api/v3/repos/admin/r/issues/comments/1/reactions",
 		"/api/v3/repos/admin/r/pulls/comments/1/reactions",
 		"/api/v3/repos/admin/r/comments/1/reactions",
@@ -132,6 +138,29 @@ func TestReactions_AllParentTypes(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Errorf("%s: status %d body %s", p, w.Code, w.Body.String())
 		}
+	}
+
+	// A same-numbered issue in another repository shares no reactions with
+	// the one above, and reacting to a nonexistent issue is a 404.
+	other := s.store.CreateRepo(admin, "r2", "", false)
+	otherIssue := s.store.CreateIssue(other.ID, admin.ID, "other target", "", nil, nil, 0)
+	if otherIssue.Number != issue.Number {
+		t.Fatalf("test premise: issue numbers differ (%d vs %d)", otherIssue.Number, issue.Number)
+	}
+	// The GET route lives on the issues two-segment dispatcher, which this
+	// minimal server does not mount; assert against the store directly.
+	if leaked := s.store.Reactions.ListReactions("issue", otherIssue.ID, ""); len(leaked) != 0 {
+		t.Errorf("cross-repo issue reactions leaked: %d reactions", len(leaked))
+	}
+	if own := s.store.Reactions.ListReactions("issue", issue.ID, ""); len(own) != 1 {
+		t.Errorf("reaction not keyed to the issue's global id: %d reactions", len(own))
+	}
+	missReq := httptest.NewRequest("POST", "/api/v3/repos/admin/r/issues/9999/reactions", bytes.NewReader(body))
+	missReq.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+	mw := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(mw, missReq)
+	if mw.Code != http.StatusNotFound {
+		t.Errorf("reaction on nonexistent issue: status %d, want 404", mw.Code)
 	}
 }
 

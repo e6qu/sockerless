@@ -170,7 +170,9 @@ func (s *Server) handleListUserBlocks(w http.ResponseWriter, r *http.Request) {
 	logins := s.store.ListBlockedUsers(user.ID)
 	out := make([]map[string]interface{}, 0, len(logins))
 	for _, login := range logins {
-		out = append(out, map[string]interface{}{"login": login})
+		if u := s.store.LookupUserByLogin(login); u != nil {
+			out = append(out, userToJSON(u))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

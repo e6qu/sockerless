@@ -10,6 +10,9 @@ import {
   fetchEnterpriseTeamMembers,
   addEnterpriseTeamMember,
   removeEnterpriseTeamMember,
+  fetchEnterpriseTeamOrgs,
+  assignEnterpriseTeamOrg,
+  unassignEnterpriseTeamOrg,
   fetchEnterpriseActionsCacheLimit,
   setEnterpriseActionsCacheLimit,
   fetchEnterpriseDependabotAccess,
@@ -64,6 +67,7 @@ function EnterpriseTeamsPanel() {
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<GithubEnterpriseTeam | null>(null);
   const [viewingMembers, setViewingMembers] = useState<GithubEnterpriseTeam | null>(null);
+  const [viewingOrgs, setViewingOrgs] = useState<GithubEnterpriseTeam | null>(null);
 
   const { data: teams, isLoading, isError, error: loadErr } = useQuery({
     queryKey: ["enterprise-teams"],
@@ -120,6 +124,9 @@ function EnterpriseTeamsPanel() {
               <Button size="sm" variant="ghost" onClick={() => setViewingMembers(team)}>
                 members
               </Button>
+              <Button size="sm" variant="ghost" onClick={() => setViewingOrgs(team)}>
+                organizations
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => setEditing(team)}>
                 edit
               </Button>
@@ -148,6 +155,9 @@ function EnterpriseTeamsPanel() {
       )}
       {viewingMembers && (
         <EnterpriseTeamMembersDialog team={viewingMembers} onClose={() => setViewingMembers(null)} />
+      )}
+      {viewingOrgs && (
+        <EnterpriseTeamOrgsDialog team={viewingOrgs} onClose={() => setViewingOrgs(null)} />
       )}
     </div>
   );
@@ -315,6 +325,115 @@ function EnterpriseTeamMembersDialog({
                   }}
                 >
                   remove
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ))}
+    </Modal>
+  );
+}
+
+function EnterpriseTeamOrgsDialog({
+  team,
+  onClose,
+}: {
+  team: GithubEnterpriseTeam;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [orgSlug, setOrgSlug] = useState("");
+
+  // The endpoints 422 unless the team's organization selection type is
+  // "selected" — "all" and "disabled" derive the assignment set instead.
+  const editable = team.organization_selection_type === "selected";
+
+  const { data: orgs, isLoading, isError, error: loadErr } = useQuery({
+    queryKey: ["enterprise-team-orgs", team.slug],
+    queryFn: () => fetchEnterpriseTeamOrgs(team.slug),
+  });
+
+  const invalidate = () => {
+    setError(null);
+    qc.invalidateQueries({ queryKey: ["enterprise-team-orgs", team.slug] });
+  };
+  const assignMut = useMutation({
+    mutationFn: () => assignEnterpriseTeamOrg(team.slug, orgSlug.trim()),
+    onSuccess: () => {
+      invalidate();
+      setOrgSlug("");
+    },
+    onError: (err: Error) => setError(err.message),
+  });
+  const unassignMut = useMutation({
+    mutationFn: (org: string) => unassignEnterpriseTeamOrg(team.slug, org),
+    onSuccess: invalidate,
+    onError: (err: Error) => setError(err.message),
+  });
+
+  return (
+    <Modal title={`${team.name} organizations`} onClose={onClose}>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      <div className="mb-3" style={{ fontSize: "0.82rem", color: "var(--color-fg-muted)" }}>
+        Organization selection type: <strong>{team.organization_selection_type}</strong>
+        {!editable &&
+          " — assignments can only be edited when the selection type is \"selected\"."}
+      </div>
+      <div className="mb-3 flex gap-2">
+        <input
+          aria-label="Organization to assign"
+          placeholder="organization login"
+          value={orgSlug}
+          onChange={(e) => setOrgSlug(e.target.value)}
+          disabled={!editable}
+          className="w-full"
+        />
+        <Button
+          variant="primary"
+          size="sm"
+          disabled={!editable || assignMut.isPending || !orgSlug.trim()}
+          onClick={() => {
+            setError(null);
+            assignMut.mutate();
+          }}
+        >
+          Assign
+        </Button>
+      </div>
+      {isLoading && <Spinner label="loading team organizations" />}
+      {isError && <InlineError title="Failed to load team organizations" detail={String(loadErr)} />}
+      {orgs &&
+        (orgs.length === 0 ? (
+          <div style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+            No organizations assigned.
+          </div>
+        ) : (
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {orgs.map((org) => (
+              <li
+                key={org.id}
+                className="flex items-center justify-between gap-2"
+                style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--color-border)", fontSize: "0.88rem" }}
+              >
+                <span>
+                  <span style={{ fontWeight: 500 }}>@{org.login}</span>
+                  {org.description && (
+                    <span style={{ color: "var(--color-fg-muted)", fontSize: "0.78rem" }}>
+                      {" "}
+                      · {org.description}
+                    </span>
+                  )}
+                </span>
+                <Button
+                  size="sm"
+                  variant="danger"
+                  disabled={!editable || unassignMut.isPending}
+                  onClick={() => {
+                    if (confirm(`Unassign ${org.login} from ${team.slug}?`)) unassignMut.mutate(org.login);
+                  }}
+                >
+                  unassign
                 </Button>
               </li>
             ))}

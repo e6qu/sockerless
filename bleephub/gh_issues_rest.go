@@ -858,13 +858,19 @@ func (s *Server) handleListIssueTimeline(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	issue := s.store.GetIssueByNumber(repo.ID, num)
-	if issue == nil {
+	// Pull requests share the issue number space and are timeline-capable
+	// on real GitHub; resolve the number to whichever exists.
+	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
+		timeline := s.store.BuildIssueTimeline(repo, issue.ID, s.baseURL(r))
+		writeJSON(w, http.StatusOK, paginateAndLink(w, r, timeline))
+		return
+	}
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-
-	timeline := s.store.BuildIssueTimeline(repo, issue.ID, s.baseURL(r))
+	timeline := s.buildPullRequestTimeline(repo, pr, s.baseURL(r))
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, timeline))
 }
 
@@ -957,6 +963,9 @@ func (s *Server) handleGetIssueEvent(w http.ResponseWriter, r *http.Request) {
 // --- JSON converters ---
 
 func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	reactions := st.Reactions.SummarizeReactions("issue", issue.ID)
+	reactions["url"] = baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + strconv.Itoa(issue.Number) + "/reactions"
+
 	// Resolve author
 	var authorJSON map[string]interface{}
 	st.mu.RLock()
@@ -1047,6 +1056,7 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 		"created_at":         issue.CreatedAt.Format(time.RFC3339),
 		"updated_at":         issue.UpdatedAt.Format(time.RFC3339),
 		"closed_at":          closedAt,
+		"reactions":          reactions,
 	}
 }
 
@@ -1058,6 +1068,9 @@ func commentToJSON(c *Comment, st *Store, baseURL, repoFullName string, issueNum
 	}
 	st.mu.RUnlock()
 
+	reactions := st.Reactions.SummarizeReactions("issue_comment", c.ID)
+	reactions["url"] = baseURL + "/api/v3/repos/" + repoFullName + "/issues/comments/" + strconv.Itoa(c.ID) + "/reactions"
+
 	return map[string]interface{}{
 		"id":         c.ID,
 		"node_id":    c.NodeID,
@@ -1068,6 +1081,7 @@ func commentToJSON(c *Comment, st *Store, baseURL, repoFullName string, issueNum
 		"user":       authorJSON,
 		"created_at": c.CreatedAt.Format(time.RFC3339),
 		"updated_at": c.UpdatedAt.Format(time.RFC3339),
+		"reactions":  reactions,
 	}
 }
 

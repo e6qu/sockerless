@@ -506,3 +506,25 @@ export function GlobeIcon(p: IconProps) {
     </Svg>
   );
 }
+
+/** Webhook: an emitting node fanned out to two receivers. */
+export function WebhookIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="8" cy="4" r="2" />
+      <circle cx="3.5" cy="12" r="2" />
+      <circle cx="12.5" cy="12" r="2" />
+      <path d="M7 5.8 4.6 10.3M9 5.8l2.4 4.5" />
+    </Svg>
+  );
+}
+
+/** Magnifying glass for the global search page. */
+export function SearchIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="7" cy="7" r="4.5" />
+      <path d="M10.5 10.5L14 14" />
+    </Svg>
+  );
+}

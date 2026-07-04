@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,7 @@ func (s *Server) registerGHPullRoutes() {
 	s.route("PUT /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/dismissals", s.requirePerm(scopePullRequests, permWrite, s.handleDismissPRReview))
 
 	// Requested reviewers
+	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permRead, s.handleListRequestedReviewers))
 	s.route("POST /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRequestReviewers))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/pulls/{number}/requested_reviewers", s.requirePerm(scopePullRequests, permWrite, s.handleRemoveRequestedReviewers))
 
@@ -819,6 +821,91 @@ func (s *Server) handleRemoveRequestedReviewers(w http.ResponseWriter, r *http.R
 
 	updated := s.store.GetPullRequestByNumber(repo.ID, num)
 	writeJSON(w, http.StatusOK, pullRequestSimpleJSON(updated, s.store, s.baseURL(r), repo.FullName))
+}
+
+// handleListRequestedReviewers serves
+// GET /repos/{owner}/{repo}/pulls/{number}/requested_reviewers — the
+// pull-request-review-request shape ({users, teams}). bleephub does not model
+// team review requests, so teams is always empty.
+func (s *Server) handleListRequestedReviewers(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupReadableRepoFromPath(w, r)
+	if repo == nil {
+		return
+	}
+
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	users := make([]map[string]interface{}, 0)
+	s.store.mu.RLock()
+	for _, id := range pr.RequestedReviewerIDs {
+		if u, ok := s.store.Users[id]; ok {
+			users = append(users, userToJSON(u))
+		}
+	}
+	s.store.mu.RUnlock()
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"users": users,
+		"teams": []interface{}{},
+	})
+}
+
+// buildPullRequestTimeline assembles the issue-timeline union for a pull
+// request: conversation comments ("commented" items) interleaved with
+// submitted reviews ("reviewed" items), ordered by creation time. Pending
+// reviews are not part of the public timeline on real GitHub and are
+// excluded here too.
+func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL string) []map[string]interface{} {
+	comments := s.store.ListCommentsFor("pull_request", pr.ID)
+	reviews := s.store.ListPullRequestReviews(repo.FullName, pr.Number)
+
+	type timelineEntry struct {
+		at   time.Time
+		id   int
+		json map[string]interface{}
+	}
+	entries := make([]timelineEntry, 0, len(comments)+len(reviews))
+	for _, c := range comments {
+		entries = append(entries, timelineEntry{
+			at:   c.CreatedAt,
+			id:   c.ID,
+			json: timelineCommentToJSON(c, s.store, baseURL, repo.FullName, pr.Number, repo),
+		})
+	}
+	for _, review := range reviews {
+		if review.State == "PENDING" {
+			continue
+		}
+		j := reviewToJSON(review, s.store, baseURL, repo.FullName, pr.Number)
+		j["event"] = "reviewed"
+		at := review.CreatedAt
+		if review.SubmittedAt != nil {
+			at = *review.SubmittedAt
+		}
+		entries = append(entries, timelineEntry{at: at, id: review.ID, json: j})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if !entries[i].at.Equal(entries[j].at) {
+			return entries[i].at.Before(entries[j].at)
+		}
+		return entries[i].id < entries[j].id
+	})
+
+	out := make([]map[string]interface{}, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, e.json)
+	}
+	return out
 }
 
 func (s *Server) handleUpdateBranch(w http.ResponseWriter, r *http.Request) {
