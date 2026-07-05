@@ -69,6 +69,12 @@ async function apiGet(page: Page, path: string) {
   );
 }
 
+// Open the GitHub-style global-nav drawer (the hamburger). The drawer holds
+// both the GitHub destinations and the bleephub "Operations" section.
+async function openDrawer(page: Page): Promise<void> {
+  await page.getByRole("button", { name: "Open global navigation" }).click();
+}
+
 // ─── redirect ───────────────────────────────────────────────────────────────
 
 test.describe("Root redirect", () => {
@@ -80,87 +86,95 @@ test.describe("Root redirect", () => {
   });
 });
 
-// ─── Overview ───────────────────────────────────────────────────────────────
+// ─── Operations console (/ui/admin) ──────────────────────────────────────────
+// The server-operational "System status" console lives at /ui/admin; the root
+// /ui/ is the GitHub-style dashboard.
 
-test.describe("Overview page", () => {
-  test("renders title and heading", async ({ page }) => {
-    await page.goto("/ui/");
+test.describe("Operations console", () => {
+  test("renders the System status heading", async ({ page }) => {
+    await page.goto("/ui/admin");
     // Brand is a link in the header; the page title is the h1.
     await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "System status" })).toBeVisible();
-    await shot(page, "01-overview");
+    await shot(page, "01-ops-console");
   });
 
   test("shows metrics cards", async ({ page }) => {
-    await page.goto("/ui/");
+    await page.goto("/ui/admin");
     await expect(page.getByText("Active Workflows")).toBeVisible();
     await expect(page.getByText("Connected Runners")).toBeVisible();
     await expect(page.getByText("Submissions")).toBeVisible();
-    await shot(page, "02-overview-metrics");
+    await shot(page, "02-ops-metrics");
   });
 });
 
-// ─── Sidebar navigation ─────────────────────────────────────────────────────
+// ─── Global-nav drawer ───────────────────────────────────────────────────────
 
-test.describe("Header navigation", () => {
-  test("shows all 6 nav links", async ({ page }) => {
+test.describe("Global navigation", () => {
+  test("the drawer lists the GitHub and Operations destinations", async ({ page }) => {
     await page.goto("/ui/");
-    await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Repos" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Runners" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Apps" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "OAuth" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Metrics" })).toBeVisible();
-    await shot(page, "03-sidebar-all-links");
+    await openDrawer(page);
+    const drawer = page.getByRole("navigation", { name: "Global" });
+    await expect(drawer.getByRole("link", { name: "Repositories" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Runners" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "GitHub Apps" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "OAuth Apps" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Metrics" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "System status" })).toBeVisible();
+    await shot(page, "03-nav-drawer");
   });
 
-  test("navigates between all pages", async ({ page }) => {
+  test("navigates between pages via the drawer", async ({ page }) => {
     await page.goto("/ui/");
+    const drawer = page.getByRole("navigation", { name: "Global" });
 
-    await page.getByRole("link", { name: "Runners" }).click();
-    await expect(page.url()).toContain("/ui/runners");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "Runners" }).click();
+    await expect(page).toHaveURL(/\/ui\/runners/);
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Runners" })).toBeVisible();
     await shot(page, "04-runners");
 
-    await page.getByRole("link", { name: "Repos" }).click();
-    await expect(page.url()).toContain("/ui/repos");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "Repositories" }).click();
+    await expect(page).toHaveURL(/\/ui\/repos/);
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Repositories" })).toBeVisible();
     await shot(page, "05-repos");
 
-    await page.getByRole("link", { name: "Apps" }).click();
-    await expect(page.url()).toContain("/ui/apps");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "GitHub Apps" }).click();
+    await expect(page).toHaveURL(/\/ui\/apps/);
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "Apps" })).toBeVisible();
     await shot(page, "06-apps");
 
-    await page.getByRole("link", { name: "OAuth" }).click();
-    await expect(page.url()).toContain("/ui/oauth");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "OAuth Apps" }).click();
+    await expect(page).toHaveURL(/\/ui\/oauth/);
     await shot(page, "07-oauth");
 
-    await page.getByRole("link", { name: "Metrics" }).click();
-    await expect(page.url()).toContain("/ui/metrics");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "Metrics" }).click();
+    await expect(page).toHaveURL(/\/ui\/metrics/);
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
     await shot(page, "08-metrics");
 
-    await page.getByRole("link", { name: "Overview" }).click();
-    await expect(page.url()).toMatch(/\/ui\/$/);
-    await shot(page, "09-back-overview");
+    await openDrawer(page);
+    await drawer.getByRole("link", { name: "Dashboard" }).click();
+    await expect(page).toHaveURL(/\/ui\/$/);
+    await shot(page, "09-back-dashboard");
   });
 });
 
 // ─── Dark / light mode toggle ────────────────────────────────────────────────
 
 test.describe("Theme toggle", () => {
-  test("toggle button is present", async ({ page }) => {
+  test("theme toggle lives in the user menu", async ({ page }) => {
     await page.goto("/ui/");
     await page.waitForLoadState("networkidle");
-    // ThemeToggle is in sidebar footer with aria-label that mentions "theme"
-    const toggle = page.locator('[aria-label*="theme"]').first();
+    // The theme toggle is an item in the avatar dropdown menu.
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    const toggle = page.getByRole("menuitem", { name: /(light|dark) theme/i });
     await expect(toggle).toBeVisible();
     await shot(page, "11-theme-toggle");
-
-    // Verify the label is one of the two expected values
-    const label = await toggle.getAttribute("aria-label");
-    expect(label).toMatch(/switch to (light|dark) theme/i);
   });
 });
 
@@ -279,8 +293,9 @@ test.describe("Repo detail page", () => {
 
     await page.goto(`/ui/repos/${owner}/issues-test`);
     await page.waitForLoadState("networkidle");
-    // Issues is a repo tab (link) in the repo header.
-    await page.getByRole("link", { name: /Issues/ }).click();
+    // Issues is a repo tab (link) in the repo header. Scope to the repo nav so
+    // it doesn't collide with the global header's "Issues" quick-link.
+    await page.getByRole("navigation", { name: "Repository" }).getByRole("link", { name: /Issues/ }).click();
     await page.waitForLoadState("networkidle");
     await expect(page.getByText("First Playwright issue")).toBeVisible();
     await shot(page, "16-repo-issues-tab");
@@ -449,10 +464,10 @@ test.describe("Dark theme", () => {
   });
 
   test("captures key pages in dark mode", async ({ page }) => {
-    await page.goto("/ui/");
+    await page.goto("/ui/admin");
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: "System status" })).toBeVisible();
-    await shot(page, "26-dark-overview");
+    await shot(page, "26-dark-ops-console");
 
     await page.goto("/ui/repos");
     await page.waitForLoadState("networkidle");

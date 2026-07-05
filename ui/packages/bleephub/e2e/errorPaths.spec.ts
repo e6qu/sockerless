@@ -45,11 +45,12 @@ test.describe("Error handling / fault injection", () => {
     await page.waitForLoadState("networkidle");
 
     await expect(page.getByText(/Failed to load repositories/i)).toBeVisible();
-    // The primary nav is still present — the whole app did not fall over.
-    await expect(page.getByRole("link", { name: "Overview" })).toBeVisible();
+    // The app shell (the header brand) is still present — the whole app did not
+    // fall over.
+    await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
   });
 
-  test("an injected 500 on metrics degrades the Overview to a visible error", async ({ page }) => {
+  test("an injected 500 on metrics degrades the Operations console to a visible error", async ({ page }) => {
     await page.route("**/internal/metrics", (route) =>
       route.fulfill({
         status: 500,
@@ -58,12 +59,13 @@ test.describe("Error handling / fault injection", () => {
       }),
     );
 
-    await page.goto("/ui/");
+    // The metrics-driven "System status" console lives at /ui/admin.
+    await page.goto("/ui/admin");
     await page.waitForLoadState("networkidle");
 
     // A failed metrics fetch must degrade to a visible InlineError, never a
-    // blank dashboard or an uncaught render. The app shell (nav) survives.
+    // blank console or an uncaught render. The app shell (header) survives.
     await expect(page.getByText(/Failed to load overview/i)).toBeVisible();
-    await expect(page.getByRole("link", { name: "Repos" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
   });
 });
