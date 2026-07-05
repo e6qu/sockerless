@@ -9,7 +9,7 @@ Runs Docker containers as AWS Lambda functions using container images, with Clou
 | **Frontend (Docker API)** | [Docker Go SDK](https://pkg.go.dev/github.com/docker/docker/client) | v25+ | `docker run` → Lambda invoke round-trip via `tcp://localhost:3375`. |
 | | [`docker` CLI](https://docs.docker.com/engine/reference/commandline/cli/) | 29.x | Wire-level [Docker REST API v1.44](https://docs.docker.com/engine/api/v1.44/). |
 | **Backend (AWS API)** | [`aws` CLI](https://docs.aws.amazon.com/cli/latest/reference/lambda/) | v2.17+ | `aws lambda invoke`, `aws lambda get-function`, `aws logs tail` — operators inspect function state. |
-| | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/lambda) | v1.50+ | `lambda.CreateFunction`, `lambda.Invoke` with `LogType=Tail`. The Invoke-diagnostics pattern (`LogType=Tail` + payload dump for crashes) lives in [`memory/feedback_lambda_invoke_diagnostics.md`](../../). |
+| | [AWS Go SDK v2](https://github.com/aws/aws-sdk-go-v2/tree/main/service/lambda) | v1.50+ | `lambda.CreateFunction`, `lambda.Invoke` with `LogType=Tail`. The Invoke-diagnostics pattern uses `LogType=Tail` plus a payload dump on crashes. |
 | | [Terraform `aws` provider](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/lambda_function) | v6.32+ | `aws_lambda_function` provisions the function infra; `simulators/aws/terraform-tests/` covers the path. |
 
 Local development and CI replace the backend-side upstream with [`simulators/aws`](../../simulators/aws/README.md). The agent-as-handler model unique to Lambda is described in [`docs/POD_MATERIALIZATION.md § Lambda`](../../docs/POD_MATERIALIZATION.md).
@@ -93,7 +93,7 @@ None open. **Lambda has no invoke-cancel API**: `UpdateFunctionConfiguration(Tim
 
 ## What's out of scope
 
-- Native runtime modes (Node, Python, Java). This backend uses **container mode only** — see [`memory/feedback_faas_container_mode.md`](../../).
+- Native runtime modes (Node, Python, Java). This backend uses **container mode only**.
 - Provisioned concurrency (cold-start optimisation belongs to the operator-Terraform layer).
 - Lambda@Edge / SnapStart.
 

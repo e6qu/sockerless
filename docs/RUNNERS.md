@@ -156,17 +156,24 @@ A leaked PAT can be revoked instantly:
 
 Both daemons run on your laptop, both dispatch to the same AWS account:
 
-```bash
-# Terminal 1 — Sockerless ECS daemon, port 2375
-sockerless --backend=ecs --listen=tcp://localhost:3375 \
-  --aws-region=us-east-1 \
-  --ecs-cluster=sockerless-runner-ecs \
-  --ecs-subnets=subnet-… --ecs-security-groups=sg-…
+Each backend is its own binary that serves the Docker REST API in-process on
+`--addr`; region, cluster, subnets, and roles come from `SOCKERLESS_*`
+environment variables (see the per-backend README and `docs/ECS_LIVE_SETUP.md`),
+not CLI flags:
 
-# Terminal 2 — Sockerless Lambda daemon, port 2376
-sockerless --backend=lambda --listen=tcp://localhost:3376 \
-  --aws-region=us-east-1 \
-  --lambda-execution-role=arn:aws:iam::…:role/sockerless-lambda
+```bash
+# Terminal 1 — Sockerless ECS backend, port 3375
+export AWS_REGION=us-east-1
+export SOCKERLESS_ECS_CLUSTER=sockerless-runner-ecs
+export SOCKERLESS_ECS_SUBNETS=subnet-…
+export SOCKERLESS_ECS_SECURITY_GROUPS=sg-…
+export SOCKERLESS_ECS_EXECUTION_ROLE_ARN=arn:aws:iam::…:role/sockerless-exec
+sockerless-backend-ecs --addr 0.0.0.0:3375
+
+# Terminal 2 — Sockerless Lambda backend, port 3376
+export AWS_REGION=us-east-1
+export SOCKERLESS_LAMBDA_ROLE_ARN=arn:aws:iam::…:role/sockerless-lambda
+sockerless-backend-lambda --addr 0.0.0.0:3376
 ```
 
 Live infra (cluster, subnets, role) is provisioned via `manual-tests/01-infrastructure.md`. Both daemons share the same VPC + IAM scaffolding so runner jobs can reach each other when needed (e.g., a runner needing a transient cache via S3 — the IAM role grants S3:Get/Put on the cache bucket).

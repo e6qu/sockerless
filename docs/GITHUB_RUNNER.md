@@ -1,6 +1,6 @@
 # GitHub Actions Runner E2E Tests
 
-End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through the Sockerless Docker frontend, which delegates container execution to the selected backend (Amazon Elastic Container Service (ECS), AWS Lambda, Google Cloud Run, Google Cloud Functions (GCF), Azure Container Apps (ACA), Azure Functions, or Docker).
+End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a local GitHub Actions runner. Jobs run through a Sockerless backend, which serves the Docker REST API in-process and executes containers on the selected backend (Amazon Elastic Container Service (ECS), AWS Lambda, Google Cloud Run, Google Cloud Functions (GCF), Azure Container Apps (ACA), Azure Functions, or Docker) — there is no separate frontend process.
 
 > **Looking for real github.com + `actions/runner`?** See [`GITHUB_RUNNER_SAAS.md`](./GITHUB_RUNNER_SAAS.md) for the SaaS flow, or [`RUNNERS.md`](./RUNNERS.md) for the cross-platform canonical guide. This doc covers only the `act`-based simulator harness.
 
@@ -9,13 +9,11 @@ End-to-end tests for Sockerless using [act](https://github.com/nektos/act) as a 
 ```
 act (GitHub Actions runner)
   │
-  ├── DOCKER_HOST=tcp://frontend:3375
-  │
-  ▼
-Sockerless Frontend (Docker API)
+  ├── DOCKER_HOST=tcp://backend:3375
   │
   ▼
 Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
+  serves the Docker REST API in-process
   │
   ▼
 Cloud simulator endpoint (aws / gcp / azure)
@@ -36,13 +34,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers.
 
 ## Quick Start
 
-Run all 12 workflows against the core backend:
-
-```bash
-make e2e-github-docker
-```
-
-Run against a specific cloud backend:
+Run all workflows against a specific cloud backend:
 
 ```bash
 make e2e-github-ecs
@@ -57,7 +49,7 @@ Run a single workflow:
 docker run --rm -e BACKEND=ecs sockerless-e2e-github --backend ecs --workflow basic
 ```
 
-Run against all 7 backends:
+Run against all 6 cloud/FaaS backends (ecs, lambda, cloudrun, gcf, aca, azf):
 
 ```bash
 make e2e-github-all
@@ -65,20 +57,18 @@ make e2e-github-all
 
 ## Workflow Tests
 
-| # | Workflow | Description | FaaS |
-|---|----------|-------------|:----:|
-| 1 | basic | Single container job, echo | Yes |
-| 2 | multi-step | Multiple `run:` steps | Yes |
-| 3 | env-vars | Job-level and step-level `env:`, CI variables | Yes |
-| 4 | exit-codes | Failing step with `continue-on-error: true` | Yes |
-| 5 | multi-job | 2 sequential jobs with `needs:` | Yes |
-| 6 | container-action | `uses: docker://alpine` with entrypoint | Yes |
-| 7 | services | Job with `services:` (busybox) | SKIP |
-| 8 | large-output | 1000-line stdout, tests log streaming | Yes |
-| 9 | matrix | `strategy.matrix` with 2 values | Yes |
-| 10 | custom-image | `container: python:3-alpine` | Yes |
-| 11 | working-dir | Steps with `working-directory:` | Yes |
-| 12 | outputs | Step outputs via `$GITHUB_OUTPUT` | Yes |
+The workflow suite is defined by `ALL_WORKFLOWS` in
+`tests/e2e-live-tests/github-runner/run.sh` (the authoritative source), with one
+`.yml` per name under `tests/e2e-live-tests/github-runner/workflows/`. It
+currently covers 29 workflows:
+
+`basic`, `multi-step`, `env-vars`, `exit-codes`, `multi-job`, `container-action`,
+`large-output`, `matrix`, `working-dir`, `outputs`, `shell-features`,
+`file-persistence`, `job-outputs`, `concurrent-jobs`, `env-inheritance`,
+`github-env`, `step-outputs`, `defaults-shell`, `conditional-steps`,
+`multi-job-data`, `services-http`, `container-options`, `container-env-create`,
+`diamond-deps`, `matrix-multi`, `conditional-job`, `continue-on-error`,
+`timeout-job`, `working-dir-nested`.
 
 ## Live Mode
 
@@ -104,7 +94,7 @@ All output is captured to `tests/e2e-live-tests/logs/`:
 
 ## Troubleshooting
 
-**act hangs on container pull**: Ensure the Docker frontend is reachable at the configured address. Check `DOCKER_HOST` is set correctly.
+**act hangs on container pull**: Ensure the backend's Docker API is reachable at the configured address. Check `DOCKER_HOST` is set correctly.
 
 **Workflow fails with "image not found"**: The backend must be able to resolve the same cloud-shaped image references it would use in production. With simulators, make sure the simulator registry/cloud slice is reachable through the configured endpoint and the required local images or registry mirrors exist. In live mode, ensure the cloud environment has registry access.
 

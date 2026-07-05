@@ -95,7 +95,7 @@ core/
 ├── server.go                 BaseServer, route registration, InitDrivers
 ├── store.go                  StateStore[T], Store (all in-memory state)
 ├── drivers.go                Driver interfaces and DriverSet
-├── drivers_agent.go          Agent drivers (exec, filesystem, stream)
+├── driver_adapt_*.go         Agent driver adapters (exec, fs, logs, stream, stats, signal, …)
 ├── handle_containers.go      Create, start, stop, kill, remove
 ├── handle_containers_query.go  Inspect, list, logs, wait, attach, stats
 ├── handle_containers_archive.go  Put/head/get archive, tar helpers
@@ -104,8 +104,8 @@ core/
 ├── handle_networks.go        Network CRUD + connect/disconnect
 ├── handle_volumes.go         Volume CRUD
 ├── handle_extended.go        Top, stats, rename, pause, events, df
-├── agent_registry.go         Reverse agent connection management
-├── agent.go                  Agent entrypoint builders
+├── reverse_agent.go          Reverse agent connection registry
+├── resource_registry.go      Cloud resource registry
 ├── build.go                  Dockerfile parser + build handler
 ├── health.go                 Health check runner
 ├── registry.go               Docker v2 registry client (opt-in)

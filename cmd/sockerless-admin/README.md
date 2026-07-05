@@ -8,7 +8,7 @@ Local orchestration server for Sockerless topologies — backends + simulators +
 |---|---|
 | **Browser / embedded UI** (`ui/packages/admin`) | The HTTP API at `/api/v1/*` is consumed by the embedded React SPA. The UI is the canonical reference adaptor for the admin REST surface. |
 | **`curl` / `httpie` / `gh api`-style HTTP clients** | Every action the UI takes is also driveable as plain REST. The API is the contract; the UI is one consumer. |
-| **`sockerless-admin` itself reaching out to backends** | The admin polls each registered backend / simulator / bleephub via `/v1/health` + `/v1/info` per the [components-decoupled-from-admin invariant](../../memory/feedback_components_decoupled_from_admin.md). |
+| **`sockerless-admin` itself reaching out to backends** | The admin polls each registered backend / simulator / bleephub via `/v1/health` + `/v1/info` per the components-decoupled-from-admin invariant. |
 | **`*_test.go` files** | Every API handler has unit tests in the same package — see the file pairing (`api_topology.go` ↔ `api_topology_test.go`, etc.). |
 
 ## Validation
@@ -153,7 +153,7 @@ $ curl -s http://localhost:9090/api/v1/components | jq '.[]'
 
 ## Known issues
 
-None open. The admin's [components-decoupled invariant](../../memory/feedback_components_decoupled_from_admin.md) is load-bearing: components must remain runnable standalone via `make backends/<x>/run`, with the admin reading only `/v1/health` + `/v1/info` + env vars. No admin-side env vars on the components.
+None open. The admin's components-decoupled invariant is load-bearing: components must remain runnable standalone via `make backends/<x>/run`, with the admin reading only `/v1/health` + `/v1/info` + env vars. No admin-side env vars on the components.
 
 ## What's out of scope
 

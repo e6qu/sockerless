@@ -4,7 +4,7 @@ This note records upstream wait behavior that affects the Azure simulator
 Terraform suite. It is not simulator behavior. These waits come from the
 providers pinned by the Azure Terraform harness:
 
-- `hashicorp/azurerm` v4.74.0
+- `hashicorp/azurerm` v4.77.0
 - `hashicorp/azurestack` v1.0.0
 
 Terraform resource `timeouts {}` blocks cap an operation's total deadline. They
@@ -15,21 +15,21 @@ do not generally tune Azure ARM long-running-operation poll cadence.
 AzureRM wraps resource operations in timeout contexts and delegates most Azure
 Resource Manager (ARM) long-running operations to the vendored Azure SDK pollers:
 
-- [`internal/timeouts/determine.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/internal/timeouts/determine.go#L13-L58) wraps create/read/update/delete contexts with the configured operation timeout.
-- [`vendor/.../resourcemanager/poller_provisioning_state.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/resourcemanager/poller_provisioning_state.go#L21-L67) sets the default ARM provisioning-state polling interval to `10s`.
-- [`vendor/.../resourcemanager/poller_lro.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/resourcemanager/poller_lro.go#L28-L47) uses a `10s` initial retry duration for Azure LRO polling unless the service response supplies `Retry-After`.
-- [`vendor/.../pollers/poller.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/pollers/poller.go#L120-L149) sleeps between polls, then calls the ARM poller until terminal status.
+- [`internal/timeouts/determine.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/internal/timeouts/determine.go#L13-L58) wraps create/read/update/delete contexts with the configured operation timeout.
+- [`vendor/.../resourcemanager/poller_provisioning_state.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/resourcemanager/poller_provisioning_state.go#L21-L67) sets the default ARM provisioning-state polling interval to `10s`.
+- [`vendor/.../resourcemanager/poller_lro.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/resourcemanager/poller_lro.go#L28-L47) uses a `10s` initial retry duration for Azure LRO polling unless the service response supplies `Retry-After`.
+- [`vendor/.../pollers/poller.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/pollers/poller.go#L120-L149) sleeps between polls, then calls the ARM poller until terminal status.
 
 Some AzureRM resources also add explicit Terraform SDK waiters on top of ARM
 polling. In current simulator coverage, Linux VM delete is the visible example:
 
 | Surface | Provider source | Hard wait behavior |
 |---|---|---|
-| Linux VM delete confirmation | [`internal/services/compute/linux_virtual_machine_resource.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/internal/services/compute/linux_virtual_machine_resource.go#L1853-L1860) | After delete, if a GET still returns 200, the provider waits for 404 with `MinTimeout: 30s`. |
+| Linux VM delete confirmation | [`internal/services/compute/linux_virtual_machine_resource.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/internal/services/compute/linux_virtual_machine_resource.go#L1853-L1860) | After delete, if a GET still returns 200, the provider waits for 404 with `MinTimeout: 30s`. |
 
 The vendored poller has a context flag to skip polling delay, but it is an
 internal SDK mechanism rather than a public Terraform configuration knob:
-[`pollers/context.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.74.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/pollers/context.go#L14-L25).
+[`pollers/context.go`](https://github.com/hashicorp/terraform-provider-azurerm/blob/v4.77.0/vendor/github.com/hashicorp/go-azure-sdk/sdk/client/pollers/context.go#L14-L25).
 
 ## Azure Stack Provider
 

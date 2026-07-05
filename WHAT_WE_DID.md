@@ -4,7 +4,19 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-05 - bleeplab README + docs sweep + bleephub UI GitHub-faithful redesign (feat/bleeplab-readme-docs-sweep)
+## 2026-07-05 - repo-wide docs sweep + stale-branch prune (docs/sweep-post-774)
+
+Audited every markdown doc against the current code and fixed the verified staleness, plus two incidental code bugs (boyscout).
+
+**Method.** Four parallel read-only audit agents covered the doc tree in clusters (bleephub/bleeplab/UI; top-level/architecture; per-backend/runner/specs; design/example). Every finding was verified against the actual code before fixing — wrong ports, counts, binary names, file lists, targets, env vars, and links — nothing taken on the agent's word.
+
+**Docs corrected (~24 files).** Ports `:2375`→`:3375` (ARCHITECTURE, ecs example, RUNNERS wiring comments); app/package counts across README / ARCHITECTURE / MAKEFILE_STANDARD / ui-README after the bleeplab addition (13 UI-embedding binaries, 14 UI packages, 18 binaries, 34 leaf apps); wrong backend binary names (`sockerless-backend-gcf`/`-azf`); dead `memory/` links in four backend/admin READMEs; stale source-file lists (`backends/core`, `agent/README`); `IMAGE_ARCHITECTURE` AuthProvider paths → the shipped `backends/{aws,gcp,azure}-common/*.go`; the GitHub/GitLab runner workflow/pipeline tables regenerated from `run.sh` (29 workflows / 21 pipelines, dropping removed `services`/`custom-image`), the nonexistent `make e2e-github-docker` target, the "all 7 backends" → 6, and the fictional `sockerless --backend/--listen/--ecs-*` CLI flags rewritten to the real backend-binary + `SOCKERLESS_*` env vars; the removed separate-Docker-API-frontend process still drawn as a component (GitHub/GitLab runner diagrams, `docs/README`, `SOCKERLESS_SPEC` §6.1) collapsed into the in-process backend; `spec/`→`specs/`; a missing `specs/README` index row (`AWS_BEHAVIORAL_PATTERNS.md`); nonexistent env vars (`SOCKERLESS_ECS_TASK_SIZE`, `SOCKERLESS_DOCKER_HUB_TOKEN`); azurerm pin 4.74→4.77; `api.Backend` method count 62→65; the bleephub UI README's page list regenerated from the current route table + AppHeader; the AGENTS.md doc-index description; the ACA "Jobs only" out-of-scope line; and a "current locations" note on the `ECS_SERVICES_DESIGN` writeup whose symbols had moved.
+
+**Boyscout code fixes (BUG-2328/2329).** Deleted the orphaned `frontend-docker` UI package — its Docker-API "frontend" backing process (`/healthz`, `/status`, `/metrics` on `:9200`) was removed with the `frontends/` directory, nothing embedded or served it, and the docker passthrough backend uses the separate `backend-docker` UI (removed the dir, its `Makefile` `UI_APPS` entry, badge-generator entry, and README/MAKEFILE_STANDARD rows). Fixed the badge generator's `Go_Modules` sed regex, which required a literal `+` the badge never contained, so that badge had silently frozen.
+
+**Branch hygiene.** Pruned 22 merged local branches (each verified against its merged PR; two housekeeping branches verified superseded in `main` before deletion).
+
+## 2026-07-05 - bleeplab README + docs sweep + bleephub UI GitHub-faithful redesign (feat/bleeplab-readme-docs-sweep, #774)
 
 Documented bleeplab and reshaped the bleephub web UI into a functional GitHub clone.
 

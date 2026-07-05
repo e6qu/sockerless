@@ -369,7 +369,7 @@ Two unit-test gates validate bleephub against the vendored GitHub OpenAPI descri
 - **Route definitions** (`gh_api_definition_test.go`) — every registered `/api/v3` route must exist in the description; paths can't be invented under GitHub's namespace.
 - **Response-shape ratchet** (`openapi_shape_validator_test.go`) — an observer on the shared test server validates every 2xx `/api/v3` JSON response member-by-member against the documented response schema. Violations are gated against [`openapi-violation-allowlist.txt`](openapi-violation-allowlist.txt): each entry is either a real-but-undescribed member (GHES-only surface, with a citation — currently only `/meta`'s `installed_version`) or a filed BUG on its way to being fixed. The list only shrinks; new violations fail the suite.
 
-## Source layout (~80 Go files)
+## Source layout (~180 Go files)
 
 | Group | Files | Purpose |
 |---|---|---|

@@ -66,8 +66,7 @@ GO_APPS := \
   github-runner-dispatcher-azure
 
 # UI packages (15). Each consumed by the corresponding GO_UI_APPS entry
-# (except `core` which is a shared library, and `frontend-docker` which
-# is standalone).
+# (except `core`, which is a shared library).
 UI_APPS := \
   ui/packages/admin \
   ui/packages/bleephub \
@@ -82,7 +81,6 @@ UI_APPS := \
   ui/packages/simulator-aws \
   ui/packages/simulator-gcp \
   ui/packages/simulator-azure \
-  ui/packages/frontend-docker \
   ui/packages/core
 
 # Test-category Makefiles (sim-vs-backend SDK/CLI/Terraform tests +

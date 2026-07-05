@@ -44,7 +44,7 @@ graph TB
     AG -.->|"WebSocket"| CORE
 ```
 
-Each backend is a **standalone binary** that serves both the Docker REST API (`:2375`) and internal management endpoints on the same HTTP mux — there is no separate frontend process. The Docker API routes are registered in-process via `core.BaseServer.registerDockerAPIRoutes()`, with a `stripVersionPrefix` middleware that removes the `/v1.XX/` prefix.
+Each backend is a **standalone binary** that serves both the Docker REST API (`:3375`) and internal management endpoints on the same HTTP mux — there is no separate frontend process. The Docker API routes are registered in-process via `core.BaseServer.registerDockerAPIRoutes()`, with a `stripVersionPrefix` middleware that removes the `/v1.XX/` prefix.
 
 The system has three main components:
 
@@ -383,8 +383,8 @@ Sockerless is a drop-in replacement for Docker Engine. Anything that talks to th
 
 | Mode | `DOCKER_HOST` | How it works |
 |------|---------------|--------------|
-| Local TCP | `tcp://localhost:2375` | Client connects directly to backend on same host |
-| Remote TCP | `tcp://remote-host:2375` | Client connects to backend on a different machine |
+| Local TCP | `tcp://localhost:3375` | Client connects directly to backend on same host |
+| Remote TCP | `tcp://remote-host:3375` | Client connects to backend on a different machine |
 | SSH tunnel | `ssh://user@remote-host` | Docker CLI opens SSH tunnel to remote unix socket |
 
 For SSH mode, the Sockerless backend must listen on a unix socket (e.g., `/var/run/docker.sock`). The Docker CLI's built-in SSH transport tunnels to the socket over SSH — no extra configuration needed.
@@ -393,11 +393,11 @@ For SSH mode, the Sockerless backend must listen on a unix socket (e.g., `/var/r
 
 ```bash
 # Local — backend on same machine
-export DOCKER_HOST=tcp://localhost:2375
+export DOCKER_HOST=tcp://localhost:3375
 docker run --rm -p 8080:8080 my-app:latest
 
 # Remote — backend on a cloud VM
-export DOCKER_HOST=tcp://sockerless.example.com:2375
+export DOCKER_HOST=tcp://sockerless.example.com:3375
 docker run --rm alpine echo "running on remote cloud"
 
 # SSH — tunnel to remote backend's unix socket
@@ -465,7 +465,7 @@ sequenceDiagram
     R-->>GL: Job result + artifacts
 ```
 
-GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless backend address (`tcp://localhost:2375`), all container operations route through Sockerless. No runner modifications needed.
+GitLab Runner's docker executor talks directly to the Docker API. By setting `host` in the runner's `config.toml` to the Sockerless backend address (`tcp://localhost:3375`), all container operations route through Sockerless. No runner modifications needed.
 
 ### bleephub — Local GitHub API Simulator
 

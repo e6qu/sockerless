@@ -47,15 +47,8 @@ export SOCKERLESS_ECS_LOG_GROUP=/sockerless/ecs/live
 sockerless-backend-ecs --addr 0.0.0.0:3375
 ```
 
-Then run the Docker frontend, which exposes the Docker REST API and delegates to the backend:
-
-```bash
-sockerless-docker-frontend \
-  --addr 0.0.0.0:3375 \
-  --backend http://127.0.0.1:3375
-```
-
-Test end-to-end:
+The backend serves the Docker REST API directly on this address — there is no
+separate frontend process. Test end-to-end:
 
 ```bash
 export DOCKER_HOST=tcp://<host>:3375
@@ -79,7 +72,7 @@ sockerless does not ship TLS termination; use a reverse proxy or front service. 
 
 ## Docker Hub rate limits
 
-Image pulls go through ECR pull-through cache (`backends/lambda/image_resolve.go` and ECS equivalent). First pull of each tag touches Docker Hub via ECR's upstream configuration — supply Docker Hub credentials via `SOCKERLESS_DOCKER_HUB_TOKEN` to avoid the 100-pulls-per-6h anonymous limit. The Terraform module wires this as an ECR secret.
+Docker Hub `library/` image pulls go through an unauthenticated ECR pull-through cache rule (`aws_ecr_pull_through_cache_rule.docker_hub` in `terraform/modules/ecs/main.tf`, gated by `var.manage_docker_hub_pull_through_cache`). Sockerless deliberately avoids Docker Hub PAT credentials on disk (`backends/ecs/image_resolve.go`), so heavy pulling can still hit the anonymous 100-pulls-per-6h limit — mirror the base images you need into ECR to avoid it.
 
 ## Verification before using with runners
 

@@ -103,7 +103,6 @@ None open. Azure-specific gotchas (terraform-tests are Docker-only, ACR route co
 
 ## What's out of scope
 
-- Container Apps Services (long-running HTTP endpoints) — this backend uses Jobs only.
 - ACR Tasks (image builds) — operator-side concern.
 - Multi-region deployments.
 

@@ -40,7 +40,7 @@ Every backend must answer these for single-container workloads. Multi-container 
 
 **Pod primitive.** ECS Fargate task. One task definition per logical pod.
 
-**Long-lived runner.** Sockerless calls `ecs.RunTask` with a task definition built from the operator's runner image plus a `tail -f /dev/null` entrypoint override. The task is tagged `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` so post-restart recovery can rebuild in-memory state from cloud API queries. CPU/memory come from `SOCKERLESS_ECS_TASK_SIZE` + `SOCKERLESS_ECS_CPU_ARCHITECTURE`.
+**Long-lived runner.** Sockerless calls `ecs.RunTask` with a task definition built from the operator's runner image plus a `tail -f /dev/null` entrypoint override. The task is tagged `sockerless-managed=true`, `sockerless-container-id=<id>`, `sockerless-name=<name>` so post-restart recovery can rebuild in-memory state from cloud API queries. CPU/memory are mapped from the container's Docker `HostConfig` resource constraints to the smallest valid Fargate tier (`fargateResources` in `backends/ecs/taskdef.go`); `SOCKERLESS_ECS_CPU_ARCHITECTURE` selects X86_64/ARM64.
 
 **Sub-task spawn.** Each `docker create` inside the runner triggers a fresh `ecs.RunTask` on the **same Fargate cluster**, with a task definition that pins the sub-task image. The new task joins the runner via the shared EFS access point — not via ECS task linking. There is no ECS-level "pod" concept; the pod is sockerless's logical bundle, not a cloud-side group.
 
@@ -121,7 +121,7 @@ GitLab's hijacked-stdin lands on the same reverse-agent stream; there is no Serv
 
 **Pod primitive.** An ACA **App** revision when `SOCKERLESS_ACA_USE_APP=1` (the runner default). App revisions support multi-container natively — same shape as Cloud Run Services. ACA Jobs are also available but execution-scoped.
 
-**Long-lived runner.** `armappcontainers.ContainerAppsClient.CreateOrUpdate` deploys an App with the runner container + any deferred network members as sidecars. Each container is wrapped with `sockerless-aca-bootstrap`. The App is tagged `sockerless-managed=true`, `sockerless-container-id=<id>` for recovery.
+**Long-lived runner.** `armappcontainers.ContainerAppsClient.CreateOrUpdate` deploys an App with the runner container + any deferred network members as sidecars. Each container is wrapped with the ACA bootstrap — the cloudrun bootstrap binary, supplied by the operator via `SOCKERLESS_ACA_BOOTSTRAP`. The App is tagged `sockerless-managed=true`, `sockerless-container-id=<id>` for recovery.
 
 **Sub-task spawn.** Each `docker create` calls `CreateOrUpdate` to deploy a new App revision (or a new App entirely, depending on network membership). The deferred-network-pod pattern mirrors Cloud Run / GCF.
 
@@ -199,6 +199,6 @@ The runner pattern: `gitlab-runner` polls GitLab, then per stage does `docker cr
 | Multi-container materialization (cloudrun/gcf) | `backends/cloudrun/network_pod.go::shouldDeferOrMaterializeNetworkPod`; `backends/cloudrun-functions/pod_service.go::materializePodService` |
 | Storage drivers | `backends/aws-common/volumes.go::EFSManager`; `backends/gcp-common/storage_gcssync.go`; `backends/azure-common/volumes.go::AzureFilesEphemeralDriver` |
 | Exec dispatch | `backends/ecs/exec_cloud.go`; `backends/core/reverse_agent.go`; `backends/lambda/exec_driver.go`; `backends/<faas>/server.go` reverse-agent driver wiring; `backends/<faas>/backend_impl*.go` / `backend_delegates.go` `ExecStart` paths |
-| Stdin pipe machinery | `backends/<cloud>/stdin_pipes.go` (ECS, Lambda) |
-| Bootstrap binaries | `agent/cmd/sockerless-{cloudrun,gcf,lambda,aca,azf}-bootstrap/` |
+| Stdin pipe machinery | `backends/<cloud>/stdin_pipe.go` (ECS, Lambda) |
+| Bootstrap binaries | `agent/cmd/sockerless-{cloudrun,gcf,lambda,azf}-bootstrap/ (ACA reuses the cloudrun bootstrap via SOCKERLESS_ACA_BOOTSTRAP)` |
 | Authoritative cloud-side mapping | `specs/CLOUD_RESOURCE_MAPPING.md` |

@@ -15,12 +15,13 @@ Per-app Makefiles keep build and run details beside the app they belong to. The 
 
 The top-level app lists currently cover three kinds of independently buildable packages:
 
-### Go binaries with optional embedded UI (12)
+### Go binaries with optional embedded UI (13)
 
 | App | Binary | UI package consumed | Default port |
 |---|---|---|---|
 | `cmd/sockerless-admin` | `sockerless-admin` | `ui/packages/admin` | `:9090` |
 | `bleephub` | `bleephub-server` | `ui/packages/bleephub` | `:5555` |
+| `bleeplab` | `bleeplab` | `ui/packages/bleeplab` | `:8929` |
 | `backends/docker` | `sockerless-backend-docker` | `ui/packages/backend-docker` | `:3375` |
 | `backends/ecs` | `sockerless-backend-ecs` | `ui/packages/backend-ecs` | `:3375` |
 | `backends/lambda` | `sockerless-backend-lambda` | `ui/packages/backend-lambda` | `:3375` |
@@ -50,9 +51,9 @@ The top-level app lists currently cover three kinds of independently buildable p
 |---|---|
 | `ui/packages/admin` | `cmd/sockerless-admin` |
 | `ui/packages/bleephub` | `bleephub` |
+| `ui/packages/bleeplab` | `bleeplab` |
 | `ui/packages/backend-{docker,ecs,lambda,cloudrun,gcf,aca,azf}` | corresponding backend |
 | `ui/packages/simulator-{aws,gcp,azure}` | corresponding simulator |
-| `ui/packages/frontend-docker` | (standalone — no Go binary embed) |
 | `ui/packages/core` | (shared lib — no embed) |
 
 ## Standard target surface

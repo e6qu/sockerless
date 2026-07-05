@@ -12,7 +12,7 @@ Runs Docker containers as Google Cloud Run Functions (2nd gen), with Cloud Loggi
 | | [GCP Go SDK](https://pkg.go.dev/cloud.google.com/go/functions) | v1.16+ | [Cloud Functions v2 REST API](https://cloud.google.com/functions/docs/reference/rest) calls (`functions.create`, `functions.invoke` via `serviceConfig.uri`). |
 | | [Terraform `google` provider](https://registry.terraform.io/providers/hashicorp/google/latest/docs/resources/cloudfunctions2_function) | v6+ | `google_cloudfunctions2_function` provisions the function infra. |
 
-Local development replaces the backend-side upstream with [`simulators/gcp`](../../simulators/gcp/README.md). Container mode only (no native runtimes) — see [`memory/feedback_faas_container_mode.md`](../../).
+Local development replaces the backend-side upstream with [`simulators/gcp`](../../simulators/gcp/README.md). Container mode only (no native runtimes).
 
 ## Validation
 
@@ -28,7 +28,7 @@ Local development replaces the backend-side upstream with [`simulators/gcp`](../
 
 ```bash
 cd backends/cloudrun-functions && make build
-./sockerless-backend-cloudrun-functions --addr :3375 --log-level info &
+./sockerless-backend-gcf --addr :3375 --log-level info &
 export DOCKER_HOST=tcp://localhost:3375
 ```
 

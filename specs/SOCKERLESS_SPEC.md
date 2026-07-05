@@ -886,7 +886,7 @@ Standard HTTP status codes:
 
 ### 6.1 Component Overview
 
-Sockerless is composed of **three independent component types** — frontend, backend, and agent — each compiled as a separate binary with its own Go module and dependencies.
+Sockerless is composed of three logical component types — frontend, backend, and agent. The **backend** and the **agent** are the shipped binaries (each its own Go module); the **frontend** — the Docker REST API surface — is served **in-process** by each backend on the same HTTP mux, not as a separate binary or process (see the packaging note in §6.3).
 
 ```
 Any Docker-compatible client                              Cloud Provider API
@@ -897,7 +897,7 @@ Any Docker-compatible client                              Cloud Provider API
     ▼                                                           │
 ┌────────────────────────────┐  Internal HTTP/JSON  ┌──────────────────────┐
 │  Frontend                  │ ◄──────────────────► │  Backend             │
-│  (separate binary)         │  + WebSocket (stream) │  (separate binary)   │
+│  (in-process layer)        │  + WebSocket (stream) │  (separate binary)   │
 │                            │  Unix socket / TCP   │                      │
 │  • Stateless               │                      │  • Stateful          │
 │  • OpenAPI-generated types │                      │  • Cloud SDK types   │
@@ -930,7 +930,7 @@ Each component is a separate Go module with its own `go.mod`, enforcing dependen
 
 ```
 sockerless/
-├── spec/                              # Specifications and research docs
+├── specs/                             # Specifications and research docs
 │   ├── SOCKERLESS_SPEC.md
 │   └── DOCKER_REST_API.md
 │
