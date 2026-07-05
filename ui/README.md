@@ -8,10 +8,10 @@ Bun + Turborepo workspace. 14 packages share a single design system + API client
 |---|---|
 | `core` | Design system (tokens, components), API client, TanStack Query hooks, `BackendApp` + `SimulatorApp` shells. Imported by every other UI package. |
 | `backend-{ecs,lambda,cloudrun,gcf,aca,azf,docker}` | Per-backend Vite apps. Each is `<BackendApp title="..." />` plus an `index.html` that loads the design-system fonts + index.css. |
-| `frontend-docker` | Docker-frontend UI (in-process docker daemon view). |
 | `simulator-{aws,gcp,azure}` | Per-cloud simulator dashboards (sim-only routes). |
 | `admin` | Cross-backend admin dashboard: component health, containers, contexts, process lifecycle, topology lifecycle, logs, resources, cleanup, and make-command recovery panels. |
-| `bleephub` | Standalone hub UI (separate product surface). |
+| `bleephub` | Standalone hub UI: a GitHub-faithful clone dashboarding the bleephub server. |
+| `bleeplab` | Standalone GitLab control-plane sim UI: dashboards the bleeplab server. |
 
 ## Design system
 

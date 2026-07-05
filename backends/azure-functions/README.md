@@ -12,7 +12,7 @@ Runs Docker containers as Azure Function Apps with custom container images, with
 | | [Azure SDK for Go](https://pkg.go.dev/github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice) | v1.6+ | The [App Service ARM REST API](https://learn.microsoft.com/en-us/rest/api/appservice/) (`Sites`) and Application Insights queries the backend issues. |
 | | [Terraform `azurerm` provider](https://registry.terraform.io/providers/hashicorp/azurerm/latest/docs/resources/linux_function_app) | v4+ | `azurerm_linux_function_app` with container `image` provisions the function infra. |
 
-Local development replaces the backend-side upstream with [`simulators/azure`](../../simulators/azure/README.md). Container mode only (no native runtimes) — see [`memory/feedback_faas_container_mode.md`](../../).
+Local development replaces the backend-side upstream with [`simulators/azure`](../../simulators/azure/README.md). Container mode only (no native runtimes).
 
 ## Validation
 
@@ -27,7 +27,7 @@ Local development replaces the backend-side upstream with [`simulators/azure`](.
 
 ```bash
 cd backends/azure-functions && make build
-./sockerless-backend-azure-functions --addr :3375 --log-level info &
+./sockerless-backend-azf --addr :3375 --log-level info &
 export DOCKER_HOST=tcp://localhost:3375
 ```
 

@@ -24,7 +24,7 @@ Image management is unified via `core.ImageManager` + `core.AuthProvider` interf
               |                       |                      |
     +---------v--------+  +-----------v------+  +------------v-----+
     |  AWS auth impl   |  |  GCP auth impl   |  |  Azure auth      |
-    |  (in ecs/)       |  |  (in cloudrun/)  |  |  (in aca/)       |
+    | (in aws-common/) |  | (in gcp-common/) |  |(in azure-common/)|
     |                  |  |                  |  |                  |
     | ECRAuthProvider  |  | ARAuthProvider   |  | ACRAuthProvider  |
     | + ECR SDK ops    |  |                  |  |                  |
@@ -120,21 +120,21 @@ func (m *ImageManager) Search(term string, limit int, filters map[string][]strin
 
 Each cloud implements `AuthProvider` in ~80 lines:
 
-**AWS** (`backends/ecs/image_auth.go` + `backends/lambda/image_auth.go`):
+**AWS** (`backends/aws-common/ecr_auth.go`):
 - `IsCloudRegistry`: matches `*.dkr.ecr.*.amazonaws.com`
 - `GetToken`: calls `ecr.GetAuthorizationToken`, returns `"Basic " + raw_base64_token`
 - `OnPush`: calls `ecr.CreateRepository` + `ecr.PutImage` (ECR SDK, not OCI)
 - `OnTag`: calls `ecr.PutImage` with new tag
 - `OnRemove`: calls `ecr.BatchDeleteImage` (already supported by simulator)
 
-**GCP** (`backends/cloudrun/image_auth.go` + `backends/cloudrun-functions/image_auth.go`):
+**GCP** (`backends/gcp-common/ar_auth.go`):
 - `IsCloudRegistry`: matches `*.gcr.io`, `*-docker.pkg.dev`
 - `GetToken`: calls `google.FindDefaultCredentials`, returns `"Bearer " + access_token`
 - `OnPush`: calls `core.OCIPush`
 - `OnTag`: re-PUTs manifest with new tag via `core.OCIPush`
 - `OnRemove`: DELETEs manifest via OCI HTTP -- handles 405 gracefully (returns nil)
 
-**Azure** (`backends/aca/image_auth.go` + `backends/azure-functions/image_auth.go`):
+**Azure** (`backends/azure-common/acr_auth.go`):
 - `IsCloudRegistry`: matches `*.azurecr.io`
 - `GetToken`: calls `azidentity.DefaultAzureCredential.GetToken`, returns `"Bearer " + token`
 - `OnPush`: calls `core.OCIPush`
@@ -192,7 +192,7 @@ This is handled by the FaaS backend keeping its own `ImageBuild` method that ret
 | Scattered image methods in `backend_impl.go` | ~400 lines total | Replaced by `s.images.Method()` one-liners |
 
 **Estimated deletion**: ~1,200+ lines of duplicated code.
-**Estimated addition**: ~500 lines (ImageManager + 6 AuthProviders, one per backend module).
+**Estimated addition**: ~500 lines (ImageManager + 3 AuthProviders, one per cloud-common module).
 
 ---
 

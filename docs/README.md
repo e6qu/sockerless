@@ -7,12 +7,12 @@ Topic guides, design notes, and research references. Specifications live in [`sp
 | Document | Description |
 |----------|-------------|
 | [`RUNNERS.md`](RUNNERS.md) | **Canonical CI runner wiring guide** — GitHub Actions + GitLab Runner against the cloud backends, token strategy, coverage matrix, runner hurdles catalog |
-| [`GITHUB_RUNNER.md`](GITHUB_RUNNER.md) | GitHub Actions E2E tests using `act` against the Docker frontend |
+| [`GITHUB_RUNNER.md`](GITHUB_RUNNER.md) | GitHub Actions E2E tests using `act` against a Sockerless backend (Docker API in-process) |
 | [`GITHUB_RUNNER_SAAS.md`](GITHUB_RUNNER_SAAS.md) | Running the official `actions/runner` against github.com with sockerless as the container runtime |
 | [`GITLAB_RUNNER_DOCKER.md`](GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker-executor E2E tests against a self-contained GitLab CE |
 | [`GITLAB_RUNNER_SAAS.md`](GITLAB_RUNNER_SAAS.md) | Running `gitlab-runner` against gitlab.com with sockerless |
 | [`runner-capability-matrix.md`](runner-capability-matrix.md) | What each backend can do when driving real CI runners through the Docker API |
-| [`E2E_SMOKE_TESTS.md`](E2E_SMOKE_TESTS.md) | The three simulator-backed E2E smoke surfaces and which make targets drive them |
+| [`E2E_SMOKE_TESTS.md`](E2E_SMOKE_TESTS.md) | The four simulator-backed E2E smoke surfaces and which make targets drive them |
 | [`ECS_LIVE_SETUP.md`](ECS_LIVE_SETUP.md) | Standing up the ECS backend against a real AWS account (prerequisite for the SAAS runner guides) |
 
 ## Build & dev infrastructure

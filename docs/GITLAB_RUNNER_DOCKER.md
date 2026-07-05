@@ -17,16 +17,14 @@ GitLab Runner (docker executor)
   ├── host = tcp://sockerless-backend:3375
   │
   ▼
-Sockerless Frontend (Docker API)
-  │
-  ▼
 Sockerless Backend (ecs / lambda / cloudrun / gcf / aca / azf / docker)
+  serves the Docker REST API in-process
   │
   ▼
 Cloud simulator endpoint (aws / gcp / azure)
 ```
 
-All services run as Docker Compose containers. The backend container runs the simulator + backend + frontend in a single process using `start-backend.sh`.
+All services run as Docker Compose containers. The backend container runs the simulator + backend (which serves the Docker API in-process) in a single process using `start-backend.sh`.
 
 ## Supported Backends
 
@@ -43,7 +41,7 @@ FaaS backends (lambda, gcf, azf) skip tests that require service containers or v
 
 ## Quick Start
 
-Run all 12 pipelines against the core backend:
+Run all pipelines against the docker backend:
 
 ```bash
 make e2e-gitlab-docker
@@ -64,7 +62,7 @@ cd tests/e2e-live-tests/gitlab-runner-docker
 ./run.sh --backend ecs --pipeline basic
 ```
 
-Run against all 7 backends:
+Run against all 6 cloud/FaaS backends (ecs, lambda, cloudrun, gcf, aca, azf):
 
 ```bash
 make e2e-gitlab-all
@@ -72,27 +70,27 @@ make e2e-gitlab-all
 
 ## Pipeline Tests
 
-| # | Pipeline | Description | FaaS |
-|---|----------|-------------|:----:|
-| 1 | basic | Single echo job | Yes |
-| 2 | multi-step | Multiple script lines, one job | Yes |
-| 3 | env-vars | Custom variables, CI_* variables | Yes |
-| 4 | exit-codes | Job with `exit 1`, `allow_failure: true` | Yes |
-| 5 | before-after | `before_script` + `script` + `after_script` | Yes |
-| 6 | multi-stage | build → test → deploy stages | Yes |
-| 7 | artifacts | `artifacts:paths` passing between jobs | SKIP |
-| 8 | services | Job with service container | SKIP |
-| 9 | large-output | 1000-line stdout, tests log streaming | Yes |
-| 10 | parallel-jobs | 3 jobs in same stage running concurrently | Yes |
-| 11 | custom-image | Uses `python:3-alpine` | Yes |
-| 12 | timeout | `timeout: 30s`, quick job | Yes |
+The pipeline suite is defined by `ALL_PIPELINES` in
+`tests/e2e-live-tests/gitlab-runner-docker/run.sh` (the authoritative source),
+with one `.yml` per name under
+`tests/e2e-live-tests/gitlab-runner-docker/pipelines/`. It currently covers 21
+pipelines:
+
+`basic`, `multi-step`, `env-vars`, `exit-codes`, `before-after`, `multi-stage`,
+`artifacts`, `large-output`, `parallel-jobs`, `timeout`, `complex-scripts`,
+`variable-features`, `job-artifacts`, `large-script-output`,
+`concurrent-lifecycle`, `services-http`, `dag-dependencies`, `rules-conditional`,
+`multi-image-jobs`, `allow-failure-exit-code`, `container-action`.
+
+FaaS backends (lambda, gcf, azf) skip pipelines that require service containers
+or volume-based artifacts.
 
 ## How It Works
 
 1. `run.sh` builds the Docker images (once) and iterates over pipelines
 2. For each pipeline, `docker compose up` starts:
    - **gitlab**: GitLab CE instance
-   - **sockerless-backend**: All-in-one container (simulator + backend + frontend)
+   - **sockerless-backend**: All-in-one container (simulator + backend, Docker API in-process)
    - **orchestrator**: Waits for GitLab, creates project, pushes pipeline, registers runner, monitors
 3. The orchestrator writes results to `/results/result.json`
 4. `run.sh` captures logs and aggregates PASS/FAIL/SKIP
@@ -119,7 +117,7 @@ All output is captured to `tests/e2e-live-tests/logs/`:
 
 **GitLab takes too long to start**: GitLab CE startup can take 2-5 minutes. The orchestrator waits up to 600s (configurable via `GITLAB_TIMEOUT`). On low-resource machines, increase this.
 
-**Pipeline stuck in "pending"**: The runner may not have connected. Check that `SOCKERLESS_HOST` points to the correct frontend address (default: `tcp://sockerless-backend:3375`).
+**Pipeline stuck in "pending"**: The runner may not have connected. Check that `SOCKERLESS_HOST` points to the correct backend address (default: `tcp://sockerless-backend:3375`).
 
 **Runner registration fails**: Both the new runner API (GitLab 16+) and legacy registration are attempted. Ensure the GitLab instance is fully initialized before the orchestrator connects.
 

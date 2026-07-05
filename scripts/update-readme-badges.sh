@@ -69,7 +69,7 @@ go_modules=$(git ls-files -- 'go.mod' '*/go.mod' | wc -l | tr -d ' ')
 sedi "s|Go-[0-9.]*k_lines|Go-$(fmt_k "$go_src")_lines|g" "$readme"
 sedi "s|TypeScript-[0-9.]*k_lines|TypeScript-$(fmt_k "${ts_total:-0}")_lines|g" "$readme"
 sedi "s|Tests-[0-9.]*k_lines|Tests-$(fmt_k "$go_test")_lines|g" "$readme"
-sedi "s|Go_Modules-[0-9]*+-|Go_Modules-${go_modules}-|g" "$readme"
+sedi "s|Go_Modules-[0-9]*-|Go_Modules-${go_modules}-|g" "$readme"
 
 # Per-module Go badges
 for pair in \
@@ -108,7 +108,6 @@ for pair in \
   "ui%2Fsim--aws:ui/packages/sim-aws" \
   "ui%2Fsim--gcp:ui/packages/sim-gcp" \
   "ui%2Fsim--azure:ui/packages/sim-azure" \
-  "ui%2Ffrontend--docker:ui/packages/frontend-docker" \
 ; do
   badge="${pair%%:*}"
   dir="${pair#*:}"

@@ -17,7 +17,6 @@ In both modes the agent supports:
 See [ARCHITECTURE.md](../ARCHITECTURE.md) for forward/reverse mode diagrams.
 - Streaming stdin/stdout/stderr over WebSocket with base64 encoding
 - Sending signals (SIGTERM, SIGKILL, SIGINT, etc.) and terminal resizes
-- Periodic health checks with configurable interval, timeout, and retries
 - Bearer token authentication
 - Zombie process reaping (PID 1 behavior)
 
@@ -34,7 +33,6 @@ agent/
 ├── exec.go                 ExecSession — fork+exec with PTY support
 ├── attach.go               AttachSession — attach to main process
 ├── process.go              MainProcess, RingBuffer (keep-alive mode)
-├── healthcheck.go          HealthChecker (periodic health probes)
 ├── auth.go                 Bearer token middleware
 ├── wsclient.go             AgentConn — forward-mode WebSocket client
 ├── reverse.go              ReverseAgentConn — reverse-mode multiplexed client
@@ -47,7 +45,7 @@ Build the agent binary:
 
 ```sh
 cd agent
-make agent/build
+make build
 ```
 
 ## Usage
@@ -153,5 +151,5 @@ The test suite covers reverse connection bridging, Docker mux protocol framing, 
 
 When running in server mode the agent exposes:
 
-- `GET /health` — Returns JSON with status, main process PID/exit info, and health check results
+- `GET /health` — Returns JSON with status and the main process PID / exit info
 - `GET /ws` — WebSocket upgrade endpoint (requires `Authorization: Bearer <token>` header)

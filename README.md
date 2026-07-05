@@ -138,7 +138,6 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-228-6295D2)
 ![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-221-6295D2)
-![ui/frontend-docker](https://img.shields.io/badge/ui%2Ffrontend--docker-327-6295D2)
 
 ### Coverage
 
@@ -216,7 +215,7 @@ See [`cmd/sockerless/README.md`](cmd/sockerless/README.md) for the full `config.
 
 ## Make targets
 
-Sockerless uses a uniform Makefile layout across all 33 leaf apps (Go binaries, UI packages, test directories) plus a thin top-level orchestrator. Every leaf implements the same 7-target surface; the top-level fans out and adds a `stack-<cloud>-<backend>` orchestration layer.
+Sockerless uses a uniform Makefile layout across all 34 leaf apps (Go binaries, UI packages, test directories) plus a thin top-level orchestrator. Every leaf implements the same 7-target surface; the top-level fans out and adds a `stack-<cloud>-<backend>` orchestration layer.
 
 Specification: [`docs/MAKEFILE_STANDARD.md`](docs/MAKEFILE_STANDARD.md).
 
@@ -241,7 +240,7 @@ make clean              # remove build artefacts
 Run any standardized target across every app:
 
 ```bash
-make build              # build all 17 binaries + 14 UI bundles
+make build              # build all 18 binaries + 14 UI bundles
 make test               # run every unit-test suite (admin + bleephub + core all green; backends + sims as configured)
 make lint               # lint every Go module + tsc --noEmit every UI package
 make clean              # remove every build artefact
@@ -317,16 +316,16 @@ make run                 # foreground server with sensible defaults
 make test                # go test ./...
 ```
 
-This works for any of the 17 Go-binary apps, 14 UI packages, and the test-category dirs.
+This works for any of the 18 Go-binary apps, 14 UI packages, and the test-category dirs.
 
 ### Apps inventory
 
-**Go binaries with optional embedded UI (12)** — each has the full target surface plus `build-noui` and `embed`:
+**Go binaries with optional embedded UI (13)** — each has the full target surface plus `build-noui` and `embed`:
 
 ```
 cmd/sockerless-admin                 # admin server, port :9090
-bleephub                             # GitHub-API simulator, port :5555
-bleeplab                             # GitLab-API simulator, port :8929
+bleephub                             # Local GitHub server, port :5555
+bleeplab                             # Local GitLab server, port :8929
 backends/{docker,ecs,lambda}         # AWS-side + local Docker
 backends/{cloudrun,cloudrun-functions}  # GCP-side
 backends/{aca,azure-functions}       # Azure-side
@@ -347,10 +346,10 @@ The agent module also exposes `make build-bootstraps` to cross-compile the three
 
 ```
 ui/packages/admin                    # Operator dashboard
-ui/packages/bleephub                 # GitHub-API simulator UI
+ui/packages/bleephub                 # bleephub (GitHub server) UI
+ui/packages/bleeplab                 # bleeplab (GitLab server) UI
 ui/packages/backend-{docker,ecs,lambda,cloudrun,gcf,aca,azf}
 ui/packages/simulator-{aws,gcp,azure}
-ui/packages/frontend-docker          # Docker frontend proxy UI
 ui/packages/core                     # Shared library (no own dist)
 ```
 
@@ -551,7 +550,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`docs/GITHUB_RUNNER.md`](docs/GITHUB_RUNNER.md) | GitHub Actions E2E test guide (act + official runner) |
 | [`docs/GITLAB_RUNNER_DOCKER.md`](docs/GITLAB_RUNNER_DOCKER.md) | GitLab Runner docker executor E2E test guide |
 | [`docs/ECS_EXPRESS_MODE.md`](docs/ECS_EXPRESS_MODE.md) | AWS ECS Express Mode (Express Gateway services) — API, Express-vs-vanilla-ECS comparison, and cloud-slice assembly |
-| [`AGENTS.md`](AGENTS.md) | Agent architecture (forward/reverse modes) |
+| [`AGENTS.md`](AGENTS.md) | Contributor / coding-agent guidelines (no-stubs policy, continuity files, invariants) |
 | [`DECISIONS.md`](DECISIONS.md) | Technical decision log across all phases |
 | [`PLAN.md`](PLAN.md) | Implementation plan and task tracking |
 | [`manual-tests/`](manual-tests/) | Per-cloud live-infra manual test runbooks |

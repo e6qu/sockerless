@@ -282,7 +282,7 @@ Sockerless also has a 3,300-line `api/openapi.yaml` driving `api/types_gen.go`, 
 
 **oapi-codegen across the entire docker REST surface, in one pass.** The Docker API has too many edges (stream upgrades, multi-content-type responses, `/exec` long-poll) for a clean generated handler interface. The migration would touch every `handle_*.go` and the cost dwarfs the BUG-991/992 fix-shape. Use oapi-codegen for greenfield (`bleephub/`) and an "audit one handler at a time" plan for the docker REST surface.
 
-**Builder pattern on the `api.Backend` interface itself.** The interface has 62 methods (per `MEMORY.md`); a step-builder construction would replace a clear method-by-method satisfaction proof (`var _ api.Backend = (*Server)(nil)`) with a generated typestate graph that nobody reads. Keep the interface flat.
+**Builder pattern on the `api.Backend` interface itself.** The interface has 65 methods (per `MEMORY.md`); a step-builder construction would replace a clear method-by-method satisfaction proof (`var _ api.Backend = (*Server)(nil)`) with a generated typestate graph that nobody reads. Keep the interface flat.
 
 **Property-based tests on cloud round-trips.** Properties want determinism; cloud APIs don't deliver it. Run rapid against in-process logic (filters, mappers, converters); don't run it against ECS / Lambda / Cloud Run.
 

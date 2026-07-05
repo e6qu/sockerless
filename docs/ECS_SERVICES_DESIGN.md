@@ -29,6 +29,14 @@ These are all AWS-track work.
 
 ## Files changed
 
+> **Current locations** (the Cloud Map logic was later consolidated into the shared
+> AWS module): the per-hostname service find-or-create + instance register/deregister
+> live in `backends/aws-common/network_discovery_cloudmap.go` (`findOrCreateServiceForHostname`,
+> `registerInstance`, `deregisterInstance`); `backends/ecs/service_discovery_cloud.go` now
+> handles only namespace create/delete. The DNS search suffix is injected as an env var via
+> `core.DNSSearchDomainEnvIfSet` (`backends/core/dns_driver.go`), not a task-def
+> `DnsSearchDomains` field.
+
 - `backends/ecs/service_discovery_cloud.go` — namespace-only creation, per-hostname service find-or-create, service cleanup on last deregister, `searchDomainsForContainer` helper.
 - `backends/ecs/taskdef.go` — `buildContainerDef` sets `DnsSearchDomains`.
 - `backends/ecs/service_discovery_cloud_test.go` — unit tests for search-domain computation.
