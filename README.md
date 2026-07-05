@@ -9,10 +9,10 @@
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
 [![Go](https://img.shields.io/badge/Go-466k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-53.8k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-53.5k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
 [![Tests](https://img.shields.io/badge/Tests-270.1k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
-[![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
+[![Modules](https://img.shields.io/badge/Go_Modules-46-informational)](#module-sizes)
 
 > ## ⚠ Caveat emptor — read before you run this
 >
