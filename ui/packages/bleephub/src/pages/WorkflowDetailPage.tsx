@@ -28,37 +28,11 @@ export function WorkflowDetailPage() {
   });
 
   if (!id) {
-    return (
-      <div
-        className="px-4 py-3 font-mono"
-        style={{
-          background: "var(--color-status-error-soft)",
-          color: "var(--color-status-error)",
-          border: "1px solid var(--color-status-error)",
-          borderRadius: "var(--radius-sm)",
-          fontSize: "0.78rem",
-        }}
-      >
-        missing workflow id in route
-      </div>
-    );
+    return <InlineError title="Missing workflow id in route" />;
   }
   if (isLoading) return <Spinner label="loading workflow" />;
   if (isError || !wf) {
-    return (
-      <div
-        className="px-4 py-3 font-mono"
-        style={{
-          background: "var(--color-status-error-soft)",
-          color: "var(--color-status-error)",
-          border: "1px solid var(--color-status-error)",
-          borderRadius: "var(--radius-sm)",
-          fontSize: "0.78rem",
-        }}
-      >
-        workflow {id} not found or fetch failed
-      </div>
-    );
+    return <InlineError title={`Workflow ${id} not found or fetch failed`} />;
   }
 
   const jobs = Object.values(wf.jobs).sort((a, b) => a.key.localeCompare(b.key));

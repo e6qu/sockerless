@@ -83,6 +83,21 @@ describe("RepoSettingsPage", () => {
     );
   });
 
+  it("renders a left settings sub-nav with grouped sections", async () => {
+    mockFetch.mockResolvedValue(jsonResponse(repo));
+    renderPage();
+    await waitFor(() => screen.getByDisplayValue("before"));
+
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    expect(nav).toBeInTheDocument();
+    expect(screen.getByText("Access")).toBeInTheDocument();
+    expect(screen.getByText("Code and automation")).toBeInTheDocument();
+    expect(screen.getByText("Danger zone")).toBeInTheDocument();
+    // General is the default-active item.
+    expect(screen.getByRole("button", { name: "General" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "Collaborators" })).not.toHaveAttribute("aria-current");
+  });
+
   it("submits PATCH /api/v3/repos/{owner}/{repo} on save", async () => {
     mockFetch
       .mockResolvedValueOnce(jsonResponse(repo)) // fetchRepoDetail

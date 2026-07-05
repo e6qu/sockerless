@@ -346,11 +346,17 @@ func (s *Server) registerGHPRCommentsRoutes() {
 }
 
 // handlePRCommentTwoSegDispatch routes `/pulls/{p1}/{p2}` when p1=="comments"
-// (single-review-comment surface). For any other p1 value it 404s — the
-// existing literal routes (e.g. /pulls/{number}/merge) win on their own paths.
+// (single-review-comment surface) or p2=="files" (the changed-file diff list).
+// For any other shape it 404s — the existing literal routes (e.g.
+// /pulls/{number}/merge) win on their own paths.
 func (s *Server) handlePRCommentTwoSegDispatch(method string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p1 := r.PathValue("p1")
+		if method == "GET" && r.PathValue("p2") == "files" && p1 != "comments" {
+			r.SetPathValue("number", p1)
+			s.handleListPullRequestFiles(w, r)
+			return
+		}
 		if p1 != "comments" {
 			writeGHError(w, http.StatusNotFound, "Not Found")
 			return

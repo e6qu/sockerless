@@ -1,3 +1,5 @@
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { GithubComment } from "../types.js";
 
 export interface CommentCardProps {
@@ -45,16 +47,20 @@ export function CommentCard({ login, body, date, isOp = false }: CommentCardProp
         )}
       </div>
       <div
+        className={body ? "markdown-body" : undefined}
         style={{
           padding: "0.85rem 1rem",
           fontSize: "0.9rem",
           lineHeight: 1.6,
           color: "var(--color-fg)",
-          whiteSpace: "pre-wrap",
           wordBreak: "break-word",
         }}
       >
-        {body || <span style={{ color: "var(--color-fg-muted)" }}>No description provided.</span>}
+        {body ? (
+          <Markdown remarkPlugins={[remarkGfm]}>{body}</Markdown>
+        ) : (
+          <span style={{ color: "var(--color-fg-muted)" }}>No description provided.</span>
+        )}
       </div>
     </div>
   );

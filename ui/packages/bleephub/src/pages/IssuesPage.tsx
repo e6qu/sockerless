@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import {
   fetchRepoIssuesPage,
+  fetchRepoIssuesFilteredPage,
   fetchIssueDetail,
   fetchIssueComments,
   createIssue,
@@ -16,17 +17,25 @@ import {
   createRepoMilestone,
   updateRepoMilestone,
   deleteRepoMilestone,
-  addIssueLabels,
-  removeIssueLabel,
-  setIssueMilestone,
+  fetchAuthenticatedUser,
+  fetchIssueReactions,
+  addIssueReaction,
+  removeIssueReaction,
 } from "../api.js";
-import { useRepoItemList } from "../hooks/useRepoItemList.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
-import type { GithubIssue, GithubLabel, GithubMilestone } from "../types.js";
+import type { GithubIssue, GithubLabel, GithubMilestone, ListFilterState } from "../types.js";
 import { CommentCard, CommentList } from "../components/CommentCard.js";
 import { LabelPills } from "../components/LabelPills.js";
 import { StateToggle } from "../components/StateToggle.js";
 import { RepoHeader } from "../components/Shell.js";
+import {
+  ListControls,
+  filterAndSortItems,
+  emptyFilters,
+  type ListItemAccessors,
+} from "../components/ListControls.js";
+import { IssueSidebar } from "../components/IssueSidebar.js";
+import { ReactionBar } from "../components/ReactionBar.js";
 import {
   Button,
   Box,
@@ -39,6 +48,27 @@ import {
   SectionLabel,
 } from "../components/ui.js";
 import { IssueOpenedIcon, IssueClosedIcon, CommentIcon, TagIcon } from "../components/octicons.js";
+
+const issueAccessors: ListItemAccessors<GithubIssue> = {
+  labels: (i) => i.labels,
+  author: (i) => i.user?.login ?? null,
+  assignees: (i) => i.assignees.map((a) => a.login),
+  milestone: (i) => i.milestone?.title ?? null,
+  comments: (i) => i.comments,
+  createdAt: (i) => i.created_at,
+  updatedAt: (i) => i.updated_at,
+};
+
+/** Closed-issue count for the count header — "N+" when a further page exists. */
+function useClosedIssueCount(owner: string, repo: string): number | string | undefined {
+  const { data } = useQuery({
+    queryKey: ["issues", owner, repo, "closed", "count"],
+    queryFn: () => fetchRepoIssuesPage(owner, repo, "closed"),
+    enabled: !!owner && !!repo,
+  });
+  if (!data) return undefined;
+  return data.nextUrl ? `${data.items.length}+` : data.items.length;
+}
 
 export function IssuesPage({ view }: { view?: "labels" | "milestones" }) {
   const { owner = "", repo = "", number } = useParams<{
@@ -60,23 +90,35 @@ export function IssuesPage({ view }: { view?: "labels" | "milestones" }) {
 }
 
 function IssueList({ owner, repo }: { owner: string; repo: string }) {
-  const {
-    state,
-    setState,
-    items: issues,
-    isLoading,
-    isError,
-    error,
-    hasMore,
-    loadMore,
-    isLoadingMore,
-  } = useRepoItemList("issues", owner, repo, fetchRepoIssuesPage);
+  const [state, setState] = useState<"open" | "closed">("open");
+  const [filters, setFilters] = useState<ListFilterState>(emptyFilters);
   const counts = useOpenCounts(owner, repo);
   const [creating, setCreating] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newBody, setNewBody] = useState("");
   const qc = useQueryClient();
   const navigate = useNavigate();
+
+  // state is server-driven (a real round-trip); label/author/assignee/milestone
+  // + sort are applied client-side over the loaded set by filterAndSortItems so
+  // picking a facet narrows instantly without a full reload.
+  const query = useInfiniteQuery({
+    queryKey: ["issues", owner, repo, state, "paged"],
+    queryFn: ({ pageParam }) =>
+      fetchRepoIssuesFilteredPage(owner, repo, { state }, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextUrl ?? undefined,
+    enabled: !!owner && !!repo,
+  });
+  const rawIssues = useMemo(
+    () => query.data?.pages.flatMap((p) => p.items) ?? [],
+    [query.data],
+  );
+  const issues = useMemo(
+    () => filterAndSortItems(rawIssues, filters, issueAccessors),
+    [rawIssues, filters],
+  );
+  const closedCount = useClosedIssueCount(owner, repo);
 
   const [createError, setCreateError] = useState<string | null>(null);
   const mutation = useMutation({
@@ -92,33 +134,40 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
     onError: (err: Error) => setCreateError(err.message),
   });
 
-  if (isLoading) return <Spinner label="loading issues" />;
-  if (isError) return <InlineError title="Failed to load issues" detail={String(error)} />;
+  if (query.isLoading) return <Spinner label="loading issues" />;
+  if (query.isError) return <InlineError title="Failed to load issues" detail={String(query.error)} />;
+
+  const hasMore = query.hasNextPage;
+  const isLoadingMore = query.isFetchingNextPage;
 
   return (
     <div>
       <RepoHeader owner={owner} repo={repo} active="issues" {...counts} />
 
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <StateToggle
-          value={state}
-          options={["open", "closed"] as const}
-          labels={{ open: "Open", closed: "Closed" }}
-          icons={{ open: <IssueOpenedIcon size={14} />, closed: <IssueClosedIcon size={14} /> }}
-          onChange={setState}
-        />
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => navigate(`/ui/repos/${owner}/${repo}/labels`)}>
-            <TagIcon size={14} /> Labels
-          </Button>
-          <Button size="sm" onClick={() => navigate(`/ui/repos/${owner}/${repo}/milestones`)}>
-            Milestones
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
-            New issue
-          </Button>
-        </div>
-      </div>
+      <ListControls
+        kind="issue"
+        state={state}
+        onState={setState}
+        openCount={counts.issueCount}
+        closedCount={closedCount}
+        items={rawIssues}
+        filters={filters}
+        onFilters={setFilters}
+        accessors={issueAccessors}
+        actions={
+          <div className="flex items-center gap-2">
+            <Button size="sm" onClick={() => navigate(`/ui/repos/${owner}/${repo}/labels`)}>
+              <TagIcon size={14} /> Labels
+            </Button>
+            <Button size="sm" onClick={() => navigate(`/ui/repos/${owner}/${repo}/milestones`)}>
+              Milestones
+            </Button>
+            <Button variant="primary" size="sm" onClick={() => setCreating(true)}>
+              New issue
+            </Button>
+          </div>
+        }
+      />
 
       {creating && (
         <Modal title="New issue" onClose={() => setCreating(false)}>
@@ -198,7 +247,7 @@ function IssueList({ owner, repo }: { owner: string; repo: string }) {
         </Box>
         {hasMore && (
           <div className="mt-3 flex justify-center">
-            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={() => query.fetchNextPage()}>
               {isLoadingMore ? "Loading…" : "Load more"}
             </Button>
           </div>
@@ -220,6 +269,8 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
     queryFn: () => fetchIssueComments(owner, repo, number),
     enabled: !!issue,
   });
+  const viewerQ = useQuery({ queryKey: ["viewer"], queryFn: fetchAuthenticatedUser });
+  const viewerLogin = typeof viewerQ.data?.login === "string" ? viewerQ.data.login : null;
 
   if (isError) {
     if (isNotFound(error)) {
@@ -240,17 +291,28 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
   if (isLoading || !issue) return <Spinner label={`loading issue #${number}`} />;
 
   const open = issue.state === "open";
+  const participants = Array.from(
+    new Set(
+      [issue.user?.login, ...comments.map((c) => c.user?.login)].filter(
+        (l): l is string => typeof l === "string",
+      ),
+    ),
+  );
+
   return (
     <div>
       <RepoHeader owner={owner} repo={repo} active="issues" {...counts} />
 
       <div className="mb-1 flex flex-wrap items-baseline gap-2">
-        <h1 style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
+        <h1 style={{ fontSize: "1.5rem", fontWeight: 400, color: "var(--color-fg)" }}>
           {issue.title}{" "}
-          <span style={{ color: "var(--color-fg-muted)", fontWeight: 400 }}>#{issue.number}</span>
+          <span style={{ color: "var(--color-fg-muted)" }}>#{issue.number}</span>
         </h1>
       </div>
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div
+        className="mb-4 flex flex-wrap items-center gap-3 border-b pb-3"
+        style={{ borderColor: "var(--color-border)" }}
+      >
         <StateLabel
           state={open ? "open" : "closed"}
           icon={open ? <IssueOpenedIcon size={15} /> : <IssueClosedIcon size={15} />}
@@ -258,163 +320,52 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
           {open ? "Open" : "Closed"}
         </StateLabel>
         <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
-          {issue.user?.login} opened this on {new Date(issue.created_at).toLocaleDateString()} ·{" "}
+          <strong style={{ color: "var(--color-fg)" }}>{issue.user?.login}</strong> opened this on{" "}
+          {new Date(issue.created_at).toLocaleDateString()} ·{" "}
           {comments.length} comment{comments.length === 1 ? "" : "s"}
         </span>
       </div>
 
-      <IssueTriagePanel owner={owner} repo={repo} number={number} issue={issue} />
-
-      <CommentCard login={issue.user?.login} body={issue.body} date={issue.created_at} isOp />
-      {commentsError ? (
-        <InlineError inline title="Failed to load comments" detail={String(commentsErr)} />
-      ) : (
-        <>
-          <CommentList comments={comments} />
-          {comments.length === 0 && (
-            <div style={{ padding: "0.5rem 0", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
-              No comments yet.
-            </div>
+      <div className="flex flex-col gap-6 lg:flex-row">
+        <div className="min-w-0 flex-1">
+          {viewerQ.isError && (
+            <InlineError inline title="Failed to load current user" detail={String(viewerQ.error)} />
           )}
-        </>
-      )}
-    </div>
-  );
-}
-
-/** Label + milestone triage controls on the issue detail view. */
-function IssueTriagePanel({
-  owner,
-  repo,
-  number,
-  issue,
-}: {
-  owner: string;
-  repo: string;
-  number: number;
-  issue: GithubIssue;
-}) {
-  const qc = useQueryClient();
-  const [error, setError] = useState<string | null>(null);
-
-  const { data: repoLabels = [], isError: labelsError, error: labelsErr } = useQuery({
-    queryKey: ["labels", owner, repo],
-    queryFn: () => fetchRepoLabels(owner, repo),
-  });
-  const { data: milestones = [], isError: milestonesError, error: milestonesErr } = useQuery({
-    queryKey: ["milestones", owner, repo, "all"],
-    queryFn: () => fetchRepoMilestones(owner, repo, "all"),
-  });
-
-  const invalidate = () => {
-    setError(null);
-    qc.invalidateQueries({ queryKey: ["issue", owner, repo, number] });
-    qc.invalidateQueries({ queryKey: ["issues", owner, repo] });
-  };
-  const addLabelMut = useMutation({
-    mutationFn: (name: string) => addIssueLabels(owner, repo, number, [name]),
-    onSuccess: invalidate,
-    onError: (err: Error) => setError(err.message),
-  });
-  const removeLabelMut = useMutation({
-    mutationFn: (name: string) => removeIssueLabel(owner, repo, number, name),
-    onSuccess: invalidate,
-    onError: (err: Error) => setError(err.message),
-  });
-  const milestoneMut = useMutation({
-    mutationFn: (milestone: number | null) => setIssueMilestone(owner, repo, number, milestone),
-    onSuccess: invalidate,
-    onError: (err: Error) => setError(err.message),
-  });
-
-  const applied = new Set(issue.labels.map((l) => l.name));
-  const addable = repoLabels.filter((l) => !applied.has(l.name));
-
-  return (
-    <Box className="mb-4">
-      <div style={{ padding: "0.75rem 1rem" }}>
-        {error && <ErrorBanner>{error}</ErrorBanner>}
-        <div className="mb-3">
-          <div className="mb-1.5" style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-            Labels
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {issue.labels.length === 0 && (
-              <span style={{ fontSize: "0.82rem", color: "var(--color-fg-muted)" }}>None yet</span>
-            )}
-            {issue.labels.map((l) => (
-              <span key={l.name} className="inline-flex items-center gap-1">
-                <LabelPills labels={[l]} />
-                <button
-                  type="button"
-                  aria-label={`Remove label ${l.name}`}
-                  onClick={() => removeLabelMut.mutate(l.name)}
-                  disabled={removeLabelMut.isPending}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: "var(--color-fg-muted)",
-                    fontSize: "0.75rem",
-                    lineHeight: 1,
-                    padding: "0 0.15rem",
-                  }}
-                >
-                  ✕
-                </button>
-              </span>
-            ))}
-            {labelsError ? (
-              <InlineError inline title="Failed to load repo labels" detail={String(labelsErr)} />
-            ) : (
-              addable.length > 0 && (
-                <select
-                  aria-label="Add label"
-                  value=""
-                  onChange={(e) => {
-                    if (e.target.value) addLabelMut.mutate(e.target.value);
-                  }}
-                  disabled={addLabelMut.isPending}
-                  style={{ fontSize: "0.8rem" }}
-                >
-                  <option value="">Add label…</option>
-                  {addable.map((l) => (
-                    <option key={l.id} value={l.name}>
-                      {l.name}
-                    </option>
-                  ))}
-                </select>
-              )
-            )}
-          </div>
-        </div>
-        <div>
-          <div className="mb-1.5" style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--color-fg-muted)" }}>
-            Milestone
-          </div>
-          {milestonesError ? (
-            <InlineError inline title="Failed to load milestones" detail={String(milestonesErr)} />
+          <CommentCard login={issue.user?.login} body={issue.body} date={issue.created_at} isOp />
+          <ReactionBar
+            queryKey={["issue-body-reactions", owner, repo, number]}
+            fetchList={() => fetchIssueReactions(owner, repo, number)}
+            add={(content) => addIssueReaction(owner, repo, number, content)}
+            remove={(reactionId) => removeIssueReaction(owner, repo, number, reactionId)}
+            viewerLogin={viewerLogin}
+          />
+          {commentsError ? (
+            <InlineError inline title="Failed to load comments" detail={String(commentsErr)} />
           ) : (
-            <select
-              aria-label="Set milestone"
-              value={issue.milestone?.number ?? ""}
-              onChange={(e) =>
-                milestoneMut.mutate(e.target.value === "" ? null : parseInt(e.target.value, 10))
-              }
-              disabled={milestoneMut.isPending}
-              style={{ fontSize: "0.8rem" }}
-            >
-              <option value="">No milestone</option>
-              {milestones.map((ms) => (
-                <option key={ms.id} value={ms.number}>
-                  {ms.title}
-                  {ms.state === "closed" ? " (closed)" : ""}
-                </option>
-              ))}
-            </select>
+            <>
+              <CommentList comments={comments} />
+              {comments.length === 0 && (
+                <div style={{ padding: "0.5rem 0", color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
+                  No comments yet.
+                </div>
+              )}
+            </>
           )}
+        </div>
+        <div style={{ width: "100%", maxWidth: "16rem", flexShrink: 0 }}>
+          <IssueSidebar
+            owner={owner}
+            repo={repo}
+            number={number}
+            kind="issue"
+            assignees={issue.assignees.map((a) => a.login)}
+            labels={issue.labels}
+            milestone={issue.milestone ?? null}
+            participants={participants}
+          />
         </div>
       </div>
-    </Box>
+    </div>
   );
 }
 

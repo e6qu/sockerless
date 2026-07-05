@@ -88,6 +88,8 @@ describe("IssuesPage detail", () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => {
       const u = url.toString();
       if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues/7/reactions")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse({ login: "admin" }));
       if (u.includes("/issues/7")) return Promise.resolve(jsonResponse(issue(7, "A real issue")));
       return Promise.resolve(jsonResponse([]));
     });
@@ -148,6 +150,86 @@ describe("IssuesPage list pagination", () => {
     await waitFor(() => {
       expect(screen.getByText("2+")).toBeInTheDocument();
     });
+  });
+});
+
+describe("IssuesPage list filter bar", () => {
+  function issueWith(number: number, title: string, overrides: Record<string, unknown>) {
+    return { ...issue(number, title), ...overrides };
+  }
+
+  it("shows the Open/Closed count header and filters by label via the dropdown", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/pulls")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("state=closed")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues?")) {
+        return Promise.resolve(
+          jsonResponse([
+            issueWith(1, "bug issue", { labels: [{ name: "bug", color: "d73a4a" }] }),
+            issueWith(2, "plain issue", { labels: [] }),
+          ]),
+        );
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/issues");
+
+    await waitFor(() => expect(screen.getByText("bug issue")).toBeInTheDocument());
+    // Count header renders Open and Closed toggles.
+    expect(screen.getByText(/Open$/)).toBeInTheDocument();
+    expect(screen.getByText(/Closed$/)).toBeInTheDocument();
+
+    // Selecting the Label filter narrows the list client-side.
+    fireEvent.change(screen.getByLabelText("Label"), { target: { value: "bug" } });
+    await waitFor(() => {
+      expect(screen.queryByText("plain issue")).not.toBeInTheDocument();
+    });
+    expect(screen.getByText("bug issue")).toBeInTheDocument();
+  });
+
+  it("switches to closed via the count header, refetching with state=closed", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/pulls")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("state=closed")) {
+        return Promise.resolve(jsonResponse([issueWith(3, "done issue", { state: "closed" })]));
+      }
+      if (u.includes("/issues?")) return Promise.resolve(jsonResponse([issue(1, "open issue")]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/issues");
+    await waitFor(() => expect(screen.getByText("open issue")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByText(/Closed$/));
+    await waitFor(() => expect(screen.getByText("done issue")).toBeInTheDocument());
+    const calls = mockFetch.mock.calls.map((c) => c[0].toString());
+    expect(calls.some((u) => u.includes("/issues?state=closed"))).toBe(true);
+  });
+});
+
+describe("IssuesPage detail sidebar", () => {
+  it("renders the two-column layout with the metadata sidebar", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues/7/reactions")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse({ login: "admin" }));
+      if (u.includes("/issues/7")) {
+        return Promise.resolve(
+          jsonResponse({ ...issue(7, "Sidebar issue"), assignees: [{ login: "carol" }] }),
+        );
+      }
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/issues/7");
+    await waitFor(() => expect(screen.getByText("Sidebar issue")).toBeInTheDocument());
+    // Sidebar sections present (Assignees + Development are sidebar-only labels;
+    // Projects/Labels also name repo tabs, so assert the distinctive ones).
+    expect(screen.getByText("Assignees")).toBeInTheDocument();
+    expect(screen.getByText("Development")).toBeInTheDocument();
+    // The assignee login shows in the sidebar.
+    expect(screen.getByText("carol")).toBeInTheDocument();
   });
 });
 
@@ -256,6 +338,8 @@ describe("IssuesPage detail triage", () => {
         return Promise.resolve(jsonResponse([bugLabel]));
       }
       if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues/7/reactions")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse({ login: "admin" }));
       if (u.includes("/issues/7")) return Promise.resolve(jsonResponse(issue(7, "Triaged")));
       if (u.includes("/milestones?")) {
         return Promise.resolve(jsonResponse([milestone(2, "v2.0")]));

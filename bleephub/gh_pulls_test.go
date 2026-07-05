@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -1380,5 +1381,93 @@ func TestPullRequestTimelineFullFlowREST(t *testing.T) {
 		if items[i]["id"] != items2[i]["id"] || items[i]["created_at"] != items2[i]["created_at"] || items[i]["sha"] != items2[i]["sha"] {
 			t.Fatalf("timeline item %d unstable across reads: %v vs %v", i, items[i], items2[i])
 		}
+	}
+}
+
+// TestPullRequestFilesREST exercises GET /repos/{owner}/{repo}/pulls/{n}/files —
+// the changed-file diff list with per-file unified-diff patches. It commits a
+// modification and an addition on the head branch and asserts the endpoint
+// reports both with real additions/deletions and a patch hunk.
+func TestPullRequestFilesREST(t *testing.T) {
+	repoPath := "/api/v3/repos/admin/pr-files-rest"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "pr-files-rest", "auto_init": true,
+	}).Body.Close()
+
+	// Seed a file on main so the head branch can modify it.
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "seed greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello\n")),
+		"branch":  "main",
+	}).Body.Close()
+
+	refResp := ghGet(t, repoPath+"/git/refs/heads/main", defaultToken)
+	refData := decodeJSON(t, refResp)
+	mainObj, _ := refData["object"].(map[string]interface{})
+	mainSha, _ := mainObj["sha"].(string)
+	if mainSha == "" {
+		t.Fatalf("main ref sha missing: %v", refData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/heads/feat", "sha": mainSha,
+	}).Body.Close()
+
+	// Modify greeting.txt and add a new file on feat.
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "change greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello world\n")),
+		"branch":  "feat",
+		"sha":     mainSha, // placeholder; contents PUT resolves by path on the branch
+	}).Body.Close()
+	// The contents PUT above needs the file's blob sha, not the commit sha; do a
+	// GET to fetch it, then update.
+	gResp := ghGet(t, repoPath+"/contents/greeting.txt?ref=feat", defaultToken)
+	gData := decodeJSON(t, gResp)
+	blobSha, _ := gData["sha"].(string)
+	if blobSha != "" {
+		ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+			"message": "change greeting again",
+			"content": base64.StdEncoding.EncodeToString([]byte("hello there\n")),
+			"branch":  "feat",
+			"sha":     blobSha,
+		}).Body.Close()
+	}
+	ghPut(t, repoPath+"/contents/added.txt", defaultToken, map[string]interface{}{
+		"message": "add file",
+		"content": base64.StdEncoding.EncodeToString([]byte("brand new\n")),
+		"branch":  "feat",
+	}).Body.Close()
+
+	ghPost(t, repoPath+"/pulls", defaultToken, map[string]interface{}{
+		"title": "Files flow", "head": "feat", "base": "main",
+	}).Body.Close()
+
+	resp := ghGet(t, repoPath+"/pulls/1/files", defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("pulls/1/files: expected 200, got %d", resp.StatusCode)
+	}
+	files := decodeJSONArray(t, resp)
+	byName := map[string]map[string]interface{}{}
+	for _, f := range files {
+		name, _ := f["filename"].(string)
+		byName[name] = f
+	}
+	added, ok := byName["added.txt"]
+	if !ok {
+		t.Fatalf("added.txt missing from files: %v", files)
+	}
+	if added["status"] != "added" {
+		t.Errorf("added.txt status = %v, want added", added["status"])
+	}
+	greeting, ok := byName["greeting.txt"]
+	if !ok {
+		t.Fatalf("greeting.txt missing from files: %v", files)
+	}
+	if greeting["status"] != "modified" {
+		t.Errorf("greeting.txt status = %v, want modified", greeting["status"])
+	}
+	if patch, _ := greeting["patch"].(string); !strings.Contains(patch, "@@") {
+		t.Errorf("greeting.txt patch missing hunk header: %q", patch)
 	}
 }

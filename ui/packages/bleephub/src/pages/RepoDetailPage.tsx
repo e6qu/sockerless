@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { deleteRepoContent } from "../api.js";
+import { useQuery } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -14,14 +13,18 @@ import {
   fetchRepoReadme,
   fetchRepoSocialCounts,
   fetchRepoTags,
+  fetchRepoTopics,
   fetchWebhooks,
   fetchSecrets,
   fetchEnvironments,
   fetchReleases,
+  fetchPackages,
 } from "../api.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import { decodeContentsBase64 } from "../utils/workflowDispatch.js";
+import { relativeTimeFromNow } from "../utils/format.js";
 import type {
+  BleephubRepo,
   GithubBranch,
   GithubCommit,
   GithubContentItem,
@@ -30,9 +33,10 @@ import type {
   GithubSecret,
   GithubEnvironment,
   GithubRelease,
+  GithubRepoSocialCounts,
 } from "../types.js";
 import { RepoHeader } from "../components/Shell.js";
-import { Box, Blankslate, CodeBlock } from "../components/ui.js";
+import { Box, Blankslate, CodeBlock, SectionLabel } from "../components/ui.js";
 import {
   BranchIcon,
   TagIcon,
@@ -41,6 +45,13 @@ import {
   FileIcon,
   DirectoryIcon,
   StarIcon,
+  EyeIcon,
+  RepoForkedIcon,
+  GlobeIcon,
+  CodeIcon,
+  CopyIcon,
+  CheckIcon,
+  ChevronDownIcon,
 } from "../components/octicons.js";
 
 type SubTab = "code" | "commits" | "branches" | "tags" | "releases" | "webhooks" | "secrets" | "environments";
@@ -125,62 +136,6 @@ export function RepoDetailPage() {
     <div>
       <RepoHeader owner={owner} repo={repo} active="code" {...counts} />
 
-      {/* About line */}
-      <div
-        className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1"
-        style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}
-      >
-        <span>{repoData.description || "No description provided."}</span>
-        <span className="inline-flex items-center gap-1">
-          <BranchIcon size={14} />{" "}
-          {branches.length > 0 ? branches.map((b) => b.name).join(", ") : repoData.default_branch}
-        </span>
-        <Link
-          to={`/ui/repos/${owner}/${repo}/packages`}
-          style={{ color: "var(--color-accent)", textDecoration: "none" }}
-        >
-          Packages
-        </Link>
-        <Link
-          to={`/ui/repos/${owner}/${repo}/codespaces`}
-          style={{ color: "var(--color-accent)", textDecoration: "none" }}
-        >
-          Codespaces
-        </Link>
-      </div>
-
-      {/* Social counters (star/watch/fork) linking to their list views. */}
-      {socialCounts && (
-        <div
-          className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1"
-          style={{ fontSize: "0.85rem" }}
-        >
-          <Link
-            to={`/ui/repos/${owner}/${repo}/stargazers`}
-            className="inline-flex items-center gap-1"
-            style={{ color: "var(--color-accent)", textDecoration: "none" }}
-          >
-            <StarIcon size={14} /> {socialCounts.stargazers_count}{" "}
-            {socialCounts.stargazers_count === 1 ? "star" : "stars"}
-          </Link>
-          <Link
-            to={`/ui/repos/${owner}/${repo}/watchers`}
-            style={{ color: "var(--color-accent)", textDecoration: "none" }}
-          >
-            {socialCounts.subscribers_count}{" "}
-            {socialCounts.subscribers_count === 1 ? "watcher" : "watchers"}
-          </Link>
-          <Link
-            to={`/ui/repos/${owner}/${repo}/forks`}
-            style={{ color: "var(--color-accent)", textDecoration: "none" }}
-          >
-            {socialCounts.forks_count} {socialCounts.forks_count === 1 ? "fork" : "forks"}
-          </Link>
-        </div>
-      )}
-
-      {languages && Object.keys(languages).length > 0 && <LanguagesBar languages={languages} />}
-
       {/* Secondary (repo-admin) tab strip */}
       <div
         className="mb-4 flex flex-wrap gap-1"
@@ -207,18 +162,32 @@ export function RepoDetailPage() {
         ))}
       </div>
 
+      {/* GitHub's two-column Code page: file browser + README on the left,
+          the About sidebar (description, topics, releases, packages,
+          languages, social counts) on the right. */}
       {tab === "code" && (
         commitsError ? (
           <InlineError title="Failed to load repository contents" detail={String(commitsErr)} />
         ) : (
-          <CodeView
-            owner={owner}
-            repo={repo}
-            commits={commits}
-            loading={commitsLoading}
-            branches={branches.map((b) => b.name)}
-            defaultBranch={repoData.default_branch}
-          />
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_296px]">
+            <div className="min-w-0">
+              <CodeView
+                owner={owner}
+                repo={repo}
+                commits={commits}
+                loading={commitsLoading}
+                branches={branches.map((b) => b.name)}
+                defaultBranch={repoData.default_branch}
+              />
+            </div>
+            <AboutSidebar
+              owner={owner}
+              repo={repo}
+              repoData={repoData}
+              languages={languages}
+              socialCounts={socialCounts}
+            />
+          </div>
         )
       )}
       {tab === "commits" &&
@@ -329,10 +298,14 @@ function CodeView({
   if (itemsError) return <InlineError title="Failed to load files" detail={String(itemsErr)} />;
 
   const fileList = Array.isArray(items) ? items : [];
+  // Only the repository root shows the "latest commit" banner — it is the
+  // repo's most recent commit, not a per-directory one, so surfacing it in a
+  // sub-tree would misattribute it. No per-file commit data is fabricated.
+  const latestCommit = path === "" ? commits[0] : undefined;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <select
           aria-label="Branch"
           value={branch}
@@ -354,17 +327,21 @@ function CodeView({
             ..
           </button>
         )}
-        <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>{path}</span>
+        <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)", flex: 1 }}>{path}</span>
+        <CloneButton owner={owner} repo={repo} />
       </div>
 
       {fileList.length > 0 && (
-        <Box>
+        <Box
+          header={
+            latestCommit ? (
+              <LatestCommitBanner owner={owner} repo={repo} commit={latestCommit} total={commits.length} />
+            ) : undefined
+          }
+        >
           {fileList.map((item, i) => (
             <FileRow
               key={item.sha}
-              owner={owner}
-              repo={repo}
-              basePath={path}
               item={item}
               isLast={i === fileList.length - 1}
               onClick={() => {
@@ -386,7 +363,7 @@ function CodeView({
           }
         >
           <div
-            style={{ padding: "1rem", fontSize: "0.9rem" }}
+            style={{ padding: "1.5rem", fontSize: "0.9rem" }}
             className="markdown-body"
           >
             <Markdown remarkPlugins={[remarkGfm]}>
@@ -399,32 +376,336 @@ function CodeView({
   );
 }
 
-function FileRow({
+/** GitHub's "latest commit" strip at the top of the file listing. */
+function LatestCommitBanner({
   owner,
   repo,
-  basePath,
+  commit,
+  total,
+}: {
+  owner: string;
+  repo: string;
+  commit: GithubCommit;
+  total: number;
+}) {
+  return (
+    <div className="flex w-full min-w-0 items-center gap-2">
+      <span
+        className="min-w-0 flex-1 truncate"
+        style={{ color: "var(--color-fg)" }}
+        title={commit.commit.message}
+      >
+        <span style={{ fontWeight: 600 }}>{commit.commit.author.name}</span>{" "}
+        {commit.commit.message.split("\n")[0]}
+      </span>
+      <span className="font-mono" style={{ color: "var(--color-fg-muted)" }}>
+        {commit.sha.slice(0, 7)}
+      </span>
+      <span style={{ color: "var(--color-fg-muted)" }}>
+        · {relativeTimeFromNow(commit.commit.author.date)}
+      </span>
+      <Link
+        to={`/ui/repos/${owner}/${repo}`}
+        onClick={(e) => e.preventDefault()}
+        className="inline-flex items-center gap-1"
+        style={{ color: "var(--color-fg-muted)", textDecoration: "none", whiteSpace: "nowrap" }}
+      >
+        <CommentIcon size={14} /> {total} {total === 1 ? "commit" : "commits"}
+      </Link>
+    </div>
+  );
+}
+
+/** GitHub's green "Code" clone dropdown — HTTPS clone URL with a copy button. */
+function CloneButton({ owner, repo }: { owner: string; repo: string }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const cloneUrl = `${origin}/${owner}/${repo}.git`;
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(cloneUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard is unavailable (insecure context / denied permission). The
+      // URL stays selectable in the field so the user can copy manually.
+      setCopied(false);
+    }
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <button
+        type="button"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1.5"
+        style={{
+          background: "var(--gh-open-solid)",
+          color: "#ffffff",
+          border: "1px solid color-mix(in srgb, #000 12%, var(--gh-open-solid))",
+          borderRadius: "var(--radius-md)",
+          padding: "0.34rem 0.7rem",
+          fontSize: "0.82rem",
+          fontWeight: 600,
+        }}
+      >
+        <CodeIcon size={15} /> Code <ChevronDownIcon size={14} />
+      </button>
+      {open && (
+        <div
+          role="dialog"
+          aria-label="Clone this repository"
+          style={{
+            position: "absolute",
+            top: "calc(100% + 6px)",
+            right: 0,
+            zIndex: 20,
+            width: 320,
+            padding: "0.85rem",
+            background: "var(--color-surface-raised)",
+            border: "1px solid var(--color-border)",
+            borderRadius: "var(--radius-md)",
+            boxShadow: "0 8px 24px rgba(31,35,40,0.2)",
+          }}
+        >
+          <div style={{ fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.4rem" }}>Clone</div>
+          <div style={{ fontSize: "0.72rem", color: "var(--color-fg-muted)", marginBottom: "0.5rem" }}>
+            HTTPS
+          </div>
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              readOnly
+              value={cloneUrl}
+              aria-label="HTTPS clone URL"
+              onFocus={(e) => e.currentTarget.select()}
+              style={{
+                flex: 1,
+                minWidth: 0,
+                fontSize: "0.78rem",
+                fontFamily: "var(--font-mono)",
+                padding: "0.35rem 0.5rem",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+                background: "var(--color-bg-subtle)",
+                color: "var(--color-fg)",
+              }}
+            />
+            <button
+              type="button"
+              onClick={copy}
+              aria-label="Copy clone URL"
+              title="Copy clone URL"
+              className="inline-flex items-center justify-center"
+              style={{
+                flexShrink: 0,
+                width: 30,
+                height: 30,
+                background: "var(--color-bg-subtle)",
+                border: "1px solid var(--color-border)",
+                borderRadius: "var(--radius-sm)",
+                color: copied ? "var(--color-status-ok)" : "var(--color-fg-muted)",
+                cursor: "pointer",
+              }}
+            >
+              {copied ? <CheckIcon size={15} /> : <CopyIcon size={15} />}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** GitHub's right-hand "About" column on the repo Code page. */
+function AboutSidebar({
+  owner,
+  repo,
+  repoData,
+  languages,
+  socialCounts,
+}: {
+  owner: string;
+  repo: string;
+  repoData: BleephubRepo;
+  languages: Record<string, number> | undefined;
+  socialCounts: GithubRepoSocialCounts | undefined;
+}) {
+  const { data: topics, isError: topicsError } = useQuery({
+    queryKey: ["repo-topics", owner, repo],
+    queryFn: () => fetchRepoTopics(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+  const { data: releases, isError: releasesError } = useQuery({
+    queryKey: ["releases", owner, repo],
+    queryFn: () => fetchReleases(owner, repo),
+    enabled: !!owner && !!repo,
+  });
+  const { data: packages, isError: packagesError } = useQuery({
+    queryKey: ["repo-packages", owner, repo],
+    queryFn: () => fetchPackages({ kind: "repo", owner, repo }),
+    enabled: !!owner && !!repo,
+  });
+
+  const base = `/ui/repos/${owner}/${repo}`;
+  const topicNames = topics?.names ?? [];
+  const divider = { border: "none", borderTop: "1px solid var(--color-border)", margin: 0 } as const;
+  const mutedLink = { color: "var(--color-fg-muted)", textDecoration: "none" } as const;
+
+  return (
+    <aside className="flex min-w-0 flex-col gap-4" style={{ fontSize: "0.85rem" }} aria-label="About">
+      <section>
+        <SectionLabel>About</SectionLabel>
+        <p
+          className="mb-2"
+          style={{ color: repoData.description ? "var(--color-fg)" : "var(--color-fg-muted)" }}
+        >
+          {repoData.description || "No description provided."}
+        </p>
+        {repoData.homepage && (
+          <a
+            href={repoData.homepage}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="mb-2 flex items-center gap-1.5"
+            style={{ color: "var(--color-accent)", textDecoration: "none", fontWeight: 600 }}
+          >
+            <GlobeIcon size={15} />
+            <span className="truncate">{repoData.homepage.replace(/^https?:\/\//, "")}</span>
+          </a>
+        )}
+        {topicsError ? (
+          <InlineError title="Failed to load topics" />
+        ) : topicNames.length > 0 ? (
+          <div className="mb-1 mt-1 flex flex-wrap gap-1.5">
+            {topicNames.map((t) => (
+              <Link
+                key={t}
+                to={`/ui/search?q=${encodeURIComponent(`topic:${t}`)}`}
+                style={{
+                  display: "inline-block",
+                  padding: "0.1rem 0.6rem",
+                  fontSize: "0.75rem",
+                  fontWeight: 500,
+                  color: "var(--color-accent)",
+                  background: "var(--color-accent-soft)",
+                  borderRadius: "2rem",
+                  textDecoration: "none",
+                }}
+              >
+                {t}
+              </Link>
+            ))}
+          </div>
+        ) : null}
+        {socialCounts && (
+          <div className="mt-2 flex flex-col gap-1.5">
+            <Link to={`${base}/stargazers`} className="inline-flex items-center gap-1.5" style={mutedLink}>
+              <StarIcon size={15} /> {socialCounts.stargazers_count}{" "}
+              {socialCounts.stargazers_count === 1 ? "star" : "stars"}
+            </Link>
+            <Link to={`${base}/watchers`} className="inline-flex items-center gap-1.5" style={mutedLink}>
+              <EyeIcon size={15} /> {socialCounts.subscribers_count}{" "}
+              {socialCounts.subscribers_count === 1 ? "watcher" : "watchers"}
+            </Link>
+            <Link to={`${base}/forks`} className="inline-flex items-center gap-1.5" style={mutedLink}>
+              <RepoForkedIcon size={15} /> {socialCounts.forks_count}{" "}
+              {socialCounts.forks_count === 1 ? "fork" : "forks"}
+            </Link>
+          </div>
+        )}
+      </section>
+
+      <hr style={divider} />
+
+      <section>
+        <SectionLabel>Releases</SectionLabel>
+        {releasesError ? (
+          <InlineError title="Failed to load releases" />
+        ) : releases && releases.length > 0 ? (
+          <div className="flex flex-col gap-1">
+            <span className="inline-flex items-center gap-1.5" style={{ fontWeight: 600 }}>
+              <TagIcon size={15} style={{ color: "var(--color-status-ok)" }} />
+              {releases[0].name || releases[0].tag_name}
+              <span
+                style={{
+                  fontSize: "0.68rem",
+                  fontWeight: 600,
+                  color: "#ffffff",
+                  background: "var(--gh-open-solid)",
+                  borderRadius: "2rem",
+                  padding: "0.05rem 0.5rem",
+                }}
+              >
+                Latest
+              </span>
+            </span>
+            {releases.length > 1 && (
+              <Link to={base} onClick={(e) => e.preventDefault()} style={mutedLink}>
+                + {releases.length - 1} {releases.length - 1 === 1 ? "release" : "releases"}
+              </Link>
+            )}
+          </div>
+        ) : (
+          <span style={{ color: "var(--color-fg-muted)" }}>No releases published</span>
+        )}
+      </section>
+
+      <hr style={divider} />
+
+      <section>
+        <SectionLabel>Packages</SectionLabel>
+        {packagesError ? (
+          <InlineError title="Failed to load packages" />
+        ) : packages && packages.length > 0 ? (
+          <Link
+            to={`/ui/repos/${owner}/${repo}/packages`}
+            style={{ color: "var(--color-accent)", textDecoration: "none" }}
+          >
+            {packages.length} {packages.length === 1 ? "package" : "packages"}
+          </Link>
+        ) : (
+          <span style={{ color: "var(--color-fg-muted)" }}>No packages published</span>
+        )}
+      </section>
+
+      {languages && Object.keys(languages).length > 0 && (
+        <>
+          <hr style={divider} />
+          <section>
+            <SectionLabel>Languages</SectionLabel>
+            <LanguagesBar languages={languages} />
+          </section>
+        </>
+      )}
+    </aside>
+  );
+}
+
+function FileRow({
   item,
   isLast,
   onClick,
 }: {
-  owner: string;
-  repo: string;
-  basePath: string;
   item: GithubContentItem;
   isLast: boolean;
   onClick: () => void;
 }) {
-  const queryClient = useQueryClient();
   const isDir = item.type === "dir";
-  const deleteMutation = useMutation({
-    mutationFn: () =>
-      deleteRepoContent(owner, repo, item.path, item.sha, `Delete ${item.name} via web`),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["contents", owner, repo, basePath] });
-      queryClient.invalidateQueries({ queryKey: ["readme", owner, repo] });
-      queryClient.invalidateQueries({ queryKey: ["commits", owner, repo] });
-    },
-  });
   return (
     <div
       role={isDir ? "button" : undefined}
@@ -437,31 +718,10 @@ function FileRow({
         fontSize: "0.85rem",
       }}
     >
-      <span style={{ color: "var(--color-accent)", display: "flex" }}>
+      <span style={{ color: isDir ? "var(--color-accent)" : "var(--color-fg-muted)", display: "flex" }}>
         {isDir ? <DirectoryIcon size={16} /> : <FileIcon size={16} />}
       </span>
-      <span style={{ color: "var(--color-accent)", fontWeight: 500, flex: 1 }}>{item.name}</span>
-      {!isDir && (
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            if (window.confirm(`Delete ${item.name}?`)) {
-              deleteMutation.mutate();
-            }
-          }}
-          disabled={deleteMutation.isPending}
-          style={{
-            fontSize: "0.75rem",
-            color: "var(--color-danger-fg)",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-          }}
-        >
-          {deleteMutation.isPending ? "Deleting..." : "Delete"}
-        </button>
-      )}
+      <span style={{ color: "var(--color-fg)", fontWeight: 400, flex: 1 }}>{item.name}</span>
     </div>
   );
 }

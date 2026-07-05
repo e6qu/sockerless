@@ -1518,3 +1518,147 @@ func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName st
 		},
 	}
 }
+
+// handleListPullRequestFiles serves GET /repos/{owner}/{repo}/pulls/{number}/files,
+// the changed-file list with per-file unified-diff patches real GitHub returns.
+// It is reached through handlePRCommentTwoSegDispatch (p2 == "files") so it adds
+// no new mux pattern. The diff is computed between the merge-base of the PR's
+// base and head and the head tip — the same range GitHub reports.
+func (s *Server) handleListPullRequestFiles(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if repo.Private && !canReadRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	num, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	pr := s.store.GetPullRequestByNumber(repo.ID, num)
+	if pr == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	files, err := pullRequestChangedFiles(s.store, repo, pr, s.baseURL(r))
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "diff derivation failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, files))
+}
+
+// pullRequestChangedFiles diffs the PR's merge-base against its head tip and
+// returns the per-file JSON GitHub's pulls/{n}/files endpoint emits, including
+// the unified-diff `patch` for text changes.
+func pullRequestChangedFiles(st *Store, repo *Repo, pr *PullRequest, baseURL string) ([]map[string]interface{}, error) {
+	owner, name, ok := splitRepoFullName(repo.FullName)
+	if !ok {
+		return []map[string]interface{}{}, nil
+	}
+	stor := st.GetGitStorage(owner, name)
+	if stor == nil {
+		return []map[string]interface{}{}, nil
+	}
+	headHash, err := resolveGitRef(stor, pr.HeadRefName)
+	if err != nil {
+		return []map[string]interface{}{}, nil
+	}
+	var baseHash plumbing.Hash
+	if pr.BaseSHA != "" {
+		baseHash = plumbing.NewHash(pr.BaseSHA)
+	} else if baseHash, err = resolveGitRef(stor, pr.BaseRefName); err != nil {
+		return []map[string]interface{}{}, nil
+	}
+	mergeBase, err := findMergeBase(stor, baseHash, headHash)
+	if err != nil {
+		return nil, err
+	}
+	headCommit, err := object.GetCommit(stor, headHash)
+	if err != nil {
+		return nil, err
+	}
+	headTree, err := headCommit.Tree()
+	if err != nil {
+		return nil, err
+	}
+	var baseTree *object.Tree
+	if !mergeBase.IsZero() {
+		if baseCommit, err := object.GetCommit(stor, mergeBase); err == nil {
+			baseTree, _ = baseCommit.Tree()
+		}
+	}
+	changes, err := object.DiffTree(baseTree, headTree)
+	if err != nil {
+		return nil, err
+	}
+	files := make([]map[string]interface{}, 0, len(changes))
+	for _, ch := range changes {
+		var status string
+		switch {
+		case ch.To.TreeEntry.Mode == 0:
+			status = "removed"
+		case ch.From.TreeEntry.Mode == 0:
+			status = "added"
+		case ch.From.TreeEntry.Hash == ch.To.TreeEntry.Hash:
+			continue // unchanged
+		default:
+			status = "modified"
+		}
+		adds, dels, err := changeStats(ch)
+		if err != nil {
+			return nil, err
+		}
+		filename := ch.To.Name
+		if filename == "" {
+			filename = ch.From.Name
+		}
+		sha := ch.To.TreeEntry.Hash.String()
+		if ch.To.TreeEntry.Mode == 0 {
+			sha = ch.From.TreeEntry.Hash.String()
+		}
+		file := map[string]interface{}{
+			"sha":          sha,
+			"filename":     filename,
+			"status":       status,
+			"additions":    adds,
+			"deletions":    dels,
+			"changes":      adds + dels,
+			"blob_url":     baseURL + "/" + repo.FullName + "/blob/" + headHash.String() + "/" + filename,
+			"raw_url":      baseURL + "/" + repo.FullName + "/raw/" + headHash.String() + "/" + filename,
+			"contents_url": baseURL + "/api/v3/repos/" + repo.FullName + "/contents/" + filename + "?ref=" + headHash.String(),
+		}
+		if patch := changeUnifiedPatch(ch); patch != "" {
+			file["patch"] = patch
+		}
+		if status != "added" && status != "removed" && ch.From.Name != "" && ch.From.Name != filename {
+			file["previous_filename"] = ch.From.Name
+		}
+		files = append(files, file)
+	}
+	sort.Slice(files, func(i, j int) bool {
+		ni, _ := files[i]["filename"].(string)
+		nj, _ := files[j]["filename"].(string)
+		return ni < nj
+	})
+	return files, nil
+}
+
+// changeUnifiedPatch renders the hunk portion of a change's unified diff, matching
+// GitHub's `patch` field (which starts at the first "@@" hunk header, without the
+// "diff --git"/index/"---"/"+++" preamble). Returns "" for binary or empty diffs.
+func changeUnifiedPatch(ch *object.Change) string {
+	patch, err := ch.Patch()
+	if err != nil {
+		return ""
+	}
+	full := patch.String()
+	if idx := strings.Index(full, "@@"); idx >= 0 {
+		return strings.TrimRight(full[idx:], "\n")
+	}
+	return ""
+}

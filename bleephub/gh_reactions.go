@@ -225,32 +225,38 @@ func (s *Server) registerGHReactionsRoutes() {
 	// The dispatcher routes by segment-2 ("tags" vs numeric release_id).
 }
 
-// resolveReactionParentID converts the reaction path parameter into the
-// store-level parent ID. Issue reactions arrive keyed by issue *number*,
-// which is only unique within one repository — they resolve through the
-// repository to the issue's global ID so reactions never leak between
-// repositories that happen to share issue numbers. Writes the error
-// response and returns false when the repository or issue does not exist.
-func (s *Server) resolveReactionParentID(w http.ResponseWriter, r *http.Request, parentType, pathParam string) (int, bool) {
+// resolveReactionParent converts the reaction path parameter into the
+// store-level (parentType, parentID) pair. Issue reactions arrive keyed by
+// issue *number*, which is only unique within one repository — they resolve
+// through the repository to the issue's global ID so reactions never leak
+// between repositories that happen to share issue numbers. Pull requests
+// share the issue number space and are reactable on real GitHub via the same
+// /issues/{number}/reactions surface, so a number that resolves to a PR is
+// keyed under the "pull_request" parent type (issue and PR IDs come from
+// independent counters and would otherwise collide). Writes the error
+// response and returns false when the repository or parent does not exist.
+func (s *Server) resolveReactionParent(w http.ResponseWriter, r *http.Request, parentType, pathParam string) (string, int, bool) {
 	parentID, err := strconv.Atoi(r.PathValue(pathParam))
 	if err != nil {
 		writeGHError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s", pathParam))
-		return 0, false
+		return "", 0, false
 	}
 	if parentType != "issue" {
-		return parentID, true
+		return parentType, parentID, true
 	}
 	repo := s.store.GetRepo(r.PathValue("owner"), r.PathValue("repo"))
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
-		return 0, false
+		return "", 0, false
 	}
-	issue := s.store.GetIssueByNumber(repo.ID, parentID)
-	if issue == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return 0, false
+	if issue := s.store.GetIssueByNumber(repo.ID, parentID); issue != nil {
+		return "issue", issue.ID, true
 	}
-	return issue.ID, true
+	if pr := s.store.GetPullRequestByNumber(repo.ID, parentID); pr != nil {
+		return "pull_request", pr.ID, true
+	}
+	writeGHError(w, http.StatusNotFound, "Not Found")
+	return "", 0, false
 }
 
 func (s *Server) handleCreateReaction(parentType, pathParam string) http.HandlerFunc {
@@ -260,7 +266,7 @@ func (s *Server) handleCreateReaction(parentType, pathParam string) http.Handler
 			writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 			return
 		}
-		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		effType, parentID, ok := s.resolveReactionParent(w, r, parentType, pathParam)
 		if !ok {
 			return
 		}
@@ -271,7 +277,7 @@ func (s *Server) handleCreateReaction(parentType, pathParam string) http.Handler
 			writeGHValidationError(w, "Reaction", "content", "missing_field")
 			return
 		}
-		reaction, alreadyExisted, err := s.store.Reactions.AddReaction(parentType, parentID, user.ID, body.Content)
+		reaction, alreadyExisted, err := s.store.Reactions.AddReaction(effType, parentID, user.ID, body.Content)
 		if err != nil {
 			writeGHValidationError(w, "Reaction", "content", "invalid")
 			return
@@ -286,12 +292,12 @@ func (s *Server) handleCreateReaction(parentType, pathParam string) http.Handler
 
 func (s *Server) handleListReactions(parentType, pathParam string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		effType, parentID, ok := s.resolveReactionParent(w, r, parentType, pathParam)
 		if !ok {
 			return
 		}
 		contentFilter := r.URL.Query().Get("content")
-		reactions := s.store.Reactions.ListReactions(parentType, parentID, contentFilter)
+		reactions := s.store.Reactions.ListReactions(effType, parentID, contentFilter)
 		page := paginateAndLink(w, r, reactions)
 		out := make([]map[string]interface{}, 0, len(page))
 		for _, rx := range page {
@@ -309,7 +315,7 @@ func (s *Server) handleDeleteReaction(parentType, pathParam string) http.Handler
 			writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 			return
 		}
-		parentID, ok := s.resolveReactionParentID(w, r, parentType, pathParam)
+		effType, parentID, ok := s.resolveReactionParent(w, r, parentType, pathParam)
 		if !ok {
 			return
 		}
@@ -318,7 +324,7 @@ func (s *Server) handleDeleteReaction(parentType, pathParam string) http.Handler
 			writeGHError(w, http.StatusBadRequest, "invalid reaction id")
 			return
 		}
-		if !s.store.Reactions.DeleteReaction(parentType, parentID, reactionID) {
+		if !s.store.Reactions.DeleteReaction(effType, parentID, reactionID) {
 			writeGHError(w, http.StatusNotFound, "Not Found")
 			return
 		}

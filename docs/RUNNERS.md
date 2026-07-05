@@ -283,6 +283,8 @@ Architectural shape: the runner *is* the workspace. For `container:` jobs it doe
 
 Architectural shape: GitLab Runner is a *dispatcher*. The master polls GitLab and uses the docker executor's `docker create + docker exec + docker attach` to spawn the job container. The master is just a docker client — it never bind-mounts its own filesystem; it can run anywhere with `--docker-host` pointing at sockerless. Cells 3 + 4 require zero topology change but exercise different sockerless code paths than the GitHub-runner shape.
 
+This shape is **SIM-PROVEN end-to-end** by the [bleeplab](../bleeplab/README.md) control-plane simulator: a real `gitlab-runner` registers against bleeplab and dispatches jobs through a sockerless backend, exercising the full runner-as-cloud-task data plane against the cloud sims (`make bleeplab-runner-docker-test-{ecs,cloudrun,gcf,aca}`). The GL-12/13/14 hurdles below were all found and fixed on the cloudrun cell of that harness. The per-runner × per-backend sim-proven set (both runners across the container backends) is tracked in [`runner-capability-matrix.md`](./runner-capability-matrix.md); the live-cloud subset is the four-cell matrix above.
+
 | # | Hurdle | Resolution | Bug |
 |---|---|---|---|
 | GL-1 | Helper image referenced by `sha256:` digest only (no name component) | `resolveImageURI` detects digest-only refs and (a) tries the local image Store for a canonical RepoTag, or (b) surfaces a clear error pointing at `name@sha256:...`; misrouting via Docker Hub is no longer possible | BUG-854 |

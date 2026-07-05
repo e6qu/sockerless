@@ -159,3 +159,133 @@ select {
 *::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-strong);
 }
+
+/*
+ * Rendered-markdown typography (READMEs, discussion bodies). GitHub's
+ * markdown body sizes headings on a descending scale and rules the two
+ * top levels; without this the react-markdown output renders every
+ * heading at body size (flat). Scoped to .markdown-body so it never
+ * leaks into the chrome. Values track GitHub's markdown CSS.
+ */
+.markdown-body {
+  line-height: 1.5;
+  word-wrap: break-word;
+}
+.markdown-body > *:first-child {
+  margin-top: 0 !important;
+}
+.markdown-body > *:last-child {
+  margin-bottom: 0 !important;
+}
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  font-weight: 600;
+  line-height: 1.25;
+  color: var(--color-fg);
+}
+.markdown-body h1 {
+  font-size: 2em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-border);
+}
+.markdown-body h2 {
+  font-size: 1.5em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-border);
+}
+.markdown-body h3 {
+  font-size: 1.25em;
+}
+.markdown-body h4 {
+  font-size: 1em;
+}
+.markdown-body h5 {
+  font-size: 0.875em;
+}
+.markdown-body h6 {
+  font-size: 0.85em;
+  color: var(--color-fg-muted);
+}
+.markdown-body p,
+.markdown-body blockquote,
+.markdown-body ul,
+.markdown-body ol,
+.markdown-body table,
+.markdown-body pre {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 2em;
+}
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li + li {
+  margin-top: 0.25em;
+}
+.markdown-body a {
+  color: var(--color-accent);
+  text-decoration: none;
+}
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+.markdown-body code {
+  padding: 0.2em 0.4em;
+  font-family: var(--font-mono);
+  font-size: 85%;
+  background: color-mix(in srgb, var(--color-fg-muted) 12%, transparent);
+  border-radius: var(--radius-sm);
+}
+.markdown-body pre {
+  padding: 1rem;
+  overflow: auto;
+  background: var(--color-bg-subtle);
+  border-radius: var(--radius-md);
+}
+.markdown-body pre code {
+  padding: 0;
+  background: transparent;
+  font-size: 100%;
+}
+.markdown-body blockquote {
+  padding: 0 1em;
+  color: var(--color-fg-muted);
+  border-left: 0.25em solid var(--color-border);
+}
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+  border-collapse: collapse;
+}
+.markdown-body th,
+.markdown-body td {
+  padding: 0.4em 0.8em;
+  border: 1px solid var(--color-border);
+}
+.markdown-body th {
+  font-weight: 600;
+  background: var(--color-bg-subtle);
+}
+.markdown-body img {
+  max-width: 100%;
+}
+.markdown-body hr {
+  height: 1px;
+  margin: 1.5rem 0;
+  border: 0;
+  background: var(--color-border);
+}

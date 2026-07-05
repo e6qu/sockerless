@@ -1,6 +1,6 @@
 # Backends
 
-Backends implement the Sockerless internal API by translating Docker-compatible container operations into cloud-specific resources. Each backend is a separate Go module that listens on an HTTP port and speaks the same protocol understood by the [frontends](../frontends/).
+Backends implement the Sockerless internal API by translating Docker-compatible container operations into cloud-specific resources. Each backend is a separate Go module that serves the Docker REST API (`:3375`) and its internal management endpoints on the same HTTP mux — there is no separate frontend process (see [ARCHITECTURE.md](../ARCHITECTURE.md)).
 
 ## Architecture
 

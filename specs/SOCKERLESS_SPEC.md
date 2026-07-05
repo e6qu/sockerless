@@ -937,10 +937,6 @@ sockerless/
 ├── api/                               # Module: shared internal API types
 │   └── go.mod                         #   Zero external dependencies
 │
-├── frontends/
-│   └── docker/                        # Module: Docker REST API frontend
-│       └── go.mod                     #   Deps: api/, OpenAPI-generated types
-│
 ├── backends/
 │   ├── core/                          # Module: shared backend library
 │   │   └── go.mod                     #   Deps: api/, agent/, gorilla/websocket
@@ -991,7 +987,6 @@ sockerless/
 | # | Module | Binary Name | External Dependencies |
 |---|--------|------------|----------------------|
 | 1 | `api/` | *(library — no binary)* | None (stdlib only) |
-| 2 | `frontends/docker/` | `sockerless-docker-frontend` | `api/`, OpenAPI-generated types, `gorilla/websocket` |
 | 3 | `backends/core/` | *(library — no binary)* | `api/`, `agent/`, `gorilla/websocket` |
 | 4 | `backends/docker/` | `sockerless-backend-docker` | `api/`, `github.com/docker/docker` client SDK |
 | 6 | `backends/ecs/` | `sockerless-backend-ecs` | `api/`, `core/`, AWS SDK v2 |
@@ -1008,6 +1003,8 @@ sockerless/
 | 18 | `tests/` | *(test binary — `go test`)* | Docker client SDK |
 
 ### 6.3 Frontend
+
+> **Packaging note:** the Docker-API frontend is no longer a separate `sockerless-docker-frontend` process. Each backend serves this Docker REST API surface **in-process** on its own HTTP mux (`:3375`) alongside its internal management endpoints — see [ARCHITECTURE.md](../ARCHITECTURE.md). This section describes that logical layer; it is not a separately-deployed binary.
 
 The frontend is a **stateless** HTTP server that:
 
@@ -2221,16 +2218,9 @@ Priority order: CLI flags > config.yaml environment values > context env vars (l
 
 See [`cmd/sockerless/README.md`](../cmd/sockerless/README.md) for the full config.yaml format.
 
-### 15.2 Frontend Configuration
+### 15.2 Docker-API address
 
-The frontend is configured via command-line flags:
-
-```sh
-sockerless-docker-frontend \
-  -addr :2375 \             # Listen address (TCP)
-  -backend http://localhost:9100 \  # Backend address
-  -log-level info            # Log level
-```
+The Docker REST API is served in-process by each backend (see §6.3), so there is no separate frontend binary or `-backend` address to configure. The listen address is a backend flag (`--addr`, default `:3375`); see §15.3 and the per-backend READMEs.
 
 ### 15.3 Backend Configuration
 

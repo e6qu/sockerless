@@ -1,6 +1,6 @@
 # E2E smoke tests
 
-This repo has three simulator-backed E2E smoke surfaces. All of them do real
+This repo has four simulator-backed E2E smoke surfaces. All of them do real
 work against local simulators or local Docker-in-Docker harnesses; none use
 mocks or synthetic cloud state. Simulators should behave like the cloud API
 surface with only endpoint routing changed; SDKs, CLIs, Terraform providers,
@@ -89,7 +89,10 @@ under `tests/upstream/act/` (`make upstream-test-act-{ecs,lambda,cloudrun,gcf,ac
 ## GitLab runner smokes
 
 These run GitLab Runner or gitlab-ci-local style Docker executor flows against
-simulator-endpoint backends.
+simulator-endpoint backends (the data plane). For the full GitLab
+control-plane flow — a real `gitlab-runner` registering against the
+[bleeplab](../bleeplab/README.md) simulator and dispatching jobs through a
+sockerless backend — see `make bleeplab-runner-docker-test-{ecs,cloudrun,gcf,aca}`.
 
 ```bash
 make e2e-gitlab-ecs

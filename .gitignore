@@ -89,7 +89,9 @@ node_modules/
 ui/node_modules/
 ui/packages/*/node_modules/
 ui/packages/*/dist/
+.turbo/
 ui/.turbo/
+ui/packages/*/.turbo/
 ui/packages/*/*.tsbuildinfo
 
 # Embedded UI build artifacts

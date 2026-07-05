@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-465.7k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-50.4k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-269.9k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-466k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-53.8k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-270.1k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-34-informational)](#module-sizes)
 
@@ -87,6 +87,7 @@ backends/
   aca/                        Azure Container Apps Jobs/Apps
   azure-functions/            Azure Functions
 bleephub/                     Local GitHub server: runner service API + REST + GraphQL + smart-HTTP git + Apps/OAuth Apps (gh CLI compat)
+bleeplab/                     Local GitLab server: runner API + CI pipelines + smart-HTTP git + artifacts (gitlab-runner compat)
 cmd/sockerless/               CLI tool (context management, server control)
 cmd/sockerless-admin/         Admin dashboard server (aggregates all components)
 ui/                           React SPA monorepo (Bun, Vite, Tailwind, TanStack)
@@ -111,7 +112,8 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **Go**
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
-![bleephub](https://img.shields.io/badge/bleephub-101.7k-00ADD8)
+![bleephub](https://img.shields.io/badge/bleephub-102.1k-00ADD8)
+![bleeplab](https://img.shields.io/badge/bleeplab-2.7k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-170.3k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-50.7k-00ADD8)
 ![sim/gcp](https://img.shields.io/badge/sim%2Fgcp-49.6k-00ADD8)
@@ -131,7 +133,8 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.5k-3178C6)
 ![ui/core](https://img.shields.io/badge/ui%2Fcore-3.7k-3178C6)
-![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-35.3k-3178C6)
+![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-38.6k-3178C6)
+![ui/bleeplab](https://img.shields.io/badge/ui%2Fbleeplab-799-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-228-6295D2)
 ![ui/sim-azure](https://img.shields.io/badge/ui%2Fsim--azure-221-6295D2)
@@ -323,6 +326,7 @@ This works for any of the 17 Go-binary apps, 14 UI packages, and the test-catego
 ```
 cmd/sockerless-admin                 # admin server, port :9090
 bleephub                             # GitHub-API simulator, port :5555
+bleeplab                             # GitLab-API simulator, port :8929
 backends/{docker,ecs,lambda}         # AWS-side + local Docker
 backends/{cloudrun,cloudrun-functions}  # GCP-side
 backends/{aca,azure-functions}       # Azure-side
@@ -540,6 +544,7 @@ Each backend has a complete deployment walkthrough in its `examples/terraform/` 
 | [`FEATURE_MATRIX.md`](FEATURE_MATRIX.md) | Docker API compatibility, cloud service mappings, test results |
 | [`simulators/README.md`](simulators/README.md) | Cloud simulators: services, validation suites + spec-based conformance gates, CLI usage |
 | [`bleephub/README.md`](bleephub/README.md) | bleephub local GitHub server: quick start, runner protocol, REST/GraphQL surface, persistence, UI |
+| [`bleeplab/README.md`](bleeplab/README.md) | bleeplab local GitLab server: runner API, CI pipelines, smart-HTTP git, artifacts, object-store storage |
 | [`docs/BLEEPHUB_GH_CLI.md`](docs/BLEEPHUB_GH_CLI.md) | Using the `gh` CLI against bleephub: hostname wiring, tokens, supported commands, troubleshooting |
 | [`backends/*/README.md`](backends/) | Per-backend configuration and terraform output mapping |
 | [`docs/RUNNERS.md`](docs/RUNNERS.md) | **CI runner wiring** — canonical guide: GitHub Actions + GitLab Runner against ECS + Lambda, token strategy, 4-cell coverage matrix |

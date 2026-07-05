@@ -2,6 +2,7 @@ import { useParams } from "react-router";
 import { InlineError } from "@sockerless/ui-core/components";
 import { fetchOrgReposPage } from "../api.js";
 import { RepoListPage } from "./RepoListPage.js";
+import { OrgHeader } from "../components/Shell.js";
 
 export function OrgReposPage() {
   const { org } = useParams<{ org: string }>();
@@ -10,12 +11,15 @@ export function OrgReposPage() {
   }
 
   return (
-    <RepoListPage
-      title={`${org} repositories`}
-      fetchPage={(filters, pageUrl) => fetchOrgReposPage(org, filters, pageUrl)}
-      queryKey={["org-repos", org]}
-      allowCreate
-      createTarget={{ org }}
-    />
+    <div>
+      <OrgHeader org={org} active="repos" />
+      <RepoListPage
+        title="Repositories"
+        fetchPage={(filters, pageUrl) => fetchOrgReposPage(org, filters, pageUrl)}
+        queryKey={["org-repos", org]}
+        allowCreate
+        createTarget={{ org }}
+      />
+    </div>
   );
 }
