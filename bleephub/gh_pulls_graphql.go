@@ -1704,7 +1704,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			}
 
 			updated := s.store.GetPullRequest(pr.ID)
-			mergedPayload := buildPullRequestPayload(repo, updated, user, "closed")
+			mergedPayload := buildPullRequestPayload(s.store, repo, updated, user, "closed")
 			s.emitWebhookEvent(repo.FullName, "pull_request", "closed", mergedPayload)
 			go s.triggerWorkflowsForEvent(repo.FullName, "pull_request", "closed", "refs/heads/"+updated.HeadRefName, mergedPayload)
 
@@ -1940,20 +1940,16 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	}
 
 	// Reviews (inline to avoid deadlock)
-	reviewNodes := make([]map[string]interface{}, 0)
-	for _, r := range st.PRReviews {
-		if r.PRID == pr.ID {
-			reviewNodes = append(reviewNodes, prReviewSourceLocked(r, st))
-		}
+	prReviews := st.PRReviewsByPR[pr.ID]
+	reviewNodes := make([]map[string]interface{}, 0, len(prReviews))
+	for _, r := range prReviews {
+		reviewNodes = append(reviewNodes, prReviewSourceLocked(r, st))
 	}
 	sortGQLNodesByCreatedAt(reviewNodes)
 
 	// latestReviews — the newest review per author.
 	latestByAuthor := map[int]*PullRequestReview{}
-	for _, r := range st.PRReviews {
-		if r.PRID != pr.ID {
-			continue
-		}
+	for _, r := range prReviews {
 		if cur, ok := latestByAuthor[r.AuthorID]; !ok || r.CreatedAt.After(cur.CreatedAt) {
 			latestByAuthor[r.AuthorID] = r
 		}
@@ -2268,10 +2264,7 @@ func prCommentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 func deriveReviewDecisionLocked(st *Store, prID int) string {
 	hasApproved := false
 	hasChangesRequested := false
-	for _, r := range st.PRReviews {
-		if r.PRID != prID {
-			continue
-		}
+	for _, r := range st.PRReviewsByPR[prID] {
 		switch r.State {
 		case "APPROVED":
 			hasApproved = true

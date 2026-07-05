@@ -370,7 +370,7 @@ func (s *Server) handleTestHook(w http.ResponseWriter, r *http.Request) {
 		if headSha == "" {
 			headSha = "0000000000000000000000000000000000000000"
 		}
-		payload := buildPushPayload(repo, sender, "refs/heads/"+branch, headSha, headSha)
+		payload := buildPushPayload(s.store, repo, sender, "refs/heads/"+branch, headSha, headSha)
 		go s.deliverWebhook(hook, "push", "", mustMarshal(payload))
 	}
 	w.WriteHeader(http.StatusNoContent)

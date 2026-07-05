@@ -53,11 +53,45 @@ type notificationThreadRow struct {
 // Thread sources are gathered under the read lock; rendering happens after
 // release because buildThread embeds the repository via repoToJSON, which
 // derives counters under the store lock itself.
+// ListNotifications gathers, sorts and renders every accepted thread. It is a
+// convenience wrapper over NotificationRows + BuildNotificationThreads; hot
+// handlers should paginate the rows first and render only the page.
 func (st *Store) ListNotifications(user *User, baseURL string, opts NotificationListOptions) []*NotificationThread {
+	rows := st.NotificationRows(user, opts)
+	return st.BuildNotificationThreads(rows, baseURL)
+}
+
+// BuildNotificationThreads renders a (typically already-paginated) slice of
+// rows into notification threads. buildThread is expensive per row (it embeds
+// repoToJSON and scans comments for the latest-comment URL), so callers should
+// paginate the rows before calling this.
+func (st *Store) BuildNotificationThreads(rows []notificationThreadRow, baseURL string) []*NotificationThread {
+	threads := make([]*NotificationThread, len(rows))
+	for i, row := range rows {
+		threads[i] = st.buildThread(row, baseURL)
+	}
+	return threads
+}
+
+// NotificationRows gathers and sorts (newest-first) the lightweight thread rows
+// the user should see, without rendering any of them. Rendering each row is
+// expensive, so callers paginate these rows and render only the page.
+func (st *Store) NotificationRows(user *User, opts NotificationListOptions) []notificationThreadRow {
 	st.mu.RLock()
 
 	state := st.notificationsStateViewLocked(user.ID)
 	var rows []notificationThreadRow
+
+	// Precompute the set of (parentType, parentID) the viewer commented on in
+	// a single pass over st.Comments, so notificationReason is an O(1) map
+	// lookup per thread instead of an O(all-comments) scan per thread (which
+	// made this handler O((issues+PRs) × comments)).
+	commentedOn := make(map[string]struct{})
+	for _, c := range st.Comments {
+		if c.AuthorID == user.ID {
+			commentedOn[strings.ToLower(c.ParentType)+"\x1f"+strconv.Itoa(c.IssueID)] = struct{}{}
+		}
+	}
 
 	add := func(src notificationThreadSource) {
 		repo := st.Repos[src.RepoID]
@@ -76,7 +110,7 @@ func (st *Store) ListNotifications(user *User, baseURL string, opts Notification
 			return
 		}
 
-		reason := notificationReason(st, user, src)
+		reason := notificationReasonWithComments(user, src, commentedOn)
 		if opts.Participating && reason == "subscribed" {
 			return
 		}
@@ -137,20 +171,16 @@ func (st *Store) ListNotifications(user *User, baseURL string, opts Notification
 
 	st.mu.RUnlock()
 
-	threads := make([]*NotificationThread, 0, len(rows))
-	for _, row := range rows {
-		threads = append(threads, st.buildThread(row, baseURL))
-	}
-
-	sort.Slice(threads, func(i, j int) bool {
-		return threads[i].UpdatedAt.After(threads[j].UpdatedAt)
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].src.UpdatedAt.After(rows[j].src.UpdatedAt)
 	})
 
-	return threads
+	return rows
 }
 
-// notificationReason derives the thread reason for the user. Callers hold
-// st.mu (it reads st.Comments directly).
+// notificationReason derives the thread reason for a single thread. Callers
+// hold st.mu (it reads st.Comments directly). Used for one-off thread lookups;
+// the list path uses notificationReasonWithComments with a precomputed set.
 func notificationReason(st *Store, user *User, src notificationThreadSource) string {
 	if src.AuthorID == user.ID {
 		return "author"
@@ -160,12 +190,30 @@ func notificationReason(st *Store, user *User, src notificationThreadSource) str
 			return "assign"
 		}
 	}
+	parentType := strings.ToLower(src.Type)
 	for _, c := range st.Comments {
-		parentID := src.ID
-		parentType := strings.ToLower(src.Type)
-		if c.AuthorID == user.ID && c.IssueID == parentID && strings.ToLower(c.ParentType) == parentType {
+		if c.AuthorID == user.ID && c.IssueID == src.ID && strings.ToLower(c.ParentType) == parentType {
 			return "comment"
 		}
+	}
+	return "subscribed"
+}
+
+// notificationReasonWithComments derives the thread reason for the user using
+// a precomputed set of the (parentType, parentID) pairs the user commented on
+// (keyed "type\x1fid"). This keeps the per-thread cost O(1) rather than
+// rescanning every comment in the store.
+func notificationReasonWithComments(user *User, src notificationThreadSource, commentedOn map[string]struct{}) string {
+	if src.AuthorID == user.ID {
+		return "author"
+	}
+	for _, aid := range src.AssigneeIDs {
+		if aid == user.ID {
+			return "assign"
+		}
+	}
+	if _, ok := commentedOn[strings.ToLower(src.Type)+"\x1f"+strconv.Itoa(src.ID)]; ok {
+		return "comment"
 	}
 	return "subscribed"
 }

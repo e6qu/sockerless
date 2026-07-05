@@ -5,6 +5,12 @@ import (
 	"time"
 )
 
+// maxHookDeliveries bounds the retained delivery history per hook. Real GitHub
+// exposes a recent, time-bounded window (≈30 days) rather than the full log;
+// this cap keeps the in-memory (and persisted) history from growing without
+// limit while retaining far more than any list page returns.
+const maxHookDeliveries = 500
+
 // Webhook represents a GitHub repository webhook.
 //
 // Secret carries a real json name so persistence round-trips it (deliveries
@@ -185,9 +191,17 @@ func (st *Store) AddDelivery(delivery *WebhookDelivery) {
 
 	delivery.ID = st.NextDeliveryID
 	st.NextDeliveryID++
-	st.HookDeliveries[delivery.HookID] = append(st.HookDeliveries[delivery.HookID], delivery)
+	list := append(st.HookDeliveries[delivery.HookID], delivery)
+	// GitHub retains only a recent window of webhook deliveries (≈30 days),
+	// not the full history. Bound the per-hook slice so a hook pointed at a
+	// dead endpoint (3 delivery records per event, forever) cannot grow the
+	// store without limit. Keep the newest maxHookDeliveries.
+	if len(list) > maxHookDeliveries {
+		list = list[len(list)-maxHookDeliveries:]
+	}
+	st.HookDeliveries[delivery.HookID] = list
 	if st.persist != nil {
-		st.persist.MustPut("hook_deliveries", strconv.Itoa(delivery.HookID), st.HookDeliveries[delivery.HookID])
+		st.persist.MustPut("hook_deliveries", strconv.Itoa(delivery.HookID), list)
 	}
 }
 

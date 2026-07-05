@@ -444,7 +444,7 @@ func (s *Server) firePullRequestSynchronize(repo *Repo, repoKey, branch string) 
 	s.store.mu.RUnlock()
 
 	for _, pr := range prs {
-		payload := buildPullRequestPayload(repo, pr, nil, "synchronize")
+		payload := buildPullRequestPayload(s.store, repo, pr, nil, "synchronize")
 		s.emitWebhookEvent(repoKey, "pull_request", "synchronize", payload)
 		s.triggerWorkflowsForEvent(repoKey, "pull_request", "synchronize", "refs/heads/"+pr.HeadRefName, payload)
 	}

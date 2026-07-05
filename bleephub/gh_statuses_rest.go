@@ -31,10 +31,16 @@ type CommitStatus struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 }
 
+// maxCommitStatusesPerRef bounds the number of statuses retained per repo+sha.
+// Real GitHub rejects more than 1000 statuses on a single sha; matching that
+// keeps a spammed ref from growing the store without limit.
+const maxCommitStatusesPerRef = 1000
+
 // CommitStatusStore holds commit statuses keyed by repo+ref.
 type CommitStatusStore struct {
 	mu      sync.RWMutex
 	byKey   map[string][]*CommitStatus
+	nextID  int
 	persist *Persistence
 }
 
@@ -54,14 +60,11 @@ func (s *CommitStatusStore) Create(repoKey, sha string, creatorID int, state, ta
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := statusKey(repoKey, sha)
-	id := 1
-	for _, list := range s.byKey {
-		for _, st := range list {
-			if st.ID >= id {
-				id = st.ID + 1
-			}
-		}
+	if s.nextID < 1 {
+		s.nextID = 1
 	}
+	id := s.nextID
+	s.nextID++
 	now := time.Now().UTC()
 	st := &CommitStatus{
 		ID:          id,
@@ -74,7 +77,11 @@ func (s *CommitStatusStore) Create(repoKey, sha string, creatorID int, state, ta
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	s.byKey[key] = append(s.byKey[key], st)
+	list := append(s.byKey[key], st)
+	if len(list) > maxCommitStatusesPerRef {
+		list = list[len(list)-maxCommitStatusesPerRef:]
+	}
+	s.byKey[key] = list
 	s.persistStatuses(key)
 	return st
 }

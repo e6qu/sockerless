@@ -938,6 +938,9 @@ func (s *Server) recordInternalAuditEvent(actor, action, targetType, targetID, o
 		createdAt:  now,
 	}
 	s.store.Misc.auditLogEvents = append([]*AuditLogEvent{e}, s.store.Misc.auditLogEvents...)
+	if len(s.store.Misc.auditLogEvents) > maxAuditLogEntries {
+		s.store.Misc.auditLogEvents = s.store.Misc.auditLogEvents[:maxAuditLogEntries]
+	}
 	if s.store.Misc.persist != nil {
 		s.store.Misc.persist.MustPut("admin_audit_log", strconv.FormatInt(e.ID, 10), e)
 	}

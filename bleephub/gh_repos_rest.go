@@ -849,16 +849,15 @@ func (s *Server) handlePutRepoTopics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Capture the stored topics inside the write callback (under st.mu) — the
+	// repo pointer is shared, so reading r.Topics after the lock is released
+	// would race a concurrent UpdateRepo writer.
+	names := []string{}
 	s.store.UpdateRepo(owner, name, func(r *Repo) {
 		r.Topics = req.Names
 		r.UpdatedAt = time.Now().UTC()
+		names = append([]string{}, r.Topics...)
 	})
-
-	updated := s.store.GetRepo(owner, name)
-	names := updated.Topics
-	if names == nil {
-		names = []string{}
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"names": names,
 	})
@@ -978,6 +977,13 @@ func (s *Server) baseURL(r *http.Request) string {
 // toggles reflect the surfaces bleephub actually serves. Must not be
 // called with st.mu held: it derives open_issues_count from the store.
 func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
+	// Read every mutable repo field off a private snapshot: UpdateRepo mutates
+	// description, topics, homepage, timestamps, etc. under st.mu.Lock, so
+	// reading the live pointer here would race a concurrent writer. The
+	// snapshot takes st.mu only for the copy — the store lookups below
+	// (GetOrg / CountOpenIssues / …) take their own locks, so they must run
+	// after the snapshot releases the lock, never nested under it.
+	repo = st.snapRepo(repo)
 	ownerJSON := map[string]interface{}{}
 	if repo.OwnerType == "Organization" {
 		parts := strings.SplitN(repo.FullName, "/", 2)

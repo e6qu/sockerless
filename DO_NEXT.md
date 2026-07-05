@@ -4,18 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-timeline-locking-boyscout` — PR timeline events (BUG-2310) + store-locking audit (BUG-2311) + boyscout sweep. PR pending.
+`feat/bleephub-fuzz-load-concurrency` — intensive fuzz/load/concurrency hardening. PR pending.
 
 **Scope**
-- **BUG-2310:** PR timelines carry the documented `committed`/`review_requested`/`review_request_removed`/`merged`/`closed`/`reopened` entries. Reviewer request/removal, close/reopen, and merge (REST + GraphQL) record real issue events; `committed` entries derive at render time from the PR's real base..head git commits. `PUT /pulls/{n}/merge` materialises a real merge/squash/rebase commit in git storage (merge_method validated, commit_title/message honored, expected-`sha` 409), so `merge_commit_sha`, `commits`, head/base shas, and the merged event's `commit_id` are real for git-backed PRs. Added the documented `GET /pulls/{n}/commits`; `GET /issues/{n}/events` serves PR numbers. Test: `TestPullRequestTimelineFullFlowREST`.
-- **BUG-2311:** a type-aware lock-graph analysis eliminated ten recursive-RLock paths and a Store.mu↔Misc.mu ABBA inversion via `*Locked` helper variants and two-phase gather/render restructures; lock order documented; `scripts/check-locked-helpers.sh` pre-commit guard; `TestStoreLockReentrancyUnderWriterPressure` deadlocks pre-fix, passes post-fix incl. `-race`. Two real data races fixed along the way.
-- **Boyscout sweep:** three error swallows fixed (environment upsert accepted malformed JSON; release-asset upload could 201 truncated content; a non-commit ref target bypassed the fast-forward check), dead code deleted in Go and the UI, the README renderer's swallow-to-blank base64 decoder replaced, stale comments rewritten timeless.
+- **Coverage-driven fuzzing:** a full-route HTTP fuzzer (`FuzzHTTPRequest` over a 1269-route vocabulary + `FuzzHTTPSequence` stateful chains; 1M+ execs, coverage plateaued, 0 crashers — the request surface is robust) and 16 parser/serializer targets (merge body, search query, emoji path, custom-property definition+values, reactions, timeline+committed-event render, git ref update, content PUT, markdown, and every pagination cursor). Crashers are committed as regression seeds; targets replay deterministically in CI.
+- **Concurrency/persistence stress (`-race`):** CRUD storm, reader-vs-writer lock-graph storm, persist-then-reload fidelity check, goroutine-leak check, and concurrent counter integrity — all dispatching the server's real wrapped handler in-process (no synthetic client).
+- **Load:** benchmarks over a large fixture + `TestLoadSustained` asserting bounded p50/p95/p99 and flat steady-state memory/goroutines.
+- **Bugs fixed (BUG-2316–2323):** 8 off-lock serializer/webhook data races + a reactions off-lock map read; per-repo/per-parent indexes replacing full-store scans (throughput 40→926 req/s, notifications ~103× / search ~277× faster, p99 16s→276ms); unbounded webhook-delivery/audit-log/commit-status growth capped; two UI silent-wrong parsers hardened to fail loud; search `items: null`→`[]`; custom-property name validation.
 
 **Next after merge**
-- BUG-2313: derive generate-release-notes "What's Changed" from PRs merged in the previous_tag..tag commit range.
-- BUG-2314: require real refs at PR creation and delete the `prHeadSHA` pseudo-sha rendering (migrate metadata-only PR fixtures).
-- BUG-2315: render GraphQL `PullRequest.reviewRequests` from the real requested-reviewer state.
-- Live-cloud track (BUG-1075); azuread upstream (BUG-1345).
+- Reported for follow-up by the load hunt: notifications gather is still O(all subscribed items) per request (a subscription/participation index would make it sublinear); `CountForks` still scans all repos per repo render (a parent→fork-count index closes it); webhook fan-out spawns one goroutine per hook per event (drains correctly, no leak — a bounded worker pool would smooth the burst). None are correctness bugs; file as perf follow-ups if they matter.
+- Still open: BUG-2313/2314/2315 (release-notes from merged PRs, delete `prHeadSHA` pseudo-shas, GraphQL `reviewRequests`), staged audit backlog (BUG-1840), live-cloud (BUG-1075).
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics
