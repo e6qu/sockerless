@@ -103,10 +103,34 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 	repo.NextIssueNumber++
 	st.NextPR++
 	st.PullRequests[pr.ID] = pr
+	st.indexPullLocked(pr)
 	if st.persist != nil {
 		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
 	}
 	return pr
+}
+
+// indexPullLocked records the PR in the per-repo secondary index so
+// GetPullRequestByNumber and ListPullRequests resolve in O(PRs-in-repo)
+// instead of a full scan of every PR in the store. Caller holds st.mu.
+func (st *Store) indexPullLocked(pr *PullRequest) {
+	m := st.PullsByRepo[pr.RepoID]
+	if m == nil {
+		m = make(map[int]*PullRequest)
+		st.PullsByRepo[pr.RepoID] = m
+	}
+	m[pr.Number] = pr
+}
+
+// unindexPullLocked removes the PR from the per-repo secondary index.
+// Caller holds st.mu.
+func (st *Store) unindexPullLocked(pr *PullRequest) {
+	if m := st.PullsByRepo[pr.RepoID]; m != nil {
+		delete(m, pr.Number)
+		if len(m) == 0 {
+			delete(st.PullsByRepo, pr.RepoID)
+		}
+	}
 }
 
 // GetPullRequest returns a pull request by global ID.
@@ -120,12 +144,7 @@ func (st *Store) GetPullRequest(id int) *PullRequest {
 func (st *Store) GetPullRequestByNumber(repoID, number int) *PullRequest {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	for _, pr := range st.PullRequests {
-		if pr.RepoID == repoID && pr.Number == number {
-			return pr
-		}
-	}
-	return nil
+	return st.PullsByRepo[repoID][number]
 }
 
 // ListPullRequests returns pull requests for a repository, optionally filtered by state.
@@ -134,10 +153,7 @@ func (st *Store) ListPullRequests(repoID int, state string) []*PullRequest {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	var prs []*PullRequest
-	for _, pr := range st.PullRequests {
-		if pr.RepoID != repoID {
-			continue
-		}
+	for _, pr := range st.PullsByRepo[repoID] {
 		if state != "" && state != "all" {
 			if state == "CLOSED" {
 				// GitHub: "closed" includes merged
@@ -200,6 +216,7 @@ func (st *Store) createPRReviewLocked(prID, authorID int, state, body string) *P
 	}
 	st.NextPRReview++
 	st.PRReviews[review.ID] = review
+	st.PRReviewsByPR[review.PRID] = append(st.PRReviewsByPR[review.PRID], review)
 	if st.persist != nil {
 		st.persist.MustPut("pr_reviews", strconv.Itoa(review.ID), review)
 	}
@@ -214,13 +231,7 @@ func (st *Store) CreatePullRequestReview(repoKey string, pullNumber int, userID 
 	if repo == nil {
 		return nil
 	}
-	var pr *PullRequest
-	for _, p := range st.PullRequests {
-		if p.RepoID == repo.ID && p.Number == pullNumber {
-			pr = p
-			break
-		}
-	}
+	pr := st.PullsByRepo[repo.ID][pullNumber]
 	if pr == nil {
 		return nil
 	}
@@ -242,22 +253,12 @@ func (st *Store) ListPullRequestReviews(repoKey string, pullNumber int) []*PullR
 	if repo == nil {
 		return nil
 	}
-	var pr *PullRequest
-	for _, p := range st.PullRequests {
-		if p.RepoID == repo.ID && p.Number == pullNumber {
-			pr = p
-			break
-		}
-	}
+	pr := st.PullsByRepo[repo.ID][pullNumber]
 	if pr == nil {
 		return nil
 	}
-	var reviews []*PullRequestReview
-	for _, r := range st.PRReviews {
-		if r.PRID == pr.ID {
-			reviews = append(reviews, r)
-		}
-	}
+	reviews := make([]*PullRequestReview, len(st.PRReviewsByPR[pr.ID]))
+	copy(reviews, st.PRReviewsByPR[pr.ID])
 	return reviews
 }
 
@@ -289,10 +290,26 @@ func (st *Store) DeletePullRequestReview(id int) bool {
 		return false
 	}
 	delete(st.PRReviews, id)
+	st.unindexPRReviewLocked(r)
 	if st.persist != nil {
 		st.persist.MustDelete("pr_reviews", strconv.Itoa(id))
 	}
 	return true
+}
+
+// unindexPRReviewLocked removes a review from the per-PR review index. Caller
+// holds st.mu.
+func (st *Store) unindexPRReviewLocked(r *PullRequestReview) {
+	list := st.PRReviewsByPR[r.PRID]
+	for i, x := range list {
+		if x.ID == r.ID {
+			st.PRReviewsByPR[r.PRID] = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(st.PRReviewsByPR[r.PRID]) == 0 {
+		delete(st.PRReviewsByPR, r.PRID)
+	}
 }
 
 // SubmitPullRequestReview transitions a pending review to an event state.
@@ -419,11 +436,7 @@ func (st *Store) RemoveRequestedReviewers(repoKey string, pullNumber int, review
 func (st *Store) ListPRReviews(prID int) []*PullRequestReview {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	var reviews []*PullRequestReview
-	for _, r := range st.PRReviews {
-		if r.PRID == prID {
-			reviews = append(reviews, r)
-		}
-	}
+	reviews := make([]*PullRequestReview, len(st.PRReviewsByPR[prID]))
+	copy(reviews, st.PRReviewsByPR[prID])
 	return reviews
 }

@@ -210,12 +210,16 @@ type Store struct {
 	TeamsBySlug                  map[string]*Team                       // "org/slug" → team
 	Memberships                  map[string]*Membership                 // "org/user" → membership
 	Issues                       map[int]*Issue                         // id → issue
+	IssuesByRepo                 map[int]map[int]*Issue                 // repoID → number → issue (secondary index)
 	Labels                       map[int]*IssueLabel                    // id → label
 	Milestones                   map[int]*Milestone                     // id → milestone
 	Comments                     map[int]*Comment                       // id → comment
+	CommentCounts                map[string]int                         // "parentType\x1fparentID" → comment count (index)
 	IssueEvents                  map[int]*IssueEvent                    // id → issue event
 	PullRequests                 map[int]*PullRequest                   // id → PR
+	PullsByRepo                  map[int]map[int]*PullRequest           // repoID → number → PR (secondary index)
 	PRReviews                    map[int]*PullRequestReview             // id → review
+	PRReviewsByPR                map[int][]*PullRequestReview           // PR id → reviews (secondary index)
 	Workflows                    map[string]*Workflow                   // id → workflow (run-level)
 	WorkflowFiles                map[int64]*WorkflowFile                // id → workflow file (file-level)
 	PendingMessages              []*TaskAgentMessage                    // messages awaiting delivery
@@ -585,12 +589,16 @@ func NewStore() *Store {
 		TeamsBySlug:                  make(map[string]*Team),
 		Memberships:                  make(map[string]*Membership),
 		Issues:                       make(map[int]*Issue),
+		IssuesByRepo:                 make(map[int]map[int]*Issue),
 		Labels:                       make(map[int]*IssueLabel),
 		Milestones:                   make(map[int]*Milestone),
 		Comments:                     make(map[int]*Comment),
+		CommentCounts:                make(map[string]int),
 		IssueEvents:                  make(map[int]*IssueEvent),
 		PullRequests:                 make(map[int]*PullRequest),
+		PullsByRepo:                  make(map[int]map[int]*PullRequest),
 		PRReviews:                    make(map[int]*PullRequestReview),
+		PRReviewsByPR:                make(map[int][]*PullRequestReview),
 		Workflows:                    make(map[string]*Workflow),
 		WorkflowFiles:                make(map[int64]*WorkflowFile),
 		RepoSecrets:                  make(map[string]map[string]*Secret),
@@ -1113,6 +1121,7 @@ func (st *Store) loadFromPersistence() error {
 			return err
 		}
 		st.Issues[i.ID] = &i
+		st.indexIssueLocked(&i)
 		if i.ID >= st.NextIssue {
 			st.NextIssue = i.ID + 1
 		}
@@ -1129,6 +1138,7 @@ func (st *Store) loadFromPersistence() error {
 			return err
 		}
 		st.Comments[c.ID] = &c
+		st.CommentCounts[commentCountKey(c.ParentType, c.IssueID)]++
 		if c.ID >= st.NextComment {
 			st.NextComment = c.ID + 1
 		}
@@ -1155,6 +1165,7 @@ func (st *Store) loadFromPersistence() error {
 			return err
 		}
 		st.PullRequests[pr.ID] = &pr
+		st.indexPullLocked(&pr)
 		if pr.ID >= st.NextPR {
 			st.NextPR = pr.ID + 1
 		}
@@ -1250,6 +1261,11 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.CommitStatuses.byKey[key] = statuses
+			for _, cs := range statuses {
+				if cs.ID >= st.CommitStatuses.nextID {
+					st.CommitStatuses.nextID = cs.ID + 1
+				}
+			}
 			return nil
 		}},
 		{"commit_comments", func(_ string, raw []byte) error {
@@ -1424,6 +1440,7 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.PRReviews[r.ID] = &r
+			st.PRReviewsByPR[r.PRID] = append(st.PRReviewsByPR[r.PRID], &r)
 			if r.ID >= st.NextPRReview {
 				st.NextPRReview = r.ID + 1
 			}
@@ -3047,13 +3064,13 @@ func (st *Store) CountOpenIssues(repoID int) int {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	n := 0
-	for _, issue := range st.Issues {
-		if issue.RepoID == repoID && issue.State == "OPEN" {
+	for _, issue := range st.IssuesByRepo[repoID] {
+		if issue.State == "OPEN" {
 			n++
 		}
 	}
-	for _, pr := range st.PullRequests {
-		if pr.RepoID == repoID && pr.State == "OPEN" {
+	for _, pr := range st.PullsByRepo[repoID] {
+		if pr.State == "OPEN" {
 			n++
 		}
 	}

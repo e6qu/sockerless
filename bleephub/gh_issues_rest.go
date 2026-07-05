@@ -73,7 +73,7 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repoKey := owner + "/" + name
-	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(repo, issue, user, "opened"))
+	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(s.store, repo, issue, user, "opened"))
 
 	s.recordAuditEvent("issues.create", user.Login, "", map[string]interface{}{"repo": repoKey, "issue_id": issue.ID, "title": issue.Title})
 	writeJSON(w, http.StatusCreated, issueToJSON(issue, s.store, s.baseURL(r), repo.FullName))
@@ -330,7 +330,7 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 			action = "reopened"
 		}
 		repoKey := owner + "/" + repoName
-		s.emitWebhookEvent(repoKey, "issues", action, buildIssuesPayload(repo, updated, user, action))
+		s.emitWebhookEvent(repoKey, "issues", action, buildIssuesPayload(s.store, repo, updated, user, action))
 	}
 
 	writeJSON(w, http.StatusOK, issueToJSON(updated, s.store, s.baseURL(r), repo.FullName))
@@ -361,16 +361,10 @@ func (s *Server) handleCreateIssueComment(w http.ResponseWriter, r *http.Request
 	}
 
 	// /issues/{n}/comments routes resolve to either an Issue or a PR by
-	// number — real GitHub treats PRs as issues for this endpoint.
-	parentType := "issue"
-	var parentID, parentNumber int
-	var locked bool
-	if issue := s.store.GetIssueByNumber(repo.ID, num); issue != nil {
-		parentID, parentNumber, locked = issue.ID, issue.Number, issue.Locked
-	} else if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
-		parentType = "pull_request"
-		parentID, parentNumber, locked = pr.ID, pr.Number, pr.Locked
-	} else {
+	// number — real GitHub treats PRs as issues for this endpoint. The
+	// resolver reads the mutable Locked flag under the store lock.
+	parentType, parentID, parentNumber, locked, found := s.store.ResolveCommentParent(repo.ID, num)
+	if !found {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -972,10 +966,10 @@ func (s *Server) handleGetIssueEvent(w http.ResponseWriter, r *http.Request) {
 // --- JSON converters ---
 
 func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[string]interface{} {
-	reactions := st.Reactions.SummarizeReactions("issue", issue.ID)
-	reactions["url"] = baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + strconv.Itoa(issue.Number) + "/reactions"
-
-	// Resolve author
+	// Every mutable field of *issue is read under the store read lock and
+	// captured into locals here: UpdateIssue / SetIssueOrPRLock mutate these
+	// fields under st.mu.Lock, so reading them after RUnlock (title, body,
+	// state, lock flags, timestamps) would race a concurrent writer.
 	var authorJSON map[string]interface{}
 	st.mu.RLock()
 	if u, ok := st.Users[issue.AuthorID]; ok {
@@ -1005,14 +999,30 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 		milestone = st.Milestones[issue.MilestoneID]
 	}
 
-	// Count comments while holding the lock
-	commentCount := 0
-	for _, c := range st.Comments {
-		if c.ParentType == "issue" && c.IssueID == issue.ID {
-			commentCount++
-		}
+	// Count comments via the maintained index while holding the lock.
+	commentCount := st.countCommentsForLocked("issue", issue.ID)
+
+	// Snapshot the mutable scalar fields before releasing the lock.
+	issueID := issue.ID
+	issueNumber := issue.Number
+	nodeID := issue.NodeID
+	title := issue.Title
+	body := issue.Body
+	rawState := issue.State
+	stateReason := issue.StateReason
+	locked := issue.Locked
+	activeLockReason := issue.ActiveLockReason
+	createdAt := issue.CreatedAt
+	updatedAt := issue.UpdatedAt
+	var closedAtCopy *time.Time
+	if issue.ClosedAt != nil {
+		c := *issue.ClosedAt
+		closedAtCopy = &c
 	}
 	st.mu.RUnlock()
+
+	reactions := st.Reactions.SummarizeReactions("issue", issueID)
+	reactions["url"] = baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + strconv.Itoa(issueNumber) + "/reactions"
 
 	var milestoneJSON interface{}
 	if milestone != nil {
@@ -1026,44 +1036,44 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 	}
 
 	// REST uses lowercase state
-	state := strings.ToLower(issue.State)
+	state := strings.ToLower(rawState)
 
 	var closedAt interface{}
-	if issue.ClosedAt != nil {
-		closedAt = issue.ClosedAt.Format(time.RFC3339)
+	if closedAtCopy != nil {
+		closedAt = closedAtCopy.Format(time.RFC3339)
 	}
 
-	var activeLockReason interface{}
-	if issue.Locked {
-		activeLockReason = issue.ActiveLockReason
+	var activeLockReasonJSON interface{}
+	if locked {
+		activeLockReasonJSON = activeLockReason
 	}
 
-	numStr := strconv.Itoa(issue.Number)
+	numStr := strconv.Itoa(issueNumber)
 	api := baseURL + "/api/v3/repos/" + repoFullName + "/issues/" + numStr
 	return map[string]interface{}{
-		"id":                 issue.ID,
-		"node_id":            issue.NodeID,
+		"id":                 issueID,
+		"node_id":            nodeID,
 		"url":                api,
 		"html_url":           baseURL + "/" + repoFullName + "/issues/" + numStr,
 		"repository_url":     baseURL + "/api/v3/repos/" + repoFullName,
 		"comments_url":       api + "/comments",
 		"events_url":         api + "/events",
 		"labels_url":         api + "/labels{/name}",
-		"number":             issue.Number,
-		"title":              issue.Title,
-		"body":               issue.Body,
+		"number":             issueNumber,
+		"title":              title,
+		"body":               body,
 		"state":              state,
-		"state_reason":       issue.StateReason,
+		"state_reason":       stateReason,
 		"user":               authorJSON,
 		"labels":             labels,
 		"assignee":           assignee,
 		"assignees":          assignees,
 		"milestone":          milestoneJSON,
-		"locked":             issue.Locked,
-		"active_lock_reason": activeLockReason,
+		"locked":             locked,
+		"active_lock_reason": activeLockReasonJSON,
 		"comments":           commentCount,
-		"created_at":         issue.CreatedAt.Format(time.RFC3339),
-		"updated_at":         issue.UpdatedAt.Format(time.RFC3339),
+		"created_at":         createdAt.Format(time.RFC3339),
+		"updated_at":         updatedAt.Format(time.RFC3339),
 		"closed_at":          closedAt,
 		"reactions":          reactions,
 	}

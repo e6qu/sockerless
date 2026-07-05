@@ -295,7 +295,7 @@ func (s *Server) handleListReactions(parentType, pathParam string) http.HandlerF
 		page := paginateAndLink(w, r, reactions)
 		out := make([]map[string]interface{}, 0, len(page))
 		for _, rx := range page {
-			user := s.store.Users[rx.UserID]
+			user := s.store.GetUserByID(rx.UserID)
 			out = append(out, reactionToJSON(rx, user))
 		}
 		writeJSON(w, http.StatusOK, out)

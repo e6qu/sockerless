@@ -411,7 +411,15 @@ async function ghFetchPage<T>(url: string): Promise<Page<T>> {
     handleUnauthorized(res);
     throw new ApiError(res.status, `${res.status} ${res.statusText}`);
   }
-  const items = (await res.json()) as T[];
+  // No silent cast: a Link-paginated list endpoint must answer with a JSON
+  // array. A non-array body (an error object, a wrapped envelope) would
+  // otherwise flow to the caller as fake "items" and render as garbage or a
+  // mid-render crash — surface it as a clear error instead.
+  const body = (await res.json()) as unknown;
+  if (!Array.isArray(body)) {
+    throw new Error("malformed response: expected a JSON array");
+  }
+  const items = body as T[];
   const link = res.headers.get("Link");
   return { items, nextUrl: parseLinkNext(link), lastPage: parseLinkLast(link) };
 }
@@ -686,12 +694,22 @@ export const fetchWebhooks = (owner: string, repo: string) =>
 export const fetchSecrets = (owner: string, repo: string) =>
   ghFetch<{ secrets: GithubSecret[] }>(
     `/api/v3/repos/${owner}/${repo}/actions/secrets`
-  ).then((r) => r.secrets);
+  ).then((r) => {
+    if (!Array.isArray(r.secrets)) {
+      throw new Error(`malformed response: missing "secrets" array`);
+    }
+    return r.secrets;
+  });
 
 export const fetchEnvironments = (owner: string, repo: string) =>
   ghFetch<{ environments: GithubEnvironment[] }>(
     `/api/v3/repos/${owner}/${repo}/environments`
-  ).then((r) => r.environments);
+  ).then((r) => {
+    if (!Array.isArray(r.environments)) {
+      throw new Error(`malformed response: missing "environments" array`);
+    }
+    return r.environments;
+  });
 
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);

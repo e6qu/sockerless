@@ -5,7 +5,25 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"unicode"
 )
+
+// validCustomPropertyName reports whether name is an acceptable custom-property
+// name. GitHub rejects names with surrounding or embedded whitespace and
+// control characters (a name is a URL path segment on the values/schema
+// endpoints); mirror that so an invalid name is a 422, not a silently stored
+// definition.
+func validCustomPropertyName(name string) bool {
+	if name == "" || strings.TrimSpace(name) != name {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
+}
 
 // GitHub organization custom properties: typed key/value definitions an
 // organization declares once (the schema) and assigns per repository (the
@@ -66,6 +84,10 @@ type customPropertyPayload struct {
 func (p *customPropertyPayload) toCustomProperty(w http.ResponseWriter, name string) *CustomProperty {
 	if name == "" {
 		writeGHValidationError(w, "CustomProperty", "property_name", "missing_field")
+		return nil
+	}
+	if !validCustomPropertyName(name) {
+		writeGHValidationError(w, "CustomProperty", "property_name", "invalid")
 		return nil
 	}
 	if !customPropertyValueTypes[p.ValueType] {

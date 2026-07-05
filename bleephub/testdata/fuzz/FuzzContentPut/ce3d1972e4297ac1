@@ -1,0 +1,5 @@
+go test fuzz v1
+string(",/deep/file.tx,")
+string("eA==")
+string("main")
+string("mgs")

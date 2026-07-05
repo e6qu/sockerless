@@ -1194,10 +1194,19 @@ func (s *Server) recordAuditEvent(action, actor, org string, data map[string]int
 		Version:   "1.1",
 	}
 	s.store.Misc.auditLog = append([]*AuditEntry{entry}, s.store.Misc.auditLog...)
+	if len(s.store.Misc.auditLog) > maxAuditLogEntries {
+		s.store.Misc.auditLog = s.store.Misc.auditLog[:maxAuditLogEntries]
+	}
 	if s.store.Misc.persist != nil {
 		s.store.Misc.persist.MustPut("audit_log", fmt.Sprintf("%d", entry.ID), entry)
 	}
 }
+
+// maxAuditLogEntries bounds the in-memory audit log. Real GitHub retains audit
+// events for a finite window (Enterprise default ≈6 months); an uncapped
+// prepend-only slice both grows without limit and makes each write O(n). The
+// cap keeps the newest entries and bounds both.
+const maxAuditLogEntries = 5000
 
 func (s *Server) seedDefaultMarketplacePlans() {
 	s.store.Misc.mu.Lock()

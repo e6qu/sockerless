@@ -291,26 +291,122 @@ func (s *Server) handleSearchIssues(w http.ResponseWriter, r *http.Request) {
 	s.store.mu.RUnlock()
 
 	base := s.baseURL(r)
-	var results []map[string]interface{}
+
+	// Unify matched issue and PR rows so the whole result set can be sorted and
+	// paginated *before* rendering — rendering every matched row (issueToJSON +
+	// repoToJSON per row) only to return one page is the dominant per-request
+	// cost on a large corpus.
+	rows := make([]searchIssueRow, 0, len(issueRows)+len(prRows))
 	for _, row := range issueRows {
-		item := issueToJSON(row.issue, s.store, base, row.repo.FullName)
-		item["score"] = 1.0
-		item["author_association"] = row.assoc
-		item["draft"] = false
-		item["pull_request"] = nil
-		item["repository"] = repoToJSON(row.repo, s.store, base)
-		results = append(results, item)
+		rows = append(rows, searchIssueRow{issue: row.issue, repo: row.repo, assoc: row.assoc})
 	}
 	for _, row := range prRows {
+		rows = append(rows, searchIssueRow{pr: row.pr, repo: row.repo, assoc: row.assoc})
+	}
+
+	render := func(row searchIssueRow) map[string]interface{} {
+		if row.issue != nil {
+			item := issueToJSON(row.issue, s.store, base, row.repo.FullName)
+			item["score"] = 1.0
+			item["author_association"] = row.assoc
+			item["draft"] = false
+			item["pull_request"] = nil
+			item["repository"] = repoToJSON(row.repo, s.store, base)
+			return item
+		}
 		item := issueToJSONForPR(row.pr, s.store, base, row.repo.FullName)
 		item["score"] = 1.0
 		item["author_association"] = row.assoc
 		item["repository"] = repoToJSON(row.repo, s.store, base)
-		results = append(results, item)
+		return item
 	}
 
-	results = sortSearchResults(results, q.Sort, q.Order)
-	writeJSON(w, http.StatusOK, searchEnvelope("issues", results, q.Page, q.PerPage))
+	total := len(rows)
+
+	// The "comments" sort key needs a rendered comment count per row, so it
+	// keeps the render-all path (rare). created/updated/best-match sort only on
+	// row timestamps, so those render just the requested page.
+	if q.Sort == "comments" {
+		results := make([]map[string]interface{}, 0, total)
+		for _, row := range rows {
+			results = append(results, render(row))
+		}
+		results = sortSearchResults(results, q.Sort, q.Order)
+		writeJSON(w, http.StatusOK, searchEnvelope("issues", results, q.Page, q.PerPage))
+		return
+	}
+
+	sortSearchRows(rows, q.Sort, q.Order)
+	start, end := searchPageBounds(q.Page, q.PerPage, total)
+	pageItems := make([]map[string]interface{}, 0, end-start)
+	for _, row := range rows[start:end] {
+		pageItems = append(pageItems, render(row))
+	}
+	out := map[string]interface{}{
+		"total_count":        total,
+		"incomplete_results": false,
+		"items":              pageItems,
+		"search_type":        "issues",
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// searchIssueRow is a matched issue or PR gathered by the issue-search scan,
+// carrying just enough to sort and then render only the requested page.
+type searchIssueRow struct {
+	issue *Issue
+	pr    *PullRequest
+	repo  *Repo
+	assoc string
+}
+
+func (row searchIssueRow) createdAt() time.Time {
+	if row.issue != nil {
+		return row.issue.CreatedAt
+	}
+	return row.pr.CreatedAt
+}
+
+func (row searchIssueRow) updatedAt() time.Time {
+	if row.issue != nil {
+		return row.issue.UpdatedAt
+	}
+	return row.pr.UpdatedAt
+}
+
+// sortSearchRows orders unified search rows in place by the same keys as
+// sortSearchResults (created/updated), so paginate-before-render yields the
+// identical page a render-all-then-sort would.
+func sortSearchRows(rows []searchIssueRow, sortKey, order string) {
+	switch sortKey {
+	case "created":
+		sort.SliceStable(rows, func(i, j int) bool {
+			if order == "asc" {
+				return rows[i].createdAt().Before(rows[j].createdAt())
+			}
+			return rows[i].createdAt().After(rows[j].createdAt())
+		})
+	case "updated":
+		sort.SliceStable(rows, func(i, j int) bool {
+			if order == "asc" {
+				return rows[i].updatedAt().Before(rows[j].updatedAt())
+			}
+			return rows[i].updatedAt().After(rows[j].updatedAt())
+		})
+	}
+}
+
+// searchPageBounds computes the [start,end) slice bounds for the given page.
+func searchPageBounds(page, perPage, total int) (int, int) {
+	start := (page - 1) * perPage
+	if start < 0 || start > total {
+		start = total
+	}
+	end := start + perPage
+	if end > total {
+		end = total
+	}
+	return start, end
 }
 
 func issueToJSONForPR(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
@@ -354,12 +450,7 @@ func issueToJSONForPullRequest(pr *PullRequest, st *Store, baseURL, repoFullName
 	if pr.MilestoneID > 0 {
 		milestone = st.Milestones[pr.MilestoneID]
 	}
-	commentCount := 0
-	for _, c := range st.Comments {
-		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
-			commentCount++
-		}
-	}
+	commentCount := st.countCommentsForLocked("pull_request", pr.ID)
 	st.mu.RUnlock()
 
 	var milestoneJSON interface{}
@@ -756,10 +847,17 @@ func searchEnvelope(searchType string, items []map[string]interface{}, page, per
 	if end > total {
 		end = total
 	}
+	// GitHub's search envelope always carries items as an array; an empty
+	// result set is [], never null. Slicing a nil source (no matches) yields a
+	// nil slice that would marshal to null, so materialize an empty array.
+	pageItems := items[start:end]
+	if pageItems == nil {
+		pageItems = []map[string]interface{}{}
+	}
 	m := map[string]interface{}{
 		"total_count":        total,
 		"incomplete_results": false,
-		"items":              items[start:end],
+		"items":              pageItems,
 	}
 	if searchType != "" {
 		m["search_type"] = searchType

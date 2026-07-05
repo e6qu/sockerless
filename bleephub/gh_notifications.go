@@ -48,8 +48,9 @@ func (s *Server) handleListNotifications(w http.ResponseWriter, r *http.Request)
 	}
 
 	opts := parseNotificationListOptions(r)
-	threads := s.store.ListNotifications(user, s.baseURL(r), opts)
-	threads = paginateAndLink(w, r, threads)
+	rows := s.store.NotificationRows(user, opts)
+	rows = paginateAndLink(w, r, rows)
+	threads := s.store.BuildNotificationThreads(rows, s.baseURL(r))
 	out := make([]map[string]interface{}, len(threads))
 	for i, t := range threads {
 		out[i] = threadToJSON(t)
@@ -93,8 +94,9 @@ func (s *Server) handleListRepoNotifications(w http.ResponseWriter, r *http.Requ
 
 	opts := parseNotificationListOptions(r)
 	opts.RepoScope = repo.FullName
-	threads := s.store.ListNotifications(user, s.baseURL(r), opts)
-	threads = paginateAndLink(w, r, threads)
+	rows := s.store.NotificationRows(user, opts)
+	rows = paginateAndLink(w, r, rows)
+	threads := s.store.BuildNotificationThreads(rows, s.baseURL(r))
 	out := make([]map[string]interface{}, len(threads))
 	for i, t := range threads {
 		out[i] = threadToJSON(t)

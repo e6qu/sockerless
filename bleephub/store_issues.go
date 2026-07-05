@@ -531,11 +531,35 @@ func (st *Store) CreateIssue(repoID, authorID int, title, body string, labelIDs,
 	repo.NextIssueNumber++
 	st.NextIssue++
 	st.Issues[issue.ID] = issue
+	st.indexIssueLocked(issue)
 	if st.persist != nil {
 		st.persist.MustPut("issues", strconv.Itoa(issue.ID), issue)
 	}
 	st.recordIssueEventLocked(repoID, issue.ID, authorID, "opened")
 	return issue
+}
+
+// indexIssueLocked records the issue in the per-repo secondary index so
+// GetIssueByNumber and ListIssues resolve in O(issues-in-repo) instead of a
+// full scan of every issue in the store. Caller holds st.mu.
+func (st *Store) indexIssueLocked(issue *Issue) {
+	m := st.IssuesByRepo[issue.RepoID]
+	if m == nil {
+		m = make(map[int]*Issue)
+		st.IssuesByRepo[issue.RepoID] = m
+	}
+	m[issue.Number] = issue
+}
+
+// unindexIssueLocked removes the issue from the per-repo secondary index.
+// Caller holds st.mu.
+func (st *Store) unindexIssueLocked(issue *Issue) {
+	if m := st.IssuesByRepo[issue.RepoID]; m != nil {
+		delete(m, issue.Number)
+		if len(m) == 0 {
+			delete(st.IssuesByRepo, issue.RepoID)
+		}
+	}
 }
 
 // GetIssue returns an issue by global ID.
@@ -549,12 +573,7 @@ func (st *Store) GetIssue(id int) *Issue {
 func (st *Store) GetIssueByNumber(repoID, number int) *Issue {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
-	for _, issue := range st.Issues {
-		if issue.RepoID == repoID && issue.Number == number {
-			return issue
-		}
-	}
-	return nil
+	return st.IssuesByRepo[repoID][number]
 }
 
 // ListIssues returns issues for a repository, optionally filtered by state.
@@ -563,10 +582,7 @@ func (st *Store) ListIssues(repoID int, state string) []*Issue {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	var issues []*Issue
-	for _, issue := range st.Issues {
-		if issue.RepoID != repoID {
-			continue
-		}
+	for _, issue := range st.IssuesByRepo[repoID] {
 		if state != "" && state != "all" {
 			if issue.State != state {
 				continue
@@ -600,23 +616,13 @@ func (st *Store) issueByRepoKeyAndNumber(repoKey string, number int) *Issue {
 	if repo == nil {
 		return nil
 	}
-	for _, issue := range st.Issues {
-		if issue.RepoID == repo.ID && issue.Number == number {
-			return issue
-		}
-	}
-	return nil
+	return st.IssuesByRepo[repo.ID][number]
 }
 
 // issueByRepoIDAndNumber resolves an issue by its repo ID and number while
 // holding the store lock. Returns nil when not found.
 func (st *Store) issueByRepoIDAndNumber(repoID, number int) *Issue {
-	for _, issue := range st.Issues {
-		if issue.RepoID == repoID && issue.Number == number {
-			return issue
-		}
-	}
-	return nil
+	return st.IssuesByRepo[repoID][number]
 }
 
 // AddIssueAssignees adds assignees to an issue, returning true when the issue
@@ -1027,6 +1033,7 @@ func (st *Store) CreateCommentFor(parentType string, parentID, authorID int, bod
 	}
 	st.NextComment++
 	st.Comments[c.ID] = c
+	st.CommentCounts[commentCountKey(parentType, parentID)]++
 	if st.persist != nil {
 		st.persist.MustPut("comments", strconv.Itoa(c.ID), c)
 	}
@@ -1056,14 +1063,42 @@ func (st *Store) GetComment(id int) *Comment {
 func (st *Store) DeleteComment(id int) bool {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if _, ok := st.Comments[id]; !ok {
+	c, ok := st.Comments[id]
+	if !ok {
 		return false
 	}
 	delete(st.Comments, id)
+	key := commentCountKey(c.ParentType, c.IssueID)
+	if st.CommentCounts[key] <= 1 {
+		delete(st.CommentCounts, key)
+	} else {
+		st.CommentCounts[key]--
+	}
 	if st.persist != nil {
 		st.persist.MustDelete("comments", strconv.Itoa(id))
 	}
 	return true
+}
+
+// commentCountKey builds the CommentCounts index key for a comment parent.
+func commentCountKey(parentType string, parentID int) string {
+	return parentType + "\x1f" + strconv.Itoa(parentID)
+}
+
+// CountCommentsFor returns the number of conversation comments on the given
+// parent (parentType "issue" or "pull_request") via the maintained index,
+// avoiding a full scan of every comment in the store. Caller must NOT hold
+// st.mu.
+func (st *Store) CountCommentsFor(parentType string, parentID int) int {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return st.CommentCounts[commentCountKey(parentType, parentID)]
+}
+
+// countCommentsForLocked is the lock-free variant for callers already holding
+// st.mu (the JSON serializers gather under one lock).
+func (st *Store) countCommentsForLocked(parentType string, parentID int) int {
+	return st.CommentCounts[commentCountKey(parentType, parentID)]
 }
 
 // GetIssueOrPullRequestIDByNumber returns the global ID of the issue or
@@ -1084,6 +1119,27 @@ func (st *Store) GetIssueOrPullRequestIDByNumber(repoID, number int) int {
 		}
 	}
 	return 0
+}
+
+// ResolveCommentParent resolves the issue or pull request with the given
+// repo + number and returns its kind, global ID, number, and locked flag in a
+// single read-locked pass. Callers must not read the mutable Locked flag off a
+// shared *Issue/*PullRequest pointer themselves — SetIssueOrPRLock mutates it
+// under the write lock, so the read has to happen under st.mu here.
+func (st *Store) ResolveCommentParent(repoID, number int) (parentType string, parentID, parentNumber int, locked, found bool) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, i := range st.Issues {
+		if i.RepoID == repoID && i.Number == number {
+			return "issue", i.ID, i.Number, i.Locked, true
+		}
+	}
+	for _, pr := range st.PullRequests {
+		if pr.RepoID == repoID && pr.Number == number {
+			return "pull_request", pr.ID, pr.Number, pr.Locked, true
+		}
+	}
+	return "", 0, 0, false, false
 }
 
 // SetIssueOrPRLock toggles the locked flag on the issue or PR with the

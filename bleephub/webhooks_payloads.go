@@ -6,6 +6,54 @@ import (
 	"time"
 )
 
+// snapRepo / snapIssue / snapPR / snapUser return shallow value copies of a
+// shared store entity taken under the store read lock. Webhook payload
+// builders read mutable scalar fields (title, body, state, description,
+// timestamps) off these entities; a concurrent Update* writer mutates the
+// same fields under st.mu.Lock, so the builders must read a private copy
+// rather than the live pointer. Each snapshot takes and releases the read
+// lock independently — they are never nested, so a queued writer cannot
+// deadlock them (sync.RWMutex read locks are not reentrant).
+func (st *Store) snapRepo(r *Repo) *Repo {
+	if r == nil {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	cp := *r
+	return &cp
+}
+
+func (st *Store) snapIssue(i *Issue) *Issue {
+	if i == nil {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	cp := *i
+	return &cp
+}
+
+func (st *Store) snapPR(pr *PullRequest) *PullRequest {
+	if pr == nil {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	cp := *pr
+	return &cp
+}
+
+func (st *Store) snapUser(u *User) *User {
+	if u == nil {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	cp := *u
+	return &cp
+}
+
 // attachInstallationBlock injects `installation: {id, node_id}` at the top
 // level of every event payload, mirroring what real GH does for events
 // delivered through an App installation.
@@ -65,8 +113,8 @@ func buildInstallationRepositoriesEventPayload(app *App, action string, inst *In
 	return out
 }
 
-func buildPushPayload(repo *Repo, sender *User, ref, before, after string) map[string]interface{} {
-	return buildPushPayloadWithInstallation(repo, sender, ref, before, after, nil)
+func buildPushPayload(st *Store, repo *Repo, sender *User, ref, before, after string) map[string]interface{} {
+	return buildPushPayloadWithInstallation(st.snapRepo(repo), st.snapUser(sender), ref, before, after, nil)
 }
 
 func buildPushPayloadWithInstallation(repo *Repo, sender *User, ref, before, after string, inst *Installation) map[string]interface{} {
@@ -85,7 +133,11 @@ func buildPushPayloadWithInstallation(repo *Repo, sender *User, ref, before, aft
 	}, inst)
 }
 
-func buildPullRequestPayload(repo *Repo, pr *PullRequest, sender *User, action string) map[string]interface{} {
+func buildPullRequestPayload(st *Store, repo *Repo, pr *PullRequest, sender *User, action string) map[string]interface{} {
+	// Snapshot the shared entities before reading their mutable fields.
+	repo = st.snapRepo(repo)
+	pr = st.snapPR(pr)
+	sender = st.snapUser(sender)
 	state := "open"
 	if pr.State == "CLOSED" || pr.State == "MERGED" {
 		state = "closed"
@@ -128,7 +180,11 @@ func buildPullRequestPayloadInner(action string, pr *PullRequest, prJSON map[str
 	}, inst)
 }
 
-func buildIssuesPayload(repo *Repo, issue *Issue, sender *User, action string) map[string]interface{} {
+func buildIssuesPayload(st *Store, repo *Repo, issue *Issue, sender *User, action string) map[string]interface{} {
+	// Snapshot the shared entities before reading their mutable fields.
+	repo = st.snapRepo(repo)
+	issue = st.snapIssue(issue)
+	sender = st.snapUser(sender)
 	state := "open"
 	if issue.State == "CLOSED" {
 		state = "closed"

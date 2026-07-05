@@ -375,7 +375,7 @@ func (s *Server) handleGitReceivePack(w http.ResponseWriter, r *http.Request, ow
 		// Record the ref update so the repository activity, events, and
 		// statistics surfaces reflect real pushes.
 		s.store.RecordRepoActivity(repo.ID, ref, before, after, pusherID, classifyRefUpdate(gitStor, cmd.Old, cmd.New))
-		payload := buildPushPayload(repo, nil, ref, before, after)
+		payload := buildPushPayload(s.store, repo, nil, ref, before, after)
 		s.emitWebhookEvent(repoKey, "push", "", payload)
 		go s.triggerWorkflowsForEvent(repoKey, "push", "", ref, payload)
 		// A push to an open PR's head branch is a pull_request

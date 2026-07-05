@@ -455,19 +455,23 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
 			delete(st.Issues, id)
+			st.unindexIssueLocked(issue)
 			if st.persist != nil {
 				st.persist.MustDelete("issues", strconv.Itoa(id))
 			}
 		}
 	}
+	delete(st.IssuesByRepo, repo.ID)
 	for id, pr := range st.PullRequests {
 		if pr.RepoID == repo.ID {
 			delete(st.PullRequests, id)
+			st.unindexPullLocked(pr)
 			if st.persist != nil {
 				st.persist.MustDelete("pull_requests", strconv.Itoa(id))
 			}
 		}
 	}
+	delete(st.PullsByRepo, repo.ID)
 	st.Releases.DeleteAllForRepo(repo.ID)
 
 	// Discussion surfaces — comments first because they reference discussions.

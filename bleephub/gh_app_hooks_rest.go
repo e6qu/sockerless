@@ -174,9 +174,13 @@ func (st *Store) AddAppDelivery(appID int, d *WebhookDelivery) {
 	}
 	d.ID = st.NextDeliveryID
 	st.NextDeliveryID++
-	st.AppHookDeliveries[appID] = append(st.AppHookDeliveries[appID], d)
+	list := append(st.AppHookDeliveries[appID], d)
+	if len(list) > maxHookDeliveries {
+		list = list[len(list)-maxHookDeliveries:]
+	}
+	st.AppHookDeliveries[appID] = list
 	if st.persist != nil {
-		st.persist.MustPut("app_hook_deliveries", strconv.Itoa(appID), st.AppHookDeliveries[appID])
+		st.persist.MustPut("app_hook_deliveries", strconv.Itoa(appID), list)
 	}
 }
 

@@ -79,7 +79,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	repoKey := owner + "/" + name
-	openedPayload := buildPullRequestPayload(repo, pr, user, "opened")
+	openedPayload := buildPullRequestPayload(s.store, repo, pr, user, "opened")
 	s.emitWebhookEvent(repoKey, "pull_request", "opened", openedPayload)
 	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "opened", "refs/heads/"+pr.HeadRefName, openedPayload)
 
@@ -284,7 +284,7 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 			action = "reopened"
 		}
 		repoKey := owner + "/" + repoName
-		payload := buildPullRequestPayload(repo, updated, user, action)
+		payload := buildPullRequestPayload(s.store, repo, updated, user, action)
 		s.emitWebhookEvent(repoKey, "pull_request", action, payload)
 		go s.triggerWorkflowsForEvent(repoKey, "pull_request", action, "refs/heads/"+updated.HeadRefName, payload)
 	}
@@ -382,7 +382,7 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 
 	merged := s.store.GetPullRequest(pr.ID)
 	repoKey := owner + "/" + repoName
-	mergedPayload := buildPullRequestPayload(repo, merged, user, "closed")
+	mergedPayload := buildPullRequestPayload(s.store, repo, merged, user, "closed")
 	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
 	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
@@ -1254,6 +1254,12 @@ func prHeadSHA(prID int) string {
 // Bleephub PRs are same-repository, so head and base both carry the
 // repository and its owner. Must not be called with st.mu held.
 func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
+	// Read the PR's mutable fields off a private snapshot: an UpdatePullRequest
+	// / merge / close writer mutates title, body, state, merge shas, and
+	// timestamps under st.mu.Lock, so the live pointer must not be read here.
+	// The snapshot's RLock is released before the map-resolution RLock below —
+	// they are sequential, never nested.
+	pr = st.snapPR(pr)
 	st.mu.RLock()
 
 	// Resolve author
@@ -1424,19 +1430,11 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
 	out := pullRequestSimpleJSON(pr, st, baseURL, repoFullName)
 
+	// Snapshot before reading the mutable merge/diff fields off the pointer.
+	pr = st.snapPR(pr)
 	st.mu.RLock()
-	reviewCount := 0
-	for _, r := range st.PRReviews {
-		if r.PRID == pr.ID {
-			reviewCount++
-		}
-	}
-	commentCount := 0
-	for _, c := range st.Comments {
-		if c.ParentType == "pull_request" && c.IssueID == pr.ID {
-			commentCount++
-		}
-	}
+	reviewCount := len(st.PRReviewsByPR[pr.ID])
+	commentCount := st.countCommentsForLocked("pull_request", pr.ID)
 	st.mu.RUnlock()
 
 	merged := pr.State == "MERGED"

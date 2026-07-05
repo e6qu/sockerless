@@ -618,7 +618,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			}
 			after, _ := p.Args["after"].(string)
 
-			return paginateRepos(repos, first, after), nil
+			return paginateRepos(s.store, repos, first, after), nil
 		},
 	})
 
@@ -645,7 +645,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					message: fmt.Sprintf("Could not resolve to a Repository with the name '%s/%s'.", owner, name),
 				}
 			}
-			return repoToGraphQL(repo), nil
+			return repoToGraphQL(s.store.snapRepo(repo)), nil
 		},
 	})
 
@@ -736,7 +736,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					}
 
 					return map[string]interface{}{
-						"repository": repoToGraphQL(repo),
+						"repository": repoToGraphQL(s.store.snapRepo(repo)),
 					}, nil
 				},
 			},
@@ -782,7 +782,12 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 	return repoType, mutationType
 }
 
-// repoToGraphQL converts a Repo to a map for GraphQL resolvers.
+// repoToGraphQL converts a Repo to a map for GraphQL resolvers. It reads the
+// repo's mutable fields (description, topics, timestamps) directly, so the
+// caller must pass either a private snapshot (st.snapRepo) or a repo it holds
+// the store lock over — never the live shared pointer off-lock, which would
+// race a concurrent UpdateRepo. Under-lock callers (the *Locked GraphQL paths)
+// pass the live pointer; off-lock resolvers pass a snapshot.
 func repoToGraphQL(repo *Repo) map[string]interface{} {
 	var ownerMap map[string]interface{}
 	if repo.Owner != nil {
@@ -937,9 +942,13 @@ func (s *Server) repoHasNoCommits(owner, name string) bool {
 	return headRef.Hash().IsZero()
 }
 
-// paginateRepos implements Relay-style cursor pagination.
-func paginateRepos(repos []*Repo, first int, after string) map[string]interface{} {
-	return paginateGQL(repos, first, after, repoToGraphQL)
+// paginateRepos implements Relay-style cursor pagination. Each page element is
+// rendered from a private snapshot so repoToGraphQL never reads a shared repo
+// pointer off the store lock.
+func paginateRepos(st *Store, repos []*Repo, first int, after string) map[string]interface{} {
+	return paginateGQL(repos, first, after, func(r *Repo) map[string]interface{} {
+		return repoToGraphQL(st.snapRepo(r))
+	})
 }
 
 func encodeCursor(idx int) string {
