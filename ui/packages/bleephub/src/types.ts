@@ -1964,3 +1964,114 @@ export interface GithubSSHSigningKey {
 export interface GithubBlockedUser {
   login: string;
 }
+
+// ─── WP-D (org overview + people/teams, user profile, dashboard) ────────
+
+/**
+ * The GitHub `public-user` shape served by GET /users/{login} and
+ * GET /user — the simple-user members plus the profile fields and live
+ * counters (followers/following/public_repos). company/location/
+ * twitter_username are null when unset, matching real GitHub.
+ */
+export interface GithubUserProfile {
+  login: string;
+  id: number;
+  avatar_url: string;
+  type: string;
+  site_admin: boolean;
+  name: string | null;
+  email: string | null;
+  bio: string | null;
+  blog: string | null;
+  company: string | null;
+  location: string | null;
+  twitter_username: string | null;
+  followers: number;
+  following: number;
+  public_repos: number;
+  created_at: string;
+  html_url?: string;
+}
+
+/**
+ * The GitHub `organization-full` shape served by GET /orgs/{org} —
+ * profile fields plus the live public_repos counter.
+ */
+export interface GithubOrgProfile {
+  login: string;
+  id: number;
+  avatar_url: string;
+  description: string | null;
+  name: string | null;
+  company: string | null;
+  blog: string | null;
+  location: string | null;
+  email: string | null;
+  twitter_username: string | null;
+  public_repos: number;
+  followers: number;
+  following: number;
+  html_url: string;
+  created_at: string;
+}
+
+/** The GitHub `organization-simple` shape in GET /users/{login}/orgs. */
+export interface GithubOrgSummary {
+  login: string;
+  id: number;
+  avatar_url: string;
+  description: string | null;
+}
+
+/** The GitHub `team` (team-simple) shape in GET /orgs/{org}/teams. */
+export interface GithubOrgTeam {
+  id: number;
+  slug: string;
+  name: string;
+  description: string | null;
+  privacy: string;
+  permission: string;
+  html_url: string;
+  parent: { slug: string; name: string } | null;
+}
+
+/**
+ * An issue from GET /issues (the authenticated user's cross-repo issue
+ * feed). Unlike the repo-scoped issue shape it carries the `repository`
+ * each result lives in, since results span repositories.
+ */
+export interface GithubFeedIssue {
+  id: number;
+  number: number;
+  title: string;
+  state: GithubState;
+  comments: number;
+  updated_at: string;
+  html_url: string;
+  repository: { full_name: string; name: string; owner: { login: string } };
+}
+
+// ─── WP-C: Issues & Pull Requests GitHub-faithful layout ────────────────
+
+/** A changed file in a pull request — GET /pulls/{n}/files (items). */
+export interface GithubPRFile {
+  sha: string;
+  filename: string;
+  status: "added" | "removed" | "modified" | "renamed" | "changed" | "copied" | "unchanged";
+  additions: number;
+  deletions: number;
+  changes: number;
+  /** Unified-diff hunk text; absent for binary files. */
+  patch?: string;
+  previous_filename?: string;
+  blob_url?: string;
+}
+
+/** Client-side list filters shared by the Issues and Pull Requests list bars. */
+export interface ListFilterState {
+  label: string | null;
+  author: string | null;
+  assignee: string | null;
+  milestone: string | null;
+  sort: "newest" | "oldest" | "comments" | "updated";
+}

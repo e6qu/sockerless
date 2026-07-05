@@ -76,6 +76,27 @@ describe("AccountPage", () => {
     expect(screen.getByText(/verified · added/)).toBeInTheDocument();
   });
 
+  it("renders a left settings sub-nav and marks the active item", async () => {
+    installFetchRoutes();
+    renderPage();
+    await waitFor(() => screen.getByText("laptop"));
+
+    const nav = screen.getByRole("navigation", { name: "Settings" });
+    expect(nav).toBeInTheDocument();
+    // Section headings from the vertical sub-nav are present.
+    expect(screen.getByText("Access")).toBeInTheDocument();
+    expect(screen.getByText("Moderation")).toBeInTheDocument();
+
+    // The default SSH keys item is the current page; switching updates it.
+    const sshItem = screen.getByRole("button", { name: "SSH keys" });
+    expect(sshItem).toHaveAttribute("aria-current", "page");
+
+    fireEvent.click(screen.getByRole("button", { name: "Emails" }));
+    await waitFor(() => screen.getByText("admin@example.com"));
+    expect(screen.getByRole("button", { name: "Emails" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "SSH keys" })).not.toHaveAttribute("aria-current");
+  });
+
   it("adds an SSH key via POST /user/keys", async () => {
     installFetchRoutes({
       "POST /api/v3/user/keys": () =>

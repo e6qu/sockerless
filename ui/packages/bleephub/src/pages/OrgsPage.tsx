@@ -77,7 +77,7 @@ function OrgsTable() {
       header: "Login",
       cell: (info) => (
         <Link
-          to={`/ui/orgs/${info.getValue()}/repos`}
+          to={`/ui/orgs/${info.getValue()}`}
           style={{ fontWeight: 500, color: "var(--color-accent)", textDecoration: "none" }}
         >
           {info.getValue()}

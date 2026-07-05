@@ -131,6 +131,12 @@ import type {
   GithubGPGKey,
   GithubSSHSigningKey,
   GithubBlockedUser,
+  GithubUserProfile,
+  GithubOrgProfile,
+  GithubOrgSummary,
+  GithubOrgTeam,
+  GithubFeedIssue,
+  GithubPRFile,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -525,19 +531,6 @@ export const fetchRepoTopics = (owner: string, repo: string): Promise<{ names: s
 
 export const updateRepoTopics = (owner: string, repo: string, names: string[]): Promise<{ names: string[] }> =>
   ghPutJSON(`/api/v3/repos/${owner}/${repo}/topics`, { names });
-
-export const deleteRepoContent = (
-  owner: string,
-  repo: string,
-  path: string,
-  sha: string,
-  message: string,
-  branch?: string,
-): Promise<unknown> => {
-  const body: Record<string, string> = { message, sha };
-  if (branch) body.branch = branch;
-  return ghDeleteJSON(`/api/v3/repos/${owner}/${repo}/contents/${path}`, body);
-};
 
 async function ghPutJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -2758,3 +2751,86 @@ export const deleteUserEmails = (emails: string[]) =>
 /** Sets the primary email's visibility; returns the updated email rows. */
 export const setUserEmailVisibility = (visibility: "public" | "private") =>
   ghPatchJSON<GithubUserEmail[]>("/api/v3/user/email/visibility", { visibility });
+
+// ─── WP-D (org overview + people/teams, user profile, dashboard) ────────
+
+/** Public-user profile for GET /users/{login} (the /ui/{login} page). */
+export const fetchUserProfile = (login: string) =>
+  ghFetch<GithubUserProfile>(`/api/v3/users/${encodeURIComponent(login)}`);
+
+/** First page of a named user's repos; follow pages via the Link header. */
+export const fetchUserReposByLoginPage = (
+  login: string,
+  filters: RepoListFilters = {},
+  pageUrl?: string,
+): Promise<Page<BleephubRepo>> =>
+  ghFetchPage<BleephubRepo>(
+    buildRepoListURL(`/api/v3/users/${encodeURIComponent(login)}/repos`, filters, 30, pageUrl),
+  );
+
+/** Organizations a named user belongs to (GET /users/{login}/orgs). */
+export const fetchUserOrgsByLogin = (login: string) =>
+  ghFetch<GithubOrgSummary[]>(`/api/v3/users/${encodeURIComponent(login)}/orgs`);
+
+/** Organization-full profile for the org Overview tab (GET /orgs/{org}). */
+export const fetchOrgProfile = (org: string) =>
+  ghFetch<GithubOrgProfile>(`/api/v3/orgs/${encodeURIComponent(org)}`);
+
+/** Members visible to the caller (GET /orgs/{org}/members). */
+export const fetchOrgMembers = (org: string) =>
+  ghFetch<GithubAccount[]>(`/api/v3/orgs/${encodeURIComponent(org)}/members`);
+
+/** Teams in an organization (GET /orgs/{org}/teams). */
+export const fetchOrgTeams = (org: string) =>
+  ghFetch<GithubOrgTeam[]>(`/api/v3/orgs/${encodeURIComponent(org)}/teams`);
+
+/**
+ * The authenticated user's cross-repo issue feed (GET /issues) — issues
+ * they created, are assigned to, or are involved in, most-recently
+ * updated first. Powers the dashboard's activity feed.
+ */
+export const fetchDashboardIssues = () =>
+  ghFetch<GithubFeedIssue[]>(
+    "/api/v3/issues?filter=all&state=all&sort=updated&per_page=15",
+  );
+// ─── WP-C: Issues & Pull Requests GitHub-faithful layout ────────────────
+
+/**
+ * First page of a repo's issues by state; follow-up pages by the Link
+ * rel="next" URL. Label/author/assignee/milestone + sort are applied
+ * client-side over the loaded set so picking a facet narrows instantly.
+ */
+export const fetchRepoIssuesFilteredPage = (
+  owner: string,
+  repo: string,
+  opts: { state?: string },
+  pageUrl?: string,
+) => {
+  if (pageUrl) return ghFetchPage<GithubIssue>(pageUrl);
+  const params = new URLSearchParams({ state: opts.state ?? "open", per_page: "50" });
+  return ghFetchPage<GithubIssue>(`/api/v3/repos/${owner}/${repo}/issues?${params}`);
+};
+
+/**
+ * First page of a repo's pull requests by state; follow-up pages by the Link
+ * rel="next" URL. Label/author/sort are applied client-side over the loaded set
+ * (the pulls list endpoint honors state/head/base server-side).
+ */
+export const fetchRepoPRsFilteredPage = (
+  owner: string,
+  repo: string,
+  opts: { state?: string },
+  pageUrl?: string,
+) => {
+  if (pageUrl) return ghFetchPage<GithubPR>(pageUrl);
+  const params = new URLSearchParams({ state: opts.state ?? "open", per_page: "50" });
+  return ghFetchPage<GithubPR>(`/api/v3/repos/${owner}/${repo}/pulls?${params}`);
+};
+
+/** The changed-file list + per-file diff for a pull request. */
+export const fetchPRFiles = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubPRFile[]>(`/api/v3/repos/${owner}/${repo}/pulls/${number}/files`);
+
+/** The PR's commits, oldest first. */
+export const fetchPRCommits = (owner: string, repo: string, number: number) =>
+  ghFetch<GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/pulls/${number}/commits`);

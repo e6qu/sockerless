@@ -528,3 +528,80 @@ export function SearchIcon(p: IconProps) {
     </Svg>
   );
 }
+
+/** Plus — the "create new" header menu. */
+export function PlusIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 3v10M3 8h10" />
+    </Svg>
+  );
+}
+
+/** Three-bar "hamburger" — opens the global navigation drawer. */
+export function ThreeBarsIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M2.5 4h11M2.5 8h11M2.5 12h11" />
+    </Svg>
+  );
+}
+
+/** Downward caret for menu triggers. */
+export function TriangleDownIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 6l4 4 4-4z" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** Angle brackets — the "Code" clone button glyph. */
+export function CodeIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M5.5 4.5 2 8l3.5 3.5M10.5 4.5 14 8l-3.5 3.5" />
+    </Svg>
+  );
+}
+
+/** Two overlapping sheets — copy to clipboard. */
+export function CopyIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
+      <path d="M10.5 5.5V4a1.5 1.5 0 0 0-1.5-1.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5" />
+    </Svg>
+  );
+}
+
+/** Plain checkmark — confirms a copy succeeded. */
+export function CheckIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M3 8.5 6.5 12 13 4.5" />
+    </Svg>
+  );
+}
+
+/** Eye — the repository "Watch" counter. */
+export function EyeIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z" />
+      <circle cx="8" cy="8" r="1.8" />
+    </Svg>
+  );
+}
+
+/** Forked repository — the "Fork" counter. */
+export function RepoForkedIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="4" cy="3.5" r="1.6" />
+      <circle cx="12" cy="3.5" r="1.6" />
+      <circle cx="8" cy="12.5" r="1.6" />
+      <path d="M4 5.1v1.4a1.5 1.5 0 0 0 1.5 1.5h5A1.5 1.5 0 0 0 12 6.5V5.1M8 8v2.9" />
+    </Svg>
+  );
+}

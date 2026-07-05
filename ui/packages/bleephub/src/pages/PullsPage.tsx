@@ -1,10 +1,11 @@
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useParams, Link, useNavigate } from "react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import {
-  fetchRepoPRsPage,
+  fetchRepoPRsFilteredPage,
   fetchPRDetail,
+  fetchPRCommits,
   fetchCheckRuns,
   mergePR,
   isNotFound,
@@ -28,7 +29,6 @@ import {
   addIssueCommentReaction,
   removeIssueCommentReaction,
 } from "../api.js";
-import { useRepoItemList } from "../hooks/useRepoItemList.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type {
   GithubCheckRun,
@@ -37,17 +37,24 @@ import type {
   GithubPR,
   GithubPRReview,
   GithubPRReviewComment,
-  GithubReaction,
-  GithubReactionContent,
   GithubReviewState,
   GithubTimelineItem,
+  ListFilterState,
 } from "../types.js";
 import { formatDuration } from "../utils/format.js";
 import { CommentCard } from "../components/CommentCard.js";
-import { StateToggle } from "../components/StateToggle.js";
 import { RepoHeader } from "../components/Shell.js";
 import { RunStatusIcon } from "../components/RunStatusIcon.js";
-import { Button, Box, Blankslate, StateLabel, SectionLabel, FormLabel } from "../components/ui.js";
+import { ReactionBar } from "../components/ReactionBar.js";
+import { IssueSidebar } from "../components/IssueSidebar.js";
+import { PRFilesView } from "../components/PRFilesView.js";
+import {
+  ListControls,
+  filterAndSortItems,
+  emptyFilters,
+  type ListItemAccessors,
+} from "../components/ListControls.js";
+import { Button, Box, Blankslate, StateLabel, SectionLabel, FormLabel, Tabs } from "../components/ui.js";
 import {
   PullRequestIcon,
   MergedIcon,
@@ -57,6 +64,16 @@ import {
   XCircleIcon,
   DotFillIcon,
 } from "../components/octicons.js";
+
+const prAccessors: ListItemAccessors<GithubPR> = {
+  labels: (p) => p.labels,
+  author: (p) => p.user?.login ?? null,
+  assignees: () => [],
+  milestone: () => null,
+  comments: () => 0,
+  createdAt: (p) => p.created_at,
+  updatedAt: (p) => p.updated_at,
+};
 
 export function PullsPage() {
   const { owner = "", repo = "", number } = useParams<{
@@ -85,36 +102,54 @@ function PRStateIcon({ pr, size }: { pr: GithubPR; size?: number }) {
   return <PullRequestIcon size={size} style={{ color: "var(--gh-open)" }} />;
 }
 
-function PRList({ owner, repo }: { owner: string; repo: string }) {
-  const {
-    state,
-    setState,
-    items: prs,
-    isLoading,
-    isError,
-    error,
-    hasMore,
-    loadMore,
-    isLoadingMore,
-  } = useRepoItemList("prs", owner, repo, fetchRepoPRsPage);
-  const counts = useOpenCounts(owner, repo);
+function usePRClosedCount(owner: string, repo: string): number | string | undefined {
+  const { data } = useQuery({
+    queryKey: ["prs", owner, repo, "closed", "count"],
+    queryFn: () => fetchRepoPRsFilteredPage(owner, repo, { state: "closed" }),
+    enabled: !!owner && !!repo,
+  });
+  if (!data) return undefined;
+  return data.nextUrl ? `${data.items.length}+` : data.items.length;
+}
 
-  if (isLoading) return <Spinner label="loading pull requests" />;
-  if (isError) return <InlineError title="Failed to load pull requests" detail={String(error)} />;
+function PRList({ owner, repo }: { owner: string; repo: string }) {
+  const [state, setState] = useState<"open" | "closed">("open");
+  const [filters, setFilters] = useState<ListFilterState>(emptyFilters);
+  const counts = useOpenCounts(owner, repo);
+  const closedCount = usePRClosedCount(owner, repo);
+
+  const query = useInfiniteQuery({
+    queryKey: ["prs", owner, repo, state, "paged"],
+    queryFn: ({ pageParam }) => fetchRepoPRsFilteredPage(owner, repo, { state }, pageParam),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextUrl ?? undefined,
+    enabled: !!owner && !!repo,
+  });
+  const rawPRs = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  const prs = useMemo(() => filterAndSortItems(rawPRs, filters, prAccessors), [rawPRs, filters]);
+
+  if (query.isLoading) return <Spinner label="loading pull requests" />;
+  if (query.isError)
+    return <InlineError title="Failed to load pull requests" detail={String(query.error)} />;
+
+  const hasMore = query.hasNextPage;
+  const isLoadingMore = query.isFetchingNextPage;
 
   return (
     <div>
       <RepoHeader owner={owner} repo={repo} active="pulls" {...counts} />
 
-      <div className="mb-4">
-        <StateToggle
-          value={state}
-          options={["open", "closed"] as const}
-          labels={{ open: "Open", closed: "Closed / Merged" }}
-          icons={{ open: <PullRequestIcon size={14} />, closed: <MergedIcon size={14} /> }}
-          onChange={setState}
-        />
-      </div>
+      <ListControls
+        kind="pr"
+        state={state}
+        onState={setState}
+        openCount={counts.prCount}
+        closedCount={closedCount}
+        items={rawPRs}
+        filters={filters}
+        onFilters={setFilters}
+        accessors={prAccessors}
+      />
 
       {prs.length === 0 ? (
         <Blankslate icon={<PullRequestIcon size={26} />} title={`No ${state} pull requests`} />
@@ -160,7 +195,7 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
         </Box>
         {hasMore && (
           <div className="mt-3 flex justify-center">
-            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={loadMore}>
+            <Button variant="ghost" size="sm" disabled={isLoadingMore} onClick={() => query.fetchNextPage()}>
               {isLoadingMore ? "Loading…" : "Load more"}
             </Button>
           </div>
@@ -171,24 +206,17 @@ function PRList({ owner, repo }: { owner: string; repo: string }) {
   );
 }
 
+type PRTab = "conversation" | "commits" | "files" | "checks";
+
 function PRDetail({ owner, repo, number }: { owner: string; repo: string; number: number }) {
   const counts = useOpenCounts(owner, repo);
+  const [tab, setTab] = useState<PRTab>("conversation");
   const { data: pr, isLoading, isError, error } = useQuery({
     queryKey: ["pr", owner, repo, number],
     queryFn: () => fetchPRDetail(owner, repo, number),
   });
   const viewerQ = useQuery({ queryKey: ["viewer"], queryFn: fetchAuthenticatedUser });
   const viewerLogin = typeof viewerQ.data?.login === "string" ? viewerQ.data.login : null;
-  const qc = useQueryClient();
-  const navigate = useNavigate();
-
-  const mergeMutation = useMutation({
-    mutationFn: () => mergePR(owner, repo, number),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["prs", owner, repo] });
-      navigate(`/ui/repos/${owner}/${repo}/pulls`);
-    },
-  });
 
   if (isError) {
     if (isNotFound(error)) {
@@ -210,77 +238,282 @@ function PRDetail({ owner, repo, number }: { owner: string; repo: string; number
 
   const s = prState(pr);
   const stateLabel = s === "merged" ? "Merged" : s === "closed" ? "Closed" : s === "draft" ? "Draft" : "Open";
-  const isMergeable = pr.state === "open" && !pr.draft && pr.merged_at === null;
-  const mergeBlocked = pr.mergeable_state === "blocked";
 
   return (
     <div>
       <RepoHeader owner={owner} repo={repo} active="pulls" {...counts} />
 
-      <h1 className="mb-2" style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
-        {pr.title} <span style={{ color: "var(--color-fg-muted)", fontWeight: 400 }}>#{pr.number}</span>
+      <h1 className="mb-2" style={{ fontSize: "1.5rem", fontWeight: 400, color: "var(--color-fg)" }}>
+        {pr.title} <span style={{ color: "var(--color-fg-muted)" }}>#{pr.number}</span>
       </h1>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-3">
-          <StateLabel state={s} icon={<PRStateIcon pr={pr} size={15} />}>
-            {stateLabel}
-          </StateLabel>
-          <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
-            <span className="font-mono" style={{ color: "var(--color-accent)" }}>{pr.head.ref}</span>
-            {" → "}
-            <span className="font-mono">{pr.base.ref}</span> · opened by {pr.user?.login}
-          </span>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <StateLabel state={s} icon={<PRStateIcon pr={pr} size={15} />}>
+          {stateLabel}
+        </StateLabel>
+        <span style={{ fontSize: "0.85rem", color: "var(--color-fg-muted)" }}>
+          <strong style={{ color: "var(--color-fg)" }}>{pr.user?.login}</strong> wants to merge into{" "}
+          <span className="font-mono" style={{ color: "var(--color-accent)" }}>{pr.base.ref}</span>
+          {" from "}
+          <span className="font-mono" style={{ color: "var(--color-accent)" }}>{pr.head.ref}</span>
+        </span>
+      </div>
+
+      <Tabs
+        active={tab}
+        onChange={(k) => setTab(k as PRTab)}
+        items={[
+          { key: "conversation", label: "Conversation" },
+          { key: "commits", label: "Commits" },
+          { key: "files", label: "Files changed" },
+          { key: "checks", label: "Checks" },
+        ]}
+      />
+
+      {tab === "conversation" && (
+        <div className="flex flex-col gap-6 lg:flex-row">
+          <div className="min-w-0 flex-1">
+            {viewerQ.isError && (
+              <InlineError inline title="Failed to load current user" detail={String(viewerQ.error)} />
+            )}
+            <CommentCard login={pr.user?.login} body={pr.body} date={pr.created_at} isOp />
+            <ReactionBar
+              queryKey={["pr-body-reactions", owner, repo, number]}
+              fetchList={() => fetchIssueReactions(owner, repo, number)}
+              add={(content) => addIssueReaction(owner, repo, number, content)}
+              remove={(reactionId) => removeIssueReaction(owner, repo, number, reactionId)}
+              viewerLogin={viewerLogin}
+            />
+            <ConversationTimeline owner={owner} repo={repo} number={number} viewerLogin={viewerLogin} />
+            <ReviewThreadsSection owner={owner} repo={repo} number={number} />
+            <ReviewsSection owner={owner} repo={repo} number={number} />
+            <MergeBox owner={owner} repo={repo} number={number} pr={pr} />
+          </div>
+          <div style={{ width: "100%", maxWidth: "16rem", flexShrink: 0 }}>
+            <IssueSidebar
+              owner={owner}
+              repo={repo}
+              number={number}
+              kind="pr"
+              assignees={[]}
+              labels={pr.labels}
+              milestone={null}
+              participants={pr.user?.login ? [pr.user.login] : []}
+              reviewers={<RequestedReviewersSection owner={owner} repo={repo} number={number} />}
+              development={
+                <span style={{ fontSize: "0.82rem", color: "var(--color-fg)" }}>
+                  <span className="font-mono" style={{ color: "var(--color-accent)" }}>
+                    {pr.head.ref}
+                  </span>
+                  {" → "}
+                  <span className="font-mono">{pr.base.ref}</span>
+                </span>
+              }
+            />
+          </div>
         </div>
-        {isMergeable && (
-          <div className="flex items-center gap-2">
-            {mergeBlocked && (
-              <span style={{ fontSize: "0.8rem", color: "var(--color-status-error)" }}>
+      )}
+
+      {tab === "commits" && <PRCommitsTab owner={owner} repo={repo} number={number} />}
+      {tab === "files" && <PRFilesView owner={owner} repo={repo} number={number} />}
+      {tab === "checks" && <ChecksSection owner={owner} repo={repo} sha={pr.head.sha} standalone />}
+    </div>
+  );
+}
+
+// ─── Merge box (bottom of Conversation) ──────────────────────────────────
+
+const MERGE_METHODS: { value: "merge" | "squash" | "rebase"; label: string }[] = [
+  { value: "merge", label: "Create a merge commit" },
+  { value: "squash", label: "Squash and merge" },
+  { value: "rebase", label: "Rebase and merge" },
+];
+
+function MergeBox({
+  owner,
+  repo,
+  number,
+  pr,
+}: {
+  owner: string;
+  repo: string;
+  number: number;
+  pr: GithubPR;
+}) {
+  const qc = useQueryClient();
+  const navigate = useNavigate();
+  const [method, setMethod] = useState<"merge" | "squash" | "rebase">("merge");
+  const checksQ = useQuery({
+    queryKey: ["check-runs", owner, repo, pr.head.sha],
+    queryFn: () => fetchCheckRuns(owner, repo, pr.head.sha),
+    enabled: !!pr.head.sha,
+  });
+  const statusQ = useQuery({
+    queryKey: ["combined-status", owner, repo, pr.head.sha],
+    queryFn: () => fetchCombinedStatus(owner, repo, pr.head.sha),
+    enabled: !!pr.head.sha,
+  });
+  const mergeMutation = useMutation({
+    mutationFn: () => mergePR(owner, repo, number, method),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["prs", owner, repo] });
+      qc.invalidateQueries({ queryKey: ["pr", owner, repo, number] });
+      navigate(`/ui/repos/${owner}/${repo}/pulls`);
+    },
+  });
+
+  const s = prState(pr);
+  if (s === "merged") {
+    return (
+      <div className="mt-4">
+        <Box>
+          <div className="flex items-center gap-2" style={{ padding: "0.85rem 1rem" }}>
+            <MergedIcon size={18} style={{ color: "var(--gh-merged)" }} />
+            <span style={{ fontWeight: 600, color: "var(--gh-merged)" }}>
+              Pull request successfully merged and closed
+            </span>
+          </div>
+        </Box>
+      </div>
+    );
+  }
+  if (s === "closed") {
+    return (
+      <div className="mt-4">
+        <Box>
+          <div className="flex items-center gap-2" style={{ padding: "0.85rem 1rem" }}>
+            <PullClosedIcon size={18} style={{ color: "var(--gh-closed)" }} />
+            <span style={{ fontWeight: 600, color: "var(--color-fg)" }}>
+              This pull request is closed
+            </span>
+          </div>
+        </Box>
+      </div>
+    );
+  }
+
+  const checks = checksQ.data?.items ?? [];
+  const statuses = statusQ.data?.statuses ?? [];
+  const summary = mergeBoxSummary(checks, statuses);
+  const mergeBlocked = pr.mergeable_state === "blocked" || pr.draft;
+
+  return (
+    <div className="mt-4">
+      <Box>
+        <div style={{ padding: "0.85rem 1rem" }}>
+          {(checks.length > 0 || statuses.length > 0) && (
+            <div className="mb-2 flex items-center gap-2" style={{ color: summary.color, fontWeight: 600 }}>
+              {summary.pending ? (
+                <DotFillIcon size={16} />
+              ) : summary.color === "var(--gh-open)" ? (
+                <CheckCircleIcon size={16} />
+              ) : (
+                <XCircleIcon size={16} />
+              )}
+              {summary.label}
+            </div>
+          )}
+          <div
+            className="mb-2 flex items-center gap-2"
+            style={{ fontSize: "0.86rem", color: pr.draft ? "var(--color-fg-muted)" : "var(--gh-open)" }}
+          >
+            {pr.draft ? (
+              <>
+                <PullRequestIcon size={16} /> This pull request is still a work in progress
+              </>
+            ) : mergeBlocked ? (
+              <span style={{ color: "var(--color-status-error)" }}>
                 Merging is blocked — required checks must pass
               </span>
+            ) : (
+              <>
+                <CheckCircleIcon size={16} /> This branch has no conflicts with the base branch
+              </>
             )}
-            {mergeMutation.isError && (
-              <span style={{ fontSize: "0.8rem", color: "var(--color-status-error)" }}>
-                Merge failed:{" "}
-                {mergeMutation.error instanceof Error
-                  ? mergeMutation.error.message
-                  : "unknown error"}
-              </span>
-            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="primary"
               size="sm"
               disabled={mergeMutation.isPending || mergeBlocked}
               onClick={() => mergeMutation.mutate()}
             >
-              {mergeMutation.isPending ? "Merging…" : "Merge pull request"}
+              {mergeMutation.isPending
+                ? "Merging…"
+                : method === "squash"
+                  ? "Squash and merge"
+                  : method === "rebase"
+                    ? "Rebase and merge"
+                    : "Merge pull request"}
             </Button>
+            <select
+              aria-label="Merge method"
+              value={method}
+              onChange={(e) => setMethod(e.target.value as "merge" | "squash" | "rebase")}
+              disabled={mergeMutation.isPending}
+              style={{ fontSize: "0.82rem" }}
+            >
+              {MERGE_METHODS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
-        )}
-      </div>
-
-      {viewerQ.isError && (
-        <InlineError inline title="Failed to load current user" detail={String(viewerQ.error)} />
-      )}
-
-      <ChecksSection owner={owner} repo={repo} sha={pr.head.sha} />
-
-      <RequestedReviewersSection owner={owner} repo={repo} number={number} />
-
-      <CommentCard login={pr.user?.login} body={pr.body} date={pr.created_at} isOp />
-      <ReactionBar
-        queryKey={["pr-body-reactions", owner, repo, number]}
-        fetchList={() => fetchIssueReactions(owner, repo, number)}
-        add={(content) => addIssueReaction(owner, repo, number, content)}
-        remove={(reactionId) => removeIssueReaction(owner, repo, number, reactionId)}
-        viewerLogin={viewerLogin}
-      />
-
-      <ConversationTimeline owner={owner} repo={repo} number={number} viewerLogin={viewerLogin} />
-
-      <ReviewThreadsSection owner={owner} repo={repo} number={number} />
-
-      <ReviewsSection owner={owner} repo={repo} number={number} />
+          {mergeMutation.isError && (
+            <div className="mt-2" style={{ fontSize: "0.8rem", color: "var(--color-status-error)" }}>
+              Merge failed:{" "}
+              {mergeMutation.error instanceof Error ? mergeMutation.error.message : "unknown error"}
+            </div>
+          )}
+        </div>
+      </Box>
     </div>
+  );
+}
+
+// ─── Commits tab ─────────────────────────────────────────────────────────
+
+function PRCommitsTab({ owner, repo, number }: { owner: string; repo: string; number: number }) {
+  const q = useQuery({
+    queryKey: ["pr-commits", owner, repo, number],
+    queryFn: () => fetchPRCommits(owner, repo, number),
+  });
+  if (q.isLoading) return <Spinner label="loading commits" />;
+  if (q.isError) return <InlineError title="Failed to load commits" detail={String(q.error)} />;
+  const commits = q.data ?? [];
+  if (commits.length === 0) {
+    return <Blankslate icon={<BranchIcon size={26} />} title="No commits" />;
+  }
+  return (
+    <Box>
+      {commits.map((c, i) => (
+        <div
+          key={c.sha}
+          className="flex items-start gap-3"
+          style={{
+            padding: "0.7rem 1rem",
+            borderBottom: i < commits.length - 1 ? "1px solid var(--color-border)" : "none",
+          }}
+        >
+          <BranchIcon size={14} style={{ marginTop: "0.2rem", color: "var(--color-fg-muted)" }} />
+          <div className="min-w-0 flex-1">
+            <div style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-fg)" }}>
+              {c.commit.message.split("\n")[0]}
+            </div>
+            <div className="mt-0.5" style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
+              {c.commit.author.name} committed on{" "}
+              {new Date(c.commit.author.date).toLocaleDateString()}
+            </div>
+          </div>
+          <span
+            className="font-mono tabular-nums"
+            style={{ fontSize: "0.76rem", color: "var(--color-fg-muted)" }}
+          >
+            {c.sha.slice(0, 7)}
+          </span>
+        </div>
+      ))}
+    </Box>
   );
 }
 
@@ -325,7 +558,17 @@ function CommitStatusIcon({ state }: { state: GithubCommitStatusState }) {
   return <DotFillIcon size={15} style={{ color: "var(--color-status-warn)" }} />;
 }
 
-function ChecksSection({ owner, repo, sha }: { owner: string; repo: string; sha: string }) {
+function ChecksSection({
+  owner,
+  repo,
+  sha,
+  standalone,
+}: {
+  owner: string;
+  repo: string;
+  sha: string;
+  standalone?: boolean;
+}) {
   const checksQ = useQuery({
     queryKey: ["check-runs", owner, repo, sha],
     queryFn: () => fetchCheckRuns(owner, repo, sha),
@@ -341,7 +584,9 @@ function ChecksSection({ owner, repo, sha }: { owner: string; repo: string; sha:
       query.state.data?.statuses.some((st) => st.state === "pending") ? 5000 : false,
   });
 
-  if (checksQ.isLoading || statusQ.isLoading) return null;
+  if (checksQ.isLoading || statusQ.isLoading) {
+    return standalone ? <Spinner label="loading checks" /> : null;
+  }
   if (checksQ.isError) {
     return <InlineError title="Failed to load checks" detail={String(checksQ.error)} />;
   }
@@ -352,7 +597,11 @@ function ChecksSection({ owner, repo, sha }: { owner: string; repo: string; sha:
   if (statusQ.isError && checks.length === 0) {
     return <InlineError title="Failed to load commit statuses" detail={String(statusQ.error)} />;
   }
-  if (checks.length === 0 && statuses.length === 0) return null;
+  if (checks.length === 0 && statuses.length === 0) {
+    return standalone ? (
+      <Blankslate icon={<CheckCircleIcon size={26} />} title="No checks reported for this commit" />
+    ) : null;
+  }
 
   const summary = mergeBoxSummary(checks, statuses);
   const rowStyle = (last: boolean) =>
@@ -476,9 +725,10 @@ function RequestedReviewersSection({
 
   if (q.isLoading) return null;
 
+  // Rendered inside the sidebar's "Reviewers" section, which supplies the
+  // heading — so this body carries none of its own.
   return (
-    <div className="mb-4">
-      <SectionLabel>Reviewers</SectionLabel>
+    <div>
       {q.isError || !q.data ? (
         <InlineError inline title="Failed to load requested reviewers" detail={String(q.error)} />
       ) : (
@@ -557,149 +807,6 @@ function RequestedReviewersSection({
       )}
       {remove.isError && (
         <InlineError inline title="Failed to remove reviewer" detail={String(remove.error)} />
-      )}
-    </div>
-  );
-}
-
-// ─── Reactions ───────────────────────────────────────────────────────────
-
-const REACTION_CONTENTS: GithubReactionContent[] = [
-  "+1",
-  "-1",
-  "laugh",
-  "confused",
-  "heart",
-  "hooray",
-  "rocket",
-  "eyes",
-];
-
-const REACTION_EMOJI: Record<GithubReactionContent, string> = {
-  "+1": "👍",
-  "-1": "👎",
-  laugh: "😄",
-  confused: "😕",
-  heart: "❤️",
-  hooray: "🎉",
-  rocket: "🚀",
-  eyes: "👀",
-};
-
-function ReactionBar({
-  queryKey,
-  fetchList,
-  add,
-  remove,
-  viewerLogin,
-}: {
-  queryKey: (string | number)[];
-  fetchList: () => Promise<GithubReaction[]>;
-  add: (content: GithubReactionContent) => Promise<GithubReaction>;
-  remove: (reactionId: number) => Promise<void>;
-  viewerLogin: string | null;
-}) {
-  const qc = useQueryClient();
-  const q = useQuery({ queryKey, queryFn: fetchList });
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const toggle = useMutation({
-    mutationFn: async (content: GithubReactionContent) => {
-      const mine = (q.data ?? []).find(
-        (r) => r.content === content && r.user?.login != null && r.user.login === viewerLogin,
-      );
-      if (mine) {
-        await remove(mine.id);
-      } else {
-        await add(content);
-      }
-    },
-    onSuccess: () => {
-      setPickerOpen(false);
-      qc.invalidateQueries({ queryKey });
-    },
-  });
-
-  if (q.isLoading) return null;
-  if (q.isError) {
-    return <InlineError inline title="Failed to load reactions" detail={String(q.error)} />;
-  }
-  const reactions = q.data ?? [];
-  const byContent = new Map<GithubReactionContent, { count: number; mine: boolean }>();
-  for (const r of reactions) {
-    const entry = byContent.get(r.content) ?? { count: 0, mine: false };
-    entry.count += 1;
-    if (r.user?.login != null && r.user.login === viewerLogin) entry.mine = true;
-    byContent.set(r.content, entry);
-  }
-
-  const pillStyle = (mine: boolean) =>
-    ({
-      border: mine ? "1px solid var(--color-accent)" : "1px solid var(--color-border)",
-      background: mine ? "color-mix(in srgb, var(--color-accent) 12%, transparent)" : "transparent",
-      borderRadius: "2rem",
-      padding: "0.1rem 0.55rem",
-      fontSize: "0.78rem",
-      cursor: "pointer",
-      color: "var(--color-fg)",
-    }) as const;
-
-  return (
-    <div style={{ marginTop: "-0.6rem", marginBottom: "1rem" }}>
-      <div className="flex flex-wrap items-center gap-1.5">
-        {REACTION_CONTENTS.filter((c) => (byContent.get(c)?.count ?? 0) > 0).map((content) => {
-          const entry = byContent.get(content);
-          return (
-            <button
-              key={content}
-              type="button"
-              aria-label={`toggle ${content} reaction`}
-              disabled={toggle.isPending}
-              onClick={() => toggle.mutate(content)}
-              style={pillStyle(entry?.mine ?? false)}
-            >
-              {REACTION_EMOJI[content]} {entry?.count}
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          aria-label="add reaction"
-          onClick={() => setPickerOpen((v) => !v)}
-          style={{
-            border: "1px solid var(--color-border)",
-            background: "transparent",
-            borderRadius: "2rem",
-            padding: "0.1rem 0.55rem",
-            fontSize: "0.78rem",
-            cursor: "pointer",
-            color: "var(--color-fg-muted)",
-          }}
-        >
-          🙂＋
-        </button>
-        {pickerOpen &&
-          REACTION_CONTENTS.map((content) => (
-            <button
-              key={content}
-              type="button"
-              aria-label={`react with ${content}`}
-              disabled={toggle.isPending}
-              onClick={() => toggle.mutate(content)}
-              style={{
-                border: "1px solid var(--color-border)",
-                background: "var(--color-bg-subtle)",
-                borderRadius: "0.4rem",
-                padding: "0.1rem 0.35rem",
-                fontSize: "0.85rem",
-                cursor: "pointer",
-              }}
-            >
-              {REACTION_EMOJI[content]}
-            </button>
-          ))}
-      </div>
-      {toggle.isError && (
-        <InlineError inline title="Failed to update reaction" detail={String(toggle.error)} />
       )}
     </div>
   );

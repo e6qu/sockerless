@@ -2,10 +2,6 @@ import { type ReactNode } from "react";
 import { NavLink, Link, useLocation } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import {
-  Mark,
-  SunIcon,
-  MoonIcon,
-  SignOutIcon,
   RepoIcon,
   CommentIcon,
   PullRequestIcon,
@@ -31,131 +27,15 @@ import {
   KeyIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
-import { clearToken } from "../api.js";
+import { AppHeader } from "./AppHeader.js";
 
-export interface NavItem {
-  label: string;
-  to: string;
-  end?: boolean;
-}
-
-const PRIMARY_NAV: NavItem[] = [
-  { label: "Overview", to: "/ui/", end: true },
-  { label: "Search", to: "/ui/search" },
-  { label: "Workflows", to: "/ui/workflows" },
-  { label: "Repos", to: "/ui/repos" },
-  { label: "Gists", to: "/ui/gists" },
-  { label: "Packages", to: "/ui/packages" },
-  { label: "Migrations", to: "/ui/migrations" },
-  { label: "Codespaces", to: "/ui/codespaces" },
-  { label: "Runners", to: "/ui/runners" },
-  { label: "Notifications", to: "/ui/notifications" },
-  { label: "Apps", to: "/ui/apps" },
-  { label: "OAuth", to: "/ui/oauth" },
-  { label: "Metrics", to: "/ui/metrics" },
-  { label: "Account", to: "/ui/account" },
-];
-
-const ADMIN_NAV: NavItem[] = [
-  { label: "Users", to: "/ui/admin/users" },
-  { label: "Orgs", to: "/ui/admin/orgs" },
-  { label: "Teams", to: "/ui/admin/teams" },
-  { label: "Enterprise", to: "/ui/admin/enterprise" },
-  { label: "Audit log", to: "/ui/admin/audit-log" },
-  { label: "Storage", to: "/ui/admin/storage" },
-];
-
-function navIcon(label: string) {
-  switch (label) {
-    case "Overview":
-      return null;
-    case "Search":
-      return <SearchIcon size={14} />;
-    case "Account":
-      return <KeyIcon size={14} />;
-    case "Repos":
-      return <RepoIcon size={14} />;
-    case "Gists":
-      return <GistIcon size={14} />;
-    case "Packages":
-      return <PackageIcon size={14} />;
-    case "Migrations":
-      return <MigrationIcon size={14} />;
-    case "Codespaces":
-      return <CodespaceIcon size={14} />;
-    case "Runners":
-      return null;
-    case "Notifications":
-      return <NotificationBellIcon size={14} />;
-    case "Apps":
-      return null;
-    case "OAuth":
-      return null;
-    case "Metrics":
-      return null;
-    case "Users":
-      return <PeopleIcon size={14} />;
-    case "Orgs":
-      return <OrganizationIcon size={14} />;
-    case "Teams":
-      return <TeamIcon size={14} />;
-    case "Enterprise":
-      return <GlobeIcon size={14} />;
-    case "Audit log":
-      return <AuditLogIcon size={14} />;
-    case "Storage":
-      return <ServerIcon size={14} />;
-    default:
-      return null;
-  }
-}
-
-function HeaderNavLink({ item }: { item: NavItem }) {
-  return (
-    <NavLink to={item.to} end={item.end} style={{ textDecoration: "none" }}>
-      {({ isActive }) => (
-        <span
-          className="inline-flex items-center gap-1.5"
-          style={{
-            padding: "0.3rem 0.6rem",
-            borderRadius: "var(--radius-md)",
-            fontSize: "0.85rem",
-            fontWeight: isActive ? 600 : 500,
-            color: isActive ? "var(--color-fg)" : "var(--color-fg-muted)",
-            background: isActive ? "color-mix(in srgb, var(--color-fg-muted) 12%, transparent)" : "transparent",
-          }}
-        >
-          {navIcon(item.label)}
-          {item.label}
-        </span>
-      )}
-    </NavLink>
-  );
-}
-
-function ThemeButton() {
-  const { theme, toggle } = useTheme("light");
-  const isDark = theme === "dark";
-  return (
-    <button
-      type="button"
-      onClick={toggle}
-      aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      title={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      className="inline-flex h-8 w-8 items-center justify-center"
-      style={{
-        background: "transparent",
-        color: "var(--color-fg-muted)",
-        border: "1px solid var(--color-border)",
-        borderRadius: "var(--radius-md)",
-      }}
-    >
-      {isDark ? <SunIcon /> : <MoonIcon />}
-    </button>
-  );
-}
-
-/** Global top header: brand, primary nav, theme toggle, sign-out. */
+/**
+ * App chrome: the GitHub-faithful global header ({@link AppHeader}) above the
+ * routed page content. The header owns the brand, global search, create menu,
+ * Issues / Pull requests, notifications, and the user menu — bleephub's
+ * server-operational surfaces live in the header's "Operations" drawer section,
+ * not in the primary GitHub-shaped nav.
+ */
 export function BleephubShell({ children }: { children: ReactNode }) {
   return (
     <div className="min-h-screen" style={{ background: "var(--color-bg)", color: "var(--color-fg)" }}>
@@ -176,55 +56,7 @@ export function BleephubShell({ children }: { children: ReactNode }) {
       >
         Skip to main content
       </a>
-      <header
-        style={{
-          background: "var(--color-bg-subtle)",
-          borderBottom: "1px solid var(--color-border)",
-        }}
-      >
-        <div className="mx-auto flex max-w-[1280px] flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
-          <Link
-            to="/ui/"
-            className="inline-flex items-center gap-2"
-            style={{ textDecoration: "none", color: "var(--color-fg)" }}
-          >
-            <Mark size={24} />
-            <span style={{ fontWeight: 600, fontSize: "0.95rem" }}>bleephub</span>
-          </Link>
-          <nav aria-label="Primary" className="flex flex-1 flex-wrap items-center gap-0.5">
-            {PRIMARY_NAV.map((item) => (
-              <HeaderNavLink key={item.to} item={item} />
-            ))}
-          </nav>
-          <nav aria-label="Admin" className="flex flex-wrap items-center gap-0.5 border-l pl-3" style={{ borderColor: "var(--color-border)" }}>
-            {ADMIN_NAV.map((item) => (
-              <HeaderNavLink key={item.to} item={item} />
-            ))}
-          </nav>
-          <div className="flex items-center gap-2">
-            <ThemeButton />
-            <button
-              type="button"
-              onClick={() => {
-                clearToken();
-                window.location.href = "/ui/login";
-              }}
-              className="inline-flex items-center gap-1.5"
-              style={{
-                background: "transparent",
-                color: "var(--color-fg-muted)",
-                border: "1px solid var(--color-border)",
-                borderRadius: "var(--radius-md)",
-                padding: "0.3rem 0.6rem",
-                fontSize: "0.82rem",
-                fontWeight: 500,
-              }}
-            >
-              <SignOutIcon /> Sign out
-            </button>
-          </div>
-        </div>
-      </header>
+      <AppHeader />
       <main id="main-content" tabIndex={-1} className="mx-auto max-w-[1280px] px-4 py-6">
         {children}
       </main>
@@ -359,16 +191,31 @@ export function RepoHeader({
   );
 }
 
-export type OrgTab = "repos" | "packages" | "rulesets" | "governance" | "copilot" | "hooks";
+export type OrgTab =
+  | "overview"
+  | "repos"
+  | "packages"
+  | "people"
+  | "teams"
+  | "rulesets"
+  | "governance"
+  | "copilot"
+  | "hooks";
 
-/** Org context bar: organization login breadcrumb with org-level tabs. */
+/**
+ * Org context bar: organization login breadcrumb with org-level tabs.
+ * The tab set mirrors GitHub's org navigation (Overview, Repositories,
+ * Packages, People, Teams …) with the bleephub-specific governance
+ * surfaces (Rulesets, Governance, Webhooks, Copilot) appended. The
+ * breadcrumb login links to the org's Overview landing page.
+ */
 export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
   const base = `/ui/orgs/${org}`;
   return (
     <div className="mb-5">
       <div className="mb-3 flex items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
         <OrganizationIcon size={18} style={{ color: "var(--color-fg-muted)" }} />
-        <Link to="/ui/admin/orgs" style={{ color: "var(--color-accent)", textDecoration: "none" }}>
+        <Link to={base} style={{ color: "var(--color-accent)", fontWeight: 600, textDecoration: "none" }}>
           {org}
         </Link>
       </div>
@@ -377,8 +224,11 @@ export function OrgHeader({ org, active }: { org: string; active: OrgTab }) {
         className="flex flex-wrap items-center gap-1"
         style={{ borderBottom: "1px solid var(--color-border)" }}
       >
+        <RepoTabLink to={base} icon={<OrganizationIcon size={15} />} label="Overview" active={active === "overview"} />
         <RepoTabLink to={`${base}/repos`} icon={<RepoIcon size={15} />} label="Repositories" active={active === "repos"} />
         <RepoTabLink to={`${base}/packages`} icon={<PackageIcon size={15} />} label="Packages" active={active === "packages"} />
+        <RepoTabLink to={`${base}/people`} icon={<PeopleIcon size={15} />} label="People" active={active === "people"} />
+        <RepoTabLink to={`${base}/teams`} icon={<TeamIcon size={15} />} label="Teams" active={active === "teams"} />
         <RepoTabLink to={`${base}/rulesets`} icon={<GearIcon size={15} />} label="Rulesets" active={active === "rulesets"} />
         <RepoTabLink to={`${base}/governance`} icon={<PeopleIcon size={15} />} label="Governance" active={active === "governance"} />
         <RepoTabLink to={`${base}/hooks`} icon={<WebhookIcon size={15} />} label="Webhooks" active={active === "hooks"} />

@@ -185,6 +185,135 @@ func (st *Store) UpdatePullRequest(id int, fn func(*PullRequest)) bool {
 	return true
 }
 
+// recordPullRequestLabelEventLocked records a labeled/unlabeled event attached
+// to a pull request so it surfaces in the PR timeline (ParentType
+// "pull_request"), while st.mu is already held.
+func (st *Store) recordPullRequestLabelEventLocked(repoID, prID, actorID, labelID int, event string) {
+	e := st.recordIssueEventWithIDsLocked(repoID, prID, actorID, event, labelID, 0, 0, 0, 0)
+	e.ParentType = "pull_request"
+	if st.persist != nil {
+		st.persist.MustPut("issue_events", strconv.Itoa(e.ID), e)
+	}
+}
+
+// AddPullRequestLabels adds labels to a pull request, recording a labeled event
+// for each new attachment. Pull requests carry labels through the same
+// /issues/{number}/labels surface real GitHub exposes. Returns true when the PR
+// exists; duplicate IDs are ignored.
+func (st *Store) AddPullRequestLabels(repoID, prNumber int, labelIDs []int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.PullsByRepo[repoID][prNumber]
+	if pr == nil {
+		return false
+	}
+	added := false
+	for _, lid := range labelIDs {
+		found := false
+		for _, existing := range pr.LabelIDs {
+			if existing == lid {
+				found = true
+				break
+			}
+		}
+		if !found {
+			pr.LabelIDs = append(pr.LabelIDs, lid)
+			st.recordPullRequestLabelEventLocked(repoID, pr.ID, actorID, lid, "labeled")
+			added = true
+		}
+	}
+	if added {
+		pr.UpdatedAt = time.Now().UTC()
+		if st.persist != nil {
+			st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+		}
+	}
+	return true
+}
+
+// SetPullRequestLabels replaces all labels on a pull request, recording
+// labeled/unlabeled events for the deltas. Returns true when the PR exists.
+func (st *Store) SetPullRequestLabels(repoID, prNumber int, labelIDs []int, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.PullsByRepo[repoID][prNumber]
+	if pr == nil {
+		return false
+	}
+	old := make(map[int]bool, len(pr.LabelIDs))
+	for _, lid := range pr.LabelIDs {
+		old[lid] = true
+	}
+	newSet := make(map[int]bool, len(labelIDs))
+	for _, lid := range labelIDs {
+		newSet[lid] = true
+	}
+	for _, lid := range pr.LabelIDs {
+		if !newSet[lid] {
+			st.recordPullRequestLabelEventLocked(repoID, pr.ID, actorID, lid, "unlabeled")
+		}
+	}
+	for _, lid := range labelIDs {
+		if !old[lid] {
+			st.recordPullRequestLabelEventLocked(repoID, pr.ID, actorID, lid, "labeled")
+		}
+	}
+	pr.LabelIDs = labelIDs
+	pr.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+	}
+	return true
+}
+
+// ClearPullRequestLabels removes every label from a pull request, recording an
+// unlabeled event for each previously-attached label. Returns true when the PR
+// exists.
+func (st *Store) ClearPullRequestLabels(repoID, prNumber, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.PullsByRepo[repoID][prNumber]
+	if pr == nil {
+		return false
+	}
+	if len(pr.LabelIDs) == 0 {
+		return true
+	}
+	for _, lid := range pr.LabelIDs {
+		st.recordPullRequestLabelEventLocked(repoID, pr.ID, actorID, lid, "unlabeled")
+	}
+	pr.LabelIDs = nil
+	pr.UpdatedAt = time.Now().UTC()
+	if st.persist != nil {
+		st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+	}
+	return true
+}
+
+// RemovePullRequestLabel removes a single label from a pull request by id,
+// recording an unlabeled event. Returns true when the PR exists (whether or not
+// the label was attached), false when it does not.
+func (st *Store) RemovePullRequestLabel(repoID, prNumber, labelID, actorID int) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	pr := st.PullsByRepo[repoID][prNumber]
+	if pr == nil {
+		return false
+	}
+	for idx, lid := range pr.LabelIDs {
+		if lid == labelID {
+			pr.LabelIDs = append(pr.LabelIDs[:idx], pr.LabelIDs[idx+1:]...)
+			pr.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+			}
+			st.recordPullRequestLabelEventLocked(repoID, pr.ID, actorID, labelID, "unlabeled")
+			break
+		}
+	}
+	return true
+}
+
 // CreatePRReview creates a new review on a pull request (legacy prID-based API).
 func (st *Store) CreatePRReview(prID, authorID int, state, body string) *PullRequestReview {
 	st.mu.Lock()

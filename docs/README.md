@@ -24,6 +24,7 @@ Topic guides, design notes, and research references. Specifications live in [`sp
 | [`OBSERVABILITY.md`](OBSERVABILITY.md) | Opt-in observability stack: OpenTelemetry Collector → VictoriaLogs + Jaeger |
 | [`ADMIN_ORCHESTRATION.md`](ADMIN_ORCHESTRATION.md) | How `sockerless-admin` controls sims/backends/bleephubs declaratively from `sockerless.yaml` |
 | [`BLEEPHUB_GH_CLI.md`](BLEEPHUB_GH_CLI.md) | Using the `gh` CLI against bleephub: hostname wiring, tokens, supported commands |
+| [`../bleeplab/README.md`](../bleeplab/README.md) | bleeplab — the GitLab control-plane simulator: runner API, CI pipelines, git + artifacts storage, the runner-as-cloud-task data plane |
 
 ## Design notes
 

@@ -24,3 +24,33 @@ export function formatUptime(seconds: number): string {
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
+
+/**
+ * Render an ISO timestamp as a coarse relative age the way GitHub labels a
+ * last-commit time ("3 days ago", "just now", "last year"). Returns "" for a
+ * missing or unparsable timestamp so callers can omit the label rather than
+ * print a bogus 1970 date.
+ */
+export function relativeTimeFromNow(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "";
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return "";
+  const secs = Math.round((now - then) / 1000);
+  if (secs < 0) return "just now";
+  const units: [limit: number, div: number, name: string][] = [
+    [60, 1, "second"],
+    [3600, 60, "minute"],
+    [86400, 3600, "hour"],
+    [2592000, 86400, "day"],
+    [31536000, 2592000, "month"],
+    [Infinity, 31536000, "year"],
+  ];
+  if (secs < 45) return "just now";
+  for (const [limit, div, name] of units) {
+    if (secs < limit) {
+      const value = Math.round(secs / div);
+      return `${value} ${name}${value === 1 ? "" : "s"} ago`;
+    }
+  }
+  return "";
+}

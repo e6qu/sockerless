@@ -47,6 +47,12 @@ import { OrgHooksPage } from "./pages/OrgHooksPage.js";
 import { SearchPage } from "./pages/SearchPage.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { RepoSocialPage } from "./pages/RepoSocialPage.js";
+// bleephub WP-D — dashboard, user profile, org overview/people/teams
+import { DashboardPage } from "./pages/DashboardPage.js";
+import { ProfilePage } from "./pages/ProfilePage.js";
+import { OrgOverviewPage } from "./pages/OrgOverviewPage.js";
+import { OrgPeoplePage } from "./pages/OrgPeoplePage.js";
+import { OrgTeamsPage } from "./pages/OrgTeamsPage.js";
 
 export function App() {
   if (!isLoggedIn()) {
@@ -68,7 +74,7 @@ export function App() {
         <BrowserRouter>
           <BleephubShell>
             <Routes>
-              <Route path="/ui/" element={<OverviewPage />} />
+              <Route path="/ui/" element={<DashboardPage />} />
               <Route path="/ui/workflows" element={<WorkflowsPage />} />
               <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
               <Route path="/ui/runners" element={<RunnersPage />} />
@@ -108,6 +114,7 @@ export function App() {
               <Route path="/ui/migrations" element={<MigrationsPage />} />
               <Route path="/ui/codespaces" element={<CodespacesPage />} />
               <Route path="/ui/repos/:owner/:repo/codespaces" element={<CodespacesPage />} />
+              <Route path="/ui/admin" element={<OverviewPage />} />
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />
               <Route path="/ui/admin/teams" element={<TeamsPage />} />
@@ -125,9 +132,18 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/stargazers" element={<RepoSocialPage kind="stargazers" />} />
               <Route path="/ui/repos/:owner/:repo/watchers" element={<RepoSocialPage kind="watchers" />} />
               <Route path="/ui/repos/:owner/:repo/forks" element={<RepoSocialPage kind="forks" />} />
+              {/* bleephub WP-D — org overview/people/teams + user profile.
+                  Org sub-pages share the OrgHeader tab bar. The bare
+                  top-level /ui/:login profile route is registered LAST so
+                  every literal /ui/<page> route wins over it. */}
+              <Route path="/ui/orgs/:org" element={<OrgOverviewPage />} />
+              <Route path="/ui/orgs/:org/people" element={<OrgPeoplePage />} />
+              <Route path="/ui/orgs/:org/teams" element={<OrgTeamsPage />} />
+              <Route path="/ui/users/:login" element={<ProfilePage />} />
               {/* A logged-in user hitting /ui/login (bookmark) or any
                   unknown /ui/* path lands back on the dashboard. */}
               <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />
+              <Route path="/ui/:login" element={<ProfilePage />} />
               <Route path="/ui/*" element={<Navigate to="/ui/" replace />} />
             </Routes>
           </BleephubShell>

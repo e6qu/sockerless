@@ -38,9 +38,31 @@ import type {
   GithubRepoInvitation,
 } from "../types.js";
 import { RepoHeader } from "../components/Shell.js";
-import { PageTitle, Button, Box, Tabs, FormLabel, ErrorBanner } from "../components/ui.js";
+import { SettingsLayout, type SettingsNavSection } from "../components/SettingsLayout.js";
+import { PageTitle, Button, Box, FormLabel, ErrorBanner } from "../components/ui.js";
 
 type SettingsTab = "general" | "collaborators" | "deploy-keys" | "pages" | "security" | "interaction" | "transfer" | "rename";
+
+const SETTINGS_NAV: SettingsNavSection<SettingsTab>[] = [
+  { items: [{ key: "general", label: "General" }] },
+  { title: "Access", items: [{ key: "collaborators", label: "Collaborators" }] },
+  {
+    title: "Code and automation",
+    items: [
+      { key: "pages", label: "Pages" },
+      { key: "rename", label: "Rename branch" },
+    ],
+  },
+  {
+    title: "Security",
+    items: [
+      { key: "deploy-keys", label: "Deploy keys" },
+      { key: "security", label: "Security" },
+      { key: "interaction", label: "Interaction limits" },
+    ],
+  },
+  { title: "Danger zone", items: [{ key: "transfer", label: "Transfer" }] },
+];
 
 export function RepoSettingsPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
@@ -56,30 +78,20 @@ export function RepoSettingsPage() {
   if (isError || !data)
     return <InlineError title={`Failed to load ${owner}/${repo}`} detail={String(error)} />;
 
-  const tabs = [
-    { key: "general" as const, label: "General" },
-    { key: "collaborators" as const, label: "Collaborators" },
-    { key: "deploy-keys" as const, label: "Deploy keys" },
-    { key: "pages" as const, label: "Pages" },
-    { key: "security" as const, label: "Security" },
-    { key: "interaction" as const, label: "Interaction limits" },
-    { key: "transfer" as const, label: "Transfer" },
-    { key: "rename" as const, label: "Rename branch" },
-  ];
-
   return (
     <div>
       <RepoHeader owner={owner} repo={repo} active="settings" />
       <PageTitle title="Settings" />
-      <Tabs items={tabs} active={tab} onChange={setTab} />
-      {tab === "general" && <GeneralSettingsTab owner={owner} repo={repo} repoData={data} />}
-      {tab === "collaborators" && <CollaboratorsTab owner={owner} repo={repo} />}
-      {tab === "deploy-keys" && <DeployKeysTab owner={owner} repo={repo} />}
-      {tab === "pages" && <PagesTab owner={owner} repo={repo} />}
-      {tab === "security" && <SecurityTab owner={owner} repo={repo} />}
-      {tab === "interaction" && <InteractionTab owner={owner} repo={repo} />}
-      {tab === "transfer" && <TransferTab owner={owner} repo={repo} />}
-      {tab === "rename" && <RenameBranchTab owner={owner} repo={repo} />}
+      <SettingsLayout sections={SETTINGS_NAV} active={tab} onSelect={setTab}>
+        {tab === "general" && <GeneralSettingsTab owner={owner} repo={repo} repoData={data} />}
+        {tab === "collaborators" && <CollaboratorsTab owner={owner} repo={repo} />}
+        {tab === "deploy-keys" && <DeployKeysTab owner={owner} repo={repo} />}
+        {tab === "pages" && <PagesTab owner={owner} repo={repo} />}
+        {tab === "security" && <SecurityTab owner={owner} repo={repo} />}
+        {tab === "interaction" && <InteractionTab owner={owner} repo={repo} />}
+        {tab === "transfer" && <TransferTab owner={owner} repo={repo} />}
+        {tab === "rename" && <RenameBranchTab owner={owner} repo={repo} />}
+      </SettingsLayout>
     </div>
   );
 }

@@ -26,17 +26,23 @@ import type {
   GithubSSHSigningKey,
   GithubUserEmail,
 } from "../types.js";
-import { PageTitle, Box, Button, ErrorBanner, FormLabel, Tabs } from "../components/ui.js";
+import { PageTitle, Box, Button, ErrorBanner, FormLabel } from "../components/ui.js";
+import { SettingsLayout, type SettingsNavSection } from "../components/SettingsLayout.js";
 import { KeyIcon } from "../components/octicons.js";
 
 type AccountTab = "ssh-keys" | "gpg-keys" | "signing-keys" | "emails" | "blocked";
 
-const TABS: { key: AccountTab; label: string }[] = [
-  { key: "ssh-keys", label: "SSH keys" },
-  { key: "gpg-keys", label: "GPG keys" },
-  { key: "signing-keys", label: "Signing keys" },
-  { key: "emails", label: "Emails" },
-  { key: "blocked", label: "Blocked users" },
+const ACCOUNT_NAV: SettingsNavSection<AccountTab>[] = [
+  { items: [{ key: "emails", label: "Emails" }] },
+  {
+    title: "Access",
+    items: [
+      { key: "ssh-keys", label: "SSH keys" },
+      { key: "gpg-keys", label: "GPG keys" },
+      { key: "signing-keys", label: "Signing keys" },
+    ],
+  },
+  { title: "Moderation", items: [{ key: "blocked", label: "Blocked users" }] },
 ];
 
 export function AccountPage() {
@@ -44,12 +50,13 @@ export function AccountPage() {
   return (
     <div>
       <PageTitle title="Account" meta="Keys, email addresses, and blocked users on the authenticated account" />
-      <Tabs items={TABS} active={tab} onChange={setTab} />
-      {tab === "ssh-keys" && <SSHKeysTab />}
-      {tab === "gpg-keys" && <GPGKeysTab />}
-      {tab === "signing-keys" && <SigningKeysTab />}
-      {tab === "emails" && <EmailsTab />}
-      {tab === "blocked" && <BlockedUsersTab />}
+      <SettingsLayout sections={ACCOUNT_NAV} active={tab} onSelect={setTab}>
+        {tab === "ssh-keys" && <SSHKeysTab />}
+        {tab === "gpg-keys" && <GPGKeysTab />}
+        {tab === "signing-keys" && <SigningKeysTab />}
+        {tab === "emails" && <EmailsTab />}
+        {tab === "blocked" && <BlockedUsersTab />}
+      </SettingsLayout>
     </div>
   );
 }

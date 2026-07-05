@@ -4,6 +4,25 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-05 - bleeplab README + docs sweep + bleephub UI GitHub-faithful redesign (feat/bleeplab-readme-docs-sweep)
+
+Documented bleeplab and reshaped the bleephub web UI into a functional GitHub clone.
+
+**bleeplab docs.** Added `bleeplab/README.md` — the GitLab control-plane simulator's architecture (control plane vs the sockerless runner-as-cloud-task data plane), its runner/control-plane/git-smart-HTTP/artifacts surfaces, the object-store-first storage backend, env vars, run/test, and source layout — cross-linked to bleephub's README, `docs/RUNNERS.md`, `specs/CLOUD_RESOURCE_MAPPING.md`, and the Makefile spec instead of duplicating them. Added `ui/packages/bleeplab/README.md`, the last UI package without one.
+
+**Docs sweep (boyscout).** Removed the retired separate-Docker-API-frontend architecture from `backends/README.md` and `specs/SOCKERLESS_SPEC.md` (backends serve the Docker REST API in-process on `:3375`; there is no `sockerless-docker-frontend` binary). Corrected `docs/E2E_SMOKE_TESTS.md` to "four" smoke surfaces and pointed its GitLab section at the bleeplab control-plane harness; added a SIM-PROVEN-by-bleeplab note to `docs/RUNNERS.md` and clarified the four-cell matrix is the live-cloud subset. Indexed bleeplab in the README + docs index and added its Go/UI LOC badges to the generator. Closed a real `.gitignore` gap — the repo-root `.turbo/` build cache had been committed as a binary; removed it and ignored the path.
+
+**bleephub UI → functional GitHub clone.** The inner pages were already largely GitHub-shaped; the divergence was the global chrome, the dashboard, detail-page sidebars, a missing profile page, and ops pages mixed into the main nav. Reshaped, across five work packages:
+- *Global chrome:* replaced the flat 20-item top-nav with GitHub's header — a hamburger opening a global-nav drawer, the brand, a search box, a "+" create menu, Issues/Pull-requests quick links, a notifications bell with an unread badge, and an avatar dropdown. The bleephub-server-operational surfaces (Runners, Metrics, Storage, GitHub/OAuth Apps, the admin Users/Orgs/Teams/Enterprise/Audit-log tables, and the cross-repo Workflows view) moved into the drawer's "Operations" section — they have no github.com equivalent — with a `/ui/admin` ops overview.
+- *Repo Code page:* a right "About" sidebar (description, topics, releases, packages, languages bar), a green clone "Code" button, a latest-commit banner, and GitHub-sized README/comment markdown (h1–h6, lists, code, tables via a shared `.markdown-body`).
+- *Issues & Pull Requests:* two-column detail with a right sidebar (Assignees, Labels, Projects, Milestone, Development; Reviewers for PRs), a list filter bar with Author/Label/Milestone/Assignee facets + an Open/Closed count header, and PR Conversation/Commits/Files-changed/Checks sub-tabs with a real unified diff and a merge box (merge/squash/rebase).
+- *Org, profile, dashboard:* the org header applied uniformly with Overview/People/Teams pages; a new user profile page at `/ui/:login` and `/ui/users/:login`; and a real dashboard at `/ui/` (top repositories + activity feed), with the ops console preserved at `/ui/admin`.
+- *Settings:* a GitHub-style left vertical sub-nav for repo and account settings.
+
+**Server fixes (BUG-2324–2327).** Reactions and issue-labels now resolve a PR number to its distinct pull-request parent (PRs share the issue number space but are stored separately, so both 404'd for PRs); added a real `GET /pulls/{n}/files` merge-base→head unified-diff endpoint (the pulls dispatch previously handled only comments); comment bodies render as GFM markdown instead of raw pre-wrap text; closed the `.turbo/` gitignore gap.
+
+Verified with the 296-test bleephub UI suite, the full Go suite, clean tsc/knip/build, and an integrated headless-Chromium screenshot pass across every surface (no console errors, no broken layouts).
+
 ## 2026-07-05 - bleephub intensive fuzz / load / concurrency hardening (feat/bleephub-fuzz-load-concurrency)
 
 Built serious, coverage-driven test infrastructure for the bleephub server and UI and fixed every bug it surfaced (BUG-2316–2323).

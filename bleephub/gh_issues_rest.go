@@ -436,6 +436,18 @@ func (s *Server) handleListIssueComments(w http.ResponseWriter, r *http.Request)
 
 // --- Issue label management handlers ---
 
+// labelIDsToJSON resolves a slice of label IDs into GitHub label JSON, in the
+// stored order, skipping any that no longer resolve.
+func (s *Server) labelIDsToJSON(labelIDs []int, base, repoFullName string) []map[string]interface{} {
+	labels := make([]map[string]interface{}, 0, len(labelIDs))
+	for _, lid := range labelIDs {
+		if l := s.store.GetLabel(lid); l != nil {
+			labels = append(labels, issueLabelToJSON(l, base, repoFullName))
+		}
+	}
+	return labels
+}
+
 func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	if user == nil {
@@ -459,9 +471,12 @@ func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issue := s.store.GetIssueByNumber(repo.ID, num)
+	pr := (*PullRequest)(nil)
 	if issue == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
+		if pr = s.store.GetPullRequestByNumber(repo.ID, num); pr == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
 	}
 
 	labelNames, ok := decodeIssueLabelsBody(w, r)
@@ -476,6 +491,16 @@ func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 		if l != nil {
 			newLabelIDs = append(newLabelIDs, l.ID)
 		}
+	}
+
+	base := s.baseURL(r)
+	if pr != nil {
+		// Pull requests carry labels through the same surface real GitHub
+		// exposes; PRs share the issue number space.
+		s.store.AddPullRequestLabels(repo.ID, pr.Number, newLabelIDs, user.ID)
+		updated := s.store.GetPullRequestByNumber(repo.ID, pr.Number)
+		writeJSON(w, http.StatusOK, s.labelIDsToJSON(updated.LabelIDs, base, repo.FullName))
+		return
 	}
 
 	s.store.UpdateIssue(issue.ID, func(i *Issue) {
@@ -495,15 +520,7 @@ func (s *Server) handleAddIssueLabels(w http.ResponseWriter, r *http.Request) {
 
 	// Return current labels
 	updated := s.store.GetIssue(issue.ID)
-	base := s.baseURL(r)
-	labels := make([]map[string]interface{}, 0)
-	for _, lid := range updated.LabelIDs {
-		l := s.store.GetLabel(lid)
-		if l != nil {
-			labels = append(labels, issueLabelToJSON(l, base, repo.FullName))
-		}
-	}
-	writeJSON(w, http.StatusOK, labels)
+	writeJSON(w, http.StatusOK, s.labelIDsToJSON(updated.LabelIDs, base, repo.FullName))
 }
 
 func (s *Server) handleRemoveIssueLabel(w http.ResponseWriter, r *http.Request) {
@@ -530,14 +547,23 @@ func (s *Server) handleRemoveIssueLabel(w http.ResponseWriter, r *http.Request) 
 	}
 
 	issue := s.store.GetIssueByNumber(repo.ID, num)
+	pr := (*PullRequest)(nil)
 	if issue == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
+		if pr = s.store.GetPullRequestByNumber(repo.ID, num); pr == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
 	}
 
 	label := s.store.GetLabelByName(repo.ID, labelName)
 	if label == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+
+	if pr != nil {
+		s.store.RemovePullRequestLabel(repo.ID, pr.Number, label.ID, user.ID)
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
@@ -636,9 +662,12 @@ func (s *Server) handleSetIssueLabels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	issue := s.store.GetIssueByNumber(repo.ID, num)
+	pr := (*PullRequest)(nil)
 	if issue == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
+		if pr = s.store.GetPullRequestByNumber(repo.ID, num); pr == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
 	}
 
 	labelNames, ok := decodeIssueLabelsBody(w, r)
@@ -653,17 +682,18 @@ func (s *Server) handleSetIssueLabels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	base := s.baseURL(r)
+	if pr != nil {
+		s.store.SetPullRequestLabels(repo.ID, pr.Number, labelIDs, user.ID)
+		updated := s.store.GetPullRequestByNumber(repo.ID, pr.Number)
+		writeJSON(w, http.StatusOK, s.labelIDsToJSON(updated.LabelIDs, base, repo.FullName))
+		return
+	}
+
 	s.store.SetIssueLabels(repo.ID, issue.Number, labelIDs, user.ID)
 
 	updated := s.store.GetIssue(issue.ID)
-	base := s.baseURL(r)
-	labels := make([]map[string]interface{}, 0, len(updated.LabelIDs))
-	for _, lid := range updated.LabelIDs {
-		if l := s.store.GetLabel(lid); l != nil {
-			labels = append(labels, issueLabelToJSON(l, base, repo.FullName))
-		}
-	}
-	writeJSON(w, http.StatusOK, labels)
+	writeJSON(w, http.StatusOK, s.labelIDsToJSON(updated.LabelIDs, base, repo.FullName))
 }
 
 func (s *Server) handleClearIssueLabels(w http.ResponseWriter, r *http.Request) {
@@ -690,6 +720,11 @@ func (s *Server) handleClearIssueLabels(w http.ResponseWriter, r *http.Request) 
 
 	issue := s.store.GetIssueByNumber(repo.ID, num)
 	if issue == nil {
+		if pr := s.store.GetPullRequestByNumber(repo.ID, num); pr != nil {
+			s.store.ClearPullRequestLabels(repo.ID, pr.Number, user.ID)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}

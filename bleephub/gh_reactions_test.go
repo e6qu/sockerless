@@ -110,6 +110,148 @@ func TestReactions_IssueLifecycle(t *testing.T) {
 	}
 }
 
+// Pull requests share the issue number space and are reactable on real GitHub
+// via the same /issues/{number}/reactions surface. A PR number must resolve
+// for GET/POST/DELETE, keyed distinctly from a same-id issue.
+func TestReactions_PullRequestLifecycle(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerRoutes()
+
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "rxn-pr", "", false)
+	issue := s.store.CreateIssue(repo.ID, admin.ID, "an issue", "", nil, nil, 0)
+	pr := s.store.CreatePullRequest(repo.ID, admin.ID, "a pull request", "", "feat", "main", false, nil, nil, 0)
+
+	handler := s.ghHeadersMiddleware(s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux)))
+	do := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		var req *http.Request
+		if body != nil {
+			req = httptest.NewRequest(method, path, bytes.NewReader(body))
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+	react, _ := json.Marshal(map[string]string{"content": "rocket"})
+
+	prPath := "/api/v3/repos/admin/rxn-pr/issues/" + itoa(pr.Number) + "/reactions"
+	// POST on the PR number → 201
+	if w := do("POST", prPath, react); w.Code != http.StatusCreated {
+		t.Fatalf("POST PR reaction: status %d body %s", w.Code, w.Body.String())
+	}
+	// GET on the PR number → the one reaction
+	w := do("GET", prPath, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET PR reactions: status %d body %s", w.Code, w.Body.String())
+	}
+	var list []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list) != 1 || list[0]["content"] != "rocket" {
+		t.Fatalf("PR reactions = %v, want one rocket", list)
+	}
+
+	// The same-numbered issue (issue.ID and pr.ID both come from independent
+	// counters) must not see the PR's reaction.
+	if own := s.store.Reactions.ListReactions("issue", issue.ID, ""); len(own) != 0 {
+		t.Errorf("PR reaction leaked onto the issue keyspace: %d", len(own))
+	}
+	if prRx := s.store.Reactions.ListReactions("pull_request", pr.ID, ""); len(prRx) != 1 {
+		t.Errorf("PR reaction not keyed under pull_request:%d — got %d", pr.ID, len(prRx))
+	}
+
+	// DELETE on the PR number → 204
+	reactionID := int(list[0]["id"].(float64))
+	if w := do("DELETE", prPath+"/"+itoa(reactionID), nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE PR reaction: status %d", w.Code)
+	}
+	if w := do("GET", prPath, nil); w.Code == http.StatusOK {
+		_ = json.Unmarshal(w.Body.Bytes(), &list)
+		if len(list) != 0 {
+			t.Errorf("PR reactions after delete = %v, want empty", list)
+		}
+	}
+}
+
+// Pull requests carry labels through the same /issues/{number}/labels surface
+// real GitHub exposes; the add/set/remove/clear routes must resolve PR numbers.
+func TestIssueLabels_PullRequestNumbers(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerRoutes()
+
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "lbl-pr", "", false)
+	pr := s.store.CreatePullRequest(repo.ID, admin.ID, "a pull request", "", "feat", "main", false, nil, nil, 0)
+	s.store.CreateLabel(repo.ID, "bug", "", "ff0000")
+	s.store.CreateLabel(repo.ID, "enhancement", "", "00ff00")
+
+	handler := s.ghHeadersMiddleware(s.prefixStripMiddleware(s.internalAuthMiddleware(s.mux)))
+	do := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		var req *http.Request
+		if body != nil {
+			req = httptest.NewRequest(method, path, bytes.NewReader(body))
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		return w
+	}
+	base := "/api/v3/repos/admin/lbl-pr/issues/" + itoa(pr.Number) + "/labels"
+	body := func(names ...string) []byte {
+		b, _ := json.Marshal(map[string][]string{"labels": names})
+		return b
+	}
+
+	// POST adds a label → 200 with the label list
+	w := do("POST", base, body("bug"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("POST PR label: status %d body %s", w.Code, w.Body.String())
+	}
+	var labels []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &labels)
+	if len(labels) != 1 || labels[0]["name"] != "bug" {
+		t.Fatalf("PR labels after add = %v, want [bug]", labels)
+	}
+
+	// PUT replaces the set → 200 with the new list
+	w = do("PUT", base, body("enhancement"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("PUT PR labels: status %d", w.Code)
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &labels)
+	if len(labels) != 1 || labels[0]["name"] != "enhancement" {
+		t.Fatalf("PR labels after set = %v, want [enhancement]", labels)
+	}
+
+	// DELETE one label by name → 204
+	if w := do("DELETE", base+"/enhancement", nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE PR label: status %d", w.Code)
+	}
+	if got := s.store.GetPullRequestByNumber(repo.ID, pr.Number); len(got.LabelIDs) != 0 {
+		t.Fatalf("PR labels after remove = %v, want empty", got.LabelIDs)
+	}
+
+	// Add two then clear all → 204
+	do("PUT", base, body("bug", "enhancement"))
+	if w := do("DELETE", base, nil); w.Code != http.StatusNoContent {
+		t.Fatalf("DELETE all PR labels: status %d", w.Code)
+	}
+	if got := s.store.GetPullRequestByNumber(repo.ID, pr.Number); len(got.LabelIDs) != 0 {
+		t.Fatalf("PR labels after clear = %v, want empty", got.LabelIDs)
+	}
+
+	// The labeled/unlabeled deltas surface as pull_request timeline events.
+	if evs := s.store.ListPullRequestEvents(repo.ID, pr.ID); len(evs) == 0 {
+		t.Errorf("no pull_request label events recorded")
+	}
+}
+
 func TestReactions_AllParentTypes(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()

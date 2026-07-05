@@ -197,8 +197,11 @@ describe("PullsPage checks section", () => {
       check_runs: [checkRun(1, "build"), checkRun(2, "lint")],
     });
     renderAt("/ui/repos/admin/test/pulls/9");
+    // The Conversation merge box shows the aggregate summary…
     expect(await screen.findByText(/all checks have passed/i)).toBeInTheDocument();
-    expect(screen.getByText("build")).toBeInTheDocument();
+    // …and the Checks tab lists the per-check rows.
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    expect(await screen.findByText("build")).toBeInTheDocument();
     expect(screen.getByText("lint")).toBeInTheDocument();
     // 42s duration from started/completed timestamps.
     expect(screen.getAllByText("42s").length).toBe(2);
@@ -242,6 +245,7 @@ describe("PullsPage checks section", () => {
       ],
     });
     renderAt("/ui/repos/admin/test/pulls/9");
+    fireEvent.click(await screen.findByRole("button", { name: "Checks" }));
     const link = await screen.findByRole("link", { name: /build/i });
     expect(link).toHaveAttribute("href", "/ui/repos/admin/test/actions/runs/42");
   });
@@ -466,8 +470,11 @@ describe("PullsPage combined status merge box", () => {
     });
     renderAt("/ui/repos/admin/test/pulls/9");
 
+    // The merge box shows the shared failure summary on Conversation…
     expect(await screen.findByText(/some checks were not successful/i)).toBeInTheDocument();
-    expect(screen.getByText(/ci\/lint/)).toBeInTheDocument();
+    // …and the Checks tab lists the commit-status contexts + check runs.
+    fireEvent.click(screen.getByRole("button", { name: "Checks" }));
+    expect(await screen.findByText(/ci\/lint/)).toBeInTheDocument();
     expect(screen.getByText(/lint failed/)).toBeInTheDocument();
     expect(screen.getByText("build")).toBeInTheDocument();
   });
@@ -516,6 +523,65 @@ describe("PullsPage reactions", () => {
     });
     const init = findCall("/issues/9/reactions", "POST");
     expect(JSON.parse(String(init?.body))).toEqual({ content: "heart" });
+  });
+});
+
+describe("PullsPage detail sub-tabs", () => {
+  it("renders the Conversation/Commits/Files changed/Checks tabs and a Reviewers sidebar", async () => {
+    mockPRApis();
+    renderAt("/ui/repos/admin/test/pulls/9");
+    await screen.findByText("Feature PR");
+    expect(screen.getByRole("button", { name: "Conversation" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Commits" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Files changed" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Checks" })).toBeInTheDocument();
+    // The Reviewers section lives in the sidebar on the Conversation tab.
+    expect(screen.getByText("Reviewers")).toBeInTheDocument();
+  });
+
+  it("loads the PR's changed files as a diff on the Files changed tab", async () => {
+    mockPRApis((u) => {
+      if (u.endsWith("/pulls/9/files")) {
+        return jsonResponse([
+          {
+            sha: "abc",
+            filename: "main.go",
+            status: "modified",
+            additions: 2,
+            deletions: 1,
+            changes: 3,
+            patch: "@@ -1,2 +1,2 @@\n-old\n+new",
+          },
+        ]);
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    await screen.findByText("Feature PR");
+    fireEvent.click(screen.getByRole("button", { name: "Files changed" }));
+    expect(await screen.findByText("main.go")).toBeInTheDocument();
+    expect(screen.getByText(/@@ -1,2 \+1,2 @@/)).toBeInTheDocument();
+  });
+});
+
+describe("PullsPage merge box", () => {
+  it("merges with the selected method (squash) via the merge endpoint", async () => {
+    mockPRApis((u, init) => {
+      if (u.endsWith("/pulls/9/merge") && init?.method === "PUT") {
+        return jsonResponse({ merged: true });
+      }
+      return undefined;
+    });
+    renderAt("/ui/repos/admin/test/pulls/9");
+    await screen.findByText("Feature PR");
+
+    fireEvent.change(screen.getByLabelText("Merge method"), { target: { value: "squash" } });
+    fireEvent.click(screen.getByRole("button", { name: /squash and merge/i }));
+    await waitFor(() => {
+      expect(findCall("/pulls/9/merge", "PUT")).toBeDefined();
+    });
+    const init = findCall("/pulls/9/merge", "PUT");
+    expect(JSON.parse(String(init?.body))).toEqual({ merge_method: "squash" });
   });
 });
 

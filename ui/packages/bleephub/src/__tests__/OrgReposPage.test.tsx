@@ -82,6 +82,9 @@ describe("OrgReposPage", () => {
       "/api/v3/orgs/acme/repos?per_page=30",
       expect.anything(),
     );
+    // The org repos page now carries the shared OrgHeader tab bar so the
+    // org chrome is uniform with the other org sub-pages.
+    expect(screen.getByRole("navigation", { name: /organization/i })).toBeInTheDocument();
   });
 
   it("shows an error state when the org does not exist", async () => {
