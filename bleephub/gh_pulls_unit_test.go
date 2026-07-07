@@ -16,6 +16,7 @@ func pullsTestServer(t *testing.T) (*Server, *User, *Repo) {
 	s.registerGHMiscEndpoints()
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "pr-unit-test", "", false)
+	seedPullRequestBranches(t, s, repo, "feature", "feat", "fix", "branch", "r", "f", "a", "b", "feat-a", "feat-b", "draft-branch")
 	return s, admin, repo
 }
 

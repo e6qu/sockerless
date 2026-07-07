@@ -391,6 +391,7 @@ func TestPersistenceReload_PRReviewComments(t *testing.T) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, "reviewed", "", false)
+		seedStorePullRequestBranches(t, st, repo, "feature")
 		pr := st.CreatePullRequest(repo.ID, user.ID, "fix", "", "feature", "main", false, nil, nil, 0)
 		prID, authorID = pr.ID, user.ID
 		root := st.PRReviewComments.CreateRootComment(pr.ID, user.ID, "main.go", "off-by-one?", "abc123", "RIGHT", 10, 0)
@@ -688,6 +689,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		st.Misc.pagesBuilds[repoKey] = []*PagesBuild{{ID: 1, Status: "built"}}
 		p.MustPut("pages_builds", repoKey, st.Misc.pagesBuilds[repoKey])
 		st.CreateIssue(repo.ID, user.ID, "stale", "", nil, nil, 0)
+		seedStorePullRequestBranches(t, st, repo, "f")
 		st.CreatePullRequest(repo.ID, user.ID, "stale pr", "", "f", "main", false, nil, nil, 0)
 		st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
 

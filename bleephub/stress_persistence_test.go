@@ -191,6 +191,7 @@ func TestStressPersistenceReloadConsistency(t *testing.T) {
 						fail(fmt.Errorf("AddReaction %s-%d: %w", tag, j, err))
 					}
 				}
+				seedStorePullRequestBranches(t, st1, repo, "feature-"+tag)
 				if st1.CreatePullRequest(repo.ID, admin.ID, "pr "+tag, "b", "feature-"+tag, "main", false, nil, nil, 0) == nil {
 					fail(fmt.Errorf("CreatePullRequest %s nil", tag))
 				}

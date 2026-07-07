@@ -62,9 +62,16 @@ func refHash(r *plumbing.Reference, stor gitStorage.Storer) (plumbing.Hash, erro
 		if err != nil {
 			return plumbing.ZeroHash, err
 		}
-		return target.Hash(), nil
+		return refHash(target, stor)
 	}
-	return r.Hash(), nil
+	h := r.Hash()
+	if tag, err := object.GetTag(stor, h); err == nil {
+		if tag.TargetType != plumbing.CommitObject {
+			return plumbing.ZeroHash, fmt.Errorf("tag %s points to %s, not commit", r.Name(), tag.TargetType)
+		}
+		return tag.Target, nil
+	}
+	return h, nil
 }
 
 // findMergeBase returns the nearest common ancestor of a and b. A simple

@@ -18,6 +18,7 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 
 	user := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(user, "rc-repo", "", false)
+	seedPullRequestBranches(t, s, repo, "feat")
 	pr := s.store.CreatePullRequest(repo.ID, user.ID, "title", "body", "feat", "main", false, nil, nil, 0)
 
 	create := func(path string, body []byte) *httptest.ResponseRecorder {
@@ -127,6 +128,7 @@ func TestPRReviewComments_MissingBody422(t *testing.T) {
 
 	user := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(user, "rc2", "", false)
+	seedPullRequestBranches(t, s, repo, "f", "m")
 	pr := s.store.CreatePullRequest(repo.ID, user.ID, "t", "b", "f", "m", false, nil, nil, 0)
 
 	bad, _ := json.Marshal(map[string]any{"path": "x.go"})

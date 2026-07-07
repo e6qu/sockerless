@@ -12,6 +12,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/go-git/go-git/v5/plumbing"
+	"github.com/go-git/go-git/v5/plumbing/object"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 // Releases API.
@@ -929,11 +933,12 @@ func releaseAssetToJSON(asset *ReleaseAsset, st *Store, baseURL string, repo *Re
 	}
 }
 
-// handleGenerateReleaseNotes returns a deterministic changelog skeleton built
-// from the request's tag names. Real GitHub summarises the PRs merged in the
-// previous_tag..tag commit range; bleephub doesn't model commit ranges, so the
-// body carries only the "What's Changed" header and the Full Changelog line.
 func (s *Server) handleGenerateReleaseNotes(w http.ResponseWriter, r *http.Request) {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	var req struct {
 		TagName           string `json:"tag_name"`
 		TargetCommitish   string `json:"target_commitish"`
@@ -944,14 +949,106 @@ func (s *Server) handleGenerateReleaseNotes(w http.ResponseWriter, r *http.Reque
 		writeGHValidationError(w, "Release", "tag_name", "missing_field")
 		return
 	}
+	notes := s.generatedReleaseNotes(repo, req.TagName, req.TargetCommitish, req.PreviousTagName)
 	out := map[string]interface{}{
 		"name": req.TagName,
-		"body": fmt.Sprintf("## What's Changed\n\nSince %s\n\n**Full Changelog**: %s...%s",
-			coalesceStr(req.PreviousTagName, "(no previous tag)"),
-			coalesceStr(req.PreviousTagName, ""),
-			req.TagName),
+		"body": notes,
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) generatedReleaseNotes(repo *Repo, tagName, targetCommitish, previousTagName string) string {
+	var lines []string
+	lines = append(lines, "## What's Changed", "")
+	for _, pr := range s.mergedPullRequestsInRange(repo, tagName, targetCommitish, previousTagName) {
+		author := ""
+		if u := s.store.GetUserByID(pr.AuthorID); u != nil {
+			author = u.Login
+		}
+		if author == "" {
+			author = "ghost"
+		}
+		lines = append(lines, fmt.Sprintf("* %s by @%s in %s/pull/%d", pr.Title, author, repo.FullName, pr.Number))
+	}
+	if len(lines) == 2 {
+		lines = append(lines, fmt.Sprintf("Since %s", coalesceStr(previousTagName, "(no previous tag)")))
+	}
+	lines = append(lines, "", fmt.Sprintf("**Full Changelog**: %s...%s", coalesceStr(previousTagName, ""), tagName))
+	return strings.Join(lines, "\n")
+}
+
+func (s *Server) mergedPullRequestsInRange(repo *Repo, tagName, targetCommitish, previousTagName string) []*PullRequest {
+	owner, name, ok := splitRepoFullName(repo.FullName)
+	if !ok {
+		return nil
+	}
+	stor := s.store.GetGitStorage(owner, name)
+	if stor == nil {
+		return nil
+	}
+	targetRef := tagName
+	if targetCommitish != "" {
+		targetRef = targetCommitish
+	}
+	targetHash, err := resolveGitRef(stor, targetRef)
+	if err != nil && targetCommitish == "" {
+		targetHash, err = resolveGitRef(stor, repo.DefaultBranch)
+	}
+	if err != nil {
+		return nil
+	}
+	var previousHash plumbing.Hash
+	if previousTagName != "" {
+		if h, err := resolveGitRef(stor, previousTagName); err == nil {
+			previousHash = h
+		}
+	}
+	inRange := releaseCommitRangeSet(stor, previousHash, targetHash)
+	if len(inRange) == 0 {
+		return nil
+	}
+
+	var out []*PullRequest
+	for _, pr := range s.store.ListPullRequests(repo.ID, "MERGED") {
+		snap := s.store.snapPR(pr)
+		if snap.MergeCommitSHA != "" && inRange[snap.MergeCommitSHA] {
+			out = append(out, snap)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].MergedAt != nil && out[j].MergedAt != nil && !out[i].MergedAt.Equal(*out[j].MergedAt) {
+			return out[i].MergedAt.Before(*out[j].MergedAt)
+		}
+		return out[i].Number < out[j].Number
+	})
+	return out
+}
+
+func releaseCommitRangeSet(stor gitStorage.Storer, previousHash, targetHash plumbing.Hash) map[string]bool {
+	out := map[string]bool{}
+	var commits []*object.Commit
+	var err error
+	if previousHash.IsZero() {
+		head, err := object.GetCommit(stor, targetHash)
+		if err != nil {
+			return out
+		}
+		iter := object.NewCommitPreorderIter(head, nil, nil)
+		defer iter.Close()
+		_ = iter.ForEach(func(c *object.Commit) error {
+			commits = append(commits, c)
+			return nil
+		})
+	} else {
+		commits, err = commitsBetween(stor, previousHash, targetHash)
+		if err != nil {
+			return out
+		}
+	}
+	for _, c := range commits {
+		out[c.Hash.String()] = true
+	}
+	return out
 }
 
 func releaseToJSON(rel *Release, st *Store, baseURL string, repo *Repo) map[string]interface{} {

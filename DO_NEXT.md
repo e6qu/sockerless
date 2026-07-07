@@ -4,6 +4,24 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
+`bleephub-pr-release-fidelity` — bleephub PR/release fidelity and continuity cleanup.
+
+**Next**
+- After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
+
+**Scope**
+- **BUG-2314:** Pull request creation requires real head/base refs. REST and GraphQL PR responses derive head/base shas, commit counts, review `commit_id`, status rollups, and merge response shas from git storage; the pseudo-PR SHA path was removed.
+- **BUG-2315:** GraphQL `reviewRequests` renders real requested reviewers instead of a hardcoded empty connection.
+- **BUG-2313:** Release `generate-notes` resolves the requested git tag/commit range, walks commits, matches merged pull request merge commits, and emits real "What's Changed" bullets with the Full Changelog compare line.
+- **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
+
+**Validation**
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.
+
+---
+### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
+
 `open-issues-776-777` — open GitHub issue sweep after #774.
 
 **Scope**
@@ -24,10 +42,6 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `bash scripts/check-no-tool-absent-skips.sh` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'TestStoreSnapshotsReferenceFields|TestStoreUpdateSnapshotsReferenceFields|TestStore' -count=1 ./...` passed in `simulators/aws/shared`, `simulators/gcp/shared`, and `simulators/azure/shared`.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` passed in `simulators/aws`, `simulators/gcp`, and `simulators/azure` when run with sandbox escalation so loopback listeners and Docker/Podman access were available.
-
-**Next after merge**
-- Only GitHub issue #394 remained open and it stayed upstream-blocked on the AzureAD Terraform provider's missing Microsoft Graph endpoint override.
-- Resume PLAN.md / BUGS.md work: BUG-2313/2314/2315 (bleephub fidelity backlog), BUG-1075 live-cloud validation, and further sim fidelity audits.
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics

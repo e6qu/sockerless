@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2334 filed - 2288 fixed - 5 open - 16 false positives.**
+**2334 filed - 2291 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,9 +10,6 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 2313 | P3 | bleephub — releases | generate-notes body ignores derivable merged-PR state | `POST /repos/{o}/{r}/releases/generate-notes` returns a deterministic changelog skeleton built only from the request's tag names; real GitHub summarises the PRs merged in the `previous_tag..tag` commit range. Merged-PR state exists (`MergedAt` on stored pulls) but faithful derivation needs commit-range modeling over the git storage (resolve tags → walk the range → match PR merge commits). Fix shape: derive the "What's Changed" bullet list (`* title by @login in <pr url>`) from PRs whose merges fall in the range, keeping the Full Changelog compare line. |
-| 2314 | P3 | bleephub — metadata-only PR model | pseudo shas for ref-less PRs | PRs whose branches have no git objects render deterministic pseudo head/base shas (`prHeadSHA`), a synthetic merge-result sha, and `commits: 1`; reviews' `commit_id` and the GraphQL statusCheckRollup commit oid use the pseudo head sha even for git-backed PRs. Fix shape: require real refs at PR creation (as GitHub does), migrate the metadata-only PR test fixtures to git-backed repos, then delete `prHeadSHA`. |
-| 2315 | P3 | bleephub — GraphQL PR reviewRequests | hardcoded empty connection | `pullRequestToGQL` renders `reviewRequests` as a hardcoded empty connection although `RequestedReviewerIDs` carries real state, so `gh pr view` never shows requested reviewers. Fix shape: a `ReviewRequest` GraphQL type whose `requestedReviewer` union renders the PR's real requested reviewers. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 
@@ -20,6 +17,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2315~~ | P3 | bleephub — GraphQL PR reviewRequests | hardcoded empty connection | `pullRequestToGQL` now renders `reviewRequests` from real `RequestedReviewerIDs` using a `ReviewRequest` node and requested-reviewer union, so `gh pr view` sees the same requested reviewers the REST surface stores. |
+| ~~2314~~ | P3 | bleephub — metadata-only PR model | pseudo shas for ref-less PRs | Pull requests now require real head and base refs at creation, REST/GraphQL PR commits and review `commit_id`s derive from git storage, merge responses use the real merge commit, and metadata-only pseudo SHA paths were removed. The tests now seed real branches before creating PRs. |
+| ~~2313~~ | P3 | bleephub — releases | generate-notes body ignores derivable merged-PR state | `POST /repos/{o}/{r}/releases/generate-notes` now resolves the requested tag range through git storage, walks real commits, matches merged PR merge commits, and emits "What's Changed" bullets plus the Full Changelog compare line. |
 | ~~2334~~ | P3 | test policy — skip-if-tool-absent | hook coverage gap | The no-skip-if-tool-absent rule lived in prose only, so a future test could reintroduce a missing-tool `t.Skip` without a local guard. Added `scripts/check-no-tool-absent-skips.sh` to pre-commit so new missing-tool/dependency skips fail before commit; required tools must be installed by the harness or fail loud. |
 | ~~2333~~ | P1 | simulators — shared memory state | mutable reference escape | The shared `MemoryStore` implementations returned and stored structs by value but left reference fields (maps, slices, pointers) aliased with store-owned state; SQLite stores did not, because JSON round-trips copied them. The AWS, GCP, and Azure memory stores now deep-copy values at every store boundary (`Put`, `Get`, `List`, `Filter`, `Update`, and AWS `Upsert`) and shared store tests prove callers cannot mutate stored reference fields through returned values. |
 | ~~2332~~ | P2 | AWS sim — ECS task resources (#776) | resource-limit fidelity coverage | The ECS simulator's task launch path needed a regression guard proving task-level and container-level CPU/memory were translated into the cgroup fields the shared container launcher applies (`MemoryBytes`/`NanoCPU` → Docker/Podman `HostConfig.Memory`/`NanoCPUs`). Added focused tests for task fallback and container-definition override sizing so advertised ECS metadata limits stay coupled to real container limits. |

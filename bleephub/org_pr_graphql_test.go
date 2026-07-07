@@ -23,6 +23,7 @@ func TestPRGraphQL_OrgOwnedHeadRepositoryOwner(t *testing.T) {
 	if repo == nil {
 		t.Fatal("failed to create org repo")
 	}
+	seedPullRequestBranches(t, testServer, repo, "feature")
 	defer func() {
 		testServer.store.DeleteRepo(orgLogin, "sweep-org-repo")
 	}()

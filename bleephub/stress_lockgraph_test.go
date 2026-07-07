@@ -25,6 +25,7 @@ func TestStressPRSerializerRace(t *testing.T) {
 	if repo == nil {
 		t.Fatal("CreateRepo nil")
 	}
+	seedStorePullRequestBranches(t, st, repo, "feature")
 	pr := st.CreatePullRequest(repo.ID, admin.ID, "orig", "body", "feature", "main", false, nil, nil, 0)
 	if pr == nil {
 		t.Fatal("CreatePullRequest nil")

@@ -120,6 +120,8 @@ func TestReleases_GenerateNotes(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
 	s.registerGHReleasesRoutes()
+	user := s.store.UsersByLogin["admin"]
+	_ = s.store.CreateRepo(user, "r", "", false)
 
 	body, _ := json.Marshal(map[string]string{
 		"tag_name":          "v2.0.0",
@@ -139,6 +141,64 @@ func TestReleases_GenerateNotes(t *testing.T) {
 	}
 	if resp["body"] == nil {
 		t.Errorf("body missing")
+	}
+}
+
+func TestReleases_GenerateNotesMergedPullRequests(t *testing.T) {
+	repoPath := "/api/v3/repos/admin/rel-notes-prs"
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "rel-notes-prs", "auto_init": true,
+	}).Body.Close()
+	repo := testServer.store.GetRepo("admin", "rel-notes-prs")
+	if repo == nil {
+		t.Fatal("repo not created")
+	}
+	seedPullRequestBranches(t, testServer, repo, "feature")
+
+	mainRef := ghGet(t, repoPath+"/git/refs/heads/main", defaultToken)
+	mainData := decodeJSON(t, mainRef)
+	mainObj, _ := mainData["object"].(map[string]interface{})
+	baseSHA, _ := mainObj["sha"].(string)
+	if baseSHA == "" {
+		t.Fatalf("main ref missing sha: %v", mainData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/tags/v1.0.0", "sha": baseSHA,
+	}).Body.Close()
+
+	ghPost(t, repoPath+"/pulls", defaultToken, map[string]interface{}{
+		"title": "Ship release notes", "head": "feature", "base": "main",
+	}).Body.Close()
+	mergeResp := ghPut(t, repoPath+"/pulls/1/merge", defaultToken, map[string]interface{}{})
+	if mergeResp.StatusCode != http.StatusOK {
+		mergeResp.Body.Close()
+		t.Fatalf("merge status = %d", mergeResp.StatusCode)
+	}
+	mergeData := decodeJSON(t, mergeResp)
+	mergeSHA, _ := mergeData["sha"].(string)
+	if mergeSHA == "" {
+		t.Fatalf("merge returned no sha: %v", mergeData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/tags/v2.0.0", "sha": mergeSHA,
+	}).Body.Close()
+
+	body, _ := json.Marshal(map[string]string{
+		"tag_name":          "v2.0.0",
+		"previous_tag_name": "v1.0.0",
+	})
+	resp := ghPost(t, repoPath+"/releases/generate-notes", defaultToken, json.RawMessage(body))
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("generate-notes status = %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	notes, _ := data["body"].(string)
+	if !strings.Contains(notes, "* Ship release notes by @admin in admin/rel-notes-prs/pull/1") {
+		t.Fatalf("notes missing merged PR bullet:\n%s", notes)
+	}
+	if !strings.Contains(notes, "**Full Changelog**: v1.0.0...v2.0.0") {
+		t.Fatalf("notes missing full changelog:\n%s", notes)
 	}
 }
 

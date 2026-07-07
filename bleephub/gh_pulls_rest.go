@@ -1,7 +1,6 @@
 package bleephub
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -386,75 +385,67 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
 	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
-	sha := mergeSha
-	if sha == "" {
-		// Metadata-only PRs (no git objects behind the branches) have no
-		// real merge commit, but the merge-result contract requires a sha;
-		// a synthetic value fills it for that model only.
-		sha = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("merge-%d-%d", pr.ID, time.Now().UnixNano()))))[:40]
-	}
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"sha":     sha,
+		"sha":     mergeSha,
 		"merged":  true,
 		"message": "Pull Request successfully merged",
 	})
 }
 
 // completePullRequestMerge materialises the merge in the repository's git
-// storage when the pull request's branches exist there (merge commit,
-// squash commit, or rebased commits per method), marks the PR merged, and
-// records the merged and closed timeline events. It returns the resulting
-// merge commit SHA ("" when the repository holds no git objects for the
-// PR's branches) or a non-empty error message when the merge cannot be
-// performed (e.g. a merge conflict).
+// storage (merge commit, squash commit, or rebased commits per method), marks
+// the PR merged, and records the merged and closed timeline events. It returns
+// the resulting merge commit SHA or a non-empty error message when the merge
+// cannot be performed (e.g. a merge conflict).
 func (s *Server) completePullRequestMerge(repo *Repo, pr *PullRequest, user *User, method, commitTitle, commitMessage string) (string, string) {
 	owner, name, _ := splitRepoFullName(repo.FullName)
 	stor := s.store.GetGitStorage(owner, name)
 	var mergeSha string
-	if stor != nil {
-		headHash, headErr := resolveGitRef(stor, pr.HeadRefName)
-		baseRef := plumbing.NewBranchReferenceName(pr.BaseRefName)
-		_, baseErr := stor.Reference(baseRef)
-		if headErr == nil && baseErr == nil {
-			email := user.Email
-			if email == "" {
-				email = user.Login + "@users.noreply.bleephub.local"
-			}
-			author := repoSignature(user.Login, email)
-			var hash plumbing.Hash
-			var err error
-			switch method {
-			case "squash":
-				message := commitTitle
-				if message == "" {
-					message = fmt.Sprintf("%s (#%d)", pr.Title, pr.Number)
-				}
-				if commitMessage != "" {
-					message += "\n\n" + commitMessage
-				}
-				hash, err = performSquashMerge(stor, baseRef, headHash, message, author, author)
-			case "rebase":
-				hash, err = performRebaseMerge(stor, baseRef, headHash, author)
-			default: // "merge"
-				message := commitTitle
-				if message == "" {
-					message = fmt.Sprintf("Merge pull request #%d from %s/%s", pr.Number, owner, pr.HeadRefName)
-				}
-				body := commitMessage
-				if body == "" {
-					body = pr.Title
-				}
-				hash, err = performMergeCommit(stor, baseRef, headHash, message+"\n\n"+body, author)
-			}
-			if err != nil {
-				return "", "Pull Request is not mergeable"
-			}
-			mergeSha = hash.String()
-			s.store.UpdateRepo(owner, name, func(r *Repo) {
-				r.PushedAt = time.Now().UTC()
-			})
-		}
+	if stor == nil {
+		return "", "Pull Request is not mergeable"
 	}
+	headHash, headErr := resolveGitRef(stor, pr.HeadRefName)
+	baseRef := plumbing.NewBranchReferenceName(pr.BaseRefName)
+	if _, baseErr := stor.Reference(baseRef); headErr != nil || baseErr != nil {
+		return "", "Pull Request is not mergeable"
+	}
+	email := user.Email
+	if email == "" {
+		email = user.Login + "@users.noreply.bleephub.local"
+	}
+	author := repoSignature(user.Login, email)
+	var hash plumbing.Hash
+	var err error
+	switch method {
+	case "squash":
+		message := commitTitle
+		if message == "" {
+			message = fmt.Sprintf("%s (#%d)", pr.Title, pr.Number)
+		}
+		if commitMessage != "" {
+			message += "\n\n" + commitMessage
+		}
+		hash, err = performSquashMerge(stor, baseRef, headHash, message, author, author)
+	case "rebase":
+		hash, err = performRebaseMerge(stor, baseRef, headHash, author)
+	default: // "merge"
+		message := commitTitle
+		if message == "" {
+			message = fmt.Sprintf("Merge pull request #%d from %s/%s", pr.Number, owner, pr.HeadRefName)
+		}
+		body := commitMessage
+		if body == "" {
+			body = pr.Title
+		}
+		hash, err = performMergeCommit(stor, baseRef, headHash, message+"\n\n"+body, author)
+	}
+	if err != nil {
+		return "", "Pull Request is not mergeable"
+	}
+	mergeSha = hash.String()
+	s.store.UpdateRepo(owner, name, func(r *Repo) {
+		r.PushedAt = time.Now().UTC()
+	})
 
 	s.store.UpdatePullRequest(pr.ID, func(p *PullRequest) {
 		now := time.Now()
@@ -1242,10 +1233,31 @@ func reviewerIDsFromRequest(st *Store, reviewers []interface{}) []int {
 
 // --- JSON converters ---
 
-// prHeadSHA returns the deterministic synthetic head commit SHA for a
-// pull request; reviews reference the same value as commit_id.
-func prHeadSHA(prID int) string {
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", prID))))[:40]
+func pullRequestHeadSHA(pr *PullRequest, st *Store) string {
+	if pr == nil {
+		return ""
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return pullRequestHeadSHALocked(pr, st)
+}
+
+func pullRequestHeadSHALocked(pr *PullRequest, st *Store) string {
+	if pr == nil {
+		return ""
+	}
+	repo := st.Repos[pr.RepoID]
+	if repo == nil {
+		return ""
+	}
+	return resolveBranchSha(st.GitStorages[repo.FullName], pr.HeadRefName)
+}
+
+func pullRequestReviewCommitSHA(review *PullRequestReview, st *Store) string {
+	if review == nil {
+		return ""
+	}
+	return pullRequestHeadSHA(st.GetPullRequest(review.PRID), st)
 }
 
 // pullRequestSimpleJSON converts a PullRequest to the GitHub
@@ -1303,16 +1315,8 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 
 	st.mu.RUnlock()
 
-	// Real branch shas when the repository has git objects behind the PR's
-	// branches; the deterministic pseudo-shas cover metadata-only PRs.
 	headSHA := resolveBranchSha(stor, pr.HeadRefName)
-	if headSHA == "" {
-		headSHA = prHeadSHA(pr.ID)
-	}
 	baseSHA := pr.BaseSHA
-	if baseSHA == "" {
-		baseSHA = fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40]
-	}
 
 	var milestoneJSON interface{}
 	if milestone != nil {
@@ -1405,7 +1409,7 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 			"review_comments": map[string]interface{}{"href": api + "/comments"},
 			"review_comment":  map[string]interface{}{"href": baseURL + "/api/v3/repos/" + repoFullName + "/pulls/comments{/number}"},
 			"commits":         map[string]interface{}{"href": api + "/commits"},
-			"statuses":        map[string]interface{}{"href": baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + prHeadSHA(pr.ID)},
+			"statuses":        map[string]interface{}{"href": baseURL + "/api/v3/repos/" + repoFullName + "/statuses/" + headSHA},
 		},
 		"labels":              labels,
 		"assignee":            assignee,
@@ -1465,12 +1469,9 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 	out["changed_files"] = pr.ChangedFiles
 	out["comments"] = commentCount
 	out["review_comments"] = reviewCount
-	// Real commit count when the repository has git objects behind the
-	// PR's branches; metadata-only PRs report the 1 their pseudo-head
-	// implies.
-	commitCount := 1
+	commitCount := 0
 	if repo := st.GetRepoByID(pr.RepoID); repo != nil {
-		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil && len(commits) > 0 {
+		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil {
 			commitCount = len(commits)
 		}
 	}
@@ -1507,7 +1508,7 @@ func reviewToJSON(review *PullRequestReview, st *Store, baseURL, repoFullName st
 		"user":               authorJSON,
 		"body":               review.Body,
 		"state":              review.State,
-		"commit_id":          prHeadSHA(review.PRID),
+		"commit_id":          pullRequestReviewCommitSHA(review, st),
 		"html_url":           htmlURL,
 		"pull_request_url":   pullURL,
 		"author_association": authorAssociation,
