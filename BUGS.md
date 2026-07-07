@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2332 filed - 2286 fixed - 5 open - 16 false positives.**
+**2334 filed - 2288 fixed - 5 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2334~~ | P3 | test policy — skip-if-tool-absent | hook coverage gap | The no-skip-if-tool-absent rule lived in prose only, so a future test could reintroduce a missing-tool `t.Skip` without a local guard. Added `scripts/check-no-tool-absent-skips.sh` to pre-commit so new missing-tool/dependency skips fail before commit; required tools must be installed by the harness or fail loud. |
+| ~~2333~~ | P1 | simulators — shared memory state | mutable reference escape | The shared `MemoryStore` implementations returned and stored structs by value but left reference fields (maps, slices, pointers) aliased with store-owned state; SQLite stores did not, because JSON round-trips copied them. The AWS, GCP, and Azure memory stores now deep-copy values at every store boundary (`Put`, `Get`, `List`, `Filter`, `Update`, and AWS `Upsert`) and shared store tests prove callers cannot mutate stored reference fields through returned values. |
 | ~~2332~~ | P2 | AWS sim — ECS task resources (#776) | resource-limit fidelity coverage | The ECS simulator's task launch path needed a regression guard proving task-level and container-level CPU/memory were translated into the cgroup fields the shared container launcher applies (`MemoryBytes`/`NanoCPU` → Docker/Podman `HostConfig.Memory`/`NanoCPUs`). Added focused tests for task fallback and container-definition override sizing so advertised ECS metadata limits stay coupled to real container limits. |
 | ~~2331~~ | P3 | AWS SDK tests — DynamoDB Local oracle | skip-if-absent test | The DynamoDB differential oracle skipped when `docker` was missing, reporting green without exercising DynamoDB Local. Docker is now a required dependency for that oracle-backed test and a missing binary fails loud. |
 | ~~2330~~ | P1 | AWS sim — DynamoDB concurrent reads (#777) | concurrent map iteration/write | DynamoDB read APIs returned or examined stored item maps directly while `UpdateItem` could mutate the same maps under `ddbItemsMu`, so capacity calculation/projection could panic with `concurrent map iteration and map write`. `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` now clone each item under `ddbItemsMu` via `ddbItemSnapshot` before projection, expression matching, response rendering, and consumed-capacity calculation; the regression runs under `-race`. |
@@ -182,5 +184,7 @@ _BUG-2188 and earlier (~450 fixed) — full closed-bug ledger in `git log` + the
 - Reopens require a postmortem: what test passed but should have failed, what client path was missed, and what new canonical-client test catches it.
 - List operations need paged-iterator tests.
 - Stateful resources need state-machine assertions.
+- Shared stores must snapshot values at their boundaries; maps, slices, and pointers cannot escape as mutable aliases to store-owned state.
+- Missing-tool/dependency skips are bugs; required tools are installed by the harness or fail loud.
 - Mux pattern overlap is a recurring simulator bug class; run the overlap scanner when adding routes.
 | 1928 | backends (FaaS) — `NetworkSettings.IPAddress` empty | **Honest, not synthetic.** Lambda / Cloud Run / Azure Functions expose **no queryable per-container IP** (the platform abstracts it); empty is the faithful value and fabricating an IP would violate the no-synthetic rule. ECS populates a real ENI IP because AWS exposes one. Flagged by a sweep agent; resolved by analysis. |

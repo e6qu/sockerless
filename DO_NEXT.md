@@ -9,7 +9,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 **Scope**
 - **DynamoDB concurrent map panic (#777 / BUG-2330):** `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` snapshot each stored item under `ddbItemsMu` before projection, expression matching, response rendering, and consumed-capacity calculation. Read APIs no longer expose maps that `UpdateItem` can mutate in place.
 - **ECS CPU/memory limit fidelity (#776 / BUG-2332):** focused regressions pin task-level fallback and container-definition override translation into `MemoryBytes` and `NanoCPU`, the fields the shared AWS simulator container launcher applies to Docker/Podman cgroups as `HostConfig.Memory` and `HostConfig.NanoCPUs`.
+- **Shared simulator store snapshotting (BUG-2333):** the AWS, GCP, and Azure `MemoryStore` implementations snapshot values at store boundaries (`Put`, `Get`, `List`, `Filter`, `Update`, and AWS `Upsert`) so maps, slices, and pointers cannot escape as mutable aliases to store-owned state. Shared store tests cover both memory and SQLite stores.
 - **Boyscout (BUG-2331):** the DynamoDB Local differential oracle treats Docker as a required dependency and fails loud when the binary is absent instead of silently skipping the test.
+- **Skip-if-tool-absent guard (BUG-2334):** pre-commit now runs `scripts/check-no-tool-absent-skips.sh`, which rejects newly-added missing-tool/dependency `t.Skip` paths. Required tools must be installed by the harness or fail loud.
 - **Hook-driven dependency refresh:** the pre-push dependency freshness hook was honored by running `make upgrade-deps`, which refreshed stale Go module requirements across the affected repo modules. The badge hook's deterministic README refresh commit was included.
 
 **Validation**
@@ -19,6 +21,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOWORK=off go test -race -tags noui . -run TestDDBItemSnapshotIsIndependentUnderConcurrentMutation -count=1` in `simulators/aws` passed.
 - `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
 - After the dependency refresh, `GOWORK=off go test -tags noui . -count=1` in `simulators/aws` and `GOWORK=off go test -run 'TestDynamoDB_QueryAndScan|TestDynamoDB_ProjectionExpression|TestDynamoDB_BatchAndTransact|TestECS_RunTask|TestECS_TaskDefinitionFidelitySDK' -count=1 ./` in `simulators/aws/sdk-tests` passed.
+- `bash scripts/check-no-tool-absent-skips.sh` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'TestStoreSnapshotsReferenceFields|TestStoreUpdateSnapshotsReferenceFields|TestStore' -count=1 ./...` passed in `simulators/aws/shared`, `simulators/gcp/shared`, and `simulators/azure/shared`.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` passed in `simulators/aws`, `simulators/gcp`, and `simulators/azure` when run with sandbox escalation so loopback listeners and Docker/Podman access were available.
 
 **Next after merge**
 - Only GitHub issue #394 remained open and it stayed upstream-blocked on the AzureAD Terraform provider's missing Microsoft Graph endpoint override.

@@ -1,6 +1,9 @@
 package simulator
 
-import "sync"
+import (
+	"reflect"
+	"sync"
+)
 
 // Store is the interface for a typed key-value store.
 // Implemented by MemoryStore (in-memory) and SQLiteStore (persistent).
@@ -36,24 +39,95 @@ func NewStateStore[T any]() *MemoryStore[T] {
 	}
 }
 
-// Get returns the stored item by value. T is returned by value, but reference
-// fields it carries (slices, maps, pointers) still share their backing storage
-// with the stored item — callers MUST NOT mutate those reference fields in
-// place, as that races concurrent Get/Put/Update and corrupts stored state.
-// SQLiteStore deep-copies via JSON, so a mutating caller diverges between the
-// two backends. To mutate a stored item, use Update (copy-modify-store under the
-// write lock); to build derived data, copy the reference field first.
+func cloneStoreValue[T any](v T) T {
+	cv := cloneReflectValue(reflect.ValueOf(v))
+	if !cv.IsValid() {
+		var zero T
+		return zero
+	}
+	out, ok := cv.Interface().(T)
+	if !ok {
+		panic("cloned store value has unexpected type")
+	}
+	return out
+}
+
+func cloneReflectValue(v reflect.Value) reflect.Value {
+	if !v.IsValid() {
+		return v
+	}
+	switch v.Kind() {
+	case reflect.Interface:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		inner := cloneReflectValue(v.Elem())
+		out := reflect.New(v.Type()).Elem()
+		out.Set(inner)
+		return out
+	case reflect.Pointer:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.New(v.Type().Elem())
+		out.Elem().Set(cloneReflectValue(v.Elem()))
+		return out
+	case reflect.Map:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.MakeMapWithSize(v.Type(), v.Len())
+		iter := v.MapRange()
+		for iter.Next() {
+			out.SetMapIndex(cloneReflectValue(iter.Key()), cloneReflectValue(iter.Value()))
+		}
+		return out
+	case reflect.Slice:
+		if v.IsNil() {
+			return reflect.Zero(v.Type())
+		}
+		out := reflect.MakeSlice(v.Type(), v.Len(), v.Cap())
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneReflectValue(v.Index(i)))
+		}
+		return out
+	case reflect.Array:
+		out := reflect.New(v.Type()).Elem()
+		for i := 0; i < v.Len(); i++ {
+			out.Index(i).Set(cloneReflectValue(v.Index(i)))
+		}
+		return out
+	case reflect.Struct:
+		out := reflect.New(v.Type()).Elem()
+		out.Set(v)
+		for i := 0; i < v.NumField(); i++ {
+			if out.Field(i).CanSet() {
+				out.Field(i).Set(cloneReflectValue(v.Field(i)))
+			}
+		}
+		return out
+	default:
+		return v
+	}
+}
+
+// Get returns a snapshot of the stored item. Reference fields (maps, slices,
+// pointers) are deep-copied so callers cannot mutate store-owned state.
 func (s *MemoryStore[T]) Get(id string) (T, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	v, ok := s.items[id]
-	return v, ok
+	if !ok {
+		var zero T
+		return zero, false
+	}
+	return cloneStoreValue(v), true
 }
 
 func (s *MemoryStore[T]) Put(id string, item T) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.items[id] = item
+	s.items[id] = cloneStoreValue(item)
 }
 
 func (s *MemoryStore[T]) Delete(id string) bool {
@@ -66,29 +140,26 @@ func (s *MemoryStore[T]) Delete(id string) bool {
 	return ok
 }
 
-// List returns all stored items by value. As with Get, reference fields in the
-// returned items share backing storage with the stored items — callers MUST NOT
-// mutate them in place; use Update for in-place mutation.
+// List returns snapshots of all stored items.
 func (s *MemoryStore[T]) List() []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]T, 0, len(s.items))
 	for _, v := range s.items {
-		result = append(result, v)
+		result = append(result, cloneStoreValue(v))
 	}
 	return result
 }
 
-// Filter returns the stored items matching fn, by value. As with Get, reference
-// fields in the returned items share backing storage with the stored items —
-// callers MUST NOT mutate them in place; use Update for in-place mutation.
+// Filter returns snapshots of the stored items matching fn.
 func (s *MemoryStore[T]) Filter(fn func(T) bool) []T {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	result := make([]T, 0)
 	for _, v := range s.items {
-		if fn(v) {
-			result = append(result, v)
+		snap := cloneStoreValue(v)
+		if fn(snap) {
+			result = append(result, snap)
 		}
 	}
 	return result
@@ -107,8 +178,9 @@ func (s *MemoryStore[T]) Update(id string, fn func(*T)) bool {
 	if !ok {
 		return false
 	}
+	v = cloneStoreValue(v)
 	fn(&v)
-	s.items[id] = v
+	s.items[id] = cloneStoreValue(v)
 	return true
 }
 
@@ -118,6 +190,7 @@ func (s *MemoryStore[T]) Upsert(id string, fn func(*T)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := s.items[id]
+	v = cloneStoreValue(v)
 	fn(&v)
-	s.items[id] = v
+	s.items[id] = cloneStoreValue(v)
 }
