@@ -13,7 +13,7 @@ import (
 type ProjectClassic struct {
 	ID        int       `json:"id"`
 	NodeID    string    `json:"node_id"`
-	RepoKey   string    `json:"-"`
+	RepoKey   string    `json:"repo_key"`
 	Name      string    `json:"name"`
 	Body      string    `json:"body"`
 	State     string    `json:"state"` // "open" or "closed"

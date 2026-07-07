@@ -21,7 +21,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.60.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.312.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.313.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/ecs v1.87.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.43.0
@@ -32,7 +32,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/iam v1.55.0
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.45.0
 	github.com/aws/aws-sdk-go-v2/service/kms v1.54.0
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.95.0
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.96.0
 	github.com/aws/aws-sdk-go-v2/service/organizations v1.52.0
 	github.com/aws/aws-sdk-go-v2/service/rds v1.120.0
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.64.0
@@ -43,7 +43,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.44.0
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.0
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.45.0
-	github.com/aws/aws-sdk-go-v2/service/ssm v1.70.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.71.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.44.0
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.75.0
 	github.com/aws/smithy-go v1.27.3

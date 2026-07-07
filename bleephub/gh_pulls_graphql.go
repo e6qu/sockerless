@@ -1,13 +1,13 @@
 package bleephub
 
 import (
-	"crypto/sha256"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/graphql-go/graphql"
 )
 
@@ -428,8 +428,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	// --- Review request types ---
 	// gh's reviewRequests fragment unions `...on User`, `...on Bot` (Copilot
 	// as reviewer), and `...on Team`. Bot and Team exist so the fragments
-	// type-check; bleephub stores no review requests, so the connection is
-	// always empty and the union never has to resolve a Bot/Team value.
+	// type-check; bleephub currently stores user review requests.
 	botType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Bot",
 		Fields: graphql.Fields{
@@ -922,11 +921,11 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return m, nil
 				},
 			},
-			// gh reads check state and the lastCommit pseudo-field through
+			// gh reads check state and the lastCommit field through
 			// commits(last:1){nodes{commit{...}}} — GitHub's PullRequest has
 			// no top-level statusCheckRollup field; gh aliases the commits
-			// connection instead. The single node carries the PR's synthetic
-			// head commit (same oid the REST surface reports).
+			// connection instead. The nodes carry the same real git commits
+			// the REST surface reports.
 			"commits": &graphql.Field{
 				Type: prCommitConnectionType,
 				Args: graphql.FieldConfigArgument{
@@ -1992,9 +1991,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		url = "/" + repo.FullName + "/pull/" + strconv.Itoa(pr.Number)
 	}
 
-	sha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("head-%d", pr.ID))))[:40]
-	// Same derivation the REST surface uses for base.sha.
-	baseSha := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf("base-%d", pr.ID))))[:40]
+	sha := pullRequestHeadSHALocked(pr, st)
+	baseSha := pr.BaseSHA
 
 	var closedAt interface{}
 	if pr.ClosedAt != nil {
@@ -2024,8 +2022,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	}
 	headRepositoryOwner := repoOwnerGraphQLLocked(repo, st)
 
-	// The PR's single synthetic head commit, carrying the real check-run
-	// rollup recorded against its sha.
+	commitNodes := make([]interface{}, 0)
 	var commitAuthors []interface{}
 	if u, ok := st.Users[pr.AuthorID]; ok {
 		commitAuthors = append(commitAuthors, map[string]interface{}{
@@ -2038,14 +2035,24 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	if repo != nil {
 		repoFullName = repo.FullName
 	}
-	headCommit := map[string]interface{}{
-		"oid":               sha,
-		"messageHeadline":   pr.Title,
-		"messageBody":       nil,
-		"committedDate":     pr.CreatedAt.Format(time.RFC3339),
-		"authoredDate":      pr.CreatedAt.Format(time.RFC3339),
-		"authors":           map[string]interface{}{"nodes": commitAuthors, "totalCount": len(commitAuthors)},
-		"statusCheckRollup": statusCheckRollupSourceLocked(st, repoFullName, sha),
+	if repo != nil {
+		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil {
+			for _, c := range commits {
+				commitNodes = append(commitNodes, map[string]interface{}{"commit": gitCommitToGQLLocked(c, st, repoFullName)})
+			}
+		}
+	}
+	if len(commitNodes) == 0 && sha != "" {
+		headCommit := map[string]interface{}{
+			"oid":               sha,
+			"messageHeadline":   pr.Title,
+			"messageBody":       nil,
+			"committedDate":     pr.CreatedAt.Format(time.RFC3339),
+			"authoredDate":      pr.CreatedAt.Format(time.RFC3339),
+			"authors":           map[string]interface{}{"nodes": commitAuthors, "totalCount": len(commitAuthors)},
+			"statusCheckRollup": statusCheckRollupSourceLocked(st, repoFullName, sha),
+		}
+		commitNodes = append(commitNodes, map[string]interface{}{"commit": headCommit})
 	}
 
 	return map[string]interface{}{
@@ -2115,8 +2122,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"headRepository":      headRepository,
 		"headRepositoryOwner": headRepositoryOwner,
 		"reviewRequests": map[string]interface{}{
-			"nodes":      []interface{}{},
-			"totalCount": 0,
+			"nodes":      pullRequestReviewRequestNodesLocked(pr, st),
+			"totalCount": len(pr.RequestedReviewerIDs),
 		},
 		"comments": map[string]interface{}{
 			"nodes":      prCommentNodes,
@@ -2129,10 +2136,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 			},
 		},
 		"commits": map[string]interface{}{
-			"totalCount": 1,
-			"nodes": []interface{}{
-				map[string]interface{}{"commit": headCommit},
-			},
+			"totalCount": len(commitNodes),
+			"nodes":      commitNodes,
 		},
 		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "pull_request", pr.ID),
 		"reviewThreads": map[string]interface{}{
@@ -2325,6 +2330,10 @@ func prReviewSourceLocked(r *PullRequestReview, st *Store) map[string]interface{
 	if u, ok := st.Users[r.AuthorID]; ok {
 		reviewAuthor = userToGraphQL(u)
 	}
+	commitSHA := ""
+	if pr := st.PullRequests[r.PRID]; pr != nil {
+		commitSHA = pullRequestHeadSHALocked(pr, st)
+	}
 	return map[string]interface{}{
 		"_dbID":             r.ID,
 		"nodeID":            r.NodeID,
@@ -2335,9 +2344,61 @@ func prReviewSourceLocked(r *PullRequestReview, st *Store) map[string]interface{
 		"createdAt":         r.CreatedAt.Format(time.RFC3339),
 		"updatedAt":         r.UpdatedAt.Format(time.RFC3339),
 		"submittedAt":       r.CreatedAt.Format(time.RFC3339),
-		"commit":            map[string]interface{}{"oid": prHeadSHA(r.PRID)},
+		"commit":            map[string]interface{}{"oid": commitSHA},
 		"reactionGroups":    reactionGroupsForGraphQL(st.Reactions, "pull_request_review", r.ID),
 	}
+}
+
+func pullRequestReviewRequestNodesLocked(pr *PullRequest, st *Store) []interface{} {
+	nodes := make([]interface{}, 0, len(pr.RequestedReviewerIDs))
+	for _, id := range pr.RequestedReviewerIDs {
+		if u := st.Users[id]; u != nil {
+			nodes = append(nodes, map[string]interface{}{
+				"requestedReviewer": userToGraphQL(u),
+			})
+		}
+	}
+	return nodes
+}
+
+func gitCommitToGQLLocked(c *object.Commit, st *Store, repoFullName string) map[string]interface{} {
+	authors := []interface{}{
+		map[string]interface{}{
+			"name":  c.Author.Name,
+			"email": c.Author.Email,
+			"user":  userGraphQLByEmailLocked(st, c.Author.Email),
+		},
+	}
+	return map[string]interface{}{
+		"oid":               c.Hash.String(),
+		"messageHeadline":   strings.SplitN(c.Message, "\n", 2)[0],
+		"messageBody":       commitMessageBody(c.Message),
+		"committedDate":     c.Committer.When.UTC().Format(time.RFC3339),
+		"authoredDate":      c.Author.When.UTC().Format(time.RFC3339),
+		"authors":           map[string]interface{}{"nodes": authors, "totalCount": len(authors)},
+		"statusCheckRollup": statusCheckRollupSourceLocked(st, repoFullName, c.Hash.String()),
+	}
+}
+
+func userGraphQLByEmailLocked(st *Store, email string) map[string]interface{} {
+	for _, u := range st.Users {
+		if strings.EqualFold(u.Email, email) {
+			return userToGraphQL(u)
+		}
+	}
+	return nil
+}
+
+func commitMessageBody(message string) interface{} {
+	parts := strings.SplitN(message, "\n", 2)
+	if len(parts) < 2 {
+		return nil
+	}
+	body := strings.TrimSpace(parts[1])
+	if body == "" {
+		return nil
+	}
+	return body
 }
 
 // prReviewToGQL is the unlocked wrapper around prReviewSourceLocked.

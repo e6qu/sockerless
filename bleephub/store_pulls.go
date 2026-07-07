@@ -75,6 +75,12 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 	if assigneeIDs == nil {
 		assigneeIDs = []int{}
 	}
+	stor := st.GitStorages[repo.FullName]
+	headSHA := resolveBranchSha(stor, headRefName)
+	baseSHA := resolveBranchSha(stor, baseRefName)
+	if headSHA == "" || baseSHA == "" {
+		return nil
+	}
 
 	now := time.Now().UTC()
 	pr := &PullRequest{
@@ -91,7 +97,7 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 		// GitHub records the base commit at PR creation; the PR's commit
 		// range stays anchored to it even after the base branch advances
 		// (including past the PR's own merge commit).
-		BaseSHA:     resolveBranchSha(st.GitStorages[repo.FullName], baseRefName),
+		BaseSHA:     baseSHA,
 		AuthorID:    authorID,
 		AssigneeIDs: assigneeIDs,
 		LabelIDs:    labelIDs,

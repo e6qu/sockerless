@@ -163,6 +163,38 @@ func (s *CommitStatusStore) persistStatuses(key string) {
 	s.persist.MustPut("commit_statuses", key, s.byKey[key])
 }
 
+func (s *CommitStatusStore) moveRepoKey(oldFull, newFull string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := oldFull + ":"
+	for key, statuses := range s.byKey {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		newKey := newFull + strings.TrimPrefix(key, oldFull)
+		s.byKey[newKey] = statuses
+		delete(s.byKey, key)
+		if s.persist != nil {
+			s.persist.MustPut("commit_statuses", newKey, statuses)
+			s.persist.MustDelete("commit_statuses", key)
+		}
+	}
+}
+
+func (s *CommitStatusStore) deleteRepoKey(fullName string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prefix := fullName + ":"
+	for key := range s.byKey {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.byKey, key)
+			if s.persist != nil {
+				s.persist.MustDelete("commit_statuses", key)
+			}
+		}
+	}
+}
+
 func (s *Server) registerGHStatusesRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/commits/{ref}/status", s.handleGetCombinedStatus)
 	s.route("GET /api/v3/repos/{owner}/{repo}/commits/{ref}/statuses", s.handleListCommitStatuses)

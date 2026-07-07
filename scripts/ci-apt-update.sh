@@ -28,5 +28,24 @@ for attempt in 1 2 3; do
 	sleep 5
 done
 
+disabled=0
+for source in /etc/apt/sources.list.d/microsoft-prod.list /etc/apt/sources.list.d/azure-cli.sources /etc/apt/sources.list.d/azure-cli.list; do
+	if [ -f "$source" ]; then
+		sudo mv "$source" "$source.disabled-by-sockerless-ci"
+		disabled=1
+	fi
+done
+
+if [ "$disabled" = 1 ]; then
+	echo "::warning::apt-get update failed with runner-provided Microsoft apt sources enabled; retrying with those third-party sources disabled"
+	if sudo timeout 150 apt-get \
+		-o Acquire::Retries=3 \
+		-o Acquire::http::Timeout=30 \
+		-o Acquire::https::Timeout=30 \
+		update; then
+		exit 0
+	fi
+fi
+
 echo "::error::apt-get update failed after 3 attempts (apt mirror degraded)"
 exit 1

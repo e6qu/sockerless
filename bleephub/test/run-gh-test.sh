@@ -281,6 +281,23 @@ assert_eq "reopened issue state" "open" "$REOPENED_STATE"
 # Test: Create pull request
 # ============================================================
 log "Test: Create pull request"
+rm -rf /tmp/gh-test-pr-seed
+mkdir -p /tmp/gh-test-pr-seed
+(
+    cd /tmp/gh-test-pr-seed
+    git init -q
+    printf '# gh-test-repo\n' > README.md
+    git add README.md
+    git commit -q -m "initial commit"
+    git remote add origin https://localhost/admin/gh-test-repo.git
+    git push -q origin HEAD:main
+    git checkout -q -b feature
+    printf 'feature\n' > feature.txt
+    git add feature.txt
+    git commit -q -m "feature commit"
+    git push -q origin HEAD:feature
+)
+pass "seeded real PR refs"
 PR=$(api "$BASE/api/v3/repos/admin/gh-test-repo/pulls" -f title="GH CLI PR" -f head=feature -f base=main -f body="Test PR")
 PR_NUM=$(echo "$PR" | jq -r '.number')
 assert_eq "PR number" "2" "$PR_NUM"

@@ -362,6 +362,7 @@ jobs:
 	if repo == nil {
 		t.Fatal("repo missing")
 	}
+	seedStorePullRequestBranches(t, testServer.store, repo, "feature-x")
 	user := testServer.store.UsersByLogin[owner]
 	pr := testServer.store.CreatePullRequest(repo.ID, user.ID, "t", "b", "feature-x", "main", false, nil, nil, 0)
 	if pr == nil {

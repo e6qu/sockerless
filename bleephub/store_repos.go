@@ -312,83 +312,10 @@ func (st *Store) RenameRepo(owner, name, newName string) bool {
 		st.GitStorages[newFull] = stor
 		delete(st.GitStorages, oldFull)
 	}
-	if v := st.RepoSecrets[oldFull]; v != nil {
-		st.RepoSecrets[newFull] = v
-		delete(st.RepoSecrets, oldFull)
-	}
-	if v := st.RepoVariables[oldFull]; v != nil {
-		st.RepoVariables[newFull] = v
-		delete(st.RepoVariables, oldFull)
-	}
-	if v := st.RepoCollaborators[oldFull]; v != nil {
-		st.RepoCollaborators[newFull] = v
-		delete(st.RepoCollaborators, oldFull)
-	}
-	if v := st.Hooks[oldFull]; v != nil {
-		st.Hooks[newFull] = v
-		delete(st.Hooks, oldFull)
-	}
-	if v := st.CheckSuitePrefs[oldFull]; v != nil {
-		st.CheckSuitePrefs[newFull] = v
-		delete(st.CheckSuitePrefs, oldFull)
-	}
-	if v := st.SecretScanningAlertsByRepo[oldFull]; v != nil {
-		st.SecretScanningAlertsByRepo[newFull] = v
-		for _, alert := range v {
-			alert.RepoKey = newFull
-			if st.persist != nil {
-				st.persist.MustPut("secret_scanning_alerts", strconv.Itoa(alert.ID), alert)
-			}
-		}
-		delete(st.SecretScanningAlertsByRepo, oldFull)
-	}
-	if v := st.SecretScanningNextNumber[oldFull]; v != 0 {
-		st.SecretScanningNextNumber[newFull] = v
-		delete(st.SecretScanningNextNumber, oldFull)
-	}
-
-	// Environment-scoped secrets/variables keyed "repo\x1fenv".
-	for k, v := range st.EnvSecrets {
-		repoKey, envName, found := strings.Cut(k, "\x1f")
-		if found && repoKey == oldFull {
-			newKey := newFull + "\x1f" + envName
-			st.EnvSecrets[newKey] = v
-			delete(st.EnvSecrets, k)
-		}
-	}
-	for k, v := range st.EnvVariables {
-		repoKey, envName, found := strings.Cut(k, "\x1f")
-		if found && repoKey == oldFull {
-			newKey := newFull + "\x1f" + envName
-			st.EnvVariables[newKey] = v
-			delete(st.EnvVariables, k)
-		}
-	}
-
-	// Workflow runs/files embed the repo full name.
-	for _, wf := range st.Workflows {
-		if wf.RepoFullName == oldFull {
-			wf.RepoFullName = newFull
-		}
-	}
-	for _, wf := range st.WorkflowFiles {
-		if wf.RepoFullName == oldFull {
-			wf.RepoFullName = newFull
-		}
-	}
-
-	st.Misc.mu.Lock()
-	if v := st.Misc.pagesBuilds[oldFull]; v != nil {
-		st.Misc.pagesBuilds[newFull] = v
-		delete(st.Misc.pagesBuilds, oldFull)
-	}
-	st.Misc.mu.Unlock()
+	st.moveRepoKeyLocked(oldFull, newFull)
 
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
-		st.persist.MustDelete("repos", strconv.Itoa(repo.ID)) // no-op key; kept for symmetry
-		// TODO: persist key renames for maps that are persisted (secrets, vars,
-		// hooks, collaborators, env-scoped items, workflow_files, pages_builds).
 	}
 
 	return true
@@ -423,7 +350,23 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	}
 	delete(st.Hooks, fullName)
 	delete(st.RepoSecrets, fullName)
+	delete(st.RepoVariables, fullName)
+	delete(st.RepoCollaborators, fullName)
+	delete(st.RepoAutolinks, fullName)
+	delete(st.RepoInvitations, fullName)
+	delete(st.RepoDeployKeys, fullName)
 	delete(st.CheckSuitePrefs, fullName)
+	delete(st.DependabotSecrets, fullName)
+	delete(st.CodeScanningDefaultSetups, fullName)
+	delete(st.CodeQualitySetups, fullName)
+	delete(st.RepoCustomPropertyValues, fullName)
+	delete(st.RepoImmutableReleases, fullName)
+	delete(st.AgentsRepoSecrets, fullName)
+	delete(st.AgentsRepoVariables, fullName)
+	delete(st.SecretScanningPushPlaceholders, fullName)
+	delete(st.SecretScanningPushBypasses, fullName)
+	st.CommitStatuses.deleteRepoKey(fullName)
+	st.CommitComments.deleteRepo(repo.ID)
 	for id, alert := range st.SecretScanningAlerts {
 		if alert.RepoKey == fullName {
 			delete(st.SecretScanningAlerts, id)
@@ -437,8 +380,166 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	if st.persist != nil {
 		st.persist.MustDelete("hooks", fullName)
 		st.persist.MustDelete("repo_secrets", fullName)
+		st.persist.MustDelete("repo_variables", fullName)
+		st.persist.MustDelete("repo_collaborators", fullName)
+		st.persist.MustDelete("repo_autolinks", fullName)
+		st.persist.MustDelete("repo_invitations", fullName)
+		st.persist.MustDelete("repo_deploy_keys", fullName)
 		st.persist.MustDelete("check_suite_prefs", fullName)
 		st.persist.MustDelete("secret_scanning_alerts", fullName)
+		st.persist.MustDelete("dependabot_secrets", fullName)
+		st.persist.MustDelete("code_scanning_default_setups", fullName)
+		st.persist.MustDelete("code_quality_setups", fullName)
+		st.persist.MustDelete("repo_custom_property_values", fullName)
+		st.persist.MustDelete("repo_immutable_releases", fullName)
+		st.persist.MustDelete("agents_repo_secrets", fullName)
+		st.persist.MustDelete("agents_repo_variables", fullName)
+		st.persist.MustDelete("secret_scanning_push_placeholders", fullName)
+		st.persist.MustDelete("secret_scanning_push_bypasses", fullName)
+	}
+	for id, suite := range st.CheckSuites {
+		if suite.RepoKey == fullName {
+			delete(st.CheckSuites, id)
+			if st.persist != nil {
+				st.persist.MustDelete("check_suites", strconv.FormatInt(id, 10))
+			}
+		}
+	}
+	for id, run := range st.CheckRuns {
+		if run.RepoKey == fullName {
+			delete(st.CheckRuns, id)
+			if st.persist != nil {
+				st.persist.MustDelete("check_runs", strconv.FormatInt(id, 10))
+			}
+		}
+	}
+	for id, alert := range st.CodeScanningAlerts {
+		if alert.RepoKey == fullName {
+			delete(st.CodeScanningAlerts, id)
+			if st.persist != nil {
+				st.persist.MustDelete("code_scanning_alerts", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.CodeScanningAlertsByRepo, fullName)
+	delete(st.CodeScanningNextNumber, fullName)
+	for id, analysis := range st.CodeScanningAnalyses {
+		if analysis.RepoKey == fullName {
+			delete(st.CodeScanningAnalyses, id)
+			if st.persist != nil {
+				st.persist.MustDelete("code_scanning_analyses", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.CodeScanningAnalysesByRepo, fullName)
+	for key, fix := range st.CodeScanningAutofixes {
+		if fix.RepoKey == fullName {
+			delete(st.CodeScanningAutofixes, key)
+			if st.persist != nil {
+				st.persist.MustDelete("code_scanning_autofixes", key)
+			}
+		}
+	}
+	for id, up := range st.SARIFUploads {
+		if up.RepoKey == fullName {
+			delete(st.SARIFUploads, id)
+			if st.persist != nil {
+				st.persist.MustDelete("sarif_uploads", id)
+			}
+		}
+	}
+	for id, db := range st.CodeQLDatabases {
+		if db.RepoKey == fullName {
+			delete(st.CodeQLDatabases, id)
+			if st.persist != nil {
+				st.persist.MustDelete("codeql_databases", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.CodeQLDatabasesByRepo, fullName)
+	for id, va := range st.CodeQLVariantAnalyses {
+		if va.ControllerRepoKey == fullName {
+			delete(st.CodeQLVariantAnalyses, id)
+			if st.persist != nil {
+				st.persist.MustDelete("codeql_variant_analyses", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, alert := range st.DependabotAlerts {
+		if alert.RepoKey == fullName {
+			delete(st.DependabotAlerts, id)
+			if st.persist != nil {
+				st.persist.MustDelete("dependabot_alerts", strconv.Itoa(id))
+			}
+		}
+	}
+	delete(st.DependabotAlertsByRepo, fullName)
+	delete(st.DependabotNextNumber, fullName)
+	for id, rs := range st.Rulesets {
+		if rs.RepoID == repo.ID {
+			delete(st.Rulesets, id)
+			if st.persist != nil {
+				st.persist.MustDelete("repo_rulesets", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, project := range st.ProjectClassic {
+		if project.RepoKey == fullName {
+			delete(st.ProjectClassic, id)
+			if st.persist != nil {
+				st.persist.MustDelete("projects_classic", strconv.Itoa(id))
+			}
+			for columnID, column := range st.ProjectColumns {
+				if column.ProjectID == id {
+					delete(st.ProjectColumns, columnID)
+					if st.persist != nil {
+						st.persist.MustDelete("project_columns", strconv.Itoa(columnID))
+					}
+					for cardID, card := range st.ProjectCards {
+						if card.ColumnID == columnID {
+							delete(st.ProjectCards, cardID)
+							if st.persist != nil {
+								st.persist.MustDelete("project_cards", strconv.Itoa(cardID))
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	for id, cs := range st.Codespaces {
+		if cs.RepoKey == fullName {
+			delete(st.Codespaces, id)
+			delete(st.CodespacesByName, cs.Name)
+			if st.persist != nil {
+				st.persist.MustDelete("codespaces", strconv.Itoa(id))
+			}
+		}
+	}
+	if pkgs := st.PackagesByOwnerKey[fullName]; len(pkgs) > 0 {
+		for _, pkg := range pkgs {
+			delete(st.Packages, pkg.ID)
+			if st.persist != nil {
+				st.persist.MustDelete("packages", strconv.Itoa(pkg.ID))
+			}
+			for versionID := range st.PackageVersionsByPackage[pkg.ID] {
+				delete(st.PackageVersions, versionID)
+				if st.persist != nil {
+					st.persist.MustDelete("package_versions", strconv.Itoa(versionID))
+				}
+				for fileID, file := range st.PackageFiles {
+					if file.VersionID == versionID {
+						delete(st.PackageFiles, fileID)
+						if st.persist != nil {
+							st.persist.MustDelete("package_files", strconv.Itoa(fileID))
+						}
+					}
+				}
+				delete(st.PackageFilesByVersion, versionID)
+			}
+			delete(st.PackageVersionsByPackage, pkg.ID)
+		}
+		delete(st.PackagesByOwnerKey, fullName)
 	}
 	for id, alert := range st.SecurityAdvisories {
 		if alert.RepoID == repo.ID {
@@ -451,6 +552,24 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.SecurityAdvisoriesByRepo, fullName)
 	if st.persist != nil {
 		st.persist.MustDelete("security_advisories", fullName)
+	}
+	for k := range st.EnvSecrets {
+		repoKey, _, found := strings.Cut(k, "\x1f")
+		if found && repoKey == fullName {
+			delete(st.EnvSecrets, k)
+			if st.persist != nil {
+				st.persist.MustDelete("env_secrets", k)
+			}
+		}
+	}
+	for k := range st.EnvVariables {
+		repoKey, _, found := strings.Cut(k, "\x1f")
+		if found && repoKey == fullName {
+			delete(st.EnvVariables, k)
+			if st.persist != nil {
+				st.persist.MustDelete("env_variables", k)
+			}
+		}
 	}
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
@@ -1348,7 +1467,6 @@ func (st *Store) TransferRepo(owner, name, newOwner string) bool {
 
 	if st.persist != nil {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
-		st.persist.MustDelete("repos", strconv.Itoa(repo.ID))
 	}
 	return true
 }
@@ -1396,6 +1514,23 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 			st.persist.MustDelete("check_suite_prefs", oldFull)
 		}
 	}
+	for _, suite := range st.CheckSuites {
+		if suite.RepoKey == oldFull {
+			suite.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("check_suites", strconv.FormatInt(suite.ID, 10), suite)
+			}
+		}
+	}
+	for _, run := range st.CheckRuns {
+		if run.RepoKey == oldFull {
+			run.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("check_runs", strconv.FormatInt(run.ID, 10), run)
+			}
+		}
+	}
+	st.CommitStatuses.moveRepoKey(oldFull, newFull)
 	if v := st.RepoAutolinks[oldFull]; v != nil {
 		for _, a := range v {
 			a.RepoKey = newFull
@@ -1498,6 +1633,78 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 			st.persist.MustDelete("dependabot_secrets", oldFull)
 		}
 	}
+	if v := st.CodeScanningDefaultSetups[oldFull]; v != nil {
+		v.RepoKey = newFull
+		st.CodeScanningDefaultSetups[newFull] = v
+		delete(st.CodeScanningDefaultSetups, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("code_scanning_default_setups", newFull, v)
+			st.persist.MustDelete("code_scanning_default_setups", oldFull)
+		}
+	}
+	if v := st.CodeQualitySetups[oldFull]; v != nil {
+		v.RepoFullName = newFull
+		st.CodeQualitySetups[newFull] = v
+		delete(st.CodeQualitySetups, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("code_quality_setups", newFull, v)
+			st.persist.MustDelete("code_quality_setups", oldFull)
+		}
+	}
+	if v := st.RepoCustomPropertyValues[oldFull]; v != nil {
+		st.RepoCustomPropertyValues[newFull] = v
+		delete(st.RepoCustomPropertyValues, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_custom_property_values", newFull, v)
+			st.persist.MustDelete("repo_custom_property_values", oldFull)
+		}
+	}
+	if enabled, ok := st.RepoImmutableReleases[oldFull]; ok {
+		st.RepoImmutableReleases[newFull] = enabled
+		delete(st.RepoImmutableReleases, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("repo_immutable_releases", newFull, enabled)
+			st.persist.MustDelete("repo_immutable_releases", oldFull)
+		}
+	}
+	if v := st.AgentsRepoSecrets[oldFull]; v != nil {
+		st.AgentsRepoSecrets[newFull] = v
+		delete(st.AgentsRepoSecrets, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("agents_repo_secrets", newFull, v)
+			st.persist.MustDelete("agents_repo_secrets", oldFull)
+		}
+	}
+	if v := st.AgentsRepoVariables[oldFull]; v != nil {
+		st.AgentsRepoVariables[newFull] = v
+		delete(st.AgentsRepoVariables, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("agents_repo_variables", newFull, v)
+			st.persist.MustDelete("agents_repo_variables", oldFull)
+		}
+	}
+	if v := st.SecretScanningPushPlaceholders[oldFull]; v != nil {
+		for _, ph := range v {
+			ph.RepoKey = newFull
+		}
+		st.SecretScanningPushPlaceholders[newFull] = v
+		delete(st.SecretScanningPushPlaceholders, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("secret_scanning_push_placeholders", newFull, v)
+			st.persist.MustDelete("secret_scanning_push_placeholders", oldFull)
+		}
+	}
+	if v := st.SecretScanningPushBypasses[oldFull]; v != nil {
+		for _, bypass := range v {
+			bypass.RepoKey = newFull
+		}
+		st.SecretScanningPushBypasses[newFull] = v
+		delete(st.SecretScanningPushBypasses, oldFull)
+		if st.persist != nil {
+			st.persist.MustPut("secret_scanning_push_bypasses", newFull, v)
+			st.persist.MustDelete("secret_scanning_push_bypasses", oldFull)
+		}
+	}
 
 	if v := st.SecurityAdvisoriesByRepo[oldFull]; v != nil {
 		st.SecurityAdvisoriesByRepo[newFull] = v
@@ -1509,6 +1716,95 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 		delete(st.SecurityAdvisoriesByRepo, oldFull)
 		if st.persist != nil {
 			st.persist.MustDelete("security_advisories", oldFull)
+		}
+	}
+	for key, fix := range st.CodeScanningAutofixes {
+		if fix.RepoKey == oldFull {
+			newKey := autofixKey(newFull, fix.AlertNumber)
+			fix.RepoKey = newFull
+			st.CodeScanningAutofixes[newKey] = fix
+			delete(st.CodeScanningAutofixes, key)
+			if st.persist != nil {
+				st.persist.MustPut("code_scanning_autofixes", newKey, fix)
+				st.persist.MustDelete("code_scanning_autofixes", key)
+			}
+		}
+	}
+	for _, up := range st.SARIFUploads {
+		if up.RepoKey == oldFull {
+			up.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("sarif_uploads", up.ID, up)
+			}
+		}
+	}
+	if v := st.CodeQLDatabasesByRepo[oldFull]; v != nil {
+		st.CodeQLDatabasesByRepo[newFull] = v
+		for _, db := range v {
+			db.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("codeql_databases", strconv.Itoa(db.ID), db)
+			}
+		}
+		delete(st.CodeQLDatabasesByRepo, oldFull)
+	}
+	for _, va := range st.CodeQLVariantAnalyses {
+		changed := false
+		if va.ControllerRepoKey == oldFull {
+			va.ControllerRepoKey = newFull
+			changed = true
+		}
+		for i := range va.ScannedRepositories {
+			if va.ScannedRepositories[i].FullName == oldFull {
+				va.ScannedRepositories[i].FullName = newFull
+				changed = true
+			}
+		}
+		for i, name := range va.NotFoundRepos {
+			if name == oldFull {
+				va.NotFoundRepos[i] = newFull
+				changed = true
+			}
+		}
+		if changed && st.persist != nil {
+			st.persist.MustPut("codeql_variant_analyses", strconv.Itoa(va.ID), va)
+		}
+	}
+	for _, rs := range st.Rulesets {
+		if rs.RepoID == 0 || rs.Source != oldFull {
+			continue
+		}
+		rs.Source = newFull
+		if st.persist != nil {
+			st.persist.MustPut("repo_rulesets", strconv.Itoa(rs.ID), rs)
+		}
+	}
+	for _, project := range st.ProjectClassic {
+		if project.RepoKey == oldFull {
+			project.RepoKey = newFull
+			if st.persist != nil {
+				st.persist.MustPut("projects_classic", strconv.Itoa(project.ID), project)
+			}
+		}
+	}
+	for _, cs := range st.Codespaces {
+		if cs.RepoKey == oldFull {
+			cs.RepoKey = newFull
+			cs.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("codespaces", strconv.Itoa(cs.ID), cs)
+			}
+		}
+	}
+	if pkgs := st.PackagesByOwnerKey[oldFull]; len(pkgs) > 0 {
+		st.PackagesByOwnerKey[newFull] = pkgs
+		delete(st.PackagesByOwnerKey, oldFull)
+		for _, pkg := range pkgs {
+			pkg.OwnerKey = newFull
+			pkg.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("packages", strconv.Itoa(pkg.ID), pkg)
+			}
 		}
 	}
 
@@ -1545,6 +1841,9 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 	for _, wf := range st.WorkflowFiles {
 		if wf.RepoFullName == oldFull {
 			wf.RepoFullName = newFull
+			if st.persist != nil {
+				st.persist.MustPut("workflow_files", strconv.FormatInt(wf.ID, 10), wf)
+			}
 		}
 	}
 

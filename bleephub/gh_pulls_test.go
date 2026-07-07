@@ -13,9 +13,28 @@ import (
 func createTestPRRepo(t *testing.T, name string) {
 	t.Helper()
 	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": name,
+		"name": name, "auto_init": true,
 	})
 	resp.Body.Close()
+	repo := testServer.store.GetRepo("admin", name)
+	if repo == nil {
+		t.Fatalf("repo %s not created", name)
+	}
+	seedPullRequestBranches(t, testServer, repo, "feature", "feat", "feat1", "feat2", "fix", "branch", "r", "f", "a", "b", "draft-feat")
+}
+
+func createGraphQLPRRepo(t *testing.T, name string, branches ...string) string {
+	t.Helper()
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": name, "auto_init": true,
+	})
+	repoData := decodeJSON(t, resp)
+	repo := testServer.store.GetRepo("admin", name)
+	if repo == nil {
+		t.Fatalf("repo %s not created", name)
+	}
+	seedPullRequestBranches(t, testServer, repo, branches...)
+	return repoData["node_id"].(string)
 }
 
 // --- REST tests ---
@@ -483,7 +502,7 @@ func TestDeleteRefREST(t *testing.T) {
 	createTestPRRepo(t, "pr-delref")
 
 	// Non-existent ref returns 422 (matching real GitHub behavior)
-	resp := ghDelete(t, "/api/v3/repos/admin/pr-delref/git/refs/heads/feature", defaultToken)
+	resp := ghDelete(t, "/api/v3/repos/admin/pr-delref/git/refs/heads/missing-feature", defaultToken)
 	defer resp.Body.Close()
 	if resp.StatusCode != 422 {
 		t.Fatalf("expected 422 for non-existent ref, got %d", resp.StatusCode)
@@ -494,10 +513,15 @@ func TestDeleteRefREST(t *testing.T) {
 
 func TestGraphQLCreatePullRequest(t *testing.T) {
 	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-create",
+		"name": "gql-pr-create", "auto_init": true,
 	})
 	repoData := decodeJSON(t, resp)
 	repoNodeID := repoData["node_id"].(string)
+	repo := testServer.store.GetRepo("admin", "gql-pr-create")
+	if repo == nil {
+		t.Fatal("repo not created")
+	}
+	seedPullRequestBranches(t, testServer, repo, "feature")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { number title headRefName baseRefName state isDraft } } }`,
@@ -603,11 +627,7 @@ func TestGraphQLGetPullRequest(t *testing.T) {
 }
 
 func TestGraphQLClosePullRequest(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-close",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-close", "feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }`,
@@ -642,11 +662,7 @@ func TestGraphQLClosePullRequest(t *testing.T) {
 }
 
 func TestGraphQLReopenPullRequest(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-reopen",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-reopen", "feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }`,
@@ -690,11 +706,7 @@ func TestGraphQLReopenPullRequest(t *testing.T) {
 }
 
 func TestGraphQLMergePullRequest(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-merge",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-merge", "feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }`,
@@ -735,11 +747,7 @@ func TestGraphQLMergePullRequest(t *testing.T) {
 }
 
 func TestGraphQLMergeWithMethod(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-squash",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-squash", "feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }`,
@@ -777,11 +785,7 @@ func TestGraphQLMergeWithMethod(t *testing.T) {
 }
 
 func TestGraphQLUpdatePullRequest(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-update",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-update", "feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { id } } }`,
@@ -954,11 +958,7 @@ func TestGraphQLFilterByState(t *testing.T) {
 }
 
 func TestGraphQLDraftPullRequest(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-draft",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-draft", "draft-feat")
 
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": `mutation($input: CreatePullRequestInput!) { createPullRequest(input: $input) { pullRequest { isDraft } } }`,
@@ -982,11 +982,7 @@ func TestGraphQLDraftPullRequest(t *testing.T) {
 }
 
 func TestGraphQLCannotMergeClosed(t *testing.T) {
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-pr-merge-closed",
-	})
-	repoData := decodeJSON(t, resp)
-	repoNodeID := repoData["node_id"].(string)
+	repoNodeID := createGraphQLPRRepo(t, "gql-pr-merge-closed", "feat")
 
 	// Create and close
 	resp2 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
@@ -1085,7 +1081,8 @@ func TestPullRequestTimelineREST(t *testing.T) {
 		"title": "Timeline PR", "head": "feat", "base": "main",
 	}).Body.Close()
 
-	// A conversation comment plus a submitted review.
+	// A real PR timeline includes the head commits, conversation comments,
+	// and submitted reviews. Pending reviews must not surface.
 	ghPost(t, "/api/v3/repos/admin/pr-timeline/issues/1/comments", defaultToken, map[string]interface{}{
 		"body": "first conversation comment",
 	}).Body.Close()
@@ -1103,8 +1100,8 @@ func TestPullRequestTimelineREST(t *testing.T) {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 	items := decodeJSONArray(t, resp)
-	if len(items) != 2 {
-		t.Fatalf("expected 2 timeline items (commented + reviewed), got %d: %v", len(items), items)
+	if len(items) != 3 {
+		t.Fatalf("expected 3 timeline items (committed + commented + reviewed), got %d: %v", len(items), items)
 	}
 	byEvent := map[string]map[string]interface{}{}
 	for _, item := range items {
@@ -1114,6 +1111,9 @@ func TestPullRequestTimelineREST(t *testing.T) {
 	commented := byEvent["commented"]
 	if commented == nil {
 		t.Fatalf("expected a commented timeline item, got %v", items)
+	}
+	if byEvent["committed"] == nil {
+		t.Fatalf("expected a committed timeline item, got %v", items)
 	}
 	if commented["body"] != "first conversation comment" {
 		t.Fatalf("expected comment body, got %v", commented["body"])

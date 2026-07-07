@@ -24,8 +24,8 @@ github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0 h1:5W/KOwsnZrdi7RD97
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0/go.mod h1:h1Iw2nkdpmAUJaa89RvX3cg/HGLgdSkCWpMNgKvBSHA=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0 h1:1owpvMLjLDdCy+NKM+JC8oFIHkLvZKwDZJONUHqXLaY=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0/go.mod h1:1ZCte/owHgsdIv9R0IbrVTtv/orZ/KcZoo0l9/QhTKg=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.312.0 h1:w7A3oil4Im9VOV6fmodiBB0UyIAC/F0pu+oaYpyHkPs=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.312.0/go.mod h1:eoF0SIRbTgKWnTcTPYckiURPba/7ilfEkvwL4V1iHK4=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.313.0 h1:IkVPFiv4v1tSMfhtzxeO/qYa47lJhRuBHFC6g3vHJdo=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.313.0/go.mod h1:eoF0SIRbTgKWnTcTPYckiURPba/7ilfEkvwL4V1iHK4=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0 h1:H1dHU54MQVblAmsvlIfMdJmXyDKFSKnHrCmaWqwQ0Vs=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0/go.mod h1:UzfjIuiQOpusteIHBCLIikQpxh8ctmdQCvSWWzbcYYI=
 github.com/aws/aws-sdk-go-v2/service/ecs v1.87.0 h1:K9vwX43Pmd88cOQDG54Ir1qVNWxZhjFUlwPemv60cis=

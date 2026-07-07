@@ -4,6 +4,37 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
+`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, Actions no-fallback hardening, repository lifecycle persistence, CI follow-ups, and continuity cleanup.
+
+**Next**
+- After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
+
+**Scope**
+- **BUG-2314:** Pull request creation requires real head/base refs. REST and GraphQL PR responses derive head/base shas, commit counts, review `commit_id`, status rollups, and merge response shas from git storage; the pseudo-PR SHA path was removed.
+- **BUG-2315:** GraphQL `reviewRequests` renders real requested reviewers instead of a hardcoded empty connection.
+- **BUG-2313:** Release `generate-notes` resolves the requested git tag/commit range, walks commits, matches merged pull request merge commits, and emits real "What's Changed" bullets with the Full Changelog compare line.
+- **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
+- **BUG-2335:** The go-github SDK suite and gh CLI parity harness no longer rely on metadata-only PR fixtures. SDK tests create real Git Data objects/refs before PR creation, `TestGitData` is live coverage instead of a stale skip, and the gh harness pushes real `main`/`feature` refs before the raw PR probe.
+- **BUG-2336:** CI apt setup no longer lets degraded runner-provided Microsoft apt sources block jobs that only need Ubuntu packages; after normal retries fail, the helper quarantines those source files and retries the required package-index update.
+- **BUG-2337:** The Azure simulator CI job no longer pipes Microsoft's remote Azure CLI installer into `sudo bash`; it verifies the hosted-runner `az` binary with `az version` and fails loud if the required dependency is absent.
+- **BUG-2338:** Bleephub Actions action download metadata resolves bleephub-hosted action refs from git storage before rendering `resolvedSha`; unresolved refs fail loudly, absent action repositories no longer fetch from github.com, and tarball serving no longer substitutes the default branch for an unknown action ref.
+- **BUG-2339:** The CodeQL variant-analysis test uses a deterministic real tar.gz query-pack archive instead of arbitrary bytes labelled as a tarball.
+- **BUG-2340:** Repository rename, transfer, and delete move or purge repo-scoped persisted metadata instead of leaving stale `owner/repo` rows behind or deleting the updated repository row. The shared lifecycle path covers Actions secrets/variables, environments, hooks/collaborators/invitations/deploy keys, checks/statuses/comments, code scanning/SARIF/CodeQL, Dependabot, custom properties, immutable releases, code quality, rulesets, Projects classic, Codespaces, packages, and Copilot coding-agent state.
+- **Hook-driven dependency refresh:** The pre-push freshness hook's Google module drift was resolved (`cloud.google.com/go/pubsub` v1.50.3 and shared `cloud.google.com/go/auth` v0.21.0), and the README badge hook's deterministic refresh commit was included.
+
+**Validation**
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata|DeleteRepoLeavesNoResidue)' -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestActionDownloadInfo|TestActionTarball|TestLocalActionTarball|TestCodeQLVariantAnalyses_CreateAndReadBack' -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.
+- `cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed.
+- `make bleephub-gh-docker-test` passed.
+- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md WHAT_WE_DID.md bleephub/sdk-tests/gitdata_test.go bleephub/sdk-tests/pulls_test.go bleephub/test/run-gh-test.sh scripts/ci-apt-update.sh` passed.
+- `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
+
+---
+### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
+
 `open-issues-776-777` — open GitHub issue sweep after #774.
 
 **Scope**
@@ -24,10 +55,6 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `bash scripts/check-no-tool-absent-skips.sh` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'TestStoreSnapshotsReferenceFields|TestStoreUpdateSnapshotsReferenceFields|TestStore' -count=1 ./...` passed in `simulators/aws/shared`, `simulators/gcp/shared`, and `simulators/azure/shared`.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` passed in `simulators/aws`, `simulators/gcp`, and `simulators/azure` when run with sandbox escalation so loopback listeners and Docker/Podman access were available.
-
-**Next after merge**
-- Only GitHub issue #394 remained open and it stayed upstream-blocked on the AzureAD Terraform provider's missing Microsoft Graph endpoint override.
-- Resume PLAN.md / BUGS.md work: BUG-2313/2314/2315 (bleephub fidelity backlog), BUG-1075 live-cloud validation, and further sim fidelity audits.
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics

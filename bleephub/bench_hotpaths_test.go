@@ -63,6 +63,11 @@ func benchServer(tb testing.TB, cfg corpusConfig) (*Server, http.Handler, string
 		if repo == nil {
 			tb.Fatalf("failed to create repo %s", name)
 		}
+		branches := make([]string, 0, cfg.prsPerRepo)
+		for j := 0; j < cfg.prsPerRepo; j++ {
+			branches = append(branches, fmt.Sprintf("feature-%d", j))
+		}
+		seedPullRequestBranches(tb, s, repo, branches...)
 		for j := 0; j < cfg.issuesPerRepo; j++ {
 			iss := s.store.CreateIssue(repo.ID, admin.ID,
 				fmt.Sprintf("issue %d in %s about widgets", j, name),

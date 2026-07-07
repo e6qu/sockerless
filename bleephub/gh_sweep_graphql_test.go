@@ -49,7 +49,7 @@ func gqlData(t *testing.T, query string, variables map[string]interface{}) map[s
 // sweepRepo creates a fresh repo via REST and returns (owner, name).
 func sweepRepo(t *testing.T, name string) (string, string) {
 	t.Helper()
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": name})
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": name, "auto_init": true})
 	data := decodeJSON(t, resp)
 	owner, _ := data["owner"].(map[string]interface{})
 	login, _ := owner["login"].(string)
@@ -57,6 +57,11 @@ func sweepRepo(t *testing.T, name string) (string, string) {
 	if login == "" || repoName == "" {
 		t.Fatalf("repo create failed: %v", data)
 	}
+	repo := testServer.store.GetRepo(login, repoName)
+	if repo == nil {
+		t.Fatalf("repo %s/%s not found after create", login, repoName)
+	}
+	seedPullRequestBranches(t, testServer, repo, "feature")
 	return login, repoName
 }
 
@@ -171,7 +176,14 @@ func TestRepoGraphQL_RepositoryOwnerOrg(t *testing.T) {
 // --- Finding 1: the static --json field set gh repo view exposes ---
 
 func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
-	owner, name := sweepRepo(t, "sweep-repoview")
+	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": "sweep-repoview"})
+	repoData := decodeJSON(t, repoResp)
+	ownerData, _ := repoData["owner"].(map[string]interface{})
+	owner, _ := ownerData["login"].(string)
+	name, _ := repoData["name"].(string)
+	if owner == "" || name == "" {
+		t.Fatalf("repo create failed: %v", repoData)
+	}
 
 	// Seed a published release so latestRelease resolves to real store data.
 	relResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/releases", defaultToken, map[string]interface{}{
@@ -315,6 +327,14 @@ func TestPRGraphQL_ListQueryShape(t *testing.T) {
 func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	owner, name := sweepRepo(t, "sweep-prview")
 	prNum, prID := sweepPR(t, owner, name, "view me")
+	createTestUser(t, "sweep-reviewer")
+	reqResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/requested_reviewers", defaultToken,
+		map[string]interface{}{"reviewers": []string{"sweep-reviewer"}})
+	if reqResp.StatusCode != http.StatusCreated {
+		reqResp.Body.Close()
+		t.Fatalf("review request status = %d", reqResp.StatusCode)
+	}
+	reqResp.Body.Close()
 
 	// Submit a review so reviews{} carries data.
 	revResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/reviews", defaultToken,
@@ -327,7 +347,10 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 
 	// Record a completed check run against the PR's head sha — the same
 	// derivation the REST surface reports — so statusCheckRollup is real.
-	headSHA := prHeadSHA(prID)
+	headSHA := pullRequestHeadSHA(testServer.store.GetPullRequest(prID), testServer.store)
+	if headSHA == "" {
+		t.Fatal("PR head sha did not resolve")
+	}
 	repoKey := owner + "/" + name
 	cr := testServer.store.CreateCheckRun(repoKey, headSHA, "build", 0, 0)
 	now := time.Now().UTC()
@@ -377,6 +400,15 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	headRepo, _ := pr["headRepository"].(map[string]interface{})
 	if headRepo == nil || headRepo["nameWithOwner"] != repoKey {
 		t.Errorf("headRepository = %v, want nameWithOwner %q", pr["headRepository"], repoKey)
+	}
+	reviewRequests, _ := pr["reviewRequests"].(map[string]interface{})
+	requestNodes, _ := reviewRequests["nodes"].([]interface{})
+	if len(requestNodes) != 1 {
+		t.Fatalf("reviewRequests.nodes = %v, want 1", reviewRequests["nodes"])
+	}
+	requestedReviewer, _ := requestNodes[0].(map[string]interface{})["requestedReviewer"].(map[string]interface{})
+	if requestedReviewer == nil || requestedReviewer["__typename"] != "User" || requestedReviewer["login"] != "sweep-reviewer" {
+		t.Fatalf("requestedReviewer = %v, want User sweep-reviewer", requestedReviewer)
 	}
 
 	reviews, _ := pr["reviews"].(map[string]interface{})

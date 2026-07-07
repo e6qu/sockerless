@@ -190,13 +190,14 @@ func TestMergeGatingByRequiredChecks(t *testing.T) {
 
 	// The default branch the commit landed on serves as the PR head.
 	stor := testServer.store.GetGitStorage(owner, repoName)
-	headSha := resolveRefSha(stor, "")
-	if headSha == "0000000000000000000000000000000000000000" {
-		t.Fatal("head sha did not resolve")
-	}
 	headBranch := "main"
 	if resolveBranchSha(stor, "main") == "" {
 		headBranch = "master"
+	}
+	seedStorePullRequestBranches(t, testServer.store, repo, headBranch, "base")
+	headSha := resolveBranchSha(stor, headBranch)
+	if headSha == "" {
+		t.Fatal("head branch sha did not resolve")
 	}
 
 	pr := testServer.store.CreatePullRequest(repo.ID, user.ID, "gate", "", headBranch, "base", false, nil, nil, 0)
@@ -263,10 +264,14 @@ func TestUnstableMergeableStateOnFailingNonRequired(t *testing.T) {
 	repo := testServer.store.GetRepo(owner, repoName)
 	user := testServer.store.UsersByLogin[owner]
 	stor := testServer.store.GetGitStorage(owner, repoName)
-	headSha := resolveRefSha(stor, "")
 	headBranch := "main"
 	if resolveBranchSha(stor, "main") == "" {
 		headBranch = "master"
+	}
+	seedStorePullRequestBranches(t, testServer.store, repo, headBranch, "base")
+	headSha := resolveBranchSha(stor, headBranch)
+	if headSha == "" {
+		t.Fatal("head branch sha did not resolve")
 	}
 	pr := testServer.store.CreatePullRequest(repo.ID, user.ID, "u", "", headBranch, "base", false, nil, nil, 0)
 	testServer.store.UpdatePullRequest(pr.ID, func(p *PullRequest) { p.Mergeable = "MERGEABLE" })

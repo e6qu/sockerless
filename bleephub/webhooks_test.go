@@ -393,6 +393,11 @@ func TestWebhookPREvent(t *testing.T) {
 	defer cleanup()
 
 	createWebhookTestRepo(t, "wh-pr")
+	repo := testServer.store.GetRepo("admin", "wh-pr")
+	if repo == nil {
+		t.Fatal("repo wh-pr not created")
+	}
+	seedPullRequestBranches(t, testServer, repo, "feature")
 
 	// Create webhook for pull_request events
 	resp := ghPost(t, "/api/v3/repos/admin/wh-pr/hooks", defaultToken, map[string]interface{}{

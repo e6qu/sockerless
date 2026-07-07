@@ -391,6 +391,7 @@ func TestPersistenceReload_PRReviewComments(t *testing.T) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, "reviewed", "", false)
+		seedStorePullRequestBranches(t, st, repo, "feature")
 		pr := st.CreatePullRequest(repo.ID, user.ID, "fix", "", "feature", "main", false, nil, nil, 0)
 		prID, authorID = pr.ID, user.ID
 		root := st.PRReviewComments.CreateRootComment(pr.ID, user.ID, "main.go", "off-by-one?", "abc123", "RIGHT", 10, 0)
@@ -682,12 +683,27 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		now := time.Now().UTC()
 		st.RepoSecrets[repoKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", repoKey, st.RepoSecrets[repoKey])
+		st.RepoVariables[repoKey] = map[string]*ActionsVariable{"VAR": {Name: "VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("repo_variables", repoKey, st.RepoVariables[repoKey])
+		st.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{RepoKey: repoKey, State: "configured", QuerySuite: "default", Languages: []string{"go"}})
+		st.SetCodeQualitySetup(&CodeQualitySetup{RepoFullName: repoKey, State: "configured", Languages: []string{"go"}, UpdatedAt: &now})
+		st.SetRepoCustomPropertyValues(repoKey, []customPropertyValuePayload{{PropertyName: "team", Value: "platform"}})
+		st.SetRepoImmutableReleases(repoKey, true)
+		st.AgentsRepoSecrets[repoKey] = map[string]*Secret{"AGENT": {Name: "AGENT", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("agents_repo_secrets", repoKey, st.AgentsRepoSecrets[repoKey])
+		st.AgentsRepoVariables[repoKey] = map[string]*ActionsVariable{"AGENT_VAR": {Name: "AGENT_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("agents_repo_variables", repoKey, st.AgentsRepoVariables[repoKey])
+		st.UpsertCodeQLDatabase(repoKey, "go", "db.zip", "application/zip", "reload-sha", []byte("db"), user.ID)
+		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
+			t.Fatal("CreatePackage did not create")
+		}
 		st.SetCheckSuitePreferences(repoKey, []*CheckSuitePref{{AppID: 1, Setting: true}})
 		st.Misc.branchProtection[bpKey(repo.ID, "main")] = &BranchProtection{}
 		p.MustPut("branch_protection", bpKey(repo.ID, "main"), st.Misc.branchProtection[bpKey(repo.ID, "main")])
 		st.Misc.pagesBuilds[repoKey] = []*PagesBuild{{ID: 1, Status: "built"}}
 		p.MustPut("pages_builds", repoKey, st.Misc.pagesBuilds[repoKey])
 		st.CreateIssue(repo.ID, user.ID, "stale", "", nil, nil, 0)
+		seedStorePullRequestBranches(t, st, repo, "f")
 		st.CreatePullRequest(repo.ID, user.ID, "stale pr", "", "f", "main", false, nil, nil, 0)
 		st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
 
@@ -708,6 +724,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	if len(st2.RepoSecrets[repoKey]) != 0 {
 		t.Error("repo secrets survived repo deletion")
 	}
+	assertNoRepoKeyResidue(t, st2, repoKey)
 	if len(st2.CheckSuitePrefs[repoKey]) != 0 {
 		t.Error("check suite prefs survived repo deletion")
 	}
@@ -742,6 +759,168 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 	if len(st2.ListHooks(repoKey)) != 0 {
 		t.Error("recreated repo inherited hooks")
+	}
+}
+
+func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
+	const oldKey = "admin/rename-source"
+	const newKey = "admin/rename-target"
+	now := time.Now().UTC()
+
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "rename-source", "", false)
+		if repo == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+
+		st.RepoSecrets[oldKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("repo_secrets", oldKey, st.RepoSecrets[oldKey])
+		st.RepoVariables[oldKey] = map[string]*ActionsVariable{"VAR": {Name: "VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("repo_variables", oldKey, st.RepoVariables[oldKey])
+		envKey := envScopeKey(oldKey, "prod")
+		st.EnvSecrets[envKey] = map[string]*Secret{"ENV_TOKEN": {Name: "ENV_TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("env_secrets", envKey, st.EnvSecrets[envKey])
+		st.EnvVariables[envKey] = map[string]*ActionsVariable{"ENV_VAR": {Name: "ENV_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("env_variables", envKey, st.EnvVariables[envKey])
+
+		st.SetCheckSuitePreferences(oldKey, []*CheckSuitePref{{AppID: 1, Setting: true}})
+		suite := st.CreateCheckSuite(oldKey, "main", "0123456789abcdef", 1)
+		st.CreateCheckRun(oldKey, "0123456789abcdef", "build", 1, suite.ID)
+		st.CommitStatuses.Create(oldKey, "0123456789abcdef", user.ID, "success", "", "ok", "ci")
+		st.CommitComments.Create(repo.ID, "0123456789abcdef", user.ID, "body", "", nil, nil)
+		st.RegisterWorkflowFile(oldKey, ".github/workflows/ci.yml", "ci", "name: ci\non: push\njobs: {}", "submitted")
+
+		st.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{RepoKey: oldKey, State: "configured", QuerySuite: "default", Languages: []string{"go"}})
+		alert := st.CreateCodeScanningAlert(oldKey, "rule", "error", "desc", "CodeQL", "open", []CodeScanningAlertInstance{{Path: "main.go", StartLine: 1}})
+		st.CreateCodeScanningAutofix(alert)
+		upload := &SARIFUpload{ID: "sarif-rename", RepoKey: oldKey, Status: "complete", CreatedAt: now}
+		st.SARIFUploads[upload.ID] = upload
+		p.MustPut("sarif_uploads", upload.ID, upload)
+
+		st.SetCodeQualitySetup(&CodeQualitySetup{RepoFullName: oldKey, State: "configured", Languages: []string{"go"}, UpdatedAt: &now})
+		st.SetRepoCustomPropertyValues(oldKey, []customPropertyValuePayload{{PropertyName: "team", Value: "platform"}})
+		st.SetRepoImmutableReleases(oldKey, true)
+		st.AgentsRepoSecrets[oldKey] = map[string]*Secret{"AGENT": {Name: "AGENT", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("agents_repo_secrets", oldKey, st.AgentsRepoSecrets[oldKey])
+		st.AgentsRepoVariables[oldKey] = map[string]*ActionsVariable{"AGENT_VAR": {Name: "AGENT_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("agents_repo_variables", oldKey, st.AgentsRepoVariables[oldKey])
+		st.CreateSecretScanningPushProtectionPlaceholder(oldKey, "token")
+		bypass := &SecretScanningPushProtectionBypass{PlaceholderID: "ph", RepoKey: oldKey, Reason: "false_positive", TokenType: "token", CreatedAt: now, ExpireAt: now.Add(time.Hour)}
+		st.SecretScanningPushBypasses[oldKey] = []*SecretScanningPushProtectionBypass{bypass}
+		p.MustPut("secret_scanning_push_bypasses", oldKey, st.SecretScanningPushBypasses[oldKey])
+
+		st.UpsertCodeQLDatabase(oldKey, "go", "db.zip", "application/zip", "0123456789abcdef", []byte("db"), user.ID)
+		st.CreateCodeQLVariantAnalysis(oldKey, user.ID, "go", "pack", []string{oldKey})
+		st.CreateRuleset(repo, &Ruleset{Name: "protect"})
+		st.CreateProjectClassic(repo, user.ID, "board", "", "open")
+		st.Codespaces[1] = &Codespace{ID: 1, Name: "cs", OwnerLogin: user.Login, RepoKey: oldKey, State: "Available", CreatedAt: now, UpdatedAt: now}
+		st.CodespacesByName["cs"] = st.Codespaces[1]
+		p.MustPut("codespaces", "1", st.Codespaces[1])
+		if _, created := st.CreatePackage("Repository", oldKey, "container", "image", "private"); !created {
+			t.Fatal("CreatePackage did not create")
+		}
+
+		if !st.RenameRepo("admin", "rename-source", "rename-target") {
+			t.Fatal("RenameRepo failed")
+		}
+	})
+
+	if st2.GetRepo("admin", "rename-target") == nil {
+		t.Fatal("renamed repo row did not survive reload")
+	}
+	if st2.GetRepo("admin", "rename-source") != nil {
+		t.Fatal("old repo name survived reload")
+	}
+	assertNoRepoKeyResidue(t, st2, oldKey)
+	assertRepoKeyMoved(t, st2, newKey)
+}
+
+func TestPersistenceReload_TransferRepoMovesRepoScopedMetadata(t *testing.T) {
+	const oldKey = "admin/transfer-source"
+	const newKey = "bob/transfer-source"
+	now := time.Now().UTC()
+
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		addTestUser(p, st, "bob")
+		repo := st.CreateRepo(user, "transfer-source", "", false)
+		if repo == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		st.RepoSecrets[oldKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
+		p.MustPut("repo_secrets", oldKey, st.RepoSecrets[oldKey])
+		if !st.TransferRepo("admin", "transfer-source", "bob") {
+			t.Fatal("TransferRepo failed")
+		}
+	})
+
+	if st2.GetRepo("bob", "transfer-source") == nil {
+		t.Fatal("transferred repo row did not survive reload")
+	}
+	if st2.GetRepo("admin", "transfer-source") != nil {
+		t.Fatal("old transferred repo owner survived reload")
+	}
+	if st2.RepoSecrets[newKey]["TOKEN"] == nil {
+		t.Fatalf("repo secrets did not move to %s", newKey)
+	}
+	if len(st2.RepoSecrets[oldKey]) != 0 {
+		t.Fatalf("repo secrets residue survived for %s", oldKey)
+	}
+}
+
+func assertRepoKeyMoved(t *testing.T, st *Store, repoKey string) {
+	t.Helper()
+	if st.RepoSecrets[repoKey]["TOKEN"] == nil || st.RepoVariables[repoKey]["VAR"] == nil {
+		t.Fatalf("actions secrets/variables did not move to %s", repoKey)
+	}
+	if st.EnvSecrets[envScopeKey(repoKey, "prod")]["ENV_TOKEN"] == nil || st.EnvVariables[envScopeKey(repoKey, "prod")]["ENV_VAR"] == nil {
+		t.Fatalf("environment secrets/variables did not move to %s", repoKey)
+	}
+	if len(st.CheckSuitePrefs[repoKey]) != 1 || len(st.CommitStatuses.List(repoKey, "0123456789abcdef")) != 1 {
+		t.Fatalf("check/status state did not move to %s", repoKey)
+	}
+	if st.GetCodeScanningDefaultSetup(repoKey) == nil || st.GetCodeScanningAutofix(repoKey, 1) == nil || st.GetSARIFUpload(repoKey, "sarif-rename") == nil {
+		t.Fatalf("code scanning state did not move to %s", repoKey)
+	}
+	if st.GetCodeQualitySetup(repoKey).State != "configured" || len(st.RepoCustomPropertyValues[repoKey]) == 0 || !st.RepoImmutableReleases[repoKey] {
+		t.Fatalf("repo governance state did not move to %s", repoKey)
+	}
+	if st.AgentsRepoSecrets[repoKey]["AGENT"] == nil || st.AgentsRepoVariables[repoKey]["AGENT_VAR"] == nil {
+		t.Fatalf("agent secrets/variables did not move to %s", repoKey)
+	}
+	if st.CodeQLDatabasesByRepo[repoKey]["go"] == nil || st.GetCodeQLVariantAnalysis(repoKey, 1) == nil {
+		t.Fatalf("CodeQL state did not move to %s", repoKey)
+	}
+	if len(st.ListPackages(repoKey)) != 1 {
+		t.Fatalf("repository-owned package did not move to %s", repoKey)
+	}
+}
+
+func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
+	t.Helper()
+	if len(st.RepoSecrets[repoKey]) != 0 || len(st.RepoVariables[repoKey]) != 0 || len(st.CheckSuitePrefs[repoKey]) != 0 {
+		t.Fatalf("basic repo-key residue survived for %s", repoKey)
+	}
+	if len(st.EnvSecrets[envScopeKey(repoKey, "prod")]) != 0 || len(st.EnvVariables[envScopeKey(repoKey, "prod")]) != 0 {
+		t.Fatalf("environment repo-key residue survived for %s", repoKey)
+	}
+	if st.GetCodeScanningDefaultSetup(repoKey) != nil || st.GetSARIFUpload(repoKey, "sarif-rename") != nil {
+		t.Fatalf("code scanning residue survived for %s", repoKey)
+	}
+	if setup := st.CodeQualitySetups[repoKey]; setup != nil {
+		t.Fatalf("code quality residue survived for %s", repoKey)
+	}
+	if len(st.RepoCustomPropertyValues[repoKey]) != 0 || st.RepoImmutableReleases[repoKey] {
+		t.Fatalf("repo governance residue survived for %s", repoKey)
+	}
+	if len(st.AgentsRepoSecrets[repoKey]) != 0 || len(st.AgentsRepoVariables[repoKey]) != 0 {
+		t.Fatalf("agent residue survived for %s", repoKey)
+	}
+	if len(st.CodeQLDatabasesByRepo[repoKey]) != 0 || len(st.ListPackages(repoKey)) != 0 {
+		t.Fatalf("CodeQL/package residue survived for %s", repoKey)
 	}
 }
 

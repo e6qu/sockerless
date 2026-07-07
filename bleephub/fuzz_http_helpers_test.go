@@ -65,6 +65,7 @@ func newFuzzFixture(tb testing.TB) *fuzzFixture {
 		"README.md":         "# fuzz\n",
 		".github/wf/ci.yml": "name: ci\non: push\n",
 	})
+	seedPullRequestBranches(tb, s, repo, "feature")
 
 	// Issue + PR.
 	issue := s.store.CreateIssue(repo.ID, admin.ID, "Fuzz issue", "body", nil, nil, 0)

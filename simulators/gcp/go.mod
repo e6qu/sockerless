@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/longrunning v1.1.0
-	cloud.google.com/go/pubsub v1.50.2
+	cloud.google.com/go/pubsub v1.50.3
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0

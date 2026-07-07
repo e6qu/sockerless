@@ -120,6 +120,7 @@ func TestReactions_PullRequestLifecycle(t *testing.T) {
 
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "rxn-pr", "", false)
+	seedPullRequestBranches(t, s, repo, "feat")
 	issue := s.store.CreateIssue(repo.ID, admin.ID, "an issue", "", nil, nil, 0)
 	pr := s.store.CreatePullRequest(repo.ID, admin.ID, "a pull request", "", "feat", "main", false, nil, nil, 0)
 
@@ -185,6 +186,7 @@ func TestIssueLabels_PullRequestNumbers(t *testing.T) {
 
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "lbl-pr", "", false)
+	seedPullRequestBranches(t, s, repo, "feat")
 	pr := s.store.CreatePullRequest(repo.ID, admin.ID, "a pull request", "", "feat", "main", false, nil, nil, 0)
 	s.store.CreateLabel(repo.ID, "bug", "", "ff0000")
 	s.store.CreateLabel(repo.ID, "enhancement", "", "00ff00")
