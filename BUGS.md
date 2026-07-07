@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2336 filed - 2293 fixed - 2 open - 16 false positives.**
+**2337 filed - 2294 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2337~~ | P2 | CI — Azure simulator setup | remote installer reintroduced apt outage | The Azure simulator CI job installed Azure CLI by piping `https://aka.ms/InstallAzureCLIDeb` into `sudo bash`, so the same Microsoft apt metadata outage bypassed the repo-owned `ci-apt-update.sh` hardening and failed before tests ran. The job now verifies the required hosted-runner `az` binary with `az version` and fails loud if the dependency is absent, instead of mutating apt sources through an unowned installer. |
 | ~~2336~~ | P2 | CI — apt setup | third-party runner source blocked required packages | `scripts/ci-apt-update.sh` retried a degraded GitHub-hosted runner apt state three times but kept Microsoft runner-provided sources enabled, so invalid signed metadata from those sources blocked jobs that only needed Ubuntu packages. After the normal retries fail, the script now quarantines the known Microsoft source files and retries against the required Ubuntu sources. |
 | ~~2335~~ | P2 | bleephub SDK/gh CLI tests | metadata-only PR fixtures after PR fidelity fix | The go-github SDK PR tests and the gh CLI parity harness still created pull requests from bare `head=feature`/`base=main` names in empty repositories, so the branch's new real-ref requirement correctly returned 422 in CI. The SDK suite now creates blobs, trees, commits, and refs through go-github's Git Data API before PR creation, `TestGitData` became live coverage instead of a stale skip, and the gh CLI harness pushes real `main` and `feature` refs through smart HTTP before its raw PR probe. |
 | ~~2315~~ | P3 | bleephub — GraphQL PR reviewRequests | hardcoded empty connection | `pullRequestToGQL` now renders `reviewRequests` from real `RequestedReviewerIDs` using a `ReviewRequest` node and requested-reviewer union, so `gh pr view` sees the same requested reviewers the REST surface stores. |
