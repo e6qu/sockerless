@@ -109,6 +109,13 @@ repos:
         pass_filenames: false
         always_run: true
 
+      - id: no-tool-absent-skips
+        name: No new skip-if-tool-absent tests
+        entry: bash scripts/check-no-tool-absent-skips.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
       - id: go-test-core
         name: Go test (core)
         entry: bash -c 'cd backends/core && go test ./... -count=1 -timeout 120s'

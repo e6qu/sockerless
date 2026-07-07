@@ -11,6 +11,11 @@ type testItem struct {
 	Value int    `json:"value"`
 }
 
+type refItem struct {
+	Labels map[string]string `json:"labels"`
+	Items  []string          `json:"items"`
+}
+
 func makeStores(t *testing.T) map[string]Store[testItem] {
 	t.Helper()
 
@@ -161,6 +166,86 @@ func TestStoreUpdateMissing(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if store.Update("nope", func(item *testItem) {}) {
 				t.Error("expected update on missing key to return false")
+			}
+		})
+	}
+}
+
+func makeRefStores(t *testing.T) map[string]Store[refItem] {
+	t.Helper()
+
+	dir, err := os.MkdirTemp("", "sim-state-ref-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+
+	db, err := OpenDB(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	sqliteStore, err := NewSQLiteStore[refItem](db, "ref_items")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return map[string]Store[refItem]{
+		"memory": NewStateStore[refItem](),
+		"sqlite": sqliteStore,
+	}
+}
+
+func TestStoreSnapshotsReferenceFields(t *testing.T) {
+	for name, store := range makeRefStores(t) {
+		t.Run(name, func(t *testing.T) {
+			seed := refItem{Labels: map[string]string{"role": "stored"}, Items: []string{"a"}}
+			store.Put("x", seed)
+			seed.Labels["role"] = "mutated-after-put"
+			seed.Items[0] = "mutated-after-put"
+
+			got, ok := store.Get("x")
+			if !ok {
+				t.Fatal("missing item")
+			}
+			got.Labels["role"] = "mutated-after-get"
+			got.Items[0] = "mutated-after-get"
+
+			again, _ := store.Get("x")
+			if again.Labels["role"] != "stored" || again.Items[0] != "a" {
+				t.Fatalf("Get leaked mutable references: %+v", again)
+			}
+
+			listed := store.List()
+			listed[0].Labels["role"] = "mutated-after-list"
+			filtered := store.Filter(func(item refItem) bool {
+				item.Labels["role"] = "mutated-in-filter"
+				return true
+			})
+			filtered[0].Items[0] = "mutated-after-filter"
+
+			final, _ := store.Get("x")
+			if final.Labels["role"] != "stored" || final.Items[0] != "a" {
+				t.Fatalf("List/Filter leaked mutable references: %+v", final)
+			}
+		})
+	}
+}
+
+func TestStoreUpdateSnapshotsReferenceFields(t *testing.T) {
+	for name, store := range makeRefStores(t) {
+		t.Run(name, func(t *testing.T) {
+			store.Put("x", refItem{Labels: map[string]string{"role": "stored"}, Items: []string{"a"}})
+			if !store.Update("x", func(item *refItem) {
+				item.Labels["role"] = "updated"
+				item.Items = append(item.Items, "b")
+			}) {
+				t.Fatal("update failed")
+			}
+			got, _ := store.Get("x")
+			if got.Labels["role"] != "updated" || len(got.Items) != 2 || got.Items[1] != "b" {
+				t.Fatalf("update did not persist expected value: %+v", got)
 			}
 		})
 	}
