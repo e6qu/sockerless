@@ -13,9 +13,9 @@ require (
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
 	github.com/sockerless/simulator-realexec v0.0.0
-	google.golang.org/genproto v0.0.0-20260630182238-925bb5da69e7
-	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7
+	google.golang.org/genproto v0.0.0-20260706201446-f0a921348800
+	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260706201446-f0a921348800
 	google.golang.org/grpc v1.82.0
 	google.golang.org/protobuf v1.36.11
 	modernc.org/sqlite v1.53.0
@@ -69,8 +69,8 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.38.0 // indirect
-	modernc.org/libc v1.73.5 // indirect
+	golang.org/x/text v0.39.0 // indirect
+	modernc.org/libc v1.74.0 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )

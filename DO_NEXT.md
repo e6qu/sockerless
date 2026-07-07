@@ -10,12 +10,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **DynamoDB concurrent map panic (#777 / BUG-2330):** `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` snapshot each stored item under `ddbItemsMu` before projection, expression matching, response rendering, and consumed-capacity calculation. Read APIs no longer expose maps that `UpdateItem` can mutate in place.
 - **ECS CPU/memory limit fidelity (#776 / BUG-2332):** focused regressions pin task-level fallback and container-definition override translation into `MemoryBytes` and `NanoCPU`, the fields the shared AWS simulator container launcher applies to Docker/Podman cgroups as `HostConfig.Memory` and `HostConfig.NanoCPUs`.
 - **Boyscout (BUG-2331):** the DynamoDB Local differential oracle treats Docker as a required dependency and fails loud when the binary is absent instead of silently skipping the test.
+- **Hook-driven dependency refresh:** the pre-push dependency freshness hook was honored by running `make upgrade-deps`, which refreshed stale Go module requirements across the affected repo modules. The badge hook's deterministic README refresh commit was included.
 
 **Validation**
 - `GOWORK=off go test -tags noui . -run 'TestDDBItemSnapshotIsIndependentUnderConcurrentMutation|TestECSContainerResourceLimits' -count=1` in `simulators/aws` passed.
 - `GOWORK=off go test -tags noui . -count=1` in `simulators/aws` passed.
 - `GOWORK=off go test -run 'TestDynamoDB_QueryAndScan|TestDynamoDB_ProjectionExpression|TestECS_RunTask|TestECS_TaskDefinitionFidelitySDK' -count=1 ./` in `simulators/aws/sdk-tests` passed.
 - `GOWORK=off go test -race -tags noui . -run TestDDBItemSnapshotIsIndependentUnderConcurrentMutation -count=1` in `simulators/aws` passed.
+- `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
+- After the dependency refresh, `GOWORK=off go test -tags noui . -count=1` in `simulators/aws` and `GOWORK=off go test -run 'TestDynamoDB_QueryAndScan|TestDynamoDB_ProjectionExpression|TestDynamoDB_BatchAndTransact|TestECS_RunTask|TestECS_TaskDefinitionFidelitySDK' -count=1 ./` in `simulators/aws/sdk-tests` passed.
 
 **Next after merge**
 - Only GitHub issue #394 remained open and it stayed upstream-blocked on the AzureAD Terraform provider's missing Microsoft Graph endpoint override.

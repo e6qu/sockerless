@@ -14,6 +14,8 @@ Closed the actionable open GitHub issues other than the upstream-blocked AzureAD
 
 **Boyscout (BUG-2331).** The DynamoDB Local differential oracle no longer uses a skip-if-Docker-absent path. Docker is a required dependency for that real oracle-backed test, so a missing binary fails loud instead of reporting a green test that exercised nothing.
 
+**Hooks honored.** The pre-push dependency-freshness hook found stale Go module requirements; `make upgrade-deps` refreshed the affected repo modules and `scripts/check-latest-deps.sh` passed. The pre-push badge hook's deterministic README badge refresh was included as its own generated commit.
+
 Validation: AWS simulator package tests, targeted AWS SDK tests for DynamoDB/ECS, and the race-enabled DynamoDB snapshot regression all passed.
 
 ## 2026-07-05 - repo-wide docs sweep + stale-branch prune (docs/sweep-post-774)
