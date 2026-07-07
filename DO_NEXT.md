@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, Actions no-fallback hardening, CI follow-ups, and continuity cleanup.
+`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, Actions no-fallback hardening, repository lifecycle persistence, CI follow-ups, and continuity cleanup.
 
 **Next**
 - After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
@@ -19,9 +19,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2337:** The Azure simulator CI job no longer pipes Microsoft's remote Azure CLI installer into `sudo bash`; it verifies the hosted-runner `az` binary with `az version` and fails loud if the required dependency is absent.
 - **BUG-2338:** Bleephub Actions action download metadata resolves bleephub-hosted action refs from git storage before rendering `resolvedSha`; unresolved refs fail loudly, absent action repositories no longer fetch from github.com, and tarball serving no longer substitutes the default branch for an unknown action ref.
 - **BUG-2339:** The CodeQL variant-analysis test uses a deterministic real tar.gz query-pack archive instead of arbitrary bytes labelled as a tarball.
+- **BUG-2340:** Repository rename, transfer, and delete move or purge repo-scoped persisted metadata instead of leaving stale `owner/repo` rows behind or deleting the updated repository row. The shared lifecycle path covers Actions secrets/variables, environments, hooks/collaborators/invitations/deploy keys, checks/statuses/comments, code scanning/SARIF/CodeQL, Dependabot, custom properties, immutable releases, code quality, rulesets, Projects classic, Codespaces, packages, and Copilot coding-agent state.
 - **Hook-driven dependency refresh:** The pre-push freshness hook's Google module drift was resolved (`cloud.google.com/go/pubsub` v1.50.3 and shared `cloud.google.com/go/auth` v0.21.0), and the README badge hook's deterministic refresh commit was included.
 
 **Validation**
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata|DeleteRepoLeavesNoResidue)' -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestActionDownloadInfo|TestActionTarball|TestLocalActionTarball|TestCodeQLVariantAnalyses_CreateAndReadBack' -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.

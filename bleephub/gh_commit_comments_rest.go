@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -166,6 +167,27 @@ func (s *CommitCommentStore) persistComment(c *CommitComment) {
 		return
 	}
 	s.persist.MustPut("commit_comments", strconv.Itoa(c.ID), c)
+}
+
+func (s *CommitCommentStore) deleteRepo(repoID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, c := range s.byID {
+		if c.RepoID != repoID {
+			continue
+		}
+		delete(s.byID, id)
+		if s.persist != nil {
+			s.persist.MustDelete("commit_comments", strconv.Itoa(id))
+		}
+	}
+	delete(s.byRepo, repoID)
+	prefix := strconv.Itoa(repoID) + ":"
+	for key := range s.byCommit {
+		if strings.HasPrefix(key, prefix) {
+			delete(s.byCommit, key)
+		}
+	}
 }
 
 func (s *Server) registerGHCommitCommentsRoutes() {
