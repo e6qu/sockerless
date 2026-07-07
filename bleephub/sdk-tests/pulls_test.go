@@ -7,11 +7,12 @@ import (
 )
 
 // createTestPR creates a repo and a single open PR, returning the repo name and
-// PR number. bleephub accepts arbitrary head/base ref strings (it does not
-// require the refs to exist), so no git push is needed.
+// PR number. The branches are created through the public Git Data API so the
+// PR points at real repository objects.
 func createTestPR(t *testing.T, repoName string) int {
 	t.Helper()
 	createRepo(t, repoName)
+	createPullRequestBranches(t, repoName)
 	pr, _, err := client.PullRequests.Create(ctx(), "admin", repoName, &github.NewPullRequest{
 		Title: github.Ptr("a PR"),
 		Body:  github.Ptr("PR body"),
@@ -28,6 +29,7 @@ func createTestPR(t *testing.T, repoName string) int {
 func TestPullRequestsLifecycle(t *testing.T) {
 	name := uniqueName("pr-life")
 	createRepo(t, name)
+	createPullRequestBranches(t, name)
 
 	pr, _, err := client.PullRequests.Create(ctx(), "admin", name, &github.NewPullRequest{
 		Title: github.Ptr("feature PR"),

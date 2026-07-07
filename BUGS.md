@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2334 filed - 2291 fixed - 2 open - 16 false positives.**
+**2336 filed - 2293 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2336~~ | P2 | CI — apt setup | third-party runner source blocked required packages | `scripts/ci-apt-update.sh` retried a degraded GitHub-hosted runner apt state three times but kept Microsoft runner-provided sources enabled, so invalid signed metadata from those sources blocked jobs that only needed Ubuntu packages. After the normal retries fail, the script now quarantines the known Microsoft source files and retries against the required Ubuntu sources. |
+| ~~2335~~ | P2 | bleephub SDK/gh CLI tests | metadata-only PR fixtures after PR fidelity fix | The go-github SDK PR tests and the gh CLI parity harness still created pull requests from bare `head=feature`/`base=main` names in empty repositories, so the branch's new real-ref requirement correctly returned 422 in CI. The SDK suite now creates blobs, trees, commits, and refs through go-github's Git Data API before PR creation, `TestGitData` became live coverage instead of a stale skip, and the gh CLI harness pushes real `main` and `feature` refs through smart HTTP before its raw PR probe. |
 | ~~2315~~ | P3 | bleephub — GraphQL PR reviewRequests | hardcoded empty connection | `pullRequestToGQL` now renders `reviewRequests` from real `RequestedReviewerIDs` using a `ReviewRequest` node and requested-reviewer union, so `gh pr view` sees the same requested reviewers the REST surface stores. |
 | ~~2314~~ | P3 | bleephub — metadata-only PR model | pseudo shas for ref-less PRs | Pull requests now require real head and base refs at creation, REST/GraphQL PR commits and review `commit_id`s derive from git storage, merge responses use the real merge commit, and metadata-only pseudo SHA paths were removed. The tests now seed real branches before creating PRs. |
 | ~~2313~~ | P3 | bleephub — releases | generate-notes body ignores derivable merged-PR state | `POST /repos/{o}/{r}/releases/generate-notes` now resolves the requested tag range through git storage, walks real commits, matches merged PR merge commits, and emits "What's Changed" bullets plus the Full Changelog compare line. |

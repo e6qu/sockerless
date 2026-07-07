@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`bleephub-pr-release-fidelity` — bleephub PR/release fidelity and continuity cleanup.
+`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, CI follow-ups, and continuity cleanup.
 
 **Next**
 - After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
@@ -14,10 +14,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2315:** GraphQL `reviewRequests` renders real requested reviewers instead of a hardcoded empty connection.
 - **BUG-2313:** Release `generate-notes` resolves the requested git tag/commit range, walks commits, matches merged pull request merge commits, and emits real "What's Changed" bullets with the Full Changelog compare line.
 - **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
+- **BUG-2335:** The go-github SDK suite and gh CLI parity harness no longer rely on metadata-only PR fixtures. SDK tests create real Git Data objects/refs before PR creation, `TestGitData` is live coverage instead of a stale skip, and the gh harness pushes real `main`/`feature` refs before the raw PR probe.
+- **BUG-2336:** CI apt setup no longer lets degraded runner-provided Microsoft apt sources block jobs that only need Ubuntu packages; after normal retries fail, the helper quarantines those source files and retries the required package-index update.
 
 **Validation**
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.
+- `cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed.
+- `make bleephub-gh-docker-test` passed.
+- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md WHAT_WE_DID.md bleephub/sdk-tests/gitdata_test.go bleephub/sdk-tests/pulls_test.go bleephub/test/run-gh-test.sh scripts/ci-apt-update.sh` passed.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
