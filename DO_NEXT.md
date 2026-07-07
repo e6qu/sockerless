@@ -16,6 +16,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
 - **BUG-2335:** The go-github SDK suite and gh CLI parity harness no longer rely on metadata-only PR fixtures. SDK tests create real Git Data objects/refs before PR creation, `TestGitData` is live coverage instead of a stale skip, and the gh harness pushes real `main`/`feature` refs before the raw PR probe.
 - **BUG-2336:** CI apt setup no longer lets degraded runner-provided Microsoft apt sources block jobs that only need Ubuntu packages; after normal retries fail, the helper quarantines those source files and retries the required package-index update.
+- **Hook-driven dependency refresh:** The pre-push freshness hook's Google module drift was resolved (`cloud.google.com/go/pubsub` v1.50.3 and shared `cloud.google.com/go/auth` v0.21.0), and the README badge hook's deterministic refresh commit was included.
 
 **Validation**
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
@@ -23,6 +24,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed.
 - `make bleephub-gh-docker-test` passed.
 - `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md WHAT_WE_DID.md bleephub/sdk-tests/gitdata_test.go bleephub/sdk-tests/pulls_test.go bleephub/test/run-gh-test.sh scripts/ci-apt-update.sh` passed.
+- `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
