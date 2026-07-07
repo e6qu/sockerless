@@ -6,7 +6,6 @@ import (
 	"compress/gzip"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -15,7 +14,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/object"
-	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 // ActionCache stores downloaded action tarballs in memory.
@@ -82,9 +81,14 @@ func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request
 	for _, a := range body.Actions {
 		key := a.NameWithOwner + "@" + a.Ref
 
-		resolvedSha := "0000000000000000000000000000000000000000"
+		resolvedSha := s.resolveActionSha(a.NameWithOwner, a.Ref)
 		if entry := s.actionCache.Get(key); entry != nil {
 			resolvedSha = entry.ResolvedSha
+		}
+		if resolvedSha == "0000000000000000000000000000000000000000" {
+			writeGHError(w, http.StatusUnprocessableEntity,
+				"action "+key+" is not resolvable from bleephub git storage")
+			return
 		}
 
 		tarballURL := fmt.Sprintf("%s/_apis/v1/actions/tarball/%s/%s",
@@ -111,6 +115,22 @@ func (s *Server) handleActionDownloadInfo(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (s *Server) resolveActionSha(nameWithOwner, ref string) string {
+	const zeroSha = "0000000000000000000000000000000000000000"
+	parts := strings.Split(nameWithOwner, "/")
+	if len(parts) != 2 {
+		return zeroSha
+	}
+	stor := s.store.GetGitStorage(parts[0], parts[1])
+	if stor == nil {
+		return zeroSha
+	}
+	if sha := resolveActionRefSha(stor, ref); sha != zeroSha {
+		return sha
+	}
+	return zeroSha
+}
+
 // handleActionTarball serves a cached action tarball, fetching from GitHub on first request.
 func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 	owner := r.PathValue("owner")
@@ -134,9 +154,9 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Actions hosted ON bleephub serve from their own git storage —
-	// GHES's primary action source; github.com is only the fallback for
-	// external actions.
+	// Actions hosted on bleephub serve from their own git storage.
+	// Repositories that are not present locally fail loudly instead of
+	// reaching out to github.com behind the runner's back.
 	if entry, err := s.localActionTarball(owner, repo, ref); err == nil && entry != nil {
 		s.actionCache.Put(key, entry)
 		w.Header().Set("Content-Type", "application/gzip")
@@ -150,71 +170,7 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.logger.Info().Str("key", key).Msg("fetching action tarball from GitHub")
-	entry, err := fetchActionTarball(nameWithOwner, ref)
-	if err != nil {
-		s.logger.Error().Err(err).Str("key", key).Msg("failed to fetch action tarball")
-		http.Error(w, "failed to fetch action: "+err.Error(), http.StatusBadGateway)
-		return
-	}
-
-	s.actionCache.Put(key, entry)
-
-	w.Header().Set("Content-Type", "application/gzip")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(entry.Data)))
-	w.WriteHeader(http.StatusOK)
-	w.Write(entry.Data)
-}
-
-func fetchActionTarball(nameWithOwner, ref string) (*ActionCacheEntry, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/tarball/%s", nameWithOwner, ref)
-
-	client := &http.Client{
-		Timeout:   60 * time.Second,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return fmt.Errorf("too many redirects")
-			}
-			return nil
-		},
-	}
-
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-	req.Header.Set("User-Agent", "bleephub/1.0")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("GET %s: %w", url, err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read body: %w", err)
-	}
-
-	resolvedSha := "0000000000000000000000000000000000000000"
-	if etag := resp.Header.Get("ETag"); etag != "" {
-		etag = strings.Trim(etag, "\"")
-		if len(etag) == 40 {
-			resolvedSha = etag
-		}
-	}
-
-	return &ActionCacheEntry{
-		Data:        data,
-		ResolvedSha: resolvedSha,
-		FetchedAt:   time.Now(),
-	}, nil
+	http.Error(w, "action repository "+nameWithOwner+" is not hosted in bleephub", http.StatusNotFound)
 }
 
 // localActionTarball builds a GitHub-layout tarball (single top-level
@@ -226,19 +182,7 @@ func (s *Server) localActionTarball(owner, repo, ref string) (*ActionCacheEntry,
 	if stor == nil {
 		return nil, nil
 	}
-	sha := resolveRefSha(stor, ref)
-	if sha == "0000000000000000000000000000000000000000" {
-		// Try branch/tag forms the way reusable-workflow resolution does.
-		for _, name := range []string{"refs/heads/" + ref, "refs/tags/" + ref} {
-			if got := resolveRefSha(stor, name); got != "0000000000000000000000000000000000000000" {
-				sha = got
-				break
-			}
-		}
-	}
-	if sha == "0000000000000000000000000000000000000000" && len(ref) == 40 {
-		sha = ref
-	}
+	sha := resolveActionRefSha(stor, ref)
 	if sha == "0000000000000000000000000000000000000000" {
 		return nil, fmt.Errorf("ref %q not found in %s/%s", ref, owner, repo)
 	}
@@ -285,4 +229,41 @@ func (s *Server) localActionTarball(owner, repo, ref string) (*ActionCacheEntry,
 		return nil, err
 	}
 	return &ActionCacheEntry{Data: buf.Bytes(), ResolvedSha: sha}, nil
+}
+
+func resolveActionRefSha(stor gitStorage.Storer, ref string) string {
+	const zeroSha = "0000000000000000000000000000000000000000"
+	if ref == "" {
+		return resolveRefSha(stor, "")
+	}
+	for _, name := range []string{ref, "refs/heads/" + ref, "refs/tags/" + ref} {
+		if sha := strictGitRefSha(stor, plumbing.ReferenceName(name)); sha != zeroSha {
+			return sha
+		}
+	}
+	if len(ref) == 40 {
+		if _, err := object.GetCommit(stor, plumbing.NewHash(ref)); err == nil {
+			return ref
+		}
+	}
+	return zeroSha
+}
+
+func strictGitRefSha(stor gitStorage.Storer, name plumbing.ReferenceName) string {
+	const zeroSha = "0000000000000000000000000000000000000000"
+	r, err := stor.Reference(name)
+	if err != nil {
+		return zeroSha
+	}
+	if r.Type() == plumbing.SymbolicReference {
+		target, err := stor.Reference(r.Target())
+		if err != nil || target.Hash().IsZero() {
+			return zeroSha
+		}
+		return target.Hash().String()
+	}
+	if r.Hash().IsZero() {
+		return zeroSha
+	}
+	return r.Hash().String()
 }

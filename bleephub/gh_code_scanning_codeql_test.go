@@ -1,7 +1,9 @@
 package bleephub
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -308,7 +310,8 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 
 	seedCodeQLDatabase(t, withDB.FullName, "go", "af5626b4a114abcb82d63db7c8082c3c4756e51b", []byte("db"))
 
-	queryPack := base64.StdEncoding.EncodeToString([]byte("fake-tarball-bytes-standing-in-for-a-query-pack"))
+	queryPackBytes := testCodeQLQueryPack(t)
+	queryPack := base64.StdEncoding.EncodeToString(queryPackBytes)
 	basePath := "/api/v3/repos/" + controller.FullName + "/code-scanning/codeql/variant-analyses"
 
 	resp := ghPost(t, basePath, defaultToken, map[string]interface{}{
@@ -371,8 +374,8 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	if packResp.StatusCode != http.StatusOK {
 		t.Fatalf("download query pack: %d body=%s", packResp.StatusCode, packRaw)
 	}
-	if string(packRaw) != "fake-tarball-bytes-standing-in-for-a-query-pack" {
-		t.Fatalf("query pack bytes = %q", packRaw)
+	if !bytes.Equal(packRaw, queryPackBytes) {
+		t.Fatalf("query pack bytes = %q, want %q", packRaw, queryPackBytes)
 	}
 
 	// Get by id.
@@ -407,6 +410,36 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 
 	// Unknown analysis id.
 	mustStatus(t, ghGet(t, basePath+"/99999", defaultToken), 404, "unknown variant analysis")
+}
+
+func testCodeQLQueryPack(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	files := []struct {
+		name string
+		body string
+	}{
+		{name: "qlpack.yml", body: "name: bleephub/test-pack\nversion: 1.0.0\nlibraryPathDependencies: []\n"},
+		{name: "queries/example.ql", body: "select \"ok\"\n"},
+	}
+	for _, file := range files {
+		content := []byte(file.body)
+		if err := tw.WriteHeader(&tar.Header{Name: file.name, Mode: 0o644, Size: int64(len(content))}); err != nil {
+			t.Fatalf("write %s header: %v", file.name, err)
+		}
+		if _, err := tw.Write(content); err != nil {
+			t.Fatalf("write %s content: %v", file.name, err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buf.Bytes()
 }
 
 func TestCodeQLVariantAnalyses_Validation(t *testing.T) {

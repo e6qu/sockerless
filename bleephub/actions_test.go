@@ -1,8 +1,11 @@
 package bleephub
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,8 +15,11 @@ import (
 
 func TestActionDownloadInfoReturnsFormat(t *testing.T) {
 	s := newTestServer()
+	commitFilesToStorage(t, s, "actions/checkout", map[string]string{
+		"action.yml": "name: checkout\nruns:\n  using: composite\n  steps: []\n",
+	})
 
-	body := `{"actions":[{"nameWithOwner":"actions/checkout","ref":"v4"}]}`
+	body := `{"actions":[{"nameWithOwner":"actions/checkout","ref":"master"}]}`
 	req := httptest.NewRequest("POST", "/_apis/v1/ActionDownloadInfo/scope/hub/plan", bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
 	s.handleActionDownloadInfo(w, req)
@@ -30,22 +36,55 @@ func TestActionDownloadInfoReturnsFormat(t *testing.T) {
 		t.Fatal("response missing actions map")
 	}
 
-	entry, ok := actions["actions/checkout@v4"]
+	entry, ok := actions["actions/checkout@master"]
 	if !ok {
-		t.Fatal("missing key 'actions/checkout@v4'")
+		t.Fatal("missing key 'actions/checkout@master'")
 	}
 
 	info := entry.(map[string]interface{})
 	if info["nameWithOwner"] != "actions/checkout" {
 		t.Errorf("nameWithOwner = %v", info["nameWithOwner"])
 	}
-	if info["ref"] != "v4" {
+	if info["ref"] != "master" {
 		t.Errorf("ref = %v", info["ref"])
 	}
 
 	tarURL, _ := info["tarballUrl"].(string)
 	if tarURL == "" {
 		t.Error("tarballUrl is empty")
+	}
+}
+
+func TestActionDownloadInfoResolvesLocalActionSha(t *testing.T) {
+	s := newTestServer()
+	commitFilesToStorage(t, s, "actions/local-checkout", map[string]string{
+		"action.yml": "name: local checkout\nruns:\n  using: composite\n  steps: []\n",
+	})
+	stor := s.store.GetGitStorage("actions", "local-checkout")
+	wantSha := resolveActionRefSha(stor, "master")
+	if wantSha == "0000000000000000000000000000000000000000" {
+		t.Fatal("test repository did not resolve master")
+	}
+
+	body := `{"actions":[{"nameWithOwner":"actions/local-checkout","ref":"master"}]}`
+	req := httptest.NewRequest("POST", "/_apis/v1/ActionDownloadInfo/scope/hub/plan", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleActionDownloadInfo(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	var resp struct {
+		Actions map[string]struct {
+			ResolvedSha string `json:"resolvedSha"`
+		} `json:"actions"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	got := resp.Actions["actions/local-checkout@master"].ResolvedSha
+	if got != wantSha {
+		t.Fatalf("resolvedSha = %q, want local git commit %q", got, wantSha)
 	}
 }
 
@@ -70,10 +109,16 @@ func TestActionDownloadInfoEmptyBody(t *testing.T) {
 
 func TestActionDownloadInfoMultipleActions(t *testing.T) {
 	s := newTestServer()
+	commitFilesToStorage(t, s, "actions/checkout", map[string]string{
+		"action.yml": "name: checkout\nruns:\n  using: composite\n  steps: []\n",
+	})
+	commitFilesToStorage(t, s, "actions/setup-go", map[string]string{
+		"action.yml": "name: setup go\nruns:\n  using: composite\n  steps: []\n",
+	})
 
 	body := `{"actions":[
-		{"nameWithOwner":"actions/checkout","ref":"v4"},
-		{"nameWithOwner":"actions/setup-go","ref":"v5"}
+		{"nameWithOwner":"actions/checkout","ref":"master"},
+		{"nameWithOwner":"actions/setup-go","ref":"master"}
 	]}`
 	req := httptest.NewRequest("POST", "/_apis/v1/ActionDownloadInfo/scope/hub/plan", bytes.NewBufferString(body))
 	w := httptest.NewRecorder()
@@ -85,15 +130,49 @@ func TestActionDownloadInfoMultipleActions(t *testing.T) {
 	if len(actions) != 2 {
 		t.Errorf("expected 2 actions, got %d", len(actions))
 	}
-	if _, ok := actions["actions/checkout@v4"]; !ok {
-		t.Error("missing actions/checkout@v4")
+	if _, ok := actions["actions/checkout@master"]; !ok {
+		t.Error("missing actions/checkout@master")
 	}
-	if _, ok := actions["actions/setup-go@v5"]; !ok {
-		t.Error("missing actions/setup-go@v5")
+	if _, ok := actions["actions/setup-go@master"]; !ok {
+		t.Error("missing actions/setup-go@master")
+	}
+}
+
+func TestActionDownloadInfoFailsLoudForUnresolvedAction(t *testing.T) {
+	s := newTestServer()
+
+	body := `{"actions":[{"nameWithOwner":"actions/checkout","ref":"v4"}]}`
+	req := httptest.NewRequest("POST", "/_apis/v1/ActionDownloadInfo/scope/hub/plan", bytes.NewBufferString(body))
+	w := httptest.NewRecorder()
+	s.handleActionDownloadInfo(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 for an action absent from bleephub git storage", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("not resolvable from bleephub git storage")) {
+		t.Fatalf("body = %q", w.Body.String())
 	}
 }
 
 func TestActionTarball404ForMissing(t *testing.T) {
+	s := newTestServer()
+	commitFilesToStorage(t, s, "actions/checkout", map[string]string{
+		"action.yml": "name: checkout\nruns:\n  using: composite\n  steps: []\n",
+	})
+
+	req := httptest.NewRequest("GET", "/_apis/v1/actions/tarball/actions/checkout/v4", nil)
+	req.SetPathValue("owner", "actions")
+	req.SetPathValue("repo", "checkout")
+	req.SetPathValue("ref", "v4")
+	w := httptest.NewRecorder()
+	s.handleActionTarball(w, req)
+
+	if w.Code != http.StatusBadGateway {
+		t.Errorf("status = %d, want 502 for an unresolved local action ref", w.Code)
+	}
+}
+
+func TestActionTarballFailsLoudForExternalAction(t *testing.T) {
 	s := newTestServer()
 
 	req := httptest.NewRequest("GET", "/_apis/v1/actions/tarball/actions/checkout/v4", nil)
@@ -103,21 +182,21 @@ func TestActionTarball404ForMissing(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.handleActionTarball(w, req)
 
-	// Without actual GitHub connectivity, this should fail with 502
-	// (or succeed if cached). In test, it will be 502 since no internet.
-	// The important thing is it doesn't panic or return 500.
-	if w.Code != http.StatusOK && w.Code != http.StatusBadGateway {
-		t.Errorf("status = %d, want 200 or 502", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for action repository absent from bleephub", w.Code)
+	}
+	if !bytes.Contains(w.Body.Bytes(), []byte("not hosted in bleephub")) {
+		t.Fatalf("body = %q", w.Body.String())
 	}
 }
 
 func TestActionTarballServesFromCache(t *testing.T) {
 	s := newTestServer()
+	cachedTarball := testActionTarball(t)
 
-	// Pre-populate cache
 	s.actionCache.Put("actions/checkout@v4", &ActionCacheEntry{
-		Data:        []byte("fake-tarball-data"),
-		ResolvedSha: "abc123",
+		Data:        cachedTarball,
+		ResolvedSha: "abcdef0123456789abcdef0123456789abcdef01",
 	})
 
 	req := httptest.NewRequest("GET", "/_apis/v1/actions/tarball/actions/checkout/v4", nil)
@@ -130,8 +209,24 @@ func TestActionTarballServesFromCache(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	if w.Body.String() != "fake-tarball-data" {
-		t.Errorf("body = %q", w.Body.String())
+	gz, err := gzip.NewReader(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatalf("cached tarball is not gzip: %v", err)
+	}
+	tr := tar.NewReader(gz)
+	hdr, err := tr.Next()
+	if err != nil {
+		t.Fatalf("read cached tarball: %v", err)
+	}
+	if hdr.Name != "actions-checkout-abcdef0/action.yml" {
+		t.Fatalf("cached tarball first entry = %q", hdr.Name)
+	}
+	content, err := io.ReadAll(tr)
+	if err != nil {
+		t.Fatalf("read action.yml: %v", err)
+	}
+	if !bytes.Contains(content, []byte("using: composite")) {
+		t.Fatalf("cached action.yml content = %q", string(content))
 	}
 }
 
@@ -150,6 +245,31 @@ func TestActionCacheGetPut(t *testing.T) {
 	if string(entry.Data) != "data" {
 		t.Errorf("data = %q", string(entry.Data))
 	}
+}
+
+func testActionTarball(t *testing.T) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	content := []byte("name: checkout\nruns:\n  using: composite\n  steps: []\n")
+	if err := tw.WriteHeader(&tar.Header{
+		Name: "actions-checkout-abcdef0/action.yml",
+		Mode: 0o644,
+		Size: int64(len(content)),
+	}); err != nil {
+		t.Fatalf("write tar header: %v", err)
+	}
+	if _, err := tw.Write(content); err != nil {
+		t.Fatalf("write tar content: %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatalf("close tar: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatalf("close gzip: %v", err)
+	}
+	return buf.Bytes()
 }
 
 // newTestServer creates a minimal server for unit testing.

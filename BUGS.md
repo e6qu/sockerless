@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2337 filed - 2294 fixed - 2 open - 16 false positives.**
+**2339 filed - 2296 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2339~~ | P3 | bleephub CodeQL variant-analysis tests | non-tar bytes labelled query pack | The CodeQL variant-analysis test uploaded arbitrary marker bytes even though the store contract describes `query_pack` as a base64 tarball. The regression fixture now uploads a deterministic real tar.gz query pack and asserts that the advertised `query_pack_url` returns those exact archive bytes. |
+| ~~2338~~ | P2 | bleephub Actions — action download metadata | synthetic all-zero SHA + hidden action fallbacks | `POST /_apis/v1/ActionDownloadInfo/...` returned an all-zero `resolvedSha` for a bleephub-hosted action until the tarball endpoint had already been fetched; the tarball path also resolved missing action refs through the default branch and fetched absent action repositories from github.com. Action download metadata now resolves local action refs directly from git storage, missing refs fail loudly, absent action repositories no longer trigger outbound github.com fetches, and the unit tests use real local git-backed tarballs instead of synthetic tarball bytes or network-dependent status assertions. |
 | ~~2337~~ | P2 | CI — Azure simulator setup | remote installer reintroduced apt outage | The Azure simulator CI job installed Azure CLI by piping `https://aka.ms/InstallAzureCLIDeb` into `sudo bash`, so the same Microsoft apt metadata outage bypassed the repo-owned `ci-apt-update.sh` hardening and failed before tests ran. The job now verifies the required hosted-runner `az` binary with `az version` and fails loud if the dependency is absent, instead of mutating apt sources through an unowned installer. |
 | ~~2336~~ | P2 | CI — apt setup | third-party runner source blocked required packages | `scripts/ci-apt-update.sh` retried a degraded GitHub-hosted runner apt state three times but kept Microsoft runner-provided sources enabled, so invalid signed metadata from those sources blocked jobs that only needed Ubuntu packages. After the normal retries fail, the script now quarantines the known Microsoft source files and retries against the required Ubuntu sources. |
 | ~~2335~~ | P2 | bleephub SDK/gh CLI tests | metadata-only PR fixtures after PR fidelity fix | The go-github SDK PR tests and the gh CLI parity harness still created pull requests from bare `head=feature`/`base=main` names in empty repositories, so the branch's new real-ref requirement correctly returned 422 in CI. The SDK suite now creates blobs, trees, commits, and refs through go-github's Git Data API before PR creation, `TestGitData` became live coverage instead of a stale skip, and the gh CLI harness pushes real `main` and `feature` refs through smart HTTP before its raw PR probe. |
