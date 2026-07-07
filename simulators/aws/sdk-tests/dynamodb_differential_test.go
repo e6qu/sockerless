@@ -452,15 +452,13 @@ func awsErrCode(err error) string {
 // ── DynamoDB Local lifecycle ─────────────────────────────────────────────────
 
 // startDynamoDBLocal launches Amazon's DynamoDB Local in a throwaway Docker
-// container and returns its endpoint plus a stop func. Docker is present in the
-// sdk-test CI job (it builds the workload images), so this runs for real there;
-// when Docker is unavailable (e.g. a bare dev machine) the test skips. A pull /
-// start failure when Docker IS present fails loud — it's a real problem, not a
-// reason to silently skip the oracle.
+// container and returns its endpoint plus a stop func. Docker is a required
+// dependency for this oracle-backed test; a missing binary or pull/start failure
+// fails loud instead of reporting a green test that exercised nothing.
 func startDynamoDBLocal(t *testing.T) (endpoint string, stop func()) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not available; skipping DynamoDB Local differential test")
+		t.Fatalf("docker is required for DynamoDB Local differential test: %v", err)
 	}
 
 	const image = "amazon/dynamodb-local:latest"

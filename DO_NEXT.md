@@ -4,24 +4,22 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`docs/sweep-post-774` — repo-wide docs sweep + stale-branch prune. PR pending.
+`open-issues-776-777` — open GitHub issue sweep after #774.
 
 **Scope**
-- **Docs sweep:** audited all 282 markdown docs against the current code (four parallel read-only agents, every finding verified before fixing) and corrected ~24 files: stale ports (`:2375`→`:3375`), app/package counts (Go-binary + UI totals after the bleeplab addition; leaf-app total 34), wrong backend binary names (`sockerless-backend-gcf`/`-azf`), dead `memory/` links, stale source-file lists (`backends/core`, `agent`, `IMAGE_ARCHITECTURE` AuthProvider paths → `{aws,gcp,azure}-common`), the GitHub/GitLab runner workflow/pipeline tables (regenerated from `run.sh`: 29 / 21) and a nonexistent `make e2e-github-docker` target + nonexistent `sockerless --backend/--listen/...` CLI flags, the removed separate-Docker-API-frontend process still drawn as a component (runner docs + `SOCKERLESS_SPEC` §6.1), `spec/`→`specs/`, a missing `specs/README` index row, and nonexistent env vars (`SOCKERLESS_ECS_TASK_SIZE`, `SOCKERLESS_DOCKER_HUB_TOKEN`) / provider version (azurerm 4.74→4.77) / method count (62→65).
-- **Boyscout code fixes:** deleted the orphaned `frontend-docker` UI package (its `:9200` backing process was removed with the `frontends/` directory; nothing embedded it) and fixed the badge generator's frozen `Go_Modules` regex (the literal `+` never matched, so that badge never updated) — BUG-2328/2329.
-- **Branch hygiene:** pruned 22 merged local branches (each verified against its merged PR; two housekeeping branches verified superseded in `main`).
+- **DynamoDB concurrent map panic (#777 / BUG-2330):** `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` snapshot each stored item under `ddbItemsMu` before projection, expression matching, response rendering, and consumed-capacity calculation. Read APIs no longer expose maps that `UpdateItem` can mutate in place.
+- **ECS CPU/memory limit fidelity (#776 / BUG-2332):** focused regressions pin task-level fallback and container-definition override translation into `MemoryBytes` and `NanoCPU`, the fields the shared AWS simulator container launcher applies to Docker/Podman cgroups as `HostConfig.Memory` and `HostConfig.NanoCPUs`.
+- **Boyscout (BUG-2331):** the DynamoDB Local differential oracle treats Docker as a required dependency and fails loud when the binary is absent instead of silently skipping the test.
 
-**Prior work (merged as #774)**
-- **bleeplab docs:** new `bleeplab/README.md` (architecture, control-plane vs the sockerless runner-as-cloud-task data plane, object-store storage, env vars, run/test, source layout — cross-linked to bleephub's README, `docs/RUNNERS.md`, `specs/CLOUD_RESOURCE_MAPPING.md`, and the Makefile spec rather than duplicating them) and `ui/packages/bleeplab/README.md` (the last UI package that lacked one).
-- **Docs sweep (boyscout):** removed the retired separate-Docker-API-frontend architecture (backends serve the Docker REST API in-process on `:3375`) from `backends/README.md` and `specs/SOCKERLESS_SPEC.md`; corrected `docs/E2E_SMOKE_TESTS.md` "three→four" smoke surfaces and pointed its GitLab section at the bleeplab harness; noted the GitLab runner cells are SIM-PROVEN by bleeplab in `docs/RUNNERS.md`; indexed bleeplab in the README + docs index and added its Go/UI LOC badges; fixed the repo-root `.turbo/` gitignore gap (a committed build-cache binary).
-- **bleephub UI → functional GitHub clone:** replaced the flat 20-item top-nav with a GitHub-faithful global header (hamburger→global-nav drawer, search, "+" create menu, Issues/PRs, notifications bell w/ unread badge, avatar menu); split the bleephub-server-operational surfaces (Runners/Metrics/Storage/Apps/OAuth + admin tables + the cross-repo Workflows view) into the drawer's "Operations" section (`/ui/admin` ops overview). Repo Code page: About right-sidebar (description/topics/releases/languages), green clone button, latest-commit banner, GFM README + comment typography. Issues/PRs: two-column detail with right sidebars (Assignees/Labels/Milestone; Reviewers for PRs), a list filter bar + Open/Closed count header, PR Conversation/Commits/Files-changed/Checks sub-tabs + a merge box with method selection. Org: uniform header + Overview/People/Teams. New user profile page (`/ui/:login`, `/ui/users/:login`) and a real dashboard at `/ui/`. GitHub-style left-nav settings.
-- **Server fixes (BUG-2324–2327):** reactions + issue-labels now resolve PR numbers (PRs share the issue number space but are stored separately — were 404); a real `GET /pulls/{n}/files` merge-base→head unified-diff endpoint; comment bodies render as GFM (were raw pre-wrap text); the `.turbo/` gitignore gap.
-- **Verification:** 296-test bleephub UI suite + full Go suite green; tsc/knip/build clean; an integrated headless-Chromium screenshot pass confirmed every surface reads as a faithful GitHub clone with no console errors or broken layouts.
+**Validation**
+- `GOWORK=off go test -tags noui . -run 'TestDDBItemSnapshotIsIndependentUnderConcurrentMutation|TestECSContainerResourceLimits' -count=1` in `simulators/aws` passed.
+- `GOWORK=off go test -tags noui . -count=1` in `simulators/aws` passed.
+- `GOWORK=off go test -run 'TestDynamoDB_QueryAndScan|TestDynamoDB_ProjectionExpression|TestECS_RunTask|TestECS_TaskDefinitionFidelitySDK' -count=1 ./` in `simulators/aws/sdk-tests` passed.
+- `GOWORK=off go test -race -tags noui . -run TestDDBItemSnapshotIsIndependentUnderConcurrentMutation -count=1` in `simulators/aws` passed.
 
 **Next after merge**
-- UI follow-ups (not blockers): a Wiki surface, Projects (v2) boards, and richer repo Insights graphs remain unbuilt; org People/Teams show pending invitations as such (faithful, not a bug).
-- Still open: BUG-2313/2314/2315 (release-notes from merged PRs, delete `prHeadSHA` pseudo-shas, GraphQL `reviewRequests`), staged audit backlog (BUG-1840), live-cloud (BUG-1075).
-- Perf follow-ups from the earlier load hunt (#773): notifications gather is O(all subscribed items) per request; `CountForks` scans all repos per render; webhook fan-out spawns one goroutine per hook per event. None are correctness bugs.
+- Only GitHub issue #394 remained open and it stayed upstream-blocked on the AzureAD Terraform provider's missing Microsoft Graph endpoint override.
+- Resume PLAN.md / BUGS.md work: BUG-2313/2314/2315 (bleephub fidelity backlog), BUG-1075 live-cloud validation, and further sim fidelity audits.
 
 ---
 ### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics

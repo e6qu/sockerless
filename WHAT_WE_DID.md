@@ -4,6 +4,18 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-07 - Open GitHub issue sweep: DynamoDB concurrency + ECS resource limits (open-issues-776-777)
+
+Closed the actionable open GitHub issues other than the upstream-blocked AzureAD Terraform provider issue (#394).
+
+**DynamoDB concurrent read panic (#777 / BUG-2330).** `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` now call `ddbItemSnapshot` so every stored item map is cloned under `ddbItemsMu` before projection, expression matching, response rendering, and consumed-capacity calculation. Read APIs no longer expose maps that `UpdateItem` can mutate in place, eliminating the process-mode `concurrent map iteration and map write` crash class. `TestDDBItemSnapshotIsIndependentUnderConcurrentMutation` exercises the snapshot independence and passes under `-race`.
+
+**ECS resource-limit fidelity (#776 / BUG-2332).** The ECS simulator's task/container CPU and memory sizing contract is pinned with focused regressions: task-level CPU/memory fall back into `MemoryBytes`/`NanoCPU`, and container-definition CPU/memory override the task values. Those are the same fields the shared AWS simulator container launcher applies to Docker/Podman cgroups as `HostConfig.Memory` and `HostConfig.NanoCPUs`, keeping advertised ECS metadata limits coupled to real container limits.
+
+**Boyscout (BUG-2331).** The DynamoDB Local differential oracle no longer uses a skip-if-Docker-absent path. Docker is a required dependency for that real oracle-backed test, so a missing binary fails loud instead of reporting a green test that exercised nothing.
+
+Validation: AWS simulator package tests, targeted AWS SDK tests for DynamoDB/ECS, and the race-enabled DynamoDB snapshot regression all passed.
+
 ## 2026-07-05 - repo-wide docs sweep + stale-branch prune (docs/sweep-post-774)
 
 Audited every markdown doc against the current code and fixed the verified staleness, plus two incidental code bugs (boyscout).

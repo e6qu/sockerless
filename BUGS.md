@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2329 filed - 2283 fixed - 5 open - 16 false positives.**
+**2332 filed - 2286 fixed - 5 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -20,6 +20,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2332~~ | P2 | AWS sim — ECS task resources (#776) | resource-limit fidelity coverage | The ECS simulator's task launch path needed a regression guard proving task-level and container-level CPU/memory were translated into the cgroup fields the shared container launcher applies (`MemoryBytes`/`NanoCPU` → Docker/Podman `HostConfig.Memory`/`NanoCPUs`). Added focused tests for task fallback and container-definition override sizing so advertised ECS metadata limits stay coupled to real container limits. |
+| ~~2331~~ | P3 | AWS SDK tests — DynamoDB Local oracle | skip-if-absent test | The DynamoDB differential oracle skipped when `docker` was missing, reporting green without exercising DynamoDB Local. Docker is now a required dependency for that oracle-backed test and a missing binary fails loud. |
+| ~~2330~~ | P1 | AWS sim — DynamoDB concurrent reads (#777) | concurrent map iteration/write | DynamoDB read APIs returned or examined stored item maps directly while `UpdateItem` could mutate the same maps under `ddbItemsMu`, so capacity calculation/projection could panic with `concurrent map iteration and map write`. `GetItem`, `Query`, `Scan`, `BatchGetItem`, and `TransactGetItems` now clone each item under `ddbItemsMu` via `ddbItemSnapshot` before projection, expression matching, response rendering, and consumed-capacity calculation; the regression runs under `-race`. |
 | 2323 | P3 | bleephub — custom properties | property name whitespace/control chars accepted | `POST/PATCH /orgs/{org}/properties/schema` accepted property names with leading/trailing/embedded whitespace and control characters (`property_name:" 00"` → 200); real GitHub validates the name pattern. Added `validCustomPropertyName`; invalid → 422. Surfaced by `FuzzCustomPropertyDefinition` (crasher kept as a regression seed). |
 | 2322 | P3 | bleephub — search envelope | empty result serialized `items: null` | An empty `/search/*` result marshalled a nil `[]map` to `"items": null`; real GitHub's search envelope is always an array. Now materialized to `"items": []`. Surfaced by `FuzzSearchEndpoints`. |
 | 2321 | P2 | bleephub UI — api.ts parsers | silent-wrong list unwrappers | `ghFetchPage` cast any JSON body straight to `T[]` (a non-array error/envelope flowed to components as fake items and crashed on `.map`); `fetchSecrets`/`fetchEnvironments` resolved to `undefined` on a missing array despite comments claiming they fail loud. All three now `Array.isArray`-guard and throw a clear error → InlineError. Surfaced by property/fuzz-style parser tests. |

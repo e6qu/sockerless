@@ -1138,7 +1138,7 @@ func handleDDBGetItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	itemKey := ddbItemKey(t, req.Key)
-	item, found := ddbItems.Get(itemKey)
+	item, found := ddbItemSnapshot(itemKey)
 	out := map[string]any{}
 	if found {
 		out["Item"] = ddbProjectItem(item, req.ProjectionExpression, req.ExpressionAttributeNames)
@@ -1291,6 +1291,16 @@ func ddbCloneItem(item map[string]any) map[string]any {
 	return clone
 }
 
+func ddbItemSnapshot(itemKey string) (map[string]any, bool) {
+	ddbItemsMu.Lock()
+	defer ddbItemsMu.Unlock()
+	item, ok := ddbItems.Get(itemKey)
+	if !ok {
+		return nil, false
+	}
+	return ddbCloneItem(item), true
+}
+
 // ddbAttrEqual compares two attribute values structurally via JSON
 // canonicalization so attrs present-and-different are detected.
 func ddbAttrEqual(a, b any) bool {
@@ -1429,7 +1439,7 @@ func handleDDBQuery(w http.ResponseWriter, r *http.Request) {
 	var lastScanned map[string]any
 	exhausted := true
 	for i, k := range remaining {
-		it, ok2 := ddbItems.Get(k)
+		it, ok2 := ddbItemSnapshot(k)
 		if !ok2 {
 			continue
 		}
@@ -1626,7 +1636,7 @@ func handleDDBScan(w http.ResponseWriter, r *http.Request) {
 	var lastScanned map[string]any
 	exhausted := true
 	for i, k := range remaining {
-		it, ok2 := ddbItems.Get(k)
+		it, ok2 := ddbItemSnapshot(k)
 		if !ok2 {
 			continue
 		}
@@ -1907,8 +1917,6 @@ func handleDDBBatchGetItem(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	ddbItemsMu.Lock()
-	defer ddbItemsMu.Unlock()
 	responses := map[string][]map[string]any{}
 	for tableName, spec := range req.RequestItems {
 		t, ok := ddbTables.Get(tableName)
@@ -1919,7 +1927,7 @@ func handleDDBBatchGetItem(w http.ResponseWriter, r *http.Request) {
 		}
 		items := []map[string]any{}
 		for _, key := range spec.Keys {
-			if it, ok := ddbItems.Get(ddbItemKey(t, key)); ok {
+			if it, ok := ddbItemSnapshot(ddbItemKey(t, key)); ok {
 				items = append(items, it)
 			}
 		}
@@ -2085,8 +2093,6 @@ func handleDDBTransactGetItems(w http.ResponseWriter, r *http.Request) {
 		sim.AWSError(w, "ValidationException", "Invalid request body", http.StatusBadRequest)
 		return
 	}
-	ddbItemsMu.Lock()
-	defer ddbItemsMu.Unlock()
 	responses := make([]map[string]any, 0, len(req.TransactItems))
 	for _, ti := range req.TransactItems {
 		if ti.Get == nil {
@@ -2099,7 +2105,7 @@ func handleDDBTransactGetItems(w http.ResponseWriter, r *http.Request) {
 				"Requested resource not found: Table: %s not found", ti.Get.TableName)
 			return
 		}
-		if it, ok := ddbItems.Get(ddbItemKey(t, ti.Get.Key)); ok {
+		if it, ok := ddbItemSnapshot(ddbItemKey(t, ti.Get.Key)); ok {
 			responses = append(responses, map[string]any{"Item": it})
 		} else {
 			responses = append(responses, map[string]any{})
