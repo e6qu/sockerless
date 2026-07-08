@@ -30,8 +30,7 @@ type Secret struct {
 // scopes are per (repository, environment name); the unit separator can
 // appear in neither an "owner/repo" key nor an environment name, so the
 // pair packs into one collision-free string. Deliberately NOT NUL: these
-// composites are also persistence bucket keys, and PostgreSQL TEXT
-// rejects NUL bytes.
+// composites are also persistence bucket keys and must stay text-safe.
 func envScopeKey(repoKey, envName string) string {
 	return repoKey + "\x1f" + envName
 }

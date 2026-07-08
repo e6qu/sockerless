@@ -9,12 +9,11 @@ import (
 	"path/filepath"
 	"sync"
 
-	_ "github.com/jackc/pgx/v5/stdlib" // PostgreSQL driver (database/sql interface)
-	_ "modernc.org/sqlite"             // SQLite driver — pure Go, no CGO
+	_ "modernc.org/sqlite" // SQLite driver — pure Go, no CGO
 )
 
 type dbDialect struct {
-	name      string // "sqlite" or "postgres", for logging
+	name      string
 	schema    string // DDL to create tables
 	putSQL    string // INSERT … ON CONFLICT upsert
 	deleteSQL string
@@ -43,26 +42,6 @@ CREATE TABLE IF NOT EXISTS counters (
 		getSQL:    `SELECT value FROM counters WHERE name = ?`,
 		setSQL:    `INSERT INTO counters (name, value) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET value = excluded.value`,
 	}
-
-	postgresDialect = dbDialect{
-		name: "postgres",
-		schema: `
-CREATE TABLE IF NOT EXISTS kv (
-	bucket TEXT NOT NULL,
-	key    TEXT NOT NULL,
-	value  BYTEA NOT NULL,
-	PRIMARY KEY (bucket, key)
-);
-CREATE TABLE IF NOT EXISTS counters (
-	name  TEXT NOT NULL PRIMARY KEY,
-	value BIGINT NOT NULL
-);`,
-		putSQL:    `INSERT INTO kv (bucket, key, value) VALUES ($1, $2, $3) ON CONFLICT(bucket, key) DO UPDATE SET value = excluded.value`,
-		deleteSQL: `DELETE FROM kv WHERE bucket = $1 AND key = $2`,
-		listSQL:   `SELECT key, value FROM kv WHERE bucket = $1`,
-		getSQL:    `SELECT value FROM counters WHERE name = $1`,
-		setSQL:    `INSERT INTO counters (name, value) VALUES ($1, $2) ON CONFLICT(name) DO UPDATE SET value = excluded.value`,
-	}
 )
 
 type Persistence struct {
@@ -86,30 +65,9 @@ func openSQLite(dataDir string) (*sql.DB, error) {
 	return db, nil
 }
 
-func openPostgres(dsn string) (*sql.DB, error) {
-	db, err := sql.Open("pgx", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open postgres: %w", err)
-	}
-	db.SetMaxOpenConns(10)
-	if err := db.Ping(); err != nil {
-		return nil, fmt.Errorf("ping postgres: %w", err)
-	}
-	return db, nil
-}
-
 func NewPersistence() (*Persistence, error) {
-	pgURL := os.Getenv("BLEEPHUB_DATABASE_URL")
-	if pgURL != "" {
-		db, err := openPostgres(pgURL)
-		if err != nil {
-			return nil, err
-		}
-		if _, err := db.Exec(postgresDialect.schema); err != nil {
-			_ = db.Close()
-			return nil, fmt.Errorf("postgres schema: %w", err)
-		}
-		return &Persistence{db: db, dialect: postgresDialect}, nil
+	if os.Getenv("BLEEPHUB_DATABASE_URL") != "" {
+		return nil, fmt.Errorf("BLEEPHUB_DATABASE_URL is no longer supported; bleephub stores its own state in SQLite via BLEEPHUB_PERSIST=true and BLEEPHUB_DATA_DIR")
 	}
 
 	if os.Getenv("BLEEPHUB_PERSIST") != "true" {
@@ -134,10 +92,7 @@ func NewPersistence() (*Persistence, error) {
 func MustNewPersistence() *Persistence {
 	p, err := NewPersistence()
 	if err != nil {
-		if os.Getenv("BLEEPHUB_DATABASE_URL") != "" {
-			log.Fatalf("BLEEPHUB_DATABASE_URL requested but persistence failed: %v", err)
-		}
-		log.Fatalf("BLEEPHUB_PERSIST=true requested but persistence failed: %v", err)
+		log.Fatalf("bleephub persistence configuration failed: %v", err)
 	}
 	return p
 }

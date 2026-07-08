@@ -615,10 +615,14 @@ func TestActionsRun_WorkflowFileReferences(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	wantFileID := stableWorkflowFileID("octo/repo", ".github/workflows/ci.yml")
-	if int64(wf.RunID) == wantFileID {
-		t.Skip("RunID coincidentally equals derived file id; cannot distinguish")
+	workflowPath := ".github/workflows/ci.yml"
+	wantFileID := stableWorkflowFileID("octo/repo", workflowPath)
+	for i := 0; int64(wf.RunID) == wantFileID; i++ {
+		workflowPath = fmt.Sprintf(".github/workflows/ci-%d.yml", i)
+		wantFileID = stableWorkflowFileID("octo/repo", workflowPath)
 	}
+	wf.WorkflowFileID = wantFileID
+	wf.WorkflowFilePath = workflowPath
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
 	if w.Code != http.StatusOK {
@@ -642,8 +646,8 @@ func TestActionsRun_WorkflowFileReferences(t *testing.T) {
 	if got.WorkflowID == int64(wf.RunID) {
 		t.Errorf("workflow_id must not equal run id %d", wf.RunID)
 	}
-	if got.Path != ".github/workflows/ci.yml" {
-		t.Errorf("path = %q, want .github/workflows/ci.yml", got.Path)
+	if got.Path != workflowPath {
+		t.Errorf("path = %q, want %q", got.Path, workflowPath)
 	}
 	wantURL := fmt.Sprintf("http://example.com/api/v3/repos/octo/repo/actions/workflows/%d", wantFileID)
 	if got.WorkflowURL != wantURL {

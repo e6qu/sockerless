@@ -226,12 +226,9 @@ The script compiles the current source, starts the server and UI, and prints the
 
 ### Persistence
 
-Two write-through database options, both fail-loud on open failure (never a silent in-memory fallback):
+Bleephub stores its own metadata state in SQLite. `BLEEPHUB_PERSIST=true` enables the write-through database, and the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`). SQLite open/schema failures fail startup loudly; there is no silent in-memory fallback once persistence is requested.
 
-- **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
-- **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
-
-Both backends are exercised by `persistence_test.go`: the SQLite round-trip always runs, and the PostgreSQL round-trip runs whenever `BLEEPHUB_TEST_POSTGRES_URL` (a base postgres data source name (DSN)) is set — it creates a unique throwaway database, round-trips, and drops it. Continuous integration (CI) runs it for real against a `postgres:16-alpine` service in the `test-core` job.
+`persistence_test.go` always exercises the SQLite round-trip. The obsolete `BLEEPHUB_DATABASE_URL` PostgreSQL path fails loudly so operators do not accidentally deploy a state backend outside the supported service model.
 
 The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + org hooks + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
 
@@ -333,7 +330,6 @@ Flags:
 Env vars:
 - `BLEEPHUB_ADMIN_TOKEN=<token>` — **required.** The seeded admin token. There is no default (a default would be a guessable credential, and the historical `ghp_…` value tripped secret scanners); the binary fails loudly at startup if unset. Set a non-PAT-shaped value.
 - `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default; see [Persistence](#persistence)).
-- `BLEEPHUB_DATABASE_URL=postgres://…` — use PostgreSQL instead of SQLite (takes priority over `BLEEPHUB_PERSIST`).
 - `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite DB (`bleephub.db`) + artifact store (default `.`).
 - `BLEEPHUB_GIT_DIR=<dir>` — store git repos on the local filesystem (default: in-memory).
 - `BLEEPHUB_S3_BUCKET` / `BLEEPHUB_S3_ENDPOINT` / `BLEEPHUB_S3_PREFIX` — store git repos in S3-compatible object storage (bucket set ⇒ S3 wins over `BLEEPHUB_GIT_DIR`).
@@ -394,7 +390,7 @@ Two unit-test gates validate bleephub against the vendored GitHub OpenAPI descri
 | GraphQL | `gh_graphql.go`, `gh_*_graphql.go`, `gh_request_decode.go` | Schema + flex decoders |
 | Webhooks | `webhooks.go`, `webhooks_store.go`, `webhooks_payloads.go`, `gh_hooks_rest.go` | HMAC-SHA256/SHA1 delivery with retry |
 | Git | `git_http.go`, `git_storage.go`, `s3fs.go` | Smart HTTP protocol (go-git); in-memory / on-disk / S3 repo storage |
-| Persistence | `persistence.go` | SQLite/PostgreSQL write-through layer |
+| Persistence | `persistence.go` | SQLite write-through layer |
 | Infrastructure | `store.go`, `store_*.go`, `rbac.go`, `metrics.go`, `otel.go`, `handle_mgmt.go`, `ui_embed.go` | State, RBAC, metrics, OTel, dashboard |
 
 ## See also

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, Actions rerun workflow-file identity, go-github Actions dispatch coverage, CI setup hardening, cloud-backend lint sharding, and AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, Actions rerun workflow-file identity, go-github Actions dispatch coverage, SQLite-only metadata persistence, CI setup hardening, cloud-backend lint sharding, and AWS S3 CopyObject list visibility.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
@@ -22,7 +22,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2349:** The go-github SDK Actions workflow dispatch test no longer skips. It seeds a real `.github/workflows/ci.yml` file through the Git Data API, lists the workflow, dispatches it, reads the workflow run by ID, and lists the queued job through the typed client.
 - **BUG-2350:** Actions workflow discovery no longer depends only on git storage `HEAD`. It resolves the repository's recorded default branch when `HEAD` is unset, so Git Data seeded repositories expose default-branch workflow files to list/get/dispatch.
 - **BUG-2351:** The GCP simulator CI setup no longer streams the Google Cloud CLI tarball directly into `tar`. It downloads the archive to `$RUNNER_TEMP` with `curl --fail --retry-all-errors` and extracts only the completed file, so transient HTTP stream failures retry instead of producing a truncated gzip.
-- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage, no-github.com action resolution, rerun workflow-file identity, the go-github reference adaptor, and default-branch workflow discovery. Continuity files reflect PR #779 as merged and this branch as active.
+- **BUG-2352:** Bleephub metadata persistence is SQLite-only. The unsupported PostgreSQL dialect, driver dependency, CI sidecar, and skip-if-env PostgreSQL test were removed; `BLEEPHUB_DATABASE_URL` now fails loudly with an explicit unsupported-configuration error; and the SQLite persistence round-trip remains unconditional.
+- **BUG-2353:** `TestActionsRun_WorkflowFileReferences` no longer has a rare collision skip. It chooses a non-colliding workflow-file path and always asserts the run's `workflow_id`, `workflow_url`, and path refer to the originating workflow file rather than the per-run ID.
+- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage, no-github.com action resolution, rerun workflow-file identity, the go-github reference adaptor, default-branch workflow discovery, and SQLite-only metadata persistence. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestS3' -count=1` passed.
@@ -46,6 +48,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOWORK=off CGO_ENABLED=0 GOCACHE=/private/tmp/sockerless-go-cache go test -count=1 ./...` passed in `bleephub/sdk-tests` with sandbox escalation for loopback listeners.
 - `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestActionsWorkflowDispatch|TestActionsRuns_Rerun|TestActionsJobs_Rerun|TestWorkflows_Rerun_ViaCachedYAML|TestRerunKeepsRunIDAndBumpsAttempt|TestRerunFailedJobsCarriesSuccesses|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
 - `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestPersistence_RoundTripAppsInstallationsTokensRepos|TestPersistence_DatabaseURLFailsLoud|TestActionsRun_WorkflowFileReferences' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the SQLite-only persistence and Actions test-skip cleanup.
 - `pre-commit run --files .github/workflows/ci.yml BUGS.md DO_NEXT.md STATUS.md WHAT_WE_DID.md` passed after the cloud-backend lint shard split.
 
 ---

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2351 filed - 2308 fixed - 2 open - 16 false positives.**
+**2353 filed - 2310 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2353~~ | P3 | bleephub Actions tests | rare skip hid workflow-file ID regression guard | `TestActionsRun_WorkflowFileReferences` skipped if the run ID happened to equal the stable workflow-file ID, leaving the exact run-id-vs-file-id invariant untested on that seed. The test now chooses a non-colliding workflow file path, writes it onto the run, and always asserts the REST run uses the workflow-file ID/path rather than the run ID. |
+| ~~2352~~ | P2 | bleephub persistence | unsupported state backend plus skip-if-env test | Bleephub is supposed to keep its own state in SQLite, but the implementation still accepted `BLEEPHUB_DATABASE_URL` for PostgreSQL and the PostgreSQL round-trip test skipped when `BLEEPHUB_TEST_POSTGRES_URL` was unset. The PostgreSQL path and driver dependency were removed, `BLEEPHUB_DATABASE_URL` now fails loudly, CI no longer starts a PostgreSQL sidecar, and persistence coverage runs unconditionally against SQLite. |
 | ~~2351~~ | P2 | CI GCP simulator setup | streamed dependency download truncated before extraction | The `sim (gcp)` job streamed the Google Cloud CLI tarball through `curl | tar`, so a transient HTTP/2 stream error produced a partial gzip and failed the job before tests ran. The workflow now downloads the archive to `$RUNNER_TEMP` with fail-loud retry-all-errors and extracts only the completed file. |
 | ~~2350~~ | P2 | bleephub Actions workflow discovery | default-branch ref ignored when git HEAD was unset | Actions workflow discovery walked only git storage `HEAD`, so repositories initialized through Git Data refs could have a real default-branch workflow file that `GET /actions/workflows` and workflow dispatch did not see. Discovery now resolves the repository's recorded default branch when `HEAD` is unset, so Git Data seeded workflow files list and dispatch through the same Actions API path. |
 | ~~2349~~ | P2 | bleephub SDK Actions coverage | skipped typed-client dispatch flow | `bleephub/sdk-tests` skipped the go-github workflow-dispatch, run-by-id, and workflow-jobs path instead of seeding a real git-backed workflow file through Git Data. The SDK suite now creates a real `.github/workflows/ci.yml` commit/ref through Git Data, lists the workflow, dispatches it, reads the run by ID, and lists the queued job through go-github. |
