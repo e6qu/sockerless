@@ -279,7 +279,6 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 - Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
 - SAML SSO + SCIM provisioning.
 - Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
-- Legacy numeric-id team routes (`/teams/{team_id}/…`) — deprecated upstream; the `/orgs/{org}/teams/{team_slug}/…` family is the supported path.
 - Org `plan` member / billing endpoints (bleephub has no billing model).
 - Marketplace billing.
 - gh CLI commands that require deep workflow-run state bleephub doesn't synthesise (`gh run watch` long-poll, log tail).

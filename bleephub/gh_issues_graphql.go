@@ -179,6 +179,16 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return c["isMinimized"], nil
 				},
 			},
+			"isPinned": &graphql.Field{
+				Type: graphql.Boolean,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					c, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return c["isPinned"], nil
+				},
+			},
 			"minimizedReason": &graphql.Field{
 				Type: graphql.String,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -1831,6 +1841,7 @@ func commentToGQLLocked(c *Comment, st *Store) map[string]interface{} {
 		"lastEditedAt":        lastEditedAt,
 		"editor":              editor,
 		"isMinimized":         c.MinimizedReason != "",
+		"isPinned":            c.Pinned,
 		"minimizedReason":     nilStr(c.MinimizedReason),
 		"reactionGroups":      reactionGroupsForGraphQL(st.Reactions, "issue_comment", c.ID),
 	}
@@ -1951,9 +1962,10 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 	})
 }
 
-// Schema-stub resolvers — return a default for fields that gh CLI queries
-// but bleephub doesn't model (edit history, moderation, reactions).
-// Errors-free responses unblock gh's queries; the contract returns defaults.
+// Some GraphQL fields queried by gh CLI are not mutable through the REST
+// surfaces Bleephub implements today. Those fields resolve to their persisted
+// value when modeled, or to the GitHub-shaped zero value when the feature is
+// absent.
 // projectV2ItemConnectionType returns a singleton wiring for the
 // ProjectV2 connection on Issue + PullRequest. Real lookups against
 // the ProjectV2Store; resolvers read from the source map populated by

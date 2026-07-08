@@ -176,6 +176,54 @@ func TestIssueGraphQL_IssueTypeAssignment(t *testing.T) {
 	}
 }
 
+func TestIssueGraphQL_IssueCommentPinned(t *testing.T) {
+	repo := createRepoWriteRepo(t, false)
+	_, number := createIssueForTest(t, repo, "comment pin")
+	comment := decodeJSONWithStatus(t, ghPost(t, fmt.Sprintf("/api/v3/repos/admin/%s/issues/%d/comments", repo, number), defaultToken, map[string]interface{}{
+		"body": "pinned through REST",
+	}), 201)
+	commentID := int(comment["id"].(float64))
+	requireStatus(t, ghPut(t, fmt.Sprintf("/api/v3/repos/admin/%s/issues/comments/%d/pin", repo, commentID), defaultToken, nil), 200)
+
+	query := `query($owner:String!,$name:String!,$number:Int!){
+		repository(owner:$owner,name:$name){
+			issue(number:$number){
+				comments(first:10){
+					nodes{id body isPinned isMinimized reactionGroups{content users{totalCount}}}
+				}
+			}
+		}
+	}`
+	resp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+		"query": query,
+		"variables": map[string]interface{}{
+			"owner":  "admin",
+			"name":   repo,
+			"number": number,
+		},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if errs, ok := data["errors"]; ok && errs != nil {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	gqlData := data["data"].(map[string]interface{})
+	gqlRepo := gqlData["repository"].(map[string]interface{})
+	gqlIssue := gqlRepo["issue"].(map[string]interface{})
+	comments := gqlIssue["comments"].(map[string]interface{})
+	nodes := comments["nodes"].([]interface{})
+	if len(nodes) != 1 {
+		t.Fatalf("comments nodes = %v, want one comment", nodes)
+	}
+	node := nodes[0].(map[string]interface{})
+	if node["body"] != "pinned through REST" || node["isPinned"] != true {
+		t.Fatalf("GraphQL pinned comment = %v", node)
+	}
+}
+
 func TestIssueGraphQL_IssueFieldValues(t *testing.T) {
 	org := createTestOrg(t)
 	repoName, _ := createOrgRepoForGovernance(t, org)
