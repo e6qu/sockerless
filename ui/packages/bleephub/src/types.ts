@@ -1209,13 +1209,6 @@ export interface GithubPackageFile {
   download_url: string;
 }
 
-export interface GithubPackageVersionCreatePayload {
-  version: string;
-  description?: string;
-  metadata?: GithubPackageVersion["metadata"];
-  files: { name: string; content_type: string; content_base64: string }[];
-}
-
 // ─── GitHub Security Advisories shapes ──────────────────────────────────
 
 export type GithubSecurityAdvisorySeverity = "critical" | "high" | "medium" | "low";

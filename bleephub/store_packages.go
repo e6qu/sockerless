@@ -54,13 +54,16 @@ type PackageVersion struct {
 	Version     string                 `json:"name"` // GitHub calls the version "name"
 	Description string                 `json:"description"`
 	Metadata    map[string]interface{} `json:"metadata"`
-	URL         string                 `json:"url"`
-	HTMLURL     string                 `json:"html_url"`
-	PackageURL  string                 `json:"package_html_url"`
-	CreatedAt   time.Time              `json:"created_at"`
-	UpdatedAt   time.Time              `json:"updated_at"`
-	Deleted     bool                   `json:"deleted,omitempty"`
-	DeletedAt   *time.Time             `json:"deleted_at,omitempty"`
+	// RegistryManifestDigest is internal persisted registry lookup state;
+	// GitHub REST package-version responses expose container tags in metadata.
+	RegistryManifestDigest string     `json:"registry_manifest_digest,omitempty"`
+	URL                    string     `json:"url"`
+	HTMLURL                string     `json:"html_url"`
+	PackageURL             string     `json:"package_html_url"`
+	CreatedAt              time.Time  `json:"created_at"`
+	UpdatedAt              time.Time  `json:"updated_at"`
+	Deleted                bool       `json:"deleted,omitempty"`
+	DeletedAt              *time.Time `json:"deleted_at,omitempty"`
 }
 
 // PackageFile is a single file attached to a package version. JSON tags
@@ -76,6 +79,12 @@ type PackageFile struct {
 	HTMLURL     string `json:"html_url"`
 	DownloadURL string `json:"download_url"`
 	StoragePath string `json:"storage_path,omitempty"`
+}
+
+type decodedPackageFileInput struct {
+	Name        string
+	ContentType string
+	Data        []byte
 }
 
 func packageNodeID(id int) string        { return fmt.Sprintf("P_kgDO%08d", id) }
@@ -120,7 +129,11 @@ func (st *Store) packageStorageBase(ownerType, ownerKey, pkgType, name string) s
 
 // versionStorageDir returns the directory for a specific version's files.
 func (st *Store) versionStorageDir(ownerType, ownerKey, pkgType, name, version string) string {
-	return filepath.Join(st.packageStorageBase(ownerType, ownerKey, pkgType, name), sanitizePackagePathSegment(version))
+	base := st.packageStorageBase(ownerType, ownerKey, pkgType, name)
+	if base == "" {
+		return ""
+	}
+	return filepath.Join(base, sanitizePackagePathSegment(version))
 }
 
 // CreatePackage creates or returns an existing package.
@@ -253,6 +266,27 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 	if p == nil {
 		return nil, fmt.Errorf("package not found")
 	}
+	for _, existing := range st.PackageVersionsByPackage[p.ID] {
+		if !existing.Deleted && existing.Version == version {
+			return nil, fmt.Errorf("package version %q already exists", version)
+		}
+	}
+	vdir := st.versionStorageDir(ownerType, ownerKey, pkgType, pkgName, version)
+	if len(files) > 0 && vdir == "" {
+		return nil, fmt.Errorf("package file storage is not configured")
+	}
+	decodedFiles := make([]decodedPackageFileInput, 0, len(files))
+	for _, fin := range files {
+		data, err := base64.StdEncoding.DecodeString(fin.ContentBase64)
+		if err != nil {
+			return nil, fmt.Errorf("decode file %q: %w", fin.Name, err)
+		}
+		decodedFiles = append(decodedFiles, decodedPackageFileInput{
+			Name:        fin.Name,
+			ContentType: fin.ContentType,
+			Data:        data,
+		})
+	}
 	now := time.Now().UTC()
 	id := st.NextPackageVersionID
 	v := &PackageVersion{
@@ -265,6 +299,29 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	persistedFiles := make([]*PackageFile, 0, len(decodedFiles))
+	for i, fin := range decodedFiles {
+		fid := st.NextPackageFileID + i
+		pf := &PackageFile{
+			ID:          fid,
+			NodeID:      packageFileNodeID(fid),
+			VersionID:   v.ID,
+			Name:        fin.Name,
+			ContentType: fin.ContentType,
+			Size:        int64(len(fin.Data)),
+			StoragePath: filepath.Join(vdir, sanitizePackagePathSegment(fin.Name)),
+		}
+		if vdir != "" {
+			if err := os.MkdirAll(vdir, 0o755); err != nil {
+				return nil, fmt.Errorf("mkdir %s: %w", vdir, err)
+			}
+			if err := os.WriteFile(pf.StoragePath, fin.Data, 0o644); err != nil {
+				return nil, fmt.Errorf("write file %s: %w", pf.StoragePath, err)
+			}
+		}
+		persistedFiles = append(persistedFiles, pf)
+	}
+
 	st.PackageVersions[id] = v
 	if st.PackageVersionsByPackage[p.ID] == nil {
 		st.PackageVersionsByPackage[p.ID] = map[int]*PackageVersion{}
@@ -272,35 +329,12 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 	st.PackageVersionsByPackage[p.ID][id] = v
 	st.NextPackageVersionID++
 
-	vdir := st.versionStorageDir(ownerType, ownerKey, pkgType, pkgName, version)
-	for _, fin := range files {
-		data, err := base64.StdEncoding.DecodeString(fin.ContentBase64)
-		if err != nil {
-			return nil, fmt.Errorf("decode file %q: %w", fin.Name, err)
-		}
-		fid := st.NextPackageFileID
-		pf := &PackageFile{
-			ID:          fid,
-			NodeID:      packageFileNodeID(fid),
-			VersionID:   v.ID,
-			Name:        fin.Name,
-			ContentType: fin.ContentType,
-			Size:        int64(len(data)),
-			StoragePath: filepath.Join(vdir, sanitizePackagePathSegment(fin.Name)),
-		}
-		if vdir != "" {
-			if err := os.MkdirAll(vdir, 0o755); err != nil {
-				return nil, fmt.Errorf("mkdir %s: %w", vdir, err)
-			}
-			if err := os.WriteFile(pf.StoragePath, data, 0o644); err != nil {
-				return nil, fmt.Errorf("write file %s: %w", pf.StoragePath, err)
-			}
-		}
-		st.PackageFiles[fid] = pf
+	for _, pf := range persistedFiles {
+		st.PackageFiles[pf.ID] = pf
 		if st.PackageFilesByVersion[v.ID] == nil {
 			st.PackageFilesByVersion[v.ID] = map[int]*PackageFile{}
 		}
-		st.PackageFilesByVersion[v.ID][fid] = pf
+		st.PackageFilesByVersion[v.ID][pf.ID] = pf
 		st.NextPackageFileID++
 		st.persistPackageFile(pf)
 	}
@@ -376,6 +410,19 @@ func (st *Store) RestorePackageVersion(id int) bool {
 		st.recomputeVersionCountLocked(p)
 		st.persistPackage(p)
 	}
+	st.persistPackageVersion(v)
+	return true
+}
+
+func (st *Store) SetPackageVersionRegistryManifestDigest(id int, digest string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	v := st.PackageVersions[id]
+	if v == nil {
+		return false
+	}
+	v.RegistryManifestDigest = digest
+	v.UpdatedAt = time.Now().UTC()
 	st.persistPackageVersion(v)
 	return true
 }

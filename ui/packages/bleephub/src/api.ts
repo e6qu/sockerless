@@ -77,7 +77,6 @@ import type {
   GithubPackage,
   GithubPackageVersion,
   GithubPackageFile,
-  GithubPackageVersionCreatePayload,
   GithubDiscussion,
   GithubDiscussionCategory,
   GithubDiscussionCategoryConnection,
@@ -1955,23 +1954,6 @@ export async function updateDiscussionComment(commentId: string, body: string): 
     }`,
     { input: { commentId, body } },
   );
-}
-
-export async function uploadPackageVersion(
-  ownerType: "user" | "org" | "repository",
-  owner: string,
-  pkgType: string,
-  pkgName: string,
-  payload: GithubPackageVersionCreatePayload,
-): Promise<GithubPackageVersion> {
-  let path: string;
-  if (ownerType === "repository") {
-    const [o, r] = owner.split("/");
-    path = `/internal/packages/repository/${o}/${r}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
-  } else {
-    path = `/internal/packages/${ownerType}/${owner}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
-  }
-  return ghPostJSON<GithubPackageVersion>(path, payload);
 }
 
 // ─── Repo insights ───────────────────────────────────────────────────────

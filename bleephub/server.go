@@ -8,6 +8,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/graphql-go/graphql"
@@ -29,8 +30,10 @@ type Server struct {
 	maxConcurrentWorkflows int
 	scheduleFired          scheduleFiredKeys // cron-firing dedup (on: schedule)
 	actionsEvents          actionsEventLoop  // checks/webhook fan-out for run+job transitions
-	routePatterns          []string          // every pattern registered via route(), for fidelity enumeration
-	externalURL            string            // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
+	registryUploadsMu      sync.Mutex
+	registryUploads        map[string]*containerRegistryUpload
+	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
+	externalURL            string   // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
 	// assigns it (same package) to validate /api/v3 response shapes
@@ -103,6 +106,7 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		artifactStore:          artifactStore,
 		metrics:                NewMetrics(),
 		maxConcurrentWorkflows: maxWF,
+		registryUploads:        map[string]*containerRegistryUpload{},
 		externalURL:            strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"),
 	}
 	if dataDir != "" {
