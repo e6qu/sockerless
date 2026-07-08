@@ -28,21 +28,17 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	// Some CI / host images ship an aws CLI that predates simulator-tested
-	// surfaces (e.g. create-transit-gateway-metering-policy). Rather than
-	// relying on whatever version happens to be installed, ensure we have a
-	// recent CLI available. If the host CLI is already present we use it; if
-	// not, install the latest v2 into a tmp dir. This satisfies the
-	// no-skip-if-absent rule: the test suite controls its own reference adaptor
-	// version.
+	// Some CI / host images ship an AWS Command Line Interface that predates
+	// simulator-tested surfaces. Use the host binary only when it supports a
+	// known recent operation; otherwise install the current v2 release into a
+	// temporary directory so the suite runs instead of skipping capability gaps.
 	awsPath, err := exec.LookPath("aws")
-	if err != nil {
+	if err != nil || !awsCLIHasOperation(awsPath, "cloudfront", "list-connection-groups") {
 		awsPath = installLatestAWSCLI()
 	}
 	if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
 		awsCLIVersion = strings.TrimSpace(string(out))
 	} else {
-		// Host aws found in PATH but broken/unusable; install a fresh one.
 		awsPath = installLatestAWSCLI()
 		if out, err := exec.Command(awsPath, "--version").CombinedOutput(); err == nil {
 			awsCLIVersion = strings.TrimSpace(string(out))
@@ -118,18 +114,23 @@ func TestMain(m *testing.M) {
 
 func waitForHealth(url string) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil && resp.StatusCode == 200 {
 			resp.Body.Close()
 			return nil
 		}
 		if resp != nil {
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
 			resp.Body.Close()
+		} else if err != nil {
+			lastErr = err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for %s", url)
+	return fmt.Errorf("timeout waiting for %s: %v", url, lastErr)
 }
 
 func awsCLI(args ...string) *exec.Cmd {
@@ -158,20 +159,9 @@ func runCLI(t *testing.T, cmd *exec.Cmd) string {
 	timer := time.AfterFunc(perCmdTimeout, func() { _ = cmd.Process.Kill() })
 	defer timer.Stop()
 	if err := cmd.Wait(); err != nil {
-		// Surface the CLI's own "invalid choice" / help output clearly; this
-		// usually means the installed aws CLI predates the command under test.
-		if isAWSCLIUnknownCommand(combined.String()) {
-			t.Skipf("installed aws CLI (%s) does not support %s %s; update the aws CLI to run this test", awsCLIVersion, cmd.Args[1], cmd.Args[2])
-		}
 		t.Fatalf("CLI command failed: %v\nCommand: %s\nOutput: %s", err, strings.Join(cmd.Args, " "), combined.String())
 	}
 	return combined.String()
-}
-
-// isAWSCLIUnknownCommand returns true when aws-cli printed its help banner
-// because it did not recognize the requested service/operation.
-func isAWSCLIUnknownCommand(out string) bool {
-	return strings.Contains(out, "Invalid choice:") || strings.Contains(out, "argument operation: Invalid choice")
 }
 
 func runCLIExpectError(t *testing.T, cmd *exec.Cmd) string {
@@ -189,6 +179,15 @@ func runCLIExpectError(t *testing.T, cmd *exec.Cmd) string {
 		t.Fatalf("CLI command unexpectedly succeeded\nCommand: %s\nOutput: %s", strings.Join(cmd.Args, " "), combined.String())
 	}
 	return combined.String()
+}
+
+func awsCLIHasOperation(awsPath, service, operation string) bool {
+	if awsPath == "" {
+		return false
+	}
+	cmd := exec.Command(awsPath, service, operation, "--generate-cli-skeleton", "input")
+	cmd.Env = append(os.Environ(), "AWS_PAGER=")
+	return cmd.Run() == nil
 }
 
 func parseJSON(t *testing.T, data string, target any) {
