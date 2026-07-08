@@ -8,6 +8,7 @@ import (
 
 	"github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -62,11 +63,18 @@ func commitFilesToStorage(t *testing.T, s *Server, repoFullName string, files ma
 			t.Fatalf("git add %s: %v", path, err)
 		}
 	}
-	_, err = wt.Commit("test files", &git.CommitOptions{
+	commitHash, err := wt.Commit("test files", &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@t", When: time.Now()},
 	})
 	if err != nil {
 		t.Fatalf("commit: %v", err)
+	}
+	mainRef := plumbing.NewBranchReferenceName("main")
+	if err := storer.SetReference(plumbing.NewHashReference(mainRef, commitHash)); err != nil {
+		t.Fatalf("set main ref: %v", err)
+	}
+	if err := storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, mainRef)); err != nil {
+		t.Fatalf("set HEAD: %v", err)
 	}
 }
 

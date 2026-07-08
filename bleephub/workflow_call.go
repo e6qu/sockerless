@@ -275,6 +275,9 @@ func gitFileAtRef(stor gitStorage.Storer, ref, path string) ([]byte, error) {
 	var hash plumbing.Hash
 	if ref == "" {
 		sha := resolveRefSha(stor, "")
+		if sha == "0000000000000000000000000000000000000000" {
+			return nil, fmt.Errorf("HEAD did not resolve to a commit")
+		}
 		hash = plumbing.NewHash(sha)
 	} else {
 		candidates := []plumbing.ReferenceName{

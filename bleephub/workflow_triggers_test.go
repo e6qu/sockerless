@@ -345,6 +345,29 @@ jobs:
 	}
 }
 
+func TestWorkflowTriggerRejectsUnresolvedRef(t *testing.T) {
+	s := newTestServer()
+	repoKey := "missingref/repo"
+	commitWorkflowYAMLToStorage(t, s, repoKey, ".github/workflows/ci.yml", `name: ci
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+
+	s.triggerWorkflowsForEvent(repoKey, "push", "", "refs/heads/missing", nil)
+
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	for _, wf := range s.store.Workflows {
+		if wf.RepoFullName == repoKey {
+			t.Fatalf("unresolved ref created workflow run with sha %q", wf.Sha)
+		}
+	}
+}
+
 func TestPullRequestSynchronizeOnPush(t *testing.T) {
 	owner := "syncowner"
 	repoName := "sync-repo"

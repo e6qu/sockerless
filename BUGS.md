@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2355 filed - 2312 fixed - 2 open - 16 false positives.**
+**2356 filed - 2313 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2356~~ | P2 | bleephub Actions event refs | unresolved git refs became all-zero workflow SHAs | Event-triggered and scheduled workflow runs now require the triggering git ref to resolve to a real commit; non-empty refs no longer fall back to `HEAD`, scheduled runs reject missing default-branch refs loudly, reusable workflow file reads fail when `HEAD` is unresolved, and git fixtures create real `main` refs instead of relying on compatibility fallback behavior. |
 | ~~2355~~ | P2 | bleephub Actions logs | console fallback masqueraded as uploaded job logs | GitHub job, run, and run-attempt log download endpoints now serve only runner-uploaded log files referenced by timeline records; object-store mode reads those bytes back from S3-compatible storage, and missing uploaded logs return 404 instead of substituting in-memory live console capture. |
 | ~~2354~~ | P2 | bleephub GraphQL issue fields | REST-backed custom issue values hidden from GraphQL | Organization issue fields and per-issue field values were real REST state, but GraphQL Issue nodes did not expose those values, so clients using GitHub's GraphQL issue-field surface could not see custom issue metadata after writing it through the API. `Issue.issueFieldValues` now exposes the GitHub GraphQL issue-field value union from the same REST-backed store records, including typed field definitions, select options, enum values, pagination, and a REST-to-GraphQL regression that writes all supported field kinds through the API before querying them. |
 | ~~2353~~ | P3 | bleephub Actions tests | rare skip hid workflow-file ID regression guard | `TestActionsRun_WorkflowFileReferences` skipped if the run ID happened to equal the stable workflow-file ID, leaving the exact run-id-vs-file-id invariant untested on that seed. The test now chooses a non-colliding workflow file path, writes it onto the run, and always asserts the REST run uses the workflow-file ID/path rather than the run ID. |
