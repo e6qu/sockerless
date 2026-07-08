@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2342 filed - 2299 fixed - 2 open - 16 false positives.**
+**2344 filed - 2300 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2344 | P2 | bleephub issue types | org definitions not assignable to issues | Bleephub has real organization issue-type CRUD, but issues do not store an assigned issue type and GraphQL `Issue.issueType` still returns null for every issue. The service needs a real per-issue issue-type assignment path (REST/API/UI as GitHub exposes it), persistence/reload coverage, and GraphQL projection from that assignment. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 
@@ -17,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2343~~ | P2 | bleephub GraphQL sub-issues / sub-issue persistence | REST-backed relationship hidden by GraphQL stub + stale old-parent row | Bleephub's REST sub-issues were real ordered store links, but GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` still returned the old empty/null compatibility shape. Replacing a child's parent also failed to persist the old parent's shortened child list, so reload could resurrect a stale parent-child link. GraphQL now projects parent/sub-issue/summary data from the same store links as REST, summary completion derives from child issue state, and parent replacement persists both old and new parent lists with a reload regression. |
 | ~~2342~~ | P2 | bleephub Actions artifact/cache/log bytes | local-only byte storage behind object-storage spec | Bleephub's Actions artifact store kept artifacts, dependency caches, and runner-uploaded log files only in process memory plus optional local data-dir files, while the storage split requires durable byte content to live in object storage. `BLEEPHUB_OBJECT_S3_BUCKET` now configures S3-compatible byte storage for Actions artifacts, caches, and log files (with endpoint/prefix overrides); configured object storage fails startup/write/read loudly, deletes remove object bytes, and simulator-backed tests assert artifact/cache/log uploads write real S3 objects. |
 | ~~2341~~ | P2 | bleephub S3 object storage tests / AWS simulator S3 CopyObject | fake S3 test boundary masked list-invisible copied objects | Bleephub's S3 filesystem tests used a hand-rolled fake S3 HTTP server that reimplemented object CRUD and pagination instead of driving a real object-store endpoint. Replacing it with `simulator-aws` exposed an S3 simulator fidelity bug: `CopyObject` wrote the destination under the correct store key but persisted the object's internal `Key` without the bucket prefix, so `GetObject` worked while `ListObjectsV2` could not see copied objects. Bleephub S3 tests now build/start the real AWS simulator and seed/assert through `aws-sdk-go-v2`; repo-prefix rename/delete cross the real 1000-key pagination boundary. The simulator stores copied objects with the canonical bucket/key and SDK + CLI regressions prove copied objects list. |
 | ~~2340~~ | P2 | bleephub repository lifecycle persistence | rename/transfer/delete did not cover repo-keyed metadata | Repository rename and transfer moved git storage but left several persisted repo-scoped metadata buckets under the old `owner/repo` key, and both paths deleted the updated repository row after writing it. Repository delete also missed newer repo-scoped buckets. Rename, transfer, and delete now share repo-key lifecycle helpers that update or purge persisted buckets across Actions, security/code scanning, CodeQL, custom properties, immutable releases, code quality, rulesets, and Copilot coding-agent state; reload regressions prove old keys do not survive. |

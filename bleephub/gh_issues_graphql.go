@@ -256,9 +256,10 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 	})
 
 	// --- Issue-type and sub-issue support types ---
-	// gh CLI's `gh issue view` selects GitHub's issue-types and sub-issues
-	// features. bleephub does not model those, so an issue always reports no
-	// type, no parent, no sub-issues, and a zeroed summary.
+	// gh CLI's `gh issue view` selects GitHub's issue-type and sub-issue
+	// fields. Organization issue-type definitions exist, but Issue rows do
+	// not carry an assigned type. Sub-issues are backed by the same ordered
+	// store links used by the REST API.
 	issueTypeMetaType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "IssueType",
 		Fields: graphql.Fields{
@@ -443,9 +444,6 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					return i["reactionGroups"], nil
 				},
 			},
-			// Issue-types and sub-issues: bleephub does not model these GitHub
-			// features, so they resolve to the empty/null shape real GitHub
-			// returns for an issue with none.
 			"issueType": &graphql.Field{
 				Type: issueTypeMetaType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -455,7 +453,15 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"parent": &graphql.Field{
 				Type: relatedIssueType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return nil, nil
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					parent, ok := i["parent"].(map[string]interface{})
+					if !ok || parent == nil {
+						return nil, nil
+					}
+					return parent, nil
 				},
 			},
 			"subIssues": &graphql.Field{
@@ -465,20 +471,21 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"nodes":      []interface{}{},
-						"totalCount": 0,
-					}, nil
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return repaginateConnection(i["subIssues"], p.Args), nil
 				},
 			},
 			"subIssuesSummary": &graphql.Field{
 				Type: subIssuesSummaryType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"total":            0,
-						"completed":        0,
-						"percentCompleted": 0,
-					}, nil
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return i["subIssuesSummary"], nil
 				},
 			},
 		},
@@ -1267,6 +1274,29 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 		url = "/" + repo.FullName + "/issues/" + strconv.Itoa(issue.Number)
 	}
 
+	var parent map[string]interface{}
+	if parentID, ok := st.SubIssueParent[issue.ID]; ok {
+		if parentIssue := st.Issues[parentID]; parentIssue != nil {
+			parent = relatedIssueToGQLLocked(parentIssue, st)
+		}
+	}
+	subIssueNodes := make([]map[string]interface{}, 0, len(st.SubIssueLists[issue.ID]))
+	completedSubIssues := 0
+	for _, childID := range st.SubIssueLists[issue.ID] {
+		child := st.Issues[childID]
+		if child == nil {
+			continue
+		}
+		if child.State == "CLOSED" {
+			completedSubIssues++
+		}
+		subIssueNodes = append(subIssueNodes, relatedIssueToGQLLocked(child, st))
+	}
+	percentCompleted := 0
+	if len(subIssueNodes) > 0 {
+		percentCompleted = completedSubIssues * 100 / len(subIssueNodes)
+	}
+
 	var closedAt interface{}
 	if issue.ClosedAt != nil {
 		closedAt = issue.ClosedAt.Format(time.RFC3339)
@@ -1314,6 +1344,22 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 			},
 		},
 		"milestone": milestone,
+		"parent":    parent,
+		"subIssues": map[string]interface{}{
+			"nodes":      subIssueNodes,
+			"totalCount": len(subIssueNodes),
+			"pageInfo": map[string]interface{}{
+				"hasNextPage":     false,
+				"hasPreviousPage": false,
+				"startCursor":     nil,
+				"endCursor":       nil,
+			},
+		},
+		"subIssuesSummary": map[string]interface{}{
+			"total":            len(subIssueNodes),
+			"completed":        completedSubIssues,
+			"percentCompleted": percentCompleted,
+		},
 		"comments": map[string]interface{}{
 			"nodes":      commentNodes,
 			"totalCount": len(commentNodes),
@@ -1334,6 +1380,27 @@ func labelToGQL(l *IssueLabel) map[string]interface{} {
 		"name":        l.Name,
 		"description": l.Description,
 		"color":       l.Color,
+	}
+}
+
+func relatedIssueToGQLLocked(issue *Issue, st *Store) map[string]interface{} {
+	repo := st.Repos[issue.RepoID]
+	nameWithOwner := ""
+	url := ""
+	if repo != nil {
+		nameWithOwner = repo.FullName
+		url = "/" + repo.FullName + "/issues/" + strconv.Itoa(issue.Number)
+	}
+	return map[string]interface{}{
+		"id":     issue.NodeID,
+		"nodeID": issue.NodeID,
+		"number": issue.Number,
+		"title":  issue.Title,
+		"url":    url,
+		"state":  issue.State,
+		"repository": map[string]interface{}{
+			"nameWithOwner": nameWithOwner,
+		},
 	}
 }
 

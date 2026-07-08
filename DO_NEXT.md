@@ -4,15 +4,17 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, and AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, and AWS S3 CopyObject list visibility.
 
 **Next**
-- Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
+- Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-2344 (per-issue issue-type assignment), BUG-1345 (AzureAD Terraform provider upstream), and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
 
 **Scope**
 - **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
 - **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
 - **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.
+- **BUG-2343:** GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` now render the same ordered sub-issue relationships as the REST API. Replacing a sub-issue's parent persists both the old and new parent lists so reload keeps the relationship graph coherent.
+- **BUG-2344:** The audit found that org issue-type definitions exist but issues still cannot store an assigned issue type; GraphQL `Issue.issueType` therefore remains null for every issue. The gap is tracked for the next Bleephub fidelity pass.
 - **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage and no-github.com action resolution. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
@@ -23,6 +25,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3API_CopyObjectListed -count=1 ./` in `simulators/aws/cli-tests` passed.
 - `bash scripts/check-simulator-tests.sh` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestArtifactUploadWritesObjectStore|TestCacheUploadWritesObjectStore|TestLogfilesUpload_WritesObjectStore|TestArtifactCreateUploadFinalize|TestLogfilesUpload_AppendsBlocks|TestLogfilesUpload_CapsAtFourMiBWithMarker|TestDeleteRunLogs' -count=1` passed with sandbox escalation for loopback/simulator listeners.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestIssueGraphQL_SubIssueFields|TestSubIssues_AddListReprioritizeRemove|TestSubIssues_ReplaceParentPersistsOldParent|TestIssueDependencies_BlockedBy' -count=1` passed with sandbox escalation for loopback/cache access.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the Actions object-store changes.
 - `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md PLAN.md WHAT_WE_DID.md bleephub/README.md bleephub/actions.go bleephub/actions_test.go bleephub/artifacts.go bleephub/artifacts_test.go bleephub/gh_actions_permissions.go bleephub/object_bytes.go bleephub/server.go bleephub/timeline.go bleephub/timeline_records_test.go` passed with sandbox escalation after the restricted sandbox blocked loopback/cache access.
 

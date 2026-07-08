@@ -61,6 +61,7 @@ func (st *Store) AddSubIssue(parentID, childID int, replaceParent bool) error {
 	}
 	if cur, ok := st.SubIssueParent[childID]; ok {
 		st.removeSubIssueLocked(cur, childID)
+		st.persistSubIssuesLocked(cur)
 	}
 	st.SubIssueLists[parentID] = append(st.SubIssueLists[parentID], childID)
 	st.SubIssueParent[childID] = parentID

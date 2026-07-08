@@ -1,42 +1,28 @@
 package bleephub
 
 import (
+	"fmt"
 	"testing"
 )
 
 // TestIssueGraphQL_SubIssueFields exercises the exact selections the gh CLI's
-// `gh issue view` sends on `...on Issue` for issue-types and sub-issues. bleephub
-// does not implement those GitHub features, so the fields must resolve to the
-// empty/null real-GitHub shape for an issue with none — without errors.
+// `gh issue view` sends on `...on Issue` for issue-types and sub-issues.
+// Sub-issue fields are backed by the same ordered issue links as the REST API.
 func TestIssueGraphQL_SubIssueFields(t *testing.T) {
-	// Create a repo.
-	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
-		"name": "gql-subissue-fields",
-	})
-	repoData := decodeJSON(t, resp)
-	if repoData["node_id"] == nil {
-		t.Fatalf("expected repo node_id, got %v", repoData)
-	}
-	owner, _ := repoData["owner"].(map[string]interface{})
-	login, _ := owner["login"].(string)
-	name, _ := repoData["name"].(string)
-
-	// Create an issue via REST.
-	resp2 := ghPost(t, "/api/v3/repos/"+login+"/"+name+"/issues", defaultToken, map[string]interface{}{
-		"title": "sub-issue field probe",
-		"body":  "probe",
-	})
-	issueData := decodeJSON(t, resp2)
-	num, ok := issueData["number"].(float64)
-	if !ok {
-		t.Fatalf("expected issue number, got %v", issueData)
-	}
+	repo := createRepoWriteRepo(t, false)
+	parentID, parentNum := createIssueForTest(t, repo, "parent")
+	openChildID, openChildNum := createIssueForTest(t, repo, "open child")
+	closedChildID, closedChildNum := createIssueForTest(t, repo, "closed child")
+	parentPath := fmt.Sprintf("/api/v3/repos/admin/%s/issues/%d", repo, parentNum)
+	requireStatus(t, ghPost(t, parentPath+"/sub_issues", defaultToken, map[string]interface{}{"sub_issue_id": openChildID}), 201)
+	requireStatus(t, ghPost(t, parentPath+"/sub_issues", defaultToken, map[string]interface{}{"sub_issue_id": closedChildID}), 201)
+	requireStatus(t, ghPatch(t, fmt.Sprintf("/api/v3/repos/admin/%s/issues/%d", repo, closedChildNum), defaultToken, map[string]interface{}{"state": "closed"}), 200)
 
 	// The exact selection set gh CLI's `gh issue view` sends for these four
 	// fields on `...on Issue`.
 	query := `query($owner:String!,$name:String!,$number:Int!){
 		repository(owner:$owner,name:$name){
-			issue(number:$number){
+			parentIssue: issue(number:$number){
 				number
 				stateReason
 				issueType{id,name,description,color}
@@ -44,22 +30,28 @@ func TestIssueGraphQL_SubIssueFields(t *testing.T) {
 				subIssues(first:100){nodes{id,number,title,url,state,repository{nameWithOwner}},totalCount}
 				subIssuesSummary{total,completed,percentCompleted}
 			}
+			childIssue: issue(number:` + fmt.Sprintf("%d", openChildNum) + `){
+				number
+				parent{id,number,title,url,state,repository{nameWithOwner}}
+				subIssues(first:100){nodes{id,number,title,url,state,repository{nameWithOwner}},totalCount}
+				subIssuesSummary{total,completed,percentCompleted}
+			}
 		}
 	}`
 
-	resp3 := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
 		"query": query,
 		"variables": map[string]interface{}{
-			"owner":  login,
-			"name":   name,
-			"number": int(num),
+			"owner":  "admin",
+			"name":   repo,
+			"number": parentNum,
 		},
 	})
-	if resp3.StatusCode != 200 {
-		resp3.Body.Close()
-		t.Fatalf("expected 200, got %d", resp3.StatusCode)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
-	data := decodeJSON(t, resp3)
+	data := decodeJSON(t, resp)
 
 	if errs, ok := data["errors"]; ok && errs != nil {
 		t.Fatalf("expected no errors, got: %v", errs)
@@ -69,43 +61,66 @@ func TestIssueGraphQL_SubIssueFields(t *testing.T) {
 	if d == nil {
 		t.Fatalf("expected data, got %v", data)
 	}
-	repo, _ := d["repository"].(map[string]interface{})
-	issue, _ := repo["issue"].(map[string]interface{})
-	if issue == nil {
-		t.Fatalf("expected issue in response, got %v", data)
+	gqlRepo, _ := d["repository"].(map[string]interface{})
+	parentIssue, _ := gqlRepo["parentIssue"].(map[string]interface{})
+	childIssue, _ := gqlRepo["childIssue"].(map[string]interface{})
+	if parentIssue == nil || childIssue == nil {
+		t.Fatalf("expected parent and child issue in response, got %v", data)
 	}
 
 	// issueType → null
-	if v, present := issue["issueType"]; !present || v != nil {
+	if v, present := parentIssue["issueType"]; !present || v != nil {
 		t.Fatalf("expected issueType=null, got present=%v value=%v", present, v)
 	}
-	// parent → null
-	if v, present := issue["parent"]; !present || v != nil {
+	// parent → null for the top-level parent issue.
+	if v, present := parentIssue["parent"]; !present || v != nil {
 		t.Fatalf("expected parent=null, got present=%v value=%v", present, v)
 	}
-	// subIssues → { nodes: [], totalCount: 0 }
-	subIssues, _ := issue["subIssues"].(map[string]interface{})
+	subIssues, _ := parentIssue["subIssues"].(map[string]interface{})
 	if subIssues == nil {
-		t.Fatalf("expected subIssues object, got %v", issue["subIssues"])
+		t.Fatalf("expected subIssues object, got %v", parentIssue["subIssues"])
 	}
-	if tc, _ := subIssues["totalCount"].(float64); tc != 0 {
-		t.Fatalf("expected subIssues.totalCount=0, got %v", subIssues["totalCount"])
+	if tc, _ := subIssues["totalCount"].(float64); tc != 2 {
+		t.Fatalf("expected subIssues.totalCount=2, got %v", subIssues["totalCount"])
 	}
-	if nodes, ok := subIssues["nodes"].([]interface{}); !ok || len(nodes) != 0 {
-		t.Fatalf("expected subIssues.nodes=[], got %v", subIssues["nodes"])
+	nodes, ok := subIssues["nodes"].([]interface{})
+	if !ok || len(nodes) != 2 {
+		t.Fatalf("expected two subIssue nodes, got %v", subIssues["nodes"])
 	}
-	// subIssuesSummary → { total: 0, completed: 0, percentCompleted: 0 }
-	summary, _ := issue["subIssuesSummary"].(map[string]interface{})
+	firstNode, _ := nodes[0].(map[string]interface{})
+	secondNode, _ := nodes[1].(map[string]interface{})
+	if int(firstNode["number"].(float64)) != openChildNum || int(secondNode["number"].(float64)) != closedChildNum {
+		t.Fatalf("subIssue order = [%v %v], want [%d %d]", firstNode["number"], secondNode["number"], openChildNum, closedChildNum)
+	}
+	if firstNode["state"] != "OPEN" || secondNode["state"] != "CLOSED" {
+		t.Fatalf("subIssue states = %v/%v", firstNode["state"], secondNode["state"])
+	}
+	if gotRepo := firstNode["repository"].(map[string]interface{})["nameWithOwner"]; gotRepo != "admin/"+repo {
+		t.Fatalf("subIssue repository = %v", gotRepo)
+	}
+	summary, _ := parentIssue["subIssuesSummary"].(map[string]interface{})
 	if summary == nil {
-		t.Fatalf("expected subIssuesSummary object, got %v", issue["subIssuesSummary"])
+		t.Fatalf("expected subIssuesSummary object, got %v", parentIssue["subIssuesSummary"])
 	}
-	if tot, _ := summary["total"].(float64); tot != 0 {
-		t.Fatalf("expected subIssuesSummary.total=0, got %v", summary["total"])
+	if tot, _ := summary["total"].(float64); tot != 2 {
+		t.Fatalf("expected subIssuesSummary.total=2, got %v", summary["total"])
 	}
-	if comp, _ := summary["completed"].(float64); comp != 0 {
-		t.Fatalf("expected subIssuesSummary.completed=0, got %v", summary["completed"])
+	if comp, _ := summary["completed"].(float64); comp != 1 {
+		t.Fatalf("expected subIssuesSummary.completed=1, got %v", summary["completed"])
 	}
-	if pct, _ := summary["percentCompleted"].(float64); pct != 0 {
-		t.Fatalf("expected subIssuesSummary.percentCompleted=0, got %v", summary["percentCompleted"])
+	if pct, _ := summary["percentCompleted"].(float64); pct != 50 {
+		t.Fatalf("expected subIssuesSummary.percentCompleted=50, got %v", summary["percentCompleted"])
+	}
+
+	childParent, _ := childIssue["parent"].(map[string]interface{})
+	if childParent == nil || int(childParent["number"].(float64)) != parentNum {
+		t.Fatalf("child parent = %v, want parent #%d", childIssue["parent"], parentNum)
+	}
+	childSubIssues, _ := childIssue["subIssues"].(map[string]interface{})
+	if childSubIssues == nil || int(childSubIssues["totalCount"].(float64)) != 0 {
+		t.Fatalf("child subIssues = %v, want empty", childIssue["subIssues"])
+	}
+	if parentID == 0 {
+		t.Fatal("parent ID must be non-zero")
 	}
 }

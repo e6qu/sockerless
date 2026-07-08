@@ -691,9 +691,9 @@ func TestGetIssueEventREST(t *testing.T) {
 	}
 }
 
-// --- Sub-issues / dependencies stubs ---
+// --- Sub-issues / dependencies ---
 
-func TestSubIssuesStubREST(t *testing.T) {
+func TestSubIssuesREST_EmptyList(t *testing.T) {
 	createTestIssueRepo(t, "issue-subissues")
 	ghPost(t, "/api/v3/repos/admin/issue-subissues/issues", defaultToken, map[string]interface{}{
 		"title": "Sub issues test",
