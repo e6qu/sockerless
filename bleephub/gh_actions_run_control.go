@@ -196,17 +196,9 @@ func (s *Server) handleRerunWorkflowJob(w http.ResponseWriter, r *http.Request) 
 	if repo == "" {
 		repo = repoFullName(r)
 	}
-	s.store.DiscoverWorkflowFilesFromGit(repo)
-	var match *WorkflowFile
-	for _, f := range s.store.ListWorkflowFiles(repo) {
-		if f.Name == wf.Name && f.YAML != "" {
-			match = f
-			break
-		}
-	}
-	if match == nil {
-		writeGHError(w, http.StatusUnprocessableEntity,
-			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+	match, err := s.cachedWorkflowFileForRun(repo, wf)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	def, perr := ParseWorkflow([]byte(match.YAML))
@@ -234,7 +226,7 @@ func (s *Server) handleRerunWorkflowJob(w http.ResponseWriter, r *http.Request) 
 	}
 	s.store.mu.RUnlock()
 
-	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, carryOver); err != nil {
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, match, def, serverURL, carryOver); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
 		return
 	}

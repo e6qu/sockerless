@@ -151,6 +151,11 @@ type WorkflowEventMeta struct {
 	// ReuseRunID keeps the original run id/number across rerun attempts
 	// (real GitHub never mints a new run id for a re-run).
 	ReuseRunID int
+	// WorkflowFileID / WorkflowFilePath preserve the originating workflow
+	// file across rerun attempts, even when multiple files share the same
+	// workflow display name.
+	WorkflowFileID   int64
+	WorkflowFilePath string
 	// CarryOverJobs pre-completes jobs by key with results carried from
 	// the previous attempt (rerun-failed-jobs keeps successful jobs).
 	CarryOverJobs map[string]*WorkflowJob
@@ -287,6 +292,8 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.TypedInputs = m.TypedInputs
 		workflow.EventPayload = m.Payload
 		workflow.Attempt = m.Attempt
+		workflow.WorkflowFileID = m.WorkflowFileID
+		workflow.WorkflowFilePath = m.WorkflowFilePath
 
 		// Carry results forward from the previous attempt
 		// (rerun-failed-jobs re-runs only the failed jobs); applied
@@ -398,15 +405,27 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 }
 
 // resolveWorkflowFileForRun finds the registered [WorkflowFile] that
-// produced this run (matched by repo + workflow name) and returns its
-// stable id and real path. When no backing file is registered yet, it
-// derives a deterministic stable id from (repo, conventional-path) and a
-// best-known path so workflow_id / path stay constant across reruns of
-// the same workflow even before the file lands in git.
+// produced this run and returns its stable id and real path. When no
+// backing file is registered yet, it derives a deterministic stable id
+// from (repo, conventional-path) and a best-known path so workflow_id /
+// path stay constant across reruns of the same workflow even before the
+// file lands in git.
 func (s *Server) resolveWorkflowFileForRun(wf *Workflow) (int64, string) {
 	repo := wf.RepoFullName
 	if repo != "" {
 		s.store.DiscoverWorkflowFilesFromGit(repo)
+		if wf.WorkflowFileID != 0 {
+			if f := s.store.GetWorkflowFile(repo, wf.WorkflowFileID); f != nil {
+				return f.ID, f.Path
+			}
+		}
+		if wf.WorkflowFilePath != "" {
+			for _, f := range s.store.ListWorkflowFiles(repo) {
+				if f.Path == wf.WorkflowFilePath {
+					return f.ID, f.Path
+				}
+			}
+		}
 		for _, f := range s.store.ListWorkflowFiles(repo) {
 			if f.Name == wf.Name {
 				return f.ID, f.Path

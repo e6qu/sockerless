@@ -776,10 +776,10 @@ func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request)
 
 // handleRerunWorkflowRun — POST .../actions/runs/{run_id}/rerun.
 // Real GitHub: 201 Created. Bleephub re-submits the run by looking up
-// the matching WorkflowFile (by name + repo) and replaying its cached
+// the matching WorkflowFile and replaying its cached
 // YAML through submitWorkflow with the original event metadata.
-// Returns 422 if no cached YAML exists (-or-later WorkflowFile
-// not registered for this run) — caller should re-submit via
+// Returns 422 if no cached YAML exists or the run cannot be tied to a
+// registered WorkflowFile — caller should re-submit via
 // /api/v3/bleephub/workflow or push the YAML to git.
 func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
@@ -796,17 +796,9 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 	if repo == "" {
 		repo = repoFullName(r)
 	}
-	s.store.DiscoverWorkflowFilesFromGit(repo)
-	var match *WorkflowFile
-	for _, f := range s.store.ListWorkflowFiles(repo) {
-		if f.Name == wf.Name && f.YAML != "" {
-			match = f
-			break
-		}
-	}
-	if match == nil {
-		writeGHError(w, http.StatusUnprocessableEntity,
-			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+	match, err := s.cachedWorkflowFileForRun(repo, wf)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	def, perr := ParseWorkflow([]byte(match.YAML))
@@ -821,11 +813,41 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
 	def.Env["__defaultImage"] = "alpine:latest"
-	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, nil); err != nil {
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, match, def, serverURL, nil); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusCreated)
+}
+
+func (s *Server) cachedWorkflowFileForRun(repo string, wf *Workflow) (*WorkflowFile, error) {
+	s.store.DiscoverWorkflowFilesFromGit(repo)
+	if wf.WorkflowFileID != 0 {
+		if f := s.store.GetWorkflowFile(repo, wf.WorkflowFileID); f != nil && f.YAML != "" {
+			return f, nil
+		}
+	}
+	if wf.WorkflowFilePath != "" {
+		for _, f := range s.store.ListWorkflowFiles(repo) {
+			if f.Path == wf.WorkflowFilePath && f.YAML != "" {
+				return f, nil
+			}
+		}
+	}
+	var matches []*WorkflowFile
+	for _, f := range s.store.ListWorkflowFiles(repo) {
+		if f.Name == wf.Name && f.YAML != "" {
+			matches = append(matches, f)
+		}
+	}
+	switch len(matches) {
+	case 1:
+		return matches[0], nil
+	case 0:
+		return nil, fmt.Errorf("no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+	default:
+		return nil, fmt.Errorf("ambiguous cached workflow YAML for this run (multiple workflow files are named %q)", wf.Name)
+	}
 }
 
 // rerunWorkflowAsNewAttempt archives the current run as a prior attempt
@@ -833,7 +855,7 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 // run_attempt+1 (real GitHub never mints a new run id for a re-run).
 // carryOver pre-completes the listed job keys with the previous
 // attempt's results (rerun-failed-jobs).
-func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, def *WorkflowDef, serverURL string, carryOver map[string]*WorkflowJob) error {
+func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, file *WorkflowFile, def *WorkflowDef, serverURL string, carryOver map[string]*WorkflowJob) error {
 	// Archive + remove the old attempt first; restore on submit failure.
 	s.store.mu.Lock()
 	s.store.WorkflowAttempts[old.RunID] = append(s.store.WorkflowAttempts[old.RunID], old)
@@ -854,6 +876,10 @@ func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, def *
 		ReuseRunID:    old.RunID,
 		Attempt:       old.AttemptNumber() + 1,
 		CarryOverJobs: carryOver,
+	}
+	if file != nil {
+		meta.WorkflowFileID = file.ID
+		meta.WorkflowFilePath = file.Path
 	}
 	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
 		// Put the old attempt back so the run doesn't vanish.
