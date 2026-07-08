@@ -1777,11 +1777,11 @@ export interface GithubPagesHealth {
   alt_domain: GithubPagesDomainHealth | null;
 }
 
-/** Review thread — GET /internal/.../pulls/{n}/review-threads (items). */
+/** Pull request review thread — GraphQL PullRequest.reviewThreads node. */
 export interface GithubPRReviewThread {
-  id: number;
+  id: string;
   isResolved: boolean;
-  comments: { id: number }[];
+  comments: { databaseId: number }[];
 }
 
 /** Requested reviewers — GET .../pulls/{n}/requested_reviewers. */

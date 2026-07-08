@@ -548,6 +548,67 @@ func TestPRGraphQL_AddPullRequestReview(t *testing.T) {
 	}
 }
 
+func TestPRGraphQL_ResolveReviewThread(t *testing.T) {
+	owner, name := sweepRepo(t, "sweep-prthread")
+	prNum, _ := sweepPR(t, owner, name, "thread me")
+
+	root := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/comments", defaultToken, map[string]interface{}{
+		"body":      "please adjust this line",
+		"path":      "main.go",
+		"line":      3,
+		"side":      "RIGHT",
+		"commit_id": "abc123",
+	}), http.StatusCreated)
+	rootID := int(root["id"].(float64))
+	decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/comments", defaultToken, map[string]interface{}{
+		"body":        "addressed",
+		"in_reply_to": rootID,
+	}), http.StatusCreated)
+
+	query := `query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:10){nodes{id,isResolved,isOutdated,path,line,comments{totalCount,nodes{body,path,line,state,author{login}}}}}}}}`
+	d := gqlData(t, query, map[string]interface{}{"owner": owner, "repo": name, "n": prNum})
+	threads := d["repository"].(map[string]interface{})["pullRequest"].(map[string]interface{})["reviewThreads"].(map[string]interface{})
+	nodes, _ := threads["nodes"].([]interface{})
+	if len(nodes) != 1 {
+		t.Fatalf("reviewThreads.nodes = %v, want one thread", threads["nodes"])
+	}
+	thread := nodes[0].(map[string]interface{})
+	threadID, _ := thread["id"].(string)
+	if threadID == "" || thread["isResolved"] != false || thread["path"] != "main.go" {
+		t.Fatalf("thread before resolve = %v", thread)
+	}
+	comments := thread["comments"].(map[string]interface{})
+	if comments["totalCount"] != float64(2) {
+		t.Fatalf("thread comments = %v, want 2", comments)
+	}
+
+	resolve := `mutation($input:ResolveReviewThreadInput!){resolveReviewThread(input:$input){clientMutationId,thread{id,isResolved,comments{totalCount}}}}`
+	rd := gqlData(t, resolve, map[string]interface{}{
+		"input": map[string]interface{}{
+			"threadId":         threadID,
+			"clientMutationId": "resolve-1",
+		},
+	})
+	resolvedThread := rd["resolveReviewThread"].(map[string]interface{})["thread"].(map[string]interface{})
+	if resolvedThread["id"] != threadID || resolvedThread["isResolved"] != true {
+		t.Fatalf("resolved thread = %v, want same id resolved", resolvedThread)
+	}
+	if rd["resolveReviewThread"].(map[string]interface{})["clientMutationId"] != "resolve-1" {
+		t.Fatalf("resolve clientMutationId missing: %v", rd)
+	}
+
+	unresolve := `mutation($input:UnresolveReviewThreadInput!){unresolveReviewThread(input:$input){thread{id,isResolved}}}`
+	ud := gqlData(t, unresolve, map[string]interface{}{
+		"input": map[string]interface{}{
+			"threadId": threadID,
+		},
+	})
+	unresolvedThread := ud["unresolveReviewThread"].(map[string]interface{})["thread"].(map[string]interface{})
+	if unresolvedThread["id"] != threadID || unresolvedThread["isResolved"] != false {
+		t.Fatalf("unresolved thread = %v, want same id unresolved", unresolvedThread)
+	}
+}
+
 // --- Finding 6: gh release list → Repository.releases connection ---
 
 func TestRepoGraphQL_ReleasesConnection(t *testing.T) {

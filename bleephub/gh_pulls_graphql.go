@@ -665,14 +665,15 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return c["nodeID"], nil
 				},
 			},
-			"body":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"path":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"diffHunk":  &graphql.Field{Type: graphql.String},
-			"line":      &graphql.Field{Type: graphql.Int},
-			"position":  &graphql.Field{Type: graphql.Int},
-			"createdAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"state":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"databaseId": &graphql.Field{Type: graphql.Int},
+			"body":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"path":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"diffHunk":   &graphql.Field{Type: graphql.String},
+			"line":       &graphql.Field{Type: graphql.Int},
+			"position":   &graphql.Field{Type: graphql.Int},
+			"createdAt":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"state":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -1800,6 +1801,54 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
+	resolveReviewThreadInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "ResolveReviewThreadInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"threadId":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
+		},
+	})
+	resolveReviewThreadPayloadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ResolveReviewThreadPayload",
+		Fields: graphql.Fields{
+			"thread":           &graphql.Field{Type: prReviewThreadType},
+			"clientMutationId": &graphql.Field{Type: graphql.String},
+		},
+	})
+	unresolveReviewThreadInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "UnresolveReviewThreadInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"threadId":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
+		},
+	})
+	unresolveReviewThreadPayloadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "UnresolveReviewThreadPayload",
+		Fields: graphql.Fields{
+			"thread":           &graphql.Field{Type: prReviewThreadType},
+			"clientMutationId": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	mutationType.AddFieldConfig("resolveReviewThread", &graphql.Field{
+		Type: resolveReviewThreadPayloadType,
+		Args: graphql.FieldConfigArgument{
+			"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(resolveReviewThreadInputType)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return s.resolveReviewThreadGraphQL(p, true)
+		},
+	})
+	mutationType.AddFieldConfig("unresolveReviewThread", &graphql.Field{
+		Type: unresolveReviewThreadPayloadType,
+		Args: graphql.FieldConfigArgument{
+			"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(unresolveReviewThreadInputType)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return s.resolveReviewThreadGraphQL(p, false)
+		},
+	})
+
 	updatePRInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "UpdatePullRequestInput",
 		Fields: graphql.InputObjectConfigFieldMap{
@@ -2159,16 +2208,17 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 				position = *c.Position
 			}
 			commentNodes = append(commentNodes, map[string]interface{}{
-				"nodeID":    c.NodeID,
-				"body":      c.Body,
-				"path":      c.Path,
-				"diffHunk":  c.DiffHunk,
-				"line":      line,
-				"position":  position,
-				"createdAt": c.CreatedAt.Format(time.RFC3339),
-				"updatedAt": c.UpdatedAt.Format(time.RFC3339),
-				"author":    author,
-				"state":     "SUBMITTED",
+				"nodeID":     c.NodeID,
+				"databaseId": c.ID,
+				"body":       c.Body,
+				"path":       c.Path,
+				"diffHunk":   c.DiffHunk,
+				"line":       line,
+				"position":   position,
+				"createdAt":  c.CreatedAt.Format(time.RFC3339),
+				"updatedAt":  c.UpdatedAt.Format(time.RFC3339),
+				"author":     author,
+				"state":      "SUBMITTED",
 			})
 		}
 		// The thread's path/line tracks the root comment.
@@ -2182,7 +2232,7 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 			}
 		}
 		out = append(out, map[string]interface{}{
-			"id":         fmt.Sprintf("PRT_kgDO%08d", t.ID),
+			"id":         prReviewThreadNodeID(t.ID),
 			"isResolved": t.IsResolved,
 			"isOutdated": false,
 			"resolvedBy": nil,
@@ -2195,6 +2245,63 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 		})
 	}
 	return out
+}
+
+func (s *Server) resolveReviewThreadGraphQL(p graphql.ResolveParams, resolved bool) (interface{}, error) {
+	user := ghUserFromContext(p.Context)
+	if user == nil {
+		return nil, fmt.Errorf("authentication required")
+	}
+	input, _ := p.Args["input"].(map[string]interface{})
+	threadNodeID, _ := input["threadId"].(string)
+	threadID, ok := parsePRReviewThreadNodeID(threadNodeID)
+	if !ok {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	if !s.store.PRReviewComments.ResolveThread(threadID, resolved) {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	thread := s.store.PRReviewComments.GetThread(threadID)
+	if thread == nil {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	s.store.mu.RLock()
+	nodes := reviewThreadsForGraphQL([]*ReviewThread{thread}, s.store)
+	s.store.mu.RUnlock()
+	var gqlThread interface{}
+	if len(nodes) == 1 {
+		gqlThread = nodes[0]
+	}
+	var clientMutationID interface{}
+	if v, ok := input["clientMutationId"].(string); ok && v != "" {
+		clientMutationID = v
+	}
+	return map[string]interface{}{
+		"thread":           gqlThread,
+		"clientMutationId": clientMutationID,
+	}, nil
+}
+
+func prReviewThreadNodeID(threadID int) string {
+	return fmt.Sprintf("PRT_kgDO%08d", threadID)
+}
+
+func parsePRReviewThreadNodeID(nodeID string) (int, bool) {
+	const prefix = "PRT_kgDO"
+	if !strings.HasPrefix(nodeID, prefix) {
+		return 0, false
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(nodeID, prefix))
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 // prMilestoneToGQLLocked returns the GraphQL source map for the PR's

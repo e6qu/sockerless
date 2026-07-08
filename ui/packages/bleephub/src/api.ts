@@ -2686,26 +2686,95 @@ export const replyToPRReviewComment = (
     in_reply_to: inReplyTo,
   });
 
-/**
- * Review-thread listing/resolution is GraphQL-only on real GitHub; bleephub
- * exposes it as a token-gated /internal/ convenience.
- */
-export const fetchPRReviewThreads = (owner: string, repo: string, number: number) =>
-  fetchJSON<GithubPRReviewThread[]>(
-    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads`,
-  );
-
-export const setPRReviewThreadResolved = (
+export const fetchPRReviewThreads = async (
   owner: string,
   repo: string,
   number: number,
-  threadId: number,
-  resolved: boolean,
-): Promise<GithubPRReviewThread> =>
-  ghPostJSON(
-    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
-    {},
+): Promise<GithubPRReviewThread[]> => {
+  const data = await ghGraphQL<{
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: Array<{
+            id: string;
+            isResolved: boolean;
+            comments: { nodes: Array<{ databaseId: number | null }> };
+          }>;
+        };
+      } | null;
+    } | null;
+  }>(
+    `query PullRequestReviewThreads($owner:String!,$repo:String!,$number:Int!){
+      repository(owner:$owner,name:$repo){
+        pullRequest(number:$number){
+          reviewThreads(first:100){
+            nodes{
+              id
+              isResolved
+              comments(first:100){nodes{databaseId}}
+            }
+          }
+        }
+      }
+    }`,
+    { owner, repo, number },
   );
+  return (
+    data.repository?.pullRequest?.reviewThreads.nodes.map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved,
+      comments: thread.comments.nodes
+        .filter((comment): comment is { databaseId: number } => typeof comment.databaseId === "number")
+        .map((comment) => ({ databaseId: comment.databaseId })),
+    })) ?? []
+  );
+};
+
+export const setPRReviewThreadResolved = (
+  _owner: string,
+  _repo: string,
+  _number: number,
+  threadId: string,
+  resolved: boolean,
+): Promise<GithubPRReviewThread> => {
+  const mutation = resolved
+    ? `mutation ResolveReviewThread($input:ResolveReviewThreadInput!){
+        resolveReviewThread(input:$input){
+          thread{id,isResolved,comments(first:100){nodes{databaseId}}}
+        }
+      }`
+    : `mutation UnresolveReviewThread($input:UnresolveReviewThreadInput!){
+        unresolveReviewThread(input:$input){
+          thread{id,isResolved,comments(first:100){nodes{databaseId}}}
+        }
+      }`;
+  return ghGraphQL<{
+    resolveReviewThread?: {
+      thread: {
+        id: string;
+        isResolved: boolean;
+        comments: { nodes: Array<{ databaseId: number | null }> };
+      };
+    };
+    unresolveReviewThread?: {
+      thread: {
+        id: string;
+        isResolved: boolean;
+        comments: { nodes: Array<{ databaseId: number | null }> };
+      };
+    };
+  }>(mutation, { input: { threadId } }).then((data) => {
+    const thread = (resolved ? data.resolveReviewThread : data.unresolveReviewThread)?.thread;
+    if (!thread) throw new Error("graphql response missing review thread");
+    return {
+      id: thread.id,
+      isResolved: thread.isResolved,
+      comments: thread.comments.nodes
+        .filter((comment): comment is { databaseId: number } => typeof comment.databaseId === "number")
+        .map((comment) => ({ databaseId: comment.databaseId })),
+    };
+  });
+};
 
 export async function fetchPRRequestedReviewers(
   owner: string,

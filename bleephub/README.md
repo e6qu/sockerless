@@ -176,7 +176,7 @@ The script compiles the current source, starts the server and user interface, an
 
 **Issues, pull requests, labels, milestones, comments.** Full create/read/update/delete, paginated lists with `Link` headers, state filters, organization issue-type assignment for issues, GraphQL counterparts.
 
-**Pull request review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing and resolve/unresolve have no GitHub Representational State Transfer equivalent (GraphQL-only on real GitHub: `resolveReviewThread`/`unresolveReviewThread`), so Bleephub exposes them as operator-only helpers under `/internal/repos/{o}/{r}/pulls/{n}/review-threads[/{tid}/{resolve|unresolve}]`, not the GitHub namespace.
+**Pull request review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing and resolve/unresolve use the GitHub GraphQL surface (`PullRequest.reviewThreads`, `resolveReviewThread`, and `unresolveReviewThread`) because real GitHub has no REST equivalent.
 
 **Reactions.** Eight content values (`+1`, `-1`, `laugh`, `confused`, `heart`, `hooray`, `rocket`, `eyes`). Idempotent POST. Surfaces: issues, issue comments, pull request review comments, commit comments, releases. `reactions{url, total_count, +1, ...}` block embedded on parent JavaScript Object Notation.
 
