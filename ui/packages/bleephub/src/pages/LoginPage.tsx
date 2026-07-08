@@ -17,9 +17,7 @@ export function LoginPage() {
       setToken(token);
       window.location.href = "/ui/";
     } else {
-      setError(
-        "Token rejected. The dashboard needs a personal access token or the admin token; gho_, ghu_, and ghs_ OAuth and installation tokens are not accepted.",
-      );
+      setError("Token rejected. Bleephub could not authenticate it through the GitHub REST user endpoint.");
       setVerifying(false);
     }
   }
@@ -50,14 +48,14 @@ export function LoginPage() {
             className="mb-1 block"
             style={{ fontSize: "0.85rem", fontWeight: 600, color: "var(--color-fg)" }}
           >
-            Admin token
+            Access token
           </label>
           <input
             id="token"
             type="password"
             value={token}
             onChange={(e) => setTokenValue(e.target.value)}
-            placeholder="BLEEPHUB_ADMIN_TOKEN"
+            placeholder="GitHub-compatible token"
             autoFocus
             disabled={verifying}
             className="mb-1 w-full"
@@ -67,7 +65,7 @@ export function LoginPage() {
             }}
           />
           <p className="mb-3" style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
-            Use the admin token the server was started with, or a personal access token.
+            Use the admin token, a personal access token, or an OAuth token accepted by this Bleephub instance.
           </p>
           {error && (
             <p className="mb-3" style={{ fontSize: "0.82rem", color: "var(--color-status-error)" }}>

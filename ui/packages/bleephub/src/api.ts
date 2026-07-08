@@ -358,14 +358,10 @@ export const fetchOAuthState = () =>
 export const fetchStorageInfo = () =>
   fetchJSON<BleephubStorageInfo>("/internal/storage");
 
-// Verify against an /internal endpoint, not /api/v3/user: the dashboard's
-// data all lives under /internal/*, which only accepts PATs (incl. the
-// admin token). /api/v3/user also accepts gho_/ghu_/ghs_ tokens, which
-// would let login "succeed" and then bounce straight back on the first
-// dashboard fetch. No handleUnauthorized here — a 401 during login is the
-// verdict, not a stale-session redirect.
+// Verify identity through GitHub's REST user endpoint. Operator-only internal
+// pages still fail loudly if the accepted token cannot access /internal/*.
 export async function verifyToken(token: string): Promise<boolean> {
-  const res = await fetch("/internal/status", {
+  const res = await fetch("/api/v3/user", {
     headers: { Authorization: `Bearer ${token}` },
   });
   return res.ok;

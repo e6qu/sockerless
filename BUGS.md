@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2378 filed - 2335 fixed - 2 open - 16 false positives.**
+**2379 filed - 2336 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2379~~ | P2 | Bleephub UI authentication | login used operator-only status instead of GitHub identity | The Bleephub login form now verifies tokens against `GET /api/v3/user`, matching the GitHub identity boundary documented for the service. OAuth/user-to-server tokens accepted by the GitHub REST user endpoint can sign in to the user interface, while operator-only `/internal/*` pages still fail loudly when a token lacks operator access. |
 | ~~2378~~ | P2 | dependency freshness / pre-push | stale Google Cloud Pub/Sub module pins blocked push | The required pre-push dependency freshness hook caught `cloud.google.com/go/pubsub` pinned behind latest in `simulators/gcp` and `simulators/gcp/sdk-tests`. The affected Google Cloud simulator modules were refreshed with `make upgrade-deps`, bringing Google Cloud Pub/Sub plus related indirect support modules to current published versions. |
 | ~~2377~~ | P2 | AWS simulator continuous integration readiness / AWS Command Line Interface harness | short startup poll and capability skip made continuous integration misleading | The AWS simulator software development kit job failed when a second process-mode simulator needed more than the old five-second health budget under continuous integration load, and the AWS Command Line Interface harness still had a dynamic unsupported-operation skip path. AWS simulator software development kit, AWS Command Line Interface, and Terraform health polling now use a bounded 30-second readiness budget with the last observed status/error in the failure, and the AWS Command Line Interface harness installs a current AWS Command Line Interface when the host binary lacks a recent operation while command failures now fail loudly instead of skipping. |
 | ~~2376~~ | P2 | CI Go module setup | transient Go proxy stream reset failed simulator jobs before tests | The `sim (aws cli compute)` job failed in `go mod download` before running tests after `proxy.golang.org` reset a large module zip stream. CI now uses `scripts/ci-go-mod-download.sh`, a bounded retry wrapper for required module downloads, across simulator SDK/CLI setup and AWS SDK prebuild steps so dependency setup fails loudly only after repeated download failures. |
