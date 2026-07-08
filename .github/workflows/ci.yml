@@ -331,7 +331,8 @@ jobs:
         timeout-minutes: 8
       - name: Run SDK tests
         run: |
-          cd simulators/${{ matrix.cloud }} && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
@@ -341,7 +342,8 @@ jobs:
           GOWORK: "off"
       - name: Run CLI tests
         run: |
-          cd simulators/${{ matrix.cloud }} && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
@@ -384,7 +386,8 @@ jobs:
       # tight one.
       - name: Pre-build AWS SDK tests (warm build cache)
         run: |
-          cd simulators/aws && go mod download && make build
+          bash scripts/ci-go-mod-download.sh simulators/aws
+          cd simulators/aws && make build
           cd sdk-tests && GOWORK=off CGO_ENABLED=0 go test -c -o /tmp/aws-sdk-tests.test .
         timeout-minutes: 6
         env:
@@ -473,7 +476,8 @@ jobs:
           aws --version
       - name: Run AWS CLI tests
         run: |
-          cd simulators/aws && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/aws
+          cd simulators/aws
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-cli-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
