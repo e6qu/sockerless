@@ -224,7 +224,15 @@ func TestActionsJobs_Get(t *testing.T) {
 func TestActionsJobs_Logs(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
+	s.registerTimelineRoutes()
 	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
+	planID, timelineID := linkJobToPlan(t, s, wfJob)
+	logID := createLogFile(t, s, planID)
+	uploadLogBlock(t, s, planID, logID, []byte("uploaded line one\nuploaded line two\n"))
+	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
+		{"id": uuid.New().String(), "type": "Task", "name": "logs", "order": 1,
+			"state": "completed", "result": "succeeded", "log": map[string]any{"id": logID}},
+	})
 	id := stableJobID(wfJob.JobID)
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d/logs", id))
@@ -233,8 +241,8 @@ func TestActionsJobs_Logs(t *testing.T) {
 	}
 	body, _ := io.ReadAll(w.Body)
 	got := string(body)
-	if got != "line one\nline two\n" {
-		t.Errorf("logs body = %q, want \"line one\\nline two\\n\"", got)
+	if got != "uploaded line one\nuploaded line two\n" {
+		t.Errorf("logs body = %q, want uploaded log bytes", got)
 	}
 }
 

@@ -14,6 +14,7 @@ package bleephub
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"hash/fnv"
 	"net/http"
@@ -701,9 +702,8 @@ func (s *Server) handleGetWorkflowJob(w http.ResponseWriter, r *http.Request) {
 
 // handleGetWorkflowJobLogs — GET .../actions/jobs/{job_id}/logs
 // Real GitHub returns text/plain logs (sometimes 302 to a pre-signed
-// URL). Bleephub serves the complete log the runner uploaded when the
-// job's timeline records reference log files, falling back to the live
-// console capture in `store.LogLines`.
+// URL). Bleephub serves the complete log from the runner-uploaded log
+// files referenced by the job's timeline records.
 func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request) {
 	if !s.enforceRepoReadable(w, r) {
 		return
@@ -718,26 +718,42 @@ func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.store.mu.RLock()
-	content := s.jobLogContentLocked(j.JobID)
-	s.store.mu.RUnlock()
+	content, ok, readErr := s.jobLogContent(r.Context(), j.JobID)
+	if readErr != nil {
+		writeGHError(w, http.StatusInternalServerError, "log byte-store read: "+readErr.Error())
+		return
+	}
+	if !ok {
+		writeGHError(w, http.StatusNotFound, "Logs not found")
+		return
+	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(content)
 }
 
-// jobLogContentLocked assembles the job's complete log: the runner-
-// uploaded log files referenced by the job's Task records, concatenated
-// in step Order; when none were uploaded, the captured console lines.
-// Caller must hold store.mu.
-func (s *Server) jobLogContentLocked(jobUUID string) []byte {
+type jobLogRef struct {
+	ID   int
+	Name string
+}
+
+// jobLogContent assembles the job's complete log from runner-uploaded
+// log files referenced by the job's Task records, concatenated in step
+// Order. Live console capture is not a durable log artifact and is never
+// used as a download substitute.
+func (s *Server) jobLogContent(ctx context.Context, jobUUID string) ([]byte, bool, error) {
+	s.store.mu.RLock()
+	refs := s.jobLogRefsLocked(jobUUID)
+	memoryLogs := s.memoryLogFilesForDownloadLocked(refs)
+	s.store.mu.RUnlock()
+
 	var buf bytes.Buffer
-	for _, rec := range s.taskRecordsForJobLocked(jobUUID) {
-		if rec.Log == nil {
-			continue
+	for _, ref := range refs {
+		content, ok, err := s.logFileContent(ctx, ref.ID, memoryLogs[ref.ID])
+		if err != nil {
+			return nil, false, err
 		}
-		content := s.store.LogFiles[rec.Log.ID]
-		if len(content) == 0 {
+		if !ok {
 			continue
 		}
 		buf.Write(content)
@@ -746,15 +762,56 @@ func (s *Server) jobLogContentLocked(jobUUID string) []byte {
 		}
 	}
 	if buf.Len() > 0 {
-		return buf.Bytes()
+		return buf.Bytes(), true, nil
 	}
-	for _, line := range s.store.LogLines[jobUUID] {
-		buf.WriteString(line)
-		if !strings.HasSuffix(line, "\n") {
-			buf.WriteByte('\n')
+	return nil, false, nil
+}
+
+// jobLogRefsLocked returns the runner-uploaded log references for the job
+// in step order. Caller must hold store.mu.
+func (s *Server) jobLogRefsLocked(jobUUID string) []jobLogRef {
+	tasks := s.taskRecordsForJobLocked(jobUUID)
+	refs := make([]jobLogRef, 0, len(tasks))
+	for _, rec := range tasks {
+		if rec.Log == nil {
+			continue
+		}
+		refs = append(refs, jobLogRef{ID: rec.Log.ID, Name: rec.Name})
+	}
+	return refs
+}
+
+// memoryLogFilesForDownloadLocked snapshots runner-uploaded log bytes only
+// when no object byte store is configured. Production object-store mode
+// reads logs back from the byte store, proving the durable path works.
+func (s *Server) memoryLogFilesForDownloadLocked(refs []jobLogRef) map[int][]byte {
+	if s.artifactStore.byteStore != nil {
+		return nil
+	}
+	out := make(map[int][]byte, len(refs))
+	for _, ref := range refs {
+		if content := s.store.LogFiles[ref.ID]; len(content) > 0 {
+			out[ref.ID] = append([]byte(nil), content...)
 		}
 	}
-	return buf.Bytes()
+	return out
+}
+
+func (s *Server) logFileContent(ctx context.Context, logID int, memoryContent []byte) ([]byte, bool, error) {
+	if s.artifactStore.byteStore != nil {
+		content, err := s.artifactStore.byteStore.Get(ctx, logDataKey(logID))
+		if err != nil {
+			return nil, false, err
+		}
+		if len(content) == 0 {
+			return nil, false, nil
+		}
+		return content, true, nil
+	}
+	if len(memoryContent) == 0 {
+		return nil, false, nil
+	}
+	return memoryContent, true, nil
 }
 
 // handleCancelWorkflowRun — POST .../actions/runs/{run_id}/cancel

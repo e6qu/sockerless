@@ -350,7 +350,15 @@ func TestReviewCustomDeploymentProtectionRule(t *testing.T) {
 }
 
 func TestRunAttemptLogs_ServesAttemptArchive(t *testing.T) {
-	wf, _ := seedRun(t, testServer, "logs-org/logs-repo", "completed", "success")
+	wf, job := seedRun(t, testServer, "logs-org/logs-repo", "completed", "success")
+	planID, timelineID := linkJobToPlan(t, testServer, job)
+	logID := createLogFile(t, testServer, planID)
+	uploadLogBlock(t, testServer, planID, logID, []byte("attempt uploaded log\n"))
+	patchTimelineRecords(t, testServer, planID, timelineID, true, []map[string]any{
+		{"id": uuid.New().String(), "type": "Task", "name": "attempt step", "order": 1,
+			"state": "completed", "result": "succeeded", "log": map[string]any{"id": logID}},
+	})
+
 	resp := ghGet(t, fmt.Sprintf("/api/v3/repos/logs-org/logs-repo/actions/runs/%d/attempts/1/logs", wf.RunID), defaultToken)
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -377,8 +385,12 @@ func TestRunAttemptLogs_ServesAttemptArchive(t *testing.T) {
 		rc.Close()
 		contents = append(contents, string(b))
 	}
-	if len(contents) == 0 || !strings.Contains(strings.Join(contents, ""), "line one") {
-		t.Fatalf("attempt log zip missing the job's console lines: %v", contents)
+	joined := strings.Join(contents, "")
+	if len(contents) == 0 || !strings.Contains(joined, "attempt uploaded log") {
+		t.Fatalf("attempt log zip missing uploaded log bytes: %v", contents)
+	}
+	if strings.Contains(joined, "line one") {
+		t.Fatalf("attempt log zip leaked console capture: %v", contents)
 	}
 
 	// Unknown attempt 404s.

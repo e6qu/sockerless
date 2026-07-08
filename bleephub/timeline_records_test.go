@@ -432,6 +432,34 @@ func TestLogfilesUpload_WritesObjectStore(t *testing.T) {
 	}
 }
 
+func TestJobLogs_ReadsUploadedLogFilesFromObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTimelineTestServer()
+	s.artifactStore = NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
+	planID, timelineID := linkJobToPlan(t, s, wfJob)
+
+	logID := createLogFile(t, s, planID)
+	uploadLogBlock(t, s, planID, logID, []byte("object-store job log\n"))
+	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
+		{"id": uuid.New().String(), "type": "Task", "name": "object step", "order": 1,
+			"state": "completed", "result": "succeeded", "log": map[string]any{"id": logID}},
+	})
+
+	s.store.mu.Lock()
+	delete(s.store.LogFiles, logID)
+	s.store.mu.Unlock()
+
+	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d/logs", stableJobID(wfJob.JobID)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "object-store job log\n" {
+		t.Fatalf("job log body = %q, want object-store bytes", got)
+	}
+}
+
 func TestLogfilesUpload_CapsAtFourMiBWithMarker(t *testing.T) {
 	s := newTimelineTestServer()
 	planID := uuid.New().String()
@@ -577,13 +605,14 @@ func TestJobLogs_PrefersUploadedLogFiles(t *testing.T) {
 	}
 }
 
-func TestJobLogs_ConsoleFallbackWhenNoUploads(t *testing.T) {
+func TestJobLogs_NoUploadedLogFilesFailsLoud(t *testing.T) {
 	s := newTimelineTestServer()
 	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
 	planID, timelineID := linkJobToPlan(t, s, wfJob)
 
-	// Records exist but reference no uploaded logs — fall back to the
-	// console capture seedRun installed.
+	// Records exist but reference no uploaded logs. The public download
+	// endpoint must not substitute live console capture for durable log
+	// artifacts.
 	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
 		{"id": uuid.New().String(), "type": "Task", "name": "one", "order": 1,
 			"state": "completed", "result": "succeeded"},
@@ -591,8 +620,11 @@ func TestJobLogs_ConsoleFallbackWhenNoUploads(t *testing.T) {
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d/logs", stableJobID(wfJob.JobID)))
 	body, _ := io.ReadAll(w.Body)
-	if string(body) != "line one\nline two\n" {
-		t.Errorf("logs body = %q, want console fallback", body)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", w.Code, body)
+	}
+	if strings.Contains(string(body), "line one") || strings.Contains(string(body), "line two") {
+		t.Fatalf("logs response leaked console capture: %q", body)
 	}
 }
 
@@ -649,32 +681,18 @@ func TestRunLogsZip_GitHubArchiveLayout(t *testing.T) {
 	}
 }
 
-func TestRunLogsZip_FallbackFlatLayoutWithoutRecords(t *testing.T) {
+func TestRunLogsZip_NoUploadedLogFilesFailsLoud(t *testing.T) {
 	s := newTimelineTestServer()
 	s.registerGHActionsExtrasRoutes()
 	wf, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
 	linkJobToPlan(t, s, wfJob)
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/logs", wf.RunID))
-	if w.Code != http.StatusOK {
-		t.Fatalf("status = %d", w.Code)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
 	}
-	zr, err := zip.NewReader(bytes.NewReader(w.Body.Bytes()), int64(w.Body.Len()))
-	if err != nil {
-		t.Fatalf("read zip: %v", err)
-	}
-	if len(zr.File) != 1 {
-		t.Fatalf("zip entries = %v, want the single console-capture file", entryNames(zr))
-	}
-	wantName := fmt.Sprintf("build_%s.txt", wfJob.JobID)
-	if zr.File[0].Name != wantName {
-		t.Errorf("entry = %q, want %q", zr.File[0].Name, wantName)
-	}
-	rc, _ := zr.File[0].Open()
-	content, _ := io.ReadAll(rc)
-	rc.Close()
-	if !strings.Contains(string(content), "line one") {
-		t.Errorf("fallback entry content = %q, want console lines", content)
+	if strings.Contains(w.Body.String(), wfJob.JobID) || strings.Contains(w.Body.String(), "line one") {
+		t.Fatalf("run logs response leaked console capture/job identity: %q", w.Body.String())
 	}
 }
 

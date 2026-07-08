@@ -351,7 +351,7 @@ func (s *Server) handleRunAttemptLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.writeRunLogsZip(w, wf, runID)
+	s.writeRunLogsZip(r.Context(), w, wf, runID)
 }
 
 // handleWorkflowFileTiming — GET .../actions/workflows/{workflow_id}/timing.
