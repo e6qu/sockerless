@@ -114,18 +114,19 @@ gh auth setup-git --hostname "$HOST" >/dev/null 2>&1 || true
 
 # `api` for endpoints `gh` doesn't expose as a high-level command
 # (apps/{slug}, /applications/{cid}/token, suspend, etc.). For the
-# happy-path repo/issue/PR/release surface, use real `gh repo create`,
-# `gh issue create`, `gh pr create`, `gh release create` below.
+# happy-path repository/issue/pull-request/release surface, use real
+# `gh repo create`, `gh issue create`, `gh pr create`, `gh release create`
+# below.
 api() {
     gh api -H "Authorization: token $TOKEN" -H "Accept: application/vnd.github+json" "$@"
 }
 
 # ============================================================
-# Test: API Root
+# Test: application programming interface root
 # ============================================================
-log "Test: API Root"
+log "Test: application programming interface root"
 ROOT=$(api "$BASE/api/v3/")
-assert_contains "API root has current_user_url" "$ROOT" "current_user_url"
+assert_contains "application programming interface root has current_user_url" "$ROOT" "current_user_url"
 
 # ============================================================
 # Test: Viewer (current user)
@@ -238,12 +239,13 @@ ISSUE_STATE=$(echo "$ISSUE_GET" | jq -r '.state')
 assert_eq "issue 1 state after gh issue create" "open" "$ISSUE_STATE"
 
 # ============================================================
-# Test: View issue via real `gh issue view` (REST-backed, --json optional)
+# Test: View issue via real `gh issue view` (Representational State Transfer-backed, --json optional)
 # ============================================================
 log "Test: gh issue view"
-# `gh issue view N --repo …` uses the REST API directly; --json args go
-# through GraphQL on real GH. We test the REST-only path here by NOT
-# passing --json — gh prints a human-readable summary on success.
+# `gh issue view N --repo ...` uses the Representational State Transfer
+# application programming interface directly; --json args go through GraphQL on
+# real GitHub. This checks the Representational State Transfer-only path by not
+# passing --json; gh prints a human-readable summary on success.
 if gh issue view 1 --repo admin/gh-test-repo >/dev/null 2>&1; then
     pass "gh issue view"
 else
@@ -377,12 +379,14 @@ RATE_LIMIT=$(echo "$RATE" | jq -r '.resources.core.limit')
 assert_eq "rate limit core.limit" "5000" "$RATE_LIMIT"
 
 # ============================================================
-# Test: Org lifecycle (via API)
+# Test: organization lifecycle (via application programming interface)
 # ============================================================
-# Org creation has no GitHub REST equivalent (admin API / web UI only), so
-# bleephub exposes it as sim-control at /internal/orgs. Listing the authed
-# user's orgs (GET /user/orgs) is real GitHub and stays below.
-log "Test: Create org"
+# Organization creation has no GitHub Representational State Transfer
+# equivalent (GitHub Enterprise Server admin application programming interface
+# and browser user interface only), so Bleephub exposes it as an operator-only
+# setup route at /internal/orgs. Listing the authenticated user's organizations
+# (GET /user/orgs) is real GitHub and stays below.
+log "Test: Create organization"
 ORG=$(api "$BASE/internal/orgs" -f login=gh-test-org -f name="Test Org")
 ORG_LOGIN=$(echo "$ORG" | jq -r '.login')
 assert_eq "org login" "gh-test-org" "$ORG_LOGIN"
@@ -442,10 +446,25 @@ fi
 # ============================================================
 log "GitHub Apps + OAuth Apps surface"
 
-# Create a GitHub App with explicit permissions + events
-APP=$(api "$BASE/internal/apps" -f name="Parity App" -f description="parity test" \
-    -f 'permissions[issues]=write' -f 'permissions[checks]=write' \
-    -f 'events[]=push' -f 'events[]=installation')
+# Create a GitHub App with explicit permissions + events through the GitHub
+# App Manifest flow.
+MANIFEST=$(jq -nc '{
+    name: "Parity App",
+    description: "parity test",
+    url: "https://example.test/app",
+    redirect_url: "https://example.test/callback",
+    default_permissions: {issues: "write", checks: "write"},
+    default_events: ["push", "installation"]
+}')
+MANIFEST_HEADERS=$(curl -sSk -o /dev/null -D - -X POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode "manifest=$MANIFEST" \
+    "$BASE/settings/apps/new")
+MANIFEST_LOCATION=$(printf '%s\n' "$MANIFEST_HEADERS" | awk 'tolower($1) == "location:" {print $2}' | tr -d '\r')
+MANIFEST_CODE=$(printf '%s\n' "$MANIFEST_LOCATION" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+assert_not_empty "GitHub App manifest conversion code" "$MANIFEST_CODE"
+APP=$(curl -sSk -X POST "$BASE/api/v3/app-manifests/$MANIFEST_CODE/conversions")
 APP_ID=$(echo "$APP" | jq -r '.id')
 APP_SLUG=$(echo "$APP" | jq -r '.slug')
 assert_not_empty "app id"   "$APP_ID"
@@ -458,10 +477,13 @@ assert_eq "GET /apps/{slug} anon" "$APP_SLUG" "$SLUG_FROM_PUBLIC"
 PEM_LEAK=$(echo "$APP_BY_SLUG" | jq -r '.pem // ""')
 assert_eq "public app no PEM leak" "" "$PEM_LEAK"
 
-# Create an installation
-INST=$(api "$BASE/internal/apps/$APP_ID/installations" \
-    -f target_type=User -f target_id=1 -f target_login=admin \
-    -f 'permissions[issues]=write' -f 'permissions[checks]=write')
+# Create an installation through the signed-in GitHub App browser flow.
+INST=$(curl -sSk -X POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/x-www-form-urlencoded" \
+    --data-urlencode target_login=admin \
+    --data-urlencode repository_selection=all \
+    "$BASE/apps/$APP_SLUG/installations/new")
 INST_ID=$(echo "$INST" | jq -r '.id')
 assert_not_empty "installation id" "$INST_ID"
 SELECTION=$(echo "$INST" | jq -r '.repository_selection')
@@ -473,7 +495,7 @@ case "$ACCESS_URL" in
     *) fail "access_tokens_url shape: $ACCESS_URL" ;;
 esac
 
-# Suspend / unsuspend (sim mgmt path)
+# Suspend / unsuspend through the operator-only management path.
 SUSPEND_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
     "$BASE/internal/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
 assert_eq "suspend installation 204" "204" "$SUSPEND_CODE"
@@ -802,14 +824,14 @@ cd "$ORIG_DIR"
 log "Native gh verb coverage complete"
 
 # ============================================================
-# Org surface — gh org list (native verb) plus the membership /
-# team / global-list endpoints via gh api.
+# Organization surface: `gh org list` (native verb) plus the membership,
+# team, and global-list endpoints via `gh api`.
 # ============================================================
 log "Org surface…"
 
 if api -X POST "$BASE/api/v3/admin/organizations" \
     -f login=gh-native-org -f admin=admin >/dev/null 2>&1; then
-    pass "create org via GHES admin API"
+    pass "create organization via GitHub Enterprise Server admin application programming interface"
 else
     fail "POST /admin/organizations gh-native-org"
 fi

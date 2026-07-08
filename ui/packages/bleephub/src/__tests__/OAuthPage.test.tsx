@@ -54,13 +54,12 @@ const oauthState = {
 };
 
 describe("OAuthPage", () => {
-  it("renders the flow simulator + tables", async () => {
+  it("renders the OAuth flow controls and tables", async () => {
     mockFetch.mockResolvedValue(jsonResponse(oauthState));
     renderPage();
     await waitFor(() => {
-      // The simulator section header is rendered with uppercase via CSS;
-      // multiple buttons mention "flow", so anchor on the section label.
-      expect(screen.getAllByText(/flow simulator/i).length).toBeGreaterThan(0);
+      // Multiple buttons mention "flow", so anchor on the section label.
+      expect(screen.getAllByText(/OAuth flow controls/i).length).toBeGreaterThan(0);
       expect(screen.getByText(/active device codes/i)).toBeInTheDocument();
       expect(screen.getByText(/active authorization codes/i)).toBeInTheDocument();
     });

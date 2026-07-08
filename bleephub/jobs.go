@@ -10,10 +10,11 @@ import (
 )
 
 func (s *Server) registerJobRoutes() {
-	// Sim-only job/workflow control plane. GitHub has NO equivalent (jobs are
-	// children of workflow runs created via dispatch/push), so these live
-	// under /internal/exec/ — the sim-control namespace — never under the
-	// GitHub-compatible /api/ surface.
+	// Operator-only job/workflow control plane. GitHub has no equivalent: jobs
+	// are children of workflow runs created via workflow_dispatch, push, or
+	// repository_dispatch events. These routes are compatibility debt under
+	// /internal/exec/, never the GitHub-compatible application programming
+	// interface surface.
 	s.route("POST /internal/exec/submit", s.handleSubmitJob)
 	s.route("GET /internal/exec/jobs/{jobId}", s.handleGetJobStatus)
 
@@ -418,7 +419,7 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 		})
 	}
 
-	// Generate a proper JWT for the job token
+	// Generate a proper JSON Web Token for the job token.
 	jobToken := makeJWT(scopeID, "actions")
 
 	// Build the full message matching runner.server format

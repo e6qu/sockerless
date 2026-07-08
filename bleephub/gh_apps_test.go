@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-// --- Unit tests (store + JWT) ---
+// --- Unit tests (store + JSON Web Token) ---
 
 func TestAppStoreCreateAndGet(t *testing.T) {
 	st := NewStore()
@@ -170,50 +170,50 @@ func TestManifestCodeOneTimeUse(t *testing.T) {
 	}
 }
 
-func TestJWTSignAndVerify(t *testing.T) {
+func TestJSONWebTokenSignAndVerify(t *testing.T) {
 	st := NewStore()
-	app := st.CreateApp(1, "JWT App", "", nil, nil)
+	app := st.CreateApp(1, "JSON Web Token App", "", nil, nil)
 
 	jwt, err := signAppJWT(app.PEMPrivateKey, app.ID, time.Now())
 	if err != nil {
-		t.Fatalf("signAppJWT: %v", err)
+		t.Fatalf("signAppJSONWebToken: %v", err)
 	}
 
 	got, err := st.parseAndVerifyAppJWT(jwt)
 	if err != nil {
-		t.Fatalf("parseAndVerifyAppJWT: %v", err)
+		t.Fatalf("parseAndVerifyAppJSONWebToken: %v", err)
 	}
 	if got.ID != app.ID {
 		t.Fatalf("expected app ID=%d, got %d", app.ID, got.ID)
 	}
 }
 
-func TestJWTExpiredRejected(t *testing.T) {
+func TestJSONWebTokenExpiredRejected(t *testing.T) {
 	st := NewStore()
-	app := st.CreateApp(1, "Expired JWT App", "", nil, nil)
+	app := st.CreateApp(1, "Expired JSON Web Token App", "", nil, nil)
 
 	// Sign with a time in the past
 	jwt, err := signAppJWT(app.PEMPrivateKey, app.ID, time.Now().Add(-20*time.Minute))
 	if err != nil {
-		t.Fatalf("signAppJWT: %v", err)
+		t.Fatalf("signAppJSONWebToken: %v", err)
 	}
 
 	_, err = st.parseAndVerifyAppJWT(jwt)
 	if err == nil {
-		t.Fatal("expected error for expired JWT")
+		t.Fatal("expected error for expired JSON Web Token")
 	}
 	if !strings.Contains(err.Error(), "expired") {
 		t.Fatalf("expected 'expired' in error, got: %v", err)
 	}
 }
 
-// TestJWTExpWindow pins GitHub's exp-claim window: exp may sit at most 10
+// TestJSONWebTokenExpWindow pins GitHub's exp-claim window: exp may sit at most 10
 // minutes (plus clock-drift tolerance) ahead of the SERVER clock. The
 // distance between iat and exp is NOT constrained — a client that backdates
 // iat for clock skew (ghinstallation sets iat=now-60) must stay valid.
-func TestJWTExpWindow(t *testing.T) {
+func TestJSONWebTokenExpWindow(t *testing.T) {
 	st := NewStore()
-	app := st.CreateApp(1, "Long JWT App", "", nil, nil)
+	app := st.CreateApp(1, "Long JSON Web Token App", "", nil, nil)
 
 	block, _ := pemDecode(app.PEMPrivateKey)
 	if block == nil {
@@ -221,7 +221,7 @@ func TestJWTExpWindow(t *testing.T) {
 	}
 	privKey, _ := parseRSAKey(block)
 
-	mintJWT := func(iat, exp int64) string {
+	mintJSONWebToken := func(iat, exp int64) string {
 		header := testBase64urlEncode([]byte(`{"alg":"RS256","typ":"JWT"}`))
 		payload := fmt.Sprintf(`{"iss":"%d","iat":%d,"exp":%d}`, app.ID, iat, exp)
 		payloadEnc := testBase64urlEncode([]byte(payload))
@@ -234,7 +234,7 @@ func TestJWTExpWindow(t *testing.T) {
 	now := time.Now().Unix()
 
 	// exp beyond now+600+drift → rejected.
-	if _, err := st.parseAndVerifyAppJWT(mintJWT(now, now+700)); err == nil {
+	if _, err := st.parseAndVerifyAppJWT(mintJSONWebToken(now, now+700)); err == nil {
 		t.Fatal("expected error for exp too far in the future")
 	} else if !strings.Contains(err.Error(), "too far in the future") {
 		t.Fatalf("expected 'too far in the future' in error, got: %v", err)
@@ -242,24 +242,24 @@ func TestJWTExpWindow(t *testing.T) {
 
 	// Backdated iat with exp inside the window → valid even though
 	// exp-iat exceeds 600 (matches real GitHub).
-	if _, err := st.parseAndVerifyAppJWT(mintJWT(now-300, now+500)); err != nil {
-		t.Fatalf("backdated-iat JWT inside the exp window must verify, got: %v", err)
+	if _, err := st.parseAndVerifyAppJWT(mintJSONWebToken(now-300, now+500)); err != nil {
+		t.Fatalf("backdated-iat JSON Web Token inside the exp window must verify, got: %v", err)
 	}
 
 	// iat in the future beyond drift → rejected.
-	if _, err := st.parseAndVerifyAppJWT(mintJWT(now+120, now+500)); err == nil {
+	if _, err := st.parseAndVerifyAppJWT(mintJSONWebToken(now+120, now+500)); err == nil {
 		t.Fatal("expected error for future iat")
 	}
 }
 
-func TestJWTWrongAppID(t *testing.T) {
+func TestJSONWebTokenWrongAppIdentifier(t *testing.T) {
 	st := NewStore()
 	app := st.CreateApp(1, "Wrong ID App", "", nil, nil)
 
-	// Sign with wrong app ID
+	// Sign with the wrong app identifier.
 	jwt, err := signAppJWT(app.PEMPrivateKey, 9999, time.Now())
 	if err != nil {
-		t.Fatalf("signAppJWT: %v", err)
+		t.Fatalf("signAppJSONWebToken: %v", err)
 	}
 
 	_, err = st.parseAndVerifyAppJWT(jwt)
@@ -271,22 +271,22 @@ func TestJWTWrongAppID(t *testing.T) {
 	}
 }
 
-func TestJWTInvalidSignature(t *testing.T) {
+func TestJSONWebTokenInvalidSignature(t *testing.T) {
 	st := NewStore()
 	app := st.CreateApp(1, "Bad Sig App", "", nil, nil)
 
 	jwt, err := signAppJWT(app.PEMPrivateKey, app.ID, time.Now())
 	if err != nil {
-		t.Fatalf("signAppJWT: %v", err)
+		t.Fatalf("signAppJSONWebToken: %v", err)
 	}
 
 	parts := strings.SplitN(jwt, ".", 3)
 	if len(parts) != 3 {
-		t.Fatalf("expected JWT to have 3 parts, got %d", len(parts))
+		t.Fatalf("expected JSON Web Token to have 3 parts, got %d", len(parts))
 	}
 	sig, err := base64urlDecode(parts[2])
 	if err != nil {
-		t.Fatalf("decode JWT signature: %v", err)
+		t.Fatalf("decode JSON Web Token signature: %v", err)
 	}
 	sig[0] ^= 0xff
 	tampered := parts[0] + "." + parts[1] + "." + testBase64urlEncode(sig)
@@ -316,18 +316,9 @@ func TestDeleteInstallation(t *testing.T) {
 
 // --- Integration tests (HTTP) ---
 
-func TestCreateAppViaManagement(t *testing.T) {
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name":        "Integration Test App",
-		"description": "An app for testing",
-		"permissions": map[string]string{"contents": "read", "issues": "write"},
-		"events":      []string{"push", "issues"},
-	})
-	if resp.StatusCode != 201 {
-		resp.Body.Close()
-		t.Fatalf("expected 201, got %d", resp.StatusCode)
-	}
-	data := decodeJSON(t, resp)
+func TestCreateAppViaManifest(t *testing.T) {
+	data := createGitHubAppViaManifest(t, "Integration Test App",
+		map[string]string{"contents": "read", "issues": "write"}, []string{"push", "issues"})
 
 	if data["id"] == nil || data["id"].(float64) == 0 {
 		t.Fatal("expected non-zero app ID")
@@ -340,71 +331,27 @@ func TestCreateAppViaManagement(t *testing.T) {
 	}
 }
 
-func TestAppManifestFlow(t *testing.T) {
-	// Create app via management
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "Manifest Flow App",
-	})
-	if resp.StatusCode != 201 {
-		resp.Body.Close()
-		t.Fatalf("create app: expected 201, got %d", resp.StatusCode)
-	}
-	appData := decodeJSON(t, resp)
-	appID := int(appData["id"].(float64))
-
-	// Register manifest code (direct store access via test server's shared state)
-	req, _ := http.NewRequest("GET", testBaseURL+"/health", nil)
-	httpResp, _ := http.DefaultClient.Do(req)
-	httpResp.Body.Close()
-
-	// We need to register a manifest code — use the management API pattern.
-	// Since there's no management endpoint for codes, we'll access the store directly
-	// through a workaround: create a second app via manifest conversion.
-	// Actually, let's use the store directly through the test server.
-	// The test shares the process so we can access the global. Let's use a simpler approach:
-	// Create the code via direct store call (tests run in same package).
-
-	// This is acceptable since TestMain creates the server in-process.
-	// We need access to the server's store. Since we don't have a global ref,
-	// let's test the manifest conversion via a helper that creates a code.
-	// For integration test, we'll test the HTTP endpoint with a pre-registered code.
-
-	// For this test, let's use the store CRUD unit tests above to verify code behavior,
-	// and test the HTTP endpoint by making an HTTP POST to the conversion endpoint.
-	// We need a way to register the code. Let's add a management endpoint approach:
-	// Actually the cleanest way is to just test the 404 case for invalid code,
-	// and trust the unit tests for the full flow.
-
-	// Test that invalid code returns 404
+func TestAppManifestInvalidConversionCode404(t *testing.T) {
 	resp2 := ghPost(t, "/api/v3/app-manifests/invalid-code/conversions", "", nil)
 	if resp2.StatusCode != 404 {
 		resp2.Body.Close()
 		t.Fatalf("expected 404 for invalid code, got %d", resp2.StatusCode)
 	}
 	resp2.Body.Close()
-	_ = appID // used for context above
 }
 
 func TestGetAuthenticatedApp(t *testing.T) {
-	// Create app
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "JWT Auth App",
-	})
-	if resp.StatusCode != 201 {
-		resp.Body.Close()
-		t.Fatalf("create app: expected 201, got %d", resp.StatusCode)
-	}
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "JSON Web Token Auth App", nil, nil)
 	appID := int(appData["id"].(float64))
 	pem := appData["pem"].(string)
 
-	// Sign JWT
+	// Sign the JSON Web Token.
 	jwt, err := signAppJWT(pem, appID, time.Now())
 	if err != nil {
-		t.Fatalf("signAppJWT: %v", err)
+		t.Fatalf("signAppJSONWebToken: %v", err)
 	}
 
-	// GET /app with JWT
+	// GET /app with a JSON Web Token.
 	req, _ := http.NewRequest("GET", testBaseURL+"/api/v3/app", nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
 	httpResp, err := http.DefaultClient.Do(req)
@@ -416,8 +363,8 @@ func TestGetAuthenticatedApp(t *testing.T) {
 		t.Fatalf("expected 200, got %d", httpResp.StatusCode)
 	}
 	data := decodeJSON(t, httpResp)
-	if data["name"] != "JWT Auth App" {
-		t.Fatalf("expected name=JWT Auth App, got %v", data["name"])
+	if data["name"] != "JSON Web Token Auth App" {
+		t.Fatalf("expected name=JSON Web Token Auth App, got %v", data["name"])
 	}
 	if data["pem"] != nil {
 		t.Fatal("PEM should not be in GET /app response")
@@ -453,37 +400,22 @@ func TestGetAuthenticatedApp(t *testing.T) {
 	}
 }
 
-func TestGetAuthenticatedAppNoJWT401(t *testing.T) {
-	// GET /app with PAT (not JWT) should 401
+func TestGetAuthenticatedAppNoJSONWebToken401(t *testing.T) {
+	// GET /app with a personal access token, not a JSON Web Token, should 401.
 	resp := ghGet(t, "/api/v3/app", defaultToken)
 	if resp.StatusCode != 401 {
 		resp.Body.Close()
-		t.Fatalf("expected 401 for PAT auth on /app, got %d", resp.StatusCode)
+		t.Fatalf("expected 401 for personal access token authentication on /app, got %d", resp.StatusCode)
 	}
 	resp.Body.Close()
 }
 
 func TestCreateInstallationHTTP(t *testing.T) {
-	// Create app
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "Install HTTP App",
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "Install HTTP App", map[string]string{"contents": "read"}, []string{"push"})
 	appID := int(appData["id"].(float64))
+	appSlug := appData["slug"].(string)
 
-	// Create installation via management
-	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_type":  "User",
-		"target_id":    1,
-		"target_login": "admin",
-		"permissions":  map[string]string{"contents": "read"},
-		"events":       []string{"push"},
-	})
-	if resp2.StatusCode != 201 {
-		resp2.Body.Close()
-		t.Fatalf("expected 201, got %d", resp2.StatusCode)
-	}
-	instData := decodeJSON(t, resp2)
+	instData := installGitHubAppViaBrowser(t, appSlug, "admin", "all")
 	if instData["app_id"].(float64) != float64(appID) {
 		t.Fatalf("expected app_id=%d, got %v", appID, instData["app_id"])
 	}
@@ -493,19 +425,13 @@ func TestCreateInstallationHTTP(t *testing.T) {
 }
 
 func TestListAppInstallationsHTTP(t *testing.T) {
-	// Create app + installation
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "List Inst App",
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "List Inst App", nil, nil)
 	appID := int(appData["id"].(float64))
 	pem := appData["pem"].(string)
 
-	ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "admin",
-	}).Body.Close()
+	installGitHubAppViaBrowser(t, appData["slug"].(string), "admin", "all")
 
-	// List via JWT
+	// List via a JSON Web Token.
 	jwt, _ := signAppJWT(pem, appID, time.Now())
 	req, _ := http.NewRequest("GET", testBaseURL+"/api/v3/app/installations", nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
@@ -526,23 +452,14 @@ func TestListAppInstallationsHTTP(t *testing.T) {
 }
 
 func TestCreateInstallationTokenHTTP(t *testing.T) {
-	// Create app + installation
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name":        "Token HTTP App",
-		"permissions": map[string]string{"contents": "write"},
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "Token HTTP App", map[string]string{"contents": "write"}, nil)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "admin",
-		"permissions":  map[string]string{"contents": "write"},
-	})
-	instData := decodeJSON(t, resp2)
+	instData := installGitHubAppViaBrowser(t, appData["slug"].(string), "admin", "all")
 	instID := int(instData["id"].(float64))
 
-	// Create installation token via JWT
+	// Create an installation token via a JSON Web Token.
 	jwt, _ := signAppJWT(pemKey, appID, time.Now())
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/app/installations/%d/access_tokens", testBaseURL, instID), nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
@@ -573,18 +490,11 @@ func TestCreateInstallationTokenHTTP(t *testing.T) {
 }
 
 func TestInstallationTokenAuth(t *testing.T) {
-	// Create app + installation + token
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "Token Auth App",
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "Token Auth App", nil, nil)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "admin",
-	})
-	instData := decodeJSON(t, resp2)
+	instData := installGitHubAppViaBrowser(t, appData["slug"].(string), "admin", "all")
 	instID := int(instData["id"].(float64))
 
 	jwt, _ := signAppJWT(pemKey, appID, time.Now())
@@ -594,7 +504,8 @@ func TestInstallationTokenAuth(t *testing.T) {
 	tokData := decodeJSON(t, httpResp)
 	ghsToken := tokData["token"].(string)
 
-	// Use ghs_ token to call an API endpoint (e.g. GET /api/v3/user)
+	// Use the installation token to call a GitHub application programming
+	// interface endpoint.
 	req2, _ := http.NewRequest("GET", testBaseURL+"/api/v3/user", nil)
 	req2.Header.Set("Authorization", "Bearer "+ghsToken)
 	resp3, err := http.DefaultClient.Do(req2)
@@ -613,28 +524,17 @@ func TestInstallationTokenAuth(t *testing.T) {
 }
 
 func TestInstallationTokenWrongApp(t *testing.T) {
-	// Create two apps
-	resp1 := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "App A Wrong",
-	})
-	appA := decodeJSON(t, resp1)
-	appAID := int(appA["id"].(float64))
+	appA := createGitHubAppViaManifest(t, "App A Wrong", nil, nil)
 
-	resp2 := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "App B Wrong",
-	})
-	appB := decodeJSON(t, resp2)
+	appB := createGitHubAppViaManifest(t, "App B Wrong", nil, nil)
 	appBPEM := appB["pem"].(string)
 	appBID := int(appB["id"].(float64))
 
-	// Create installation for app A
-	resp3 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appAID), defaultToken, map[string]interface{}{
-		"target_login": "admin",
-	})
-	instData := decodeJSON(t, resp3)
+	// Create an installation for app A.
+	instData := installGitHubAppViaBrowser(t, appA["slug"].(string), "admin", "all")
 	instAID := int(instData["id"].(float64))
 
-	// Try to create token for app A's installation using app B's JWT
+	// Try to create a token for app A's installation using app B's JSON Web Token.
 	jwt, _ := signAppJWT(appBPEM, appBID, time.Now())
 	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/api/v3/app/installations/%d/access_tokens", testBaseURL, instAID), nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
@@ -659,16 +559,10 @@ func TestGetRepoInstallationHTTP(t *testing.T) {
 		"name": "somerepo",
 	}).Body.Close()
 
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "Repo Inst App",
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "Repo Inst App", nil, nil)
 	appID := int(appData["id"].(float64))
 
-	ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "repo-inst-owner",
-		"target_type":  "Organization",
-	}).Body.Close()
+	installGitHubAppViaBrowser(t, appData["slug"].(string), "repo-inst-owner", "all")
 
 	// GET /repos/{owner}/{repo}/installation
 	resp2 := ghGet(t, "/api/v3/repos/repo-inst-owner/somerepo/installation", defaultToken)
@@ -699,21 +593,14 @@ func TestGetRepoInstallationHTTP(t *testing.T) {
 }
 
 func TestDeleteInstallationHTTP(t *testing.T) {
-	// Create app + installation
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name": "Delete Inst App",
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, "Delete Inst App", nil, nil)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
 
-	resp2 := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "admin",
-	})
-	instData := decodeJSON(t, resp2)
+	instData := installGitHubAppViaBrowser(t, appData["slug"].(string), "admin", "all")
 	instID := int(instData["id"].(float64))
 
-	// Delete via JWT
+	// Delete via a JSON Web Token.
 	jwt, _ := signAppJWT(pemKey, appID, time.Now())
 	req, _ := http.NewRequest("DELETE", fmt.Sprintf("%s/api/v3/app/installations/%d", testBaseURL, instID), nil)
 	req.Header.Set("Authorization", "Bearer "+jwt)
@@ -738,12 +625,12 @@ func TestDeleteInstallationHTTP(t *testing.T) {
 	httpResp2.Body.Close()
 }
 
-func TestExistingPATAuthUnaffected(t *testing.T) {
-	// Verify PAT still works for existing endpoints
+func TestExistingPersonalAccessTokenAuthUnaffected(t *testing.T) {
+	// Verify personal access token authentication still works for existing endpoints.
 	resp := ghGet(t, "/api/v3/user", defaultToken)
 	if resp.StatusCode != 200 {
 		resp.Body.Close()
-		t.Fatalf("expected 200 for PAT auth, got %d", resp.StatusCode)
+		t.Fatalf("expected 200 for personal access token authentication, got %d", resp.StatusCode)
 	}
 	data := decodeJSON(t, resp)
 	if data["login"] != "admin" {
@@ -759,7 +646,7 @@ func TestExistingPATAuthUnaffected(t *testing.T) {
 	resp2.Body.Close()
 }
 
-// --- Helpers for TestJWTTooLongLifetime ---
+// --- Helpers for JSON Web Token lifetime tests ---
 
 func pemDecode(pemStr string) (*pem.Block, []byte) {
 	return pem.Decode([]byte(pemStr))
@@ -779,10 +666,10 @@ func rsaSign(key *rsa.PrivateKey, hash []byte) []byte {
 	return sig
 }
 
-// TestJWTAlgorithmRejection: only RS256 authenticates /app endpoints. An
+// TestJSONWebTokenAlgorithmRejection: only RS256 authenticates /app endpoints. An
 // unsigned (alg=none) or HMAC-flavoured token must never resolve to an app,
 // no matter how well-formed the claims are.
-func TestJWTAlgorithmRejection(t *testing.T) {
+func TestJSONWebTokenAlgorithmRejection(t *testing.T) {
 	st := NewStore()
 	app := st.CreateApp(1, "Alg App", "", nil, nil)
 	now := time.Now().Unix()

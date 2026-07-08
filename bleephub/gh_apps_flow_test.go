@@ -23,6 +23,70 @@ var noRedirectClient = &http.Client{
 	},
 }
 
+func createGitHubAppViaManifest(t *testing.T, name string, perms map[string]string, events []string) map[string]interface{} {
+	t.Helper()
+	manifest := map[string]interface{}{
+		"name":                name,
+		"url":                 "https://example.test/app",
+		"redirect_url":        "https://example.test/callback",
+		"default_permissions": perms,
+		"default_events":      events,
+	}
+	manifestJSON, _ := json.Marshal(manifest)
+	form := url.Values{"manifest": {string(manifestJSON)}}
+	req, _ := http.NewRequest("POST", testBaseURL+"/settings/apps/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err := noRedirectClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("manifest submission: got %d, want 302", resp.StatusCode)
+	}
+	loc, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatalf("parse manifest redirect: %v", err)
+	}
+	code := loc.Query().Get("code")
+	if code == "" {
+		t.Fatal("manifest redirect carries no code")
+	}
+	convResp := ghPost(t, "/api/v3/app-manifests/"+code+"/conversions", "", nil)
+	if convResp.StatusCode != http.StatusCreated {
+		convResp.Body.Close()
+		t.Fatalf("manifest conversion: got %d, want 201", convResp.StatusCode)
+	}
+	return decodeJSON(t, convResp)
+}
+
+func installGitHubAppViaBrowser(t *testing.T, appSlug, targetLogin, selection string, repoIDs ...int) map[string]interface{} {
+	t.Helper()
+	form := url.Values{}
+	if targetLogin != "" {
+		form.Set("target_login", targetLogin)
+	}
+	if selection != "" {
+		form.Set("repository_selection", selection)
+	}
+	for _, id := range repoIDs {
+		form.Add("repository_ids", fmt.Sprint(id))
+	}
+	req, _ := http.NewRequest("POST", testBaseURL+"/apps/"+appSlug+"/installations/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusCreated {
+		resp.Body.Close()
+		t.Fatalf("GitHub App browser installation: got %d, want 201", resp.StatusCode)
+	}
+	return decodeJSON(t, resp)
+}
+
 func TestAppManifestFlowEndToEnd(t *testing.T) {
 	// 1. Submit the manifest form (the github.com/settings/apps/new POST).
 	manifest := map[string]interface{}{
@@ -83,7 +147,8 @@ func TestAppManifestFlowEndToEnd(t *testing.T) {
 		t.Fatalf("code reuse: got %d, want 404", convAgain.StatusCode)
 	}
 
-	// 3. The returned PEM signs a JWT that authenticates GET /app.
+	// 3. The returned Privacy Enhanced Mail key signs a JSON Web Token that
+	// authenticates GET /app.
 	jwt, err := signAppJWT(pemKey, appID, time.Now())
 	if err != nil {
 		t.Fatal(err)
@@ -91,7 +156,7 @@ func TestAppManifestFlowEndToEnd(t *testing.T) {
 	appResp := ghGet(t, "/api/v3/app", jwt)
 	if appResp.StatusCode != http.StatusOK {
 		appResp.Body.Close()
-		t.Fatalf("GET /app with manifest JWT: got %d, want 200", appResp.StatusCode)
+		t.Fatalf("GET /app with manifest JSON Web Token: got %d, want 200", appResp.StatusCode)
 	}
 	got := decodeJSON(t, appResp)
 	if got["slug"] != "manifest-flow-app" {
@@ -113,32 +178,24 @@ func TestAppManifestFlowEndToEnd(t *testing.T) {
 	}
 }
 
-// installAppOnOrg provisions an app + an org (owned by admin) + an org repo
-// + an installation carrying the given permissions; returns appID, pem, instID.
-func installAppOnOrg(t *testing.T, orgLogin, repoName string, perms map[string]string) (int, string, int) {
+// installAppOnOrg provisions an app, an organization owned by admin, an
+// organization repository, and an installation carrying the given permissions;
+// it returns appID, slug, pem, and instID.
+func installAppOnOrg(t *testing.T, orgLogin, repoName string, perms map[string]string) (int, string, string, int) {
 	t.Helper()
 	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": orgLogin}).Body.Close()
 	ghPost(t, "/api/v3/orgs/"+orgLogin+"/repos", defaultToken, map[string]interface{}{"name": repoName}).Body.Close()
 
-	resp := ghPost(t, "/internal/apps", defaultToken, map[string]interface{}{
-		"name":        orgLogin + "-app",
-		"permissions": perms,
-	})
-	appData := decodeJSON(t, resp)
+	appData := createGitHubAppViaManifest(t, orgLogin+"-app", perms, nil)
 	appID := int(appData["id"].(float64))
 	pemKey := appData["pem"].(string)
-
-	instResp := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": orgLogin,
-		"target_type":  "Organization",
-		"permissions":  perms,
-	})
-	instData := decodeJSON(t, instResp)
-	return appID, pemKey, int(instData["id"].(float64))
+	appSlug := appData["slug"].(string)
+	instData := installGitHubAppViaBrowser(t, appSlug, orgLogin, "all")
+	return appID, appSlug, pemKey, int(instData["id"].(float64))
 }
 
 func TestInstallationTokenDownscoping(t *testing.T) {
-	appID, pemKey, instID := installAppOnOrg(t, "downscope-org", "scoped-repo",
+	appID, _, pemKey, instID := installAppOnOrg(t, "downscope-org", "scoped-repo",
 		map[string]string{"contents": "read", "issues": "write"})
 	jwt, err := signAppJWT(pemKey, appID, time.Now())
 	if err != nil {
@@ -254,7 +311,7 @@ func TestInstallationTokenDownscoping(t *testing.T) {
 }
 
 func TestInstallationSuspensionBlocksTokens(t *testing.T) {
-	appID, pemKey, instID := installAppOnOrg(t, "suspend-org", "suspend-repo",
+	appID, _, pemKey, instID := installAppOnOrg(t, "suspend-org", "suspend-repo",
 		map[string]string{"contents": "read"})
 	jwt, err := signAppJWT(pemKey, appID, time.Now())
 	if err != nil {
@@ -276,14 +333,15 @@ func TestInstallationSuspensionBlocksTokens(t *testing.T) {
 		t.Fatalf("pre-suspension: got %d, want 200", before.StatusCode)
 	}
 
-	// Suspend (JWT-auth PUT, the real endpoint).
+	// Suspend through the JSON Web Token-authenticated endpoint.
 	susp := ghPut(t, fmt.Sprintf("/api/v3/app/installations/%d/suspended", instID), jwt, nil)
 	susp.Body.Close()
 	if susp.StatusCode != http.StatusNoContent {
 		t.Fatalf("suspend: got %d, want 204", susp.StatusCode)
 	}
 
-	// Existing tokens die for the whole API surface while suspended.
+	// Existing tokens die for the whole application programming interface
+	// surface while suspended.
 	during := ghGet(t, "/api/v3/installation/repositories", tokenStr)
 	during.Body.Close()
 	if during.StatusCode != http.StatusForbidden {
@@ -327,7 +385,7 @@ func TestInstallationSuspensionBlocksTokens(t *testing.T) {
 }
 
 func TestOrgInstallationsList(t *testing.T) {
-	appID, _, instID := installAppOnOrg(t, "instlist-org", "instlist-repo",
+	appID, appSlug, _, instID := installAppOnOrg(t, "instlist-org", "instlist-repo",
 		map[string]string{"contents": "read"})
 
 	resp := ghGet(t, "/api/v3/orgs/instlist-org/installations", defaultToken)
@@ -346,10 +404,14 @@ func TestOrgInstallationsList(t *testing.T) {
 	}
 
 	// Installing the same app twice on one target is rejected.
-	dup := ghPost(t, fmt.Sprintf("/internal/apps/%d/installations", appID), defaultToken, map[string]interface{}{
-		"target_login": "instlist-org",
-		"target_type":  "Organization",
-	})
+	form := url.Values{"target_login": {"instlist-org"}}
+	req, _ := http.NewRequest("POST", testBaseURL+"/apps/"+appSlug+"/installations/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "token "+defaultToken)
+	dup, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
 	dup.Body.Close()
 	if dup.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("duplicate installation: got %d, want 422", dup.StatusCode)

@@ -120,7 +120,7 @@ describe("RunnersPage", () => {
     });
   });
 
-  it("lists registered runners from the GitHub REST endpoint with label pills and busy state", async () => {
+  it("lists registered runners from the GitHub Representational State Transfer endpoint with label pills and busy state", async () => {
     installMocks();
     renderPage();
     await waitFor(() => {

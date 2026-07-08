@@ -75,7 +75,7 @@ export function OAuthPage() {
     <div>
       <PageTitle
         title="OAuth flows"
-        meta="Device flow + web flow simulator. Mint codes, exchange tokens, watch the live state below."
+        meta="Device flow and web flow controls. Mint codes, exchange tokens, watch the live state below."
         actions={
           <Button size="sm" variant="secondary" onClick={() => refetch()}>
             <RefreshIcon size={14} /> Refresh
@@ -107,32 +107,16 @@ function FlowSimulator() {
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function startWebFlow(auto: boolean) {
+  function startWebFlow() {
     setError(null);
     setResult(null);
     const url =
       `/login/oauth/authorize?client_id=${encodeURIComponent(clientID)}` +
       `&redirect_uri=${encodeURIComponent(redirectURI)}` +
       `&scope=${encodeURIComponent(scope)}` +
-      `&state=${encodeURIComponent(state)}` +
-      (auto ? "&auto=1" : "");
-    if (auto) {
-      try {
-        const res = await fetch(url, { redirect: "manual" });
-        if (res.status === 0 || res.type === "opaqueredirect") {
-          setResult(`(opaque redirect — open ${url} to see the redirect target)`);
-        } else if (res.status === 302) {
-          setResult(`302 → ${res.headers.get("Location") ?? "(no Location header)"}`);
-        } else {
-          setResult(`${res.status} (unexpected — auto=1 should 302)`);
-        }
-      } catch (e) {
-        setError(String(e));
-      }
-    } else {
-      window.open(url, "_blank", "noopener");
-      setResult(`Opened ${url} in a new tab.`);
-    }
+      `&state=${encodeURIComponent(state)}`;
+    window.open(url, "_blank", "noopener");
+    setResult(`Opened ${url} in a new tab.`);
   }
 
   async function startDeviceFlow() {
@@ -153,20 +137,17 @@ function FlowSimulator() {
   }
 
   return (
-    <Box className="mb-6" header={<span style={{ fontWeight: 600, color: "var(--color-fg)" }}>Flow simulator</span>}>
+    <Box className="mb-6" header={<span style={{ fontWeight: 600, color: "var(--color-fg)" }}>OAuth flow controls</span>}>
       <div style={{ padding: "1rem" }}>
         <div className="mb-4 grid gap-3 md:grid-cols-2">
-          <Field label="Client ID" value={clientID} onChange={setClientID} />
+          <Field label="Client identifier" value={clientID} onChange={setClientID} />
           <Field label="State" value={state} onChange={setState} />
-          <Field label="Redirect URI" value={redirectURI} onChange={setRedirectURI} />
+          <Field label="Redirect Uniform Resource Identifier" value={redirectURI} onChange={setRedirectURI} />
           <Field label="Scope" value={scope} onChange={setScope} />
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="primary" size="sm" onClick={() => startWebFlow(true)}>
-            Web flow (auto)
-          </Button>
-          <Button variant="secondary" size="sm" onClick={() => startWebFlow(false)}>
-            Web flow → form
+          <Button variant="primary" size="sm" onClick={startWebFlow}>
+            Web flow
           </Button>
           <Button variant="secondary" size="sm" onClick={startDeviceFlow}>
             Device flow

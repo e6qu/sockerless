@@ -45,15 +45,15 @@ describe("LoginPage", () => {
     expect(getToken()).toBe("ghp_validpat");
   });
 
-  it("rejects a gho_ token at login with a PAT/admin-token message", async () => {
-    // /internal/* only accepts PATs — an OAuth token gets a 401 here even
-    // though /api/v3/user would have accepted it.
+  it("rejects a gho_ token at login with a personal-access-token or admin-token message", async () => {
+    // /internal/* only accepts personal access tokens. An OAuth token gets a
+    // 401 here even though /api/v3/user would have accepted it.
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ message: "Requires authentication" }), { status: 401 }),
     );
     submitToken("gho_oauthtoken");
     await waitFor(() => {
-      expect(screen.getByText(/personal access token \(PAT\) or the admin token/i)).toBeInTheDocument();
+      expect(screen.getByText(/personal access token or the admin token/i)).toBeInTheDocument();
     });
     expect(window.location.href).toBe("");
     expect(getToken()).toBeNull();

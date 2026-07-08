@@ -3,9 +3,9 @@ package bleephub
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -67,13 +67,9 @@ func TestInstallationCreatedFiresAppWebhook(t *testing.T) {
 		a.WebhookSecret = "shh"
 	})
 
-	// Fire CreateInstallation via the management endpoint (PAT auth bypasses perms).
-	reqBody, _ := json.Marshal(map[string]any{
-		"target_type":  "User",
-		"target_id":    1,
-		"target_login": user.Login,
-	})
-	req := httptest.NewRequest("POST", fmt.Sprintf("/internal/apps/%d/installations", app.ID), bytes.NewReader(reqBody))
+	form := url.Values{"target_login": {user.Login}, "repository_selection": {"all"}}
+	req := httptest.NewRequest("POST", "/apps/"+app.Slug+"/installations/new", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
 	w := httptest.NewRecorder()
 	s.internalAuthMiddleware(s.mux).ServeHTTP(w, req)

@@ -417,17 +417,14 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			// issue has been added to via addProjectV2ItemById.
 			"projectItems": &graphql.Field{
 				Type: projectV2ItemConnectionType(),
-				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"after": &graphql.ArgumentConfig{Type: graphql.String},
-				},
+				Args: relayConnectionArgs(),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					i, ok := p.Source.(map[string]interface{})
 					if !ok {
 						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
 					}
 					issueID, _ := i["databaseId"].(int)
-					return projectItemsConnectionForIssue(s.store, issueID), nil
+					return projectItemsConnectionForIssue(s.store, issueID, p.Args), nil
 				},
 			},
 			"comments": &graphql.Field{
@@ -1616,6 +1613,15 @@ func gqlPageInfoType() *graphql.Object {
 	return gqlPageInfoTypeMemo
 }
 
+func relayConnectionArgs() graphql.FieldConfigArgument {
+	return graphql.FieldConfigArgument{
+		"first":  &graphql.ArgumentConfig{Type: graphql.Int},
+		"after":  &graphql.ArgumentConfig{Type: graphql.String},
+		"last":   &graphql.ArgumentConfig{Type: graphql.Int},
+		"before": &graphql.ArgumentConfig{Type: graphql.String},
+	}
+}
+
 func issueFieldValuesConnectionLocked(st *Store, issue *Issue) map[string]interface{} {
 	repo := st.Repos[issue.RepoID]
 	org := ""
@@ -1972,8 +1978,13 @@ func paginateIssuesGQL(issues []*Issue, st *Store, first int, after string) map[
 // projectItemsForGraphQL.
 var (
 	projectV2TypeMemo                *graphql.Object
+	projectV2FieldTypeMemo           *graphql.Object
+	projectV2FieldConnectionMemo     *graphql.Object
+	projectV2ViewTypeMemo            *graphql.Object
+	projectV2ViewConnectionMemo      *graphql.Object
 	projectV2ItemTypeMemo            *graphql.Object
 	projectV2ItemConnectionTypeMemo  *graphql.Object
+	projectV2ItemsFieldAdded         bool
 	projectV2SingleSelectValueMemo   *graphql.Object
 	projectV2TextValueMemo           *graphql.Object
 	projectV2NumberValueMemo         *graphql.Object
@@ -2006,7 +2017,172 @@ func projectV2GraphQLTypes() *graphql.Object {
 			"url":    &graphql.Field{Type: graphql.String},
 		},
 	})
+	projectV2TypeMemo.AddFieldConfig("fields", &graphql.Field{
+		Type: projectV2FieldConnectionType(),
+		Args: relayConnectionArgs(),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			st, projectID, err := projectV2SourceStoreAndID(p.Source)
+			if err != nil {
+				return nil, err
+			}
+			fields := st.ProjectsV2.FieldsForProject(projectID)
+			nodes := make([]map[string]interface{}, 0, len(fields))
+			for _, f := range fields {
+				nodes = append(nodes, projectV2FieldToGQL(f))
+			}
+			return paginateGQLMaps(nodes, p.Args), nil
+		},
+	})
+	projectV2TypeMemo.AddFieldConfig("views", &graphql.Field{
+		Type: projectV2ViewConnectionType(),
+		Args: relayConnectionArgs(),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			st, projectID, err := projectV2SourceStoreAndID(p.Source)
+			if err != nil {
+				return nil, err
+			}
+			views := st.ProjectsV2.ViewsForProject(projectID)
+			nodes := make([]map[string]interface{}, 0, len(views))
+			for _, v := range views {
+				nodes = append(nodes, projectV2ViewToGQL(v))
+			}
+			return paginateGQLMaps(nodes, p.Args), nil
+		},
+	})
 	return projectV2TypeMemo
+}
+
+func ensureProjectV2ItemsField() {
+	if projectV2TypeMemo == nil || projectV2ItemConnectionTypeMemo == nil || projectV2ItemsFieldAdded {
+		return
+	}
+	projectV2TypeMemo.AddFieldConfig("items", &graphql.Field{
+		Type: projectV2ItemConnectionTypeMemo,
+		Args: relayConnectionArgs(),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			st, projectID, err := projectV2SourceStoreAndID(p.Source)
+			if err != nil {
+				return nil, err
+			}
+			items := st.ProjectsV2.ListItemsForProject(projectID)
+			nodes := make([]map[string]interface{}, 0, len(items))
+			for _, it := range items {
+				nodes = append(nodes, projectV2ItemToGQL(it, st))
+			}
+			return paginateGQLMaps(nodes, p.Args), nil
+		},
+	})
+	projectV2ItemsFieldAdded = true
+}
+
+func projectV2FieldConnectionType() *graphql.Object {
+	if projectV2FieldConnectionMemo != nil {
+		return projectV2FieldConnectionMemo
+	}
+	optionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2SingleSelectFieldOption",
+		Fields: graphql.Fields{
+			"id":          &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"name":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"color":       &graphql.Field{Type: graphql.String},
+			"description": &graphql.Field{Type: graphql.String},
+		},
+	})
+	iterationType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2Iteration",
+		Fields: graphql.Fields{
+			"id":        &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"title":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"startDate": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"duration":  &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+		},
+	})
+	iterationConfigurationType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2IterationConfiguration",
+		Fields: graphql.Fields{
+			"startDate":  &graphql.Field{Type: graphql.String},
+			"duration":   &graphql.Field{Type: graphql.Int},
+			"iterations": &graphql.Field{Type: graphql.NewList(iterationType)},
+		},
+	})
+	projectV2FieldTypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2Field",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["nodeID"], nil
+				},
+			},
+			"name":                   &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"dataType":               &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"options":                &graphql.Field{Type: graphql.NewList(optionType)},
+			"iterationConfiguration": &graphql.Field{Type: iterationConfigurationType},
+			"createdAt":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":              &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		},
+	})
+	projectV2FieldConnectionMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2FieldConnection",
+		Fields: graphql.Fields{
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2FieldTypeMemo)},
+			"edges":      &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{Name: "ProjectV2FieldEdge", Fields: graphql.Fields{"node": &graphql.Field{Type: projectV2FieldTypeMemo}, "cursor": &graphql.Field{Type: graphql.NewNonNull(graphql.String)}}}))},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(gqlPageInfoType())},
+		},
+	})
+	return projectV2FieldConnectionMemo
+}
+
+func projectV2ViewConnectionType() *graphql.Object {
+	if projectV2ViewConnectionMemo != nil {
+		return projectV2ViewConnectionMemo
+	}
+	projectV2ViewTypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2View",
+		Fields: graphql.Fields{
+			"id": &graphql.Field{
+				Type: graphql.NewNonNull(graphql.ID),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["nodeID"], nil
+				},
+			},
+			"number":    &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"name":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"layout":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"filter":    &graphql.Field{Type: graphql.String},
+			"createdAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"visibleFieldIds": &graphql.Field{
+				Type: graphql.NewList(graphql.NewNonNull(graphql.Int)),
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["visibleFieldIds"], nil
+				},
+			},
+		},
+	})
+	projectV2ViewConnectionMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ViewConnection",
+		Fields: graphql.Fields{
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ViewTypeMemo)},
+			"edges":      &graphql.Field{Type: graphql.NewList(graphql.NewObject(graphql.ObjectConfig{Name: "ProjectV2ViewEdge", Fields: graphql.Fields{"node": &graphql.Field{Type: projectV2ViewTypeMemo}, "cursor": &graphql.Field{Type: graphql.NewNonNull(graphql.String)}}}))},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(gqlPageInfoType())},
+		},
+	})
+	return projectV2ViewConnectionMemo
 }
 
 func projectV2ItemConnectionType() *graphql.Object {
@@ -2197,11 +2373,11 @@ func projectV2ItemConnectionType() *graphql.Object {
 			},
 		},
 	})
-	projectV2ItemPageInfoType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "ProjectV2ItemPageInfo",
+	projectV2ItemEdgeType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemEdge",
 		Fields: graphql.Fields{
-			"hasNextPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"endCursor":   &graphql.Field{Type: graphql.String},
+			"node":   &graphql.Field{Type: projectV2ItemTypeMemo},
+			"cursor": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 		},
 	})
 	projectV2ItemConnectionTypeMemo = graphql.NewObject(graphql.ObjectConfig{
@@ -2209,9 +2385,11 @@ func projectV2ItemConnectionType() *graphql.Object {
 		Fields: graphql.Fields{
 			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
 			"nodes":      &graphql.Field{Type: graphql.NewList(projectV2ItemTypeMemo)},
-			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(projectV2ItemPageInfoType)},
+			"edges":      &graphql.Field{Type: graphql.NewList(projectV2ItemEdgeType)},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(gqlPageInfoType())},
 		},
 	})
+	ensureProjectV2ItemsField()
 	return projectV2ItemConnectionTypeMemo
 }
 
@@ -2223,7 +2401,7 @@ func projectV2ItemConnectionType() *graphql.Object {
 func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
 	var projectMap map[string]interface{}
 	if p := st.ProjectsV2.GetProject(it.ProjectID); p != nil {
-		projectMap = projectV2ToGQL(p)
+		projectMap = projectV2ToGQL(p, st)
 	}
 	byName := map[string]interface{}{}
 	for fieldID, val := range it.FieldValues {
@@ -2271,8 +2449,10 @@ func projectV2FieldValueToGQL(v *ProjectV2ItemFieldValue, f *ProjectV2Field) map
 }
 
 // projectV2ToGQL renders a project as a GraphQL source map.
-func projectV2ToGQL(p *ProjectV2) map[string]interface{} {
+func projectV2ToGQL(p *ProjectV2, st *Store) map[string]interface{} {
 	return map[string]interface{}{
+		"id":     p.ID,
+		"store":  st,
 		"nodeID": p.NodeID,
 		"number": p.Number,
 		"title":  p.Title,
@@ -2282,20 +2462,85 @@ func projectV2ToGQL(p *ProjectV2) map[string]interface{} {
 	}
 }
 
+func projectV2SourceStoreAndID(source interface{}) (*Store, int, error) {
+	src, ok := source.(map[string]interface{})
+	if !ok {
+		return nil, 0, fmt.Errorf("resolve source: unexpected type %T", source)
+	}
+	st, ok := src["store"].(*Store)
+	if !ok || st == nil {
+		return nil, 0, fmt.Errorf("project source missing store")
+	}
+	id, ok := src["id"].(int)
+	if !ok || id == 0 {
+		return nil, 0, fmt.Errorf("project source missing id")
+	}
+	return st, id, nil
+}
+
+func projectV2FieldToGQL(f *ProjectV2Field) map[string]interface{} {
+	options := make([]map[string]interface{}, 0, len(f.Options))
+	for _, opt := range f.Options {
+		options = append(options, map[string]interface{}{
+			"id":          opt.ID,
+			"name":        opt.Name,
+			"color":       opt.Color,
+			"description": opt.Description,
+		})
+	}
+	var iteration map[string]interface{}
+	if f.Iteration != nil {
+		iterations := make([]map[string]interface{}, 0, len(f.Iteration.Iterations))
+		for _, it := range f.Iteration.Iterations {
+			iterations = append(iterations, map[string]interface{}{
+				"id":        it.ID,
+				"title":     it.Title,
+				"startDate": it.StartDate,
+				"duration":  it.Duration,
+			})
+		}
+		iteration = map[string]interface{}{
+			"startDate":  f.Iteration.StartDate,
+			"duration":   f.Iteration.Duration,
+			"iterations": iterations,
+		}
+	}
+	return map[string]interface{}{
+		"nodeID":                 f.NodeID,
+		"name":                   f.Name,
+		"dataType":               string(f.DataType),
+		"options":                options,
+		"iterationConfiguration": iteration,
+		"createdAt":              f.CreatedAt.UTC().Format(time.RFC3339),
+		"updatedAt":              f.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
+func projectV2ViewToGQL(v *ProjectV2View) map[string]interface{} {
+	var filter interface{}
+	if v.Filter != nil {
+		filter = *v.Filter
+	}
+	visible := append([]int(nil), v.VisibleFields...)
+	return map[string]interface{}{
+		"nodeID":          v.NodeID,
+		"number":          v.Number,
+		"name":            v.Name,
+		"layout":          v.Layout,
+		"filter":          filter,
+		"visibleFieldIds": visible,
+		"createdAt":       v.CreatedAt.UTC().Format(time.RFC3339),
+		"updatedAt":       v.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+}
+
 // projectItemsConnectionForIssue returns the source map for the
 // Issue.projectItems / PullRequest.projectItems connection.
-func projectItemsConnectionForIssue(st *Store, issueID int) map[string]interface{} {
+func projectItemsConnectionForIssue(st *Store, issueID int, args map[string]interface{}) map[string]interface{} {
 	items := st.ProjectsV2.ListItemsForIssue(issueID)
 	nodes := make([]map[string]interface{}, 0, len(items))
 	for _, it := range items {
 		nodes = append(nodes, projectV2ItemToGQL(it, st))
 	}
-	return map[string]interface{}{
-		"totalCount": len(nodes),
-		"nodes":      nodes,
-		"pageInfo": map[string]interface{}{
-			"hasNextPage": false,
-			"endCursor":   nil,
-		},
-	}
+	return paginateGQLMaps(nodes, args)
 }

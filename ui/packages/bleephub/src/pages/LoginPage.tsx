@@ -18,7 +18,7 @@ export function LoginPage() {
       window.location.href = "/ui/";
     } else {
       setError(
-        "Token rejected. The dashboard needs a personal access token (PAT) or the admin token — gho_/ghu_/ghs_ OAuth and installation tokens are not accepted.",
+        "Token rejected. The dashboard needs a personal access token or the admin token; gho_, ghu_, and ghs_ OAuth and installation tokens are not accepted.",
       );
       setVerifying(false);
     }
@@ -32,7 +32,7 @@ export function LoginPage() {
       <div className="mb-5 flex flex-col items-center gap-2">
         <Mark size={42} />
         <h1 style={{ fontSize: "1.4rem", fontWeight: 600, color: "var(--color-fg)" }}>
-          Sign in to bleephub
+          Sign in to Bleephub
         </h1>
       </div>
       <div

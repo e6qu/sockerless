@@ -246,11 +246,11 @@ export async function verifyToken(token: string): Promise<boolean> {
   return res.ok;
 }
 
-// The /internal/* create + oauth-apps management endpoints return GitHub's
-// snake_case wire shape (client_id, callback_url, created_at). The UI's
-// types are camelCase, so normalize at this boundary. Fields are mapped
-// 1:1 from the server contract — no defaults, so a contract break shows
-// as undefined rather than a plausible-looking blank.
+// The OAuth Apps management surface returns GitHub's snake_case wire shape
+// (client_id, callback_url, created_at). The user interface types are
+// camelCase, so normalize at this boundary. Fields are mapped 1:1 from the
+// server contract, with no defaults, so a contract break shows as undefined
+// rather than a plausible-looking blank.
 function normalizeOAuthApp(raw: WireOAuthApp): BleephubOAuthApp {
   return {
     clientId: raw.client_id,
@@ -269,22 +269,50 @@ export async function createApp(payload: {
   permissions?: Record<string, string>;
   events?: string[];
 }): Promise<{ clientId: string; pem: string; client_secret: string; webhook_secret: string }> {
-  const res = await fetch("/internal/apps", {
+  const origin = globalThis.location?.origin || "http://localhost";
+  const redirectUrl = `${origin}/ui/apps`;
+  const manifest = {
+    name: payload.name,
+    url: origin,
+    redirect_url: redirectUrl,
+    description: payload.description || "",
+    default_permissions: payload.permissions || {},
+    default_events: payload.events || [],
+  };
+  const form = new URLSearchParams();
+  form.set("manifest", JSON.stringify(manifest));
+
+  const createRes = await fetch("/settings/apps/new", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       ...authHeaders(),
     },
-    body: JSON.stringify(payload),
+    body: form,
+    redirect: "manual",
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`createApp ${res.status}: ${text || res.statusText}`);
+  if (createRes.status !== 302 && createRes.status !== 303) {
+    const text = await createRes.text();
+    throw new Error(`createApp manifest ${createRes.status}: ${text || createRes.statusText}`);
   }
-  // appToJSON returns the GitHub snake_case app shape plus the once-shown
-  // secrets; the create dialog only needs the client id + secrets, surfaced
-  // here as the camelCase clientId it reads.
-  const raw = (await res.json()) as WireAppCreated;
+  const location = createRes.headers.get("Location");
+  if (!location) {
+    throw new Error("createApp manifest: missing redirect Location header");
+  }
+  const code = new URL(location, origin).searchParams.get("code");
+  if (!code) {
+    throw new Error("createApp manifest: missing conversion code");
+  }
+
+  const convertRes = await fetch(`/api/v3/app-manifests/${encodeURIComponent(code)}/conversions`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!convertRes.ok) {
+    const text = await convertRes.text();
+    throw new Error(`createApp conversion ${convertRes.status}: ${text || convertRes.statusText}`);
+  }
+  const raw = (await convertRes.json()) as WireAppCreated;
   return {
     clientId: raw.client_id,
     pem: raw.pem,
@@ -681,7 +709,7 @@ export const fetchWebhooks = (owner: string, repo: string) =>
   ghFetch<GithubWebhook[]>(`/api/v3/repos/${owner}/${repo}/hooks`);
 
 // Secrets + environments come back in GitHub's list envelope
-// ({secrets:[…], total_count}) — unwrap to the array the UI renders.
+// ({secrets:[…], total_count}) — unwrap to the array the user interface renders.
 // No `?? []`: if the server ever stops sending the array, the missing
 // field should surface as an error, not a silent "none configured".
 export const fetchSecrets = (owner: string, repo: string) =>
@@ -707,7 +735,7 @@ export const fetchEnvironments = (owner: string, repo: string) =>
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);
 
-// ─── GitHub Actions REST ────────────────────────────────────────────────
+// ─── GitHub Actions Representational State Transfer ─────────────────────
 
 /**
  * One page of a GitHub envelope list ({total_count, <key>: [...]}) plus
@@ -1359,7 +1387,7 @@ export const putDependabotRepoSecret = (
 export const deleteDependabotRepoSecret = (owner: string, repo: string, name: string) =>
   ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/dependabot/secrets/${encodeURIComponent(name)}`);
 
-// ─── GitHub Security Advisories REST ────────────────────────────────────
+// ─── GitHub Security Advisories Representational State Transfer ─────────
 
 export const fetchSecurityAdvisories = (owner: string, repo: string) =>
   ghFetch<GithubSecurityAdvisory[]>(`/api/v3/repos/${owner}/${repo}/security-advisories`);
@@ -1379,7 +1407,7 @@ export const reportVulnerability = (
   payload: GithubVulnerabilityReportPayload,
 ) => ghPostJSON<GithubSecurityAdvisory>(`/api/v3/repos/${owner}/${repo}/security-advisories/reports`, payload);
 
-// ─── GitHub Organization Rulesets REST ──────────────────────────────────
+// ─── GitHub Organization Rulesets Representational State Transfer ───────
 
 export const fetchOrgRulesets = (org: string) =>
   ghFetch<GithubRuleset[]>(`/api/v3/orgs/${org}/rulesets`);
@@ -1393,7 +1421,7 @@ export const updateOrgRuleset = (org: string, rulesetId: number, payload: Github
 export const deleteOrgRuleset = (org: string, rulesetId: number) =>
   ghDeleteJSON<void>(`/api/v3/orgs/${org}/rulesets/${rulesetId}`, {});
 
-// ─── GitHub Migrations REST ─────────────────────────────────────────────
+// ─── GitHub Migrations Representational State Transfer ──────────────────
 
 type MigrationScope = { kind: "user" } | { kind: "org"; org: string };
 
@@ -1451,7 +1479,7 @@ export async function downloadMigrationArchive(
   URL.revokeObjectURL(url);
 }
 
-// ─── GitHub Codespaces REST ─────────────────────────────────────────────
+// ─── GitHub Codespaces Representational State Transfer ──────────────────
 
 export const fetchUserCodespaces = () =>
   ghFetchEnvelope<GithubCodespace>("/api/v3/user/codespaces", "codespaces");
@@ -1479,7 +1507,7 @@ export const fetchCodespaceMachines = (owner: string, repo: string) =>
 
 export const fetchCurrentUser = () => ghFetch<BleephubUser>("/api/v3/user");
 
-// ─── GitHub Packages REST ───────────────────────────────────────────────
+// ─── GitHub Packages Representational State Transfer ────────────────────
 
 export type PackageScope =
   | { kind: "user"; username: string }

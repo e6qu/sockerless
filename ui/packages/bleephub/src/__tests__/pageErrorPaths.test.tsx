@@ -125,9 +125,9 @@ const PAGES: Array<{ name: string; routePath: string; entry: string; element: Re
 // Any InlineError/ErrorBanner surface the pages under test render.
 const ERROR_TEXT = /Failed to (load|resolve)|Search failed|Invalid webhook route/i;
 
-describe("page error paths — HTTP 500 degrades to a visible error, never a crash", () => {
+describe("page error paths — Hypertext Transfer Protocol 500 degrades to a visible error, never a crash", () => {
   for (const p of PAGES) {
-    it(`${p.name} renders an error surface when the API returns 500`, async () => {
+    it(`${p.name} renders an error surface when the application programming interface returns 500`, async () => {
       mockFetch.mockResolvedValue(jsonResponse({ message: "Internal Server Error" }, 500));
       renderAt(p.routePath, p.entry, p.element);
       const errs = await screen.findAllByText(ERROR_TEXT, undefined, { timeout: 3000 });

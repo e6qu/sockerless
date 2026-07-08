@@ -13,7 +13,7 @@ import (
 )
 
 // OAuth applications token management endpoints.
-// Real GitHub exposes a parallel surface for OAuth Apps + GitHub Apps acting
+// Real GitHub exposes a parallel surface for OAuth Apps and GitHub Apps acting
 // as OAuth clients. Authentication is HTTP Basic with client_id:client_secret.
 // `client_id` resolves to either an OAuth App or a GitHub App (looked up in
 // Store.OAuthApps then Store.AppsByClientID).
@@ -32,8 +32,11 @@ func (s *Server) registerGHAppsOAuthMgmtRoutes() {
 	s.route("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
 	s.route("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
 
-	// OAuth App management. GitHub has NO REST API to create/list OAuth Apps
-	// (web UI only), so this is sim-control under /internal/, never /api/.
+	// OAuth App management. GitHub has no public Representational State
+	// Transfer application programming interface to create or list OAuth Apps;
+	// the real surface is browser settings. These operator-only routes are
+	// compatibility debt under /internal/, never the GitHub-compatible
+	// application programming interface surface.
 	s.route("POST /internal/oauth-apps", s.handleCreateOAuthAppMgmt)
 	s.route("GET /internal/oauth-apps", s.handleListOAuthAppsMgmt)
 }
@@ -89,7 +92,7 @@ func (s *Server) handleCheckOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	// Token must belong to this client_id (either as OAuth App or as GitHub App's OAuth client).
+	// Token must belong to this client_id, either as an OAuth App token or as a GitHub App OAuth client token.
 	if !tokenMatchesClient(tok, clientID, s.store) {
 		writeGHError(w, http.StatusUnprocessableEntity, "token does not match client_id")
 		return
@@ -386,7 +389,7 @@ func hashedToken(token string) string {
 
 // authorizationID derives a stable positive integer id for an authorization
 // from its token value. GitHub exposes a separate int authorization id; the
-// sim doesn't store one, so we derive it deterministically from the token.
+// Bleephub does not store one, so derive it deterministically from the token.
 func authorizationID(token string) int {
 	sum := sha256.Sum256([]byte(token))
 	id := int(binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff)

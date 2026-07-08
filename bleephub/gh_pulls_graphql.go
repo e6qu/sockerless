@@ -870,10 +870,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			// addProjectV2ItemById.
 			"projectItems": &graphql.Field{
 				Type: projectV2ItemConnectionType(),
-				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"after": &graphql.ArgumentConfig{Type: graphql.String},
-				},
+				Args: relayConnectionArgs(),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr, ok := p.Source.(map[string]interface{})
 					if !ok {
@@ -885,14 +882,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					for _, it := range items {
 						nodes = append(nodes, projectV2ItemToGQL(it, s.store))
 					}
-					return map[string]interface{}{
-						"totalCount": len(nodes),
-						"nodes":      nodes,
-						"pageInfo": map[string]interface{}{
-							"hasNextPage": false,
-							"endCursor":   nil,
-						},
-					}, nil
+					return paginateGQLMaps(nodes, p.Args), nil
 				},
 			},
 			// PR.milestone — real GH PRs are issues internally so they

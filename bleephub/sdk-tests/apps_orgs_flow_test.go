@@ -16,8 +16,8 @@ import (
 	github "github.com/google/go-github/v88/github"
 )
 
-// signAppJWT mints the RS256 app JWT a real GitHub App client (ghinstallation
-// et al.) sends, from the PEM bleephub returned at app creation.
+// signAppJWT mints the RS256 JSON Web Token a real GitHub App client sends,
+// from the Privacy Enhanced Mail key Bleephub returned at app creation.
 func signAppJWT(t *testing.T, privateKeyPEM string, appID int64) string {
 	t.Helper()
 	block, _ := pem.Decode([]byte(privateKeyPEM))
@@ -36,13 +36,13 @@ func signAppJWT(t *testing.T, privateKeyPEM string, appID int64) string {
 	hash := sha256.Sum256([]byte(header + "." + payload))
 	sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, hash[:])
 	if err != nil {
-		t.Fatalf("sign app JWT: %v", err)
+		t.Fatalf("sign app JSON Web Token: %v", err)
 	}
 	return header + "." + payload + "." + b64(sig)
 }
 
-// ghClient builds a go-github client against bleephub authenticated with the
-// given bearer credential (PAT, app JWT, or ghs_ installation token).
+// ghClient builds a go-github client against Bleephub authenticated with the
+// given bearer credential.
 func ghClient(t *testing.T, credential string) *github.Client {
 	t.Helper()
 	c, err := github.NewClient(
@@ -56,9 +56,10 @@ func ghClient(t *testing.T, credential string) *github.Client {
 }
 
 // TestAppsInstallationTokenFlow drives the app-auth lifecycle with the typed
-// SDK: JWT-authenticated installation listing, token minting with permission
-// downscoping + repository scoping, using the minted ghs_ token through the
-// SDK, and the 422 on permission escalation.
+// software development kit: JSON Web Token-authenticated installation listing,
+// token minting with permission downscoping and repository scoping, using the
+// minted installation token through the software development kit, and the 422
+// on permission escalation.
 func TestAppsInstallationTokenFlow(t *testing.T) {
 	org := uniqueName("appflow")
 	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {
@@ -70,29 +71,24 @@ func TestAppsInstallationTokenFlow(t *testing.T) {
 	}
 
 	var created struct {
-		ID  int64  `json:"id"`
-		PEM string `json:"pem"`
+		ID   int64  `json:"id"`
+		Slug string `json:"slug"`
+		PEM  string `json:"pem"`
 	}
-	if code := internalPost(t, "/internal/apps", map[string]interface{}{
-		"name":        uniqueName("flow-app"),
-		"permissions": map[string]string{"contents": "read", "issues": "write"},
-	}, &created); code != http.StatusCreated {
-		t.Fatalf("internal create app status = %d", code)
+	if code := createGitHubAppViaManifest(t, uniqueName("flow-app"),
+		map[string]string{"contents": "read", "issues": "write"}, &created); code != http.StatusCreated {
+		t.Fatalf("GitHub App manifest conversion status = %d, want 201", code)
 	}
 	var inst struct {
 		ID int64 `json:"id"`
 	}
-	if code := internalPost(t, fmt.Sprintf("/internal/apps/%d/installations", created.ID), map[string]interface{}{
-		"target_login": org,
-		"target_type":  "Organization",
-		"permissions":  map[string]string{"contents": "read", "issues": "write"},
-	}, &inst); code != http.StatusCreated {
-		t.Fatalf("internal create installation status = %d", code)
+	if code := installGitHubAppViaBrowser(t, created.Slug, org, "all", nil, &inst); code != http.StatusCreated {
+		t.Fatalf("GitHub App browser installation status = %d", code)
 	}
 
 	appClient := ghClient(t, signAppJWT(t, created.PEM, created.ID))
 
-	// JWT-authed installation listing sees the installation.
+	// JSON Web Token-authenticated installation listing sees the installation.
 	installations, _, err := appClient.Apps.ListInstallations(ctx(), nil)
 	if err != nil {
 		t.Fatalf("Apps.ListInstallations: %v", err)
@@ -101,7 +97,7 @@ func TestAppsInstallationTokenFlow(t *testing.T) {
 		t.Fatalf("ListInstallations = %v, want the one installation id=%d", installations, inst.ID)
 	}
 
-	// Escalation beyond the grant is a 422 the SDK surfaces as ErrorResponse.
+	// Escalation beyond the grant is a 422 the software development kit surfaces as ErrorResponse.
 	_, resp, err := appClient.Apps.CreateInstallationToken(ctx(), inst.ID, &github.InstallationTokenOptions{
 		Permissions: &github.InstallationPermissions{Contents: github.Ptr("write")},
 	})
@@ -127,7 +123,8 @@ func TestAppsInstallationTokenFlow(t *testing.T) {
 		t.Errorf("token repositories = %+v, want exactly flow-repo", tok.GetRepositories())
 	}
 
-	// The ghs_ token works through the SDK and sees exactly the scoped repo.
+	// The installation token works through the software development kit and
+	// sees exactly the scoped repository.
 	instClient := ghClient(t, tok.GetToken())
 	repos, _, err := instClient.Apps.ListRepos(ctx(), nil)
 	if err != nil {
@@ -149,7 +146,7 @@ func TestAppsInstallationTokenFlow(t *testing.T) {
 
 // TestOrgProfileTeamsAndMembershipSurfaces drives the org profile PATCH, the
 // global org list, public-membership toggles, team hierarchy + maintainer
-// role, and team repos through the typed SDK.
+// role, and team repositories through the typed software development kit.
 func TestOrgProfileTeamsAndMembershipSurfaces(t *testing.T) {
 	org := uniqueName("orgsurf")
 	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {
@@ -274,7 +271,8 @@ func TestOrgProfileTeamsAndMembershipSurfaces(t *testing.T) {
 	}
 }
 
-// TestOrgWebhooksSDK drives org webhook CRUD through the typed SDK.
+// TestOrgWebhooksSDK drives organization webhook create, read, update, and
+// delete through the typed software development kit.
 func TestOrgWebhooksSDK(t *testing.T) {
 	org := uniqueName("orghook")
 	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {

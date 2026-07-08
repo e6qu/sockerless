@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2359 filed - 2316 fixed - 2 open - 16 false positives.**
+**2363 filed - 2318 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2363 | P1 | Bleephub GitHub Actions runners | endpoint compatibility split | Bleephub GitHub Actions runner control-plane harnesses still use Bleephub-specific internal workflow and job submission paths in places where the runner should speak the same GitHub Actions runner protocol to either github.com, GitHub Enterprise Server, or Bleephub, differing only by endpoint and credentials. |
+| 2362 | P1 | Bleephub GitHub Apps and OAuth Apps | remaining operator-only app-management path beside GitHub flows | GitHub App creation uses the GitHub App Manifest flow and GitHub App installation uses a logged-in browser app-slug flow in the user interface, parity script, and software development kit compatibility tests, but Bleephub still exposes legacy operator-only `/internal/apps*` setup routes and `/internal/oauth-apps` where remaining settings flows should be assembled or retired. |
 | 1345 | P2 | azuread terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider has no supported way to redirect Microsoft Graph API calls to a custom endpoint (no `microsoft_graph_endpoint` override). Feature request open upstream: https://github.com/hashicorp/terraform-provider-azuread/issues/1837. Entra provisioning via Terraform (`azuread_group`, `azuread_user`, `azuread_group_member`) cannot be tested against the sim until this is resolved upstream. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Cloud Run Services, ACA Apps, AZF cloud-DNS, Lambda service-mesh, and ACA/AZF Azure AD remain unvalidated against authenticated real clouds. Do not mark these green without real cloud runs. |
 
@@ -17,6 +19,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2361~~ | P2 | bleephub Projects v2 GraphQL | project-level store state hidden from GraphQL | GraphQL `ProjectV2` nodes now expose store-backed `fields`, `views`, and `items` connections, including field options, iteration configuration, view filters/visible fields, full item Relay pagination, and shared full `PageInfo`/edges on ProjectV2 item connections for Issue, PullRequest, and ProjectV2. |
+| ~~2360~~ | P2 | bleephub OAuth web flow | non-standard compatibility bypass | The OAuth web-flow shortcut `?auto=1` no longer mints authorization codes or selects the seed admin. Authorization requires a real browser session plus the CSRF-backed consent POST, tests drive that path, and the UI flow simulator opens only the real web flow. |
 | ~~2359~~ | P2 | bleephub Projects v2 GraphQL | REST-backed field values hidden by partial GraphQL union | Projects v2 GraphQL now accepts and projects every field-value kind the store supports: text, number, date, single-select, and iteration values validate through the real Projects v2 store, round-trip via `updateProjectV2ItemFieldValue`, and render through typed `ProjectV2ItemFieldValue` union members from `Issue.projectItems.fieldValueByName`. |
 | ~~2358~~ | P2 | bleephub GraphQL issue comments | persisted comment pin state hidden from GraphQL | Issue-comment pin/unpin state now projects through GraphQL `Issue.comments.nodes.isPinned` from the persisted REST-backed `Comment.Pinned` field, with a REST-to-GraphQL regression that pins a real issue comment before querying it. |
 | ~~2357~~ | P2 | bleephub org audit log | unpaginated shape-thin listing | The organization audit-log endpoint now paginates through the shared GitHub-style list helper, adds Link headers, and treats `phrase` as tokenized search across persisted action, actor, org, and detail data instead of only exact action equality. |
