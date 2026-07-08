@@ -342,6 +342,11 @@ describe("IssuesPage detail triage", () => {
   function mockDetailEndpoints() {
     mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
       const u = url.toString();
+      if (u.endsWith("/api/v3/repos/admin/test")) {
+        return Promise.resolve(
+          jsonResponse({ owner: { login: "admin", type: "Organization" } }),
+        );
+      }
       if (u.includes("/issues/7") && init?.method === "PATCH") {
         return Promise.resolve(
           jsonResponse({ ...issue(7, "Triaged"), milestone: milestone(2, "v2.0"), issue_type: epicType }),
@@ -415,13 +420,15 @@ describe("IssuesPage detail triage", () => {
     });
   });
 
-  it("hides issue type controls when the repository owner has no issue-type namespace", async () => {
+  it("hides issue type controls and skips the org issue-type endpoint for user-owned repositories", async () => {
     mockFetch.mockImplementation((url: RequestInfo | URL) => {
       const u = url.toString();
       if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
       if (u.includes("/issues/7/reactions")) return Promise.resolve(jsonResponse([]));
       if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse({ login: "admin" }));
-      if (u.includes("/api/v3/orgs/admin/issue-types")) return Promise.resolve(jsonResponse({ message: "Not Found" }, 404));
+      if (u.endsWith("/api/v3/repos/admin/test")) {
+        return Promise.resolve(jsonResponse({ owner: { login: "admin", type: "User" } }));
+      }
       if (u.includes("/issues/7")) return Promise.resolve(jsonResponse(issue(7, "Triaged")));
       if (u.includes("/milestones?")) return Promise.resolve(jsonResponse([]));
       if (u.includes("/api/v3/repos/admin/test/labels")) return Promise.resolve(jsonResponse([]));
@@ -430,5 +437,8 @@ describe("IssuesPage detail triage", () => {
     renderAt("/ui/repos/admin/test/issues/7");
     await waitFor(() => expect(screen.getByText("Triaged")).toBeInTheDocument());
     expect(screen.queryByLabelText("Set issue type")).not.toBeInTheDocument();
+    expect(
+      mockFetch.mock.calls.some((c) => c[0].toString().includes("/api/v3/orgs/admin/issue-types")),
+    ).toBe(false);
   });
 });

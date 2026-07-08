@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2344 filed - 2301 fixed - 2 open - 16 false positives.**
+**2345 filed - 2302 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2345~~ | P2 | bleephub UI issue sidebar | org-only endpoint probed for user-owned repos | The issue sidebar treated organization issue types as discoverable by probing `/orgs/{owner}/issue-types` and hiding the selector after a 404, which made user-owned issue detail pages emit browser console errors under Playwright. The issue detail page now fetches repository metadata, passes the factual owner type into the sidebar, and the sidebar only queries org issue-type definitions and GraphQL issue-type assignment for organization-owned repositories. UI regressions assert user-owned repos do not call the org endpoint, and the Bleephub Playwright E2E issue flow passes without the 404 console error. |
 | ~~2344~~ | P2 | bleephub issue types | org definitions not assignable to issues | Organization issue-type definitions were real, but individual issues had no assignment field and GraphQL `Issue.issueType` always returned null. Issues now store a per-issue organization issue-type assignment, REST create/PATCH validates assignment IDs against the repository owner's enabled org issue types, GraphQL `Issue.issueType` projects the assigned definition, the issue sidebar edits it through the same validated path, and reload regressions prove the assignment persists. |
 | ~~2343~~ | P2 | bleephub GraphQL sub-issues / sub-issue persistence | REST-backed relationship hidden by GraphQL stub + stale old-parent row | Bleephub's REST sub-issues were real ordered store links, but GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` still returned the old empty/null compatibility shape. Replacing a child's parent also failed to persist the old parent's shortened child list, so reload could resurrect a stale parent-child link. GraphQL now projects parent/sub-issue/summary data from the same store links as REST, summary completion derives from child issue state, and parent replacement persists both old and new parent lists with a reload regression. |
 | ~~2342~~ | P2 | bleephub Actions artifact/cache/log bytes | local-only byte storage behind object-storage spec | Bleephub's Actions artifact store kept artifacts, dependency caches, and runner-uploaded log files only in process memory plus optional local data-dir files, while the storage split requires durable byte content to live in object storage. `BLEEPHUB_OBJECT_S3_BUCKET` now configures S3-compatible byte storage for Actions artifacts, caches, and log files (with endpoint/prefix overrides); configured object storage fails startup/write/read loudly, deletes remove object bytes, and simulator-backed tests assert artifact/cache/log uploads write real S3 objects. |

@@ -54,6 +54,7 @@ function SidebarSection({
 export function IssueSidebar({
   owner,
   repo,
+  ownerType,
   number,
   kind,
   assignees,
@@ -65,6 +66,7 @@ export function IssueSidebar({
 }: {
   owner: string;
   repo: string;
+  ownerType?: string;
   number: number;
   kind: "issue" | "pr";
   assignees: string[];
@@ -93,12 +95,12 @@ export function IssueSidebar({
   } = useQuery({
     queryKey: ["org-issue-types", owner],
     queryFn: () => fetchOrgIssueTypes(owner),
-    enabled: kind === "issue",
+    enabled: kind === "issue" && ownerType === "Organization",
   });
   const { data: graphQLIssueType = null } = useQuery({
     queryKey: ["issue-type", owner, repo, number],
     queryFn: () => fetchIssueGraphQLIssueType(owner, repo, number),
-    enabled: kind === "issue",
+    enabled: kind === "issue" && ownerType === "Organization",
   });
 
   const invalidate = () => {
@@ -135,7 +137,7 @@ export function IssueSidebar({
   const selectedIssueType = graphQLIssueType
     ? issueTypes.find((it) => it.node_id === graphQLIssueType.id) ?? null
     : null;
-  const issueTypesUnavailable = issueTypesError && isNotFound(issueTypesErr);
+  const issueTypesUnavailable = ownerType !== "Organization" || (issueTypesError && isNotFound(issueTypesErr));
   const muted = { fontSize: "0.82rem", color: "var(--color-fg-muted)" } as const;
 
   return (

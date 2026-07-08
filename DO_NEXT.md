@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, and AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, and AWS S3 CopyObject list visibility.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
@@ -15,6 +15,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.
 - **BUG-2343:** GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` now render the same ordered sub-issue relationships as the REST API. Replacing a sub-issue's parent persists both the old and new parent lists so reload keeps the relationship graph coherent.
 - **BUG-2344:** Issues now store per-issue organization issue-type assignments. REST issue create/PATCH accepts `issue_type_id` and validates it against the repository owner's enabled org issue types; GraphQL `Issue.issueType` projects the assigned definition; the issue sidebar reads the assignment through GraphQL, maps it to the org issue-type list, and PATCHes the same validated REST field. Reload coverage proves assignments persist.
+- **BUG-2345:** The issue sidebar now gates issue-type queries on the repository owner's real type instead of probing `/orgs/{owner}/issue-types` for every issue. User-owned repositories skip the organization-only REST and GraphQL issue-type calls, so issue detail pages do not emit 404 browser console errors under Playwright.
 - **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage and no-github.com action resolution. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
@@ -29,7 +30,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestIssueTypeAssignment|TestIssueGraphQL_IssueTypeAssignment|TestIssueGraphQL_SubIssueFields|TestOrgIssueTypes' -count=1` passed with sandbox escalation for loopback/cache access.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the Actions object-store changes.
 - `make ui/packages/bleephub/test TEST_ARGS='IssuesPage.test.tsx --runInBand'` and `make ui/packages/bleephub/lint` passed after the issue-type sidebar changes.
-- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md PLAN.md WHAT_WE_DID.md bleephub/README.md bleephub/actions.go bleephub/actions_test.go bleephub/artifacts.go bleephub/artifacts_test.go bleephub/gh_actions_permissions.go bleephub/object_bytes.go bleephub/server.go bleephub/timeline.go bleephub/timeline_records_test.go` passed with sandbox escalation after the restricted sandbox blocked loopback/cache access.
+- `SERVER_BIN=/private/tmp/bleephub-server npx playwright test --timeout=60000` passed locally after the user-owned issue sidebar routing fix.
+- `pre-commit run --files BUGS.md DO_NEXT.md PLAN.md STATUS.md WHAT_WE_DID.md ui/packages/bleephub/src/__tests__/IssuesPage.test.tsx ui/packages/bleephub/src/components/IssueSidebar.tsx ui/packages/bleephub/src/pages/IssuesPage.tsx` passed with sandbox escalation after the restricted sandbox blocked loopback listeners and npm package resolution.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
