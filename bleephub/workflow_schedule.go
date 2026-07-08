@@ -116,10 +116,19 @@ func (s *Server) fireScheduledWorkflow(repoKey, fileName string, content []byte,
 		"schedule":   cron,
 		"repository": repoPayload(repo),
 	}
+	sha := resolveRefSha(stor, ref)
+	if sha == "0000000000000000000000000000000000000000" {
+		s.logger.Error().
+			Str("repo", repoKey).
+			Str("ref", ref).
+			Str("cron", cron).
+			Msg("scheduled workflow rejected because the default-branch git ref did not resolve to a commit")
+		return
+	}
 	meta := &WorkflowEventMeta{
 		EventName: "schedule",
 		Ref:       ref,
-		Sha:       resolveRefSha(stor, ref),
+		Sha:       sha,
 		Repo:      repoKey,
 		Payload:   payload,
 	}

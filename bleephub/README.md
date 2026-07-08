@@ -11,6 +11,7 @@ bleephub is paired with the external GitHub-compatible tools that drive it. Anyt
 | Adaptor | Min version | What it proves |
 |---|---|---|
 | [`gh` CLI](https://cli.github.com/manual/) | 2.50+ | End-to-end CLI verbs against `--hostname localhost` — repos, issues, PRs, releases, run / view / list. See [`docs/BLEEPHUB_GH_CLI.md`](../docs/BLEEPHUB_GH_CLI.md). |
+| [`go-github`](https://github.com/google/go-github) | v88 | Typed REST SDK coverage against the GHES-style API, including Git Data seeded repositories and Actions workflow dispatch / run / job reads. |
 | [`actions/runner`](https://github.com/actions/runner) (official binary) | v2.319+ | The runner-server `/_apis/` protocol — token, agent registration, broker long-poll, run service, timeline/logs upload. |
 | [Smart-HTTP git](https://git-scm.com/docs/http-protocol) (`go-git`) | git 2.40+ | `git clone` / `git push` over `https://localhost/{owner}/{repo}.git`. Used by `actions/checkout`. |
 | [GitHub REST API spec](https://docs.github.com/en/rest) | 2022-11-28 | The authoritative reference for paths, request bodies, response envelopes, and `Link`-header pagination. |
@@ -170,7 +171,7 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Repositories.** Create / list / get / update / delete; refs (branches, tags); blobs / trees / commits; smart-HTTP git (`go-git`) for `actions/checkout`.
 
-**Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, GraphQL counterparts.
+**Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, organization issue-type assignment for issues, GraphQL counterparts.
 
 **PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing + resolve/unresolve have no GitHub REST equivalent (GraphQL-only on real GitHub: `resolveReviewThread`/`unresolveReviewThread`), so bleephub exposes them as sim-control helpers under `/internal/repos/{o}/{r}/pulls/{n}/review-threads[/{tid}/{resolve|unresolve}]`, not the GitHub namespace.
 
@@ -186,7 +187,7 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Checks integration.** Workflow jobs mirror to check runs under a check suite owned by the github-actions app: created at run submission, `in_progress` at runner pickup, completed with the job's conclusion; the suite rolls up at run completion. `workflow_run`, `workflow_job`, `check_run`, and `check_suite` webhook events fire at the same points real GitHub fires them. PR `mergeable_state` reflects the head commit's checks (`blocked` on unmet required status checks from base-branch protection, `unstable` on failing/pending non-required ones), and the merge API rejects with 405 while required checks aren't green.
 
-**Actions API (workflow runs / jobs / steps).** `GET /actions/runs` (status/branch/event filters), `runs/{id}`, `runs/{id}/jobs` (real per-step status/timing from runner timeline records), `runs/{id}/attempts/{n}[/jobs]` (archived attempts), `runs/{id}/logs` (GitHub-layout zip), `runs/{id}/timing`, `runs/{id}/rerun` + `rerun-failed-jobs` (same run id, run_attempt increments; failed-only rerun carries successful jobs' results over), `runs/{id}/cancel`. Workflow files: list/get, `PUT .../workflows/{id}/{enable,disable}` (disabled workflows don't trigger and dispatch 403s), `POST .../dispatches` with input validation/defaults/typing against the `workflow_dispatch` declarations. `POST /repos/{o}/{r}/dispatches` for `repository_dispatch`. Runners: repo + org scope (list/get/delete/registration-token, honest `busy` from running-job association) plus org runner groups (CRUD, membership, repo visibility, undeletable Default); the broker routes jobs only to runners whose labels cover `runs-on` (GitHub-hosted aliases like `ubuntu-latest` run on any connected runner — bleephub has no hosted pool). Cancellation is real: cancel sends `JobCancellation` over the runner's open poll (the runner aborts mid-job), undelivered job messages purge, and `always()`/`cancelled()` jobs still dispatch with the run concluding `cancelled`. Actions referenced with `uses:` resolve from bleephub-hosted repos first (GitHub-layout tarballs from git storage — composite actions included, proven by the runner harness), falling back to github.com for external actions.
+**Actions API (workflow runs / jobs / steps).** `GET /actions/runs` (status/branch/event filters), `runs/{id}`, `runs/{id}/jobs` (real per-step status/timing from runner timeline records), `runs/{id}/attempts/{n}[/jobs]` (archived attempts), `runs/{id}/logs` (GitHub-layout zip assembled from runner-uploaded timeline log files), `runs/{id}/timing`, `runs/{id}/rerun` + `rerun-failed-jobs` (same run id, run_attempt increments; failed-only rerun carries successful jobs' results over), `jobs/{job_id}/rerun` (archives the prior attempt and reruns the target job plus its dependents), `jobs/{job_id}/logs` (runner-uploaded job log bytes). Public log-download endpoints do not substitute the live console feed for durable uploaded logs: if timeline records have no uploaded log file content, the endpoint returns 404. Reruns preserve the originating workflow-file ID/path, so repositories with multiple workflow files sharing the same `name:` still replay the correct YAML; legacy runs without a unique cached workflow file fail loudly. Workflow files are discovered from the repository's recorded default branch, including repos seeded through Git Data refs where git storage `HEAD` is not set: list/get, `PUT .../workflows/{id}/{enable,disable}` (disabled workflows don't trigger and dispatch 403s), `POST .../dispatches` with input validation/defaults/typing against the `workflow_dispatch` declarations. `POST /repos/{o}/{r}/dispatches` for `repository_dispatch`. Runners: repo + org scope (list/get/delete/registration-token, honest `busy` from running-job association) plus org runner groups (CRUD, membership, repo visibility, undeletable Default); the broker routes jobs only to runners whose labels cover `runs-on` (GitHub-hosted aliases like `ubuntu-latest` run on any connected runner — bleephub has no hosted pool). Cancellation is real: cancel sends `JobCancellation` over the runner's open poll (the runner aborts mid-job), undelivered job messages purge, and `always()`/`cancelled()` jobs still dispatch with the run concluding `cancelled`. Actions referenced with `uses:` resolve from bleephub-hosted repos and serve GitHub-layout tarballs from git storage; absent action repositories or refs fail loudly instead of fetching from github.com.
 
 **Checks API.** `check-runs` create/get/update/list-by-commit/list-by-suite/annotations. `check-suites` get/list-by-commit/preferences. App-owned: writes require `checks:write` on an installation token.
 
@@ -209,28 +210,25 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Actions OIDC.** `GET /token` issues an RS256-signed JWT with the canonical claim set (sub, aud, repository, repository_owner, ref, run_id, run_number, sha, actor, environment, jti, exp). `GET /.well-known/jwks` + `/.well-known/openid-configuration` for cloud-IdP trust verification.
 
-**Users API.** Public users, my-user, keys CRUD, gpg_keys compatibility surface, emails, followers / following compatibility surface, follow / unfollow.
+**Users API.** Public users, my-user, keys CRUD, gpg_keys, emails, followers / following, follow / unfollow.
 
 **Meta.** `GET /meta` in GHES shape — bleephub presents as GHES (`installed_version: "3.21.0"`). `gh`'s feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
 
-**Pages.** Site CRUD + builds shape.
+**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual build requests require a configured Pages site and record the actual latest default-branch commit SHA.
 
-**Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
+**Branch protection.** PUT/GET/DELETE per-branch protection rules with typed required-status-checks, review, restriction, admin-enforcement, force-push, and deletion subresources.
 
-**Orgs.** GHES admin create + sim-control create; `GET /organizations` (global list with `since` cursor); organization-full profile (company / blog / location / twitter / billing email / `default_repository_permission` / `members_can_create_repositories` / `web_commit_signoff_required`) readable + PATCHable. Memberships with real invitation semantics: `PUT /orgs/{org}/memberships/{username}` invites (state `pending`), the invitee accepts via `PATCH /user/memberships/orgs/{org}` (`GET /user/memberships/orgs[/{org}]` lists/inspects); member checks (`GET/DELETE /orgs/{org}/members/{username}`), public members (list / check / publicize / conceal — self-only, like real GitHub). Teams: CRUD + hierarchy (`parent_team_id`, child-team listing, cycle rejection, delete re-parents children), `notification_setting`, member roles (`member`/`maintainer`) with team-membership state mirroring the org membership, team repos (list with `permissions` + `role_name`, check incl. the `vnd.github.v3.repository+json` media type, add/remove), rename re-keys the slug. Audit log shape-only endpoint, IdP-group sync compatibility surface.
+**Orgs.** GHES admin create + sim-control create; `GET /organizations` (global list with `since` cursor); organization-full profile (company / blog / location / twitter / billing email / `default_repository_permission` / `members_can_create_repositories` / `web_commit_signoff_required`) readable + PATCHable. Memberships with real invitation semantics: `PUT /orgs/{org}/memberships/{username}` invites (state `pending`), the invitee accepts via `PATCH /user/memberships/orgs/{org}` (`GET /user/memberships/orgs[/{org}]` lists/inspects); member checks (`GET/DELETE /orgs/{org}/members/{username}`), public members (list / check / publicize / conceal — self-only, like real GitHub). Teams: CRUD + hierarchy (`parent_team_id`, child-team listing, cycle rejection, delete re-parents children), `notification_setting`, member roles (`member`/`maintainer`) with team-membership state mirroring the org membership, team repos (list with `permissions` + `role_name`, check incl. the `vnd.github.v3.repository+json` media type, add/remove), rename re-keys the slug. Outside collaborators, organization blocks, security-manager teams, member Codespaces administration, member Copilot seat details, and the owner-gated persisted audit log are implemented; audit-log reads support phrase/actor filters and GitHub-style pagination.
 
-**Marketplace.** Listing plans + accounts compatibility surface.
+**Marketplace.** Listing plans and account purchases are backed by the marketplace plan/purchase store; GitHub's `stubbed` Marketplace endpoints serve the same persisted state as the production variants.
 
-**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue) with Issue.projectItems backed by the store.
+**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Issue nodes expose REST-backed project items, assigned organization issue types (`Issue.issueType`), organization issue-field values (`Issue.issueFieldValues`), and sub-issue relationships (`parent`, ordered `subIssues`, and `subIssuesSummary`). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue). `Issue.projectItems.fieldValueByName` reads the real Projects v2 store and returns typed text, number, date, single-select, and iteration field-value union members.
 
 ### Persistence
 
-Two write-through database options, both fail-loud on open failure (never a silent in-memory fallback):
+Bleephub stores its own metadata state in SQLite. `BLEEPHUB_PERSIST=true` enables the write-through database, and the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`). SQLite open/schema failures fail startup loudly; there is no silent in-memory fallback once persistence is requested.
 
-- **SQLite** — `BLEEPHUB_PERSIST=true`; the DB file is `<BLEEPHUB_DATA_DIR>/bleephub.db` (default `./bleephub.db`).
-- **PostgreSQL** — `BLEEPHUB_DATABASE_URL=postgres://…`; takes priority over the SQLite switch.
-
-Both backends are exercised by `persistence_test.go`: the SQLite round-trip always runs, and the PostgreSQL round-trip runs whenever `BLEEPHUB_TEST_POSTGRES_URL` (a base postgres data source name (DSN)) is set — it creates a unique throwaway database, round-trips, and drops it. Continuous integration (CI) runs it for real against a `postgres:16-alpine` service in the `test-core` job.
+`persistence_test.go` always exercises the SQLite round-trip. The obsolete `BLEEPHUB_DATABASE_URL` PostgreSQL path fails loudly so operators do not accidentally deploy a state backend outside the supported service model.
 
 The full metadata surface is persisted: users, tokens, apps (incl. credentials + webhook config), OAuth apps, installations (incl. selected repos) + installation / user-to-server / refresh tokens, repos, orgs, teams, memberships, issues, labels, milestones, comments, pull requests + reviews + review comments, hooks (incl. secrets) + org hooks + deliveries, app hook deliveries, repo secrets, check suites/runs/preferences, workflow files, releases, deployments + statuses + environments (incl. reviewers/wait timer), reactions, Projects v2, user SSH/GPG keys, Pages, branch protection, the audit log, and marketplace plans. ID numbering is re-derived on load so it resumes where it left off.
 
@@ -243,6 +241,15 @@ Git repository storage (go-git) is selected by its own env vars:
 - `BLEEPHUB_S3_BUCKET` (+ optional `BLEEPHUB_S3_ENDPOINT`, `BLEEPHUB_S3_PREFIX`) — repos in S3-compatible object storage (takes priority over `BLEEPHUB_GIT_DIR`).
 
 Database persistence **requires** durable git storage (`BLEEPHUB_GIT_DIR` or `BLEEPHUB_S3_BUCKET`): reloading repo metadata against in-memory git storage would resurrect every repo empty, so that combination is a startup error — never a silent degraded mode.
+
+The S3 filesystem test suite drives this path through a real `simulator-aws` S3 endpoint and `aws-sdk-go-v2`; it does not use a local fake S3 server. The tests cover object reads/writes/open modes, paginated listings, and repository-prefix rename/delete through the same list/copy/delete APIs that S3-backed git storage uses.
+
+Actions byte storage is selected separately from git storage:
+
+- default — in-memory bytes, or local files under `BLEEPHUB_DATA_DIR` for local development;
+- `BLEEPHUB_OBJECT_S3_BUCKET` (+ optional `BLEEPHUB_OBJECT_S3_ENDPOINT`, `BLEEPHUB_OBJECT_S3_PREFIX`) — Actions artifacts, dependency caches, and runner-uploaded log files in S3-compatible object storage. If `BLEEPHUB_OBJECT_S3_BUCKET` is set and the bucket cannot be reached with `HeadBucket`, startup fails loudly.
+
+The object-byte tests also drive a real `simulator-aws` S3 endpoint: artifact upload, cache upload, runner log upload, and public job-log download assert the expected S3 objects are written and read back, so these paths do not rely on fake S3 or memory-only assertions.
 
 ### `gh` CLI compatibility
 
@@ -267,18 +274,11 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 
 ## What it does not implement (deferred)
 
-- Runner auto-update (`AgentRefreshMessage`).
 - V2 broker flow (uses legacy V1 pipelines paths).
 - Failed-run shells exist for TRIGGERED workflows that can't start (conclusion `startup_failure`, no jobs); explicit dispatches still 422 with the parse error (more useful to the caller).
-- Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
+- Project-level Projects v2 GraphQL views/boards beyond the current Projects v2 mutations and `Issue.projectItems` field-value connection; REST Projects v2 fields, items, views, and view-filtered item lists are implemented.
 - SAML SSO + SCIM provisioning.
-- Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
-- Org people-management extras: `outside_collaborators`, `blocks`, `security-managers`, member codespaces/copilot endpoints.
-- Legacy numeric-id team routes (`/teams/{team_id}/…`) — deprecated upstream; the `/orgs/{org}/teams/{team_slug}/…` family is the supported path.
-- Webhook `config` subresources (`/repos/{o}/{r}/hooks/{id}/config`, `/orgs/{org}/hooks/{id}/config`) — config rides the hook CRUD bodies, which is what gh / terraform / go-github use.
-- `GET /app/installation-requests` and the marketplace `stubbed` endpoints.
 - Org `plan` member / billing endpoints (bleephub has no billing model).
-- Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.
 - gh CLI commands that require deep workflow-run state bleephub doesn't synthesise (`gh run watch` long-poll, log tail).
 - `on: schedule` crons fire from real server time (minute-aligned); there is no time-warp hook for tests beyond calling the dispatcher directly.
@@ -323,7 +323,6 @@ Flags:
 Env vars:
 - `BLEEPHUB_ADMIN_TOKEN=<token>` — **required.** The seeded admin token. There is no default (a default would be a guessable credential, and the historical `ghp_…` value tripped secret scanners); the binary fails loudly at startup if unset. Set a non-PAT-shaped value.
 - `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default; see [Persistence](#persistence)).
-- `BLEEPHUB_DATABASE_URL=postgres://…` — use PostgreSQL instead of SQLite (takes priority over `BLEEPHUB_PERSIST`).
 - `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite DB (`bleephub.db`) + artifact store (default `.`).
 - `BLEEPHUB_GIT_DIR=<dir>` — store git repos on the local filesystem (default: in-memory).
 - `BLEEPHUB_S3_BUCKET` / `BLEEPHUB_S3_ENDPOINT` / `BLEEPHUB_S3_PREFIX` — store git repos in S3-compatible object storage (bucket set ⇒ S3 wins over `BLEEPHUB_GIT_DIR`).
@@ -384,7 +383,7 @@ Two unit-test gates validate bleephub against the vendored GitHub OpenAPI descri
 | GraphQL | `gh_graphql.go`, `gh_*_graphql.go`, `gh_request_decode.go` | Schema + flex decoders |
 | Webhooks | `webhooks.go`, `webhooks_store.go`, `webhooks_payloads.go`, `gh_hooks_rest.go` | HMAC-SHA256/SHA1 delivery with retry |
 | Git | `git_http.go`, `git_storage.go`, `s3fs.go` | Smart HTTP protocol (go-git); in-memory / on-disk / S3 repo storage |
-| Persistence | `persistence.go` | SQLite/PostgreSQL write-through layer |
+| Persistence | `persistence.go` | SQLite write-through layer |
 | Infrastructure | `store.go`, `store_*.go`, `rbac.go`, `metrics.go`, `otel.go`, `handle_mgmt.go`, `ui_embed.go` | State, RBAC, metrics, OTel, dashboard |
 
 ## See also

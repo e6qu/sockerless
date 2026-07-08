@@ -27,8 +27,12 @@ jobs:
         include:
           - shard: core-local
             modules: cmd/sockerless cmd/sockerless-admin agent bleephub bleeplab backends/docker
-          - shard: cloud-backends
-            modules: backends/aws-common backends/ecs backends/lambda backends/cloudrun backends/cloudrun-functions backends/aca backends/azure-functions
+          - shard: cloud-backends-aws
+            modules: backends/aws-common backends/ecs backends/lambda
+          - shard: cloud-backends-gcp
+            modules: backends/cloudrun backends/cloudrun-functions
+          - shard: cloud-backends-azure
+            modules: backends/aca backends/azure-functions
           - shard: simulators
             modules: simulators/aws simulators/gcp simulators/azure simulators/realexec
           - shard: dispatchers
@@ -125,22 +129,6 @@ jobs:
     name: test (core)
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 15
-    services:
-      # Postgres so bleephub's postgres-backed persistence test runs for real
-      # (it skips when BLEEPHUB_TEST_POSTGRES_URL is unset).
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: ci
-          POSTGRES_PASSWORD: ci
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U ci"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0
@@ -151,8 +139,6 @@ jobs:
       - name: Architecture checks
         run: bash scripts/check-cloud-backend-isolation.sh
       - name: Core + API + agent
-        env:
-          BLEEPHUB_TEST_POSTGRES_URL: postgres://ci:ci@localhost:5432/postgres?sslmode=disable
         run: |
           set -e
           run() { echo "=== $1 ===" && (cd "$1" && go test -tags noui -v -timeout 5m ./...); }
@@ -312,7 +298,13 @@ jobs:
       - name: Install gcloud CLI
         if: matrix.cloud == 'gcp'
         run: |
-          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C "$HOME"
+          archive="$RUNNER_TEMP/google-cloud-cli-linux-x86_64.tar.gz"
+          curl --fail --location --show-error --silent --http1.1 \
+            --retry 5 --retry-all-errors --retry-delay 5 \
+            --connect-timeout 20 --max-time 300 \
+            --output "$archive" \
+            https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz
+          tar -xzf "$archive" -C "$HOME"
           echo "$HOME/google-cloud-sdk/bin" >> "$GITHUB_PATH"
           # The Firestore-emulator component is the differential-test oracle for
           # TestFirestore_DifferentialVsEmulator (the runner ships a JRE).

@@ -12,6 +12,7 @@ import (
 
 	memfs "github.com/go-git/go-billy/v5/memfs"
 	git "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -74,10 +75,18 @@ func commitWorkflowYAMLToStorage(t *testing.T, s *Server, repoFullName, path, bo
 	if _, err := wt.Add(path); err != nil {
 		t.Fatalf("git add %s: %v", path, err)
 	}
-	if _, err := wt.Commit("add "+path, &git.CommitOptions{
+	commitHash, err := wt.Commit("add "+path, &git.CommitOptions{
 		Author: &object.Signature{Name: "t", Email: "t@t", When: time.Now()},
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("git commit: %v", err)
+	}
+	mainRef := plumbing.NewBranchReferenceName("main")
+	if err := storer.SetReference(plumbing.NewHashReference(mainRef, commitHash)); err != nil {
+		t.Fatalf("set main ref: %v", err)
+	}
+	if err := storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, mainRef)); err != nil {
+		t.Fatalf("set HEAD: %v", err)
 	}
 }
 
@@ -263,7 +272,7 @@ func TestWorkflows_Dispatch_NoYAMLCached(t *testing.T) {
 func TestWorkflows_Rerun_ViaCachedYAML(t *testing.T) {
 	// The rerun handler dispatches through the WorkflowFile cache: register
 	// a file matching the run's name, then POST rerun, expect 201 Created
-	// instead of 422 (the no-cached-yaml fallback).
+	// instead of the fail-loud no-cached-yaml 422.
 	s := newTestServer()
 	s.registerGHActionsRoutes()
 	s.registerGHWorkflowsRoutes()

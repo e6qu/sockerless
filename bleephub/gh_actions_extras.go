@@ -3,6 +3,7 @@ package bleephub
 import (
 	"archive/zip"
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -97,10 +98,9 @@ func repositoryDispatchPayload(repo *Repo, user *User, eventType string, clientP
 // handleRunLogs — returns the run's log archive shaped like real GitHub's:
 // per job a top-level "0_<jobname>.txt" (full job log) plus a
 // "<jobname>/" folder with "<number>_<step name>.txt" per step that has
-// uploaded log content. Jobs whose runner never reported timeline records
-// keep the flat "<jobKey>_<jobUUID>.txt" console-capture entry. Real GH
-// redirects to a signed-URL download; bleephub returns the zip directly
-// with Content-Type: application/zip (curl + gh both handle the body).
+// uploaded log content. Real GH redirects to a signed-URL download;
+// bleephub returns the zip directly with Content-Type: application/zip
+// (curl + gh both handle the body).
 func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 	runID, err := strconv.Atoi(r.PathValue("run_id"))
 	if err != nil {
@@ -112,54 +112,95 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.writeRunLogsZip(w, wf, runID)
+	s.writeRunLogsZip(r.Context(), w, wf, runID)
 }
 
 // writeRunLogsZip renders the run's log archive (real GitHub's layout:
 // per job a top-level "0_<jobname>.txt" full job log plus a
 // "<jobname>/" folder with per-step files) and writes it as the
 // response. Shared by the run-level and attempt-level log endpoints.
-func (s *Server) writeRunLogsZip(w http.ResponseWriter, wf *Workflow, runID int) {
+func (s *Server) writeRunLogsZip(ctx context.Context, w http.ResponseWriter, wf *Workflow, runID int) {
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
+
 	s.store.mu.RLock()
-	for jobKey, job := range wf.Jobs {
-		tasks := s.taskRecordsForJobLocked(job.JobID)
-		if len(tasks) == 0 {
-			f, err := zw.Create(fmt.Sprintf("%s_%s.txt", jobKey, job.JobID))
-			if err != nil {
-				continue
-			}
-			for _, line := range s.store.LogLines[job.JobID] {
-				_, _ = f.Write([]byte(line + "\n"))
-			}
-			continue
-		}
+	jobKeys := make([]string, 0, len(wf.Jobs))
+	for jobKey := range wf.Jobs {
+		jobKeys = append(jobKeys, jobKey)
+	}
+	sort.Strings(jobKeys)
+	type runLogJob struct {
+		name       string
+		refs       []jobLogRef
+		memoryLogs map[int][]byte
+	}
+	jobs := make([]runLogJob, 0, len(jobKeys))
+	for _, jobKey := range jobKeys {
+		job := wf.Jobs[jobKey]
 		jobName := job.DisplayName
 		if jobName == "" {
 			jobName = jobKey
 		}
-		jobName = zipSafeName(jobName)
-		if f, err := zw.Create(fmt.Sprintf("0_%s.txt", jobName)); err == nil {
-			_, _ = f.Write(s.jobLogContentLocked(job.JobID))
-		}
-		for i, rec := range tasks {
-			if rec.Log == nil {
-				continue
-			}
-			content := s.store.LogFiles[rec.Log.ID]
-			if len(content) == 0 {
-				continue
-			}
-			f, err := zw.Create(fmt.Sprintf("%s/%d_%s.txt", jobName, i+1, zipSafeName(rec.Name)))
-			if err != nil {
-				continue
-			}
-			_, _ = f.Write(content)
-		}
+		refs := s.jobLogRefsLocked(job.JobID)
+		jobs = append(jobs, runLogJob{
+			name:       zipSafeName(jobName),
+			refs:       refs,
+			memoryLogs: s.memoryLogFilesForDownloadLocked(refs),
+		})
 	}
 	s.store.mu.RUnlock()
-	_ = zw.Close()
+
+	wroteAny := false
+	for _, job := range jobs {
+		var full bytes.Buffer
+		type stepEntry struct {
+			name    string
+			content []byte
+		}
+		steps := make([]stepEntry, 0, len(job.refs))
+		for _, ref := range job.refs {
+			content, ok, err := s.logFileContent(ctx, ref.ID, job.memoryLogs[ref.ID])
+			if err != nil {
+				_ = zw.Close()
+				writeGHError(w, http.StatusInternalServerError, "log byte-store read: "+err.Error())
+				return
+			}
+			if !ok {
+				continue
+			}
+			full.Write(content)
+			if content[len(content)-1] != '\n' {
+				full.WriteByte('\n')
+			}
+			steps = append(steps, stepEntry{name: ref.Name, content: content})
+		}
+		if full.Len() == 0 {
+			continue
+		}
+		if f, err := zw.Create(fmt.Sprintf("0_%s.txt", job.name)); err == nil {
+			_, _ = f.Write(full.Bytes())
+			wroteAny = true
+		}
+		for i, step := range steps {
+			f, err := zw.Create(fmt.Sprintf("%s/%d_%s.txt", job.name, i+1, zipSafeName(step.name)))
+			if err != nil {
+				_ = zw.Close()
+				writeGHError(w, http.StatusInternalServerError, "create log archive entry: "+err.Error())
+				return
+			}
+			_, _ = f.Write(step.content)
+			wroteAny = true
+		}
+	}
+	if !wroteAny {
+		_ = zw.Close()
+		writeGHError(w, http.StatusNotFound, "Logs not found")
+		return
+	}
+	if err := zw.Close(); err != nil {
+		writeGHError(w, http.StatusInternalServerError, "finish log archive: "+err.Error())
+		return
+	}
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="logs_%d.zip"`, runID))
 	w.WriteHeader(http.StatusOK)
@@ -191,17 +232,9 @@ func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
 	if repo == "" {
 		repo = repoFullName(r)
 	}
-	s.store.DiscoverWorkflowFilesFromGit(repo)
-	var match *WorkflowFile
-	for _, f := range s.store.ListWorkflowFiles(repo) {
-		if f.Name == wf.Name && f.YAML != "" {
-			match = f
-			break
-		}
-	}
-	if match == nil {
-		writeGHError(w, http.StatusUnprocessableEntity,
-			"no cached workflow YAML for this run (push the workflow file to git or POST /api/v3/bleephub/workflow first)")
+	match, err := s.cachedWorkflowFileForRun(repo, wf)
+	if err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	def, perr := ParseWorkflow([]byte(match.YAML))
@@ -226,7 +259,7 @@ func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.store.mu.RUnlock()
 
-	if err := s.rerunWorkflowAsNewAttempt(r, wf, def, serverURL, carryOver); err != nil {
+	if err := s.rerunWorkflowAsNewAttempt(r, wf, match, def, serverURL, carryOver); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
 		return
 	}
@@ -319,7 +352,12 @@ func (s *Server) handleDeleteArtifact(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.artifactStore.deleteArtifact(art.ID) {
+	deleted, err := s.artifactStore.deleteArtifact(r.Context(), art.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "artifact byte-store delete: "+err.Error())
+		return
+	}
+	if !deleted {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}

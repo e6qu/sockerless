@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -126,16 +127,20 @@ func (st *Store) ListWorkflowFiles(repoFullName string) []*WorkflowFile {
 	return out
 }
 
-// DiscoverWorkflowFilesFromGit walks the repo's git storage at HEAD
-// and registers any `.github/workflows/*.{yml,yaml}` file as a
-// WorkflowFile with source="discovered". Idempotent — re-discovers on
-// every call so a fresh push picks up new YAMLs.
+// DiscoverWorkflowFilesFromGit walks the repo's default branch and registers
+// any `.github/workflows/*.{yml,yaml}` file as a WorkflowFile with
+// source="discovered". Idempotent — re-discovers on every call so a fresh push
+// picks up new YAMLs.
 //
-// No-ops for repos that have no git storage, no HEAD, or an empty
+// No-ops for repos that have no git storage, no default branch ref, or an empty
 // tree; returns the count of files registered.
 func (st *Store) DiscoverWorkflowFilesFromGit(repoFullName string) int {
 	st.mu.RLock()
 	storer := st.GitStorages[repoFullName]
+	defaultBranch := "main"
+	if repo := st.ReposByName[repoFullName]; repo != nil && repo.DefaultBranch != "" {
+		defaultBranch = repo.DefaultBranch
+	}
 	st.mu.RUnlock()
 	if storer == nil {
 		return 0
@@ -146,7 +151,10 @@ func (st *Store) DiscoverWorkflowFilesFromGit(repoFullName string) int {
 	}
 	headRef, err := repo.Head()
 	if err != nil {
-		return 0
+		headRef, err = repo.Storer.Reference(plumbing.NewBranchReferenceName(defaultBranch))
+		if err != nil {
+			return 0
+		}
 	}
 	commit, err := repo.CommitObject(headRef.Hash())
 	if err != nil {

@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -16,8 +17,10 @@ import (
 	"time"
 )
 
-// ArtifactStore holds artifacts for @actions/artifact v4 Twirp API.
-// When dataDir is set, artifacts are persisted to disk; otherwise they're in-memory.
+// ArtifactStore holds artifact/cache metadata for @actions/artifact v4
+// and the byte backend used for artifact/cache/log content.
+// When dataDir is set, metadata and local-development bytes are persisted
+// to disk; when byteStore is set, durable bytes are written to object storage.
 type ArtifactStore struct {
 	mu          sync.RWMutex
 	artifacts   map[int64]*Artifact
@@ -26,6 +29,7 @@ type ArtifactStore struct {
 	cacheIndex  map[string]int64
 	nextCacheID int64
 	dataDir     string // empty = in-memory mode
+	byteStore   actionsByteStore
 }
 
 // Artifact represents an uploaded artifact.
@@ -59,22 +63,17 @@ type CacheEntry struct {
 	CreatedAt     time.Time `json:"createdAt"`
 }
 
-// NewArtifactStore creates an artifact store. If dataDir is non-empty,
-// artifacts are persisted to disk.
-func NewArtifactStore(dataDir ...string) *ArtifactStore {
-	dir := ""
-	if len(dataDir) > 0 {
-		dir = dataDir[0]
-	}
+func NewArtifactStoreWithByteStore(dataDir string, byteStore actionsByteStore) *ArtifactStore {
 	store := &ArtifactStore{
 		artifacts:   make(map[int64]*Artifact),
 		nextID:      1,
 		caches:      make(map[int64]*CacheEntry),
 		cacheIndex:  make(map[string]int64),
 		nextCacheID: 1,
-		dataDir:     dir,
+		dataDir:     dataDir,
+		byteStore:   byteStore,
 	}
-	if dir != "" {
+	if dataDir != "" {
 		store.recoverFromDisk()
 	}
 	return store
@@ -109,10 +108,9 @@ func (as *ArtifactStore) recoverArtifactsFromDisk() {
 		if err := json.Unmarshal(metaBytes, &art); err != nil {
 			continue
 		}
-		// Load data
-		dataPath := filepath.Join(artDir, entry.Name(), "data")
-		data, _ := os.ReadFile(dataPath)
-		art.Data = data
+		if data, err := as.readBytes(context.Background(), artifactDataKey(id), filepath.Join(artDir, entry.Name(), "data")); err == nil {
+			art.Data = data
+		}
 		as.artifacts[id] = &art
 		if id >= as.nextID {
 			as.nextID = id + 1
@@ -143,9 +141,9 @@ func (as *ArtifactStore) recoverCachesFromDisk() {
 		if err := json.Unmarshal(metaBytes, &cacheEntry); err != nil {
 			continue
 		}
-		dataPath := filepath.Join(cacheDir, entry.Name(), "data")
-		data, _ := os.ReadFile(dataPath)
-		cacheEntry.Data = data
+		if data, err := as.readBytes(context.Background(), cacheDataKey(id), filepath.Join(cacheDir, entry.Name(), "data")); err == nil {
+			cacheEntry.Data = data
+		}
 		as.caches[id] = &cacheEntry
 		as.cacheIndex[cacheLookupKey(cacheEntry.Repo, cacheEntry.Key, cacheEntry.Version)] = id
 		if id >= as.nextCacheID {
@@ -168,19 +166,45 @@ func (as *ArtifactStore) persistMeta(art *Artifact) {
 	os.WriteFile(filepath.Join(dir, "meta.json"), data, 0o644)
 }
 
-// appendData appends data to the artifact's data file.
-func (as *ArtifactStore) appendData(art *Artifact, chunk []byte) {
-	if as.dataDir == "" {
-		return
+func (as *ArtifactStore) writeArtifactData(ctx context.Context, art *Artifact) error {
+	return as.writeBytes(ctx, artifactDataKey(art.ID), filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(art.ID, 10), "data"), art.Data)
+}
+
+func (as *ArtifactStore) writeCacheData(ctx context.Context, entry *CacheEntry) error {
+	return as.writeBytes(ctx, cacheDataKey(entry.ID), filepath.Join(as.dataDir, "caches", strconv.FormatInt(entry.ID, 10), "data"), entry.Data)
+}
+
+func (as *ArtifactStore) writeLogData(ctx context.Context, logID int, data []byte) error {
+	return as.writeBytes(ctx, logDataKey(logID), "", data)
+}
+
+func (as *ArtifactStore) deleteLogData(ctx context.Context, logID int) error {
+	if as.byteStore == nil {
+		return nil
 	}
-	dir := filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(art.ID, 10))
-	os.MkdirAll(dir, 0o755)
-	f, err := os.OpenFile(filepath.Join(dir, "data"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
-		return
+	return as.byteStore.Delete(ctx, logDataKey(logID))
+}
+
+func (as *ArtifactStore) writeBytes(ctx context.Context, objectKey, localPath string, data []byte) error {
+	if as.byteStore != nil {
+		if err := as.byteStore.Put(ctx, objectKey, data); err != nil {
+			return err
+		}
 	}
-	f.Write(chunk)
-	f.Close()
+	if as.dataDir == "" || localPath == "" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(localPath, data, 0o644)
+}
+
+func (as *ArtifactStore) readBytes(ctx context.Context, objectKey, localPath string) ([]byte, error) {
+	if as.byteStore != nil {
+		return as.byteStore.Get(ctx, objectKey)
+	}
+	return os.ReadFile(localPath)
 }
 
 func (as *ArtifactStore) finalizedArtifacts() []*Artifact {
@@ -212,18 +236,27 @@ func (as *ArtifactStore) artifactByID(id int64) (*Artifact, bool) {
 	return &copyArt, true
 }
 
-func (as *ArtifactStore) deleteArtifact(id int64) bool {
-	as.mu.Lock()
+func (as *ArtifactStore) deleteArtifact(ctx context.Context, id int64) (bool, error) {
+	as.mu.RLock()
 	_, ok := as.artifacts[id]
-	if ok {
-		delete(as.artifacts, id)
+	as.mu.RUnlock()
+	if !ok {
+		return false, nil
 	}
-	as.mu.Unlock()
-
 	if ok && as.dataDir != "" {
-		_ = os.RemoveAll(filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(id, 10)))
+		if err := os.RemoveAll(filepath.Join(as.dataDir, "artifacts", strconv.FormatInt(id, 10))); err != nil {
+			return true, err
+		}
 	}
-	return ok
+	if ok && as.byteStore != nil {
+		if err := as.byteStore.Delete(ctx, artifactDataKey(id)); err != nil {
+			return true, err
+		}
+	}
+	as.mu.Lock()
+	delete(as.artifacts, id)
+	as.mu.Unlock()
+	return true, nil
 }
 
 func (as *ArtifactStore) persistCacheMeta(entry *CacheEntry) {
@@ -245,6 +278,9 @@ func (as *ArtifactStore) persistCacheMeta(entry *CacheEntry) {
 // on-disk copy used for restart recovery, so the error is returned for the
 // caller to surface rather than silently dropped.
 func (as *ArtifactStore) writeCacheDataAt(entry *CacheEntry, chunk []byte, offset int64) error {
+	if as.byteStore != nil {
+		return as.writeCacheData(context.Background(), entry)
+	}
 	if as.dataDir == "" {
 		return nil
 	}
@@ -364,18 +400,25 @@ func (s *Server) handleDeleteRepoCachesByKey(w http.ResponseWriter, r *http.Requ
 	}
 	var deleted []*CacheEntry
 	s.artifactStore.mu.Lock()
-	for id, entry := range s.artifactStore.caches {
+	for _, entry := range s.artifactStore.caches {
 		if entry.Repo != repo || entry.Key != key {
 			continue
 		}
 		deleted = append(deleted, entry)
-		delete(s.artifactStore.caches, id)
-		delete(s.artifactStore.cacheIndex, cacheLookupKey(entry.Repo, entry.Key, entry.Version))
 	}
 	s.artifactStore.mu.Unlock()
 	for _, entry := range deleted {
-		s.removeCacheFromDisk(entry.ID)
+		if err := s.removeCacheBytes(r.Context(), entry.ID); err != nil {
+			writeGHError(w, http.StatusInternalServerError, "cache byte-store delete: "+err.Error())
+			return
+		}
 	}
+	s.artifactStore.mu.Lock()
+	for _, entry := range deleted {
+		delete(s.artifactStore.caches, entry.ID)
+		delete(s.artifactStore.cacheIndex, cacheLookupKey(entry.Repo, entry.Key, entry.Version))
+	}
+	s.artifactStore.mu.Unlock()
 	sort.Slice(deleted, func(i, j int) bool { return deleted[i].ID < deleted[j].ID })
 	caches := make([]map[string]any, 0, len(deleted))
 	for _, e := range deleted {
@@ -402,10 +445,15 @@ func (s *Server) handleDeleteRepoCacheByID(w http.ResponseWriter, r *http.Reques
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.artifactStore.mu.Unlock()
+	if err := s.removeCacheBytes(r.Context(), id); err != nil {
+		writeGHError(w, http.StatusInternalServerError, "cache byte-store delete: "+err.Error())
+		return
+	}
+	s.artifactStore.mu.Lock()
 	delete(s.artifactStore.caches, id)
 	delete(s.artifactStore.cacheIndex, cacheLookupKey(entry.Repo, entry.Key, entry.Version))
 	s.artifactStore.mu.Unlock()
-	s.removeCacheFromDisk(id)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -425,11 +473,18 @@ func (s *Server) handleRepoCacheUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 // removeCacheFromDisk deletes a cache's on-disk copy. No-op in in-memory mode.
-func (s *Server) removeCacheFromDisk(id int64) {
-	if s.artifactStore.dataDir == "" {
-		return
+func (s *Server) removeCacheBytes(ctx context.Context, id int64) error {
+	if s.artifactStore.dataDir != "" {
+		if err := os.RemoveAll(filepath.Join(s.artifactStore.dataDir, "caches", strconv.FormatInt(id, 10))); err != nil {
+			return err
+		}
 	}
-	_ = os.RemoveAll(filepath.Join(s.artifactStore.dataDir, "caches", strconv.FormatInt(id, 10)))
+	if s.artifactStore.byteStore != nil {
+		if err := s.artifactStore.byteStore.Delete(ctx, cacheDataKey(id)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- Artifact Twirp handlers ---
@@ -500,7 +555,11 @@ func (s *Server) handleUploadArtifact(w http.ResponseWriter, r *http.Request) {
 	if ok {
 		art.Data = append(art.Data, data...)
 		art.Size = int64(len(art.Data))
-		s.artifactStore.appendData(art, data)
+		if err := s.artifactStore.writeArtifactData(r.Context(), art); err != nil {
+			s.artifactStore.mu.Unlock()
+			http.Error(w, "artifact byte-store write: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
 	}
 	s.artifactStore.mu.Unlock()
 
@@ -651,9 +710,18 @@ func (s *Server) handleDownloadArtifact(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(art.Data)))
+	data := art.Data
+	if len(data) == 0 && art.Size > 0 && s.artifactStore.byteStore != nil {
+		var err error
+		data, err = s.artifactStore.byteStore.Get(r.Context(), artifactDataKey(art.ID))
+		if err != nil {
+			http.Error(w, "artifact byte-store read: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(art.Data)
+	_, _ = w.Write(data)
 }
 
 // --- Actions cache ---
@@ -806,7 +874,9 @@ func (s *Server) handleCacheUpload(w http.ResponseWriter, r *http.Request) {
 	copy(entry.Data[start:end+1], chunk)
 	entry.Size = int64(len(entry.Data))
 	if err := s.artifactStore.writeCacheDataAt(entry, chunk, start); err != nil {
-		s.logger.Error().Err(err).Int64("id", id).Msg("cache chunk on-disk persistence failed (in-memory copy intact)")
+		s.artifactStore.mu.Unlock()
+		writeGHError(w, http.StatusInternalServerError, "cache byte-store write: "+err.Error())
+		return
 	}
 	s.artifactStore.persistCacheMeta(entry)
 	s.artifactStore.mu.Unlock()
@@ -880,9 +950,18 @@ func (s *Server) handleCacheDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(entry.Data)))
+	data := entry.Data
+	if len(data) == 0 && entry.Size > 0 && s.artifactStore.byteStore != nil {
+		var err error
+		data, err = s.artifactStore.byteStore.Get(r.Context(), cacheDataKey(entry.ID))
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, "cache byte-store read: "+err.Error())
+			return
+		}
+	}
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(entry.Data)
+	_, _ = w.Write(data)
 }
 
 func cacheLookupKey(repo, key, version string) string {

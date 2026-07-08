@@ -56,7 +56,6 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // Honors the persistence-related env vars:
 //   - BLEEPHUB_DATA_DIR     — directory for SQLite DB + artifact store.
 //   - BLEEPHUB_PERSIST      — when "true", enables SQLite-backed state.
-//   - BLEEPHUB_DATABASE_URL — PostgreSQL DSN (takes priority over SQLite).
 //
 // Operator-requested persistence that fails to open will log.Fatalf.
 //
@@ -89,12 +88,11 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		}
 	}
 	dataDir := os.Getenv("BLEEPHUB_DATA_DIR")
-	var artifactStore *ArtifactStore
-	if dataDir != "" {
-		artifactStore = NewArtifactStore(dataDir)
-	} else {
-		artifactStore = NewArtifactStore()
+	byteStore, err := newActionsByteStoreFromEnv(context.Background())
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to initialize BLEEPHUB_OBJECT_S3_* byte storage")
 	}
+	artifactStore := NewArtifactStoreWithByteStore(dataDir, byteStore)
 
 	s := &Server{
 		addr:                   addr,
@@ -111,15 +109,15 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		s.store.PackageDataDir = dataDir
 	}
 
-	// Wire persistence. PostgreSQL takes priority via BLEEPHUB_DATABASE_URL;
-	// otherwise BLEEPHUB_PERSIST=true enables SQLite. Both fail-loud on open failure.
+	// Wire persistence. BLEEPHUB_PERSIST=true enables SQLite and fails loud
+	// on open failure.
 	persist := MustNewPersistence()
 	if persist != nil {
 		// Metadata persistence with in-memory git storage is a silent
 		// degraded mode: every repo would reload with an empty git side.
 		// Refuse to start rather than serve hollow repos.
 		if GitDataDir() == "" && !IsS3GitStorage() {
-			logger.Fatal().Msg("persistence is enabled (BLEEPHUB_PERSIST/BLEEPHUB_DATABASE_URL) but git storage is in-memory: " +
+			logger.Fatal().Msg("persistence is enabled (BLEEPHUB_PERSIST=true) but git storage is in-memory: " +
 				"repo metadata would survive a restart while every git repo reloads empty. " +
 				"Configure durable git storage (BLEEPHUB_GIT_DIR=<dir> or BLEEPHUB_S3_BUCKET=<bucket>) or disable persistence.")
 		}

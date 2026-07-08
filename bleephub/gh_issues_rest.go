@@ -26,11 +26,12 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Title     string   `json:"title"`
-		Body      string   `json:"body"`
-		Labels    []string `json:"labels"`
-		Assignees []string `json:"assignees"`
-		Milestone int      `json:"milestone"` // milestone number
+		Title       string   `json:"title"`
+		Body        string   `json:"body"`
+		Labels      []string `json:"labels"`
+		Assignees   []string `json:"assignees"`
+		Milestone   int      `json:"milestone"` // milestone number
+		IssueTypeID *int     `json:"issue_type_id"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -67,10 +68,26 @@ func (s *Server) handleCreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var issueTypeID int
+	if req.IssueTypeID != nil && *req.IssueTypeID > 0 {
+		it := s.store.GetAssignableIssueTypeForRepo(repo, *req.IssueTypeID)
+		if it == nil {
+			writeGHValidationError(w, "Issue", "issue_type_id", "invalid")
+			return
+		}
+		issueTypeID = it.ID
+	}
+
 	issue := s.store.CreateIssue(repo.ID, user.ID, req.Title, req.Body, labelIDs, assigneeIDs, milestoneID)
 	if issue == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Issue creation failed")
 		return
+	}
+	if issueTypeID > 0 {
+		s.store.UpdateIssue(issue.ID, func(i *Issue) {
+			i.IssueTypeID = issueTypeID
+		})
+		issue = s.store.GetIssue(issue.ID)
 	}
 	repoKey := owner + "/" + name
 	s.emitWebhookEvent(repoKey, "issues", "opened", buildIssuesPayload(s.store, repo, issue, user, "opened"))
@@ -283,6 +300,30 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		assigneeIDs = &ids
 	}
+	var issueTypeID *int
+	if v, present := req["issue_type_id"]; present {
+		switch tv := v.(type) {
+		case nil:
+			cleared := 0
+			issueTypeID = &cleared
+		case float64:
+			if tv <= 0 {
+				cleared := 0
+				issueTypeID = &cleared
+				break
+			}
+			it := s.store.GetAssignableIssueTypeForRepo(repo, int(tv))
+			if it == nil {
+				writeGHValidationError(w, "Issue", "issue_type_id", "invalid")
+				return
+			}
+			resolved := it.ID
+			issueTypeID = &resolved
+		default:
+			writeGHValidationError(w, "Issue", "issue_type_id", "invalid")
+			return
+		}
+	}
 
 	s.store.UpdateIssue(issue.ID, func(i *Issue) {
 		if v, ok := req["title"].(string); ok {
@@ -299,6 +340,9 @@ func (s *Server) handleUpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 		if assigneeIDs != nil {
 			i.AssigneeIDs = *assigneeIDs
+		}
+		if issueTypeID != nil {
+			i.IssueTypeID = *issueTypeID
 		}
 		if v, ok := req["state"].(string); ok {
 			switch v {
@@ -1033,7 +1077,6 @@ func issueToJSON(issue *Issue, st *Store, baseURL, repoFullName string) map[stri
 	if issue.MilestoneID > 0 {
 		milestone = st.Milestones[issue.MilestoneID]
 	}
-
 	// Count comments via the maintained index while holding the lock.
 	commentCount := st.countCommentsForLocked("issue", issue.ID)
 

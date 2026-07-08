@@ -260,6 +260,14 @@ func (s *Server) triggerWorkflowsForEvent(repoKey, eventType, action, ref string
 	}
 
 	sha := resolveRefSha(stor, ref)
+	if sha == "0000000000000000000000000000000000000000" {
+		s.logger.Error().
+			Str("repo", repoKey).
+			Str("event", eventType).
+			Str("ref", ref).
+			Msg("workflow trigger rejected because the git ref did not resolve to a commit")
+		return
+	}
 	ev := s.buildTriggerEvent(stor, eventType, action, ref, payload)
 
 	for name, content := range workflowFiles {
@@ -379,10 +387,8 @@ func (s *Server) workflowFileDisabled(repoKey, filename string) bool {
 }
 
 // resolveRefSha resolves the commit sha the triggering ref points at in git
-// storage, falling back to HEAD's commit when the ref isn't stored (e.g. a
-// pull_request event for a PR created via REST without a pushed branch).
-// Returns the all-zero placeholder sha when nothing resolves — the same
-// convention the workflow_dispatch path uses for runs without a git commit.
+// storage. Empty ref means HEAD. Non-empty refs must resolve exactly; event
+// triggers must not silently substitute a different commit.
 func resolveRefSha(stor gitStorage.Storer, ref string) string {
 	const zeroSha = "0000000000000000000000000000000000000000"
 	resolve := func(name plumbing.ReferenceName) (plumbing.Hash, bool) {
@@ -403,6 +409,7 @@ func resolveRefSha(stor gitStorage.Storer, ref string) string {
 		if h, ok := resolve(plumbing.ReferenceName(ref)); ok && !h.IsZero() {
 			return h.String()
 		}
+		return zeroSha
 	}
 	if h, ok := resolve(plumbing.HEAD); ok && !h.IsZero() {
 		return h.String()

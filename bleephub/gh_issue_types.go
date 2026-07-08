@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -160,6 +161,17 @@ func issueTypeJSON(it *IssueType) map[string]interface{} {
 
 // --- store ---
 
+func orgLoginForIssueTypeRepo(repo *Repo) string {
+	if repo == nil || repo.OwnerType != "Organization" {
+		return ""
+	}
+	owner, _, ok := strings.Cut(repo.FullName, "/")
+	if !ok {
+		return ""
+	}
+	return owner
+}
+
 // ListIssueTypes returns the org's issue types sorted by ID.
 func (st *Store) ListIssueTypes(orgLogin string) []*IssueType {
 	st.mu.RLock()
@@ -171,6 +183,56 @@ func (st *Store) ListIssueTypes(orgLogin string) []*IssueType {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
+}
+
+// GetAssignableIssueTypeForRepo returns an enabled issue type owned by the
+// repository's organization. User-owned repositories do not have issue types.
+func (st *Store) GetAssignableIssueTypeForRepo(repo *Repo, id int) *IssueType {
+	if id <= 0 {
+		return nil
+	}
+	orgLogin := orgLoginForIssueTypeRepo(repo)
+	if orgLogin == "" {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	it := st.OrgIssueTypes[orgLogin][id]
+	if it == nil || !it.IsEnabled {
+		return nil
+	}
+	return it
+}
+
+// issueTypeForIssueLocked resolves the issue's assigned type while st.mu is
+// held. It returns nil when the repo no longer resolves, the repo is not owned
+// by an organization, or the assigned definition was removed.
+func (st *Store) issueTypeForIssueLocked(issue *Issue) *IssueType {
+	if issue == nil || issue.IssueTypeID == 0 {
+		return nil
+	}
+	repo := st.Repos[issue.RepoID]
+	orgLogin := orgLoginForIssueTypeRepo(repo)
+	if orgLogin == "" {
+		return nil
+	}
+	return st.OrgIssueTypes[orgLogin][issue.IssueTypeID]
+}
+
+func findIssueTypeByNodeID(st *Store, nodeID string) *IssueType {
+	if nodeID == "" {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	for _, types := range st.OrgIssueTypes {
+		for _, it := range types {
+			if it.NodeID == nodeID {
+				return it
+			}
+		}
+	}
+	return nil
 }
 
 // CreateIssueType creates a new organization issue type.

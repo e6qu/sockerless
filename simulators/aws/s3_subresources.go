@@ -722,7 +722,7 @@ func handleS3CopyObject(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now().UTC()
 	dst := S3Object{
-		Key:          dstKey,
+		Key:          s3ObjectKey(dstBucket, dstKey),
 		Data:         append([]byte(nil), src.Data...),
 		Size:         src.Size,
 		ETag:         src.ETag,

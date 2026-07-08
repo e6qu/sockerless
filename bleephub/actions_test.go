@@ -281,7 +281,7 @@ func newTestServer() *Server {
 		logger:        logger,
 		store:         NewStore(),
 		actionCache:   NewActionCache(),
-		artifactStore: NewArtifactStore(),
+		artifactStore: NewArtifactStoreWithByteStore("", nil),
 	}
 	s.store.SeedDefaultUser()
 	return s

@@ -2,11 +2,15 @@ import { useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { InlineError } from "@sockerless/ui-core/components";
 import {
+  isNotFound,
   fetchRepoLabels,
   fetchRepoMilestones,
+  fetchOrgIssueTypes,
+  fetchIssueGraphQLIssueType,
   addIssueLabels,
   removeIssueLabel,
   setIssueMilestone,
+  setIssueType,
 } from "../api.js";
 import { LabelPills } from "./LabelPills.js";
 import { ErrorBanner } from "./ui.js";
@@ -50,6 +54,7 @@ function SidebarSection({
 export function IssueSidebar({
   owner,
   repo,
+  ownerType,
   number,
   kind,
   assignees,
@@ -61,6 +66,7 @@ export function IssueSidebar({
 }: {
   owner: string;
   repo: string;
+  ownerType?: string;
   number: number;
   kind: "issue" | "pr";
   assignees: string[];
@@ -81,10 +87,26 @@ export function IssueSidebar({
     queryKey: ["milestones", owner, repo, "all"],
     queryFn: () => fetchRepoMilestones(owner, repo, "all"),
   });
+  const {
+    data: issueTypes = [],
+    isLoading: issueTypesLoading,
+    isError: issueTypesError,
+    error: issueTypesErr,
+  } = useQuery({
+    queryKey: ["org-issue-types", owner],
+    queryFn: () => fetchOrgIssueTypes(owner),
+    enabled: kind === "issue" && ownerType === "Organization",
+  });
+  const { data: graphQLIssueType = null } = useQuery({
+    queryKey: ["issue-type", owner, repo, number],
+    queryFn: () => fetchIssueGraphQLIssueType(owner, repo, number),
+    enabled: kind === "issue" && ownerType === "Organization",
+  });
 
   const invalidate = () => {
     setError(null);
     qc.invalidateQueries({ queryKey: [kind === "pr" ? "pr" : "issue", owner, repo, number] });
+    qc.invalidateQueries({ queryKey: ["issue-type", owner, repo, number] });
     qc.invalidateQueries({ queryKey: [kind === "pr" ? "prs" : "issues", owner, repo] });
     qc.invalidateQueries({ queryKey: ["pr-timeline", owner, repo, number] });
   };
@@ -103,9 +125,19 @@ export function IssueSidebar({
     onSuccess: invalidate,
     onError: (err: Error) => setError(err.message),
   });
+  const issueTypeMut = useMutation({
+    mutationFn: (id: number | null) => setIssueType(owner, repo, number, id),
+    onSuccess: invalidate,
+    onError: (err: Error) => setError(err.message),
+  });
 
   const applied = new Set(labels.map((l) => l.name));
   const addable = repoLabels.filter((l) => !applied.has(l.name));
+  const enabledIssueTypes = issueTypes.filter((it) => it.is_enabled);
+  const selectedIssueType = graphQLIssueType
+    ? issueTypes.find((it) => it.node_id === graphQLIssueType.id) ?? null
+    : null;
+  const issueTypesUnavailable = ownerType !== "Organization" || (issueTypesError && isNotFound(issueTypesErr));
   const muted = { fontSize: "0.82rem", color: "var(--color-fg-muted)" } as const;
 
   return (
@@ -209,6 +241,34 @@ export function IssueSidebar({
           <span style={muted}>No milestone</span>
         )}
       </SidebarSection>
+
+      {kind === "issue" && !issueTypesLoading && !issueTypesUnavailable && (
+        <SidebarSection title="Type">
+          {issueTypesError ? (
+            <InlineError inline title="Failed to load issue types" detail={String(issueTypesErr)} />
+          ) : (
+            <select
+              aria-label="Set issue type"
+              value={selectedIssueType?.id ?? ""}
+              onChange={(e) =>
+                issueTypeMut.mutate(e.target.value === "" ? null : parseInt(e.target.value, 10))
+              }
+              disabled={issueTypeMut.isPending}
+              style={{ fontSize: "0.8rem" }}
+            >
+              <option value="">No type</option>
+              {enabledIssueTypes.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.name}
+                </option>
+              ))}
+              {selectedIssueType && !selectedIssueType.is_enabled && (
+                <option value={selectedIssueType.id}>{selectedIssueType.name} (disabled)</option>
+              )}
+            </select>
+          )}
+        </SidebarSection>
+      )}
 
       <SidebarSection title="Development">
         {development ?? <span style={muted}>No branches or pull requests</span>}

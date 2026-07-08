@@ -4,33 +4,71 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, Actions no-fallback hardening, repository lifecycle persistence, CI follow-ups, and continuity cleanup.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage and fail-loud log downloads, GraphQL sub-issues, issue-field values, Projects v2 field values, and issue-comment pin state, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, Actions rerun workflow-file identity, fail-loud event ref resolution, paginated/searchable organization audit logs, go-github Actions dispatch coverage, SQLite-only metadata persistence, CI setup hardening, cloud-backend lint sharding, and AWS S3 CopyObject list visibility.
 
 **Next**
-- After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
+- Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
 
 **Scope**
-- **BUG-2314:** Pull request creation requires real head/base refs. REST and GraphQL PR responses derive head/base shas, commit counts, review `commit_id`, status rollups, and merge response shas from git storage; the pseudo-PR SHA path was removed.
-- **BUG-2315:** GraphQL `reviewRequests` renders real requested reviewers instead of a hardcoded empty connection.
-- **BUG-2313:** Release `generate-notes` resolves the requested git tag/commit range, walks commits, matches merged pull request merge commits, and emits real "What's Changed" bullets with the Full Changelog compare line.
-- **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
-- **BUG-2335:** The go-github SDK suite and gh CLI parity harness no longer rely on metadata-only PR fixtures. SDK tests create real Git Data objects/refs before PR creation, `TestGitData` is live coverage instead of a stale skip, and the gh harness pushes real `main`/`feature` refs before the raw PR probe.
-- **BUG-2336:** CI apt setup no longer lets degraded runner-provided Microsoft apt sources block jobs that only need Ubuntu packages; after normal retries fail, the helper quarantines those source files and retries the required package-index update.
-- **BUG-2337:** The Azure simulator CI job no longer pipes Microsoft's remote Azure CLI installer into `sudo bash`; it verifies the hosted-runner `az` binary with `az version` and fails loud if the required dependency is absent.
-- **BUG-2338:** Bleephub Actions action download metadata resolves bleephub-hosted action refs from git storage before rendering `resolvedSha`; unresolved refs fail loudly, absent action repositories no longer fetch from github.com, and tarball serving no longer substitutes the default branch for an unknown action ref.
-- **BUG-2339:** The CodeQL variant-analysis test uses a deterministic real tar.gz query-pack archive instead of arbitrary bytes labelled as a tarball.
-- **BUG-2340:** Repository rename, transfer, and delete move or purge repo-scoped persisted metadata instead of leaving stale `owner/repo` rows behind or deleting the updated repository row. The shared lifecycle path covers Actions secrets/variables, environments, hooks/collaborators/invitations/deploy keys, checks/statuses/comments, code scanning/SARIF/CodeQL, Dependabot, custom properties, immutable releases, code quality, rulesets, Projects classic, Codespaces, packages, and Copilot coding-agent state.
-- **Hook-driven dependency refresh:** The pre-push freshness hook's Google module drift was resolved (`cloud.google.com/go/pubsub` v1.50.3 and shared `cloud.google.com/go/auth` v0.21.0), and the README badge hook's deterministic refresh commit was included.
+- **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
+- **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
+- **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.
+- **BUG-2355:** Public Actions job, run, and run-attempt log downloads now serve only runner-uploaded timeline log files. Object-store mode reads those bytes back from S3-compatible storage, and missing uploaded logs return 404 instead of substituting in-memory live console capture.
+- **BUG-2356:** Event-triggered and scheduled workflow runs no longer substitute `HEAD` or an all-zero SHA when the triggering ref is missing. Non-empty refs must resolve exactly, missing event refs are rejected before run creation, scheduled runs reject unresolved default-branch refs, reusable workflow file reads fail when `HEAD` is unresolved, and the workflow git fixtures create real `main` refs so tests exercise valid git state.
+- **BUG-2357:** Organization audit-log listing now uses the shared GitHub-style paginator and emits Link headers instead of dumping every persisted event. Its `phrase` filter token-searches the persisted action, actor, org, and detail payload fields, while `actor_id` still narrows by actor. Regression coverage pins pagination, Link headers, exact-action search, and cross-field persisted-data search.
+- **BUG-2343:** GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` now render the same ordered sub-issue relationships as the REST API. Replacing a sub-issue's parent persists both the old and new parent lists so reload keeps the relationship graph coherent.
+- **BUG-2344:** Issues now store per-issue organization issue-type assignments. REST issue create/PATCH accepts `issue_type_id` and validates it against the repository owner's enabled org issue types; GraphQL `Issue.issueType` projects the assigned definition; the issue sidebar reads the assignment through GraphQL, maps it to the org issue-type list, and PATCHes the same validated REST field. Reload coverage proves assignments persist.
+- **BUG-2345:** The issue sidebar now gates issue-type queries on the repository owner's real type instead of probing `/orgs/{owner}/issue-types` for every issue. User-owned repositories skip the organization-only REST and GraphQL issue-type calls, so issue detail pages do not emit 404 browser console errors under Playwright.
+- **BUG-2354:** GraphQL `Issue.issueFieldValues` now exposes organization issue fields and per-issue values from the same real REST-backed store records. The schema includes the GitHub issue-field value union, typed field-definition union, select-option objects, enum values, pagination, and regression coverage that writes text, number, single-select, multi-select, and date values through REST before querying them through GraphQL.
+- **BUG-2359:** Projects v2 GraphQL field values now use the full real Projects v2 store contract instead of the old single-select-only projection. `updateProjectV2ItemFieldValue` validates project/item/field ownership, accepts exactly one value of the field's real type, supports text, number, date, single-select, and iteration values, and `Issue.projectItems.fieldValueByName` renders each stored kind through its matching GraphQL union member.
+- **BUG-2358:** GraphQL `Issue.comments.nodes.isPinned` now reads the persisted REST-backed `Comment.Pinned` field. Regression coverage creates an issue comment, pins it through the REST endpoint, and queries it through GraphQL so the resolver cannot drift back to a default-only value.
+- **BUG-2346:** Manual Pages builds no longer store a synthetic all-zero commit SHA, share the audit-log ID allocator, or lose their internal build ID on reload. Build requests require an enabled Pages site plus a real default-branch commit, record that actual commit SHA, allocate IDs from a dedicated persisted Pages-build sequence, and rehydrate the internal ID from the persisted build URL.
+- **BUG-2347:** Workflow-run rerun, failed-job rerun, and job rerun resolve cached workflow YAML by the run's originating workflow-file ID/path before accepting an older run's unique workflow-name match. New attempts preserve that workflow-file identity through `submitWorkflow`, and ambiguous same-name older runs fail loudly instead of replaying the wrong file.
+- **BUG-2348:** CI no longer runs all cloud-backend module lints in one imbalanced 5-minute shard. The lint matrix now splits cloud backends into AWS, Google Cloud, and Azure provider-family shards, giving each family its own timeout budget and parallel runner.
+- **BUG-2349:** The go-github SDK Actions workflow dispatch test no longer skips. It seeds a real `.github/workflows/ci.yml` file through the Git Data API, lists the workflow, dispatches it, reads the workflow run by ID, and lists the queued job through the typed client.
+- **BUG-2350:** Actions workflow discovery no longer depends only on git storage `HEAD`. It resolves the repository's recorded default branch when `HEAD` is unset, so Git Data seeded repositories expose default-branch workflow files to list/get/dispatch.
+- **BUG-2351:** The GCP simulator CI setup no longer streams the Google Cloud CLI tarball directly into `tar`. It downloads the archive to `$RUNNER_TEMP` with `curl --fail --retry-all-errors` and extracts only the completed file, so transient HTTP stream failures retry instead of producing a truncated gzip.
+- **BUG-2352:** Bleephub metadata persistence is SQLite-only. The unsupported PostgreSQL dialect, driver dependency, CI sidecar, and skip-if-env PostgreSQL test were removed; `BLEEPHUB_DATABASE_URL` now fails loudly with an explicit unsupported-configuration error; and the SQLite persistence round-trip remains unconditional.
+- **BUG-2353:** `TestActionsRun_WorkflowFileReferences` no longer has a rare collision skip. It chooses a non-colliding workflow-file path and always asserts the run's `workflow_id`, `workflow_url`, and path refer to the originating workflow file rather than the per-run ID.
+- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage, no-github.com action resolution, rerun workflow-file identity, the go-github reference adaptor, default-branch workflow discovery, SQLite-only metadata persistence, Projects v2 field-value GraphQL support, and the now-real audit-log, marketplace, app-installation-request, webhook-config, runner-refresh, org people-management, org invitation, and legacy numeric-id team surfaces. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata|DeleteRepoLeavesNoResidue)' -count=1` passed.
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestActionDownloadInfo|TestActionTarball|TestLocalActionTarball|TestCodeQLVariantAnalyses_CreateAndReadBack' -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestS3' -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.
-- `cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed.
-- `make bleephub-gh-docker-test` passed.
-- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md WHAT_WE_DID.md bleephub/sdk-tests/gitdata_test.go bleephub/sdk-tests/pulls_test.go bleephub/test/run-gh-test.sh scripts/ci-apt-update.sh` passed.
-- `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` in `simulators/aws` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3_CopyObject -count=1 ./` in `simulators/aws/sdk-tests` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3API_CopyObjectListed -count=1 ./` in `simulators/aws/cli-tests` passed.
+- `bash scripts/check-simulator-tests.sh` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestArtifactUploadWritesObjectStore|TestCacheUploadWritesObjectStore|TestLogfilesUpload_WritesObjectStore|TestArtifactCreateUploadFinalize|TestLogfilesUpload_AppendsBlocks|TestLogfilesUpload_CapsAtFourMiBWithMarker|TestDeleteRunLogs' -count=1` passed with sandbox escalation for loopback/simulator listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestActionsJobs_Logs|TestLogfilesUpload|TestJobLogs|TestRunLogsZip|TestActionsRunLogs_Delete|TestRunAttemptLogs' -count=1` passed in `bleephub` with sandbox escalation for loopback/simulator listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestTriggerFiltersEndToEnd|TestWorkflowTriggerRejectsUnresolvedRef|TestRerun|TestActionDownloadInfo|TestReusableWorkflow|TestWorkflows_DiscoverFromGitStorage' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestIssueGraphQL_SubIssueFields|TestSubIssues_AddListReprioritizeRemove|TestSubIssues_ReplaceParentPersistsOldParent|TestIssueDependencies_BlockedBy' -count=1` passed with sandbox escalation for loopback/cache access.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestIssueTypeAssignment|TestIssueGraphQL_IssueTypeAssignment|TestIssueGraphQL_SubIssueFields|TestOrgIssueTypes' -count=1` passed with sandbox escalation for loopback/cache access.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestIssueGraphQL_IssueFieldValues|TestIssueFieldValues_AddSetListClear|TestIssueGraphQL_IssueTypeAssignment|TestIssueGraphQL_SubIssueFields' -count=1` passed in `bleephub` with sandbox escalation for loopback/cache access.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the Actions object-store changes.
+- `make ui/packages/bleephub/test TEST_ARGS='IssuesPage.test.tsx --runInBand'` and `make ui/packages/bleephub/lint` passed after the issue-type sidebar changes.
+- `SERVER_BIN=/private/tmp/bleephub-server npx playwright test --timeout=60000` passed locally after the user-owned issue sidebar routing fix.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestPagesBuildsCRUD|TestPagesCreateUpdateShape|TestPagesDeployments_CreateStatusCancel|TestPersistenceReload'` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `pre-commit run --files BUGS.md DO_NEXT.md STATUS.md WHAT_WE_DID.md bleephub/README.md bleephub/gh_misc_endpoints.go bleephub/gh_misc_surfaces_test.go bleephub/persistence_reload_test.go bleephub/store.go` passed with sandbox escalation after the restricted sandbox blocked loopback listeners and Go build-cache access.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestActionsRuns_Rerun|TestActionsJobs_Rerun|TestWorkflows_Rerun_ViaCachedYAML|TestRerunKeepsRunIDAndBumpsAttempt|TestRerunFailedJobsCarriesSuccesses|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs'` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...` passed in `bleephub` with sandbox escalation for loopback listeners after the Actions rerun workflow-file identity fix.
+- `GOWORK=off CGO_ENABLED=0 GOCACHE=/private/tmp/sockerless-go-cache go test -run TestActionsWorkflowDispatch -count=1 ./...` passed in `bleephub/sdk-tests` with sandbox escalation for loopback listeners.
+- `GOWORK=off CGO_ENABLED=0 GOCACHE=/private/tmp/sockerless-go-cache go test -count=1 ./...` passed in `bleephub/sdk-tests` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestActionsWorkflowDispatch|TestActionsRuns_Rerun|TestActionsJobs_Rerun|TestWorkflows_Rerun_ViaCachedYAML|TestRerunKeepsRunIDAndBumpsAttempt|TestRerunFailedJobsCarriesSuccesses|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestPersistence_RoundTripAppsInstallationsTokensRepos|TestPersistence_DatabaseURLFailsLoud|TestActionsRun_WorkflowFileReferences' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the SQLite-only persistence and Actions test-skip cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback/cache access after the GraphQL issue-field value projection.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the Actions log-download cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the fail-loud workflow event-ref resolution cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestAuditLogRecords|TestOrgAuditLogRequiresOwner|TestAuditLogFromRepoCreate' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the audit-log pagination/search cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the audit-log pagination/search cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestIssueGraphQL_IssueCommentPinned|TestPinIssueCommentREST' -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the issue-comment pin GraphQL cleanup.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -count=1` passed in `bleephub` with sandbox escalation for loopback listeners after the issue-comment pin GraphQL cleanup.
+- `go test ./bleephub -run 'TestProjectsV2GraphQL_FieldValueKinds|TestIssueGraphQL_IssueCommentPinned|TestOrgInvitationsLifecycle'` passed with sandbox escalation for Go build-cache access after the Projects v2 GraphQL field-value cleanup.
+- `go test ./bleephub` passed with sandbox escalation for Go build-cache access after the Projects v2 GraphQL field-value cleanup.
+- `pre-commit run --files .github/workflows/ci.yml BUGS.md DO_NEXT.md STATUS.md WHAT_WE_DID.md` passed after the cloud-backend lint shard split.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
@@ -57,9 +95,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` passed in `simulators/aws`, `simulators/gcp`, and `simulators/azure` when run with sandbox escalation so loopback listeners and Docker/Podman access were available.
 
 ---
-### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics
+### Prior branch (merged, PR #767): Team creator auto-maintainer + SQS receive diagnostics
 
-The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and fully resolve #763.
+The `fix/open-issues-765-766` branch closed GitHub issues #765 and #766 and fully resolved #763.
 
 **Team creator auto-maintainer (#763/#765).** Real GitHub's `POST /orgs/{org}/teams` makes the authenticated creator a team maintainer automatically. bleephub's `handleCreateTeam` now calls `SetTeamMembership` for the authenticated user with `TeamRoleMaintainer` after creating the team, so downstream OAuth web-flow tests that create a team and then call `/user/teams` see the expected membership. Added `TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope` which creates a team via the API and asserts a `read:org` OAuth token lists it.
 
@@ -76,7 +114,7 @@ The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and 
 - `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
 - `pre-commit run --files bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go simulators/aws/sqs.go simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
 
-**Next:** create the new PR.
+**Next:** PR #767 merged; resume PLAN.md / open issues / BUGS.md work.
 
 ---
 ### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758

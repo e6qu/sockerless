@@ -99,6 +99,32 @@ func TestSubIssues_AddListReprioritizeRemove(t *testing.T) {
 	requireStatus(t, resp, 422)
 }
 
+func TestSubIssues_ReplaceParentPersistsOldParent(t *testing.T) {
+	var firstParentID, secondParentID, childID int
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(admin, "subissue-replace-reload", "", false)
+		firstParent := st.CreateIssue(repo.ID, admin.ID, "first parent", "", nil, nil, 0)
+		secondParent := st.CreateIssue(repo.ID, admin.ID, "second parent", "", nil, nil, 0)
+		child := st.CreateIssue(repo.ID, admin.ID, "child", "", nil, nil, 0)
+		firstParentID, secondParentID, childID = firstParent.ID, secondParent.ID, child.ID
+		if err := st.AddSubIssue(firstParentID, childID, false); err != nil {
+			t.Fatalf("AddSubIssue first parent: %v", err)
+		}
+		if err := st.AddSubIssue(secondParentID, childID, true); err != nil {
+			t.Fatalf("AddSubIssue replace parent: %v", err)
+		}
+	})
+
+	if got := st2.ListSubIssues(firstParentID); len(got) != 0 {
+		t.Fatalf("first parent sub-issues after reload = %v, want empty", got)
+	}
+	if got := st2.ListSubIssues(secondParentID); len(got) != 1 || got[0] != childID {
+		t.Fatalf("second parent sub-issues after reload = %v, want [%d]", got, childID)
+	}
+}
+
 func TestIssueDependencies_BlockedBy(t *testing.T) {
 	repo := createRepoWriteRepo(t, false)
 	blockedID, blockedNum := createIssueForTest(t, repo, "blocked issue")

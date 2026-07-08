@@ -224,7 +224,15 @@ func TestActionsJobs_Get(t *testing.T) {
 func TestActionsJobs_Logs(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
+	s.registerTimelineRoutes()
 	_, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
+	planID, timelineID := linkJobToPlan(t, s, wfJob)
+	logID := createLogFile(t, s, planID)
+	uploadLogBlock(t, s, planID, logID, []byte("uploaded line one\nuploaded line two\n"))
+	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
+		{"id": uuid.New().String(), "type": "Task", "name": "logs", "order": 1,
+			"state": "completed", "result": "succeeded", "log": map[string]any{"id": logID}},
+	})
 	id := stableJobID(wfJob.JobID)
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/jobs/%d/logs", id))
@@ -233,8 +241,8 @@ func TestActionsJobs_Logs(t *testing.T) {
 	}
 	body, _ := io.ReadAll(w.Body)
 	got := string(body)
-	if got != "line one\nline two\n" {
-		t.Errorf("logs body = %q, want \"line one\\nline two\\n\"", got)
+	if got != "uploaded line one\nuploaded line two\n" {
+		t.Errorf("logs body = %q, want uploaded log bytes", got)
 	}
 }
 
@@ -376,15 +384,136 @@ func TestActionsRuns_Cancel(t *testing.T) {
 	}
 }
 
-func TestActionsRuns_Rerun_NotImplemented(t *testing.T) {
+func TestActionsRuns_RerunWithoutCachedYAMLFailsLoud(t *testing.T) {
 	s := newTestServer()
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
 	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/rerun", wf.RunID))
 	if w.Code != http.StatusUnprocessableEntity {
-		t.Errorf("status = %d, want 422 — rerun is unimplemented and must surface that, not silently succeed", w.Code)
+		t.Errorf("status = %d, want 422 when the run has no cached workflow YAML", w.Code)
 	}
+}
+
+func TestActionsRuns_RerunUsesOriginatingWorkflowFile(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	repo := "octo/repo"
+	target := registerSameNamedWorkflowFiles(t, s, repo)
+
+	wf, _ := seedRun(t, s, repo, "completed", "success")
+	wf.Name = "shared"
+	wf.WorkflowFileID = target.ID
+	wf.WorkflowFilePath = target.Path
+
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/%s/actions/runs/%d/rerun", repo, wf.RunID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	got := s.findWorkflowByRunID(wf.RunID)
+	if got == nil {
+		t.Fatal("rerun did not create a live attempt")
+	}
+	if got.WorkflowFileID != target.ID || got.WorkflowFilePath != target.Path {
+		t.Fatalf("workflow file = %d %q, want %d %q", got.WorkflowFileID, got.WorkflowFilePath, target.ID, target.Path)
+	}
+	if _, ok := got.Jobs["target"]; !ok {
+		t.Fatalf("rerun jobs = %#v, want target job from originating workflow file", got.Jobs)
+	}
+	if _, ok := got.Jobs["wrong"]; ok {
+		t.Fatalf("rerun used same-named non-origin workflow file: %#v", got.Jobs)
+	}
+}
+
+func TestActionsRuns_RerunFailedJobsUsesOriginatingWorkflowFile(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	s.registerGHActionsExtrasRoutes()
+	repo := "octo/repo"
+	target := registerSameNamedWorkflowFiles(t, s, repo)
+
+	wf, _ := seedRun(t, s, repo, "completed", "failure")
+	wf.Name = "shared"
+	wf.WorkflowFileID = target.ID
+	wf.WorkflowFilePath = target.Path
+	wf.Jobs["build"].Result = ResultFailure
+
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/%s/actions/runs/%d/rerun-failed-jobs", repo, wf.RunID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	got := s.findWorkflowByRunID(wf.RunID)
+	if got == nil {
+		t.Fatal("rerun-failed-jobs did not create a live attempt")
+	}
+	if got.WorkflowFileID != target.ID || got.WorkflowFilePath != target.Path {
+		t.Fatalf("workflow file = %d %q, want %d %q", got.WorkflowFileID, got.WorkflowFilePath, target.ID, target.Path)
+	}
+	if _, ok := got.Jobs["target"]; !ok {
+		t.Fatalf("rerun-failed-jobs jobs = %#v, want target job from originating workflow file", got.Jobs)
+	}
+	if _, ok := got.Jobs["wrong"]; ok {
+		t.Fatalf("rerun-failed-jobs used same-named non-origin workflow file: %#v", got.Jobs)
+	}
+}
+
+func TestActionsJobs_RerunUsesOriginatingWorkflowFile(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRunControlRoutes()
+	repo := "octo/repo"
+	target := registerSameNamedWorkflowFiles(t, s, repo)
+
+	wf, job := seedRun(t, s, repo, "completed", "failure")
+	wf.Name = "shared"
+	wf.WorkflowFileID = target.ID
+	wf.WorkflowFilePath = target.Path
+	job.Result = ResultFailure
+
+	jobID := stableJobID(job.JobID)
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/%s/actions/jobs/%d/rerun", repo, jobID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
+	}
+	got := s.findWorkflowByRunID(wf.RunID)
+	if got == nil {
+		t.Fatal("job rerun did not create a live attempt")
+	}
+	if got.WorkflowFileID != target.ID || got.WorkflowFilePath != target.Path {
+		t.Fatalf("workflow file = %d %q, want %d %q", got.WorkflowFileID, got.WorkflowFilePath, target.ID, target.Path)
+	}
+	if _, ok := got.Jobs["target"]; !ok {
+		t.Fatalf("job rerun jobs = %#v, want target job from originating workflow file", got.Jobs)
+	}
+	if _, ok := got.Jobs["wrong"]; ok {
+		t.Fatalf("job rerun used same-named non-origin workflow file: %#v", got.Jobs)
+	}
+}
+
+func TestActionsRuns_RerunAmbiguousNameFailsLoud(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	repo := "octo/repo"
+	s.store.RegisterWorkflowFile(repo, ".github/workflows/a.yml", "shared", "name: shared\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n", "submitted")
+	s.store.RegisterWorkflowFile(repo, ".github/workflows/b.yml", "shared", "name: shared\njobs:\n  b:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo b\n", "submitted")
+
+	wf, _ := seedRun(t, s, repo, "completed", "success")
+	wf.Name = "shared"
+
+	w := runAuthedRequest(s, "POST", fmt.Sprintf("/api/v3/repos/%s/actions/runs/%d/rerun", repo, wf.RunID))
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func registerSameNamedWorkflowFiles(t *testing.T, s *Server, repo string) *WorkflowFile {
+	t.Helper()
+	s.store.RegisterWorkflowFile(repo, ".github/workflows/a.yml", "shared", "name: shared\njobs:\n  wrong:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo wrong\n", "submitted")
+	s.store.RegisterWorkflowFile(repo, ".github/workflows/b.yml", "shared", "name: shared\njobs:\n  target:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo target\n", "submitted")
+	files := s.store.ListWorkflowFiles(repo)
+	if len(files) != 2 {
+		t.Fatalf("workflow files = %d, want 2", len(files))
+	}
+	return files[1]
 }
 
 func TestActionsRuns_Delete(t *testing.T) {
@@ -494,10 +623,14 @@ func TestActionsRun_WorkflowFileReferences(t *testing.T) {
 	s.registerGHActionsRoutes()
 	wf, _ := seedRun(t, s, "octo/repo", "completed", "success")
 
-	wantFileID := stableWorkflowFileID("octo/repo", ".github/workflows/ci.yml")
-	if int64(wf.RunID) == wantFileID {
-		t.Skip("RunID coincidentally equals derived file id; cannot distinguish")
+	workflowPath := ".github/workflows/ci.yml"
+	wantFileID := stableWorkflowFileID("octo/repo", workflowPath)
+	for i := 0; int64(wf.RunID) == wantFileID; i++ {
+		workflowPath = fmt.Sprintf(".github/workflows/ci-%d.yml", i)
+		wantFileID = stableWorkflowFileID("octo/repo", workflowPath)
 	}
+	wf.WorkflowFileID = wantFileID
+	wf.WorkflowFilePath = workflowPath
 
 	w := runRequest(s, "GET", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d", wf.RunID))
 	if w.Code != http.StatusOK {
@@ -521,8 +654,8 @@ func TestActionsRun_WorkflowFileReferences(t *testing.T) {
 	if got.WorkflowID == int64(wf.RunID) {
 		t.Errorf("workflow_id must not equal run id %d", wf.RunID)
 	}
-	if got.Path != ".github/workflows/ci.yml" {
-		t.Errorf("path = %q, want .github/workflows/ci.yml", got.Path)
+	if got.Path != workflowPath {
+		t.Errorf("path = %q, want %q", got.Path, workflowPath)
 	}
 	wantURL := fmt.Sprintf("http://example.com/api/v3/repos/octo/repo/actions/workflows/%d", wantFileID)
 	if got.WorkflowURL != wantURL {

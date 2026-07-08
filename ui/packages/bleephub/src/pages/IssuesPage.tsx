@@ -21,6 +21,7 @@ import {
   fetchIssueReactions,
   addIssueReaction,
   removeIssueReaction,
+  fetchRepoDetail,
 } from "../api.js";
 import { useOpenCounts } from "../hooks/useOpenCounts.js";
 import type { GithubIssue, GithubLabel, GithubMilestone, ListFilterState } from "../types.js";
@@ -264,6 +265,10 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
     queryKey: ["issue", owner, repo, number],
     queryFn: () => fetchIssueDetail(owner, repo, number),
   });
+  const { data: repoDetail } = useQuery({
+    queryKey: ["repo", owner, repo],
+    queryFn: () => fetchRepoDetail(owner, repo),
+  });
   const { data: comments = [], isError: commentsError, error: commentsErr } = useQuery({
     queryKey: ["issue-comments", owner, repo, number],
     queryFn: () => fetchIssueComments(owner, repo, number),
@@ -356,6 +361,7 @@ function IssueDetail({ owner, repo, number }: { owner: string; repo: string; num
           <IssueSidebar
             owner={owner}
             repo={repo}
+            ownerType={repoDetail?.owner?.type}
             number={number}
             kind="issue"
             assignees={issue.assignees.map((a) => a.login)}

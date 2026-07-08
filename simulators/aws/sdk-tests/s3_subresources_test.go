@@ -192,4 +192,12 @@ func TestS3_CopyObject(t *testing.T) {
 	defer get.Body.Close()
 	got, _ := io.ReadAll(get.Body)
 	assert.Equal(t, payload, got, "copied object must have the same bytes")
+
+	list, err := c.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
+		Bucket: aws.String(bucket),
+		Prefix: aws.String(dst),
+	})
+	require.NoError(t, err)
+	require.Len(t, list.Contents, 1)
+	assert.Equal(t, dst, aws.ToString(list.Contents[0].Key), "copied object must be visible to ListObjectsV2")
 }

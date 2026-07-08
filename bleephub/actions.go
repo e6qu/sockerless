@@ -131,7 +131,8 @@ func (s *Server) resolveActionSha(nameWithOwner, ref string) string {
 	return zeroSha
 }
 
-// handleActionTarball serves a cached action tarball, fetching from GitHub on first request.
+// handleActionTarball serves a cached action tarball or builds it from a
+// bleephub-hosted repository. Repositories absent from bleephub fail loudly.
 func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 	owner := r.PathValue("owner")
 	repo := r.PathValue("repo")
@@ -175,8 +176,7 @@ func (s *Server) handleActionTarball(w http.ResponseWriter, r *http.Request) {
 
 // localActionTarball builds a GitHub-layout tarball (single top-level
 // "<owner>-<repo>-<sha>/" directory, like codeload's) from a repo hosted
-// on this server. (nil, nil) when the repo isn't local — the caller
-// falls back to github.com.
+// on this server. (nil, nil) means the repo is not hosted in bleephub.
 func (s *Server) localActionTarball(owner, repo, ref string) (*ActionCacheEntry, error) {
 	stor := s.store.GetGitStorage(owner, repo)
 	if stor == nil {
