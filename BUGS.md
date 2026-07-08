@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2347 filed - 2304 fixed - 2 open - 16 false positives.**
+**2348 filed - 2305 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2348~~ | P2 | CI cloud-backend lint | imbalanced lint shard timed out after clean module lints | The `lint (cloud-backends)` job ran seven backend modules in one 5-minute shard, so hosted-runner dependency downloads plus six completed zero-issue lint passes left `backends/azure-functions` running when GitHub canceled the job. CI now runs separate AWS, Google Cloud, and Azure cloud-backend lint shards so each provider family has its own timeout budget and runs in parallel. |
 | ~~2347~~ | P2 | bleephub Actions reruns | workflow-file identity lost on rerun | Workflow-run rerun, failed-job rerun, and job rerun selected cached YAML by workflow display name instead of the originating workflow-file identity, so repositories with multiple workflow files sharing `name:` could rerun the wrong YAML. Reruns now resolve cached YAML by the run's workflow-file ID/path first, preserve that identity through the new attempt, and fail loudly when an older name-only run is ambiguous. |
 | ~~2346~~ | P2 | bleephub Pages builds | synthetic build commit, shared ID allocator, and lost IDs on reload | Manual Pages builds stored the all-zero SHA, allocated build IDs from the audit-log sequence, and lost the internal build ID on reload because the REST build object intentionally omits a top-level `id`. Pages build requests now require an enabled Pages site and a real default-branch commit, store that commit SHA, use a dedicated persisted Pages-build ID sequence, and rehydrate the internal ID from the persisted build URL. |
 | ~~2345~~ | P2 | bleephub UI issue sidebar | org-only endpoint probed for user-owned repos | The issue sidebar treated organization issue types as discoverable by probing `/orgs/{owner}/issue-types` and hiding the selector after a 404, which made user-owned issue detail pages emit browser console errors under Playwright. The issue detail page now fetches repository metadata, passes the factual owner type into the sidebar, and the sidebar only queries org issue-type definitions and GraphQL issue-type assignment for organization-owned repositories. UI regressions assert user-owned repos do not call the org endpoint, and the Bleephub Playwright E2E issue flow passes without the 404 console error. |

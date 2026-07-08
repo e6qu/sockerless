@@ -27,8 +27,12 @@ jobs:
         include:
           - shard: core-local
             modules: cmd/sockerless cmd/sockerless-admin agent bleephub bleeplab backends/docker
-          - shard: cloud-backends
-            modules: backends/aws-common backends/ecs backends/lambda backends/cloudrun backends/cloudrun-functions backends/aca backends/azure-functions
+          - shard: cloud-backends-aws
+            modules: backends/aws-common backends/ecs backends/lambda
+          - shard: cloud-backends-gcp
+            modules: backends/cloudrun backends/cloudrun-functions
+          - shard: cloud-backends-azure
+            modules: backends/aca backends/azure-functions
           - shard: simulators
             modules: simulators/aws simulators/gcp simulators/azure simulators/realexec
           - shard: dispatchers
