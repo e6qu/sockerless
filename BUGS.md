@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2358 filed - 2315 fixed - 2 open - 16 false positives.**
+**2359 filed - 2316 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2359~~ | P2 | bleephub Projects v2 GraphQL | REST-backed field values hidden by partial GraphQL union | Projects v2 GraphQL now accepts and projects every field-value kind the store supports: text, number, date, single-select, and iteration values validate through the real Projects v2 store, round-trip via `updateProjectV2ItemFieldValue`, and render through typed `ProjectV2ItemFieldValue` union members from `Issue.projectItems.fieldValueByName`. |
 | ~~2358~~ | P2 | bleephub GraphQL issue comments | persisted comment pin state hidden from GraphQL | Issue-comment pin/unpin state now projects through GraphQL `Issue.comments.nodes.isPinned` from the persisted REST-backed `Comment.Pinned` field, with a REST-to-GraphQL regression that pins a real issue comment before querying it. |
 | ~~2357~~ | P2 | bleephub org audit log | unpaginated shape-thin listing | The organization audit-log endpoint now paginates through the shared GitHub-style list helper, adds Link headers, and treats `phrase` as tokenized search across persisted action, actor, org, and detail data instead of only exact action equality. |
 | ~~2356~~ | P2 | bleephub Actions event refs | unresolved git refs became all-zero workflow SHAs | Event-triggered and scheduled workflow runs now require the triggering git ref to resolve to a real commit; non-empty refs no longer fall back to `HEAD`, scheduled runs reject missing default-branch refs loudly, reusable workflow file reads fail when `HEAD` is unresolved, and git fixtures create real `main` refs instead of relying on compatibility fallback behavior. |

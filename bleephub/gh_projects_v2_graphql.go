@@ -6,14 +6,12 @@ import (
 	"github.com/graphql-go/graphql"
 )
 
-// addProjectV2MutationsToSchema registers the minimum GraphQL mutations
+// addProjectV2MutationsToSchema registers the ProjectV2 GraphQL mutations
 // gh CLI's `gh project create` + `gh project item-add` use:
 //   - createProjectV2(input{ownerId, title}) → ProjectV2
 //   - addProjectV2ItemById(input{projectId, contentId}) → ProjectV2Item
-//
-// Field-level mutations (updateProjectV2ItemFieldValue, etc.) aren't
-// modeled yet; bleephub returns nil-valued field connections so callers
-// can introspect but can't write.
+//   - createProjectV2Field(input{projectId, dataType, name}) → ProjectV2Field
+//   - updateProjectV2ItemFieldValue(input{projectId,itemId,fieldId,value}) → ProjectV2Item
 func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 	projectV2Type := projectV2GraphQLTypes()
 
@@ -127,6 +125,8 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			"SINGLE_SELECT": &graphql.EnumValueConfig{Value: "SINGLE_SELECT"},
 			"TEXT":          &graphql.EnumValueConfig{Value: "TEXT"},
 			"NUMBER":        &graphql.EnumValueConfig{Value: "NUMBER"},
+			"DATE":          &graphql.EnumValueConfig{Value: "DATE"},
+			"ITERATION":     &graphql.EnumValueConfig{Value: "ITERATION"},
 		},
 	})
 
@@ -136,14 +136,31 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			"name": &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
 		},
 	})
+	iterationInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "ProjectV2IterationInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"title":     &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"startDate": &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"duration":  &graphql.InputObjectFieldConfig{Type: graphql.Int},
+		},
+	})
+	iterationConfigInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "ProjectV2IterationConfigurationInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"startDate":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"duration":   &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.Int)},
+			"iterations": &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.NewNonNull(iterationInputType))},
+		},
+	})
 
 	createFieldInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "CreateProjectV2FieldInput",
 		Fields: graphql.InputObjectConfigFieldMap{
-			"projectId":           &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
-			"dataType":            &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(dataTypeEnum)},
-			"name":                &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"singleSelectOptions": &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.NewNonNull(singleSelectOptionInputType))},
+			"projectId":              &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"dataType":               &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(dataTypeEnum)},
+			"name":                   &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"singleSelectOptions":    &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.NewNonNull(singleSelectOptionInputType))},
+			"iterationConfiguration": &graphql.InputObjectFieldConfig{Type: iterationConfigInputType},
 		},
 	})
 
@@ -187,6 +204,7 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			name, _ := input["name"].(string)
 			dataType, _ := input["dataType"].(string)
 			rawOptions, _ := input["singleSelectOptions"].([]interface{})
+			rawIteration, _ := input["iterationConfiguration"].(map[string]interface{})
 			options := make([]*ProjectV2SingleSelectOption, 0, len(rawOptions))
 			for _, raw := range rawOptions {
 				m, ok := raw.(map[string]interface{})
@@ -196,12 +214,39 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 				n, _ := m["name"].(string)
 				options = append(options, &ProjectV2SingleSelectOption{Name: n})
 			}
+			var iteration *ProjectV2IterationConfiguration
+			if rawIteration != nil {
+				startDate, _ := rawIteration["startDate"].(string)
+				duration, _ := rawIteration["duration"].(int)
+				iteration = &ProjectV2IterationConfiguration{StartDate: startDate, Duration: duration}
+				rawIterations, _ := rawIteration["iterations"].([]interface{})
+				for _, raw := range rawIterations {
+					m, ok := raw.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("iterationConfiguration.iterations contains an invalid item")
+					}
+					title, _ := m["title"].(string)
+					start, _ := m["startDate"].(string)
+					iterDuration := duration
+					if d, ok := m["duration"].(int); ok && d > 0 {
+						iterDuration = d
+					}
+					iteration.Iterations = append(iteration.Iterations, &ProjectV2Iteration{
+						Title:     title,
+						StartDate: start,
+						Duration:  iterDuration,
+					})
+				}
+			}
 
 			proj := s.store.ProjectsV2.LookupProjectByNodeID(projectNodeID)
 			if proj == nil {
 				return nil, fmt.Errorf("could not resolve to a project with the global id of '%s'", projectNodeID)
 			}
-			field := s.store.ProjectsV2.CreateField(proj.ID, name, ProjectV2FieldDataType(dataType), options, nil)
+			if dataType == string(ProjectV2FieldIteration) && iteration == nil {
+				return nil, fmt.Errorf("iterationConfiguration is required for ITERATION fields")
+			}
+			field := s.store.ProjectsV2.CreateField(proj.ID, name, ProjectV2FieldDataType(dataType), options, iteration)
 			return map[string]interface{}{
 				"projectV2Field": map[string]interface{}{
 					"nodeID":   field.NodeID,
@@ -220,6 +265,8 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			"singleSelectOptionId": &graphql.InputObjectFieldConfig{Type: graphql.String},
 			"text":                 &graphql.InputObjectFieldConfig{Type: graphql.String},
 			"number":               &graphql.InputObjectFieldConfig{Type: graphql.Float},
+			"date":                 &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"iterationId":          &graphql.InputObjectFieldConfig{Type: graphql.String},
 		},
 	})
 	updateValueInputType := graphql.NewInputObject(graphql.InputObjectConfig{
@@ -266,23 +313,34 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 				return nil, fmt.Errorf("authentication required")
 			}
 			input, _ := p.Args["input"].(map[string]interface{})
+			projectNodeID, _ := input["projectId"].(string)
 			itemNodeID, _ := input["itemId"].(string)
 			fieldNodeID, _ := input["fieldId"].(string)
 			value, _ := input["value"].(map[string]interface{})
 
+			proj := s.store.ProjectsV2.LookupProjectByNodeID(projectNodeID)
+			if proj == nil {
+				return nil, fmt.Errorf("could not resolve to a project with the global id of '%s'", projectNodeID)
+			}
 			item := s.store.ProjectsV2.LookupItemByNodeID(itemNodeID)
 			if item == nil {
 				return nil, fmt.Errorf("could not resolve to an item with the global id of '%s'", itemNodeID)
+			}
+			if item.ProjectID != proj.ID {
+				return nil, fmt.Errorf("project does not contain item with the global id of '%s'", itemNodeID)
 			}
 			field := s.store.ProjectsV2.LookupFieldByNodeID(fieldNodeID)
 			if field == nil {
 				return nil, fmt.Errorf("could not resolve to a field with the global id of '%s'", fieldNodeID)
 			}
-			optionID, _ := value["singleSelectOptionId"].(string)
-			textValue, _ := value["text"].(string)
-			numberValue, _ := value["number"].(float64)
-
-			if _, err := s.store.ProjectsV2.SetFieldValue(item.ID, field.ID, optionID, textValue, numberValue); err != nil {
+			if field.ProjectID != proj.ID {
+				return nil, fmt.Errorf("field does not belong to project with the global id of '%s'", projectNodeID)
+			}
+			fieldValue, err := projectV2GraphQLFieldValueInput(field, value)
+			if err != nil {
+				return nil, err
+			}
+			if err := s.store.ProjectsV2.SetFieldValueAny(item.ID, field.ID, fieldValue); err != nil {
 				return nil, err
 			}
 			return map[string]interface{}{
@@ -290,6 +348,53 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			}, nil
 		},
 	})
+}
+
+func projectV2GraphQLFieldValueInput(field *ProjectV2Field, value map[string]interface{}) (interface{}, error) {
+	if value == nil {
+		return nil, fmt.Errorf("value is required")
+	}
+	type candidate struct {
+		name  string
+		value interface{}
+	}
+	candidates := make([]candidate, 0, 5)
+	for _, key := range []string{"singleSelectOptionId", "text", "number", "date", "iterationId"} {
+		v, ok := value[key]
+		if !ok || v == nil {
+			continue
+		}
+		candidates = append(candidates, candidate{name: key, value: v})
+	}
+	if len(candidates) != 1 {
+		return nil, fmt.Errorf("exactly one field value must be provided")
+	}
+	got := candidates[0]
+	want := map[ProjectV2FieldDataType]string{
+		ProjectV2FieldSingleSelect: "singleSelectOptionId",
+		ProjectV2FieldText:         "text",
+		ProjectV2FieldNumber:       "number",
+		ProjectV2FieldDate:         "date",
+		ProjectV2FieldIteration:    "iterationId",
+	}[field.DataType]
+	if got.name != want {
+		return nil, fmt.Errorf("field %q expects %s", field.Name, want)
+	}
+	if field.DataType == ProjectV2FieldNumber {
+		switch n := got.value.(type) {
+		case float64:
+			return n, nil
+		case float32:
+			return float64(n), nil
+		case int:
+			return float64(n), nil
+		case int32:
+			return float64(n), nil
+		case int64:
+			return float64(n), nil
+		}
+	}
+	return got.value, nil
 }
 
 // resolveProjectOwner maps a GraphQL node ID to (ownerID, ownerType).

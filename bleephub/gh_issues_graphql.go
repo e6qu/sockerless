@@ -1975,6 +1975,10 @@ var (
 	projectV2ItemTypeMemo            *graphql.Object
 	projectV2ItemConnectionTypeMemo  *graphql.Object
 	projectV2SingleSelectValueMemo   *graphql.Object
+	projectV2TextValueMemo           *graphql.Object
+	projectV2NumberValueMemo         *graphql.Object
+	projectV2DateValueMemo           *graphql.Object
+	projectV2IterationValueMemo      *graphql.Object
 	projectV2ItemFieldValueUnionMemo *graphql.Union
 )
 
@@ -2035,11 +2039,113 @@ func projectV2ItemConnectionType() *graphql.Object {
 			},
 		},
 	})
+	projectV2TextValueMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldTextValue",
+		Fields: graphql.Fields{
+			"text": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["text"], nil
+				},
+			},
+		},
+	})
+	projectV2NumberValueMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldNumberValue",
+		Fields: graphql.Fields{
+			"number": &graphql.Field{
+				Type: graphql.Float,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["number"], nil
+				},
+			},
+		},
+	})
+	projectV2DateValueMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldDateValue",
+		Fields: graphql.Fields{
+			"date": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["date"], nil
+				},
+			},
+		},
+	})
+	projectV2IterationValueMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "ProjectV2ItemFieldIterationValue",
+		Fields: graphql.Fields{
+			"iterationId": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["iterationId"], nil
+				},
+			},
+			"title": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["title"], nil
+				},
+			},
+			"startDate": &graphql.Field{
+				Type: graphql.String,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["startDate"], nil
+				},
+			},
+			"duration": &graphql.Field{
+				Type: graphql.Int,
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					src, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return src["duration"], nil
+				},
+			},
+		},
+	})
 	projectV2ItemFieldValueUnionMemo = graphql.NewUnion(graphql.UnionConfig{
 		Name:  "ProjectV2ItemFieldValue",
-		Types: []*graphql.Object{projectV2SingleSelectValueMemo},
+		Types: []*graphql.Object{projectV2SingleSelectValueMemo, projectV2TextValueMemo, projectV2NumberValueMemo, projectV2DateValueMemo, projectV2IterationValueMemo},
 		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
-			return projectV2SingleSelectValueMemo
+			src, _ := p.Value.(map[string]interface{})
+			switch src["kind"] {
+			case string(ProjectV2FieldText):
+				return projectV2TextValueMemo
+			case string(ProjectV2FieldNumber):
+				return projectV2NumberValueMemo
+			case string(ProjectV2FieldDate):
+				return projectV2DateValueMemo
+			case string(ProjectV2FieldIteration):
+				return projectV2IterationValueMemo
+			default:
+				return projectV2SingleSelectValueMemo
+			}
 		},
 	})
 	projectV2ItemTypeMemo = graphql.NewObject(graphql.ObjectConfig{
@@ -2125,7 +2231,7 @@ func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
 		if field == nil {
 			continue
 		}
-		byName[field.Name] = projectV2FieldValueToGQL(val)
+		byName[field.Name] = projectV2FieldValueToGQL(val, field)
 	}
 	return map[string]interface{}{
 		"nodeID":            it.NodeID,
@@ -2134,16 +2240,34 @@ func projectV2ItemToGQL(it *ProjectV2Item, st *Store) map[string]interface{} {
 	}
 }
 
-// projectV2FieldValueToGQL renders a field value as its GraphQL union
-// shape. Only SINGLE_SELECT is wired into the union today — TEXT and
-// NUMBER variants are stored but not exposed as union members; future
-// expansion can add ProjectV2ItemFieldTextValue + NumberValue object
-// types and grow the union.
-func projectV2FieldValueToGQL(v *ProjectV2ItemFieldValue) map[string]interface{} {
-	return map[string]interface{}{
-		"optionId": v.OptionID,
-		"name":     v.OptionName,
+// projectV2FieldValueToGQL renders a persisted ProjectV2 field value as
+// the matching GraphQL union source map.
+func projectV2FieldValueToGQL(v *ProjectV2ItemFieldValue, f *ProjectV2Field) map[string]interface{} {
+	out := map[string]interface{}{"kind": string(f.DataType)}
+	switch f.DataType {
+	case ProjectV2FieldText:
+		out["text"] = v.TextValue
+	case ProjectV2FieldNumber:
+		out["number"] = v.NumberValue
+	case ProjectV2FieldDate:
+		out["date"] = v.DateValue
+	case ProjectV2FieldIteration:
+		out["iterationId"] = v.IterationID
+		if f.Iteration != nil {
+			for _, it := range f.Iteration.Iterations {
+				if it.ID == v.IterationID {
+					out["title"] = it.Title
+					out["startDate"] = it.StartDate
+					out["duration"] = it.Duration
+					break
+				}
+			}
+		}
+	default:
+		out["optionId"] = v.OptionID
+		out["name"] = v.OptionName
 	}
+	return out
 }
 
 // projectV2ToGQL renders a project as a GraphQL source map.
