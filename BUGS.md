@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2373 filed - 2330 fixed - 2 open - 16 false positives.**
+**2374 filed - 2331 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2374~~ | P2 | dependency freshness / pre-push | stale Go module pins blocked push | The required pre-push dependency freshness hook caught `golang.org/x/net` pinned behind latest in `bleephub`, `simulators/aws`, and `simulators/aws/sdk-tests`. The affected modules were refreshed with `make upgrade-deps`, bringing the stale Go dependencies to current published versions, and `scripts/check-latest-deps.sh` passed. |
 | ~~2373~~ | P2 | Bleephub Packages store | duplicate version names created ambiguous package state | Package version creation accepted duplicate live names under one package, so a registry tag push or package publish could create multiple active versions for the same reference. Package-version creation now rejects an existing live version name and tests pin the conflict. |
 | ~~2372~~ | P1 | Bleephub Packages publishing | user-facing package upload used operator-only seed route | The Packages page exposed an "Upload version" action that posted package bytes to `/internal/packages/.../versions`, an operator seed route with no GitHub equivalent. Bleephub now accepts container package publication through a GitHub Container Registry-compatible OCI/Docker Registry HTTP API v2 path under `/v2/`, and the user interface no longer calls internal package upload endpoints. |
 | ~~2371~~ | P1 | Bleephub pull request review threads | user-facing workflow depended on internal helper instead of GitHub GraphQL | Pull request review-thread listing and resolve/unresolve were real store-backed state, but the Bleephub UI read and mutated them through operator-only `/internal/repos/{owner}/{repo}/pulls/{number}/review-threads` routes while the GitHub-compatible GraphQL `resolveReviewThread` and `unresolveReviewThread` mutations were absent. Review threads now use the public GraphQL pull request `reviewThreads` connection and GitHub-shaped mutations, and the legacy internal review-thread routes were removed. |
