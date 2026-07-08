@@ -706,7 +706,10 @@ api_get() {
 }
 
 api_post() {
-    local path="$1" body="${2:-{}}"
+    local path="$1" body="${2:-}"
+    if [ -z "$body" ]; then
+        body='{}'
+    fi
     curl -sf -X POST -H "Authorization: token $BLEEPHUB_ADMIN_TOKEN" \
         -H "Content-Type: application/json" \
         -d "$body" "http://$BLEEPHUB_ADDR$path"
@@ -737,9 +740,12 @@ latest_workflow_run_id() {
 
 LAST_WORKFLOW_RUN_ID=""
 submit_workflow_dispatch() {
-    local test_num="$1" yaml="$2" inputs_json="${3:-{}}"
+    local test_num="$1" yaml="$2" inputs_json="${3:-}"
     local filename="test-${test_num}.yml"
     local before_id run_id
+    if [ -z "$inputs_json" ]; then
+        inputs_json='{}'
+    fi
     before_id=$(latest_workflow_run_id)
     put_workflow_file "$filename" "$(dispatchable_workflow_yaml "$yaml")" || fail "put workflow file $filename"
     api_post "/api/v3/repos/admin/test/actions/workflows/$filename/dispatches" \
@@ -792,7 +798,10 @@ wait_for_workflow_run() {
 
 # Helper: submit workflow YAML through GitHub Actions workflow dispatch and wait for completion.
 submit_and_wait_workflow() {
-    local test_num="$1" label="$2" yaml="$3" max="${4:-180}" inputs_json="${5:-{}}"
+    local test_num="$1" label="$2" yaml="$3" max="${4:-180}" inputs_json="${5:-}"
+    if [ -z "$inputs_json" ]; then
+        inputs_json='{}'
+    fi
 
     log "===== TEST $test_num: $label ====="
     submit_workflow_dispatch "$test_num" "$yaml" "$inputs_json"
@@ -804,13 +813,15 @@ submit_and_wait_workflow() {
     fail "$label failed"
 }
 
-# Iteration aid: BLEEPHUB_TEST_FROM=12 skips the host-mode suite and
-# goes straight to the container-mode tests. CI runs everything.
+# Iteration aid: BLEEPHUB_TEST_FROM=N starts at test N. CI runs everything.
 TEST_FROM="${BLEEPHUB_TEST_FROM:-1}"
 
-if [ "$TEST_FROM" -le 11 ]; then
+run_test() {
+    [ "$TEST_FROM" -le "$1" ]
+}
 
 # ===== TEST 1: Single-job GitHub Actions workflow =====
+if run_test 1; then
 submit_and_wait_workflow 1 "Single-job GitHub Actions workflow" '
 name: single-job-test
 jobs:
@@ -823,9 +834,11 @@ jobs:
 
 # Give runner a moment to reset between tests
 sleep 3
+fi
 
 
 # ===== TEST 2: Multi-job workflow (needs:) =====
+if run_test 2; then
 submit_and_wait_workflow 2 "Multi-job workflow" '
 name: multi-job-test
 jobs:
@@ -843,8 +856,10 @@ jobs:
 '
 
 sleep 3
+fi
 
 # ===== TEST 3: Three-stage pipeline (build → test → deploy) =====
+if run_test 3; then
 submit_and_wait_workflow 3 "Three-stage pipeline" '
 name: pipeline-test
 jobs:
@@ -868,8 +883,10 @@ jobs:
 '
 
 sleep 3
+fi
 
 # ===== TEST 4: Matrix strategy (2x2 matrix) =====
+if run_test 4; then
 submit_and_wait_workflow 4 "Matrix strategy 2x2" '
 name: matrix-test
 jobs:
@@ -884,8 +901,10 @@ jobs:
 '
 
 sleep 3
+fi
 
 # ===== TEST 5: Job output propagation =====
+if run_test 5; then
 submit_and_wait_workflow 5 "Job output propagation" '
 name: output-test
 jobs:
@@ -904,12 +923,14 @@ jobs:
 '
 
 sleep 3
+fi
 
 # (Service containers are real containers — like container-mode jobs
 # they need an engine and are gated on the bind-mount→EFS work in
 # docs/GITHUB_RUNNER.md; this host-mode harness skips them.)
 
 # ===== TEST 7: Secrets injection =====
+if run_test 7; then
 log "===== TEST 7: Secrets injection ====="
 
 # PUT a secret with the REAL wire contract: fetch the public key and
@@ -944,8 +965,10 @@ jobs:
 '
 
 sleep 3
+fi
 
 # ===== TEST 8: Workflow dispatch with inputs =====
+if run_test 8; then
 submit_and_wait_workflow 8 "Workflow dispatch with inputs" '
 name: inputs-test
 on:
@@ -963,8 +986,10 @@ jobs:
 ' 120 '{"version":"1.2.3"}'
 
 sleep 3
+fi
 
 # ===== TEST 9: Matrix fail-fast =====
+if run_test 9; then
 submit_and_wait_workflow 9 "Matrix fail-fast" '
 name: failfast-test
 jobs:
@@ -977,9 +1002,10 @@ jobs:
     steps:
       - run: echo "Matrix job"
 '
+fi
 
-# ===== All tests passed =====
 # ===== TEST 10: Composite action hosted ON bleephub =====
+if run_test 10; then
 log "===== TEST 10: Composite action from a bleephub-hosted repo ====="
 
 curl -sf -X POST "http://$BLEEPHUB_ADDR/api/v3/user/repos" \
@@ -1016,8 +1042,10 @@ jobs:
 '
 
 sleep 3
+fi
 
 # ===== TEST 11: Cancellation of a running job =====
+if run_test 11; then
 log "===== TEST 11: Cancellation reaches the running job ====="
 
 WF11_YAML='name: cancel-test
@@ -1067,14 +1095,14 @@ CLEANUP_RESULT=$(echo "$WF11_JOBS" | jq -r '.jobs[] | select(.name == "cleanup")
 log "TEST 11 PASSED: Cancellation (run cancelled, always() cleanup ran)"
 
 sleep 3
-
-fi  # TEST_FROM <= 11
+fi
 
 # ===== TEST 12: Container-mode job through the selected backend =====
 # The job declares `container:` — the runner creates the job container
 # via its DOCKER_HOST (sockerless-backend-ecs), which dispatches it as
 # a cloud-native workload on the host engine. The runner's workspace bind
 # translates to the shared EFS volume; steps run via docker exec.
+if run_test 12; then
 log "===== TEST 12: Container-mode job ====="
 
 submit_and_wait_workflow 12 "Container-mode job" '
@@ -1098,8 +1126,10 @@ PROOF=$(find "$WORK_DIR" -name proof.txt -exec cat {} \; 2>/dev/null | head -1)
 log "Workspace sharing verified: container-written file visible on the runner EFS workspace"
 
 sleep 3
+fi
 
 # ===== TEST 13: Service container reachable from the job container =====
+if run_test 13; then
 log "===== TEST 13: Service container (nginx) reachable by alias ====="
 
 submit_and_wait_workflow 13 "Service container" '
@@ -1117,6 +1147,7 @@ jobs:
 ' 300
 
 sleep 3
+fi
 
 # ===== TEST 14: Dispatcher-in-the-loop runner spawn (runner-as-task) =====
 # The control-plane half of the topology: a job is queued whose labels
@@ -1124,6 +1155,7 @@ sleep 3
 # bleephub (--api-base), mints a registration token, and spawns an
 # ephemeral runner container on the host engine; that runner registers,
 # takes the job, and completes.
+if run_test 14; then
 log "===== TEST 14: Dispatcher spawns the runner for a queued job ====="
 
 # Spawn image: one thin layer over the harness image (already on the
@@ -1170,5 +1202,6 @@ done
 [ "$STATUS" = "completed" ] || fail "dispatched job never completed (status: $STATUS)"
 [ "$RESULT" = "success" ] || fail "dispatched job result=$RESULT, want success"
 log "TEST 14 PASSED: dispatcher-spawned runner executed the queued job"
+fi
 
 log "===== ALL 14 INTEGRATION TESTS PASSED ====="

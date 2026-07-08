@@ -9,9 +9,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.62.0
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.313.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.314.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0
-	github.com/aws/aws-sdk-go-v2/service/ecs v1.87.0
+	github.com/aws/aws-sdk-go-v2/service/ecs v1.88.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.0
@@ -79,7 +79,7 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect

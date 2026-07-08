@@ -3599,26 +3599,27 @@ func ec2TransitionInstanceToRunning(instanceID string) {
 	if !ok {
 		return
 	}
-	// On a real-execution host, boot a real Firecracker VM; a boot failure
-	// there is a genuine error, so the instance settles to "stopped". On an
-	// API-only host (no VM capabilities) the instance is modeled as "running"
-	// at the control plane — the same modeling tier VPC/subnet/NAT use. See
+	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
+		if inst.State == "pending" {
+			inst.State = "running"
+		}
+	})
+	// On a real-execution host, boot a real Firecracker VM after the EC2
+	// control plane has converged to running. A boot failure there is still a
+	// genuine instance failure, so the instance subsequently settles to
+	// "stopped"; the public RunInstances lifecycle must not remain pending
+	// forever while optional host substrate setup is slow.
 	if ec2RealVMHostAvailable() {
 		if err := ec2StartRealVM(context.Background(), inst); err != nil {
 			fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
 			ec2Instances.Update(instanceID, func(inst *EC2Instance) {
-				if inst.State == "pending" {
+				if inst.State == "running" {
 					inst.State = "stopped"
 				}
 			})
 			return
 		}
 	}
-	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
-		if inst.State == "pending" {
-			inst.State = "running"
-		}
-	})
 }
 
 func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
