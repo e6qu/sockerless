@@ -8,7 +8,7 @@ require (
 	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/logging v1.18.0
 	cloud.google.com/go/longrunning v1.2.0
-	cloud.google.com/go/pubsub v1.50.3
+	cloud.google.com/go/pubsub v1.50.4
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/docker/docker v28.5.2+incompatible
 	github.com/sockerless/simulator v0.0.0
@@ -67,7 +67,7 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.44.0 // indirect
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
-	golang.org/x/net v0.56.0 // indirect
+	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
 	modernc.org/libc v1.74.1 // indirect
