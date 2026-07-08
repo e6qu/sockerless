@@ -319,7 +319,12 @@ func (s *Server) handleDeleteArtifact(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.artifactStore.deleteArtifact(art.ID) {
+	deleted, err := s.artifactStore.deleteArtifact(r.Context(), art.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "artifact byte-store delete: "+err.Error())
+		return
+	}
+	if !deleted {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}

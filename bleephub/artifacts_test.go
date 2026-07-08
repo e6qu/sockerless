@@ -63,6 +63,33 @@ func TestArtifactCreateUploadFinalize(t *testing.T) {
 	}
 }
 
+func TestArtifactUploadWritesObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.artifactStore = NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+
+	req := httptest.NewRequest("POST", "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact", bytes.NewBufferString(`{"name":"object-artifact","version":4}`))
+	w := httptest.NewRecorder()
+	s.handleCreateArtifact(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status = %d, body=%s", w.Code, w.Body.String())
+	}
+
+	uploadReq := httptest.NewRequest("PUT", "/_apis/v1/artifacts/1/upload", bytes.NewBufferString("object-backed artifact"))
+	uploadReq.SetPathValue("artifactId", "1")
+	uploadW := httptest.NewRecorder()
+	s.handleUploadArtifact(uploadW, uploadReq)
+	if uploadW.Code != http.StatusOK {
+		t.Fatalf("upload status = %d, body=%s", uploadW.Code, uploadW.Body.String())
+	}
+
+	got := readS3TestFile(t, objectFS, "actions/artifacts/1/data")
+	if string(got) != "object-backed artifact" {
+		t.Fatalf("s3 artifact data = %q", string(got))
+	}
+}
+
 func TestArtifactListReturnsFinalized(t *testing.T) {
 	s := newTestServer()
 
@@ -85,6 +112,22 @@ func TestArtifactListReturnsFinalized(t *testing.T) {
 	arts := resp["artifacts"].([]interface{})
 	if len(arts) != 1 {
 		t.Errorf("listed %d artifacts, want 1 (only finalized)", len(arts))
+	}
+}
+
+func TestCacheUploadWritesObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	store := NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+	entry := &CacheEntry{ID: 7, Repo: "octo/repo", Key: "linux-go", Version: "v1"}
+	entry.Data = []byte("cache archive bytes")
+
+	if err := store.writeCacheDataAt(entry, entry.Data, 0); err != nil {
+		t.Fatalf("writeCacheDataAt: %v", err)
+	}
+	got := readS3TestFile(t, objectFS, "actions/caches/7/data")
+	if string(got) != "cache archive bytes" {
+		t.Fatalf("s3 cache data = %q", string(got))
 	}
 }
 

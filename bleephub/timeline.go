@@ -217,8 +217,14 @@ func (s *Server) handleUploadLog(w http.ResponseWriter, r *http.Request) {
 		}
 		s.store.LogFiles[logID] = append(existing, logTruncationMarker...)
 	}
+	storedData := append([]byte(nil), s.store.LogFiles[logID]...)
 	stored := len(s.store.LogFiles[logID])
 	s.store.mu.Unlock()
+
+	if err := s.artifactStore.writeLogData(r.Context(), logID, storedData); err != nil {
+		http.Error(w, "log byte-store write: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
 
 	s.logger.Debug().Int("logId", logID).Int("uploadBytes", len(body)).Int("storedBytes", stored).Msg("log upload")
 

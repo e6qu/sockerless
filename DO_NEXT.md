@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity plus AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, and AWS S3 CopyObject list visibility.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
@@ -12,7 +12,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 **Scope**
 - **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
 - **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
-- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake, and continuity files reflect PR #779 as merged and this branch as active.
+- **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.
+- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage and no-github.com action resolution. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestS3' -count=1` passed.
@@ -21,7 +22,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3_CopyObject -count=1 ./` in `simulators/aws/sdk-tests` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3API_CopyObjectListed -count=1 ./` in `simulators/aws/cli-tests` passed.
 - `bash scripts/check-simulator-tests.sh` passed.
-- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md PLAN.md WHAT_WE_DID.md bleephub/README.md bleephub/s3fs_test.go simulators/aws/s3_subresources.go simulators/aws/sdk-tests/s3_subresources_test.go simulators/aws/cli-tests/s3_test.go` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestArtifactUploadWritesObjectStore|TestCacheUploadWritesObjectStore|TestLogfilesUpload_WritesObjectStore|TestArtifactCreateUploadFinalize|TestLogfilesUpload_AppendsBlocks|TestLogfilesUpload_CapsAtFourMiBWithMarker|TestDeleteRunLogs' -count=1` passed with sandbox escalation for loopback/simulator listeners.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the Actions object-store changes.
+- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md PLAN.md WHAT_WE_DID.md bleephub/README.md bleephub/actions.go bleephub/actions_test.go bleephub/artifacts.go bleephub/artifacts_test.go bleephub/gh_actions_permissions.go bleephub/object_bytes.go bleephub/server.go bleephub/timeline.go bleephub/timeline_records_test.go` passed with sandbox escalation after the restricted sandbox blocked loopback/cache access.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774

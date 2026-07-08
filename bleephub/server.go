@@ -89,12 +89,11 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		}
 	}
 	dataDir := os.Getenv("BLEEPHUB_DATA_DIR")
-	var artifactStore *ArtifactStore
-	if dataDir != "" {
-		artifactStore = NewArtifactStore(dataDir)
-	} else {
-		artifactStore = NewArtifactStore()
+	byteStore, err := newActionsByteStoreFromEnv(context.Background())
+	if err != nil {
+		logger.Fatal().Err(err).Msg("failed to initialize BLEEPHUB_OBJECT_S3_* byte storage")
 	}
+	artifactStore := NewArtifactStoreWithByteStore(dataDir, byteStore)
 
 	s := &Server{
 		addr:                   addr,

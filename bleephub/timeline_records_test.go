@@ -416,6 +416,22 @@ func TestLogfilesUpload_AppendsBlocks(t *testing.T) {
 	}
 }
 
+func TestLogfilesUpload_WritesObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTimelineTestServer()
+	s.artifactStore = NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+	planID := uuid.New().String()
+	logID := createLogFile(t, s, planID)
+
+	uploadLogBlock(t, s, planID, logID, []byte("object-backed log\n"))
+
+	got := readS3TestFile(t, objectFS, fmt.Sprintf("actions/logs/%d/data", logID))
+	if string(got) != "object-backed log\n" {
+		t.Fatalf("s3 log data = %q", string(got))
+	}
+}
+
 func TestLogfilesUpload_CapsAtFourMiBWithMarker(t *testing.T) {
 	s := newTimelineTestServer()
 	planID := uuid.New().String()
