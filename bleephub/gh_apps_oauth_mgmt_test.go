@@ -271,6 +271,43 @@ func TestOAuthAppManagement(t *testing.T) {
 	}
 }
 
+func TestOAuthAppBrowserSettingsCreateAndList(t *testing.T) {
+	s := newTestServer()
+	s.store.SeedDefaultUser()
+	s.registerGHAppsOAuthMgmtRoutes()
+
+	form := "name=Browser+OAuth&description=settings&url=https%3A%2F%2Fexample.test&callback_url=https%3A%2F%2Fexample.test%2Fcb"
+	req := httptest.NewRequest("POST", "/settings/oauth-apps/new", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "token "+AdminToken())
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("settings create status = %d body = %s", w.Code, w.Body.String())
+	}
+	var created map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &created)
+	if created["client_id"] == "" || created["client_secret"] == "" {
+		t.Fatalf("created OAuth App missing one-time credentials: %v", created)
+	}
+
+	req = httptest.NewRequest("GET", "/settings/oauth-apps", nil)
+	req.Header.Set("Authorization", "token "+AdminToken())
+	w = httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("settings list status = %d body = %s", w.Code, w.Body.String())
+	}
+	var list []map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &list)
+	if len(list) != 1 || list[0]["client_id"] != created["client_id"] {
+		t.Fatalf("settings list = %+v, want created client id %v", list, created["client_id"])
+	}
+	if _, leaked := list[0]["client_secret"]; leaked {
+		t.Fatal("settings list leaked OAuth App client_secret")
+	}
+}
+
 func basicHeader(clientID, clientSecret string) string {
 	return base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
 }

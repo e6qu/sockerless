@@ -31,6 +31,8 @@ func (s *Server) registerGHAppsOAuthMgmtRoutes() {
 	s.route("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
 	s.route("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
 	s.route("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
+	s.route("GET /settings/oauth-apps", s.handleListBrowserOAuthApps)
+	s.route("POST /settings/oauth-apps/new", s.handleCreateBrowserOAuthApp)
 
 	// OAuth App management. GitHub has no public Representational State
 	// Transfer application programming interface to create or list OAuth Apps;
@@ -278,6 +280,72 @@ func (s *Server) handleListOAuthAppsMgmt(w http.ResponseWriter, r *http.Request)
 		out = append(out, oauthAppToJSON(a, false))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) handleCreateBrowserOAuthApp(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	req, ok := decodeOAuthAppSettingsRequest(w, r)
+	if !ok {
+		return
+	}
+	app := s.store.CreateOAuthApp(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
+	writeJSON(w, http.StatusCreated, oauthAppToJSON(app, true))
+}
+
+func (s *Server) handleListBrowserOAuthApps(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	apps := s.store.ListOAuthApps()
+	out := make([]map[string]interface{}, 0, len(apps))
+	for _, a := range apps {
+		if a.OwnerID == user.ID {
+			out = append(out, oauthAppToJSON(a, false))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+type oauthAppSettingsRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	CallbackURL string `json:"callback_url"`
+}
+
+func decodeOAuthAppSettingsRequest(w http.ResponseWriter, r *http.Request) (oauthAppSettingsRequest, bool) {
+	var req oauthAppSettingsRequest
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+			return req, false
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+			return req, false
+		}
+		req.Name = r.PostFormValue("name")
+		req.Description = r.PostFormValue("description")
+		req.URL = r.PostFormValue("url")
+		req.CallbackURL = r.PostFormValue("callback_url")
+		if req.CallbackURL == "" {
+			req.CallbackURL = r.PostFormValue("callbackUrl")
+		}
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeGHValidationError(w, "OAuthApp", "name", "missing_field")
+		return req, false
+	}
+	return req, true
 }
 
 func tokenMatchesClient(tok *UserToServerToken, clientID string, st *Store) bool {

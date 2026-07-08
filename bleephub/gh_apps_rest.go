@@ -34,8 +34,12 @@ func (s *Server) registerGHAppsRoutes() {
 	// manifest's redirect_url with the one-time code that
 	// POST /api/v3/app-manifests/{code}/conversions redeems.
 	s.route("POST /settings/apps/new", s.handleManifestSubmission)
+	s.route("GET /settings/apps", s.handleListBrowserGitHubApps)
 	s.route("POST /apps/{app_slug}/installations/new", s.handleBrowserInstallApp)
 	s.route("POST /settings/apps/{app_slug}/installations/new", s.handleBrowserInstallApp)
+	s.route("POST /settings/installations/{id}/suspend", s.handleBrowserSuspendInstallation)
+	s.route("POST /settings/installations/{id}/unsuspend", s.handleBrowserUnsuspendInstallation)
+	s.route("DELETE /settings/installations/{id}", s.handleBrowserDeleteInstallation)
 
 	s.registerGHAppsUserAndOperatorRoutes()
 }
@@ -229,6 +233,24 @@ func (s *Server) handleManifestSubmission(w http.ResponseWriter, r *http.Request
 	http.Redirect(w, r, redirect.String(), http.StatusFound)
 }
 
+// handleListBrowserGitHubApps exposes the signed-in user's GitHub Apps through
+// the same settings surface that owns the browser manifest flow.
+func (s *Server) handleListBrowserGitHubApps(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	apps := s.snapshotGitHubApps()
+	out := make([]map[string]interface{}, 0, len(apps))
+	for _, app := range apps {
+		if app.OwnerID == user.ID {
+			out = append(out, appToJSON(s.store, app, false))
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // handleBrowserInstallApp implements the signed-in browser installation step
 // behind GitHub's "Install App" flow. The app's registered default
 // permissions/events are the installation grant; the form only chooses the
@@ -288,6 +310,84 @@ func (s *Server) handleBrowserInstallApp(w http.ResponseWriter, r *http.Request)
 	}
 	s.emitInstallationEvent(app, "created", inst)
 	writeJSON(w, http.StatusCreated, installationToJSON(inst))
+}
+
+func (s *Server) handleBrowserSuspendInstallation(w http.ResponseWriter, r *http.Request) {
+	s.handleBrowserInstallationState(w, r, true)
+}
+
+func (s *Server) handleBrowserUnsuspendInstallation(w http.ResponseWriter, r *http.Request) {
+	s.handleBrowserInstallationState(w, r, false)
+}
+
+func (s *Server) handleBrowserInstallationState(w http.ResponseWriter, r *http.Request, suspend bool) {
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	inst, ok := s.browserManageableInstallation(w, r, user)
+	if !ok {
+		return
+	}
+	var changed bool
+	if suspend {
+		changed = s.store.SuspendInstallation(inst.ID, user)
+	} else {
+		changed = s.store.UnsuspendInstallation(inst.ID)
+	}
+	if !changed {
+		writeGHError(w, http.StatusConflict, "Installation state already matches request")
+		return
+	}
+	if app := s.store.GetApp(inst.AppID); app != nil {
+		action := "unsuspend"
+		if suspend {
+			action = "suspend"
+		}
+		s.emitInstallationEvent(app, action, s.store.GetInstallation(inst.ID))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleBrowserDeleteInstallation(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
+	if user == nil {
+		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
+		return
+	}
+	inst, ok := s.browserManageableInstallation(w, r, user)
+	if !ok {
+		return
+	}
+	s.store.DeleteInstallation(inst.ID)
+	if app := s.store.GetApp(inst.AppID); app != nil {
+		s.emitInstallationEvent(app, "deleted", inst)
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) browserManageableInstallation(w http.ResponseWriter, r *http.Request, user *User) (*Installation, bool) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Invalid installation ID")
+		return nil, false
+	}
+	inst := s.store.GetInstallation(id)
+	if inst == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil, false
+	}
+	if inst.TargetLogin == user.Login {
+		return inst, true
+	}
+	if inst.TargetType == "Organization" {
+		if m := s.store.GetMembership(inst.TargetLogin, user.ID); m != nil && m.State == MembershipStateActive && m.Role == OrgRoleAdmin {
+			return inst, true
+		}
+	}
+	writeGHError(w, http.StatusForbidden, "Must be able to manage GitHub Apps on this account")
+	return nil, false
 }
 
 func (s *Server) resolveInstallTarget(user *User, targetLogin string) (string, int, bool) {
@@ -1063,6 +1163,16 @@ func (s *Server) snapshotInstallations() []*Installation {
 	out := make([]*Installation, 0, len(s.store.Installations))
 	for _, inst := range s.store.Installations {
 		out = append(out, inst)
+	}
+	return out
+}
+
+func (s *Server) snapshotGitHubApps() []*App {
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	out := make([]*App, 0, len(s.store.Apps))
+	for _, app := range s.store.Apps {
+		out = append(out, app)
 	}
 	return out
 }

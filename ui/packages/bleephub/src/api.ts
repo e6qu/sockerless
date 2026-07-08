@@ -13,6 +13,8 @@ import type {
   BleephubInstallation,
   BleephubOAuthApp,
   BleephubOAuthState,
+  WireGitHubApp,
+  WireInstallation,
   WireOAuthApp,
   WireAppCreated,
   GithubIssue,
@@ -340,9 +342,17 @@ export async function fetchWorkflowFiles(): Promise<BleephubWorkflowFile[]> {
 }
 
 
-export const fetchApps = () => fetchJSON<BleephubApp[]>("/internal/apps");
-export const fetchInstallations = () =>
-  fetchJSON<BleephubInstallation[]>("/internal/installations");
+export async function fetchApps(): Promise<BleephubApp[]> {
+  const raw = await fetchJSON<WireGitHubApp[]>("/settings/apps");
+  return raw.map(normalizeGitHubApp);
+}
+
+export async function fetchInstallations(): Promise<BleephubInstallation[]> {
+  const raw = await ghFetch<{ total_count: number; installations: WireInstallation[] }>(
+    "/api/v3/user/installations?per_page=100",
+  );
+  return raw.installations.map(normalizeInstallation);
+}
 export const fetchOAuthState = () =>
   fetchJSON<BleephubOAuthState>("/internal/oauth/state");
 
@@ -362,11 +372,34 @@ export async function verifyToken(token: string): Promise<boolean> {
   return res.ok;
 }
 
-// The OAuth Apps management surface returns GitHub's snake_case wire shape
-// (client_id, callback_url, created_at). The user interface types are
-// camelCase, so normalize at this boundary. Fields are mapped 1:1 from the
-// server contract, with no defaults, so a contract break shows as undefined
-// rather than a plausible-looking blank.
+// The browser settings and GitHub REST surfaces return snake_case wire shapes.
+// The user interface types are camelCase, so normalize at this boundary.
+// Fields are mapped 1:1 from the server contract, with no defaults, so a
+// contract break shows as undefined rather than a plausible-looking blank.
+function normalizeGitHubApp(raw: WireGitHubApp): BleephubApp {
+  return {
+    id: raw.id,
+    slug: raw.slug,
+    name: raw.name,
+    description: raw.description,
+    ownerId: raw.owner.id,
+    createdAt: raw.created_at,
+  };
+}
+
+function normalizeInstallation(raw: WireInstallation): BleephubInstallation {
+  return {
+    id: raw.id,
+    appId: raw.app_id,
+    appSlug: raw.app_slug,
+    targetType: raw.target_type,
+    targetLogin: raw.account.login,
+    repositorySelection: raw.repository_selection,
+    createdAt: raw.created_at,
+    suspendedAt: raw.suspended_at,
+  };
+}
+
 function normalizeOAuthApp(raw: WireOAuthApp): BleephubOAuthApp {
   return {
     clientId: raw.client_id,
@@ -438,7 +471,7 @@ export async function createApp(payload: {
 }
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
-  const res = await fetch("/internal/oauth-apps", {
+  const res = await fetch("/settings/oauth-apps", {
     headers: authHeaders(),
   });
   if (!res.ok) {
@@ -455,13 +488,18 @@ export async function createOAuthApp(payload: {
   url?: string;
   callback_url?: string;
 }): Promise<BleephubOAuthApp & { client_secret: string }> {
-  const res = await fetch("/internal/oauth-apps", {
+  const form = new URLSearchParams();
+  form.set("name", payload.name);
+  if (payload.description) form.set("description", payload.description);
+  if (payload.url) form.set("url", payload.url);
+  if (payload.callback_url) form.set("callback_url", payload.callback_url);
+  const res = await fetch("/settings/oauth-apps/new", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       ...authHeaders(),
     },
-    body: JSON.stringify(payload),
+    body: form,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -476,7 +514,7 @@ export async function createOAuthApp(payload: {
 
 export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
   const verb = suspend ? "suspend" : "unsuspend";
-  const res = await fetch(`/internal/installations/${installationID}/${verb}`, {
+  const res = await fetch(`/settings/installations/${installationID}/${verb}`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -487,7 +525,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 }
 
 export async function deleteInstallation(installationID: number): Promise<void> {
-  const res = await fetch(`/internal/installations/${installationID}`, {
+  const res = await fetch(`/settings/installations/${installationID}`, {
     method: "DELETE",
     headers: authHeaders(),
   });

@@ -87,6 +87,86 @@ func installGitHubAppViaBrowser(t *testing.T, appSlug, targetLogin, selection st
 	return decodeJSON(t, resp)
 }
 
+func TestGitHubAppBrowserSettingsListAndManageInstallation(t *testing.T) {
+	created := createGitHubAppViaManifest(t, "Settings Managed App", map[string]string{"contents": "read"}, []string{"push"})
+	appSlug := created["slug"].(string)
+
+	req, _ := http.NewRequest("GET", testBaseURL+"/settings/apps", nil)
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /settings/apps status = %d", resp.StatusCode)
+	}
+	var apps []map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&apps); err != nil {
+		t.Fatal(err)
+	}
+	if len(apps) == 0 {
+		t.Fatal("settings app list returned no apps")
+	}
+	found := false
+	for _, app := range apps {
+		if app["slug"] == appSlug {
+			found = true
+			if _, leaked := app["pem"]; leaked {
+				t.Fatal("settings app list leaked private key")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("settings apps = %+v, want created app slug %q", apps, appSlug)
+	}
+
+	inst := installGitHubAppViaBrowser(t, appSlug, "admin", "all")
+	instID := int(inst["id"].(float64))
+
+	req, _ = http.NewRequest("POST", fmt.Sprintf("%s/settings/installations/%d/suspend", testBaseURL, instID), nil)
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("settings suspend status = %d", resp.StatusCode)
+	}
+	if got := testServer.store.GetInstallation(instID); got == nil || got.SuspendedAt == nil {
+		t.Fatalf("installation %d was not suspended through settings route", instID)
+	}
+
+	req, _ = http.NewRequest("POST", fmt.Sprintf("%s/settings/installations/%d/unsuspend", testBaseURL, instID), nil)
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("settings unsuspend status = %d", resp.StatusCode)
+	}
+	if got := testServer.store.GetInstallation(instID); got == nil || got.SuspendedAt != nil {
+		t.Fatalf("installation %d was not unsuspended through settings route", instID)
+	}
+
+	req, _ = http.NewRequest("DELETE", fmt.Sprintf("%s/settings/installations/%d", testBaseURL, instID), nil)
+	req.Header.Set("Authorization", "token "+defaultToken)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("settings delete status = %d", resp.StatusCode)
+	}
+	if got := testServer.store.GetInstallation(instID); got != nil {
+		t.Fatalf("installation %d still exists after settings delete", instID)
+	}
+}
+
 func TestAppManifestFlowEndToEnd(t *testing.T) {
 	// 1. Submit the manifest form (the github.com/settings/apps/new POST).
 	manifest := map[string]interface{}{

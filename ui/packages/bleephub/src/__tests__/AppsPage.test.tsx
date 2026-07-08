@@ -32,30 +32,44 @@ function renderPage() {
 const apps = [
   {
     id: 1,
+    node_id: "A_1",
     slug: "ci-bot",
     name: "CI Bot",
+    client_id: "Iv1.example",
     description: "Helper",
-    ownerId: 1,
-    createdAt: "2026-01-01T00:00:00Z",
+    external_url: "https://example.test",
+    html_url: "https://github.com/apps/ci-bot",
+    permissions: {},
+    events: [],
+    installations_count: 1,
+    owner: { id: 1, login: "octocat" },
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
   },
 ];
 
 const installations = [
   {
     id: 100,
-    appId: 1,
-    appSlug: "ci-bot",
-    targetType: "User",
-    targetLogin: "octocat",
-    repositorySelection: "all",
-    createdAt: "2026-01-01T00:00:00Z",
+    app_id: 1,
+    app_slug: "ci-bot",
+    target_type: "User",
+    target_id: 1,
+    account: { login: "octocat" },
+    repository_selection: "all",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    suspended_at: null,
   },
 ];
 
 function routedFetch(url: RequestInfo | URL): Promise<Response> {
   const u = typeof url === "string" ? url : url.toString();
-  if (u.includes("/internal/apps")) return Promise.resolve(jsonResponse(apps));
-  if (u.includes("/internal/installations")) return Promise.resolve(jsonResponse(installations));
+  if (u === "/settings/apps") return Promise.resolve(jsonResponse(apps));
+  if (u.includes("/api/v3/user/installations")) {
+    return Promise.resolve(jsonResponse({ total_count: installations.length, installations }));
+  }
+  if (u === "/settings/oauth-apps") return Promise.resolve(jsonResponse([]));
   return Promise.resolve(jsonResponse([]));
 }
 
