@@ -316,7 +316,13 @@ jobs:
       - name: Install gcloud CLI
         if: matrix.cloud == 'gcp'
         run: |
-          curl -sSL https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz | tar -xz -C "$HOME"
+          archive="$RUNNER_TEMP/google-cloud-cli-linux-x86_64.tar.gz"
+          curl --fail --location --show-error --silent --http1.1 \
+            --retry 5 --retry-all-errors --retry-delay 5 \
+            --connect-timeout 20 --max-time 300 \
+            --output "$archive" \
+            https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-linux-x86_64.tar.gz
+          tar -xzf "$archive" -C "$HOME"
           echo "$HOME/google-cloud-sdk/bin" >> "$GITHUB_PATH"
           # The Firestore-emulator component is the differential-test oracle for
           # TestFirestore_DifferentialVsEmulator (the runner ships a JRE).

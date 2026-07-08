@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, Actions rerun workflow-file identity, go-github Actions dispatch coverage, cloud-backend lint sharding, and AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, Actions rerun workflow-file identity, go-github Actions dispatch coverage, CI setup hardening, cloud-backend lint sharding, and AWS S3 CopyObject list visibility.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
@@ -21,6 +21,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2348:** CI no longer runs all cloud-backend module lints in one imbalanced 5-minute shard. The lint matrix now splits cloud backends into AWS, Google Cloud, and Azure provider-family shards, giving each family its own timeout budget and parallel runner.
 - **BUG-2349:** The go-github SDK Actions workflow dispatch test no longer skips. It seeds a real `.github/workflows/ci.yml` file through the Git Data API, lists the workflow, dispatches it, reads the workflow run by ID, and lists the queued job through the typed client.
 - **BUG-2350:** Actions workflow discovery no longer depends only on git storage `HEAD`. It resolves the repository's recorded default branch when `HEAD` is unset, so Git Data seeded repositories expose default-branch workflow files to list/get/dispatch.
+- **BUG-2351:** The GCP simulator CI setup no longer streams the Google Cloud CLI tarball directly into `tar`. It downloads the archive to `$RUNNER_TEMP` with `curl --fail --retry-all-errors` and extracts only the completed file, so transient HTTP stream failures retry instead of producing a truncated gzip.
 - **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage, no-github.com action resolution, rerun workflow-file identity, the go-github reference adaptor, and default-branch workflow discovery. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
