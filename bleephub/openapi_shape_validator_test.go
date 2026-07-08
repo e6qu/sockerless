@@ -26,7 +26,7 @@ import (
 
 type shapeViolation struct {
 	Op    string // "METHOD /spec/path/template -> status"
-	Kind  string // unknown-field | type-mismatch | missing-required | malformed-json
+	Kind  string // unknown-field | type-mismatch | missing-required | malformed-json | internal-url
 	Field string
 }
 
@@ -180,6 +180,9 @@ func (v *shapeValidator) Observe(req *http.Request, status int, header http.Head
 		v.record(shapeViolation{Op: opLabel(op, status), Kind: "malformed-json", Field: "$"})
 		return
 	}
+	for _, field := range internalURLFields(decoded, "$") {
+		v.record(shapeViolation{Op: opLabel(candidates[0], status), Kind: "internal-url", Field: field})
+	}
 
 	var best []shapeViolation
 	bestSet := false
@@ -209,6 +212,33 @@ func (v *shapeValidator) Observe(req *http.Request, status int, header http.Head
 	for _, viol := range best {
 		v.record(viol)
 	}
+}
+
+func internalURLFields(v any, field string) []string {
+	switch x := v.(type) {
+	case map[string]any:
+		var out []string
+		keys := make([]string, 0, len(x))
+		for k := range x {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = append(out, internalURLFields(x[k], field+"."+k)...)
+		}
+		return out
+	case []any:
+		var out []string
+		for i, item := range x {
+			out = append(out, internalURLFields(item, fmt.Sprintf("%s[%d]", field, i))...)
+		}
+		return out
+	case string:
+		if strings.Contains(x, "/internal/") {
+			return []string{field}
+		}
+	}
+	return nil
 }
 
 func opLabel(op openAPIOperation, status int) string {
