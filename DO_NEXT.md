@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, and AWS S3 CopyObject list visibility.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity, Actions byte-object storage, GraphQL sub-issues, issue-type assignment, user-owned issue sidebar routing, Pages build metadata fidelity, and AWS S3 CopyObject list visibility.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
@@ -16,6 +16,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2343:** GraphQL `Issue.parent`, `Issue.subIssues`, and `Issue.subIssuesSummary` now render the same ordered sub-issue relationships as the REST API. Replacing a sub-issue's parent persists both the old and new parent lists so reload keeps the relationship graph coherent.
 - **BUG-2344:** Issues now store per-issue organization issue-type assignments. REST issue create/PATCH accepts `issue_type_id` and validates it against the repository owner's enabled org issue types; GraphQL `Issue.issueType` projects the assigned definition; the issue sidebar reads the assignment through GraphQL, maps it to the org issue-type list, and PATCHes the same validated REST field. Reload coverage proves assignments persist.
 - **BUG-2345:** The issue sidebar now gates issue-type queries on the repository owner's real type instead of probing `/orgs/{owner}/issue-types` for every issue. User-owned repositories skip the organization-only REST and GraphQL issue-type calls, so issue detail pages do not emit 404 browser console errors under Playwright.
+- **BUG-2346:** Manual Pages builds no longer store a synthetic all-zero commit SHA, share the audit-log ID allocator, or lose their internal build ID on reload. Build requests require an enabled Pages site plus a real default-branch commit, record that actual commit SHA, allocate IDs from a dedicated persisted Pages-build sequence, and rehydrate the internal ID from the persisted build URL.
 - **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake; it also documents Actions object-byte storage and no-github.com action resolution. Continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
@@ -31,7 +32,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the Actions object-store changes.
 - `make ui/packages/bleephub/test TEST_ARGS='IssuesPage.test.tsx --runInBand'` and `make ui/packages/bleephub/lint` passed after the issue-type sidebar changes.
 - `SERVER_BIN=/private/tmp/bleephub-server npx playwright test --timeout=60000` passed locally after the user-owned issue sidebar routing fix.
-- `pre-commit run --files BUGS.md DO_NEXT.md PLAN.md STATUS.md WHAT_WE_DID.md ui/packages/bleephub/src/__tests__/IssuesPage.test.tsx ui/packages/bleephub/src/components/IssueSidebar.tsx ui/packages/bleephub/src/pages/IssuesPage.tsx` passed with sandbox escalation after the restricted sandbox blocked loopback listeners and npm package resolution.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./... -run 'TestPagesBuildsCRUD|TestPagesCreateUpdateShape|TestPagesDeployments_CreateStatusCancel|TestPersistenceReload'` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `GOWORK=off GOCACHE=/private/tmp/sockerless-go-cache go test ./...` passed in `bleephub` with sandbox escalation for loopback listeners.
+- `pre-commit run --files BUGS.md DO_NEXT.md STATUS.md WHAT_WE_DID.md bleephub/README.md bleephub/gh_misc_endpoints.go bleephub/gh_misc_surfaces_test.go bleephub/persistence_reload_test.go bleephub/store.go` passed with sandbox escalation after the restricted sandbox blocked loopback listeners and Go build-cache access.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774

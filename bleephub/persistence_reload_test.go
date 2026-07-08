@@ -666,6 +666,31 @@ func TestPersistenceReload_AuditLogOrdering(t *testing.T) {
 	}
 }
 
+func TestPersistenceReload_PagesBuildIDSequence(t *testing.T) {
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "pages", "", false)
+		if repo == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		st.Misc.pagesBuilds[repo.FullName] = []*PagesBuild{
+			{ID: 41, URL: "http://127.0.0.1/api/v3/repos/admin/pages/pages/builds/41", Status: "built"},
+			{ID: 9, URL: "http://127.0.0.1/api/v3/repos/admin/pages/pages/builds/9", Status: "built"},
+		}
+		p.MustPut("pages_builds", repo.FullName, st.Misc.pagesBuilds[repo.FullName])
+		st.Misc.nextAuditID = 7
+		p.MustPut("audit_log", "7", &AuditEntry{ID: 7, Timestamp: time.Now().UTC().Format(time.RFC3339Nano), Action: "repo.create", Actor: "admin", Version: "1.1"})
+	})
+
+	if st2.Misc.nextPagesBuildID != 42 {
+		t.Fatalf("nextPagesBuildID = %d, want 42", st2.Misc.nextPagesBuildID)
+	}
+	if st2.Misc.nextAuditID != 7 {
+		t.Fatalf("nextAuditID = %d, want 7", st2.Misc.nextAuditID)
+	}
+}
+
 // H4: deleting a repo purges everything keyed to it, so a restart plus a
 // recreated same-name repo inherits nothing.
 func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {

@@ -120,6 +120,12 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	s.registerGHMiscEndpoints()
 	admin := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(admin, "pages-build-test", "", false)
+	commitHash, err := initRepoWithFiles(s.store.GetGitStorage("admin", "pages-build-test"), repo.DefaultBranch, "init", map[string]string{
+		"index.html": "hello",
+	}, repoSignature(admin.Login, "bleephub@local"))
+	if err != nil {
+		t.Fatalf("init repo: %v", err)
+	}
 
 	w := doMiscReq(s, "GET", "/api/v3/repos/"+repo.FullName+"/pages/builds", "")
 	if w.Code != 200 {
@@ -129,6 +135,16 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &builds)
 	if len(builds) != 0 {
 		t.Fatalf("initial builds = %d, want 0", len(builds))
+	}
+
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages/builds", "")
+	if w.Code != 404 {
+		t.Fatalf("trigger build without Pages site status = %d, want 404", w.Code)
+	}
+
+	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages", `{"source":{"branch":"main","path":"/"}}`)
+	if w.Code != 201 {
+		t.Fatalf("create Pages site status = %d, body = %s", w.Code, w.Body.String())
 	}
 
 	w = doMiscReq(s, "POST", "/api/v3/repos/"+repo.FullName+"/pages/builds", "")
@@ -174,6 +190,9 @@ func TestPagesBuildsCRUD(t *testing.T) {
 	}
 	if _, ok := latest["commit"]; !ok {
 		t.Fatalf("build missing commit field; got %v", latest)
+	}
+	if latest["commit"] != commitHash.String() {
+		t.Fatalf("build commit = %v, want %s", latest["commit"], commitHash.String())
 	}
 	if _, ok := latest["pusher"]; !ok {
 		t.Fatalf("build missing pusher field; got %v", latest)

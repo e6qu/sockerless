@@ -213,7 +213,7 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Meta.** `GET /meta` in GHES shape — bleephub presents as GHES (`installed_version: "3.21.0"`). `gh`'s feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
 
-**Pages.** Site CRUD + builds shape.
+**Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual build requests require a configured Pages site and record the actual latest default-branch commit SHA.
 
 **Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
 

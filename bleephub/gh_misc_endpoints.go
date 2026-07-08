@@ -21,7 +21,7 @@ import (
 
 // long-tail GitHub API surfaces gh CLI / octokit / probot hit.// Users API extras (keys, gpg_keys, emails, followers, following)
 // Actions OIDC (signed token + JWKS + discovery)
-// GitHub Pages (site CRUD + builds stubs)
+// GitHub Pages (site CRUD + builds + deployments)
 // Org members + audit log
 // Marketplace (listing plans/accounts)
 //
@@ -220,6 +220,18 @@ type PagesBuildErr struct {
 	Message *string `json:"message"`
 }
 
+func pagesBuildIDFromURL(url string) int64 {
+	idx := strings.LastIndex(url, "/")
+	if idx < 0 || idx == len(url)-1 {
+		return 0
+	}
+	id, err := strconv.ParseInt(url[idx+1:], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
+}
+
 type AuditEntry struct {
 	ID        int64                  `json:"_document_id"`
 	Timestamp string                 `json:"@timestamp"`
@@ -286,6 +298,7 @@ type MiscStore struct {
 	oidcClaimKeys        []string
 	nextKeyID            int
 	nextGPGKeyID         int
+	nextPagesBuildID     int64
 	nextAuditID          int64
 	nextAdminAuditID     int64
 	oidcKey              *rsa.PrivateKey
@@ -311,6 +324,7 @@ func newMiscStore() *MiscStore {
 		auditLogEvents:       []*AuditLogEvent{},
 		nextKeyID:            1,
 		nextGPGKeyID:         1,
+		nextPagesBuildID:     1,
 		blockedUsers:         map[int]map[int]bool{},
 		socialAccounts:       map[int][]map[string]interface{}{},
 		sshSigningKeys:       map[int][]map[string]interface{}{},
@@ -1073,10 +1087,17 @@ func (s *Server) handlePagesListBuilds(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, builds)
 }
+
 func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	stor := s.store.GetGitStorage(r.PathValue("owner"), r.PathValue("repo"))
+	commitSHA := resolveBranchSha(stor, repo.DefaultBranch)
+	if commitSHA == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "Default branch has no commit for Pages build")
 		return
 	}
 	actor := "bleephub-system"
@@ -1087,15 +1108,20 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	}
 	now := time.Now()
 	s.store.Misc.mu.Lock()
-	s.store.Misc.nextAuditID++
-	buildID := s.store.Misc.nextAuditID
+	if s.store.Misc.pagesByRepo[repo.ID] == nil {
+		s.store.Misc.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	buildID := s.store.Misc.nextPagesBuildID
+	s.store.Misc.nextPagesBuildID++
 	buildURL := s.baseURL(r) + "/api/v3/repos/" + repo.FullName + "/pages/builds/" + strconv.FormatInt(buildID, 10)
 	build := &PagesBuild{
 		ID:        buildID,
 		URL:       buildURL,
 		Status:    "queued",
 		Pusher:    pusher,
-		Commit:    "0000000000000000000000000000000000000000",
+		Commit:    commitSHA,
 		CreatedAt: now,
 		UpdatedAt: now,
 		Error:     &PagesBuildErr{},
@@ -1109,6 +1135,7 @@ func (s *Server) handlePagesTriggerBuild(w http.ResponseWriter, r *http.Request)
 	// GitHub's request-a-build response is exactly {status, url}.
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"status": "queued", "url": buildURL})
 }
+
 func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
@@ -1124,6 +1151,7 @@ func (s *Server) handlePagesLatestBuild(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, http.StatusOK, builds[0])
 }
+
 func (s *Server) handlePagesGetBuild(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {

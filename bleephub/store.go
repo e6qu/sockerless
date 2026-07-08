@@ -1698,11 +1698,12 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Misc.pagesBuilds[key] = builds
-			// nextAuditID is pre-incremented before use, so resume it AT the
-			// highest seen ID (the next allocation bumps past it).
 			for _, b := range builds {
-				if b.ID > st.Misc.nextAuditID {
-					st.Misc.nextAuditID = b.ID
+				if b.ID == 0 {
+					b.ID = pagesBuildIDFromURL(b.URL)
+				}
+				if b.ID >= st.Misc.nextPagesBuildID {
+					st.Misc.nextPagesBuildID = b.ID + 1
 				}
 			}
 			return nil
