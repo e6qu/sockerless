@@ -495,12 +495,12 @@ case "$ACCESS_URL" in
     *) fail "access_tokens_url shape: $ACCESS_URL" ;;
 esac
 
-# Suspend / unsuspend through the operator-only management path.
+# Suspend / unsuspend through the signed-in settings path.
 SUSPEND_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
-    "$BASE/internal/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
+    "$BASE/settings/installations/$INST_ID/suspend" -w "%{http_code}" -o /dev/null)
 assert_eq "suspend installation 204" "204" "$SUSPEND_CODE"
 UNSUSP_CODE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" \
-    "$BASE/internal/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
+    "$BASE/settings/installations/$INST_ID/unsuspend" -w "%{http_code}" -o /dev/null)
 assert_eq "unsuspend installation 204" "204" "$UNSUSP_CODE"
 
 # Installation lookup by user
@@ -509,7 +509,7 @@ USR_INST_ID=$(echo "$USR_INST" | jq -r '.id // 0')
 assert_eq "GET /users/{login}/installation id matches" "$INST_ID" "$USR_INST_ID"
 
 # OAuth App create + Basic-auth on /applications/{client_id}/token
-OA=$(api "$BASE/internal/oauth-apps" -f name="OA Parity" -f description="parity" \
+OA=$(api "$BASE/settings/oauth-apps/new" -f name="OA Parity" -f description="parity" \
     -f url="https://example.test" -f callback_url="https://example.test/cb")
 OA_CID=$(echo "$OA" | jq -r '.client_id')
 OA_CSEC=$(echo "$OA" | jq -r '.client_secret')

@@ -34,13 +34,6 @@ func (s *Server) registerGHAppsOAuthMgmtRoutes() {
 	s.route("GET /settings/oauth-apps", s.handleListBrowserOAuthApps)
 	s.route("POST /settings/oauth-apps/new", s.handleCreateBrowserOAuthApp)
 
-	// OAuth App management. GitHub has no public Representational State
-	// Transfer application programming interface to create or list OAuth Apps;
-	// the real surface is browser settings. These operator-only routes are
-	// compatibility debt under /internal/, never the GitHub-compatible
-	// application programming interface surface.
-	s.route("POST /internal/oauth-apps", s.handleCreateOAuthAppMgmt)
-	s.route("GET /internal/oauth-apps", s.handleListOAuthAppsMgmt)
 }
 
 // authenticateClientCreds reads + verifies HTTP Basic auth carrying
@@ -246,40 +239,6 @@ func (s *Server) handleRevokeOAuthGrant(w http.ResponseWriter, r *http.Request) 
 	}
 	s.store.RevokeUserGrant(clientID, tok.UserID)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *Server) handleCreateOAuthAppMgmt(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
-		return
-	}
-	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		URL         string `json:"url"`
-		CallbackURL string `json:"callback_url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		writeGHValidationError(w, "OAuthApp", "name", "missing_field")
-		return
-	}
-	app := s.store.CreateOAuthApp(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
-	writeJSON(w, http.StatusCreated, oauthAppToJSON(app, true))
-}
-
-func (s *Server) handleListOAuthAppsMgmt(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
-		return
-	}
-	apps := s.store.ListOAuthApps()
-	out := make([]map[string]interface{}, 0, len(apps))
-	for _, a := range apps {
-		out = append(out, oauthAppToJSON(a, false))
-	}
-	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) handleCreateBrowserOAuthApp(w http.ResponseWriter, r *http.Request) {

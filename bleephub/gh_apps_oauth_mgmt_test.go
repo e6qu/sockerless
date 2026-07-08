@@ -2,7 +2,6 @@ package bleephub
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -226,51 +225,6 @@ func TestOAuthScopeToken_MintsFreshNarrowedToken(t *testing.T) {
 	_ = inst
 }
 
-func TestOAuthAppManagement(t *testing.T) {
-	s := newTestServer()
-	s.store.SeedDefaultUser()
-	s.registerGHAppsOAuthMgmtRoutes()
-
-	// Create via management endpoint (PAT auth).
-	body, _ := json.Marshal(map[string]string{
-		"name":         "My OAuth App",
-		"description":  "test",
-		"url":          "https://example.test",
-		"callback_url": "https://example.test/cb",
-	})
-	req := httptest.NewRequest("POST", "/internal/oauth-apps", bytes.NewReader(body))
-	user := s.store.UsersByLogin["admin"]
-	req = req.WithContext(setUserCtx(req, user))
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create status = %d body = %s", w.Code, w.Body.String())
-	}
-	var created map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &created)
-	if created["client_id"] == "" || created["client_secret"] == "" {
-		t.Error("missing client_id or client_secret in response")
-	}
-
-	// List
-	req = httptest.NewRequest("GET", "/internal/oauth-apps", nil)
-	req = req.WithContext(setUserCtx(req, user))
-	w = httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("list status = %d", w.Code)
-	}
-	var list []map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &list)
-	if len(list) != 1 {
-		t.Errorf("expected 1 oauth app, got %d", len(list))
-	}
-	// List view must NOT include client_secret.
-	if _, hasSecret := list[0]["client_secret"]; hasSecret {
-		t.Error("list view leaked client_secret")
-	}
-}
-
 func TestOAuthAppBrowserSettingsCreateAndList(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
@@ -310,8 +264,4 @@ func TestOAuthAppBrowserSettingsCreateAndList(t *testing.T) {
 
 func basicHeader(clientID, clientSecret string) string {
 	return base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
-}
-
-func setUserCtx(r *http.Request, u *User) context.Context {
-	return context.WithValue(r.Context(), ctxUser, u)
 }

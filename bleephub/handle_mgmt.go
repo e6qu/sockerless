@@ -19,8 +19,6 @@ func (s *Server) registerMgmtRoutes() {
 		{"GET /internal/workflows/{workflowId}", s.handleGetWorkflow},
 		{"GET /internal/workflows/{workflowId}/logs", s.handleGetWorkflowLogs},
 		{"GET /internal/workflow_files", s.handleListWorkflowFilesInternal},
-		{"GET /internal/apps", s.handleListAppsInternal},
-		{"GET /internal/installations", s.handleListInstallationsInternal},
 		{"GET /internal/oauth/state", s.handleOAuthStateInternal},
 		{"GET /internal/sessions", s.handleListSessions},
 		{"GET /internal/repos", s.handleListRepos},
@@ -48,31 +46,6 @@ func (s *Server) registerMgmtRoutes() {
 	}
 }
 
-// appView / installationView / oauthState — operator-facing admin
-// shapes for the bleephub UI Apps Manager + OAuth Debug pages. Real
-// GitHub doesn't expose these aggregations (they're internal sim
-// state, not part of the public REST surface).
-
-type appView struct {
-	ID          int    `json:"id"`
-	Slug        string `json:"slug"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	OwnerID     int    `json:"ownerId"`
-	CreatedAt   string `json:"createdAt"`
-}
-
-type installationViewMgmt struct {
-	ID                  int     `json:"id"`
-	AppID               int     `json:"appId"`
-	AppSlug             string  `json:"appSlug"`
-	TargetType          string  `json:"targetType"`
-	TargetLogin         string  `json:"targetLogin"`
-	RepositorySelection string  `json:"repositorySelection"`
-	CreatedAt           string  `json:"createdAt"`
-	SuspendedAt         *string `json:"suspendedAt"`
-}
-
 type oauthStateView struct {
 	DeviceCodes []deviceCodeView `json:"deviceCodes"`
 	AuthCodes   []authCodeView   `json:"authCodes"`
@@ -95,49 +68,6 @@ type authCodeView struct {
 	UserID      int    `json:"userId"`
 	CreatedAt   string `json:"createdAt"`
 	ExpiresAt   string `json:"expiresAt"`
-}
-
-func (s *Server) handleListAppsInternal(w http.ResponseWriter, r *http.Request) {
-	s.store.mu.RLock()
-	apps := make([]appView, 0, len(s.store.Apps))
-	for _, app := range s.store.Apps {
-		apps = append(apps, appView{
-			ID:          app.ID,
-			Slug:        app.Slug,
-			Name:        app.Name,
-			Description: app.Description,
-			OwnerID:     app.OwnerID,
-			CreatedAt:   app.CreatedAt.Format("2006-01-02T15:04:05Z"),
-		})
-	}
-	s.store.mu.RUnlock()
-	sort.Slice(apps, func(i, j int) bool { return apps[i].ID < apps[j].ID })
-	writeJSON(w, http.StatusOK, apps)
-}
-
-func (s *Server) handleListInstallationsInternal(w http.ResponseWriter, r *http.Request) {
-	s.store.mu.RLock()
-	installs := make([]installationViewMgmt, 0, len(s.store.Installations))
-	for _, inst := range s.store.Installations {
-		var suspendedAt *string
-		if inst.SuspendedAt != nil {
-			s := inst.SuspendedAt.UTC().Format("2006-01-02T15:04:05Z")
-			suspendedAt = &s
-		}
-		installs = append(installs, installationViewMgmt{
-			ID:                  inst.ID,
-			AppID:               inst.AppID,
-			AppSlug:             inst.AppSlug,
-			TargetType:          inst.TargetType,
-			TargetLogin:         inst.TargetLogin,
-			RepositorySelection: inst.RepositorySelection,
-			CreatedAt:           inst.CreatedAt.Format("2006-01-02T15:04:05Z"),
-			SuspendedAt:         suspendedAt,
-		})
-	}
-	s.store.mu.RUnlock()
-	sort.Slice(installs, func(i, j int) bool { return installs[i].ID < installs[j].ID })
-	writeJSON(w, http.StatusOK, installs)
 }
 
 func (s *Server) handleOAuthStateInternal(w http.ResponseWriter, r *http.Request) {

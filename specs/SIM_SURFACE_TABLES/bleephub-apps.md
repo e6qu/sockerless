@@ -62,17 +62,18 @@ Canonical reference: <https://docs.github.com/en/enterprise-server/rest/apps>
 | Scope OAuth token | `POST /api/v3/applications/{client_id}/token/scoped` | ✓ `handleScopeOAuthToken` | ✓ same | |
 | Revoke OAuth grant | `DELETE /api/v3/applications/{client_id}/grant` | ✓ `handleRevokeOAuthGrant` | ✓ same | |
 
-## Management API (bleephub-specific)
+## Browser settings
 
 | Operation | Verb + path | sim handler | test | notes |
 |---|---|---|---|---|
-| Create app | `POST /internal/apps` | ✓ `handleCreateApp` | ✓ `gh_apps_test.go` | Internal provisioning endpoint. |
-| Create installation | `POST /internal/apps/{app_id}/installations` | ✓ `handleCreateInstallationMgmt` | ✓ same | |
-| Suspend installation | `POST /internal/installations/{id}/suspend` | ✓ `handleSuspendInstallationMgmt` | ✓ same | |
-| Unsuspend installation | `POST /internal/installations/{id}/unsuspend` | ✓ `handleUnsuspendInstallationMgmt` | ✓ same | |
-| Delete installation | `DELETE /internal/installations/{id}` | ✓ `handleDeleteInstallationMgmt` | ✓ same | |
-| Create OAuth app | `POST /internal/oauth-apps` | ✓ `handleCreateOAuthAppMgmt` | ✓ `gh_apps_oauth_mgmt_test.go` | |
-| List OAuth apps | `GET /internal/oauth-apps` | ✓ `handleListOAuthAppsMgmt` | ✓ same | |
+| Submit GitHub App manifest | `POST /settings/apps/new` | ✓ `handleManifestSubmission` | ✓ `gh_apps_flow_test.go` | Browser form route; creates a one-time manifest conversion code. |
+| List owned GitHub Apps | `GET /settings/apps` | ✓ `handleListBrowserGitHubApps` | ✓ same | Settings-owned inventory for the signed-in user. |
+| Install GitHub App | `POST /apps/{app_slug}/installations/new` | ✓ `handleBrowserInstallApp` | ✓ same | Also accepted at `/settings/apps/{app_slug}/installations/new`. |
+| Suspend installation | `POST /settings/installations/{id}/suspend` | ✓ `handleBrowserSuspendInstallation` | ✓ same | Signed-in owner or organization admin. |
+| Unsuspend installation | `POST /settings/installations/{id}/unsuspend` | ✓ `handleBrowserUnsuspendInstallation` | ✓ same | Signed-in owner or organization admin. |
+| Delete installation | `DELETE /settings/installations/{id}` | ✓ `handleBrowserDeleteInstallation` | ✓ same | Signed-in owner or organization admin. |
+| Create OAuth app | `POST /settings/oauth-apps/new` | ✓ `handleCreateBrowserOAuthApp` | ✓ `gh_apps_oauth_mgmt_test.go` | Browser form route; returns the one-time client secret. |
+| List OAuth apps | `GET /settings/oauth-apps` | ✓ `handleListBrowserOAuthApps` | ✓ same | Signed-in user's OAuth Apps. |
 
 ## OAuth / device flows
 
