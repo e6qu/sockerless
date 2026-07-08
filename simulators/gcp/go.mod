@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/iam v1.11.0
 	cloud.google.com/go/kms v1.31.0
 	cloud.google.com/go/logging v1.18.0
-	cloud.google.com/go/longrunning v1.1.0
+	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/pubsub v1.50.3
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/docker/docker v28.5.2+incompatible
@@ -23,7 +23,7 @@ require (
 
 require (
 	cloud.google.com/go/firestore v1.22.0 // indirect
-	cloud.google.com/go/pubsub/v2 v2.6.0 // indirect
+	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
 	cloud.google.com/go/spanner v1.92.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -68,9 +68,9 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.10.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
-	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
-	modernc.org/libc v1.74.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	golang.org/x/text v0.40.0 // indirect
+	modernc.org/libc v1.74.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )

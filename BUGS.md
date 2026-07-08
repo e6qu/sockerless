@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2364 filed - 2321 fixed - 2 open - 16 false positives.**
+**2365 filed - 2322 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2365~~ | P2 | CI dependency freshness / GCP simulator | stale Google Cloud long-running operations module | The CI `check-deps` job caught `simulators/gcp` pinning `cloud.google.com/go/longrunning` at v1.1.0 after v1.2.0 was available; the GCP simulator module was refreshed with `make upgrade-deps`, bringing the long-running operations client and related indirect dependencies to the current published versions, and `scripts/check-latest-deps.sh` passed. |
 | ~~2362~~ | P1 | Bleephub GitHub Apps and OAuth Apps | legacy internal app-management routes beside GitHub flows | The legacy operator-only GitHub App, installation, and OAuth App management routes were removed from `/internal/apps*`, `/internal/installations`, and `/internal/oauth-apps`; GitHub App creation/listing/installation and OAuth App creation/listing now live only on browser settings/public GitHub-shaped routes, and the route-registry guard fails if those internal app-management routes return. |
 | ~~2364~~ | P1 | Bleephub GitHub Apps and OAuth Apps | user interface used operator-only app management endpoints | The Apps page no longer lists GitHub Apps, OAuth Apps, or installations through `/internal/apps`, `/internal/oauth-apps`, or `/internal/installations`; it reads owned GitHub Apps through `/settings/apps`, OAuth Apps through `/settings/oauth-apps`, installations through `GET /api/v3/user/installations`, creates OAuth Apps through the browser settings form route, and manages installation suspend/unsuspend/delete through authenticated settings routes backed by the same store transitions and webhook events. |
 | ~~2363~~ | P1 | Bleephub GitHub Actions runners | endpoint compatibility split | GitHub Actions workflow dispatch now preserves GitHub's host-mode job shape by sending no default job container when workflow YAML has no `container:` block; the Docker runner integration harness creates a real repository, writes workflow files through the contents API, dispatches them through repository-scoped workflow dispatch, polls/cancels through public run/job endpoints, and points both resident and dispatcher-spawned runners at `admin/test`; the Playwright seed path does the same, and the Workflows/Overview/Detail UI reads workflow files, runs, run detail, jobs, and logs through repository-scoped GitHub Actions REST endpoints instead of `/internal/exec`, `/internal/workflow_files`, or `/internal/workflows`. |
