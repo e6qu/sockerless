@@ -50,6 +50,7 @@ type Issue struct {
 	AssigneeIDs      []int
 	LabelIDs         []int
 	MilestoneID      int // 0 = none
+	IssueTypeID      int // 0 = none; organization issue type ID
 	Locked           bool
 	ActiveLockReason string // "", "off-topic", "too heated", "resolved", "spam"
 	CreatedAt        time.Time

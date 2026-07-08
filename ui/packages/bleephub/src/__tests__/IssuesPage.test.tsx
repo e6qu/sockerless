@@ -328,11 +328,24 @@ describe("IssuesPage milestones view", () => {
 });
 
 describe("IssuesPage detail triage", () => {
+  const epicType = {
+    id: 5,
+    node_id: "IT_kwDO00000005",
+    name: "Epic",
+    description: "Coordinated work",
+    color: "purple",
+    is_enabled: true,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
   function mockDetailEndpoints() {
     mockFetch.mockImplementation((url: RequestInfo | URL, init?: RequestInit) => {
       const u = url.toString();
       if (u.includes("/issues/7") && init?.method === "PATCH") {
-        return Promise.resolve(jsonResponse({ ...issue(7, "Triaged"), milestone: milestone(2, "v2.0") }));
+        return Promise.resolve(
+          jsonResponse({ ...issue(7, "Triaged"), milestone: milestone(2, "v2.0"), issue_type: epicType }),
+        );
       }
       if (u.includes("/issues/7/labels") && init?.method === "POST") {
         return Promise.resolve(jsonResponse([bugLabel]));
@@ -346,6 +359,9 @@ describe("IssuesPage detail triage", () => {
       }
       if (u.includes("/api/v3/repos/admin/test/labels")) {
         return Promise.resolve(jsonResponse([bugLabel]));
+      }
+      if (u.includes("/api/v3/orgs/admin/issue-types")) {
+        return Promise.resolve(jsonResponse([epicType]));
       }
       return Promise.resolve(jsonResponse([]));
     });
@@ -381,5 +397,38 @@ describe("IssuesPage detail triage", () => {
       expect(patch).toBeTruthy();
       expect(JSON.parse(String(patch![1]!.body))).toEqual({ milestone: 2 });
     });
+  });
+
+  it("sets the organization issue type via PATCH", async () => {
+    mockDetailEndpoints();
+    renderAt("/ui/repos/admin/test/issues/7");
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "Epic" })).toBeInTheDocument();
+    });
+    fireEvent.change(screen.getByLabelText("Set issue type"), { target: { value: "5" } });
+    await waitFor(() => {
+      const patch = mockFetch.mock.calls.find(
+        (c) => c[0].toString().endsWith("/issues/7") && c[1]?.method === "PATCH",
+      );
+      expect(patch).toBeTruthy();
+      expect(JSON.parse(String(patch![1]!.body))).toEqual({ issue_type_id: 5 });
+    });
+  });
+
+  it("hides issue type controls when the repository owner has no issue-type namespace", async () => {
+    mockFetch.mockImplementation((url: RequestInfo | URL) => {
+      const u = url.toString();
+      if (u.includes("/issues/7/comments")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/issues/7/reactions")) return Promise.resolve(jsonResponse([]));
+      if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse({ login: "admin" }));
+      if (u.includes("/api/v3/orgs/admin/issue-types")) return Promise.resolve(jsonResponse({ message: "Not Found" }, 404));
+      if (u.includes("/issues/7")) return Promise.resolve(jsonResponse(issue(7, "Triaged")));
+      if (u.includes("/milestones?")) return Promise.resolve(jsonResponse([]));
+      if (u.includes("/api/v3/repos/admin/test/labels")) return Promise.resolve(jsonResponse([]));
+      return Promise.resolve(jsonResponse([]));
+    });
+    renderAt("/ui/repos/admin/test/issues/7");
+    await waitFor(() => expect(screen.getByText("Triaged")).toBeInTheDocument());
+    expect(screen.queryByLabelText("Set issue type")).not.toBeInTheDocument();
   });
 });

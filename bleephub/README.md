@@ -170,7 +170,7 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Repositories.** Create / list / get / update / delete; refs (branches, tags); blobs / trees / commits; smart-HTTP git (`go-git`) for `actions/checkout`.
 
-**Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, GraphQL counterparts.
+**Issues, PRs, labels, milestones, comments.** Full CRUD, paginated lists with `Link` headers, state filters, organization issue-type assignment for issues, GraphQL counterparts.
 
 **PR review comments.** Inline / file-line / range / threads. Replies via the dedicated `/replies` endpoint OR `in_reply_to` body field. Reactions on review comments. Review-thread listing + resolve/unresolve have no GitHub REST equivalent (GraphQL-only on real GitHub: `resolveReviewThread`/`unresolveReviewThread`), so bleephub exposes them as sim-control helpers under `/internal/repos/{o}/{r}/pulls/{n}/review-threads[/{tid}/{resolve|unresolve}]`, not the GitHub namespace.
 
@@ -221,7 +221,7 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Marketplace.** Listing plans + accounts compatibility surface.
 
-**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Issue nodes expose REST-backed project items and sub-issue relationships (`parent`, ordered `subIssues`, and `subIssuesSummary`). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue) with Issue.projectItems backed by the store.
+**GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Issue nodes expose REST-backed project items, assigned organization issue types (`Issue.issueType`), and sub-issue relationships (`parent`, ordered `subIssues`, and `subIssuesSummary`). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue) with Issue.projectItems backed by the store.
 
 ### Persistence
 

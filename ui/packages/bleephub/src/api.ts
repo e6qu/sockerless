@@ -1882,12 +1882,46 @@ export const removeIssueLabel = (owner: string, repo: string, number: number, na
 
 /** PATCH the issue's milestone: a milestone number sets it, null clears it. */
 export const setIssueMilestone = (
+ owner: string,
+ repo: string,
+ number: number,
+ milestone: number | null,
+): Promise<GithubIssue> =>
+  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}`, { milestone });
+
+/** PATCH the issue's organization issue type: an ID sets it, null clears it. */
+export const setIssueType = (
   owner: string,
   repo: string,
   number: number,
-  milestone: number | null,
+  issueTypeId: number | null,
 ): Promise<GithubIssue> =>
-  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}`, { milestone });
+  ghPatchJSON(`/api/v3/repos/${owner}/${repo}/issues/${number}`, { issue_type_id: issueTypeId });
+
+export interface GithubIssueGraphQLIssueType {
+  id: string;
+  name: string;
+  description: string | null;
+  color: string | null;
+}
+
+export const fetchIssueGraphQLIssueType = async (
+  owner: string,
+  repo: string,
+  number: number,
+): Promise<GithubIssueGraphQLIssueType | null> => {
+  const data = await ghGraphQL<{
+    repository: { issue: { issueType: GithubIssueGraphQLIssueType | null } | null } | null;
+  }>(
+    `query($owner:String!,$name:String!,$number:Int!){
+      repository(owner:$owner,name:$name){
+        issue(number:$number){issueType{id,name,description,color}}
+      }
+    }`,
+    { owner, name: repo, number },
+  );
+  return data.repository?.issue?.issueType ?? null;
+};
 
 // ─── Organization governance ────────────────────────────────────────────
 

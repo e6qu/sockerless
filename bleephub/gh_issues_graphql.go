@@ -257,9 +257,9 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 
 	// --- Issue-type and sub-issue support types ---
 	// gh CLI's `gh issue view` selects GitHub's issue-type and sub-issue
-	// fields. Organization issue-type definitions exist, but Issue rows do
-	// not carry an assigned type. Sub-issues are backed by the same ordered
-	// store links used by the REST API.
+	// fields. Issue types resolve from the organization definitions assigned
+	// to the issue row. Sub-issues are backed by the same ordered store links
+	// used by the REST API.
 	issueTypeMetaType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "IssueType",
 		Fields: graphql.Fields{
@@ -447,7 +447,15 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"issueType": &graphql.Field{
 				Type: issueTypeMetaType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return nil, nil
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					it, ok := i["issueType"].(map[string]interface{})
+					if !ok || it == nil {
+						return nil, nil
+					}
+					return it, nil
 				},
 			},
 			"parent": &graphql.Field{
@@ -915,6 +923,7 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"labelIds":     &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
 			"milestoneId":  &graphql.InputObjectFieldConfig{Type: graphql.ID},
 			"assigneeIds":  &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
+			"issueTypeId":  &graphql.InputObjectFieldConfig{Type: graphql.ID},
 			// gh's IssueCreate mutation always serializes projectIds (null
 			// unless --project) and issueTemplate when a template applies —
 			// the input must declare them or variable coercion rejects the
@@ -983,10 +992,24 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 					milestoneID = ms.ID
 				}
 			}
+			var issueTypeID int
+			if itNodeID, ok := input["issueTypeId"].(string); ok && itNodeID != "" {
+				it := findIssueTypeByNodeID(s.store, itNodeID)
+				if it == nil || s.store.GetAssignableIssueTypeForRepo(repo, it.ID) == nil {
+					return nil, fmt.Errorf("could not resolve to an IssueType with the global id of '%s'", itNodeID)
+				}
+				issueTypeID = it.ID
+			}
 
 			issue := s.store.CreateIssue(repo.ID, user.ID, title, body, labelIDs, assigneeIDs, milestoneID)
 			if issue == nil {
 				return nil, fmt.Errorf("issue creation failed")
+			}
+			if issueTypeID > 0 {
+				s.store.UpdateIssue(issue.ID, func(i *Issue) {
+					i.IssueTypeID = issueTypeID
+				})
+				issue = s.store.GetIssue(issue.ID)
 			}
 
 			return map[string]interface{}{
@@ -1169,6 +1192,7 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			"milestoneId": &graphql.InputObjectFieldConfig{Type: graphql.ID},
 			"labelIds":    &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
 			"assigneeIds": &graphql.InputObjectFieldConfig{Type: graphql.NewList(graphql.ID)},
+			"issueTypeId": &graphql.InputObjectFieldConfig{Type: graphql.ID},
 		},
 	})
 
@@ -1197,6 +1221,21 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 			if issue == nil {
 				return nil, fmt.Errorf("could not resolve to an Issue")
 			}
+			var issueTypeID *int
+			if raw, present := input["issueTypeId"]; present {
+				if itNodeID, ok := raw.(string); ok && itNodeID != "" {
+					repo := s.store.GetRepoByID(issue.RepoID)
+					it := findIssueTypeByNodeID(s.store, itNodeID)
+					if it == nil || s.store.GetAssignableIssueTypeForRepo(repo, it.ID) == nil {
+						return nil, fmt.Errorf("could not resolve to an IssueType with the global id of '%s'", itNodeID)
+					}
+					resolved := it.ID
+					issueTypeID = &resolved
+				} else {
+					cleared := 0
+					issueTypeID = &cleared
+				}
+			}
 
 			s.store.UpdateIssue(issue.ID, func(i *Issue) {
 				if v, ok := input["title"].(string); ok {
@@ -1207,6 +1246,9 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 				}
 				if v, ok := input["state"].(string); ok {
 					i.State = strings.ToUpper(v)
+				}
+				if issueTypeID != nil {
+					i.IssueTypeID = *issueTypeID
 				}
 			})
 
@@ -1253,6 +1295,15 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	if issue.MilestoneID > 0 {
 		if ms, ok := st.Milestones[issue.MilestoneID]; ok {
 			milestone = milestoneToGQL(ms)
+		}
+	}
+	var issueType map[string]interface{}
+	if it := st.issueTypeForIssueLocked(issue); it != nil {
+		issueType = map[string]interface{}{
+			"id":          it.NodeID,
+			"name":        it.Name,
+			"description": nilStrPtr(it.Description),
+			"color":       nilStrPtr(it.Color),
 		}
 	}
 
@@ -1344,6 +1395,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 			},
 		},
 		"milestone": milestone,
+		"issueType": issueType,
 		"parent":    parent,
 		"subIssues": map[string]interface{}{
 			"nodes":      subIssueNodes,
@@ -1464,6 +1516,13 @@ func nilStr(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+func nilStrPtr(s *string) interface{} {
+	if s == nil {
+		return nil
+	}
+	return *s
 }
 
 // reactionGroupsForGraphQL returns a GraphQL-shaped `[ReactionGroup]` list

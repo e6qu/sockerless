@@ -101,3 +101,112 @@ func TestOrgIssueTypes_Validation(t *testing.T) {
 		t.Fatalf("unknown org: %d", resp.StatusCode)
 	}
 }
+
+func TestIssueTypeAssignmentREST(t *testing.T) {
+	org := createTestOrg(t)
+	repoName, _ := createOrgRepoForGovernance(t, org)
+	repoFullName := org + "/" + repoName
+	created := decodeJSONWithStatus(t, ghPost(t, "/api/v3/orgs/"+org+"/issue-types", defaultToken, map[string]interface{}{
+		"name":       "Bug",
+		"is_enabled": true,
+		"color":      "red",
+	}), 200)
+	typeID := int(created["id"].(float64))
+
+	issue := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+repoFullName+"/issues", defaultToken, map[string]interface{}{
+		"title":         "typed issue",
+		"issue_type_id": typeID,
+	}), 201)
+	repo := testServer.store.GetRepo(org, repoName)
+	stored := testServer.store.GetIssueByNumber(repo.ID, int(issue["number"].(float64)))
+	if stored == nil {
+		t.Fatal("stored issue not found")
+	}
+	if stored.IssueTypeID != typeID {
+		t.Fatalf("stored IssueTypeID = %d, want %d", stored.IssueTypeID, typeID)
+	}
+
+	issue = decodeJSONWithStatus(t, ghPatch(t, "/api/v3/repos/"+repoFullName+"/issues/1", defaultToken, map[string]interface{}{
+		"issue_type_id": nil,
+	}), 200)
+	_ = issue
+	stored = testServer.store.GetIssueByNumber(repo.ID, 1)
+	if stored == nil {
+		t.Fatal("stored issue not found after clear")
+	}
+	if stored.IssueTypeID != 0 {
+		t.Fatalf("cleared IssueTypeID = %d, want 0", stored.IssueTypeID)
+	}
+}
+
+func TestIssueTypeAssignmentRESTValidation(t *testing.T) {
+	org := createTestOrg(t)
+	repoName, _ := createOrgRepoForGovernance(t, org)
+	repoFullName := org + "/" + repoName
+	disabled := decodeJSONWithStatus(t, ghPost(t, "/api/v3/orgs/"+org+"/issue-types", defaultToken, map[string]interface{}{
+		"name":       "Disabled",
+		"is_enabled": false,
+	}), 200)
+
+	otherOrg := createTestOrg(t)
+	otherType := decodeJSONWithStatus(t, ghPost(t, "/api/v3/orgs/"+otherOrg+"/issue-types", defaultToken, map[string]interface{}{
+		"name":       "Other org type",
+		"is_enabled": true,
+	}), 200)
+
+	resp := ghPost(t, "/api/v3/repos/"+repoFullName+"/issues", defaultToken, map[string]interface{}{
+		"title":         "disabled type",
+		"issue_type_id": int(disabled["id"].(float64)),
+	})
+	resp.Body.Close()
+	if resp.StatusCode != 422 {
+		t.Fatalf("disabled issue type create status = %d, want 422", resp.StatusCode)
+	}
+
+	issue := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+repoFullName+"/issues", defaultToken, map[string]interface{}{
+		"title": "untyped issue",
+	}), 201)
+	repo := testServer.store.GetRepo(org, repoName)
+	stored := testServer.store.GetIssueByNumber(repo.ID, int(issue["number"].(float64)))
+	if stored == nil {
+		t.Fatal("stored issue not found")
+	}
+	if stored.IssueTypeID != 0 {
+		t.Fatalf("untyped IssueTypeID = %d, want 0", stored.IssueTypeID)
+	}
+
+	resp = ghPatch(t, "/api/v3/repos/"+repoFullName+"/issues/1", defaultToken, map[string]interface{}{
+		"issue_type_id": int(otherType["id"].(float64)),
+	})
+	resp.Body.Close()
+	if resp.StatusCode != 422 {
+		t.Fatalf("wrong-org issue type patch status = %d, want 422", resp.StatusCode)
+	}
+}
+
+func TestIssueTypeAssignmentPersists(t *testing.T) {
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.Users[1]
+		org := st.CreateOrg(admin, "persist-issue-type-org", "Persist Issue Type", "")
+		repo := st.CreateOrgRepo(org, admin, "persist-issue-type-repo", "", false)
+		it := st.CreateIssueType(org.Login, "Epic", nil, nil, true)
+		issue := st.CreateIssue(repo.ID, admin.ID, "typed", "", nil, nil, 0)
+		st.UpdateIssue(issue.ID, func(i *Issue) {
+			i.IssueTypeID = it.ID
+		})
+	})
+
+	repo := st2.GetRepo("persist-issue-type-org", "persist-issue-type-repo")
+	if repo == nil {
+		t.Fatal("repo did not reload")
+	}
+	issue := st2.GetIssueByNumber(repo.ID, 1)
+	if issue == nil {
+		t.Fatal("issue did not reload")
+	}
+	it := st2.GetAssignableIssueTypeForRepo(repo, issue.IssueTypeID)
+	if it == nil || it.Name != "Epic" {
+		t.Fatalf("reloaded issue type = %#v for issue %#v", it, issue)
+	}
+}

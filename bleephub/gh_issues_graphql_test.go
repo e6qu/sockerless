@@ -124,3 +124,54 @@ func TestIssueGraphQL_SubIssueFields(t *testing.T) {
 		t.Fatal("parent ID must be non-zero")
 	}
 }
+
+func TestIssueGraphQL_IssueTypeAssignment(t *testing.T) {
+	org := createTestOrg(t)
+	repoName, _ := createOrgRepoForGovernance(t, org)
+	repoFullName := org + "/" + repoName
+	createdType := decodeJSONWithStatus(t, ghPost(t, "/api/v3/orgs/"+org+"/issue-types", defaultToken, map[string]interface{}{
+		"name":        "Epic",
+		"description": "Tracks a coordinated body of work",
+		"is_enabled":  true,
+		"color":       "purple",
+	}), 200)
+	typeID := int(createdType["id"].(float64))
+
+	issue := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+repoFullName+"/issues", defaultToken, map[string]interface{}{
+		"title":         "typed through REST",
+		"issue_type_id": typeID,
+	}), 201)
+	number := int(issue["number"].(float64))
+
+	query := `query($owner:String!,$name:String!,$number:Int!){
+		repository(owner:$owner,name:$name){
+			issue(number:$number){
+				number
+				issueType{id,name,description,color}
+			}
+		}
+	}`
+	resp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+		"query": query,
+		"variables": map[string]interface{}{
+			"owner":  org,
+			"name":   repoName,
+			"number": number,
+		},
+	})
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	data := decodeJSON(t, resp)
+	if errs, ok := data["errors"]; ok && errs != nil {
+		t.Fatalf("expected no errors, got: %v", errs)
+	}
+	gqlData := data["data"].(map[string]interface{})
+	gqlRepo := gqlData["repository"].(map[string]interface{})
+	gqlIssue := gqlRepo["issue"].(map[string]interface{})
+	gqlType := gqlIssue["issueType"].(map[string]interface{})
+	if gqlType == nil || gqlType["id"] != createdType["node_id"] || gqlType["name"] != "Epic" || gqlType["color"] != "purple" {
+		t.Fatalf("GraphQL issueType = %v", gqlIssue["issueType"])
+	}
+}
