@@ -1192,8 +1192,8 @@ func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
 		if e.Org != "" && e.Org != orgName {
 			continue
 		}
-		if action := r.URL.Query().Get("phrase"); action != "" {
-			if e.Action != action {
+		if phrase := r.URL.Query().Get("phrase"); phrase != "" {
+			if !auditEntryMatchesPhrase(e, phrase) {
 				continue
 			}
 		}
@@ -1205,7 +1205,26 @@ func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	s.store.Misc.mu.RUnlock()
-	writeJSON(w, http.StatusOK, entries)
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, entries))
+}
+
+func auditEntryMatchesPhrase(e *AuditEntry, phrase string) bool {
+	terms := strings.Fields(strings.ToLower(phrase))
+	if len(terms) == 0 {
+		return true
+	}
+	text := strings.ToLower(strings.Join([]string{e.Action, e.Actor, e.Org}, " "))
+	if len(e.Data) > 0 {
+		if b, err := json.Marshal(e.Data); err == nil {
+			text += " " + strings.ToLower(string(b))
+		}
+	}
+	for _, term := range terms {
+		if !strings.Contains(text, term) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) recordAuditEvent(action, actor, org string, data map[string]interface{}) {

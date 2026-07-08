@@ -210,17 +210,17 @@ The script compiles the current source, starts the server and UI, and prints the
 
 **Actions OIDC.** `GET /token` issues an RS256-signed JWT with the canonical claim set (sub, aud, repository, repository_owner, ref, run_id, run_number, sha, actor, environment, jti, exp). `GET /.well-known/jwks` + `/.well-known/openid-configuration` for cloud-IdP trust verification.
 
-**Users API.** Public users, my-user, keys CRUD, gpg_keys compatibility surface, emails, followers / following compatibility surface, follow / unfollow.
+**Users API.** Public users, my-user, keys CRUD, gpg_keys, emails, followers / following, follow / unfollow.
 
 **Meta.** `GET /meta` in GHES shape — bleephub presents as GHES (`installed_version: "3.21.0"`). `gh`'s feature detection requires the member to resolve the host version; without it `gh issue list --label`, `gh pr status`, and `gh workflow run` fail.
 
 **Pages.** Site CRUD, build records, deployments, and DNS-health checks are persisted. Manual build requests require a configured Pages site and record the actual latest default-branch commit SHA.
 
-**Branch protection.** PUT/GET/DELETE per-branch protection rules; JSON pass-through.
+**Branch protection.** PUT/GET/DELETE per-branch protection rules with typed required-status-checks, review, restriction, admin-enforcement, force-push, and deletion subresources.
 
-**Orgs.** GHES admin create + sim-control create; `GET /organizations` (global list with `since` cursor); organization-full profile (company / blog / location / twitter / billing email / `default_repository_permission` / `members_can_create_repositories` / `web_commit_signoff_required`) readable + PATCHable. Memberships with real invitation semantics: `PUT /orgs/{org}/memberships/{username}` invites (state `pending`), the invitee accepts via `PATCH /user/memberships/orgs/{org}` (`GET /user/memberships/orgs[/{org}]` lists/inspects); member checks (`GET/DELETE /orgs/{org}/members/{username}`), public members (list / check / publicize / conceal — self-only, like real GitHub). Teams: CRUD + hierarchy (`parent_team_id`, child-team listing, cycle rejection, delete re-parents children), `notification_setting`, member roles (`member`/`maintainer`) with team-membership state mirroring the org membership, team repos (list with `permissions` + `role_name`, check incl. the `vnd.github.v3.repository+json` media type, add/remove), rename re-keys the slug. Audit log shape-only endpoint, IdP-group sync compatibility surface.
+**Orgs.** GHES admin create + sim-control create; `GET /organizations` (global list with `since` cursor); organization-full profile (company / blog / location / twitter / billing email / `default_repository_permission` / `members_can_create_repositories` / `web_commit_signoff_required`) readable + PATCHable. Memberships with real invitation semantics: `PUT /orgs/{org}/memberships/{username}` invites (state `pending`), the invitee accepts via `PATCH /user/memberships/orgs/{org}` (`GET /user/memberships/orgs[/{org}]` lists/inspects); member checks (`GET/DELETE /orgs/{org}/members/{username}`), public members (list / check / publicize / conceal — self-only, like real GitHub). Teams: CRUD + hierarchy (`parent_team_id`, child-team listing, cycle rejection, delete re-parents children), `notification_setting`, member roles (`member`/`maintainer`) with team-membership state mirroring the org membership, team repos (list with `permissions` + `role_name`, check incl. the `vnd.github.v3.repository+json` media type, add/remove), rename re-keys the slug. Outside collaborators, organization blocks, security-manager teams, member Codespaces administration, member Copilot seat details, and the owner-gated persisted audit log are implemented; audit-log reads support phrase/actor filters and GitHub-style pagination.
 
-**Marketplace.** Listing plans + accounts compatibility surface.
+**Marketplace.** Listing plans and account purchases are backed by the marketplace plan/purchase store; GitHub's `stubbed` Marketplace endpoints serve the same persisted state as the production variants.
 
 **GraphQL.** Repository / User / Organization queries + the IssueOrPullRequest union + repositoryOwner polymorphic root + repository.issues/pullRequests connections + `search(type: ISSUE)` + check-run/check-suite types + matching enums (RepositoryPrivacy, RepositoryAffiliation, IssueOrderField, OrderDirection, IssueState). Issue nodes expose REST-backed project items, assigned organization issue types (`Issue.issueType`), organization issue-field values (`Issue.issueFieldValues`), and sub-issue relationships (`parent`, ordered `subIssues`, and `subIssuesSummary`). Mutations cover the GraphQL verbs `gh` sends: createIssue / addComment / closeIssue / reopenIssue, createPullRequest / closePullRequest / reopenPullRequest / mergePullRequest / addPullRequestReview, createRepository / deleteRepository, and Projects v2 (createProjectV2, addProjectV2ItemById, createProjectV2Field, updateProjectV2ItemFieldValue) with Issue.projectItems backed by the store.
 
@@ -274,18 +274,13 @@ Verified end-to-end by [`make bleephub-gh-docker-test`](#integration-tests), whi
 
 ## What it does not implement (deferred)
 
-- Runner auto-update (`AgentRefreshMessage`).
 - V2 broker flow (uses legacy V1 pipelines paths).
 - Failed-run shells exist for TRIGGERED workflows that can't start (conclusion `startup_failure`, no jobs); explicit dispatches still 422 with the parse error (more useful to the caller).
 - Full Projects v2 (boards / views / iteration fields; bleephub implements the createProjectV2 / addProjectV2ItemById / createProjectV2Field / updateProjectV2ItemFieldValue mutations and the `Issue.projectItems` connection).
 - SAML SSO + SCIM provisioning.
 - Org invitation entities (`/orgs/{org}/invitations`, `failed_invitations`, team invitations) — bleephub has no email model; the invite flow is modeled as `pending` memberships (`PUT /orgs/{org}/memberships/{username}` → `PATCH /user/memberships/orgs/{org}`), which is what the membership APIs expose.
-- Org people-management extras: `outside_collaborators`, `blocks`, `security-managers`, member codespaces/copilot endpoints.
 - Legacy numeric-id team routes (`/teams/{team_id}/…`) — deprecated upstream; the `/orgs/{org}/teams/{team_slug}/…` family is the supported path.
-- Webhook `config` subresources (`/repos/{o}/{r}/hooks/{id}/config`, `/orgs/{org}/hooks/{id}/config`) — config rides the hook CRUD bodies, which is what gh / terraform / go-github use.
-- `GET /app/installation-requests` and the marketplace `stubbed` endpoints.
 - Org `plan` member / billing endpoints (bleephub has no billing model).
-- Per-installation audit log content (shape-only empty endpoint).
 - Marketplace billing.
 - gh CLI commands that require deep workflow-run state bleephub doesn't synthesise (`gh run watch` long-poll, log tail).
 - `on: schedule` crons fire from real server time (minute-aligned); there is no time-warp hook for tests beyond calling the dispatcher directly.

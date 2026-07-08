@@ -330,8 +330,8 @@ func TestAuditLogRecords(t *testing.T) {
 		t.Fatalf("other org entries = %d, want 0", len(otherEntries))
 	}
 
-	s.recordAuditEvent("test.action2", "user1", "test-org", nil)
-	s.recordAuditEvent("test.action3", "user2", "test-org", nil)
+	s.recordAuditEvent("test.action2", "user1", "test-org", map[string]interface{}{"target": "alpha repo"})
+	s.recordAuditEvent("test.action3", "user2", "test-org", map[string]interface{}{"target": "beta repo"})
 	w = doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log?phrase=test.action2", "")
 	if w.Code != 200 {
 		t.Fatalf("filtered audit log status = %d", w.Code)
@@ -340,6 +340,39 @@ func TestAuditLogRecords(t *testing.T) {
 	json.Unmarshal(w.Body.Bytes(), &filtered)
 	if len(filtered) != 1 {
 		t.Fatalf("filtered entries = %d, want 1", len(filtered))
+	}
+	if filtered[0].(map[string]interface{})["action"] != "test.action2" {
+		t.Fatalf("filtered action = %v, want test.action2", filtered[0])
+	}
+
+	w = doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log?phrase=user2+beta", "")
+	if w.Code != 200 {
+		t.Fatalf("cross-field filtered audit log status = %d", w.Code)
+	}
+	filtered = nil
+	json.Unmarshal(w.Body.Bytes(), &filtered)
+	if len(filtered) != 1 {
+		t.Fatalf("cross-field filtered entries = %d, want 1; body = %s", len(filtered), w.Body.String())
+	}
+	if filtered[0].(map[string]interface{})["action"] != "test.action3" {
+		t.Fatalf("cross-field filtered action = %v, want test.action3", filtered[0])
+	}
+
+	w = doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log?per_page=1&page=2", "")
+	if w.Code != 200 {
+		t.Fatalf("paged audit log status = %d", w.Code)
+	}
+	var paged []interface{}
+	json.Unmarshal(w.Body.Bytes(), &paged)
+	if len(paged) != 1 {
+		t.Fatalf("paged entries = %d, want 1; body = %s", len(paged), w.Body.String())
+	}
+	if paged[0].(map[string]interface{})["action"] != "test.action2" {
+		t.Fatalf("page 2 action = %v, want test.action2", paged[0])
+	}
+	link := w.Header().Get("Link")
+	if !strings.Contains(link, `rel="next"`) || !strings.Contains(link, `page=3`) || !strings.Contains(link, `rel="prev"`) || !strings.Contains(link, `page=1`) {
+		t.Fatalf("Link header = %q, want next/page=3 and prev/page=1", link)
 	}
 }
 
