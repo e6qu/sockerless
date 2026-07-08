@@ -317,15 +317,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 
-	pageInfoType := graphql.NewObject(graphql.ObjectConfig{
-		Name: "PageInfo",
-		Fields: graphql.Fields{
-			"hasNextPage":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"hasPreviousPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
-			"startCursor":     &graphql.Field{Type: graphql.String},
-			"endCursor":       &graphql.Field{Type: graphql.String},
-		},
-	})
+	pageInfoType := gqlPageInfoType()
 
 	repoEdgeType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "RepositoryEdge",

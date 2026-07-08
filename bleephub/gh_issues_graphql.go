@@ -306,6 +306,8 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 		},
 	})
 
+	issueFieldValueConnectionType := issueFieldValueGraphQLConnectionType()
+
 	// --- Issue type ---
 	issueType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Issue",
@@ -494,6 +496,22 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
 					}
 					return i["subIssuesSummary"], nil
+				},
+			},
+			"issueFieldValues": &graphql.Field{
+				Type: issueFieldValueConnectionType,
+				Args: graphql.FieldConfigArgument{
+					"first":  &graphql.ArgumentConfig{Type: graphql.Int},
+					"last":   &graphql.ArgumentConfig{Type: graphql.Int},
+					"after":  &graphql.ArgumentConfig{Type: graphql.String},
+					"before": &graphql.ArgumentConfig{Type: graphql.String},
+				},
+				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+					i, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return repaginateConnection(i["issueFieldValues"], p.Args), nil
 				},
 			},
 		},
@@ -1264,6 +1282,149 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 
 // --- GraphQL converter helpers ---
 
+func issueFieldValueGraphQLConnectionType() *graphql.Object {
+	dataTypeEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueFieldDataType",
+		Values: graphql.EnumValueConfigMap{
+			"TEXT":          &graphql.EnumValueConfig{Value: "TEXT"},
+			"SINGLE_SELECT": &graphql.EnumValueConfig{Value: "SINGLE_SELECT"},
+			"DATE":          &graphql.EnumValueConfig{Value: "DATE"},
+			"NUMBER":        &graphql.EnumValueConfig{Value: "NUMBER"},
+			"MULTI_SELECT":  &graphql.EnumValueConfig{Value: "MULTI_SELECT"},
+		},
+	})
+	visibilityEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueFieldVisibility",
+		Values: graphql.EnumValueConfigMap{
+			"ORG_ONLY": &graphql.EnumValueConfig{Value: "ORG_ONLY"},
+			"ALL":      &graphql.EnumValueConfig{Value: "ALL"},
+		},
+	})
+	colorEnum := graphql.NewEnum(graphql.EnumConfig{
+		Name: "IssueFieldSingleSelectOptionColor",
+		Values: graphql.EnumValueConfigMap{
+			"GRAY":   &graphql.EnumValueConfig{Value: "GRAY"},
+			"BLUE":   &graphql.EnumValueConfig{Value: "BLUE"},
+			"GREEN":  &graphql.EnumValueConfig{Value: "GREEN"},
+			"YELLOW": &graphql.EnumValueConfig{Value: "YELLOW"},
+			"ORANGE": &graphql.EnumValueConfig{Value: "ORANGE"},
+			"RED":    &graphql.EnumValueConfig{Value: "RED"},
+			"PINK":   &graphql.EnumValueConfig{Value: "PINK"},
+			"PURPLE": &graphql.EnumValueConfig{Value: "PURPLE"},
+		},
+	})
+
+	optionType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "IssueFieldSingleSelectOption",
+		Fields: graphql.Fields{
+			"id":             &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"databaseId":     &graphql.Field{Type: graphql.Int},
+			"fullDatabaseId": &graphql.Field{Type: graphql.String},
+			"name":           &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description":    &graphql.Field{Type: graphql.String},
+			"color":          &graphql.Field{Type: graphql.NewNonNull(colorEnum)},
+			"priority":       &graphql.Field{Type: graphql.Int},
+		},
+	})
+
+	commonFieldFields := func(withOptions bool) graphql.Fields {
+		fields := graphql.Fields{
+			"id":             &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"fullDatabaseId": &graphql.Field{Type: graphql.String},
+			"name":           &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"description":    &graphql.Field{Type: graphql.String},
+			"dataType":       &graphql.Field{Type: graphql.NewNonNull(dataTypeEnum)},
+			"visibility":     &graphql.Field{Type: graphql.NewNonNull(visibilityEnum)},
+			"createdAt":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+		}
+		if withOptions {
+			fields["options"] = &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(optionType)))}
+		}
+		return fields
+	}
+	textFieldType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldText", Fields: commonFieldFields(false)})
+	dateFieldType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldDate", Fields: commonFieldFields(false)})
+	numberFieldType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldNumber", Fields: commonFieldFields(false)})
+	singleSelectFieldType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldSingleSelect", Fields: commonFieldFields(true)})
+	multiSelectFieldType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldMultiSelect", Fields: commonFieldFields(true)})
+
+	fieldUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "IssueFields",
+		Types: []*graphql.Object{textFieldType, dateFieldType, numberFieldType, singleSelectFieldType, multiSelectFieldType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			src, _ := p.Value.(map[string]interface{})
+			switch src["__typename"] {
+			case "IssueFieldDate":
+				return dateFieldType
+			case "IssueFieldNumber":
+				return numberFieldType
+			case "IssueFieldSingleSelect":
+				return singleSelectFieldType
+			case "IssueFieldMultiSelect":
+				return multiSelectFieldType
+			default:
+				return textFieldType
+			}
+		},
+	})
+
+	commonValueFields := func(valueType graphql.Output) graphql.Fields {
+		return graphql.Fields{
+			"id":    &graphql.Field{Type: graphql.NewNonNull(graphql.ID)},
+			"field": &graphql.Field{Type: fieldUnion},
+			"value": &graphql.Field{Type: valueType},
+		}
+	}
+	textValueType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldTextValue", Fields: commonValueFields(graphql.NewNonNull(graphql.String))})
+	dateValueType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldDateValue", Fields: commonValueFields(graphql.NewNonNull(graphql.String))})
+	numberValueType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldNumberValue", Fields: commonValueFields(graphql.NewNonNull(graphql.Float))})
+	singleSelectValueFields := commonValueFields(graphql.NewNonNull(graphql.String))
+	singleSelectValueFields["name"] = &graphql.Field{Type: graphql.NewNonNull(graphql.String)}
+	singleSelectValueFields["description"] = &graphql.Field{Type: graphql.String}
+	singleSelectValueFields["color"] = &graphql.Field{Type: graphql.NewNonNull(colorEnum)}
+	singleSelectValueFields["optionId"] = &graphql.Field{Type: graphql.String}
+	singleSelectValueType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldSingleSelectValue", Fields: singleSelectValueFields})
+	multiSelectValueFields := commonValueFields(graphql.String)
+	multiSelectValueFields["options"] = &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(optionType)))}
+	multiSelectValueType := graphql.NewObject(graphql.ObjectConfig{Name: "IssueFieldMultiSelectValue", Fields: multiSelectValueFields})
+
+	valueUnion := graphql.NewUnion(graphql.UnionConfig{
+		Name:  "IssueFieldValue",
+		Types: []*graphql.Object{dateValueType, multiSelectValueType, numberValueType, singleSelectValueType, textValueType},
+		ResolveType: func(p graphql.ResolveTypeParams) *graphql.Object {
+			src, _ := p.Value.(map[string]interface{})
+			switch src["__typename"] {
+			case "IssueFieldDateValue":
+				return dateValueType
+			case "IssueFieldMultiSelectValue":
+				return multiSelectValueType
+			case "IssueFieldNumberValue":
+				return numberValueType
+			case "IssueFieldSingleSelectValue":
+				return singleSelectValueType
+			default:
+				return textValueType
+			}
+		},
+	})
+	edgeType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "IssueFieldValueEdge",
+		Fields: graphql.Fields{
+			"cursor": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"node":   &graphql.Field{Type: valueUnion},
+		},
+	})
+	return graphql.NewObject(graphql.ObjectConfig{
+		Name: "IssueFieldValueConnection",
+		Fields: graphql.Fields{
+			"nodes":      &graphql.Field{Type: graphql.NewList(valueUnion)},
+			"edges":      &graphql.Field{Type: graphql.NewList(edgeType)},
+			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"pageInfo":   &graphql.Field{Type: graphql.NewNonNull(gqlPageInfoType())},
+		},
+	})
+}
+
 func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
@@ -1412,6 +1573,7 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 			"completed":        completedSubIssues,
 			"percentCompleted": percentCompleted,
 		},
+		"issueFieldValues": issueFieldValuesConnectionLocked(st, issue),
 		"comments": map[string]interface{}{
 			"nodes":      commentNodes,
 			"totalCount": len(commentNodes),
@@ -1424,6 +1586,171 @@ func issueToGQL(issue *Issue, st *Store) map[string]interface{} {
 		},
 		"reactionGroups": reactionGroupsForGraphQL(st.Reactions, "issue", issue.ID),
 	}
+}
+
+var gqlPageInfoTypeMemo *graphql.Object
+
+func gqlPageInfoType() *graphql.Object {
+	if gqlPageInfoTypeMemo != nil {
+		return gqlPageInfoTypeMemo
+	}
+	gqlPageInfoTypeMemo = graphql.NewObject(graphql.ObjectConfig{
+		Name: "PageInfo",
+		Fields: graphql.Fields{
+			"hasNextPage":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"hasPreviousPage": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"startCursor":     &graphql.Field{Type: graphql.String},
+			"endCursor":       &graphql.Field{Type: graphql.String},
+		},
+	})
+	return gqlPageInfoTypeMemo
+}
+
+func issueFieldValuesConnectionLocked(st *Store, issue *Issue) map[string]interface{} {
+	repo := st.Repos[issue.RepoID]
+	org := ""
+	if repo != nil {
+		org = issueFieldsOrgLocked(st, repo)
+	}
+	values := st.IssueFieldValues[issue.ID]
+	fieldIDs := make([]int, 0, len(values))
+	for id := range values {
+		fieldIDs = append(fieldIDs, id)
+	}
+	sort.Ints(fieldIDs)
+	nodes := make([]map[string]interface{}, 0, len(fieldIDs))
+	for _, fieldID := range fieldIDs {
+		field := st.OrgIssueFields[org][fieldID]
+		if field == nil {
+			continue
+		}
+		nodes = append(nodes, issueFieldValueToGQLLocked(field, issue.ID, values[fieldID]))
+	}
+	return paginateGQL(nodes, len(nodes), "", func(n map[string]interface{}) map[string]interface{} { return n })
+}
+
+func issueFieldsOrgLocked(st *Store, repo *Repo) string {
+	orgLogin, _, _ := strings.Cut(repo.FullName, "/")
+	if st.OrgsByLogin[orgLogin] == nil {
+		return ""
+	}
+	return orgLogin
+}
+
+func issueFieldValueToGQLLocked(field *IssueField, issueID int, value interface{}) map[string]interface{} {
+	out := map[string]interface{}{
+		"id":    fmt.Sprintf("IFV_kwDO%08d%08d", issueID, field.ID),
+		"field": issueFieldToGQLLocked(field),
+		"value": value,
+	}
+	switch field.DataType {
+	case "date":
+		out["__typename"] = "IssueFieldDateValue"
+	case "number":
+		out["__typename"] = "IssueFieldNumberValue"
+	case "single_select":
+		out["__typename"] = "IssueFieldSingleSelectValue"
+		if name, ok := value.(string); ok {
+			out["name"] = name
+			if opt := issueFieldOptionByName(field, name); opt != nil {
+				out["optionId"] = issueFieldOptionNodeID(opt.ID)
+				out["description"] = nilStrPtr(opt.Description)
+				out["color"] = issueFieldColorEnum(opt.Color)
+			} else {
+				out["description"] = nil
+				out["color"] = "GRAY"
+			}
+		}
+	case "multi_select":
+		out["__typename"] = "IssueFieldMultiSelectValue"
+		names := toStringSlice(value)
+		opts := make([]map[string]interface{}, 0, len(names))
+		for _, name := range names {
+			if opt := issueFieldOptionByName(field, name); opt != nil {
+				opts = append(opts, issueFieldOptionToGQL(opt))
+			}
+		}
+		out["options"] = opts
+		out["value"] = nil
+	default:
+		out["__typename"] = "IssueFieldTextValue"
+	}
+	return out
+}
+
+func issueFieldToGQLLocked(field *IssueField) map[string]interface{} {
+	out := map[string]interface{}{
+		"id":             field.NodeID,
+		"fullDatabaseId": strconv.Itoa(field.ID),
+		"name":           field.Name,
+		"description":    nilStrPtr(field.Description),
+		"dataType":       strings.ToUpper(field.DataType),
+		"visibility":     issueFieldVisibilityEnum(field.Visibility),
+		"createdAt":      field.CreatedAt.Format(time.RFC3339),
+	}
+	switch field.DataType {
+	case "date":
+		out["__typename"] = "IssueFieldDate"
+	case "number":
+		out["__typename"] = "IssueFieldNumber"
+	case "single_select":
+		out["__typename"] = "IssueFieldSingleSelect"
+		out["options"] = issueFieldOptionsToGQL(field.Options)
+	case "multi_select":
+		out["__typename"] = "IssueFieldMultiSelect"
+		out["options"] = issueFieldOptionsToGQL(field.Options)
+	default:
+		out["__typename"] = "IssueFieldText"
+	}
+	return out
+}
+
+func issueFieldOptionsToGQL(options []*IssueFieldOption) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(options))
+	for _, opt := range options {
+		out = append(out, issueFieldOptionToGQL(opt))
+	}
+	return out
+}
+
+func issueFieldOptionToGQL(opt *IssueFieldOption) map[string]interface{} {
+	return map[string]interface{}{
+		"id":             issueFieldOptionNodeID(opt.ID),
+		"databaseId":     opt.ID,
+		"fullDatabaseId": strconv.Itoa(opt.ID),
+		"name":           opt.Name,
+		"description":    nilStrPtr(opt.Description),
+		"color":          issueFieldColorEnum(opt.Color),
+		"priority":       opt.Priority,
+	}
+}
+
+func issueFieldOptionByName(field *IssueField, name string) *IssueFieldOption {
+	for _, opt := range field.Options {
+		if opt.Name == name {
+			return opt
+		}
+	}
+	return nil
+}
+
+func issueFieldOptionNodeID(id int) string {
+	return fmt.Sprintf("IFO_kwDO%08d", id)
+}
+
+func issueFieldColorEnum(color string) string {
+	color = strings.ToUpper(color)
+	if color == "" {
+		return "GRAY"
+	}
+	return color
+}
+
+func issueFieldVisibilityEnum(visibility string) string {
+	if visibility == "all" {
+		return "ALL"
+	}
+	return "ORG_ONLY"
 }
 
 func labelToGQL(l *IssueLabel) map[string]interface{} {
