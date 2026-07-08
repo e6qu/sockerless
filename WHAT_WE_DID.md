@@ -4,6 +4,14 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-08 - bleephub S3 object-store tests use real simulator storage (feat/bleephub-object-store-real-client-tests)
+
+Replaced Bleephub's hand-rolled fake S3 HTTP test server with a real `simulator-aws` process in `SIM_RUNTIME=process`. The S3 filesystem tests now build/start the AWS simulator, create buckets through `aws-sdk-go-v2`, seed objects through `PutObject`, and verify object state through `ListObjectsV2`. File read/write/open-mode semantics stayed covered, and the repo-prefix operations now exercise real object-store pagination by crossing S3's 1000-key default page size. Repo-prefix rename is covered through real S3 copy/delete behavior, matching the path Bleephub uses for S3-backed git storage during repository rename and transfer.
+
+The real object-store test uncovered a simulator fidelity bug: `CopyObject` persisted the destination row under the correct store key but set the row's internal `Key` to the bare object key instead of `bucket/key`. Direct `GetObject` therefore worked while `ListObjectsV2` could not see copied objects. The AWS simulator now stores copied objects with the same canonical key shape as `PutObject`, and both SDK and CLI regressions prove copied objects are list-visible.
+
+Validation: `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestS3' -count=1`, `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3_CopyObject -count=1 ./` in `simulators/aws/sdk-tests`, and `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3API_CopyObjectListed -count=1 ./` in `simulators/aws/cli-tests` passed.
+
 ## 2026-07-07 - bleephub PR/release fidelity + continuity cleanup (bleephub-pr-release-fidelity)
 
 Closed the bleephub fidelity backlog left after the large API/UI hardening run (BUG-2313, BUG-2314, BUG-2315).

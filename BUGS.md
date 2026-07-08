@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2340 filed - 2297 fixed - 2 open - 16 false positives.**
+**2341 filed - 2298 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2341~~ | P2 | bleephub S3 object storage tests / AWS simulator S3 CopyObject | fake S3 test boundary masked list-invisible copied objects | Bleephub's S3 filesystem tests used a hand-rolled fake S3 HTTP server that reimplemented object CRUD and pagination instead of driving a real object-store endpoint. Replacing it with `simulator-aws` exposed an S3 simulator fidelity bug: `CopyObject` wrote the destination under the correct store key but persisted the object's internal `Key` without the bucket prefix, so `GetObject` worked while `ListObjectsV2` could not see copied objects. Bleephub S3 tests now build/start the real AWS simulator and seed/assert through `aws-sdk-go-v2`; repo-prefix rename/delete cross the real 1000-key pagination boundary. The simulator stores copied objects with the canonical bucket/key and SDK + CLI regressions prove copied objects list. |
 | ~~2340~~ | P2 | bleephub repository lifecycle persistence | rename/transfer/delete did not cover repo-keyed metadata | Repository rename and transfer moved git storage but left several persisted repo-scoped metadata buckets under the old `owner/repo` key, and both paths deleted the updated repository row after writing it. Repository delete also missed newer repo-scoped buckets. Rename, transfer, and delete now share repo-key lifecycle helpers that update or purge persisted buckets across Actions, security/code scanning, CodeQL, custom properties, immutable releases, code quality, rulesets, and Copilot coding-agent state; reload regressions prove old keys do not survive. |
 | ~~2339~~ | P3 | bleephub CodeQL variant-analysis tests | non-tar bytes labelled query pack | The CodeQL variant-analysis test uploaded arbitrary marker bytes even though the store contract describes `query_pack` as a base64 tarball. The regression fixture now uploads a deterministic real tar.gz query pack and asserts that the advertised `query_pack_url` returns those exact archive bytes. |
 | ~~2338~~ | P2 | bleephub Actions — action download metadata | synthetic all-zero SHA + hidden action fallbacks | `POST /_apis/v1/ActionDownloadInfo/...` returned an all-zero `resolvedSha` for a bleephub-hosted action until the tarball endpoint had already been fetched; the tarball path also resolved missing action refs through the default branch and fetched absent action repositories from github.com. Action download metadata now resolves local action refs directly from git storage, missing refs fail loudly, absent action repositories no longer trigger outbound github.com fetches, and the unit tests use real local git-backed tarballs instead of synthetic tarball bytes or network-dependent status assertions. |

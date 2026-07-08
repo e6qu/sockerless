@@ -4,33 +4,24 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`bleephub-pr-release-fidelity` — bleephub PR/release fidelity, Actions no-fallback hardening, repository lifecycle persistence, CI follow-ups, and continuity cleanup.
+`feat/bleephub-object-store-real-client-tests` — Bleephub object-store test fidelity plus AWS S3 CopyObject list visibility.
 
 **Next**
-- After merge, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open. Resume live-cloud validation or the next sim-fidelity audit from [PLAN.md](PLAN.md).
+- Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL compatibility resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, only BUG-1345 (AzureAD Terraform provider upstream) and BUG-1075 (live-cloud validation) remained open unless new boyscout bugs were found.
 
 **Scope**
-- **BUG-2314:** Pull request creation requires real head/base refs. REST and GraphQL PR responses derive head/base shas, commit counts, review `commit_id`, status rollups, and merge response shas from git storage; the pseudo-PR SHA path was removed.
-- **BUG-2315:** GraphQL `reviewRequests` renders real requested reviewers instead of a hardcoded empty connection.
-- **BUG-2313:** Release `generate-notes` resolves the requested git tag/commit range, walks commits, matches merged pull request merge commits, and emits real "What's Changed" bullets with the Full Changelog compare line.
-- **Test/spec hardening:** PR fixtures now seed real git branches before creating PRs, so metadata-only PRs cannot pass tests. Annotated tags are dereferenced when resolving git refs. Continuity and roadmap text was cleaned up to reflect the merged post-#778 state and the object-storage direction for bleephub durable blobs.
-- **BUG-2335:** The go-github SDK suite and gh CLI parity harness no longer rely on metadata-only PR fixtures. SDK tests create real Git Data objects/refs before PR creation, `TestGitData` is live coverage instead of a stale skip, and the gh harness pushes real `main`/`feature` refs before the raw PR probe.
-- **BUG-2336:** CI apt setup no longer lets degraded runner-provided Microsoft apt sources block jobs that only need Ubuntu packages; after normal retries fail, the helper quarantines those source files and retries the required package-index update.
-- **BUG-2337:** The Azure simulator CI job no longer pipes Microsoft's remote Azure CLI installer into `sudo bash`; it verifies the hosted-runner `az` binary with `az version` and fails loud if the required dependency is absent.
-- **BUG-2338:** Bleephub Actions action download metadata resolves bleephub-hosted action refs from git storage before rendering `resolvedSha`; unresolved refs fail loudly, absent action repositories no longer fetch from github.com, and tarball serving no longer substitutes the default branch for an unknown action ref.
-- **BUG-2339:** The CodeQL variant-analysis test uses a deterministic real tar.gz query-pack archive instead of arbitrary bytes labelled as a tarball.
-- **BUG-2340:** Repository rename, transfer, and delete move or purge repo-scoped persisted metadata instead of leaving stale `owner/repo` rows behind or deleting the updated repository row. The shared lifecycle path covers Actions secrets/variables, environments, hooks/collaborators/invitations/deploy keys, checks/statuses/comments, code scanning/SARIF/CodeQL, Dependabot, custom properties, immutable releases, code quality, rulesets, Projects classic, Codespaces, packages, and Copilot coding-agent state.
-- **Hook-driven dependency refresh:** The pre-push freshness hook's Google module drift was resolved (`cloud.google.com/go/pubsub` v1.50.3 and shared `cloud.google.com/go/auth` v0.21.0), and the README badge hook's deterministic refresh commit was included.
+- **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
+- **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
+- **Docs/continuity:** Bleephub's README documents that S3 filesystem tests use the AWS simulator object-store slice rather than a local fake, and continuity files reflect PR #779 as merged and this branch as active.
 
 **Validation**
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata|DeleteRepoLeavesNoResidue)' -count=1` passed.
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestActionDownloadInfo|TestActionTarball|TestLocalActionTarball|TestCodeQLVariantAnalyses_CreateAndReadBack' -count=1` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestS3' -count=1` passed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed.
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub/... -count=1` passed.
-- `cd bleephub/sdk-tests && GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed.
-- `make bleephub-gh-docker-test` passed.
-- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md WHAT_WE_DID.md bleephub/sdk-tests/gitdata_test.go bleephub/sdk-tests/pulls_test.go bleephub/test/run-gh-test.sh scripts/ci-apt-update.sh` passed.
-- `bash scripts/check-latest-deps.sh` passed after the dependency refresh.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` in `simulators/aws` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3_CopyObject -count=1 ./` in `simulators/aws/sdk-tests` passed.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run TestS3API_CopyObjectListed -count=1 ./` in `simulators/aws/cli-tests` passed.
+- `bash scripts/check-simulator-tests.sh` passed.
+- `pre-commit run --files BUGS.md STATUS.md DO_NEXT.md PLAN.md WHAT_WE_DID.md bleephub/README.md bleephub/s3fs_test.go simulators/aws/s3_subresources.go simulators/aws/sdk-tests/s3_subresources_test.go simulators/aws/cli-tests/s3_test.go` passed.
 
 ---
 ### Prior branch (merged, PR #778): Open GitHub issue sweep after #774
@@ -57,9 +48,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -tags noui . -count=1` passed in `simulators/aws`, `simulators/gcp`, and `simulators/azure` when run with sandbox escalation so loopback listeners and Docker/Podman access were available.
 
 ---
-### Prior branch (open, PR #767): Team creator auto-maintainer + SQS receive diagnostics
+### Prior branch (merged, PR #767): Team creator auto-maintainer + SQS receive diagnostics
 
-The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and fully resolve #763.
+The `fix/open-issues-765-766` branch closed GitHub issues #765 and #766 and fully resolved #763.
 
 **Team creator auto-maintainer (#763/#765).** Real GitHub's `POST /orgs/{org}/teams` makes the authenticated creator a team maintainer automatically. bleephub's `handleCreateTeam` now calls `SetTeamMembership` for the authenticated user with `TeamRoleMaintainer` after creating the team, so downstream OAuth web-flow tests that create a team and then call `/user/teams` see the expected membership. Added `TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope` which creates a team via the API and asserts a `read:org` OAuth token lists it.
 
@@ -76,7 +67,7 @@ The `fix/open-issues-765-766` branch will close GitHub issues #765 and #766 and 
 - `GOWORK=off go test -run 'TestCloudWatch_AlarmSNSActionToSQS' -count=1 ./` in `simulators/aws/sdk-tests` passes.
 - `pre-commit run --files bleephub/gh_teams_rest.go bleephub/gh_teams_rest_test.go simulators/aws/sqs.go simulators/aws/cli-tests/cloudwatch_alarm_sns_sqs_process_test.go` passes.
 
-**Next:** create the new PR.
+**Next:** PR #767 merged; resume PLAN.md / open issues / BUGS.md work.
 
 ---
 ### Prior branch (merged, PR #759): CloudWatch alarm evaluator dangling-alarm regression test closes #758

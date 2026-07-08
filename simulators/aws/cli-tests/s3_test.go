@@ -39,6 +39,23 @@ func TestS3_CopyUpload(t *testing.T) {
 	runCLI(t, awsCLI("s3", "rb", "s3://upload-test-bucket"))
 }
 
+func TestS3API_CopyObjectListed(t *testing.T) {
+	bucket := "cli-copy-object-listed"
+	runCLI(t, awsCLI("s3api", "create-bucket", "--bucket", bucket))
+
+	srcFile := filepath.Join(tmpDir, "copy-source.txt")
+	require.NoError(t, os.WriteFile(srcFile, []byte("copy me"), 0644))
+	runCLI(t, awsCLI("s3api", "put-object", "--bucket", bucket, "--key", "source.txt", "--body", srcFile))
+	runCLI(t, awsCLI("s3api", "copy-object", "--bucket", bucket, "--key", "copied.txt", "--copy-source", bucket+"/source.txt"))
+
+	out := runCLI(t, awsCLI("s3api", "list-objects-v2", "--bucket", bucket, "--prefix", "copied.txt"))
+	assert.Contains(t, out, `"Key": "copied.txt"`)
+
+	runCLI(t, awsCLI("s3api", "delete-object", "--bucket", bucket, "--key", "source.txt"))
+	runCLI(t, awsCLI("s3api", "delete-object", "--bucket", bucket, "--key", "copied.txt"))
+	runCLI(t, awsCLI("s3api", "delete-bucket", "--bucket", bucket))
+}
+
 func TestS3_CopyDownload(t *testing.T) {
 	runCLI(t, awsCLI("s3", "mb", "s3://download-test-bucket"))
 

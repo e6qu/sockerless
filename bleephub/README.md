@@ -244,6 +244,8 @@ Git repository storage (go-git) is selected by its own env vars:
 
 Database persistence **requires** durable git storage (`BLEEPHUB_GIT_DIR` or `BLEEPHUB_S3_BUCKET`): reloading repo metadata against in-memory git storage would resurrect every repo empty, so that combination is a startup error — never a silent degraded mode.
 
+The S3 filesystem test suite drives this path through a real `simulator-aws` S3 endpoint and `aws-sdk-go-v2`; it does not use a local fake S3 server. The tests cover object reads/writes/open modes, paginated listings, and repository-prefix rename/delete through the same list/copy/delete APIs that S3-backed git storage uses.
+
 ### `gh` CLI compatibility
 
 bleephub accepts what real GitHub accepts — including the string-coerced booleans / integers `gh api -f` sends (real GH's Rails layer coerces them; bleephub's `flexBool`/`flexInt`/`flexInt64`/`flexIntSlice` types decode either form). `gh` CLI works against bleephub directly:
