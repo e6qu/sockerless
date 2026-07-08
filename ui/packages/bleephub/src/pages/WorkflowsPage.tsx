@@ -71,10 +71,6 @@ function WorkflowsTab() {
       header: "State",
       cell: (info) => <StatusBadge status={info.getValue()} />,
     }),
-    filesCol.accessor("source", {
-      header: "Source",
-      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
-    }),
     filesCol.accessor("updatedAt", {
       header: "Updated",
       cell: (info) => (

@@ -51,7 +51,25 @@ async function apiPost(page: Page, path: string, body: unknown) {
         body: JSON.stringify(body),
       });
       if (!res.ok) throw new Error(`${res.status} ${res.statusText} ${await res.text()}`);
-      return res.json();
+      if (res.status === 204) return null;
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
+    },
+    { base: BASE, path, token: TOKEN, body },
+  );
+}
+
+async function apiPut(page: Page, path: string, body: unknown) {
+  return page.evaluate(
+    async ({ base, path, token, body }) => {
+      const res = await fetch(base + path, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText} ${await res.text()}`);
+      const text = await res.text();
+      return text ? JSON.parse(text) : null;
     },
     { base: BASE, path, token: TOKEN, body },
   );
@@ -404,12 +422,17 @@ test.describe("OAuth page", () => {
 test.describe("Actions UI", () => {
   test("submits a workflow and renders the run detail (jobs + logs section)", async ({ page }) => {
     await page.goto("/ui/");
-    // Submit a real 2-job workflow via the internal exec API; this creates a
-    // run with a job graph (no runner attached, so logs stay empty — the
-    // detail page must still render the job table and the logs blankslate).
+    const repoName = `ci-demo-${Date.now()}`;
+    const repoFullName = `admin/${repoName}`;
+    await apiPost(page, "/api/v3/user/repos", { name: repoName, auto_init: true });
+
+    // Commit a real GitHub Actions workflow file and dispatch it through the
+    // public workflow-dispatch application programming interface. No runner is
+    // attached in this test, so logs stay empty; the detail page must still
+    // render the job table and logs view.
     const yaml = [
       "name: CI Pipeline",
-      "on: [push]",
+      "on: workflow_dispatch",
       "jobs:",
       "  build:",
       "    runs-on: ubuntu-latest",
@@ -421,7 +444,12 @@ test.describe("Actions UI", () => {
       "    steps:",
       "      - run: echo testing",
     ].join("\n");
-    await apiPost(page, "/internal/exec/workflow", { workflow: yaml, repo: "admin/ci-demo" });
+    await apiPut(page, `/api/v3/repos/${repoFullName}/contents/.github/workflows/ci.yml`, {
+      message: "Add GitHub Actions workflow",
+      content: Buffer.from(yaml, "utf8").toString("base64"),
+      branch: "main",
+    });
+    await apiPost(page, `/api/v3/repos/${repoFullName}/actions/workflows/ci.yml/dispatches`, { ref: "main", inputs: {} });
 
     // Runs tab lists the run (the tab is a button; the page title also
     // contains the word "runs", so target the button role explicitly).

@@ -196,14 +196,121 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const fetchWorkflows = () =>
-  fetchJSON<BleephubWorkflow[]>("/internal/workflows");
+function splitRepoFullName(repoFullName: string): [string, string] {
+  const [owner, repo] = repoFullName.split("/", 2);
+  if (!owner || !repo) throw new Error(`invalid repository full name: ${repoFullName}`);
+  return [owner, repo];
+}
 
-export const fetchWorkflowDetail = (id: string) =>
-  fetchJSON<BleephubWorkflow>(`/internal/workflows/${id}`);
+function workflowRouteID(repoFullName: string, runID: number): string {
+  const [owner, repo] = splitRepoFullName(repoFullName);
+  return `${owner}~${repo}~${runID}`;
+}
 
-export const fetchWorkflowLogs = (id: string) =>
-  fetchJSON<Record<string, string[]>>(`/internal/workflows/${id}/logs`);
+function parseWorkflowRouteID(id: string): { owner: string; repo: string; repoFullName: string; runID: number } {
+  const parts = id.split("~");
+  if (parts.length < 3) throw new Error(`invalid workflow run route id: ${id}`);
+  const owner = parts[0];
+  const runIDText = parts[parts.length - 1];
+  const repo = parts.slice(1, -1).join("~");
+  const runID = Number(runIDText);
+  if (!owner || !repo || !Number.isFinite(runID)) {
+    throw new Error(`invalid workflow run route id: ${id}`);
+  }
+  return { owner, repo, repoFullName: `${owner}/${repo}`, runID };
+}
+
+async function fetchAllUserRepos(): Promise<BleephubRepo[]> {
+  const repos: BleephubRepo[] = [];
+  let nextUrl: string | null = "/api/v3/user/repos?per_page=100";
+  while (nextUrl) {
+    const repoPage: Page<BleephubRepo> = await ghFetchPage<BleephubRepo>(nextUrl);
+    repos.push(...repoPage.items);
+    nextUrl = repoPage.nextUrl;
+  }
+  return repos;
+}
+
+function mapWorkflowFile(repoFullName: string, workflow: GithubWorkflow): BleephubWorkflowFile {
+  return {
+    id: workflow.id,
+    name: workflow.name,
+    path: workflow.path,
+    state: workflow.state,
+    repoFullName,
+    createdAt: workflow.created_at,
+    updatedAt: workflow.updated_at,
+  };
+}
+
+function mapJob(job: GithubJob): BleephubWorkflow["jobs"][string] {
+  return {
+    key: job.name,
+    jobId: String(job.id),
+    displayName: job.name,
+    needs: [],
+    status: job.status === "in_progress" ? "running" : job.status,
+    result: job.conclusion ?? "",
+    startedAt: job.started_at ?? "0001-01-01T00:00:00Z",
+    completedAt: job.completed_at ?? "0001-01-01T00:00:00Z",
+  };
+}
+
+function mapWorkflowRun(repoFullName: string, run: GithubWorkflowRun, jobs: GithubJob[]): BleephubWorkflow {
+  return {
+    id: workflowRouteID(repoFullName, run.id),
+    name: run.name,
+    runId: run.id,
+    jobs: Object.fromEntries(jobs.map((job) => [job.name, mapJob(job)])),
+    status: run.status,
+    result: run.conclusion ?? "",
+    createdAt: run.created_at,
+    eventName: run.event,
+    repoFullName,
+  };
+}
+
+export async function fetchWorkflows(): Promise<BleephubWorkflow[]> {
+  const repos = await fetchAllUserRepos();
+  const perRepo = await Promise.all(
+    repos.map(async (repo) => {
+      const [owner, repoName] = splitRepoFullName(repo.full_name);
+      const runsPage = await fetchWorkflowRunsPage(owner, repoName, {});
+      const runs = await Promise.all(
+        runsPage.items.map(async (run) => {
+          const jobsPage = await fetchRunJobs(owner, repoName, run.id);
+          return mapWorkflowRun(repo.full_name, run, jobsPage.items);
+        }),
+      );
+      return runs;
+    }),
+  );
+  return perRepo.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function fetchWorkflowDetail(id: string): Promise<BleephubWorkflow> {
+  const { owner, repo, repoFullName, runID } = parseWorkflowRouteID(id);
+  const [run, jobsPage] = await Promise.all([
+    fetchWorkflowRun(owner, repo, runID),
+    fetchRunJobs(owner, repo, runID),
+  ]);
+  return mapWorkflowRun(repoFullName, run, jobsPage.items);
+}
+
+export async function fetchWorkflowLogs(id: string): Promise<Record<string, string[]>> {
+  const { owner, repo } = parseWorkflowRouteID(id);
+  const workflow = await fetchWorkflowDetail(id);
+  const logs: Record<string, string[]> = {};
+  await Promise.all(
+    Object.values(workflow.jobs)
+      .filter((job) => job.status === "completed")
+      .map(async (job) => {
+        const text = await fetchJobLogs(owner, repo, Number(job.jobId));
+        if (text) logs[job.jobId] = text.split(/\r?\n/);
+      }),
+  );
+  return logs;
+}
 
 export const fetchSessions = () =>
   fetchJSON<BleephubSession[]>("/internal/sessions");
@@ -220,8 +327,17 @@ export const fetchStatus = () =>
 export const fetchHealth = () =>
   fetchJSON<BleephubHealth>("/health");
 
-export const fetchWorkflowFiles = () =>
-  fetchJSON<BleephubWorkflowFile[]>("/internal/workflow_files");
+export async function fetchWorkflowFiles(): Promise<BleephubWorkflowFile[]> {
+  const repos = await fetchAllUserRepos();
+  const perRepo = await Promise.all(
+    repos.map(async (repo) => {
+      const [owner, repoName] = splitRepoFullName(repo.full_name);
+      const page = await fetchActionsWorkflows(owner, repoName);
+      return page.items.map((workflow) => mapWorkflowFile(repo.full_name, workflow));
+    }),
+  );
+  return perRepo.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 
 
 export const fetchApps = () => fetchJSON<BleephubApp[]>("/internal/apps");

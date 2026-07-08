@@ -25,7 +25,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <MemoryRouter initialEntries={["/ui/workflows/wf-1"]}>
+      <MemoryRouter initialEntries={["/ui/workflows/admin~test~42"]}>
         <Routes>
           <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
         </Routes>
@@ -35,24 +35,54 @@ function renderPage() {
 }
 
 const workflowData = {
-  id: "wf-1",
+  id: 42,
   name: "CI Build",
-  runId: 42,
+  run_number: 42,
+  run_attempt: 1,
+  event: "push",
   status: "completed",
-  result: "success",
-  createdAt: "2026-01-01T00:00:00Z",
-  eventName: "push",
-  repoFullName: "admin/test",
-  jobs: {
-    build: { key: "build", jobId: "j1", displayName: "Build", status: "completed", result: "success", needs: [] },
-    test: { key: "test", jobId: "j2", displayName: "Test", status: "completed", result: "success", needs: ["build"] },
-  },
+  conclusion: "success",
+  head_branch: "main",
+  head_sha: "abc",
+  path: ".github/workflows/ci.yml",
+  workflow_id: 1234,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  actor: { login: "admin" },
 };
+
+const jobsData = [
+  {
+    id: 101,
+    run_id: 42,
+    name: "Build",
+    status: "completed",
+    conclusion: "success",
+    started_at: "2026-01-01T00:00:01Z",
+    completed_at: "2026-01-01T00:00:02Z",
+    steps: [],
+    labels: ["self-hosted"],
+    run_attempt: 1,
+  },
+  {
+    id: 102,
+    run_id: 42,
+    name: "Test",
+    status: "completed",
+    conclusion: "success",
+    started_at: "2026-01-01T00:00:03Z",
+    completed_at: "2026-01-01T00:00:04Z",
+    steps: [],
+    labels: ["self-hosted"],
+    run_attempt: 1,
+  },
+];
 
 describe("WorkflowDetailPage", () => {
   it("renders workflow name and details", async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes("/logs")) return Promise.resolve(jsonResponse({}));
+      if (url.includes("/logs")) return Promise.resolve(new Response("", { status: 200 }));
+      if (url.includes("/jobs")) return Promise.resolve(jsonResponse({ total_count: 2, jobs: jobsData }));
       return Promise.resolve(jsonResponse(workflowData));
     });
     renderPage();
@@ -64,7 +94,8 @@ describe("WorkflowDetailPage", () => {
 
   it("renders job table with both jobs", async () => {
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes("/logs")) return Promise.resolve(jsonResponse({}));
+      if (url.includes("/logs")) return Promise.resolve(new Response("", { status: 200 }));
+      if (url.includes("/jobs")) return Promise.resolve(jsonResponse({ total_count: 2, jobs: jobsData }));
       return Promise.resolve(jsonResponse(workflowData));
     });
     renderPage();
@@ -76,13 +107,10 @@ describe("WorkflowDetailPage", () => {
   });
 
   it("renders per-job log output when logs are present", async () => {
-    // Logs are keyed by jobId (j1/j2), matching the runner timeline feed.
-    const logs = {
-      j1: ["Run actions/checkout@v4", "Build succeeded in 4s"],
-      j2: ["Run go test ./...", "ok\tall packages"],
-    };
     mockFetch.mockImplementation((url: string) => {
-      if (url.includes("/logs")) return Promise.resolve(jsonResponse(logs));
+      if (url.includes("/actions/jobs/101/logs")) return Promise.resolve(new Response("Run actions/checkout@v4\nBuild succeeded in 4s", { status: 200 }));
+      if (url.includes("/actions/jobs/102/logs")) return Promise.resolve(new Response("Run go test ./...\nok\tall packages", { status: 200 }));
+      if (url.includes("/jobs")) return Promise.resolve(jsonResponse({ total_count: 2, jobs: jobsData }));
       return Promise.resolve(jsonResponse(workflowData));
     });
     renderPage();

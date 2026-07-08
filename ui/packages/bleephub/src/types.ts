@@ -6,6 +6,8 @@
 // "queued"/"skipped", a workflow file is never anything but "active".
 // "waiting" = held on a reviewer-protected environment approval.
 export type WorkflowStatus =
+  | "queued"
+  | "in_progress"
   | "running"
   | "completed"
   | "pending_concurrency"
@@ -17,9 +19,16 @@ export type JobStatus =
   | "completed"
   | "skipped"
   | "waiting";
-export type JobResult = "success" | "failure" | "cancelled" | "skipped";
+export type JobResult =
+  | "success"
+  | "failure"
+  | "cancelled"
+  | "skipped"
+  | "neutral"
+  | "timed_out"
+  | "action_required";
 export type WorkflowResult = "" | JobResult;
-export type WorkflowFileState = "active";
+export type WorkflowFileState = "active" | "disabled_manually" | "disabled_inactivity";
 export type WorkflowFileSource = "submitted" | "discovered";
 
 /**
@@ -180,7 +189,7 @@ export interface BleephubWorkflowFile {
   path: string;
   state: WorkflowFileState;
   repoFullName: string;
-  source: WorkflowFileSource;
+  source?: WorkflowFileSource;
   createdAt: string;
   updatedAt: string;
 }
@@ -511,6 +520,8 @@ export interface GithubWorkflow {
   name: string;
   path: string;
   state: "active" | "disabled_manually" | "disabled_inactivity";
+  created_at: string;
+  updated_at: string;
   badge_url: string;
 }
 
