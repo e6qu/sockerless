@@ -136,10 +136,24 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("templateRepository", &graphql.Field{
-		// No template-repo feature: null (gh selects {id,name,owner{id,login}}).
 		Type: repoType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			templateID, ok := r["templateRepoID"].(int)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing templateRepoID")
+			}
+			if templateID == 0 {
+				return nil, nil
+			}
+			templateRepo := s.store.GetRepoByID(templateID)
+			if templateRepo == nil {
+				return nil, nil
+			}
+			return repoToGraphQL(s.store.snapRepo(templateRepo)), nil
 		},
 	})
 	repoType.AddFieldConfig("homepageUrl", &graphql.Field{
@@ -937,6 +951,7 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"hasWiki":             repo.HasWiki,
 		"hasDiscussions":      repoHasDiscussions(repo),
 		"parentID":            repo.ParentID,
+		"templateRepoID":      repo.TemplateRepoID,
 		"allowSquashMerge":    repo.AllowSquashMerge,
 		"allowMergeCommit":    repo.AllowMergeCommit,
 		"allowRebaseMerge":    repo.AllowRebaseMerge,

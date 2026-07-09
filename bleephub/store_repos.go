@@ -59,6 +59,7 @@ type Repo struct {
 	Stargazers                           map[int]bool `json:"stargazers,omitempty"`
 	ParentID                             int          `json:"parent_id"`
 	SourceID                             int          `json:"source_id"`
+	TemplateRepoID                       int          `json:"template_repo_id,omitempty"`
 	NextIssueNumber                      int          `json:"-"`
 	NextMilestoneNumber                  int          `json:"-"`
 	AutomatedSecurityFixesEnabled        bool         `json:"automated_security_fixes_enabled"`

@@ -97,6 +97,7 @@ func (s *Server) handleGenerateRepoFromTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.store.UpdateRepo(ownerLogin, repo.Name, func(rp *Repo) {
+		rp.TemplateRepoID = template.ID
 		rp.PushedAt = time.Now().UTC()
 	})
 

@@ -31,6 +31,23 @@ func TestGenerateRepositoryFromTemplate(t *testing.T) {
 	if repo["default_branch"] != "main" {
 		t.Fatalf("default_branch = %v, want main", repo["default_branch"])
 	}
+	gqlResp := ghPost(t, "/api/graphql", defaultToken, map[string]interface{}{
+		"query": `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){templateRepository{name,nameWithOwner,owner{login}}}}`,
+		"variables": map[string]interface{}{
+			"owner": "admin",
+			"name":  newName,
+		},
+	})
+	gqlData := decodeJSONWithStatus(t, gqlResp, 200)
+	data, _ := gqlData["data"].(map[string]interface{})
+	gqlRepo, _ := data["repository"].(map[string]interface{})
+	templateRepo, _ := gqlRepo["templateRepository"].(map[string]interface{})
+	if templateRepo == nil {
+		t.Fatalf("templateRepository = nil, want admin/%s", template)
+	}
+	if templateRepo["name"] != template || templateRepo["nameWithOwner"] != "admin/"+template {
+		t.Fatalf("templateRepository = %v, want admin/%s", templateRepo, template)
+	}
 
 	// The template's files exist in the generated repo as real git content.
 	resp = ghGet(t, "/api/v3/repos/admin/"+newName+"/contents/README.md", defaultToken)
