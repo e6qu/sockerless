@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2437 filed - 2394 fixed - 2 open - 16 false positives.**
+**2441 filed - 2397 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
 
@@ -17,6 +18,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2440~~ | P3 | Bleephub user interface build | unsplit production JavaScript bundle | The Bleephub production build now lazy-loads route pages and splits vendor dependency groups, eliminating the large JavaScript chunk warning without raising Vite's warning threshold. |
+| ~~2439~~ | P3 | Bleephub user interface utilities | stale runtime helper after public Actions metrics move | The dead `formatUptime` helper was removed after process uptime left the user-facing Bleephub pages. |
+| ~~2438~~ | P1 | Bleephub user interface operations pages | user-facing UI consumed operator-only internals | The overview and metrics pages now derive visible GitHub Actions and runner state from public GitHub REST routes, the storage-coordinate page was removed from the routed user interface, and UI tests assert those pages no longer call `/internal/metrics`, `/internal/status`, or `/internal/storage`. |
 | ~~2437~~ | P1 | Bleephub GitHub Actions workflow dispatch | `gh workflow run` rejected a real workflow ref | Workflow dispatch now resolves GitHub `ref` inputs as full refs, branch names, tag names, or raw commit SHAs, and the Bleephub `gh` command-line interface harness accepts `gh workflow run ci.yml --ref main`. |
 | ~~2436~~ | P3 | Bleephub command-line interface docs | stale required check name | The Bleephub `gh` command-line interface documentation now named the actual required `Bleephub GitHub command-line interface` CI job. |
 | ~~2435~~ | P1 | Docker-backed integration harnesses | Docker frontend-specific local image loading | Docker-backed Make targets now used a shared local-image build helper that runs `docker buildx build --load` when Buildx is available and legacy `docker build` otherwise, so Docker Engine and Podman-compatible runtimes both loaded the required harness images. |

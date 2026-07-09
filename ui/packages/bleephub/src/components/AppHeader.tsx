@@ -183,15 +183,13 @@ const GITHUB_NAV: DrawerItem[] = [
   { label: "Explore", to: "/ui/search", icon: <SearchIcon size={16} /> },
 ];
 
-// bleephub-server operational surfaces — these have no github.com equivalent
-// (the server's own runners, metrics, storage, app registry, and admin tables),
-// so they live in an "Operations" section rather than the GitHub-shaped nav.
+// Bleephub service administration surfaces that map to public GitHub or GitHub
+// Enterprise Server routes stay grouped away from the repository/product nav.
 const OPS_NAV: DrawerItem[] = [
   { label: "System status", to: "/ui/admin", icon: <GraphIcon size={16} />, end: true },
   { label: "Workflow runs", to: "/ui/workflows", icon: <RepoIcon size={16} /> },
   { label: "Runners", to: "/ui/runners", icon: <ServerIcon size={16} /> },
   { label: "Metrics", to: "/ui/metrics", icon: <GraphIcon size={16} /> },
-  { label: "Storage", to: "/ui/admin/storage", icon: <ServerIcon size={16} /> },
   { label: "GitHub Apps", to: "/ui/apps", icon: <KeyIcon size={16} /> },
   { label: "OAuth Apps", to: "/ui/oauth", icon: <KeyIcon size={16} /> },
   { label: "Users", to: "/ui/admin/users", icon: <PeopleIcon size={16} /> },

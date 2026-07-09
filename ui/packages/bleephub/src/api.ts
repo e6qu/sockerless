@@ -5,9 +5,7 @@ import type {
   BleephubRepo,
   RepoListFilters,
   BleephubMetrics,
-  BleephubStatus,
   BleephubHealth,
-  BleephubStorageInfo,
   BleephubApp,
   BleephubInstallation,
   BleephubOAuthApp,
@@ -314,11 +312,69 @@ export async function fetchWorkflowLogs(id: string): Promise<Record<string, stri
 export const fetchRepos = () =>
   fetchAllUserRepos();
 
-export const fetchMetrics = () =>
-  fetchJSON<BleephubMetrics>("/internal/metrics");
+async function fetchAllWorkflowRuns(owner: string, repo: string): Promise<GithubWorkflowRun[]> {
+  const runs: GithubWorkflowRun[] = [];
+  let nextUrl: string | null = null;
+  do {
+    const page = await fetchWorkflowRunsPage(owner, repo, {}, nextUrl ?? undefined);
+    runs.push(...page.items);
+    nextUrl = page.nextUrl;
+  } while (nextUrl);
+  return runs;
+}
 
-export const fetchStatus = () =>
-  fetchJSON<BleephubStatus>("/internal/status");
+async function fetchRepositoryActionsState(repo: BleephubRepo): Promise<{
+  runs: GithubWorkflowRun[];
+  jobs: GithubJob[];
+  runners: GithubRunner[];
+}> {
+  const [owner, repoName] = splitRepoFullName(repo.full_name);
+  const runs = await fetchAllWorkflowRuns(owner, repoName);
+  const jobsPages = await Promise.all(
+    runs.map((run) => fetchRunJobs(owner, repoName, run.id)),
+  );
+  const runnersPage = await fetchActionsRunners(owner, repoName);
+  return {
+    runs,
+    jobs: jobsPages.flatMap((page) => page.items),
+    runners: runnersPage.items,
+  };
+}
+
+async function fetchActionsAggregate(): Promise<BleephubMetrics> {
+  const repos = await fetchAllUserRepos();
+  const perRepo = await Promise.all(repos.map((repo) => fetchRepositoryActionsState(repo)));
+  const runs = perRepo.flatMap((repo) => repo.runs);
+  const jobs = perRepo.flatMap((repo) => repo.jobs);
+  const onlineRunnerIDs = new Set<number>();
+  for (const runner of perRepo.flatMap((repo) => repo.runners)) {
+    if (runner.status === "online") onlineRunnerIDs.add(runner.id);
+  }
+
+  const jobsByStatus: Record<string, number> = {};
+  const jobCompletions: Record<string, number> = {};
+  for (const job of jobs) {
+    jobsByStatus[job.status] = (jobsByStatus[job.status] ?? 0) + 1;
+    if (job.conclusion) {
+      jobCompletions[job.conclusion] = (jobCompletions[job.conclusion] ?? 0) + 1;
+    }
+  }
+
+  const activeWorkflows = runs.filter((run) => run.status !== "completed").length;
+  const connectedRunners = onlineRunnerIDs.size;
+  return {
+    workflow_runs: runs.length,
+    job_dispatches: jobs.length,
+    jobs_by_status: jobsByStatus,
+    job_completions: jobCompletions,
+    active_workflows: activeWorkflows,
+    connected_runners: connectedRunners,
+  };
+}
+
+export async function fetchMetrics(): Promise<BleephubMetrics> {
+  return fetchActionsAggregate();
+}
 
 export const fetchHealth = () =>
   fetchJSON<BleephubHealth>("/health");
@@ -347,11 +403,7 @@ export async function fetchInstallations(): Promise<BleephubInstallation[]> {
   );
   return raw.installations.map(normalizeInstallation);
 }
-export const fetchStorageInfo = () =>
-  fetchJSON<BleephubStorageInfo>("/internal/storage");
-
-// Verify identity through GitHub's REST user endpoint. Operator-only internal
-// pages still fail loudly if the accepted token cannot access /internal/*.
+// Verify identity through GitHub's REST user endpoint.
 export async function verifyToken(token: string): Promise<boolean> {
   const res = await fetch("/api/v3/user", {
     headers: { Authorization: `Bearer ${token}` },

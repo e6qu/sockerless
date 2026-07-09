@@ -33,16 +33,6 @@ function renderPage() {
 }
 
 const healthData = { status: "ok", service: "bleephub" };
-const metricsData = {
-  workflow_submissions: 10,
-  job_dispatches: 25,
-  job_completions: { success: 20, failure: 5 },
-  active_workflows: 2,
-  active_sessions: 3,
-  uptime_seconds: 3600,
-  goroutines: 42,
-  heap_alloc_mb: 12.5,
-};
 const workflowsData = [
   {
     id: 1,
@@ -74,13 +64,17 @@ const jobsData = [{
   labels: ["self-hosted"],
   run_attempt: 1,
 }];
+const runnersData = [
+  { id: 501, name: "runner-1", os: "linux", status: "online", busy: false, labels: [] },
+  { id: 502, name: "runner-2", os: "linux", status: "offline", busy: false, labels: [] },
+];
 
 function mockAllEndpoints() {
   mockFetch.mockImplementation((url: string) => {
     if (url.includes("/health")) return Promise.resolve(jsonResponse(healthData));
-    if (url.includes("/internal/metrics")) return Promise.resolve(jsonResponse(metricsData));
     if (url.includes("/api/v3/user/repos")) return Promise.resolve(jsonResponse(reposData));
     if (url.includes("/actions/runs/1/jobs")) return Promise.resolve(jsonResponse({ total_count: 1, jobs: jobsData }));
+    if (url.includes("/actions/runners")) return Promise.resolve(jsonResponse({ total_count: 2, runners: runnersData }));
     if (url.includes("/actions/runs")) return Promise.resolve(jsonResponse({ total_count: 1, workflow_runs: workflowsData }));
     return Promise.resolve(jsonResponse({}));
   });
@@ -108,11 +102,10 @@ describe("OverviewPage", () => {
     renderPage();
     await waitFor(() => {
       expect(screen.getByText(/active workflows/i)).toBeInTheDocument();
-      expect(screen.getByText("2")).toBeInTheDocument();
+      expect(screen.getAllByText("0").length).toBeGreaterThan(0);
       expect(screen.getByText(/connected runners/i)).toBeInTheDocument();
-      expect(screen.getByText("3")).toBeInTheDocument();
-      expect(screen.getByText("Submissions")).toBeInTheDocument();
-      expect(screen.getByText("10")).toBeInTheDocument();
+      expect(screen.getAllByText("1").length).toBeGreaterThan(0);
+      expect(screen.getByText("Workflow runs")).toBeInTheDocument();
     });
   });
 
@@ -123,5 +116,17 @@ describe("OverviewPage", () => {
       expect(screen.getByText(/recent workflows/i)).toBeInTheDocument();
       expect(screen.getByText("CI Build")).toBeInTheDocument();
     });
+  });
+
+  it("does not call operator-only internal diagnostics endpoints", async () => {
+    mockAllEndpoints();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByText(/system status/i)).toBeInTheDocument();
+    });
+    const urls = mockFetch.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("/internal/metrics"))).toBe(false);
+    expect(urls.some((url) => url.includes("/internal/status"))).toBe(false);
+    expect(urls.some((url) => url.includes("/internal/storage"))).toBe(false);
   });
 });

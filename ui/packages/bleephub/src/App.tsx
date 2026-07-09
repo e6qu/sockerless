@@ -1,68 +1,70 @@
+import { lazy, Suspense } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router";
 import { ErrorBoundary, ToastProvider } from "@sockerless/ui-core/components";
 import { isLoggedIn } from "./api.js";
 import { BleephubShell } from "./components/Shell.js";
-import { LoginPage } from "./pages/LoginPage.js";
-import { OverviewPage } from "./pages/OverviewPage.js";
-import { WorkflowsPage } from "./pages/WorkflowsPage.js";
-import { WorkflowDetailPage } from "./pages/WorkflowDetailPage.js";
-import { RunnersPage } from "./pages/RunnersPage.js";
-import { ReposPage } from "./pages/ReposPage.js";
-import { OrgReposPage } from "./pages/OrgReposPage.js";
-import { RepoDetailPage } from "./pages/RepoDetailPage.js";
-import { IssuesPage } from "./pages/IssuesPage.js";
-import { PullsPage } from "./pages/PullsPage.js";
-import { DiscussionsPage } from "./pages/DiscussionsPage.js";
-import { ActionsPage } from "./pages/ActionsPage.js";
-import { RunDetailPage } from "./pages/RunDetailPage.js";
-import { RepoSettingsPage } from "./pages/RepoSettingsPage.js";
-import { BranchProtectionPage } from "./pages/BranchProtectionPage.js";
-import { SecretScanningPage } from "./pages/SecretScanningPage.js";
-import { CodeScanningPage } from "./pages/CodeScanningPage.js";
-import { DependabotPage } from "./pages/DependabotPage.js";
-import { SecurityAdvisoriesPage } from "./pages/SecurityAdvisoriesPage.js";
-import { ProjectsClassicPage } from "./pages/ProjectsClassicPage.js";
-import { RepoSecretsPage } from "./pages/RepoSecretsPage.js";
-import { MetricsPage } from "./pages/MetricsPage.js";
-import { AppsPage } from "./pages/AppsPage.js";
-import { OAuthPage } from "./pages/OAuthPage.js";
-import { UsersPage } from "./pages/UsersPage.js";
-import { OrgsPage } from "./pages/OrgsPage.js";
-import { TeamsPage } from "./pages/TeamsPage.js";
-import { RulesetsPage } from "./pages/RulesetsPage.js";
-import { AuditLogPage } from "./pages/AuditLogPage.js";
-import { StorageHealthPage } from "./pages/StorageHealthPage.js";
-import { GistsPage } from "./pages/GistsPage.js";
-import { NotificationsPage } from "./pages/NotificationsPage.js";
-import { MigrationsPage } from "./pages/MigrationsPage.js";
-import { CodespacesPage } from "./pages/CodespacesPage.js";
-import { PackagesPage } from "./pages/PackagesPage.js";
-import { InsightsPage } from "./pages/InsightsPage.js";
-import { OrgGovernancePage } from "./pages/OrgGovernancePage.js";
-import { CopilotPage } from "./pages/CopilotPage.js";
-import { EnterprisePage } from "./pages/EnterprisePage.js";
-import { DeploymentsPage } from "./pages/DeploymentsPage.js";
-import { WebhookDeliveriesPage } from "./pages/WebhookDeliveriesPage.js";
-import { OrgHooksPage } from "./pages/OrgHooksPage.js";
-import { SearchPage } from "./pages/SearchPage.js";
-import { AccountPage } from "./pages/AccountPage.js";
-import { RepoSocialPage } from "./pages/RepoSocialPage.js";
-// Bleephub dashboard, user profile, and organization overview pages.
-import { DashboardPage } from "./pages/DashboardPage.js";
-import { ProfilePage } from "./pages/ProfilePage.js";
-import { OrgOverviewPage } from "./pages/OrgOverviewPage.js";
-import { OrgPeoplePage } from "./pages/OrgPeoplePage.js";
-import { OrgTeamsPage } from "./pages/OrgTeamsPage.js";
+
+const LoginPage = lazy(() => import("./pages/LoginPage.js").then(({ LoginPage }) => ({ default: LoginPage })));
+const OverviewPage = lazy(() => import("./pages/OverviewPage.js").then(({ OverviewPage }) => ({ default: OverviewPage })));
+const WorkflowsPage = lazy(() => import("./pages/WorkflowsPage.js").then(({ WorkflowsPage }) => ({ default: WorkflowsPage })));
+const WorkflowDetailPage = lazy(() => import("./pages/WorkflowDetailPage.js").then(({ WorkflowDetailPage }) => ({ default: WorkflowDetailPage })));
+const RunnersPage = lazy(() => import("./pages/RunnersPage.js").then(({ RunnersPage }) => ({ default: RunnersPage })));
+const ReposPage = lazy(() => import("./pages/ReposPage.js").then(({ ReposPage }) => ({ default: ReposPage })));
+const OrgReposPage = lazy(() => import("./pages/OrgReposPage.js").then(({ OrgReposPage }) => ({ default: OrgReposPage })));
+const RepoDetailPage = lazy(() => import("./pages/RepoDetailPage.js").then(({ RepoDetailPage }) => ({ default: RepoDetailPage })));
+const IssuesPage = lazy(() => import("./pages/IssuesPage.js").then(({ IssuesPage }) => ({ default: IssuesPage })));
+const PullsPage = lazy(() => import("./pages/PullsPage.js").then(({ PullsPage }) => ({ default: PullsPage })));
+const DiscussionsPage = lazy(() => import("./pages/DiscussionsPage.js").then(({ DiscussionsPage }) => ({ default: DiscussionsPage })));
+const ActionsPage = lazy(() => import("./pages/ActionsPage.js").then(({ ActionsPage }) => ({ default: ActionsPage })));
+const RunDetailPage = lazy(() => import("./pages/RunDetailPage.js").then(({ RunDetailPage }) => ({ default: RunDetailPage })));
+const RepoSettingsPage = lazy(() => import("./pages/RepoSettingsPage.js").then(({ RepoSettingsPage }) => ({ default: RepoSettingsPage })));
+const BranchProtectionPage = lazy(() => import("./pages/BranchProtectionPage.js").then(({ BranchProtectionPage }) => ({ default: BranchProtectionPage })));
+const SecretScanningPage = lazy(() => import("./pages/SecretScanningPage.js").then(({ SecretScanningPage }) => ({ default: SecretScanningPage })));
+const CodeScanningPage = lazy(() => import("./pages/CodeScanningPage.js").then(({ CodeScanningPage }) => ({ default: CodeScanningPage })));
+const DependabotPage = lazy(() => import("./pages/DependabotPage.js").then(({ DependabotPage }) => ({ default: DependabotPage })));
+const SecurityAdvisoriesPage = lazy(() => import("./pages/SecurityAdvisoriesPage.js").then(({ SecurityAdvisoriesPage }) => ({ default: SecurityAdvisoriesPage })));
+const ProjectsClassicPage = lazy(() => import("./pages/ProjectsClassicPage.js").then(({ ProjectsClassicPage }) => ({ default: ProjectsClassicPage })));
+const RepoSecretsPage = lazy(() => import("./pages/RepoSecretsPage.js").then(({ RepoSecretsPage }) => ({ default: RepoSecretsPage })));
+const MetricsPage = lazy(() => import("./pages/MetricsPage.js").then(({ MetricsPage }) => ({ default: MetricsPage })));
+const AppsPage = lazy(() => import("./pages/AppsPage.js").then(({ AppsPage }) => ({ default: AppsPage })));
+const OAuthPage = lazy(() => import("./pages/OAuthPage.js").then(({ OAuthPage }) => ({ default: OAuthPage })));
+const UsersPage = lazy(() => import("./pages/UsersPage.js").then(({ UsersPage }) => ({ default: UsersPage })));
+const OrgsPage = lazy(() => import("./pages/OrgsPage.js").then(({ OrgsPage }) => ({ default: OrgsPage })));
+const TeamsPage = lazy(() => import("./pages/TeamsPage.js").then(({ TeamsPage }) => ({ default: TeamsPage })));
+const RulesetsPage = lazy(() => import("./pages/RulesetsPage.js").then(({ RulesetsPage }) => ({ default: RulesetsPage })));
+const AuditLogPage = lazy(() => import("./pages/AuditLogPage.js").then(({ AuditLogPage }) => ({ default: AuditLogPage })));
+const GistsPage = lazy(() => import("./pages/GistsPage.js").then(({ GistsPage }) => ({ default: GistsPage })));
+const NotificationsPage = lazy(() => import("./pages/NotificationsPage.js").then(({ NotificationsPage }) => ({ default: NotificationsPage })));
+const MigrationsPage = lazy(() => import("./pages/MigrationsPage.js").then(({ MigrationsPage }) => ({ default: MigrationsPage })));
+const CodespacesPage = lazy(() => import("./pages/CodespacesPage.js").then(({ CodespacesPage }) => ({ default: CodespacesPage })));
+const PackagesPage = lazy(() => import("./pages/PackagesPage.js").then(({ PackagesPage }) => ({ default: PackagesPage })));
+const InsightsPage = lazy(() => import("./pages/InsightsPage.js").then(({ InsightsPage }) => ({ default: InsightsPage })));
+const OrgGovernancePage = lazy(() => import("./pages/OrgGovernancePage.js").then(({ OrgGovernancePage }) => ({ default: OrgGovernancePage })));
+const CopilotPage = lazy(() => import("./pages/CopilotPage.js").then(({ CopilotPage }) => ({ default: CopilotPage })));
+const EnterprisePage = lazy(() => import("./pages/EnterprisePage.js").then(({ EnterprisePage }) => ({ default: EnterprisePage })));
+const DeploymentsPage = lazy(() => import("./pages/DeploymentsPage.js").then(({ DeploymentsPage }) => ({ default: DeploymentsPage })));
+const WebhookDeliveriesPage = lazy(() => import("./pages/WebhookDeliveriesPage.js").then(({ WebhookDeliveriesPage }) => ({ default: WebhookDeliveriesPage })));
+const OrgHooksPage = lazy(() => import("./pages/OrgHooksPage.js").then(({ OrgHooksPage }) => ({ default: OrgHooksPage })));
+const SearchPage = lazy(() => import("./pages/SearchPage.js").then(({ SearchPage }) => ({ default: SearchPage })));
+const AccountPage = lazy(() => import("./pages/AccountPage.js").then(({ AccountPage }) => ({ default: AccountPage })));
+const RepoSocialPage = lazy(() => import("./pages/RepoSocialPage.js").then(({ RepoSocialPage }) => ({ default: RepoSocialPage })));
+const DashboardPage = lazy(() => import("./pages/DashboardPage.js").then(({ DashboardPage }) => ({ default: DashboardPage })));
+const ProfilePage = lazy(() => import("./pages/ProfilePage.js").then(({ ProfilePage }) => ({ default: ProfilePage })));
+const OrgOverviewPage = lazy(() => import("./pages/OrgOverviewPage.js").then(({ OrgOverviewPage }) => ({ default: OrgOverviewPage })));
+const OrgPeoplePage = lazy(() => import("./pages/OrgPeoplePage.js").then(({ OrgPeoplePage }) => ({ default: OrgPeoplePage })));
+const OrgTeamsPage = lazy(() => import("./pages/OrgTeamsPage.js").then(({ OrgTeamsPage }) => ({ default: OrgTeamsPage })));
 
 export function App() {
   if (!isLoggedIn()) {
     return (
       <ErrorBoundary>
         <BrowserRouter>
-          <Routes>
-            <Route path="/ui/login" element={<LoginPage />} />
-            <Route path="/ui/*" element={<Navigate to="/ui/login" replace />} />
-          </Routes>
+          <Suspense fallback={null}>
+            <Routes>
+              <Route path="/ui/login" element={<LoginPage />} />
+              <Route path="/ui/*" element={<Navigate to="/ui/login" replace />} />
+            </Routes>
+          </Suspense>
         </BrowserRouter>
       </ErrorBoundary>
     );
@@ -73,8 +75,9 @@ export function App() {
       <ToastProvider>
         <BrowserRouter>
           <BleephubShell>
-            <Routes>
-              <Route path="/ui/" element={<DashboardPage />} />
+            <Suspense fallback={null}>
+              <Routes>
+                <Route path="/ui/" element={<DashboardPage />} />
               <Route path="/ui/workflows" element={<WorkflowsPage />} />
               <Route path="/ui/workflows/:id" element={<WorkflowDetailPage />} />
               <Route path="/ui/runners" element={<RunnersPage />} />
@@ -120,7 +123,6 @@ export function App() {
               <Route path="/ui/admin/teams" element={<TeamsPage />} />
               <Route path="/ui/admin/enterprise" element={<EnterprisePage />} />
               <Route path="/ui/admin/audit-log" element={<AuditLogPage />} />
-              <Route path="/ui/admin/storage" element={<StorageHealthPage />} />
               {/* Deployments + webhook deliveries + Pages */}
               <Route path="/ui/repos/:owner/:repo/deployments" element={<DeploymentsPage />} />
               <Route path="/ui/repos/:owner/:repo/hooks/:hookId/deliveries" element={<WebhookDeliveriesPage />} />
@@ -144,8 +146,9 @@ export function App() {
                   unknown /ui/* path lands back on the dashboard. */}
               <Route path="/ui/login" element={<Navigate to="/ui/" replace />} />
               <Route path="/ui/:login" element={<ProfilePage />} />
-              <Route path="/ui/*" element={<Navigate to="/ui/" replace />} />
-            </Routes>
+                <Route path="/ui/*" element={<Navigate to="/ui/" replace />} />
+              </Routes>
+            </Suspense>
           </BleephubShell>
         </BrowserRouter>
       </ToastProvider>

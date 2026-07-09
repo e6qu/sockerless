@@ -118,24 +118,21 @@ export interface BleephubRepo {
   topics?: string[];
 }
 
-/** MetricsSnapshot is a point-in-time metrics report. */
+/** Dashboard metrics derived from public GitHub REST repository and Actions routes. */
 export interface BleephubMetrics {
-  workflow_submissions: number;
+  workflow_runs: number;
   job_dispatches: number;
+  jobs_by_status: Record<string, number>;
   job_completions: Record<string, number>;
   active_workflows: number;
-  active_sessions: number;
-  uptime_seconds: number;
-  goroutines: number;
-  heap_alloc_mb: number;
+  connected_runners: number;
 }
 
-/** Status response from /internal/status. */
+/** Runtime status derived from public GitHub REST repository and Actions routes. */
 export interface BleephubStatus {
   active_workflows: number;
   jobs_by_status: Record<string, number>;
   connected_runners: number;
-  uptime_seconds: number;
 }
 
 /** Health response from /health. */
@@ -399,14 +396,6 @@ export interface GithubBranchProtection {
   required_signatures?: GithubProtectionToggle;
   lock_branch?: GithubProtectionToggle;
   block_creations?: GithubProtectionToggle;
-}
-
-/** Storage backend info from /internal/storage */
-export interface BleephubStorageInfo {
-  persistence: string;
-  dialect: string;
-  git: string;
-  git_details: Record<string, string>;
 }
 
 export interface GithubWebhook {

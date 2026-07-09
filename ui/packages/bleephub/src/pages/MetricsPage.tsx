@@ -1,6 +1,5 @@
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import { useMetricsData } from "../hooks/useMetricsData.js";
-import { formatUptime } from "../utils/format.js";
 import { PageTitle, StatCard, SectionLabel } from "../components/ui.js";
 
 export function MetricsPage() {
@@ -12,19 +11,15 @@ export function MetricsPage() {
   return (
     <div>
       <PageTitle
-        title="Runtime & throughput"
-        meta={
-          metrics
-            ? `uptime ${formatUptime(metrics.uptime_seconds)} · ${metrics.goroutines} goroutines · ${metrics.heap_alloc_mb.toFixed(1)} MB heap`
-            : undefined
-        }
+        title="GitHub Actions throughput"
+        meta={metrics ? `${metrics.workflow_runs} workflow runs · ${metrics.connected_runners} connected runners` : undefined}
       />
 
       {metrics && (
         <section className="mb-8">
           <SectionLabel>Counters</SectionLabel>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-            <StatCard title="Workflow submissions" value={metrics.workflow_submissions} />
+            <StatCard title="Workflow runs" value={metrics.workflow_runs} />
             <StatCard title="Job dispatches" value={metrics.job_dispatches} />
             <StatCard
               title="Active workflows"
@@ -32,9 +27,9 @@ export function MetricsPage() {
               emphasized={metrics.active_workflows > 0}
             />
             <StatCard
-              title="Active sessions"
-              value={metrics.active_sessions}
-              emphasized={metrics.active_sessions > 0}
+              title="Connected runners"
+              value={metrics.connected_runners}
+              emphasized={metrics.connected_runners > 0}
             />
           </div>
         </section>
