@@ -121,7 +121,7 @@ test.describe("Operations console", () => {
     await page.goto("/ui/admin");
     await expect(page.getByText("Active Workflows")).toBeVisible();
     await expect(page.getByText("Connected Runners")).toBeVisible();
-    await expect(page.getByText("Submissions")).toBeVisible();
+    await expect(page.getByText("Workflow runs", { exact: true })).toBeVisible();
     await shot(page, "02-ops-metrics");
   });
 });
@@ -172,7 +172,7 @@ test.describe("Global navigation", () => {
     await openDrawer(page);
     await drawer.getByRole("link", { name: "Metrics" }).click();
     await expect(page).toHaveURL(/\/ui\/metrics/);
-    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /actions throughput/i })).toBeVisible();
     await shot(page, "08-metrics");
 
     await openDrawer(page);
@@ -474,7 +474,7 @@ test.describe("Metrics page", () => {
   test("shows counters section", async ({ page }) => {
     await page.goto("/ui/metrics");
     await page.waitForLoadState("networkidle");
-    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /runtime/i })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1 }).filter({ hasText: /actions throughput/i })).toBeVisible();
     await shot(page, "25-metrics-page");
   });
 });

@@ -50,8 +50,8 @@ test.describe("Error handling / fault injection", () => {
     await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
   });
 
-  test("an injected 500 on metrics degrades the Operations console to a visible error", async ({ page }) => {
-    await page.route("**/internal/metrics", (route) =>
+  test("an injected 500 on the public repository list degrades the Operations console to a visible error", async ({ page }) => {
+    await page.route("**/api/v3/user/repos**", (route) =>
       route.fulfill({
         status: 500,
         contentType: "application/json",
@@ -59,12 +59,12 @@ test.describe("Error handling / fault injection", () => {
       }),
     );
 
-    // The metrics-driven "System status" console lives at /ui/admin.
+    // The GitHub Actions metrics-driven "System status" console lives at /ui/admin.
     await page.goto("/ui/admin");
     await page.waitForLoadState("networkidle");
 
-    // A failed metrics fetch must degrade to a visible InlineError, never a
-    // blank console or an uncaught render. The app shell (header) survives.
+    // A failed public aggregate fetch must degrade to a visible InlineError,
+    // never a blank console or an uncaught render. The app shell survives.
     await expect(page.getByText(/Failed to load overview/i)).toBeVisible();
     await expect(page.getByRole("link", { name: "bleephub" })).toBeVisible();
   });
