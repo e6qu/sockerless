@@ -514,9 +514,10 @@ func (s *Server) handleListPublicRepositories(w http.ResponseWriter, r *http.Req
 		repos = repos[:pageSize]
 	}
 	base := s.baseURL(r)
+	viewer := ghUserFromContext(r.Context())
 	out := make([]map[string]interface{}, 0, len(repos))
 	for _, repo := range repos {
-		out = append(out, repoToJSON(repo, s.store, base))
+		out = append(out, repoToJSONForViewer(repo, s.store, base, viewer))
 	}
 	if more {
 		last := repos[len(repos)-1].ID

@@ -383,3 +383,24 @@ func TestUnitRepoJSONFields(t *testing.T) {
 		t.Errorf("permissions = %v, want all true", perms)
 	}
 }
+
+func TestUnitRepoJSONPermissionsFollowViewerAccess(t *testing.T) {
+	s := reposTestServer(t)
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "viewer-permissions", "", true)
+	_, readerToken := makeOtherUser(s, "repo-json-reader")
+	if !s.store.AddRepoCollaborator("admin", repo.Name, "repo-json-reader", "pull") {
+		t.Fatal("failed to add pull collaborator")
+	}
+
+	w := doInvitationReq(s, readerToken, "GET", "/api/v3/repos/"+repo.FullName, nil)
+	if w.Code != 200 {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var got map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &got)
+	perms, _ := got["permissions"].(map[string]interface{})
+	if perms["pull"] != true || perms["push"] != false || perms["admin"] != false {
+		t.Fatalf("pull collaborator permissions = %v, want pull only", perms)
+	}
+}

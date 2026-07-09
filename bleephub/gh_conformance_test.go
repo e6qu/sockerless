@@ -481,7 +481,7 @@ func TestConformanceRepoPermissions(t *testing.T) {
 		"name": "conf-perms",
 	}).Body.Close()
 
-	resp := ghGet(t, "/api/v3/repos/admin/conf-perms", "")
+	resp := ghGet(t, "/api/v3/repos/admin/conf-perms", defaultToken)
 	if resp.StatusCode != 200 {
 		resp.Body.Close()
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -500,6 +500,17 @@ func TestConformanceRepoPermissions(t *testing.T) {
 	}
 	if perms["pull"] != true {
 		t.Fatalf("expected pull=true, got %v", perms["pull"])
+	}
+
+	resp = ghGet(t, "/api/v3/repos/admin/conf-perms", "")
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("anonymous expected 200, got %d", resp.StatusCode)
+	}
+	data = decodeJSON(t, resp)
+	perms, _ = data["permissions"].(map[string]interface{})
+	if perms["admin"] != false || perms["push"] != false || perms["pull"] != true {
+		t.Fatalf("anonymous permissions = %v, want pull only", perms)
 	}
 }
 

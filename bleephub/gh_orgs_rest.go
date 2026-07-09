@@ -379,7 +379,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo = s.store.GetRepo(org.Login, req.Name)
-	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), ghUserFromContext(r.Context())))
 }
 
 // orgAsSimpleUserJSON converts an Org to the simple-user shape GitHub uses
