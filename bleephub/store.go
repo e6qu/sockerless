@@ -938,6 +938,9 @@ func (st *Store) loadFromPersistence() error {
 		if err := loadJSON(raw, &a); err != nil {
 			return err
 		}
+		if st.Users[a.OwnerID] == nil {
+			return fmt.Errorf("app %d (%s): owner id %d not found in loaded users", a.ID, a.Slug, a.OwnerID)
+		}
 		st.Apps[a.ID] = &a
 		st.AppsBySlug[a.Slug] = &a
 		st.AppsByClientID[a.ClientID] = &a

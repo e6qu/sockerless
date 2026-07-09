@@ -24,17 +24,10 @@ import (
 func TestSeedPreRegisteredApp(t *testing.T) {
 	// The private key the consumer "already holds" — as on real GitHub, where
 	// the App is registered out of band and the consumer keeps id + PEM.
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	pemKey := string(pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(key),
-	}))
+	pemKey := testSeedPrivateKeyPEM(t)
 
 	const appID = 4242
-	const orgLogin = "acme"
+	const accountLogin = "admin"
 	const instID = 9001
 
 	seed, _ := json.Marshal([]map[string]any{{
@@ -42,9 +35,14 @@ func TestSeedPreRegisteredApp(t *testing.T) {
 		"slug":            "ci-bot",
 		"name":            "CI Bot",
 		"private_key_pem": pemKey,
+		"owner":           accountLogin,
 		"permissions":     map[string]string{"contents": "read"},
 		"events":          []string{"push"},
-		"installations":   []map[string]any{{"id": instID, "account": orgLogin}},
+		"installations": []map[string]any{{
+			"id":          instID,
+			"account":     accountLogin,
+			"target_type": "User",
+		}},
 	}})
 	// Operator-only config (the harness that brings bleephub up) — the
 	// consumer's client never sees this.
@@ -108,8 +106,8 @@ func TestSeedPreRegisteredApp(t *testing.T) {
 		t.Fatalf("installations = %s, want one with id %d", body, instID)
 	}
 	acct, _ := insts[0]["account"].(map[string]any)
-	if acct["login"] != orgLogin {
-		t.Errorf("installation account = %v, want %s", acct["login"], orgLogin)
+	if acct["login"] != accountLogin {
+		t.Errorf("installation account = %v, want %s", acct["login"], accountLogin)
 	}
 
 	// 3. The consumer mints an installation token by coordinates alone.
@@ -126,6 +124,56 @@ func TestSeedPreRegisteredApp(t *testing.T) {
 	}
 }
 
+func TestSeedPreRegisteredAppRequiresExplicitExistingOwner(t *testing.T) {
+	pemKey := testSeedPrivateKeyPEM(t)
+	seed, _ := json.Marshal([]map[string]any{{
+		"id":              5001,
+		"slug":            "ownerless",
+		"name":            "Ownerless",
+		"private_key_pem": pemKey,
+	}})
+	t.Setenv("BLEEPHUB_SEED_APPS", string(seed))
+
+	srv := &Server{store: NewStore(), logger: zerolog.Nop()}
+	srv.store.SeedDefaultUser()
+	err := srv.seedConfiguredApps()
+	if err == nil || err.Error() != `seed app "Ownerless": owner is required` {
+		t.Fatalf("seedConfiguredApps error = %v, want explicit owner requirement", err)
+	}
+	if app := srv.store.GetApp(5001); app != nil {
+		t.Fatalf("app was created despite missing owner: %#v", app)
+	}
+}
+
+func TestSeedPreRegisteredAppRejectsUnknownInstallationAccount(t *testing.T) {
+	pemKey := testSeedPrivateKeyPEM(t)
+	seed, _ := json.Marshal([]map[string]any{{
+		"id":              5002,
+		"slug":            "unknown-install",
+		"name":            "Unknown Install",
+		"private_key_pem": pemKey,
+		"owner":           "admin",
+		"installations": []map[string]any{{
+			"id":      7001,
+			"account": "missing-org",
+		}},
+	}})
+	t.Setenv("BLEEPHUB_SEED_APPS", string(seed))
+
+	srv := &Server{store: NewStore(), logger: zerolog.Nop()}
+	srv.store.SeedDefaultUser()
+	err := srv.seedConfiguredApps()
+	if err == nil || err.Error() != `seed app "Unknown Install": installation account "missing-org" does not resolve to an existing user or organization` {
+		t.Fatalf("seedConfiguredApps error = %v, want unknown installation account failure", err)
+	}
+	if org := srv.store.GetOrg("missing-org"); org != nil {
+		t.Fatalf("missing installation account was auto-created: %#v", org)
+	}
+	if inst := srv.store.GetInstallation(7001); inst != nil {
+		t.Fatalf("installation was created despite missing account: %#v", inst)
+	}
+}
+
 // TestSeedAppIdempotentAndBadKey covers the two guards: a re-seed of the same
 // id is a no-op (created=false), and a non-RSA / malformed PEM is rejected
 // loud rather than producing an unusable App.
@@ -133,11 +181,7 @@ func TestSeedAppIdempotentAndBadKey(t *testing.T) {
 	st := NewStore()
 	st.SeedDefaultUser()
 
-	key, _ := rsa.GenerateKey(rand.Reader, 2048)
-	pemKey := string(pem.EncodeToMemory(&pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(key),
-	}))
+	pemKey := testSeedPrivateKeyPEM(t)
 	spec := AppSeedSpec{ID: 77, Name: "Dup App"}
 
 	app1, created1, err := st.SeedApp(spec, pemKey, "admin")
@@ -152,4 +196,16 @@ func TestSeedAppIdempotentAndBadKey(t *testing.T) {
 	if _, _, err := st.SeedApp(AppSeedSpec{ID: 78, Name: "Bad"}, "not-a-pem", "admin"); err == nil {
 		t.Fatal("seed with a malformed key must error, not produce an unusable App")
 	}
+}
+
+func testSeedPrivateKeyPEM(t *testing.T) string {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(key),
+	}))
 }

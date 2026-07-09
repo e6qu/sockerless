@@ -592,15 +592,14 @@ func appToJSON(st *Store, app *App, includePEM bool) map[string]interface{} {
 
 // appOwnerJSON serializes the GitHub App's owning account as a Simple User,
 // matching the `owner` object real GitHub returns on GET /app and
-// GET /apps/{slug}. Resolves the real user by app.OwnerID.
+// GET /apps/{slug}. App loading and creation validate OwnerID, so a missing
+// owner is corrupt state and is exposed as null rather than a fabricated user.
 func appOwnerJSON(st *Store, app *App) map[string]interface{} {
 	st.mu.RLock()
 	owner := st.Users[app.OwnerID]
 	st.mu.RUnlock()
 	if owner == nil {
-		// Owner record missing: still return a well-formed simple-user
-		// keyed on the recorded OwnerID so the shape is never empty.
-		return userToJSON(&User{ID: app.OwnerID, Type: "User"})
+		return nil
 	}
 	return userToJSON(owner)
 }
