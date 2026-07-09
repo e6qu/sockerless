@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -124,6 +125,58 @@ func TestRepoGraphQL_GitHubRepoQuery(t *testing.T) {
 	}
 	if repo["parent"] != nil {
 		t.Errorf("parent = %v, want null for non-fork repo", repo["parent"])
+	}
+}
+
+func TestRepoMetadataPushedAtFollowsGitHistory(t *testing.T) {
+	name := "sweep-empty-pushed-at"
+	createResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": name})
+	created := decodeJSON(t, createResp)
+	ownerData, _ := created["owner"].(map[string]interface{})
+	owner, _ := ownerData["login"].(string)
+	if owner == "" || created["name"] != name {
+		t.Fatalf("repo create failed: %v", created)
+	}
+	if created["pushed_at"] != nil {
+		t.Fatalf("REST pushed_at for empty repository = %v, want null", created["pushed_at"])
+	}
+
+	query := `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pushedAt,isEmpty}}`
+	before := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	beforeRepo, _ := before["repository"].(map[string]interface{})
+	if beforeRepo == nil {
+		t.Fatalf("repository query before commit = %v", before)
+	}
+	if beforeRepo["pushedAt"] != nil {
+		t.Fatalf("GraphQL pushedAt for empty repository = %v, want null", beforeRepo["pushedAt"])
+	}
+	if beforeRepo["isEmpty"] != true {
+		t.Fatalf("GraphQL isEmpty before commit = %v, want true", beforeRepo["isEmpty"])
+	}
+
+	putResp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/contents/README.md", defaultToken, map[string]interface{}{
+		"message": "initial commit",
+		"content": base64.StdEncoding.EncodeToString([]byte("# " + name + "\n")),
+	})
+	if putResp.StatusCode != http.StatusCreated {
+		t.Fatalf("contents create status = %d", putResp.StatusCode)
+	}
+
+	repoResp := ghGet(t, "/api/v3/repos/"+owner+"/"+name, defaultToken)
+	afterREST := decodeJSON(t, repoResp)
+	if afterREST["pushed_at"] == nil {
+		t.Fatalf("REST pushed_at after real commit = nil, want timestamp")
+	}
+	after := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	afterRepo, _ := after["repository"].(map[string]interface{})
+	if afterRepo == nil {
+		t.Fatalf("repository query after commit = %v", after)
+	}
+	if afterRepo["pushedAt"] == nil {
+		t.Fatalf("GraphQL pushedAt after real commit = nil, want timestamp")
+	}
+	if afterRepo["isEmpty"] != false {
+		t.Fatalf("GraphQL isEmpty after commit = %v, want false", afterRepo["isEmpty"])
 	}
 }
 

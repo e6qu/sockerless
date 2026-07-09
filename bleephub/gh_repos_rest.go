@@ -1098,7 +1098,7 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		},
 		"created_at": repo.CreatedAt.Format(time.RFC3339),
 		"updated_at": repo.UpdatedAt.Format(time.RFC3339),
-		"pushed_at":  repo.PushedAt.Format(time.RFC3339),
+		"pushed_at":  nullableTimestamp(repo.PushedAt),
 	}
 }
 
@@ -1153,6 +1153,13 @@ func nilOrString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+func nullableTimestamp(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func licenseJSON(repo *Repo) interface{} {

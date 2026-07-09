@@ -942,7 +942,7 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"owner":               ownerMap,
 		"createdAt":           repo.CreatedAt.Format(time.RFC3339),
 		"updatedAt":           repo.UpdatedAt.Format(time.RFC3339),
-		"pushedAt":            repo.PushedAt.Format(time.RFC3339),
+		"pushedAt":            nullableTimestamp(repo.PushedAt),
 	}
 }
 

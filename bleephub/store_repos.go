@@ -115,7 +115,6 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 		NextMilestoneNumber:       1,
 		CreatedAt:                 now,
 		UpdatedAt:                 now,
-		PushedAt:                  now,
 	}
 	st.NextRepo++
 
@@ -234,7 +233,7 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		NextMilestoneNumber:       1,
 		CreatedAt:                 time.Now().UTC(),
 		UpdatedAt:                 time.Now().UTC(),
-		PushedAt:                  time.Now().UTC(),
+		PushedAt:                  sourceRepo.PushedAt,
 	}
 	st.NextRepo++
 
