@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-repository-license-graphql` — Bleephub repository metadata now uses real persisted repository, git, and Pages state for license metadata, feature flags, merge-method settings, pushed timestamps, and Pages capability instead of null/hardcoded compatibility shapes.
+`feat/bleephub-repository-license-graphql` — Bleephub repository metadata now uses real persisted repository, git, and Pages state for license metadata, feature flags, merge-method settings, pushed timestamps, archive timestamps, and Pages capability instead of null/hardcoded compatibility shapes.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 and BUG-1075 remained open unless new boyscout bugs were found.
@@ -15,6 +15,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 - **BUG-2393:** GraphQL `Repository.mergeCommitAllowed`, `Repository.rebaseMergeAllowed`, and `Repository.squashMergeAllowed` now read the same persisted merge-method settings as REST repository JSON (`allow_merge_commit`, `allow_rebase_merge`, and `allow_squash_merge`) instead of always reporting all merge methods as enabled.
 - **BUG-2394:** REST repository JSON now derives `has_pages` from the persisted GitHub Pages site store. Repository metadata reports false before a Pages site exists, true after `POST /repos/{owner}/{repo}/pages`, and false again after `DELETE /repos/{owner}/{repo}/pages`.
 - **BUG-2395:** Empty repository creation no longer fabricates pushed timestamps. `PushedAt` stays unset until a real git write occurs, REST `pushed_at` and GraphQL `pushedAt` render null for empty repositories, forks copy the source repository's pushed state, and committed repositories expose non-null pushed timestamps from the real write path.
+- **BUG-2396:** Repository archival now records a persisted archive timestamp when `PATCH /repos/{owner}/{repo}` archives a repository, clears it when the repository is unarchived, copies it to forks, and exposes it through GraphQL `Repository.archivedAt`.
 - **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
 - **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
 - **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.

@@ -31,6 +31,7 @@ type Repo struct {
 	Private                              bool         `json:"private"`
 	Fork                                 bool         `json:"fork"`
 	Archived                             bool         `json:"archived"`
+	ArchivedAt                           *time.Time   `json:"archived_at,omitempty"`
 	IsTemplate                           bool         `json:"is_template"`
 	WebCommitSignoffRequired             bool         `json:"web_commit_signoff_required"`
 	HasIssues                            bool         `json:"has_issues"`
@@ -205,6 +206,8 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		OwnerType:                 "User",
 		Private:                   sourceRepo.Private,
 		Fork:                      true,
+		Archived:                  sourceRepo.Archived,
+		ArchivedAt:                cloneTimePtr(sourceRepo.ArchivedAt),
 		ParentID:                  sourceRepo.ID,
 		SourceID:                  sourceID,
 		HasIssues:                 sourceRepo.HasIssues,
@@ -268,6 +271,14 @@ func repoHasDiscussions(repo *Repo) bool {
 		return true
 	}
 	return *repo.HasDiscussions
+}
+
+func cloneTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	clone := t.UTC()
+	return &clone
 }
 
 // RenameRepo renames owner/name to owner/newName, moving every map keyed by

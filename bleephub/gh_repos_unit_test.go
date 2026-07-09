@@ -237,6 +237,21 @@ func TestUnitUpdateRepo_Archived(t *testing.T) {
 	if got["archived"] != true {
 		t.Fatalf("archived = %v, want true", got["archived"])
 	}
+	updated := s.store.GetRepo("admin", "archive-repo")
+	if updated == nil || updated.ArchivedAt == nil {
+		t.Fatalf("ArchivedAt = %v, want timestamp", updated)
+	}
+	w = doRepoReq(s, "PATCH", "/api/v3/repos/"+repo.FullName, `{"archived":false}`)
+	if w.Code != 200 {
+		t.Fatalf("unarchive status = %d, body = %s", w.Code, w.Body.String())
+	}
+	updated = s.store.GetRepo("admin", "archive-repo")
+	if updated == nil {
+		t.Fatalf("repository missing after unarchive")
+	}
+	if updated.ArchivedAt != nil {
+		t.Fatalf("ArchivedAt after unarchive = %v, want nil", updated.ArchivedAt)
+	}
 }
 
 func TestUnitRepoTopics_Empty(t *testing.T) {

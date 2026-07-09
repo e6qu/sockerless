@@ -419,10 +419,13 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("archivedAt", &graphql.Field{
-		// Archive timestamps aren't recorded; null matches an unarchived repo.
 		Type: graphql.String,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			return r["archivedAt"], nil
 		},
 	})
 
@@ -943,6 +946,7 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"createdAt":           repo.CreatedAt.Format(time.RFC3339),
 		"updatedAt":           repo.UpdatedAt.Format(time.RFC3339),
 		"pushedAt":            nullableTimestamp(repo.PushedAt),
+		"archivedAt":          nullableTimePtr(repo.ArchivedAt),
 	}
 }
 

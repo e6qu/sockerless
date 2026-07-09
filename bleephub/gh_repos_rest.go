@@ -722,6 +722,13 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 			r.HasPullRequests = v
 		}
 		if v, ok := coerceBool(req["archived"]); ok {
+			switch {
+			case v && (!r.Archived || r.ArchivedAt == nil):
+				now := time.Now().UTC()
+				r.ArchivedAt = &now
+			case !v:
+				r.ArchivedAt = nil
+			}
 			r.Archived = v
 		}
 		if v, ok := coerceBool(req["is_template"]); ok {
@@ -1157,6 +1164,13 @@ func nilOrString(s string) interface{} {
 
 func nullableTimestamp(t time.Time) interface{} {
 	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func nullableTimePtr(t *time.Time) interface{} {
+	if t == nil || t.IsZero() {
 		return nil
 	}
 	return t.UTC().Format(time.RFC3339)

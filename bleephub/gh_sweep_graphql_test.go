@@ -180,6 +180,49 @@ func TestRepoMetadataPushedAtFollowsGitHistory(t *testing.T) {
 	}
 }
 
+func TestRepoGraphQLArchivedAtFollowsArchiveState(t *testing.T) {
+	owner, name := sweepRepo(t, "archive-state")
+	query := `query($owner:String!,$name:String!){
+		repository(owner:$owner,name:$name){isArchived,archivedAt}
+	}`
+
+	before := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	beforeRepo, _ := before["repository"].(map[string]interface{})
+	if beforeRepo == nil {
+		t.Fatalf("repository null before archive: %v", before)
+	}
+	if beforeRepo["isArchived"] != false || beforeRepo["archivedAt"] != nil {
+		t.Fatalf("repository before archive = %v, want unarchived with null archivedAt", beforeRepo)
+	}
+
+	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{"archived": true})
+	if patchResp.StatusCode != http.StatusOK {
+		t.Fatalf("archive patch status = %d", patchResp.StatusCode)
+	}
+	archived := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	archivedRepo, _ := archived["repository"].(map[string]interface{})
+	if archivedRepo == nil {
+		t.Fatalf("repository null after archive: %v", archived)
+	}
+	archivedAt, _ := archivedRepo["archivedAt"].(string)
+	if archivedRepo["isArchived"] != true || archivedAt == "" {
+		t.Fatalf("repository after archive = %v, want archived with archivedAt", archivedRepo)
+	}
+	if _, err := time.Parse(time.RFC3339, archivedAt); err != nil {
+		t.Fatalf("archivedAt %q is not RFC3339: %v", archivedAt, err)
+	}
+
+	unarchiveResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{"archived": false})
+	if unarchiveResp.StatusCode != http.StatusOK {
+		t.Fatalf("unarchive patch status = %d", unarchiveResp.StatusCode)
+	}
+	after := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	afterRepo, _ := after["repository"].(map[string]interface{})
+	if afterRepo == nil || afterRepo["isArchived"] != false || afterRepo["archivedAt"] != nil {
+		t.Fatalf("repository after unarchive = %v, want unarchived with null archivedAt", afterRepo)
+	}
+}
+
 // TestRepoGraphQL_RepositoryOwnerOrg verifies that repositoryOwner(login:)
 // returns real organization data (not a synthetic partial User-shaped payload)
 // when the login resolves to an organization.

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2395 filed - 2352 fixed - 2 open - 16 false positives.**
+**2396 filed - 2353 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2396~~ | P2 | Bleephub repositories | archival transition time not modeled | Repository archival now records a persisted `ArchivedAt` timestamp when `PATCH /repos/{owner}/{repo}` archives a repository, clears it when the repository is unarchived, copies it to forks, and exposes it through GraphQL `Repository.archivedAt`. |
 | ~~2395~~ | P2 | Bleephub repositories | empty repositories reported fabricated push timestamps | Empty repository creation no longer initializes `PushedAt`; REST `pushed_at` and GraphQL `pushedAt` render null until a real git write occurs, forks copy the source repository's pushed state, and committed repositories expose non-null pushed timestamps from the real write path. |
 | ~~2394~~ | P2 | Bleephub repositories | Pages capability hidden by constant repository JSON | Repository JSON now derives `has_pages` from the persisted GitHub Pages site store, so repository metadata reports false before Pages creation, true while a Pages site exists, and false again after deletion. |
 | ~~2393~~ | P2 | Bleephub GraphQL repositories | REST-backed merge settings hidden from GraphQL | GraphQL `Repository.mergeCommitAllowed`, `rebaseMergeAllowed`, and `squashMergeAllowed` now read the same persisted repository merge-method settings as REST `allow_merge_commit`, `allow_rebase_merge`, and `allow_squash_merge` instead of always returning true. |
