@@ -1483,3 +1483,106 @@ func TestPullRequestFilesREST(t *testing.T) {
 		t.Errorf("greeting.txt patch missing hunk header: %q", patch)
 	}
 }
+
+func TestPullRequestGraphQLFilesAndClosingIssuesUseRealState(t *testing.T) {
+	repoName := "pr-graphql-files-closing"
+	repoPath := "/api/v3/repos/admin/" + repoName
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": repoName, "auto_init": true,
+	}).Body.Close()
+
+	issueResp := ghPost(t, repoPath+"/issues", defaultToken, map[string]interface{}{
+		"title": "release blocker",
+		"body":  "tracked by the pull request body",
+	})
+	issue := decodeJSON(t, issueResp)
+	if issue["number"] != float64(1) {
+		t.Fatalf("issue number = %v, want 1", issue["number"])
+	}
+
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "seed greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello\n")),
+		"branch":  "main",
+	}).Body.Close()
+	gResp := ghGet(t, repoPath+"/contents/greeting.txt?ref=main", defaultToken)
+	gData := decodeJSON(t, gResp)
+	blobSha, _ := gData["sha"].(string)
+	if blobSha == "" {
+		t.Fatalf("base blob sha missing: %v", gData)
+	}
+	refResp := ghGet(t, repoPath+"/git/refs/heads/main", defaultToken)
+	refData := decodeJSON(t, refResp)
+	mainObj, _ := refData["object"].(map[string]interface{})
+	mainSha, _ := mainObj["sha"].(string)
+	if mainSha == "" {
+		t.Fatalf("main ref sha missing: %v", refData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/heads/feature", "sha": mainSha,
+	}).Body.Close()
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "change greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello there\n")),
+		"branch":  "feature",
+		"sha":     blobSha,
+	}).Body.Close()
+	ghPut(t, repoPath+"/contents/added.txt", defaultToken, map[string]interface{}{
+		"message": "add file",
+		"content": base64.StdEncoding.EncodeToString([]byte("brand new\n")),
+		"branch":  "feature",
+	}).Body.Close()
+
+	prResp := ghPost(t, repoPath+"/pulls", defaultToken, map[string]interface{}{
+		"title": "GraphQL files",
+		"head":  "feature",
+		"base":  "main",
+		"body":  "Fixes #1.",
+	})
+	prData := decodeJSON(t, prResp)
+	prNumber := int(prData["number"].(float64))
+
+	query := `query PullRequestFilesAndClosingIssues($owner:String!,$repo:String!,$number:Int!){
+		repository(owner:$owner,name:$repo){
+			pullRequest(number:$number){
+				files(first:10){totalCount,nodes{path,additions,deletions,changeType}}
+				closingIssuesReferences(first:10){totalCount,nodes{number,title},pageInfo{hasNextPage,endCursor}}
+			}
+		}
+	}`
+	d := gqlData(t, query, map[string]interface{}{"owner": "admin", "repo": repoName, "number": prNumber})
+	repo, _ := d["repository"].(map[string]interface{})
+	pr, _ := repo["pullRequest"].(map[string]interface{})
+	if pr == nil {
+		t.Fatalf("pullRequest null: %v", d)
+	}
+	files, _ := pr["files"].(map[string]interface{})
+	if files["totalCount"] != float64(2) {
+		t.Fatalf("files.totalCount = %v, want 2: %v", files["totalCount"], files)
+	}
+	fileNodes, _ := files["nodes"].([]interface{})
+	byPath := map[string]map[string]interface{}{}
+	for _, raw := range fileNodes {
+		node, _ := raw.(map[string]interface{})
+		path, _ := node["path"].(string)
+		byPath[path] = node
+	}
+	if byPath["added.txt"]["changeType"] != "ADDED" {
+		t.Fatalf("added.txt GraphQL file = %v, want ADDED", byPath["added.txt"])
+	}
+	if byPath["greeting.txt"]["changeType"] != "CHANGED" {
+		t.Fatalf("greeting.txt GraphQL file = %v, want CHANGED", byPath["greeting.txt"])
+	}
+	closing, _ := pr["closingIssuesReferences"].(map[string]interface{})
+	if closing["totalCount"] != float64(1) {
+		t.Fatalf("closingIssuesReferences.totalCount = %v, want 1: %v", closing["totalCount"], closing)
+	}
+	closingNodes, _ := closing["nodes"].([]interface{})
+	if len(closingNodes) != 1 {
+		t.Fatalf("closing issue nodes = %v, want 1", closingNodes)
+	}
+	closingIssue, _ := closingNodes[0].(map[string]interface{})
+	if closingIssue["number"] != float64(1) || closingIssue["title"] != "release blocker" {
+		t.Fatalf("closing issue = %v, want #1 release blocker", closingIssue)
+	}
+}

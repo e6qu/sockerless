@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -1021,7 +1022,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				},
 			},
 			"files": &graphql.Field{
-				// PR diffs aren't materialised file-by-file; empty connection.
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "PullRequestChangedFileConnection",
 					Fields: graphql.Fields{
@@ -1039,13 +1039,25 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				}),
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{"nodes": []interface{}{}, "totalCount": 0}, nil
+					pr, repo, err := pullRequestAndRepoFromGQLSource(p.Source, s.store)
+					if err != nil {
+						return nil, err
+					}
+					files, err := pullRequestChangedFiles(s.store, repo, pr, "")
+					if err != nil {
+						return nil, err
+					}
+					nodes := make([]map[string]interface{}, 0, len(files))
+					for _, file := range files {
+						nodes = append(nodes, pullRequestChangedFileToGQL(file))
+					}
+					return repaginateConnection(map[string]interface{}{"nodes": nodes}, p.Args), nil
 				},
 			},
 			"closingIssuesReferences": &graphql.Field{
-				// Closing-keyword links aren't parsed; empty connection.
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "ClosingIssuesReferencesConnection",
 					Fields: graphql.Fields{
@@ -1065,11 +1077,16 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"nodes":      []interface{}{},
-						"totalCount": 0,
-						"pageInfo":   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
-					}, nil
+					pr, repo, err := pullRequestAndRepoFromGQLSource(p.Source, s.store)
+					if err != nil {
+						return nil, err
+					}
+					issues := closingIssuesForPullRequest(s.store, repo, pr)
+					first, _ := intArg(p.Args, "first")
+					after, _ := p.Args["after"].(string)
+					return paginateGQL(issues, first, after, func(issue *Issue) map[string]interface{} {
+						return issueToGQL(issue, s.store)
+					}), nil
 				},
 			},
 			"mergeCommit": &graphql.Field{
@@ -1943,6 +1960,110 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 
 // --- GraphQL converter helpers ---
 
+func pullRequestAndRepoFromGQLSource(src interface{}, st *Store) (*PullRequest, *Repo, error) {
+	prMap, ok := src.(map[string]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("resolve source: unexpected type %T", src)
+	}
+	prID, ok := prMap["databaseId"].(int)
+	if !ok || prID <= 0 {
+		return nil, nil, fmt.Errorf("pull request source missing databaseId")
+	}
+	pr := st.GetPullRequest(prID)
+	if pr == nil {
+		return nil, nil, fmt.Errorf("pull request not found")
+	}
+	repo := st.GetRepoByID(pr.RepoID)
+	if repo == nil {
+		return nil, nil, fmt.Errorf("repository not found")
+	}
+	return pr, repo, nil
+}
+
+func pullRequestChangedFileToGQL(file map[string]interface{}) map[string]interface{} {
+	status, _ := file["status"].(string)
+	changeType := "CHANGED"
+	switch status {
+	case "added":
+		changeType = "ADDED"
+	case "removed":
+		changeType = "DELETED"
+	case "renamed":
+		changeType = "RENAMED"
+	case "modified", "changed":
+		changeType = "CHANGED"
+	}
+	path, _ := file["filename"].(string)
+	additions, _ := file["additions"].(int)
+	deletions, _ := file["deletions"].(int)
+	return map[string]interface{}{
+		"path":       path,
+		"additions":  additions,
+		"deletions":  deletions,
+		"changeType": changeType,
+	}
+}
+
+var (
+	closingKeywordRE = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b([^\n]*)`)
+	closingIssueRE   = regexp.MustCompile(`(?i)(?:\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#([0-9]+)`)
+)
+
+func closingIssuesForPullRequest(st *Store, repo *Repo, pr *PullRequest) []*Issue {
+	refs := closingIssueRefs(repo.FullName, pr.Body)
+	if len(refs) == 0 {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	issues := make([]*Issue, 0, len(refs))
+	seen := map[int]bool{}
+	for _, ref := range refs {
+		targetRepo := st.ReposByName[ref.repoFullName]
+		if targetRepo == nil {
+			continue
+		}
+		issue := st.IssuesByRepo[targetRepo.ID][ref.number]
+		if issue == nil || seen[issue.ID] {
+			continue
+		}
+		seen[issue.ID] = true
+		issues = append(issues, issue)
+	}
+	return issues
+}
+
+type closingIssueRef struct {
+	repoFullName string
+	number       int
+}
+
+func closingIssueRefs(defaultRepoFullName, body string) []closingIssueRef {
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	refs := []closingIssueRef{}
+	for _, match := range closingKeywordRE.FindAllStringSubmatch(body, -1) {
+		tail := match[1]
+		if idx := strings.IndexAny(tail, ".;"); idx >= 0 {
+			tail = tail[:idx]
+		}
+		for _, refMatch := range closingIssueRE.FindAllStringSubmatch(tail, -1) {
+			repoFullName := defaultRepoFullName
+			if refMatch[1] != "" {
+				repoFullName = refMatch[1]
+			}
+			number, err := strconv.Atoi(refMatch[2])
+			if err != nil || number <= 0 {
+				continue
+			}
+			refs = append(refs, closingIssueRef{repoFullName: repoFullName, number: number})
+		}
+	}
+	return refs
+}
+
 func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	stor, repoFullNameForCommits := st.GitStorageForRepoID(pr.RepoID)
 	realCommits := []*object.Commit(nil)
@@ -2105,6 +2226,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"__typename":       "PullRequest",
 		"nodeID":           pr.NodeID,
 		"databaseId":       pr.ID,
+		"repoID":           pr.RepoID,
 		"number":           pr.Number,
 		"title":            pr.Title,
 		"body":             pr.Body,

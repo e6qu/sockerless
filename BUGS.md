@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2383 filed - 2340 fixed - 2 open - 16 false positives.**
+**2384 filed - 2341 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2384~~ | P2 | Bleephub GraphQL pull requests | hardcoded empty GitHub connections | `PullRequest.files` now derives changed files from the same git merge-base/head diff as `GET /pulls/{number}/files`, and `PullRequest.closingIssuesReferences` resolves GitHub closing-keyword issue references from the real pull request body to store-backed issue nodes. |
 | ~~2383~~ | P1 | Bleephub GraphQL pull requests / store locking | reentrant store read lock under git-backed PR commit rendering | Pull request GraphQL rendering now snapshots the repository git-storage handle before taking the store read lock and derives real git commit objects outside that lock, so `PullRequest.commits` no longer re-enters `Store.GetGitStorage` while rendering store-backed metadata. |
 | ~~2382~~ | P2 | Bleephub user interface repository inventory | user-facing pages used operator-only repo inventory | The Bleephub user interface's shared repository inventory helper now reads the authenticated user's repositories through paginated `GET /api/v3/user/repos`, so Codespaces, Migrations, and the registered-runner registry no longer depend on the operator-only `/internal/repos` endpoint. |
 | ~~2381~~ | P2 | Bleephub user interface end-to-end setup | Playwright auth selected login by stale placeholder | The Bleephub Playwright authentication setup now selects the login token input by its accessible token label instead of the old `BLEEPHUB_ADMIN_TOKEN` placeholder, so login-copy changes do not break the end-to-end authentication setup. |
