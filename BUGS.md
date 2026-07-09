@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2381 filed - 2338 fixed - 2 open - 16 false positives.**
+**2382 filed - 2339 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2382~~ | P2 | Bleephub user interface repository inventory | user-facing pages used operator-only repo inventory | The Bleephub user interface's shared repository inventory helper now reads the authenticated user's repositories through paginated `GET /api/v3/user/repos`, so Codespaces, Migrations, and the registered-runner registry no longer depend on the operator-only `/internal/repos` endpoint. |
 | ~~2381~~ | P2 | Bleephub user interface end-to-end setup | Playwright auth selected login by stale placeholder | The Bleephub Playwright authentication setup now selects the login token input by its accessible token label instead of the old `BLEEPHUB_ADMIN_TOKEN` placeholder, so login-copy changes do not break the end-to-end authentication setup. |
 | ~~2380~~ | P2 | dependency freshness / pre-push | stale AWS software development kit module pins blocked push | The required pre-push dependency freshness hook caught stale `github.com/aws/aws-sdk-go-v2/config` and `github.com/aws/aws-sdk-go-v2/credentials` pins in `backends/ecs`, `backends/lambda`, `bleephub`, `bleeplab`, and `simulators/aws/sdk-tests`. The affected modules were refreshed with `make upgrade-deps`, and `scripts/check-latest-deps.sh` passed. |
 | ~~2379~~ | P2 | Bleephub UI authentication | login used operator-only status instead of GitHub identity | The Bleephub login form now verifies tokens against `GET /api/v3/user`, matching the GitHub identity boundary documented for the service. OAuth/user-to-server tokens accepted by the GitHub REST user endpoint can sign in to the user interface, while operator-only `/internal/*` pages still fail loudly when a token lacks operator access. |

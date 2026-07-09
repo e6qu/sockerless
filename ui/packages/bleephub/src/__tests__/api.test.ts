@@ -32,6 +32,7 @@ import {
   isGistStarred,
   fetchPublicGists,
   fetchStarredGists,
+  fetchRepos,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -173,6 +174,28 @@ describe("Link-header pagination", () => {
     mockFetch.mockResolvedValue(jsonResponse([]));
     await fetchRepoIssuesPage("a", "b", "open", "/api/v3/repos/a/b/issues?page=2");
     expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/a/b/issues?page=2");
+  });
+
+  it("fetchRepos lists repositories through the GitHub REST user repository endpoint", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: 1, full_name: "admin/one" }]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            Link: `</api/v3/user/repos?page=2&per_page=100>; rel="next"`,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse([{ id: 2, full_name: "admin/two" }]));
+
+    const repos = await fetchRepos();
+
+    expect(repos.map((r) => r.full_name)).toEqual(["admin/one", "admin/two"]);
+    expect(mockFetch.mock.calls.map((c) => c[0])).toEqual([
+      "/api/v3/user/repos?per_page=100",
+      "/api/v3/user/repos?page=2&per_page=100",
+    ]);
   });
 });
 

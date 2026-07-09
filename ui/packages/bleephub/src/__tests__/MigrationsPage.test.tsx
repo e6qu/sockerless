@@ -100,7 +100,7 @@ function mockEndpoints() {
   mockFetch.mockImplementation((url: string) => {
     if (url === "/api/v3/user/migrations") return Promise.resolve(jsonResponse([userMigration]));
     if (url === "/api/v3/orgs/acme/migrations") return Promise.resolve(jsonResponse([orgMigration]));
-    if (url === "/internal/repos") return Promise.resolve(jsonResponse([baseRepo]));
+    if (url === "/api/v3/user/repos?per_page=100") return Promise.resolve(jsonResponse([baseRepo]));
     return Promise.resolve(jsonResponse({}));
   });
 }
@@ -126,5 +126,17 @@ describe("MigrationsPage", () => {
       expect(input).toHaveValue("acme");
       expect(screen.getByText(/1 rows/)).toBeInTheDocument();
     });
+  });
+
+  it("loads migration repository choices from GitHub REST user repositories", async () => {
+    mockEndpoints();
+    renderPage();
+    fireEvent.click(screen.getByText("New migration"));
+    await waitFor(() => {
+      expect(screen.getByRole("checkbox", { name: "admin/repo" })).toBeInTheDocument();
+    });
+    const calls = mockFetch.mock.calls.map((c) => c[0].toString());
+    expect(calls).toContain("/api/v3/user/repos?per_page=100");
+    expect(calls).not.toContain("/internal/repos");
   });
 });

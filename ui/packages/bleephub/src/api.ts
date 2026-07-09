@@ -317,7 +317,7 @@ export const fetchSessions = () =>
   fetchJSON<BleephubSession[]>("/internal/sessions");
 
 export const fetchRepos = () =>
-  fetchJSON<BleephubRepo[]>("/internal/repos");
+  fetchAllUserRepos();
 
 export const fetchMetrics = () =>
   fetchJSON<BleephubMetrics>("/internal/metrics");
