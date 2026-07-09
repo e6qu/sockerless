@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2430 filed - 2387 fixed - 2 open - 16 false positives.**
+**2431 filed - 2388 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2431~~ | P2 | dependency freshness | pre-push dependency drift | Pre-push dependency freshness no longer found stale AWS and Google Cloud Go modules after the affected modules were upgraded to the latest published versions. |
 | ~~2430~~ | P2 | Bleephub pre-commit coverage | local hook required temporarily unavailable Docker coverage | The local Bleephub Go pre-commit hook now runs the non-Docker Bleephub suite while Docker-backed Codespaces coverage remains fail-loud in CI during the temporary local Docker outage. |
 | ~~2429~~ | P2 | Bleephub pre-commit coverage | hook-discovered stale fixtures and dead UI types | The Bleephub hook suite no longer found a repo-scoped Actions fixture without a real git ref, missing GitHub Enterprise Server-only route-spec allowlist entries, or dead TypeScript runner-session exports left after the runner UI moved to public GitHub Actions routes. |
 | ~~2428~~ | P1 | Bleephub OAuth user interface | omitted required OAuth client identifier | The OAuth flow UI now sends the user-entered registered `client_id` on device-code issuance, device-token polling, and web-flow authorization URLs, instead of relying on an implicit or fake client identifier. |
