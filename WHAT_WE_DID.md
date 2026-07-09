@@ -4,6 +4,12 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
+## 2026-07-09 - Bleephub repository license GraphQL fidelity (feat/bleephub-repository-license-graphql)
+
+Closed BUG-2391 by wiring GraphQL `Repository.licenseInfo` to Bleephub's real repository license state. Repositories created with a license template already persisted license key, name, and SPDX metadata and exposed it through the REST repository and license endpoints; GraphQL now projects that same metadata instead of reporting licensed repositories as unlicensed.
+
+The GraphQL sweep creates a licensed repository through the public REST repository creation path, then queries `licenseInfo{key,name,nickname,spdxId}` and asserts the MIT license object. Because the license template path creates the initial license commit, the same regression also verifies the repository is no longer reported as empty, keeping the GraphQL shape tied to real git state.
+
 ## 2026-07-08 - bleephub GitHub Actions runner and UI endpoint fidelity (feat/bleephub-faithful-app-runner-flows)
 
 Closed BUG-2363 by removing the remaining Bleephub-only workflow/job execution paths from the external runner harness and workflow UI data paths. `workflow_dispatch` now preserves GitHub's host-mode job shape: a workflow without a `container:` block sends `jobContainer: null` to the runner instead of silently adding an `alpine:latest` job container. The regression builds the runner job message from a dispatched workflow and asserts the host-mode shape directly.

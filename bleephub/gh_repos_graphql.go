@@ -207,17 +207,35 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("licenseInfo", &graphql.Field{
-		// gh selects licenseInfo{key,name,nickname}; no license detection → null.
 		Type: graphql.NewObject(graphql.ObjectConfig{
 			Name: "RepositoryLicense",
 			Fields: graphql.Fields{
 				"key":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 				"name":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 				"nickname": &graphql.Field{Type: graphql.String},
+				"spdxId":   &graphql.Field{Type: graphql.String},
 			},
 		}),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			key, _ := r["licenseKey"].(string)
+			if key == "" {
+				return nil, nil
+			}
+			name, ok := r["licenseName"].(string)
+			if !ok || name == "" {
+				return nil, fmt.Errorf("repository source missing licenseName")
+			}
+			spdxID, _ := r["licenseSPDX"].(string)
+			return map[string]interface{}{
+				"key":      key,
+				"name":     name,
+				"nickname": nil,
+				"spdxId":   spdxID,
+			}, nil
 		},
 	})
 	languageType := graphql.NewObject(graphql.ObjectConfig{
@@ -878,6 +896,9 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"defaultBranch":       repo.DefaultBranch,
 		"stargazerCount":      repo.StargazersCount,
 		"language":            repo.Language,
+		"licenseKey":          repo.LicenseKey,
+		"licenseName":         repo.LicenseName,
+		"licenseSPDX":         repo.LicenseSPDX,
 		"homepage":            repo.Homepage,
 		"topics":              repo.Topics,
 		"hasProjects":         repo.HasProjects,

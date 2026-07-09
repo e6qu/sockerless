@@ -176,7 +176,10 @@ func TestRepoGraphQL_RepositoryOwnerOrg(t *testing.T) {
 // --- Finding 1: the static --json field set gh repo view exposes ---
 
 func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
-	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": "sweep-repoview"})
+	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":             "sweep-repoview",
+		"license_template": "mit",
+	})
 	repoData := decodeJSON(t, repoResp)
 	ownerData, _ := repoData["owner"].(map[string]interface{})
 	owner, _ := ownerData["login"].(string)
@@ -222,7 +225,7 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 			hasDiscussionsEnabled
 			forkCount
 			watchers{totalCount}
-			licenseInfo{key,name,nickname}
+			licenseInfo{key,name,nickname,spdxId}
 			primaryLanguage{name}
 			languages(first:100){edges{size,node{name}}}
 			repositoryTopics(first:100){nodes{topic{name}}}
@@ -242,10 +245,17 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if latest == nil || latest["tagName"] != "v1.0.0" {
 		t.Errorf("latestRelease = %v, want tagName v1.0.0", repo["latestRelease"])
 	}
-	for _, nullField := range []string{"templateRepository", "licenseInfo", "primaryLanguage", "archivedAt"} {
+	for _, nullField := range []string{"templateRepository", "primaryLanguage", "archivedAt"} {
 		if repo[nullField] != nil {
 			t.Errorf("%s = %v, want null", nullField, repo[nullField])
 		}
+	}
+	license, _ := repo["licenseInfo"].(map[string]interface{})
+	if license == nil {
+		t.Fatalf("licenseInfo = nil, want MIT license metadata")
+	}
+	if license["key"] != "mit" || license["name"] != "MIT License" || license["spdxId"] != "MIT" {
+		t.Errorf("licenseInfo = %v, want MIT license metadata", license)
 	}
 	if repo["homepageUrl"] != "https://example.test/sweep-repoview" {
 		t.Errorf("homepageUrl = %v, want patched homepage", repo["homepageUrl"])
@@ -269,9 +279,9 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if edges, ok := langs["edges"].([]interface{}); !ok || len(edges) != 0 {
 		t.Errorf("languages.edges = %v, want []", langs["edges"])
 	}
-	// Repo just created via REST with no commits: genuinely empty.
-	if v, ok := repo["isEmpty"].(bool); !ok || !v {
-		t.Errorf("isEmpty = %v, want true for a commit-less repo", repo["isEmpty"])
+	// The public license_template path creates the initial license commit.
+	if v, ok := repo["isEmpty"].(bool); !ok || v {
+		t.Errorf("isEmpty = %v, want false for a licensed repo with an initial commit", repo["isEmpty"])
 	}
 }
 
