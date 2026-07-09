@@ -26,8 +26,14 @@ func createRepoWriteRepo(t *testing.T, autoInit bool) string {
 func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 	repo := createRepoWriteRepo(t, true)
 
+	resp := ghGet(t, "/api/v3/repos/admin/"+repo, defaultToken)
+	repoData := decodeJSONWithStatus(t, resp, 200)
+	if repoData["has_pages"] != false {
+		t.Fatalf("repo has_pages before Pages create = %v, want false", repoData["has_pages"])
+	}
+
 	// A deployment for a repo without a Pages site is a 404.
-	resp := ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments", defaultToken, map[string]interface{}{
+	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments", defaultToken, map[string]interface{}{
 		"artifact_url":        "https://example.invalid/artifact.zip",
 		"pages_build_version": "abc123",
 		"oidc_token":          "token",
@@ -38,6 +44,11 @@ func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 		"source": map[string]interface{}{"branch": "main", "path": "/"},
 	})
 	requireStatus(t, resp, 201)
+	resp = ghGet(t, "/api/v3/repos/admin/"+repo, defaultToken)
+	repoData = decodeJSONWithStatus(t, resp, 200)
+	if repoData["has_pages"] != true {
+		t.Fatalf("repo has_pages after Pages create = %v, want true", repoData["has_pages"])
+	}
 
 	// Required members are validated.
 	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments", defaultToken, map[string]interface{}{
@@ -105,6 +116,14 @@ func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 	requireStatus(t, resp, 404)
 	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments/424242/cancel", defaultToken, nil)
 	requireStatus(t, resp, 404)
+
+	resp = ghDelete(t, "/api/v3/repos/admin/"+repo+"/pages", defaultToken)
+	requireStatus(t, resp, 204)
+	resp = ghGet(t, "/api/v3/repos/admin/"+repo, defaultToken)
+	repoData = decodeJSONWithStatus(t, resp, 200)
+	if repoData["has_pages"] != false {
+		t.Fatalf("repo has_pages after Pages delete = %v, want false", repoData["has_pages"])
+	}
 }
 
 func TestPagesHealthCheck(t *testing.T) {

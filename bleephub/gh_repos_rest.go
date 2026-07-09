@@ -1086,7 +1086,7 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		"has_issues":        repo.HasIssues,
 		"has_projects":      repo.HasProjects,
 		"has_wiki":          repo.HasWiki,
-		"has_pages":         false,
+		"has_pages":         st.HasPagesSite(repo.ID),
 		"has_downloads":     false,
 		"has_discussions":   repoHasDiscussions(repo),
 		"has_pull_requests": repo.HasPullRequests,

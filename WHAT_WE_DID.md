@@ -4,7 +4,7 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-09 - Bleephub repository metadata GraphQL fidelity (feat/bleephub-repository-license-graphql)
+## 2026-07-09 - Bleephub repository metadata fidelity (feat/bleephub-repository-license-graphql)
 
 Closed BUG-2391 by wiring GraphQL `Repository.licenseInfo` to Bleephub's real repository license state. Repositories created with a license template already persisted license key, name, and SPDX metadata and exposed it through the REST repository and license endpoints; GraphQL now projects that same metadata instead of reporting licensed repositories as unlicensed.
 
@@ -12,7 +12,11 @@ The GraphQL sweep creates a licensed repository through the public REST reposito
 
 Closed BUG-2392 by replacing the remaining repository feature-setting compatibility constants with real persisted repository state. Repository discussion enablement is stored as a nullable GitHub-defaulted setting, so rows created before the field existed keep GitHub's enabled default while explicit true/false values persist. User and organization repository creation accept `has_discussions`, repository PATCH updates it, forks and advisory forks copy it, REST repository JSON, migration repository JSON, and GraphQL `Repository.hasDiscussionsEnabled` read it, and SQLite reload preserves explicit false. GraphQL `createRepository` now applies accepted `hasIssuesEnabled` and `hasWikiEnabled` inputs before rendering the created repository, and the issue GraphQL resolver no longer hardcodes `Repository.hasIssuesEnabled` to true.
 
-Validation: `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestRepoGraphQL_ViewJSONStaticFields|TestGraphQLCreateRepo|TestPersistence_' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation for loopback listeners.
+Closed BUG-2393 by projecting repository merge-method settings through GraphQL from the same persisted repository row that REST exposes. `Repository.mergeCommitAllowed`, `Repository.rebaseMergeAllowed`, and `Repository.squashMergeAllowed` now read `allow_merge_commit`, `allow_rebase_merge`, and `allow_squash_merge` state instead of always reporting every merge method as enabled.
+
+Closed BUG-2394 by deriving REST repository `has_pages` from the persisted GitHub Pages site store. Repository metadata reports false before Pages creation, true while a Pages site exists, and false again after Pages deletion, matching the real Pages state instead of a fixed false constant.
+
+Validation: `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestRepoGraphQL_ViewJSONStaticFields|TestGraphQLCreateRepo|TestPersistence_' -count=1`, `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestRepoGraphQL_ViewJSONStaticFields|TestPagesDeployments_CreateStatusCancel|TestPagesBuildsCRUD' -count=1`, and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation for loopback listeners.
 
 ## 2026-07-08 - bleephub GitHub Actions runner and UI endpoint fidelity (feat/bleephub-faithful-app-runner-flows)
 

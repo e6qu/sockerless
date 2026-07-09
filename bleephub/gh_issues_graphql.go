@@ -641,21 +641,45 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 	repoType.AddFieldConfig("mergeCommitAllowed", &graphql.Field{
 		Type: graphql.Boolean,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return true, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["allowMergeCommit"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing allowMergeCommit")
+			}
+			return v, nil
 		},
 	})
 
 	repoType.AddFieldConfig("rebaseMergeAllowed", &graphql.Field{
 		Type: graphql.Boolean,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return true, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["allowRebaseMerge"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing allowRebaseMerge")
+			}
+			return v, nil
 		},
 	})
 
 	repoType.AddFieldConfig("squashMergeAllowed", &graphql.Field{
 		Type: graphql.Boolean,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return true, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["allowSquashMerge"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing allowSquashMerge")
+			}
+			return v, nil
 		},
 	})
 

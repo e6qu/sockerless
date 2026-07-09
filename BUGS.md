@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2392 filed - 2349 fixed - 2 open - 16 false positives.**
+**2394 filed - 2351 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2394~~ | P2 | Bleephub repositories | Pages capability hidden by constant repository JSON | Repository JSON now derives `has_pages` from the persisted GitHub Pages site store, so repository metadata reports false before Pages creation, true while a Pages site exists, and false again after deletion. |
+| ~~2393~~ | P2 | Bleephub GraphQL repositories | REST-backed merge settings hidden from GraphQL | GraphQL `Repository.mergeCommitAllowed`, `rebaseMergeAllowed`, and `squashMergeAllowed` now read the same persisted repository merge-method settings as REST `allow_merge_commit`, `allow_rebase_merge`, and `allow_squash_merge` instead of always returning true. |
 | ~~2392~~ | P2 | Bleephub repositories | repository feature settings ignored or hardcoded | Repository discussion enablement is now persisted as a nullable GitHub-defaulted repository setting; REST repository JSON, migration repository JSON, and GraphQL `Repository.hasDiscussionsEnabled` read that state, and GraphQL `createRepository` applies accepted feature inputs instead of ignoring them. |
 | ~~2391~~ | P2 | Bleephub GraphQL repositories | REST-backed repository license hidden from GraphQL | GraphQL `Repository.licenseInfo` now reads the same persisted repository license key/name/SPDX metadata that repository creation, REST repository responses, and the REST license endpoint already expose; the GraphQL sweep creates a licensed repository through the public REST path and asserts the license object. |
 | ~~2390~~ | P2 | Bleephub repository tags | annotated tag object leaked as commit | `GET /api/v3/repos/{owner}/{repo}/tags` now peels annotated tag objects through real git storage before rendering `commit.sha` and `commit.url`; the regression creates both annotated and lightweight tags through the public Git Data API instead of accepting an empty tag list. |

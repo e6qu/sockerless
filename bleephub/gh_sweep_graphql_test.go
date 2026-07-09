@@ -202,6 +202,9 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 		"has_projects":           true,
 		"has_wiki":               true,
 		"has_discussions":        true,
+		"allow_squash_merge":     false,
+		"allow_merge_commit":     false,
+		"allow_rebase_merge":     true,
 		"delete_branch_on_merge": true,
 		"is_template":            true,
 	})
@@ -240,6 +243,9 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 			primaryLanguage{name}
 			languages(first:100){edges{size,node{name}}}
 			repositoryTopics(first:100){nodes{topic{name}}}
+			mergeCommitAllowed
+			rebaseMergeAllowed
+			squashMergeAllowed
 			deleteBranchOnMerge
 			isTemplate
 			isEmpty
@@ -274,6 +280,15 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	for _, trueField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
 		if v, ok := repo[trueField].(bool); !ok || !v {
 			t.Errorf("%s = %v, want true", trueField, repo[trueField])
+		}
+	}
+	for field, want := range map[string]bool{
+		"mergeCommitAllowed": false,
+		"rebaseMergeAllowed": true,
+		"squashMergeAllowed": false,
+	} {
+		if got, ok := repo[field].(bool); !ok || got != want {
+			t.Errorf("%s = %v, want %v", field, repo[field], want)
 		}
 	}
 	if fc, _ := repo["forkCount"].(float64); fc != 0 {
