@@ -1944,6 +1944,14 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 // --- GraphQL converter helpers ---
 
 func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
+	stor, repoFullNameForCommits := st.GitStorageForRepoID(pr.RepoID)
+	realCommits := []*object.Commit(nil)
+	if stor != nil {
+		if commits, err := pullRequestCommitObjectsFromStorage(stor, pr); err == nil {
+			realCommits = commits
+		}
+	}
+
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
@@ -2074,12 +2082,11 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	if repo != nil {
 		repoFullName = repo.FullName
 	}
-	if repo != nil {
-		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil {
-			for _, c := range commits {
-				commitNodes = append(commitNodes, map[string]interface{}{"commit": gitCommitToGQLLocked(c, st, repoFullName)})
-			}
-		}
+	if repoFullName == "" {
+		repoFullName = repoFullNameForCommits
+	}
+	for _, c := range realCommits {
+		commitNodes = append(commitNodes, map[string]interface{}{"commit": gitCommitToGQLLocked(c, st, repoFullName)})
 	}
 	if len(commitNodes) == 0 && sha != "" {
 		headCommit := map[string]interface{}{

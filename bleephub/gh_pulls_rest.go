@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
 func (s *Server) registerGHPullRoutes() {
@@ -1061,6 +1062,10 @@ func pullRequestCommitObjects(st *Store, repo *Repo, pr *PullRequest) ([]*object
 	if stor == nil {
 		return nil, nil
 	}
+	return pullRequestCommitObjectsFromStorage(stor, pr)
+}
+
+func pullRequestCommitObjectsFromStorage(stor gitStorage.Storer, pr *PullRequest) ([]*object.Commit, error) {
 	headHash, err := resolveGitRef(stor, pr.HeadRefName)
 	if err != nil {
 		return nil, nil
