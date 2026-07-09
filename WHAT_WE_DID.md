@@ -48,11 +48,15 @@ Closed BUG-2428 by keeping the Bleephub OAuth UI on the same registered-client c
 
 Closed BUG-2429 by fixing hook-discovered stale coverage and dead UI types. The pending-deployment review flow fixture now creates a real workflow file through the public contents API before submitting a repo-scoped workflow, the GitHub Enterprise Server-only user-administration and Pages deployment status routes are explicitly allowlisted in the route-spec guard, and obsolete runner-session TypeScript exports were removed after the runner UI moved to GitHub Actions public runner endpoints.
 
-Closed BUG-2430 by making the local Bleephub Go pre-commit hook truthful during the temporary local Docker outage. The hook now runs the non-Docker Bleephub suite through `scripts/bleephub-go-test-local.sh`, while Docker-backed Codespaces lifecycle coverage remains fail-loud in CI instead of silently pretending the missing local Docker socket was covered.
+Closed BUG-2430 by making the local Bleephub Go pre-commit hook truthful during the temporary local Docker outage. During the outage, the local hook ran the non-Docker Bleephub suite while Docker-backed Codespaces lifecycle coverage remained fail-loud in CI instead of silently pretending the missing local Docker socket was covered.
 
 Closed BUG-2431 by upgrading the stale AWS and Google Cloud Go modules surfaced by pre-push dependency freshness. The affected Amazon EC2 software development kit, Google API client, and Google Cloud Firestore module pins were brought to their latest published versions, and dependency freshness passed again.
 
 Closed BUG-2432 by removing hidden admin-owned identity defaults from GitHub App seed configuration. Seeded GitHub Apps now require an explicit existing owner user, installations require an existing target user or organization with a matching target type, persisted app owners are validated on load, and app JSON no longer fabricates a Simple User when app owner state is corrupt.
+
+Closed BUG-2433 by renaming the Bleephub runner integration harness's Google Cloud service-account credential generation from fake service-account JSON to simulator service-account JSON. The harness still generated a real RSA key and drove the Google client JWT signing and token exchange path, with only the token endpoint coordinate pointed at the simulator.
+
+Closed BUG-2434 by restoring the local Bleephub Go pre-commit hook to the full Bleephub suite after Docker compatibility returned on the host. The temporary non-Docker skip script was removed, so Docker-backed Codespaces coverage ran locally again instead of being deferred to CI.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
 
@@ -60,12 +64,12 @@ Validation in this branch included focused Bleephub Go tests for repository meta
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestReleases_AssetLifecycle|TestGenerateCodespaceNameRequiresRandomBytes|TestCodespacesUserMachines_RealCatalogValues' -count=1
 ```
 
-It passed with sandbox escalation for loopback listeners. Docker-backed Bleephub/Codespaces validation remained delegated to CI while the local Docker-compatible runtime was temporarily unavailable.
+It passed with sandbox escalation for loopback listeners.
 
-The local Bleephub Go pre-commit test script also passed:
+The full Bleephub Go pre-commit test command passed after Docker compatibility returned:
 
 ```bash
-GOCACHE=/private/tmp/sockerless-go-cache bash scripts/bleephub-go-test-local.sh
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./... -count=1 -timeout 300s
 ```
 
 The dependency freshness hook also passed:
@@ -78,6 +82,18 @@ The GitHub App seed validation also passed:
 
 ```bash
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestSeedPreRegisteredApp|TestSeedAppIdempotentAndBadKey|TestPersistence_RoundTripAppsInstallationsTokensRepos' -count=1
+```
+
+The runner harness shell syntax check also passed:
+
+```bash
+bash -n bleephub/test/run-integration.sh
+```
+
+The full local Bleephub Go hook command also passed:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./... -count=1 -timeout 300s
 ```
 
 The runner UI validation also passed:
@@ -130,7 +146,7 @@ The GitHub Enterprise Server user administration route changes also passed compi
 GOCACHE=/private/tmp/sockerless-go-cache go test -c ./bleephub -o /private/tmp/bleephub.test
 ```
 
-The focused runtime Go test for the user administration routes did not execute locally because the sandbox denied loopback binds and both escalated attempts timed out in the automatic approval reviewer before execution. Docker-backed Bleephub/Codespaces validation remained delegated to CI while the local Docker-compatible runtime was temporarily unavailable.
+The focused runtime Go test for the user administration routes did not execute locally because the sandbox denied loopback binds and both escalated attempts timed out in the automatic approval reviewer before execution.
 
 The audit-log public-route validation passed:
 

@@ -386,12 +386,12 @@ provision_azf() {
     log "sockerless-backend-azf ready (shared volumes: workspace + externals)"
 }
 
-# write_fake_sa_json writes a service-account JSON whose token_uri points
-# at the sim's /token endpoint. The backend's google-cloud Go clients
-# parse the (real, freshly generated) RSA private key, self-sign a JWT,
-# and exchange it at token_uri for an access token — exactly as against
-# real GCP, differing only in the token_uri coordinate.
-write_fake_sa_json() {
+# write_simulator_sa_json writes a service-account JSON whose token_uri points
+# at the simulator's /token endpoint. The backend's Google Cloud Go clients
+# parse the real, freshly generated RSA private key, self-sign a JWT, and
+# exchange it at token_uri for an access token, exactly as against Google Cloud,
+# differing only in the endpoint coordinate.
+write_simulator_sa_json() {
     local out="$1" token_uri="$2" project="$3"
     local key
     key=$(openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 2>/dev/null) || fail "generate SA RSA key"
@@ -450,9 +450,10 @@ provision_cloudrun() {
             || fail "create GCS bucket $b"
     done
 
-    # GCP auth: a fake SA JSON whose token_uri is the sim's /token.
+    # Google Cloud auth: simulator service-account JSON with token_uri as the
+    # simulator's /token coordinate.
     local sa_json="$SOCKERLESS_HARNESS_DATA_DIR/cloudrun-sa.json"
-    write_fake_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
+    write_simulator_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
     export GOOGLE_APPLICATION_CREDENTIALS="$sa_json"
 
     # The runner workspace + externals are LOCAL dirs synced to/from GCS
@@ -579,9 +580,10 @@ provision_gcf() {
             || fail "create GCS bucket $b"
     done
 
-    # GCP auth: a fake SA JSON whose token_uri is the sim's /token.
+    # Google Cloud auth: simulator service-account JSON with token_uri as the
+    # simulator's /token coordinate.
     local sa_json="$SOCKERLESS_HARNESS_DATA_DIR/gcf-sa.json"
-    write_fake_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
+    write_simulator_sa_json "$sa_json" "http://$SIM_ADDR/token" "$project"
     export GOOGLE_APPLICATION_CREDENTIALS="$sa_json"
 
     WORK_DIR="$SOCKERLESS_HARNESS_DATA_DIR/runner-ws"

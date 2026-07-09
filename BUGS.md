@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2432 filed - 2389 fixed - 2 open - 16 false positives.**
+**2434 filed - 2391 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,9 +17,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2434~~ | P2 | Bleephub pre-commit coverage | stale temporary local Docker skip | The local Bleephub Go pre-commit hook again ran the full Bleephub suite after the Docker-compatible runtime returned, and the temporary non-Docker skip script was removed. |
+| ~~2433~~ | P3 | Bleephub runner integration harness | simulator credentials described as fake | The Bleephub runner integration harness now described generated Google service-account credentials as simulator coordinates instead of fake credentials, matching the real JWT signing and token-exchange flow it exercised. |
 | ~~2432~~ | P1 | Bleephub GitHub Apps seed configuration | implicit admin-owned identities | GitHub App seed configuration no longer defaulted the app owner to `admin` or auto-created unknown installation organizations; seed owners and installation accounts had to name real existing users or organizations. |
 | ~~2431~~ | P2 | dependency freshness | pre-push dependency drift | Pre-push dependency freshness no longer found stale AWS and Google Cloud Go modules after the affected modules were upgraded to the latest published versions. |
-| ~~2430~~ | P2 | Bleephub pre-commit coverage | local hook required temporarily unavailable Docker coverage | The local Bleephub Go pre-commit hook now runs the non-Docker Bleephub suite while Docker-backed Codespaces coverage remains fail-loud in CI during the temporary local Docker outage. |
+| ~~2430~~ | P2 | Bleephub pre-commit coverage | local hook required temporarily unavailable Docker coverage | The local Bleephub Go pre-commit hook temporarily ran the non-Docker Bleephub suite while Docker-backed Codespaces coverage remained fail-loud in CI during the local Docker outage. |
 | ~~2429~~ | P2 | Bleephub pre-commit coverage | hook-discovered stale fixtures and dead UI types | The Bleephub hook suite no longer found a repo-scoped Actions fixture without a real git ref, missing GitHub Enterprise Server-only route-spec allowlist entries, or dead TypeScript runner-session exports left after the runner UI moved to public GitHub Actions routes. |
 | ~~2428~~ | P1 | Bleephub OAuth user interface | omitted required OAuth client identifier | The OAuth flow UI now sends the user-entered registered `client_id` on device-code issuance, device-token polling, and web-flow authorization URLs, instead of relying on an implicit or fake client identifier. |
 | ~~2427~~ | P1 | Bleephub OAuth clients | accepted unregistered clients and skipped client-secret checks | OAuth web and device flows now require registered OAuth App or GitHub App client IDs, authorization-code exchange validates the matching client secret, and device-code polling requires the same client ID that issued the code. |

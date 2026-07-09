@@ -139,7 +139,7 @@ repos:
 
       - id: go-test-bleephub
         name: Go test (bleephub)
-        entry: bash scripts/bleephub-go-test-local.sh
+        entry: bash -c 'cd bleephub && go test -tags noui ./... -count=1 -timeout 300s'
         language: system
         pass_filenames: false
         files: ^bleephub/.*\.go$
