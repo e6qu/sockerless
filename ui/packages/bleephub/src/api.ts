@@ -2,7 +2,6 @@ import type {
   BleephubWorkflow,
   BleephubWorkflowFile,
   BleephubDispatchRequest,
-  BleephubSession,
   BleephubRepo,
   RepoListFilters,
   BleephubMetrics,
@@ -12,7 +11,6 @@ import type {
   BleephubApp,
   BleephubInstallation,
   BleephubOAuthApp,
-  BleephubOAuthState,
   WireGitHubApp,
   WireInstallation,
   WireOAuthApp,
@@ -313,9 +311,6 @@ export async function fetchWorkflowLogs(id: string): Promise<Record<string, stri
   return logs;
 }
 
-export const fetchSessions = () =>
-  fetchJSON<BleephubSession[]>("/internal/sessions");
-
 export const fetchRepos = () =>
   fetchAllUserRepos();
 
@@ -352,9 +347,6 @@ export async function fetchInstallations(): Promise<BleephubInstallation[]> {
   );
   return raw.installations.map(normalizeInstallation);
 }
-export const fetchOAuthState = () =>
-  fetchJSON<BleephubOAuthState>("/internal/oauth/state");
-
 export const fetchStorageInfo = () =>
   fetchJSON<BleephubStorageInfo>("/internal/storage");
 
@@ -1101,75 +1093,77 @@ export const deleteScopedVariable = (scope: SecretsScope, name: string) =>
 
 // ─── Internal admin endpoints ───────────────────────────────────────────
 
-async function internalFetch<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { ...authHeaders(), ...(init?.headers || {}) },
-  });
-  if (!res.ok) {
-    handleUnauthorized(res);
-    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
-  }
-  if (res.status === 204) return undefined as T;
-  return res.json() as Promise<T>;
+export async function fetchUsers(): Promise<BleephubUser[]> {
+  const users = await ghFetch<BleephubUser[]>("/api/v3/users?per_page=100");
+  return Promise.all(users.map((user) => ghFetch<BleephubUser>(`/api/v3/users/${user.login}`)));
 }
 
-export const fetchUsers = () => internalFetch<BleephubUser[]>("/internal/users");
+export async function createUser(payload: { login: string; email?: string; site_admin?: boolean }): Promise<BleephubUser> {
+  const user = await ghPostJSON<BleephubUser>("/api/v3/admin/users", { login: payload.login, email: payload.email });
+  if (payload.site_admin) {
+    await ghSend("PUT", `/api/v3/users/${user.login}/site_admin`);
+  }
+  return ghFetch<BleephubUser>(`/api/v3/users/${user.login}`);
+}
 
-export const createUser = (payload: { login: string; password?: string; site_admin?: boolean }) =>
-  internalFetch<BleephubUser>("/internal/users", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+export async function updateUser(login: string, payload: Pick<Partial<BleephubUser>, "site_admin">): Promise<BleephubUser> {
+  if (payload.site_admin === true) {
+    await ghSend("PUT", `/api/v3/users/${login}/site_admin`);
+  } else if (payload.site_admin === false) {
+    await ghSend("DELETE", `/api/v3/users/${login}/site_admin`);
+  }
+  return ghFetch<BleephubUser>(`/api/v3/users/${login}`);
+}
+
+export const deleteUser = (login: string) =>
+  ghSend("DELETE", `/api/v3/admin/users/${login}`);
+
+export async function fetchOrgs(): Promise<BleephubOrg[]> {
+  const orgs = await ghFetch<GithubOrgSummary[]>("/api/v3/organizations?per_page=100");
+  return Promise.all(orgs.map((org) => ghFetch<BleephubOrg>(`/api/v3/orgs/${org.login}`)));
+}
+
+export async function createOrg(payload: {
+  login: string;
+  name?: string;
+  description?: string;
+  billing_email?: string;
+}): Promise<BleephubOrg> {
+  const viewer = await fetchCurrentUser();
+  const org = await ghPostJSON<BleephubOrg>("/api/v3/admin/organizations", {
+    login: payload.login,
+    admin: viewer.login,
+    profile_name: payload.name || payload.login,
   });
+  if (payload.description || payload.billing_email) {
+    return ghPatchJSON<BleephubOrg>(`/api/v3/orgs/${org.login}`, {
+      description: payload.description,
+      billing_email: payload.billing_email,
+    });
+  }
+  return org;
+}
 
-export const updateUser = (id: number, payload: Partial<BleephubUser>) =>
-  internalFetch<BleephubUser>(`/internal/users/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+export const updateOrg = (login: string, payload: Partial<BleephubOrg>) =>
+  ghPatchJSON<BleephubOrg>(`/api/v3/orgs/${login}`, payload);
 
-export const deleteUser = (id: number) =>
-  internalFetch<void>(`/internal/users/${id}`, { method: "DELETE" });
+export const deleteOrg = (login: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${login}`);
 
-export const fetchOrgs = () => internalFetch<BleephubOrg[]>("/internal/orgs");
-
-export const createOrg = (payload: { login: string; name?: string; description?: string; billing_email?: string }) =>
-  internalFetch<BleephubOrg>("/internal/orgs", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-export const updateOrg = (id: number, payload: Partial<BleephubOrg>) =>
-  internalFetch<BleephubOrg>(`/internal/orgs/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-
-export const deleteOrg = (id: number) =>
-  internalFetch<void>(`/internal/orgs/${id}`, { method: "DELETE" });
-
-export const fetchTeams = () => internalFetch<BleephubTeam[]>("/internal/teams");
+export const fetchTeams = () => ghFetch<BleephubTeam[]>("/api/v3/user/teams?per_page=100");
 
 export const createTeam = (payload: { org: string; name: string; description?: string; privacy?: "secret" | "closed" }) =>
-  internalFetch<BleephubTeam>("/internal/teams", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
+  ghPostJSON<BleephubTeam>(`/api/v3/orgs/${payload.org}/teams`, {
+    name: payload.name,
+    description: payload.description,
+    privacy: payload.privacy,
   });
 
-export const updateTeam = (id: number, payload: Partial<BleephubTeam>) =>
-  internalFetch<BleephubTeam>(`/internal/teams/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
+export const updateTeam = (org: string, slug: string, payload: Partial<BleephubTeam>) =>
+  ghPatchJSON<BleephubTeam>(`/api/v3/orgs/${org}/teams/${slug}`, payload);
 
-export const deleteTeam = (id: number) =>
-  internalFetch<void>(`/internal/teams/${id}`, { method: "DELETE" });
+export const deleteTeam = (org: string, slug: string) =>
+  ghSend("DELETE", `/api/v3/orgs/${org}/teams/${slug}`);
 
 export const fetchTeamMembers = (org: string, slug: string) =>
   ghFetch<GithubTeamMember[]>(`/api/v3/orgs/${org}/teams/${slug}/members`);
@@ -1234,19 +1228,57 @@ export const transferRepo = (owner: string, repo: string, newOwner: string) =>
 export const renameBranch = (owner: string, repo: string, branch: string, newName: string) =>
   ghPostJSON<{ url: string }>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/rename`, { new_name: newName });
 
+interface GithubAuditEntry {
+  _document_id: number | string;
+  "@timestamp": string;
+  action: string;
+  actor: string;
+  org?: string;
+  data?: Record<string, unknown>;
+}
+
 export const fetchAuditLog = (filters: {
+  org: string;
+  phrase?: string;
+  order?: "asc" | "desc";
+}): Promise<BleephubAuditEvent[]> => {
+  const params = new URLSearchParams();
+  params.set("include", "all");
+  params.set("per_page", "100");
+  if (filters.order) params.set("order", filters.order);
+  if (filters.phrase) params.set("phrase", filters.phrase);
+  const qs = params.toString();
+  return ghFetch<GithubAuditEntry[]>(`/api/v3/orgs/${encodeURIComponent(filters.org)}/audit-log?${qs}`).then((entries) =>
+    entries.map((entry) => ({
+      id: Number(entry._document_id),
+      actor_login: entry.actor,
+      action: entry.action,
+      entity_type: String(entry.data?.entity_type ?? entry.data?.target_type ?? entry.org ?? filters.org),
+      entity_id: String(entry.data?.entity_id ?? entry.data?.target_id ?? entry.data?.repo ?? entry.org ?? filters.org),
+      details: entry.data ?? {},
+      created_at: entry["@timestamp"],
+    })),
+  );
+};
+
+export const fetchAuthenticatedUserOrgs = () =>
+  ghFetch<BleephubOrg[]>("/api/v3/user/orgs?per_page=100");
+
+export const fetchAuditLogOrgs = async (): Promise<BleephubOrg[]> => {
+  const orgs = await fetchAuthenticatedUserOrgs();
+  return orgs.sort((a, b) => a.login.localeCompare(b.login));
+};
+
+export const buildAuditLogPhrase = (filters: {
   actor?: string;
   action?: string;
-  entity_type?: string;
-  since?: string;
-  until?: string;
-} = {}) => {
-  const params = new URLSearchParams();
-  Object.entries(filters).forEach(([k, v]) => {
-    if (v) params.set(k, v);
-  });
-  const qs = params.toString();
-  return internalFetch<BleephubAuditEvent[]>(`/internal/audit-log${qs ? `?${qs}` : ""}`);
+  text?: string;
+}) => {
+  const terms: string[] = [];
+  if (filters.actor) terms.push(filters.actor);
+  if (filters.action) terms.push(filters.action);
+  if (filters.text) terms.push(filters.text);
+  return terms.join(" ");
 };
 
 export const fetchNotifications = () =>
@@ -3015,7 +3047,7 @@ export const deleteUserEmails = (emails: string[]) =>
 export const setUserEmailVisibility = (visibility: "public" | "private") =>
   ghPatchJSON<GithubUserEmail[]>("/api/v3/user/email/visibility", { visibility });
 
-// ─── WP-D (org overview + people/teams, user profile, dashboard) ────────
+// ─── Bleephub dashboard, user profile, and organization pages ───────────
 
 /** Public-user profile for GET /users/{login} (the /ui/{login} page). */
 export const fetchUserProfile = (login: string) =>

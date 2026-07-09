@@ -2,7 +2,7 @@ package bleephub
 
 import (
 	"fmt"
-	"strconv"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,6 +25,7 @@ func createRepoWriteRepo(t *testing.T, autoInit bool) string {
 
 func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 	repo := createRepoWriteRepo(t, true)
+	buildVersion := "abc123"
 
 	resp := ghGet(t, "/api/v3/repos/admin/"+repo, defaultToken)
 	repoData := decodeJSONWithStatus(t, resp, 200)
@@ -77,27 +78,39 @@ func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 
 	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments", defaultToken, map[string]interface{}{
 		"artifact_url":        "https://example.invalid/artifact.zip",
-		"pages_build_version": "abc123",
+		"pages_build_version": buildVersion,
 		"oidc_token":          "token",
 	})
 	data := decodeJSONWithStatus(t, resp, 200)
-	id, ok := data["id"].(float64)
-	if !ok {
-		t.Fatalf("id = %v, want number", data["id"])
+	id, ok := data["id"].(string)
+	if !ok || id != buildVersion {
+		t.Fatalf("id = %v, want public pages build version %q", data["id"], buildVersion)
 	}
 	statusURL, _ := data["status_url"].(string)
 	if statusURL == "" {
 		t.Fatal("missing status_url")
 	}
+	parsedStatusURL, err := url.Parse(statusURL)
+	if err != nil {
+		t.Fatalf("status_url did not parse: %v", err)
+	}
+	wantStatusPath := "/api/v3/repos/admin/" + repo + "/pages/deployments/" + buildVersion + "/status"
+	if parsedStatusURL.Path != wantStatusPath {
+		t.Fatalf("status_url path = %q, want %q", parsedStatusURL.Path, wantStatusPath)
+	}
 	if data["page_url"] == "" {
 		t.Fatal("missing page_url")
 	}
 
-	idStr := strconv.Itoa(int(id))
-	resp = ghGet(t, "/api/v3/repos/admin/"+repo+"/pages/deployments/"+idStr, defaultToken)
+	resp = ghGet(t, parsedStatusURL.Path, defaultToken)
 	status := decodeJSONWithStatus(t, resp, 200)
 	if status["status"] != "succeed" {
 		t.Fatalf("status = %v, want succeed", status["status"])
+	}
+	resp = ghGet(t, "/api/v3/repos/admin/"+repo+"/pages/deployments/"+buildVersion, defaultToken)
+	status = decodeJSONWithStatus(t, resp, 200)
+	if status["status"] != "succeed" {
+		t.Fatalf("status by build version = %v, want succeed", status["status"])
 	}
 
 	// The publish flipped the Pages site to built.
@@ -108,7 +121,7 @@ func TestPagesDeployments_CreateStatusCancel(t *testing.T) {
 	}
 
 	// A synchronously completed deployment is terminal — not cancellable.
-	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments/"+idStr+"/cancel", defaultToken, nil)
+	resp = ghPost(t, "/api/v3/repos/admin/"+repo+"/pages/deployments/"+buildVersion+"/cancel", defaultToken, nil)
 	requireStatus(t, resp, 422)
 
 	// Unknown deployment IDs are 404 for status and cancel.

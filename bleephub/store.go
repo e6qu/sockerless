@@ -2,8 +2,6 @@ package bleephub
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -61,6 +59,7 @@ type User struct {
 	Bio          string          `json:"bio"`
 	Type         string          `json:"type"`
 	SiteAdmin    bool            `json:"site_admin"`
+	Suspended    bool            `json:"suspended,omitempty"`
 	StarredRepos map[string]bool `json:"starred_repos,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
@@ -95,12 +94,16 @@ type Token struct {
 
 // DeviceCode represents a pending device authorization flow.
 type DeviceCode struct {
-	Code      string
-	UserCode  string
-	Scopes    string
-	Token     string // pre-generated token value
-	UserID    int
-	ExpiresAt time.Time
+	Code          string
+	UserCode      string
+	ClientID      string
+	Scopes        string
+	Token         string
+	UserID        int
+	AppID         int
+	OAuthClientID string
+	ApprovedAt    time.Time
+	ExpiresAt     time.Time
 }
 
 // RepoAutolink represents a GitHub autolink reference configured on a repository.
@@ -3089,16 +3092,12 @@ func (st *Store) CreateToken(userID int, scopes string) *Token {
 // Real GitHub uses ghp_ for classic PATs; bleephub matches the prefix so SDK
 // clients that branch on prefix recognise the token shape.
 func generateTokenValue() string {
-	b := make([]byte, 20)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("ghp_%s", hex.EncodeToString(b))
+	return fmt.Sprintf("ghp_%s", mustRandomHex(20))
 }
 
 // generateGistID creates a random 20-character hexadecimal gist ID.
 func generateGistID() string {
-	b := make([]byte, 10)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return mustRandomHex(10)
 }
 
 // CreateGist creates a new gist owned by the given user.

@@ -47,7 +47,7 @@ import { OrgHooksPage } from "./pages/OrgHooksPage.js";
 import { SearchPage } from "./pages/SearchPage.js";
 import { AccountPage } from "./pages/AccountPage.js";
 import { RepoSocialPage } from "./pages/RepoSocialPage.js";
-// bleephub WP-D — dashboard, user profile, org overview/people/teams
+// Bleephub dashboard, user profile, and organization overview pages.
 import { DashboardPage } from "./pages/DashboardPage.js";
 import { ProfilePage } from "./pages/ProfilePage.js";
 import { OrgOverviewPage } from "./pages/OrgOverviewPage.js";
@@ -132,7 +132,7 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/stargazers" element={<RepoSocialPage kind="stargazers" />} />
               <Route path="/ui/repos/:owner/:repo/watchers" element={<RepoSocialPage kind="watchers" />} />
               <Route path="/ui/repos/:owner/:repo/forks" element={<RepoSocialPage kind="forks" />} />
-              {/* bleephub WP-D — org overview/people/teams + user profile.
+              {/* Bleephub organization overview, people, teams, and user profile pages.
                   Org sub-pages share the OrgHeader tab bar. The bare
                   top-level /ui/:login profile route is registered LAST so
                   every literal /ui/<page> route wins over it. */}

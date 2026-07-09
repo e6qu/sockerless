@@ -229,6 +229,17 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 	if req.Ref == "" {
 		req.Ref = "refs/heads/main"
 	}
+	repoParts := splitRepoKeyParts(repo)
+	stor := s.store.GetGitStorage(repoParts[0], repoParts[1])
+	if stor == nil {
+		writeGHError(w, http.StatusUnprocessableEntity, "Repository git storage is not available")
+		return
+	}
+	sha := resolveRefSha(stor, req.Ref)
+	if sha == "0000000000000000000000000000000000000000" {
+		writeGHError(w, http.StatusUnprocessableEntity, "No ref found for: "+req.Ref)
+		return
+	}
 
 	// Validate against the workflow's declared workflow_dispatch inputs:
 	// unknown inputs reject, required inputs must arrive, declared
@@ -285,7 +296,7 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 	meta := WorkflowEventMeta{
 		EventName:   "workflow_dispatch",
 		Ref:         req.Ref,
-		Sha:         "0000000000000000000000000000000000000000",
+		Sha:         sha,
 		Repo:        repo,
 		Inputs:      req.Inputs,
 		TypedInputs: typedInputs,

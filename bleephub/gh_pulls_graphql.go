@@ -148,12 +148,11 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	//   statusCheckRollup: commits(last:1){nodes{commit{statusCheckRollup{
 	//     contexts(first:100){nodes{...on StatusContext, ...on CheckRun}}}}}}
 	// and the merge path's lastCommit pseudo-field as commits(last:1){nodes
-	// {commit{oid}}}. CheckRun nodes are backed by the real checks store;
-	// StatusContext exists so gh's fragment type-checks, but bleephub has no
-	// commit-status (REST /statuses) feature, so no StatusContext node is
-	// ever emitted. StatusCheckRollupContextConnection deliberately does NOT
-	// declare checkRunCount/...CountsByState: gh introspects for them and
-	// falls back to the plain contexts query when absent.
+	// {commit{oid}}}. CheckRun nodes are backed by the real checks store and
+	// StatusContext nodes are backed by the real REST commit-status store.
+	// StatusCheckRollupContextConnection deliberately does NOT declare
+	// checkRunCount/...CountsByState: gh introspects for them and falls back
+	// to the plain contexts query when absent.
 	statusContextType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "StatusContext",
 		Fields: graphql.Fields{
@@ -2653,29 +2652,49 @@ func prReviewToGQL(r *PullRequestReview, st *Store) map[string]interface{} {
 }
 
 // statusCheckRollupSourceLocked builds Commit.statusCheckRollup from the real
-// checks store for (repoKey, sha): one CheckRun union node per stored check
-// run. Returns nil when no check runs exist — the value real GitHub reports
-// for a commit with no checks. StatusContext nodes are never emitted because
-// bleephub has no commit-status (REST /statuses) feature. Caller must hold
-// st.mu.RLock.
+// checks and commit-status stores for (repoKey, sha): one StatusContext node
+// per latest REST status context and one CheckRun node per stored check run.
+// Returns nil when neither store has data, matching real GitHub for a commit
+// with no statuses or check runs. Caller must hold st.mu.RLock.
 func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 	if repoKey == "" {
 		return nil
 	}
+	_, _, statuses := st.CommitStatuses.Combined(repoKey, sha)
 	var runs []*CheckRun
 	for _, cr := range st.CheckRuns {
 		if cr.RepoKey == repoKey && cr.HeadSHA == sha {
 			runs = append(runs, cr)
 		}
 	}
-	if len(runs) == 0 {
+	if len(statuses) == 0 && len(runs) == 0 {
 		return nil
 	}
+	sort.Slice(statuses, func(a, b int) bool {
+		return statuses[a].CreatedAt.Before(statuses[b].CreatedAt)
+	})
 	sort.Slice(runs, func(a, b int) bool { return runs[a].ID < runs[b].ID })
 
 	allCompleted := true
 	anyFailed := false
-	nodes := make([]interface{}, 0, len(runs))
+	nodes := make([]interface{}, 0, len(statuses)+len(runs))
+	for _, status := range statuses {
+		if status.State == "pending" {
+			allCompleted = false
+		}
+		switch status.State {
+		case "failure", "error":
+			anyFailed = true
+		}
+		nodes = append(nodes, map[string]interface{}{
+			"__typename":  "StatusContext",
+			"context":     status.Context,
+			"state":       strings.ToUpper(status.State),
+			"targetUrl":   nilStr(status.TargetURL),
+			"createdAt":   status.CreatedAt.Format(time.RFC3339),
+			"description": nilStr(status.Description),
+		})
+	}
 	for _, cr := range runs {
 		var conclusion interface{}
 		if cr.Conclusion != "" {

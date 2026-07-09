@@ -19,6 +19,7 @@ const ctxInstallation contextKey = "gh-installation"
 const ctxInstallationToken contextKey = "gh-installation-token"
 const ctxUserToServerToken contextKey = "gh-uts-token"
 const ctxSuspendedInstallation contextKey = "gh-suspended-installation"
+const ctxSuspendedUser contextKey = "gh-suspended-user"
 
 // GitHub token prefixes. Each prefix selects a different lookup table and
 // auth shape in authenticateRequest; using the named constants keeps the
@@ -86,6 +87,10 @@ func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 		// credentials while suspended), not just for minting new tokens.
 		if susp, _ := ctx.Value(ctxSuspendedInstallation).(bool); susp {
 			writeGHError(w, http.StatusForbidden, "This installation has been suspended")
+			return
+		}
+		if susp, _ := ctx.Value(ctxSuspendedUser).(bool); susp {
+			writeGHError(w, http.StatusForbidden, "This account has been suspended")
 			return
 		}
 
@@ -196,7 +201,11 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 		}
 	}
 	if user != nil {
-		ctx = context.WithValue(ctx, ctxUser, user)
+		if user.Suspended {
+			ctx = context.WithValue(ctx, ctxSuspendedUser, true)
+		} else {
+			ctx = context.WithValue(ctx, ctxUser, user)
+		}
 	}
 	return ctx
 }

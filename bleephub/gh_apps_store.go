@@ -4,7 +4,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/pem"
 	"fmt"
 	"strconv"
@@ -108,21 +107,16 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 	now := time.Now().UTC()
 	slug := slugify(name)
 
-	secretBytes := make([]byte, 20)
-	_, _ = rand.Read(secretBytes)
-	wsBytes := make([]byte, 20)
-	_, _ = rand.Read(wsBytes)
-
 	app := &App{
 		ID:                 id,
 		NodeID:             fmt.Sprintf("A_kgDO%08d", id),
 		Slug:               slug,
 		Name:               name,
 		ClientID:           fmt.Sprintf("Iv1.%016x", id),
-		ClientSecret:       hex.EncodeToString(secretBytes),
+		ClientSecret:       mustRandomHex(20),
 		Description:        description,
 		ExternalURL:        fmt.Sprintf("https://github.com/apps/%s", slug),
-		WebhookSecret:      hex.EncodeToString(wsBytes),
+		WebhookSecret:      mustRandomHex(20),
 		WebhookActive:      true,
 		WebhookContentType: "form",
 		WebhookInsecureSSL: "0",
@@ -410,15 +404,11 @@ func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL
 	if st.OAuthApps == nil {
 		st.OAuthApps = make(map[string]*OAuthApp)
 	}
-	cidBytes := make([]byte, 10)
-	_, _ = rand.Read(cidBytes)
-	secretBytes := make([]byte, 20)
-	_, _ = rand.Read(secretBytes)
-	clientID := hex.EncodeToString(cidBytes)
+	clientID := mustRandomHex(10)
 	now := time.Now().UTC()
 	app := &OAuthApp{
 		ClientID:     clientID,
-		ClientSecret: hex.EncodeToString(secretBytes),
+		ClientSecret: mustRandomHex(20),
 		Name:         name,
 		Description:  description,
 		URL:          url,
@@ -481,9 +471,7 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	b := make([]byte, 20)
-	_, _ = rand.Read(b)
-	tokenStr := tokenPrefixInstallation + hex.EncodeToString(b)
+	tokenStr := tokenPrefixInstallation + mustRandomHex(20)
 
 	token := &InstallationToken{
 		Token:          tokenStr,

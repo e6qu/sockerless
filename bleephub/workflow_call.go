@@ -329,7 +329,11 @@ func (s *Server) completeServerJobLocked(wf *Workflow, wfJob *WorkflowJob) {
 	jd := wfJob.Def
 	switch jd.CallRole {
 	case "gate":
-		s.resolveCallInputsLocked(wf, wfJob)
+		if !s.resolveCallInputsLocked(wf, wfJob) {
+			wfJob.Status = JobStatusCompleted
+			wfJob.Result = ResultFailure
+			break
+		}
 		wfJob.Status = JobStatusCompleted
 		wfJob.Result = ResultSuccess
 	case "collector":
@@ -347,12 +351,17 @@ func (s *Server) completeServerJobLocked(wf *Workflow, wfJob *WorkflowJob) {
 // resolveCallInputsLocked evaluates the caller's `with:` templates with
 // the contexts available to jobs.<id>.with (github, needs, vars, inputs,
 // matrix) and applies the called workflow's defaults and typing.
-func (s *Server) resolveCallInputsLocked(wf *Workflow, gate *WorkflowJob) {
+func (s *Server) resolveCallInputsLocked(wf *Workflow, gate *WorkflowJob) bool {
 	binding := gate.Def.Call
 	if binding == nil {
-		return
+		return true
 	}
-	ctx := s.jobExprContext(wf, gate)
+	ctx, err := s.jobExprContext(wf, gate)
+	if err != nil {
+		s.logger.Warn().Err(err).Str("workflow", binding.CalledPath).
+			Msg("workflow_call input context failed")
+		return false
+	}
 	if len(gate.MatrixValues) > 0 {
 		matrixCtx := make(map[string]interface{}, len(gate.MatrixValues))
 		for k, v := range gate.MatrixValues {
@@ -382,6 +391,7 @@ func (s *Server) resolveCallInputsLocked(wf *Workflow, gate *WorkflowJob) {
 		}
 	}
 	binding.SetResolvedInputs(resolved)
+	return true
 }
 
 // typedCallInput converts a resolved string input to the declared type.

@@ -50,6 +50,13 @@ func (s *Server) registerGHMiscEndpoints() {
 
 	// Users extras
 	s.route("GET /api/v3/users", s.handleListUsers)
+	s.route("POST /api/v3/admin/users", s.handleAdminCreateUser)
+	s.route("PATCH /api/v3/admin/users/{username}", s.handleAdminRenameUser)
+	s.route("DELETE /api/v3/admin/users/{username}", s.handleAdminDeleteUser)
+	s.route("PUT /api/v3/users/{username}/site_admin", s.handleAdminPromoteUser)
+	s.route("DELETE /api/v3/users/{username}/site_admin", s.handleAdminDemoteUser)
+	s.route("PUT /api/v3/users/{username}/suspended", s.handleAdminSuspendUser)
+	s.route("DELETE /api/v3/users/{username}/suspended", s.handleAdminUnsuspendUser)
 	s.route("GET /api/v3/users/{username}/gists", s.handleListUserGists)
 	s.route("GET /api/v3/users/{username}/events", s.handleListUserEvents)
 	s.route("GET /api/v3/users/{username}/events/public", s.handleListUserEventsPublic)
@@ -866,8 +873,6 @@ func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error)
 	workflowRef := repoFull + "/.github/workflows/" + workflowFile + "@" + ref
 	jobWorkflowRef := workflowRef
 
-	jti := make([]byte, 12)
-	_, _ = rand.Read(jti)
 	payload := map[string]interface{}{
 		"iss":                   s.baseURL(r),
 		"aud":                   audience,
@@ -875,7 +880,7 @@ func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error)
 		"iat":                   now.Unix(),
 		"nbf":                   now.Unix(),
 		"exp":                   now.Add(5 * time.Minute).Unix(),
-		"jti":                   base64.RawURLEncoding.EncodeToString(jti),
+		"jti":                   base64.RawURLEncoding.EncodeToString(mustRandomBytes(12)),
 		"ref":                   ref,
 		"ref_type":              refType,
 		"repository":            repoFull,
@@ -1194,6 +1199,12 @@ func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
 
 	s.store.Misc.mu.RLock()
 	entries := make([]*AuditEntry, 0, len(s.store.Misc.auditLog))
+	order := r.URL.Query().Get("order")
+	if order != "" && order != "desc" && order != "asc" {
+		s.store.Misc.mu.RUnlock()
+		writeGHValidationError(w, "AuditLog", "order", "invalid")
+		return
+	}
 	for _, e := range s.store.Misc.auditLog {
 		if e.Org != "" && e.Org != orgName {
 			continue
@@ -1211,6 +1222,11 @@ func (s *Server) handleOrgAuditLog(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, e)
 	}
 	s.store.Misc.mu.RUnlock()
+	if order == "asc" {
+		for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+			entries[i], entries[j] = entries[j], entries[i]
+		}
+	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, entries))
 }
 

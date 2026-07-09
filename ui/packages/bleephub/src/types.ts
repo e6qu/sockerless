@@ -70,44 +70,6 @@ export interface BleephubWorkflowJob {
   matrixGroup?: string;
 }
 
-/** Session represents a runner's active session. */
-export interface BleephubSession {
-  sessionId: string;
-  ownerName: string;
-  agent: BleephubAgent | null;
-  pendingMessages: number;
-}
-
-/** Agent represents a registered runner agent. */
-export interface BleephubAgent {
-  id: number;
-  name: string;
-  version: string;
-  enabled: boolean;
-  status: string;
-  osDescription: string;
-  labels: BleephubLabel[];
-  authorization?: BleephubAgentAuthorization;
-  ephemeral?: boolean;
-  maxParallelism?: number;
-  provisioningState?: string;
-  createdOn: string;
-}
-
-/** AgentAuthorization holds the agent's RSA public key and auth URL. */
-export interface BleephubAgentAuthorization {
-  authorizationUrl?: string;
-  clientId?: string;
-  publicKey?: { exponent: string; modulus: string };
-}
-
-/** Label is an agent label. */
-export interface BleephubLabel {
-  id: number;
-  name: string;
-  type: string;
-}
-
 /** Filters the repo list endpoints support server-side. */
 export interface RepoListFilters {
   type?: string;
@@ -275,32 +237,6 @@ export interface WireAppCreated {
   pem: string;
   client_secret: string;
   webhook_secret: string;
-}
-
-/** Device-flow code from /internal/oauth/state. */
-export interface BleephubDeviceCode {
-  code: string;
-  userCode: string;
-  scopes: string;
-  userId: number;
-  expiresAt: string;
-}
-
-/** Authorization-code flow entry from /internal/oauth/state. */
-export interface BleephubAuthCode {
-  code: string;
-  clientId: string;
-  redirectUri: string;
-  scopes: string;
-  state: string;
-  userId: number;
-  createdAt: string;
-  expiresAt: string;
-}
-
-export interface BleephubOAuthState {
-  deviceCodes: BleephubDeviceCode[];
-  authCodes: BleephubAuthCode[];
 }
 
 /** GitHub REST issue/PR state. */
@@ -1989,7 +1925,7 @@ export interface GithubBlockedUser {
   login: string;
 }
 
-// ─── WP-D (org overview + people/teams, user profile, dashboard) ────────
+// ─── Bleephub dashboard, user profile, and organization pages ───────────
 
 /**
  * The GitHub `public-user` shape served by GET /users/{login} and

@@ -249,7 +249,7 @@ func (s *Server) handleRunConcurrencyGroups(w http.ResponseWriter, r *http.Reque
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

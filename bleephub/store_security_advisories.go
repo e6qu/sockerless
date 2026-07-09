@@ -2,8 +2,6 @@ package bleephub
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log"
 	"sort"
@@ -82,17 +80,12 @@ func validAdvisoryState(s string) bool {
 }
 
 func generateGHSAID() string {
-	b := make([]byte, 6)
-	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("GHSA-%d", time.Now().UnixNano())
-	}
-	h := hex.EncodeToString(b)
+	h := mustRandomHex(6)
 	return fmt.Sprintf("GHSA-%s-%s-%s", h[0:4], h[4:8], h[8:12])
 }
 
 func generateCVEID() string {
-	b := make([]byte, 4)
-	rand.Read(b)
+	b := mustRandomBytes(4)
 	n := int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
 	if n < 0 {
 		n = -n

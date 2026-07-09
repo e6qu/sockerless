@@ -173,7 +173,8 @@ func (s *Server) handleCreateUserCodespace(w http.ResponseWriter, r *http.Reques
 	}
 	cs, err := s.store.CreateCodespace(user.Login, repoKey, req.Ref, req.Machine, req.DisplayName)
 	if err != nil {
-		s.logger.Warn().Err(err).Msg("codespace create failed")
+		writeGHError(w, http.StatusInternalServerError, "codespace create failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusCreated, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -213,7 +214,12 @@ func (s *Server) handleDeleteUserCodespace(w http.ResponseWriter, r *http.Reques
 	if cs == nil {
 		return
 	}
-	if !s.store.DeleteCodespace(cs.ID) {
+	ok, err := s.store.DeleteCodespace(cs.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "codespace delete failed: "+err.Error())
+		return
+	}
+	if !ok {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -227,8 +233,8 @@ func (s *Server) handleStartUserCodespace(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.startCodespace(cs); err != nil {
-		s.logger.Warn().Err(err).Int("codespace_id", cs.ID).Msg("codespace start failed")
-		s.store.SetCodespaceState(cs.ID, "Unavailable", false)
+		writeGHError(w, http.StatusInternalServerError, "codespace start failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusAccepted, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -240,8 +246,8 @@ func (s *Server) handleStopUserCodespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.stopCodespace(cs); err != nil {
-		s.logger.Warn().Err(err).Int("codespace_id", cs.ID).Msg("codespace stop failed")
-		s.store.SetCodespaceState(cs.ID, "Unavailable", false)
+		writeGHError(w, http.StatusInternalServerError, "codespace stop failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusAccepted, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -281,7 +287,8 @@ func (s *Server) handleCreateRepoCodespace(w http.ResponseWriter, r *http.Reques
 	}
 	cs, err := s.store.CreateCodespace(user.Login, repo.FullName, req.Ref, req.Machine, req.DisplayName)
 	if err != nil {
-		s.logger.Warn().Err(err).Msg("codespace create failed")
+		writeGHError(w, http.StatusInternalServerError, "codespace create failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusCreated, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -310,7 +317,12 @@ func (s *Server) handleDeleteRepoCodespace(w http.ResponseWriter, r *http.Reques
 	if cs == nil {
 		return
 	}
-	if !s.store.DeleteCodespace(cs.ID) {
+	ok, err := s.store.DeleteCodespace(cs.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "codespace delete failed: "+err.Error())
+		return
+	}
+	if !ok {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -328,8 +340,8 @@ func (s *Server) handleStartRepoCodespace(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := s.startCodespace(cs); err != nil {
-		s.logger.Warn().Err(err).Int("codespace_id", cs.ID).Msg("codespace start failed")
-		s.store.SetCodespaceState(cs.ID, "Unavailable", false)
+		writeGHError(w, http.StatusInternalServerError, "codespace start failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusAccepted, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -345,8 +357,8 @@ func (s *Server) handleStopRepoCodespace(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.stopCodespace(cs); err != nil {
-		s.logger.Warn().Err(err).Int("codespace_id", cs.ID).Msg("codespace stop failed")
-		s.store.SetCodespaceState(cs.ID, "Unavailable", false)
+		writeGHError(w, http.StatusInternalServerError, "codespace stop failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusAccepted, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -517,7 +529,8 @@ func (s *Server) handleCreatePullRequestCodespace(w http.ResponseWriter, r *http
 	}
 	cs, err := s.store.CreateCodespace(user.Login, repo.FullName, pr.HeadRefName, req.Machine, req.DisplayName)
 	if err != nil {
-		s.logger.Warn().Err(err).Msg("pull request codespace create failed")
+		writeGHError(w, http.StatusInternalServerError, "codespace create failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusCreated, s.codespaceToJSON(cs, s.baseURL(r)))
 }
@@ -668,7 +681,12 @@ func (s *Server) handleDeleteOrgMemberCodespace(w http.ResponseWriter, r *http.R
 	if cs == nil {
 		return
 	}
-	if !s.store.DeleteCodespace(cs.ID) {
+	ok, err := s.store.DeleteCodespace(cs.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "codespace delete failed: "+err.Error())
+		return
+	}
+	if !ok {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -688,8 +706,8 @@ func (s *Server) handleStopOrgMemberCodespace(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if err := s.stopCodespace(cs); err != nil {
-		s.logger.Warn().Err(err).Int("codespace_id", cs.ID).Msg("codespace stop failed")
-		s.store.SetCodespaceState(cs.ID, "Unavailable", false)
+		writeGHError(w, http.StatusInternalServerError, "codespace stop failed: "+err.Error())
+		return
 	}
 	writeJSON(w, http.StatusOK, s.orgScopedCodespaceJSON(cs, s.baseURL(r)))
 }

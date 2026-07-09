@@ -1,53 +1,60 @@
 import { useQuery } from "@tanstack/react-query";
 import { DataTable, InlineError, Spinner, StatusBadge } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
-import { fetchSessions, fetchRepos, fetchActionsRunners } from "../api.js";
-import type { BleephubSession } from "../types.js";
-import { Box, PageTitle, SectionLabel, StatCard } from "../components/ui.js";
+import { fetchRepos, fetchActionsRunners } from "../api.js";
+import type { GithubRunner } from "../types.js";
+import { PageTitle, StatCard } from "../components/ui.js";
 
-const col = createColumnHelper<BleephubSession>();
+const col = createColumnHelper<GithubRunner>();
 
 const columns = [
   col.display({
-    id: "agentName",
-    header: "Agent name",
+    id: "name",
+    header: "Runner name",
     cell: (info) => (
       <span style={{ color: "var(--color-fg)", fontWeight: 500 }}>
-        {info.row.original.agent?.name ?? "—"}
+        {info.row.original.name}
       </span>
     ),
   }),
   col.display({
-    id: "agentId",
-    header: "Agent identifier",
+    id: "id",
+    header: "Runner identifier",
     cell: (info) => (
       <span className="tabular-nums" style={{ color: "var(--color-fg-muted)" }}>
-        {info.row.original.agent?.id ?? "—"}
+        {info.row.original.id}
       </span>
     ),
   }),
-  col.display({
-    id: "version",
-    header: "Version",
-    cell: (info) => (
-      <span style={{ color: "var(--color-fg-muted)" }}>
-        {info.row.original.agent?.version ?? "—"}
-      </span>
-    ),
+  col.accessor("os", {
+    header: "Operating system",
+    cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
   }),
   col.display({
     id: "status",
     header: "Status",
-    cell: (info) => {
-      const status = info.row.original.agent?.status ?? "unknown";
-      return <StatusBadge status={status} />;
-    },
+    cell: (info) => <StatusBadge status={info.row.original.status} />,
+  }),
+  col.display({
+    id: "busy",
+    header: "Busy",
+    cell: (info) => (
+      <span
+        style={{
+          color: info.row.original.busy ? "var(--color-status-warn)" : "var(--color-fg-subtle)",
+          fontSize: "0.78rem",
+          fontWeight: info.row.original.busy ? 600 : 400,
+        }}
+      >
+        {info.row.original.busy ? "yes" : "no"}
+      </span>
+    ),
   }),
   col.display({
     id: "labels",
     header: "Labels",
     cell: (info) => {
-      const names = info.row.original.agent?.labels?.map((l) => l.name) ?? [];
+      const names = info.row.original.labels.map((l) => l.name);
       if (names.length === 0) return <span style={{ color: "var(--color-fg-subtle)" }}>—</span>;
       return (
         <span
@@ -59,82 +66,9 @@ const columns = [
       );
     },
   }),
-  col.accessor("sessionId", {
-    header: "Session identifier",
-    cell: (info) => (
-      <span
-        className="font-mono"
-        style={{ color: "var(--color-fg-subtle)", fontSize: "0.7rem" }}
-      >
-        {(info.getValue() as string).slice(0, 12)}…
-      </span>
-    ),
-  }),
-  col.display({
-    id: "ephemeral",
-    header: "Ephemeral",
-    cell: (info) => (
-      <span
-        style={{
-          color: info.row.original.agent?.ephemeral
-            ? "var(--color-accent)"
-            : "var(--color-fg-subtle)",
-          fontSize: "0.78rem",
-        }}
-      >
-        {info.row.original.agent?.ephemeral ? "yes" : "no"}
-      </span>
-    ),
-  }),
 ];
 
 export function RunnersPage() {
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["sessions"],
-    queryFn: fetchSessions,
-    refetchInterval: 5000,
-  });
-
-  if (isError) return <InlineError title="Failed to load runners" />;
-  if (isLoading || !data) return <Spinner label="loading runners" />;
-
-  const totalPending = data.reduce((sum, s) => sum + s.pendingMessages, 0);
-
-  // No separate "online" stat: the server marks every agent with an active
-  // session "online", so the figure would always mirror the session count.
-  return (
-    <div>
-      <PageTitle
-        title="Connected runners"
-        meta={`${data.length} session${data.length === 1 ? "" : "s"} · ${totalPending} pending message${totalPending === 1 ? "" : "s"}`}
-      />
-
-      <div className="mb-6 grid grid-cols-2 gap-3">
-        <StatCard title="Connected sessions" value={data.length} emphasized={data.length > 0} />
-        <StatCard title="Pending messages" value={totalPending} emphasized={totalPending > 0} />
-      </div>
-
-      <DataTable
-        data={data}
-        columns={columns}
-        filterPlaceholder="Filter runners…"
-        emptyMessage="No runners connected. Start a GitHub Actions runner pointing at this Bleephub endpoint URL."
-      />
-
-      <RegisteredRunnersSection />
-    </div>
-  );
-}
-
-/**
- * GitHub-shaped runner registry (GET .../actions/runners). The
- * Representational State Transfer endpoint is repository-scoped while
- * Bleephub registers agents globally, so the section reads through the first
- * repository path. The server returns the full registry for any repository.
- * Hidden until a repository exists, because without one there is no
- * Representational State Transfer path to query.
- */
-function RegisteredRunnersSection() {
   const reposQ = useQuery({ queryKey: ["repos"], queryFn: fetchRepos });
   const firstRepo = reposQ.data?.[0]?.full_name;
   const [owner, repo] = firstRepo ? firstRepo.split("/") : ["", ""];
@@ -147,88 +81,55 @@ function RegisteredRunnersSection() {
   });
 
   if (reposQ.isError) {
+    return <InlineError title="Failed to load repositories for the runner registry" />;
+  }
+  if (reposQ.isLoading || !reposQ.data) return <Spinner label="loading runners" />;
+
+  if (!firstRepo) {
     return (
-      <div className="mt-8">
-        <InlineError title="Failed to load repos for the runner registry" detail={String(reposQ.error)} />
+      <div>
+        <PageTitle title="Registered runners" meta="0 runners" />
+        <DataTable
+          data={[]}
+          columns={columns}
+          filterPlaceholder="Filter runners…"
+          emptyMessage="Create a repository to query the GitHub Actions runner registry."
+        />
       </div>
     );
   }
-  if (!firstRepo) return null;
+
+  if (runnersQ.isError) return <InlineError title="Failed to load registered runners" />;
+  if (runnersQ.isLoading || !runnersQ.data) return <Spinner label="loading runners" />;
+
+  const runners = runnersQ.data.items;
+  const totalCount = runnersQ.data.totalCount;
+  const online = runners.filter((runner) => runner.status === "online").length;
+  const busy = runners.filter((runner) => runner.busy).length;
 
   return (
-    <section className="mt-8">
-      <SectionLabel>Registered runners</SectionLabel>
-      {runnersQ.isLoading && <Spinner label="loading registered runners" />}
-      {runnersQ.isError && (
-        <InlineError title="Failed to load registered runners" detail={String(runnersQ.error)} />
-      )}
-      {runnersQ.data &&
-        (runnersQ.data.items.length === 0 ? (
-          <p style={{ fontSize: "0.84rem", color: "var(--color-fg-muted)" }}>
-            No runners registered.
-          </p>
-        ) : (
-          <Box>
-            {runnersQ.data.items.map((r, i) => (
-              <div
-                key={r.id}
-                className="flex flex-wrap items-center gap-3"
-                style={{
-                  padding: "0.6rem 1rem",
-                  borderBottom:
-                    i < runnersQ.data.items.length - 1 ? "1px solid var(--color-border)" : "none",
-                }}
-              >
-                <span
-                  aria-label={r.status}
-                  title={r.status}
-                  style={{
-                    width: 9,
-                    height: 9,
-                    borderRadius: "999px",
-                    background: r.status === "online" ? "var(--gh-open)" : "var(--color-fg-subtle)",
-                    flexShrink: 0,
-                  }}
-                />
-                <span style={{ fontSize: "0.88rem", fontWeight: 600, color: "var(--color-fg)" }}>
-                  {r.name}
-                </span>
-                <span style={{ fontSize: "0.76rem", color: "var(--color-fg-muted)" }}>{r.os}</span>
-                {r.busy && (
-                  <span
-                    style={{
-                      fontSize: "0.7rem",
-                      fontWeight: 600,
-                      color: "var(--color-status-warn)",
-                      background: "var(--color-status-warn-soft)",
-                      padding: "0.08rem 0.45rem",
-                      borderRadius: "2rem",
-                    }}
-                  >
-                    busy
-                  </span>
-                )}
-                <span className="flex flex-wrap items-center gap-1">
-                  {r.labels.map((l) => (
-                    <span
-                      key={l.id}
-                      className="font-mono"
-                      style={{
-                        fontSize: "0.7rem",
-                        color: "var(--color-accent)",
-                        background: "var(--color-accent-soft)",
-                        padding: "0.08rem 0.5rem",
-                        borderRadius: "2rem",
-                      }}
-                    >
-                      {l.name}
-                    </span>
-                  ))}
-                </span>
-              </div>
-            ))}
-          </Box>
-        ))}
-    </section>
+    <div>
+      <PageTitle
+        title="Registered runners"
+        meta={`${totalCount} runner${totalCount === 1 ? "" : "s"} · ${firstRepo}`}
+      />
+
+      <div className="mb-6 grid grid-cols-3 gap-3">
+        <StatCard
+          title="Registered runners"
+          value={totalCount}
+          emphasized={runners.length > 0}
+        />
+        <StatCard title="Online runners" value={online} emphasized={online > 0} />
+        <StatCard title="Busy runners" value={busy} emphasized={busy > 0} />
+      </div>
+
+      <DataTable
+        data={runners}
+        columns={columns}
+        filterPlaceholder="Filter runners…"
+        emptyMessage="No runners registered."
+      />
+    </div>
   );
 }

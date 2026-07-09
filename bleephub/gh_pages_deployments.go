@@ -17,6 +17,7 @@ import (
 //
 //	POST /repos/{o}/{r}/pages/deployments
 //	GET  /repos/{o}/{r}/pages/deployments/{pages_deployment_id}
+//	GET  /repos/{o}/{r}/pages/deployments/{pages_deployment_id}/status
 //	POST /repos/{o}/{r}/pages/deployments/{pages_deployment_id}/cancel
 //	GET  /repos/{o}/{r}/pages/health
 //
@@ -39,6 +40,7 @@ func (s *Server) registerGHPagesDeploymentRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages/deployments",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDeploymentCreate))
 	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}", s.handlePagesDeploymentStatus)
+	s.route("GET /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}/status", s.handlePagesDeploymentStatus)
 	s.route("POST /api/v3/repos/{owner}/{repo}/pages/deployments/{pages_deployment_id}/cancel",
 		s.requirePerm(scopeAdministration, permWrite, s.handlePagesDeploymentCancel))
 	s.route("GET /api/v3/repos/{owner}/{repo}/pages/health", s.handlePagesHealthCheck)
@@ -76,6 +78,28 @@ func (st *Store) GetPagesDeployment(repoID, id int) *PagesDeploymentRecord {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	return st.PagesDeployments[repoID][id]
+}
+
+// GetPagesDeploymentByIdentifier returns a Pages deployment by its internal
+// numeric record ID or by GitHub's public pages_build_version identifier.
+func (st *Store) GetPagesDeploymentByIdentifier(repoID int, ident string) *PagesDeploymentRecord {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	byID := st.PagesDeployments[repoID]
+	if byID == nil {
+		return nil
+	}
+	if id, err := strconv.Atoi(ident); err == nil {
+		if d := byID[id]; d != nil {
+			return d
+		}
+	}
+	for _, d := range byID {
+		if d.BuildVersion == ident {
+			return d
+		}
+	}
+	return nil
 }
 
 // SetPagesDeploymentStatus transitions a Pages deployment's status.
@@ -161,8 +185,8 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 
 	base := s.baseURL(r)
 	writeJSON(w, http.StatusOK, map[string]interface{}{
-		"id":         d.ID,
-		"status_url": base + "/api/v3/repos/" + repo.FullName + "/pages/deployments/" + strconv.Itoa(d.ID),
+		"id":         d.BuildVersion,
+		"status_url": base + "/api/v3/repos/" + repo.FullName + "/pages/deployments/" + d.BuildVersion + "/status",
 		"page_url":   site.HTMLURL,
 	})
 }
@@ -173,12 +197,7 @@ func (s *Server) handlePagesDeploymentStatus(w http.ResponseWriter, r *http.Requ
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	id, err := strconv.Atoi(r.PathValue("pages_deployment_id"))
-	if err != nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	d := s.store.GetPagesDeployment(repo.ID, id)
+	d := s.store.GetPagesDeploymentByIdentifier(repo.ID, r.PathValue("pages_deployment_id"))
 	if d == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -192,12 +211,7 @@ func (s *Server) handlePagesDeploymentCancel(w http.ResponseWriter, r *http.Requ
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	id, err := strconv.Atoi(r.PathValue("pages_deployment_id"))
-	if err != nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	d := s.store.GetPagesDeployment(repo.ID, id)
+	d := s.store.GetPagesDeploymentByIdentifier(repo.ID, r.PathValue("pages_deployment_id"))
 	if d == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -206,7 +220,7 @@ func (s *Server) handlePagesDeploymentCancel(w http.ResponseWriter, r *http.Requ
 		writeGHError(w, http.StatusUnprocessableEntity, "Deployment cannot be cancelled")
 		return
 	}
-	s.store.SetPagesDeploymentStatus(repo.ID, id, "deployment_cancelled")
+	s.store.SetPagesDeploymentStatus(repo.ID, d.ID, "deployment_cancelled")
 	w.WriteHeader(http.StatusNoContent)
 }
 

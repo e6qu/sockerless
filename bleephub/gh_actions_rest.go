@@ -558,6 +558,18 @@ func (s *Server) findWorkflowByRunID(runID int) *Workflow {
 	return nil
 }
 
+func (s *Server) findWorkflowByRunIDInRepo(runID int, repo string) *Workflow {
+	wf := s.findWorkflowByRunID(runID)
+	if wf == nil || !workflowBelongsToRepo(wf, repo) {
+		return nil
+	}
+	return wf
+}
+
+func workflowBelongsToRepo(wf *Workflow, repo string) bool {
+	return wf != nil && wf.RepoFullName == repo
+}
+
 // findJobByStableID resolves the stable int64 GitHub-shape job ID
 // back to (workflow, job). Returns (nil, nil) if no job in any
 // workflow hashes to this ID.
@@ -572,6 +584,14 @@ func (s *Server) findJobByStableID(jobID int64) (*Workflow, *WorkflowJob) {
 		}
 	}
 	return nil, nil
+}
+
+func (s *Server) findJobByStableIDInRepo(jobID int64, repo string) (*Workflow, *WorkflowJob) {
+	wf, job := s.findJobByStableID(jobID)
+	if job == nil || !workflowBelongsToRepo(wf, repo) {
+		return nil, nil
+	}
+	return wf, job
 }
 
 // handleListWorkflowRuns — GET /api/v3/repos/{owner}/{repo}/actions/runs
@@ -630,7 +650,7 @@ func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -652,7 +672,7 @@ func (s *Server) handleListWorkflowRunJobs(w http.ResponseWriter, r *http.Reques
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -692,7 +712,7 @@ func (s *Server) handleGetWorkflowJob(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid job_id")
 		return
 	}
-	wf, j := s.findJobByStableID(jobID)
+	wf, j := s.findJobByStableIDInRepo(jobID, repoFullName(r))
 	if j == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -713,7 +733,7 @@ func (s *Server) handleGetWorkflowJobLogs(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusBadRequest, "invalid job_id")
 		return
 	}
-	_, j := s.findJobByStableID(jobID)
+	_, j := s.findJobByStableIDInRepo(jobID, repoFullName(r))
 	if j == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -822,7 +842,7 @@ func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -844,7 +864,7 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -954,15 +974,15 @@ func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, file 
 
 // findRunAttempt resolves a run's specific attempt: the live run when
 // attempt matches its number, else the archived attempt.
-func (s *Server) findRunAttempt(runID, attempt int) *Workflow {
-	current := s.findWorkflowByRunID(runID)
+func (s *Server) findRunAttempt(runID, attempt int, repo string) *Workflow {
+	current := s.findWorkflowByRunIDInRepo(runID, repo)
 	if current != nil && current.AttemptNumber() == attempt {
 		return current
 	}
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
 	for _, archived := range s.store.WorkflowAttempts[runID] {
-		if archived.AttemptNumber() == attempt {
+		if archived.AttemptNumber() == attempt && workflowBelongsToRepo(archived, repo) {
 			return archived
 		}
 	}
@@ -984,7 +1004,7 @@ func (s *Server) handleGetRunAttempt(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid attempt_number")
 		return
 	}
-	wf := s.findRunAttempt(runID, attempt)
+	wf := s.findRunAttempt(runID, attempt, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -1009,7 +1029,7 @@ func (s *Server) handleListRunAttemptJobs(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusBadRequest, "invalid attempt_number")
 		return
 	}
-	wf := s.findRunAttempt(runID, attempt)
+	wf := s.findRunAttempt(runID, attempt, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -1048,7 +1068,7 @@ func (s *Server) handleDeleteWorkflowRun(w http.ResponseWriter, r *http.Request)
 	s.store.mu.Lock()
 	var foundKey string
 	for k, wf := range s.store.Workflows {
-		if wf.RunID == runID {
+		if wf.RunID == runID && workflowBelongsToRepo(wf, repoFullName(r)) {
 			foundKey = k
 			break
 		}

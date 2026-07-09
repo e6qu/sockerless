@@ -111,14 +111,20 @@ func TestSecretsSealedRoundTrip(t *testing.T) {
 
 	mustStatus(t, putSealedSecret(t, path, "v1-plain"), 201, "create")
 
-	secrets, _ := testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	secrets, _, err := testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if secrets["ROUND_TRIP"] != "v1-plain" {
 		t.Fatalf("injected = %q, want v1-plain", secrets["ROUND_TRIP"])
 	}
 
 	mustStatus(t, putSealedSecret(t, path, "v2-plain"), 204, "update")
 
-	secrets, _ = testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	secrets, _, err = testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if secrets["ROUND_TRIP"] != "v2-plain" {
 		t.Fatalf("after update injected = %q, want v2-plain", secrets["ROUND_TRIP"])
 	}
@@ -364,7 +370,10 @@ func TestEnvSecretsLifecycle(t *testing.T) {
 		t.Errorf("name = %v", one["name"])
 	}
 
-	secrets, _ := testServer.CollectJobSecretsAndVars(repo.FullName, "production")
+	secrets, _, err := testServer.CollectJobSecretsAndVars(repo.FullName, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if secrets["ENV_ONLY"] != "env-plain-2" {
 		t.Errorf("injected env secret = %q, want env-plain-2", secrets["ENV_ONLY"])
 	}

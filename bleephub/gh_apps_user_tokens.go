@@ -1,8 +1,6 @@
 package bleephub
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"time"
 )
 
@@ -63,9 +61,7 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 	if appID > 0 {
 		prefix = tokenPrefixAppUser
 	}
-	b := make([]byte, 20)
-	_, _ = rand.Read(b)
-	tokenStr := prefix + hex.EncodeToString(b)
+	tokenStr := prefix + mustRandomHex(20)
 
 	tok := &UserToServerToken{
 		Token:            tokenStr,
@@ -79,10 +75,8 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 
 	var rt *RefreshToken
 	if withRefresh {
-		rb := make([]byte, 20)
-		_, _ = rand.Read(rb)
 		rt = &RefreshToken{
-			Token:            tokenPrefixRefresh + hex.EncodeToString(rb),
+			Token:            tokenPrefixRefresh + mustRandomHex(20),
 			UserID:           userID,
 			AppID:            appID,
 			OAuthAppClientID: oauthClientID,

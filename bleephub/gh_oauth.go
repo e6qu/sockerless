@@ -42,6 +42,7 @@ func (s *Server) registerGHOAuthRoutes() {
 	s.route("POST /login/device/code", s.handleDeviceCode)
 	s.route("POST /login/oauth/access_token", s.handleOAuthAccessToken)
 	s.route("GET /login/device", s.handleDevicePage)
+	s.route("POST /login/device", s.handleDeviceApprove)
 	// Session login (required before the web-flow authorize step).
 	s.route("GET /login", s.handleLoginPage)
 	s.route("POST /login", s.handleLoginPost)
@@ -73,7 +74,7 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 <form method="POST" action="/login">
   <input type="hidden" name="return_to" value="%s"/>
   <label>Username<br><input type="text" name="login" autofocus style="width:100%%"/></label><br><br>
-  <label>Password<br><input type="password" name="password" style="width:100%%"/></label><br><br>
+  <label>Personal access token<br><input type="password" name="password" style="width:100%%"/></label><br><br>
   <button type="submit" style="padding:8px 16px;background:#2da44e;color:white;border:0;border-radius:6px;font-size:14px;cursor:pointer">Sign in</button>
 </form>
 </body></html>`,
@@ -83,26 +84,29 @@ func (s *Server) handleLoginPage(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(page))
 }
 
-// handleLoginPost authenticates a user by login name (password not checked —
-// sim policy) and sets a _gh_sess session cookie. Mirrors the POST /login
-// endpoint on real GitHub / GHES.
+// handleLoginPost authenticates a user with a stored personal access token and
+// sets a _gh_sess session cookie. Bleephub does not implement password
+// verification (`/api/v3/meta` advertises that), so browser sessions must be
+// backed by the same real credential source as API requests.
 func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
 		return
 	}
 	login := r.FormValue("login")
+	credential := r.FormValue("password")
 	returnTo := r.FormValue("return_to")
 
 	if login == "" {
 		writeGHError(w, http.StatusUnprocessableEntity, "login is required")
 		return
 	}
+	if credential == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "personal access token is required")
+		return
+	}
 
-	s.store.mu.RLock()
-	user := s.store.UsersByLogin[login]
-	s.store.mu.RUnlock()
-
+	user := s.browserLoginUser(login, credential)
 	if user == nil {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusUnauthorized)
@@ -141,17 +145,50 @@ func (s *Server) handleLoginPost(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><p>Signed in successfully.</p></body></html>`))
 }
 
-// oauthClientKind resolves an OAuth client_id to the token-minting parameters
-// CreateUserToServerToken expects: (appID, oauthClientID). A GitHub App
-// client_id yields a non-zero appID (mints ghu_); anything else is treated as
-// an OAuth App client_id (mints gho_). A GitHub App also returns isGitHubApp=true.
-func (s *Server) oauthClientKind(clientID string) (appID int, oauthClientID string, isGitHubApp bool) {
+func (s *Server) browserLoginUser(login, credential string) *User {
+	_, user := s.store.LookupToken(credential)
+	if user == nil || user.Login != login || user.Suspended {
+		return nil
+	}
+	return user
+}
+
+// oauthClientKind resolves a registered OAuth client_id to the token-minting
+// parameters CreateUserToServerToken expects: (appID, oauthClientID). A GitHub
+// App client_id yields a non-zero appID (mints ghu_); a registered OAuth App
+// client_id yields oauthClientID (mints gho_). Unknown client IDs are invalid.
+func (s *Server) oauthClientKind(clientID string) (appID int, oauthClientID string, isGitHubApp bool, ok bool) {
 	if clientID != "" {
 		if app := s.store.GetAppByClientID(clientID); app != nil {
-			return app.ID, "", true
+			return app.ID, "", true, true
+		}
+		if app := s.store.GetOAuthApp(clientID); app != nil {
+			return 0, app.ClientID, false, true
 		}
 	}
-	return 0, clientID, false
+	return 0, "", false, false
+}
+
+func (s *Server) verifyOAuthClientSecret(clientID, clientSecret string) (appID int, oauthClientID string, isGitHubApp bool, ok bool) {
+	if clientID == "" || clientSecret == "" {
+		return 0, "", false, false
+	}
+	if app := s.store.VerifyAppClientSecret(clientID, clientSecret); app != nil {
+		return app.ID, "", true, true
+	}
+	if app := s.store.VerifyOAuthAppSecret(clientID, clientSecret); app != nil {
+		return 0, app.ClientID, false, true
+	}
+	return 0, "", false, false
+}
+
+func newDeviceUserCode() string {
+	raw := strings.ToUpper(strings.ReplaceAll(uuid.NewString(), "-", ""))
+	return raw[:4] + "-" + raw[4:8]
+}
+
+func normalizeDeviceUserCode(code string) string {
+	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(code), "-", ""))
 }
 
 // handleDeviceCode initiates the device authorization flow.
@@ -163,22 +200,21 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 	scope := r.FormValue("scope")
 	clientID := r.FormValue("client_id")
 
-	// Mint the user-to-server token up front (gho_ for an OAuth App, ghu_ for a
-	// GitHub App), keyed on the requesting client_id, and stash it on the device
-	// code. The exchange leg returns it verbatim.
-	appID, oauthClientID, _ := s.oauthClientKind(clientID)
+	appID, oauthClientID, _, ok := s.oauthClientKind(clientID)
+	if !ok {
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "incorrect_client_credentials"})
+		return
+	}
 
 	s.store.mu.Lock()
-	adminUser := s.store.Users[1]
-	utsTok, _ := s.store.createUserToServerTokenLocked(adminUser.ID, appID, oauthClientID, scope, 8*time.Hour, false)
-
 	dc := &DeviceCode{
-		Code:      uuid.New().String(),
-		UserCode:  "BLEE-PHUB",
-		Scopes:    scope,
-		Token:     utsTok.Token,
-		UserID:    adminUser.ID,
-		ExpiresAt: time.Now().Add(15 * time.Minute),
+		Code:          uuid.New().String(),
+		UserCode:      newDeviceUserCode(),
+		ClientID:      clientID,
+		Scopes:        scope,
+		AppID:         appID,
+		OAuthClientID: oauthClientID,
+		ExpiresAt:     time.Now().Add(15 * time.Minute),
 	}
 	s.store.DeviceCodes[dc.Code] = dc
 	s.store.mu.Unlock()
@@ -197,7 +233,7 @@ func (s *Server) handleDeviceCode(w http.ResponseWriter, r *http.Request) {
 // handleOAuthAccessToken handles BOTH OAuth flows on the same shared endpoint,
 // mirroring real GitHub. The grant is identified by which fields the form carries:
 //
-//   - device_code → device flow (existing behaviour, auto-approved)
+//   - device_code → device flow
 //   - code        → web flow with authorization code grant
 //
 // Both return `{access_token, token_type, scope}` on success and
@@ -220,35 +256,56 @@ func (s *Server) handleOAuthAccessToken(w http.ResponseWriter, r *http.Request) 
 	_, _ = w.Write([]byte(`{"error":"unsupported_grant_type"}`))
 }
 
-// handleDeviceTokenForm — device-flow leg. Auto-approved (sim policy: device
-// codes mint a token on the first poll instead of requiring out-of-band confirmation).
+// handleDeviceTokenForm — device-flow polling leg.
 func (s *Server) handleDeviceTokenForm(w http.ResponseWriter, r *http.Request) {
 	deviceCode := r.FormValue("device_code")
-	s.store.mu.RLock()
+	clientID := r.FormValue("client_id")
+	s.store.mu.Lock()
 	dc, ok := s.store.DeviceCodes[deviceCode]
-	s.store.mu.RUnlock()
 
 	if !ok {
+		s.store.mu.Unlock()
 		writeOAuthTokenResponse(w, r, map[string]string{"error": "bad_verification_code"})
 		return
 	}
+	if clientID == "" || clientID != dc.ClientID {
+		s.store.mu.Unlock()
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "incorrect_client_credentials"})
+		return
+	}
+	if time.Now().After(dc.ExpiresAt) {
+		delete(s.store.DeviceCodes, deviceCode)
+		s.store.mu.Unlock()
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "expired_token"})
+		return
+	}
+	if dc.Token == "" {
+		s.store.mu.Unlock()
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "authorization_pending"})
+		return
+	}
+	token := dc.Token
+	scopes := dc.Scopes
+	delete(s.store.DeviceCodes, deviceCode)
+	s.store.mu.Unlock()
 
 	s.logger.Info().Str("device_code", deviceCode).Msg("device token granted")
 
 	writeOAuthTokenResponse(w, r, map[string]string{
-		"access_token": dc.Token,
+		"access_token": token,
 		"token_type":   "bearer",
-		"scope":        "repo read:org gist",
+		"scope":        scopes,
 	})
 }
 
 // handleWebFlowTokenForm — web-flow leg. Exchanges a one-time-use authorization
-// code (issued by /login/oauth/authorize) for an access token. Real GitHub
-// validates client_id + client_secret; the sim doesn't gate on the secret but
-// does enforce one-time-use.
+// code (issued by /login/oauth/authorize) for an access token. GitHub requires
+// the registered OAuth App or GitHub App client_id + client_secret here.
 func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) {
 	code := r.FormValue("code")
 	clientID := r.FormValue("client_id")
+	clientSecret := r.FormValue("client_secret")
+	redirectURI := r.FormValue("redirect_uri")
 
 	s.store.mu.Lock()
 	ac, ok := s.store.AuthCodes[code]
@@ -261,19 +318,19 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 		writeOAuthTokenResponse(w, r, map[string]string{"error": "bad_verification_code"})
 		return
 	}
-	if clientID != "" && ac.ClientID != "" && clientID != ac.ClientID {
+	if clientID == "" || ac.ClientID == "" || clientID != ac.ClientID {
 		writeOAuthTokenResponse(w, r, map[string]string{"error": "incorrect_client_credentials"})
 		return
 	}
-
-	// The resulting access token is a user-to-server token: gho_ for an OAuth
-	// App, ghu_ for a GitHub App. Resolve the kind from the auth code's bound
-	// client_id (RLock taken inside oauthClientKind — must precede the write lock).
-	effectiveClientID := ac.ClientID
-	if effectiveClientID == "" {
-		effectiveClientID = clientID
+	if redirectURI != "" && ac.RedirectURI != "" && redirectURI != ac.RedirectURI {
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "redirect_uri_mismatch"})
+		return
 	}
-	appID, oauthClientID, _ := s.oauthClientKind(effectiveClientID)
+	appID, oauthClientID, _, ok := s.verifyOAuthClientSecret(clientID, clientSecret)
+	if !ok {
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "incorrect_client_credentials"})
+		return
+	}
 
 	s.store.mu.Lock()
 	user := s.store.Users[ac.UserID]
@@ -293,10 +350,76 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// handleDevicePage renders a simple HTML confirmation page.
+// handleDevicePage renders the browser confirmation form for a device code.
 func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/html")
-	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><h1>Auto-approved by bleephub</h1><p>You can close this page.</p></body></html>`))
+	sess := s.sessionFromRequest(r)
+	if sess == nil {
+		http.Redirect(w, r, "/login?return_to="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return
+	}
+	userCode := r.URL.Query().Get("user_code")
+	page := fmt.Sprintf(`<!DOCTYPE html><html><head><title>Device activation</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:420px;margin:48px auto">
+<h1>Device activation</h1>
+<form method="POST" action="/login/device">
+  <label>Code<br><input type="text" name="user_code" value="%s" autofocus style="width:100%%;text-transform:uppercase"/></label><br><br>
+  <button type="submit" style="padding:8px 16px;background:#2da44e;color:white;border:0;border-radius:6px;font-size:14px;cursor:pointer">Authorize</button>
+</form>
+</body></html>`, html.EscapeString(userCode))
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(page))
+}
+
+// handleDeviceApprove binds a pending device code to the signed-in browser user.
+func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
+	sess := s.sessionFromRequest(r)
+	if sess == nil {
+		http.Redirect(w, r, "/login?return_to="+url.QueryEscape(r.URL.RequestURI()), http.StatusFound)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+		return
+	}
+	userCode := normalizeDeviceUserCode(r.FormValue("user_code"))
+	if userCode == "" {
+		writeGHError(w, http.StatusUnprocessableEntity, "user_code is required")
+		return
+	}
+
+	s.store.mu.Lock()
+	var dc *DeviceCode
+	for _, candidate := range s.store.DeviceCodes {
+		if normalizeDeviceUserCode(candidate.UserCode) == userCode {
+			dc = candidate
+			break
+		}
+	}
+	if dc == nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if time.Now().After(dc.ExpiresAt) {
+		delete(s.store.DeviceCodes, dc.Code)
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusGone, "device code expired")
+		return
+	}
+	user := s.store.Users[sess.UserID]
+	if user == nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
+		return
+	}
+	tok, _ := s.store.createUserToServerTokenLocked(user.ID, dc.AppID, dc.OAuthClientID, dc.Scopes, 8*time.Hour, false)
+	dc.Token = tok.Token
+	dc.UserID = user.ID
+	dc.ApprovedAt = time.Now().UTC()
+	s.store.mu.Unlock()
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(`<!DOCTYPE html><html><body><p>Device authorized.</p></body></html>`))
 }
 
 // handleOAuthAuthorize — GET /login/oauth/authorize.
@@ -322,6 +445,10 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	if sess == nil {
 		returnTo := r.URL.RequestURI()
 		http.Redirect(w, r, "/login?return_to="+url.QueryEscape(returnTo), http.StatusFound)
+		return
+	}
+	if _, _, _, ok := s.oauthClientKind(clientID); !ok {
+		writeGHError(w, http.StatusBadRequest, "incorrect_client_credentials")
 		return
 	}
 
@@ -398,6 +525,10 @@ func (s *Server) handleOAuthAuthorizeApprove(w http.ResponseWriter, r *http.Requ
 		writeGHError(w, http.StatusBadRequest, "client_id and redirect_uri are required")
 		return
 	}
+	if _, _, _, ok := s.oauthClientKind(clientID); !ok {
+		writeGHError(w, http.StatusBadRequest, "incorrect_client_credentials")
+		return
+	}
 	s.completeAuthorize(w, r, user, clientID, redirectURI, scopes, state)
 }
 
@@ -447,8 +578,12 @@ func (s *Server) sessionFromRequest(r *http.Request) *LoginSession {
 	}
 	s.store.mu.RLock()
 	sess := s.store.LoginSessions[cookie.Value]
+	var user *User
+	if sess != nil {
+		user = s.store.Users[sess.UserID]
+	}
 	s.store.mu.RUnlock()
-	if sess == nil || time.Now().After(sess.ExpiresAt) {
+	if sess == nil || user == nil || user.Suspended || time.Now().After(sess.ExpiresAt) {
 		return nil
 	}
 	return sess

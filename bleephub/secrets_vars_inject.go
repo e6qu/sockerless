@@ -1,6 +1,9 @@
 package bleephub
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // orgItemVisibleToRepo reports whether an organization-level secret or
 // variable applies to a repository under real GitHub's visibility rules:
@@ -33,7 +36,7 @@ func orgItemVisibleToRepo(visibility string, selectedIDs []int, repo *Repo) bool
 // environment-level items override both. Secrets and variables merge
 // independently. The returned maps are fresh copies safe to hand to the
 // runner-message builder.
-func (s *Server) CollectJobSecretsAndVars(repoFullName, envName string) (secrets map[string]string, vars map[string]string) {
+func (s *Server) CollectJobSecretsAndVars(repoFullName, envName string) (secrets map[string]string, vars map[string]string, err error) {
 	s.store.mu.RLock()
 	defer s.store.mu.RUnlock()
 	return s.collectJobSecretsAndVarsLocked(repoFullName, envName)
@@ -42,11 +45,14 @@ func (s *Server) CollectJobSecretsAndVars(repoFullName, envName string) (secrets
 // collectJobSecretsAndVarsLocked is the lock-free core of
 // CollectJobSecretsAndVars for callers already holding the store lock
 // (job dispatch evaluates `if:` expressions under it).
-func (s *Server) collectJobSecretsAndVarsLocked(repoFullName, envName string) (secrets map[string]string, vars map[string]string) {
+func (s *Server) collectJobSecretsAndVarsLocked(repoFullName, envName string) (secrets map[string]string, vars map[string]string, err error) {
 	secrets = make(map[string]string)
 	vars = make(map[string]string)
 
 	repo := s.store.ReposByName[repoFullName]
+	if repo == nil {
+		return nil, nil, fmt.Errorf("repository %q not found for Actions secrets and variables", repoFullName)
+	}
 
 	// Organization scope (lowest precedence). The owner segment is only an
 	// org scope when it names an organization; user-owned repos have none.
@@ -83,5 +89,5 @@ func (s *Server) collectJobSecretsAndVarsLocked(repoFullName, envName string) (s
 		}
 	}
 
-	return secrets, vars
+	return secrets, vars, nil
 }

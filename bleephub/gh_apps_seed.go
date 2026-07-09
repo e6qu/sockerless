@@ -1,10 +1,8 @@
 package bleephub
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -220,13 +218,10 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		clientID = fmt.Sprintf("Iv1.%016x", spec.ID)
 	}
 
-	secretBytes := make([]byte, 20)
-	_, _ = rand.Read(secretBytes)
+	clientSecret := mustRandomHex(20)
 	webhookSecret := spec.WebhookSecret
 	if webhookSecret == "" {
-		wsBytes := make([]byte, 20)
-		_, _ = rand.Read(wsBytes)
-		webhookSecret = hex.EncodeToString(wsBytes)
+		webhookSecret = mustRandomHex(20)
 	}
 
 	now := time.Now().UTC()
@@ -236,7 +231,7 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		Slug:               slug,
 		Name:               spec.Name,
 		ClientID:           clientID,
-		ClientSecret:       hex.EncodeToString(secretBytes),
+		ClientSecret:       clientSecret,
 		ExternalURL:        fmt.Sprintf("https://github.com/apps/%s", slug),
 		WebhookURL:         spec.WebhookURL,
 		WebhookSecret:      webhookSecret,

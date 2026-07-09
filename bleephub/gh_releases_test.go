@@ -3,7 +3,6 @@ package bleephub
 import (
 	"bytes"
 	"encoding/json"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -225,18 +224,9 @@ func TestReleases_AssetLifecycle(t *testing.T) {
 	relID := int(rel["id"].(float64))
 
 	upload := func() *httptest.ResponseRecorder {
-		var body bytes.Buffer
-		mw := multipart.NewWriter(&body)
-		_ = mw.WriteField("name", "foo.tar.gz")
-		_ = mw.WriteField("label", "archive")
-		_ = mw.WriteField("content_type", "application/gzip")
-		fw, _ := mw.CreateFormFile("file", "foo.tar.gz")
-		_, _ = fw.Write([]byte("hello world"))
-		_ = mw.Close()
-
-		req := httptest.NewRequest("POST", "/api/v3/repos/admin/asset-repo/releases/"+itoa(relID)+"/assets", &body)
+		req := httptest.NewRequest("POST", "/api/uploads/repos/admin/asset-repo/releases/"+itoa(relID)+"/assets?name=foo.tar.gz&label=archive", strings.NewReader("hello world"))
 		req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
-		req.Header.Set("Content-Type", mw.FormDataContentType())
+		req.Header.Set("Content-Type", "application/gzip")
 		rec := httptest.NewRecorder()
 		s.ghHeadersMiddleware(s.mux).ServeHTTP(rec, req)
 		return rec
@@ -257,6 +247,14 @@ func TestReleases_AssetLifecycle(t *testing.T) {
 	}
 	if asset["size"] != float64(len("hello world")) {
 		t.Errorf("asset size = %v", asset["size"])
+	}
+
+	missingName := httptest.NewRequest("POST", "/api/uploads/repos/admin/asset-repo/releases/"+itoa(relID)+"/assets", strings.NewReader("ignored"))
+	missingName.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+	missingNameRec := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(missingNameRec, missingName)
+	if missingNameRec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("missing-name upload: %d body=%s", missingNameRec.Code, missingNameRec.Body.String())
 	}
 
 	// List assets for the release.

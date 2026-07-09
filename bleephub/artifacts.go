@@ -574,22 +574,21 @@ func (s *Server) handleUploadArtifact(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFinalizeArtifact(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
-		Size int64  `json:"size"`
+		Name                    string `json:"name"`
+		Size                    int64  `json:"size"`
+		WorkflowRunBackendID    string `json:"workflow_run_backend_id"`
+		WorkflowRunBackendIDAlt string `json:"workflowRunBackendId"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	workflowRunBackendID := coalesceStr(req.WorkflowRunBackendID, req.WorkflowRunBackendIDAlt)
 
 	s.artifactStore.mu.Lock()
-	var found *Artifact
-	for _, art := range s.artifactStore.artifacts {
-		if art.Name == req.Name && !art.Finalized {
-			art.Finalized = true
-			found = art
-			s.artifactStore.persistMeta(art)
-			break
-		}
+	found := s.artifactStore.findArtifactByNameLocked(req.Name, workflowRunBackendID, false)
+	if found != nil {
+		found.Finalized = true
+		s.artifactStore.persistMeta(found)
 	}
 	s.artifactStore.mu.Unlock()
 
@@ -659,20 +658,17 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name                    string `json:"name"`
+		WorkflowRunBackendID    string `json:"workflow_run_backend_id"`
+		WorkflowRunBackendIDAlt string `json:"workflowRunBackendId"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	workflowRunBackendID := coalesceStr(req.WorkflowRunBackendID, req.WorkflowRunBackendIDAlt)
 
 	s.artifactStore.mu.RLock()
-	var found *Artifact
-	for _, art := range s.artifactStore.artifacts {
-		if art.Name == req.Name && art.Finalized {
-			found = art
-			break
-		}
-	}
+	found := s.artifactStore.findArtifactByNameLocked(req.Name, workflowRunBackendID, true)
 	s.artifactStore.mu.RUnlock()
 
 	if found == nil {
@@ -690,6 +686,22 @@ func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Reque
 		"name":       found.Name,
 		"signed_url": downloadURL,
 	})
+}
+
+func (as *ArtifactStore) findArtifactByNameLocked(name, workflowRunBackendID string, finalized bool) *Artifact {
+	var found *Artifact
+	for _, art := range as.artifacts {
+		if art.Name != name || art.Finalized != finalized {
+			continue
+		}
+		if workflowRunBackendID != "" && art.WorkflowRunBackendID != workflowRunBackendID {
+			continue
+		}
+		if found == nil || art.ID < found.ID {
+			found = art
+		}
+	}
+	return found
 }
 
 func (s *Server) handleDownloadArtifact(w http.ResponseWriter, r *http.Request) {

@@ -1,7 +1,9 @@
 package bleephub
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,13 +19,17 @@ import (
 // the container can be exercised without a Docker round-trip.
 func seedCodespaceRecord(t *testing.T, ownerLogin, repoKey string) *Codespace {
 	t.Helper()
+	name, err := generateCodespaceName(repoKey)
+	if err != nil {
+		t.Fatalf("generate codespace name: %v", err)
+	}
 	st := testServer.store
 	st.mu.Lock()
 	m := codespaceDefaultMachine()
 	now := time.Now().UTC()
 	cs := &Codespace{
 		ID:                 st.NextCodespaceID,
-		Name:               generateCodespaceName(repoKey),
+		Name:               name,
 		OwnerLogin:         ownerLogin,
 		RepoKey:            repoKey,
 		MachineName:        m.Name,
@@ -46,6 +52,29 @@ func seedCodespaceRecord(t *testing.T, ownerLogin, repoKey string) *Codespace {
 		st.mu.Unlock()
 	})
 	return cs
+}
+
+type errReader struct {
+	err error
+}
+
+func (r errReader) Read([]byte) (int, error) {
+	return 0, r.err
+}
+
+func TestGenerateCodespaceNameRequiresRandomBytes(t *testing.T) {
+	name, err := generateCodespaceNameWithReader("octo/repo", bytes.NewReader([]byte{0xab, 0xcd, 0xef, 0x12}))
+	if err != nil {
+		t.Fatalf("generate codespace name: %v", err)
+	}
+	if name != "github-repo-abcdef1" {
+		t.Fatalf("name = %q, want github-repo-abcdef1", name)
+	}
+
+	wantErr := errors.New("entropy unavailable")
+	if _, err := generateCodespaceNameWithReader("octo/repo", errReader{err: wantErr}); !errors.Is(err, wantErr) {
+		t.Fatalf("generate with failing reader error = %v, want %v", err, wantErr)
+	}
 }
 
 func TestCodespacesUserMachines_RealCatalogValues(t *testing.T) {
@@ -305,7 +334,7 @@ func TestCodespacesCreateForPullRequest(t *testing.T) {
 	name := created["name"].(string)
 	t.Cleanup(func() {
 		if cs := testServer.store.GetCodespaceByName(name); cs != nil {
-			testServer.store.DeleteCodespace(cs.ID)
+			_, _ = testServer.store.DeleteCodespace(cs.ID)
 		}
 		cleanupCodespaceContainer(t, name)
 	})

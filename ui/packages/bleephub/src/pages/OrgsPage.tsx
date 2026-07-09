@@ -28,7 +28,7 @@ export function OrgsPage() {
     <div>
       <PageTitle
         title="Organizations"
-        meta="Internal bleephub organizations."
+        meta="GitHub Enterprise Server organizations."
         actions={
           <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
             New org
@@ -53,7 +53,7 @@ function OrgsTable() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteOrg(id),
+    mutationFn: (login: string) => deleteOrg(login),
     onSuccess: () => {
       setMutationError(null);
       queryClient.invalidateQueries({ queryKey: ["orgs"] });
@@ -111,7 +111,7 @@ function OrgsTable() {
               variant="danger"
               onClick={() => {
                 if (confirm(`Delete org @${org.login}?`)) {
-                  deleteMut.mutate(org.id);
+                  deleteMut.mutate(org.login);
                 }
               }}
               disabled={deleteMut.isPending}
@@ -229,7 +229,7 @@ function EditOrgDialog({ org, onClose }: { org: BleephubOrg; onClose: () => void
 
   const mutation = useMutation({
     mutationFn: () =>
-      updateOrg(org.id, {
+      updateOrg(org.login, {
         name: name || undefined,
         description: description || undefined,
         billing_email: billingEmail || undefined,

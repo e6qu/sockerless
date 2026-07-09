@@ -519,7 +519,7 @@ func TestPRGraphQL_ListQueryShape(t *testing.T) {
 }
 
 // --- Finding 3: gh pr view's default field set, incl. the commits-aliased
-// statusCheckRollup backed by the real checks store ---
+// statusCheckRollup backed by the real checks and commit-status stores ---
 
 func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	owner, name := sweepRepo(t, "sweep-prview")
@@ -556,6 +556,18 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 		c.Conclusion = "success"
 		c.CompletedAt = &now
 	})
+	statusResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/statuses/"+headSHA, defaultToken,
+		map[string]interface{}{
+			"state":       "failure",
+			"target_url":  "https://ci.example.test/unit",
+			"description": "unit suite failed",
+			"context":     "ci/unit",
+		})
+	if statusResp.StatusCode != http.StatusCreated {
+		statusResp.Body.Close()
+		t.Fatalf("commit status create status = %d", statusResp.StatusCode)
+	}
+	statusResp.Body.Close()
 
 	// Selections assembled exactly as api.PullRequestGraphQL renders gh pr
 	// view's defaultFields (projectCards excluded: GHES >= 3.17 drops it).
@@ -574,7 +586,7 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 		comments(first: 100) {nodes {id,author{login,...on User{id,name}},authorAssociation,body,createdAt,includesCreatedEdit,isMinimized,minimizedReason,reactionGroups{content,users{totalCount}},url,viewerDidAuthor},pageInfo{hasNextPage,endCursor},totalCount},
 		reactionGroups{content,users{totalCount}},
 		createdAt,
-		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {contexts(first:100) {nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
+		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {state, contexts(first:100) {nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
 	}
 	query PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {
 		repository(owner: $owner, name: $repo) {
@@ -632,13 +644,22 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	}
 	rollup, _ := rcNodes[0].(map[string]interface{})["commit"].(map[string]interface{})["statusCheckRollup"].(map[string]interface{})
 	if rollup == nil {
-		t.Fatalf("commit.statusCheckRollup null despite a recorded check run")
+		t.Fatalf("commit.statusCheckRollup null despite recorded status data")
+	}
+	if rollup["state"] != "FAILURE" {
+		t.Errorf("statusCheckRollup.state = %v, want FAILURE from commit status", rollup["state"])
 	}
 	ctxNodes, _ := rollup["contexts"].(map[string]interface{})["nodes"].([]interface{})
-	if len(ctxNodes) != 1 {
-		t.Fatalf("contexts.nodes = %v, want 1 CheckRun", rollup["contexts"])
+	if len(ctxNodes) != 2 {
+		t.Fatalf("contexts.nodes = %v, want StatusContext + CheckRun", rollup["contexts"])
 	}
-	checkNode := ctxNodes[0].(map[string]interface{})
+	statusNode := ctxNodes[0].(map[string]interface{})
+	if statusNode["__typename"] != "StatusContext" || statusNode["context"] != "ci/unit" ||
+		statusNode["state"] != "FAILURE" || statusNode["targetUrl"] != "https://ci.example.test/unit" ||
+		statusNode["description"] != "unit suite failed" {
+		t.Errorf("status context node = %v, want ci/unit FAILURE", statusNode)
+	}
+	checkNode := ctxNodes[1].(map[string]interface{})
 	if checkNode["__typename"] != "CheckRun" || checkNode["name"] != "build" ||
 		checkNode["status"] != "COMPLETED" || checkNode["conclusion"] != "SUCCESS" {
 		t.Errorf("check run node = %v, want CheckRun build COMPLETED SUCCESS", checkNode)

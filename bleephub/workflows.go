@@ -498,7 +498,16 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			// Evaluate job-level if: condition
 			if wfJob.Def != nil && wfJob.Def.If != "" {
 				hasAlways, hasFailure := ExprContainsStatusFunction(wfJob.Def.If)
-				exprCtx := s.jobExprContext(wf, wfJob)
+				exprCtx, err := s.jobExprContext(wf, wfJob)
+				if err != nil {
+					wfJob.Status = JobStatusCompleted
+					wfJob.Result = ResultFailure
+					wfJob.CompletedAt = time.Now()
+					s.logger.Warn().Err(err).Str("job", wfJob.Key).
+						Msg("job if: context error — failing job")
+					changed = true
+					continue
+				}
 
 				ok, err := EvalExprErr(wfJob.Def.If, exprCtx)
 				if err != nil {
@@ -616,7 +625,18 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 	timelineID := uuid.New().String()
 	requestID := s.nextRequestID()
 
-	msg := s.buildJobMessageFromDef(serverURL, wf, wfJob, planID, timelineID, requestID, defaultImage)
+	msg, err := s.buildJobMessageFromDef(serverURL, wf, wfJob, planID, timelineID, requestID, defaultImage)
+	if err != nil {
+		s.store.mu.Lock()
+		wfJob.Status = JobStatusCompleted
+		wfJob.Result = ResultFailure
+		wfJob.CompletedAt = time.Now()
+		s.store.mu.Unlock()
+		s.queueActionsEvent(evJobCompleted, wf, wfJob)
+		s.logger.Error().Err(err).Str("job", wfJob.Key).Msg("failed to build job message")
+		s.finalizeWorkflowIfDone(wf)
+		return
+	}
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		s.logger.Error().Err(err).Str("job", wfJob.Key).Msg("failed to marshal job message")
@@ -1238,7 +1258,7 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 // jobExprContext builds the expression-evaluation context for a job-level
 // `if:` with the contexts real GitHub makes available there: github,
 // needs, vars, and inputs. Callers hold the store write lock.
-func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
+func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) (*ExprContext, error) {
 	// Jobs inside a reusable-workflow call see their workflow's own view:
 	// sibling needs under unprefixed keys, the synthetic gate invisible,
 	// and the call's resolved inputs as the inputs context.
@@ -1288,7 +1308,10 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 
 	varsCtx := make(map[string]interface{})
 	if wf.RepoFullName != "" {
-		_, vars := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		_, vars, err := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		if err != nil {
+			return nil, err
+		}
 		for name, v := range vars {
 			varsCtx[name] = v
 		}
@@ -1303,7 +1326,7 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 			"inputs": inputsCtx,
 			"vars":   varsCtx,
 		},
-	}
+	}, nil
 }
 
 // githubContextMap assembles the server-side `github` context for
@@ -1314,18 +1337,12 @@ func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
 	if eventName == "" {
 		eventName = "push"
 	}
+	repoFullName := wf.RepoFullName
 	ref := wf.Ref
-	if ref == "" {
+	if ref == "" && repoFullName != "" {
 		ref = "refs/heads/main"
 	}
 	sha := wf.Sha
-	if sha == "" {
-		sha = "0000000000000000000000000000000000000000"
-	}
-	repoFullName := wf.RepoFullName
-	if repoFullName == "" {
-		repoFullName = "bleephub/test"
-	}
 	repoOwner := repoFullName
 	if idx := strings.Index(repoOwner, "/"); idx >= 0 {
 		repoOwner = repoOwner[:idx]

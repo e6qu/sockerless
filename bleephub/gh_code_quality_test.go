@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"testing"
+	"time"
 )
 
 func TestRepoCodeQualitySetup_DefaultAndRoundTrip(t *testing.T) {
@@ -75,6 +76,16 @@ func TestRepoCodeQualitySetup_Validation(t *testing.T) {
 	// A labeled runner without a label is unusable.
 	requireStatus(t, ghPatch(t, path, defaultToken, map[string]interface{}{"runner_type": "labeled"}), 422)
 
+	// Rejected updates must not leak partial mutations into store state.
+	requireStatus(t, ghPatch(t, path, defaultToken, map[string]interface{}{
+		"state": "configured", "languages": []string{"go"}, "runner_type": "standard",
+	}), 200)
+	requireStatus(t, ghPatch(t, path, defaultToken, map[string]interface{}{"runner_type": "labeled"}), 422)
+	setup := decodeJSONWithStatus(t, ghGet(t, path, defaultToken), 200)
+	if setup["runner_type"] != "standard" || setup["runner_label"] != nil || setup["state"] != "configured" {
+		t.Fatalf("rejected update mutated setup = %v", setup)
+	}
+
 	// Only repository admins may update; other users read a public
 	// repository but get 403 on writes.
 	outsider := seedTestUser(testServer, "code-quality-outsider")
@@ -84,4 +95,32 @@ func TestRepoCodeQualitySetup_Validation(t *testing.T) {
 
 	// Unknown repository → 404.
 	requireStatus(t, ghGet(t, "/api/v3/repos/admin/no-such-repo/code-quality/setup", defaultToken), 404)
+}
+
+func TestStoreCodeQualitySetup_SnapshotsStoreBoundary(t *testing.T) {
+	st := NewStore()
+	now := time.Now().UTC()
+	wantUpdatedAt := now
+	input := &CodeQualitySetup{
+		RepoFullName: "admin/code-quality-boundary",
+		State:        "configured",
+		Languages:    []string{"go"},
+		RunnerType:   "standard",
+		UpdatedAt:    &now,
+	}
+	st.SetCodeQualitySetup(input)
+
+	input.Languages[0] = "python"
+	*input.UpdatedAt = input.UpdatedAt.Add(time.Hour)
+	got := st.GetCodeQualitySetup(input.RepoFullName)
+	if got.Languages[0] != "go" || !got.UpdatedAt.Equal(wantUpdatedAt) {
+		t.Fatalf("SetCodeQualitySetup stored caller-owned references: %+v", got)
+	}
+
+	got.Languages[0] = "ruby"
+	*got.UpdatedAt = got.UpdatedAt.Add(time.Hour)
+	again := st.GetCodeQualitySetup(input.RepoFullName)
+	if again.Languages[0] != "go" || !again.UpdatedAt.Equal(wantUpdatedAt) {
+		t.Fatalf("GetCodeQualitySetup returned store-owned references: %+v", again)
+	}
 }

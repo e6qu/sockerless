@@ -424,6 +424,8 @@ func (s *Server) registerGHReleasesRoutes() {
 		s.handleReleaseTwoSegDispatch("GET"))
 	s.route("POST /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("POST"))
+	s.route("POST /api/uploads/repos/{owner}/{repo}/releases/{release_id}/assets",
+		s.requirePerm(scopeContents, permWrite, s.handleUploadReleaseAsset))
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
 		s.handleReleaseTwoSegDispatch("PATCH"))
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/releases/{p1}/{p2}",
@@ -713,47 +715,22 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func readUploadAssetBody(r *http.Request) (name, label, contentType string, data []byte, ok bool) {
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
-		return "", "", "", nil, false
-	}
-	name = r.FormValue("name")
-	label = r.FormValue("label")
-	contentType = r.FormValue("content_type")
-	if files := r.MultipartForm.File["file"]; len(files) > 0 {
-		fh := files[0]
-		f, err := fh.Open()
-		if err != nil {
-			return "", "", "", nil, false
-		}
-		defer f.Close()
-		data, err = io.ReadAll(f)
-		if err != nil {
-			return "", "", "", nil, false
-		}
-		// Form-supplied content_type wins over the file header default.
-		if contentType == "" {
-			contentType = fh.Header.Get("Content-Type")
-		}
-	} else {
-		// Fallback: raw bytes in any non-metadata form value.
-		for key, values := range r.MultipartForm.Value {
-			if key == "name" || key == "label" || key == "content_type" {
-				continue
-			}
-			if len(values) > 0 {
-				data = []byte(values[0])
-				break
-			}
-		}
-	}
+func readUploadAssetBody(r *http.Request) (name, label, contentType string, data []byte, ok bool, err error) {
+	q := r.URL.Query()
+	name = q.Get("name")
+	label = q.Get("label")
+	contentType = r.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
 	if name == "" {
-		return "", "", "", nil, false
+		return "", "", "", nil, false, nil
 	}
-	return name, label, contentType, data, true
+	data, err = io.ReadAll(r.Body)
+	if err != nil {
+		return "", "", "", nil, false, err
+	}
+	return name, label, contentType, data, true, nil
 }
 
 func (s *Server) handleUploadReleaseAsset(w http.ResponseWriter, r *http.Request) {
@@ -773,7 +750,11 @@ func (s *Server) handleUploadReleaseAsset(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	name, label, contentType, data, ok := readUploadAssetBody(r)
+	name, label, contentType, data, ok, err := readUploadAssetBody(r)
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Bad Request")
+		return
+	}
 	if !ok {
 		writeGHValidationError(w, "ReleaseAsset", "name", "missing_field")
 		return

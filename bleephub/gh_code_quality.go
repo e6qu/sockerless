@@ -22,13 +22,26 @@ type CodeQualitySetup struct {
 	UpdatedAt    *time.Time `json:"updated_at"`
 }
 
+func cloneCodeQualitySetup(setup *CodeQualitySetup) *CodeQualitySetup {
+	if setup == nil {
+		return nil
+	}
+	cp := *setup
+	cp.Languages = append([]string(nil), setup.Languages...)
+	if setup.UpdatedAt != nil {
+		updatedAt := *setup.UpdatedAt
+		cp.UpdatedAt = &updatedAt
+	}
+	return &cp
+}
+
 // GetCodeQualitySetup returns the repository's code quality setup, or
 // the unconfigured default.
 func (st *Store) GetCodeQualitySetup(repoFullName string) *CodeQualitySetup {
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 	if setup, ok := st.CodeQualitySetups[repoFullName]; ok && setup != nil {
-		return setup
+		return cloneCodeQualitySetup(setup)
 	}
 	return &CodeQualitySetup{RepoFullName: repoFullName, State: "not-configured", Languages: []string{}}
 }
@@ -37,9 +50,10 @@ func (st *Store) GetCodeQualitySetup(repoFullName string) *CodeQualitySetup {
 func (st *Store) SetCodeQualitySetup(setup *CodeQualitySetup) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.CodeQualitySetups[setup.RepoFullName] = setup
+	stored := cloneCodeQualitySetup(setup)
+	st.CodeQualitySetups[setup.RepoFullName] = stored
 	if st.persist != nil {
-		st.persist.MustPut("code_quality_setups", setup.RepoFullName, setup)
+		st.persist.MustPut("code_quality_setups", setup.RepoFullName, stored)
 	}
 }
 

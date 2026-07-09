@@ -107,7 +107,7 @@ func (s *Server) handleRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -223,7 +223,7 @@ func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -273,7 +273,7 @@ func (s *Server) handleRunTiming(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -320,7 +320,7 @@ func (s *Server) handleRunArtifacts(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -683,7 +683,11 @@ func (s *Server) lookupRunFromPath(r *http.Request) (*Repo, *Workflow) {
 	if err != nil {
 		return repo, nil
 	}
-	return repo, s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunID(runID)
+	if wf == nil || !workflowBelongsToRepo(wf, repo.FullName) {
+		return repo, nil
+	}
+	return repo, wf
 }
 
 // findWorkflowByRunID lives in gh_actions_rest.go alongside the rest of

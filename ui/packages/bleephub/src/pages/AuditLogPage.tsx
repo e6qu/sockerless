@@ -2,49 +2,59 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { DataTable, InlineError, Spinner } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
-import { fetchAuditLog } from "../api.js";
+import { buildAuditLogPhrase, fetchAuditLog, fetchAuditLogOrgs } from "../api.js";
 import type { BleephubAuditEvent } from "../types.js";
 import { Button, FormLabel, PageTitle } from "../components/ui.js";
 
 const col = createColumnHelper<BleephubAuditEvent>();
 
 export function AuditLogPage() {
+  const [org, setOrg] = useState("");
   const [actor, setActor] = useState("");
   const [action, setAction] = useState("");
-  const [entityType, setEntityType] = useState("");
-  const [since, setSince] = useState("");
-  const [until, setUntil] = useState("");
+  const [phrase, setPhrase] = useState("");
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
   const [appliedFilters, setAppliedFilters] = useState({
+    org: "",
     actor: "",
     action: "",
-    entity_type: "",
-    since: "",
-    until: "",
+    phrase: "",
+    order: "desc" as "desc" | "asc",
   });
 
-  const filters = {
+  const { data: orgs, isLoading: orgsLoading, isError: orgsError } = useQuery({
+    queryKey: ["audit-log-orgs"],
+    queryFn: fetchAuditLogOrgs,
+  });
+
+  const effectiveOrg = appliedFilters.org || orgs?.[0]?.login || "";
+  const effectivePhrase = buildAuditLogPhrase({
     actor: appliedFilters.actor || undefined,
     action: appliedFilters.action || undefined,
-    entity_type: appliedFilters.entity_type || undefined,
-    since: appliedFilters.since || undefined,
-    until: appliedFilters.until || undefined,
-  };
+    text: appliedFilters.phrase || undefined,
+  });
 
   const { data, isLoading, isError } = useQuery({
     queryKey: ["audit-log", appliedFilters],
-    queryFn: () => fetchAuditLog(filters),
+    queryFn: () =>
+      fetchAuditLog({
+        org: effectiveOrg,
+        phrase: effectivePhrase || undefined,
+        order: appliedFilters.order,
+      }),
+    enabled: Boolean(effectiveOrg),
   });
 
   const apply = () =>
     setAppliedFilters({
+      org: org.trim() || effectiveOrg,
       actor: actor.trim(),
       action: action.trim(),
-      entity_type: entityType.trim(),
-      since,
-      until,
+      phrase: phrase.trim(),
+      order,
     });
 
-  if (isError) return <InlineError title="Failed to load audit log" />;
+  if (orgsError || isError) return <InlineError title="Failed to load audit log" />;
 
   const columns = [
     col.accessor("id", {
@@ -102,12 +112,22 @@ export function AuditLogPage() {
 
   return (
     <div>
-      <PageTitle title="Audit log" meta="Administrative events." />
+      <PageTitle title="Audit log" meta="GitHub Enterprise Server organization audit events." />
 
       <div
         className="mb-5 grid gap-3"
         style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
       >
+        <div>
+          <FormLabel id="filter-org">Organization</FormLabel>
+          <select id="filter-org" value={org || effectiveOrg} onChange={(e) => setOrg(e.target.value)}>
+            {(orgs ?? []).map((o) => (
+              <option key={o.login} value={o.login}>
+                {o.login}
+              </option>
+            ))}
+          </select>
+        </div>
         <div>
           <FormLabel id="filter-actor">Actor</FormLabel>
           <input
@@ -129,32 +149,21 @@ export function AuditLogPage() {
           />
         </div>
         <div>
-          <FormLabel id="filter-entity">Entity type</FormLabel>
+          <FormLabel id="filter-phrase">Search phrase</FormLabel>
           <input
-            id="filter-entity"
+            id="filter-phrase"
             type="text"
-            value={entityType}
-            onChange={(e) => setEntityType(e.target.value)}
-            placeholder="user"
+            value={phrase}
+            onChange={(e) => setPhrase(e.target.value)}
+            placeholder="repository settings"
           />
         </div>
         <div>
-          <FormLabel id="filter-since">Since</FormLabel>
-          <input
-            id="filter-since"
-            type="datetime-local"
-            value={since}
-            onChange={(e) => setSince(e.target.value)}
-          />
-        </div>
-        <div>
-          <FormLabel id="filter-until">Until</FormLabel>
-          <input
-            id="filter-until"
-            type="datetime-local"
-            value={until}
-            onChange={(e) => setUntil(e.target.value)}
-          />
+          <FormLabel id="filter-order">Order</FormLabel>
+          <select id="filter-order" value={order} onChange={(e) => setOrder(e.target.value as "desc" | "asc")}>
+            <option value="desc">Newest first</option>
+            <option value="asc">Oldest first</option>
+          </select>
         </div>
         <div className="flex items-end">
           <Button onClick={apply} variant="secondary" size="sm">
@@ -163,7 +172,9 @@ export function AuditLogPage() {
         </div>
       </div>
 
-      {isLoading || !data ? (
+      {!effectiveOrg && !orgsLoading ? (
+        <InlineError title="No organization audit log is available" detail="The authenticated user does not belong to an organization." />
+      ) : orgsLoading || isLoading || !data ? (
         <Spinner label="loading audit log" />
       ) : (
         <DataTable

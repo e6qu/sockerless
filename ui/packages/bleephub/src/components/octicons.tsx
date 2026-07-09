@@ -206,15 +206,6 @@ export function SignOutIcon(p: IconProps) {
   );
 }
 
-export function RefreshIcon(p: IconProps) {
-  return (
-    <Svg {...p}>
-      <path d="M13 8a5 5 0 1 1-1.5-3.5" />
-      <path d="M13 2.5V5h-2.5" />
-    </Svg>
-  );
-}
-
 /* Actions status vocabulary — run / job / step / check states. */
 
 export function CheckCircleIcon(p: IconProps) {

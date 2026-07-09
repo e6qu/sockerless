@@ -33,6 +33,21 @@ import {
   fetchPublicGists,
   fetchStarredGists,
   fetchRepos,
+  fetchUsers,
+  createUser,
+  updateUser,
+  deleteUser,
+  fetchOrgs,
+  createOrg,
+  updateOrg,
+  deleteOrg,
+  fetchTeams,
+  createTeam,
+  updateTeam,
+  deleteTeam,
+  fetchAuditLog,
+  fetchAuditLogOrgs,
+  buildAuditLogPhrase,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -397,6 +412,202 @@ describe("Notifications application programming interface helpers", () => {
     const [url, opts] = mockFetch.mock.calls[0];
     expect(url).toBe("/api/v3/notifications/threads/t1/subscription");
     expect(opts.method).toBe("DELETE");
+  });
+});
+
+// ─── Organizations and Teams GitHub REST helpers ────────────────────────
+
+describe("Organization and team application programming interface helpers", () => {
+  it("fetchOrgs lists organizations through GitHub REST and hydrates full organization records", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse([{ id: 10, login: "acme", avatar_url: "", description: "short" }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 10, login: "acme", name: "Acme", description: "full", created_at: "2026-01-01T00:00:00Z" }));
+
+    const orgs = await fetchOrgs();
+
+    expect(orgs[0].name).toBe("Acme");
+    expect(mockFetch.mock.calls.map((c) => c[0])).toEqual([
+      "/api/v3/organizations?per_page=100",
+      "/api/v3/orgs/acme",
+    ]);
+    expect(mockFetch.mock.calls.map((c) => c[0])).not.toContain("/internal/orgs");
+  });
+
+  it("createOrg uses the GitHub Enterprise Server admin organization endpoint", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ id: 1, login: "admin", type: "User", site_admin: true, created_at: "2026-01-01T00:00:00Z" }))
+      .mockResolvedValueOnce(jsonResponse({ id: 10, login: "acme", name: "Acme", created_at: "2026-01-01T00:00:00Z" }, 201))
+      .mockResolvedValueOnce(jsonResponse({ id: 10, login: "acme", name: "Acme", description: "Real org", created_at: "2026-01-01T00:00:00Z" }));
+
+    await createOrg({ login: "acme", name: "Acme", description: "Real org" });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[0][0]).toBe("/api/v3/user");
+    expect(calls[1][0]).toBe("/api/v3/admin/organizations");
+    expect(calls[1][1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(calls[1][1].body as string)).toEqual({
+      login: "acme",
+      admin: "admin",
+      profile_name: "Acme",
+    });
+    expect(calls[2][0]).toBe("/api/v3/orgs/acme");
+    expect(calls[2][1]).toMatchObject({ method: "PATCH" });
+    expect(calls.map((c) => c[0])).not.toContain("/internal/orgs");
+  });
+
+  it("updateOrg and deleteOrg use organization login on GitHub REST routes", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ id: 10, login: "acme", name: "Acme", created_at: "2026-01-01T00:00:00Z" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await updateOrg("acme", { name: "Acme" });
+    await deleteOrg("acme");
+
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/orgs/acme");
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "PATCH" });
+    expect(mockFetch.mock.calls[1][0]).toBe("/api/v3/orgs/acme");
+    expect(mockFetch.mock.calls[1][1]).toMatchObject({ method: "DELETE" });
+  });
+
+  it("team helpers use authenticated-user and organization team REST routes", async () => {
+    const team = {
+      id: 20,
+      slug: "core",
+      name: "Core",
+      description: "platform",
+      privacy: "closed",
+      organization: { id: 10, login: "acme" },
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse([team]))
+      .mockResolvedValueOnce(jsonResponse(team, 201))
+      .mockResolvedValueOnce(jsonResponse({ ...team, name: "Core Platform" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await fetchTeams();
+    await createTeam({ org: "acme", name: "Core", description: "platform", privacy: "closed" });
+    await updateTeam("acme", "core", { name: "Core Platform" });
+    await deleteTeam("acme", "core");
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[0][0]).toBe("/api/v3/user/teams?per_page=100");
+    expect(calls[1][0]).toBe("/api/v3/orgs/acme/teams");
+    expect(calls[1][1]).toMatchObject({ method: "POST" });
+    expect(calls[2][0]).toBe("/api/v3/orgs/acme/teams/core");
+    expect(calls[2][1]).toMatchObject({ method: "PATCH" });
+    expect(calls[3][0]).toBe("/api/v3/orgs/acme/teams/core");
+    expect(calls[3][1]).toMatchObject({ method: "DELETE" });
+    expect(calls.map((c) => c[0])).not.toContain("/internal/teams");
+  });
+});
+
+// ─── GitHub Enterprise Server user administration helpers ───────────────
+
+describe("GitHub Enterprise Server user administration application programming interface helpers", () => {
+  it("fetchUsers lists users through GitHub REST and hydrates full user records", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse([{ id: 3, login: "dev", type: "User", site_admin: false }]))
+      .mockResolvedValueOnce(jsonResponse({ id: 3, login: "dev", type: "User", site_admin: false, created_at: "2026-01-01T00:00:00Z" }));
+
+    const users = await fetchUsers();
+
+    expect(users[0].created_at).toBe("2026-01-01T00:00:00Z");
+    expect(mockFetch.mock.calls.map((c) => c[0])).toEqual([
+      "/api/v3/users?per_page=100",
+      "/api/v3/users/dev",
+    ]);
+    expect(mockFetch.mock.calls.map((c) => c[0])).not.toContain("/internal/users");
+  });
+
+  it("createUser uses GitHub Enterprise Server admin user and site-admin routes", async () => {
+    mockFetch
+      .mockResolvedValueOnce(jsonResponse({ id: 3, login: "dev", type: "User", site_admin: false }, 201))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 3, login: "dev", type: "User", site_admin: true, created_at: "2026-01-01T00:00:00Z" }));
+
+    await createUser({ login: "dev", email: "dev@example.com", site_admin: true });
+
+    const calls = mockFetch.mock.calls;
+    expect(calls[0][0]).toBe("/api/v3/admin/users");
+    expect(calls[0][1]).toMatchObject({ method: "POST" });
+    expect(JSON.parse(calls[0][1].body as string)).toEqual({ login: "dev", email: "dev@example.com" });
+    expect(calls[1][0]).toBe("/api/v3/users/dev/site_admin");
+    expect(calls[1][1]).toMatchObject({ method: "PUT" });
+    expect(calls[2][0]).toBe("/api/v3/users/dev");
+    expect(calls.map((c) => c[0])).not.toContain("/internal/users");
+  });
+
+  it("updateUser and deleteUser use GitHub Enterprise Server account routes", async () => {
+    mockFetch
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ id: 3, login: "dev", type: "User", site_admin: false, created_at: "2026-01-01T00:00:00Z" }))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+    await updateUser("dev", { site_admin: false });
+    await deleteUser("dev");
+
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/users/dev/site_admin");
+    expect(mockFetch.mock.calls[0][1]).toMatchObject({ method: "DELETE" });
+    expect(mockFetch.mock.calls[1][0]).toBe("/api/v3/users/dev");
+    expect(mockFetch.mock.calls[2][0]).toBe("/api/v3/admin/users/dev");
+    expect(mockFetch.mock.calls[2][1]).toMatchObject({ method: "DELETE" });
+  });
+});
+
+// ─── GitHub Enterprise Server organization audit log helpers ────────────
+
+describe("GitHub Enterprise Server organization audit log application programming interface helpers", () => {
+  it("fetchAuditLogOrgs lists organizations through the authenticated-user organizations route", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse([
+        { id: 2, login: "zeta", name: "Zeta", description: "", created_at: "2026-01-01T00:00:00Z" },
+        { id: 1, login: "acme", name: "Acme", description: "", created_at: "2026-01-01T00:00:00Z" },
+      ]),
+    );
+
+    const orgs = await fetchAuditLogOrgs();
+
+    expect(orgs.map((o) => o.login)).toEqual(["acme", "zeta"]);
+    expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/user/orgs?per_page=100");
+  });
+
+  it("fetchAuditLog uses the GitHub Enterprise Server organization audit-log route", async () => {
+    mockFetch.mockResolvedValue(
+      jsonResponse([
+        {
+          _document_id: "123",
+          "@timestamp": "2026-01-01T00:00:00Z",
+          action: "repo.create",
+          actor: "admin",
+          org: "acme",
+          data: { repo: "acme/demo" },
+          version: "1.1",
+        },
+      ]),
+    );
+
+    const events = await fetchAuditLog({ org: "acme", phrase: "repo.create admin", order: "desc" });
+
+    expect(events[0]).toMatchObject({
+      id: 123,
+      actor_login: "admin",
+      action: "repo.create",
+      entity_type: "acme",
+      entity_id: "acme/demo",
+      created_at: "2026-01-01T00:00:00Z",
+    });
+    const url = String(mockFetch.mock.calls[0][0]);
+    expect(url).toContain("/api/v3/orgs/acme/audit-log?");
+    expect(url).toContain("include=all");
+    expect(url).toContain("per_page=100");
+    expect(url).toContain("order=desc");
+    expect(url).toContain("phrase=repo.create+admin");
+    expect(url).not.toContain("/internal/audit-log");
+  });
+
+  it("buildAuditLogPhrase combines typed filters into GitHub's phrase query", () => {
+    expect(buildAuditLogPhrase({ actor: "admin", action: "repo.create", text: "demo" })).toBe("admin repo.create demo");
   });
 });
 

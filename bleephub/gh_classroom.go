@@ -1,8 +1,6 @@
 package bleephub
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -14,9 +12,7 @@ import (
 // newInviteCode mints the short random code GitHub Classroom uses in
 // assignment invite links (https://classroom.github.com/a/<code>).
 func newInviteCode() string {
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return mustRandomHex(6)
 }
 
 // GitHub Classroom REST surface (GET /classrooms, /classrooms/{classroom_id},

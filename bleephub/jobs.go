@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -126,9 +127,9 @@ type WorkflowSubmitRequest struct {
 	Image     string            `json:"image"`      // default container image
 	HostMode  bool              `json:"hostMode"`   // run jobs on the runner (no container) unless the YAML declares one
 	EventName string            `json:"event_name"` // default "push"
-	Ref       string            `json:"ref"`        // default "refs/heads/main"
-	Sha       string            `json:"sha"`        // default "0000..."
-	Repo      string            `json:"repo"`       // default "bleephub/test"
+	Ref       string            `json:"ref"`        // repository-scoped default is the repository default branch
+	Sha       string            `json:"sha"`        // optional explicit commit SHA for repo-less operator submissions
+	Repo      string            `json:"repo"`       // optional repository scope, when the workflow belongs to a repo
 	Inputs    map[string]string `json:"inputs"`     // workflow_dispatch inputs
 }
 
@@ -177,17 +178,9 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		eventName = "push"
 	}
 	ref := req.Ref
-	if ref == "" {
-		ref = "refs/heads/main"
-	}
 	sha := req.Sha
-	if sha == "" {
-		sha = "0000000000000000000000000000000000000000"
-	}
 	repo := req.Repo
-	if repo == "" {
-		repo = "bleephub/test"
-	}
+	const zeroSha = "0000000000000000000000000000000000000000"
 
 	// Auto-register the WorkflowFile so /api/v3/repos/{o}/{r}/actions/
 	// workflows lists this submission. Path defaults to the conventional
@@ -198,7 +191,37 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 		wfName = "workflow"
 	}
 	wfPath := ".github/workflows/" + wfName + ".yml"
-	s.store.RegisterWorkflowFile(repo, wfPath, wfName, req.Workflow, "submitted")
+	if repo != "" {
+		repoRow := s.store.GetRepoByFullName(repo)
+		if repoRow == nil {
+			writeGHError(w, http.StatusNotFound, "Not Found")
+			return
+		}
+		if ref == "" {
+			ref = "refs/heads/" + repoRow.DefaultBranch
+		}
+		if sha == "" {
+			parts := strings.SplitN(repo, "/", 2)
+			if len(parts) != 2 {
+				writeGHError(w, http.StatusUnprocessableEntity, "Invalid repository scope")
+				return
+			}
+			stor := s.store.GetGitStorage(parts[0], parts[1])
+			if stor == nil {
+				writeGHError(w, http.StatusUnprocessableEntity, "Repository git storage is not available")
+				return
+			}
+			sha = resolveRefSha(stor, ref)
+			if sha == "" || sha == zeroSha {
+				writeGHError(w, http.StatusUnprocessableEntity, "No ref found for: "+ref)
+				return
+			}
+		} else if sha == zeroSha {
+			writeGHError(w, http.StatusUnprocessableEntity, "No ref found for: "+ref)
+			return
+		}
+		s.store.RegisterWorkflowFile(repo, wfPath, wfName, req.Workflow, "submitted")
+	}
 
 	// Expand matrix strategies
 	expandedDef := expandMatrixJobs(wfDef)
@@ -480,15 +503,15 @@ func buildJobMessage(serverURL, jobID, planID, timelineID string, requestID int6
 			"github": dictContextData(
 				"server_url", serverURL,
 				"api_url", serverURL,
-				"repository", "bleephub/test",
-				"repository_owner", "bleephub",
+				"repository", "",
+				"repository_owner", "",
 				"run_id", "1",
 				"run_number", "1",
 				"workflow", "test",
 				"job", "test",
 				"event_name", "push",
-				"sha", "0000000000000000000000000000000000000000",
-				"ref", "refs/heads/main",
+				"sha", "",
+				"ref", "",
 				"action", "__run",
 				"workspace", "/github/workspace",
 				"token", jobToken,

@@ -39,7 +39,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -103,7 +103,7 @@ func (s *Server) handleForceCancelWorkflowRun(w http.ResponseWriter, r *http.Req
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -173,7 +173,7 @@ func (s *Server) handleRerunWorkflowJob(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf, target := s.findJobByStableID(jobID)
+	wf, target := s.findJobByStableIDInRepo(jobID, repoFullName(r))
 	if target == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -346,7 +346,7 @@ func (s *Server) handleRunAttemptLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findRunAttempt(runID, attempt)
+	wf := s.findRunAttempt(runID, attempt, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

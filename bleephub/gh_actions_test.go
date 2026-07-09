@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -243,6 +244,67 @@ func TestActionsJobs_Logs(t *testing.T) {
 	got := string(body)
 	if got != "uploaded line one\nuploaded line two\n" {
 		t.Errorf("logs body = %q, want uploaded log bytes", got)
+	}
+}
+
+func TestActionsRunAndJobEndpointsScopeIDsToPathRepository(t *testing.T) {
+	s := newTestServer()
+	s.registerGHActionsRoutes()
+	s.registerGHActionsExtrasRoutes()
+	admin := s.store.LookupUserByLogin("admin")
+	s.store.CreateRepo(admin, "repo-a", "", false)
+	s.store.CreateRepo(admin, "repo-b", "", false)
+	wf, wfJob := seedRun(t, s, "admin/repo-a", "completed", "success")
+	seedFinalizedArtifact(s, 1, wf, "logs", time.Now())
+	jobID := stableJobID(wfJob.JobID)
+
+	cases := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{
+			name:   "get run",
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/runs/%d", wf.RunID),
+		},
+		{
+			name:   "list run jobs",
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/runs/%d/jobs", wf.RunID),
+		},
+		{
+			name:   "get job",
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/jobs/%d", jobID),
+		},
+		{
+			name:   "get job logs",
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/jobs/%d/logs", jobID),
+		},
+		{
+			name:   "list run artifacts",
+			method: http.MethodGet,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/runs/%d/artifacts", wf.RunID),
+		},
+		{
+			name:   "delete run",
+			method: http.MethodDelete,
+			path:   fmt.Sprintf("/api/v3/repos/admin/repo-b/actions/runs/%d", wf.RunID),
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := runAuthedRequest(s, tc.method, tc.path)
+			if w.Code != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404; body=%s", w.Code, w.Body.String())
+			}
+		})
+	}
+	if got := s.findWorkflowByRunID(wf.RunID); got == nil {
+		t.Fatal("wrong-repository delete removed the original workflow run")
 	}
 }
 
@@ -839,10 +901,7 @@ func TestActionsPendingDeploymentReviewFlow(t *testing.T) {
 		t.Fatalf("protection_rules = %v, want the required_reviewers rule", envData["protection_rules"])
 	}
 
-	// Run a workflow with a job targeting the environment.
-	resp = ghPost(t, "/internal/exec/workflow", defaultToken, map[string]interface{}{
-		"repo": repo,
-		"workflow": `
+	workflowYAML := `
 name: deploy
 on: push
 jobs:
@@ -850,7 +909,22 @@ jobs:
     environment: production
     steps:
       - run: echo deploy
-`,
+`
+	resp = ghPut(t, "/api/v3/repos/"+repo+"/contents/.github/workflows/deploy.yml", defaultToken, map[string]interface{}{
+		"message": "add deployment workflow",
+		"content": base64.StdEncoding.EncodeToString([]byte(workflowYAML)),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create workflow file: %d %s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+
+	// Run a workflow with a job targeting the environment.
+	resp = ghPost(t, "/internal/exec/workflow", defaultToken, map[string]interface{}{
+		"repo":     repo,
+		"workflow": workflowYAML,
 	})
 	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 {
 		body, _ := io.ReadAll(resp.Body)
