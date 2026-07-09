@@ -58,11 +58,12 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req struct {
-		Title string   `json:"title"`
-		Body  string   `json:"body"`
-		Head  string   `json:"head"`
-		Base  string   `json:"base"`
-		Draft flexBool `json:"draft"`
+		Title               string   `json:"title"`
+		Body                string   `json:"body"`
+		Head                string   `json:"head"`
+		Base                string   `json:"base"`
+		Draft               flexBool `json:"draft"`
+		MaintainerCanModify flexBool `json:"maintainer_can_modify"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
@@ -72,7 +73,16 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, req.Head, req.Base, bool(req.Draft), nil, nil, 0)
+	headRepo, headRef := resolvePullRequestHead(s.store, repo, req.Head)
+	if headRepo == nil || headRef == "" {
+		writeGHValidationError(w, "PullRequest", "head", "invalid")
+		return
+	}
+
+	pr := s.store.CreatePullRequest(repo.ID, user.ID, req.Title, req.Body, headRef, req.Base, bool(req.Draft), nil, nil, 0, PullRequestOptions{
+		HeadRepoID:          headRepo.ID,
+		MaintainerCanModify: bool(req.MaintainerCanModify),
+	})
 	if pr == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Pull request creation failed")
 		return
@@ -122,15 +132,24 @@ func (s *Server) handleListPullRequests(w http.ResponseWriter, r *http.Request) 
 	// Filter by head
 	if head := r.URL.Query().Get("head"); head != "" {
 		// head can be "owner:branch" or just "branch"
+		headOwner := ""
 		branch := head
 		if idx := strings.Index(head, ":"); idx >= 0 {
+			headOwner = head[:idx]
 			branch = head[idx+1:]
 		}
 		var filtered []*PullRequest
 		for _, pr := range prs {
-			if pr.HeadRefName == branch {
-				filtered = append(filtered, pr)
+			if pr.HeadRefName != branch {
+				continue
 			}
+			if headOwner != "" {
+				headRepo := pullRequestHeadRepo(s.store, pr)
+				if headRepo == nil || headRepo.Owner == nil || headRepo.Owner.Login != headOwner {
+					continue
+				}
+			}
+			filtered = append(filtered, pr)
 		}
 		prs = filtered
 	}
@@ -405,7 +424,16 @@ func (s *Server) completePullRequestMerge(repo *Repo, pr *PullRequest, user *Use
 	if stor == nil {
 		return "", "Pull Request is not mergeable"
 	}
-	headHash, headErr := resolveGitRef(stor, pr.HeadRefName)
+	headStor, headRepoFullName := pullRequestGitStorage(s.store, repo, pr)
+	if headStor == nil {
+		return "", "Pull Request is not mergeable"
+	}
+	headHash, headErr := resolveGitRef(headStor, pr.HeadRefName)
+	if headErr == nil && headRepoFullName != repo.FullName {
+		if err := copyGitObjects(headStor, stor); err != nil {
+			return "", "Pull Request is not mergeable"
+		}
+	}
 	baseRef := plumbing.NewBranchReferenceName(pr.BaseRefName)
 	if _, baseErr := stor.Reference(baseRef); headErr != nil || baseErr != nil {
 		return "", "Pull Request is not mergeable"
@@ -432,7 +460,11 @@ func (s *Server) completePullRequestMerge(repo *Repo, pr *PullRequest, user *Use
 	default: // "merge"
 		message := commitTitle
 		if message == "" {
-			message = fmt.Sprintf("Merge pull request #%d from %s/%s", pr.Number, owner, pr.HeadRefName)
+			headOwner := owner
+			if headRepo := pullRequestHeadRepo(s.store, pr); headRepo != nil && headRepo.Owner != nil {
+				headOwner = headRepo.Owner.Login
+			}
+			message = fmt.Sprintf("Merge pull request #%d from %s/%s", pr.Number, headOwner, pr.HeadRefName)
 		}
 		body := commitMessage
 		if body == "" {
@@ -1054,11 +1086,7 @@ func (s *Server) buildPullRequestTimeline(repo *Repo, pr *PullRequest, baseURL s
 // including past the PR's own merge commit. The result is empty (with a nil
 // error) when the repository holds no git objects for the PR's branches.
 func pullRequestCommitObjects(st *Store, repo *Repo, pr *PullRequest) ([]*object.Commit, error) {
-	owner, name, ok := splitRepoFullName(repo.FullName)
-	if !ok {
-		return nil, nil
-	}
-	stor := st.GetGitStorage(owner, name)
+	stor, _ := pullRequestGitStorage(st, repo, pr)
 	if stor == nil {
 		return nil, nil
 	}
@@ -1213,6 +1241,95 @@ func (s *Server) handleUpdateBranch(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func pullRequestHeadRepoID(pr *PullRequest) int {
+	if pr == nil {
+		return 0
+	}
+	if pr.HeadRepoID != 0 {
+		return pr.HeadRepoID
+	}
+	return pr.RepoID
+}
+
+func pullRequestHeadRepo(st *Store, pr *PullRequest) *Repo {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	return pullRequestHeadRepoLocked(st, pr)
+}
+
+func pullRequestHeadRepoLocked(st *Store, pr *PullRequest) *Repo {
+	if pr == nil {
+		return nil
+	}
+	return st.Repos[pullRequestHeadRepoID(pr)]
+}
+
+func resolvePullRequestHead(st *Store, baseRepo *Repo, head string) (*Repo, string) {
+	if baseRepo == nil || strings.TrimSpace(head) == "" {
+		return nil, ""
+	}
+	ownerLogin := ""
+	branch := head
+	if idx := strings.Index(head, ":"); idx >= 0 {
+		ownerLogin = head[:idx]
+		branch = head[idx+1:]
+	}
+	if branch == "" {
+		return nil, ""
+	}
+	if ownerLogin == "" || (baseRepo.Owner != nil && ownerLogin == baseRepo.Owner.Login) {
+		return baseRepo, branch
+	}
+
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	var matches []*Repo
+	networkSourceID := baseRepo.ID
+	if baseRepo.SourceID != 0 {
+		networkSourceID = baseRepo.SourceID
+	}
+	for _, repo := range st.Repos {
+		if repo == nil || repo.Owner == nil || repo.Owner.Login != ownerLogin {
+			continue
+		}
+		if repo.ID == baseRepo.ID {
+			matches = append(matches, repo)
+			continue
+		}
+		sourceID := repo.SourceID
+		if sourceID == 0 {
+			sourceID = repo.ID
+		}
+		if repo.ParentID == baseRepo.ID || sourceID == networkSourceID {
+			matches = append(matches, repo)
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0], branch
+	}
+	for _, repo := range matches {
+		if repo.Name == baseRepo.Name {
+			return repo, branch
+		}
+	}
+	return nil, ""
+}
+
+func pullRequestGitStorage(st *Store, repo *Repo, pr *PullRequest) (gitStorage.Storer, string) {
+	if repo == nil || pr == nil {
+		return nil, ""
+	}
+	headRepo := pullRequestHeadRepo(st, pr)
+	if headRepo == nil {
+		return nil, ""
+	}
+	owner, name, ok := splitRepoFullName(headRepo.FullName)
+	if !ok {
+		return nil, ""
+	}
+	return st.GetGitStorage(owner, name), headRepo.FullName
+}
+
 // reviewerIDsFromRequest normalises the GitHub request reviewers field,
 // which may be an array of logins (strings) or objects with an id/login key.
 func reviewerIDsFromRequest(st *Store, reviewers []interface{}) []int {
@@ -1251,7 +1368,7 @@ func pullRequestHeadSHALocked(pr *PullRequest, st *Store) string {
 	if pr == nil {
 		return ""
 	}
-	repo := st.Repos[pr.RepoID]
+	repo := pullRequestHeadRepoLocked(st, pr)
 	if repo == nil {
 		return ""
 	}
@@ -1268,8 +1385,7 @@ func pullRequestReviewCommitSHA(review *PullRequestReview, st *Store) string {
 // pullRequestSimpleJSON converts a PullRequest to the GitHub
 // `pull-request-simple` shape used by list responses — the full shape
 // minus the merge/diff-stat members that exist only on `pull-request`.
-// Bleephub PRs are same-repository, so head and base both carry the
-// repository and its owner. Must not be called with st.mu held.
+// Must not be called with st.mu held.
 func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName string) map[string]interface{} {
 	// Read the PR's mutable fields off a private snapshot: an UpdatePullRequest
 	// / merge / close writer mutates title, body, state, merge shas, and
@@ -1316,11 +1432,15 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		milestone = st.Milestones[pr.MilestoneID]
 	}
 	repo := st.ReposByName[repoFullName]
-	stor := st.GitStorages[repoFullName]
+	headRepo := pullRequestHeadRepoLocked(st, pr)
+	headStor := gitStorage.Storer(nil)
+	if headRepo != nil {
+		headStor = st.GitStorages[headRepo.FullName]
+	}
 
 	st.mu.RUnlock()
 
-	headSHA := resolveBranchSha(stor, pr.HeadRefName)
+	headSHA := resolveBranchSha(headStor, pr.HeadRefName)
 	baseSHA := pr.BaseSHA
 
 	var milestoneJSON interface{}
@@ -1333,6 +1453,14 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 	if repo != nil {
 		repoJSON = repoToJSON(repo, st, baseURL)
 		repoOwnerJSON = repoOwnerREST(repo, st, baseURL)
+	}
+	var headRepoJSON interface{}
+	var headRepoOwnerJSON interface{}
+	headRepoFullName := repoFullName
+	if headRepo != nil {
+		headRepoFullName = headRepo.FullName
+		headRepoJSON = repoToJSON(headRepo, st, baseURL)
+		headRepoOwnerJSON = repoOwnerREST(headRepo, st, baseURL)
 	}
 
 	// GitHub's assignee is the first assignee, null when unassigned.
@@ -1395,9 +1523,9 @@ func pullRequestSimpleJSON(pr *PullRequest, st *Store, baseURL, repoFullName str
 		"head": map[string]interface{}{
 			"ref":   pr.HeadRefName,
 			"sha":   headSHA,
-			"label": repoFullName + ":" + pr.HeadRefName,
-			"repo":  repoJSON,
-			"user":  repoOwnerJSON,
+			"label": headRepoFullName + ":" + pr.HeadRefName,
+			"repo":  headRepoJSON,
+			"user":  headRepoOwnerJSON,
 		},
 		"base": map[string]interface{}{
 			"ref":   pr.BaseRefName,
@@ -1467,7 +1595,7 @@ func pullRequestToJSON(pr *PullRequest, st *Store, baseURL, repoFullName string)
 	out["merged"] = merged
 	out["mergeable"] = pr.Mergeable == "MERGEABLE"
 	out["mergeable_state"] = mergeableState
-	out["maintainer_can_modify"] = false
+	out["maintainer_can_modify"] = pr.MaintainerCanModify
 	out["merged_by"] = mergedByJSON
 	out["additions"] = pr.Additions
 	out["deletions"] = pr.Deletions
@@ -1562,11 +1690,7 @@ func (s *Server) handleListPullRequestFiles(w http.ResponseWriter, r *http.Reque
 // returns the per-file JSON GitHub's pulls/{n}/files endpoint emits, including
 // the unified-diff `patch` for text changes.
 func pullRequestChangedFiles(st *Store, repo *Repo, pr *PullRequest, baseURL string) ([]map[string]interface{}, error) {
-	owner, name, ok := splitRepoFullName(repo.FullName)
-	if !ok {
-		return []map[string]interface{}{}, nil
-	}
-	stor := st.GetGitStorage(owner, name)
+	stor, _ := pullRequestGitStorage(st, repo, pr)
 	if stor == nil {
 		return []map[string]interface{}{}, nil
 	}

@@ -394,6 +394,6 @@ func (s *Server) evaluateChecksForMerge(repo *Repo, baseBranch, headSha string) 
 
 // prHeadSha resolves a PR's current head commit.
 func (s *Server) prHeadSha(repo *Repo, pr *PullRequest) string {
-	stor := s.store.GetGitStorage(splitRepoKeyParts(repo.FullName)[0], splitRepoKeyParts(repo.FullName)[1])
+	stor, _ := pullRequestGitStorage(s.store, repo, pr)
 	return resolveBranchSha(stor, pr.HeadRefName)
 }

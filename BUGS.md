@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2386 filed - 2343 fixed - 2 open - 16 false positives.**
+**2387 filed - 2344 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2387~~ | P2 | Bleephub pull requests | same-repository-only pull request model | Pull requests now persist the real head repository and maintainer-edit flag, so fork pull requests create from `owner:branch`, render REST/GraphQL head repository fields from the fork, derive commits/files from the fork git storage, emit fork-aware pull request webhook payloads, and merge by copying real fork git objects into the base repository before materializing the merge commit. |
 | ~~2386~~ | P2 | Bleephub GraphQL repositories | hardcoded repository metadata | GraphQL `Repository` now reports repository settings and implemented features from real store/REST state: wiki, Projects classic, Discussions, homepage, fork parent/count, template status, and delete-branch-on-merge no longer resolve from fixed false/null/zero values. |
 | ~~2385~~ | P2 | Bleephub GraphQL repositories | hardcoded repository watcher count | GraphQL `Repository.watchers.totalCount` now reads the same REST-backed repository watch subscriptions as `/subscribers` and `/subscription`, so GraphQL clients see real watcher totals. |
 | ~~2384~~ | P2 | Bleephub GraphQL pull requests | hardcoded empty GitHub connections | `PullRequest.files` now derives changed files from the same git merge-base/head diff as `GET /pulls/{number}/files`, and `PullRequest.closingIssuesReferences` resolves GitHub closing-keyword issue references from the real pull request body to store-backed issue nodes. |

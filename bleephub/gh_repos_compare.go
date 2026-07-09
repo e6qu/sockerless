@@ -922,6 +922,21 @@ func (s *Server) handleMergeRefs(w http.ResponseWriter, r *http.Request) {
 // It is used to implement repository forks while keeping the copy independent
 // of the original.
 func copyGitStorage(src, dst gitStorage.Storer) error {
+	if err := copyGitObjects(src, dst); err != nil {
+		return err
+	}
+
+	refIter, err := src.IterReferences()
+	if err != nil {
+		return err
+	}
+	defer refIter.Close()
+	return refIter.ForEach(func(ref *plumbing.Reference) error {
+		return dst.SetReference(ref)
+	})
+}
+
+func copyGitObjects(src, dst gitStorage.Storer) error {
 	for _, t := range []plumbing.ObjectType{plumbing.CommitObject, plumbing.TreeObject, plumbing.BlobObject, plumbing.TagObject} {
 		iter, err := src.IterEncodedObjects(t)
 		if err != nil {
@@ -955,13 +970,5 @@ func copyGitStorage(src, dst gitStorage.Storer) error {
 		}
 		iter.Close()
 	}
-
-	refIter, err := src.IterReferences()
-	if err != nil {
-		return err
-	}
-	defer refIter.Close()
-	return refIter.ForEach(func(ref *plumbing.Reference) error {
-		return dst.SetReference(ref)
-	})
+	return nil
 }

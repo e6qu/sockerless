@@ -5,10 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func createTestPRRepo(t *testing.T, name string) {
@@ -90,6 +92,131 @@ func TestCreatePullRequestREST(t *testing.T) {
 	}
 	if _, ok := headUser["nodeID"]; ok {
 		t.Errorf("head.user has GraphQL nodeID in REST response: %v", headUser)
+	}
+}
+
+func TestForkPullRequestRESTAndGraphQL(t *testing.T) {
+	sourceName := "pr-fork-source"
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": sourceName, "auto_init": true,
+	})
+	resp.Body.Close()
+	source := testServer.store.GetRepo("admin", sourceName)
+	if source == nil {
+		t.Fatalf("source repo not created")
+	}
+	seedPullRequestBranches(t, testServer, source)
+
+	testServer.store.mu.Lock()
+	forker := &User{ID: testServer.store.NextUser, Login: "pr-forker", Type: "User", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	testServer.store.NextUser++
+	testServer.store.Users[forker.ID] = forker
+	testServer.store.UsersByLogin[forker.Login] = forker
+	tok := &Token{Value: "pr-forker-token", UserID: forker.ID, Scopes: "repo", CreatedAt: time.Now()}
+	testServer.store.Tokens[tok.Value] = tok
+	testServer.store.mu.Unlock()
+
+	forkResp := ghPost(t, "/api/v3/repos/admin/"+sourceName+"/forks", tok.Value, map[string]interface{}{})
+	if forkResp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(forkResp.Body)
+		forkResp.Body.Close()
+		t.Fatalf("fork status = %d body=%s", forkResp.StatusCode, body)
+	}
+	forkResp.Body.Close()
+	fork := testServer.store.GetRepo("pr-forker", sourceName)
+	if fork == nil {
+		t.Fatalf("fork repo not created")
+	}
+	seedPullRequestBranches(t, testServer, fork, "fork-change")
+
+	createResp := ghPost(t, "/api/v3/repos/admin/"+sourceName+"/pulls", tok.Value, map[string]interface{}{
+		"title":                 "Fork change",
+		"body":                  "from fork",
+		"head":                  "pr-forker:fork-change",
+		"base":                  "main",
+		"maintainer_can_modify": true,
+	})
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		createResp.Body.Close()
+		t.Fatalf("create fork pull request status = %d body=%s", createResp.StatusCode, body)
+	}
+	created := decodeJSON(t, createResp)
+	head, _ := created["head"].(map[string]interface{})
+	headRepo, _ := head["repo"].(map[string]interface{})
+	if headRepo == nil || headRepo["full_name"] != "pr-forker/"+sourceName {
+		t.Fatalf("head.repo = %v, want fork repo", head["repo"])
+	}
+	headUser, _ := head["user"].(map[string]interface{})
+	if headUser == nil || headUser["login"] != "pr-forker" {
+		t.Fatalf("head.user = %v, want pr-forker", head["user"])
+	}
+	if created["maintainer_can_modify"] != true {
+		t.Fatalf("maintainer_can_modify = %v, want true", created["maintainer_can_modify"])
+	}
+
+	filesResp := ghGet(t, "/api/v3/repos/admin/"+sourceName+"/pulls/1/files", defaultToken)
+	if filesResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(filesResp.Body)
+		filesResp.Body.Close()
+		t.Fatalf("files status = %d body=%s", filesResp.StatusCode, body)
+	}
+	files := decodeJSONArray(t, filesResp)
+	if len(files) != 1 || files[0]["filename"] != "fork-change.txt" {
+		t.Fatalf("files = %v, want fork-change.txt", files)
+	}
+
+	gql := gqlData(t, `query($owner:String!,$name:String!){
+		repository(owner:$owner,name:$name){
+			pullRequest(number:1){
+				headRefName
+				headRepository{nameWithOwner}
+				headRepositoryOwner{login}
+				isCrossRepository
+				maintainerCanModify
+				files(first:10){totalCount nodes{path}}
+				commits(first:10){totalCount nodes{commit{oid}}}
+			}
+		}
+	}`, map[string]interface{}{"owner": "admin", "name": sourceName})
+	repoData, _ := gql["repository"].(map[string]interface{})
+	prData, _ := repoData["pullRequest"].(map[string]interface{})
+	if prData["isCrossRepository"] != true {
+		t.Fatalf("isCrossRepository = %v, want true", prData["isCrossRepository"])
+	}
+	if prData["maintainerCanModify"] != true {
+		t.Fatalf("maintainerCanModify = %v, want true", prData["maintainerCanModify"])
+	}
+	gqlHeadRepo, _ := prData["headRepository"].(map[string]interface{})
+	if gqlHeadRepo == nil || gqlHeadRepo["nameWithOwner"] != "pr-forker/"+sourceName {
+		t.Fatalf("GraphQL headRepository = %v", prData["headRepository"])
+	}
+	gqlHeadOwner, _ := prData["headRepositoryOwner"].(map[string]interface{})
+	if gqlHeadOwner == nil || gqlHeadOwner["login"] != "pr-forker" {
+		t.Fatalf("GraphQL headRepositoryOwner = %v", prData["headRepositoryOwner"])
+	}
+	gqlFiles, _ := prData["files"].(map[string]interface{})
+	if gqlFiles["totalCount"] != float64(1) {
+		t.Fatalf("GraphQL files = %v, want one changed file", gqlFiles)
+	}
+	gqlCommits, _ := prData["commits"].(map[string]interface{})
+	if gqlCommits["totalCount"] != float64(1) {
+		t.Fatalf("GraphQL commits = %v, want one commit", gqlCommits)
+	}
+
+	beforeMergeSHA := resolveBranchSha(testServer.store.GetGitStorage("admin", sourceName), "main")
+	mergeResp := ghPut(t, "/api/v3/repos/admin/"+sourceName+"/pulls/1/merge", defaultToken, map[string]interface{}{
+		"merge_method": "merge",
+	})
+	if mergeResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(mergeResp.Body)
+		mergeResp.Body.Close()
+		t.Fatalf("merge status = %d body=%s", mergeResp.StatusCode, body)
+	}
+	mergeResp.Body.Close()
+	baseSHA := resolveBranchSha(testServer.store.GetGitStorage("admin", sourceName), "main")
+	if baseSHA == "" || baseSHA == beforeMergeSHA {
+		t.Fatalf("base branch did not advance after fork pull request merge: %q", baseSHA)
 	}
 }
 

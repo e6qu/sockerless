@@ -953,9 +953,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return state == "CLOSED" || state == "MERGED", nil
 				},
 			},
-			// Bleephub PRs always live in the base repository (no forks
-			// feature): headRepository is the PR's own repo, its owner the
-			// repo owner, and isCrossRepository is genuinely false.
 			"headRepository": &graphql.Field{
 				Type: repoType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -979,15 +976,29 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"isCrossRepository": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return false, nil
+					pr, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					v, ok := pr["isCrossRepository"].(bool)
+					if !ok {
+						return nil, fmt.Errorf("pull request source missing isCrossRepository")
+					}
+					return v, nil
 				},
 			},
 			"maintainerCanModify": &graphql.Field{
-				// Meaningful only for fork PRs on real GitHub; same-repo PRs
-				// report false.
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return false, nil
+					pr, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					v, ok := pr["maintainerCanModify"].(bool)
+					if !ok {
+						return nil, fmt.Errorf("pull request source missing maintainerCanModify")
+					}
+					return v, nil
 				},
 			},
 			"autoMergeRequest": &graphql.Field{
@@ -1482,14 +1493,12 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	createPRInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "CreatePullRequestInput",
 		Fields: graphql.InputObjectConfigFieldMap{
-			"repositoryId": &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
-			"title":        &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"body":         &graphql.InputObjectFieldConfig{Type: graphql.String},
-			"headRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"baseRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"draft":        &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
-			// gh sends maintainerCanModify when creating fork PRs; accepted
-			// and ignored (bleephub PRs are single-repo).
+			"repositoryId":        &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"title":               &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"body":                &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"headRefName":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"baseRefName":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"draft":               &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
 			"maintainerCanModify": &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
 		},
 	})
@@ -1519,13 +1528,21 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			headRefName, _ := input["headRefName"].(string)
 			baseRefName, _ := input["baseRefName"].(string)
 			draft, _ := input["draft"].(bool)
+			maintainerCanModify, _ := input["maintainerCanModify"].(bool)
 
 			repo := findRepoByNodeID(s.store, repoNodeID)
 			if repo == nil {
 				return nil, fmt.Errorf("could not resolve to a Repository with the global id of '%s'", repoNodeID)
 			}
 
-			pr := s.store.CreatePullRequest(repo.ID, user.ID, title, body, headRefName, baseRefName, draft, nil, nil, 0)
+			headRepo, headRefName := resolvePullRequestHead(s.store, repo, headRefName)
+			if headRepo == nil || headRefName == "" {
+				return nil, fmt.Errorf("pull request creation failed")
+			}
+			pr := s.store.CreatePullRequest(repo.ID, user.ID, title, body, headRefName, baseRefName, draft, nil, nil, 0, PullRequestOptions{
+				HeadRepoID:          headRepo.ID,
+				MaintainerCanModify: maintainerCanModify,
+			})
 			if pr == nil {
 				return nil, fmt.Errorf("pull request creation failed")
 			}
@@ -2065,7 +2082,8 @@ func closingIssueRefs(defaultRepoFullName, body string) []closingIssueRef {
 }
 
 func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
-	stor, repoFullNameForCommits := st.GitStorageForRepoID(pr.RepoID)
+	baseRepo := st.GetRepoByID(pr.RepoID)
+	stor, repoFullNameForCommits := pullRequestGitStorage(st, baseRepo, pr)
 	realCommits := []*object.Commit(nil)
 	if stor != nil {
 		if commits, err := pullRequestCommitObjectsFromStorage(stor, pr); err == nil {
@@ -2181,14 +2199,12 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		mergeStateStatus = "DIRTY"
 	}
 
-	// Single-repo PRs: head repo/owner are the PR's own repo and its owner.
-	// For org-owned repos the owner must be the Organization, not the user who
-	// created the repo; real GitHub returns the org as headRepositoryOwner.
 	var headRepository map[string]interface{}
-	if repo != nil {
-		headRepository = repoToGraphQL(repo)
+	headRepo := pullRequestHeadRepoLocked(st, pr)
+	if headRepo != nil {
+		headRepository = repoToGraphQL(headRepo)
 	}
-	headRepositoryOwner := repoOwnerGraphQLLocked(repo, st)
+	headRepositoryOwner := repoOwnerGraphQLLocked(headRepo, st)
 
 	commitNodes := make([]interface{}, 0)
 	var commitAuthors []interface{}
@@ -2289,6 +2305,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		},
 		"headRepository":      headRepository,
 		"headRepositoryOwner": headRepositoryOwner,
+		"isCrossRepository":   pullRequestHeadRepoID(pr) != pr.RepoID,
+		"maintainerCanModify": pr.MaintainerCanModify,
 		"reviewRequests": map[string]interface{}{
 			"nodes":      pullRequestReviewRequestNodesLocked(pr, st),
 			"totalCount": len(pr.RequestedReviewerIDs),

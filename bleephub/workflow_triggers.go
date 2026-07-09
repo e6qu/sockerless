@@ -437,16 +437,20 @@ func (s *Server) firePullRequestSynchronize(repo *Repo, repoKey, branch string) 
 	s.store.mu.RLock()
 	var prs []*PullRequest
 	for _, pr := range s.store.PullRequests {
-		if pr.RepoID == repo.ID && pr.State == "OPEN" && pr.HeadRefName == branch {
+		if pullRequestHeadRepoID(pr) == repo.ID && pr.State == "OPEN" && pr.HeadRefName == branch {
 			prs = append(prs, pr)
 		}
 	}
 	s.store.mu.RUnlock()
 
 	for _, pr := range prs {
-		payload := buildPullRequestPayload(s.store, repo, pr, nil, "synchronize")
-		s.emitWebhookEvent(repoKey, "pull_request", "synchronize", payload)
-		s.triggerWorkflowsForEvent(repoKey, "pull_request", "synchronize", "refs/heads/"+pr.HeadRefName, payload)
+		baseRepo := s.store.GetRepoByID(pr.RepoID)
+		if baseRepo == nil {
+			continue
+		}
+		payload := buildPullRequestPayload(s.store, baseRepo, pr, nil, "synchronize")
+		s.emitWebhookEvent(baseRepo.FullName, "pull_request", "synchronize", payload)
+		s.triggerWorkflowsForEvent(baseRepo.FullName, "pull_request", "synchronize", "refs/heads/"+pr.HeadRefName, payload)
 	}
 }
 

@@ -135,7 +135,9 @@ func buildPushPayloadWithInstallation(repo *Repo, sender *User, ref, before, aft
 
 func buildPullRequestPayload(st *Store, repo *Repo, pr *PullRequest, sender *User, action string) map[string]interface{} {
 	// Snapshot the shared entities before reading their mutable fields.
+	headRepo := pullRequestHeadRepo(st, pr)
 	repo = st.snapRepo(repo)
+	headRepo = st.snapRepo(headRepo)
 	pr = st.snapPR(pr)
 	sender = st.snapUser(sender)
 	state := "open"
@@ -151,10 +153,14 @@ func buildPullRequestPayload(st *Store, repo *Repo, pr *PullRequest, sender *Use
 		"draft":  pr.IsDraft,
 		"merged": pr.State == "MERGED",
 		"head": map[string]interface{}{
-			"ref": pr.HeadRefName,
+			"ref":  pr.HeadRefName,
+			"sha":  pullRequestHeadSHA(pr, st),
+			"repo": repoPayload(headRepo),
 		},
 		"base": map[string]interface{}{
-			"ref": pr.BaseRefName,
+			"ref":  pr.BaseRefName,
+			"sha":  pr.BaseSHA,
+			"repo": repoPayload(repo),
 		},
 		"created_at": pr.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at": pr.UpdatedAt.UTC().Format(time.RFC3339),
