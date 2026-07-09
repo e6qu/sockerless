@@ -532,6 +532,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		HasIssues                 *bool    `json:"has_issues"`
 		HasProjects               *bool    `json:"has_projects"`
 		HasWiki                   *bool    `json:"has_wiki"`
+		HasDiscussions            *bool    `json:"has_discussions"`
 		HasPullRequests           *bool    `json:"has_pull_requests"`
 		AllowSquashMerge          *bool    `json:"allow_squash_merge"`
 		AllowMergeCommit          *bool    `json:"allow_merge_commit"`
@@ -582,6 +583,9 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.HasWiki != nil {
 			r.HasWiki = *req.HasWiki
+		}
+		if req.HasDiscussions != nil {
+			r.HasDiscussions = boolPointer(*req.HasDiscussions)
 		}
 		if req.HasPullRequests != nil {
 			r.HasPullRequests = *req.HasPullRequests
@@ -710,6 +714,9 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		}
 		if v, ok := coerceBool(req["has_wiki"]); ok {
 			r.HasWiki = v
+		}
+		if v, ok := coerceBool(req["has_discussions"]); ok {
+			r.HasDiscussions = boolPointer(v)
 		}
 		if v, ok := coerceBool(req["has_pull_requests"]); ok {
 			r.HasPullRequests = v
@@ -1081,7 +1088,7 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		"has_wiki":          repo.HasWiki,
 		"has_pages":         false,
 		"has_downloads":     false,
-		"has_discussions":   true,
+		"has_discussions":   repoHasDiscussions(repo),
 		"has_pull_requests": repo.HasPullRequests,
 		"topics":            topics,
 		"permissions": map[string]bool{

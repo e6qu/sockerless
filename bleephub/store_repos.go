@@ -36,6 +36,7 @@ type Repo struct {
 	HasIssues                            bool         `json:"has_issues"`
 	HasProjects                          bool         `json:"has_projects"`
 	HasWiki                              bool         `json:"has_wiki"`
+	HasDiscussions                       *bool        `json:"has_discussions"`
 	HasPullRequests                      bool         `json:"has_pull_requests"`
 	AllowSquashMerge                     bool         `json:"allow_squash_merge"`
 	AllowMergeCommit                     bool         `json:"allow_merge_commit"`
@@ -102,6 +103,7 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 		HasIssues:                 true,
 		HasProjects:               false,
 		HasWiki:                   false,
+		HasDiscussions:            boolPointer(true),
 		HasPullRequests:           true,
 		AllowSquashMerge:          true,
 		AllowMergeCommit:          true,
@@ -209,6 +211,7 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		HasIssues:                 sourceRepo.HasIssues,
 		HasProjects:               sourceRepo.HasProjects,
 		HasWiki:                   sourceRepo.HasWiki,
+		HasDiscussions:            boolPointer(repoHasDiscussions(sourceRepo)),
 		HasPullRequests:           sourceRepo.HasPullRequests,
 		AllowSquashMerge:          sourceRepo.AllowSquashMerge,
 		AllowMergeCommit:          sourceRepo.AllowMergeCommit,
@@ -255,6 +258,17 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
 	return repo
+}
+
+func boolPointer(v bool) *bool {
+	return &v
+}
+
+func repoHasDiscussions(repo *Repo) bool {
+	if repo == nil || repo.HasDiscussions == nil {
+		return true
+	}
+	return *repo.HasDiscussions
 }
 
 // RenameRepo renames owner/name to owner/newName, moving every map keyed by

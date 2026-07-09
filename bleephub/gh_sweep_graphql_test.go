@@ -179,6 +179,7 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
 		"name":             "sweep-repoview",
 		"license_template": "mit",
+		"has_discussions":  false,
 	})
 	repoData := decodeJSON(t, repoResp)
 	ownerData, _ := repoData["owner"].(map[string]interface{})
@@ -187,10 +188,20 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if owner == "" || name == "" {
 		t.Fatalf("repo create failed: %v", repoData)
 	}
+	if repoData["has_discussions"] != false {
+		t.Fatalf("created repo has_discussions = %v, want false", repoData["has_discussions"])
+	}
+	disabledQuery := `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){hasDiscussionsEnabled}}`
+	disabledData := gqlData(t, disabledQuery, map[string]interface{}{"owner": owner, "name": name})
+	disabledRepo, _ := disabledData["repository"].(map[string]interface{})
+	if disabledRepo == nil || disabledRepo["hasDiscussionsEnabled"] != false {
+		t.Fatalf("GraphQL hasDiscussionsEnabled before patch = %v, want false", disabledRepo)
+	}
 	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{
 		"homepage":               "https://example.test/sweep-repoview",
 		"has_projects":           true,
 		"has_wiki":               true,
+		"has_discussions":        true,
 		"delete_branch_on_merge": true,
 		"is_template":            true,
 	})

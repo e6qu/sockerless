@@ -4,11 +4,15 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file kept the recent chain and a compact foundation summary.
 
-## 2026-07-09 - Bleephub repository license GraphQL fidelity (feat/bleephub-repository-license-graphql)
+## 2026-07-09 - Bleephub repository metadata GraphQL fidelity (feat/bleephub-repository-license-graphql)
 
 Closed BUG-2391 by wiring GraphQL `Repository.licenseInfo` to Bleephub's real repository license state. Repositories created with a license template already persisted license key, name, and SPDX metadata and exposed it through the REST repository and license endpoints; GraphQL now projects that same metadata instead of reporting licensed repositories as unlicensed.
 
 The GraphQL sweep creates a licensed repository through the public REST repository creation path, then queries `licenseInfo{key,name,nickname,spdxId}` and asserts the MIT license object. Because the license template path creates the initial license commit, the same regression also verifies the repository is no longer reported as empty, keeping the GraphQL shape tied to real git state.
+
+Closed BUG-2392 by replacing the remaining repository feature-setting compatibility constants with real persisted repository state. Repository discussion enablement is stored as a nullable GitHub-defaulted setting, so rows created before the field existed keep GitHub's enabled default while explicit true/false values persist. User and organization repository creation accept `has_discussions`, repository PATCH updates it, forks and advisory forks copy it, REST repository JSON, migration repository JSON, and GraphQL `Repository.hasDiscussionsEnabled` read it, and SQLite reload preserves explicit false. GraphQL `createRepository` now applies accepted `hasIssuesEnabled` and `hasWikiEnabled` inputs before rendering the created repository, and the issue GraphQL resolver no longer hardcodes `Repository.hasIssuesEnabled` to true.
+
+Validation: `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestRepoGraphQL_ViewJSONStaticFields|TestGraphQLCreateRepo|TestPersistence_' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation for loopback listeners.
 
 ## 2026-07-08 - bleephub GitHub Actions runner and UI endpoint fidelity (feat/bleephub-faithful-app-runner-flows)
 

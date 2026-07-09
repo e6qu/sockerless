@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2391 filed - 2348 fixed - 2 open - 16 false positives.**
+**2392 filed - 2349 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2392~~ | P2 | Bleephub repositories | repository feature settings ignored or hardcoded | Repository discussion enablement is now persisted as a nullable GitHub-defaulted repository setting; REST repository JSON, migration repository JSON, and GraphQL `Repository.hasDiscussionsEnabled` read that state, and GraphQL `createRepository` applies accepted feature inputs instead of ignoring them. |
 | ~~2391~~ | P2 | Bleephub GraphQL repositories | REST-backed repository license hidden from GraphQL | GraphQL `Repository.licenseInfo` now reads the same persisted repository license key/name/SPDX metadata that repository creation, REST repository responses, and the REST license endpoint already expose; the GraphQL sweep creates a licensed repository through the public REST path and asserts the license object. |
 | ~~2390~~ | P2 | Bleephub repository tags | annotated tag object leaked as commit | `GET /api/v3/repos/{owner}/{repo}/tags` now peels annotated tag objects through real git storage before rendering `commit.sha` and `commit.url`; the regression creates both annotated and lightweight tags through the public Git Data API instead of accepting an empty tag list. |
 | ~~2389~~ | P3 | CI Bleephub check names | simulator shorthand on GitHub-compatible service checks | Bleephub continuous-integration checks and branch-protection required contexts now use fully qualified names (`Bleephub end-to-end`, `Bleephub GitHub software development kit`, `Bleephub GitHub command-line interface`, and `Bleephub GitHub Actions runner`) instead of `sim (bleephub ...)`, so GitHub-compatible service coverage is not mislabeled as a simulator job. |

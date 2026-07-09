@@ -4,13 +4,14 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current branch
 
-`feat/bleephub-repository-license-graphql` — Bleephub GraphQL repository license metadata now uses real persisted repository license state instead of a null compatibility shape.
+`feat/bleephub-repository-license-graphql` — Bleephub GraphQL repository metadata now uses real persisted repository state for license metadata and feature flags instead of null/hardcoded compatibility shapes.
 
 **Next**
 - Keep tightening Bleephub toward real-service behavior by replacing remaining fake test boundaries, shallow GraphQL resolvers, and shape-only endpoints with real store/object-storage/git-backed behavior. After this branch, BUG-1345 and BUG-1075 remained open unless new boyscout bugs were found.
 
 **Scope**
 - **BUG-2391:** GraphQL `Repository.licenseInfo` now reads the repository's persisted license key, name, and SPDX identifier from the same REST-backed repository state as `GET /api/v3/repos/{owner}/{repo}` and `GET /api/v3/repos/{owner}/{repo}/license`. The GraphQL sweep creates a licensed repository through the public REST creation path and asserts the MIT license object, so licensed repositories no longer appear unlicensed to GraphQL clients.
+- **BUG-2392:** Repository discussion enablement is now persisted as a nullable GitHub-defaulted repository setting. REST repository JSON, migration repository JSON, and GraphQL `Repository.hasDiscussionsEnabled` read that state; user and organization repository creation accept `has_discussions`; repository PATCH updates it; forks and advisory forks copy it; and explicit false values survive SQLite reload. GraphQL `createRepository` now applies accepted `hasIssuesEnabled` and `hasWikiEnabled` inputs before rendering the created repository, and the duplicate issue GraphQL resolver no longer hardcodes `Repository.hasIssuesEnabled` to true.
 - **BUG-2341:** Bleephub's S3 filesystem tests no longer use a fake S3 server. They build and start `simulator-aws` in `SIM_RUNTIME=process`, create a real S3 bucket through `aws-sdk-go-v2`, and exercise file open/write/read/seek semantics plus repo-prefix delete and rename through real S3 list/copy/delete APIs.
 - **BUG-2341 boyscout:** AWS simulator `CopyObject` now stores the copied object's internal `Key` as `bucket/key`, matching `PutObject`, so `ListObjectsV2` sees copied objects. SDK and CLI regressions prove copied objects are both readable and listable.
 - **BUG-2342:** Actions artifacts, dependency caches, and runner-uploaded log files can write byte content to S3-compatible object storage via `BLEEPHUB_OBJECT_S3_BUCKET` plus optional endpoint/prefix overrides. Configured object storage fails startup/write/read loudly, delete paths remove object bytes, and real `simulator-aws` tests assert uploaded artifact/cache/log bytes land in S3.

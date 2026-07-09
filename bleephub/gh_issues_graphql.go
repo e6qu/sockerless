@@ -596,7 +596,15 @@ func (s *Server) addIssueFieldsToSchema(userType, repoType, mutationType, queryT
 	repoType.AddFieldConfig("hasIssuesEnabled", &graphql.Field{
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return true, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasIssues"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasIssues")
+			}
+			return v, nil
 		},
 	})
 

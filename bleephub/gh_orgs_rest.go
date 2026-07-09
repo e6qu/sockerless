@@ -286,6 +286,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		HasIssues                 *bool    `json:"has_issues"`
 		HasProjects               *bool    `json:"has_projects"`
 		HasWiki                   *bool    `json:"has_wiki"`
+		HasDiscussions            *bool    `json:"has_discussions"`
 		HasPullRequests           *bool    `json:"has_pull_requests"`
 		AllowSquashMerge          *bool    `json:"allow_squash_merge"`
 		AllowMergeCommit          *bool    `json:"allow_merge_commit"`
@@ -336,6 +337,9 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		}
 		if req.HasWiki != nil {
 			r.HasWiki = *req.HasWiki
+		}
+		if req.HasDiscussions != nil {
+			r.HasDiscussions = boolPointer(*req.HasDiscussions)
 		}
 		if req.HasPullRequests != nil {
 			r.HasPullRequests = *req.HasPullRequests

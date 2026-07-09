@@ -100,6 +100,20 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			return v, nil
 		},
 	})
+	repoType.AddFieldConfig("hasIssuesEnabled", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasIssues"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasIssues")
+			}
+			return v, nil
+		},
+	})
 	repoType.AddFieldConfig("parent", &graphql.Field{
 		Type: repoType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -821,6 +835,20 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					if repo == nil {
 						return nil, fmt.Errorf("repository creation failed")
 					}
+					if !s.store.UpdateRepo(user.Login, name, func(r *Repo) {
+						if v, ok := graphQLInputBool(input, "hasIssuesEnabled"); ok {
+							r.HasIssues = v
+						}
+						if v, ok := graphQLInputBool(input, "hasWikiEnabled"); ok {
+							r.HasWiki = v
+						}
+					}) {
+						return nil, fmt.Errorf("repository %s/%s not found after creation", user.Login, name)
+					}
+					repo = s.store.GetRepo(user.Login, name)
+					if repo == nil {
+						return nil, fmt.Errorf("repository %s/%s not found after update", user.Login, name)
+					}
 
 					return map[string]interface{}{
 						"repository": repoToGraphQL(s.store.snapRepo(repo)),
@@ -901,9 +929,10 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"licenseSPDX":         repo.LicenseSPDX,
 		"homepage":            repo.Homepage,
 		"topics":              repo.Topics,
+		"hasIssues":           repo.HasIssues,
 		"hasProjects":         repo.HasProjects,
 		"hasWiki":             repo.HasWiki,
-		"hasDiscussions":      true,
+		"hasDiscussions":      repoHasDiscussions(repo),
 		"parentID":            repo.ParentID,
 		"deleteBranchOnMerge": repo.DeleteBranchOnMerge,
 		"isTemplate":          repo.IsTemplate,
@@ -911,6 +940,24 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"createdAt":           repo.CreatedAt.Format(time.RFC3339),
 		"updatedAt":           repo.UpdatedAt.Format(time.RFC3339),
 		"pushedAt":            repo.PushedAt.Format(time.RFC3339),
+	}
+}
+
+func graphQLInputBool(input map[string]interface{}, key string) (bool, bool) {
+	v, ok := input[key]
+	if !ok || v == nil {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case *bool:
+		if b == nil {
+			return false, false
+		}
+		return *b, true
+	default:
+		panic(fmt.Sprintf("GraphQL input %s decoded as %T, want bool", key, v))
 	}
 }
 

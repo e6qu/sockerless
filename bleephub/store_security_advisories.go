@@ -279,6 +279,7 @@ func (st *Store) CreateTemporaryFork(repoID int, ghsaID string) *Repo {
 		HasIssues:                 repo.HasIssues,
 		HasProjects:               repo.HasProjects,
 		HasWiki:                   repo.HasWiki,
+		HasDiscussions:            boolPointer(repoHasDiscussions(repo)),
 		HasPullRequests:           repo.HasPullRequests,
 		AllowSquashMerge:          repo.AllowSquashMerge,
 		AllowMergeCommit:          repo.AllowMergeCommit,
