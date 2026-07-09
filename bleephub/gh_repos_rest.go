@@ -1081,7 +1081,7 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		"has_wiki":          repo.HasWiki,
 		"has_pages":         false,
 		"has_downloads":     false,
-		"has_discussions":   false,
+		"has_discussions":   true,
 		"has_pull_requests": repo.HasPullRequests,
 		"topics":            topics,
 		"permissions": map[string]bool{

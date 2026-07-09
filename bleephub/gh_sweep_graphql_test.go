@@ -120,10 +120,10 @@ func TestRepoGraphQL_GitHubRepoQuery(t *testing.T) {
 		t.Fatalf("repository null: %v", d)
 	}
 	if v, ok := repo["hasWikiEnabled"].(bool); !ok || v {
-		t.Errorf("hasWikiEnabled = %v, want false (no wiki feature)", repo["hasWikiEnabled"])
+		t.Errorf("hasWikiEnabled = %v, want false for default repo setting", repo["hasWikiEnabled"])
 	}
 	if repo["parent"] != nil {
-		t.Errorf("parent = %v, want null (no forks feature)", repo["parent"])
+		t.Errorf("parent = %v, want null for non-fork repo", repo["parent"])
 	}
 }
 
@@ -184,6 +184,17 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if owner == "" || name == "" {
 		t.Fatalf("repo create failed: %v", repoData)
 	}
+	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{
+		"homepage":               "https://example.test/sweep-repoview",
+		"has_projects":           true,
+		"has_wiki":               true,
+		"delete_branch_on_merge": true,
+		"is_template":            true,
+	})
+	patched := decodeJSON(t, patchResp)
+	if patched["has_discussions"] != true {
+		t.Fatalf("patched repo has_discussions = %v, want true", patched["has_discussions"])
+	}
 
 	// Seed a published release so latestRelease resolves to real store data.
 	relResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/releases", defaultToken, map[string]interface{}{
@@ -231,14 +242,17 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if latest == nil || latest["tagName"] != "v1.0.0" {
 		t.Errorf("latestRelease = %v, want tagName v1.0.0", repo["latestRelease"])
 	}
-	for _, nullField := range []string{"templateRepository", "homepageUrl", "licenseInfo", "primaryLanguage", "archivedAt"} {
+	for _, nullField := range []string{"templateRepository", "licenseInfo", "primaryLanguage", "archivedAt"} {
 		if repo[nullField] != nil {
 			t.Errorf("%s = %v, want null", nullField, repo[nullField])
 		}
 	}
-	for _, falseField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
-		if v, ok := repo[falseField].(bool); !ok || v {
-			t.Errorf("%s = %v, want false", falseField, repo[falseField])
+	if repo["homepageUrl"] != "https://example.test/sweep-repoview" {
+		t.Errorf("homepageUrl = %v, want patched homepage", repo["homepageUrl"])
+	}
+	for _, trueField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
+		if v, ok := repo[trueField].(bool); !ok || !v {
+			t.Errorf("%s = %v, want true", trueField, repo[trueField])
 		}
 	}
 	if fc, _ := repo["forkCount"].(float64); fc != 0 {
@@ -258,6 +272,51 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	// Repo just created via REST with no commits: genuinely empty.
 	if v, ok := repo["isEmpty"].(bool); !ok || !v {
 		t.Errorf("isEmpty = %v, want true for a commit-less repo", repo["isEmpty"])
+	}
+}
+
+func TestRepoGraphQL_ForkParentAndCount(t *testing.T) {
+	owner, name := sweepRepo(t, "sweep-fork-graphql")
+
+	testServer.store.mu.Lock()
+	forker := &User{ID: testServer.store.NextUser, Login: "graphql-forker", Type: "User", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	testServer.store.NextUser++
+	testServer.store.Users[forker.ID] = forker
+	testServer.store.UsersByLogin[forker.Login] = forker
+	tok := &Token{Value: "graphql-forker-token", UserID: forker.ID, Scopes: "repo", CreatedAt: time.Now()}
+	testServer.store.Tokens[tok.Value] = tok
+	testServer.store.mu.Unlock()
+
+	resp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/forks", tok.Value, map[string]interface{}{"name": "sweep-fork-child"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("fork create status = %d, want 202", resp.StatusCode)
+	}
+
+	query := `query($owner:String!,$name:String!,$forkOwner:String!,$forkName:String!){
+		source: repository(owner:$owner,name:$name){
+			nameWithOwner
+			forkCount
+		}
+		fork: repository(owner:$forkOwner,name:$forkName){
+			nameWithOwner
+			parent{nameWithOwner databaseId}
+		}
+	}`
+	d := gqlData(t, query, map[string]interface{}{
+		"owner":     owner,
+		"name":      name,
+		"forkOwner": forker.Login,
+		"forkName":  "sweep-fork-child",
+	})
+	source, _ := d["source"].(map[string]interface{})
+	if source == nil || source["forkCount"].(float64) != 1 {
+		t.Fatalf("source = %v, want forkCount 1", d["source"])
+	}
+	fork, _ := d["fork"].(map[string]interface{})
+	parent, _ := fork["parent"].(map[string]interface{})
+	if parent == nil || parent["nameWithOwner"] != owner+"/"+name {
+		t.Fatalf("fork parent = %v, want %s/%s", fork["parent"], owner, name)
 	}
 }
 
