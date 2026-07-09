@@ -946,6 +946,12 @@ func (s *Server) handlePagesGet(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, pages)
 }
 
+func (st *Store) HasPagesSite(repoID int) bool {
+	st.Misc.mu.RLock()
+	defer st.Misc.mu.RUnlock()
+	return st.Misc.pagesByRepo[repoID] != nil
+}
+
 func (s *Server) handlePagesCreate(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {

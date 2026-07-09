@@ -9,7 +9,7 @@ import (
 
 // TestRDSCLI_RestoreAndReserved covers the cluster/instance restore
 // family and the reserved-instance catalog/purchase flow through the
-// aws CLI. Grouped (appdata shard is heavy).
+// aws CLI. Grouped because appdata2 carries RDS.
 func TestRDSCLI_RestoreAndReserved(t *testing.T) {
 	// --- Restore family ---
 	srcCluster := "cli-rext-src-cluster"

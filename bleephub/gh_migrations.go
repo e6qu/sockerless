@@ -596,7 +596,7 @@ func migrationRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interfa
 		"has_wiki":          repo.HasWiki,
 		"has_pages":         false,
 		"has_downloads":     false,
-		"has_discussions":   true,
+		"has_discussions":   repoHasDiscussions(repo),
 		"has_pull_requests": repo.HasPullRequests,
 		"is_template":       repo.IsTemplate,
 		"topics":            repo.Topics,

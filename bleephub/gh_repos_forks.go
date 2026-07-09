@@ -57,7 +57,7 @@ func (s *Server) handleCreateFork(w http.ResponseWriter, r *http.Request) {
 		"source": sourceRepo.FullName,
 		"fork":   fork.FullName,
 	})
-	writeJSON(w, http.StatusAccepted, fullRepoJSON(fork, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusAccepted, fullRepoJSONForViewer(fork, s.store, s.baseURL(r), user))
 }
 
 func (s *Server) handleListForks(w http.ResponseWriter, r *http.Request) {
@@ -94,7 +94,7 @@ func (s *Server) handleListForks(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]interface{}, 0, len(forks))
 	base := s.baseURL(r)
 	for _, fork := range forks {
-		result = append(result, repoToJSON(fork, s.store, base))
+		result = append(result, repoToJSONForViewer(fork, s.store, base, user))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }

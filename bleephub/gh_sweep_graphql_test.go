@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -127,6 +128,101 @@ func TestRepoGraphQL_GitHubRepoQuery(t *testing.T) {
 	}
 }
 
+func TestRepoMetadataPushedAtFollowsGitHistory(t *testing.T) {
+	name := "sweep-empty-pushed-at"
+	createResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": name})
+	created := decodeJSON(t, createResp)
+	ownerData, _ := created["owner"].(map[string]interface{})
+	owner, _ := ownerData["login"].(string)
+	if owner == "" || created["name"] != name {
+		t.Fatalf("repo create failed: %v", created)
+	}
+	if created["pushed_at"] != nil {
+		t.Fatalf("REST pushed_at for empty repository = %v, want null", created["pushed_at"])
+	}
+
+	query := `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){pushedAt,isEmpty}}`
+	before := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	beforeRepo, _ := before["repository"].(map[string]interface{})
+	if beforeRepo == nil {
+		t.Fatalf("repository query before commit = %v", before)
+	}
+	if beforeRepo["pushedAt"] != nil {
+		t.Fatalf("GraphQL pushedAt for empty repository = %v, want null", beforeRepo["pushedAt"])
+	}
+	if beforeRepo["isEmpty"] != true {
+		t.Fatalf("GraphQL isEmpty before commit = %v, want true", beforeRepo["isEmpty"])
+	}
+
+	putResp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/contents/README.md", defaultToken, map[string]interface{}{
+		"message": "initial commit",
+		"content": base64.StdEncoding.EncodeToString([]byte("# " + name + "\n")),
+	})
+	if putResp.StatusCode != http.StatusCreated {
+		t.Fatalf("contents create status = %d", putResp.StatusCode)
+	}
+
+	repoResp := ghGet(t, "/api/v3/repos/"+owner+"/"+name, defaultToken)
+	afterREST := decodeJSON(t, repoResp)
+	if afterREST["pushed_at"] == nil {
+		t.Fatalf("REST pushed_at after real commit = nil, want timestamp")
+	}
+	after := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	afterRepo, _ := after["repository"].(map[string]interface{})
+	if afterRepo == nil {
+		t.Fatalf("repository query after commit = %v", after)
+	}
+	if afterRepo["pushedAt"] == nil {
+		t.Fatalf("GraphQL pushedAt after real commit = nil, want timestamp")
+	}
+	if afterRepo["isEmpty"] != false {
+		t.Fatalf("GraphQL isEmpty after commit = %v, want false", afterRepo["isEmpty"])
+	}
+}
+
+func TestRepoGraphQLArchivedAtFollowsArchiveState(t *testing.T) {
+	owner, name := sweepRepo(t, "archive-state")
+	query := `query($owner:String!,$name:String!){
+		repository(owner:$owner,name:$name){isArchived,archivedAt}
+	}`
+
+	before := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	beforeRepo, _ := before["repository"].(map[string]interface{})
+	if beforeRepo == nil {
+		t.Fatalf("repository null before archive: %v", before)
+	}
+	if beforeRepo["isArchived"] != false || beforeRepo["archivedAt"] != nil {
+		t.Fatalf("repository before archive = %v, want unarchived with null archivedAt", beforeRepo)
+	}
+
+	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{"archived": true})
+	if patchResp.StatusCode != http.StatusOK {
+		t.Fatalf("archive patch status = %d", patchResp.StatusCode)
+	}
+	archived := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	archivedRepo, _ := archived["repository"].(map[string]interface{})
+	if archivedRepo == nil {
+		t.Fatalf("repository null after archive: %v", archived)
+	}
+	archivedAt, _ := archivedRepo["archivedAt"].(string)
+	if archivedRepo["isArchived"] != true || archivedAt == "" {
+		t.Fatalf("repository after archive = %v, want archived with archivedAt", archivedRepo)
+	}
+	if _, err := time.Parse(time.RFC3339, archivedAt); err != nil {
+		t.Fatalf("archivedAt %q is not RFC3339: %v", archivedAt, err)
+	}
+
+	unarchiveResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{"archived": false})
+	if unarchiveResp.StatusCode != http.StatusOK {
+		t.Fatalf("unarchive patch status = %d", unarchiveResp.StatusCode)
+	}
+	after := gqlData(t, query, map[string]interface{}{"owner": owner, "name": name})
+	afterRepo, _ := after["repository"].(map[string]interface{})
+	if afterRepo == nil || afterRepo["isArchived"] != false || afterRepo["archivedAt"] != nil {
+		t.Fatalf("repository after unarchive = %v, want unarchived with null archivedAt", afterRepo)
+	}
+}
+
 // TestRepoGraphQL_RepositoryOwnerOrg verifies that repositoryOwner(login:)
 // returns real organization data (not a synthetic partial User-shaped payload)
 // when the login resolves to an organization.
@@ -176,7 +272,11 @@ func TestRepoGraphQL_RepositoryOwnerOrg(t *testing.T) {
 // --- Finding 1: the static --json field set gh repo view exposes ---
 
 func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
-	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{"name": "sweep-repoview"})
+	repoResp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name":             "sweep-repoview",
+		"license_template": "mit",
+		"has_discussions":  false,
+	})
 	repoData := decodeJSON(t, repoResp)
 	ownerData, _ := repoData["owner"].(map[string]interface{})
 	owner, _ := ownerData["login"].(string)
@@ -184,10 +284,23 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if owner == "" || name == "" {
 		t.Fatalf("repo create failed: %v", repoData)
 	}
+	if repoData["has_discussions"] != false {
+		t.Fatalf("created repo has_discussions = %v, want false", repoData["has_discussions"])
+	}
+	disabledQuery := `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){hasDiscussionsEnabled}}`
+	disabledData := gqlData(t, disabledQuery, map[string]interface{}{"owner": owner, "name": name})
+	disabledRepo, _ := disabledData["repository"].(map[string]interface{})
+	if disabledRepo == nil || disabledRepo["hasDiscussionsEnabled"] != false {
+		t.Fatalf("GraphQL hasDiscussionsEnabled before patch = %v, want false", disabledRepo)
+	}
 	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{
 		"homepage":               "https://example.test/sweep-repoview",
 		"has_projects":           true,
 		"has_wiki":               true,
+		"has_discussions":        true,
+		"allow_squash_merge":     false,
+		"allow_merge_commit":     false,
+		"allow_rebase_merge":     true,
 		"delete_branch_on_merge": true,
 		"is_template":            true,
 	})
@@ -222,10 +335,13 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 			hasDiscussionsEnabled
 			forkCount
 			watchers{totalCount}
-			licenseInfo{key,name,nickname}
+			licenseInfo{key,name,nickname,spdxId}
 			primaryLanguage{name}
 			languages(first:100){edges{size,node{name}}}
 			repositoryTopics(first:100){nodes{topic{name}}}
+			mergeCommitAllowed
+			rebaseMergeAllowed
+			squashMergeAllowed
 			deleteBranchOnMerge
 			isTemplate
 			isEmpty
@@ -242,10 +358,17 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if latest == nil || latest["tagName"] != "v1.0.0" {
 		t.Errorf("latestRelease = %v, want tagName v1.0.0", repo["latestRelease"])
 	}
-	for _, nullField := range []string{"templateRepository", "licenseInfo", "primaryLanguage", "archivedAt"} {
+	for _, nullField := range []string{"templateRepository", "primaryLanguage", "archivedAt"} {
 		if repo[nullField] != nil {
 			t.Errorf("%s = %v, want null", nullField, repo[nullField])
 		}
+	}
+	license, _ := repo["licenseInfo"].(map[string]interface{})
+	if license == nil {
+		t.Fatalf("licenseInfo = nil, want MIT license metadata")
+	}
+	if license["key"] != "mit" || license["name"] != "MIT License" || license["spdxId"] != "MIT" {
+		t.Errorf("licenseInfo = %v, want MIT license metadata", license)
 	}
 	if repo["homepageUrl"] != "https://example.test/sweep-repoview" {
 		t.Errorf("homepageUrl = %v, want patched homepage", repo["homepageUrl"])
@@ -253,6 +376,15 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	for _, trueField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
 		if v, ok := repo[trueField].(bool); !ok || !v {
 			t.Errorf("%s = %v, want true", trueField, repo[trueField])
+		}
+	}
+	for field, want := range map[string]bool{
+		"mergeCommitAllowed": false,
+		"rebaseMergeAllowed": true,
+		"squashMergeAllowed": false,
+	} {
+		if got, ok := repo[field].(bool); !ok || got != want {
+			t.Errorf("%s = %v, want %v", field, repo[field], want)
 		}
 	}
 	if fc, _ := repo["forkCount"].(float64); fc != 0 {
@@ -269,9 +401,9 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if edges, ok := langs["edges"].([]interface{}); !ok || len(edges) != 0 {
 		t.Errorf("languages.edges = %v, want []", langs["edges"])
 	}
-	// Repo just created via REST with no commits: genuinely empty.
-	if v, ok := repo["isEmpty"].(bool); !ok || !v {
-		t.Errorf("isEmpty = %v, want true for a commit-less repo", repo["isEmpty"])
+	// The public license_template path creates the initial license commit.
+	if v, ok := repo["isEmpty"].(bool); !ok || v {
+		t.Errorf("isEmpty = %v, want false for a licensed repo with an initial commit", repo["isEmpty"])
 	}
 }
 

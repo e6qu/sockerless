@@ -31,11 +31,13 @@ type Repo struct {
 	Private                              bool         `json:"private"`
 	Fork                                 bool         `json:"fork"`
 	Archived                             bool         `json:"archived"`
+	ArchivedAt                           *time.Time   `json:"archived_at,omitempty"`
 	IsTemplate                           bool         `json:"is_template"`
 	WebCommitSignoffRequired             bool         `json:"web_commit_signoff_required"`
 	HasIssues                            bool         `json:"has_issues"`
 	HasProjects                          bool         `json:"has_projects"`
 	HasWiki                              bool         `json:"has_wiki"`
+	HasDiscussions                       *bool        `json:"has_discussions"`
 	HasPullRequests                      bool         `json:"has_pull_requests"`
 	AllowSquashMerge                     bool         `json:"allow_squash_merge"`
 	AllowMergeCommit                     bool         `json:"allow_merge_commit"`
@@ -57,6 +59,7 @@ type Repo struct {
 	Stargazers                           map[int]bool `json:"stargazers,omitempty"`
 	ParentID                             int          `json:"parent_id"`
 	SourceID                             int          `json:"source_id"`
+	TemplateRepoID                       int          `json:"template_repo_id,omitempty"`
 	NextIssueNumber                      int          `json:"-"`
 	NextMilestoneNumber                  int          `json:"-"`
 	AutomatedSecurityFixesEnabled        bool         `json:"automated_security_fixes_enabled"`
@@ -102,6 +105,7 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 		HasIssues:                 true,
 		HasProjects:               false,
 		HasWiki:                   false,
+		HasDiscussions:            boolPointer(true),
 		HasPullRequests:           true,
 		AllowSquashMerge:          true,
 		AllowMergeCommit:          true,
@@ -113,7 +117,6 @@ func (st *Store) createRepoLocked(fullName, name, description string, private bo
 		NextMilestoneNumber:       1,
 		CreatedAt:                 now,
 		UpdatedAt:                 now,
-		PushedAt:                  now,
 	}
 	st.NextRepo++
 
@@ -204,11 +207,14 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		OwnerType:                 "User",
 		Private:                   sourceRepo.Private,
 		Fork:                      true,
+		Archived:                  sourceRepo.Archived,
+		ArchivedAt:                cloneTimePtr(sourceRepo.ArchivedAt),
 		ParentID:                  sourceRepo.ID,
 		SourceID:                  sourceID,
 		HasIssues:                 sourceRepo.HasIssues,
 		HasProjects:               sourceRepo.HasProjects,
 		HasWiki:                   sourceRepo.HasWiki,
+		HasDiscussions:            boolPointer(repoHasDiscussions(sourceRepo)),
 		HasPullRequests:           sourceRepo.HasPullRequests,
 		AllowSquashMerge:          sourceRepo.AllowSquashMerge,
 		AllowMergeCommit:          sourceRepo.AllowMergeCommit,
@@ -231,7 +237,7 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		NextMilestoneNumber:       1,
 		CreatedAt:                 time.Now().UTC(),
 		UpdatedAt:                 time.Now().UTC(),
-		PushedAt:                  time.Now().UTC(),
+		PushedAt:                  sourceRepo.PushedAt,
 	}
 	st.NextRepo++
 
@@ -255,6 +261,25 @@ func (st *Store) ForkRepo(owner *User, sourceRepo *Repo, name string) *Repo {
 		st.persist.MustPut("repos", strconv.Itoa(repo.ID), repo)
 	}
 	return repo
+}
+
+func boolPointer(v bool) *bool {
+	return &v
+}
+
+func repoHasDiscussions(repo *Repo) bool {
+	if repo == nil || repo.HasDiscussions == nil {
+		return true
+	}
+	return *repo.HasDiscussions
+}
+
+func cloneTimePtr(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	clone := t.UTC()
+	return &clone
 }
 
 // RenameRepo renames owner/name to owner/newName, moving every map keyed by

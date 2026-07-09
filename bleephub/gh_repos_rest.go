@@ -532,6 +532,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		HasIssues                 *bool    `json:"has_issues"`
 		HasProjects               *bool    `json:"has_projects"`
 		HasWiki                   *bool    `json:"has_wiki"`
+		HasDiscussions            *bool    `json:"has_discussions"`
 		HasPullRequests           *bool    `json:"has_pull_requests"`
 		AllowSquashMerge          *bool    `json:"allow_squash_merge"`
 		AllowMergeCommit          *bool    `json:"allow_merge_commit"`
@@ -583,6 +584,9 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 		if req.HasWiki != nil {
 			r.HasWiki = *req.HasWiki
 		}
+		if req.HasDiscussions != nil {
+			r.HasDiscussions = boolPointer(*req.HasDiscussions)
+		}
 		if req.HasPullRequests != nil {
 			r.HasPullRequests = *req.HasPullRequests
 		}
@@ -622,7 +626,7 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 
 	repo = s.store.GetRepo(user.Login, req.Name)
 	s.recordAuditEvent("repo.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "repo_id": repo.ID})
-	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
 }
 
 func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
@@ -638,7 +642,7 @@ func (s *Server) handleGetRepo(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, fullRepoJSON(repo, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
 }
 
 func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
@@ -711,10 +715,20 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 		if v, ok := coerceBool(req["has_wiki"]); ok {
 			r.HasWiki = v
 		}
+		if v, ok := coerceBool(req["has_discussions"]); ok {
+			r.HasDiscussions = boolPointer(v)
+		}
 		if v, ok := coerceBool(req["has_pull_requests"]); ok {
 			r.HasPullRequests = v
 		}
 		if v, ok := coerceBool(req["archived"]); ok {
+			switch {
+			case v && (!r.Archived || r.ArchivedAt == nil):
+				now := time.Now().UTC()
+				r.ArchivedAt = &now
+			case !v:
+				r.ArchivedAt = nil
+			}
 			r.Archived = v
 		}
 		if v, ok := coerceBool(req["is_template"]); ok {
@@ -762,7 +776,7 @@ func (s *Server) handleUpdateRepo(w http.ResponseWriter, r *http.Request) {
 	})
 
 	updated := s.store.GetRepo(owner, name)
-	writeJSON(w, http.StatusOK, fullRepoJSON(updated, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusOK, fullRepoJSONForViewer(updated, s.store, s.baseURL(r), user))
 }
 
 func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
@@ -882,7 +896,7 @@ func (s *Server) handleListAuthUserRepos(w http.ResponseWriter, r *http.Request)
 	result := make([]map[string]interface{}, 0, len(repos))
 	base := s.baseURL(r)
 	for _, repo := range repos {
-		result = append(result, repoToJSON(repo, s.store, base))
+		result = append(result, repoToJSONForViewer(repo, s.store, base, user))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -902,8 +916,9 @@ func (s *Server) handleListUserRepos(w http.ResponseWriter, r *http.Request) {
 	repos := s.store.ListReposForUser(user, opts)
 	result := make([]map[string]interface{}, 0, len(repos))
 	base := s.baseURL(r)
+	viewer := ghUserFromContext(r.Context())
 	for _, repo := range repos {
-		result = append(result, repoToJSON(repo, s.store, base))
+		result = append(result, repoToJSONForViewer(repo, s.store, base, viewer))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -922,8 +937,9 @@ func (s *Server) handleListOrgRepos(w http.ResponseWriter, r *http.Request) {
 	repos := s.store.ListReposForOrg(org.Login, opts)
 	result := make([]map[string]interface{}, 0, len(repos))
 	base := s.baseURL(r)
+	viewer := ghUserFromContext(r.Context())
 	for _, repo := range repos {
-		result = append(result, repoToJSON(repo, s.store, base))
+		result = append(result, repoToJSONForViewer(repo, s.store, base, viewer))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, result))
 }
@@ -977,6 +993,10 @@ func (s *Server) baseURL(r *http.Request) string {
 // toggles reflect the surfaces bleephub actually serves. Must not be
 // called with st.mu held: it derives open_issues_count from the store.
 func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
+	return repoToJSONForViewer(repo, st, baseURL, nil)
+}
+
+func repoToJSONForViewer(repo *Repo, st *Store, baseURL string, viewer *User) map[string]interface{} {
 	// Read every mutable repo field off a private snapshot: UpdateRepo mutates
 	// description, topics, homepage, timestamps, etc. under st.mu.Lock, so
 	// reading the live pointer here would race a concurrent writer. The
@@ -1079,19 +1099,23 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 		"has_issues":        repo.HasIssues,
 		"has_projects":      repo.HasProjects,
 		"has_wiki":          repo.HasWiki,
-		"has_pages":         false,
+		"has_pages":         st.HasPagesSite(repo.ID),
 		"has_downloads":     false,
-		"has_discussions":   true,
+		"has_discussions":   repoHasDiscussions(repo),
 		"has_pull_requests": repo.HasPullRequests,
 		"topics":            topics,
-		"permissions": map[string]bool{
-			"admin": true,
-			"push":  true,
-			"pull":  true,
-		},
-		"created_at": repo.CreatedAt.Format(time.RFC3339),
-		"updated_at": repo.UpdatedAt.Format(time.RFC3339),
-		"pushed_at":  repo.PushedAt.Format(time.RFC3339),
+		"permissions":       repoPermissionsJSON(st, viewer, repo),
+		"created_at":        repo.CreatedAt.Format(time.RFC3339),
+		"updated_at":        repo.UpdatedAt.Format(time.RFC3339),
+		"pushed_at":         nullableTimestamp(repo.PushedAt),
+	}
+}
+
+func repoPermissionsJSON(st *Store, viewer *User, repo *Repo) map[string]bool {
+	return map[string]bool{
+		"admin": canAdminRepo(st, viewer, repo),
+		"push":  canPushRepo(st, viewer, repo),
+		"pull":  canReadRepo(st, viewer, repo),
 	}
 }
 
@@ -1101,7 +1125,11 @@ func repoToJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
 // counters that exist only on full-repository, both derived from real
 // store state: the fork network and the watch subscriptions.
 func fullRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} {
-	out := repoToJSON(repo, st, baseURL)
+	return fullRepoJSONForViewer(repo, st, baseURL, nil)
+}
+
+func fullRepoJSONForViewer(repo *Repo, st *Store, baseURL string, viewer *User) map[string]interface{} {
+	out := repoToJSONForViewer(repo, st, baseURL, viewer)
 	out["network_count"] = out["forks_count"]
 	out["subscribers_count"] = len(st.ListRepoSubscribers(repo.ID))
 	out["organization"] = repoOrganizationJSON(repo, st)
@@ -1132,10 +1160,10 @@ func fullRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface{} 
 	}
 	if repo.Fork {
 		if parent := st.GetRepoByID(repo.ParentID); parent != nil {
-			out["parent"] = repoToJSON(parent, st, baseURL)
+			out["parent"] = repoToJSONForViewer(parent, st, baseURL, viewer)
 		}
 		if source := st.GetRepoByID(repo.SourceID); source != nil {
-			out["source"] = repoToJSON(source, st, baseURL)
+			out["source"] = repoToJSONForViewer(source, st, baseURL, viewer)
 		}
 	}
 	return out
@@ -1146,6 +1174,20 @@ func nilOrString(s string) interface{} {
 		return nil
 	}
 	return s
+}
+
+func nullableTimestamp(t time.Time) interface{} {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
+}
+
+func nullableTimePtr(t *time.Time) interface{} {
+	if t == nil || t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 func licenseJSON(repo *Repo) interface{} {
@@ -1237,7 +1279,7 @@ func (s *Server) handleListStarredRepos(w http.ResponseWriter, r *http.Request) 
 			continue
 		}
 		if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
-			out = append(out, fullRepoJSON(repo, s.store, s.baseURL(r)))
+			out = append(out, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -1252,13 +1294,14 @@ func (s *Server) handleListUserStarredRepos(w http.ResponseWriter, r *http.Reque
 	}
 	names := s.store.ListStarredRepos(u.ID)
 	out := make([]map[string]interface{}, 0, len(names))
+	viewer := ghUserFromContext(r.Context())
 	for _, fullName := range names {
 		parts := strings.SplitN(fullName, "/", 2)
 		if len(parts) != 2 {
 			continue
 		}
 		if repo := s.store.GetRepo(parts[0], parts[1]); repo != nil {
-			out = append(out, fullRepoJSON(repo, s.store, s.baseURL(r)))
+			out = append(out, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), viewer))
 		}
 	}
 	writeJSON(w, http.StatusOK, out)

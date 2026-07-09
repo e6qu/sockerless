@@ -97,6 +97,7 @@ func (s *Server) handleGenerateRepoFromTemplate(w http.ResponseWriter, r *http.R
 		return
 	}
 	s.store.UpdateRepo(ownerLogin, repo.Name, func(rp *Repo) {
+		rp.TemplateRepoID = template.ID
 		rp.PushedAt = time.Now().UTC()
 	})
 
@@ -104,7 +105,7 @@ func (s *Server) handleGenerateRepoFromTemplate(w http.ResponseWriter, r *http.R
 	s.recordAuditEvent("repo.generate", user.Login, "", map[string]interface{}{
 		"repo": repo.FullName, "repo_id": repo.ID, "template": template.FullName,
 	})
-	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), user))
 }
 
 // generateFromTemplateStorage copies the template's tree and blob objects

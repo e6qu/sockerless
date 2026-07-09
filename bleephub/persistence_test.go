@@ -46,6 +46,9 @@ func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
 	oapp := st1.CreateOAuthApp(user.ID, "Persist OAuth", "", "", "")
 	utsTok, _ := st1.CreateUserToServerToken(user.ID, 0, oapp.ClientID, "repo", 60_000_000_000, true)
 	repo := st1.CreateRepo(user, "persist-target", "", false)
+	st1.UpdateRepo(user.Login, repo.Name, func(r *Repo) {
+		r.HasDiscussions = boolPointer(false)
+	})
 	if err := p1.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -106,6 +109,8 @@ func persistRoundTrip(t *testing.T, open func() (*Persistence, error)) {
 		t.Fatal("repo did not persist")
 	} else if got.ID != repo.ID {
 		t.Errorf("repo ID round-trip: got %d want %d", got.ID, repo.ID)
+	} else if repoHasDiscussions(got) {
+		t.Error("repo has_discussions=false did not persist")
 	}
 }
 

@@ -100,6 +100,20 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			return v, nil
 		},
 	})
+	repoType.AddFieldConfig("hasIssuesEnabled", &graphql.Field{
+		Type: graphql.NewNonNull(graphql.Boolean),
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasIssues"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasIssues")
+			}
+			return v, nil
+		},
+	})
 	repoType.AddFieldConfig("parent", &graphql.Field{
 		Type: repoType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -122,10 +136,24 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("templateRepository", &graphql.Field{
-		// No template-repo feature: null (gh selects {id,name,owner{id,login}}).
 		Type: repoType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			templateID, ok := r["templateRepoID"].(int)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing templateRepoID")
+			}
+			if templateID == 0 {
+				return nil, nil
+			}
+			templateRepo := s.store.GetRepoByID(templateID)
+			if templateRepo == nil {
+				return nil, nil
+			}
+			return repoToGraphQL(s.store.snapRepo(templateRepo)), nil
 		},
 	})
 	repoType.AddFieldConfig("homepageUrl", &graphql.Field{
@@ -207,17 +235,35 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("licenseInfo", &graphql.Field{
-		// gh selects licenseInfo{key,name,nickname}; no license detection → null.
 		Type: graphql.NewObject(graphql.ObjectConfig{
 			Name: "RepositoryLicense",
 			Fields: graphql.Fields{
 				"key":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 				"name":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 				"nickname": &graphql.Field{Type: graphql.String},
+				"spdxId":   &graphql.Field{Type: graphql.String},
 			},
 		}),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			key, _ := r["licenseKey"].(string)
+			if key == "" {
+				return nil, nil
+			}
+			name, ok := r["licenseName"].(string)
+			if !ok || name == "" {
+				return nil, fmt.Errorf("repository source missing licenseName")
+			}
+			spdxID, _ := r["licenseSPDX"].(string)
+			return map[string]interface{}{
+				"key":      key,
+				"name":     name,
+				"nickname": nil,
+				"spdxId":   spdxID,
+			}, nil
 		},
 	})
 	languageType := graphql.NewObject(graphql.ObjectConfig{
@@ -387,10 +433,13 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("archivedAt", &graphql.Field{
-		// Archive timestamps aren't recorded; null matches an unarchived repo.
 		Type: graphql.String,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			return r["archivedAt"], nil
 		},
 	})
 
@@ -803,6 +852,20 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 					if repo == nil {
 						return nil, fmt.Errorf("repository creation failed")
 					}
+					if !s.store.UpdateRepo(user.Login, name, func(r *Repo) {
+						if v, ok := graphQLInputBool(input, "hasIssuesEnabled"); ok {
+							r.HasIssues = v
+						}
+						if v, ok := graphQLInputBool(input, "hasWikiEnabled"); ok {
+							r.HasWiki = v
+						}
+					}) {
+						return nil, fmt.Errorf("repository %s/%s not found after creation", user.Login, name)
+					}
+					repo = s.store.GetRepo(user.Login, name)
+					if repo == nil {
+						return nil, fmt.Errorf("repository %s/%s not found after update", user.Login, name)
+					}
 
 					return map[string]interface{}{
 						"repository": repoToGraphQL(s.store.snapRepo(repo)),
@@ -878,18 +941,45 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 		"defaultBranch":       repo.DefaultBranch,
 		"stargazerCount":      repo.StargazersCount,
 		"language":            repo.Language,
+		"licenseKey":          repo.LicenseKey,
+		"licenseName":         repo.LicenseName,
+		"licenseSPDX":         repo.LicenseSPDX,
 		"homepage":            repo.Homepage,
 		"topics":              repo.Topics,
+		"hasIssues":           repo.HasIssues,
 		"hasProjects":         repo.HasProjects,
 		"hasWiki":             repo.HasWiki,
-		"hasDiscussions":      true,
+		"hasDiscussions":      repoHasDiscussions(repo),
 		"parentID":            repo.ParentID,
+		"templateRepoID":      repo.TemplateRepoID,
+		"allowSquashMerge":    repo.AllowSquashMerge,
+		"allowMergeCommit":    repo.AllowMergeCommit,
+		"allowRebaseMerge":    repo.AllowRebaseMerge,
 		"deleteBranchOnMerge": repo.DeleteBranchOnMerge,
 		"isTemplate":          repo.IsTemplate,
 		"owner":               ownerMap,
 		"createdAt":           repo.CreatedAt.Format(time.RFC3339),
 		"updatedAt":           repo.UpdatedAt.Format(time.RFC3339),
-		"pushedAt":            repo.PushedAt.Format(time.RFC3339),
+		"pushedAt":            nullableTimestamp(repo.PushedAt),
+		"archivedAt":          nullableTimePtr(repo.ArchivedAt),
+	}
+}
+
+func graphQLInputBool(input map[string]interface{}, key string) (bool, bool) {
+	v, ok := input[key]
+	if !ok || v == nil {
+		return false, false
+	}
+	switch b := v.(type) {
+	case bool:
+		return b, true
+	case *bool:
+		if b == nil {
+			return false, false
+		}
+		return *b, true
+	default:
+		panic(fmt.Sprintf("GraphQL input %s decoded as %T, want bool", key, v))
 	}
 }
 

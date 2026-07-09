@@ -286,6 +286,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		HasIssues                 *bool    `json:"has_issues"`
 		HasProjects               *bool    `json:"has_projects"`
 		HasWiki                   *bool    `json:"has_wiki"`
+		HasDiscussions            *bool    `json:"has_discussions"`
 		HasPullRequests           *bool    `json:"has_pull_requests"`
 		AllowSquashMerge          *bool    `json:"allow_squash_merge"`
 		AllowMergeCommit          *bool    `json:"allow_merge_commit"`
@@ -337,6 +338,9 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		if req.HasWiki != nil {
 			r.HasWiki = *req.HasWiki
 		}
+		if req.HasDiscussions != nil {
+			r.HasDiscussions = boolPointer(*req.HasDiscussions)
+		}
 		if req.HasPullRequests != nil {
 			r.HasPullRequests = *req.HasPullRequests
 		}
@@ -375,7 +379,7 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repo = s.store.GetRepo(org.Login, req.Name)
-	writeJSON(w, http.StatusCreated, fullRepoJSON(repo, s.store, s.baseURL(r)))
+	writeJSON(w, http.StatusCreated, fullRepoJSONForViewer(repo, s.store, s.baseURL(r), ghUserFromContext(r.Context())))
 }
 
 // orgAsSimpleUserJSON converts an Org to the simple-user shape GitHub uses
