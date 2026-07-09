@@ -79,7 +79,7 @@ func TestInternalEndpointsRequireAuth(t *testing.T) {
 	paths := []string{
 		"/internal/metrics", "/internal/status", "/internal/storage",
 		"/internal/workflows", "/internal/sessions", "/internal/repos",
-		"/internal/apps", "/internal/installations", "/internal/oauth/state",
+		"/internal/oauth/state",
 	}
 	for _, p := range paths {
 		t.Run("anon"+p, func(t *testing.T) {

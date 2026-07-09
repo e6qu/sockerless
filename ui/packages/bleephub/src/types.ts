@@ -6,6 +6,8 @@
 // "queued"/"skipped", a workflow file is never anything but "active".
 // "waiting" = held on a reviewer-protected environment approval.
 export type WorkflowStatus =
+  | "queued"
+  | "in_progress"
   | "running"
   | "completed"
   | "pending_concurrency"
@@ -17,9 +19,16 @@ export type JobStatus =
   | "completed"
   | "skipped"
   | "waiting";
-export type JobResult = "success" | "failure" | "cancelled" | "skipped";
+export type JobResult =
+  | "success"
+  | "failure"
+  | "cancelled"
+  | "skipped"
+  | "neutral"
+  | "timed_out"
+  | "action_required";
 export type WorkflowResult = "" | JobResult;
-export type WorkflowFileState = "active";
+export type WorkflowFileState = "active" | "disabled_manually" | "disabled_inactivity";
 export type WorkflowFileSource = "submitted" | "discovered";
 
 /**
@@ -180,7 +189,7 @@ export interface BleephubWorkflowFile {
   path: string;
   state: WorkflowFileState;
   repoFullName: string;
-  source: WorkflowFileSource;
+  source?: WorkflowFileSource;
   createdAt: string;
   updatedAt: string;
 }
@@ -191,7 +200,7 @@ export interface BleephubDispatchRequest {
   inputs?: Record<string, string>;
 }
 
-/** App row from /internal/apps (appView — id/slug/name/description/owner only). */
+/** GitHub App row from the settings-owned browser surface. */
 export interface BleephubApp {
   id: number;
   slug: string;
@@ -201,7 +210,7 @@ export interface BleephubApp {
   createdAt: string;
 }
 
-/** Installation row from /internal/installations. */
+/** GitHub App installation row normalized from GitHub's REST installation shape. */
 export interface BleephubInstallation {
   id: number;
   appId: number;
@@ -214,7 +223,7 @@ export interface BleephubInstallation {
   suspendedAt: string | null;
 }
 
-/** OAuth App row from /internal/oauth-apps, distinct from GitHub App. */
+/** OAuth App row from the settings-owned browser surface, distinct from GitHub App. */
 export interface BleephubOAuthApp {
   clientId: string;
   name: string;
@@ -223,6 +232,26 @@ export interface BleephubOAuthApp {
   callbackUrl: string;
   ownerId: number;
   createdAt: string;
+}
+
+export interface WireGitHubApp {
+  id: number;
+  slug: string;
+  name: string;
+  description: string;
+  owner: { id: number };
+  created_at: string;
+}
+
+export interface WireInstallation {
+  id: number;
+  app_id: number;
+  app_slug: string;
+  target_type: string;
+  repository_selection: string;
+  created_at: string;
+  suspended_at: string | null;
+  account: { login: string };
 }
 
 // Wire shapes: the snake_case JSON the `/api/v3/bleephub/*` endpoints emit
@@ -511,6 +540,8 @@ export interface GithubWorkflow {
   name: string;
   path: string;
   state: "active" | "disabled_manually" | "disabled_inactivity";
+  created_at: string;
+  updated_at: string;
   badge_url: string;
 }
 
@@ -1178,13 +1209,6 @@ export interface GithubPackageFile {
   download_url: string;
 }
 
-export interface GithubPackageVersionCreatePayload {
-  version: string;
-  description?: string;
-  metadata?: GithubPackageVersion["metadata"];
-  files: { name: string; content_type: string; content_base64: string }[];
-}
-
 // ─── GitHub Security Advisories shapes ──────────────────────────────────
 
 export type GithubSecurityAdvisorySeverity = "critical" | "high" | "medium" | "low";
@@ -1746,11 +1770,11 @@ export interface GithubPagesHealth {
   alt_domain: GithubPagesDomainHealth | null;
 }
 
-/** Review thread — GET /internal/.../pulls/{n}/review-threads (items). */
+/** Pull request review thread — GraphQL PullRequest.reviewThreads node. */
 export interface GithubPRReviewThread {
-  id: number;
+  id: string;
   isResolved: boolean;
-  comments: { id: number }[];
+  comments: { databaseId: number }[];
 }
 
 /** Requested reviewers — GET .../pulls/{n}/requested_reviewers. */

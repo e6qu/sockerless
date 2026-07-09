@@ -331,7 +331,8 @@ jobs:
         timeout-minutes: 8
       - name: Run SDK tests
         run: |
-          cd simulators/${{ matrix.cloud }} && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
@@ -341,7 +342,8 @@ jobs:
           GOWORK: "off"
       - name: Run CLI tests
         run: |
-          cd simulators/${{ matrix.cloud }} && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/${{ matrix.cloud }}
+          cd simulators/${{ matrix.cloud }}
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/${{ matrix.cloud }}-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/${{ matrix.cloud }}" \
@@ -384,7 +386,8 @@ jobs:
       # tight one.
       - name: Pre-build AWS SDK tests (warm build cache)
         run: |
-          cd simulators/aws && go mod download && make build
+          bash scripts/ci-go-mod-download.sh simulators/aws
+          cd simulators/aws && make build
           cd sdk-tests && GOWORK=off CGO_ENABLED=0 go test -c -o /tmp/aws-sdk-tests.test .
         timeout-minutes: 6
         env:
@@ -473,7 +476,8 @@ jobs:
           aws --version
       - name: Run AWS CLI tests
         run: |
-          cd simulators/aws && go mod download
+          bash scripts/ci-go-mod-download.sh simulators/aws
+          cd simulators/aws
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-cli-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
@@ -623,8 +627,8 @@ jobs:
       - name: simulators jscpd (UI ≥200 tokens)
         run: bash scripts/simulators-jscpd.sh
 
-  sim-bleephub-e2e:
-    name: sim (bleephub e2e)
+  bleephub-end-to-end:
+    name: Bleephub end-to-end
     runs-on: ubuntu-latest
     # 15 (not 10): the chromium download in "Install Playwright browsers" is a
     # variable-time network step that, stacked on the UI + Go builds, used to
@@ -697,8 +701,8 @@ jobs:
   # bleephub against the official GitHub Go SDK (google/go-github): builds the
   # binary, runs it, and drives every major surface through typed SDK calls so
   # any wire-shape drift surfaces as a decode error.
-  sim-bleephub-sdk:
-    name: sim (bleephub sdk)
+  bleephub-github-software-development-kit:
+    name: Bleephub GitHub software development kit
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -713,8 +717,8 @@ jobs:
 
   # bleephub against the real `gh` CLI inside Docker (self-signed TLS + CA
   # trust + the official gh binary driving repo/issue/PR/release verbs).
-  sim-bleephub-gh-cli:
-    name: sim (bleephub gh CLI)
+  bleephub-github-command-line-interface:
+    name: Bleephub GitHub command-line interface
     runs-on: ubuntu-latest
     timeout-minutes: 12
     steps:
@@ -725,12 +729,13 @@ jobs:
   # The official actions/runner registering against bleephub and running
   # real jobs end-to-end: host-mode jobs, container-mode jobs +
   # service containers dispatched through sockerless-backend-ecs to the
-  # AWS sim (workloads on the host engine via the mounted docker.sock,
-  # workspace shared via sim-EFS), and the github-runner dispatcher
+  # AWS simulator (workloads on the host engine via the mounted docker.sock,
+  # workspace shared via simulator-backed Amazon Elastic File System), and the
+  # github-runner dispatcher
   # spawning an ephemeral runner for a queued job (runner-as-cloud-task
   # topology, sim-proven).
-  sim-bleephub-runner:
-    name: sim (bleephub actions/runner)
+  bleephub-github-actions-runner:
+    name: Bleephub GitHub Actions runner
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -757,7 +762,7 @@ jobs:
 
   build-amd64:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0
@@ -766,7 +771,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Build all binaries (amd64)
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           GOWORK: "off"
         run: |
@@ -793,7 +798,7 @@ jobs:
 
   build-arm64:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0
@@ -802,7 +807,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Cross-compile all binaries (arm64)
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           GOOS: linux
           GOARCH: arm64

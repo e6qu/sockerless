@@ -1003,7 +1003,7 @@ function ReviewThreadCard({
   repo: string;
   number: number;
   group: ReviewThreadGroup;
-  threadInfo: { id: number; isResolved: boolean } | null;
+  threadInfo: { id: string; isResolved: boolean } | null;
 }) {
   const qc = useQueryClient();
   const [replyBody, setReplyBody] = useState("");
@@ -1153,10 +1153,10 @@ function ReviewThreadsSection({
   const comments = commentsQ.data ?? [];
   if (comments.length === 0) return null;
 
-  const threadInfoByCommentId = new Map<number, { id: number; isResolved: boolean }>();
+  const threadInfoByCommentId = new Map<number, { id: string; isResolved: boolean }>();
   for (const t of threadsQ.data ?? []) {
     for (const c of t.comments) {
-      threadInfoByCommentId.set(c.id, { id: t.id, isResolved: t.isResolved });
+      threadInfoByCommentId.set(c.databaseId, { id: t.id, isResolved: t.isResolved });
     }
   }
   const groups = groupReviewThreads(comments);

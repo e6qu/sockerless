@@ -361,7 +361,8 @@ function WorkflowHeader({
   const disabled = workflow.state !== "active";
 
   // The dispatch form only exists for files with `on: workflow_dispatch` —
-  // read the YAML through the contents API and parse the trigger section.
+  // read the workflow file through the GitHub Contents application programming
+  // interface and parse the trigger section.
   const yamlQ = useQuery({
     queryKey: ["workflow-yaml", owner, repo, workflow.path],
     queryFn: () => fetchFileContent(owner, repo, workflow.path),

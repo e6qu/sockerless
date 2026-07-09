@@ -488,13 +488,6 @@ func (s *Server) addDiscussionFieldsToSchema(userType, repoType, mutationType *g
 	})
 
 	// --- Repository fields ---
-	repoType.AddFieldConfig("hasDiscussionsEnabled", &graphql.Field{
-		Type: graphql.NewNonNull(graphql.Boolean),
-		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
-		},
-	})
-
 	repoType.AddFieldConfig("discussionCategories", &graphql.Field{
 		Type: discussionCategoryConnectionType,
 		Args: graphql.FieldConfigArgument{

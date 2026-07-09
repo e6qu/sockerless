@@ -106,18 +106,13 @@ func TestPRReviewComments_RootAndReply(t *testing.T) {
 	}
 
 	// Review threads — 1 thread with 3 comments (root + 2 replies share a thread).
-	// Sim-control surface under /internal/ (GraphQL-only on real GitHub).
-	req = httptest.NewRequest("GET", "/internal/repos/admin/rc-repo/pulls/"+itoa(pr.Number)+"/review-threads", nil)
-	req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
-	w = httptest.NewRecorder()
-	s.internalAuthMiddleware(s.mux).ServeHTTP(w, req)
-	var threads []map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &threads)
+	// Public clients read and mutate this state through GitHub GraphQL.
+	threads := s.store.PRReviewComments.ListThreads(pr.ID)
 	if len(threads) != 1 {
 		t.Fatalf("threads len = %d", len(threads))
 	}
-	if threads[0]["isResolved"] != false {
-		t.Errorf("thread resolved = %v", threads[0]["isResolved"])
+	if threads[0].IsResolved {
+		t.Errorf("thread resolved = %v", threads[0].IsResolved)
 	}
 }
 

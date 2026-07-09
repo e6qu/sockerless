@@ -120,10 +120,10 @@ func TestRepoGraphQL_GitHubRepoQuery(t *testing.T) {
 		t.Fatalf("repository null: %v", d)
 	}
 	if v, ok := repo["hasWikiEnabled"].(bool); !ok || v {
-		t.Errorf("hasWikiEnabled = %v, want false (no wiki feature)", repo["hasWikiEnabled"])
+		t.Errorf("hasWikiEnabled = %v, want false for default repo setting", repo["hasWikiEnabled"])
 	}
 	if repo["parent"] != nil {
-		t.Errorf("parent = %v, want null (no forks feature)", repo["parent"])
+		t.Errorf("parent = %v, want null for non-fork repo", repo["parent"])
 	}
 }
 
@@ -184,6 +184,17 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if owner == "" || name == "" {
 		t.Fatalf("repo create failed: %v", repoData)
 	}
+	patchResp := ghPatch(t, "/api/v3/repos/"+owner+"/"+name, defaultToken, map[string]interface{}{
+		"homepage":               "https://example.test/sweep-repoview",
+		"has_projects":           true,
+		"has_wiki":               true,
+		"delete_branch_on_merge": true,
+		"is_template":            true,
+	})
+	patched := decodeJSON(t, patchResp)
+	if patched["has_discussions"] != true {
+		t.Fatalf("patched repo has_discussions = %v, want true", patched["has_discussions"])
+	}
 
 	// Seed a published release so latestRelease resolves to real store data.
 	relResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/releases", defaultToken, map[string]interface{}{
@@ -193,6 +204,12 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	relData := decodeJSON(t, relResp)
 	if relData["id"] == nil {
 		t.Fatalf("release create failed: %v", relData)
+	}
+	subResp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/subscription", defaultToken, map[string]interface{}{
+		"subscribed": true,
+	})
+	if subResp.StatusCode != http.StatusOK {
+		t.Fatalf("subscription create failed: %d", subResp.StatusCode)
 	}
 
 	// Field selections verbatim from api/query_builder.go RepositoryGraphQL.
@@ -225,22 +242,25 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if latest == nil || latest["tagName"] != "v1.0.0" {
 		t.Errorf("latestRelease = %v, want tagName v1.0.0", repo["latestRelease"])
 	}
-	for _, nullField := range []string{"templateRepository", "homepageUrl", "licenseInfo", "primaryLanguage", "archivedAt"} {
+	for _, nullField := range []string{"templateRepository", "licenseInfo", "primaryLanguage", "archivedAt"} {
 		if repo[nullField] != nil {
 			t.Errorf("%s = %v, want null", nullField, repo[nullField])
 		}
 	}
-	for _, falseField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
-		if v, ok := repo[falseField].(bool); !ok || v {
-			t.Errorf("%s = %v, want false", falseField, repo[falseField])
+	if repo["homepageUrl"] != "https://example.test/sweep-repoview" {
+		t.Errorf("homepageUrl = %v, want patched homepage", repo["homepageUrl"])
+	}
+	for _, trueField := range []string{"hasProjectsEnabled", "hasDiscussionsEnabled", "deleteBranchOnMerge", "isTemplate"} {
+		if v, ok := repo[trueField].(bool); !ok || !v {
+			t.Errorf("%s = %v, want true", trueField, repo[trueField])
 		}
 	}
 	if fc, _ := repo["forkCount"].(float64); fc != 0 {
 		t.Errorf("forkCount = %v, want 0", repo["forkCount"])
 	}
 	watchers, _ := repo["watchers"].(map[string]interface{})
-	if watchers == nil || watchers["totalCount"].(float64) != 0 {
-		t.Errorf("watchers = %v, want totalCount 0", repo["watchers"])
+	if watchers == nil || watchers["totalCount"].(float64) != 1 {
+		t.Errorf("watchers = %v, want totalCount 1", repo["watchers"])
 	}
 	langs, _ := repo["languages"].(map[string]interface{})
 	if langs == nil {
@@ -252,6 +272,51 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	// Repo just created via REST with no commits: genuinely empty.
 	if v, ok := repo["isEmpty"].(bool); !ok || !v {
 		t.Errorf("isEmpty = %v, want true for a commit-less repo", repo["isEmpty"])
+	}
+}
+
+func TestRepoGraphQL_ForkParentAndCount(t *testing.T) {
+	owner, name := sweepRepo(t, "sweep-fork-graphql")
+
+	testServer.store.mu.Lock()
+	forker := &User{ID: testServer.store.NextUser, Login: "graphql-forker", Type: "User", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	testServer.store.NextUser++
+	testServer.store.Users[forker.ID] = forker
+	testServer.store.UsersByLogin[forker.Login] = forker
+	tok := &Token{Value: "graphql-forker-token", UserID: forker.ID, Scopes: "repo", CreatedAt: time.Now()}
+	testServer.store.Tokens[tok.Value] = tok
+	testServer.store.mu.Unlock()
+
+	resp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/forks", tok.Value, map[string]interface{}{"name": "sweep-fork-child"})
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("fork create status = %d, want 202", resp.StatusCode)
+	}
+
+	query := `query($owner:String!,$name:String!,$forkOwner:String!,$forkName:String!){
+		source: repository(owner:$owner,name:$name){
+			nameWithOwner
+			forkCount
+		}
+		fork: repository(owner:$forkOwner,name:$forkName){
+			nameWithOwner
+			parent{nameWithOwner databaseId}
+		}
+	}`
+	d := gqlData(t, query, map[string]interface{}{
+		"owner":     owner,
+		"name":      name,
+		"forkOwner": forker.Login,
+		"forkName":  "sweep-fork-child",
+	})
+	source, _ := d["source"].(map[string]interface{})
+	if source == nil || source["forkCount"].(float64) != 1 {
+		t.Fatalf("source = %v, want forkCount 1", d["source"])
+	}
+	fork, _ := d["fork"].(map[string]interface{})
+	parent, _ := fork["parent"].(map[string]interface{})
+	if parent == nil || parent["nameWithOwner"] != owner+"/"+name {
+		t.Fatalf("fork parent = %v, want %s/%s", fork["parent"], owner, name)
 	}
 }
 
@@ -545,6 +610,67 @@ func TestPRGraphQL_AddPullRequestReview(t *testing.T) {
 	latest, _ := pr2["latestReviews"].(map[string]interface{})
 	if nodes, _ := latest["nodes"].([]interface{}); len(nodes) != 1 {
 		t.Errorf("latestReviews.nodes = %v, want 1", latest["nodes"])
+	}
+}
+
+func TestPRGraphQL_ResolveReviewThread(t *testing.T) {
+	owner, name := sweepRepo(t, "sweep-prthread")
+	prNum, _ := sweepPR(t, owner, name, "thread me")
+
+	root := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/comments", defaultToken, map[string]interface{}{
+		"body":      "please adjust this line",
+		"path":      "main.go",
+		"line":      3,
+		"side":      "RIGHT",
+		"commit_id": "abc123",
+	}), http.StatusCreated)
+	rootID := int(root["id"].(float64))
+	decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/pulls/"+itoa(prNum)+"/comments", defaultToken, map[string]interface{}{
+		"body":        "addressed",
+		"in_reply_to": rootID,
+	}), http.StatusCreated)
+
+	query := `query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$n){reviewThreads(first:10){nodes{id,isResolved,isOutdated,path,line,comments{totalCount,nodes{body,path,line,state,author{login}}}}}}}}`
+	d := gqlData(t, query, map[string]interface{}{"owner": owner, "repo": name, "n": prNum})
+	threads := d["repository"].(map[string]interface{})["pullRequest"].(map[string]interface{})["reviewThreads"].(map[string]interface{})
+	nodes, _ := threads["nodes"].([]interface{})
+	if len(nodes) != 1 {
+		t.Fatalf("reviewThreads.nodes = %v, want one thread", threads["nodes"])
+	}
+	thread := nodes[0].(map[string]interface{})
+	threadID, _ := thread["id"].(string)
+	if threadID == "" || thread["isResolved"] != false || thread["path"] != "main.go" {
+		t.Fatalf("thread before resolve = %v", thread)
+	}
+	comments := thread["comments"].(map[string]interface{})
+	if comments["totalCount"] != float64(2) {
+		t.Fatalf("thread comments = %v, want 2", comments)
+	}
+
+	resolve := `mutation($input:ResolveReviewThreadInput!){resolveReviewThread(input:$input){clientMutationId,thread{id,isResolved,comments{totalCount}}}}`
+	rd := gqlData(t, resolve, map[string]interface{}{
+		"input": map[string]interface{}{
+			"threadId":         threadID,
+			"clientMutationId": "resolve-1",
+		},
+	})
+	resolvedThread := rd["resolveReviewThread"].(map[string]interface{})["thread"].(map[string]interface{})
+	if resolvedThread["id"] != threadID || resolvedThread["isResolved"] != true {
+		t.Fatalf("resolved thread = %v, want same id resolved", resolvedThread)
+	}
+	if rd["resolveReviewThread"].(map[string]interface{})["clientMutationId"] != "resolve-1" {
+		t.Fatalf("resolve clientMutationId missing: %v", rd)
+	}
+
+	unresolve := `mutation($input:UnresolveReviewThreadInput!){unresolveReviewThread(input:$input){thread{id,isResolved}}}`
+	ud := gqlData(t, unresolve, map[string]interface{}{
+		"input": map[string]interface{}{
+			"threadId": threadID,
+		},
+	})
+	unresolvedThread := ud["unresolveReviewThread"].(map[string]interface{})["thread"].(map[string]interface{})
+	if unresolvedThread["id"] != threadID || unresolvedThread["isResolved"] != false {
+		t.Fatalf("unresolved thread = %v, want same id unresolved", unresolvedThread)
 	}
 }
 

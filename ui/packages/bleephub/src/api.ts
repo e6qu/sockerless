@@ -13,6 +13,8 @@ import type {
   BleephubInstallation,
   BleephubOAuthApp,
   BleephubOAuthState,
+  WireGitHubApp,
+  WireInstallation,
   WireOAuthApp,
   WireAppCreated,
   GithubIssue,
@@ -75,7 +77,6 @@ import type {
   GithubPackage,
   GithubPackageVersion,
   GithubPackageFile,
-  GithubPackageVersionCreatePayload,
   GithubDiscussion,
   GithubDiscussionCategory,
   GithubDiscussionCategoryConnection,
@@ -196,20 +197,127 @@ async function fetchJSON<T>(url: string): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export const fetchWorkflows = () =>
-  fetchJSON<BleephubWorkflow[]>("/internal/workflows");
+function splitRepoFullName(repoFullName: string): [string, string] {
+  const [owner, repo] = repoFullName.split("/", 2);
+  if (!owner || !repo) throw new Error(`invalid repository full name: ${repoFullName}`);
+  return [owner, repo];
+}
 
-export const fetchWorkflowDetail = (id: string) =>
-  fetchJSON<BleephubWorkflow>(`/internal/workflows/${id}`);
+function workflowRouteID(repoFullName: string, runID: number): string {
+  const [owner, repo] = splitRepoFullName(repoFullName);
+  return `${owner}~${repo}~${runID}`;
+}
 
-export const fetchWorkflowLogs = (id: string) =>
-  fetchJSON<Record<string, string[]>>(`/internal/workflows/${id}/logs`);
+function parseWorkflowRouteID(id: string): { owner: string; repo: string; repoFullName: string; runID: number } {
+  const parts = id.split("~");
+  if (parts.length < 3) throw new Error(`invalid workflow run route id: ${id}`);
+  const owner = parts[0];
+  const runIDText = parts[parts.length - 1];
+  const repo = parts.slice(1, -1).join("~");
+  const runID = Number(runIDText);
+  if (!owner || !repo || !Number.isFinite(runID)) {
+    throw new Error(`invalid workflow run route id: ${id}`);
+  }
+  return { owner, repo, repoFullName: `${owner}/${repo}`, runID };
+}
+
+async function fetchAllUserRepos(): Promise<BleephubRepo[]> {
+  const repos: BleephubRepo[] = [];
+  let nextUrl: string | null = "/api/v3/user/repos?per_page=100";
+  while (nextUrl) {
+    const repoPage: Page<BleephubRepo> = await ghFetchPage<BleephubRepo>(nextUrl);
+    repos.push(...repoPage.items);
+    nextUrl = repoPage.nextUrl;
+  }
+  return repos;
+}
+
+function mapWorkflowFile(repoFullName: string, workflow: GithubWorkflow): BleephubWorkflowFile {
+  return {
+    id: workflow.id,
+    name: workflow.name,
+    path: workflow.path,
+    state: workflow.state,
+    repoFullName,
+    createdAt: workflow.created_at,
+    updatedAt: workflow.updated_at,
+  };
+}
+
+function mapJob(job: GithubJob): BleephubWorkflow["jobs"][string] {
+  return {
+    key: job.name,
+    jobId: String(job.id),
+    displayName: job.name,
+    needs: [],
+    status: job.status === "in_progress" ? "running" : job.status,
+    result: job.conclusion ?? "",
+    startedAt: job.started_at ?? "0001-01-01T00:00:00Z",
+    completedAt: job.completed_at ?? "0001-01-01T00:00:00Z",
+  };
+}
+
+function mapWorkflowRun(repoFullName: string, run: GithubWorkflowRun, jobs: GithubJob[]): BleephubWorkflow {
+  return {
+    id: workflowRouteID(repoFullName, run.id),
+    name: run.name,
+    runId: run.id,
+    jobs: Object.fromEntries(jobs.map((job) => [job.name, mapJob(job)])),
+    status: run.status,
+    result: run.conclusion ?? "",
+    createdAt: run.created_at,
+    eventName: run.event,
+    repoFullName,
+  };
+}
+
+export async function fetchWorkflows(): Promise<BleephubWorkflow[]> {
+  const repos = await fetchAllUserRepos();
+  const perRepo = await Promise.all(
+    repos.map(async (repo) => {
+      const [owner, repoName] = splitRepoFullName(repo.full_name);
+      const runsPage = await fetchWorkflowRunsPage(owner, repoName, {});
+      const runs = await Promise.all(
+        runsPage.items.map(async (run) => {
+          const jobsPage = await fetchRunJobs(owner, repoName, run.id);
+          return mapWorkflowRun(repo.full_name, run, jobsPage.items);
+        }),
+      );
+      return runs;
+    }),
+  );
+  return perRepo.flat().sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function fetchWorkflowDetail(id: string): Promise<BleephubWorkflow> {
+  const { owner, repo, repoFullName, runID } = parseWorkflowRouteID(id);
+  const [run, jobsPage] = await Promise.all([
+    fetchWorkflowRun(owner, repo, runID),
+    fetchRunJobs(owner, repo, runID),
+  ]);
+  return mapWorkflowRun(repoFullName, run, jobsPage.items);
+}
+
+export async function fetchWorkflowLogs(id: string): Promise<Record<string, string[]>> {
+  const { owner, repo } = parseWorkflowRouteID(id);
+  const workflow = await fetchWorkflowDetail(id);
+  const logs: Record<string, string[]> = {};
+  await Promise.all(
+    Object.values(workflow.jobs)
+      .filter((job) => job.status === "completed")
+      .map(async (job) => {
+        const text = await fetchJobLogs(owner, repo, Number(job.jobId));
+        if (text) logs[job.jobId] = text.split(/\r?\n/);
+      }),
+  );
+  return logs;
+}
 
 export const fetchSessions = () =>
   fetchJSON<BleephubSession[]>("/internal/sessions");
 
 export const fetchRepos = () =>
-  fetchJSON<BleephubRepo[]>("/internal/repos");
+  fetchAllUserRepos();
 
 export const fetchMetrics = () =>
   fetchJSON<BleephubMetrics>("/internal/metrics");
@@ -220,37 +328,73 @@ export const fetchStatus = () =>
 export const fetchHealth = () =>
   fetchJSON<BleephubHealth>("/health");
 
-export const fetchWorkflowFiles = () =>
-  fetchJSON<BleephubWorkflowFile[]>("/internal/workflow_files");
+export async function fetchWorkflowFiles(): Promise<BleephubWorkflowFile[]> {
+  const repos = await fetchAllUserRepos();
+  const perRepo = await Promise.all(
+    repos.map(async (repo) => {
+      const [owner, repoName] = splitRepoFullName(repo.full_name);
+      const page = await fetchActionsWorkflows(owner, repoName);
+      return page.items.map((workflow) => mapWorkflowFile(repo.full_name, workflow));
+    }),
+  );
+  return perRepo.flat().sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
 
 
-export const fetchApps = () => fetchJSON<BleephubApp[]>("/internal/apps");
-export const fetchInstallations = () =>
-  fetchJSON<BleephubInstallation[]>("/internal/installations");
+export async function fetchApps(): Promise<BleephubApp[]> {
+  const raw = await fetchJSON<WireGitHubApp[]>("/settings/apps");
+  return raw.map(normalizeGitHubApp);
+}
+
+export async function fetchInstallations(): Promise<BleephubInstallation[]> {
+  const raw = await ghFetch<{ total_count: number; installations: WireInstallation[] }>(
+    "/api/v3/user/installations?per_page=100",
+  );
+  return raw.installations.map(normalizeInstallation);
+}
 export const fetchOAuthState = () =>
   fetchJSON<BleephubOAuthState>("/internal/oauth/state");
 
 export const fetchStorageInfo = () =>
   fetchJSON<BleephubStorageInfo>("/internal/storage");
 
-// Verify against an /internal endpoint, not /api/v3/user: the dashboard's
-// data all lives under /internal/*, which only accepts PATs (incl. the
-// admin token). /api/v3/user also accepts gho_/ghu_/ghs_ tokens, which
-// would let login "succeed" and then bounce straight back on the first
-// dashboard fetch. No handleUnauthorized here — a 401 during login is the
-// verdict, not a stale-session redirect.
+// Verify identity through GitHub's REST user endpoint. Operator-only internal
+// pages still fail loudly if the accepted token cannot access /internal/*.
 export async function verifyToken(token: string): Promise<boolean> {
-  const res = await fetch("/internal/status", {
+  const res = await fetch("/api/v3/user", {
     headers: { Authorization: `Bearer ${token}` },
   });
   return res.ok;
 }
 
-// The /internal/* create + oauth-apps management endpoints return GitHub's
-// snake_case wire shape (client_id, callback_url, created_at). The UI's
-// types are camelCase, so normalize at this boundary. Fields are mapped
-// 1:1 from the server contract — no defaults, so a contract break shows
-// as undefined rather than a plausible-looking blank.
+// The browser settings and GitHub REST surfaces return snake_case wire shapes.
+// The user interface types are camelCase, so normalize at this boundary.
+// Fields are mapped 1:1 from the server contract, with no defaults, so a
+// contract break shows as undefined rather than a plausible-looking blank.
+function normalizeGitHubApp(raw: WireGitHubApp): BleephubApp {
+  return {
+    id: raw.id,
+    slug: raw.slug,
+    name: raw.name,
+    description: raw.description,
+    ownerId: raw.owner.id,
+    createdAt: raw.created_at,
+  };
+}
+
+function normalizeInstallation(raw: WireInstallation): BleephubInstallation {
+  return {
+    id: raw.id,
+    appId: raw.app_id,
+    appSlug: raw.app_slug,
+    targetType: raw.target_type,
+    targetLogin: raw.account.login,
+    repositorySelection: raw.repository_selection,
+    createdAt: raw.created_at,
+    suspendedAt: raw.suspended_at,
+  };
+}
+
 function normalizeOAuthApp(raw: WireOAuthApp): BleephubOAuthApp {
   return {
     clientId: raw.client_id,
@@ -269,22 +413,50 @@ export async function createApp(payload: {
   permissions?: Record<string, string>;
   events?: string[];
 }): Promise<{ clientId: string; pem: string; client_secret: string; webhook_secret: string }> {
-  const res = await fetch("/internal/apps", {
+  const origin = globalThis.location?.origin || "http://localhost";
+  const redirectUrl = `${origin}/ui/apps`;
+  const manifest = {
+    name: payload.name,
+    url: origin,
+    redirect_url: redirectUrl,
+    description: payload.description || "",
+    default_permissions: payload.permissions || {},
+    default_events: payload.events || [],
+  };
+  const form = new URLSearchParams();
+  form.set("manifest", JSON.stringify(manifest));
+
+  const createRes = await fetch("/settings/apps/new", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       ...authHeaders(),
     },
-    body: JSON.stringify(payload),
+    body: form,
+    redirect: "manual",
   });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`createApp ${res.status}: ${text || res.statusText}`);
+  if (createRes.status !== 302 && createRes.status !== 303) {
+    const text = await createRes.text();
+    throw new Error(`createApp manifest ${createRes.status}: ${text || createRes.statusText}`);
   }
-  // appToJSON returns the GitHub snake_case app shape plus the once-shown
-  // secrets; the create dialog only needs the client id + secrets, surfaced
-  // here as the camelCase clientId it reads.
-  const raw = (await res.json()) as WireAppCreated;
+  const location = createRes.headers.get("Location");
+  if (!location) {
+    throw new Error("createApp manifest: missing redirect Location header");
+  }
+  const code = new URL(location, origin).searchParams.get("code");
+  if (!code) {
+    throw new Error("createApp manifest: missing conversion code");
+  }
+
+  const convertRes = await fetch(`/api/v3/app-manifests/${encodeURIComponent(code)}/conversions`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+  if (!convertRes.ok) {
+    const text = await convertRes.text();
+    throw new Error(`createApp conversion ${convertRes.status}: ${text || convertRes.statusText}`);
+  }
+  const raw = (await convertRes.json()) as WireAppCreated;
   return {
     clientId: raw.client_id,
     pem: raw.pem,
@@ -294,7 +466,7 @@ export async function createApp(payload: {
 }
 
 export async function fetchOAuthApps(): Promise<BleephubOAuthApp[]> {
-  const res = await fetch("/internal/oauth-apps", {
+  const res = await fetch("/settings/oauth-apps", {
     headers: authHeaders(),
   });
   if (!res.ok) {
@@ -311,13 +483,18 @@ export async function createOAuthApp(payload: {
   url?: string;
   callback_url?: string;
 }): Promise<BleephubOAuthApp & { client_secret: string }> {
-  const res = await fetch("/internal/oauth-apps", {
+  const form = new URLSearchParams();
+  form.set("name", payload.name);
+  if (payload.description) form.set("description", payload.description);
+  if (payload.url) form.set("url", payload.url);
+  if (payload.callback_url) form.set("callback_url", payload.callback_url);
+  const res = await fetch("/settings/oauth-apps/new", {
     method: "POST",
     headers: {
-      "Content-Type": "application/json",
+      "Content-Type": "application/x-www-form-urlencoded",
       ...authHeaders(),
     },
-    body: JSON.stringify(payload),
+    body: form,
   });
   if (!res.ok) {
     const text = await res.text();
@@ -332,7 +509,7 @@ export async function createOAuthApp(payload: {
 
 export async function suspendInstallation(installationID: number, suspend: boolean): Promise<void> {
   const verb = suspend ? "suspend" : "unsuspend";
-  const res = await fetch(`/internal/installations/${installationID}/${verb}`, {
+  const res = await fetch(`/settings/installations/${installationID}/${verb}`, {
     method: "POST",
     headers: authHeaders(),
   });
@@ -343,7 +520,7 @@ export async function suspendInstallation(installationID: number, suspend: boole
 }
 
 export async function deleteInstallation(installationID: number): Promise<void> {
-  const res = await fetch(`/internal/installations/${installationID}`, {
+  const res = await fetch(`/settings/installations/${installationID}`, {
     method: "DELETE",
     headers: authHeaders(),
   });
@@ -681,7 +858,7 @@ export const fetchWebhooks = (owner: string, repo: string) =>
   ghFetch<GithubWebhook[]>(`/api/v3/repos/${owner}/${repo}/hooks`);
 
 // Secrets + environments come back in GitHub's list envelope
-// ({secrets:[…], total_count}) — unwrap to the array the UI renders.
+// ({secrets:[…], total_count}) — unwrap to the array the user interface renders.
 // No `?? []`: if the server ever stops sending the array, the missing
 // field should surface as an error, not a silent "none configured".
 export const fetchSecrets = (owner: string, repo: string) =>
@@ -707,7 +884,7 @@ export const fetchEnvironments = (owner: string, repo: string) =>
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);
 
-// ─── GitHub Actions REST ────────────────────────────────────────────────
+// ─── GitHub Actions Representational State Transfer ─────────────────────
 
 /**
  * One page of a GitHub envelope list ({total_count, <key>: [...]}) plus
@@ -1359,7 +1536,7 @@ export const putDependabotRepoSecret = (
 export const deleteDependabotRepoSecret = (owner: string, repo: string, name: string) =>
   ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/dependabot/secrets/${encodeURIComponent(name)}`);
 
-// ─── GitHub Security Advisories REST ────────────────────────────────────
+// ─── GitHub Security Advisories Representational State Transfer ─────────
 
 export const fetchSecurityAdvisories = (owner: string, repo: string) =>
   ghFetch<GithubSecurityAdvisory[]>(`/api/v3/repos/${owner}/${repo}/security-advisories`);
@@ -1379,7 +1556,7 @@ export const reportVulnerability = (
   payload: GithubVulnerabilityReportPayload,
 ) => ghPostJSON<GithubSecurityAdvisory>(`/api/v3/repos/${owner}/${repo}/security-advisories/reports`, payload);
 
-// ─── GitHub Organization Rulesets REST ──────────────────────────────────
+// ─── GitHub Organization Rulesets Representational State Transfer ───────
 
 export const fetchOrgRulesets = (org: string) =>
   ghFetch<GithubRuleset[]>(`/api/v3/orgs/${org}/rulesets`);
@@ -1393,7 +1570,7 @@ export const updateOrgRuleset = (org: string, rulesetId: number, payload: Github
 export const deleteOrgRuleset = (org: string, rulesetId: number) =>
   ghDeleteJSON<void>(`/api/v3/orgs/${org}/rulesets/${rulesetId}`, {});
 
-// ─── GitHub Migrations REST ─────────────────────────────────────────────
+// ─── GitHub Migrations Representational State Transfer ──────────────────
 
 type MigrationScope = { kind: "user" } | { kind: "org"; org: string };
 
@@ -1451,7 +1628,7 @@ export async function downloadMigrationArchive(
   URL.revokeObjectURL(url);
 }
 
-// ─── GitHub Codespaces REST ─────────────────────────────────────────────
+// ─── GitHub Codespaces Representational State Transfer ──────────────────
 
 export const fetchUserCodespaces = () =>
   ghFetchEnvelope<GithubCodespace>("/api/v3/user/codespaces", "codespaces");
@@ -1479,7 +1656,7 @@ export const fetchCodespaceMachines = (owner: string, repo: string) =>
 
 export const fetchCurrentUser = () => ghFetch<BleephubUser>("/api/v3/user");
 
-// ─── GitHub Packages REST ───────────────────────────────────────────────
+// ─── GitHub Packages Representational State Transfer ────────────────────
 
 export type PackageScope =
   | { kind: "user"; username: string }
@@ -1773,23 +1950,6 @@ export async function updateDiscussionComment(commentId: string, body: string): 
     }`,
     { input: { commentId, body } },
   );
-}
-
-export async function uploadPackageVersion(
-  ownerType: "user" | "org" | "repository",
-  owner: string,
-  pkgType: string,
-  pkgName: string,
-  payload: GithubPackageVersionCreatePayload,
-): Promise<GithubPackageVersion> {
-  let path: string;
-  if (ownerType === "repository") {
-    const [o, r] = owner.split("/");
-    path = `/internal/packages/repository/${o}/${r}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
-  } else {
-    path = `/internal/packages/${ownerType}/${owner}/${encodeURIComponent(pkgType)}/${encodeURIComponent(pkgName)}/versions`;
-  }
-  return ghPostJSON<GithubPackageVersion>(path, payload);
 }
 
 // ─── Repo insights ───────────────────────────────────────────────────────
@@ -2504,26 +2664,95 @@ export const replyToPRReviewComment = (
     in_reply_to: inReplyTo,
   });
 
-/**
- * Review-thread listing/resolution is GraphQL-only on real GitHub; bleephub
- * exposes it as a token-gated /internal/ convenience.
- */
-export const fetchPRReviewThreads = (owner: string, repo: string, number: number) =>
-  fetchJSON<GithubPRReviewThread[]>(
-    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads`,
-  );
-
-export const setPRReviewThreadResolved = (
+export const fetchPRReviewThreads = async (
   owner: string,
   repo: string,
   number: number,
-  threadId: number,
-  resolved: boolean,
-): Promise<GithubPRReviewThread> =>
-  ghPostJSON(
-    `/internal/repos/${owner}/${repo}/pulls/${number}/review-threads/${threadId}/${resolved ? "resolve" : "unresolve"}`,
-    {},
+): Promise<GithubPRReviewThread[]> => {
+  const data = await ghGraphQL<{
+    repository: {
+      pullRequest: {
+        reviewThreads: {
+          nodes: Array<{
+            id: string;
+            isResolved: boolean;
+            comments: { nodes: Array<{ databaseId: number | null }> };
+          }>;
+        };
+      } | null;
+    } | null;
+  }>(
+    `query PullRequestReviewThreads($owner:String!,$repo:String!,$number:Int!){
+      repository(owner:$owner,name:$repo){
+        pullRequest(number:$number){
+          reviewThreads(first:100){
+            nodes{
+              id
+              isResolved
+              comments(first:100){nodes{databaseId}}
+            }
+          }
+        }
+      }
+    }`,
+    { owner, repo, number },
   );
+  return (
+    data.repository?.pullRequest?.reviewThreads.nodes.map((thread) => ({
+      id: thread.id,
+      isResolved: thread.isResolved,
+      comments: thread.comments.nodes
+        .filter((comment): comment is { databaseId: number } => typeof comment.databaseId === "number")
+        .map((comment) => ({ databaseId: comment.databaseId })),
+    })) ?? []
+  );
+};
+
+export const setPRReviewThreadResolved = (
+  _owner: string,
+  _repo: string,
+  _number: number,
+  threadId: string,
+  resolved: boolean,
+): Promise<GithubPRReviewThread> => {
+  const mutation = resolved
+    ? `mutation ResolveReviewThread($input:ResolveReviewThreadInput!){
+        resolveReviewThread(input:$input){
+          thread{id,isResolved,comments(first:100){nodes{databaseId}}}
+        }
+      }`
+    : `mutation UnresolveReviewThread($input:UnresolveReviewThreadInput!){
+        unresolveReviewThread(input:$input){
+          thread{id,isResolved,comments(first:100){nodes{databaseId}}}
+        }
+      }`;
+  return ghGraphQL<{
+    resolveReviewThread?: {
+      thread: {
+        id: string;
+        isResolved: boolean;
+        comments: { nodes: Array<{ databaseId: number | null }> };
+      };
+    };
+    unresolveReviewThread?: {
+      thread: {
+        id: string;
+        isResolved: boolean;
+        comments: { nodes: Array<{ databaseId: number | null }> };
+      };
+    };
+  }>(mutation, { input: { threadId } }).then((data) => {
+    const thread = (resolved ? data.resolveReviewThread : data.unresolveReviewThread)?.thread;
+    if (!thread) throw new Error("graphql response missing review thread");
+    return {
+      id: thread.id,
+      isResolved: thread.isResolved,
+      comments: thread.comments.nodes
+        .filter((comment): comment is { databaseId: number } => typeof comment.databaseId === "number")
+        .map((comment) => ({ databaseId: comment.databaseId })),
+    };
+  });
+};
 
 export async function fetchPRRequestedReviewers(
   owner: string,

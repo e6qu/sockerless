@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -665,14 +666,15 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return c["nodeID"], nil
 				},
 			},
-			"body":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"path":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"diffHunk":  &graphql.Field{Type: graphql.String},
-			"line":      &graphql.Field{Type: graphql.Int},
-			"position":  &graphql.Field{Type: graphql.Int},
-			"createdAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"updatedAt": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
-			"state":     &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"databaseId": &graphql.Field{Type: graphql.Int},
+			"body":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"path":       &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"diffHunk":   &graphql.Field{Type: graphql.String},
+			"line":       &graphql.Field{Type: graphql.Int},
+			"position":   &graphql.Field{Type: graphql.Int},
+			"createdAt":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"updatedAt":  &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+			"state":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"author": &graphql.Field{
 				Type: userType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -870,10 +872,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			// addProjectV2ItemById.
 			"projectItems": &graphql.Field{
 				Type: projectV2ItemConnectionType(),
-				Args: graphql.FieldConfigArgument{
-					"first": &graphql.ArgumentConfig{Type: graphql.Int},
-					"after": &graphql.ArgumentConfig{Type: graphql.String},
-				},
+				Args: relayConnectionArgs(),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
 					pr, ok := p.Source.(map[string]interface{})
 					if !ok {
@@ -885,14 +884,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					for _, it := range items {
 						nodes = append(nodes, projectV2ItemToGQL(it, s.store))
 					}
-					return map[string]interface{}{
-						"totalCount": len(nodes),
-						"nodes":      nodes,
-						"pageInfo": map[string]interface{}{
-							"hasNextPage": false,
-							"endCursor":   nil,
-						},
-					}, nil
+					return paginateGQLMaps(nodes, p.Args), nil
 				},
 			},
 			// PR.milestone — real GH PRs are issues internally so they
@@ -961,9 +953,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					return state == "CLOSED" || state == "MERGED", nil
 				},
 			},
-			// Bleephub PRs always live in the base repository (no forks
-			// feature): headRepository is the PR's own repo, its owner the
-			// repo owner, and isCrossRepository is genuinely false.
 			"headRepository": &graphql.Field{
 				Type: repoType,
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
@@ -987,15 +976,29 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			"isCrossRepository": &graphql.Field{
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return false, nil
+					pr, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					v, ok := pr["isCrossRepository"].(bool)
+					if !ok {
+						return nil, fmt.Errorf("pull request source missing isCrossRepository")
+					}
+					return v, nil
 				},
 			},
 			"maintainerCanModify": &graphql.Field{
-				// Meaningful only for fork PRs on real GitHub; same-repo PRs
-				// report false.
 				Type: graphql.NewNonNull(graphql.Boolean),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return false, nil
+					pr, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					v, ok := pr["maintainerCanModify"].(bool)
+					if !ok {
+						return nil, fmt.Errorf("pull request source missing maintainerCanModify")
+					}
+					return v, nil
 				},
 			},
 			"autoMergeRequest": &graphql.Field{
@@ -1030,7 +1033,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				},
 			},
 			"files": &graphql.Field{
-				// PR diffs aren't materialised file-by-file; empty connection.
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "PullRequestChangedFileConnection",
 					Fields: graphql.Fields{
@@ -1048,13 +1050,25 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				}),
 				Args: graphql.FieldConfigArgument{
 					"first": &graphql.ArgumentConfig{Type: graphql.Int},
+					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{"nodes": []interface{}{}, "totalCount": 0}, nil
+					pr, repo, err := pullRequestAndRepoFromGQLSource(p.Source, s.store)
+					if err != nil {
+						return nil, err
+					}
+					files, err := pullRequestChangedFiles(s.store, repo, pr, "")
+					if err != nil {
+						return nil, err
+					}
+					nodes := make([]map[string]interface{}, 0, len(files))
+					for _, file := range files {
+						nodes = append(nodes, pullRequestChangedFileToGQL(file))
+					}
+					return repaginateConnection(map[string]interface{}{"nodes": nodes}, p.Args), nil
 				},
 			},
 			"closingIssuesReferences": &graphql.Field{
-				// Closing-keyword links aren't parsed; empty connection.
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "ClosingIssuesReferencesConnection",
 					Fields: graphql.Fields{
@@ -1074,11 +1088,16 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 					"after": &graphql.ArgumentConfig{Type: graphql.String},
 				},
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{
-						"nodes":      []interface{}{},
-						"totalCount": 0,
-						"pageInfo":   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
-					}, nil
+					pr, repo, err := pullRequestAndRepoFromGQLSource(p.Source, s.store)
+					if err != nil {
+						return nil, err
+					}
+					issues := closingIssuesForPullRequest(s.store, repo, pr)
+					first, _ := intArg(p.Args, "first")
+					after, _ := p.Args["after"].(string)
+					return paginateGQL(issues, first, after, func(issue *Issue) map[string]interface{} {
+						return issueToGQL(issue, s.store)
+					}), nil
 				},
 			},
 			"mergeCommit": &graphql.Field{
@@ -1474,14 +1493,12 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	createPRInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "CreatePullRequestInput",
 		Fields: graphql.InputObjectConfigFieldMap{
-			"repositoryId": &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
-			"title":        &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"body":         &graphql.InputObjectFieldConfig{Type: graphql.String},
-			"headRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"baseRefName":  &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
-			"draft":        &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
-			// gh sends maintainerCanModify when creating fork PRs; accepted
-			// and ignored (bleephub PRs are single-repo).
+			"repositoryId":        &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"title":               &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"body":                &graphql.InputObjectFieldConfig{Type: graphql.String},
+			"headRefName":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"baseRefName":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.String)},
+			"draft":               &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
 			"maintainerCanModify": &graphql.InputObjectFieldConfig{Type: graphql.Boolean},
 		},
 	})
@@ -1511,13 +1528,21 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			headRefName, _ := input["headRefName"].(string)
 			baseRefName, _ := input["baseRefName"].(string)
 			draft, _ := input["draft"].(bool)
+			maintainerCanModify, _ := input["maintainerCanModify"].(bool)
 
 			repo := findRepoByNodeID(s.store, repoNodeID)
 			if repo == nil {
 				return nil, fmt.Errorf("could not resolve to a Repository with the global id of '%s'", repoNodeID)
 			}
 
-			pr := s.store.CreatePullRequest(repo.ID, user.ID, title, body, headRefName, baseRefName, draft, nil, nil, 0)
+			headRepo, headRefName := resolvePullRequestHead(s.store, repo, headRefName)
+			if headRepo == nil || headRefName == "" {
+				return nil, fmt.Errorf("pull request creation failed")
+			}
+			pr := s.store.CreatePullRequest(repo.ID, user.ID, title, body, headRefName, baseRefName, draft, nil, nil, 0, PullRequestOptions{
+				HeadRepoID:          headRepo.ID,
+				MaintainerCanModify: maintainerCanModify,
+			})
 			if pr == nil {
 				return nil, fmt.Errorf("pull request creation failed")
 			}
@@ -1810,6 +1835,54 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
+	resolveReviewThreadInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "ResolveReviewThreadInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"threadId":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
+		},
+	})
+	resolveReviewThreadPayloadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "ResolveReviewThreadPayload",
+		Fields: graphql.Fields{
+			"thread":           &graphql.Field{Type: prReviewThreadType},
+			"clientMutationId": &graphql.Field{Type: graphql.String},
+		},
+	})
+	unresolveReviewThreadInputType := graphql.NewInputObject(graphql.InputObjectConfig{
+		Name: "UnresolveReviewThreadInput",
+		Fields: graphql.InputObjectConfigFieldMap{
+			"threadId":         &graphql.InputObjectFieldConfig{Type: graphql.NewNonNull(graphql.ID)},
+			"clientMutationId": &graphql.InputObjectFieldConfig{Type: graphql.String},
+		},
+	})
+	unresolveReviewThreadPayloadType := graphql.NewObject(graphql.ObjectConfig{
+		Name: "UnresolveReviewThreadPayload",
+		Fields: graphql.Fields{
+			"thread":           &graphql.Field{Type: prReviewThreadType},
+			"clientMutationId": &graphql.Field{Type: graphql.String},
+		},
+	})
+
+	mutationType.AddFieldConfig("resolveReviewThread", &graphql.Field{
+		Type: resolveReviewThreadPayloadType,
+		Args: graphql.FieldConfigArgument{
+			"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(resolveReviewThreadInputType)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return s.resolveReviewThreadGraphQL(p, true)
+		},
+	})
+	mutationType.AddFieldConfig("unresolveReviewThread", &graphql.Field{
+		Type: unresolveReviewThreadPayloadType,
+		Args: graphql.FieldConfigArgument{
+			"input": &graphql.ArgumentConfig{Type: graphql.NewNonNull(unresolveReviewThreadInputType)},
+		},
+		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
+			return s.resolveReviewThreadGraphQL(p, false)
+		},
+	})
+
 	updatePRInputType := graphql.NewInputObject(graphql.InputObjectConfig{
 		Name: "UpdatePullRequestInput",
 		Fields: graphql.InputObjectConfigFieldMap{
@@ -1904,7 +1977,120 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 
 // --- GraphQL converter helpers ---
 
+func pullRequestAndRepoFromGQLSource(src interface{}, st *Store) (*PullRequest, *Repo, error) {
+	prMap, ok := src.(map[string]interface{})
+	if !ok {
+		return nil, nil, fmt.Errorf("resolve source: unexpected type %T", src)
+	}
+	prID, ok := prMap["databaseId"].(int)
+	if !ok || prID <= 0 {
+		return nil, nil, fmt.Errorf("pull request source missing databaseId")
+	}
+	pr := st.GetPullRequest(prID)
+	if pr == nil {
+		return nil, nil, fmt.Errorf("pull request not found")
+	}
+	repo := st.GetRepoByID(pr.RepoID)
+	if repo == nil {
+		return nil, nil, fmt.Errorf("repository not found")
+	}
+	return pr, repo, nil
+}
+
+func pullRequestChangedFileToGQL(file map[string]interface{}) map[string]interface{} {
+	status, _ := file["status"].(string)
+	changeType := "CHANGED"
+	switch status {
+	case "added":
+		changeType = "ADDED"
+	case "removed":
+		changeType = "DELETED"
+	case "renamed":
+		changeType = "RENAMED"
+	case "modified", "changed":
+		changeType = "CHANGED"
+	}
+	path, _ := file["filename"].(string)
+	additions, _ := file["additions"].(int)
+	deletions, _ := file["deletions"].(int)
+	return map[string]interface{}{
+		"path":       path,
+		"additions":  additions,
+		"deletions":  deletions,
+		"changeType": changeType,
+	}
+}
+
+var (
+	closingKeywordRE = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\b([^\n]*)`)
+	closingIssueRE   = regexp.MustCompile(`(?i)(?:\b([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+))?#([0-9]+)`)
+)
+
+func closingIssuesForPullRequest(st *Store, repo *Repo, pr *PullRequest) []*Issue {
+	refs := closingIssueRefs(repo.FullName, pr.Body)
+	if len(refs) == 0 {
+		return nil
+	}
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	issues := make([]*Issue, 0, len(refs))
+	seen := map[int]bool{}
+	for _, ref := range refs {
+		targetRepo := st.ReposByName[ref.repoFullName]
+		if targetRepo == nil {
+			continue
+		}
+		issue := st.IssuesByRepo[targetRepo.ID][ref.number]
+		if issue == nil || seen[issue.ID] {
+			continue
+		}
+		seen[issue.ID] = true
+		issues = append(issues, issue)
+	}
+	return issues
+}
+
+type closingIssueRef struct {
+	repoFullName string
+	number       int
+}
+
+func closingIssueRefs(defaultRepoFullName, body string) []closingIssueRef {
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	refs := []closingIssueRef{}
+	for _, match := range closingKeywordRE.FindAllStringSubmatch(body, -1) {
+		tail := match[1]
+		if idx := strings.IndexAny(tail, ".;"); idx >= 0 {
+			tail = tail[:idx]
+		}
+		for _, refMatch := range closingIssueRE.FindAllStringSubmatch(tail, -1) {
+			repoFullName := defaultRepoFullName
+			if refMatch[1] != "" {
+				repoFullName = refMatch[1]
+			}
+			number, err := strconv.Atoi(refMatch[2])
+			if err != nil || number <= 0 {
+				continue
+			}
+			refs = append(refs, closingIssueRef{repoFullName: repoFullName, number: number})
+		}
+	}
+	return refs
+}
+
 func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
+	baseRepo := st.GetRepoByID(pr.RepoID)
+	stor, repoFullNameForCommits := pullRequestGitStorage(st, baseRepo, pr)
+	realCommits := []*object.Commit(nil)
+	if stor != nil {
+		if commits, err := pullRequestCommitObjectsFromStorage(stor, pr); err == nil {
+			realCommits = commits
+		}
+	}
+
 	st.mu.RLock()
 	defer st.mu.RUnlock()
 
@@ -2013,14 +2199,12 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		mergeStateStatus = "DIRTY"
 	}
 
-	// Single-repo PRs: head repo/owner are the PR's own repo and its owner.
-	// For org-owned repos the owner must be the Organization, not the user who
-	// created the repo; real GitHub returns the org as headRepositoryOwner.
 	var headRepository map[string]interface{}
-	if repo != nil {
-		headRepository = repoToGraphQL(repo)
+	headRepo := pullRequestHeadRepoLocked(st, pr)
+	if headRepo != nil {
+		headRepository = repoToGraphQL(headRepo)
 	}
-	headRepositoryOwner := repoOwnerGraphQLLocked(repo, st)
+	headRepositoryOwner := repoOwnerGraphQLLocked(headRepo, st)
 
 	commitNodes := make([]interface{}, 0)
 	var commitAuthors []interface{}
@@ -2035,12 +2219,11 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 	if repo != nil {
 		repoFullName = repo.FullName
 	}
-	if repo != nil {
-		if commits, err := pullRequestCommitObjects(st, repo, pr); err == nil {
-			for _, c := range commits {
-				commitNodes = append(commitNodes, map[string]interface{}{"commit": gitCommitToGQLLocked(c, st, repoFullName)})
-			}
-		}
+	if repoFullName == "" {
+		repoFullName = repoFullNameForCommits
+	}
+	for _, c := range realCommits {
+		commitNodes = append(commitNodes, map[string]interface{}{"commit": gitCommitToGQLLocked(c, st, repoFullName)})
 	}
 	if len(commitNodes) == 0 && sha != "" {
 		headCommit := map[string]interface{}{
@@ -2059,6 +2242,7 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		"__typename":       "PullRequest",
 		"nodeID":           pr.NodeID,
 		"databaseId":       pr.ID,
+		"repoID":           pr.RepoID,
 		"number":           pr.Number,
 		"title":            pr.Title,
 		"body":             pr.Body,
@@ -2121,6 +2305,8 @@ func pullRequestToGQL(pr *PullRequest, st *Store) map[string]interface{} {
 		},
 		"headRepository":      headRepository,
 		"headRepositoryOwner": headRepositoryOwner,
+		"isCrossRepository":   pullRequestHeadRepoID(pr) != pr.RepoID,
+		"maintainerCanModify": pr.MaintainerCanModify,
 		"reviewRequests": map[string]interface{}{
 			"nodes":      pullRequestReviewRequestNodesLocked(pr, st),
 			"totalCount": len(pr.RequestedReviewerIDs),
@@ -2169,16 +2355,17 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 				position = *c.Position
 			}
 			commentNodes = append(commentNodes, map[string]interface{}{
-				"nodeID":    c.NodeID,
-				"body":      c.Body,
-				"path":      c.Path,
-				"diffHunk":  c.DiffHunk,
-				"line":      line,
-				"position":  position,
-				"createdAt": c.CreatedAt.Format(time.RFC3339),
-				"updatedAt": c.UpdatedAt.Format(time.RFC3339),
-				"author":    author,
-				"state":     "SUBMITTED",
+				"nodeID":     c.NodeID,
+				"databaseId": c.ID,
+				"body":       c.Body,
+				"path":       c.Path,
+				"diffHunk":   c.DiffHunk,
+				"line":       line,
+				"position":   position,
+				"createdAt":  c.CreatedAt.Format(time.RFC3339),
+				"updatedAt":  c.UpdatedAt.Format(time.RFC3339),
+				"author":     author,
+				"state":      "SUBMITTED",
 			})
 		}
 		// The thread's path/line tracks the root comment.
@@ -2192,7 +2379,7 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 			}
 		}
 		out = append(out, map[string]interface{}{
-			"id":         fmt.Sprintf("PRT_kgDO%08d", t.ID),
+			"id":         prReviewThreadNodeID(t.ID),
 			"isResolved": t.IsResolved,
 			"isOutdated": false,
 			"resolvedBy": nil,
@@ -2205,6 +2392,63 @@ func reviewThreadsForGraphQL(threads []*ReviewThread, st *Store) []map[string]in
 		})
 	}
 	return out
+}
+
+func (s *Server) resolveReviewThreadGraphQL(p graphql.ResolveParams, resolved bool) (interface{}, error) {
+	user := ghUserFromContext(p.Context)
+	if user == nil {
+		return nil, fmt.Errorf("authentication required")
+	}
+	input, _ := p.Args["input"].(map[string]interface{})
+	threadNodeID, _ := input["threadId"].(string)
+	threadID, ok := parsePRReviewThreadNodeID(threadNodeID)
+	if !ok {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	if !s.store.PRReviewComments.ResolveThread(threadID, resolved) {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	thread := s.store.PRReviewComments.GetThread(threadID)
+	if thread == nil {
+		return nil, &ghNotFoundError{
+			message: fmt.Sprintf("Could not resolve to a PullRequestReviewThread with the global id of '%s'", threadNodeID),
+		}
+	}
+	s.store.mu.RLock()
+	nodes := reviewThreadsForGraphQL([]*ReviewThread{thread}, s.store)
+	s.store.mu.RUnlock()
+	var gqlThread interface{}
+	if len(nodes) == 1 {
+		gqlThread = nodes[0]
+	}
+	var clientMutationID interface{}
+	if v, ok := input["clientMutationId"].(string); ok && v != "" {
+		clientMutationID = v
+	}
+	return map[string]interface{}{
+		"thread":           gqlThread,
+		"clientMutationId": clientMutationID,
+	}, nil
+}
+
+func prReviewThreadNodeID(threadID int) string {
+	return fmt.Sprintf("PRT_kgDO%08d", threadID)
+}
+
+func parsePRReviewThreadNodeID(nodeID string) (int, bool) {
+	const prefix = "PRT_kgDO"
+	if !strings.HasPrefix(nodeID, prefix) {
+		return 0, false
+	}
+	id, err := strconv.Atoi(strings.TrimPrefix(nodeID, prefix))
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 // prMilestoneToGQLLocked returns the GraphQL source map for the PR's

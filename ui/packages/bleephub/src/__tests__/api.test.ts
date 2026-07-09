@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   fetchOAuthApps,
+  createApp,
   fetchSecrets,
   fetchEnvironments,
   fetchRepoIssuesPage,
@@ -31,6 +32,7 @@ import {
   isGistStarred,
   fetchPublicGists,
   fetchStarredGists,
+  fetchRepos,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -49,8 +51,8 @@ afterEach(() => {
 });
 
 describe("api wire-shape normalization", () => {
-  // BUG-1597: server emits snake_case (client_id/callback_url/created_at);
-  // the UI reads camelCase. fetchOAuthApps must bridge that.
+  // The server emits snake_case (client_id/callback_url/created_at), while the
+  // user interface reads camelCase. fetchOAuthApps bridges that boundary.
   it("fetchOAuthApps maps snake_case wire fields to camelCase", async () => {
     mockFetch.mockResolvedValue(
       jsonResponse([
@@ -69,6 +71,55 @@ describe("api wire-shape normalization", () => {
     expect(apps[0].clientId).toBe("Iv1.abc123");
     expect(apps[0].callbackUrl).toBe("https://example.test/cb");
     expect(apps[0].createdAt).toBe("2026-01-01T00:00:00Z");
+  });
+
+  it("createApp uses the GitHub App Manifest flow", async () => {
+    setToken("admintoken");
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response("", {
+          status: 302,
+          headers: { Location: "/ui/apps?code=manifest-code" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({
+          client_id: "Iv1.created",
+          pem: "-----BEGIN RSA PRIVATE KEY-----\nkey\n-----END RSA PRIVATE KEY-----",
+          client_secret: "secret",
+          webhook_secret: "hook",
+        }),
+      );
+
+    const created = await createApp({
+      name: "Manifest App",
+      description: "Created through the manifest flow",
+      permissions: { contents: "read" },
+      events: ["push"],
+    });
+
+    expect(mockFetch.mock.calls[0][0]).toBe("/settings/apps/new");
+    const firstOptions = mockFetch.mock.calls[0][1] as RequestInit;
+    expect(firstOptions.method).toBe("POST");
+    expect(firstOptions.redirect).toBe("manual");
+    expect(firstOptions.headers).toMatchObject({
+      Authorization: "Bearer admintoken",
+      "Content-Type": "application/x-www-form-urlencoded",
+    });
+    const manifest = JSON.parse(
+      new URLSearchParams(firstOptions.body as string).get("manifest") || "{}",
+    );
+    expect(manifest.name).toBe("Manifest App");
+    expect(manifest.default_permissions).toEqual({ contents: "read" });
+    expect(manifest.default_events).toEqual(["push"]);
+
+    expect(mockFetch.mock.calls[1][0]).toBe("/api/v3/app-manifests/manifest-code/conversions");
+    expect(mockFetch.mock.calls[1][1]).toMatchObject({
+      method: "POST",
+      headers: { Authorization: "Bearer admintoken" },
+    });
+    expect(created.clientId).toBe("Iv1.created");
+    expect(created.client_secret).toBe("secret");
   });
 
   // BUG-1596: server returns the GitHub list envelope, not a bare array.
@@ -124,6 +175,28 @@ describe("Link-header pagination", () => {
     await fetchRepoIssuesPage("a", "b", "open", "/api/v3/repos/a/b/issues?page=2");
     expect(mockFetch.mock.calls[0][0]).toBe("/api/v3/repos/a/b/issues?page=2");
   });
+
+  it("fetchRepos lists repositories through the GitHub REST user repository endpoint", async () => {
+    mockFetch
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify([{ id: 1, full_name: "admin/one" }]), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+            Link: `</api/v3/user/repos?page=2&per_page=100>; rel="next"`,
+          },
+        }),
+      )
+      .mockResolvedValueOnce(jsonResponse([{ id: 2, full_name: "admin/two" }]));
+
+    const repos = await fetchRepos();
+
+    expect(repos.map((r) => r.full_name)).toEqual(["admin/one", "admin/two"]);
+    expect(mockFetch.mock.calls.map((c) => c[0])).toEqual([
+      "/api/v3/user/repos?per_page=100",
+      "/api/v3/user/repos?page=2&per_page=100",
+    ]);
+  });
 });
 
 describe("single-resource fetches", () => {
@@ -158,9 +231,9 @@ describe("api auth headers", () => {
   });
 });
 
-// ─── GitHub Codespaces REST ─────────────────────────────────────────────
+// ─── GitHub Codespaces Representational State Transfer ──────────────────
 
-describe("Codespaces API helpers", () => {
+describe("Codespaces application programming interface helpers", () => {
   const machine = {
     name: "basicLinux32",
     display_name: "Basic Linux",
@@ -257,9 +330,9 @@ describe("Codespaces API helpers", () => {
   });
 });
 
-// ─── Notifications REST ─────────────────────────────────────────────────
+// ─── Notifications Representational State Transfer ──────────────────────
 
-describe("Notifications API helpers", () => {
+describe("Notifications application programming interface helpers", () => {
   const thread = {
     id: "t1",
     repository: { full_name: "admin/repo" },
@@ -327,9 +400,9 @@ describe("Notifications API helpers", () => {
   });
 });
 
-// ─── Gists REST ─────────────────────────────────────────────────────────
+// ─── Gists Representational State Transfer ──────────────────────────────
 
-describe("Gists API helpers", () => {
+describe("Gists application programming interface helpers", () => {
   const gist = {
     id: "g1",
     description: "hello",

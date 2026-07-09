@@ -88,7 +88,7 @@ function installMocks() {
   mockFetch.mockImplementation((url: RequestInfo | URL) => {
     const u = url.toString();
     if (u.includes("/internal/sessions")) return Promise.resolve(jsonResponse(sessionsData));
-    if (u.includes("/internal/repos")) return Promise.resolve(jsonResponse(reposData));
+    if (u === "/api/v3/user/repos?per_page=100") return Promise.resolve(jsonResponse(reposData));
     if (u.includes("/actions/runners")) return Promise.resolve(jsonResponse(runnersData));
     return Promise.resolve(jsonResponse([]));
   });
@@ -120,7 +120,7 @@ describe("RunnersPage", () => {
     });
   });
 
-  it("lists registered runners from the GitHub REST endpoint with label pills and busy state", async () => {
+  it("lists registered runners from the GitHub Representational State Transfer endpoint with label pills and busy state", async () => {
     installMocks();
     renderPage();
     await waitFor(() => {
@@ -133,6 +133,8 @@ describe("RunnersPage", () => {
     expect(screen.getByText("busy")).toBeInTheDocument();
     expect(screen.getByLabelText("online")).toBeInTheDocument();
     const calls = mockFetch.mock.calls.map((c) => c[0].toString());
+    expect(calls).toContain("/api/v3/user/repos?per_page=100");
     expect(calls).toContain("/api/v3/repos/admin/test/actions/runners");
+    expect(calls).not.toContain("/internal/repos");
   });
 });

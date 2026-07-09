@@ -13,7 +13,7 @@ import (
 )
 
 // OAuth applications token management endpoints.
-// Real GitHub exposes a parallel surface for OAuth Apps + GitHub Apps acting
+// Real GitHub exposes a parallel surface for OAuth Apps and GitHub Apps acting
 // as OAuth clients. Authentication is HTTP Basic with client_id:client_secret.
 // `client_id` resolves to either an OAuth App or a GitHub App (looked up in
 // Store.OAuthApps then Store.AppsByClientID).
@@ -31,11 +31,9 @@ func (s *Server) registerGHAppsOAuthMgmtRoutes() {
 	s.route("DELETE /api/v3/applications/{client_id}/token", s.handleRevokeOAuthToken)
 	s.route("POST /api/v3/applications/{client_id}/token/scoped", s.handleScopeOAuthToken)
 	s.route("DELETE /api/v3/applications/{client_id}/grant", s.handleRevokeOAuthGrant)
+	s.route("GET /settings/oauth-apps", s.handleListBrowserOAuthApps)
+	s.route("POST /settings/oauth-apps/new", s.handleCreateBrowserOAuthApp)
 
-	// OAuth App management. GitHub has NO REST API to create/list OAuth Apps
-	// (web UI only), so this is sim-control under /internal/, never /api/.
-	s.route("POST /internal/oauth-apps", s.handleCreateOAuthAppMgmt)
-	s.route("GET /internal/oauth-apps", s.handleListOAuthAppsMgmt)
 }
 
 // authenticateClientCreds reads + verifies HTTP Basic auth carrying
@@ -89,7 +87,7 @@ func (s *Server) handleCheckOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	// Token must belong to this client_id (either as OAuth App or as GitHub App's OAuth client).
+	// Token must belong to this client_id, either as an OAuth App token or as a GitHub App OAuth client token.
 	if !tokenMatchesClient(tok, clientID, s.store) {
 		writeGHError(w, http.StatusUnprocessableEntity, "token does not match client_id")
 		return
@@ -243,28 +241,22 @@ func (s *Server) handleRevokeOAuthGrant(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleCreateOAuthAppMgmt(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
+func (s *Server) handleCreateBrowserOAuthApp(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
 	if user == nil {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
-	var req struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		URL         string `json:"url"`
-		CallbackURL string `json:"callback_url"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" {
-		writeGHValidationError(w, "OAuthApp", "name", "missing_field")
+	req, ok := decodeOAuthAppSettingsRequest(w, r)
+	if !ok {
 		return
 	}
 	app := s.store.CreateOAuthApp(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
 	writeJSON(w, http.StatusCreated, oauthAppToJSON(app, true))
 }
 
-func (s *Server) handleListOAuthAppsMgmt(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
+func (s *Server) handleListBrowserOAuthApps(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(s.authenticateRequest(r))
 	if user == nil {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
@@ -272,9 +264,47 @@ func (s *Server) handleListOAuthAppsMgmt(w http.ResponseWriter, r *http.Request)
 	apps := s.store.ListOAuthApps()
 	out := make([]map[string]interface{}, 0, len(apps))
 	for _, a := range apps {
-		out = append(out, oauthAppToJSON(a, false))
+		if a.OwnerID == user.ID {
+			out = append(out, oauthAppToJSON(a, false))
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+type oauthAppSettingsRequest struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	URL         string `json:"url"`
+	CallbackURL string `json:"callback_url"`
+}
+
+func decodeOAuthAppSettingsRequest(w http.ResponseWriter, r *http.Request) (oauthAppSettingsRequest, bool) {
+	var req oauthAppSettingsRequest
+	contentType := r.Header.Get("Content-Type")
+	if strings.HasPrefix(contentType, "application/json") {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing JSON")
+			return req, false
+		}
+	} else {
+		if err := r.ParseForm(); err != nil {
+			writeGHError(w, http.StatusBadRequest, "Problems parsing form")
+			return req, false
+		}
+		req.Name = r.PostFormValue("name")
+		req.Description = r.PostFormValue("description")
+		req.URL = r.PostFormValue("url")
+		req.CallbackURL = r.PostFormValue("callback_url")
+		if req.CallbackURL == "" {
+			req.CallbackURL = r.PostFormValue("callbackUrl")
+		}
+	}
+	req.Name = strings.TrimSpace(req.Name)
+	if req.Name == "" {
+		writeGHValidationError(w, "OAuthApp", "name", "missing_field")
+		return req, false
+	}
+	return req, true
 }
 
 func tokenMatchesClient(tok *UserToServerToken, clientID string, st *Store) bool {
@@ -386,7 +416,7 @@ func hashedToken(token string) string {
 
 // authorizationID derives a stable positive integer id for an authorization
 // from its token value. GitHub exposes a separate int authorization id; the
-// sim doesn't store one, so we derive it deterministically from the token.
+// Bleephub does not store one, so derive it deterministically from the token.
 func authorizationID(token string) int {
 	sum := sha256.Sum256([]byte(token))
 	id := int(binary.BigEndian.Uint32(sum[:4]) & 0x7fffffff)

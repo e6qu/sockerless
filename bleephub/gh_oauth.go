@@ -306,10 +306,6 @@ func (s *Server) handleDevicePage(w http.ResponseWriter, r *http.Request) {
 // consent form with an authenticity_token (CSRF) that the POST must echo.
 //
 // bleephub: same behaviour. Establish a session first via POST /login.
-// ?auto=1 is a non-standard bleephub shortcut that skips the form and redirects
-// immediately; it uses the session user if a cookie is present, or the seed admin
-// otherwise (for test tooling backwards compatibility only — not present on real
-// GitHub).
 func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	clientID := q.Get("client_id")
@@ -322,27 +318,6 @@ func (s *Server) handleOAuthAuthorize(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sess := s.sessionFromRequest(r)
-
-	if q.Get("auto") == "1" {
-		// Non-standard fast path: use session user if present, seed admin otherwise.
-		var user *User
-		if sess != nil {
-			s.store.mu.RLock()
-			user = s.store.Users[sess.UserID]
-			s.store.mu.RUnlock()
-		}
-		if user == nil {
-			s.store.mu.RLock()
-			user = s.store.Users[1]
-			s.store.mu.RUnlock()
-		}
-		if user == nil {
-			writeGHError(w, http.StatusInternalServerError, "no user available")
-			return
-		}
-		s.completeAuthorize(w, r, user, clientID, redirectURI, scopes, state)
-		return
-	}
 
 	if sess == nil {
 		returnTo := r.URL.RequestURI()

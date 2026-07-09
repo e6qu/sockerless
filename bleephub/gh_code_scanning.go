@@ -42,11 +42,13 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleListCodeQLDatabases)
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleGetCodeQLDatabase)
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleDeleteCodeQLDatabase)
+	s.route("GET /code-scanning/repos/{owner}/{repo}/codeql/databases/{language}/download", s.handleDownloadCodeQLDatabase)
 
 	// CodeQL variant analyses
 	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses", s.handleCreateCodeQLVariantAnalysis)
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}", s.handleGetCodeQLVariantAnalysis)
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}/repos/{repo_owner}/{repo_name}", s.handleGetCodeQLVariantAnalysisRepoTask)
+	s.route("GET /code-scanning/repos/{owner}/{repo}/codeql/variant-analyses/{codeql_variant_analysis_id}/query-pack", s.handleDownloadCodeQLVariantAnalysisQueryPack)
 
 	// Organization alerts
 	s.route("GET /api/v3/orgs/{org}/code-scanning/alerts",
@@ -55,12 +57,9 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	// Internal seeding endpoint: real GitHub creates alerts by uploading SARIF.
 	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/alerts", s.handleSeedCodeScanningAlert)
 
-	// Internal seeding + download endpoints for CodeQL entities: real GitHub
-	// receives databases from CodeQL analysis uploads and serves them (and
-	// variant-analysis query packs) from signed blob-storage URLs.
+	// Internal seeding endpoint for CodeQL database bytes: real GitHub
+	// receives databases from CodeQL analysis uploads.
 	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleSeedCodeQLDatabase)
-	s.route("GET /internal/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}/download", s.handleDownloadCodeQLDatabase)
-	s.route("GET /internal/repos/{owner}/{repo}/code-scanning/codeql/variant-analyses/{codeql_variant_analysis_id}/query-pack", s.handleDownloadCodeQLVariantAnalysisQueryPack)
 }
 
 func (s *Server) handleListCodeScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -886,7 +885,7 @@ func (s *Server) handleGetCodeQLDatabase(w http.ResponseWriter, r *http.Request)
 	// With the Accept header set to the database's content type, real
 	// GitHub redirects to a download URL for the archive bytes.
 	if strings.Contains(r.Header.Get("Accept"), db.ContentType) {
-		loc := fmt.Sprintf("%s/internal/repos/%s/code-scanning/codeql/databases/%s/download", s.baseURL(r), repo.FullName, db.Language)
+		loc := fmt.Sprintf("%s/code-scanning/repos/%s/codeql/databases/%s/download", s.baseURL(r), repo.FullName, db.Language)
 		http.Redirect(w, r, loc, http.StatusFound)
 		return
 	}
@@ -1037,7 +1036,7 @@ func (s *Server) variantAnalysisJSON(va *CodeQLVariantAnalysis, baseURL string, 
 		"controller_repo":      simpleRepoJSON(controllerRepo, s.store, baseURL),
 		"actor":                actorJSON,
 		"query_language":       va.QueryLanguage,
-		"query_pack_url":       fmt.Sprintf("%s/internal/repos/%s/code-scanning/codeql/variant-analyses/%d/query-pack", baseURL, controllerRepo.FullName, va.ID),
+		"query_pack_url":       fmt.Sprintf("%s/code-scanning/repos/%s/codeql/variant-analyses/%d/query-pack", baseURL, controllerRepo.FullName, va.ID),
 		"created_at":           va.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":           va.UpdatedAt.UTC().Format(time.RFC3339),
 		"completed_at":         completedAt,

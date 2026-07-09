@@ -39,6 +39,28 @@ func seedCodeQLDatabase(t *testing.T, repoFullName, language, commitOID string, 
 	return created
 }
 
+func assertNoInternalURL(t *testing.T, value any) {
+	t.Helper()
+	var walk func(any, string)
+	walk = func(v any, path string) {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, child := range x {
+				walk(child, path+"."+k)
+			}
+		case []any:
+			for i, child := range x {
+				walk(child, fmt.Sprintf("%s[%d]", path, i))
+			}
+		case string:
+			if strings.Contains(x, "/internal/") {
+				t.Fatalf("%s contains internal URL %q", path, x)
+			}
+		}
+	}
+	walk(value, "$")
+}
+
 // putRepoFile creates or updates a file via the contents API, returning
 // the commit SHA. This is how the autofix tests give the target branch
 // real git content.
@@ -257,6 +279,7 @@ func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 	if uploader == nil || uploader["login"] != "admin" {
 		t.Fatalf("uploader = %v, want admin", db["uploader"])
 	}
+	assertNoInternalURL(t, db)
 
 	// Get one.
 	resp = ghGet(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", defaultToken)
@@ -276,6 +299,22 @@ func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 	}
 	req.Header.Set("Authorization", "token "+defaultToken)
 	req.Header.Set("Accept", "application/zip")
+	noFollow := &http.Client{CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	redirectResp, err := noFollow.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	redirectResp.Body.Close()
+	if redirectResp.StatusCode != http.StatusFound {
+		t.Fatalf("database download status = %d, want 302", redirectResp.StatusCode)
+	}
+	loc := redirectResp.Header.Get("Location")
+	if loc == "" || strings.Contains(loc, "/internal/") {
+		t.Fatalf("database download redirect Location = %q, want public non-internal URL", loc)
+	}
+
 	dlResp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -357,9 +396,13 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	if ctrl["full_name"] != controller.FullName {
 		t.Fatalf("controller_repo = %v, want %s", ctrl["full_name"], controller.FullName)
 	}
+	assertNoInternalURL(t, created)
 
 	// The advertised query_pack_url resolves to the uploaded pack bytes.
 	packURL, _ := created["query_pack_url"].(string)
+	if packURL == "" || strings.Contains(packURL, "/internal/") {
+		t.Fatalf("query_pack_url = %q, want public non-internal URL", packURL)
+	}
 	req, err := http.NewRequest("GET", packURL, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -387,6 +430,7 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	if got["status"] != "succeeded" || got["completed_at"] == nil {
 		t.Fatalf("variant analysis = %v, want succeeded with completed_at", got)
 	}
+	assertNoInternalURL(t, got)
 
 	// Per-repository task.
 	resp = ghGet(t, fmt.Sprintf("%s/%d/repos/%s", basePath, vaID, withDB.FullName), defaultToken)

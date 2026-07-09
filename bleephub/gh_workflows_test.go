@@ -253,6 +253,29 @@ jobs:
 	if count != 1 {
 		t.Errorf("after dispatch: %d ci runs, want 1", count)
 	}
+
+	var run *Workflow
+	s.store.mu.RLock()
+	for _, candidate := range s.store.Workflows {
+		if candidate.Name == "ci" {
+			run = candidate
+			break
+		}
+	}
+	if run == nil || len(run.Jobs) != 1 {
+		s.store.mu.RUnlock()
+		t.Fatalf("dispatch run jobs = %v, want one job", run)
+	}
+	var job *WorkflowJob
+	for _, candidate := range run.Jobs {
+		job = candidate
+		break
+	}
+	s.store.mu.RUnlock()
+	msg := s.buildJobMessageFromDef("http://example.test", run, job, "plan", "timeline", 1, run.Env["__defaultImage"])
+	if msg["jobContainer"] != nil {
+		t.Fatalf("workflow_dispatch jobContainer = %#v, want nil for a workflow without container", msg["jobContainer"])
+	}
 }
 
 func TestWorkflows_Dispatch_NoYAMLCached(t *testing.T) {

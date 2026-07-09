@@ -110,7 +110,7 @@ function mockUserEndpoints() {
     if (u === "/api/v3/user/codespaces") {
       return Promise.resolve(jsonResponse({ total_count: 1, codespaces: [codespace] }));
     }
-    if (u === "/internal/repos") return Promise.resolve(jsonResponse([baseRepo]));
+    if (u === "/api/v3/user/repos?per_page=100") return Promise.resolve(jsonResponse([baseRepo]));
     return Promise.resolve(jsonResponse({}));
   });
 }
@@ -135,6 +135,18 @@ describe("CodespacesPage", () => {
     await waitFor(() => {
       expect(screen.getByText("my codespace")).toBeInTheDocument();
     });
+  });
+
+  it("loads the create dialog repository selector from GitHub REST user repositories", async () => {
+    mockUserEndpoints();
+    renderPage();
+    fireEvent.click(screen.getByText("New codespace"));
+    await waitFor(() => {
+      expect(screen.getByRole("option", { name: "admin/test" })).toBeInTheDocument();
+    });
+    const calls = mockFetch.mock.calls.map((c) => c[0].toString());
+    expect(calls).toContain("/api/v3/user/repos?per_page=100");
+    expect(calls).not.toContain("/internal/repos");
   });
 
   it("renders repo-scoped codespaces", async () => {

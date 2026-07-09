@@ -3,7 +3,6 @@ package bleephub
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -104,24 +103,8 @@ func TestListAuthUserTeams_ViaOAuthWebFlow(t *testing.T) {
 
 	oapp := s.store.CreateOAuthApp(admin.ID, "AuthJSReproducer", "", "", "http://localhost:3000/api/auth/callback/github")
 
-	// Step 1: authorize (auto=1 test shortcut) returns a code.
-	authorizeURL := fmt.Sprintf("/login/oauth/authorize?auto=1&client_id=%s&redirect_uri=%s&scope=repo&state=xyz",
-		url.QueryEscape(oapp.ClientID),
-		url.QueryEscape("http://localhost:3000/api/auth/callback/github"))
-	req := httptest.NewRequest("GET", authorizeURL, nil)
-	w := httptest.NewRecorder()
-	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
-	if w.Code != http.StatusFound {
-		t.Fatalf("authorize status = %d, want 302; body=%s", w.Code, w.Body.String())
-	}
-	loc, err := w.Result().Location()
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := loc.Query().Get("code")
-	if code == "" {
-		t.Fatalf("authorize redirect missing code: %s", loc.String())
-	}
+	// Step 1: authorize through the real login + consent flow.
+	code := authorizeOAuthWebFlow(t, s, "admin", oapp.ClientID, "http://localhost:3000/api/auth/callback/github", "repo", "xyz")
 
 	// Step 2: exchange the code for an access token (JSON Accept, like Auth.js).
 	form := url.Values{}
@@ -205,24 +188,8 @@ func TestListAuthUserTeams_ViaOAuthWebFlow_ReadOrgScope(t *testing.T) {
 
 	oapp := s.store.CreateOAuthApp(admin.ID, "AuthJSReadOrg", "", "", "http://localhost:3000/api/auth/callback/github")
 
-	// Step 1: authorize with read:org only.
-	authorizeURL := fmt.Sprintf("/login/oauth/authorize?auto=1&client_id=%s&redirect_uri=%s&scope=read:org&state=xyz",
-		url.QueryEscape(oapp.ClientID),
-		url.QueryEscape("http://localhost:3000/api/auth/callback/github"))
-	req := httptest.NewRequest("GET", authorizeURL, nil)
-	w := httptest.NewRecorder()
-	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
-	if w.Code != http.StatusFound {
-		t.Fatalf("authorize status = %d, want 302; body=%s", w.Code, w.Body.String())
-	}
-	loc, err := w.Result().Location()
-	if err != nil {
-		t.Fatal(err)
-	}
-	code := loc.Query().Get("code")
-	if code == "" {
-		t.Fatalf("authorize redirect missing code: %s", loc.String())
-	}
+	// Step 1: authorize with read:org only through the real login + consent flow.
+	code := authorizeOAuthWebFlow(t, s, "admin", oapp.ClientID, "http://localhost:3000/api/auth/callback/github", "read:org", "xyz")
 
 	// Step 2: exchange the code for an access token.
 	form := url.Values{}

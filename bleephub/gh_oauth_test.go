@@ -75,6 +75,42 @@ func extractCSRF(t *testing.T, body string) string {
 	return rest[:end]
 }
 
+func authorizeOAuthWebFlow(t *testing.T, s *Server, login, clientID, redirectURI, scope, state string) string {
+	t.Helper()
+	jar := doLogin(t, s, login)
+	authorizeURL := "/login/oauth/authorize?client_id=" + url.QueryEscape(clientID) +
+		"&redirect_uri=" + url.QueryEscape(redirectURI) +
+		"&scope=" + url.QueryEscape(scope) +
+		"&state=" + url.QueryEscape(state)
+	w := requestWithJar(s, "GET", authorizeURL, "", "", jar)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GET authorize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	csrf := extractCSRF(t, w.Body.String())
+	form := url.Values{}
+	form.Set("authenticity_token", csrf)
+	form.Set("client_id", clientID)
+	form.Set("redirect_uri", redirectURI)
+	form.Set("scope", scope)
+	form.Set("state", state)
+	w2 := requestWithJar(s, "POST", "/login/oauth/authorize", form.Encode(), "application/x-www-form-urlencoded", jar)
+	if w2.Code != http.StatusFound {
+		t.Fatalf("POST authorize status = %d, want 302; body=%s", w2.Code, w2.Body.String())
+	}
+	loc, err := url.Parse(w2.Header().Get("Location"))
+	if err != nil {
+		t.Fatalf("parse authorize redirect: %v", err)
+	}
+	if got := loc.Query().Get("state"); got != state {
+		t.Fatalf("authorize redirect state = %q, want %q", got, state)
+	}
+	code := loc.Query().Get("code")
+	if code == "" {
+		t.Fatalf("authorize redirect missing code: %s", loc.String())
+	}
+	return code
+}
+
 func TestOAuth_LoginPage_RendersForm(t *testing.T) {
 	s := newTestServer()
 	s.registerGHOAuthRoutes()
@@ -288,26 +324,21 @@ func TestOAuth_AuthorizeApprove_RejectsWrongCSRF(t *testing.T) {
 	}
 }
 
-func TestOAuth_AuthorizeAuto1ImmediateRedirect(t *testing.T) {
+func TestOAuth_AuthorizeAutoParamDoesNotBypassSession(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
 	s.registerGHOAuthRoutes()
 
-	// auto=1 without a session still works (non-standard shortcut, uses seed admin).
 	w := runRequest(s, "GET", "/login/oauth/authorize?client_id=Iv1.x&redirect_uri=http://cb/&state=ST&auto=1")
 	if w.Code != http.StatusFound {
-		t.Fatalf("auto=1 status = %d, want 302", w.Code)
+		t.Fatalf("auto=1 without session status = %d, want 302", w.Code)
 	}
 	loc := w.Header().Get("Location")
-	parsed, err := url.Parse(loc)
-	if err != nil {
-		t.Fatalf("parse Location: %v", err)
+	if !strings.HasPrefix(loc, "/login") {
+		t.Fatalf("auto=1 bypassed session requirement, redirected to %q", loc)
 	}
-	if parsed.Query().Get("code") == "" {
-		t.Errorf("Location missing code: %s", loc)
-	}
-	if parsed.Query().Get("state") != "ST" {
-		t.Errorf("Location state = %q, want ST", parsed.Query().Get("state"))
+	if strings.Contains(loc, "code=") {
+		t.Fatalf("auto=1 minted an authorization code without consent: %q", loc)
 	}
 }
 

@@ -5,10 +5,9 @@ import (
 	"testing"
 )
 
-// TestAppsGetBySlug provisions a GitHub App via the /internal/apps sim-control
-// endpoint (go-github has no App-create method — apps are created out of band
-// via the manifest flow on real GitHub), then reads it back through the typed
-// Apps.Get(slug), which maps to GET /api/v3/apps/{app_slug}.
+// TestAppsGetBySlug provisions a GitHub App through the manifest flow, then
+// reads it back through the typed Apps.Get(slug), which maps to GET
+// /api/v3/apps/{app_slug}.
 func TestAppsGetBySlug(t *testing.T) {
 	var created struct {
 		ID   int64  `json:"id"`
@@ -16,16 +15,12 @@ func TestAppsGetBySlug(t *testing.T) {
 		Name string `json:"name"`
 		PEM  string `json:"pem"`
 	}
-	if code := internalPost(t, "/internal/apps", map[string]interface{}{
-		"name":        "SDK Test App",
-		"description": "an app for sdk-tests",
-		"permissions": map[string]string{"contents": "read", "checks": "write"},
-		"events":      []string{"push"},
-	}, &created); code != http.StatusCreated {
-		t.Fatalf("internal create app status = %d, want 201", code)
+	if code := createGitHubAppViaManifest(t, "Software Development Kit Test App",
+		map[string]string{"contents": "read", "checks": "write"}, &created); code != http.StatusCreated {
+		t.Fatalf("GitHub App manifest conversion status = %d, want 201", code)
 	}
 	if created.Slug == "" {
-		t.Fatal("internal create app returned empty slug")
+		t.Fatal("GitHub App manifest conversion returned empty slug")
 	}
 
 	app, _, err := client.Apps.Get(ctx(), created.Slug)
@@ -38,7 +33,7 @@ func TestAppsGetBySlug(t *testing.T) {
 	if app.GetSlug() != created.Slug {
 		t.Errorf("app slug = %q, want %q", app.GetSlug(), created.Slug)
 	}
-	if app.GetName() != "SDK Test App" {
-		t.Errorf("app name = %q, want SDK Test App", app.GetName())
+	if app.GetName() != "Software Development Kit Test App" {
+		t.Errorf("app name = %q, want Software Development Kit Test App", app.GetName())
 	}
 }

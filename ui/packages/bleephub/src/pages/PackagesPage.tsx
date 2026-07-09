@@ -11,7 +11,6 @@ import {
   fetchPackages,
   fetchPackageVersions,
   restorePackageVersion,
-  uploadPackageVersion,
   type PackageScope,
 } from "../api.js";
 import type {
@@ -20,11 +19,9 @@ import type {
   GithubPackageType,
 } from "../types.js";
 import {
-  Box,
   Button,
   DialogActions,
   ErrorBanner,
-  FormLabel,
   Modal,
   PageTitle,
   Tabs,
@@ -106,7 +103,6 @@ function PackagesList({
 }) {
   const queryClient = useQueryClient();
   const [selected, setSelected] = useState<GithubPackage | null>(null);
-  const [showUpload, setShowUpload] = useState(false);
 
   const listKey = ["packages", scope, packageType];
   const {
@@ -211,9 +207,6 @@ function PackagesList({
         <div style={{ color: "var(--color-fg-muted)", fontSize: "0.85rem" }}>
           {filtered.length} package{filtered.length === 1 ? "" : "s"}
         </div>
-        <Button size="sm" variant="primary" onClick={() => setShowUpload(true)}>
-          Upload version
-        </Button>
       </div>
       <DataTable
         data={filtered}
@@ -225,13 +218,6 @@ function PackagesList({
           scope={scope}
           pkg={selected}
           onClose={() => setSelected(null)}
-        />
-      )}
-      {showUpload && (
-        <UploadPackageVersionDialog
-          scope={scope}
-          defaultType={packageType}
-          onClose={() => setShowUpload(false)}
         />
       )}
     </>
@@ -377,143 +363,5 @@ function VersionFiles({
     <span style={{ fontSize: "0.78rem", color: "var(--color-fg-muted)" }}>
       {data.length} file{data.length === 1 ? "" : "s"}
     </span>
-  );
-}
-
-function UploadPackageVersionDialog({
-  scope,
-  defaultType,
-  onClose,
-}: {
-  scope: PackageScope;
-  defaultType: GithubPackageType;
-  onClose: () => void;
-}) {
-  const queryClient = useQueryClient();
-  const [pkgName, setPkgName] = useState("");
-  const [pkgType, setPkgType] = useState<GithubPackageType>(defaultType);
-  const [version, setVersion] = useState("");
-  const [fileName, setFileName] = useState("artifact.tgz");
-  const [fileContent, setFileContent] = useState("hello");
-  const [error, setError] = useState<string | null>(null);
-
-  const mutation = useMutation({
-    mutationFn: async () => {
-      let ownerType: "user" | "org" | "repository";
-      let owner: string;
-      switch (scope.kind) {
-        case "user":
-          ownerType = "user";
-          owner = scope.username;
-          break;
-        case "org":
-          ownerType = "org";
-          owner = scope.org;
-          break;
-        case "repo":
-          ownerType = "repository";
-          owner = `${scope.owner}/${scope.repo}`;
-          break;
-        default:
-          ownerType = "user";
-          owner = "";
-      }
-      return uploadPackageVersion(ownerType, owner, pkgType, pkgName, {
-        version,
-        files: [
-          {
-            name: fileName,
-            content_type: "application/gzip",
-            content_base64: btoa(fileContent),
-          },
-        ],
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["packages", scope, pkgType] });
-      onClose();
-    },
-    onError: (err: Error) => setError(err.message),
-  });
-
-  const valid =
-    pkgName.trim() !== "" && version.trim() !== "" && fileName.trim() !== "";
-
-  return (
-    <Modal title="Upload package version" onClose={onClose}>
-      <div className="mb-4 grid grid-cols-2 gap-3">
-        <div>
-          <FormLabel id="pkg-type">Package type</FormLabel>
-          <select
-            id="pkg-type"
-            value={pkgType}
-            onChange={(e) => setPkgType(e.target.value as GithubPackageType)}
-            className="w-full"
-          >
-            {PACKAGE_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <FormLabel id="pkg-name">Package name</FormLabel>
-          <input
-            id="pkg-name"
-            value={pkgName}
-            onChange={(e) => setPkgName(e.target.value)}
-            placeholder="my-package"
-            className="w-full"
-          />
-        </div>
-        <div>
-          <FormLabel id="pkg-version">Version</FormLabel>
-          <input
-            id="pkg-version"
-            value={version}
-            onChange={(e) => setVersion(e.target.value)}
-            placeholder="1.0.0"
-            className="w-full"
-          />
-        </div>
-        <div>
-          <FormLabel id="file-name">File name</FormLabel>
-          <input
-            id="file-name"
-            value={fileName}
-            onChange={(e) => setFileName(e.target.value)}
-            className="w-full"
-          />
-        </div>
-      </div>
-      <Box header="File content">
-        <textarea
-          value={fileContent}
-          onChange={(e) => setFileContent(e.target.value)}
-          rows={4}
-          className="w-full"
-          style={{ border: "none" }}
-        />
-      </Box>
-
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-
-      <DialogActions>
-        <Button onClick={onClose} disabled={mutation.isPending} variant="ghost">
-          Cancel
-        </Button>
-        <Button
-          onClick={() => {
-            setError(null);
-            mutation.mutate();
-          }}
-          disabled={mutation.isPending || !valid}
-          variant="primary"
-        >
-          {mutation.isPending ? "Uploading…" : "Upload"}
-        </Button>
-      </DialogActions>
-    </Modal>
   );
 }

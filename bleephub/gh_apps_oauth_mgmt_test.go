@@ -2,7 +2,6 @@ package bleephub
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -226,55 +225,43 @@ func TestOAuthScopeToken_MintsFreshNarrowedToken(t *testing.T) {
 	_ = inst
 }
 
-func TestOAuthAppManagement(t *testing.T) {
+func TestOAuthAppBrowserSettingsCreateAndList(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
 	s.registerGHAppsOAuthMgmtRoutes()
 
-	// Create via management endpoint (PAT auth).
-	body, _ := json.Marshal(map[string]string{
-		"name":         "My OAuth App",
-		"description":  "test",
-		"url":          "https://example.test",
-		"callback_url": "https://example.test/cb",
-	})
-	req := httptest.NewRequest("POST", "/internal/oauth-apps", bytes.NewReader(body))
-	user := s.store.UsersByLogin["admin"]
-	req = req.WithContext(setUserCtx(req, user))
+	form := "name=Browser+OAuth&description=settings&url=https%3A%2F%2Fexample.test&callback_url=https%3A%2F%2Fexample.test%2Fcb"
+	req := httptest.NewRequest("POST", "/settings/oauth-apps/new", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "token "+AdminToken())
 	w := httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("create status = %d body = %s", w.Code, w.Body.String())
+		t.Fatalf("settings create status = %d body = %s", w.Code, w.Body.String())
 	}
 	var created map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &created)
 	if created["client_id"] == "" || created["client_secret"] == "" {
-		t.Error("missing client_id or client_secret in response")
+		t.Fatalf("created OAuth App missing one-time credentials: %v", created)
 	}
 
-	// List
-	req = httptest.NewRequest("GET", "/internal/oauth-apps", nil)
-	req = req.WithContext(setUserCtx(req, user))
+	req = httptest.NewRequest("GET", "/settings/oauth-apps", nil)
+	req.Header.Set("Authorization", "token "+AdminToken())
 	w = httptest.NewRecorder()
 	s.mux.ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
-		t.Fatalf("list status = %d", w.Code)
+		t.Fatalf("settings list status = %d body = %s", w.Code, w.Body.String())
 	}
 	var list []map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &list)
-	if len(list) != 1 {
-		t.Errorf("expected 1 oauth app, got %d", len(list))
+	if len(list) != 1 || list[0]["client_id"] != created["client_id"] {
+		t.Fatalf("settings list = %+v, want created client id %v", list, created["client_id"])
 	}
-	// List view must NOT include client_secret.
-	if _, hasSecret := list[0]["client_secret"]; hasSecret {
-		t.Error("list view leaked client_secret")
+	if _, leaked := list[0]["client_secret"]; leaked {
+		t.Fatal("settings list leaked OAuth App client_secret")
 	}
 }
 
 func basicHeader(clientID, clientSecret string) string {
 	return base64.StdEncoding.EncodeToString([]byte(clientID + ":" + clientSecret))
-}
-
-func setUserCtx(r *http.Request, u *User) context.Context {
-	return context.WithValue(r.Context(), ctxUser, u)
 }

@@ -33,7 +33,7 @@ export function AppsPage() {
     <div>
       <PageTitle
         title="Apps & installations"
-        meta="GitHub Apps (JWT + ghs_), OAuth Apps (client_id/secret + gho_), and the active installations between them."
+        meta="GitHub Apps, OAuth Apps, and the active installations between them."
         actions={
           tab === "oauth-apps" ? (
             <Button variant="primary" size="sm" onClick={() => setShowCreate("oauth-app")}>
@@ -80,7 +80,7 @@ function AppsTab() {
 
   const columns = [
     appsCol.accessor("id", {
-      header: "ID",
+      header: "Identifier",
       cell: (info) => (
         <span className="tabular-nums" style={{ color: "var(--color-fg-muted)" }}>
           {info.getValue()}
@@ -110,7 +110,7 @@ function AppsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter apps…"
-      emptyMessage="No apps yet. Click New GitHub app or POST /internal/apps."
+      emptyMessage="No apps yet. Create a GitHub App through the manifest flow."
     />
   );
 }
@@ -148,7 +148,7 @@ function InstallationsTab() {
 
   const columns = [
     installsCol.accessor("id", {
-      header: "ID",
+      header: "Identifier",
       cell: (info) => (
         <span className="tabular-nums" style={{ color: "var(--color-fg-muted)" }}>
           {info.getValue()}
@@ -233,7 +233,7 @@ function InstallationsTab() {
         data={data}
         columns={columns}
         filterPlaceholder="Filter installations…"
-        emptyMessage="No installations. POST /internal/apps/{app_id}/installations."
+        emptyMessage="No installations."
       />
     </>
   );
@@ -252,7 +252,7 @@ function OAuthAppsTab() {
 
   const columns = [
     oauthCol.accessor("clientId", {
-      header: "Client ID",
+      header: "Client identifier",
       cell: (info) => (
         <span className="font-mono" style={{ color: "var(--color-accent)" }}>
           {info.getValue()}
@@ -286,7 +286,7 @@ function OAuthAppsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter OAuth apps…"
-      emptyMessage="No OAuth apps yet. Click New OAuth app or POST /internal/oauth-apps."
+      emptyMessage="No OAuth Apps yet."
     />
   );
 }
@@ -459,24 +459,24 @@ function CreatedAppDialog({
 
       {created.client_id && (
         <>
-          <FormLabel>Client ID</FormLabel>
+          <FormLabel>Client identifier</FormLabel>
           <div className="mb-4">
             <CodeBlock>{created.client_id}</CodeBlock>
           </div>
         </>
       )}
 
-      <FormLabel>Client Secret</FormLabel>
+      <FormLabel>Client secret</FormLabel>
       <div className="mb-4">
         <CodeBlock>{created.client_secret}</CodeBlock>
       </div>
 
-      <FormLabel>Webhook Secret</FormLabel>
+      <FormLabel>Webhook secret</FormLabel>
       <div className="mb-4">
         <CodeBlock>{created.webhook_secret}</CodeBlock>
       </div>
 
-      <FormLabel>PEM Private Key</FormLabel>
+      <FormLabel>Privacy Enhanced Mail private key</FormLabel>
       <div className="mb-4">
         <CodeBlock>{created.pem}</CodeBlock>
       </div>
@@ -514,11 +514,11 @@ function CreateOAuthAppDialog({ onClose }: { onClose: () => void }) {
         <p className="mb-4" style={{ fontSize: "0.82rem", color: "var(--color-status-warn)" }}>
           The client secret is shown once. Copy it now.
         </p>
-        <FormLabel>Client ID</FormLabel>
+        <FormLabel>Client identifier</FormLabel>
         <div className="mb-4">
           <CodeBlock>{created.client_id}</CodeBlock>
         </div>
-        <FormLabel>Client Secret</FormLabel>
+        <FormLabel>Client secret</FormLabel>
         <div className="mb-4">
           <CodeBlock>{created.client_secret}</CodeBlock>
         </div>

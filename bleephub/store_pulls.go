@@ -18,9 +18,11 @@ type PullRequest struct {
 	State                string // "OPEN", "CLOSED", "MERGED"
 	IsDraft              bool
 	HeadRefName          string // source branch name
+	HeadRepoID           int    // source repository; zero on legacy rows means RepoID
 	BaseRefName          string // target branch name
 	BaseSHA              string // base branch commit at PR creation ("" when the repo had no git objects)
 	MergeCommitSHA       string // merge result commit ("" until merged, or when merged without git refs)
+	MaintainerCanModify  bool
 	AuthorID             int
 	AssigneeIDs          []int
 	LabelIDs             []int
@@ -54,14 +56,31 @@ type PullRequestReview struct {
 	UpdatedAt        time.Time
 }
 
+type PullRequestOptions struct {
+	HeadRepoID          int
+	MaintainerCanModify bool
+}
+
 // CreatePullRequest creates a new pull request in the given repository.
 // Uses the shared NextIssueNumber counter for issue/PR numbering.
-func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefName, baseRefName string, isDraft bool, labelIDs, assigneeIDs []int, milestoneID int) *PullRequest {
+func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefName, baseRefName string, isDraft bool, labelIDs, assigneeIDs []int, milestoneID int, opts ...PullRequestOptions) *PullRequest {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	repo := st.Repos[repoID]
 	if repo == nil {
+		return nil
+	}
+	headRepoID := repoID
+	maintainerCanModify := false
+	if len(opts) > 0 {
+		if opts[0].HeadRepoID != 0 {
+			headRepoID = opts[0].HeadRepoID
+		}
+		maintainerCanModify = opts[0].MaintainerCanModify
+	}
+	headRepo := st.Repos[headRepoID]
+	if headRepo == nil {
 		return nil
 	}
 
@@ -75,25 +94,28 @@ func (st *Store) CreatePullRequest(repoID, authorID int, title, body, headRefNam
 	if assigneeIDs == nil {
 		assigneeIDs = []int{}
 	}
-	stor := st.GitStorages[repo.FullName]
-	headSHA := resolveBranchSha(stor, headRefName)
-	baseSHA := resolveBranchSha(stor, baseRefName)
+	headStor := st.GitStorages[headRepo.FullName]
+	baseStor := st.GitStorages[repo.FullName]
+	headSHA := resolveBranchSha(headStor, headRefName)
+	baseSHA := resolveBranchSha(baseStor, baseRefName)
 	if headSHA == "" || baseSHA == "" {
 		return nil
 	}
 
 	now := time.Now().UTC()
 	pr := &PullRequest{
-		ID:          st.NextPR,
-		NodeID:      fmt.Sprintf("PR_kgDO%08d", st.NextPR),
-		Number:      repo.NextIssueNumber, // shared counter
-		RepoID:      repoID,
-		Title:       title,
-		Body:        body,
-		State:       "OPEN",
-		IsDraft:     isDraft,
-		HeadRefName: headRefName,
-		BaseRefName: baseRefName,
+		ID:                  st.NextPR,
+		NodeID:              fmt.Sprintf("PR_kgDO%08d", st.NextPR),
+		Number:              repo.NextIssueNumber, // shared counter
+		RepoID:              repoID,
+		Title:               title,
+		Body:                body,
+		State:               "OPEN",
+		IsDraft:             isDraft,
+		HeadRefName:         headRefName,
+		HeadRepoID:          headRepoID,
+		BaseRefName:         baseRefName,
+		MaintainerCanModify: maintainerCanModify,
 		// GitHub records the base commit at PR creation; the PR's commit
 		// range stays anchored to it even after the base branch advances
 		// (including past the PR's own merge commit).

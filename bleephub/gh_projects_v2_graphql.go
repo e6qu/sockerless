@@ -50,7 +50,7 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			}
 			proj := s.store.ProjectsV2.CreateProject(ownerID, ownerType, title, user.ID)
 			return map[string]interface{}{
-				"projectV2": projectV2ToGQL(proj),
+				"projectV2": projectV2ToGQL(proj, s.store),
 			}, nil
 		},
 	})

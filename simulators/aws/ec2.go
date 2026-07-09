@@ -3599,26 +3599,21 @@ func ec2TransitionInstanceToRunning(instanceID string) {
 	if !ok {
 		return
 	}
-	// On a real-execution host, boot a real Firecracker VM; a boot failure
-	// there is a genuine error, so the instance settles to "stopped". On an
-	// API-only host (no VM capabilities) the instance is modeled as "running"
-	// at the control plane — the same modeling tier VPC/subnet/NAT use. See
-	if ec2RealVMHostAvailable() {
-		if err := ec2StartRealVM(context.Background(), inst); err != nil {
-			fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
-			ec2Instances.Update(instanceID, func(inst *EC2Instance) {
-				if inst.State == "pending" {
-					inst.State = "stopped"
-				}
-			})
-			return
-		}
-	}
 	ec2Instances.Update(instanceID, func(inst *EC2Instance) {
 		if inst.State == "pending" {
 			inst.State = "running"
 		}
 	})
+	// On a real-execution host, boot a real Firecracker VM after the EC2
+	// control plane has converged to running. Host data-plane setup is not the
+	// EC2 control plane, so a local Firecracker boot failure is reported to the
+	// simulator logs without rewriting the instance's EC2 state.
+	if ec2RealVMHostAvailable() {
+		if err := ec2StartRealVM(context.Background(), inst); err != nil {
+			fmt.Fprintf(os.Stderr, "failed to boot real EC2 instance %s: %v\n", instanceID, err)
+			return
+		}
+	}
 }
 
 func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
@@ -3635,17 +3630,6 @@ func handleDescribeInstances(w http.ResponseWriter, r *http.Request) {
 		}
 	} else {
 		instances = ec2Instances.List()
-	}
-	// Reconcile reported state against real VM liveness only on a real-execution
-	// host. On an API-only host there is no real VM behind a modeled "running"
-	// instance, so the stored control-plane state is authoritative.
-	if ec2RealVMHostAvailable() {
-		for i := range instances {
-			if instances[i].State == "running" && !ec2RealVMAlive(instances[i].InstanceId) {
-				instances[i].State = "stopped"
-				ec2Instances.Put(instances[i].InstanceId, instances[i])
-			}
-		}
 	}
 	filters := ec2Filters(r)
 	if len(filters) > 0 {
@@ -4606,9 +4590,10 @@ func handleAttachVolume(w http.ResponseWriter, r *http.Request) {
 		ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not prepare volume block image: %v", err), http.StatusInternalServerError)
 		return
 	}
-	// Real block-device attach only on a real-execution host (the volume binds
-	// to the instance's Firecracker VM); modeled at the control plane otherwise
-	if ec2RealVMHostAvailable() {
+	// Real block-device attach only when a live Firecracker VM exists. EC2
+	// attachment metadata remains authoritative at the control plane when the
+	// host data-plane substrate is absent or failed.
+	if ec2RealVMAlive(instanceID) {
 		if err := ec2AttachRealVolume(r.Context(), instanceID, &vol); err != nil {
 			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to attach real EBS volume: %v", err), http.StatusServiceUnavailable)
 			return
@@ -4639,7 +4624,7 @@ func handleDetachVolume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	att := vol.Attachments[0]
-	if ec2RealVMHostAvailable() {
+	if ec2RealVMAlive(att.InstanceId) {
 		if err := ec2DetachRealVolume(r.Context(), att.InstanceId, volID); err != nil {
 			ec2ErrorXML(w, "IncorrectInstanceState", fmt.Sprintf("failed to detach real EBS volume: %v", err), http.StatusServiceUnavailable)
 			return
@@ -4718,7 +4703,7 @@ func handleModifyVolume(w http.ResponseWriter, r *http.Request) {
 	vol.Iops, vol.Throughput = ec2ResolveVolumePerformance(vol.VolumeType, vol.Size, vol.Iops, vol.Throughput)
 	mod.TargetSize, mod.TargetVolumeType, mod.TargetIops, mod.TargetThroughput = vol.Size, vol.VolumeType, vol.Iops, vol.Throughput
 	ec2VolumeMods.Put(volID, mod)
-	if len(vol.Attachments) > 0 && ec2RealVMHostAvailable() {
+	if len(vol.Attachments) > 0 && ec2RealVMAlive(vol.Attachments[0].InstanceId) {
 		if _, err := ebsEnsureVolumeBlockImage(&vol); err != nil {
 			ec2ErrorXML(w, "InternalError", fmt.Sprintf("could not resize volume block image: %v", err), http.StatusInternalServerError)
 			return

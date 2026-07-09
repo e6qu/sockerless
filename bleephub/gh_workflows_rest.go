@@ -262,7 +262,7 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 	}
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
-	def.Env["__defaultImage"] = "alpine:latest"
+	def.Env["__defaultImage"] = ""
 
 	// The workflow_dispatch event payload carries the string-typed
 	// inputs (github.event.inputs), the ref, and the workflow path.
@@ -291,7 +291,7 @@ func (s *Server) handleDispatchWorkflow(w http.ResponseWriter, r *http.Request) 
 		TypedInputs: typedInputs,
 		Payload:     payload,
 	}
-	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
+	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "", &meta); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "submit: "+err.Error())
 		return
 	}

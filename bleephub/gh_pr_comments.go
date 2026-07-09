@@ -17,7 +17,6 @@ import (
 //   PATCH  /repos/{o}/{r}/pulls/comments/{id}
 //   DELETE /repos/{o}/{r}/pulls/comments/{id}
 //   POST   /repos/{o}/{r}/pulls/{number}/comments/{id}/replies
-//   GET    /repos/{o}/{r}/pulls/{number}/review-threads          (resolve state)
 //
 // gh CLI's `gh pr review --thread` / `gh pr comment` uses GraphQL mutations
 // (resolveReviewThread / unresolveReviewThread); the REST surface here is
@@ -47,17 +46,16 @@ type PRReviewComment struct {
 	OriginalCommitID  string    `json:"original_commit_id"`
 	Body              string    `json:"body"`
 	AuthorID          int       `json:"-"`
-	ThreadID          int       `json:"-"` // sim-only: shared id for the thread root + replies
-	Resolved          bool      `json:"-"` // sim-only: thread-level resolved flag stored on the root
+	ThreadID          int       `json:"-"` // shared id for the thread root + replies
+	Resolved          bool      `json:"-"` // thread-level resolved flag stored on the root
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // prReviewCommentRecord is the persistence DTO for PRReviewComment. The
 // struct's json:"-" linkage fields (PR, author, thread, resolved) must
-// survive a reload, but the struct itself is serialized verbatim to clients
-// by the internal review-threads endpoint (ReviewThread.Comments), so the
-// fields can't simply be retagged — the record carries them explicitly.
+// survive a reload while the public REST shape omits them, so the record
+// carries them explicitly.
 type prReviewCommentRecord struct {
 	*PRReviewComment
 	PullRequestID int  `json:"pull_request_id"`
@@ -276,6 +274,22 @@ func (s *PRReviewCommentStore) ResolveThread(threadID int, resolved bool) bool {
 	return true
 }
 
+func (s *PRReviewCommentStore) GetThread(threadID int) *ReviewThread {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	root := s.byID[threadID]
+	if root == nil {
+		return nil
+	}
+	thread := &ReviewThread{ID: threadID, IsResolved: root.Resolved}
+	for _, c := range s.byPR[root.PullRequestID] {
+		if c.ID == threadID || c.ThreadID == threadID {
+			thread.Comments = append(thread.Comments, c)
+		}
+	}
+	return thread
+}
+
 // ListThreads groups PR review comments by thread root.
 type ReviewThread struct {
 	ID         int                `json:"id"`
@@ -323,12 +337,6 @@ func (s *Server) registerGHPRCommentsRoutes() {
 	// with the 3-segment dispatch in gh_reactions.go)
 	s.route("GET /api/v3/repos/{owner}/{repo}/pulls/{number}/reviews/{review_id}/comments",
 		s.handleListPRReviewCommentsForReview)
-
-	// Listing review threads has no REST equivalent on real GitHub (GraphQL
-	// only), so it lives under /internal/ alongside the resolve/unresolve
-	// conveniences rather than faking a GitHub REST path.
-	s.route("GET /internal/repos/{owner}/{repo}/pulls/{number}/review-threads",
-		s.handleListReviewThreads)
 
 	// `/pulls/comments/{comment_id}` — single-review-comment surface.
 	// Go 1.22's mux can't register both `/pulls/comments/{cid}` and
@@ -547,25 +555,6 @@ func (s *Server) handleReplyPRComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, prReviewCommentToJSON(c, s.store, s.baseURL(r), repo, pr))
-}
-
-func (s *Server) handleListReviewThreads(w http.ResponseWriter, r *http.Request) {
-	repo := s.lookupReadableRepoFromPath(w, r)
-	if repo == nil {
-		return
-	}
-	num, err := strconv.Atoi(r.PathValue("number"))
-	if err != nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	pr := s.store.GetPullRequestByNumber(repo.ID, num)
-	if pr == nil {
-		writeGHError(w, http.StatusNotFound, "Not Found")
-		return
-	}
-	threads := s.store.PRReviewComments.ListThreads(pr.ID)
-	writeJSON(w, http.StatusOK, threads)
 }
 
 // handleListPRReviewCommentsForReview serves

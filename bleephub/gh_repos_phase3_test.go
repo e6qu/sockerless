@@ -13,11 +13,58 @@ func TestListTags(t *testing.T) {
 		"auto_init": true,
 	})
 
-	// Tag the default branch via the git/refs endpoint (not implemented yet,
-	// so create a tag ref directly through a commit reference using the
-	// existing delete-ref storage path is not available). Instead, use the
-	// contents endpoint to make the repo distinct and rely on the fact that
-	// there are no tags initially.
+	refResp := ghGet(t, "/api/v3/repos/admin/tags-repo/git/refs/heads/main", defaultToken)
+	defer refResp.Body.Close()
+	if refResp.StatusCode != 200 {
+		t.Fatalf("main ref status = %d", refResp.StatusCode)
+	}
+	var mainRef map[string]interface{}
+	if err := json.NewDecoder(refResp.Body).Decode(&mainRef); err != nil {
+		t.Fatal(err)
+	}
+	mainObj, _ := mainRef["object"].(map[string]interface{})
+	mainSHA, _ := mainObj["sha"].(string)
+	if mainSHA == "" {
+		t.Fatalf("main ref missing sha: %v", mainRef)
+	}
+
+	tagResp := ghPost(t, "/api/v3/repos/admin/tags-repo/git/tags", defaultToken, map[string]interface{}{
+		"tag":     "v1.0.0",
+		"message": "release",
+		"object":  mainSHA,
+		"type":    "commit",
+	})
+	defer tagResp.Body.Close()
+	if tagResp.StatusCode != 201 {
+		t.Fatalf("tag object status = %d", tagResp.StatusCode)
+	}
+	var tagObj map[string]interface{}
+	if err := json.NewDecoder(tagResp.Body).Decode(&tagObj); err != nil {
+		t.Fatal(err)
+	}
+	tagSHA, _ := tagObj["sha"].(string)
+	if tagSHA == "" || tagSHA == mainSHA {
+		t.Fatalf("tag object sha = %q, main sha = %q", tagSHA, mainSHA)
+	}
+
+	annotatedRefResp := ghPost(t, "/api/v3/repos/admin/tags-repo/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/tags/v1.0.0",
+		"sha": tagSHA,
+	})
+	defer annotatedRefResp.Body.Close()
+	if annotatedRefResp.StatusCode != 201 {
+		t.Fatalf("annotated tag ref status = %d", annotatedRefResp.StatusCode)
+	}
+
+	lightweightRefResp := ghPost(t, "/api/v3/repos/admin/tags-repo/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/tags/v1.0.1",
+		"sha": mainSHA,
+	})
+	defer lightweightRefResp.Body.Close()
+	if lightweightRefResp.StatusCode != 201 {
+		t.Fatalf("lightweight tag ref status = %d", lightweightRefResp.StatusCode)
+	}
+
 	resp := ghGet(t, "/api/v3/repos/admin/tags-repo/tags", defaultToken)
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
@@ -27,8 +74,26 @@ func TestListTags(t *testing.T) {
 	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
 		t.Fatal(err)
 	}
-	if len(tags) != 0 {
-		t.Fatalf("expected 0 tags, got %d", len(tags))
+	if len(tags) != 2 {
+		t.Fatalf("expected 2 tags, got %d: %v", len(tags), tags)
+	}
+	byName := map[string]map[string]interface{}{}
+	for _, tag := range tags {
+		name, _ := tag["name"].(string)
+		byName[name] = tag
+	}
+	for _, name := range []string{"v1.0.0", "v1.0.1"} {
+		tag := byName[name]
+		if tag == nil {
+			t.Fatalf("missing tag %s in %v", name, tags)
+		}
+		commit, _ := tag["commit"].(map[string]interface{})
+		if commit["sha"] != mainSHA {
+			t.Fatalf("tag %s commit sha = %v, want %s", name, commit["sha"], mainSHA)
+		}
+		if strings.Contains(commit["url"].(string), tagSHA) {
+			t.Fatalf("tag %s commit URL pointed at annotated tag object: %v", name, commit["url"])
+		}
 	}
 }
 

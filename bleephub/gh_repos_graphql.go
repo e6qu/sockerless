@@ -83,22 +83,42 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 	// --- Repository fields gh CLI selects (clone/create/view --json) ---
 	// gh's `GitHubRepo` query (repo clone, pr create) selects hasWikiEnabled
 	// and parent{...repo}; `gh repo view --json` exposes the wider static set
-	// below. Fields bleephub has no feature for resolve to the honest
-	// empty/false/null value real GitHub returns for a repo without that
-	// feature — they are not faked.
+	// below. Fields backed by repository settings or implemented repository
+	// features resolve from the same store state as the REST repository shape.
 
 	repoType.AddFieldConfig("hasWikiEnabled", &graphql.Field{
-		// No wiki feature: real value is false.
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasWiki"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasWiki")
+			}
+			return v, nil
 		},
 	})
 	repoType.AddFieldConfig("parent", &graphql.Field{
-		// No forks feature: a non-fork repo's parent is null.
 		Type: repoType,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			parentID, ok := r["parentID"].(int)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing parentID")
+			}
+			if parentID == 0 {
+				return nil, nil
+			}
+			parent := s.store.GetRepoByID(parentID)
+			if parent == nil {
+				return nil, fmt.Errorf("repository parent %d not found", parentID)
+			}
+			return repoToGraphQL(s.store.snapRepo(parent)), nil
 		},
 	})
 	repoType.AddFieldConfig("templateRepository", &graphql.Field{
@@ -111,30 +131,63 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 	repoType.AddFieldConfig("homepageUrl", &graphql.Field{
 		Type: graphql.String,
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return nil, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			homepage, ok := r["homepage"].(string)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing homepage")
+			}
+			if homepage == "" {
+				return nil, nil
+			}
+			return homepage, nil
 		},
 	})
 	repoType.AddFieldConfig("hasProjectsEnabled", &graphql.Field{
-		// Classic (v1) projects are not modeled; ProjectsV2 is separate.
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasProjects"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasProjects")
+			}
+			return v, nil
 		},
 	})
 	repoType.AddFieldConfig("hasDiscussionsEnabled", &graphql.Field{
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["hasDiscussions"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing hasDiscussions")
+			}
+			return v, nil
 		},
 	})
 	repoType.AddFieldConfig("forkCount", &graphql.Field{
 		Type: graphql.NewNonNull(graphql.Int),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return 0, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			repoID, ok := r["databaseId"].(int)
+			if !ok || repoID == 0 {
+				return nil, fmt.Errorf("repository forkCount source missing databaseId")
+			}
+			return s.store.CountForks(repoID), nil
 		},
 	})
 	repoType.AddFieldConfig("watchers", &graphql.Field{
-		// gh selects watchers{totalCount}; no watch/subscribe feature → 0.
 		Type: graphql.NewObject(graphql.ObjectConfig{
 			Name: "RepoWatcherConnection",
 			Fields: graphql.Fields{
@@ -142,7 +195,15 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			},
 		}),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return map[string]interface{}{"totalCount": 0}, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			repoID, ok := r["databaseId"].(int)
+			if !ok || repoID == 0 {
+				return nil, fmt.Errorf("repository watcher source missing databaseId")
+			}
+			return map[string]interface{}{"totalCount": len(s.store.ListRepoSubscribers(repoID))}, nil
 		},
 	})
 	repoType.AddFieldConfig("licenseInfo", &graphql.Field{
@@ -283,13 +344,29 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 	repoType.AddFieldConfig("deleteBranchOnMerge", &graphql.Field{
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["deleteBranchOnMerge"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing deleteBranchOnMerge")
+			}
+			return v, nil
 		},
 	})
 	repoType.AddFieldConfig("isTemplate", &graphql.Field{
 		Type: graphql.NewNonNull(graphql.Boolean),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return false, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			v, ok := r["isTemplate"].(bool)
+			if !ok {
+				return nil, fmt.Errorf("repository source missing isTemplate")
+			}
+			return v, nil
 		},
 	})
 	repoType.AddFieldConfig("isEmpty", &graphql.Field{
@@ -787,25 +864,32 @@ func repoToGraphQL(repo *Repo) map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"nodeID":         repo.NodeID,
-		"databaseId":     repo.ID,
-		"name":           repo.Name,
-		"nameWithOwner":  repo.FullName,
-		"description":    repo.Description,
-		"url":            "/" + repo.FullName,
-		"sshUrl":         "git@bleephub.local:" + repo.FullName + ".git",
-		"isPrivate":      repo.Private,
-		"isFork":         repo.Fork,
-		"isArchived":     repo.Archived,
-		"visibility":     strings.ToUpper(repo.Visibility),
-		"defaultBranch":  repo.DefaultBranch,
-		"stargazerCount": repo.StargazersCount,
-		"language":       repo.Language,
-		"topics":         repo.Topics,
-		"owner":          ownerMap,
-		"createdAt":      repo.CreatedAt.Format(time.RFC3339),
-		"updatedAt":      repo.UpdatedAt.Format(time.RFC3339),
-		"pushedAt":       repo.PushedAt.Format(time.RFC3339),
+		"nodeID":              repo.NodeID,
+		"databaseId":          repo.ID,
+		"name":                repo.Name,
+		"nameWithOwner":       repo.FullName,
+		"description":         repo.Description,
+		"url":                 "/" + repo.FullName,
+		"sshUrl":              "git@bleephub.local:" + repo.FullName + ".git",
+		"isPrivate":           repo.Private,
+		"isFork":              repo.Fork,
+		"isArchived":          repo.Archived,
+		"visibility":          strings.ToUpper(repo.Visibility),
+		"defaultBranch":       repo.DefaultBranch,
+		"stargazerCount":      repo.StargazersCount,
+		"language":            repo.Language,
+		"homepage":            repo.Homepage,
+		"topics":              repo.Topics,
+		"hasProjects":         repo.HasProjects,
+		"hasWiki":             repo.HasWiki,
+		"hasDiscussions":      true,
+		"parentID":            repo.ParentID,
+		"deleteBranchOnMerge": repo.DeleteBranchOnMerge,
+		"isTemplate":          repo.IsTemplate,
+		"owner":               ownerMap,
+		"createdAt":           repo.CreatedAt.Format(time.RFC3339),
+		"updatedAt":           repo.UpdatedAt.Format(time.RFC3339),
+		"pushedAt":            repo.PushedAt.Format(time.RFC3339),
 	}
 }
 

@@ -25,7 +25,7 @@ export function WorkflowsPage() {
         title="Workflows & runs"
         meta={
           tab === "workflows"
-            ? "YAML files discovered from git + bleephub-submitted definitions."
+            ? "GitHub Actions workflow files discovered from repository storage."
             : "Run-level history. Click a row for the per-job timeline."
         }
       />
@@ -71,10 +71,6 @@ function WorkflowsTab() {
       header: "State",
       cell: (info) => <StatusBadge status={info.getValue()} />,
     }),
-    filesCol.accessor("source", {
-      header: "Source",
-      cell: (info) => <span style={{ color: "var(--color-fg-muted)" }}>{info.getValue()}</span>,
-    }),
     filesCol.accessor("updatedAt", {
       header: "Updated",
       cell: (info) => (
@@ -105,7 +101,7 @@ function WorkflowsTab() {
         data={data}
         columns={columns}
         filterPlaceholder="Filter workflow files…"
-        emptyMessage="No workflow files yet. Push a .github/workflows/*.yml or POST /internal/exec/workflow."
+        emptyMessage="No workflow files yet. Push a workflow file under .github/workflows."
       />
       {dispatchTarget && (
         <DispatchDialog target={dispatchTarget} onClose={() => setDispatchTarget(null)} />
@@ -174,7 +170,7 @@ function RunsTab() {
       data={data}
       columns={columns}
       filterPlaceholder="Filter runs…"
-      emptyMessage="No runs yet. Submit a workflow via /internal/exec/workflow or dispatch one from the Workflows tab."
+      emptyMessage="No runs yet. Dispatch a GitHub Actions workflow from the Workflows tab."
       onRowClick={(row) => navigate(`/ui/workflows/${row.id}`)}
     />
   );

@@ -5,9 +5,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func createTestPRRepo(t *testing.T, name string) {
@@ -89,6 +92,131 @@ func TestCreatePullRequestREST(t *testing.T) {
 	}
 	if _, ok := headUser["nodeID"]; ok {
 		t.Errorf("head.user has GraphQL nodeID in REST response: %v", headUser)
+	}
+}
+
+func TestForkPullRequestRESTAndGraphQL(t *testing.T) {
+	sourceName := "pr-fork-source"
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": sourceName, "auto_init": true,
+	})
+	resp.Body.Close()
+	source := testServer.store.GetRepo("admin", sourceName)
+	if source == nil {
+		t.Fatalf("source repo not created")
+	}
+	seedPullRequestBranches(t, testServer, source)
+
+	testServer.store.mu.Lock()
+	forker := &User{ID: testServer.store.NextUser, Login: "pr-forker", Type: "User", CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	testServer.store.NextUser++
+	testServer.store.Users[forker.ID] = forker
+	testServer.store.UsersByLogin[forker.Login] = forker
+	tok := &Token{Value: "pr-forker-token", UserID: forker.ID, Scopes: "repo", CreatedAt: time.Now()}
+	testServer.store.Tokens[tok.Value] = tok
+	testServer.store.mu.Unlock()
+
+	forkResp := ghPost(t, "/api/v3/repos/admin/"+sourceName+"/forks", tok.Value, map[string]interface{}{})
+	if forkResp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(forkResp.Body)
+		forkResp.Body.Close()
+		t.Fatalf("fork status = %d body=%s", forkResp.StatusCode, body)
+	}
+	forkResp.Body.Close()
+	fork := testServer.store.GetRepo("pr-forker", sourceName)
+	if fork == nil {
+		t.Fatalf("fork repo not created")
+	}
+	seedPullRequestBranches(t, testServer, fork, "fork-change")
+
+	createResp := ghPost(t, "/api/v3/repos/admin/"+sourceName+"/pulls", tok.Value, map[string]interface{}{
+		"title":                 "Fork change",
+		"body":                  "from fork",
+		"head":                  "pr-forker:fork-change",
+		"base":                  "main",
+		"maintainer_can_modify": true,
+	})
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		createResp.Body.Close()
+		t.Fatalf("create fork pull request status = %d body=%s", createResp.StatusCode, body)
+	}
+	created := decodeJSON(t, createResp)
+	head, _ := created["head"].(map[string]interface{})
+	headRepo, _ := head["repo"].(map[string]interface{})
+	if headRepo == nil || headRepo["full_name"] != "pr-forker/"+sourceName {
+		t.Fatalf("head.repo = %v, want fork repo", head["repo"])
+	}
+	headUser, _ := head["user"].(map[string]interface{})
+	if headUser == nil || headUser["login"] != "pr-forker" {
+		t.Fatalf("head.user = %v, want pr-forker", head["user"])
+	}
+	if created["maintainer_can_modify"] != true {
+		t.Fatalf("maintainer_can_modify = %v, want true", created["maintainer_can_modify"])
+	}
+
+	filesResp := ghGet(t, "/api/v3/repos/admin/"+sourceName+"/pulls/1/files", defaultToken)
+	if filesResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(filesResp.Body)
+		filesResp.Body.Close()
+		t.Fatalf("files status = %d body=%s", filesResp.StatusCode, body)
+	}
+	files := decodeJSONArray(t, filesResp)
+	if len(files) != 1 || files[0]["filename"] != "fork-change.txt" {
+		t.Fatalf("files = %v, want fork-change.txt", files)
+	}
+
+	gql := gqlData(t, `query($owner:String!,$name:String!){
+		repository(owner:$owner,name:$name){
+			pullRequest(number:1){
+				headRefName
+				headRepository{nameWithOwner}
+				headRepositoryOwner{login}
+				isCrossRepository
+				maintainerCanModify
+				files(first:10){totalCount nodes{path}}
+				commits(first:10){totalCount nodes{commit{oid}}}
+			}
+		}
+	}`, map[string]interface{}{"owner": "admin", "name": sourceName})
+	repoData, _ := gql["repository"].(map[string]interface{})
+	prData, _ := repoData["pullRequest"].(map[string]interface{})
+	if prData["isCrossRepository"] != true {
+		t.Fatalf("isCrossRepository = %v, want true", prData["isCrossRepository"])
+	}
+	if prData["maintainerCanModify"] != true {
+		t.Fatalf("maintainerCanModify = %v, want true", prData["maintainerCanModify"])
+	}
+	gqlHeadRepo, _ := prData["headRepository"].(map[string]interface{})
+	if gqlHeadRepo == nil || gqlHeadRepo["nameWithOwner"] != "pr-forker/"+sourceName {
+		t.Fatalf("GraphQL headRepository = %v", prData["headRepository"])
+	}
+	gqlHeadOwner, _ := prData["headRepositoryOwner"].(map[string]interface{})
+	if gqlHeadOwner == nil || gqlHeadOwner["login"] != "pr-forker" {
+		t.Fatalf("GraphQL headRepositoryOwner = %v", prData["headRepositoryOwner"])
+	}
+	gqlFiles, _ := prData["files"].(map[string]interface{})
+	if gqlFiles["totalCount"] != float64(1) {
+		t.Fatalf("GraphQL files = %v, want one changed file", gqlFiles)
+	}
+	gqlCommits, _ := prData["commits"].(map[string]interface{})
+	if gqlCommits["totalCount"] != float64(1) {
+		t.Fatalf("GraphQL commits = %v, want one commit", gqlCommits)
+	}
+
+	beforeMergeSHA := resolveBranchSha(testServer.store.GetGitStorage("admin", sourceName), "main")
+	mergeResp := ghPut(t, "/api/v3/repos/admin/"+sourceName+"/pulls/1/merge", defaultToken, map[string]interface{}{
+		"merge_method": "merge",
+	})
+	if mergeResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(mergeResp.Body)
+		mergeResp.Body.Close()
+		t.Fatalf("merge status = %d body=%s", mergeResp.StatusCode, body)
+	}
+	mergeResp.Body.Close()
+	baseSHA := resolveBranchSha(testServer.store.GetGitStorage("admin", sourceName), "main")
+	if baseSHA == "" || baseSHA == beforeMergeSHA {
+		t.Fatalf("base branch did not advance after fork pull request merge: %q", baseSHA)
 	}
 }
 
@@ -588,6 +716,17 @@ func TestGraphQLListPullRequests(t *testing.T) {
 	tc, _ := prs["totalCount"].(float64)
 	if tc < 2 {
 		t.Fatalf("expected totalCount >= 2, got %v", tc)
+	}
+}
+
+func TestGraphQLPullRequestConverterDoesNotReenterStoreForGitStorage(t *testing.T) {
+	src, err := os.ReadFile("gh_pulls_graphql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(src)
+	if strings.Contains(body, "pullRequestCommitObjects(st,") || strings.Contains(body, "pullRequestCommitObjects(s.store,") {
+		t.Fatal("pull request GraphQL conversion must not call store-locking commit helpers while rendering under Store.mu")
 	}
 }
 
@@ -1469,5 +1608,108 @@ func TestPullRequestFilesREST(t *testing.T) {
 	}
 	if patch, _ := greeting["patch"].(string); !strings.Contains(patch, "@@") {
 		t.Errorf("greeting.txt patch missing hunk header: %q", patch)
+	}
+}
+
+func TestPullRequestGraphQLFilesAndClosingIssuesUseRealState(t *testing.T) {
+	repoName := "pr-graphql-files-closing"
+	repoPath := "/api/v3/repos/admin/" + repoName
+	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": repoName, "auto_init": true,
+	}).Body.Close()
+
+	issueResp := ghPost(t, repoPath+"/issues", defaultToken, map[string]interface{}{
+		"title": "release blocker",
+		"body":  "tracked by the pull request body",
+	})
+	issue := decodeJSON(t, issueResp)
+	if issue["number"] != float64(1) {
+		t.Fatalf("issue number = %v, want 1", issue["number"])
+	}
+
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "seed greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello\n")),
+		"branch":  "main",
+	}).Body.Close()
+	gResp := ghGet(t, repoPath+"/contents/greeting.txt?ref=main", defaultToken)
+	gData := decodeJSON(t, gResp)
+	blobSha, _ := gData["sha"].(string)
+	if blobSha == "" {
+		t.Fatalf("base blob sha missing: %v", gData)
+	}
+	refResp := ghGet(t, repoPath+"/git/refs/heads/main", defaultToken)
+	refData := decodeJSON(t, refResp)
+	mainObj, _ := refData["object"].(map[string]interface{})
+	mainSha, _ := mainObj["sha"].(string)
+	if mainSha == "" {
+		t.Fatalf("main ref sha missing: %v", refData)
+	}
+	ghPost(t, repoPath+"/git/refs", defaultToken, map[string]interface{}{
+		"ref": "refs/heads/feature", "sha": mainSha,
+	}).Body.Close()
+	ghPut(t, repoPath+"/contents/greeting.txt", defaultToken, map[string]interface{}{
+		"message": "change greeting",
+		"content": base64.StdEncoding.EncodeToString([]byte("hello there\n")),
+		"branch":  "feature",
+		"sha":     blobSha,
+	}).Body.Close()
+	ghPut(t, repoPath+"/contents/added.txt", defaultToken, map[string]interface{}{
+		"message": "add file",
+		"content": base64.StdEncoding.EncodeToString([]byte("brand new\n")),
+		"branch":  "feature",
+	}).Body.Close()
+
+	prResp := ghPost(t, repoPath+"/pulls", defaultToken, map[string]interface{}{
+		"title": "GraphQL files",
+		"head":  "feature",
+		"base":  "main",
+		"body":  "Fixes #1.",
+	})
+	prData := decodeJSON(t, prResp)
+	prNumber := int(prData["number"].(float64))
+
+	query := `query PullRequestFilesAndClosingIssues($owner:String!,$repo:String!,$number:Int!){
+		repository(owner:$owner,name:$repo){
+			pullRequest(number:$number){
+				files(first:10){totalCount,nodes{path,additions,deletions,changeType}}
+				closingIssuesReferences(first:10){totalCount,nodes{number,title},pageInfo{hasNextPage,endCursor}}
+			}
+		}
+	}`
+	d := gqlData(t, query, map[string]interface{}{"owner": "admin", "repo": repoName, "number": prNumber})
+	repo, _ := d["repository"].(map[string]interface{})
+	pr, _ := repo["pullRequest"].(map[string]interface{})
+	if pr == nil {
+		t.Fatalf("pullRequest null: %v", d)
+	}
+	files, _ := pr["files"].(map[string]interface{})
+	if files["totalCount"] != float64(2) {
+		t.Fatalf("files.totalCount = %v, want 2: %v", files["totalCount"], files)
+	}
+	fileNodes, _ := files["nodes"].([]interface{})
+	byPath := map[string]map[string]interface{}{}
+	for _, raw := range fileNodes {
+		node, _ := raw.(map[string]interface{})
+		path, _ := node["path"].(string)
+		byPath[path] = node
+	}
+	if byPath["added.txt"]["changeType"] != "ADDED" {
+		t.Fatalf("added.txt GraphQL file = %v, want ADDED", byPath["added.txt"])
+	}
+	if byPath["greeting.txt"]["changeType"] != "CHANGED" {
+		t.Fatalf("greeting.txt GraphQL file = %v, want CHANGED", byPath["greeting.txt"])
+	}
+	closing, _ := pr["closingIssuesReferences"].(map[string]interface{})
+	if closing["totalCount"] != float64(1) {
+		t.Fatalf("closingIssuesReferences.totalCount = %v, want 1: %v", closing["totalCount"], closing)
+	}
+	closingNodes, _ := closing["nodes"].([]interface{})
+	if len(closingNodes) != 1 {
+		t.Fatalf("closing issue nodes = %v, want 1", closingNodes)
+	}
+	closingIssue, _ := closingNodes[0].(map[string]interface{})
+	if closingIssue["number"] != float64(1) || closingIssue["title"] != "release blocker" {
+		t.Fatalf("closing issue = %v, want #1 release blocker", closingIssue)
 	}
 }

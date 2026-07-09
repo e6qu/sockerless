@@ -8,9 +8,9 @@
 [![GCP](https://img.shields.io/badge/GCP-Cloud_Run_|_GCF-4285F4?logo=googlecloud&logoColor=white)](#backends)
 [![Azure](https://img.shields.io/badge/Azure-ACA_|_AZF-0078D4?logo=microsoftazure&logoColor=white)](#backends)
 
-[![Go](https://img.shields.io/badge/Go-467.9k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
-[![TypeScript](https://img.shields.io/badge/TypeScript-53.7k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
-[![Tests](https://img.shields.io/badge/Tests-272k_lines-brightgreen)](#module-sizes)
+[![Go](https://img.shields.io/badge/Go-469k_lines-00ADD8?logo=go&logoColor=white)](#module-sizes)
+[![TypeScript](https://img.shields.io/badge/TypeScript-54k_lines-3178C6?logo=typescript&logoColor=white)](#module-sizes)
+[![Tests](https://img.shields.io/badge/Tests-272.9k_lines-brightgreen)](#module-sizes)
 [![Coverage](https://img.shields.io/badge/Core_Coverage-40%25-yellow)](#module-sizes)
 [![Modules](https://img.shields.io/badge/Go_Modules-46-informational)](#module-sizes)
 
@@ -112,7 +112,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 **Go**
 
 ![core](https://img.shields.io/badge/core-19.8k-00ADD8)
-![bleephub](https://img.shields.io/badge/bleephub-103.7k-00ADD8)
+![bleephub](https://img.shields.io/badge/bleephub-104.9k-00ADD8)
 ![bleeplab](https://img.shields.io/badge/bleeplab-2.7k-00ADD8)
 ![sim/aws](https://img.shields.io/badge/sim%2Faws-170.4k-00ADD8)
 ![sim/azure](https://img.shields.io/badge/sim%2Fazure-50.8k-00ADD8)
@@ -133,7 +133,7 @@ Local simulator APIs can also be fronted by the optional Caddy HTTPS gateway for
 
 ![ui/admin](https://img.shields.io/badge/ui%2Fadmin-8.5k-3178C6)
 ![ui/core](https://img.shields.io/badge/ui%2Fcore-3.7k-3178C6)
-![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-38.8k-3178C6)
+![ui/bleephub](https://img.shields.io/badge/ui%2Fbleephub-39.2k-3178C6)
 ![ui/bleeplab](https://img.shields.io/badge/ui%2Fbleeplab-799-3178C6)
 ![ui/sim-aws](https://img.shields.io/badge/ui%2Fsim--aws-247-6295D2)
 ![ui/sim-gcp](https://img.shields.io/badge/ui%2Fsim--gcp-228-6295D2)

@@ -227,18 +227,23 @@ func startHTTPSGateway(t *testing.T, env *Env, stateDir, simDir string, simPort 
 
 func waitForHealth(url string) error {
 	client := &http.Client{Timeout: 2 * time.Second}
-	for i := 0; i < 50; i++ {
+	deadline := time.Now().Add(30 * time.Second)
+	var lastErr error
+	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			resp.Body.Close()
 			return nil
 		}
 		if resp != nil {
+			lastErr = fmt.Errorf("status %d", resp.StatusCode)
 			resp.Body.Close()
+		} else if err != nil {
+			lastErr = err
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return fmt.Errorf("timeout waiting for %s", url)
+	return fmt.Errorf("timeout waiting for %s: %v", url, lastErr)
 }
 
 func waitForHTTPSHealth(raw string, client *http.Client) error {

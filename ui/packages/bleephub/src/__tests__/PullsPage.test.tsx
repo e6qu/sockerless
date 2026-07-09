@@ -74,6 +74,19 @@ function mockPRApis(overrides: (u: string, init?: RequestInit) => Response | und
     if (u.includes("/requested_reviewers")) return Promise.resolve(jsonResponse(emptyReviewers));
     if (u.endsWith("/api/v3/user")) return Promise.resolve(jsonResponse(viewer));
     if (u.endsWith("/pulls/9")) return Promise.resolve(jsonResponse(pr(9, "Feature PR")));
+    if (u.endsWith("/api/graphql")) {
+      return Promise.resolve(
+        jsonResponse({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: { nodes: [] },
+              },
+            },
+          },
+        }),
+      );
+    }
     return Promise.resolve(jsonResponse([]));
   });
 }
@@ -365,11 +378,38 @@ describe("PullsPage review comment threads", () => {
           reviewComment(12, { in_reply_to_id: 11, created_at: "2026-01-01T01:00:00Z" }),
         ]);
       }
-      if (u.endsWith("/internal/repos/admin/test/pulls/9/review-threads")) {
-        return jsonResponse([{ id: 11, isResolved: false, comments: [{ id: 11 }, { id: 12 }] }]);
-      }
-      if (u.endsWith("/review-threads/11/resolve") && init?.method === "POST") {
-        return jsonResponse({ id: 11, isResolved: true, comments: [{ id: 11 }, { id: 12 }] });
+      if (u.endsWith("/api/graphql") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body ?? "{}")) as { query?: string };
+        if (body.query?.includes("resolveReviewThread")) {
+          return jsonResponse({
+            data: {
+              resolveReviewThread: {
+                thread: {
+                  id: "PRT_kgDO00000011",
+                  isResolved: true,
+                  comments: { nodes: [{ databaseId: 11 }, { databaseId: 12 }] },
+                },
+              },
+            },
+          });
+        }
+        return jsonResponse({
+          data: {
+            repository: {
+              pullRequest: {
+                reviewThreads: {
+                  nodes: [
+                    {
+                      id: "PRT_kgDO00000011",
+                      isResolved: false,
+                      comments: { nodes: [{ databaseId: 11 }, { databaseId: 12 }] },
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        });
       }
       if (u.endsWith("/pulls/9/comments") && init?.method === "POST") {
         return jsonResponse(reviewComment(13, { in_reply_to_id: 11 }), 201);
@@ -389,7 +429,21 @@ describe("PullsPage review comment threads", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^resolve$/i }));
     await waitFor(() => {
-      expect(findCall("/review-threads/11/resolve", "POST")).toBeDefined();
+      const graphQLCalls = mockFetch.mock.calls.filter(
+        ([url, init]) => url.toString().endsWith("/api/graphql") && (init as RequestInit | undefined)?.method === "POST",
+      );
+      expect(
+        graphQLCalls.some(([, init]) => {
+          const body = JSON.parse(String((init as RequestInit).body ?? "{}")) as {
+            query?: string;
+            variables?: { input?: { threadId?: string } };
+          };
+          return (
+            body.query?.includes("resolveReviewThread") &&
+            body.variables?.input?.threadId === "PRT_kgDO00000011"
+          );
+        }),
+      ).toBe(true);
     });
   });
 

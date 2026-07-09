@@ -1,10 +1,10 @@
 # bleephub ↔ GitHub API signature parity
 
-Status: **Phase 155 in progress on branch `feat/bleephub-full-api-ui-parity`**. Original audit date: 2026-05-12; refreshed 2026-07-02.
+Status: **active parity ratchet on branch `feat/bleephub-faithful-app-runner-flows`**. Original audit date: 2026-05-12; refreshed 2026-07-09.
 
 > **Goal:** every bleephub HTTP endpoint matches real GitHub's path + request shape + response shape exactly, modulo base domain. A client built against GitHub or GitHub Enterprise Server (GHES) should round-trip against bleephub by swapping the base URL only.
 
-This doc is the audit artifact + acceptance criteria. Current coverage against the vendored GitHub OpenAPI description: **665 / 1,190 operations registered (56%)**; **595 operations remain unimplemented**.
+This doc is the audit artifact + acceptance criteria. The current `/api/v3` route-shape ratchet is `TestRegisteredAPIv3RoutesExistInGitHubSpec`, backed by `bleephub/testdata/github-openapi.json.gz`; it passes on this branch and rejects any served GitHub REST route that is not in the vendored GitHub OpenAPI description, an explicit GitHub Enterprise Server-only allowlist, or a documented dispatch ambiguity. Response-shape fidelity is guarded separately by the OpenAPI response observer.
 
 ## Base-URL convention
 
@@ -24,7 +24,8 @@ Rationale: the official `actions/runner` is GHES-aware (`/_apis/` is a GHES path
 |---|---|---|---|
 | 153 | shipped | GitHub Apps, OAuth apps, webhooks, checks, auth, repos, issues, pulls, gists, users, orgs, GraphQL compatibility | ~300 |
 | 154 | shipped | Reactions, releases, deployments, environments, PR review comments, PR threads, users extras, OIDC, Pages, branch protection, org audit log, marketplace | +~120 |
-| 155 | in progress | Teams, issue management, PR reviews, Git data writes, release assets, repo settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runners, gist extras, users extras, notifications | +~122 net |
+| 155 | shipped | Teams, issue management, PR reviews, Git data writes, release assets, repo settings, org rulesets, Dependabot org/repo, secret scanning org/repo, security advisories, Actions permissions/runners, gist extras, users extras, notifications | +~122 net |
+| 156+ | shipped | Remaining vendored GitHub REST operations, Bleephub user-interface parity pages, GitHub Actions runner/service fidelity, object-storage-backed git/artifact/cache/log bytes, GitHub App Manifest and browser installation flows, OAuth login/consent flow, Projects v2 GraphQL field values and connections, issue types/fields/sub-issues, Pages build fidelity, CodeQL/package/registry byte paths, and public user-facing paths moved away from operator-only internals | full vendored REST surface registered |
 
 ## Phase 155 surfaces shipped
 
@@ -55,40 +56,9 @@ The following were implemented during Phase 155 but removed before final validat
 
 The `allowedBleephubExtensions` escape hatch in `gh_api_definition_test.go` was also removed; the API-definition ratchet now enforces only real GitHub paths plus the documented GHES-only allowlist and dispatch routes.
 
-## Remaining gap inventory (595 operations)
+## Remaining gap inventory
 
-Grouped by surface. These are tracked for future phases.
-
-### Enterprise / admin
-
-- Enterprise teams, enterprise code security, enterprise copilot metrics/policies, enterprise dependabot alerts.
-- Organization roles / custom repository roles.
-- Billing / budgets / network configurations / private registries.
-- Attestations, agent tasks.
-
-### Classroom / education
-
-- Classrooms, assignments, grades.
-
-### Copilot
-
-- Copilot billing, seats, metrics, content exclusion, coding agent permissions, spaces.
-
-### Marketplace
-
-- Marketplace listing accounts and stubbed plans.
-
-### Misc novelty
-
-- `/events`, `/feeds`, `/emojis`, `/octocat`, `/zen`, `/versions`, `/codes_of_conduct`.
-
-### Already substantial but not exhaustive
-
-- Teams: invitations, project assignments, team discussions (legacy).
-- Actions: hosted runners, agent secrets/variables, concurrency groups.
-- Security: code security configurations (shape-only), org-level Dependabot repository-access, security managers.
-- Users: full user profile management, email visibility.
-- Gists: more exhaustive history/revision handling.
+The stale Phase 155 operation inventory was retired after the full vendored REST surface was registered. New gaps are tracked as concrete `BUGS.md` entries before implementation. Current known Bleephub-relevant gaps are not operation-registration gaps: live-cloud validation (BUG-1075) and any newly discovered semantic or data-plane drift found by the ratchets, SDK/CLI tests, user-interface tests, or real consumers.
 
 ## Semantic gaps
 

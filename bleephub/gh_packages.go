@@ -11,6 +11,13 @@ import (
 )
 
 func (s *Server) registerGHPackagesRoutes() {
+	// GitHub Container Registry-compatible OCI/Docker Registry HTTP API v2.
+	s.route("GET /v2/{rest...}", s.handleContainerRegistry)
+	s.route("HEAD /v2/{rest...}", s.handleContainerRegistry)
+	s.route("POST /v2/{rest...}", s.handleContainerRegistry)
+	s.route("PATCH /v2/{rest...}", s.handleContainerRegistry)
+	s.route("PUT /v2/{rest...}", s.handleContainerRegistry)
+
 	// Authenticated-user scoped
 	s.route("GET /api/v3/user/packages", s.handleListAuthUserPackages)
 	s.route("GET /api/v3/user/packages/{package_type}/{package_name}", s.handleGetAuthUserPackage)

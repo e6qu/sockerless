@@ -32,72 +32,97 @@ function renderPage() {
   );
 }
 
-// - Workflows (files) — backed by GET /internal/workflow_files
-// - Runs           — backed by GET /internal/workflows
+const reposData = [
+  {
+    id: 1,
+    name: "test",
+    full_name: "admin/test",
+    default_branch: "main",
+    owner: { login: "admin", type: "User" },
+  },
+];
+
 const workflowFilesData = [
   {
     id: 1234,
     name: "CI Build",
     path: ".github/workflows/ci.yml",
     state: "active",
-    repoFullName: "admin/test",
-    source: "submitted",
-    createdAt: "2026-01-01T00:00:00Z",
-    updatedAt: "2026-01-01T00:00:00Z",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    badge_url: "http://localhost/admin/test/actions/workflows/ci.yml/badge.svg",
   },
 ];
 
 const workflowRunsData = [
   {
-    id: "wf-1",
+    id: 1,
     name: "CI Build",
-    runId: 1,
-    status: "running",
-    result: "",
-    createdAt: "2026-01-01T00:00:00Z",
-    eventName: "push",
-    repoFullName: "admin/test",
-    jobs: {
-      build: {
-        key: "build",
-        jobId: "j1",
-        displayName: "Build",
-        status: "running",
-        result: "",
-        startedAt: "2026-01-01T00:00:01Z",
-        completedAt: "0001-01-01T00:00:00Z",
-      },
-    },
+    run_number: 1,
+    run_attempt: 1,
+    event: "push",
+    status: "in_progress",
+    conclusion: null,
+    head_branch: "main",
+    head_sha: "abc",
+    path: ".github/workflows/ci.yml",
+    workflow_id: 1234,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    actor: { login: "admin" },
   },
-  // A run held on an environment-approval gate — server status "waiting".
   {
-    id: "wf-2",
+    id: 2,
     name: "Deploy",
-    runId: 2,
+    run_number: 2,
+    run_attempt: 1,
+    event: "workflow_dispatch",
     status: "waiting",
-    result: "",
-    createdAt: "2026-01-01T01:00:00Z",
-    eventName: "workflow_dispatch",
-    repoFullName: "admin/test",
-    jobs: {
-      deploy: {
-        key: "deploy",
-        jobId: "j2",
-        displayName: "Deploy",
-        status: "waiting",
-        result: "",
-        startedAt: "0001-01-01T00:00:00Z",
-        completedAt: "0001-01-01T00:00:00Z",
-      },
-    },
+    conclusion: null,
+    head_branch: "main",
+    head_sha: "def",
+    path: ".github/workflows/deploy.yml",
+    workflow_id: 5678,
+    created_at: "2026-01-01T01:00:00Z",
+    updated_at: "2026-01-01T01:00:00Z",
+    actor: { login: "admin" },
   },
 ];
 
-// Route the mocked fetch by URL so the two tabs see distinct payloads.
+const jobsData = [
+  {
+    id: 101,
+    run_id: 1,
+    name: "build",
+    status: "in_progress",
+    conclusion: null,
+    started_at: "2026-01-01T00:00:01Z",
+    completed_at: null,
+    steps: [],
+    labels: ["self-hosted"],
+    run_attempt: 1,
+  },
+  {
+    id: 102,
+    run_id: 2,
+    name: "deploy",
+    status: "waiting",
+    conclusion: null,
+    started_at: null,
+    completed_at: null,
+    steps: [],
+    labels: ["self-hosted"],
+    run_attempt: 1,
+  },
+];
+
 function routedFetch(url: RequestInfo | URL): Promise<Response> {
   const u = typeof url === "string" ? url : url.toString();
-  if (u.includes("/internal/workflow_files")) return Promise.resolve(jsonResponse(workflowFilesData));
-  if (u.includes("/internal/workflows")) return Promise.resolve(jsonResponse(workflowRunsData));
+  if (u.includes("/api/v3/user/repos")) return Promise.resolve(jsonResponse(reposData));
+  if (u.includes("/actions/workflows")) return Promise.resolve(jsonResponse({ total_count: 1, workflows: workflowFilesData }));
+  if (u.includes("/actions/runs/1/jobs")) return Promise.resolve(jsonResponse({ total_count: 1, jobs: [jobsData[0]] }));
+  if (u.includes("/actions/runs/2/jobs")) return Promise.resolve(jsonResponse({ total_count: 1, jobs: [jobsData[1]] }));
+  if (u.includes("/actions/runs")) return Promise.resolve(jsonResponse({ total_count: 2, workflow_runs: workflowRunsData }));
   return Promise.resolve(jsonResponse([]));
 }
 
@@ -130,7 +155,7 @@ describe("WorkflowsPage", () => {
       fireEvent.click(screen.getByText("Runs"));
     });
     await waitFor(() => {
-      expect(screen.getByText("running")).toBeInTheDocument();
+      expect(screen.getByText("in_progress")).toBeInTheDocument();
       expect(screen.getByText("push")).toBeInTheDocument();
     });
   });

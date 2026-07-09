@@ -47,13 +47,6 @@ func TestNoInventedGitHubNamespacePaths(t *testing.T) {
 		"POST /internal/exec/workflow",
 		"GET /internal/exec/workflows/{workflowId}",
 		"POST /internal/exec/workflows/{workflowId}/cancel",
-		"POST /internal/apps",
-		"POST /internal/apps/{app_id}/installations",
-		"POST /internal/installations/{id}/suspend",
-		"POST /internal/installations/{id}/unsuspend",
-		"DELETE /internal/installations/{id}",
-		"POST /internal/oauth-apps",
-		"GET /internal/oauth-apps",
 	} {
 		if !registered[want] {
 			t.Errorf("relocated sim-control route missing from registry: %q", want)
@@ -64,6 +57,21 @@ func TestNoInventedGitHubNamespacePaths(t *testing.T) {
 	for _, gone := range routes {
 		if strings.Contains(gone, "/api/v3/bleephub") {
 			t.Errorf("former invented path still registered: %q", gone)
+		}
+	}
+	for _, gone := range []string{
+		"GET /internal/apps",
+		"POST /internal/apps",
+		"POST /internal/apps/{app_id}/installations",
+		"GET /internal/installations",
+		"POST /internal/installations/{id}/suspend",
+		"POST /internal/installations/{id}/unsuspend",
+		"DELETE /internal/installations/{id}",
+		"POST /internal/oauth-apps",
+		"GET /internal/oauth-apps",
+	} {
+		if registered[gone] {
+			t.Errorf("legacy app-management route still registered: %q", gone)
 		}
 	}
 }

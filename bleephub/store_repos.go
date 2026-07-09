@@ -968,6 +968,16 @@ func (st *Store) GetGitStorage(owner, name string) gitStorage.Storer {
 	return st.GitStorages[owner+"/"+name]
 }
 
+func (st *Store) GitStorageForRepoID(repoID int) (gitStorage.Storer, string) {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+	repo := st.Repos[repoID]
+	if repo == nil {
+		return nil, ""
+	}
+	return st.GitStorages[repo.FullName], repo.FullName
+}
+
 // RepoSize returns the on-disk size of the repository's git storage in
 // kilobytes, matching GitHub's `size` field unit. For in-memory storage the
 // result is 0; for S3-backed storage the result is also 0 until a real

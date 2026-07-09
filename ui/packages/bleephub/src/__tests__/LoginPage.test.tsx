@@ -27,33 +27,40 @@ afterEach(() => {
 
 function submitToken(token: string) {
   render(<LoginPage />);
-  fireEvent.change(screen.getByLabelText(/admin token/i), { target: { value: token } });
+  fireEvent.change(screen.getByLabelText(/access token/i), { target: { value: token } });
   fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
 }
 
 describe("LoginPage", () => {
-  it("verifies against /internal/status and signs in on success", async () => {
-    mockFetch.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
+  it("verifies against GitHub REST identity and signs in on success", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ login: "octocat" }), { status: 200 }));
     submitToken("ghp_validpat");
     await waitFor(() => {
       expect(window.location.href).toBe("/ui/");
     });
-    // verification went to the operator surface the dashboard actually uses
     const [url, opts] = mockFetch.mock.calls[0];
-    expect(url.toString()).toBe("/internal/status");
+    expect(url.toString()).toBe("/api/v3/user");
     expect((opts.headers as Record<string, string>).Authorization).toBe("Bearer ghp_validpat");
     expect(getToken()).toBe("ghp_validpat");
   });
 
-  it("rejects a gho_ token at login with a PAT/admin-token message", async () => {
-    // /internal/* only accepts PATs — an OAuth token gets a 401 here even
-    // though /api/v3/user would have accepted it.
+  it("accepts an OAuth token when GitHub REST identity accepts it", async () => {
+    mockFetch.mockResolvedValue(new Response(JSON.stringify({ login: "octocat" }), { status: 200 }));
+    submitToken("gho_oauthtoken");
+    await waitFor(() => {
+      expect(window.location.href).toBe("/ui/");
+    });
+    expect(mockFetch.mock.calls[0][0].toString()).toBe("/api/v3/user");
+    expect(getToken()).toBe("gho_oauthtoken");
+  });
+
+  it("rejects a token when GitHub REST identity rejects it", async () => {
     mockFetch.mockResolvedValue(
       new Response(JSON.stringify({ message: "Requires authentication" }), { status: 401 }),
     );
-    submitToken("gho_oauthtoken");
+    submitToken("bad-token");
     await waitFor(() => {
-      expect(screen.getByText(/personal access token \(PAT\) or the admin token/i)).toBeInTheDocument();
+      expect(screen.getByText(/GitHub REST user endpoint/i)).toBeInTheDocument();
     });
     expect(window.location.href).toBe("");
     expect(getToken()).toBeNull();

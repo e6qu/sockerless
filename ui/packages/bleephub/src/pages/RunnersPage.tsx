@@ -19,7 +19,7 @@ const columns = [
   }),
   col.display({
     id: "agentId",
-    header: "Agent ID",
+    header: "Agent identifier",
     cell: (info) => (
       <span className="tabular-nums" style={{ color: "var(--color-fg-muted)" }}>
         {info.row.original.agent?.id ?? "—"}
@@ -60,7 +60,7 @@ const columns = [
     },
   }),
   col.accessor("sessionId", {
-    header: "Session ID",
+    header: "Session identifier",
     cell: (info) => (
       <span
         className="font-mono"
@@ -118,7 +118,7 @@ export function RunnersPage() {
         data={data}
         columns={columns}
         filterPlaceholder="Filter runners…"
-        emptyMessage="No runners connected. Start one with `actions/runner` pointing at this bleephub URL."
+        emptyMessage="No runners connected. Start a GitHub Actions runner pointing at this Bleephub endpoint URL."
       />
 
       <RegisteredRunnersSection />
@@ -127,11 +127,12 @@ export function RunnersPage() {
 }
 
 /**
- * GitHub-shape runner registry (GET .../actions/runners). The REST
- * endpoint is repo-scoped while bleephub registers agents globally, so
- * the section reads through the first repo's path — the server returns
- * the full registry for any repo. Hidden until a repo exists, because
- * without one there is no REST path to query.
+ * GitHub-shaped runner registry (GET .../actions/runners). The
+ * Representational State Transfer endpoint is repository-scoped while
+ * Bleephub registers agents globally, so the section reads through the first
+ * repository path. The server returns the full registry for any repository.
+ * Hidden until a repository exists, because without one there is no
+ * Representational State Transfer path to query.
  */
 function RegisteredRunnersSection() {
   const reposQ = useQuery({ queryKey: ["repos"], queryFn: fetchRepos });
