@@ -9,7 +9,7 @@ import (
 )
 
 // TestRDSCLI_Complete exercises the final RDS operations through the aws
-// CLI in one grouped round-trip (the appdata shard is already heavy):
+// CLI in one grouped round-trip (the appdata2 shard carries RDS):
 // custom DB engine versions, DB recommendations, DB snapshot tenant
 // databases, valid DB instance modifications, Serverless v1 cluster
 // capacity, option-group option membership (the CLI exposes the

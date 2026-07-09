@@ -10,7 +10,7 @@ import (
 // TestRDSCLI_StateAndGlobalCluster covers instance/cluster state
 // transitions (start/stop/failover, promote-read-replica) and the
 // Aurora global cluster family end-to-end through the aws CLI. Grouped
-// into one round-trip func (appdata shard is already heavy).
+// into one round-trip func (appdata2 carries RDS).
 func TestRDSCLI_StateAndGlobalCluster(t *testing.T) {
 	// --- DB instance start/stop ---
 	instID := "cli-state-pg-db"
@@ -132,8 +132,7 @@ func TestRDSCLI_StateAndGlobalCluster(t *testing.T) {
 // TestRDSCLI_EventSubParamDetailEndpoint covers event subscriptions,
 // parameter detail (describe/modify/reset), snapshot attribute sharing,
 // DB cluster endpoints, and copy-db-cluster-snapshot end-to-end through
-// the aws CLI. Grouped into one round-trip func (appdata shard is
-// already heavy).
+// the aws CLI. Grouped into one round-trip func (appdata2 carries RDS).
 func TestRDSCLI_EventSubParamDetailEndpoint(t *testing.T) {
 	// --- event subscription ---
 	subName := "cli-rds-events"

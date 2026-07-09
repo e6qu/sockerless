@@ -9,8 +9,7 @@ import (
 
 // TestRDSCLI_ClusterSnapshotAndParamGroup covers the DB cluster
 // snapshot and DB cluster parameter group families end-to-end through
-// the aws CLI. Grouped into one round-trip func (appdata shard is
-// already heavy).
+// the aws CLI. Grouped into one round-trip func (appdata2 carries RDS).
 func TestRDSCLI_ClusterSnapshotAndParamGroup(t *testing.T) {
 	clusterID := "cli-ext-aurora-cluster"
 	runCLI(t, awsCLI("rds", "create-db-cluster",

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2398 filed - 2355 fixed - 2 open - 16 false positives.**
+**2399 filed - 2356 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2399~~ | P2 | CI - AWS Command Line Interface simulator shards | appdata shard canceled before completing RDS coverage | The AWS CLI appdata shard accumulated enough CloudWatch/EventBridge/IAM/Kinesis/KMS/Lambda/ElastiCache/Organizations/RDS coverage that hosted-runner variance canceled it mid-RDS before the test command completed. CI now keeps the existing required check names and moves the Amazon Relational Database Service (RDS) CLI tests to the existing appdata2 shard, balancing appdata with appdata2 instead of adding or removing required jobs. |
 | ~~2398~~ | P2 | Bleephub REST repositories | repository permissions fabricated | REST repository JSON now derives `permissions.admin`, `permissions.push`, and `permissions.pull` from the authenticated viewer's real repository access, so owners, pull collaborators, and anonymous public readers see different permission objects. |
 | ~~2397~~ | P2 | Bleephub GraphQL repositories | generated repository template provenance hidden | Generated repositories now persist the source template repository ID from `POST /repos/{template_owner}/{template_repo}/generate`, and GraphQL `Repository.templateRepository` resolves that persisted source repository instead of returning null for every repository. |
 | ~~2396~~ | P2 | Bleephub repositories | archival transition time not modeled | Repository archival now records a persisted `ArchivedAt` timestamp when `PATCH /repos/{owner}/{repo}` archives a repository, clears it when the repository is unarchived, copies it to forks, and exposes it through GraphQL `Repository.archivedAt`. |
