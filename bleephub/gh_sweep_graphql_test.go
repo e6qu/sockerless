@@ -194,6 +194,12 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 	if relData["id"] == nil {
 		t.Fatalf("release create failed: %v", relData)
 	}
+	subResp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/subscription", defaultToken, map[string]interface{}{
+		"subscribed": true,
+	})
+	if subResp.StatusCode != http.StatusOK {
+		t.Fatalf("subscription create failed: %d", subResp.StatusCode)
+	}
 
 	// Field selections verbatim from api/query_builder.go RepositoryGraphQL.
 	query := `query($owner:String!,$name:String!){
@@ -239,8 +245,8 @@ func TestRepoGraphQL_ViewJSONStaticFields(t *testing.T) {
 		t.Errorf("forkCount = %v, want 0", repo["forkCount"])
 	}
 	watchers, _ := repo["watchers"].(map[string]interface{})
-	if watchers == nil || watchers["totalCount"].(float64) != 0 {
-		t.Errorf("watchers = %v, want totalCount 0", repo["watchers"])
+	if watchers == nil || watchers["totalCount"].(float64) != 1 {
+		t.Errorf("watchers = %v, want totalCount 1", repo["watchers"])
 	}
 	langs, _ := repo["languages"].(map[string]interface{})
 	if langs == nil {

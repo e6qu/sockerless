@@ -134,7 +134,6 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 		},
 	})
 	repoType.AddFieldConfig("watchers", &graphql.Field{
-		// gh selects watchers{totalCount}; no watch/subscribe feature → 0.
 		Type: graphql.NewObject(graphql.ObjectConfig{
 			Name: "RepoWatcherConnection",
 			Fields: graphql.Fields{
@@ -142,7 +141,15 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			},
 		}),
 		Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-			return map[string]interface{}{"totalCount": 0}, nil
+			r, ok := p.Source.(map[string]interface{})
+			if !ok {
+				return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+			}
+			repoID, ok := r["databaseId"].(int)
+			if !ok || repoID == 0 {
+				return nil, fmt.Errorf("repository watcher source missing databaseId")
+			}
+			return map[string]interface{}{"totalCount": len(s.store.ListRepoSubscribers(repoID))}, nil
 		},
 	})
 	repoType.AddFieldConfig("licenseInfo", &graphql.Field{
