@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -45,7 +46,8 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 		if !ref.Name().IsTag() {
 			return nil
 		}
-		if ref.Hash().IsZero() {
+		target := peelRepositoryTagTarget(stor, ref.Hash())
+		if target.IsZero() {
 			return nil
 		}
 		tagName := ref.Name().Short()
@@ -54,18 +56,39 @@ func (s *Server) handleListTags(w http.ResponseWriter, r *http.Request) {
 			"zipball_url": base + "/" + repo.FullName + "/legacy.zip/refs/tags/" + tagName,
 			"tarball_url": base + "/" + repo.FullName + "/legacy.tar.gz/refs/tags/" + tagName,
 			"commit": map[string]interface{}{
-				"sha": ref.Hash().String(),
-				"url": base + "/api/v3/repos/" + repo.FullName + "/commits/" + ref.Hash().String(),
+				"sha": target.String(),
+				"url": base + "/api/v3/repos/" + repo.FullName + "/commits/" + target.String(),
 			},
 			"node_id": nodeIDForTag(repo, tagName),
 		})
 		return nil
+	})
+	sort.Slice(tags, func(i, j int) bool {
+		return fmt.Sprint(tags[i]["name"]) < fmt.Sprint(tags[j]["name"])
 	})
 
 	if tags == nil {
 		tags = []map[string]interface{}{}
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, tags))
+}
+
+func peelRepositoryTagTarget(stor storer.EncodedObjectStorer, hash plumbing.Hash) plumbing.Hash {
+	if hash.IsZero() {
+		return plumbing.ZeroHash
+	}
+	seen := map[plumbing.Hash]bool{}
+	for {
+		if hash.IsZero() || seen[hash] {
+			return plumbing.ZeroHash
+		}
+		seen[hash] = true
+		tag, err := object.GetTag(stor, hash)
+		if err != nil {
+			return hash
+		}
+		hash = tag.Target
+	}
 }
 
 func nodeIDForTag(repo *Repo, tagName string) string {

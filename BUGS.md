@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2389 filed - 2346 fixed - 2 open - 16 false positives.**
+**2390 filed - 2347 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2390~~ | P2 | Bleephub repository tags | annotated tag object leaked as commit | `GET /api/v3/repos/{owner}/{repo}/tags` now peels annotated tag objects through real git storage before rendering `commit.sha` and `commit.url`; the regression creates both annotated and lightweight tags through the public Git Data API instead of accepting an empty tag list. |
 | ~~2389~~ | P3 | CI Bleephub check names | simulator shorthand on GitHub-compatible service checks | Bleephub continuous-integration checks and branch-protection required contexts now use fully qualified names (`Bleephub end-to-end`, `Bleephub GitHub software development kit`, `Bleephub GitHub command-line interface`, and `Bleephub GitHub Actions runner`) instead of `sim (bleephub ...)`, so GitHub-compatible service coverage is not mislabeled as a simulator job. |
 | ~~2388~~ | P2 | CI build-arm64 | under-budgeted required check | Required all-binary build jobs now have a ten-minute job and step budget, so hosted-runner variance does not cancel the amd64/arm64 build matrix at the five-minute boundary before it can prove the builds. |
 | ~~2387~~ | P2 | Bleephub pull requests | same-repository-only pull request model | Pull requests now persist the real head repository and maintainer-edit flag, so fork pull requests create from `owner:branch`, render REST/GraphQL head repository fields from the fork, derive commits/files from the fork git storage, emit fork-aware pull request webhook payloads, and merge by copying real fork git objects into the base repository before materializing the merge commit. |
