@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2434 filed - 2391 fixed - 2 open - 16 false positives.**
+**2437 filed - 2394 fixed - 2 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -17,6 +17,9 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2437~~ | P1 | Bleephub GitHub Actions workflow dispatch | `gh workflow run` rejected a real workflow ref | Workflow dispatch now resolves GitHub `ref` inputs as full refs, branch names, tag names, or raw commit SHAs, and the Bleephub `gh` command-line interface harness accepts `gh workflow run ci.yml --ref main`. |
+| ~~2436~~ | P3 | Bleephub command-line interface docs | stale required check name | The Bleephub `gh` command-line interface documentation now named the actual required `Bleephub GitHub command-line interface` CI job. |
+| ~~2435~~ | P1 | Docker-backed integration harnesses | Docker frontend-specific local image loading | Docker-backed Make targets now used a shared local-image build helper that runs `docker buildx build --load` when Buildx is available and legacy `docker build` otherwise, so Docker Engine and Podman-compatible runtimes both loaded the required harness images. |
 | ~~2434~~ | P2 | Bleephub pre-commit coverage | stale temporary local Docker skip | The local Bleephub Go pre-commit hook again ran the full Bleephub suite after the Docker-compatible runtime returned, and the temporary non-Docker skip script was removed. |
 | ~~2433~~ | P3 | Bleephub runner integration harness | simulator credentials described as fake | The Bleephub runner integration harness now described generated Google service-account credentials as simulator coordinates instead of fake credentials, matching the real JWT signing and token-exchange flow it exercised. |
 | ~~2432~~ | P1 | Bleephub GitHub Apps seed configuration | implicit admin-owned identities | GitHub App seed configuration no longer defaulted the app owner to `admin` or auto-created unknown installation organizations; seed owners and installation accounts had to name real existing users or organizations. |

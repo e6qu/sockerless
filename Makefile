@@ -34,6 +34,14 @@
 include make/help.mk
 include make/colors.mk
 
+define docker_build_local
+	@if docker buildx version >/dev/null 2>&1; then \
+		docker buildx build --load $(1); \
+	else \
+		docker build $(1); \
+	fi
+endef
+
 # ── Apps — explicit lists (not glob) ────────────────────────────────
 #
 # When a new app lands, add it to one of these lists. The fan-out and
@@ -211,13 +219,13 @@ check-backend-coverage-enforce: ; @cd tools/check-backend-coverage && GOWORK=off
 # The host Docker socket mount is required: the simulator executes
 # workloads on the host daemon.
 smoke-test-ecs:
-	docker build --load -t sockerless-smoke-ecs -f smoke-tests/Dockerfile.ecs .
+	$(call docker_build_local,-t sockerless-smoke-ecs -f smoke-tests/Dockerfile.ecs .)
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-ecs
 smoke-test-cloudrun:
-	docker build --load -t sockerless-smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .
+	$(call docker_build_local,-t sockerless-smoke-cloudrun -f smoke-tests/Dockerfile.cloudrun .)
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-cloudrun
 smoke-test-aca:
-	docker build --load -t sockerless-smoke-aca -f smoke-tests/Dockerfile.aca .
+	$(call docker_build_local,-t sockerless-smoke-aca -f smoke-tests/Dockerfile.aca .)
 	docker run --rm --security-opt label=disable -v /var/run/docker.sock:/var/run/docker.sock sockerless-smoke-aca
 smoke-test-all: smoke-test-ecs smoke-test-cloudrun smoke-test-aca
 
@@ -376,7 +384,7 @@ upstream-test-gcl-all:
 .PHONY: bleephub-gh-docker-test
 bleephub-gh-docker-test:
 	@printf "$(COLOR_CYAN)▸ Building bleephub gh-test image…$(COLOR_RESET)\n"
-	@docker build --load -f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .
+	$(call docker_build_local,-f bleephub/Dockerfile.gh-test -t bleephub-gh-test:local .)
 	@printf "$(COLOR_CYAN)▸ Running gh CLI parity harness…$(COLOR_RESET)\n"
 	@docker run --rm bleephub-gh-test:local
 
@@ -395,7 +403,7 @@ bleephub-gh-docker-test:
 .PHONY: bleephub-runner-docker-build
 bleephub-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleephub runner-integration image…$(COLOR_RESET)\n"
-	@docker build --load -f bleephub/Dockerfile -t bleephub-runner-int:local .
+	$(call docker_build_local,-f bleephub/Dockerfile -t bleephub-runner-int:local .)
 
 # $(1) = backend (ecs|aca|cloudrun). $(2) = the sim's in-container HTTP
 # port, published to the host engine at 127.0.0.1:5000 so the overlay
@@ -448,7 +456,7 @@ bleephub-runner-docker-test-gcf: bleephub-runner-docker-build bleephub-sim-regis
 .PHONY: bleeplab-runner-docker-build
 bleeplab-runner-docker-build:
 	@printf "$(COLOR_CYAN)▸ Building bleeplab runner-integration image…$(COLOR_RESET)\n"
-	@docker build --load -f bleeplab/Dockerfile -t bleeplab-runner-int:local .
+	$(call docker_build_local,-f bleeplab/Dockerfile -t bleeplab-runner-int:local .)
 
 # $(1)=backend, $(2)=sim port. Publishes the sim's /v2/ registry at
 # 127.0.0.1:5000 so the overlay build→push→pull (cloudrun) reaches it; ECS

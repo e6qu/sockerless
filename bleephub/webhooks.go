@@ -417,6 +417,39 @@ func resolveRefSha(stor gitStorage.Storer, ref string) string {
 	return zeroSha
 }
 
+// resolveGitHubRefInput resolves a GitHub API `ref` input. Public endpoints
+// accept the same forms real GitHub accepts: full refs, branch names, tag
+// names, and raw commit SHAs. The returned ref is normalized when a branch or
+// tag name resolves; unresolved inputs stay fail-loud through the zero SHA.
+func resolveGitHubRefInput(stor gitStorage.Storer, ref string) (string, string) {
+	const zeroSha = "0000000000000000000000000000000000000000"
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return ref, zeroSha
+	}
+	candidates := []string{ref}
+	if !strings.HasPrefix(ref, "refs/") {
+		candidates = append(candidates,
+			plumbing.NewBranchReferenceName(ref).String(),
+			plumbing.NewTagReferenceName(ref).String(),
+		)
+	}
+	for _, candidate := range candidates {
+		if sha := resolveRefSha(stor, candidate); sha != zeroSha {
+			return candidate, sha
+		}
+	}
+	if len(ref) == 40 {
+		if _, err := hex.DecodeString(ref); err == nil {
+			hash := plumbing.NewHash(ref)
+			if _, err := stor.EncodedObject(plumbing.CommitObject, hash); err == nil {
+				return ref, ref
+			}
+		}
+	}
+	return ref, zeroSha
+}
+
 func splitRepoKeyParts(repoKey string) [2]string {
 	for i, c := range repoKey {
 		if c == '/' {
