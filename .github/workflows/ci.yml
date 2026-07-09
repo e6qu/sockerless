@@ -761,7 +761,7 @@ jobs:
 
   build-amd64:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0
@@ -770,7 +770,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Build all binaries (amd64)
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           GOWORK: "off"
         run: |
@@ -797,7 +797,7 @@ jobs:
 
   build-arm64:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7.0.0
       - uses: actions/setup-go@v6.5.0
@@ -806,7 +806,7 @@ jobs:
           cache: true
           cache-dependency-path: ${{ env.GO_CACHE_DEPENDENCY_PATHS }}
       - name: Cross-compile all binaries (arm64)
-        timeout-minutes: 5
+        timeout-minutes: 10
         env:
           GOOS: linux
           GOARCH: arm64
