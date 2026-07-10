@@ -4,31 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2456.
+`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457.
 
-The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
+This branch started from the merged #783 baseline and fixed the next persistence class issue found while continuing the Bleephub sweep.
 
-The newest fixes moved user administration, audit-log viewing, OAuth flow controls, and the operations dashboard off operator-only routes, then tied browser login and OAuth client exchange to real stored credential sources. Bleephub now exposes GitHub Enterprise Server user administration routes for list/create/delete/site-admin/suspension flows, persists account suspension state, rejects suspended user tokens with `403`, and the UI helpers call the public GitHub routes. The audit-log page now reads organization audit logs from `/api/v3/orgs/{org}/audit-log` with GitHub's phrase/order query model, and the server honors ascending audit-log order. The OAuth page now starts web/device flows and polls device tokens through GitHub OAuth endpoints instead of reading `/internal/oauth/state`. Browser sessions now require a stored personal access token for the submitted account, suspended accounts cannot sign in through `/login`, OAuth web/device flows require registered OAuth App or GitHub App clients with web-flow client-secret validation, and the UI sends the user-entered registered client identifier on each OAuth flow request. The overview and metrics pages now derive workflow-run, job, and runner counts from public repository Actions REST routes instead of `/internal/metrics` or `/internal/status`, and the storage-coordinate route was removed from the user-facing UI. Playwright end-to-end coverage now expects the public GitHub Actions metrics labels and injects Operations-console failures on `/api/v3/user/repos`, matching the public aggregate path. Hook-discovered stale coverage was also fixed: a repo-scoped Actions fixture now creates a real git ref, GitHub Enterprise Server-only route coverage is allowlisted explicitly, old runner-session UI types were removed, the local Bleephub Go pre-commit hook again ran the full Bleephub suite after Docker compatibility returned, pre-push dependency freshness passed after stale AWS and Google Cloud Go module pins were upgraded, GitHub App seed configuration required explicit real owner and installation accounts instead of defaulting or creating admin-owned identities, the runner harness described generated Google Cloud service-account credentials as simulator endpoint coordinates for the real JWT exchange flow, Docker-backed Make targets loaded local images correctly with either Buildx or legacy Docker builders, the `gh` command-line interface docs named the real required CI job, GitHub Actions workflow dispatch accepted GitHub `ref` inputs such as `main` by resolving branches, tags, full refs, and raw commit SHAs through git storage, the UI production bundle now lazy-loads route pages with explicit vendor chunks, and GraphQL `Release.immutable` now uses the persisted immutable-release state already exposed through REST. Incidental AWS simulator CI hardening also landed: Amazon SQS `ReceiveMessage` now honors `WaitTimeSeconds` and validates the real 0-20 second range, and AWS Budgets requests record CloudTrail management events under `budgets.amazonaws.com`.
-
-GraphQL pull request status rollups now also exposed GitHub's count-by-state fields and Actions workflow-run links from persisted check-suite metadata.
-
-GitHub Actions workflow runs and archived attempts now persist in SQLite. On reload, non-terminal runs become completed/cancelled because runner dispatch state is process-local and cannot truthfully continue after a service restart.
-
-Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returned fail-loud GitHub API errors when secure randomness failed. Those paths no longer crashed the Bleephub process or left partially-created records behind a failed token/identifier generation.
-
-OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
-
-Fine-grained personal access token generation now used the same full-read entropy pattern as the other public credential paths. The token helper was injectable for failure coverage, and entropy failure returned a normal error without creating a partial token or grant-request record.
-
-Bleephub gists now persisted across SQLite-backed service reloads. Gists, gist comments, star state, fork links, revision history, comment counters, and sequence counters reload as real service state instead of existing only in memory.
-
-The Bleephub persistence loader comment now avoids a hand-maintained bucket inventory and points to the actual `loadBucket` registrations as the authoritative list.
-
-The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
-
-`/health` now reported the configured enterprise slug, and the Bleephub enterprise UI used that runtime coordinate for enterprise REST routes without falling back to the default slug. Instances configured with `BLEEPHUB_ENTERPRISE_SLUG` no longer had a correct API surface paired with a UI hardcoded to `/api/v3/enterprises/bleephub/...`.
-
-The Bleephub UI test setup now installed localStorage without touching Node's warning-producing localStorage getter, so Vitest no longer emitted the experimental localStorage warning before the setup shim ran.
+Repository deletion now purges the persisted child state that belongs to the deleted repository's issues and pull requests. Issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments are deleted with the repository instead of surviving a SQLite reload and attaching to later ID reuse.
 
 ## Continue Here
 
@@ -90,7 +70,7 @@ The Bleephub UI test setup now installed localStorage without touching Node's wa
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_WorkflowRunsAndAttempts|TestWorkflowRunsListNewestFirst|TestActionsRuns_(Get|Delete|Cancel)|TestActionsRunJobs_List|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs|TestApproveWorkflowRun_ReleasesGatedRun' -count=1` passed after workflow runs and archived attempts began persisting.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked|TestCreateGist|TestGitHubApp|TestOAuth|TestSecurityAdvisories|TestClassroom|TestActionsOIDC' -count=1` passed after public token and identifier entropy failures became returned errors.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the entropy failure-handling change.
-- `docker version` and `docker run --rm hello-world` passed with sandbox escalation against Docker CLI compatibility backed by Podman 6.0.1.
+- `docker version`, `docker ps`, and `docker run --rm alpine:3 true` passed with sandbox escalation against Docker CLI compatibility backed by Podman 6.0.1.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestOAuth(App|Check|Reset|Revoke|Scope)|TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked' -count=1` passed after OAuth App token management moved to returned entropy errors.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the OAuth App token-management entropy fix.
 - `make bleephub-gh-docker-test` passed with the Docker-compatible Podman runtime after the OAuth App token-management entropy fix.
@@ -104,7 +84,9 @@ The Bleephub UI test setup now installed localStorage without touching Node's wa
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1` passed after fine-grained personal access token generation moved onto a full-read entropy helper.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1` passed after gist/comment/star/fork state began persisting.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after gist/comment/star/fork state began persisting.
-- `make bleephub-gh-docker-test` passed with 117 checks and 0 failures against the Docker-compatible Podman runtime after the local Docker runtime returned.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1` passed after repository deletion began purging persisted issue and pull request child state.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the repository deletion cascade fix.
+- `make bleephub-gh-docker-test` passed with 117 checks and 0 failures against the Docker-compatible Podman runtime after the repository deletion cascade fix.
 
 ## Standing Gaps
 

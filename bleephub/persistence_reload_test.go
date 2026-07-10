@@ -262,6 +262,99 @@ func TestPersistenceReload_GistsCommentsStarsAndForks(t *testing.T) {
 	}
 }
 
+func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
+	var oldIssueID, oldPRID int
+
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(admin, "deleted-issue-children", "", false)
+		parent := st.CreateIssue(repo.ID, admin.ID, "parent", "", nil, nil, 0)
+		child := st.CreateIssue(repo.ID, admin.ID, "child", "", nil, nil, 0)
+		blocker := st.CreateIssue(repo.ID, admin.ID, "blocker", "", nil, nil, 0)
+		oldIssueID = parent.ID
+		if st.CreateComment(parent.ID, admin.ID, "stale issue comment") == nil {
+			t.Fatal("CreateComment returned nil")
+		}
+		if err := st.AddSubIssue(parent.ID, child.ID, false); err != nil {
+			t.Fatalf("AddSubIssue: %v", err)
+		}
+		if !st.AddIssueBlockedBy(parent.ID, blocker.ID) {
+			t.Fatal("AddIssueBlockedBy returned false")
+		}
+
+		now := time.Now().UTC()
+		st.mu.Lock()
+		pr := &PullRequest{
+			ID:          st.NextPR,
+			NodeID:      "PR_kgDOdelete",
+			Number:      repo.NextIssueNumber,
+			RepoID:      repo.ID,
+			Title:       "pull request",
+			State:       "OPEN",
+			HeadRefName: "feature",
+			HeadRepoID:  repo.ID,
+			BaseRefName: repo.DefaultBranch,
+			AuthorID:    admin.ID,
+			Mergeable:   "UNKNOWN",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			AssigneeIDs: []int{},
+			LabelIDs:    []int{},
+		}
+		st.NextPR++
+		repo.NextIssueNumber++
+		st.PullRequests[pr.ID] = pr
+		st.indexPullLocked(pr)
+		if st.persist != nil {
+			st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+		}
+		st.mu.Unlock()
+		oldPRID = pr.ID
+		if st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment") == nil {
+			t.Fatal("CreateCommentFor pull request returned nil")
+		}
+		if st.CreatePRReview(pr.ID, admin.ID, "APPROVED", "approved") == nil {
+			t.Fatal("CreatePRReview returned nil")
+		}
+		if st.PRReviewComments.CreateRootComment(pr.ID, admin.ID, "README.md", "review comment", "abc123", "RIGHT", 1, 0) == nil {
+			t.Fatal("CreateRootComment returned nil")
+		}
+		if !st.DeleteRepo("admin", repo.Name) {
+			t.Fatal("DeleteRepo returned false")
+		}
+	})
+
+	if len(st2.Comments) != 0 {
+		t.Fatalf("comments survived deleted repo reload: %#v", st2.Comments)
+	}
+	if len(st2.IssueEvents) != 0 {
+		t.Fatalf("issue events survived deleted repo reload: %#v", st2.IssueEvents)
+	}
+	if got := st2.ListSubIssues(oldIssueID); len(got) != 0 {
+		t.Fatalf("sub-issues survived deleted repo reload: %v", got)
+	}
+	if got := st2.ListIssueBlockedBy(oldIssueID); len(got) != 0 {
+		t.Fatalf("issue dependencies survived deleted repo reload: %v", got)
+	}
+	if len(st2.PRReviews) != 0 || len(st2.PRReviewsByPR) != 0 {
+		t.Fatalf("pull request reviews survived deleted repo reload: reviews=%#v byPR=%#v", st2.PRReviews, st2.PRReviewsByPR)
+	}
+	if got := st2.PRReviewComments.ListForPR(oldPRID); len(got) != 0 {
+		t.Fatalf("pull request review comments survived deleted repo reload: %#v", got)
+	}
+
+	admin := st2.UsersByLogin["admin"]
+	recreated := st2.CreateRepo(admin, "deleted-issue-children", "", false)
+	fresh := st2.CreateIssue(recreated.ID, admin.ID, "fresh", "", nil, nil, 0)
+	if fresh.ID != oldIssueID {
+		t.Fatalf("fixture did not reuse issue ID after reload: got %d want %d", fresh.ID, oldIssueID)
+	}
+	if got := st2.CountCommentsFor("issue", fresh.ID); got != 0 {
+		t.Fatalf("fresh issue inherited stale comment count = %d", got)
+	}
+}
+
 // G1: app credentials + webhook config survive a restart — JWT auth (PEM),
 // OAuth client-secret auth, and app webhook delivery config all depend on them.
 func TestPersistenceReload_AppCredentialsAndWebhookConfig(t *testing.T) {

@@ -260,6 +260,19 @@ func (s *PRReviewCommentStore) Delete(id int) bool {
 	return true
 }
 
+func (s *PRReviewCommentStore) DeleteForPR(prID int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, c := range s.byPR[prID] {
+		delete(s.byID, c.ID)
+		delete(s.threadRoots, c.ID)
+		if s.persist != nil {
+			s.persist.MustDelete("pr_review_comments", strconv.Itoa(c.ID))
+		}
+	}
+	delete(s.byPR, prID)
+}
+
 // ResolveThread flips the thread root's Resolved flag.
 func (s *PRReviewCommentStore) ResolveThread(threadID int, resolved bool) bool {
 	s.mu.Lock()

@@ -617,6 +617,19 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 			}
 		}
 	}
+	issueIDs := map[int]bool{}
+	for _, issue := range st.Issues {
+		if issue.RepoID == repo.ID {
+			issueIDs[issue.ID] = true
+		}
+	}
+	prIDs := map[int]bool{}
+	for _, pr := range st.PullRequests {
+		if pr.RepoID == repo.ID {
+			prIDs[pr.ID] = true
+		}
+	}
+	st.deleteRepoIssueAndPullChildrenLocked(repo.ID, issueIDs, prIDs)
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
 			delete(st.Issues, id)
@@ -699,6 +712,104 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	return true
+}
+
+func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prIDs map[int]bool) {
+	if len(issueIDs) == 0 && len(prIDs) == 0 {
+		return
+	}
+	for id, c := range st.Comments {
+		if (c.ParentType == "issue" && issueIDs[c.IssueID]) || (c.ParentType == "pull_request" && prIDs[c.IssueID]) {
+			delete(st.Comments, id)
+			delete(st.CommentCounts, commentCountKey(c.ParentType, c.IssueID))
+			if st.persist != nil {
+				st.persist.MustDelete("comments", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, e := range st.IssueEvents {
+		if e.RepoID == repoID || (e.ParentType == "issue" && issueIDs[e.IssueID]) || (e.ParentType == "pull_request" && prIDs[e.IssueID]) {
+			delete(st.IssueEvents, id)
+			if st.persist != nil {
+				st.persist.MustDelete("issue_events", strconv.Itoa(id))
+			}
+		}
+	}
+	for parentID, children := range st.SubIssueLists {
+		if issueIDs[parentID] {
+			for _, childID := range children {
+				delete(st.SubIssueParent, childID)
+			}
+			delete(st.SubIssueLists, parentID)
+			if st.persist != nil {
+				st.persist.MustDelete("sub_issues", strconv.Itoa(parentID))
+			}
+			continue
+		}
+		kept := children[:0]
+		changed := false
+		for _, childID := range children {
+			if issueIDs[childID] {
+				delete(st.SubIssueParent, childID)
+				changed = true
+				continue
+			}
+			kept = append(kept, childID)
+		}
+		if !changed {
+			continue
+		}
+		if len(kept) == 0 {
+			delete(st.SubIssueLists, parentID)
+		} else {
+			st.SubIssueLists[parentID] = kept
+		}
+		st.persistSubIssuesLocked(parentID)
+	}
+	for childID, parentID := range st.SubIssueParent {
+		if issueIDs[childID] || issueIDs[parentID] {
+			delete(st.SubIssueParent, childID)
+		}
+	}
+	for issueID, blockers := range st.IssueBlockedBy {
+		if issueIDs[issueID] {
+			delete(st.IssueBlockedBy, issueID)
+			if st.persist != nil {
+				st.persist.MustDelete("issue_blocked_by", strconv.Itoa(issueID))
+			}
+			continue
+		}
+		kept := blockers[:0]
+		changed := false
+		for _, blockerID := range blockers {
+			if issueIDs[blockerID] {
+				changed = true
+				continue
+			}
+			kept = append(kept, blockerID)
+		}
+		if !changed {
+			continue
+		}
+		if len(kept) == 0 {
+			delete(st.IssueBlockedBy, issueID)
+		} else {
+			st.IssueBlockedBy[issueID] = kept
+		}
+		st.persistBlockedByLocked(issueID)
+	}
+	for id, r := range st.PRReviews {
+		if prIDs[r.PRID] {
+			delete(st.PRReviews, id)
+			if st.persist != nil {
+				st.persist.MustDelete("pr_reviews", strconv.Itoa(id))
+			}
+		}
+	}
+	for prID := range prIDs {
+		delete(st.PRReviewsByPR, prID)
+		st.PRReviewComments.DeleteForPR(prID)
+	}
 }
 
 // ListForks returns all repositories whose ParentID or SourceID matches

@@ -4,9 +4,9 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-09 - Bleephub Actions Runtime Fidelity (`feat/bleephub-actions-runtime-fidelity`)
+## 2026-07-10 - Bleephub Repository Deletion Cascade (`feat/bleephub-repository-deletion-cascade`)
 
-This branch continued Bleephub's movement from compatibility-shaped behavior to a real GitHub Enterprise Server-compatible service.
+This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gap by making repository deletion purge issue and pull request child state.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 
@@ -100,6 +100,8 @@ Closed BUG-2455 by persisting Bleephub gist state in SQLite-backed service stora
 
 Closed BUG-2456 by replacing the stale Bleephub persistence bucket inventory comment with a pointer to the actual `loadBucket` registrations. The code no longer carried a duplicate manual list that drifted when durable state buckets changed.
 
+Closed BUG-2457 by making repository deletion purge the persisted child state attached to the deleted repository's issues and pull requests. Issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments no longer survived a SQLite reload or attached to a later repository that reused issue or pull request IDs.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -114,16 +116,18 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubComm
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestExistingRoutesUnaffected|TestGHApiRoot' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
 They passed with sandbox escalation for loopback listeners.
 
-Docker compatibility was available again through Podman 6.0.1, and a minimal container run passed:
+Docker compatibility was available again through Podman 6.0.1, container listing worked, and a minimal container run passed:
 
 ```bash
 docker version
-docker run --rm hello-world
+docker ps
+docker run --rm alpine:3 true
 ```
 
 The full Bleephub Go pre-commit test command passed after Docker compatibility returned:
@@ -154,7 +158,7 @@ make bleephub-gh-docker-test
 
 It passed again after the OAuth App token-management entropy fix, after the official-client organization provisioning fix, and after the runtime enterprise-coordinate fix, each time with 117 checks passing and 0 failing.
 
-It also passed after gist state became durable, with 117 checks passing and 0 failing.
+It also passed after gist state became durable and after repository deletion began purging persisted issue and pull request child state, with 117 checks passing and 0 failing.
 
 The focused Bleephub Playwright coverage for the public Actions metrics UI and error paths passed after rebuilding the embedded UI binary:
 

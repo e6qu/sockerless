@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2456 filed - 2412 fixed - 3 open - 16 false positives.**
+**2457 filed - 2413 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -14,10 +14,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
 
-## Fixed On Active Branch
+## Recently Fixed
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2457~~ | P1 | Bleephub repository deletion | deleted repositories left issue and pull request child state behind | Repository deletion now purges persisted issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments for the deleted repository. |
 | ~~2456~~ | P3 | Bleephub persistence docs | hand-maintained bucket inventory drifted from code | The persistence loader comment now points to the actual `loadBucket` registrations instead of duplicating a stale bucket list. |
 | ~~2455~~ | P1 | Bleephub gists | gist state lived only in memory | Gists, comments, stars, forks, histories, and counters now persist and reload from SQLite-backed service state. |
 | ~~2454~~ | P2 | Bleephub fine-grained personal access tokens | token generation bypassed the shared full-read entropy helper pattern | Fine-grained personal access token generation now uses an injectable full-read secure-random helper and has direct entropy-failure coverage. |
