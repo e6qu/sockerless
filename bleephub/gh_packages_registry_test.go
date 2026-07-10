@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -109,6 +110,18 @@ func TestPackageAndRegistryBytesUseObjectStore(t *testing.T) {
 	data, contentType, ok := s.packageVersionFileData(version.ID, "manifest.json")
 	if !ok || string(data) != "package object bytes" || contentType != "application/vnd.oci.image.manifest.v1+json" {
 		t.Fatalf("package file data ok=%v contentType=%q data=%q", ok, contentType, string(data))
+	}
+	s.registerGHPackagesRoutes()
+	req := httptest.NewRequest("GET", "/api/v3/users/admin/packages/container/object-package/versions/"+itoa(version.ID)+"/files/"+itoa(files[0].ID), nil)
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	rec := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download package object file status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	downloaded := rec.Body.Bytes()
+	if string(downloaded) != "package object bytes" {
+		t.Fatalf("downloaded package object bytes = %q", string(downloaded))
 	}
 
 	digest := digestSHA256([]byte("registry object bytes"))

@@ -1,12 +1,12 @@
 package bleephub
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 )
 
@@ -307,7 +307,7 @@ func (s *Server) handleDownloadUserPackageFile(w http.ResponseWriter, r *http.Re
 	if !ok || !s.canViewPackage(user, p) {
 		return
 	}
-	s.servePackageFile(w, f)
+	s.servePackageFile(w, r, f)
 }
 
 // ─── Authenticated-user scoped handlers ─────────────────────────────────
@@ -755,7 +755,7 @@ func (s *Server) handleDownloadOrgPackageFile(w http.ResponseWriter, r *http.Req
 	if !ok || !s.canViewPackage(user, p) {
 		return
 	}
-	s.servePackageFile(w, f)
+	s.servePackageFile(w, r, f)
 }
 
 // ─── Repo-scoped handlers ───────────────────────────────────────────────
@@ -896,7 +896,7 @@ func (s *Server) handleDownloadRepoPackageFile(w http.ResponseWriter, r *http.Re
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.servePackageFile(w, f)
+	s.servePackageFile(w, r, f)
 }
 
 // ─── Resolvers ──────────────────────────────────────────────────────────
@@ -1256,8 +1256,16 @@ func minimalRepoJSON(repo *Repo, st *Store, baseURL string) map[string]interface
 
 // ─── File serving ───────────────────────────────────────────────────────
 
-func (s *Server) servePackageFile(w http.ResponseWriter, f *PackageFile) {
-	data, err := os.ReadFile(f.StoragePath)
+func (s *Server) servePackageFile(w http.ResponseWriter, r *http.Request, f *PackageFile) {
+	var (
+		data []byte
+		err  error
+	)
+	if s.store.ObjectByteStore != nil {
+		data, err = s.store.ObjectByteStore.Get(r.Context(), f.StoragePath)
+	} else {
+		data, err = os.ReadFile(f.StoragePath)
+	}
 	if err != nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -1266,5 +1274,5 @@ func (s *Server) servePackageFile(w http.ResponseWriter, f *PackageFile) {
 	w.Header().Set("Content-Length", strconv.FormatInt(int64(len(data)), 10))
 	w.Header().Set("Content-Disposition", "attachment; filename=\""+f.Name+"\"")
 	w.WriteHeader(http.StatusOK)
-	io.Copy(w, strings.NewReader(string(data)))
+	_, _ = io.Copy(w, bytes.NewReader(data))
 }

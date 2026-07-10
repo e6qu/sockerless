@@ -4,6 +4,24 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-10 - Bleephub Object-Backed Service Bytes (`feat/bleephub-object-backed-service-bytes`)
+
+This branch continued from merged #785, which cleaned Codespace runtime/workspace state during repository deletion, hardened the AWS SDK simulator CI shard, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
+
+Closed BUG-2471 by extending the object-backed byte-storage contract to release assets and GitHub Packages. Release asset uploads, package version files, and GitHub Container Registry blobs now write through the configured S3-compatible object store when it is present; SQLite stores metadata and object keys. Persisted startup and local development documentation now describe `BLEEPHUB_OBJECT_S3_BUCKET` as the required store for all durable service bytes, and release asset object-delete failures surface through the API and repository deletion path instead of being ignored.
+
+Closed BUG-2472 by making public GitHub Packages file downloads read object-backed package file bytes. The metadata/listing path and the byte-serving path now use the same object storage source, so advertised package file REST URLs work for object-backed service bytes instead of looking only for local filesystem paths.
+
+Validation in this branch included:
+
+```bash
+bash -n scripts/bleephub-local-dev.sh
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistentServerStorageRequiresDurableGitAndObjectBytes|TestReleases_AssetBytesUseObjectStore|TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestReleases_AssetLifecycle|TestDeleteRepo' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestPackages_' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
+pre-commit run --all-files
+```
+
 ## 2026-07-10 - Bleephub Repository Codespace Cleanup (`feat/bleephub-repository-codespace-cleanup`)
 
 This branch continued from merged #784, which closed the broad Bleephub repository-deletion durable-state cascade for issue/pull request child state, repository-ID keyed rows, selected-repository references, deployment state, environment state, GitHub Pages deployment records, team grants, artifact metadata, source import records, dependency snapshots, SBOM exports, enterprise Dependabot repository-access IDs, labels, milestones, and reaction parent buckets.
@@ -13,8 +31,6 @@ Closed BUG-2468 by making repository deletion clean Codespace runtime state befo
 Closed BUG-2469 by hardening the `sim (aws sdk)` CI job against GitHub-hosted runner disk exhaustion. The job now frees regenerable Go/Docker/apt caches before the large AWS SDK simulator shard, runs the prebuilt SDK test binary directly, and passes the prebuilt simulator binary into the SDK test harness instead of rebuilding the simulator during execution.
 
 Closed BUG-2470 by making persisted Bleephub require object-backed GitHub Actions byte storage. Startup now refuses SQLite persistence unless the Actions artifact/cache/log byte store has been initialized from `BLEEPHUB_OBJECT_S3_BUCKET`, so a restarted service cannot advertise durable CI/CD records whose bytes lived only in memory or local files. The local development launcher fails loudly until object-store coordinates are supplied, and the persistence documentation now names the same requirement.
-
-Closed BUG-2471 by extending the object-backed byte-storage contract to release assets and GitHub Packages. Release asset uploads, package version files, and GitHub Container Registry blobs now write through the configured S3-compatible object store when it is present; SQLite stores the metadata and object keys. Persisted startup and local development documentation now describe `BLEEPHUB_OBJECT_S3_BUCKET` as the required store for all durable service bytes, and release asset object-delete failures surface through the API and repository deletion path instead of being ignored.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 

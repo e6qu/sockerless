@@ -4,15 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-codespace-cleanup` continued the Bleephub GitHub-fidelity work after merged #784. It fixed BUG-2468, BUG-2469, BUG-2470, and BUG-2471.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471 and BUG-2472.
 
-#784 made repository rename, transfer, deletion, and deployment deletion keep durable repository-owned state coherent across reload and later ID/name reuse. This branch picked up the next repository-deletion class: real Codespace runtime state attached to a deleted repository.
+#785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
-Repository deletion now also uses the same fail-loud Codespace runtime cleanup as direct Codespace deletion. Bleephub removes backing Codespace containers and workspace directories before deleting repository state, and public REST/GraphQL delete paths return an error without deleting the repository when required Codespace cleanup fails.
+This branch extended the same object-backed durable byte contract to release assets and GitHub Packages. Release asset uploads, package version files, and GitHub Container Registry blobs now write through the configured S3-compatible object store when it is present; SQLite stores metadata and object keys. Persisted startup and local development documentation require `BLEEPHUB_OBJECT_S3_BUCKET` for the full durable service-byte set: GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, and container-registry blobs.
 
-The branch also fixed the CI disk-pressure class that made `sim (aws sdk)` fail on GitHub-hosted runner diagnostics with `No space left on device`. The AWS SDK simulator job now frees regenerable Go/Docker/apt caches before the heavy shard, runs the prebuilt SDK test binary directly, and reuses the prebuilt simulator binary instead of rebuilding it during execution.
-
-Persisted Bleephub startup now requires initialized S3-compatible object storage for durable service bytes: GitHub Actions artifacts, dependency caches, runner logs, release assets, GitHub Packages files, and GitHub Container Registry blobs. SQLite remained the Bleephub metadata store, but persisted mode no longer accepted memory or local files as a durable byte backend. The local development launcher now fails loudly until `BLEEPHUB_OBJECT_S3_BUCKET` is configured, and the README documents the same requirement.
+The public GitHub Packages file download route now reads package file bytes from object storage when package files were stored there. Object-backed package files therefore work through the same REST download URL that listed package metadata advertises, instead of failing because the downloader looked only for a local filesystem path.
 
 ## Continue Here
 
@@ -110,6 +108,8 @@ Persisted Bleephub startup now requires initialized S3-compatible object storage
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the persisted Actions byte-store startup guard.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistentServerStorageRequiresDurableGitAndObjectBytes|TestReleases_AssetBytesUseObjectStore|TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestReleases_AssetLifecycle|TestDeleteRepo' -count=1` passed with sandbox escalation after release assets and package bytes moved to object storage.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the release/package object-storage change.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestPackages_' -count=1` passed with sandbox escalation after public package file downloads began reading object-backed package files.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the public package file download fix.
 
 ## Standing Gaps
 
