@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2466 filed - 2422 fixed - 3 open - 16 false positives.**
+**2467 filed - 2423 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2467~~ | P1 | Bleephub repository deletion | deleted repository labels, milestones, and reactions survived parent deletion | Repository deletion now removes repository-owned labels and milestones, plus reactions attached to deleted issue, pull request, comment, release, pull request review-comment, and commit-comment parents, from memory and SQLite. |
 | ~~2466~~ | P1 | Bleephub notifications | deleted issue/pull request and renamed repository notification state survived under old keys | Repository deletion now removes notification read/done/subscription state for deleted issue and pull request thread IDs, and repository rename/transfer moves repo-scoped notification read markers to the new full name. |
 | ~~2465~~ | P1 | Bleephub Projects v2 | deleted issue and pull request IDs remained in project item indexes | Repository deletion now removes Projects v2 items for deleted issues and pull requests, and project deletion clears its in-memory content indexes. |
 | ~~2464~~ | P1 | Bleephub repository deletion | deleted repository IDs and issue IDs remained in durable task, field-value, and CodeQL target state | Repository deletion now purges Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows for the deleted repository or its issues. |

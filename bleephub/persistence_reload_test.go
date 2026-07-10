@@ -279,8 +279,15 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		blocker := st.CreateIssue(repo.ID, admin.ID, "blocker", "", nil, nil, 0)
 		oldIssueID = parent.ID
 		now := time.Now().UTC()
-		if st.CreateComment(parent.ID, admin.ID, "stale issue comment") == nil {
+		issueComment := st.CreateComment(parent.ID, admin.ID, "stale issue comment")
+		if issueComment == nil {
 			t.Fatal("CreateComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("issue", parent.ID, admin.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction issue: %v", err)
+		}
+		if _, _, err := st.Reactions.AddReaction("issue_comment", issueComment.ID, admin.ID, "heart"); err != nil {
+			t.Fatalf("AddReaction issue comment: %v", err)
 		}
 		st.SetIssueFieldValues(parent.ID, map[int]interface{}{1: "High"})
 		st.MarkNotificationsRead(admin.ID, now, repo.FullName)
@@ -407,14 +414,25 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		st.MarkThreadDone(admin.ID, prThreadID)
 		st.SetThreadSubscription(admin.ID, prThreadID, &ThreadSubscription{Subscribed: true, Reason: "manual", CreatedAt: now})
 		st.ProjectsV2.AddItem(projectID, "PullRequest", pr.ID, admin.ID)
-		if st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment") == nil {
+		if _, _, err := st.Reactions.AddReaction("pull_request", pr.ID, admin.ID, "rocket"); err != nil {
+			t.Fatalf("AddReaction pull request: %v", err)
+		}
+		prComment := st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment")
+		if prComment == nil {
 			t.Fatal("CreateCommentFor pull request returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("pull_request_comment", prComment.ID, admin.ID, "eyes"); err != nil {
+			t.Fatalf("AddReaction pull request comment: %v", err)
 		}
 		if st.CreatePRReview(pr.ID, admin.ID, "APPROVED", "approved") == nil {
 			t.Fatal("CreatePRReview returned nil")
 		}
-		if st.PRReviewComments.CreateRootComment(pr.ID, admin.ID, "README.md", "review comment", "abc123", "RIGHT", 1, 0) == nil {
+		reviewComment := st.PRReviewComments.CreateRootComment(pr.ID, admin.ID, "README.md", "review comment", "abc123", "RIGHT", 1, 0)
+		if reviewComment == nil {
 			t.Fatal("CreateRootComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("pull_request_comment", reviewComment.ID, admin.ID, "hooray"); err != nil {
+			t.Fatalf("AddReaction pull request review comment: %v", err)
 		}
 		if !st.DeleteRepo(org.Login, repo.Name) {
 			t.Fatal("DeleteRepo returned false")
@@ -451,6 +469,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	}
 	if got := st2.PRReviewComments.ListForPR(oldPRID); len(got) != 0 {
 		t.Fatalf("pull request review comments survived deleted repo reload: %#v", got)
+	}
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("reactions survived deleted issue and pull request parents after reload: %d", got)
 	}
 	if len(st2.Attestations) != 0 {
 		t.Fatalf("attestations survived deleted repo reload: %#v", st2.Attestations)
@@ -516,6 +537,12 @@ func assertNotificationStateAbsent(t *testing.T, st *Store, login, repoKey strin
 			t.Fatalf("notification subscription survived for %s: %#v", threadID, state.Subscriptions)
 		}
 	}
+}
+
+func reactionStoreCount(st *Store) int {
+	st.Reactions.mu.RLock()
+	defer st.Reactions.mu.RUnlock()
+	return len(st.Reactions.byID)
 }
 
 func assertRepoIDAbsentFromCascadeLists(t *testing.T, st *Store, orgLogin string, repoID int) {
@@ -790,6 +817,33 @@ func TestPersistenceReload_Reactions(t *testing.T) {
 	}
 	if sum := st2.Reactions.SummarizeReactions("issue", issueID); sum["total_count"] != 2 {
 		t.Errorf("reaction summary total_count = %v after reload, want 2", sum["total_count"])
+	}
+}
+
+func TestPersistenceReload_ReactionParentDeletion(t *testing.T) {
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "reaction-delete", "", false)
+		issue := st.CreateIssue(repo.ID, user.ID, "cleanup", "", nil, nil, 0)
+		comment := st.CreateComment(issue.ID, user.ID, "cleanup comment")
+		if comment == nil {
+			t.Fatal("CreateComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("issue", issue.ID, user.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction issue: %v", err)
+		}
+		if _, _, err := st.Reactions.AddReaction("issue_comment", comment.ID, user.ID, "heart"); err != nil {
+			t.Fatalf("AddReaction issue comment: %v", err)
+		}
+		st.Reactions.DeleteParent("issue", issue.ID)
+		if !st.DeleteComment(comment.ID) {
+			t.Fatal("DeleteComment returned false")
+		}
+	})
+
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("deleted reaction parents survived reload: %d", got)
 	}
 }
 
@@ -1280,10 +1334,30 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		st.CreateEnvBranchPolicy(env.ID, "main", "branch")
 		st.CreateEnvProtectionRule(env.ID, 1)
 		st.CreatePagesDeployment(repo.ID, "github-pages", "pages-build", "succeed")
+		label := st.CreateLabel(repo.ID, "stale-label", "stale", "ededed")
+		if label == nil {
+			t.Fatal("CreateLabel returned nil")
+		}
+		if st.CreateMilestone(repo.ID, user.ID, "stale milestone", "", "open", nil) == nil {
+			t.Fatal("CreateMilestone returned nil")
+		}
 		st.CreateIssue(repo.ID, user.ID, "stale", "", nil, nil, 0)
 		seedStorePullRequestBranches(t, st, repo, "f")
 		st.CreatePullRequest(repo.ID, user.ID, "stale pr", "", "f", "main", false, nil, nil, 0)
-		st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
+		release := st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
+		if release == nil {
+			t.Fatal("Create release returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("release", release.ID, user.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction release: %v", err)
+		}
+		commitComment := st.CommitComments.Create(repo.ID, "abc123", user.ID, "stale commit comment", "README.md", nil, nil)
+		if commitComment == nil {
+			t.Fatal("Create commit comment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("commit_comment", commitComment.ID, user.ID, "eyes"); err != nil {
+			t.Fatalf("AddReaction commit comment: %v", err)
+		}
 
 		if !st.DeleteRepo("admin", repoName) {
 			t.Fatal("DeleteRepo failed")
@@ -1389,8 +1463,17 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 			t.Error("pull request survived repo deletion")
 		}
 	}
+	if len(st2.ListLabels(oldRepoID)) != 0 {
+		t.Error("labels survived repo deletion")
+	}
+	if len(st2.ListMilestones(oldRepoID, "all")) != 0 {
+		t.Error("milestones survived repo deletion")
+	}
 	if len(st2.Releases.List(oldRepoID)) != 0 {
 		t.Error("releases survived repo deletion")
+	}
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("release or commit comment reactions survived repo deletion: %d", got)
 	}
 
 	// A recreated same-name repo starts clean.

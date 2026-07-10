@@ -260,6 +260,16 @@ func (s *PRReviewCommentStore) Delete(id int) bool {
 	return true
 }
 
+func (s *PRReviewCommentStore) IDsForPR(prID int) map[int]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make(map[int]bool, len(s.byPR[prID]))
+	for _, c := range s.byPR[prID] {
+		ids[c.ID] = true
+	}
+	return ids
+}
+
 func (s *PRReviewCommentStore) DeleteForPR(prID int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -526,6 +536,7 @@ func (s *Server) handleDeletePRComment(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.store.Reactions.DeleteParent("pull_request_comment", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

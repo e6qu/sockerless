@@ -394,7 +394,9 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	st.deleteRepoFullNameReferencesLocked(fullName)
 	st.deleteNotificationRepoKeyLocked(fullName)
 	st.CommitStatuses.deleteRepoKey(fullName)
+	commitCommentIDs := st.CommitComments.IDsForRepo(repo.ID)
 	st.CommitComments.deleteRepo(repo.ID)
+	st.Reactions.DeleteParents("commit_comment", commitCommentIDs)
 	for id, alert := range st.SecretScanningAlerts {
 		if alert.RepoKey == fullName {
 			delete(st.SecretScanningAlerts, id)
@@ -649,6 +651,22 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	st.deleteRepoIssueAndPullChildrenLocked(repo.ID, issueIDs, prIDs)
+	for id, label := range st.Labels {
+		if label.RepoID == repo.ID {
+			delete(st.Labels, id)
+			if st.persist != nil {
+				st.persist.MustDelete("labels", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, milestone := range st.Milestones {
+		if milestone.RepoID == repo.ID {
+			delete(st.Milestones, id)
+			if st.persist != nil {
+				st.persist.MustDelete("milestones", strconv.Itoa(id))
+			}
+		}
+	}
 	for id, issue := range st.Issues {
 		if issue.RepoID == repo.ID {
 			delete(st.Issues, id)
@@ -669,7 +687,9 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	delete(st.PullsByRepo, repo.ID)
+	releaseIDs := st.Releases.IDsForRepo(repo.ID)
 	st.Releases.DeleteAllForRepo(repo.ID)
+	st.Reactions.DeleteParents("release", releaseIDs)
 
 	// Discussion surfaces — comments first because they reference discussions.
 	for id, c := range st.DiscussionComments {
@@ -1070,6 +1090,7 @@ func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prID
 	for id, c := range st.Comments {
 		if (c.ParentType == "issue" && issueIDs[c.IssueID]) || (c.ParentType == "pull_request" && prIDs[c.IssueID]) {
 			delete(st.Comments, id)
+			st.Reactions.DeleteParent(c.ParentType+"_comment", id)
 			delete(st.CommentCounts, commentCountKey(c.ParentType, c.IssueID))
 			if st.persist != nil {
 				st.persist.MustDelete("comments", strconv.Itoa(id))
@@ -1157,8 +1178,11 @@ func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prID
 	}
 	for prID := range prIDs {
 		delete(st.PRReviewsByPR, prID)
+		st.Reactions.DeleteParents("pull_request_comment", st.PRReviewComments.IDsForPR(prID))
 		st.PRReviewComments.DeleteForPR(prID)
 	}
+	st.Reactions.DeleteParents("issue", issueIDs)
+	st.Reactions.DeleteParents("pull_request", prIDs)
 }
 
 // ListForks returns all repositories whose ParentID or SourceID matches

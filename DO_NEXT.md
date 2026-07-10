@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 through BUG-2466.
+`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 through BUG-2467.
 
 This branch started from the merged #783 baseline and fixed the next persistence class issue found while continuing the Bleephub sweep.
 
@@ -19,6 +19,8 @@ Repository rename and transfer now move team repository grants, notification rep
 Repository deletion now also purges source import records, dependency snapshots, generated SBOM exports, enterprise Dependabot repository-access IDs, Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows keyed by the deleted repository or its issue IDs.
 
 Project deletion now also clears the Projects v2 in-memory content index, so deleted project items cannot remain visible through issue or pull request lookups in the same process.
+
+Repository deletion now also purges repository labels, repository milestones, and reactions attached to deleted issue, pull request, issue-comment, pull request comment, pull request review-comment, release, and commit-comment parents. Individual parent deletion paths for issue comments, pull request review comments, commit comments, and releases also remove their reaction rows instead of leaving orphaned reaction buckets behind.
 
 ## Continue Here
 
@@ -107,6 +109,7 @@ Project deletion now also clears the Projects v2 in-memory content index, so del
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the BUG-2465 Projects v2 deletion-index fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata|TestNotifications_' -count=1` passed with sandbox escalation after notification thread and repo read state joined repository delete/rename cascades.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the BUG-2466 notification-state cascade fix.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(DeleteRepo(PurgesIssueAndPullChildren|LeavesNoResidue)|ReactionParentDeletion|Reactions)' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after labels, milestones, and reaction parent buckets joined the deletion cascade.
 
 ## Standing Gaps
 

@@ -1069,6 +1069,7 @@ func (st *Store) DeleteComment(id int) bool {
 		return false
 	}
 	delete(st.Comments, id)
+	st.Reactions.DeleteParent(c.ParentType+"_comment", id)
 	key := commentCountKey(c.ParentType, c.IssueID)
 	if st.CommentCounts[key] <= 1 {
 		delete(st.CommentCounts, key)
