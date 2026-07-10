@@ -19,8 +19,9 @@ import (
 
 // ArtifactStore holds artifact/cache metadata for @actions/artifact v4
 // and the byte backend used for artifact/cache/log content.
-// When dataDir is set, metadata and local-development bytes are persisted
-// to disk; when byteStore is set, durable bytes are written to object storage.
+// When dataDir is set, metadata and non-persistent local-development bytes
+// are written to disk; persisted server startup requires byteStore so durable
+// bytes are written to object storage.
 type ArtifactStore struct {
 	mu          sync.RWMutex
 	artifacts   map[int64]*Artifact

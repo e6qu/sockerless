@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2469 filed - 2425 fixed - 3 open - 16 false positives.**
+**2470 filed - 2426 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2470~~ | P1 | Bleephub GitHub Actions storage | persisted service accepted local Actions byte storage | Bleephub persisted mode now requires initialized S3-compatible object storage for Actions artifact, dependency-cache, and runner-log bytes, and local development startup fails loudly until `BLEEPHUB_OBJECT_S3_BUCKET` is configured. |
 | ~~2469~~ | P2 | AWS simulator CI | AWS SDK simulator shard exhausted hosted-runner disk | The `sim (aws sdk)` CI job now frees regenerable Go/Docker/apt caches before the large AWS SDK simulator suite, runs the prebuilt SDK test binary directly, and reuses the prebuilt simulator binary instead of rebuilding it during execution. |
 | ~~2468~~ | P1 | Bleephub repository deletion | repository delete dropped Codespace records without cleaning real runtime state | Repository deletion now removes backing Codespace containers and workspace directories before deleting repository state, and repository delete paths fail loudly without deleting the repository when required Codespace cleanup fails. |
 | ~~2467~~ | P1 | Bleephub repository deletion | deleted repository labels, milestones, and reactions survived parent deletion | Repository deletion now removes repository-owned labels and milestones, plus reactions attached to deleted issue, pull request, comment, release, pull request review-comment, and commit-comment parents, from memory and SQLite. |

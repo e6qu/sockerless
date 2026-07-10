@@ -4,13 +4,15 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-codespace-cleanup` continued the Bleephub GitHub-fidelity work after merged #784. It fixed BUG-2468 and BUG-2469.
+`feat/bleephub-repository-codespace-cleanup` continued the Bleephub GitHub-fidelity work after merged #784. It fixed BUG-2468, BUG-2469, and BUG-2470.
 
 #784 made repository rename, transfer, deletion, and deployment deletion keep durable repository-owned state coherent across reload and later ID/name reuse. This branch picked up the next repository-deletion class: real Codespace runtime state attached to a deleted repository.
 
 Repository deletion now also uses the same fail-loud Codespace runtime cleanup as direct Codespace deletion. Bleephub removes backing Codespace containers and workspace directories before deleting repository state, and public REST/GraphQL delete paths return an error without deleting the repository when required Codespace cleanup fails.
 
 The branch also fixed the CI disk-pressure class that made `sim (aws sdk)` fail on GitHub-hosted runner diagnostics with `No space left on device`. The AWS SDK simulator job now frees regenerable Go/Docker/apt caches before the heavy shard, runs the prebuilt SDK test binary directly, and reuses the prebuilt simulator binary instead of rebuilding it during execution.
+
+Persisted Bleephub startup now requires initialized S3-compatible object storage for GitHub Actions artifact, dependency-cache, and runner-log bytes. SQLite remained the Bleephub metadata store, but persisted mode no longer accepted memory or local files as a durable byte backend. The local development launcher now fails loudly until `BLEEPHUB_OBJECT_S3_BUCKET` is configured, and the README documents the same requirement.
 
 ## Continue Here
 
@@ -103,6 +105,9 @@ The branch also fixed the CI disk-pressure class that made `sim (aws sdk)` fail 
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestDeleteRepo|TestUnitDeleteRepo|TestCodespaces' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after repository deletion began cleaning Codespace runtime/workspace state before deleting repository records.
 - `cd simulators/aws/sdk-tests && GOWORK=off SOCKERLESS_AWS_SIMULATOR_BINARY=/Users/zardoz/projects/sockerless/simulators/aws/simulator-aws SOCKERLESS_SPEC_VALIDATE=/tmp/aws-spec-violations-direct-full.jsonl SOCKERLESS_SPEC_DIR=/Users/zardoz/projects/sockerless/specs/cloud-api/aws /tmp/aws-sdk-tests.test -test.v -test.count=1 -test.timeout=600s` passed after the AWS SDK simulator CI job moved to the prebuilt test binary path.
 - `bash scripts/check-spec-violations.sh aws /tmp/aws-spec-violations-direct-full.jsonl` passed after that direct AWS SDK simulator run.
+- `bash -n scripts/bleephub-local-dev.sh` passed after the local development launcher began requiring object-store coordinates for persisted Bleephub.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistentServerStorageRequiresDurableGitAndObjectBytes|TestArtifact(CreateUploadFinalize|FinalizeScopesByWorkflowRunBackendID|ListReturnsFinalized|Download)|TestGetSignedArtifactURL|TestTimelineLogBytesUseObjectStore|TestActionsJobs_Logs' -count=1` passed with sandbox escalation after persisted startup began requiring object-backed Actions bytes.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the persisted Actions byte-store startup guard.
 
 ## Standing Gaps
 
