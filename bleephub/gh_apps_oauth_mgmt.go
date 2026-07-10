@@ -251,7 +251,11 @@ func (s *Server) handleCreateBrowserOAuthApp(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	app := s.store.CreateOAuthApp(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
+	app, err := s.store.CreateOAuthAppE(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, oauthAppToJSON(app, true))
 }
 

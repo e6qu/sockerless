@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
@@ -9,10 +10,12 @@ import (
 	"time"
 )
 
-// newInviteCode mints the short random code GitHub Classroom uses in
-// assignment invite links (https://classroom.github.com/a/<code>).
-func newInviteCode() string {
-	return mustRandomHex(6)
+func newInviteCodeE() (string, error) {
+	code, err := randomHex(6)
+	if err != nil {
+		return "", fmt.Errorf("generate Classroom invite code: %w", err)
+	}
+	return code, nil
 }
 
 // GitHub Classroom REST surface (GET /classrooms, /classrooms/{classroom_id},
@@ -483,12 +486,17 @@ func (s *Server) handleSeedClassroomAssignment(w http.ResponseWriter, r *http.Re
 		writeGHError(w, http.StatusUnprocessableEntity, "Starter code repository not found: "+req.StarterCodeRepository)
 		return
 	}
+	inviteCode, err := newInviteCodeE()
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	a := s.store.CreateClassroomAssignment(&ClassroomAssignment{
 		ClassroomID:                 classroom.ID,
 		Title:                       req.Title,
 		Type:                        req.Type,
 		Slug:                        slugify(req.Title),
-		InviteCode:                  newInviteCode(),
+		InviteCode:                  inviteCode,
 		InvitationsEnabled:          req.InvitationsEnabled,
 		PublicRepo:                  req.PublicRepo,
 		StudentsAreRepoAdmins:       req.StudentsAreRepoAdmins,

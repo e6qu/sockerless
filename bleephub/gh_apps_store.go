@@ -90,17 +90,33 @@ type OAuthApp struct {
 
 // CreateApp generates a new GitHub App with an RSA key pair.
 func (st *Store) CreateApp(ownerID int, name, description string, perms map[string]string, events []string) *App {
+	app, err := st.CreateAppE(ownerID, name, description, perms, events)
+	if err != nil {
+		panic(err)
+	}
+	return app
+}
+
+func (st *Store) CreateAppE(ownerID int, name, description string, perms map[string]string, events []string) (*App, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		panic("rsa.GenerateKey: " + err.Error())
+		return nil, fmt.Errorf("generate GitHub App private key: %w", err)
 	}
 	privPEM := pem.EncodeToMemory(&pem.Block{
 		Type:  "RSA PRIVATE KEY",
 		Bytes: x509.MarshalPKCS1PrivateKey(key),
 	})
+	clientSecret, err := randomHex(20)
+	if err != nil {
+		return nil, fmt.Errorf("generate GitHub App client secret: %w", err)
+	}
+	webhookSecret, err := randomHex(20)
+	if err != nil {
+		return nil, fmt.Errorf("generate GitHub App webhook secret: %w", err)
+	}
 
 	id := st.NextAppID
 	st.NextAppID++
@@ -113,10 +129,10 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 		Slug:               slug,
 		Name:               name,
 		ClientID:           fmt.Sprintf("Iv1.%016x", id),
-		ClientSecret:       mustRandomHex(20),
+		ClientSecret:       clientSecret,
 		Description:        description,
 		ExternalURL:        fmt.Sprintf("https://github.com/apps/%s", slug),
-		WebhookSecret:      mustRandomHex(20),
+		WebhookSecret:      webhookSecret,
 		WebhookActive:      true,
 		WebhookContentType: "form",
 		WebhookInsecureSSL: "0",
@@ -136,7 +152,7 @@ func (st *Store) CreateApp(ownerID int, name, description string, perms map[stri
 	if st.persist != nil {
 		st.persist.MustPut("apps", strconv.Itoa(id), app)
 	}
-	return app
+	return app, nil
 }
 
 // UpdateAppHookConfig mutates the app's hook URL/secret/active flags.
@@ -399,16 +415,31 @@ func (st *Store) GetAppByClientID(clientID string) *App {
 // Both kinds of apps support the OAuth web flow, but the resulting access tokens
 // have different prefixes (gho_ for OAuth Apps, ghu_ for GitHub App user-to-server).
 func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL string) *OAuthApp {
+	app, err := st.CreateOAuthAppE(ownerID, name, description, url, callbackURL)
+	if err != nil {
+		panic(err)
+	}
+	return app
+}
+
+func (st *Store) CreateOAuthAppE(ownerID int, name, description, url, callbackURL string) (*OAuthApp, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	if st.OAuthApps == nil {
 		st.OAuthApps = make(map[string]*OAuthApp)
 	}
-	clientID := mustRandomHex(10)
+	clientID, err := randomHex(10)
+	if err != nil {
+		return nil, fmt.Errorf("generate OAuth App client id: %w", err)
+	}
+	clientSecret, err := randomHex(20)
+	if err != nil {
+		return nil, fmt.Errorf("generate OAuth App client secret: %w", err)
+	}
 	now := time.Now().UTC()
 	app := &OAuthApp{
 		ClientID:     clientID,
-		ClientSecret: mustRandomHex(20),
+		ClientSecret: clientSecret,
 		Name:         name,
 		Description:  description,
 		URL:          url,
@@ -421,7 +452,7 @@ func (st *Store) CreateOAuthApp(ownerID int, name, description, url, callbackURL
 	if st.persist != nil {
 		st.persist.MustPut("oauth_apps", clientID, app)
 	}
-	return app
+	return app, nil
 }
 
 // GetOAuthApp returns the OAuth App with the given client_id, or nil.
@@ -468,10 +499,22 @@ func (st *Store) VerifyAppClientSecret(clientID, clientSecret string) *App {
 // If repoIDs is non-empty, the token is scoped to those repositories
 // (a subset of the installation's accessible repos).
 func (st *Store) CreateInstallationToken(installationID, appID int, perms map[string]string, repoIDs []int) *InstallationToken {
+	token, err := st.CreateInstallationTokenE(installationID, appID, perms, repoIDs)
+	if err != nil {
+		panic(err)
+	}
+	return token
+}
+
+func (st *Store) CreateInstallationTokenE(installationID, appID int, perms map[string]string, repoIDs []int) (*InstallationToken, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	tokenStr := tokenPrefixInstallation + mustRandomHex(20)
+	h, err := randomHex(20)
+	if err != nil {
+		return nil, fmt.Errorf("generate installation token: %w", err)
+	}
+	tokenStr := tokenPrefixInstallation + h
 
 	token := &InstallationToken{
 		Token:          tokenStr,
@@ -485,7 +528,7 @@ func (st *Store) CreateInstallationToken(installationID, appID int, perms map[st
 	if st.persist != nil {
 		st.persist.MustPut("installation_tokens", tokenStr, token)
 	}
-	return token
+	return token, nil
 }
 
 // RevokeInstallationToken drops the token from the store. Returns

@@ -221,10 +221,16 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		clientID = fmt.Sprintf("Iv1.%016x", spec.ID)
 	}
 
-	clientSecret := mustRandomHex(20)
+	clientSecret, err := randomHex(20)
+	if err != nil {
+		return nil, false, fmt.Errorf("generate seeded GitHub App client secret: %w", err)
+	}
 	webhookSecret := spec.WebhookSecret
 	if webhookSecret == "" {
-		webhookSecret = mustRandomHex(20)
+		webhookSecret, err = randomHex(20)
+		if err != nil {
+			return nil, false, fmt.Errorf("generate seeded GitHub App webhook secret: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()

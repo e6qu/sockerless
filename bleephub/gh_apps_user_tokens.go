@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"fmt"
 	"time"
 )
 
@@ -40,12 +41,20 @@ type RefreshToken struct {
 // Pass appID > 0 for ghu_ (GitHub-App user-to-server) or oauthClientID for gho_ (OAuth-App user).
 // If withRefresh is true, also mints a ghr_ refresh token.
 func (st *Store) CreateUserToServerToken(userID, appID int, oauthClientID, scopes string, ttl time.Duration, withRefresh bool) (*UserToServerToken, *RefreshToken) {
+	tok, rt, err := st.CreateUserToServerTokenE(userID, appID, oauthClientID, scopes, ttl, withRefresh)
+	if err != nil {
+		panic(err)
+	}
+	return tok, rt
+}
+
+func (st *Store) CreateUserToServerTokenE(userID, appID int, oauthClientID, scopes string, ttl time.Duration, withRefresh bool) (*UserToServerToken, *RefreshToken, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	return st.createUserToServerTokenLocked(userID, appID, oauthClientID, scopes, ttl, withRefresh)
 }
 
-func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID, scopes string, ttl time.Duration, withRefresh bool) (*UserToServerToken, *RefreshToken) {
+func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID, scopes string, ttl time.Duration, withRefresh bool) (*UserToServerToken, *RefreshToken, error) {
 	if st.UserToServerTokens == nil {
 		st.UserToServerTokens = make(map[string]*UserToServerToken)
 	}
@@ -61,7 +70,11 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 	if appID > 0 {
 		prefix = tokenPrefixAppUser
 	}
-	tokenStr := prefix + mustRandomHex(20)
+	h, err := randomHex(20)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate user-to-server token: %w", err)
+	}
+	tokenStr := prefix + h
 
 	tok := &UserToServerToken{
 		Token:            tokenStr,
@@ -75,8 +88,12 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 
 	var rt *RefreshToken
 	if withRefresh {
+		refreshHex, err := randomHex(20)
+		if err != nil {
+			return nil, nil, fmt.Errorf("generate refresh token: %w", err)
+		}
 		rt = &RefreshToken{
-			Token:            tokenPrefixRefresh + mustRandomHex(20),
+			Token:            tokenPrefixRefresh + refreshHex,
 			UserID:           userID,
 			AppID:            appID,
 			OAuthAppClientID: oauthClientID,
@@ -94,7 +111,7 @@ func (st *Store) createUserToServerTokenLocked(userID, appID int, oauthClientID,
 	if st.persist != nil {
 		st.persist.MustPut("user_to_server_tokens", tokenStr, tok)
 	}
-	return tok, rt
+	return tok, rt, nil
 }
 
 // SetUserToServerTokenInstallations binds the token to a set of installation
@@ -148,11 +165,19 @@ func (st *Store) RevokeUserToServerToken(tokenStr string) bool {
 // RotateUserToServerToken mints a fresh user-to-server token + refresh pair from a
 // valid refresh token. Old token + refresh are revoked. Returns nil if refresh is invalid.
 func (st *Store) RotateUserToServerToken(refreshTokenStr string) (*UserToServerToken, *RefreshToken) {
+	tok, rt, err := st.RotateUserToServerTokenE(refreshTokenStr)
+	if err != nil {
+		panic(err)
+	}
+	return tok, rt
+}
+
+func (st *Store) RotateUserToServerTokenE(refreshTokenStr string) (*UserToServerToken, *RefreshToken, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	rt := st.RefreshTokens[refreshTokenStr]
 	if rt == nil || time.Now().After(rt.ExpiresAt) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Revoke the matching user token (find by RefreshTokenValue). The deletes
 	// write through to disk so the rotated-out credentials stay dead after a

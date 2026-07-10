@@ -3,16 +3,22 @@ package bleephub
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"io"
 )
 
-func mustRandomBytes(n int) []byte {
+func randomBytes(n int) ([]byte, error) {
 	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		panic("crypto/rand: " + err.Error())
+	if _, err := io.ReadFull(rand.Reader, b); err != nil {
+		return nil, fmt.Errorf("read secure random bytes: %w", err)
 	}
-	return b
+	return b, nil
 }
 
-func mustRandomHex(n int) string {
-	return hex.EncodeToString(mustRandomBytes(n))
+func randomHex(n int) (string, error) {
+	b, err := randomBytes(n)
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
 }

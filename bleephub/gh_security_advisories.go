@@ -160,7 +160,11 @@ func (s *Server) handleCreateSecurityAdvisory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	adv := s.store.CreateSecurityAdvisory(repo.ID, user.ID, req)
+	adv, err := s.store.CreateSecurityAdvisoryE(repo.ID, user.ID, req)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if adv == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return
@@ -285,7 +289,12 @@ func (s *Server) handleRequestCVE(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if !s.store.RequestCVE(adv.ID) {
+	ok, err := s.store.RequestCVEE(adv.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !ok {
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return
 	}
@@ -356,7 +365,11 @@ func (s *Server) handleSecurityAdvisoryReportsDispatch(w http.ResponseWriter, r 
 	}
 
 	req.State = "triage"
-	adv := s.store.CreateSecurityAdvisory(repo.ID, user.ID, req)
+	adv, err := s.store.CreateSecurityAdvisoryE(repo.ID, user.ID, req)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if adv == nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return

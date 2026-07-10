@@ -339,7 +339,12 @@ func (s *Server) handleWebFlowTokenForm(w http.ResponseWriter, r *http.Request) 
 		writeOAuthTokenResponse(w, r, map[string]string{"error": "server_error"})
 		return
 	}
-	tok, _ := s.store.createUserToServerTokenLocked(user.ID, appID, oauthClientID, ac.Scopes, 8*time.Hour, false)
+	tok, _, err := s.store.createUserToServerTokenLocked(user.ID, appID, oauthClientID, ac.Scopes, 8*time.Hour, false)
+	if err != nil {
+		s.store.mu.Unlock()
+		writeOAuthTokenResponse(w, r, map[string]string{"error": "server_error"})
+		return
+	}
 	s.store.mu.Unlock()
 
 	s.logger.Info().Str("auth_code", code).Int("user_id", user.ID).Msg("web flow token granted")
@@ -412,7 +417,12 @@ func (s *Server) handleDeviceApprove(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
 		return
 	}
-	tok, _ := s.store.createUserToServerTokenLocked(user.ID, dc.AppID, dc.OAuthClientID, dc.Scopes, 8*time.Hour, false)
+	tok, _, err := s.store.createUserToServerTokenLocked(user.ID, dc.AppID, dc.OAuthClientID, dc.Scopes, 8*time.Hour, false)
+	if err != nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	dc.Token = tok.Token
 	dc.UserID = user.ID
 	dc.ApprovedAt = time.Now().UTC()
@@ -591,7 +601,10 @@ func (s *Server) sessionFromRequest(r *http.Request) *LoginSession {
 
 // createTokenLocked generates a new token (caller must hold st.mu write lock).
 func (st *Store) createTokenLocked(userID int, scopes string) *Token {
-	value := generateTokenValue()
+	value, err := generateTokenValue()
+	if err != nil {
+		panic(err)
+	}
 	t := &Token{
 		Value:     value,
 		UserID:    userID,

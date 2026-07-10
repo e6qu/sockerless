@@ -3131,23 +3131,45 @@ func (st *Store) CreateToken(userID int, scopes string) *Token {
 // generateTokenValue creates a ghp_-prefixed random token string (classic PAT).
 // Real GitHub uses ghp_ for classic PATs; bleephub matches the prefix so SDK
 // clients that branch on prefix recognise the token shape.
-func generateTokenValue() string {
-	return fmt.Sprintf("ghp_%s", mustRandomHex(20))
+func generateTokenValue() (string, error) {
+	h, err := randomHex(20)
+	if err != nil {
+		return "", fmt.Errorf("generate personal access token: %w", err)
+	}
+	return fmt.Sprintf("ghp_%s", h), nil
 }
 
 // generateGistID creates a random 20-character hexadecimal gist ID.
-func generateGistID() string {
-	return mustRandomHex(10)
+func generateGistID() (string, error) {
+	h, err := randomHex(10)
+	if err != nil {
+		return "", fmt.Errorf("generate gist id: %w", err)
+	}
+	return h, nil
 }
 
 // CreateGist creates a new gist owned by the given user.
 func (st *Store) CreateGist(owner *User, description string, public bool, files map[string]*GistFile) *Gist {
+	g, err := st.CreateGistE(owner, description, public, files)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+func (st *Store) CreateGistE(owner *User, description string, public bool, files map[string]*GistFile) (*Gist, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	id := generateGistID()
+	id, err := generateGistID()
+	if err != nil {
+		return nil, err
+	}
 	for st.Gists[id] != nil {
-		id = generateGistID()
+		id, err = generateGistID()
+		if err != nil {
+			return nil, err
+		}
 	}
 	now := time.Now().UTC()
 	g := &Gist{
@@ -3172,7 +3194,7 @@ func (st *Store) CreateGist(owner *User, description string, public bool, files 
 	}
 	st.Gists[id] = g
 	st.NextGistID++
-	return g
+	return g, nil
 }
 
 // GetGist returns the gist with the given ID, or nil.
@@ -3184,11 +3206,19 @@ func (st *Store) GetGist(id string) *Gist {
 
 // UpdateGist replaces the gist fields and records a history entry.
 func (st *Store) UpdateGist(id string, description *string, files map[string]*GistFile, deleteFiles []string) (*Gist, bool) {
+	g, ok, err := st.UpdateGistE(id, description, files, deleteFiles)
+	if err != nil {
+		panic(err)
+	}
+	return g, ok
+}
+
+func (st *Store) UpdateGistE(id string, description *string, files map[string]*GistFile, deleteFiles []string) (*Gist, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	g := st.Gists[id]
 	if g == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	additions, deletions := 0, 0
@@ -3211,7 +3241,10 @@ func (st *Store) UpdateGist(id string, description *string, files map[string]*Gi
 	}
 	g.UpdatedAt = time.Now().UTC()
 
-	version := generateGistID()
+	version, err := generateGistID()
+	if err != nil {
+		return nil, false, err
+	}
 	g.History = append(g.History, &GistHistory{
 		Version:     version,
 		CommittedAt: g.UpdatedAt,
@@ -3221,7 +3254,7 @@ func (st *Store) UpdateGist(id string, description *string, files map[string]*Gi
 			"deletions": deletions,
 		},
 	})
-	return g, true
+	return g, true, nil
 }
 
 // DeleteGist deletes a gist and all its comments.
@@ -3368,11 +3401,19 @@ func (st *Store) IsGistStarred(userID int, gistID string) bool {
 
 // ForkGist forks a gist for the given user.
 func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
+	fork, ok, err := st.ForkGistE(user, gistID)
+	if err != nil {
+		panic(err)
+	}
+	return fork, ok
+}
+
+func (st *Store) ForkGistE(user *User, gistID string) (*Gist, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	orig := st.Gists[gistID]
 	if orig == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	files := make(map[string]*GistFile, len(orig.Files))
 	for name, f := range orig.Files {
@@ -3380,9 +3421,15 @@ func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
 		files[name] = &cp
 	}
 	now := time.Now().UTC()
-	id := generateGistID()
+	id, err := generateGistID()
+	if err != nil {
+		return nil, false, err
+	}
 	for st.Gists[id] != nil {
-		id = generateGistID()
+		id, err = generateGistID()
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	fork := &Gist{
 		ID:          id,
@@ -3399,7 +3446,7 @@ func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
 	st.Gists[id] = fork
 	orig.ForkIDs = append(orig.ForkIDs, id)
 	st.NextGistID++
-	return fork, true
+	return fork, true, nil
 }
 
 // ListGistForks returns forks of a gist.

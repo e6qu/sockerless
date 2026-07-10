@@ -79,48 +79,66 @@ func validAdvisoryState(s string) bool {
 	return false
 }
 
-func generateGHSAID() string {
-	h := mustRandomHex(6)
-	return fmt.Sprintf("GHSA-%s-%s-%s", h[0:4], h[4:8], h[8:12])
+func generateGHSAID() (string, error) {
+	h, err := randomHex(6)
+	if err != nil {
+		return "", fmt.Errorf("generate GitHub Security Advisory id: %w", err)
+	}
+	return fmt.Sprintf("GHSA-%s-%s-%s", h[0:4], h[4:8], h[8:12]), nil
 }
 
-func generateCVEID() string {
-	b := mustRandomBytes(4)
+func generateCVEID() (string, error) {
+	b, err := randomBytes(4)
+	if err != nil {
+		return "", fmt.Errorf("generate CVE id: %w", err)
+	}
 	n := int(b[0])<<24 | int(b[1])<<16 | int(b[2])<<8 | int(b[3])
 	if n < 0 {
 		n = -n
 	}
-	return fmt.Sprintf("CVE-%d-%04d", time.Now().UTC().Year(), n%10000)
+	return fmt.Sprintf("CVE-%d-%04d", time.Now().UTC().Year(), n%10000), nil
 }
 
 // CreateSecurityAdvisory creates a new security advisory in the given repo.
 func (st *Store) CreateSecurityAdvisory(repoID, authorID int, req CreateAdvisoryReq) *SecurityAdvisory {
+	adv, err := st.CreateSecurityAdvisoryE(repoID, authorID, req)
+	if err != nil {
+		panic(err)
+	}
+	return adv
+}
+
+func (st *Store) CreateSecurityAdvisoryE(repoID, authorID int, req CreateAdvisoryReq) (*SecurityAdvisory, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	repo := st.Repos[repoID]
 	if repo == nil {
-		return nil
+		return nil, nil
 	}
 	if req.Severity == "" {
 		req.Severity = "medium"
 	}
 	if !validAdvisorySeverity(req.Severity) {
-		return nil
+		return nil, nil
 	}
 	state := req.State
 	if state == "" {
 		state = "draft"
 	}
 	if !validAdvisoryState(state) {
-		return nil
+		return nil, nil
+	}
+	ghsaID, err := generateGHSAID()
+	if err != nil {
+		return nil, err
 	}
 
 	now := time.Now().UTC()
 	adv := &SecurityAdvisory{
 		ID:                     st.NextSecurityAdvisoryID,
 		NodeID:                 fmt.Sprintf("GSA_kwCN%07d", st.NextSecurityAdvisoryID),
-		GHSAID:                 generateGHSAID(),
+		GHSAID:                 ghsaID,
 		RepoID:                 repoID,
 		AuthorID:               authorID,
 		Summary:                req.Summary,
@@ -146,7 +164,7 @@ func (st *Store) CreateSecurityAdvisory(repoID, authorID int, req CreateAdvisory
 	st.SecurityAdvisories[adv.ID] = adv
 
 	st.persistSecurityAdvisory(adv)
-	return adv
+	return adv, nil
 }
 
 // ListSecurityAdvisories returns all security advisories for a repo, newest first.
@@ -200,17 +218,29 @@ func (st *Store) UpdateSecurityAdvisory(id int, fn func(*SecurityAdvisory)) bool
 
 // RequestCVE assigns a CVE ID to the advisory.
 func (st *Store) RequestCVE(id int) bool {
+	ok, err := st.RequestCVEE(id)
+	if err != nil {
+		panic(err)
+	}
+	return ok
+}
+
+func (st *Store) RequestCVEE(id int) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	adv := st.SecurityAdvisories[id]
 	if adv == nil || adv.CVEID != "" {
-		return false
+		return false, nil
 	}
-	adv.CVEID = generateCVEID()
+	cveID, err := generateCVEID()
+	if err != nil {
+		return false, err
+	}
+	adv.CVEID = cveID
 	adv.UpdatedAt = time.Now().UTC()
 	st.persistSecurityAdvisory(adv)
-	return true
+	return true, nil
 }
 
 // CreateTemporaryFork creates a private fork of the advisory's repo for collaboration.

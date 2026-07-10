@@ -722,7 +722,11 @@ func (s *Server) handleOIDCDiscovery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleJWKS(w http.ResponseWriter, r *http.Request) {
-	key := s.oidcKey()
+	key, err := s.oidcKeyE()
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	n := base64.RawURLEncoding.EncodeToString(key.N.Bytes())
 	e := base64.RawURLEncoding.EncodeToString(big.NewInt(int64(key.E)).Bytes())
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -759,18 +763,18 @@ func (s *Server) handleOIDCCustomSubPut(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"include_claim_keys": req.IncludeClaimKeys, "use_default": false})
 }
 
-func (s *Server) oidcKey() *rsa.PrivateKey {
+func (s *Server) oidcKeyE() (*rsa.PrivateKey, error) {
 	s.store.Misc.mu.Lock()
 	defer s.store.Misc.mu.Unlock()
 	if s.store.Misc.oidcKey != nil {
-		return s.store.Misc.oidcKey
+		return s.store.Misc.oidcKey, nil
 	}
 	k, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		panic("oidc key gen: " + err.Error())
+		return nil, fmt.Errorf("generate OpenID Connect signing key: %w", err)
 	}
 	s.store.Misc.oidcKey = k
-	return k
+	return k, nil
 }
 
 func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error) {
@@ -873,6 +877,11 @@ func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error)
 	workflowRef := repoFull + "/.github/workflows/" + workflowFile + "@" + ref
 	jobWorkflowRef := workflowRef
 
+	jtiBytes, err := randomBytes(12)
+	if err != nil {
+		return "", fmt.Errorf("generate OpenID Connect token id: %w", err)
+	}
+
 	payload := map[string]interface{}{
 		"iss":                   s.baseURL(r),
 		"aud":                   audience,
@@ -880,7 +889,7 @@ func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error)
 		"iat":                   now.Unix(),
 		"nbf":                   now.Unix(),
 		"exp":                   now.Add(5 * time.Minute).Unix(),
-		"jti":                   base64.RawURLEncoding.EncodeToString(mustRandomBytes(12)),
+		"jti":                   base64.RawURLEncoding.EncodeToString(jtiBytes),
 		"ref":                   ref,
 		"ref_type":              refType,
 		"repository":            repoFull,
@@ -905,7 +914,11 @@ func (s *Server) mintOIDCToken(r *http.Request, audience string) (string, error)
 		"runner_environment":    "github-hosted",
 		"environment":           env,
 	}
-	return signRS256JWT(payload, s.oidcKey(), "bleephub-oidc")
+	key, err := s.oidcKeyE()
+	if err != nil {
+		return "", err
+	}
+	return signRS256JWT(payload, key, "bleephub-oidc")
 }
 
 // splitRepoFull splits an "owner/repo" full name into its owner and repo

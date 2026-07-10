@@ -116,7 +116,11 @@ func (s *Server) handleManifestSubmission(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	app := s.store.CreateApp(user.ID, manifest.Name, manifest.Description, manifest.DefaultPermissions, manifest.DefaultEvents)
+	app, err := s.store.CreateAppE(user.ID, manifest.Name, manifest.Description, manifest.DefaultPermissions, manifest.DefaultEvents)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if manifest.URL != "" || manifest.HookAttributes.URL != "" {
 		s.store.UpdateAppHookConfig(app.ID, func(a *App) {
 			if manifest.URL != "" {
@@ -490,7 +494,11 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	token := s.store.CreateInstallationToken(inst.ID, app.ID, perms, repoIDs)
+	token, err := s.store.CreateInstallationTokenE(inst.ID, app.ID, perms, repoIDs)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// When the token is minted with a specific repository subset, real GitHub
 	// returns repository_selection="selected" and a `repositories` array of the
