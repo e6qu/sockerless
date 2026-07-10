@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2450 filed - 2406 fixed - 3 open - 16 false positives.**
+**2451 filed - 2407 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2451~~ | P2 | Bleephub GitHub command-line interface parity harness | official-client harness used operator-only organization provisioning | The Docker-backed `gh` command-line interface parity harness now provisions organizations through GitHub Enterprise Server's public admin organization API, and Go coverage rejects `/internal/orgs` in that harness. |
 | ~~2450~~ | P2 | Bleephub OAuth App token management | public OAuth token helpers still used panic-wrapping token creation | OAuth App token refresh and scoped-token endpoints now use error-returning user-to-server token creation, return fail-loud GitHub API errors on secure-random failure, and keep the original token intact until a reset replacement exists. |
 | ~~2449~~ | P2 | Bleephub entropy failure handling | public API token/ID generation panicked on secure-random failure | Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returns fail-loud GitHub API errors on secure-random failure instead of crashing the Bleephub process or partially creating records. |
 | ~~2447~~ | P1 | Bleephub GitHub Actions durability | workflow runs stayed process-local | GitHub Actions workflow runs and archived attempts now persist in SQLite, repository rename/delete keeps run history coherent, and non-terminal runs reload as completed/cancelled instead of falsely advertising abandoned execution. |

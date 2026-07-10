@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2450.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2451.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -17,6 +17,8 @@ GitHub Actions workflow runs and archived attempts now persist in SQLite. On rel
 Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returned fail-loud GitHub API errors when secure randomness failed. Those paths no longer crashed the Bleephub process or left partially-created records behind a failed token/identifier generation.
 
 OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
+
+The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
 
 ## Continue Here
 
@@ -82,6 +84,9 @@ OAuth App token refresh and scoped-token endpoints now used the same error-retur
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestOAuth(App|Check|Reset|Revoke|Scope)|TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked' -count=1` passed after OAuth App token management moved to returned entropy errors.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the OAuth App token-management entropy fix.
 - `make bleephub-gh-docker-test` passed with the Docker-compatible Podman runtime after the OAuth App token-management entropy fix.
+- `bash -n bleephub/test/run-gh-test.sh` passed after the Docker-backed `gh` command-line interface harness moved organization creation to the public GitHub Enterprise Server admin organization API.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI|TestAdminCreateOrg|TestCreateOrg|TestListAuthUserOrgs' -count=1` passed after the official-client organization provisioning fix.
+- `make bleephub-gh-docker-test` passed with 117 passing checks and 0 failures after the official-client organization provisioning fix.
 
 ## Standing Gaps
 

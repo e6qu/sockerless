@@ -88,6 +88,8 @@ Closed BUG-2449 by returning fail-loud GitHub API errors for public secure-rando
 
 Closed BUG-2450 by moving OAuth App token reset and scoped-token creation onto the error-returning user-to-server token path. Reset now mints the replacement before revoking the original token, so entropy or persistence failure returns a fail-loud GitHub API error without destroying the existing credential.
 
+Closed BUG-2451 by moving the Docker-backed `gh` command-line interface parity harness's organization provisioning onto GitHub Enterprise Server's public admin organization API. The harness no longer calls `/internal/orgs`, and Go coverage now rejects that operator-only route in the official-client harness.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -98,6 +100,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPRGraphQL_
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_WorkflowRunsAndAttempts|TestWorkflowRunsListNewestFirst|TestActionsRuns_(Get|Delete|Cancel)|TestActionsRunJobs_List|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs|TestApproveWorkflowRun_ReleasesGatedRun' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked|TestCreateGist|TestGitHubApp|TestOAuth|TestSecurityAdvisories|TestClassroom|TestActionsOIDC' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestOAuth(App|Check|Reset|Revoke|Scope)|TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI|TestAdminCreateOrg|TestCreateOrg|TestListAuthUserOrgs' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
@@ -135,7 +138,7 @@ The Docker-backed Bleephub `gh` command-line interface parity harness passed wit
 make bleephub-gh-docker-test
 ```
 
-It passed again after the OAuth App token-management entropy fix with 117 checks passing and 0 failing.
+It passed again after the OAuth App token-management entropy fix and after the official-client organization provisioning fix, each time with 117 checks passing and 0 failing.
 
 The focused Bleephub Playwright coverage for the public Actions metrics UI and error paths passed after rebuilding the embedded UI binary:
 

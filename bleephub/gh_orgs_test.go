@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
 	"testing"
 )
 
@@ -43,7 +45,21 @@ func decodeJSONArray(t *testing.T, resp *http.Response) []map[string]interface{}
 	return data
 }
 
-// TestCreateOrg verifies POST /api/v3/user/orgs → 201.
+func TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI(t *testing.T) {
+	body, err := os.ReadFile("test/run-gh-test.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(body)
+	if strings.Contains(script, "/internal/orgs") {
+		t.Fatal("Docker-backed GitHub command-line interface harness must not provision organizations through /internal/orgs")
+	}
+	if !strings.Contains(script, "/api/v3/admin/organizations") {
+		t.Fatal("Docker-backed GitHub command-line interface harness must provision organizations through the GitHub Enterprise Server admin organization API")
+	}
+}
+
+// TestCreateOrg verifies the operator organization provisioning route.
 func TestCreateOrg(t *testing.T) {
 	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
 		"login":       "testorg-create",
@@ -70,7 +86,7 @@ func TestCreateOrg(t *testing.T) {
 	}
 }
 
-// TestCreateOrgNoAuth verifies POST /api/v3/user/orgs without token → 401.
+// TestCreateOrgNoAuth verifies the operator organization provisioning route without token → 401.
 func TestCreateOrgNoAuth(t *testing.T) {
 	resp := ghPost(t, "/internal/orgs", "", map[string]interface{}{
 		"login": "should-fail",
