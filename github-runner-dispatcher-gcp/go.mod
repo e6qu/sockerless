@@ -7,7 +7,7 @@ require (
 	cloud.google.com/go/secretmanager v1.20.0
 	github.com/BurntSushi/toml v1.6.0
 	github.com/sockerless/github-runner-dispatcher-aws v0.0.0
-	google.golang.org/api v0.287.1
+	google.golang.org/api v0.288.0
 	google.golang.org/protobuf v1.36.11
 )
 

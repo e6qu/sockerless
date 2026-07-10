@@ -191,7 +191,10 @@ func TestWorkflowCallEndToEnd(t *testing.T) {
 
 	// The called job's runner message carries the call inputs and the
 	// caller-view needs context (no gate, unprefixed keys).
-	msg := testServer.buildJobMessageFromDef("http://localhost", wf, publish, "p", "t", 1, "alpine:latest")
+	msg, err := testServer.buildJobMessageFromDef("http://localhost", wf, publish, "p", "t", 1, "alpine:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctxData := msg["contextData"].(map[string]interface{})
 	if ctxData["inputs"] == nil {
 		t.Error("called job message missing inputs context")
@@ -223,7 +226,10 @@ func TestWorkflowCallEndToEnd(t *testing.T) {
 	}
 
 	// notify's needs context exposes the caller key with the mapped outputs.
-	nmsg := testServer.buildJobMessageFromDef("http://localhost", wf, notify, "p2", "t2", 2, "alpine:latest")
+	nmsg, err := testServer.buildJobMessageFromDef("http://localhost", wf, notify, "p2", "t2", 2, "alpine:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
 	nctx := nmsg["contextData"].(map[string]interface{})
 	needsJSON := nctx["needs"]
 	if needsJSON == nil {

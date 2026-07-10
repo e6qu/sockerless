@@ -32,28 +32,86 @@ function renderPage() {
   );
 }
 
-const metricsData = {
-  workflow_submissions: 15,
-  job_dispatches: 30,
-  job_completions: { success: 25, failure: 5 },
-  active_workflows: 1,
-  active_sessions: 2,
-  uptime_seconds: 7200,
-  goroutines: 50,
-  heap_alloc_mb: 18.3,
+const reposData = [{ id: 1, name: "test", full_name: "admin/test", default_branch: "main", owner: { login: "admin", type: "User" } }];
+const workflowRunsData = [
+  {
+    id: 1,
+    name: "CI Build",
+    run_number: 1,
+    run_attempt: 1,
+    event: "push",
+    status: "completed",
+    conclusion: "success",
+    head_branch: "main",
+    head_sha: "abc",
+    path: ".github/workflows/ci.yml",
+    workflow_id: 1234,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+    actor: { login: "admin" },
+  },
+  {
+    id: 2,
+    name: "Deploy",
+    run_number: 2,
+    run_attempt: 1,
+    event: "workflow_dispatch",
+    status: "in_progress",
+    conclusion: null,
+    head_branch: "main",
+    head_sha: "def",
+    path: ".github/workflows/deploy.yml",
+    workflow_id: 1235,
+    created_at: "2026-01-01T01:00:00Z",
+    updated_at: "2026-01-01T01:00:00Z",
+    actor: { login: "admin" },
+  },
+];
+const jobsByRun: Record<string, unknown[]> = {
+  "1": [
+    {
+      id: 101,
+      run_id: 1,
+      name: "build",
+      status: "completed",
+      conclusion: "success",
+      started_at: "2026-01-01T00:00:01Z",
+      completed_at: "2026-01-01T00:00:02Z",
+      steps: [],
+      labels: ["self-hosted"],
+      run_attempt: 1,
+    },
+  ],
+  "2": [
+    {
+      id: 201,
+      run_id: 2,
+      name: "deploy",
+      status: "in_progress",
+      conclusion: null,
+      started_at: "2026-01-01T01:00:01Z",
+      completed_at: null,
+      steps: [],
+      labels: ["self-hosted"],
+      run_attempt: 1,
+    },
+  ],
 };
-
-const statusData = {
-  active_workflows: 1,
-  jobs_by_status: { completed: 20, running: 3, pending: 5 },
-  connected_runners: 2,
-  uptime_seconds: 7200,
-};
+const runnersData = [
+  { id: 501, name: "runner-1", os: "linux", status: "online", busy: false, labels: [] },
+  { id: 502, name: "runner-2", os: "linux", status: "offline", busy: false, labels: [] },
+];
 
 function mockEndpoints() {
   mockFetch.mockImplementation((url: string) => {
-    if (url.includes("/internal/status")) return Promise.resolve(jsonResponse(statusData));
-    if (url.includes("/internal/metrics")) return Promise.resolve(jsonResponse(metricsData));
+    if (url.includes("/api/v3/user/repos")) return Promise.resolve(jsonResponse(reposData));
+    const jobsMatch = url.match(/\/actions\/runs\/(\d+)\/jobs/);
+    if (jobsMatch) {
+      const jobs = jobsByRun[jobsMatch[1]] ?? [];
+      return Promise.resolve(jsonResponse({ total_count: jobs.length, jobs }));
+    }
+    if (url.includes("/actions/runners")) return Promise.resolve(jsonResponse({ total_count: 2, runners: runnersData }));
+    if (url.includes("/actions/runs")) return Promise.resolve(jsonResponse({ total_count: 2, workflow_runs: workflowRunsData }));
     return Promise.resolve(jsonResponse({}));
   });
 }
@@ -63,7 +121,7 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByRole("heading", { name: /runtime/i })).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: /actions throughput/i })).toBeInTheDocument();
     });
   });
 
@@ -71,14 +129,11 @@ describe("MetricsPage", () => {
     mockEndpoints();
     renderPage();
     await waitFor(() => {
-      expect(screen.getByText(/workflow submissions/i)).toBeInTheDocument();
-      expect(screen.getByText("15")).toBeInTheDocument();
+      expect(screen.getAllByText(/workflow runs/i).length).toBeGreaterThan(0);
+      expect(screen.getAllByText("2").length).toBeGreaterThan(0);
       expect(screen.getByText(/job dispatches/i)).toBeInTheDocument();
-      expect(screen.getByText("30")).toBeInTheDocument();
-      // Goroutines + heap moved into the PageHeading meta line in the
-      // redesign — they appear as part of the meta string, not as
-      // standalone MetricsCard titles.
-      expect(screen.getByText(/50 goroutines/i)).toBeInTheDocument();
+      expect(screen.getAllByText(/connected runners/i).length).toBeGreaterThan(0);
+      expect(screen.getByText(/2 workflow runs/i)).toBeInTheDocument();
     });
   });
 
@@ -96,5 +151,17 @@ describe("MetricsPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/jobs by status/i)).toBeInTheDocument();
     });
+  });
+
+  it("does not call operator-only internal diagnostics endpoints", async () => {
+    mockEndpoints();
+    renderPage();
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: /actions throughput/i })).toBeInTheDocument();
+    });
+    const urls = mockFetch.mock.calls.map((call) => String(call[0]));
+    expect(urls.some((url) => url.includes("/internal/metrics"))).toBe(false);
+    expect(urls.some((url) => url.includes("/internal/status"))).toBe(false);
+    expect(urls.some((url) => url.includes("/internal/storage"))).toBe(false);
   });
 });

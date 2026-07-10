@@ -63,8 +63,9 @@ FROM ubuntu:22.04
 # sealed-box contract before PUTting them.
 # docker.io: client CLI for the dispatcher's `docker run` shell-outs
 # and the harness's spawn-image build via the mounted host socket.
-# openssl: the cloudrun cell generates a service-account RSA key for the
-# fake SA JSON (token_uri → sim /token) the backend's google clients sign.
+# openssl: the Google Cloud cells generate service-account RSA keys for the
+# simulator service-account JSON (token_uri -> simulator /token) the backend's
+# Google clients sign.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl ca-certificates jq git libicu70 libssl3 openssl python3 python3-nacl docker.io && \
     rm -rf /var/lib/apt/lists/*

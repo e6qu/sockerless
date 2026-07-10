@@ -29,7 +29,7 @@ jobs:
 // of the given repo's git storage. Mirrors the pattern in
 // webhooks_test.go's pushTestCommit but skips the HTTP push — we only
 // need the commit visible to the discovery walk.
-func commitWorkflowYAMLToStorage(t *testing.T, s *Server, repoFullName, path, body string) {
+func commitWorkflowYAMLToStorage(t *testing.T, s *Server, repoFullName, path, body string) string {
 	t.Helper()
 	parts := strings.Split(repoFullName, "/")
 	if len(parts) != 2 {
@@ -88,6 +88,7 @@ func commitWorkflowYAMLToStorage(t *testing.T, s *Server, repoFullName, path, bo
 	if err := storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, mainRef)); err != nil {
 		t.Fatalf("set HEAD: %v", err)
 	}
+	return commitHash.String()
 }
 
 func TestWorkflows_DiscoverFromGitStorage(t *testing.T) {
@@ -124,6 +125,24 @@ func TestWorkflows_AutoRegisterOnSubmit(t *testing.T) {
 	s := newTestServer()
 	s.registerJobRoutes()
 	s.registerGHWorkflowsRoutes()
+	admin := s.store.LookupUserByLogin("admin")
+	org := s.store.CreateOrg(admin, "octo", "octo", "")
+	if org == nil {
+		t.Fatal("create org octo")
+	}
+	repo := s.store.CreateOrgRepo(org, admin, "repo", "", false)
+	if repo == nil {
+		t.Fatal("create repo octo/repo")
+	}
+	stor := s.store.GetGitStorage("octo", "repo")
+	if stor == nil {
+		t.Fatal("git storage for octo/repo")
+	}
+	if _, err := initRepoWithFiles(stor, repo.DefaultBranch, "seed workflow", map[string]string{
+		".github/workflows/ci.yml": sampleWorkflowYAML,
+	}, repoSignature(admin.Login, "bleephub@local")); err != nil {
+		t.Fatalf("seed workflow git state: %v", err)
+	}
 
 	body, _ := json.Marshal(map[string]any{
 		"workflow": sampleWorkflowYAML,
@@ -228,7 +247,12 @@ jobs:
     steps:
       - run: echo hi
 `
-	wf := s.store.RegisterWorkflowFile("octo/repo", ".github/workflows/ci.yml", "ci", dispatchableYAML, "submitted")
+	wantSHA := commitWorkflowYAMLToStorage(t, s, "octo/repo", ".github/workflows/ci.yml", dispatchableYAML)
+	s.store.DiscoverWorkflowFilesFromGit("octo/repo")
+	wf := s.resolveWorkflowFile("octo/repo", "ci.yml")
+	if wf == nil {
+		t.Fatal("workflow file was not discovered from git storage")
+	}
 
 	body := []byte(`{"ref":"refs/heads/main","inputs":{"reason":"manual"}}`)
 	req := httptest.NewRequest("POST",
@@ -266,15 +290,124 @@ jobs:
 		s.store.mu.RUnlock()
 		t.Fatalf("dispatch run jobs = %v, want one job", run)
 	}
+	if run.Sha != wantSHA {
+		s.store.mu.RUnlock()
+		t.Fatalf("dispatch run sha = %q, want committed workflow sha %q", run.Sha, wantSHA)
+	}
 	var job *WorkflowJob
 	for _, candidate := range run.Jobs {
 		job = candidate
 		break
 	}
 	s.store.mu.RUnlock()
-	msg := s.buildJobMessageFromDef("http://example.test", run, job, "plan", "timeline", 1, run.Env["__defaultImage"])
+	msg, err := s.buildJobMessageFromDef("http://example.test", run, job, "plan", "timeline", 1, run.Env["__defaultImage"])
+	if err != nil {
+		t.Fatal(err)
+	}
 	if msg["jobContainer"] != nil {
 		t.Fatalf("workflow_dispatch jobContainer = %#v, want nil for a workflow without container", msg["jobContainer"])
+	}
+}
+
+func TestWorkflows_DispatchResolvesGitHubRefInputs(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		refBody string
+		wantRef string
+	}{
+		{name: "branch name", refBody: "main", wantRef: "refs/heads/main"},
+		{name: "tag name", refBody: "v1.0.0", wantRef: "refs/tags/v1.0.0"},
+		{name: "commit SHA", refBody: "", wantRef: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestServer()
+			s.registerGHWorkflowsRoutes()
+			const dispatchableYAML = `name: ci
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`
+			wantSHA := commitWorkflowYAMLToStorage(t, s, "octo/repo", ".github/workflows/ci.yml", dispatchableYAML)
+			stor := s.store.GetGitStorage("octo", "repo")
+			if err := stor.SetReference(plumbing.NewHashReference(plumbing.NewTagReferenceName("v1.0.0"), plumbing.NewHash(wantSHA))); err != nil {
+				t.Fatalf("set tag ref: %v", err)
+			}
+			s.store.DiscoverWorkflowFilesFromGit("octo/repo")
+			wf := s.resolveWorkflowFile("octo/repo", "ci.yml")
+			if wf == nil {
+				t.Fatal("workflow file was not discovered from git storage")
+			}
+
+			refBody := tc.refBody
+			wantRef := tc.wantRef
+			if tc.name == "commit SHA" {
+				refBody = wantSHA
+				wantRef = wantSHA
+			}
+			body := []byte(fmt.Sprintf(`{"ref":%q}`, refBody))
+			req := httptest.NewRequest("POST",
+				fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID),
+				bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer "+defaultToken)
+			w := httptest.NewRecorder()
+			s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+			if w.Code != http.StatusNoContent {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+
+			s.store.mu.RLock()
+			defer s.store.mu.RUnlock()
+			for _, run := range s.store.Workflows {
+				if run.Name != "ci" {
+					continue
+				}
+				if run.Ref != wantRef {
+					t.Fatalf("dispatch ref = %q, want %q", run.Ref, wantRef)
+				}
+				if run.Sha != wantSHA {
+					t.Fatalf("dispatch sha = %q, want %q", run.Sha, wantSHA)
+				}
+				return
+			}
+			t.Fatal("dispatch did not create a ci workflow run")
+		})
+	}
+}
+
+func TestWorkflows_DispatchRejectsUnresolvedRef(t *testing.T) {
+	s := newTestServer()
+	s.registerGHWorkflowsRoutes()
+	commitWorkflowYAMLToStorage(t, s, "octo/repo", ".github/workflows/ci.yml", `name: ci
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+`)
+	s.store.DiscoverWorkflowFilesFromGit("octo/repo")
+	wf := s.resolveWorkflowFile("octo/repo", "ci.yml")
+	if wf == nil {
+		t.Fatal("workflow file was not discovered from git storage")
+	}
+
+	body := []byte(`{"ref":"refs/heads/missing"}`)
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/api/v3/repos/octo/repo/actions/workflows/%d/dispatches", wf.ID),
+		bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	w := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "No ref found for: refs/heads/missing") {
+		t.Fatalf("body = %s, want missing ref error", w.Body.String())
 	}
 }
 

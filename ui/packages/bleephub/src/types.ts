@@ -70,44 +70,6 @@ export interface BleephubWorkflowJob {
   matrixGroup?: string;
 }
 
-/** Session represents a runner's active session. */
-export interface BleephubSession {
-  sessionId: string;
-  ownerName: string;
-  agent: BleephubAgent | null;
-  pendingMessages: number;
-}
-
-/** Agent represents a registered runner agent. */
-export interface BleephubAgent {
-  id: number;
-  name: string;
-  version: string;
-  enabled: boolean;
-  status: string;
-  osDescription: string;
-  labels: BleephubLabel[];
-  authorization?: BleephubAgentAuthorization;
-  ephemeral?: boolean;
-  maxParallelism?: number;
-  provisioningState?: string;
-  createdOn: string;
-}
-
-/** AgentAuthorization holds the agent's RSA public key and auth URL. */
-export interface BleephubAgentAuthorization {
-  authorizationUrl?: string;
-  clientId?: string;
-  publicKey?: { exponent: string; modulus: string };
-}
-
-/** Label is an agent label. */
-export interface BleephubLabel {
-  id: number;
-  name: string;
-  type: string;
-}
-
 /** Filters the repo list endpoints support server-side. */
 export interface RepoListFilters {
   type?: string;
@@ -156,30 +118,28 @@ export interface BleephubRepo {
   topics?: string[];
 }
 
-/** MetricsSnapshot is a point-in-time metrics report. */
+/** Dashboard metrics derived from public GitHub REST repository and Actions routes. */
 export interface BleephubMetrics {
-  workflow_submissions: number;
+  workflow_runs: number;
   job_dispatches: number;
+  jobs_by_status: Record<string, number>;
   job_completions: Record<string, number>;
   active_workflows: number;
-  active_sessions: number;
-  uptime_seconds: number;
-  goroutines: number;
-  heap_alloc_mb: number;
+  connected_runners: number;
 }
 
-/** Status response from /internal/status. */
+/** Runtime status derived from public GitHub REST repository and Actions routes. */
 export interface BleephubStatus {
   active_workflows: number;
   jobs_by_status: Record<string, number>;
   connected_runners: number;
-  uptime_seconds: number;
 }
 
 /** Health response from /health. */
 export interface BleephubHealth {
   status: string;
   service: string;
+  enterprise_slug: string;
 }
 
 /** WorkflowFile is the file-level workflow YAML entity. */
@@ -275,32 +235,6 @@ export interface WireAppCreated {
   pem: string;
   client_secret: string;
   webhook_secret: string;
-}
-
-/** Device-flow code from /internal/oauth/state. */
-export interface BleephubDeviceCode {
-  code: string;
-  userCode: string;
-  scopes: string;
-  userId: number;
-  expiresAt: string;
-}
-
-/** Authorization-code flow entry from /internal/oauth/state. */
-export interface BleephubAuthCode {
-  code: string;
-  clientId: string;
-  redirectUri: string;
-  scopes: string;
-  state: string;
-  userId: number;
-  createdAt: string;
-  expiresAt: string;
-}
-
-export interface BleephubOAuthState {
-  deviceCodes: BleephubDeviceCode[];
-  authCodes: BleephubAuthCode[];
 }
 
 /** GitHub REST issue/PR state. */
@@ -463,14 +397,6 @@ export interface GithubBranchProtection {
   required_signatures?: GithubProtectionToggle;
   lock_branch?: GithubProtectionToggle;
   block_creations?: GithubProtectionToggle;
-}
-
-/** Storage backend info from /internal/storage */
-export interface BleephubStorageInfo {
-  persistence: string;
-  dialect: string;
-  git: string;
-  git_details: Record<string, string>;
 }
 
 export interface GithubWebhook {
@@ -1989,7 +1915,7 @@ export interface GithubBlockedUser {
   login: string;
 }
 
-// ─── WP-D (org overview + people/teams, user profile, dashboard) ────────
+// ─── Bleephub dashboard, user profile, and organization pages ───────────
 
 /**
  * The GitHub `public-user` shape served by GET /users/{login} and

@@ -53,7 +53,10 @@ func TestCollectOrgVisibilityMatrix(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.repo.FullName, func(t *testing.T) {
-			secrets, vars := testServer.CollectJobSecretsAndVars(tc.repo.FullName, "")
+			secrets, vars, err := testServer.CollectJobSecretsAndVars(tc.repo.FullName, "")
+			if err != nil {
+				t.Fatal(err)
+			}
 			for name, want := range tc.want {
 				if _, got := secrets[name]; got != want {
 					t.Errorf("secret %s visible=%v, want %v", name, got, want)
@@ -101,7 +104,10 @@ func TestCollectPrecedence(t *testing.T) {
 	mustStatus(t, putSealedSecret(t, "/api/v3/repos/"+repo.FullName+"/environments/production/secrets/ONLY_ENV", "only-env"), 201, "only-env secret")
 
 	// With the environment: env wins, all scopes contribute.
-	secrets, vars := testServer.CollectJobSecretsAndVars(repo.FullName, "production")
+	secrets, vars, err := testServer.CollectJobSecretsAndVars(repo.FullName, "production")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if secrets["STACKED"] != "from-env" {
 		t.Errorf("STACKED = %q, want from-env", secrets["STACKED"])
 	}
@@ -115,7 +121,10 @@ func TestCollectPrecedence(t *testing.T) {
 	}
 
 	// Without the environment: repo wins, env-only items absent.
-	secrets, vars = testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	secrets, vars, err = testServer.CollectJobSecretsAndVars(repo.FullName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if secrets["STACKED"] != "from-repo" {
 		t.Errorf("no-env STACKED = %q, want from-repo", secrets["STACKED"])
 	}
@@ -127,14 +136,31 @@ func TestCollectPrecedence(t *testing.T) {
 	}
 }
 
-// TestCollectUnknownRepo confirms the collector degrades to empty maps
-// (never nil) for a repo bleephub does not know.
+// TestCollectUnknownRepo confirms the collector fails loudly for a
+// repository Bleephub does not know.
 func TestCollectUnknownRepo(t *testing.T) {
-	secrets, vars := testServer.CollectJobSecretsAndVars("ghost/ghost", "")
-	if secrets == nil || vars == nil {
-		t.Fatal("collector must return non-nil maps")
+	if secrets, vars, err := testServer.CollectJobSecretsAndVars("ghost/ghost", ""); err == nil {
+		t.Fatalf("CollectJobSecretsAndVars returned %v/%v without an error for an unknown repository", secrets, vars)
 	}
-	if len(secrets) != 0 || len(vars) != 0 {
-		t.Errorf("unexpected items: %v %v", secrets, vars)
+}
+
+func TestBuildJobMessageRejectsUnknownRepoSecretsScope(t *testing.T) {
+	s := newTestServer()
+	wf := &Workflow{
+		ID:           "wf-unknown-repo",
+		RepoFullName: "ghost/ghost",
+		RunID:        1,
+		Jobs:         map[string]*WorkflowJob{},
+	}
+	job := &WorkflowJob{
+		Key:         "build",
+		JobID:       "job-unknown-repo",
+		DisplayName: "build",
+		Def:         &JobDef{Steps: []StepDef{{Run: "echo hi"}}},
+	}
+	wf.Jobs[job.Key] = job
+
+	if msg, err := s.buildJobMessageFromDef("http://localhost", wf, job, "plan", "timeline", 1, ""); err == nil {
+		t.Fatalf("buildJobMessageFromDef returned message %v without an error for an unknown repository", msg)
 	}
 }

@@ -15,6 +15,26 @@ import (
 func submitConcurrencyWorkflow(t *testing.T, name, group, repo string) string {
 	t.Helper()
 	yaml := fmt.Sprintf("name: %s\nconcurrency: %s\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n", name, group)
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		t.Fatalf("expected owner/repo, got %q", repo)
+	}
+	repoRow := testServer.store.GetRepoByFullName(repo)
+	if repoRow == nil {
+		t.Fatalf("repository %s missing", repo)
+	}
+	stor := testServer.store.GetGitStorage(parts[0], parts[1])
+	if stor == nil {
+		t.Fatalf("git storage for %s missing", repo)
+	}
+	if resolveBranchSha(stor, repoRow.DefaultBranch) == "" {
+		admin := testServer.store.Users[1]
+		if _, err := initRepoWithFiles(stor, repoRow.DefaultBranch, "seed workflow", map[string]string{
+			".github/workflows/" + name + ".yml": yaml,
+		}, repoSignature(admin.Login, "bleephub@local")); err != nil {
+			t.Fatalf("seed workflow git state: %v", err)
+		}
+	}
 	body, _ := json.Marshal(map[string]string{"workflow": yaml, "repo": repo})
 	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -53,7 +73,8 @@ func runIDByName(t *testing.T, repo, name string) int {
 }
 
 func TestConcurrencyGroups_RepoAndRunEndpoints(t *testing.T) {
-	repo := "cg-org/cg-repo"
+	org := seedTestOrg(t, "cg-org")
+	repo := seedOrgRepo(t, org, "cg-repo", false).FullName
 	group := "cg-test-group"
 	wf1 := submitConcurrencyWorkflow(t, "cg-holder", group, repo)
 	wf2 := submitConcurrencyWorkflow(t, "cg-waiter", group, repo)
@@ -146,7 +167,8 @@ func TestConcurrencyGroups_RepoAndRunEndpoints(t *testing.T) {
 }
 
 func TestConcurrencyGroups_CompletedRunReleasesLease(t *testing.T) {
-	repo := "cg-org/cg-repo-done"
+	org := seedTestOrg(t, "cg-org")
+	repo := seedOrgRepo(t, org, "cg-repo-done", false).FullName
 	wfID := submitConcurrencyWorkflow(t, "cg-done", "cg-done-group", repo)
 	runID := runIDByName(t, repo, "cg-done")
 	cancelWorkflowByID(t, wfID)

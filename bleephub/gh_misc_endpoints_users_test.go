@@ -37,6 +37,85 @@ func TestUserExtras_ListUsers(t *testing.T) {
 	}
 }
 
+func TestEnterpriseAdminUsersCRUDSiteAdminAndSuspension(t *testing.T) {
+	login := "admin-api-user"
+	create := ghPost(t, "/api/v3/admin/users", defaultToken, map[string]interface{}{
+		"login": login,
+		"email": "admin-api-user@example.com",
+	})
+	if create.StatusCode != 201 {
+		body, _ := io.ReadAll(create.Body)
+		create.Body.Close()
+		t.Fatalf("create admin user: got %d, want 201: %s", create.StatusCode, body)
+	}
+	created := decodeJSON(t, create)
+	if created["login"] != login {
+		t.Fatalf("create login = %v, want %s", created["login"], login)
+	}
+
+	promote := ghPut(t, "/api/v3/users/"+login+"/site_admin", defaultToken, nil)
+	promote.Body.Close()
+	if promote.StatusCode != 204 {
+		t.Fatalf("promote status = %d, want 204", promote.StatusCode)
+	}
+	got := decodeJSONWithStatus(t, ghGet(t, "/api/v3/users/"+login, defaultToken), 200)
+	if got["site_admin"] != true {
+		t.Fatalf("site_admin after promote = %v, want true", got["site_admin"])
+	}
+
+	demote := ghDelete(t, "/api/v3/users/"+login+"/site_admin", defaultToken)
+	demote.Body.Close()
+	if demote.StatusCode != 204 {
+		t.Fatalf("demote status = %d, want 204", demote.StatusCode)
+	}
+	got = decodeJSONWithStatus(t, ghGet(t, "/api/v3/users/"+login, defaultToken), 200)
+	if got["site_admin"] != false {
+		t.Fatalf("site_admin after demote = %v, want false", got["site_admin"])
+	}
+
+	suspend := ghPut(t, "/api/v3/users/"+login+"/suspended", defaultToken, map[string]string{"reason": "test"})
+	suspend.Body.Close()
+	if suspend.StatusCode != 204 {
+		t.Fatalf("suspend status = %d, want 204", suspend.StatusCode)
+	}
+
+	u := testServer.store.LookupUserByLogin(login)
+	if u == nil {
+		t.Fatalf("created user %q missing from store", login)
+	}
+	userToken := "tok-" + login
+	testServer.store.mu.Lock()
+	testServer.store.Tokens[userToken] = &Token{Value: userToken, UserID: u.ID, Scopes: "repo", CreatedAt: time.Now().UTC()}
+	testServer.store.mu.Unlock()
+	asSuspended := ghGet(t, "/api/v3/user", userToken)
+	asSuspended.Body.Close()
+	if asSuspended.StatusCode != 403 {
+		t.Fatalf("suspended user token status = %d, want 403", asSuspended.StatusCode)
+	}
+
+	unsuspend := ghDelete(t, "/api/v3/users/"+login+"/suspended", defaultToken)
+	unsuspend.Body.Close()
+	if unsuspend.StatusCode != 204 {
+		t.Fatalf("unsuspend status = %d, want 204", unsuspend.StatusCode)
+	}
+	asActive := ghGet(t, "/api/v3/user", userToken)
+	asActive.Body.Close()
+	if asActive.StatusCode != 200 {
+		t.Fatalf("unsuspended user token status = %d, want 200", asActive.StatusCode)
+	}
+
+	del := ghDelete(t, "/api/v3/admin/users/"+login, defaultToken)
+	del.Body.Close()
+	if del.StatusCode != 204 {
+		t.Fatalf("delete admin user status = %d, want 204", del.StatusCode)
+	}
+	getDeleted := ghGet(t, "/api/v3/users/"+login, defaultToken)
+	getDeleted.Body.Close()
+	if getDeleted.StatusCode != 404 {
+		t.Fatalf("get deleted user status = %d, want 404", getDeleted.StatusCode)
+	}
+}
+
 func TestUserExtras_Blocks(t *testing.T) {
 	u := createTestUser(t, "blocktarget")
 	_ = u

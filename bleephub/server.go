@@ -78,8 +78,9 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // storage would resurrect every repo empty, so that combination is a
 // startup error rather than a silent degraded mode.
 //
-// Intentionally NOT persisted: in-flight workflow/session/agent state
-// (a restart abandons in-flight runs) and the OIDC signing key
+// Workflow run history is persisted; in-flight runs are marked terminal
+// cancelled on reload because the runner dispatch state is process-local.
+// Intentionally NOT persisted: session/agent state and the OIDC signing key
 // (gh_misc_endpoints.go oidcKey), which rotates on restart — consumers
 // must re-fetch the JWKS, exactly as they must against real GitHub key
 // rotation.
@@ -384,7 +385,11 @@ func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "bleephub"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":          "ok",
+		"service":         "bleephub",
+		"enterprise_slug": s.enterpriseSlug(),
+	})
 }
 
 func (s *Server) handleInternalMetrics(w http.ResponseWriter, r *http.Request) {

@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -18,6 +19,234 @@ func (s *Server) handleListUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, userToJSON(u))
 	}
 	writeJSON(w, http.StatusOK, paginateAndLink(w, r, out))
+}
+
+func normalizeGitHubLogin(login string) string {
+	login = strings.ToLower(strings.TrimSpace(login))
+	var b strings.Builder
+	lastHyphen := false
+	for _, r := range login {
+		isAlphaNum := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9')
+		if isAlphaNum {
+			b.WriteRune(r)
+			lastHyphen = false
+			continue
+		}
+		if !lastHyphen && b.Len() > 0 {
+			b.WriteByte('-')
+			lastHyphen = true
+		}
+	}
+	out := strings.Trim(b.String(), "-")
+	return out
+}
+
+func (s *Server) handleAdminCreateUser(w http.ResponseWriter, r *http.Request) {
+	if s.requireSiteAdmin(w, r) == nil {
+		return
+	}
+	var req struct {
+		Login     string `json:"login"`
+		Email     string `json:"email"`
+		Suspended bool   `json:"suspended"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	login := normalizeGitHubLogin(req.Login)
+	if login == "" {
+		writeGHValidationError(w, "User", "login", "missing_field")
+		return
+	}
+	s.store.mu.Lock()
+	if _, exists := s.store.UsersByLogin[login]; exists {
+		s.store.mu.Unlock()
+		writeGHValidationError(w, "User", "login", "already_exists")
+		return
+	}
+	if req.Email != "" {
+		for _, existing := range s.store.Users {
+			if strings.EqualFold(existing.Email, req.Email) {
+				s.store.mu.Unlock()
+				writeGHValidationError(w, "User", "email", "already_exists")
+				return
+			}
+		}
+	}
+	now := time.Now().UTC()
+	u := &User{
+		ID:           s.store.NextUser,
+		NodeID:       fmt.Sprintf("U_kgDO%08d", s.store.NextUser),
+		Login:        login,
+		Email:        req.Email,
+		AvatarURL:    "",
+		Type:         "User",
+		SiteAdmin:    false,
+		Suspended:    req.Suspended,
+		StarredRepos: map[string]bool{},
+		CreatedAt:    now,
+		UpdatedAt:    now,
+	}
+	s.store.NextUser++
+	s.store.Users[u.ID] = u
+	s.store.UsersByLogin[u.Login] = u
+	if s.store.persist != nil {
+		s.store.persist.MustPut("users", strconv.Itoa(u.ID), u)
+	}
+	s.store.mu.Unlock()
+	writeJSON(w, http.StatusCreated, userToJSON(u))
+}
+
+func (s *Server) handleAdminRenameUser(w http.ResponseWriter, r *http.Request) {
+	if s.requireSiteAdmin(w, r) == nil {
+		return
+	}
+	username := r.PathValue("username")
+	var req struct {
+		Login string `json:"login"`
+	}
+	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	nextLogin := normalizeGitHubLogin(req.Login)
+	if nextLogin == "" {
+		writeGHValidationError(w, "User", "login", "missing_field")
+		return
+	}
+	s.store.mu.Lock()
+	u := s.store.UsersByLogin[username]
+	if u == nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if existing := s.store.UsersByLogin[nextLogin]; existing != nil && existing.ID != u.ID {
+		s.store.mu.Unlock()
+		writeGHValidationError(w, "User", "login", "already_exists")
+		return
+	}
+	delete(s.store.UsersByLogin, u.Login)
+	u.Login = nextLogin
+	u.UpdatedAt = time.Now().UTC()
+	s.store.UsersByLogin[u.Login] = u
+	if s.store.persist != nil {
+		s.store.persist.MustPut("users", strconv.Itoa(u.ID), u)
+	}
+	s.store.mu.Unlock()
+	writeJSON(w, http.StatusAccepted, map[string]string{
+		"message": "Job queued to rename user. It may take a few minutes to complete.",
+		"url":     fmt.Sprintf("/user/%d", u.ID),
+	})
+}
+
+func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
+	admin := s.requireSiteAdmin(w, r)
+	if admin == nil {
+		return
+	}
+	username := r.PathValue("username")
+	s.store.mu.Lock()
+	u := s.store.UsersByLogin[username]
+	if u == nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if u.ID == admin.ID {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusForbidden, "You cannot delete your own account.")
+		return
+	}
+	delete(s.store.Users, u.ID)
+	delete(s.store.UsersByLogin, u.Login)
+	for val, t := range s.store.Tokens {
+		if t.UserID == u.ID {
+			delete(s.store.Tokens, val)
+			if s.store.persist != nil {
+				s.store.persist.MustDelete("tokens", val)
+			}
+		}
+	}
+	for cookie, sess := range s.store.LoginSessions {
+		if sess.UserID == u.ID {
+			delete(s.store.LoginSessions, cookie)
+		}
+	}
+	if s.store.persist != nil {
+		s.store.persist.MustDelete("users", strconv.Itoa(u.ID))
+	}
+	s.store.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleAdminPromoteUser(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminSetUserFlags(w, r, adminUserFlagUpdate{siteAdmin: adminUserBoolPtr(true)})
+}
+
+func (s *Server) handleAdminDemoteUser(w http.ResponseWriter, r *http.Request) {
+	admin := s.requireSiteAdmin(w, r)
+	if admin == nil {
+		return
+	}
+	if admin.Login == r.PathValue("username") {
+		writeGHError(w, http.StatusForbidden, "You cannot demote your own account.")
+		return
+	}
+	s.setUserFlags(w, r.PathValue("username"), adminUserFlagUpdate{siteAdmin: adminUserBoolPtr(false)})
+}
+
+func (s *Server) handleAdminSuspendUser(w http.ResponseWriter, r *http.Request) {
+	admin := s.requireSiteAdmin(w, r)
+	if admin == nil {
+		return
+	}
+	if admin.Login == r.PathValue("username") {
+		writeGHError(w, http.StatusForbidden, "You cannot suspend your own account.")
+		return
+	}
+	s.setUserFlags(w, r.PathValue("username"), adminUserFlagUpdate{suspended: adminUserBoolPtr(true)})
+}
+
+func (s *Server) handleAdminUnsuspendUser(w http.ResponseWriter, r *http.Request) {
+	s.handleAdminSetUserFlags(w, r, adminUserFlagUpdate{suspended: adminUserBoolPtr(false)})
+}
+
+type adminUserFlagUpdate struct {
+	siteAdmin *bool
+	suspended *bool
+}
+
+func (s *Server) handleAdminSetUserFlags(w http.ResponseWriter, r *http.Request, update adminUserFlagUpdate) {
+	if s.requireSiteAdmin(w, r) == nil {
+		return
+	}
+	s.setUserFlags(w, r.PathValue("username"), update)
+}
+
+func (s *Server) setUserFlags(w http.ResponseWriter, username string, update adminUserFlagUpdate) {
+	s.store.mu.Lock()
+	u := s.store.UsersByLogin[username]
+	if u == nil {
+		s.store.mu.Unlock()
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
+	if update.siteAdmin != nil {
+		u.SiteAdmin = *update.siteAdmin
+	}
+	if update.suspended != nil {
+		u.Suspended = *update.suspended
+	}
+	u.UpdatedAt = time.Now().UTC()
+	if s.store.persist != nil {
+		s.store.persist.MustPut("users", strconv.Itoa(u.ID), u)
+	}
+	s.store.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func adminUserBoolPtr(v bool) *bool {
+	return &v
 }
 
 func (s *Server) handleListUserGists(w http.ResponseWriter, r *http.Request) {

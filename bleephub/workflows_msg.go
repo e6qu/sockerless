@@ -11,7 +11,7 @@ import (
 
 // buildJobMessageFromDef builds a job message from a WorkflowDef-based job,
 // supporting both run: and uses: steps.
-func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *WorkflowJob, planID, timelineID string, requestID int64, defaultImage string) map[string]interface{} {
+func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *WorkflowJob, planID, timelineID string, requestID int64, defaultImage string) (map[string]interface{}, error) {
 	jd := wfJob.Def
 	scopeID := uuid.New().String()
 	jobToken := makeJWT(scopeID, "actions")
@@ -152,12 +152,10 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 	runID := strconv.Itoa(wf.RunID)
 
 	// The github context (event metadata + defaults) is assembled by
-	// githubRunnerContext below; the secrets/vars lookup needs only the
-	// repo, with the same fallback the context map uses.
+	// githubRunnerContext below; the secrets/vars lookup must resolve a
+	// real repository because repository, organization and environment
+	// secrets are scoped by that persisted state.
 	repoFullName := wf.RepoFullName
-	if repoFullName == "" {
-		repoFullName = "bleephub/test"
-	}
 
 	// Build secrets context and mask array
 	secretsPairs := make([]string, 0)
@@ -188,8 +186,11 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"DistributedTask.EnableCompositeActions": varVal("true"),
 	}
 	varsPairs := make([]string, 0)
-	if s != nil && s.store != nil {
-		secretsMap, varsMap := s.CollectJobSecretsAndVars(repoFullName, jd.EnvironmentName())
+	if s != nil && s.store != nil && repoFullName != "" {
+		secretsMap, varsMap, err := s.CollectJobSecretsAndVars(repoFullName, jd.EnvironmentName())
+		if err != nil {
+			return nil, err
+		}
 		if jd.Call != nil && jd.CallRole == "" && !jd.Call.SecretsInherit {
 			secretsMap = remapCallSecrets(s, wf, jd.Call, secretsMap)
 		}
@@ -292,7 +293,7 @@ func (s *Server) buildJobMessageFromDef(serverURL string, wf *Workflow, wfJob *W
 		"environmentVariables": nil,
 		"actionsEnvironment":   nil,
 		"fileTable":            []string{".github/workflows/ci.yml"},
-	}
+	}, nil
 }
 
 // templateToken converts a workflow string into the runner's template

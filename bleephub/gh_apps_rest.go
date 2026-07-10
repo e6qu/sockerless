@@ -116,7 +116,11 @@ func (s *Server) handleManifestSubmission(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	app := s.store.CreateApp(user.ID, manifest.Name, manifest.Description, manifest.DefaultPermissions, manifest.DefaultEvents)
+	app, err := s.store.CreateAppE(user.ID, manifest.Name, manifest.Description, manifest.DefaultPermissions, manifest.DefaultEvents)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if manifest.URL != "" || manifest.HookAttributes.URL != "" {
 		s.store.UpdateAppHookConfig(app.ID, func(a *App) {
 			if manifest.URL != "" {
@@ -490,7 +494,11 @@ func (s *Server) handleCreateInstallationToken(w http.ResponseWriter, r *http.Re
 		}
 	}
 
-	token := s.store.CreateInstallationToken(inst.ID, app.ID, perms, repoIDs)
+	token, err := s.store.CreateInstallationTokenE(inst.ID, app.ID, perms, repoIDs)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// When the token is minted with a specific repository subset, real GitHub
 	// returns repository_selection="selected" and a `repositories` array of the
@@ -592,15 +600,14 @@ func appToJSON(st *Store, app *App, includePEM bool) map[string]interface{} {
 
 // appOwnerJSON serializes the GitHub App's owning account as a Simple User,
 // matching the `owner` object real GitHub returns on GET /app and
-// GET /apps/{slug}. Resolves the real user by app.OwnerID.
+// GET /apps/{slug}. App loading and creation validate OwnerID, so a missing
+// owner is corrupt state and is exposed as null rather than a fabricated user.
 func appOwnerJSON(st *Store, app *App) map[string]interface{} {
 	st.mu.RLock()
 	owner := st.Users[app.OwnerID]
 	st.mu.RUnlock()
 	if owner == nil {
-		// Owner record missing: still return a well-formed simple-user
-		// keyed on the recorded OwnerID so the shape is never empty.
-		return userToJSON(&User{ID: app.OwnerID, Type: "User"})
+		return nil
 	}
 	return userToJSON(owner)
 }

@@ -105,7 +105,7 @@ func (st *Store) NotificationRows(user *User, opts NotificationListOptions) []no
 			return
 		}
 
-		threadID := fmt.Sprintf("%d", src.ID)
+		threadID := notificationThreadID(src.Type, src.ID)
 		if state.DismissedThreadIDs[threadID] {
 			return
 		}
@@ -218,6 +218,34 @@ func notificationReasonWithComments(user *User, src notificationThreadSource, co
 	return "subscribed"
 }
 
+func notificationThreadID(sourceType string, sourceID int) string {
+	switch strings.ToLower(sourceType) {
+	case "issue":
+		return fmt.Sprintf("issue-%d", sourceID)
+	case "pullrequest", "pull_request", "pull-request":
+		return fmt.Sprintf("pull-request-%d", sourceID)
+	default:
+		return fmt.Sprintf("%s-%d", strings.ToLower(sourceType), sourceID)
+	}
+}
+
+func parseNotificationThreadID(threadID string) (string, int, bool) {
+	switch {
+	case strings.HasPrefix(threadID, "issue-"):
+		id, err := strconv.Atoi(strings.TrimPrefix(threadID, "issue-"))
+		return "Issue", id, err == nil
+	case strings.HasPrefix(threadID, "pull-request-"):
+		id, err := strconv.Atoi(strings.TrimPrefix(threadID, "pull-request-"))
+		return "PullRequest", id, err == nil
+	default:
+		id, err := strconv.Atoi(threadID)
+		if err == nil {
+			return "", id, true
+		}
+		return "", 0, false
+	}
+}
+
 // lastReadAtFor derives the thread's last-read timestamp from the user's
 // notification state. Callers hold st.mu (state is store-owned).
 func lastReadAtFor(state *UserNotificationsState, threadID string) *time.Time {
@@ -239,6 +267,7 @@ func lastReadAtFor(state *UserNotificationsState, threadID string) *time.Time {
 func (st *Store) buildThread(row notificationThreadRow, baseURL string) *NotificationThread {
 	src, repo, threadID := row.src, row.repo, row.threadID
 	base := baseURL
+	apiBase := baseURL + "/api/v3"
 	var subjectURL, latestCommentURL, htmlURL string
 	if src.Type == "Issue" {
 		subjectURL = fmt.Sprintf("%s/api/v3/repos/%s/issues/%d", base, repo.FullName, src.Number)
@@ -280,67 +309,31 @@ func (st *Store) buildThread(row notificationThreadRow, baseURL string) *Notific
 		Unread:           row.unread,
 		UpdatedAt:        src.UpdatedAt,
 		LastReadAt:       row.lastReadAt,
-		SubscriptionURL:  fmt.Sprintf("%s/notifications/threads/%s/subscription", base, threadID),
-		URL:              fmt.Sprintf("%s/notifications/threads/%s", base, threadID),
+		SubscriptionURL:  fmt.Sprintf("%s/notifications/threads/%s/subscription", apiBase, threadID),
+		URL:              fmt.Sprintf("%s/notifications/threads/%s", apiBase, threadID),
 	}
 }
 
-// GetNotificationThread returns a single synthetic thread by ID.
+// GetNotificationThread returns a single notification thread by ID.
 // The thread source is gathered under the read lock; rendering happens after
 // release because buildThread embeds the repository via repoToJSON, which
 // derives counters under the store lock itself.
 func (st *Store) GetNotificationThread(user *User, baseURL, threadID string) *NotificationThread {
-	id, err := strconv.Atoi(threadID)
-	if err != nil {
+	sourceType, id, ok := parseNotificationThreadID(threadID)
+	if !ok {
 		return nil
 	}
 
 	var row *notificationThreadRow
-	matchedIssue := false
 	st.mu.RLock()
-	for _, issue := range st.Issues {
-		if issue.ID == id {
-			matchedIssue = true
-			repo := st.Repos[issue.RepoID]
-			if repo == nil || !canReadRepoLocked(st, user, repo) {
-				break
-			}
-			src := notificationThreadSource{
-				Type:        "Issue",
-				ID:          issue.ID,
-				RepoID:      issue.RepoID,
-				Number:      issue.Number,
-				Title:       issue.Title,
-				UpdatedAt:   issue.UpdatedAt,
-				AuthorID:    issue.AuthorID,
-				AssigneeIDs: issue.AssigneeIDs,
-			}
-			state := st.notificationsStateViewLocked(user.ID)
-			row = &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
-			break
+	if sourceType == "Issue" || sourceType == "" {
+		if issue := st.Issues[id]; issue != nil {
+			row = st.notificationIssueRowLocked(user, issue, notificationThreadID("Issue", issue.ID))
 		}
 	}
-	if row == nil && !matchedIssue {
-		for _, pr := range st.PullRequests {
-			if pr.ID == id {
-				repo := st.Repos[pr.RepoID]
-				if repo == nil || !canReadRepoLocked(st, user, repo) {
-					break
-				}
-				src := notificationThreadSource{
-					Type:        "PullRequest",
-					ID:          pr.ID,
-					RepoID:      pr.RepoID,
-					Number:      pr.Number,
-					Title:       pr.Title,
-					UpdatedAt:   pr.UpdatedAt,
-					AuthorID:    pr.AuthorID,
-					AssigneeIDs: pr.AssigneeIDs,
-				}
-				state := st.notificationsStateViewLocked(user.ID)
-				row = &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
-				break
-			}
+	if row == nil && (sourceType == "PullRequest" || sourceType == "") {
+		if pr := st.PullRequests[id]; pr != nil {
+			row = st.notificationPullRequestRowLocked(user, pr, notificationThreadID("PullRequest", pr.ID))
 		}
 	}
 	st.mu.RUnlock()
@@ -351,67 +344,42 @@ func (st *Store) GetNotificationThread(user *User, baseURL, threadID string) *No
 	return st.buildThread(*row, baseURL)
 }
 
-// GetNotificationThreadByID returns a single synthetic thread by numeric ID.
-func (st *Store) GetNotificationThreadByID(userID int, baseURL string, threadID int) *NotificationThread {
-	user := st.GetUserByID(userID)
-	if user == nil {
+func (st *Store) notificationIssueRowLocked(user *User, issue *Issue, threadID string) *notificationThreadRow {
+	repo := st.Repos[issue.RepoID]
+	if repo == nil || !canReadRepoLocked(st, user, repo) {
 		return nil
 	}
-	return st.GetNotificationThread(user, baseURL, strconv.Itoa(threadID))
+	src := notificationThreadSource{
+		Type:        "Issue",
+		ID:          issue.ID,
+		RepoID:      issue.RepoID,
+		Number:      issue.Number,
+		Title:       issue.Title,
+		UpdatedAt:   issue.UpdatedAt,
+		AuthorID:    issue.AuthorID,
+		AssigneeIDs: issue.AssigneeIDs,
+	}
+	state := st.notificationsStateViewLocked(user.ID)
+	return &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
 }
 
-// MarkThreadReadByID records a thread as read for the user by numeric ID.
-func (st *Store) MarkThreadReadByID(userID int, threadID int, at time.Time) bool {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	state := st.notificationsStateFor(userID)
-	if state.ReadThreadIDs == nil {
-		state.ReadThreadIDs = map[string]time.Time{}
+func (st *Store) notificationPullRequestRowLocked(user *User, pr *PullRequest, threadID string) *notificationThreadRow {
+	repo := st.Repos[pr.RepoID]
+	if repo == nil || !canReadRepoLocked(st, user, repo) {
+		return nil
 	}
-	state.ReadThreadIDs[strconv.Itoa(threadID)] = at
-	st.persistNotificationsState(userID, state)
-	return true
-}
-
-// GetThreadSubscriptionByID returns the user's subscription for a numeric thread ID.
-func (st *Store) GetThreadSubscriptionByID(userID int, threadID int) *ThreadSubscription {
-	st.mu.RLock()
-	defer st.mu.RUnlock()
-	state := st.notificationsStateViewLocked(userID)
-	return state.Subscriptions[strconv.Itoa(threadID)]
-}
-
-// SetThreadSubscriptionByID sets a thread subscription for the user by numeric ID.
-func (st *Store) SetThreadSubscriptionByID(userID int, threadID int, subscribed bool) bool {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	state := st.notificationsStateFor(userID)
-	if state.Subscriptions == nil {
-		state.Subscriptions = map[string]*ThreadSubscription{}
+	src := notificationThreadSource{
+		Type:        "PullRequest",
+		ID:          pr.ID,
+		RepoID:      pr.RepoID,
+		Number:      pr.Number,
+		Title:       pr.Title,
+		UpdatedAt:   pr.UpdatedAt,
+		AuthorID:    pr.AuthorID,
+		AssigneeIDs: pr.AssigneeIDs,
 	}
-	state.Subscriptions[strconv.Itoa(threadID)] = &ThreadSubscription{
-		Subscribed: subscribed,
-		CreatedAt:  time.Now().UTC(),
-	}
-	st.persistNotificationsState(userID, state)
-	return true
-}
-
-// DeleteThreadSubscriptionByID removes a thread subscription for the user by numeric ID.
-func (st *Store) DeleteThreadSubscriptionByID(userID int, threadID int) bool {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	state := st.notificationsStateFor(userID)
-	if state.Subscriptions == nil {
-		return false
-	}
-	id := strconv.Itoa(threadID)
-	if state.Subscriptions[id] == nil {
-		return false
-	}
-	delete(state.Subscriptions, id)
-	st.persistNotificationsState(userID, state)
-	return true
+	state := st.notificationsStateViewLocked(user.ID)
+	return &notificationThreadRow{src, repo, threadID, notificationReason(st, user, src), true, lastReadAtFor(state, threadID)}
 }
 
 // MarkNotificationsRead sets the global last-read timestamp for the user.

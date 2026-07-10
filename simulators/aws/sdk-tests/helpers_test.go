@@ -89,6 +89,7 @@ func TestMain(m *testing.M) {
 	simCmd.Env = append(os.Environ(),
 		fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port),
 		fmt.Sprintf("SIM_DNS_PORT=%d", dnsPort),
+		"SIM_LOG_LEVEL=warn",
 	)
 	simCmd.Stdout = os.Stdout
 	simCmd.Stderr = os.Stderr

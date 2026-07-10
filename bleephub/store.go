@@ -2,8 +2,6 @@ package bleephub
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -61,6 +59,7 @@ type User struct {
 	Bio          string          `json:"bio"`
 	Type         string          `json:"type"`
 	SiteAdmin    bool            `json:"site_admin"`
+	Suspended    bool            `json:"suspended,omitempty"`
 	StarredRepos map[string]bool `json:"starred_repos,omitempty"`
 	CreatedAt    time.Time       `json:"created_at"`
 	UpdatedAt    time.Time       `json:"updated_at"`
@@ -95,12 +94,16 @@ type Token struct {
 
 // DeviceCode represents a pending device authorization flow.
 type DeviceCode struct {
-	Code      string
-	UserCode  string
-	Scopes    string
-	Token     string // pre-generated token value
-	UserID    int
-	ExpiresAt time.Time
+	Code          string
+	UserCode      string
+	ClientID      string
+	Scopes        string
+	Token         string
+	UserID        int
+	AppID         int
+	OAuthClientID string
+	ApprovedAt    time.Time
+	ExpiresAt     time.Time
 }
 
 // RepoAutolink represents a GitHub autolink reference configured on a repository.
@@ -160,7 +163,7 @@ type Gist struct {
 	NodeID      string               `json:"node_id"`
 	Description string               `json:"description"`
 	Public      bool                 `json:"public"`
-	OwnerID     int                  `json:"-"`
+	OwnerID     int                  `json:"owner_id"`
 	Files       map[string]*GistFile `json:"files"`
 	CreatedAt   time.Time            `json:"created_at"`
 	UpdatedAt   time.Time            `json:"updated_at"`
@@ -173,21 +176,26 @@ type Gist struct {
 	GitPullURL  string               `json:"git_pull_url"`
 	GitPushURL  string               `json:"git_push_url"`
 	History     []*GistHistory       `json:"history"`
-	ForkOfID    string               `json:"-"`
-	ForkIDs     []string             `json:"-"`
+	ForkOfID    string               `json:"fork_of_id,omitempty"`
+	ForkIDs     []string             `json:"fork_ids,omitempty"`
 }
 
 // GistComment is a comment on a gist.
 type GistComment struct {
 	ID                int       `json:"id"`
 	NodeID            string    `json:"node_id"`
-	GistID            string    `json:"-"`
-	UserID            int       `json:"-"`
+	GistID            string    `json:"gist_id"`
+	UserID            int       `json:"user_id"`
 	Body              string    `json:"body"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 	AuthorAssociation string    `json:"author_association"`
 	URL               string    `json:"url"`
+}
+
+type persistedStarredGists struct {
+	UserID int             `json:"user_id"`
+	Stars  map[string]bool `json:"stars"`
 }
 
 // Store holds all in-memory state for bleephub.
@@ -879,29 +887,11 @@ func (st *Store) SetPersistence(p *Persistence) error {
 
 // loadFromPersistence repopulates the in-memory maps from disk.
 //
-// Loads buckets:
+// The loadBucket registrations below are the authoritative durable-state
+// inventory.
 //
-//	users, tokens, apps, oauth_apps, installations, installation_tokens,
-//	user_to_server_tokens, refresh_tokens, repos, orgs, teams, memberships,
-//	labels, milestones, issues, comments, pull_requests, pr_reviews,
-//	hooks, org_hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
-//	check_suites, check_runs, check_suite_prefs, workflow_files,
-//	releases, release_assets, deployments, deployment_statuses, environments,
-//	pr_review_comments, reactions, projects_v2, project_v2_items,
-//	project_v2_fields, misc, user_keys, gpg_keys, pages_sites,
-//	pages_builds, branch_protection, audit_log, marketplace_plans,
-//	notifications_state, repo_rulesets, projects_classic, project_columns,
-//	project_cards, secret_scanning_alerts, code_scanning_alerts,
-//	code_scanning_analyses, code_scanning_default_setups, sarif_uploads,
-//	dependabot_alerts,
-//	dependabot_secrets, dependabot_org_secrets, dependabot_user_secrets,
-//	dependabot_repository_access, security_advisories, security_advisory_reports,
-//	user_migrations, org_migrations, discussions, discussion_categories,
-//	discussion_comments, packages, package_versions, package_files,
-//	codespaces, codespace_secrets.
-//
-// Other state (workflows, sessions, agents, ephemeral codes) deliberately
-// stays in-memory only — operator restart implies abandoning in-flight runs.
+// Other state (sessions, agents, ephemeral codes) deliberately stays
+// in-memory only.
 func (st *Store) loadFromPersistence() error {
 	if st.persist == nil {
 		return nil
@@ -930,10 +920,78 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
+	if err := st.loadBucket("gists", func(raw []byte) error {
+		var g Gist
+		if err := loadJSON(raw, &g); err != nil {
+			return err
+		}
+		if st.Users[g.OwnerID] == nil {
+			return fmt.Errorf("gist %s: owner id %d not found in loaded users", g.ID, g.OwnerID)
+		}
+		if g.Files == nil {
+			g.Files = map[string]*GistFile{}
+		}
+		if g.History == nil {
+			g.History = []*GistHistory{}
+		}
+		st.Gists[g.ID] = &g
+		if n, err := strconv.Atoi(strings.TrimPrefix(g.NodeID, "G_kwDOB")); err == nil && n >= st.NextGistID {
+			st.NextGistID = n + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("gist_comments", func(raw []byte) error {
+		var c GistComment
+		if err := loadJSON(raw, &c); err != nil {
+			return err
+		}
+		if st.Gists[c.GistID] == nil {
+			return fmt.Errorf("gist comment %d: gist %s not found in loaded gists", c.ID, c.GistID)
+		}
+		if st.Users[c.UserID] == nil {
+			return fmt.Errorf("gist comment %d: user id %d not found in loaded users", c.ID, c.UserID)
+		}
+		st.GistComments[c.ID] = &c
+		if c.ID >= st.NextGistCommentID {
+			st.NextGistCommentID = c.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("starred_gists", func(raw []byte) error {
+		var row persistedStarredGists
+		if err := loadJSON(raw, &row); err != nil {
+			return err
+		}
+		if st.Users[row.UserID] == nil {
+			return fmt.Errorf("starred_gists user id %d not found in loaded users", row.UserID)
+		}
+		for gistID, starred := range row.Stars {
+			if !starred {
+				delete(row.Stars, gistID)
+				continue
+			}
+			if st.Gists[gistID] == nil {
+				return fmt.Errorf("starred_gists user %d: gist %s not found in loaded gists", row.UserID, gistID)
+			}
+		}
+		if len(row.Stars) > 0 {
+			st.StarredGists[row.UserID] = row.Stars
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := st.loadBucket("apps", func(raw []byte) error {
 		var a App
 		if err := loadJSON(raw, &a); err != nil {
 			return err
+		}
+		if st.Users[a.OwnerID] == nil {
+			return fmt.Errorf("app %d (%s): owner id %d not found in loaded users", a.ID, a.Slug, a.OwnerID)
 		}
 		st.Apps[a.ID] = &a
 		st.AppsBySlug[a.Slug] = &a
@@ -1420,6 +1478,42 @@ func (st *Store) loadFromPersistence() error {
 			st.CheckRuns[cr.ID] = &cr
 			if cr.ID >= st.NextCheckRunID {
 				st.NextCheckRunID = cr.ID + 1
+			}
+			return nil
+		}},
+		{"workflows", func(_ string, raw []byte) error {
+			var wf Workflow
+			if err := loadJSON(raw, &wf); err != nil {
+				return err
+			}
+			normalizeReloadedWorkflow(&wf)
+			st.Workflows[wf.ID] = &wf
+			if wf.RunID >= st.NextRunID {
+				st.NextRunID = wf.RunID + 1
+			}
+			if st.persist != nil {
+				st.persist.MustPut("workflows", wf.ID, &wf)
+			}
+			return nil
+		}},
+		{"workflow_attempts", func(key string, raw []byte) error {
+			runID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("workflow_attempts key %q: %w", key, err)
+			}
+			var attempts []*Workflow
+			if err := loadJSON(raw, &attempts); err != nil {
+				return err
+			}
+			for _, wf := range attempts {
+				normalizeReloadedWorkflow(wf)
+				if wf.RunID >= st.NextRunID {
+					st.NextRunID = wf.RunID + 1
+				}
+			}
+			st.WorkflowAttempts[runID] = attempts
+			if st.persist != nil {
+				st.persist.MustPut("workflow_attempts", key, attempts)
 			}
 			return nil
 		}},
@@ -3088,27 +3182,81 @@ func (st *Store) CreateToken(userID int, scopes string) *Token {
 // generateTokenValue creates a ghp_-prefixed random token string (classic PAT).
 // Real GitHub uses ghp_ for classic PATs; bleephub matches the prefix so SDK
 // clients that branch on prefix recognise the token shape.
-func generateTokenValue() string {
-	b := make([]byte, 20)
-	_, _ = rand.Read(b)
-	return fmt.Sprintf("ghp_%s", hex.EncodeToString(b))
+func generateTokenValue() (string, error) {
+	h, err := randomHex(20)
+	if err != nil {
+		return "", fmt.Errorf("generate personal access token: %w", err)
+	}
+	return fmt.Sprintf("ghp_%s", h), nil
 }
 
 // generateGistID creates a random 20-character hexadecimal gist ID.
-func generateGistID() string {
-	b := make([]byte, 10)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+func generateGistID() (string, error) {
+	h, err := randomHex(10)
+	if err != nil {
+		return "", fmt.Errorf("generate gist id: %w", err)
+	}
+	return h, nil
+}
+
+func (st *Store) persistGistLocked(g *Gist) {
+	if st.persist != nil {
+		st.persist.MustPut("gists", g.ID, g)
+	}
+}
+
+func (st *Store) deleteGistPersistenceLocked(id string) {
+	if st.persist != nil {
+		st.persist.MustDelete("gists", id)
+	}
+}
+
+func (st *Store) persistGistCommentLocked(c *GistComment) {
+	if st.persist != nil {
+		st.persist.MustPut("gist_comments", strconv.Itoa(c.ID), c)
+	}
+}
+
+func (st *Store) deleteGistCommentPersistenceLocked(id int) {
+	if st.persist != nil {
+		st.persist.MustDelete("gist_comments", strconv.Itoa(id))
+	}
+}
+
+func (st *Store) persistStarredGistsLocked(userID int) {
+	if st.persist == nil {
+		return
+	}
+	key := strconv.Itoa(userID)
+	if stars := st.StarredGists[userID]; len(stars) > 0 {
+		st.persist.MustPut("starred_gists", key, persistedStarredGists{UserID: userID, Stars: stars})
+	} else {
+		st.persist.MustDelete("starred_gists", key)
+	}
 }
 
 // CreateGist creates a new gist owned by the given user.
 func (st *Store) CreateGist(owner *User, description string, public bool, files map[string]*GistFile) *Gist {
+	g, err := st.CreateGistE(owner, description, public, files)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+func (st *Store) CreateGistE(owner *User, description string, public bool, files map[string]*GistFile) (*Gist, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	id := generateGistID()
+	id, err := generateGistID()
+	if err != nil {
+		return nil, err
+	}
 	for st.Gists[id] != nil {
-		id = generateGistID()
+		id, err = generateGistID()
+		if err != nil {
+			return nil, err
+		}
 	}
 	now := time.Now().UTC()
 	g := &Gist{
@@ -3133,7 +3281,8 @@ func (st *Store) CreateGist(owner *User, description string, public bool, files 
 	}
 	st.Gists[id] = g
 	st.NextGistID++
-	return g
+	st.persistGistLocked(g)
+	return g, nil
 }
 
 // GetGist returns the gist with the given ID, or nil.
@@ -3145,11 +3294,19 @@ func (st *Store) GetGist(id string) *Gist {
 
 // UpdateGist replaces the gist fields and records a history entry.
 func (st *Store) UpdateGist(id string, description *string, files map[string]*GistFile, deleteFiles []string) (*Gist, bool) {
+	g, ok, err := st.UpdateGistE(id, description, files, deleteFiles)
+	if err != nil {
+		panic(err)
+	}
+	return g, ok
+}
+
+func (st *Store) UpdateGistE(id string, description *string, files map[string]*GistFile, deleteFiles []string) (*Gist, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	g := st.Gists[id]
 	if g == nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	additions, deletions := 0, 0
@@ -3172,7 +3329,10 @@ func (st *Store) UpdateGist(id string, description *string, files map[string]*Gi
 	}
 	g.UpdatedAt = time.Now().UTC()
 
-	version := generateGistID()
+	version, err := generateGistID()
+	if err != nil {
+		return nil, false, err
+	}
 	g.History = append(g.History, &GistHistory{
 		Version:     version,
 		CommittedAt: g.UpdatedAt,
@@ -3182,7 +3342,8 @@ func (st *Store) UpdateGist(id string, description *string, files map[string]*Gi
 			"deletions": deletions,
 		},
 	})
-	return g, true
+	st.persistGistLocked(g)
+	return g, true, nil
 }
 
 // DeleteGist deletes a gist and all its comments.
@@ -3193,9 +3354,11 @@ func (st *Store) DeleteGist(id string) bool {
 		return false
 	}
 	delete(st.Gists, id)
+	st.deleteGistPersistenceLocked(id)
 	for cid, c := range st.GistComments {
 		if c.GistID == id {
 			delete(st.GistComments, cid)
+			st.deleteGistCommentPersistenceLocked(cid)
 		}
 	}
 	for uid, stars := range st.StarredGists {
@@ -3204,6 +3367,7 @@ func (st *Store) DeleteGist(id string) bool {
 			if len(stars) == 0 {
 				delete(st.StarredGists, uid)
 			}
+			st.persistStarredGistsLocked(uid)
 		}
 	}
 	return true
@@ -3298,6 +3462,7 @@ func (st *Store) StarGist(userID int, gistID string) bool {
 		st.StarredGists[userID] = make(map[string]bool)
 	}
 	st.StarredGists[userID][gistID] = true
+	st.persistStarredGistsLocked(userID)
 	return true
 }
 
@@ -3314,6 +3479,7 @@ func (st *Store) UnstarGist(userID int, gistID string) bool {
 			delete(st.StarredGists, userID)
 		}
 	}
+	st.persistStarredGistsLocked(userID)
 	return true
 }
 
@@ -3329,11 +3495,19 @@ func (st *Store) IsGistStarred(userID int, gistID string) bool {
 
 // ForkGist forks a gist for the given user.
 func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
+	fork, ok, err := st.ForkGistE(user, gistID)
+	if err != nil {
+		panic(err)
+	}
+	return fork, ok
+}
+
+func (st *Store) ForkGistE(user *User, gistID string) (*Gist, bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	orig := st.Gists[gistID]
 	if orig == nil {
-		return nil, false
+		return nil, false, nil
 	}
 	files := make(map[string]*GistFile, len(orig.Files))
 	for name, f := range orig.Files {
@@ -3341,9 +3515,15 @@ func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
 		files[name] = &cp
 	}
 	now := time.Now().UTC()
-	id := generateGistID()
+	id, err := generateGistID()
+	if err != nil {
+		return nil, false, err
+	}
 	for st.Gists[id] != nil {
-		id = generateGistID()
+		id, err = generateGistID()
+		if err != nil {
+			return nil, false, err
+		}
 	}
 	fork := &Gist{
 		ID:          id,
@@ -3360,7 +3540,9 @@ func (st *Store) ForkGist(user *User, gistID string) (*Gist, bool) {
 	st.Gists[id] = fork
 	orig.ForkIDs = append(orig.ForkIDs, id)
 	st.NextGistID++
-	return fork, true
+	st.persistGistLocked(orig)
+	st.persistGistLocked(fork)
+	return fork, true, nil
 }
 
 // ListGistForks returns forks of a gist.
@@ -3403,6 +3585,8 @@ func (st *Store) CreateGistComment(gistID string, user *User, body string) *Gist
 	st.GistComments[c.ID] = c
 	st.NextGistCommentID++
 	g.Comments++
+	st.persistGistCommentLocked(c)
+	st.persistGistLocked(g)
 	return c
 }
 
@@ -3423,6 +3607,7 @@ func (st *Store) UpdateGistComment(id int, body string) (*GistComment, bool) {
 	}
 	c.Body = body
 	c.UpdatedAt = time.Now().UTC()
+	st.persistGistCommentLocked(c)
 	return c, true
 }
 
@@ -3436,8 +3621,10 @@ func (st *Store) DeleteGistComment(id int) bool {
 	}
 	if g := st.Gists[c.GistID]; g != nil {
 		g.Comments--
+		st.persistGistLocked(g)
 	}
 	delete(st.GistComments, id)
+	st.deleteGistCommentPersistenceLocked(id)
 	return true
 }
 

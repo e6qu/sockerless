@@ -381,13 +381,11 @@ assert_eq "rate limit core.limit" "5000" "$RATE_LIMIT"
 # ============================================================
 # Test: organization lifecycle (via application programming interface)
 # ============================================================
-# Organization creation has no GitHub Representational State Transfer
-# equivalent (GitHub Enterprise Server admin application programming interface
-# and browser user interface only), so Bleephub exposes it as an operator-only
-# setup route at /internal/orgs. Listing the authenticated user's organizations
-# (GET /user/orgs) is real GitHub and stays below.
 log "Test: Create organization"
-ORG=$(api "$BASE/internal/orgs" -f login=gh-test-org -f name="Test Org")
+ORG=$(api -X POST "$BASE/api/v3/admin/organizations" \
+    -f login=gh-test-org \
+    -f admin=admin \
+    -f profile_name="Test Org")
 ORG_LOGIN=$(echo "$ORG" | jq -r '.login')
 assert_eq "org login" "gh-test-org" "$ORG_LOGIN"
 

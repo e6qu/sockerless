@@ -1215,7 +1215,7 @@ func (s *Server) handleDeleteRunLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusBadRequest, "invalid run_id")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

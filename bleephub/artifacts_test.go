@@ -115,6 +115,68 @@ func TestArtifactListReturnsFinalized(t *testing.T) {
 	}
 }
 
+func TestArtifactFinalizeScopesByWorkflowRunBackendID(t *testing.T) {
+	s := newTestServer()
+
+	s.artifactStore.mu.Lock()
+	s.artifactStore.artifacts[1] = &Artifact{ID: 1, Name: "shared", WorkflowRunBackendID: "run-a"}
+	s.artifactStore.artifacts[2] = &Artifact{ID: 2, Name: "shared", WorkflowRunBackendID: "run-b"}
+	s.artifactStore.mu.Unlock()
+
+	req := httptest.NewRequest("POST",
+		"/twirp/github.actions.results.api.v1.ArtifactService/FinalizeArtifact",
+		bytes.NewBufferString(`{"name":"shared","size":0,"workflow_run_backend_id":"run-b"}`))
+	w := httptest.NewRecorder()
+	s.handleFinalizeArtifact(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("finalize status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		ArtifactID int64 `json:"artifact_id"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode finalize: %v", err)
+	}
+	if resp.ArtifactID != 2 {
+		t.Fatalf("artifact_id = %d, want run-b artifact 2", resp.ArtifactID)
+	}
+
+	s.artifactStore.mu.RLock()
+	runA := s.artifactStore.artifacts[1].Finalized
+	runB := s.artifactStore.artifacts[2].Finalized
+	s.artifactStore.mu.RUnlock()
+	if runA || !runB {
+		t.Fatalf("finalized flags: run-a=%v run-b=%v, want false/true", runA, runB)
+	}
+}
+
+func TestGetSignedArtifactURLScopesByWorkflowRunBackendID(t *testing.T) {
+	s := newTestServer()
+
+	s.artifactStore.mu.Lock()
+	s.artifactStore.artifacts[1] = &Artifact{ID: 1, Name: "shared", WorkflowRunBackendID: "run-a", Finalized: true}
+	s.artifactStore.artifacts[2] = &Artifact{ID: 2, Name: "shared", WorkflowRunBackendID: "run-b", Finalized: true}
+	s.artifactStore.mu.Unlock()
+
+	req := httptest.NewRequest("POST",
+		"/twirp/github.actions.results.api.v1.ArtifactService/GetSignedArtifactURL",
+		bytes.NewBufferString(`{"name":"shared","workflowRunBackendId":"run-b"}`))
+	w := httptest.NewRecorder()
+	s.handleGetSignedArtifactURL(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("signed URL status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		SignedURL string `json:"signed_url"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode signed URL: %v", err)
+	}
+	if !strings.Contains(resp.SignedURL, "/_apis/v1/artifacts/2/download") {
+		t.Fatalf("signed_url = %q, want run-b artifact 2 download URL", resp.SignedURL)
+	}
+}
+
 func TestCacheUploadWritesObjectStore(t *testing.T) {
 	fs := newS3FSForTest(t)
 	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}

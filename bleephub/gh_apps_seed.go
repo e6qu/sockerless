@@ -1,10 +1,8 @@
 package bleephub
 
 import (
-	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
-	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
@@ -26,7 +24,7 @@ type AppSeedSpec struct {
 	ClientID       string                 `json:"client_id"`            // defaults to Iv1.<id>
 	PrivateKeyPEM  string                 `json:"private_key_pem"`      // caller-supplied RSA key (PKCS1 or PKCS8)
 	PrivateKeyFile string                 `json:"private_key_pem_file"` // alternative to inline PEM
-	Owner          string                 `json:"owner"`                // owning user/org login; defaults to "admin"
+	Owner          string                 `json:"owner"`                // owning user login (required)
 	Permissions    map[string]string      `json:"permissions"`
 	Events         []string               `json:"events"`
 	WebhookURL     string                 `json:"webhook_url"`
@@ -97,12 +95,14 @@ func (s *Server) seedConfiguredApps() error {
 		if pemKey == "" {
 			return fmt.Errorf("seed app %q: private_key_pem or private_key_pem_file is required", spec.Name)
 		}
-		owner := spec.Owner
-		if owner == "" {
-			owner = "admin"
+		if spec.Owner == "" {
+			return fmt.Errorf("seed app %q: owner is required", spec.Name)
+		}
+		if s.store.LookupUserByLogin(spec.Owner) == nil {
+			return fmt.Errorf("seed app %q: owner %q is not an existing user", spec.Name, spec.Owner)
 		}
 
-		app, created, err := s.store.SeedApp(spec, pemKey, owner)
+		app, created, err := s.store.SeedApp(spec, pemKey, spec.Owner)
 		if err != nil {
 			return fmt.Errorf("seed app %q: %w", spec.Name, err)
 		}
@@ -118,7 +118,10 @@ func (s *Server) seedConfiguredApps() error {
 			if ins.Account == "" {
 				return fmt.Errorf("seed app %q: installation account is required", spec.Name)
 			}
-			targetType, targetID := s.resolveSeedInstallTarget(ins)
+			targetType, targetID, err := s.resolveSeedInstallTarget(ins)
+			if err != nil {
+				return fmt.Errorf("seed app %q: %w", spec.Name, err)
+			}
 			inst := s.store.SeedInstallation(app.ID, ins.ID, targetType, targetID, ins.Account, ins.Permissions, ins.Events)
 			if inst == nil {
 				return fmt.Errorf("seed app %q: failed to create installation on %q", spec.Name, ins.Account)
@@ -131,31 +134,30 @@ func (s *Server) seedConfiguredApps() error {
 	return nil
 }
 
-// resolveSeedInstallTarget resolves an installation account login to a target
-// type + id. An existing org or user is used as-is; an unknown account is
-// created as an Organization (the common install target) owned by admin so
-// the installation references a real account, never a fabricated id.
-func (s *Server) resolveSeedInstallTarget(ins InstallationSeedSpec) (string, int) {
+// resolveSeedInstallTarget resolves an installation account login to a real
+// target type + id. Seed configuration must name an existing account; startup
+// fails instead of inventing an organization or silently installing on id 0.
+func (s *Server) resolveSeedInstallTarget(ins InstallationSeedSpec) (string, int, error) {
+	if ins.TargetType != "" && ins.TargetType != "Organization" && ins.TargetType != "User" {
+		return "", 0, fmt.Errorf("installation account %q: target_type must be Organization or User", ins.Account)
+	}
 	if org := s.store.GetOrg(ins.Account); org != nil {
-		return "Organization", org.ID
+		if ins.TargetType == "User" {
+			return "", 0, fmt.Errorf("installation account %q is an organization, not a user", ins.Account)
+		}
+		return "Organization", org.ID, nil
 	}
 	if u := s.store.LookupUserByLogin(ins.Account); u != nil {
-		return "User", u.ID
-	}
-	if ins.TargetType == "User" {
-		// A user target must exist already — bleephub never invents users.
-		return "User", 0
-	}
-	admin := s.store.LookupUserByLogin("admin")
-	if admin != nil {
-		if org := s.store.CreateOrg(admin, ins.Account, ins.Account, "Seeded for GitHub App installation"); org != nil {
-			return "Organization", org.ID
+		if ins.TargetType == "Organization" {
+			return "", 0, fmt.Errorf("installation account %q is a user, not an organization", ins.Account)
 		}
-		if org := s.store.GetOrg(ins.Account); org != nil {
-			return "Organization", org.ID
-		}
+		return "User", u.ID, nil
 	}
-	return "Organization", 0
+	want := ins.TargetType
+	if want == "" {
+		want = "user or organization"
+	}
+	return "", 0, fmt.Errorf("installation account %q does not resolve to an existing %s", ins.Account, want)
 }
 
 // normalizeRSAPrivateKeyPEM validates a caller-supplied RSA private key (PKCS1
@@ -203,6 +205,10 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 	if slug == "" {
 		slug = slugify(spec.Name)
 	}
+	owner := st.UsersByLogin[ownerLogin]
+	if owner == nil {
+		return nil, false, fmt.Errorf("owner %q is not an existing user", ownerLogin)
+	}
 	if existing := st.Apps[spec.ID]; existing != nil {
 		return existing, false, nil
 	}
@@ -210,23 +216,21 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		return existing, false, nil
 	}
 
-	ownerID := 0
-	if u := st.UsersByLogin[ownerLogin]; u != nil {
-		ownerID = u.ID
-	}
-
 	clientID := spec.ClientID
 	if clientID == "" {
 		clientID = fmt.Sprintf("Iv1.%016x", spec.ID)
 	}
 
-	secretBytes := make([]byte, 20)
-	_, _ = rand.Read(secretBytes)
+	clientSecret, err := randomHex(20)
+	if err != nil {
+		return nil, false, fmt.Errorf("generate seeded GitHub App client secret: %w", err)
+	}
 	webhookSecret := spec.WebhookSecret
 	if webhookSecret == "" {
-		wsBytes := make([]byte, 20)
-		_, _ = rand.Read(wsBytes)
-		webhookSecret = hex.EncodeToString(wsBytes)
+		webhookSecret, err = randomHex(20)
+		if err != nil {
+			return nil, false, fmt.Errorf("generate seeded GitHub App webhook secret: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -236,7 +240,7 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		Slug:               slug,
 		Name:               spec.Name,
 		ClientID:           clientID,
-		ClientSecret:       hex.EncodeToString(secretBytes),
+		ClientSecret:       clientSecret,
 		ExternalURL:        fmt.Sprintf("https://github.com/apps/%s", slug),
 		WebhookURL:         spec.WebhookURL,
 		WebhookSecret:      webhookSecret,
@@ -246,7 +250,7 @@ func (st *Store) SeedApp(spec AppSeedSpec, pemKey, ownerLogin string) (app *App,
 		PEMPrivateKey:      normKey,
 		Permissions:        spec.Permissions,
 		Events:             spec.Events,
-		OwnerID:            ownerID,
+		OwnerID:            owner.ID,
 		CreatedAt:          now,
 		UpdatedAt:          now,
 	}
@@ -275,6 +279,9 @@ func (st *Store) SeedInstallation(appID, explicitID int, targetType string, targ
 
 	app := st.Apps[appID]
 	if app == nil {
+		return nil
+	}
+	if targetID <= 0 {
 		return nil
 	}
 	if targetType == "" {

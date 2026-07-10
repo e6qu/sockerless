@@ -1,7 +1,7 @@
 cloud.google.com/go/bigtable v1.50.0 h1:lihc3U/eVrlIjK55i93K8sol+pKtFozIJ9vooEuNd4I=
 cloud.google.com/go/bigtable v1.50.0/go.mod h1:RTannV5mvoJM8KscLTfRYMPo84u9/j+C3PSyYJGf5Ic=
-cloud.google.com/go/firestore v1.22.0 h1:avooeboIq37vKXobrbPUFhFBxS/c3FqmWoX0xs8dO6E=
-cloud.google.com/go/firestore v1.22.0/go.mod h1:PaM4i7i7ruALSKmlpHXXZaPObcZw0W7ie5UOPr72iTU=
+cloud.google.com/go/firestore v1.23.0 h1:lFkdUEqdb1FxJNeZ17ZCrpok/+5yZdWapEzDCwLuwp8=
+cloud.google.com/go/firestore v1.23.0/go.mod h1:2EWfSUj+iqHckyH7uSjLI+lDgSAWJs9jL/uP45PnuQQ=
 cloud.google.com/go/iam v1.11.0 h1:KieQ9Pb+LLPak1O3Rv3GgCxhnmkYf7Xyh0P5HfF1jFM=
 cloud.google.com/go/iam v1.11.0/go.mod h1:KP+nKGugNJW4LcLx1uEZcq1ok5sQHFaQehQNl4QDgV4=
 cloud.google.com/go/kms v1.31.0 h1:LS8N92OxFDgOLg5NCo3OmbvjtQAIVT5gUHVLKIDHaFE=

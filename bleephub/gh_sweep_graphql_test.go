@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Tests in this file replay the EXACT GraphQL shapes gh CLI (v2.92) sends —
+// Tests in this file replay the EXACT GraphQL shapes gh CLI (v2.96) sends —
 // copied from the gh source (api/query_builder.go, api/queries_repo.go,
 // pkg/cmd/pr/shared/{lister,finder}.go, pkg/cmd/pr/status/http.go,
 // pkg/cmd/issue/list/http.go, pkg/cmd/release/list/http.go,
@@ -519,7 +519,7 @@ func TestPRGraphQL_ListQueryShape(t *testing.T) {
 }
 
 // --- Finding 3: gh pr view's default field set, incl. the commits-aliased
-// statusCheckRollup backed by the real checks store ---
+// statusCheckRollup backed by the real checks and commit-status stores ---
 
 func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	owner, name := sweepRepo(t, "sweep-prview")
@@ -542,20 +542,56 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	}
 	revResp.Body.Close()
 
-	// Record a completed check run against the PR's head sha — the same
-	// derivation the REST surface reports — so statusCheckRollup is real.
+	// Record a completed GitHub Actions workflow job against the PR's head sha
+	// so the checks store and GraphQL statusCheckRollup are fed by the same
+	// Actions event path as real runs.
 	headSHA := pullRequestHeadSHA(testServer.store.GetPullRequest(prID), testServer.store)
 	if headSHA == "" {
 		t.Fatal("PR head sha did not resolve")
 	}
 	repoKey := owner + "/" + name
-	cr := testServer.store.CreateCheckRun(repoKey, headSHA, "build", 0, 0)
 	now := time.Now().UTC()
-	testServer.store.UpdateCheckRun(cr.ID, func(c *CheckRun) {
-		c.Status = "completed"
-		c.Conclusion = "success"
-		c.CompletedAt = &now
-	})
+	runID := testServer.store.ReserveRunID()
+	wf := &Workflow{
+		ID:           "gql-rollup-" + repoKey,
+		Name:         "ci",
+		RunID:        runID,
+		RunNumber:    runID,
+		Status:       WorkflowStatusCompleted,
+		Result:       ResultSuccess,
+		CreatedAt:    now,
+		EventName:    "pull_request",
+		Ref:          "refs/heads/main",
+		Sha:          headSHA,
+		RepoFullName: repoKey,
+		Jobs: map[string]*WorkflowJob{
+			"build": {
+				Key:         "build",
+				JobID:       "gql-rollup-job-" + repoKey,
+				DisplayName: "build",
+				Status:      JobStatusCompleted,
+				Result:      ResultSuccess,
+				StartedAt:   now,
+				CompletedAt: now,
+			},
+		},
+	}
+	testServer.store.mu.Lock()
+	testServer.store.Workflows[wf.ID] = wf
+	testServer.store.mu.Unlock()
+	testServer.onActionsRunRequested(wf)
+	statusResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/statuses/"+headSHA, defaultToken,
+		map[string]interface{}{
+			"state":       "failure",
+			"target_url":  "https://ci.example.test/unit",
+			"description": "unit suite failed",
+			"context":     "ci/unit",
+		})
+	if statusResp.StatusCode != http.StatusCreated {
+		statusResp.Body.Close()
+		t.Fatalf("commit status create status = %d", statusResp.StatusCode)
+	}
+	statusResp.Body.Close()
 
 	// Selections assembled exactly as api.PullRequestGraphQL renders gh pr
 	// view's defaultFields (projectCards excluded: GHES >= 3.17 drops it).
@@ -574,7 +610,7 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 		comments(first: 100) {nodes {id,author{login,...on User{id,name}},authorAssociation,body,createdAt,includesCreatedEdit,isMinimized,minimizedReason,reactionGroups{content,users{totalCount}},url,viewerDidAuthor},pageInfo{hasNextPage,endCursor},totalCount},
 		reactionGroups{content,users{totalCount}},
 		createdAt,
-		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {contexts(first:100) {nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
+		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {state, contexts(first:100) {checkRunCount,checkRunCountsByState{state,count},statusContextCount,statusContextCountsByState{state,count},nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
 	}
 	query PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {
 		repository(owner: $owner, name: $repo) {
@@ -632,17 +668,58 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	}
 	rollup, _ := rcNodes[0].(map[string]interface{})["commit"].(map[string]interface{})["statusCheckRollup"].(map[string]interface{})
 	if rollup == nil {
-		t.Fatalf("commit.statusCheckRollup null despite a recorded check run")
+		t.Fatalf("commit.statusCheckRollup null despite recorded status data")
+	}
+	if rollup["state"] != "FAILURE" {
+		t.Errorf("statusCheckRollup.state = %v, want FAILURE from commit status", rollup["state"])
 	}
 	ctxNodes, _ := rollup["contexts"].(map[string]interface{})["nodes"].([]interface{})
-	if len(ctxNodes) != 1 {
-		t.Fatalf("contexts.nodes = %v, want 1 CheckRun", rollup["contexts"])
+	if len(ctxNodes) != 2 {
+		t.Fatalf("contexts.nodes = %v, want StatusContext + CheckRun", rollup["contexts"])
 	}
-	checkNode := ctxNodes[0].(map[string]interface{})
+	contexts := rollup["contexts"].(map[string]interface{})
+	if contexts["checkRunCount"] != float64(1) || contexts["statusContextCount"] != float64(1) {
+		t.Fatalf("rollup counts = checkRun %v statusContext %v, want 1/1", contexts["checkRunCount"], contexts["statusContextCount"])
+	}
+	if got := countForState(contexts["checkRunCountsByState"], "SUCCESS"); got != 1 {
+		t.Fatalf("checkRunCountsByState SUCCESS = %d, want 1: %v", got, contexts["checkRunCountsByState"])
+	}
+	if got := countForState(contexts["statusContextCountsByState"], "FAILURE"); got != 1 {
+		t.Fatalf("statusContextCountsByState FAILURE = %d, want 1: %v", got, contexts["statusContextCountsByState"])
+	}
+	statusNode := ctxNodes[0].(map[string]interface{})
+	if statusNode["__typename"] != "StatusContext" || statusNode["context"] != "ci/unit" ||
+		statusNode["state"] != "FAILURE" || statusNode["targetUrl"] != "https://ci.example.test/unit" ||
+		statusNode["description"] != "unit suite failed" {
+		t.Errorf("status context node = %v, want ci/unit FAILURE", statusNode)
+	}
+	checkNode := ctxNodes[1].(map[string]interface{})
 	if checkNode["__typename"] != "CheckRun" || checkNode["name"] != "build" ||
 		checkNode["status"] != "COMPLETED" || checkNode["conclusion"] != "SUCCESS" {
 		t.Errorf("check run node = %v, want CheckRun build COMPLETED SUCCESS", checkNode)
 	}
+	checkSuite, _ := checkNode["checkSuite"].(map[string]interface{})
+	workflowRun, _ := checkSuite["workflowRun"].(map[string]interface{})
+	workflow, _ := workflowRun["workflow"].(map[string]interface{})
+	if workflow == nil || workflow["name"] != "ci" {
+		t.Fatalf("checkSuite.workflowRun.workflow = %v, want ci", workflow)
+	}
+}
+
+func countForState(raw interface{}, state string) int {
+	nodes, _ := raw.([]interface{})
+	for _, node := range nodes {
+		m, _ := node.(map[string]interface{})
+		if m["state"] == state {
+			switch count := m["count"].(type) {
+			case float64:
+				return int(count)
+			case int:
+				return count
+			}
+		}
+	}
+	return 0
 }
 
 // --- Finding 4: gh pr merge's finder fields + the merge mutation shape ---
@@ -823,10 +900,13 @@ func TestRepoGraphQL_ReleasesConnection(t *testing.T) {
 		}
 	}
 
-	// Verbatim shurcooL rendering of gh release list's query (the
-	// pre-immutable-releases variant gh falls back to after introspecting
-	// Release — bleephub deliberately omits `immutable`).
-	query := `query RepositoryReleaseList($direction:OrderDirection!$endCursor:String$name:String!$owner:String!$perPage:Int!){repository(owner: $owner, name: $name){releases(first: $perPage, orderBy: {field: CREATED_AT, direction: $direction}, after: $endCursor){nodes{name,tagName,isDraft,isLatest,isPrerelease,createdAt,publishedAt},pageInfo{hasNextPage,endCursor}}}}`
+	resp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/immutable-releases", defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("enable immutable releases: %d", resp.StatusCode)
+	}
+
+	query := `query RepositoryReleaseList($direction:OrderDirection!$endCursor:String$name:String!$owner:String!$perPage:Int!){repository(owner: $owner, name: $name){releases(first: $perPage, orderBy: {field: CREATED_AT, direction: $direction}, after: $endCursor){nodes{name,tagName,isDraft,immutable,isLatest,isPrerelease,createdAt,publishedAt},pageInfo{hasNextPage,endCursor}}}}`
 	d := gqlData(t, query, map[string]interface{}{
 		"owner":     owner,
 		"name":      name,
@@ -853,18 +933,24 @@ func TestRepoGraphQL_ReleasesConnection(t *testing.T) {
 	if v, _ := byTag["v1.1.0-rc1"]["isPrerelease"].(bool); !v {
 		t.Errorf("v1.1.0-rc1 isPrerelease = %v, want true", byTag["v1.1.0-rc1"]["isPrerelease"])
 	}
+	if v, _ := byTag["v1.0.0"]["immutable"].(bool); !v {
+		t.Errorf("v1.0.0 immutable = %v, want true from repo immutable-release state", byTag["v1.0.0"]["immutable"])
+	}
 	if byTag["v2.0.0"]["publishedAt"] != nil {
 		t.Errorf("draft publishedAt = %v, want null", byTag["v2.0.0"]["publishedAt"])
 	}
 
-	// Release must NOT declare `immutable` — gh introspects for it and only
-	// then sends the immutable-aware query, which bleephub cannot honour.
 	intro := gqlData(t, `query Release_fields{Release: __type(name: "Release"){fields{name}}}`, nil)
 	fields, _ := intro["Release"].(map[string]interface{})["fields"].([]interface{})
+	foundImmutable := false
 	for _, f := range fields {
 		if f.(map[string]interface{})["name"] == "immutable" {
-			t.Fatalf("Release declares `immutable` — gh would send the immutable-releases query")
+			foundImmutable = true
+			break
 		}
+	}
+	if !foundImmutable {
+		t.Fatalf("Release must declare immutable so official clients can use the immutable-aware query")
 	}
 }
 

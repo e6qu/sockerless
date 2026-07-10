@@ -168,6 +168,52 @@ type WorkflowEventMeta struct {
 	Payload map[string]interface{}
 }
 
+func (st *Store) persistWorkflowRecord(wf *Workflow) {
+	if st.persist != nil && wf != nil {
+		st.persist.MustPut("workflows", wf.ID, wf)
+	}
+}
+
+func (st *Store) deleteWorkflowRecord(id string) {
+	if st.persist != nil && id != "" {
+		st.persist.MustDelete("workflows", id)
+	}
+}
+
+func (st *Store) persistWorkflowAttemptsRecord(runID int) {
+	if st.persist == nil || runID == 0 {
+		return
+	}
+	attempts := st.WorkflowAttempts[runID]
+	if len(attempts) == 0 {
+		st.persist.MustDelete("workflow_attempts", strconv.Itoa(runID))
+		return
+	}
+	st.persist.MustPut("workflow_attempts", strconv.Itoa(runID), attempts)
+}
+
+func normalizeReloadedWorkflow(wf *Workflow) {
+	if wf == nil || wf.Status == WorkflowStatusCompleted {
+		return
+	}
+	now := time.Now().UTC()
+	wf.Status = WorkflowStatusCompleted
+	wf.Result = ResultCancelled
+	wf.CancelRequested = true
+	for _, job := range wf.Jobs {
+		switch job.Status {
+		case JobStatusCompleted, JobStatusSkipped:
+			continue
+		default:
+			job.Status = JobStatusCompleted
+			job.Result = ResultCancelled
+			if job.CompletedAt.IsZero() {
+				job.CompletedAt = now
+			}
+		}
+	}
+}
+
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
 
 // PendingDeployment is one reviewer-protected environment a run waits on.
@@ -345,6 +391,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Status = WorkflowStatusActionRequired
 		s.store.mu.Lock()
 		s.store.Workflows[workflow.ID] = workflow
+		s.store.persistWorkflowRecord(workflow)
 		s.store.mu.Unlock()
 		s.queueActionsEvent(evRunRequested, workflow, nil)
 		return workflow, nil
@@ -375,6 +422,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 				workflow.Status = WorkflowStatusPendingConcurrency
 				s.store.mu.Lock()
 				s.store.Workflows[workflow.ID] = workflow
+				s.store.persistWorkflowRecord(workflow)
 				s.store.mu.Unlock()
 				s.queueActionsEvent(evRunRequested, workflow, nil)
 				return workflow, nil
@@ -388,6 +436,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	}
 	s.store.mu.Lock()
 	s.store.Workflows[workflow.ID] = workflow
+	s.store.persistWorkflowRecord(workflow)
 	s.store.mu.Unlock()
 	s.queueActionsEvent(evRunRequested, workflow, nil)
 
@@ -498,7 +547,16 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			// Evaluate job-level if: condition
 			if wfJob.Def != nil && wfJob.Def.If != "" {
 				hasAlways, hasFailure := ExprContainsStatusFunction(wfJob.Def.If)
-				exprCtx := s.jobExprContext(wf, wfJob)
+				exprCtx, err := s.jobExprContext(wf, wfJob)
+				if err != nil {
+					wfJob.Status = JobStatusCompleted
+					wfJob.Result = ResultFailure
+					wfJob.CompletedAt = time.Now()
+					s.logger.Warn().Err(err).Str("job", wfJob.Key).
+						Msg("job if: context error — failing job")
+					changed = true
+					continue
+				}
 
 				ok, err := EvalExprErr(wfJob.Def.If, exprCtx)
 				if err != nil {
@@ -587,6 +645,9 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			s.queueActionsEvent(evJobQueued, wf, wfJob)
 			changed = true
 		}
+		if changed {
+			s.store.persistWorkflowRecord(wf)
+		}
 		s.store.mu.Unlock()
 
 		// Dispatch collected jobs outside the lock (dispatchWorkflowJob acquires its own locks)
@@ -616,7 +677,18 @@ func (s *Server) dispatchWorkflowJob(ctx context.Context, wf *Workflow, wfJob *W
 	timelineID := uuid.New().String()
 	requestID := s.nextRequestID()
 
-	msg := s.buildJobMessageFromDef(serverURL, wf, wfJob, planID, timelineID, requestID, defaultImage)
+	msg, err := s.buildJobMessageFromDef(serverURL, wf, wfJob, planID, timelineID, requestID, defaultImage)
+	if err != nil {
+		s.store.mu.Lock()
+		wfJob.Status = JobStatusCompleted
+		wfJob.Result = ResultFailure
+		wfJob.CompletedAt = time.Now()
+		s.store.mu.Unlock()
+		s.queueActionsEvent(evJobCompleted, wf, wfJob)
+		s.logger.Error().Err(err).Str("job", wfJob.Key).Msg("failed to build job message")
+		s.finalizeWorkflowIfDone(wf)
+		return
+	}
 	msgJSON, err := json.Marshal(msg)
 	if err != nil {
 		s.logger.Error().Err(err).Str("job", wfJob.Key).Msg("failed to marshal job message")
@@ -728,6 +800,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			}
 		}
 	}
+	s.store.persistWorkflowRecord(foundWf)
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -782,6 +855,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		}
 	}
 	concurrencyGroup := foundWf.ConcurrencyGroup
+	s.store.persistWorkflowRecord(foundWf)
 	s.store.mu.Unlock()
 
 	if allDone {
@@ -939,6 +1013,7 @@ func (s *Server) applyDeploymentReview(ctx context.Context, wf *Workflow, envIDs
 		serverURL = wf.Env["__serverURL"]
 		defaultImage = wf.Env["__defaultImage"]
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if state == "approved" && serverURL != "" {
@@ -978,6 +1053,7 @@ func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
 		allDone = false
 	}
 	concurrencyGroup := wf.ConcurrencyGroup
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if allDone {
@@ -1102,6 +1178,7 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 
 	pendingWf.Status = WorkflowStatusRunning
 	pendingWf.ConcurrencyAcquiredAt = time.Now().UTC()
+	s.store.persistWorkflowRecord(pendingWf)
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -1227,6 +1304,9 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 
 	// Re-dispatch to handle dependents (outside lock since dispatchReadyJobs acquires locks)
 	if timedOut {
+		s.store.mu.Lock()
+		s.store.persistWorkflowRecord(wf)
+		s.store.mu.Unlock()
 		if wf.Env != nil {
 			if serverURL, ok := wf.Env["__serverURL"]; ok {
 				s.dispatchReadyJobs(context.Background(), wf, serverURL, wf.Env["__defaultImage"])
@@ -1238,7 +1318,7 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 // jobExprContext builds the expression-evaluation context for a job-level
 // `if:` with the contexts real GitHub makes available there: github,
 // needs, vars, and inputs. Callers hold the store write lock.
-func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
+func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) (*ExprContext, error) {
 	// Jobs inside a reusable-workflow call see their workflow's own view:
 	// sibling needs under unprefixed keys, the synthetic gate invisible,
 	// and the call's resolved inputs as the inputs context.
@@ -1288,7 +1368,10 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 
 	varsCtx := make(map[string]interface{})
 	if wf.RepoFullName != "" {
-		_, vars := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		_, vars, err := s.collectJobSecretsAndVarsLocked(wf.RepoFullName, jobEnvironmentName(wfJob))
+		if err != nil {
+			return nil, err
+		}
 		for name, v := range vars {
 			varsCtx[name] = v
 		}
@@ -1303,7 +1386,7 @@ func (s *Server) jobExprContext(wf *Workflow, wfJob *WorkflowJob) *ExprContext {
 			"inputs": inputsCtx,
 			"vars":   varsCtx,
 		},
-	}
+	}, nil
 }
 
 // githubContextMap assembles the server-side `github` context for
@@ -1314,18 +1397,12 @@ func (s *Server) githubContextMap(wf *Workflow) map[string]interface{} {
 	if eventName == "" {
 		eventName = "push"
 	}
+	repoFullName := wf.RepoFullName
 	ref := wf.Ref
-	if ref == "" {
+	if ref == "" && repoFullName != "" {
 		ref = "refs/heads/main"
 	}
 	sha := wf.Sha
-	if sha == "" {
-		sha = "0000000000000000000000000000000000000000"
-	}
-	repoFullName := wf.RepoFullName
-	if repoFullName == "" {
-		repoFullName = "bleephub/test"
-	}
 	repoOwner := repoFullName
 	if idx := strings.Index(repoOwner, "/"); idx >= 0 {
 		repoOwner = repoOwner[:idx]

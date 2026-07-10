@@ -165,6 +165,7 @@ func TestAWSEventSourceCoversAllServiceSlices(t *testing.T) {
 		"CodeBuild_20161006.StartBuild":                       "codebuild.amazonaws.com",
 		"AmazonEC2ContainerServiceV20141113.RunTask":          "ecs.amazonaws.com",
 		"AmazonEC2ContainerRegistry_V20150921.DescribeImages": "ecr.amazonaws.com",
+		"AWSBudgetServiceGateway.CreateBudget":                "budgets.amazonaws.com",
 		"AnyScaleFrontendService.RegisterScalableTarget":      "application-autoscaling.amazonaws.com",
 		"Route53AutoNaming_v20170314.CreateService":           "servicediscovery.amazonaws.com",
 		"CloudTrail_20131101.LookupEvents":                    "cloudtrail.amazonaws.com",

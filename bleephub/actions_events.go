@@ -102,6 +102,13 @@ func (s *Server) onActionsRunRequested(wf *Workflow) {
 	branch := refShortName(wf.Ref)
 
 	suite := s.store.CreateCheckSuite(repoKey, branch, wf.Sha, githubActionsAppID)
+	s.store.UpdateCheckSuite(suite.ID, func(cs *CheckSuite) {
+		cs.WorkflowRunID = wf.RunID
+		cs.WorkflowRunBackendID = wf.ID
+		cs.WorkflowName = wf.Name
+		cs.WorkflowFileID = wf.WorkflowFileID
+		cs.WorkflowFilePath = wf.WorkflowFilePath
+	})
 
 	s.store.mu.RLock()
 	jobs := make([]*WorkflowJob, 0, len(wf.Jobs))

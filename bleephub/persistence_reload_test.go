@@ -169,6 +169,99 @@ func addTestUser(p *Persistence, st *Store, login string) *User {
 	return u
 }
 
+func TestPersistenceReload_GistsCommentsStarsAndForks(t *testing.T) {
+	var gistID, forkID string
+	var commentID int
+
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		alice := addTestUser(p, st, "alice")
+
+		g, err := st.CreateGistE(admin, "persisted gist", true, map[string]*GistFile{
+			"hello.txt": {Filename: "hello.txt", Content: "hello"},
+		})
+		if err != nil {
+			t.Fatalf("CreateGistE: %v", err)
+		}
+		gistID = g.ID
+		nextDescription := "updated gist"
+		if _, ok, err := st.UpdateGistE(g.ID, &nextDescription, map[string]*GistFile{
+			"second.txt": {Filename: "second.txt", Content: "second"},
+		}, nil); err != nil || !ok {
+			t.Fatalf("UpdateGistE ok=%v err=%v", ok, err)
+		}
+		if !st.StarGist(alice.ID, g.ID) {
+			t.Fatal("StarGist returned false")
+		}
+		fork, ok, err := st.ForkGistE(alice, g.ID)
+		if err != nil || !ok {
+			t.Fatalf("ForkGistE ok=%v err=%v", ok, err)
+		}
+		forkID = fork.ID
+		comment := st.CreateGistComment(g.ID, alice, "first")
+		if comment == nil {
+			t.Fatal("CreateGistComment returned nil")
+		}
+		commentID = comment.ID
+		if _, ok := st.UpdateGistComment(comment.ID, "edited"); !ok {
+			t.Fatal("UpdateGistComment returned false")
+		}
+
+		deleted, err := st.CreateGistE(admin, "deleted gist", true, map[string]*GistFile{
+			"gone.txt": {Filename: "gone.txt", Content: "gone"},
+		})
+		if err != nil {
+			t.Fatalf("CreateGistE deleted fixture: %v", err)
+		}
+		deletedComment := st.CreateGistComment(deleted.ID, admin, "gone")
+		if deletedComment == nil {
+			t.Fatal("CreateGistComment deleted fixture returned nil")
+		}
+		if !st.StarGist(alice.ID, deleted.ID) {
+			t.Fatal("StarGist deleted fixture returned false")
+		}
+		if !st.DeleteGist(deleted.ID) {
+			t.Fatal("DeleteGist returned false")
+		}
+	})
+
+	g := st2.GetGist(gistID)
+	if g == nil {
+		t.Fatal("gist did not persist")
+	}
+	if g.Description != "updated gist" || g.Files["hello.txt"].Content != "hello" || g.Files["second.txt"].Content != "second" {
+		t.Fatalf("gist content did not persist: %#v", g)
+	}
+	if len(g.History) != 2 {
+		t.Fatalf("gist history length = %d, want 2", len(g.History))
+	}
+	if g.Comments != 1 {
+		t.Fatalf("gist comments count = %d, want 1", g.Comments)
+	}
+	comment := st2.GetGistComment(commentID)
+	if comment == nil || comment.Body != "edited" {
+		t.Fatalf("gist comment did not persist: %#v", comment)
+	}
+	alice := st2.UsersByLogin["alice"]
+	if alice == nil {
+		t.Fatal("alice user did not persist")
+	}
+	if !st2.IsGistStarred(alice.ID, gistID) {
+		t.Fatal("starred gist state did not persist")
+	}
+	forks := st2.ListGistForks(gistID)
+	if len(forks) != 1 || forks[0].ID != forkID || forks[0].OwnerID != alice.ID {
+		t.Fatalf("gist fork list did not persist: %#v", forks)
+	}
+	if deleted := st2.ListGistsForUser(st2.UsersByLogin["admin"].ID, time.Time{}); len(deleted) != 1 || deleted[0].ID != gistID {
+		t.Fatalf("deleted gist or residue survived reload: %#v", deleted)
+	}
+	if starred := st2.ListStarredGists(alice.ID); len(starred) != 1 || starred[0].ID != gistID {
+		t.Fatalf("deleted starred gist residue survived reload: %#v", starred)
+	}
+}
+
 // G1: app credentials + webhook config survive a restart — JWT auth (PEM),
 // OAuth client-secret auth, and app webhook delivery config all depend on them.
 func TestPersistenceReload_AppCredentialsAndWebhookConfig(t *testing.T) {
@@ -451,6 +544,13 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 				},
 			}
 		})
+		st.UpdateCheckSuite(cr.SuiteID, func(s *CheckSuite) {
+			s.WorkflowRunID = 42
+			s.WorkflowRunBackendID = "workflow-backend-42"
+			s.WorkflowName = "ci"
+			s.WorkflowFileID = 99
+			s.WorkflowFilePath = ".github/workflows/ci.yml"
+		})
 	})
 
 	runs := st2.ListCheckRunsForCommit(repoKey, sha, "", "", 0)
@@ -463,6 +563,106 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 	suites := st2.ListCheckSuitesForCommit(repoKey, sha, 0)
 	if len(suites) != 1 || suites[0].ID != suiteID {
 		t.Fatalf("check suites for commit after reload = %d, want exactly suite %d (RepoKey lost?)", len(suites), suiteID)
+	}
+	if suites[0].WorkflowRunID != 42 || suites[0].WorkflowRunBackendID != "workflow-backend-42" ||
+		suites[0].WorkflowName != "ci" || suites[0].WorkflowFileID != 99 ||
+		suites[0].WorkflowFilePath != ".github/workflows/ci.yml" {
+		t.Fatalf("check suite workflow metadata did not round-trip: %+v", suites[0])
+	}
+}
+
+func TestPersistenceReload_WorkflowRunsAndAttempts(t *testing.T) {
+	const repoKey = "admin/actions-persist"
+	now := time.Now().UTC()
+	var completedRunID, runningRunID int
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		if st.CreateRepo(user, "actions-persist", "", false) == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		completedRunID = st.ReserveRunID()
+		completed := &Workflow{
+			ID:           "completed-run",
+			Name:         "ci",
+			RunID:        completedRunID,
+			RunNumber:    completedRunID,
+			Status:       WorkflowStatusCompleted,
+			Result:       ResultSuccess,
+			CreatedAt:    now,
+			EventName:    "push",
+			Ref:          "refs/heads/main",
+			Sha:          "1111111111111111111111111111111111111111",
+			RepoFullName: repoKey,
+			Jobs: map[string]*WorkflowJob{
+				"build": {
+					Key:         "build",
+					JobID:       "job-completed",
+					DisplayName: "build",
+					Status:      JobStatusCompleted,
+					Result:      ResultSuccess,
+					StartedAt:   now,
+					CompletedAt: now,
+				},
+			},
+			WorkflowFileID:   1001,
+			WorkflowFilePath: ".github/workflows/ci.yml",
+		}
+		attempt := *completed
+		attempt.ID = "completed-run-attempt-1"
+		attempt.Attempt = 1
+		attempt.Result = ResultFailure
+		runningRunID = st.ReserveRunID()
+		running := &Workflow{
+			ID:           "running-run",
+			Name:         "deploy",
+			RunID:        runningRunID,
+			RunNumber:    runningRunID,
+			Status:       WorkflowStatusRunning,
+			CreatedAt:    now,
+			EventName:    "workflow_dispatch",
+			Ref:          "refs/heads/main",
+			Sha:          "2222222222222222222222222222222222222222",
+			RepoFullName: repoKey,
+			Jobs: map[string]*WorkflowJob{
+				"deploy": {
+					Key:         "deploy",
+					JobID:       "job-running",
+					DisplayName: "deploy",
+					Status:      JobStatusRunning,
+					StartedAt:   now,
+				},
+			},
+		}
+		st.Workflows[completed.ID] = completed
+		st.Workflows[running.ID] = running
+		st.WorkflowAttempts[completedRunID] = []*Workflow{&attempt}
+		st.persistWorkflowRecord(completed)
+		st.persistWorkflowRecord(running)
+		st.persistWorkflowAttemptsRecord(completedRunID)
+	})
+
+	completed := st2.Workflows["completed-run"]
+	if completed == nil || completed.RunID != completedRunID || completed.RepoFullName != repoKey ||
+		completed.Status != WorkflowStatusCompleted || completed.Result != ResultSuccess ||
+		completed.WorkflowFilePath != ".github/workflows/ci.yml" {
+		t.Fatalf("completed workflow after reload = %+v", completed)
+	}
+	if got := completed.Jobs["build"]; got == nil || got.Status != JobStatusCompleted || got.Result != ResultSuccess {
+		t.Fatalf("completed job after reload = %+v", got)
+	}
+	attempts := st2.WorkflowAttempts[completedRunID]
+	if len(attempts) != 1 || attempts[0].ID != "completed-run-attempt-1" || attempts[0].Result != ResultFailure {
+		t.Fatalf("workflow attempts after reload = %+v", attempts)
+	}
+	running := st2.Workflows["running-run"]
+	if running == nil || running.RunID != runningRunID || running.Status != WorkflowStatusCompleted ||
+		running.Result != ResultCancelled || !running.CancelRequested {
+		t.Fatalf("running workflow after reload = %+v, want completed/cancelled abandoned run", running)
+	}
+	if got := running.Jobs["deploy"]; got == nil || got.Status != JobStatusCompleted || got.Result != ResultCancelled ||
+		got.CompletedAt.IsZero() {
+		t.Fatalf("running job after reload = %+v, want completed/cancelled", got)
 	}
 }
 

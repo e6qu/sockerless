@@ -41,7 +41,7 @@ func TestLiveCodespaces_UserAndRepo(t *testing.T) {
 	userName := userCs["name"].(string)
 	t.Cleanup(func() {
 		if cs := testServer.store.GetCodespaceByName(userName); cs != nil {
-			testServer.store.DeleteCodespace(cs.ID)
+			_, _ = testServer.store.DeleteCodespace(cs.ID)
 		}
 		cleanupCodespaceContainer(t, userName)
 	})
@@ -84,7 +84,7 @@ func TestLiveCodespaces_UserAndRepo(t *testing.T) {
 	repoName := repoCs["name"].(string)
 	t.Cleanup(func() {
 		if cs := testServer.store.GetCodespaceByName(repoName); cs != nil {
-			testServer.store.DeleteCodespace(cs.ID)
+			_, _ = testServer.store.DeleteCodespace(cs.ID)
 		}
 		cleanupCodespaceContainer(t, repoName)
 	})

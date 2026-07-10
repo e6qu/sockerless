@@ -60,13 +60,18 @@ type CheckImage struct {
 
 // CheckSuite groups CheckRuns by (repo, head_sha, app).
 type CheckSuite struct {
-	ID         int64  `json:"id"`
-	NodeID     string `json:"node_id"`
-	HeadBranch string `json:"head_branch"`
-	HeadSHA    string `json:"head_sha"`
-	Status     string `json:"status"`
-	Conclusion string `json:"conclusion"`
-	AppID      int    `json:"app_id"`
+	ID                   int64  `json:"id"`
+	NodeID               string `json:"node_id"`
+	HeadBranch           string `json:"head_branch"`
+	HeadSHA              string `json:"head_sha"`
+	Status               string `json:"status"`
+	Conclusion           string `json:"conclusion"`
+	AppID                int    `json:"app_id"`
+	WorkflowRunID        int    `json:"workflow_run_id,omitempty"`
+	WorkflowRunBackendID string `json:"workflow_run_backend_id,omitempty"`
+	WorkflowName         string `json:"workflow_name,omitempty"`
+	WorkflowFileID       int64  `json:"workflow_file_id,omitempty"`
+	WorkflowFilePath     string `json:"workflow_file_path,omitempty"`
 	// RepoKey carries a real json name so persistence round-trips it;
 	// client responses go through checkSuiteToJSON (explicit map).
 	RepoKey   string    `json:"repo_key"`

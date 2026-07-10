@@ -22,7 +22,7 @@ require (
 )
 
 require (
-	cloud.google.com/go/firestore v1.22.0 // indirect
+	cloud.google.com/go/firestore v1.23.0 // indirect
 	cloud.google.com/go/pubsub/v2 v2.6.1 // indirect
 	cloud.google.com/go/spanner v1.92.0 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect

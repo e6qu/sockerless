@@ -574,22 +574,21 @@ func (s *Server) handleUploadArtifact(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleFinalizeArtifact(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
-		Size int64  `json:"size"`
+		Name                    string `json:"name"`
+		Size                    int64  `json:"size"`
+		WorkflowRunBackendID    string `json:"workflow_run_backend_id"`
+		WorkflowRunBackendIDAlt string `json:"workflowRunBackendId"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	workflowRunBackendID := coalesceStr(req.WorkflowRunBackendID, req.WorkflowRunBackendIDAlt)
 
 	s.artifactStore.mu.Lock()
-	var found *Artifact
-	for _, art := range s.artifactStore.artifacts {
-		if art.Name == req.Name && !art.Finalized {
-			art.Finalized = true
-			found = art
-			s.artifactStore.persistMeta(art)
-			break
-		}
+	found := s.artifactStore.findArtifactByNameLocked(req.Name, workflowRunBackendID, false)
+	if found != nil {
+		found.Finalized = true
+		s.artifactStore.persistMeta(found)
 	}
 	s.artifactStore.mu.Unlock()
 
@@ -659,20 +658,17 @@ func (s *Server) handleListArtifacts(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name string `json:"name"`
+		Name                    string `json:"name"`
+		WorkflowRunBackendID    string `json:"workflow_run_backend_id"`
+		WorkflowRunBackendIDAlt string `json:"workflowRunBackendId"`
 	}
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
+	workflowRunBackendID := coalesceStr(req.WorkflowRunBackendID, req.WorkflowRunBackendIDAlt)
 
 	s.artifactStore.mu.RLock()
-	var found *Artifact
-	for _, art := range s.artifactStore.artifacts {
-		if art.Name == req.Name && art.Finalized {
-			found = art
-			break
-		}
-	}
+	found := s.artifactStore.findArtifactByNameLocked(req.Name, workflowRunBackendID, true)
 	s.artifactStore.mu.RUnlock()
 
 	if found == nil {
@@ -690,6 +686,22 @@ func (s *Server) handleGetSignedArtifactURL(w http.ResponseWriter, r *http.Reque
 		"name":       found.Name,
 		"signed_url": downloadURL,
 	})
+}
+
+func (as *ArtifactStore) findArtifactByNameLocked(name, workflowRunBackendID string, finalized bool) *Artifact {
+	var found *Artifact
+	for _, art := range as.artifacts {
+		if art.Name != name || art.Finalized != finalized {
+			continue
+		}
+		if workflowRunBackendID != "" && art.WorkflowRunBackendID != workflowRunBackendID {
+			continue
+		}
+		if found == nil || art.ID < found.ID {
+			found = art
+		}
+	}
+	return found
 }
 
 func (s *Server) handleDownloadArtifact(w http.ResponseWriter, r *http.Request) {
@@ -754,6 +766,12 @@ func (s *Server) handleCacheReserve(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusConflict, "Cache reservation already exists")
 		return
 	}
+	downloadToken, err := newCacheDownloadToken()
+	if err != nil {
+		s.artifactStore.mu.Unlock()
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	id := s.artifactStore.nextCacheID
 	s.artifactStore.nextCacheID++
 	entry := &CacheEntry{
@@ -761,7 +779,7 @@ func (s *Server) handleCacheReserve(w http.ResponseWriter, r *http.Request) {
 		Repo:          repo,
 		Key:           req.Key,
 		Version:       req.Version,
-		DownloadToken: newCacheDownloadToken(),
+		DownloadToken: downloadToken,
 		CreatedAt:     time.Now(),
 	}
 	s.artifactStore.caches[id] = entry
@@ -968,14 +986,16 @@ func cacheLookupKey(repo, key, version string) string {
 	return repo + "\x00" + key + "\x00" + version
 }
 
-func newCacheDownloadToken() string {
+func newCacheDownloadToken() (string, error) {
+	return newCacheDownloadTokenFromReader(rand.Reader)
+}
+
+func newCacheDownloadTokenFromReader(random io.Reader) (string, error) {
 	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failure is unrecoverable; an unguessable token is a
-		// security property, so fail loudly rather than emit a weak one.
-		panic("bleephub: crypto/rand failed generating cache download token: " + err.Error())
+	if _, err := io.ReadFull(random, b); err != nil {
+		return "", fmt.Errorf("generate cache download token: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 // cacheScopeRepo resolves the repository an Actions cache request acts for

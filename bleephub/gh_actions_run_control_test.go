@@ -12,11 +12,34 @@ import (
 	"github.com/google/uuid"
 )
 
+func ensureTestOrgRepo(t *testing.T, repo string) {
+	t.Helper()
+	parts := strings.Split(repo, "/")
+	if len(parts) != 2 {
+		t.Fatalf("expected owner/repo, got %q", repo)
+	}
+	if testServer.store.GetRepoByFullName(repo) != nil {
+		return
+	}
+	admin := testServer.store.LookupUserByLogin("admin")
+	org := testServer.store.GetOrg(parts[0])
+	if org == nil {
+		org = testServer.store.CreateOrg(admin, parts[0], parts[0], "")
+	}
+	if org == nil {
+		t.Fatalf("create org %s", parts[0])
+	}
+	if created := testServer.store.CreateOrgRepo(org, admin, parts[1], "", false); created == nil {
+		t.Fatalf("create repo %s", repo)
+	}
+}
+
 // seedGatedRun installs a run held in action_required (the fork-PR
 // approval gate) with one dispatchable pending job, wired so approval
 // can dispatch through the real engine.
 func seedGatedRun(t *testing.T, repo string) *Workflow {
 	t.Helper()
+	ensureTestOrgRepo(t, repo)
 	s := testServer
 	s.store.mu.Lock()
 	runID := s.store.NextRunID
@@ -172,6 +195,7 @@ func TestForkPRApprovalGate_EngineHoldsForkRuns(t *testing.T) {
 
 func TestRerunWorkflowJob_NewAttemptCarriesOtherJobs(t *testing.T) {
 	repo := "jobrr-org/jobrr-repo"
+	ensureTestOrgRepo(t, repo)
 	yaml := "name: jobrr\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo a\n  b:\n    runs-on: ubuntu-latest\n    needs: a\n    steps:\n      - run: echo b\n"
 	testServer.store.RegisterWorkflowFile(repo, ".github/workflows/jobrr.yml", "jobrr", yaml, "submitted")
 

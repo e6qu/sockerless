@@ -39,7 +39,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -66,6 +66,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 	}
 	if activeWf != nil && !wf.CancelInProgress {
 		wf.Status = WorkflowStatusPendingConcurrency
+		s.store.persistWorkflowRecord(wf)
 		s.store.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{})
 		return
@@ -80,6 +81,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 		serverURL = wf.Env["__serverURL"]
 		defaultImage = wf.Env["__defaultImage"]
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if activeWf != nil && wf.CancelInProgress {
@@ -103,7 +105,7 @@ func (s *Server) handleForceCancelWorkflowRun(w http.ResponseWriter, r *http.Req
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findWorkflowByRunID(runID)
+	wf := s.findWorkflowByRunIDInRepo(runID, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -150,6 +152,7 @@ func (s *Server) forceCancelWorkflow(wf *Workflow) {
 		}
 		s.store.PendingMessages = kept
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	for _, jobID := range runningJobIDs {
@@ -173,7 +176,7 @@ func (s *Server) handleRerunWorkflowJob(w http.ResponseWriter, r *http.Request) 
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf, target := s.findJobByStableID(jobID)
+	wf, target := s.findJobByStableIDInRepo(jobID, repoFullName(r))
 	if target == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -323,6 +326,7 @@ func (s *Server) handleReviewCustomDeploymentProtectionRule(w http.ResponseWrite
 			EnvNames:  []string{body.EnvironmentName},
 			CreatedAt: time.Now().UTC(),
 		})
+		s.store.persistWorkflowRecord(wf)
 		s.store.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -346,7 +350,7 @@ func (s *Server) handleRunAttemptLogs(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	wf := s.findRunAttempt(runID, attempt)
+	wf := s.findRunAttempt(runID, attempt, repoFullName(r))
 	if wf == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

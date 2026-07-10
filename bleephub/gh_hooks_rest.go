@@ -368,7 +368,8 @@ func (s *Server) handleTestHook(w http.ResponseWriter, r *http.Request) {
 		branch := repo.DefaultBranch
 		headSha := resolveBranchSha(s.store.GetGitStorage(owner, repoName), branch)
 		if headSha == "" {
-			headSha = "0000000000000000000000000000000000000000"
+			writeGHError(w, http.StatusUnprocessableEntity, "No default branch commit found")
+			return
 		}
 		payload := buildPushPayload(s.store, repo, sender, "refs/heads/"+branch, headSha, headSha)
 		go s.deliverWebhook(hook, "push", "", mustMarshal(payload))

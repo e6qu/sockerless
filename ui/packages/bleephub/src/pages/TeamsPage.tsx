@@ -36,7 +36,7 @@ export function TeamsPage() {
     <div>
       <PageTitle
         title="Teams"
-        meta="Internal bleephub teams."
+        meta="GitHub organization teams."
         actions={
           <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
             New team
@@ -62,7 +62,7 @@ function TeamsTable() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteTeam(id),
+    mutationFn: (team: BleephubTeam) => deleteTeam(team.organization?.login ?? "", team.slug),
     onSuccess: () => {
       setMutationError(null);
       queryClient.invalidateQueries({ queryKey: ["teams"] });
@@ -123,7 +123,7 @@ function TeamsTable() {
               variant="danger"
               onClick={() => {
                 if (confirm(`Delete team ${team.slug}?`)) {
-                  deleteMut.mutate(team.id);
+                  deleteMut.mutate(team);
                 }
               }}
               disabled={deleteMut.isPending}
@@ -244,7 +244,7 @@ function EditTeamDialog({ team, onClose }: { team: BleephubTeam; onClose: () => 
 
   const mutation = useMutation({
     mutationFn: () =>
-      updateTeam(team.id, {
+      updateTeam(team.organization?.login ?? "", team.slug, {
         name: name.trim() || undefined,
         description: description || undefined,
         privacy,

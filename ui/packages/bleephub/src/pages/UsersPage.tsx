@@ -27,7 +27,7 @@ export function UsersPage() {
     <div>
       <PageTitle
         title="Users"
-        meta="Internal bleephub user accounts."
+        meta="GitHub Enterprise Server user accounts."
         actions={
           <Button variant="primary" size="sm" onClick={() => setShowCreate(true)}>
             New user
@@ -51,8 +51,8 @@ function UsersTable() {
   });
 
   const updateMut = useMutation({
-    mutationFn: ({ id, site_admin }: { id: number; site_admin: boolean }) =>
-      updateUser(id, { site_admin }),
+    mutationFn: ({ login, site_admin }: { login: string; site_admin: boolean }) =>
+      updateUser(login, { site_admin }),
     onSuccess: () => {
       setMutationError(null);
       queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -61,7 +61,7 @@ function UsersTable() {
   });
 
   const deleteMut = useMutation({
-    mutationFn: (id: number) => deleteUser(id),
+    mutationFn: (login: string) => deleteUser(login),
     onSuccess: () => {
       setMutationError(null);
       queryClient.invalidateQueries({ queryKey: ["users"] });
@@ -98,9 +98,7 @@ function UsersTable() {
             <input
               type="checkbox"
               checked={info.getValue()}
-              onChange={(e) =>
-                updateMut.mutate({ id: user.id, site_admin: e.target.checked })
-              }
+              onChange={(e) => updateMut.mutate({ login: user.login, site_admin: e.target.checked })}
               disabled={updateMut.isPending}
             />
             <span style={{ fontSize: "0.82rem" }}>{info.getValue() ? "yes" : "no"}</span>
@@ -123,7 +121,7 @@ function UsersTable() {
             variant="danger"
             onClick={() => {
               if (confirm(`Delete user @${user.login}?`)) {
-                deleteMut.mutate(user.id);
+                deleteMut.mutate(user.login);
               }
             }}
             disabled={deleteMut.isPending}
@@ -151,7 +149,7 @@ function UsersTable() {
 function CreateUserDialog({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [login, setLogin] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
   const [siteAdmin, setSiteAdmin] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -159,7 +157,7 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
     mutationFn: () =>
       createUser({
         login: login.trim(),
-        password: password || undefined,
+        email: email.trim() || undefined,
         site_admin: siteAdmin,
       }),
     onSuccess: () => {
@@ -180,12 +178,12 @@ function CreateUserDialog({ onClose }: { onClose: () => void }) {
         className="mb-4 w-full"
       />
 
-      <FormLabel id="user-password">Password</FormLabel>
+      <FormLabel id="user-email">Email</FormLabel>
       <input
-        id="user-password"
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
+        id="user-email"
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
         className="mb-4 w-full"
       />
 

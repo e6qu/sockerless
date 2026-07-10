@@ -44,6 +44,9 @@ func TestCommitStatuses_CreateListCombined(t *testing.T) {
 	if pending["state"] != "pending" || pending["context"] != "ci/build" {
 		t.Errorf("pending status shape: %v", pending)
 	}
+	if _, ok := pending["avatar_url"].(string); !ok {
+		t.Errorf("pending status avatar_url = %T, want string", pending["avatar_url"])
+	}
 
 	// Second status for same context: success (overrides pending in combined).
 	b2, _ := json.Marshal(map[string]string{

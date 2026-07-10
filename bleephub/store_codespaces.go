@@ -100,7 +100,6 @@ func codespaceMachineByName(name string) codespaceMachine {
 const (
 	codespaceContainerPrefix = "bleephub-codespace-"
 	codespaceDefaultImage    = "mcr.microsoft.com/devcontainers/universal:latest"
-	codespaceFallbackImage   = "ubuntu:latest"
 )
 
 // persistCodespaceLocked writes a codespace row through to persistence.
@@ -131,7 +130,10 @@ func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displ
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	name := generateCodespaceName(repoKey)
+	name, err := generateCodespaceName(repoKey)
+	if err != nil {
+		return nil, err
+	}
 	machine := codespaceDefaultMachine()
 	for _, m := range codespaceMachines {
 		if m.Name == machineName {
@@ -169,15 +171,10 @@ func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displ
 		ImageName:          image,
 		DevcontainerPath:   devcontainerPath,
 	}
-	st.Codespaces[cs.ID] = cs
-	st.CodespacesByName[cs.Name] = cs
-	st.NextCodespaceID++
 
 	repoDir, cleanup, err := st.prepareWorkspaceLocked(repoKey, gitRef)
 	if err != nil {
-		cs.State = "Unavailable"
-		st.persistCodespaceLocked(cs)
-		return cs, fmt.Errorf("prepare workspace: %w", err)
+		return nil, fmt.Errorf("prepare workspace: %w", err)
 	}
 	cs.WorkspaceMount = repoDir
 
@@ -187,14 +184,15 @@ func (st *Store) CreateCodespace(ownerLogin, repoKey, gitRef, machineName, displ
 
 	containerID, err := dockerRunCodespace(ctx, containerName, image, repoDir, repoNameFromRepoKey(repoKey))
 	if err != nil {
-		cs.State = "Unavailable"
-		st.persistCodespaceLocked(cs)
 		cleanup()
-		return cs, fmt.Errorf("docker run: %w", err)
+		return nil, fmt.Errorf("docker run: %w", err)
 	}
 	cs.ContainerID = containerID
 	cs.ContainerName = containerName
 	cs.State = dockerStateToCodespaceState(containerID)
+	st.Codespaces[cs.ID] = cs
+	st.CodespacesByName[cs.Name] = cs
+	st.NextCodespaceID++
 	st.persistCodespaceLocked(cs)
 	return cs, nil
 }
@@ -242,17 +240,20 @@ func (st *Store) ListCodespacesByRepo(repoKey string) []*Codespace {
 }
 
 // DeleteCodespace stops and removes the backing container and deletes the record.
-func (st *Store) DeleteCodespace(id int) bool {
+func (st *Store) DeleteCodespace(id int) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	cs := st.Codespaces[id]
 	if cs == nil {
-		return false
+		return false, nil
 	}
 	if cs.ContainerID != "" {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		_ = dockerRemoveContainer(ctx, cs.ContainerID)
+		err := dockerRemoveContainer(ctx, cs.ContainerID)
 		cancel()
+		if err != nil {
+			return true, fmt.Errorf("docker remove: %w", err)
+		}
 	}
 	if cs.WorkspaceMount != "" && strings.HasPrefix(cs.WorkspaceMount, os.TempDir()) {
 		_ = os.RemoveAll(cs.WorkspaceMount)
@@ -262,7 +263,7 @@ func (st *Store) DeleteCodespace(id int) bool {
 	if st.persist != nil {
 		st.persist.MustDelete("codespaces", strconv.Itoa(id))
 	}
-	return true
+	return true, nil
 }
 
 // UpdateCodespace updates mutable fields of a codespace.
@@ -561,18 +562,21 @@ func codespaceDefaultMachine() codespaceMachine {
 	return codespaceMachines[1]
 }
 
-func generateCodespaceName(repoKey string) string {
+func generateCodespaceName(repoKey string) (string, error) {
+	return generateCodespaceNameWithReader(repoKey, rand.Reader)
+}
+
+func generateCodespaceNameWithReader(repoKey string, random io.Reader) (string, error) {
 	b := make([]byte, 4)
-	if _, err := rand.Read(b); err != nil {
-		// Fallback to timestamp-based randomness.
-		b = []byte(fmt.Sprintf("%d", time.Now().UnixNano()))
+	if _, err := io.ReadFull(random, b); err != nil {
+		return "", fmt.Errorf("generate codespace name: read random bytes: %w", err)
 	}
 	suffix := fmt.Sprintf("%07s", fmt.Sprintf("%x", b))[:7]
 	repoName := repoNameFromRepoKey(repoKey)
 	if repoName == "" {
-		return "github-" + suffix
+		return "github-" + suffix, nil
 	}
-	return fmt.Sprintf("github-%s-%s", repoName, suffix)
+	return fmt.Sprintf("github-%s-%s", repoName, suffix), nil
 }
 
 func repoNameFromRepoKey(repoKey string) string {
@@ -751,11 +755,7 @@ func dockerRunCodespace(ctx context.Context, name, image, repoDir, repoName stri
 		repoName = "workspace"
 	}
 	if err := ensureDockerImage(ctx, image); err != nil {
-		// Fall back to ubuntu if the requested image cannot be pulled.
-		image = codespaceFallbackImage
-		if err := ensureDockerImage(ctx, image); err != nil {
-			return "", fmt.Errorf("pull image: %w", err)
-		}
+		return "", fmt.Errorf("pull image %q: %w", image, err)
 	}
 
 	args := []string{

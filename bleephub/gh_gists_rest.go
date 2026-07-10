@@ -127,7 +127,11 @@ func (s *Server) handleCreateGist(w http.ResponseWriter, r *http.Request) {
 		files[name] = gistFileFromInput(name, f.Content, s.baseURL(r), "")
 	}
 
-	g := s.store.CreateGist(user, req.Description, req.Public, files)
+	g, err := s.store.CreateGistE(user, req.Description, req.Public, files)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.populateGistURLs(g, r)
 	writeJSON(w, http.StatusCreated, s.gistToJSON(g, r, true))
 }
@@ -197,7 +201,11 @@ func (s *Server) handleUpdateGist(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, ok := s.store.UpdateGist(id, req.Description, newFiles, deleteFiles)
+	updated, ok, err := s.store.UpdateGistE(id, req.Description, newFiles, deleteFiles)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if !ok {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
@@ -275,7 +283,11 @@ func (s *Server) handleForkGist(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("gist_id")
-	fork, ok := s.store.ForkGist(user, id)
+	fork, ok, err := s.store.ForkGistE(user, id)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	if !ok {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return

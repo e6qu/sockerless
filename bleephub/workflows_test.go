@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"testing"
@@ -440,6 +441,120 @@ func TestBuildJobMessageNoServices(t *testing.T) {
 	if msg["jobServiceContainers"] != nil {
 		t.Errorf("jobServiceContainers should be nil, got %v", msg["jobServiceContainers"])
 	}
+}
+
+func TestBuildJobMessageRepoLessGithubContextHasNoFakeRefSha(t *testing.T) {
+	req := &SubmitRequest{HostMode: true, Steps: []SubmitStep{{Run: "echo hello"}}}
+	msg := buildJobMessage("http://localhost", "job", "plan", "timeline", 1, req)
+	ctx := msg["contextData"].(map[string]interface{})
+	githubCtx := pipelineContextMap(t, ctx["github"])
+	if githubCtx["repository"] != "" || githubCtx["repository_owner"] != "" {
+		t.Fatalf("repo-less context repository = %q owner = %q", githubCtx["repository"], githubCtx["repository_owner"])
+	}
+	if githubCtx["sha"] != "" || githubCtx["ref"] != "" {
+		t.Fatalf("repo-less context sha/ref = %q/%q, want empty values", githubCtx["sha"], githubCtx["ref"])
+	}
+}
+
+func TestGithubContextMapRepoLessHasNoFakeRefSha(t *testing.T) {
+	s := newTestServer()
+	wf := &Workflow{Name: "operator", RunID: 7, RunNumber: 7}
+	ctx := s.githubContextMap(wf)
+	if ctx["repository"] != "" || ctx["repository_owner"] != "" {
+		t.Fatalf("repo-less context repository = %q owner = %q", ctx["repository"], ctx["repository_owner"])
+	}
+	if ctx["sha"] != "" || ctx["ref"] != "" {
+		t.Fatalf("repo-less context sha/ref = %q/%q, want empty values", ctx["sha"], ctx["ref"])
+	}
+}
+
+func TestSubmitWorkflowRepoRefResolution(t *testing.T) {
+	repo := seedTestRepo(t, "internal-submit-ref", false)
+	yaml := "name: internal-submit\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+	stor := testServer.store.GetGitStorage("admin", "internal-submit-ref")
+	if stor == nil {
+		t.Fatalf("git storage for %s missing", repo.FullName)
+	}
+	admin := testServer.store.Users[1]
+	commit, err := initRepoWithFiles(stor, repo.DefaultBranch, "seed workflow", map[string]string{
+		".github/workflows/internal-submit.yml": yaml,
+	}, repoSignature(admin.Login, "bleephub@local"))
+	if err != nil {
+		t.Fatalf("seed workflow git state: %v", err)
+	}
+	wantSha := commit.String()
+	body, _ := json.Marshal(map[string]string{
+		"workflow": yaml,
+		"repo":     repo.FullName,
+		"ref":      "refs/heads/main",
+	})
+	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := decodeJSONWithStatus(t, resp, 200)
+	wfID, _ := data["workflowId"].(string)
+	if wfID == "" {
+		t.Fatalf("submit response missing workflowId: %v", data)
+	}
+	testServer.store.mu.RLock()
+	wf := testServer.store.Workflows[wfID]
+	testServer.store.mu.RUnlock()
+	if wf == nil {
+		t.Fatalf("workflow %q not stored", wfID)
+	}
+	if wf.Sha != wantSha {
+		t.Fatalf("workflow sha = %q, want resolved git sha %q", wf.Sha, wantSha)
+	}
+}
+
+func TestSubmitWorkflowRejectsUnresolvedRepoRef(t *testing.T) {
+	repo := seedTestRepo(t, "internal-submit-missing-ref", false)
+	yaml := "name: missing-ref\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n"
+	body, _ := json.Marshal(map[string]string{
+		"workflow": yaml,
+		"repo":     repo.FullName,
+		"ref":      "refs/heads/missing",
+	})
+	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 422 {
+		t.Fatalf("status = %d, want 422", resp.StatusCode)
+	}
+}
+
+func pipelineContextMap(t *testing.T, ctx interface{}) map[string]string {
+	t.Helper()
+	m, ok := ctx.(map[string]interface{})
+	if !ok {
+		t.Fatalf("context is %T, want map", ctx)
+	}
+	out := make(map[string]string)
+	add := func(entry map[string]interface{}) {
+		k, _ := entry["k"].(string)
+		v, _ := entry["v"].(string)
+		out[k] = v
+	}
+	switch entries := m["d"].(type) {
+	case []interface{}:
+		for _, raw := range entries {
+			entry, ok := raw.(map[string]interface{})
+			if !ok {
+				t.Fatalf("entry is %T, want map", raw)
+			}
+			add(entry)
+		}
+	case []map[string]interface{}:
+		for _, entry := range entries {
+			add(entry)
+		}
+	default:
+		t.Fatalf("context entries are %T, want slice", m["d"])
+	}
+	return out
 }
 
 // jsonUnmarshal is a test helper.

@@ -6,7 +6,7 @@ require (
 	cloud.google.com/go/bigtable v1.50.0
 	cloud.google.com/go/compute/metadata v0.9.0
 	cloud.google.com/go/eventarc v1.24.0
-	cloud.google.com/go/firestore v1.22.0
+	cloud.google.com/go/firestore v1.23.0
 	cloud.google.com/go/functions v1.24.0
 	cloud.google.com/go/iam v1.11.0
 	cloud.google.com/go/kms v1.31.0
@@ -16,7 +16,7 @@ require (
 	cloud.google.com/go/storage v1.63.0
 	github.com/sockerless/simulator-realexec v0.0.0-00010101000000-000000000000
 	github.com/stretchr/testify v1.11.1
-	google.golang.org/api v0.287.1
+	google.golang.org/api v0.288.0
 	google.golang.org/genproto v0.0.0-20260706201446-f0a921348800
 	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800
 	google.golang.org/grpc v1.82.0

@@ -282,6 +282,7 @@ func commitStatusToJSON(st *CommitStatus, stStore *Store, baseURL, repoKey strin
 		"description": st.Description,
 		"target_url":  st.TargetURL,
 		"context":     st.Context,
+		"avatar_url":  "",
 		"creator":     creator,
 		"created_at":  st.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":  st.UpdatedAt.UTC().Format(time.RFC3339),

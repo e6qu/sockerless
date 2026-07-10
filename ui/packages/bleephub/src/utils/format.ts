@@ -16,15 +16,6 @@ export function formatDuration(startISO: string | null, endISO: string | null): 
   return `${s}s`;
 }
 
-/** Format a duration in seconds as "Xh Ym" or "Zm". */
-export function formatUptime(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "—";
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
-}
-
 /**
  * Render an ISO timestamp as a coarse relative age the way GitHub labels a
  * last-commit time ("3 days ago", "just now", "last year"). Returns "" for a

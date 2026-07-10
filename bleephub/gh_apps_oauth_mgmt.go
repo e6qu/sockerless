@@ -116,9 +116,14 @@ func (s *Server) handleResetOAuthToken(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "token does not match client_id")
 		return
 	}
-	// Revoke old + mint fresh pair carrying same scopes + user.
+	// Mint the replacement before revoking the old token so an entropy or
+	// persistence failure leaves the original credential intact.
+	fresh, refresh, err := s.store.CreateUserToServerTokenE(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, 8*time.Hour, tok.RefreshTokenValue != "")
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	s.store.RevokeUserToServerToken(tok.Token)
-	fresh, refresh := s.store.CreateUserToServerToken(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, 8*time.Hour, tok.RefreshTokenValue != "")
 	resp := oauthTokenInspectionJSON(s.store, fresh, s.userByID(fresh.UserID))
 	resp["token"] = fresh.Token
 	if refresh != nil {
@@ -187,7 +192,11 @@ func (s *Server) handleScopeOAuthToken(w http.ResponseWriter, r *http.Request) {
 	if ttl <= 0 {
 		ttl = 8 * time.Hour
 	}
-	scoped, _ := s.store.CreateUserToServerToken(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, ttl, false)
+	scoped, _, err := s.store.CreateUserToServerTokenE(tok.UserID, tok.AppID, tok.OAuthAppClientID, tok.Scopes, ttl, false)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 
 	// Bind the new token to the targeted installation so the inspection response
 	// reflects the narrowed scope.
@@ -251,7 +260,11 @@ func (s *Server) handleCreateBrowserOAuthApp(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	app := s.store.CreateOAuthApp(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
+	app, err := s.store.CreateOAuthAppE(user.ID, req.Name, req.Description, req.URL, req.CallbackURL)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, oauthAppToJSON(app, true))
 }
 

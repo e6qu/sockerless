@@ -358,6 +358,19 @@ func TestAuditLogRecords(t *testing.T) {
 		t.Fatalf("cross-field filtered action = %v, want test.action3", filtered[0])
 	}
 
+	w = doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log?order=asc", "")
+	if w.Code != 200 {
+		t.Fatalf("ascending audit log status = %d", w.Code)
+	}
+	var asc []interface{}
+	json.Unmarshal(w.Body.Bytes(), &asc)
+	if len(asc) != 3 {
+		t.Fatalf("ascending entries = %d, want 3; body = %s", len(asc), w.Body.String())
+	}
+	if asc[0].(map[string]interface{})["action"] != "test.action" {
+		t.Fatalf("ascending first action = %v, want test.action", asc[0])
+	}
+
 	w = doMiscReq(s, "GET", "/api/v3/orgs/test-org/audit-log?per_page=1&page=2", "")
 	if w.Code != 200 {
 		t.Fatalf("paged audit log status = %d", w.Code)

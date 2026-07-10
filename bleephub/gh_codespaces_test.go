@@ -59,12 +59,12 @@ func TestCodespaces_UserCreateListGetDelete(t *testing.T) {
 	name := created["name"].(string)
 	t.Cleanup(func() {
 		if cs := testServer.store.GetCodespaceByName(name); cs != nil {
-			testServer.store.DeleteCodespace(cs.ID)
+			_, _ = testServer.store.DeleteCodespace(cs.ID)
 		}
 		cleanupCodespaceContainer(t, name)
 	})
-	if created["state"] != "Available" && created["state"] != "Unavailable" {
-		t.Fatalf("unexpected state: %v", created["state"])
+	if created["state"] != "Available" {
+		t.Fatalf("created state = %v, want Available", created["state"])
 	}
 	if created["display_name"] != "User Codespace" {
 		t.Fatalf("unexpected display_name: %v", created["display_name"])
@@ -155,7 +155,7 @@ func TestCodespaces_RepoCreateStartStopDelete(t *testing.T) {
 	name := created["name"].(string)
 	t.Cleanup(func() {
 		if cs := testServer.store.GetCodespaceByName(name); cs != nil {
-			testServer.store.DeleteCodespace(cs.ID)
+			_, _ = testServer.store.DeleteCodespace(cs.ID)
 		}
 		cleanupCodespaceContainer(t, name)
 	})
@@ -169,8 +169,8 @@ func TestCodespaces_RepoCreateStartStopDelete(t *testing.T) {
 	}
 	started := decodeJSON(t, resp)
 	resp.Body.Close()
-	if started["state"] != "Available" && started["state"] != "Unavailable" {
-		t.Fatalf("unexpected start state: %v", started["state"])
+	if started["state"] != "Available" {
+		t.Fatalf("start state = %v, want Available", started["state"])
 	}
 
 	resp = ghPost(t, fmt.Sprintf("/api/v3/repos/%s/codespaces/%s/stop", repo.FullName, name), defaultToken, nil)
@@ -181,8 +181,8 @@ func TestCodespaces_RepoCreateStartStopDelete(t *testing.T) {
 	}
 	stopped := decodeJSON(t, resp)
 	resp.Body.Close()
-	if stopped["state"] != "Shutdown" && stopped["state"] != "Unavailable" {
-		t.Fatalf("unexpected stop state: %v", stopped["state"])
+	if stopped["state"] != "Shutdown" {
+		t.Fatalf("stop state = %v, want Shutdown", stopped["state"])
 	}
 
 	// Delete.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -80,6 +81,108 @@ func TestNotifications_ListAndRead(t *testing.T) {
 	w = do("PUT", "/api/v3/notifications", nil)
 	if w.Code != http.StatusAccepted {
 		t.Errorf("mark all read: %d", w.Code)
+	}
+}
+
+func TestNotifications_ThreadIDsSeparateIssuesAndPullRequests(t *testing.T) {
+	s := newTestServer()
+	s.registerGHNotificationsRoutes()
+
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "notif-collisions", "", false)
+	seedPullRequestBranches(t, s, repo, "feature")
+	issue := s.store.CreateIssue(repo.ID, admin.ID, "issue notification", "body", nil, nil, 0)
+	pr := s.store.CreatePullRequest(repo.ID, admin.ID, "pull request notification", "body", "feature", "main", false, nil, nil, 0)
+	if issue == nil || pr == nil {
+		t.Fatalf("failed to create notification sources: issue=%v pullRequest=%v", issue, pr)
+	}
+	if issue.ID != pr.ID {
+		t.Fatalf("test setup expected colliding source IDs, issue=%d pullRequest=%d", issue.ID, pr.ID)
+	}
+
+	do := func(method, path string, body []byte) *httptest.ResponseRecorder {
+		var req *http.Request
+		if body != nil {
+			req = httptest.NewRequest(method, path, bytes.NewReader(body))
+		} else {
+			req = httptest.NewRequest(method, path, nil)
+		}
+		req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+		w := httptest.NewRecorder()
+		s.ghHeadersMiddleware(s.mux).ServeHTTP(w, req)
+		return w
+	}
+
+	w := do("GET", "/api/v3/notifications", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list: %d body=%s", w.Code, w.Body.String())
+	}
+	var threads []map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &threads); err != nil {
+		t.Fatalf("unmarshal threads: %v", err)
+	}
+	if len(threads) != 2 {
+		t.Fatalf("threads len = %d, want 2: %+v", len(threads), threads)
+	}
+
+	var issueID, pullRequestID string
+	for _, thread := range threads {
+		subject := thread["subject"].(map[string]any)
+		switch subject["type"] {
+		case "Issue":
+			issueID = thread["id"].(string)
+		case "PullRequest":
+			pullRequestID = thread["id"].(string)
+		}
+		for _, field := range []string{"url", "subscription_url"} {
+			got, _ := thread[field].(string)
+			if got == "" || !strings.Contains(got, "/api/v3/notifications/threads/") {
+				t.Fatalf("%s = %q, want GitHub REST notification URL", field, got)
+			}
+		}
+	}
+	if issueID == "" || pullRequestID == "" {
+		t.Fatalf("missing typed notification IDs: issue=%q pullRequest=%q threads=%+v", issueID, pullRequestID, threads)
+	}
+	if issueID == pullRequestID {
+		t.Fatalf("thread IDs collided: issue=%q pullRequest=%q", issueID, pullRequestID)
+	}
+
+	w = do("PATCH", "/api/v3/notifications/threads/"+issueID, nil)
+	if w.Code != http.StatusResetContent {
+		t.Fatalf("mark issue read: %d body=%s", w.Code, w.Body.String())
+	}
+
+	w = do("GET", "/api/v3/notifications?all=true", nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("list all: %d body=%s", w.Code, w.Body.String())
+	}
+	threads = nil
+	if err := json.Unmarshal(w.Body.Bytes(), &threads); err != nil {
+		t.Fatalf("unmarshal all threads: %v", err)
+	}
+	unreadByID := map[string]bool{}
+	for _, thread := range threads {
+		unreadByID[thread["id"].(string)] = thread["unread"].(bool)
+	}
+	if unreadByID[issueID] {
+		t.Fatalf("issue thread stayed unread after marking it read: %+v", unreadByID)
+	}
+	if !unreadByID[pullRequestID] {
+		t.Fatalf("pull request thread inherited issue read state: %+v", unreadByID)
+	}
+
+	w = do("GET", "/api/v3/notifications/threads/"+pullRequestID, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("get pull request thread: %d body=%s", w.Code, w.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal pull request thread: %v", err)
+	}
+	subject := got["subject"].(map[string]any)
+	if subject["type"] != "PullRequest" || subject["title"] != "pull request notification" {
+		t.Fatalf("pull request thread subject = %+v", subject)
 	}
 }
 

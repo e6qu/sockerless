@@ -13,8 +13,8 @@ cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdB
 cloud.google.com/go/compute/metadata v0.9.0/go.mod h1:E0bWwX5wTnLPedCKqk3pJmVgCBSM6qQI1yTBdEb3C10=
 cloud.google.com/go/eventarc v1.24.0 h1:CIbP4yT5AzMyjDthvnPfSsLJhti7fepLTg+opCJvr6M=
 cloud.google.com/go/eventarc v1.24.0/go.mod h1:pFJA4y1jNwTT1oq7BlV04G3oRr0PjQB4lQjJxmpFZdE=
-cloud.google.com/go/firestore v1.22.0 h1:avooeboIq37vKXobrbPUFhFBxS/c3FqmWoX0xs8dO6E=
-cloud.google.com/go/firestore v1.22.0/go.mod h1:PaM4i7i7ruALSKmlpHXXZaPObcZw0W7ie5UOPr72iTU=
+cloud.google.com/go/firestore v1.23.0 h1:lFkdUEqdb1FxJNeZ17ZCrpok/+5yZdWapEzDCwLuwp8=
+cloud.google.com/go/firestore v1.23.0/go.mod h1:2EWfSUj+iqHckyH7uSjLI+lDgSAWJs9jL/uP45PnuQQ=
 cloud.google.com/go/functions v1.24.0 h1:0nb8LMMABq/oChZg+ovRD5bsc/dNm5ti/aoHRZ9MoUs=
 cloud.google.com/go/functions v1.24.0/go.mod h1:t40GeqBAQNuqKlHCxmV/pxhyYJnImLcvRa3GBv4tAy0=
 cloud.google.com/go/iam v1.11.0 h1:KieQ9Pb+LLPak1O3Rv3GgCxhnmkYf7Xyh0P5HfF1jFM=
@@ -215,8 +215,8 @@ golang.org/x/tools v0.0.0-20190524140312-2c0ae7006135/go.mod h1:RgjU9mgBXZiqYHBn
 golang.org/x/xerrors v0.0.0-20191204190536-9bdfabe68543/go.mod h1:I/5z698sn9Ka8TeJc9MKroUUfqBBauWjQqLJ2OPfmY0=
 gonum.org/v1/gonum v0.17.0 h1:VbpOemQlsSMrYmn7T2OUvQ4dqxQXU+ouZFQsZOx50z4=
 gonum.org/v1/gonum v0.17.0/go.mod h1:El3tOrEuMpv2UdMrbNlKEh9vd86bmQ6vqIcDwxEOc1E=
-google.golang.org/api v0.287.1 h1:LiyJx32VU3cwQfLchn/513qKhc25hq0pEANYJoWNnnI=
-google.golang.org/api v0.287.1/go.mod h1:lM2kYRzYUCBY91P9h6VF1PYmvhxii3O5hji37qRvIcY=
+google.golang.org/api v0.288.0 h1:glhO/J88obKP5I269W3hB73dvBKrjU56ZfmNlNXpgTU=
+google.golang.org/api v0.288.0/go.mod h1:lM2kYRzYUCBY91P9h6VF1PYmvhxii3O5hji37qRvIcY=
 google.golang.org/appengine v1.1.0/go.mod h1:EbEs0AVv82hx2wNQdGPgUI5lhzA/G0D9YwlJXL52JkM=
 google.golang.org/appengine v1.4.0/go.mod h1:xpcJRLb0r/rnEns0DIKYYv+WjYCduHsrkT7/EB5XEv4=
 google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8/go.mod h1:JiN7NxoALGmiZfu7CAH4rXhgtRTLTxftemlI0sWmxmc=

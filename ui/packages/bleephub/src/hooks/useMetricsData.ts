@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { fetchMetrics, fetchStatus } from "../api.js";
+import { fetchMetrics } from "../api.js";
 import type { BleephubMetrics, BleephubStatus } from "../types.js";
 
 /** Shared hook for metrics + status data used by OverviewPage and MetricsPage. */
@@ -9,20 +9,22 @@ export function useMetricsData(): {
   isLoading: boolean;
   isError: boolean;
 } {
-  const { data: metrics, isLoading: ml, isError: me } = useQuery({
+  const { data: metrics, isLoading, isError } = useQuery({
     queryKey: ["metrics"],
     queryFn: fetchMetrics,
     refetchInterval: 5000,
   });
-  const { data: status, isLoading: sl, isError: se } = useQuery({
-    queryKey: ["status"],
-    queryFn: fetchStatus,
-    refetchInterval: 5000,
-  });
+  const status = metrics
+    ? {
+      active_workflows: metrics.active_workflows,
+      jobs_by_status: metrics.jobs_by_status,
+      connected_runners: metrics.connected_runners,
+    }
+    : undefined;
   return {
     metrics,
     status,
-    isLoading: ml || sl,
-    isError: me || se,
+    isLoading,
+    isError,
   };
 }
