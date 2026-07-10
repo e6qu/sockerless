@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -370,6 +371,9 @@ func packageVersionManifestDigest(v *PackageVersion) string {
 }
 
 func (s *Server) writeRegistryBlob(digest string, data []byte) error {
+	if s.store.ObjectByteStore != nil {
+		return s.store.ObjectByteStore.Put(context.Background(), packageRegistryBlobDataKey(digest), data)
+	}
 	if s.store.PackageDataDir == "" {
 		return fmt.Errorf("package file storage is not configured")
 	}
@@ -384,6 +388,9 @@ func (s *Server) writeRegistryBlob(digest string, data []byte) error {
 }
 
 func (s *Server) readRegistryBlob(digest string) ([]byte, error) {
+	if s.store.ObjectByteStore != nil {
+		return s.store.ObjectByteStore.Get(context.Background(), packageRegistryBlobDataKey(digest))
+	}
 	path, err := s.registryBlobPath(digest)
 	if err != nil {
 		return nil, err
@@ -413,7 +420,15 @@ func (s *Server) packageVersionFileData(versionID int, name string) ([]byte, str
 		if file.Name != name {
 			continue
 		}
-		data, err := os.ReadFile(file.StoragePath)
+		var (
+			data []byte
+			err  error
+		)
+		if s.store.ObjectByteStore != nil {
+			data, err = s.store.ObjectByteStore.Get(context.Background(), file.StoragePath)
+		} else {
+			data, err = os.ReadFile(file.StoragePath)
+		}
 		if err != nil {
 			return nil, "", false
 		}

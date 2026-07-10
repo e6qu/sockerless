@@ -182,7 +182,7 @@ The script compiles the current source, starts the server and user interface, an
 
 **Releases.** Create / list / get-by-id / get-by-tag / latest / update / delete + `generate-notes` + release reactions. Full HATEOAS URLs (`html_url`, `tarball_url`, `zipball_url`, `assets_url`, `upload_url`). Webhook event fires on create.
 
-**Packages and GitHub Container Registry.** GitHub REST package management covers user, organization, and repository package listing, version/file reads, delete, and restore where GitHub exposes restore. Container package publication uses the OCI/Docker Registry HTTP API v2 data plane under `/v2/`: blob uploads verify `sha256:` digests, manifest pushes create `container` package versions, and manifest/blob reads serve the stored registry bytes with `Docker-Distribution-Api-Version` and `Docker-Content-Digest` headers. The Packages user interface is a management/read surface and does not call operator-only `/internal/packages` seed endpoints.
+**Packages and GitHub Container Registry.** GitHub REST package management covers user, organization, and repository package listing, version/file reads, delete, and restore where GitHub exposes restore. Container package publication uses the OCI/Docker Registry HTTP API v2 data plane under `/v2/`: blob uploads verify `sha256:` digests, manifest pushes create `container` package versions, and manifest/blob reads serve the stored registry bytes with `Docker-Distribution-Api-Version` and `Docker-Content-Digest` headers. Persisted package files and container-registry blobs are stored in the configured object store, while SQLite stores the package metadata and object keys. The Packages user interface is a management/read surface and does not call operator-only `/internal/packages` seed endpoints.
 
 **Code scanning and CodeQL.** Code scanning alerts, SARIF uploads, default setup, Copilot Autofix, CodeQL databases, and CodeQL variant analyses are GitHub REST-backed surfaces. CodeQL database archive downloads and variant-analysis query-pack downloads are advertised through public non-internal storage URLs; successful `/api/v3` JSON responses are guarded in tests so they cannot leak operator-only `/internal/` routes.
 
@@ -255,9 +255,9 @@ The S3 filesystem test suite drives this path through a real `simulator-aws` S3 
 Actions byte storage is selected separately from git storage:
 
 - default — in-memory bytes while metadata persistence is disabled;
-- `BLEEPHUB_OBJECT_S3_BUCKET` (+ optional `BLEEPHUB_OBJECT_S3_ENDPOINT`, `BLEEPHUB_OBJECT_S3_PREFIX`) — Actions artifacts, dependency caches, and runner-uploaded log files in S3-compatible object storage. If `BLEEPHUB_OBJECT_S3_BUCKET` is set and the bucket cannot be reached with `HeadBucket`, startup fails loudly.
+- `BLEEPHUB_OBJECT_S3_BUCKET` (+ optional `BLEEPHUB_OBJECT_S3_ENDPOINT`, `BLEEPHUB_OBJECT_S3_PREFIX`) — service byte content in S3-compatible object storage: GitHub Actions artifacts, dependency caches, runner-uploaded log files, release assets, package files, and container-registry blobs. If `BLEEPHUB_OBJECT_S3_BUCKET` is set and the bucket cannot be reached with `HeadBucket`, startup fails loudly.
 
-Database persistence **requires** `BLEEPHUB_OBJECT_S3_BUCKET`: SQLite stores Bleephub metadata, while GitHub Actions artifact, dependency-cache, and runner-log bytes must live in object storage. Persisted startup fails loudly when this bucket is absent instead of storing byte content in memory or local files.
+Database persistence **requires** `BLEEPHUB_OBJECT_S3_BUCKET`: SQLite stores Bleephub metadata, while GitHub Actions artifact, dependency-cache, runner-log, release-asset, package-file, and container-registry bytes must live in object storage. Persisted startup fails loudly when this bucket is absent instead of storing byte content in memory or local files.
 
 The object-byte tests also drive a real `simulator-aws` S3 endpoint: artifact upload, cache upload, runner log upload, and public job-log download assert the expected S3 objects are written and read back, so these paths do not rely on fake S3 or memory-only assertions.
 
@@ -335,7 +335,7 @@ Env vars:
 - `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite database (`bleephub.db`) and local non-persistent development metadata (default `.`).
 - `BLEEPHUB_GIT_DIR=<dir>` — store git repos on the local filesystem (default: in-memory).
 - `BLEEPHUB_S3_BUCKET` / `BLEEPHUB_S3_ENDPOINT` / `BLEEPHUB_S3_PREFIX` — store git repos in S3-compatible object storage (bucket set ⇒ S3 wins over `BLEEPHUB_GIT_DIR`).
-- `BLEEPHUB_OBJECT_S3_BUCKET` / `BLEEPHUB_OBJECT_S3_ENDPOINT` / `BLEEPHUB_OBJECT_S3_PREFIX` — store GitHub Actions artifacts, dependency caches, and runner logs in S3-compatible object storage; required when `BLEEPHUB_PERSIST=true`.
+- `BLEEPHUB_OBJECT_S3_BUCKET` / `BLEEPHUB_OBJECT_S3_ENDPOINT` / `BLEEPHUB_OBJECT_S3_PREFIX` — store GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, and container-registry blobs in S3-compatible object storage; required when `BLEEPHUB_PERSIST=true`.
 - `BPH_TLS_CERT` + `BPH_TLS_KEY` — serve over TLS.
 - `BLEEPHUB_MAX_WORKFLOWS=N` — concurrency cap (default 10).
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — when set, emits traces + metrics + logs via OTLP (off by default; preserves the components-decoupled invariant).

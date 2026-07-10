@@ -79,11 +79,12 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // storage would resurrect every repo empty, so that combination is a
 // startup error rather than a silent degraded mode.
 //
-// Persistence also requires BLEEPHUB_OBJECT_S3_BUCKET for Actions
-// artifact, cache, and runner-log bytes. SQLite persists only Bleephub
-// metadata; byte content must be backed by object storage so a restarted
-// service does not advertise durable CI/CD records whose bytes lived only
-// in memory or local development files.
+// Persistence also requires BLEEPHUB_OBJECT_S3_BUCKET for service byte
+// content: GitHub Actions artifacts, dependency caches, runner logs, release
+// assets, GitHub Packages files, and GitHub Container Registry blobs. SQLite
+// persists only Bleephub metadata; byte content must be backed by object
+// storage so a restarted service does not advertise durable records whose
+// bytes lived only in memory or local development files.
 //
 // Workflow run history is persisted; in-flight runs are marked terminal
 // cancelled on reload because the runner dispatch state is process-local.
@@ -117,6 +118,8 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		registryUploads:        map[string]*containerRegistryUpload{},
 		externalURL:            strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"),
 	}
+	s.store.ObjectByteStore = byteStore
+	s.store.Releases.byteStore = byteStore
 	if dataDir != "" {
 		s.store.PackageDataDir = dataDir
 	}
@@ -149,15 +152,15 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	return s
 }
 
-func validatePersistentServerStorage(actionsByteStoreReady bool) error {
+func validatePersistentServerStorage(serviceByteStoreReady bool) error {
 	if GitDataDir() == "" && !IsS3GitStorage() {
 		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but git storage is in-memory: " +
 			"repo metadata would survive a restart while every git repo reloads empty. " +
 			"Configure durable git storage (BLEEPHUB_GIT_DIR=<dir> or BLEEPHUB_S3_BUCKET=<bucket>) or disable persistence")
 	}
-	if !actionsByteStoreReady {
-		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but Actions byte storage is not object-backed: " +
-			"artifact, dependency-cache, and runner-log bytes require BLEEPHUB_OBJECT_S3_BUCKET")
+	if !serviceByteStoreReady {
+		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but service byte storage is not object-backed: " +
+			"GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, and container-registry blobs require BLEEPHUB_OBJECT_S3_BUCKET")
 	}
 	return nil
 }

@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/base64"
 	"fmt"
 	"net/url"
@@ -272,7 +273,7 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 		}
 	}
 	vdir := st.versionStorageDir(ownerType, ownerKey, pkgType, pkgName, version)
-	if len(files) > 0 && vdir == "" {
+	if len(files) > 0 && vdir == "" && st.ObjectByteStore == nil {
 		return nil, fmt.Errorf("package file storage is not configured")
 	}
 	decodedFiles := make([]decodedPackageFileInput, 0, len(files))
@@ -309,9 +310,14 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 			Name:        fin.Name,
 			ContentType: fin.ContentType,
 			Size:        int64(len(fin.Data)),
-			StoragePath: filepath.Join(vdir, sanitizePackagePathSegment(fin.Name)),
 		}
-		if vdir != "" {
+		if st.ObjectByteStore != nil {
+			pf.StoragePath = packageFileDataKey(fid)
+			if err := st.ObjectByteStore.Put(context.Background(), pf.StoragePath, fin.Data); err != nil {
+				return nil, fmt.Errorf("write package file %s: %w", fin.Name, err)
+			}
+		} else if vdir != "" {
+			pf.StoragePath = filepath.Join(vdir, sanitizePackagePathSegment(fin.Name))
 			if err := os.MkdirAll(vdir, 0o755); err != nil {
 				return nil, fmt.Errorf("mkdir %s: %w", vdir, err)
 			}

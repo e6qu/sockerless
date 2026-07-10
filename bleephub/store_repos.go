@@ -697,7 +697,9 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	}
 	delete(st.PullsByRepo, repo.ID)
 	releaseIDs := st.Releases.IDsForRepo(repo.ID)
-	st.Releases.DeleteAllForRepo(repo.ID)
+	if err := st.Releases.DeleteAllForRepo(repo.ID); err != nil {
+		return true, fmt.Errorf("delete repo %s release assets: %w", fullName, err)
+	}
 	st.Reactions.DeleteParents("release", releaseIDs)
 
 	// Discussion surfaces — comments first because they reference discussions.

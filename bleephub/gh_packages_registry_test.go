@@ -83,6 +83,51 @@ func TestContainerRegistryPublishCreatesPackageVersion(t *testing.T) {
 	}
 }
 
+func TestPackageAndRegistryBytesUseObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	admin := s.store.UsersByLogin["admin"]
+	pkg, _ := s.store.CreatePackage("User", admin.Login, "container", "object-package", "public")
+	version, err := s.store.CreatePackageVersion("User", admin.Login, "container", pkg.Name, "1.0.0", "", nil, []PackageFileInput{{
+		Name:          "manifest.json",
+		ContentType:   "application/vnd.oci.image.manifest.v1+json",
+		ContentBase64: "cGFja2FnZSBvYmplY3QgYnl0ZXM=",
+	}})
+	if err != nil {
+		t.Fatalf("create package version: %v", err)
+	}
+	files := s.store.ListPackageFiles(version.ID)
+	if len(files) != 1 {
+		t.Fatalf("package files len = %d, want 1", len(files))
+	}
+	got := readS3TestFile(t, objectFS, packageFileDataKey(files[0].ID))
+	if string(got) != "package object bytes" {
+		t.Fatalf("package object bytes = %q", string(got))
+	}
+	data, contentType, ok := s.packageVersionFileData(version.ID, "manifest.json")
+	if !ok || string(data) != "package object bytes" || contentType != "application/vnd.oci.image.manifest.v1+json" {
+		t.Fatalf("package file data ok=%v contentType=%q data=%q", ok, contentType, string(data))
+	}
+
+	digest := digestSHA256([]byte("registry object bytes"))
+	if err := s.writeRegistryBlob(digest, []byte("registry object bytes")); err != nil {
+		t.Fatalf("write registry blob: %v", err)
+	}
+	registryGot := readS3TestFile(t, objectFS, packageRegistryBlobDataKey(digest))
+	if string(registryGot) != "registry object bytes" {
+		t.Fatalf("registry object bytes = %q", string(registryGot))
+	}
+	readBack, err := s.readRegistryBlob(digest)
+	if err != nil {
+		t.Fatalf("read registry blob: %v", err)
+	}
+	if string(readBack) != "registry object bytes" {
+		t.Fatalf("registry read back = %q", string(readBack))
+	}
+}
+
 func TestContainerRegistryRejectsDuplicateVersionName(t *testing.T) {
 	name := "admin/registry-duplicate"
 	layerDigest := uploadRegistryBlob(t, name, []byte("layer"))

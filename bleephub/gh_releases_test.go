@@ -313,6 +313,55 @@ func TestReleases_AssetLifecycle(t *testing.T) {
 	}
 }
 
+func TestReleases_AssetBytesUseObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	s.store.Releases.byteStore = s.store.ObjectByteStore
+	s.registerGHReleasesRoutes()
+
+	user := s.store.UsersByLogin["admin"]
+	_ = s.store.CreateRepo(user, "object-release-repo", "", false)
+	createBody, _ := json.Marshal(map[string]any{
+		"tag_name": "v1.0.0",
+		"name":     "Release 1.0",
+	})
+	w := doAuthReq(s, "POST", "/api/v3/repos/admin/object-release-repo/releases", createBody)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create release: %d body=%s", w.Code, w.Body.String())
+	}
+	var rel map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &rel)
+	relID := int(rel["id"].(float64))
+
+	req := httptest.NewRequest("POST", "/api/uploads/repos/admin/object-release-repo/releases/"+itoa(relID)+"/assets?name=object.tar.gz", strings.NewReader("release object bytes"))
+	req.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+	req.Header.Set("Content-Type", "application/gzip")
+	rec := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("upload asset: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var asset map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &asset)
+	assetID := int(asset["id"].(float64))
+
+	got := readS3TestFile(t, objectFS, releaseAssetDataKey(assetID))
+	if string(got) != "release object bytes" {
+		t.Fatalf("release asset object bytes = %q", string(got))
+	}
+
+	download := httptest.NewRequest("GET", "/api/v3/repos/admin/object-release-repo/releases/assets/"+itoa(assetID), nil)
+	download.Header.Set("Authorization", "Bearer bleephub-admin-token-00000000000000000000")
+	download.Header.Set("Accept", "application/octet-stream")
+	out := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(out, download)
+	if out.Code != http.StatusOK || out.Body.String() != "release object bytes" {
+		t.Fatalf("download asset: status=%d body=%q", out.Code, out.Body.String())
+	}
+}
+
 func TestReleases_ReleaseReactionsLifecycle(t *testing.T) {
 	s := newTestServer()
 	s.store.SeedDefaultUser()
