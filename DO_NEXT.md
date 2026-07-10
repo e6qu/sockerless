@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2449.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2450.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -15,6 +15,8 @@ GraphQL pull request status rollups now also exposed GitHub's count-by-state fie
 GitHub Actions workflow runs and archived attempts now persist in SQLite. On reload, non-terminal runs become completed/cancelled because runner dispatch state is process-local and cannot truthfully continue after a service restart.
 
 Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returned fail-loud GitHub API errors when secure randomness failed. Those paths no longer crashed the Bleephub process or left partially-created records behind a failed token/identifier generation.
+
+OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
 
 ## Continue Here
 
@@ -76,6 +78,10 @@ Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, ho
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_WorkflowRunsAndAttempts|TestWorkflowRunsListNewestFirst|TestActionsRuns_(Get|Delete|Cancel)|TestActionsRunJobs_List|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs|TestApproveWorkflowRun_ReleasesGatedRun' -count=1` passed after workflow runs and archived attempts began persisting.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked|TestCreateGist|TestGitHubApp|TestOAuth|TestSecurityAdvisories|TestClassroom|TestActionsOIDC' -count=1` passed after public token and identifier entropy failures became returned errors.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the entropy failure-handling change.
+- `docker version` and `docker run --rm hello-world` passed with sandbox escalation against Docker CLI compatibility backed by Podman 6.0.1.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestOAuth(App|Check|Reset|Revoke|Scope)|TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked' -count=1` passed after OAuth App token management moved to returned entropy errors.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the OAuth App token-management entropy fix.
+- `make bleephub-gh-docker-test` passed with the Docker-compatible Podman runtime after the OAuth App token-management entropy fix.
 
 ## Standing Gaps
 

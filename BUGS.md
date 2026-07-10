@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2449 filed - 2405 fixed - 3 open - 16 false positives.**
+**2450 filed - 2406 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2450~~ | P2 | Bleephub OAuth App token management | public OAuth token helpers still used panic-wrapping token creation | OAuth App token refresh and scoped-token endpoints now use error-returning user-to-server token creation, return fail-loud GitHub API errors on secure-random failure, and keep the original token intact until a reset replacement exists. |
 | ~~2449~~ | P2 | Bleephub entropy failure handling | public API token/ID generation panicked on secure-random failure | Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returns fail-loud GitHub API errors on secure-random failure instead of crashing the Bleephub process or partially creating records. |
 | ~~2447~~ | P1 | Bleephub GitHub Actions durability | workflow runs stayed process-local | GitHub Actions workflow runs and archived attempts now persist in SQLite, repository rename/delete keeps run history coherent, and non-terminal runs reload as completed/cancelled instead of falsely advertising abandoned execution. |
 | ~~2448~~ | P3 | Bleephub GraphQL sweep documentation | stale official-client source version | The GraphQL sweep tests now name GitHub command-line interface version 2.96 as the source for the replayed GraphQL shapes used by the current status-rollup coverage. |
