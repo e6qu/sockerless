@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2448 filed - 2404 fixed - 3 open - 16 false positives.**
+**2449 filed - 2405 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2449~~ | P2 | Bleephub entropy failure handling | public API token/ID generation panicked on secure-random failure | Hosted compute network IDs, GitHub Actions runner registration/removal tokens, and Actions cache download tokens now return fail-loud GitHub API errors on secure-random failure instead of crashing the Bleephub process or partially creating records. |
 | ~~2447~~ | P1 | Bleephub GitHub Actions durability | workflow runs stayed process-local | GitHub Actions workflow runs and archived attempts now persist in SQLite, repository rename/delete keeps run history coherent, and non-terminal runs reload as completed/cancelled instead of falsely advertising abandoned execution. |
 | ~~2448~~ | P3 | Bleephub GraphQL sweep documentation | stale official-client source version | The GraphQL sweep tests now name GitHub command-line interface version 2.96 as the source for the replayed GraphQL shapes used by the current status-rollup coverage. |
 | ~~2446~~ | P2 | Bleephub GraphQL pull request status rollups | compatibility-shaped omitted fields and null workflow links | GraphQL status-check rollup connections now expose GitHub's check-run and status-context count-by-state fields, and Actions-created check suites persist workflow-run metadata so `CheckRun.checkSuite.workflowRun.workflow` resolves from real Actions state. |

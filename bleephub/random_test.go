@@ -45,3 +45,15 @@ func TestCryptoRandomReadsAreChecked(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestEntropyHelpersReturnErrors(t *testing.T) {
+	if _, err := newHostedComputeIDFromReader(strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "hosted compute resource id") {
+		t.Fatalf("newHostedComputeIDFromReader error = %v", err)
+	}
+	if _, err := randomRunnerTokenFromReader(strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "runner token") {
+		t.Fatalf("randomRunnerTokenFromReader error = %v", err)
+	}
+	if _, err := newCacheDownloadTokenFromReader(strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "cache download token") {
+		t.Fatalf("newCacheDownloadTokenFromReader error = %v", err)
+	}
+}

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2448.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2449.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -13,6 +13,8 @@ The newest fixes moved user administration, audit-log viewing, OAuth flow contro
 GraphQL pull request status rollups now also exposed GitHub's count-by-state fields and Actions workflow-run links from persisted check-suite metadata.
 
 GitHub Actions workflow runs and archived attempts now persist in SQLite. On reload, non-terminal runs become completed/cancelled because runner dispatch state is process-local and cannot truthfully continue after a service restart.
+
+Hosted-compute network IDs, GitHub Actions runner registration/removal tokens, and Actions cache download tokens now returned fail-loud GitHub API errors when secure randomness failed. Those paths no longer crashed the Bleephub process or left partially-created records behind a failed token/identifier generation.
 
 ## Continue Here
 
@@ -72,6 +74,8 @@ GitHub Actions workflow runs and archived attempts now persist in SQLite. On rel
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPRGraphQL_ViewDefaultFields|TestPersistenceReload_CheckRunsAndSuites' -count=1` passed after GraphQL status-rollup count fields and check-suite workflow-run links were added.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the GraphQL status-rollup and check-suite persistence change.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_WorkflowRunsAndAttempts|TestWorkflowRunsListNewestFirst|TestActionsRuns_(Get|Delete|Cancel)|TestActionsRunJobs_List|TestRerunWorkflowJob_NewAttemptCarriesOtherJobs|TestApproveWorkflowRun_ReleasesGatedRun' -count=1` passed after workflow runs and archived attempts began persisting.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestEntropyHelpersReturnErrors|TestCryptoRandomReadsAreChecked|TestOrgNetworkConfigurations_|TestGovernancePersistence' -count=1` passed after hosted-compute, runner-token, and cache-token entropy failures became returned errors.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the entropy failure-handling change.
 
 ## Standing Gaps
 

@@ -3,6 +3,8 @@ package bleephub
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"sort"
@@ -61,12 +63,16 @@ var networkConfigurationNameRE = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,100}$`)
 
 // newHostedComputeID mints the uppercase-hex resource IDs hosted compute
 // networking uses.
-func newHostedComputeID() string {
+func newHostedComputeID() (string, error) {
+	return newHostedComputeIDFromReader(rand.Reader)
+}
+
+func newHostedComputeIDFromReader(random io.Reader) (string, error) {
 	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		panic(err)
+	if _, err := io.ReadFull(random, buf); err != nil {
+		return "", fmt.Errorf("generate hosted compute resource id: %w", err)
 	}
-	return strings.ToUpper(hex.EncodeToString(buf))
+	return strings.ToUpper(hex.EncodeToString(buf)), nil
 }
 
 func (s *Server) handleListOrgNetworkConfigurations(w http.ResponseWriter, r *http.Request) {
@@ -133,7 +139,11 @@ func (s *Server) handleCreateOrgNetworkConfiguration(w http.ResponseWriter, r *h
 	if !s.validateNetworkConfigurationRequest(w, org, &req, true) {
 		return
 	}
-	c := s.store.CreateNetworkConfiguration(org, &req)
+	c, err := s.store.CreateNetworkConfiguration(org, &req)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, networkConfigurationJSON(c))
 }
 
@@ -196,7 +206,11 @@ func (s *Server) handleSeedOrgNetworkSettings(w http.ResponseWriter, r *http.Req
 		writeGHError(w, http.StatusUnprocessableEntity, "name, subnet_id, and region are required")
 		return
 	}
-	res := s.store.CreateNetworkSettings(org, req.Name, req.SubnetID, req.Region)
+	res, err := s.store.CreateNetworkSettings(org, req.Name, req.SubnetID, req.Region)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, networkSettingsJSON(res))
 }
 
@@ -285,11 +299,15 @@ func (st *Store) relinkNetworkSettingsLocked(orgLogin string, c *NetworkConfigur
 
 // CreateNetworkConfiguration creates a configuration and links its settings
 // resources.
-func (st *Store) CreateNetworkConfiguration(orgLogin string, req *networkConfigurationRequest) *NetworkConfiguration {
+func (st *Store) CreateNetworkConfiguration(orgLogin string, req *networkConfigurationRequest) (*NetworkConfiguration, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	id, err := newHostedComputeID()
+	if err != nil {
+		return nil, err
+	}
 	c := &NetworkConfiguration{
-		ID:                         newHostedComputeID(),
+		ID:                         id,
 		OrgLogin:                   orgLogin,
 		Name:                       *req.Name,
 		ComputeService:             "none",
@@ -311,7 +329,7 @@ func (st *Store) CreateNetworkConfiguration(orgLogin string, req *networkConfigu
 	if st.persist != nil {
 		st.persist.MustPut("org_network_configurations", orgLogin, st.OrgNetworkConfigurations[orgLogin])
 	}
-	return c
+	return c, nil
 }
 
 // UpdateNetworkConfiguration applies provided members and relinks settings.
@@ -374,11 +392,15 @@ func (st *Store) GetNetworkSettings(orgLogin, id string) *NetworkSettingsResourc
 }
 
 // CreateNetworkSettings provisions a settings resource for the org.
-func (st *Store) CreateNetworkSettings(orgLogin, name, subnetID, region string) *NetworkSettingsResource {
+func (st *Store) CreateNetworkSettings(orgLogin, name, subnetID, region string) (*NetworkSettingsResource, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	id, err := newHostedComputeID()
+	if err != nil {
+		return nil, err
+	}
 	res := &NetworkSettingsResource{
-		ID:       newHostedComputeID(),
+		ID:       id,
 		OrgLogin: orgLogin,
 		Name:     name,
 		SubnetID: subnetID,
@@ -391,5 +413,5 @@ func (st *Store) CreateNetworkSettings(orgLogin, name, subnetID, region string) 
 	if st.persist != nil {
 		st.persist.MustPut("org_network_settings", orgLogin, st.OrgNetworkSettings[orgLogin])
 	}
-	return res
+	return res, nil
 }

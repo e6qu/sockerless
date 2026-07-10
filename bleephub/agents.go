@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -40,19 +42,28 @@ func (s *Server) registerAgentRoutes() {
 // recognized later — the runner echoes it during config.sh setup but
 // bleephub gates agent registration on the PAT/installation auth, exactly
 // as real GitHub treats the opaque token as a one-shot setup credential.
-func randomRunnerToken() string {
+func randomRunnerToken() (string, error) {
+	return randomRunnerTokenFromReader(rand.Reader)
+}
+
+func randomRunnerTokenFromReader(random io.Reader) (string, error) {
 	b := make([]byte, 30)
-	if _, err := rand.Read(b); err != nil {
-		panic("randomRunnerToken: " + err.Error())
+	if _, err := io.ReadFull(random, b); err != nil {
+		return "", fmt.Errorf("generate runner token: %w", err)
 	}
-	return "A" + base64.RawURLEncoding.EncodeToString(b)
+	return "A" + base64.RawURLEncoding.EncodeToString(b), nil
 }
 
 func (s *Server) handleRegistrationToken(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info().Msg("registration token requested")
+	token, err := randomRunnerToken()
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	// Real GitHub: 201 Created, random token, ~1h TTL.
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"token":      randomRunnerToken(),
+		"token":      token,
 		"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 	})
 }
@@ -61,8 +72,13 @@ func (s *Server) handleRegistrationToken(w http.ResponseWriter, r *http.Request)
 // Same opaque-token shape and ~1h TTL as the registration token.
 func (s *Server) handleRemoveToken(w http.ResponseWriter, r *http.Request) {
 	s.logger.Info().Msg("removal token requested")
+	token, err := randomRunnerToken()
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"token":      randomRunnerToken(),
+		"token":      token,
 		"expires_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 	})
 }

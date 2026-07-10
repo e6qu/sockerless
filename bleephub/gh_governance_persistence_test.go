@@ -51,10 +51,16 @@ func TestPersistence_GovernanceSurfacesRoundTrip(t *testing.T) {
 	st1.CreatePrivateRegistry(org.Login, &privateRegistryRequest{
 		RegistryType: strPtr("maven_repository"), URL: &urlStr, Visibility: strPtr("all"),
 	}, "token")
-	settings := st1.CreateNetworkSettings(org.Login, "persist-subnet", "/subscriptions/x/subnets/s", "eastus")
-	netCfg := st1.CreateNetworkConfiguration(org.Login, &networkConfigurationRequest{
+	settings, err := st1.CreateNetworkSettings(org.Login, "persist-subnet", "/subscriptions/x/subnets/s", "eastus")
+	if err != nil {
+		t.Fatalf("create network settings: %v", err)
+	}
+	netCfg, err := st1.CreateNetworkConfiguration(org.Login, &networkConfigurationRequest{
 		Name: strPtr("persist-net"), NetworkSettingsIDs: []string{settings.ID},
 	})
+	if err != nil {
+		t.Fatalf("create network configuration: %v", err)
+	}
 	st1.SetOrgImmutableReleasesSettings(org.Login, "selected", []int{repo.ID})
 	st1.SetRepoImmutableReleases(repo.FullName, true)
 
