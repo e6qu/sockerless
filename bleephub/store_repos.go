@@ -1056,6 +1056,8 @@ func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prID
 			st.persist.MustDelete("issue_field_values", strconv.Itoa(issueID))
 		}
 	}
+	st.ProjectsV2.DeleteContentItems("Issue", issueIDs)
+	st.ProjectsV2.DeleteContentItems("PullRequest", prIDs)
 	for id, c := range st.Comments {
 		if (c.ParentType == "issue" && issueIDs[c.IssueID]) || (c.ParentType == "pull_request" && prIDs[c.IssueID]) {
 			delete(st.Comments, id)

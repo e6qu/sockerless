@@ -265,7 +265,7 @@ func TestPersistenceReload_GistsCommentsStarsAndForks(t *testing.T) {
 }
 
 func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
-	var oldRepoID, oldIssueID, oldPRID int
+	var oldRepoID, oldIssueID, oldPRID, projectID int
 	const orgLogin = "delete-cascade-org"
 
 	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
@@ -288,6 +288,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if !st.AddIssueBlockedBy(parent.ID, blocker.ID) {
 			t.Fatal("AddIssueBlockedBy returned false")
 		}
+		project := st.ProjectsV2.CreateProject(org.ID, "Organization", "Repository cleanup", admin.ID)
+		projectID = project.ID
+		st.ProjectsV2.AddItem(project.ID, "Issue", parent.ID, admin.ID)
 		st.RecordRepoActivity(repo.ID, "refs/heads/main", "0000000", "abcdef0", admin.ID, "push")
 		st.RecordRepoClone(repo.ID, admin.Login)
 		if !st.SetRepoSubscription(admin.ID, repo.ID, true) {
@@ -394,6 +397,7 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		}
 		st.mu.Unlock()
 		oldPRID = pr.ID
+		st.ProjectsV2.AddItem(projectID, "PullRequest", pr.ID, admin.ID)
 		if st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment") == nil {
 			t.Fatal("CreateCommentFor pull request returned nil")
 		}
@@ -422,6 +426,15 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	}
 	if values := st2.IssueFieldValues[oldIssueID]; len(values) != 0 {
 		t.Fatalf("issue field values survived deleted repo reload: %#v", values)
+	}
+	if got := st2.ProjectsV2.ListItemsForIssue(oldIssueID); len(got) != 0 {
+		t.Fatalf("Projects v2 issue items survived deleted repo reload: %#v", got)
+	}
+	if got := st2.ProjectsV2.ListItemsForPR(oldPRID); len(got) != 0 {
+		t.Fatalf("Projects v2 pull request items survived deleted repo reload: %#v", got)
+	}
+	if got := st2.ProjectsV2.ListItemsForProject(projectID); len(got) != 0 {
+		t.Fatalf("Projects v2 project retained deleted repo items after reload: %#v", got)
 	}
 	if len(st2.PRReviews) != 0 || len(st2.PRReviewsByPR) != 0 {
 		t.Fatalf("pull request reviews survived deleted repo reload: reviews=%#v byPR=%#v", st2.PRReviews, st2.PRReviewsByPR)
@@ -458,6 +471,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	}
 	if got := st2.CountCommentsFor("issue", fresh.ID); got != 0 {
 		t.Fatalf("fresh issue inherited stale comment count = %d", got)
+	}
+	if got := st2.ProjectsV2.ListItemsForIssue(fresh.ID); len(got) != 0 {
+		t.Fatalf("fresh issue inherited stale Projects v2 items: %#v", got)
 	}
 }
 
