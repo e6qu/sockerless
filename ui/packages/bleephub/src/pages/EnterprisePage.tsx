@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Spinner, InlineError } from "@sockerless/ui-core/components";
 import {
-  ENTERPRISE_SLUG,
+  fetchEnterpriseSlug,
   fetchEnterpriseTeams,
   createEnterpriseTeam,
   updateEnterpriseTeam,
@@ -37,13 +37,21 @@ type EnterpriseTab = "teams" | "settings";
 
 export function EnterprisePage() {
   const [tab, setTab] = useState<EnterpriseTab>("teams");
+  const { data: enterpriseSlug } = useQuery({
+    queryKey: ["enterprise-slug"],
+    queryFn: fetchEnterpriseSlug,
+  });
 
   return (
     <div>
       <PageTitle
         icon={<GlobeIcon size={22} />}
         title="Enterprise"
-        meta={`Instance-wide administration for the "${ENTERPRISE_SLUG}" enterprise.`}
+        meta={
+          enterpriseSlug
+            ? `Instance-wide administration for the "${enterpriseSlug}" enterprise.`
+            : "Instance-wide enterprise administration."
+        }
       />
       <Tabs
         items={[

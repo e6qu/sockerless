@@ -2259,64 +2259,84 @@ export const revokeOrgRoleFromUser = (org: string, username: string, roleId: num
 
 // ─── Enterprise administration ──────────────────────────────────────────
 
-/** The instance-wide enterprise slug bleephub serves by default. */
-export const ENTERPRISE_SLUG = "bleephub";
+export async function fetchEnterpriseSlug(): Promise<string> {
+  const health = await fetchHealth();
+  if (!health.enterprise_slug) {
+    throw new Error("/health response did not include enterprise_slug");
+  }
+  return health.enterprise_slug;
+}
 
-const enterpriseBase = `/api/v3/enterprises/${ENTERPRISE_SLUG}`;
+async function enterprisePath(path: string): Promise<string> {
+  const slug = await fetchEnterpriseSlug();
+  return `/api/v3/enterprises/${encodeURIComponent(slug)}${path}`;
+}
 
 export const fetchEnterpriseTeams = () =>
-  ghFetch<GithubEnterpriseTeam[]>(`${enterpriseBase}/teams`);
+  enterprisePath("/teams").then((path) => ghFetch<GithubEnterpriseTeam[]>(path));
 
 export const createEnterpriseTeam = (payload: {
   name: string;
   description?: string;
   organization_selection_type?: string;
-}): Promise<GithubEnterpriseTeam> => ghPostJSON(`${enterpriseBase}/teams`, payload);
+}): Promise<GithubEnterpriseTeam> =>
+  enterprisePath("/teams").then((path) => ghPostJSON(path, payload));
 
 export const updateEnterpriseTeam = (
   slug: string,
   payload: { name?: string; description?: string; organization_selection_type?: string },
 ): Promise<GithubEnterpriseTeam> =>
-  ghPatchJSON(`${enterpriseBase}/teams/${encodeURIComponent(slug)}`, payload);
+  enterprisePath(`/teams/${encodeURIComponent(slug)}`).then((path) => ghPatchJSON(path, payload));
 
 export const deleteEnterpriseTeam = (slug: string) =>
-  ghSend("DELETE", `${enterpriseBase}/teams/${encodeURIComponent(slug)}`);
+  enterprisePath(`/teams/${encodeURIComponent(slug)}`).then((path) => ghSend("DELETE", path));
 
 export const fetchEnterpriseTeamMembers = (slug: string) =>
-  ghFetch<GithubAccount[]>(`${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships`);
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/memberships`).then((path) =>
+    ghFetch<GithubAccount[]>(path),
+  );
 
 export const addEnterpriseTeamMember = (slug: string, username: string): Promise<GithubAccount> =>
-  ghPutJSON(
-    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`,
-    {},
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`).then(
+    (path) => ghPutJSON(path, {}),
   );
 
 export const removeEnterpriseTeamMember = (slug: string, username: string) =>
-  ghSend(
-    "DELETE",
-    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`,
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/memberships/${encodeURIComponent(username)}`).then(
+    (path) => ghSend("DELETE", path),
   );
 
 export const fetchEnterpriseActionsCacheLimit = () =>
-  ghFetch<{ max_cache_size_gb: number }>(`${enterpriseBase}/actions/cache/storage-limit`);
+  enterprisePath("/actions/cache/storage-limit").then((path) =>
+    ghFetch<{ max_cache_size_gb: number }>(path),
+  );
 
 export const setEnterpriseActionsCacheLimit = (maxCacheSizeGB: number) =>
-  ghSend("PUT", `${enterpriseBase}/actions/cache/storage-limit`, {
-    max_cache_size_gb: maxCacheSizeGB,
-  });
+  enterprisePath("/actions/cache/storage-limit").then((path) =>
+    ghSend("PUT", path, {
+      max_cache_size_gb: maxCacheSizeGB,
+    }),
+  );
 
 export const fetchEnterpriseDependabotAccess = () =>
-  ghFetch<GithubEnterpriseDependabotAccess>(`${enterpriseBase}/dependabot/repository-access`);
+  enterprisePath("/dependabot/repository-access").then((path) =>
+    ghFetch<GithubEnterpriseDependabotAccess>(path),
+  );
 
 export const updateEnterpriseDependabotAccess = (payload: {
   repository_ids_to_add?: number[];
   repository_ids_to_remove?: number[];
-}) => ghSend("PATCH", `${enterpriseBase}/dependabot/repository-access`, payload);
+}) =>
+  enterprisePath("/dependabot/repository-access").then((path) =>
+    ghSend("PATCH", path, payload),
+  );
 
 export const setEnterpriseDependabotDefaultLevel = (level: "public" | "internal") =>
-  ghSend("PUT", `${enterpriseBase}/dependabot/repository-access/default-level`, {
-    default_level: level,
-  });
+  enterprisePath("/dependabot/repository-access/default-level").then((path) =>
+    ghSend("PUT", path, {
+      default_level: level,
+    }),
+  );
 
 // ─── Copilot ────────────────────────────────────────────────────────────
 
@@ -2471,18 +2491,18 @@ export const removeCopilotSpaceResource = (
 ) => ghSend("DELETE", `${copilotSpacesBase(org)}/${spaceNumber}/resources/${resourceId}`);
 
 export const fetchEnterpriseTeamOrgs = (slug: string) =>
-  ghFetch<GithubOrgSimple[]>(`${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations`);
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/organizations`).then((path) =>
+    ghFetch<GithubOrgSimple[]>(path),
+  );
 
 export const assignEnterpriseTeamOrg = (slug: string, org: string): Promise<GithubOrgSimple> =>
-  ghPutJSON(
-    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`,
-    {},
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`).then(
+    (path) => ghPutJSON(path, {}),
   );
 
 export const unassignEnterpriseTeamOrg = (slug: string, org: string) =>
-  ghSend(
-    "DELETE",
-    `${enterpriseBase}/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`,
+  enterprisePath(`/teams/${encodeURIComponent(slug)}/organizations/${encodeURIComponent(org)}`).then(
+    (path) => ghSend("DELETE", path),
   );
 
 export const fetchOrgRepoCustomPropertyValues = (

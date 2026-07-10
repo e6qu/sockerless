@@ -139,6 +139,7 @@ export interface BleephubStatus {
 export interface BleephubHealth {
   status: string;
   service: string;
+  enterprise_slug: string;
 }
 
 /** WorkflowFile is the file-level workflow YAML entity. */

@@ -48,6 +48,7 @@ import {
   fetchAuditLog,
   fetchAuditLogOrgs,
   buildAuditLogPhrase,
+  fetchEnterpriseSlug,
 } from "../api.js";
 
 const mockFetch = vi.fn();
@@ -153,6 +154,13 @@ describe("api wire-shape normalization", () => {
     );
     const envs = await fetchEnvironments("admin", "repo");
     expect(envs[0].name).toBe("prod");
+  });
+
+  it("fetchEnterpriseSlug requires the runtime enterprise coordinate", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ status: "ok", service: "bleephub" }));
+    await expect(fetchEnterpriseSlug()).rejects.toThrow(
+      "/health response did not include enterprise_slug",
+    );
   });
 });
 

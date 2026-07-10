@@ -381,6 +381,10 @@ func TestExistingRoutesUnaffected(t *testing.T) {
 	if resp.StatusCode != 200 {
 		t.Fatalf("/health: expected 200, got %d", resp.StatusCode)
 	}
+	health := decodeJSON(t, resp)
+	if health["enterprise_slug"] != defaultEnterpriseSlug {
+		t.Fatalf("/health enterprise_slug = %v, want %s", health["enterprise_slug"], defaultEnterpriseSlug)
+	}
 
 	// /_apis/connectionData
 	resp2 := ghGet(t, "/_apis/connectionData", "")

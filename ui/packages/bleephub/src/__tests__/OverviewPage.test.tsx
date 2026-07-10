@@ -32,7 +32,7 @@ function renderPage() {
   );
 }
 
-const healthData = { status: "ok", service: "bleephub" };
+const healthData = { status: "ok", service: "bleephub", enterprise_slug: "bleephub" };
 const workflowsData = [
   {
     id: 1,

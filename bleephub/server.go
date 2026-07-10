@@ -385,7 +385,11 @@ func (s *Server) handleCatchAll(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "bleephub"})
+	writeJSON(w, http.StatusOK, map[string]string{
+		"status":          "ok",
+		"service":         "bleephub",
+		"enterprise_slug": s.enterpriseSlug(),
+	})
 }
 
 func (s *Server) handleInternalMetrics(w http.ResponseWriter, r *http.Request) {

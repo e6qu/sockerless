@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2451.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2453.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -19,6 +19,10 @@ Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, ho
 OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
 
 The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
+
+`/health` now reported the configured enterprise slug, and the Bleephub enterprise UI used that runtime coordinate for enterprise REST routes without falling back to the default slug. Instances configured with `BLEEPHUB_ENTERPRISE_SLUG` no longer had a correct API surface paired with a UI hardcoded to `/api/v3/enterprises/bleephub/...`.
+
+The Bleephub UI test setup now installed localStorage without touching Node's warning-producing localStorage getter, so Vitest no longer emitted the experimental localStorage warning before the setup shim ran.
 
 ## Continue Here
 
@@ -87,6 +91,10 @@ The Docker-backed `gh` command-line interface parity harness now provisioned org
 - `bash -n bleephub/test/run-gh-test.sh` passed after the Docker-backed `gh` command-line interface harness moved organization creation to the public GitHub Enterprise Server admin organization API.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI|TestAdminCreateOrg|TestCreateOrg|TestListAuthUserOrgs' -count=1` passed after the official-client organization provisioning fix.
 - `make bleephub-gh-docker-test` passed with 117 passing checks and 0 failures after the official-client organization provisioning fix.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestExistingRoutesUnaffected|TestGHApiRoot' -count=1` passed after `/health` began reporting the configured enterprise slug.
+- `bun run test src/__tests__/EnterprisePage.test.tsx src/__tests__/api.test.ts src/__tests__/OverviewPage.test.tsx` passed in `ui/packages/bleephub` after the enterprise UI began using the runtime enterprise slug and the localStorage warning was fixed.
+- `bun run typecheck` passed in `ui/packages/bleephub` after the enterprise API helpers became runtime-coordinate driven.
+- `make bleephub-gh-docker-test` passed with 117 passing checks and 0 failures after Docker compatibility returned and the runtime enterprise-coordinate fix landed.
 
 ## Standing Gaps
 

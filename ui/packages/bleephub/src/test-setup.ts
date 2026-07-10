@@ -1,11 +1,10 @@
 import "@testing-library/jest-dom/vitest";
 
-// This jsdom build does not provide window.localStorage; the app reads it
-// (authHeaders → getToken). Install a minimal in-memory store so components
-// exercise the real auth-header path under test, as they would in a browser.
-if (typeof window !== "undefined" && !window.localStorage) {
+// Install storage without probing window.localStorage first; Node emits an
+// experimental warning when that getter is touched without --localstorage-file.
+if (typeof window !== "undefined") {
   const store = new Map<string, string>();
-  const localStorageMock: Storage = {
+  const testLocalStorage: Storage = {
     getItem: (k) => (store.has(k) ? store.get(k)! : null),
     setItem: (k, v) => void store.set(k, String(v)),
     removeItem: (k) => void store.delete(k),
@@ -15,5 +14,5 @@ if (typeof window !== "undefined" && !window.localStorage) {
       return store.size;
     },
   };
-  Object.defineProperty(window, "localStorage", { value: localStorageMock, configurable: true });
+  Object.defineProperty(window, "localStorage", { value: testLocalStorage, configurable: true });
 }
