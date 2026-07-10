@@ -163,7 +163,7 @@ type Gist struct {
 	NodeID      string               `json:"node_id"`
 	Description string               `json:"description"`
 	Public      bool                 `json:"public"`
-	OwnerID     int                  `json:"-"`
+	OwnerID     int                  `json:"owner_id"`
 	Files       map[string]*GistFile `json:"files"`
 	CreatedAt   time.Time            `json:"created_at"`
 	UpdatedAt   time.Time            `json:"updated_at"`
@@ -176,21 +176,26 @@ type Gist struct {
 	GitPullURL  string               `json:"git_pull_url"`
 	GitPushURL  string               `json:"git_push_url"`
 	History     []*GistHistory       `json:"history"`
-	ForkOfID    string               `json:"-"`
-	ForkIDs     []string             `json:"-"`
+	ForkOfID    string               `json:"fork_of_id,omitempty"`
+	ForkIDs     []string             `json:"fork_ids,omitempty"`
 }
 
 // GistComment is a comment on a gist.
 type GistComment struct {
 	ID                int       `json:"id"`
 	NodeID            string    `json:"node_id"`
-	GistID            string    `json:"-"`
-	UserID            int       `json:"-"`
+	GistID            string    `json:"gist_id"`
+	UserID            int       `json:"user_id"`
 	Body              string    `json:"body"`
 	CreatedAt         time.Time `json:"created_at"`
 	UpdatedAt         time.Time `json:"updated_at"`
 	AuthorAssociation string    `json:"author_association"`
 	URL               string    `json:"url"`
+}
+
+type persistedStarredGists struct {
+	UserID int             `json:"user_id"`
+	Stars  map[string]bool `json:"stars"`
 }
 
 // Store holds all in-memory state for bleephub.
@@ -930,6 +935,71 @@ func (st *Store) loadFromPersistence() error {
 			return err
 		}
 		st.Tokens[t.Value] = &t
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("gists", func(raw []byte) error {
+		var g Gist
+		if err := loadJSON(raw, &g); err != nil {
+			return err
+		}
+		if st.Users[g.OwnerID] == nil {
+			return fmt.Errorf("gist %s: owner id %d not found in loaded users", g.ID, g.OwnerID)
+		}
+		if g.Files == nil {
+			g.Files = map[string]*GistFile{}
+		}
+		if g.History == nil {
+			g.History = []*GistHistory{}
+		}
+		st.Gists[g.ID] = &g
+		if n, err := strconv.Atoi(strings.TrimPrefix(g.NodeID, "G_kwDOB")); err == nil && n >= st.NextGistID {
+			st.NextGistID = n + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("gist_comments", func(raw []byte) error {
+		var c GistComment
+		if err := loadJSON(raw, &c); err != nil {
+			return err
+		}
+		if st.Gists[c.GistID] == nil {
+			return fmt.Errorf("gist comment %d: gist %s not found in loaded gists", c.ID, c.GistID)
+		}
+		if st.Users[c.UserID] == nil {
+			return fmt.Errorf("gist comment %d: user id %d not found in loaded users", c.ID, c.UserID)
+		}
+		st.GistComments[c.ID] = &c
+		if c.ID >= st.NextGistCommentID {
+			st.NextGistCommentID = c.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := st.loadBucket("starred_gists", func(raw []byte) error {
+		var row persistedStarredGists
+		if err := loadJSON(raw, &row); err != nil {
+			return err
+		}
+		if st.Users[row.UserID] == nil {
+			return fmt.Errorf("starred_gists user id %d not found in loaded users", row.UserID)
+		}
+		for gistID, starred := range row.Stars {
+			if !starred {
+				delete(row.Stars, gistID)
+				continue
+			}
+			if st.Gists[gistID] == nil {
+				return fmt.Errorf("starred_gists user %d: gist %s not found in loaded gists", row.UserID, gistID)
+			}
+		}
+		if len(row.Stars) > 0 {
+			st.StarredGists[row.UserID] = row.Stars
+		}
 		return nil
 	}); err != nil {
 		return err
@@ -3148,6 +3218,42 @@ func generateGistID() (string, error) {
 	return h, nil
 }
 
+func (st *Store) persistGistLocked(g *Gist) {
+	if st.persist != nil {
+		st.persist.MustPut("gists", g.ID, g)
+	}
+}
+
+func (st *Store) deleteGistPersistenceLocked(id string) {
+	if st.persist != nil {
+		st.persist.MustDelete("gists", id)
+	}
+}
+
+func (st *Store) persistGistCommentLocked(c *GistComment) {
+	if st.persist != nil {
+		st.persist.MustPut("gist_comments", strconv.Itoa(c.ID), c)
+	}
+}
+
+func (st *Store) deleteGistCommentPersistenceLocked(id int) {
+	if st.persist != nil {
+		st.persist.MustDelete("gist_comments", strconv.Itoa(id))
+	}
+}
+
+func (st *Store) persistStarredGistsLocked(userID int) {
+	if st.persist == nil {
+		return
+	}
+	key := strconv.Itoa(userID)
+	if stars := st.StarredGists[userID]; len(stars) > 0 {
+		st.persist.MustPut("starred_gists", key, persistedStarredGists{UserID: userID, Stars: stars})
+	} else {
+		st.persist.MustDelete("starred_gists", key)
+	}
+}
+
 // CreateGist creates a new gist owned by the given user.
 func (st *Store) CreateGist(owner *User, description string, public bool, files map[string]*GistFile) *Gist {
 	g, err := st.CreateGistE(owner, description, public, files)
@@ -3194,6 +3300,7 @@ func (st *Store) CreateGistE(owner *User, description string, public bool, files
 	}
 	st.Gists[id] = g
 	st.NextGistID++
+	st.persistGistLocked(g)
 	return g, nil
 }
 
@@ -3254,6 +3361,7 @@ func (st *Store) UpdateGistE(id string, description *string, files map[string]*G
 			"deletions": deletions,
 		},
 	})
+	st.persistGistLocked(g)
 	return g, true, nil
 }
 
@@ -3265,9 +3373,11 @@ func (st *Store) DeleteGist(id string) bool {
 		return false
 	}
 	delete(st.Gists, id)
+	st.deleteGistPersistenceLocked(id)
 	for cid, c := range st.GistComments {
 		if c.GistID == id {
 			delete(st.GistComments, cid)
+			st.deleteGistCommentPersistenceLocked(cid)
 		}
 	}
 	for uid, stars := range st.StarredGists {
@@ -3276,6 +3386,7 @@ func (st *Store) DeleteGist(id string) bool {
 			if len(stars) == 0 {
 				delete(st.StarredGists, uid)
 			}
+			st.persistStarredGistsLocked(uid)
 		}
 	}
 	return true
@@ -3370,6 +3481,7 @@ func (st *Store) StarGist(userID int, gistID string) bool {
 		st.StarredGists[userID] = make(map[string]bool)
 	}
 	st.StarredGists[userID][gistID] = true
+	st.persistStarredGistsLocked(userID)
 	return true
 }
 
@@ -3386,6 +3498,7 @@ func (st *Store) UnstarGist(userID int, gistID string) bool {
 			delete(st.StarredGists, userID)
 		}
 	}
+	st.persistStarredGistsLocked(userID)
 	return true
 }
 
@@ -3446,6 +3559,8 @@ func (st *Store) ForkGistE(user *User, gistID string) (*Gist, bool, error) {
 	st.Gists[id] = fork
 	orig.ForkIDs = append(orig.ForkIDs, id)
 	st.NextGistID++
+	st.persistGistLocked(orig)
+	st.persistGistLocked(fork)
 	return fork, true, nil
 }
 
@@ -3489,6 +3604,8 @@ func (st *Store) CreateGistComment(gistID string, user *User, body string) *Gist
 	st.GistComments[c.ID] = c
 	st.NextGistCommentID++
 	g.Comments++
+	st.persistGistCommentLocked(c)
+	st.persistGistLocked(g)
 	return c
 }
 
@@ -3509,6 +3626,7 @@ func (st *Store) UpdateGistComment(id int, body string) (*GistComment, bool) {
 	}
 	c.Body = body
 	c.UpdatedAt = time.Now().UTC()
+	st.persistGistCommentLocked(c)
 	return c, true
 }
 
@@ -3522,8 +3640,10 @@ func (st *Store) DeleteGistComment(id int) bool {
 	}
 	if g := st.Gists[c.GistID]; g != nil {
 		g.Comments--
+		st.persistGistLocked(g)
 	}
 	delete(st.GistComments, id)
+	st.deleteGistCommentPersistenceLocked(id)
 	return true
 }
 

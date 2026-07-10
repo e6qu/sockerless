@@ -96,6 +96,8 @@ Closed BUG-2453 by removing the Bleephub UI test setup's localStorage warning so
 
 Closed BUG-2454 by moving fine-grained personal access token generation onto an injectable full-read entropy helper. The helper now returns a normal error when secure randomness is unavailable, and entropy failure is covered directly alongside the other credential helpers.
 
+Closed BUG-2455 by persisting Bleephub gist state in SQLite-backed service storage. Gists, comments, stars, forks, histories, comment counters, and sequence counters now reload as durable service state instead of disappearing on process restart.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -109,6 +111,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestOAuth(App|
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI|TestAdminCreateOrg|TestCreateOrg|TestListAuthUserOrgs' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestExistingRoutesUnaffected|TestGHApiRoot' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
@@ -148,6 +151,8 @@ make bleephub-gh-docker-test
 ```
 
 It passed again after the OAuth App token-management entropy fix, after the official-client organization provisioning fix, and after the runtime enterprise-coordinate fix, each time with 117 checks passing and 0 failing.
+
+It also passed after gist state became durable, with 117 checks passing and 0 failing.
 
 The focused Bleephub Playwright coverage for the public Actions metrics UI and error paths passed after rebuilding the embedded UI binary:
 

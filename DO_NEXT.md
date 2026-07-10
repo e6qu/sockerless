@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2454.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2455.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -19,6 +19,8 @@ Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, ho
 OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
 
 Fine-grained personal access token generation now used the same full-read entropy pattern as the other public credential paths. The token helper was injectable for failure coverage, and entropy failure returned a normal error without creating a partial token or grant-request record.
+
+Bleephub gists now persisted across SQLite-backed service reloads. Gists, gist comments, star state, fork links, revision history, comment counters, and sequence counters reload as real service state instead of existing only in memory.
 
 The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
 
@@ -98,6 +100,9 @@ The Bleephub UI test setup now installed localStorage without touching Node's wa
 - `bun run typecheck` passed in `ui/packages/bleephub` after the enterprise API helpers became runtime-coordinate driven.
 - `make bleephub-gh-docker-test` passed with 117 passing checks and 0 failures after Docker compatibility returned and the runtime enterprise-coordinate fix landed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1` passed after fine-grained personal access token generation moved onto a full-read entropy helper.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1` passed after gist/comment/star/fork state began persisting.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after gist/comment/star/fork state began persisting.
+- `make bleephub-gh-docker-test` passed with 117 checks and 0 failures against the Docker-compatible Podman runtime after the local Docker runtime returned.
 
 ## Standing Gaps
 
