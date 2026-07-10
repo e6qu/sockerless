@@ -263,12 +263,15 @@ func TestPersistenceReload_GistsCommentsStarsAndForks(t *testing.T) {
 }
 
 func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
-	var oldIssueID, oldPRID int
+	var oldRepoID, oldIssueID, oldPRID int
+	const orgLogin = "delete-cascade-org"
 
 	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
 		st.SeedDefaultUser()
 		admin := st.UsersByLogin["admin"]
-		repo := st.CreateRepo(admin, "deleted-issue-children", "", false)
+		org := st.CreateOrg(admin, orgLogin, "Delete Cascade", "")
+		repo := st.CreateOrgRepo(org, admin, "deleted-issue-children", "", false)
+		oldRepoID = repo.ID
 		parent := st.CreateIssue(repo.ID, admin.ID, "parent", "", nil, nil, 0)
 		child := st.CreateIssue(repo.ID, admin.ID, "child", "", nil, nil, 0)
 		blocker := st.CreateIssue(repo.ID, admin.ID, "blocker", "", nil, nil, 0)
@@ -282,9 +285,86 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if !st.AddIssueBlockedBy(parent.ID, blocker.ID) {
 			t.Fatal("AddIssueBlockedBy returned false")
 		}
+		st.RecordRepoActivity(repo.ID, "refs/heads/main", "0000000", "abcdef0", admin.ID, "push")
+		st.RecordRepoClone(repo.ID, admin.Login)
+		if !st.SetRepoSubscription(admin.ID, repo.ID, true) {
+			t.Fatal("SetRepoSubscription returned false")
+		}
+		st.CreateAttestation(repo.ID, []byte(`{"bundle":true}`), []string{"sha256:deadbeef"}, "https://slsa.dev/provenance/v1", admin.Login)
 
 		now := time.Now().UTC()
 		st.mu.Lock()
+		inst := &Installation{
+			ID:                  st.NextInstallationID,
+			AppID:               1,
+			AppSlug:             "cascade-app",
+			TargetType:          "Organization",
+			TargetID:            org.ID,
+			TargetLogin:         org.Login,
+			RepositorySelection: "selected",
+			SelectedRepoIDs:     []int{repo.ID},
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}
+		st.NextInstallationID++
+		st.Installations[inst.ID] = inst
+		token := &InstallationToken{
+			Token:          "cascade-installation-token",
+			ExpiresAt:      now.Add(time.Hour),
+			RepositoryIDs:  []int{repo.ID},
+			InstallationID: inst.ID,
+			AppID:          inst.AppID,
+		}
+		st.InstallationTokens[token.Token] = token
+		orgActions := st.getOrgActionsPermissionsLocked(org.Login)
+		orgActions.SelectedRepositoryIDs = []int{repo.ID}
+		orgActions.SelfHostedRunnersSelectedRepoIDs = []int{repo.ID}
+		st.RunnerGroups[99] = &RunnerGroup{ID: 99, Name: "cascade", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now}
+		st.OrgSecrets[org.Login] = map[string]*OrgSecret{
+			"ORG_SECRET": {Secret: Secret{Name: "ORG_SECRET", Value: "secret", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		st.OrgVariables[org.Login] = map[string]*ActionsVariable{
+			"ORG_VAR": {Name: "ORG_VAR", Value: "value", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.AgentsOrgSecrets[org.Login] = map[string]*OrgSecret{
+			"AGENT_SECRET": {Secret: Secret{Name: "AGENT_SECRET", Value: "secret", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		st.AgentsOrgVariables[org.Login] = map[string]*ActionsVariable{
+			"AGENT_VAR": {Name: "AGENT_VAR", Value: "value", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.DependabotRepositoryAccess[org.Login] = []int{repo.ID}
+		st.DependabotOrgSecrets[org.Login] = map[string]*DependabotOrgSecret{
+			"DEPENDABOT_SECRET": {DependabotSecret: DependabotSecret{Name: "DEPENDABOT_SECRET", Value: "secret", KeyID: "key", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		codespaceScope := codespaceSecretScopeKey("org", org.Login)
+		st.CodespaceSecrets[codespaceScope] = map[string]*CodespaceSecret{
+			"CODESPACE_SECRET": {Name: "CODESPACE_SECRET", Key: "CODESPACE_SECRET", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.CopilotCodingAgentPerms[org.Login] = &CopilotCodingAgentPermissions{OrgLogin: org.Login, EnabledRepositories: "selected", SelectedRepositoryIDs: []int{repo.ID}}
+		st.OrgPrivateRegistries[org.Login] = map[string]*PrivateRegistryConfiguration{
+			"registry": {Name: "registry", Visibility: "selected", SelectedRepositoryIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.OrgImmutableReleases[org.Login] = &OrgImmutableReleasesSettings{EnforcedRepositories: "selected", SelectedRepositoryIDs: []int{repo.ID}}
+		st.CodeSecurityRepoAttachments[org.Login] = map[int]int{repo.ID: 321}
+		st.EnterpriseCodeSecurityRepoConfigs[repo.ID] = 654
+		if st.persist != nil {
+			st.persist.MustPut("installations", strconv.Itoa(inst.ID), inst)
+			st.persist.MustPut("installation_tokens", token.Token, token)
+			st.persist.MustPut("org_actions_permissions", org.Login, orgActions)
+			st.persist.MustPut("runner_groups", "99", st.RunnerGroups[99])
+			st.persist.MustPut("org_secrets", org.Login, st.OrgSecrets[org.Login])
+			st.persist.MustPut("org_variables", org.Login, st.OrgVariables[org.Login])
+			st.persist.MustPut("agents_org_secrets", org.Login, st.AgentsOrgSecrets[org.Login])
+			st.persist.MustPut("agents_org_variables", org.Login, st.AgentsOrgVariables[org.Login])
+			st.persist.MustPut("dependabot_repo_access", org.Login, st.DependabotRepositoryAccess[org.Login])
+			st.persist.MustPut("dependabot_org_secrets", org.Login, st.DependabotOrgSecrets[org.Login])
+			st.persist.MustPut("codespace_secrets", codespaceScope, st.CodespaceSecrets[codespaceScope])
+			st.persist.MustPut("copilot_coding_agent_permissions", org.Login, st.CopilotCodingAgentPerms[org.Login])
+			st.persist.MustPut("org_private_registries", org.Login, st.OrgPrivateRegistries[org.Login])
+			st.persist.MustPut("org_immutable_releases", org.Login, st.OrgImmutableReleases[org.Login])
+			st.persist.MustPut("code_security_repo_attachments", org.Login, st.CodeSecurityRepoAttachments[org.Login])
+			st.persist.MustPut("enterprise_code_security_attachments", strconv.Itoa(repo.ID), &EnterpriseCodeSecurityAttachment{RepoID: repo.ID, ConfigID: 654})
+		}
 		pr := &PullRequest{
 			ID:          st.NextPR,
 			NodeID:      "PR_kgDOdelete",
@@ -320,7 +400,7 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if st.PRReviewComments.CreateRootComment(pr.ID, admin.ID, "README.md", "review comment", "abc123", "RIGHT", 1, 0) == nil {
 			t.Fatal("CreateRootComment returned nil")
 		}
-		if !st.DeleteRepo("admin", repo.Name) {
+		if !st.DeleteRepo(org.Login, repo.Name) {
 			t.Fatal("DeleteRepo returned false")
 		}
 	})
@@ -343,15 +423,96 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	if got := st2.PRReviewComments.ListForPR(oldPRID); len(got) != 0 {
 		t.Fatalf("pull request review comments survived deleted repo reload: %#v", got)
 	}
+	if len(st2.Attestations) != 0 {
+		t.Fatalf("attestations survived deleted repo reload: %#v", st2.Attestations)
+	}
+	if len(st2.RepoActivities) != 0 {
+		t.Fatalf("repository activity survived deleted repo reload: %#v", st2.RepoActivities)
+	}
+	if len(st2.RepoCloneTraffic) != 0 {
+		t.Fatalf("repository clone traffic survived deleted repo reload: %#v", st2.RepoCloneTraffic)
+	}
+	if len(st2.RepoSubscriptions) != 0 {
+		t.Fatalf("repository subscriptions survived deleted repo reload: %#v", st2.RepoSubscriptions)
+	}
+	assertRepoIDAbsentFromCascadeLists(t, st2, orgLogin, oldRepoID)
 
 	admin := st2.UsersByLogin["admin"]
-	recreated := st2.CreateRepo(admin, "deleted-issue-children", "", false)
+	org := st2.GetOrg(orgLogin)
+	if org == nil {
+		t.Fatalf("organization %s did not reload", orgLogin)
+	}
+	recreated := st2.CreateOrgRepo(org, admin, "deleted-issue-children", "", false)
+	if recreated.ID != oldRepoID {
+		t.Fatalf("fixture did not reuse repository ID after reload: got %d want %d", recreated.ID, oldRepoID)
+	}
 	fresh := st2.CreateIssue(recreated.ID, admin.ID, "fresh", "", nil, nil, 0)
 	if fresh.ID != oldIssueID {
 		t.Fatalf("fixture did not reuse issue ID after reload: got %d want %d", fresh.ID, oldIssueID)
 	}
 	if got := st2.CountCommentsFor("issue", fresh.ID); got != 0 {
 		t.Fatalf("fresh issue inherited stale comment count = %d", got)
+	}
+}
+
+func assertRepoIDAbsentFromCascadeLists(t *testing.T, st *Store, orgLogin string, repoID int) {
+	t.Helper()
+	assertNoRepoID := func(name string, ids []int) {
+		t.Helper()
+		for _, id := range ids {
+			if id == repoID {
+				t.Fatalf("%s still referenced deleted repository ID %d: %v", name, repoID, ids)
+			}
+		}
+	}
+	for _, inst := range st.Installations {
+		assertNoRepoID("installation selected repositories", inst.SelectedRepoIDs)
+	}
+	for _, token := range st.InstallationTokens {
+		assertNoRepoID("installation token repositories", token.RepositoryIDs)
+	}
+	if p := st.OrgActionsPermissions[orgLogin]; p != nil {
+		assertNoRepoID("organization Actions selected repositories", p.SelectedRepositoryIDs)
+		assertNoRepoID("organization self-hosted runner repositories", p.SelfHostedRunnersSelectedRepoIDs)
+	}
+	for _, group := range st.RunnerGroups {
+		assertNoRepoID("runner group selected repositories", group.SelectedRepoIDs)
+	}
+	for _, sec := range st.OrgSecrets[orgLogin] {
+		assertNoRepoID("organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, v := range st.OrgVariables[orgLogin] {
+		assertNoRepoID("organization variable selected repositories", v.SelectedRepoIDs)
+	}
+	for _, sec := range st.AgentsOrgSecrets[orgLogin] {
+		assertNoRepoID("agent organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, v := range st.AgentsOrgVariables[orgLogin] {
+		assertNoRepoID("agent organization variable selected repositories", v.SelectedRepoIDs)
+	}
+	assertNoRepoID("Dependabot repository access", st.DependabotRepositoryAccess[orgLogin])
+	for _, sec := range st.DependabotOrgSecrets[orgLogin] {
+		assertNoRepoID("Dependabot organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, sec := range st.CodespaceSecrets[codespaceSecretScopeKey("org", orgLogin)] {
+		assertNoRepoID("Codespaces organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	if p := st.CopilotCodingAgentPerms[orgLogin]; p != nil {
+		assertNoRepoID("Copilot coding agent selected repositories", p.SelectedRepositoryIDs)
+	}
+	for _, reg := range st.OrgPrivateRegistries[orgLogin] {
+		assertNoRepoID("private registry selected repositories", reg.SelectedRepositoryIDs)
+	}
+	if settings := st.OrgImmutableReleases[orgLogin]; settings != nil {
+		assertNoRepoID("immutable releases selected repositories", settings.SelectedRepositoryIDs)
+	}
+	if attachments := st.CodeSecurityRepoAttachments[orgLogin]; attachments != nil {
+		if _, ok := attachments[repoID]; ok {
+			t.Fatalf("code security attachments still referenced deleted repository ID %d: %v", repoID, attachments)
+		}
+	}
+	if cfg, ok := st.EnterpriseCodeSecurityRepoConfigs[repoID]; ok {
+		t.Fatalf("enterprise code security attachment survived for deleted repository ID %d: %d", repoID, cfg)
 	}
 }
 

@@ -6,7 +6,7 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 ## 2026-07-10 - Bleephub Repository Deletion Cascade (`feat/bleephub-repository-deletion-cascade`)
 
-This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gap by making repository deletion purge issue and pull request child state.
+This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gaps by making repository deletion purge issue/pull request child state, repository-ID keyed rows, and selected-repository references.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 
@@ -101,6 +101,8 @@ Closed BUG-2455 by persisting Bleephub gist state in SQLite-backed service stora
 Closed BUG-2456 by replacing the stale Bleephub persistence bucket inventory comment with a pointer to the actual `loadBucket` registrations. The code no longer carried a duplicate manual list that drifted when durable state buckets changed.
 
 Closed BUG-2457 by making repository deletion purge the persisted child state attached to the deleted repository's issues and pull requests. Issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments no longer survived a SQLite reload or attached to a later repository that reused issue or pull request IDs.
+
+Closed BUG-2458 by extending repository deletion to repository-ID keyed rows and selected-repository references. Artifact attestations, repository activity, clone traffic, watch subscriptions, GitHub App selected repositories, installation token repository scopes, organization Actions settings, runner groups, Actions secrets/variables, agent secrets/variables, Dependabot access and org secrets, Codespaces org secrets, Copilot coding-agent permissions, private registries, immutable-release enforcement, and code-security attachments no longer survived deletion with the old repository ID.
 
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 

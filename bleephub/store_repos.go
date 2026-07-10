@@ -381,6 +381,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.RepoInvitations, fullName)
 	delete(st.RepoDeployKeys, fullName)
 	delete(st.CheckSuitePrefs, fullName)
+	delete(st.RepoActionsPermissions, fullName)
 	delete(st.DependabotSecrets, fullName)
 	delete(st.CodeScanningDefaultSetups, fullName)
 	delete(st.CodeQualitySetups, fullName)
@@ -411,6 +412,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		st.persist.MustDelete("repo_invitations", fullName)
 		st.persist.MustDelete("repo_deploy_keys", fullName)
 		st.persist.MustDelete("check_suite_prefs", fullName)
+		st.persist.MustDelete("repo_actions_permissions", fullName)
 		st.persist.MustDelete("secret_scanning_alerts", fullName)
 		st.persist.MustDelete("dependabot_secrets", fullName)
 		st.persist.MustDelete("code_scanning_default_setups", fullName)
@@ -599,6 +601,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	if st.persist != nil {
 		st.persist.MustDelete("security_advisories", fullName)
 	}
+	st.deleteRepoIDReferencesLocked(repo.ID)
 	for k := range st.EnvSecrets {
 		repoKey, _, found := strings.Cut(k, "\x1f")
 		if found && repoKey == fullName {
@@ -712,6 +715,220 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		}
 	}
 	return true
+}
+
+func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
+	for id, a := range st.Attestations {
+		if a.RepoID == repoID {
+			delete(st.Attestations, id)
+			if st.persist != nil {
+				st.persist.MustDelete("attestations", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, a := range st.RepoActivities {
+		if a.RepoID == repoID {
+			delete(st.RepoActivities, id)
+			if st.persist != nil {
+				st.persist.MustDelete("repo_activity", strconv.Itoa(id))
+			}
+		}
+	}
+	for key, bucket := range st.RepoCloneTraffic {
+		if bucket.RepoID == repoID {
+			delete(st.RepoCloneTraffic, key)
+			if st.persist != nil {
+				st.persist.MustDelete("repo_traffic_clones", key)
+			}
+		}
+	}
+	for key, sub := range st.RepoSubscriptions {
+		if sub != nil && sub.RepoID == repoID {
+			delete(st.RepoSubscriptions, key)
+			if st.persist != nil {
+				st.persist.MustDelete("repo_subscriptions", key)
+			}
+		}
+	}
+	delete(st.EnterpriseCodeSecurityRepoConfigs, repoID)
+	if st.persist != nil {
+		st.persist.MustDelete("enterprise_code_security_attachments", strconv.Itoa(repoID))
+	}
+	for orgLogin, attachments := range st.CodeSecurityRepoAttachments {
+		if _, ok := attachments[repoID]; !ok {
+			continue
+		}
+		delete(attachments, repoID)
+		if len(attachments) == 0 {
+			delete(st.CodeSecurityRepoAttachments, orgLogin)
+			if st.persist != nil {
+				st.persist.MustDelete("code_security_repo_attachments", orgLogin)
+			}
+			continue
+		}
+		if st.persist != nil {
+			st.persist.MustPut("code_security_repo_attachments", orgLogin, attachments)
+		}
+	}
+	for orgLogin, ids := range st.DependabotRepositoryAccess {
+		if kept, changed := removeRepoIDFromList(ids, repoID); changed {
+			if len(kept) == 0 {
+				delete(st.DependabotRepositoryAccess, orgLogin)
+				if st.persist != nil {
+					st.persist.MustDelete("dependabot_repo_access", orgLogin)
+				}
+			} else {
+				st.DependabotRepositoryAccess[orgLogin] = kept
+				if st.persist != nil {
+					st.persist.MustPut("dependabot_repo_access", orgLogin, kept)
+				}
+			}
+		}
+	}
+	for _, inst := range st.Installations {
+		if kept, changed := removeRepoIDFromList(inst.SelectedRepoIDs, repoID); changed {
+			inst.SelectedRepoIDs = kept
+			if st.persist != nil {
+				st.persist.MustPut("installations", strconv.Itoa(inst.ID), inst)
+			}
+		}
+	}
+	for token, t := range st.InstallationTokens {
+		if kept, changed := removeRepoIDFromList(t.RepositoryIDs, repoID); changed {
+			t.RepositoryIDs = kept
+			if st.persist != nil {
+				st.persist.MustPut("installation_tokens", token, t)
+			}
+		}
+	}
+	for orgLogin, p := range st.OrgActionsPermissions {
+		changed := false
+		if kept, ok := removeRepoIDFromList(p.SelectedRepositoryIDs, repoID); ok {
+			p.SelectedRepositoryIDs = kept
+			changed = true
+		}
+		if kept, ok := removeRepoIDFromList(p.SelfHostedRunnersSelectedRepoIDs, repoID); ok {
+			p.SelfHostedRunnersSelectedRepoIDs = kept
+			changed = true
+		}
+		if changed {
+			st.persistOrgActionsPermissionsLocked(orgLogin)
+		}
+	}
+	for _, g := range st.RunnerGroups {
+		if kept, changed := removeRepoIDFromList(g.SelectedRepoIDs, repoID); changed {
+			g.SelectedRepoIDs = kept
+			if st.persist != nil {
+				st.persist.MustPut("runner_groups", strconv.Itoa(g.ID), g)
+			}
+		}
+	}
+	for orgLogin, m := range st.OrgSecrets {
+		if removeRepoIDFromOrgSecrets(m, repoID) && st.persist != nil {
+			st.persist.MustPut("org_secrets", orgLogin, m)
+		}
+	}
+	for orgLogin, m := range st.OrgVariables {
+		if removeRepoIDFromActionsVariables(m, repoID) && st.persist != nil {
+			st.persist.MustPut("org_variables", orgLogin, m)
+		}
+	}
+	for orgLogin, m := range st.AgentsOrgSecrets {
+		if removeRepoIDFromOrgSecrets(m, repoID) && st.persist != nil {
+			st.persist.MustPut("agents_org_secrets", orgLogin, m)
+		}
+	}
+	for orgLogin, m := range st.AgentsOrgVariables {
+		if removeRepoIDFromActionsVariables(m, repoID) && st.persist != nil {
+			st.persist.MustPut("agents_org_variables", orgLogin, m)
+		}
+	}
+	for orgLogin, m := range st.DependabotOrgSecrets {
+		changed := false
+		for _, sec := range m {
+			if kept, ok := removeRepoIDFromList(sec.SelectedRepoIDs, repoID); ok {
+				sec.SelectedRepoIDs = kept
+				changed = true
+			}
+		}
+		if changed && st.persist != nil {
+			st.persist.MustPut("dependabot_org_secrets", orgLogin, m)
+		}
+	}
+	for scope, m := range st.CodespaceSecrets {
+		changed := false
+		for _, sec := range m {
+			if kept, ok := removeRepoIDFromList(sec.SelectedRepoIDs, repoID); ok {
+				sec.SelectedRepoIDs = kept
+				changed = true
+			}
+		}
+		if changed {
+			st.persistCodespaceSecretScopeLocked(scope)
+		}
+	}
+	for orgLogin, p := range st.CopilotCodingAgentPerms {
+		if kept, changed := removeRepoIDFromList(p.SelectedRepositoryIDs, repoID); changed {
+			p.SelectedRepositoryIDs = kept
+			st.persistCopilotCodingAgentPermsLocked(p)
+			st.CopilotCodingAgentPerms[orgLogin] = p
+		}
+	}
+	for orgLogin, regs := range st.OrgPrivateRegistries {
+		changed := false
+		for _, reg := range regs {
+			if kept, ok := removeRepoIDFromList(reg.SelectedRepositoryIDs, repoID); ok {
+				reg.SelectedRepositoryIDs = kept
+				changed = true
+			}
+		}
+		if changed && st.persist != nil {
+			st.persist.MustPut("org_private_registries", orgLogin, regs)
+		}
+	}
+	for orgLogin, settings := range st.OrgImmutableReleases {
+		if kept, changed := removeRepoIDFromList(settings.SelectedRepositoryIDs, repoID); changed {
+			settings.SelectedRepositoryIDs = kept
+			if st.persist != nil {
+				st.persist.MustPut("org_immutable_releases", orgLogin, settings)
+			}
+		}
+	}
+}
+
+func removeRepoIDFromList(ids []int, repoID int) ([]int, bool) {
+	kept := ids[:0]
+	changed := false
+	for _, id := range ids {
+		if id == repoID {
+			changed = true
+			continue
+		}
+		kept = append(kept, id)
+	}
+	return kept, changed
+}
+
+func removeRepoIDFromOrgSecrets(secrets map[string]*OrgSecret, repoID int) bool {
+	changed := false
+	for _, sec := range secrets {
+		if kept, ok := removeRepoIDFromList(sec.SelectedRepoIDs, repoID); ok {
+			sec.SelectedRepoIDs = kept
+			changed = true
+		}
+	}
+	return changed
+}
+
+func removeRepoIDFromActionsVariables(vars map[string]*ActionsVariable, repoID int) bool {
+	changed := false
+	for _, v := range vars {
+		if kept, ok := removeRepoIDFromList(v.SelectedRepoIDs, repoID); ok {
+			v.SelectedRepoIDs = kept
+			changed = true
+		}
+	}
+	return changed
 }
 
 func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prIDs map[int]bool) {

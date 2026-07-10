@@ -4,11 +4,13 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457.
+`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 and BUG-2458.
 
 This branch started from the merged #783 baseline and fixed the next persistence class issue found while continuing the Bleephub sweep.
 
 Repository deletion now purges the persisted child state that belongs to the deleted repository's issues and pull requests. Issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments are deleted with the repository instead of surviving a SQLite reload and attaching to later ID reuse.
+
+The same deletion cascade now purges repository-ID keyed state and selected-repository references. Artifact attestations, repository activity, clone traffic, watch subscriptions, GitHub App selected repositories, installation token repository scopes, organization Actions settings, runner groups, Actions secrets/variables, agent secrets/variables, Dependabot access and org secrets, Codespaces org secrets, Copilot coding-agent permissions, private registries, immutable-release enforcement, and code-security attachments no longer retain the deleted repository ID.
 
 ## Continue Here
 
@@ -85,7 +87,8 @@ Repository deletion now purges the persisted child state that belongs to the del
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1` passed after gist/comment/star/fork state began persisting.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after gist/comment/star/fork state began persisting.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1` passed after repository deletion began purging persisted issue and pull request child state.
-- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the repository deletion cascade fix.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1` passed after repository deletion began purging repository-ID keyed state and selected-repository references.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed after the repository deletion cascade fixes.
 - `make bleephub-gh-docker-test` passed with 117 checks and 0 failures against the Docker-compatible Podman runtime after the repository deletion cascade fix.
 
 ## Standing Gaps
