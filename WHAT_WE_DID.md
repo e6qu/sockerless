@@ -6,7 +6,7 @@ Detailed historical narrative lives in PR descriptions and `git log`. This file 
 
 ## 2026-07-10 - Bleephub Repository Deletion Cascade (`feat/bleephub-repository-deletion-cascade`)
 
-This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gaps by making repository deletion purge issue/pull request child state, repository-ID keyed rows, and selected-repository references.
+This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gaps by making repository deletion purge issue/pull request child state, repository-ID keyed rows, selected-repository references, deployment state, environment state, environment policies, and GitHub Pages deployment records.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 
@@ -104,6 +104,10 @@ Closed BUG-2457 by making repository deletion purge the persisted child state at
 
 Closed BUG-2458 by extending repository deletion to repository-ID keyed rows and selected-repository references. Artifact attestations, repository activity, clone traffic, watch subscriptions, GitHub App selected repositories, installation token repository scopes, organization Actions settings, runner groups, Actions secrets/variables, agent secrets/variables, Dependabot access and org secrets, Codespaces org secrets, Copilot coding-agent permissions, private registries, immutable-release enforcement, and code-security attachments no longer survived deletion with the old repository ID.
 
+Closed BUG-2459 by extending repository deletion to deployments, deployment statuses, environments, environment branch policies, environment protection rules, and GitHub Pages deployment records. Those repository-ID keyed rows no longer survived SQLite reload or attached to a later repository that reused the old ID.
+
+Closed BUG-2460 by making deployment deletion purge the deployment's status rows from memory and SQLite with the deployment record.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -119,6 +123,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestExistingRo
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteDeploymentPurgesStatuses|TestPersistenceReload_DeploymentsStatusesEnvironments|TestDeployments_Lifecycle' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 

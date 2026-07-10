@@ -602,6 +602,20 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 		st.persist.MustDelete("security_advisories", fullName)
 	}
 	st.deleteRepoIDReferencesLocked(repo.ID)
+	for _, envID := range st.Deployments.DeleteRepo(repo.ID) {
+		if _, ok := st.EnvBranchPolicies[envID]; ok {
+			delete(st.EnvBranchPolicies, envID)
+			if st.persist != nil {
+				st.persist.MustDelete("env_branch_policies", strconv.Itoa(envID))
+			}
+		}
+		if _, ok := st.EnvProtectionRules[envID]; ok {
+			delete(st.EnvProtectionRules, envID)
+			if st.persist != nil {
+				st.persist.MustDelete("env_protection_rules", strconv.Itoa(envID))
+			}
+		}
+	}
 	for k := range st.EnvSecrets {
 		repoKey, _, found := strings.Cut(k, "\x1f")
 		if found && repoKey == fullName {
@@ -718,6 +732,10 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 }
 
 func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
+	delete(st.PagesDeployments, repoID)
+	if st.persist != nil {
+		st.persist.MustDelete("pages_deployments", strconv.Itoa(repoID))
+	}
 	for id, a := range st.Attestations {
 		if a.RepoID == repoID {
 			delete(st.Attestations, id)

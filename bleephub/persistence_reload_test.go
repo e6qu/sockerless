@@ -1181,6 +1181,13 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		p.MustPut("branch_protection", bpKey(repo.ID, "main"), st.Misc.branchProtection[bpKey(repo.ID, "main")])
 		st.Misc.pagesBuilds[repoKey] = []*PagesBuild{{ID: 1, Status: "built"}}
 		p.MustPut("pages_builds", repoKey, st.Misc.pagesBuilds[repoKey])
+		dep := st.Deployments.CreateDeployment(repo.ID, user.ID, "main", "abc123", "deploy", "production", "", nil, true, false)
+		st.Deployments.AddStatus(dep.ID, user.ID, "success", "", "", "", "", "production", false)
+		env := st.Deployments.UpsertEnvironment(repo.ID, "production")
+		st.Deployments.SetEnvironmentBranchPolicyConfig(repo.ID, "production", &DeploymentBranchPolicy{CustomBranchPolicies: true})
+		st.CreateEnvBranchPolicy(env.ID, "main", "branch")
+		st.CreateEnvProtectionRule(env.ID, 1)
+		st.CreatePagesDeployment(repo.ID, "github-pages", "pages-build", "succeed")
 		st.CreateIssue(repo.ID, user.ID, "stale", "", nil, nil, 0)
 		seedStorePullRequestBranches(t, st, repo, "f")
 		st.CreatePullRequest(repo.ID, user.ID, "stale pr", "", "f", "main", false, nil, nil, 0)
@@ -1213,6 +1220,24 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	if len(st2.Misc.pagesBuilds[repoKey]) != 0 {
 		t.Error("pages builds survived repo deletion")
 	}
+	if len(st2.Deployments.ListDeployments(oldRepoID)) != 0 {
+		t.Error("deployments survived repo deletion")
+	}
+	if len(st2.Deployments.statuses) != 0 {
+		t.Error("deployment statuses survived repo deletion")
+	}
+	if len(st2.Deployments.ListEnvironments(oldRepoID)) != 0 {
+		t.Error("environments survived repo deletion")
+	}
+	if len(st2.EnvBranchPolicies) != 0 {
+		t.Error("environment branch policies survived repo deletion")
+	}
+	if len(st2.EnvProtectionRules) != 0 {
+		t.Error("environment protection rules survived repo deletion")
+	}
+	if len(st2.PagesDeployments[oldRepoID]) != 0 {
+		t.Error("Pages deployments survived repo deletion")
+	}
 	for _, i := range st2.Issues {
 		if i.RepoID == oldRepoID {
 			t.Error("issue survived repo deletion")
@@ -1238,6 +1263,29 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 	if len(st2.ListHooks(repoKey)) != 0 {
 		t.Error("recreated repo inherited hooks")
+	}
+}
+
+func TestPersistenceReload_DeleteDeploymentPurgesStatuses(t *testing.T) {
+	var depID int
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "deployment-delete", "", false)
+		dep := st.Deployments.CreateDeployment(repo.ID, user.ID, "main", "abc123", "deploy", "production", "", nil, true, false)
+		depID = dep.ID
+		st.Deployments.AddStatus(dep.ID, user.ID, "queued", "", "", "", "", "production", false)
+		st.Deployments.AddStatus(dep.ID, user.ID, "success", "", "", "", "", "production", false)
+		if !st.Deployments.DeleteDeployment(dep.ID) {
+			t.Fatal("DeleteDeployment failed")
+		}
+	})
+
+	if got := st2.Deployments.GetDeployment(depID); got != nil {
+		t.Fatalf("deployment survived deletion after reload: %+v", got)
+	}
+	if len(st2.Deployments.statuses) != 0 {
+		t.Fatalf("deployment statuses survived deletion after reload: %+v", st2.Deployments.statuses)
 	}
 }
 

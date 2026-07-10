@@ -171,18 +171,30 @@ func (ds *DeploymentStore) DeleteDeployment(id int) bool {
 	if d == nil {
 		return false
 	}
-	delete(ds.deployments, id)
+	ds.deleteDeploymentLocked(d)
+	return true
+}
+
+func (ds *DeploymentStore) deleteDeploymentLocked(d *Deployment) {
+	delete(ds.deployments, d.ID)
 	src := ds.byRepo[d.RepoID]
 	for i, x := range src {
-		if x.ID == id {
+		if x.ID == d.ID {
 			ds.byRepo[d.RepoID] = append(src[:i], src[i+1:]...)
 			break
 		}
 	}
-	if ds.persist != nil {
-		ds.persist.MustDelete("deployments", strconv.Itoa(id))
+	for id, status := range ds.statuses {
+		if status.DeploymentID == d.ID {
+			delete(ds.statuses, id)
+			if ds.persist != nil {
+				ds.persist.MustDelete("deployment_statuses", strconv.Itoa(id))
+			}
+		}
 	}
-	return true
+	if ds.persist != nil {
+		ds.persist.MustDelete("deployments", strconv.Itoa(d.ID))
+	}
 }
 
 func (ds *DeploymentStore) AddStatus(deploymentID, creatorID int, state, description, targetURL, logURL, envURL, env string, autoInactive bool) *DeploymentStatus {
@@ -352,6 +364,28 @@ func (ds *DeploymentStore) DeleteEnvironment(repoID int, name string) bool {
 		ds.persist.MustDelete("environments", key)
 	}
 	return true
+}
+
+func (ds *DeploymentStore) DeleteRepo(repoID int) []int {
+	ds.mu.Lock()
+	defer ds.mu.Unlock()
+
+	for _, d := range append([]*Deployment(nil), ds.byRepo[repoID]...) {
+		ds.deleteDeploymentLocked(d)
+	}
+	delete(ds.byRepo, repoID)
+
+	envIDs := make([]int, 0, len(ds.envsByRepo[repoID]))
+	for _, env := range append([]*Environment(nil), ds.envsByRepo[repoID]...) {
+		envIDs = append(envIDs, env.ID)
+		key := fmt.Sprintf("%d:%s", repoID, env.Name)
+		delete(ds.environments, key)
+		if ds.persist != nil {
+			ds.persist.MustDelete("environments", key)
+		}
+	}
+	delete(ds.envsByRepo, repoID)
+	return envIDs
 }
 
 func (s *Server) registerGHDeploymentsRoutes() {
