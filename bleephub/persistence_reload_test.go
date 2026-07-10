@@ -1,7 +1,9 @@
 package bleephub
 
 import (
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -1157,6 +1159,17 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		repo := st.CreateRepo(user, repoName, "", false)
 		oldRepoID = repo.ID
 
+		org := st.CreateOrg(user, "delete-cascade-org", "Delete Cascade Org", "")
+		team := st.CreateTeam(org.Login, "Reviewers", TeamOptions{Permission: TeamPermissionPull})
+		if team == nil {
+			t.Fatal("CreateTeam returned nil")
+		}
+		team.RepoNames = append(team.RepoNames, repoKey)
+		team.RepoPermissions = map[string]TeamPermission{repoKey: TeamPermissionPush}
+		p.MustPut("teams", strconv.Itoa(team.ID), team)
+		st.CreateArtifactStorageRecord(&ArtifactStorageRecord{OrgID: org.ID, Name: "build", Digest: "sha256:" + strings.Repeat("a", 64), Status: "active", GitHubRepository: repoKey})
+		st.UpsertArtifactDeploymentRecord(&ArtifactDeploymentRecord{OrgID: org.ID, Name: "deploy", Digest: "sha256:" + strings.Repeat("b", 64), Status: "deployed", LogicalEnvironment: "prod", PhysicalEnvironment: "us", Cluster: "cluster", DeploymentName: "web", GitHubRepository: repoKey})
+
 		hook := st.CreateHook(repoKey, "http://sink.localhost/h", "sec", "json", "0", []string{"push"}, true)
 		st.AddDelivery(&WebhookDelivery{HookID: hook.ID, Event: "push", DeliveredAt: time.Now().UTC()})
 		now := time.Now().UTC()
@@ -1238,6 +1251,24 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	if len(st2.PagesDeployments[oldRepoID]) != 0 {
 		t.Error("Pages deployments survived repo deletion")
 	}
+	for _, team := range st2.Teams {
+		if slices.Contains(team.RepoNames, repoKey) {
+			t.Fatal("team repository grant survived repo deletion")
+		}
+		if _, ok := team.RepoPermissions[repoKey]; ok {
+			t.Fatal("team repository permission override survived repo deletion")
+		}
+	}
+	for _, rec := range st2.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatal("artifact storage metadata survived repo deletion")
+		}
+	}
+	for _, rec := range st2.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatal("artifact deployment metadata survived repo deletion")
+		}
+	}
 	for _, i := range st2.Issues {
 		if i.RepoID == oldRepoID {
 			t.Error("issue survived repo deletion")
@@ -1301,6 +1332,16 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		if repo == nil {
 			t.Fatal("CreateRepo returned nil")
 		}
+		org := st.CreateOrg(user, "rename-cascade-org", "Rename Cascade Org", "")
+		team := st.CreateTeam(org.Login, "Reviewers", TeamOptions{Permission: TeamPermissionPull})
+		if team == nil {
+			t.Fatal("CreateTeam returned nil")
+		}
+		team.RepoNames = append(team.RepoNames, oldKey)
+		team.RepoPermissions = map[string]TeamPermission{oldKey: TeamPermissionAdmin}
+		p.MustPut("teams", strconv.Itoa(team.ID), team)
+		st.CreateArtifactStorageRecord(&ArtifactStorageRecord{OrgID: org.ID, Name: "build", Digest: "sha256:" + strings.Repeat("c", 64), Status: "active", GitHubRepository: oldKey})
+		st.UpsertArtifactDeploymentRecord(&ArtifactDeploymentRecord{OrgID: org.ID, Name: "deploy", Digest: "sha256:" + strings.Repeat("d", 64), Status: "deployed", LogicalEnvironment: "prod", PhysicalEnvironment: "us", Cluster: "cluster", DeploymentName: "web", GitHubRepository: oldKey})
 
 		st.RepoSecrets[oldKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", oldKey, st.RepoSecrets[oldKey])
@@ -1424,6 +1465,36 @@ func assertRepoKeyMoved(t *testing.T, st *Store, repoKey string) {
 	if len(st.ListPackages(repoKey)) != 1 {
 		t.Fatalf("repository-owned package did not move to %s", repoKey)
 	}
+	foundTeamGrant := false
+	for _, team := range st.Teams {
+		if slices.Contains(team.RepoNames, repoKey) && team.RepoPermissions[repoKey] == TeamPermissionAdmin {
+			foundTeamGrant = true
+			break
+		}
+	}
+	if !foundTeamGrant {
+		t.Fatalf("team repository grant did not move to %s", repoKey)
+	}
+	foundArtifactStorage := false
+	for _, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			foundArtifactStorage = true
+			break
+		}
+	}
+	if !foundArtifactStorage {
+		t.Fatalf("artifact storage metadata did not move to %s", repoKey)
+	}
+	foundArtifactDeployment := false
+	for _, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			foundArtifactDeployment = true
+			break
+		}
+	}
+	if !foundArtifactDeployment {
+		t.Fatalf("artifact deployment metadata did not move to %s", repoKey)
+	}
 }
 
 func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
@@ -1448,6 +1519,24 @@ func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
 	}
 	if len(st.CodeQLDatabasesByRepo[repoKey]) != 0 || len(st.ListPackages(repoKey)) != 0 {
 		t.Fatalf("CodeQL/package residue survived for %s", repoKey)
+	}
+	for _, team := range st.Teams {
+		if slices.Contains(team.RepoNames, repoKey) {
+			t.Fatalf("team repository grant residue survived for %s", repoKey)
+		}
+		if _, ok := team.RepoPermissions[repoKey]; ok {
+			t.Fatalf("team repository permission residue survived for %s", repoKey)
+		}
+	}
+	for _, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatalf("artifact storage metadata residue survived for %s", repoKey)
+		}
+	}
+	for _, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatalf("artifact deployment metadata residue survived for %s", repoKey)
+		}
 	}
 }
 

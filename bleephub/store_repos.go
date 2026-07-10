@@ -391,6 +391,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.AgentsRepoVariables, fullName)
 	delete(st.SecretScanningPushPlaceholders, fullName)
 	delete(st.SecretScanningPushBypasses, fullName)
+	st.deleteRepoFullNameReferencesLocked(fullName)
 	st.CommitStatuses.deleteRepoKey(fullName)
 	st.CommitComments.deleteRepo(repo.ID)
 	for id, alert := range st.SecretScanningAlerts {
@@ -909,6 +910,46 @@ func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
 			settings.SelectedRepositoryIDs = kept
 			if st.persist != nil {
 				st.persist.MustPut("org_immutable_releases", orgLogin, settings)
+			}
+		}
+	}
+}
+
+func (st *Store) deleteRepoFullNameReferencesLocked(fullName string) {
+	for _, team := range st.Teams {
+		changed := false
+		kept := team.RepoNames[:0]
+		for _, repoName := range team.RepoNames {
+			if repoName == fullName {
+				changed = true
+				continue
+			}
+			kept = append(kept, repoName)
+		}
+		if changed {
+			team.RepoNames = kept
+			if team.RepoPermissions != nil {
+				delete(team.RepoPermissions, fullName)
+			}
+			team.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+			}
+		}
+	}
+	for id, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == fullName {
+			delete(st.ArtifactStorageRecords, id)
+			if st.persist != nil {
+				st.persist.MustDelete("artifact_storage_records", strconv.Itoa(id))
+			}
+		}
+	}
+	for id, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == fullName {
+			delete(st.ArtifactDeploymentRecords, id)
+			if st.persist != nil {
+				st.persist.MustDelete("artifact_deployment_records", strconv.Itoa(id))
 			}
 		}
 	}
@@ -1898,6 +1939,46 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 		if st.persist != nil {
 			st.persist.MustPut("repo_collaborators", newFull, v)
 			st.persist.MustDelete("repo_collaborators", oldFull)
+		}
+	}
+	for _, team := range st.Teams {
+		changed := false
+		for i, repoName := range team.RepoNames {
+			if repoName == oldFull {
+				team.RepoNames[i] = newFull
+				changed = true
+			}
+		}
+		if team.RepoPermissions != nil {
+			if perm, ok := team.RepoPermissions[oldFull]; ok {
+				team.RepoPermissions[newFull] = perm
+				delete(team.RepoPermissions, oldFull)
+				changed = true
+			}
+		}
+		if changed {
+			team.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("teams", strconv.Itoa(team.ID), team)
+			}
+		}
+	}
+	for _, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == oldFull {
+			rec.GitHubRepository = newFull
+			rec.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("artifact_storage_records", strconv.Itoa(rec.ID), rec)
+			}
+		}
+	}
+	for _, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == oldFull {
+			rec.GitHubRepository = newFull
+			rec.UpdatedAt = time.Now().UTC()
+			if st.persist != nil {
+				st.persist.MustPut("artifact_deployment_records", strconv.Itoa(rec.ID), rec)
+			}
 		}
 	}
 	if v := st.Hooks[oldFull]; v != nil {

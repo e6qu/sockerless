@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2460 filed - 2416 fixed - 3 open - 16 false positives.**
+**2462 filed - 2418 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2462~~ | P1 | Bleephub artifact metadata | repository rename/delete left stale artifact metadata repository references | Repository rename and transfer now move organization artifact storage/deployment metadata `github_repository` references, and repository deletion purges metadata rows for the deleted repository. |
+| ~~2461~~ | P1 | Bleephub team repository access | repository rename/delete left stale team repository grants | Repository rename and transfer now move team repository access lists and permission overrides, and repository deletion removes team grants for the deleted repository. |
 | ~~2460~~ | P1 | Bleephub deployments | deleted deployments left status rows behind | Deployment deletion now purges the deployment's status rows from memory and SQLite with the deployment record. |
 | ~~2459~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in deployment and Pages deployment state | Repository deletion now purges deployments, deployment statuses, environments, environment policies, protection rules, and Pages deployment records for the deleted repository. |
 | ~~2458~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in durable repository-owned state and selected-repository allowlists | Repository deletion now purges persisted artifact attestations, repository activity, clone traffic, watch subscriptions, selected-repository allowlists, GitHub App selected repositories, installation token repository scopes, and code-security attachments for the deleted repository. |
