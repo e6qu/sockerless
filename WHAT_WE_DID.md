@@ -4,9 +4,11 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-09 - Bleephub Actions Runtime Fidelity (`feat/bleephub-actions-runtime-fidelity`)
+## 2026-07-10 - Bleephub Repository Deletion Cascade (`feat/bleephub-repository-deletion-cascade`)
 
-This branch continued Bleephub's movement from compatibility-shaped behavior to a real GitHub Enterprise Server-compatible service.
+This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gaps by making repository deletion purge issue/pull request child state, repository-ID keyed rows, selected-repository references, deployment state, environment state, environment policies, GitHub Pages deployment records, team grants, artifact metadata references, source import records, dependency snapshots, SBOM exports, and enterprise Dependabot repository-access IDs.
+
+Closed BUG-2457 through BUG-2467 by making repository deletion and parent deletion paths clean all durable state owned by deleted repository resources. Labels, milestones, notification thread state, Projects v2 item indexes, reactions, issue/pull request comments, pull request reviews, pull request review comments, release reaction parents, commit-comment reaction parents, deployment statuses, and repository-owned metadata no longer survived SQLite reloads or attached to later ID/name reuse.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 
@@ -100,6 +102,26 @@ Closed BUG-2455 by persisting Bleephub gist state in SQLite-backed service stora
 
 Closed BUG-2456 by replacing the stale Bleephub persistence bucket inventory comment with a pointer to the actual `loadBucket` registrations. The code no longer carried a duplicate manual list that drifted when durable state buckets changed.
 
+Closed BUG-2457 by making repository deletion purge the persisted child state attached to the deleted repository's issues and pull requests. Issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments no longer survived a SQLite reload or attached to a later repository that reused issue or pull request IDs.
+
+Closed BUG-2458 by extending repository deletion to repository-ID keyed rows and selected-repository references. Artifact attestations, repository activity, clone traffic, watch subscriptions, GitHub App selected repositories, installation token repository scopes, organization Actions settings, runner groups, Actions secrets/variables, agent secrets/variables, Dependabot access and org secrets, Codespaces org secrets, Copilot coding-agent permissions, private registries, immutable-release enforcement, and code-security attachments no longer survived deletion with the old repository ID.
+
+Closed BUG-2459 by extending repository deletion to deployments, deployment statuses, environments, environment branch policies, environment protection rules, and GitHub Pages deployment records. Those repository-ID keyed rows no longer survived SQLite reload or attached to a later repository that reused the old ID.
+
+Closed BUG-2460 by making deployment deletion purge the deployment's status rows from memory and SQLite with the deployment record.
+
+Closed BUG-2461 by moving team repository access lists and permission overrides during repository rename and transfer, and by removing those team grants when the repository is deleted.
+
+Closed BUG-2462 by moving organization artifact storage/deployment metadata `github_repository` references during repository rename and transfer, and by deleting artifact metadata rows for a deleted repository.
+
+Closed BUG-2463 by adding source imports, dependency graph snapshots, generated SBOM exports, and enterprise Dependabot repository-access IDs to the repository deletion cascade.
+
+Closed BUG-2464 by adding Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows to the repository deletion cascade. Deleted repositories and their issues no longer left those durable rows behind for a reloaded or recreated repository to inherit.
+
+Closed BUG-2465 by adding Projects v2 content items to the repository deletion cascade and by making project deletion clear its in-memory content index. Deleted repository issues and pull requests no longer left project items behind after reload or ID reuse.
+
+Closed BUG-2466 by adding notification state to repository deletion and rename cascades. Deleted issue and pull request threads no longer left read, done, or subscription state behind for later ID reuse, and repository rename/transfer moved repo-scoped notification read markers to the new full name.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -114,16 +136,23 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestGitHubComm
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestExistingRoutesUnaffected|TestGHApiRoot' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_GistsCommentsStarsAndForks|Test(CreateGist|UpdateGist|DeleteGist|StarUnstarGist|ListStarredGists|ForkGist|GistComments|ListGistsForAuthUser|ListPublicGists|GistCommitsAndRevision)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestSubIssues_|TestIssueDependencies_BlockedBy|TestDeleteRepo' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteDeploymentPurgesStatuses|TestPersistenceReload_DeploymentsStatusesEnvironments|TestDeployments_Lifecycle' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestProjectV2' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata|TestNotifications_' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
 They passed with sandbox escalation for loopback listeners.
 
-Docker compatibility was available again through Podman 6.0.1, and a minimal container run passed:
+Docker compatibility was available again through Podman 6.0.1, container listing worked, and a minimal container run passed:
 
 ```bash
 docker version
-docker run --rm hello-world
+docker ps
+docker run --rm alpine:3 true
 ```
 
 The full Bleephub Go pre-commit test command passed after Docker compatibility returned:
@@ -154,7 +183,7 @@ make bleephub-gh-docker-test
 
 It passed again after the OAuth App token-management entropy fix, after the official-client organization provisioning fix, and after the runtime enterprise-coordinate fix, each time with 117 checks passing and 0 failing.
 
-It also passed after gist state became durable, with 117 checks passing and 0 failing.
+It also passed after gist state became durable and after repository deletion began purging persisted issue and pull request child state, with 117 checks passing and 0 failing.
 
 The focused Bleephub Playwright coverage for the public Actions metrics UI and error paths passed after rebuilding the embedded UI binary:
 

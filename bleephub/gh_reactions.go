@@ -150,6 +150,30 @@ func (rs *ReactionStore) DeleteReaction(parentType string, parentID, reactionID 
 	return true
 }
 
+// DeleteParent removes every reaction attached to one parent entity.
+func (rs *ReactionStore) DeleteParent(parentType string, parentID int) {
+	rs.DeleteParents(parentType, map[int]bool{parentID: true})
+}
+
+// DeleteParents removes every reaction attached to the given parent entities.
+func (rs *ReactionStore) DeleteParents(parentType string, parentIDs map[int]bool) {
+	if len(parentIDs) == 0 {
+		return
+	}
+	rs.mu.Lock()
+	defer rs.mu.Unlock()
+	for parentID := range parentIDs {
+		key := reactionParentKey(parentType, parentID)
+		for _, r := range rs.byParent[key] {
+			delete(rs.byID, r.ID)
+		}
+		delete(rs.byParent, key)
+		if rs.persist != nil {
+			rs.persist.MustDelete("reactions", key)
+		}
+	}
+}
+
 // SummarizeReactions computes the per-content counts + total used by
 // real GitHub's reactions{url, total_count, +1, ...} block embedded in
 // issue / comment / release JSON.

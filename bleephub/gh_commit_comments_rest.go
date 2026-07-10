@@ -162,6 +162,16 @@ func (s *CommitCommentStore) Delete(id int) bool {
 	return true
 }
 
+func (s *CommitCommentStore) IDsForRepo(repoID int) map[int]bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make(map[int]bool, len(s.byRepo[repoID]))
+	for _, c := range s.byRepo[repoID] {
+		ids[c.ID] = true
+	}
+	return ids
+}
+
 func (s *CommitCommentStore) persistComment(c *CommitComment) {
 	if s.persist == nil {
 		return
@@ -344,6 +354,7 @@ func (s *Server) handleDeleteCommitComment(w http.ResponseWriter, r *http.Reques
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	s.store.Reactions.DeleteParent("commit_comment", id)
 	w.WriteHeader(http.StatusNoContent)
 }
 

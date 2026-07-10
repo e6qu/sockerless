@@ -1660,7 +1660,9 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.ProjectsV2.items[it.ID] = &it
-			st.ProjectsV2.itemsByOwner[it.ContentID] = append(st.ProjectsV2.itemsByOwner[it.ContentID], &it)
+			if it.ContentID != 0 {
+				st.ProjectsV2.itemsByOwner[it.ContentID] = append(st.ProjectsV2.itemsByOwner[it.ContentID], &it)
+			}
 			if it.ID >= st.ProjectsV2.nextItemID {
 				st.ProjectsV2.nextItemID = it.ID + 1
 			}

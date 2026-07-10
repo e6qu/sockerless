@@ -203,6 +203,16 @@ func (rs *ReleaseStore) DeleteAllForRepo(repoID int) {
 	delete(rs.byRepo, repoID)
 }
 
+func (rs *ReleaseStore) IDsForRepo(repoID int) map[int]bool {
+	rs.mu.RLock()
+	defer rs.mu.RUnlock()
+	ids := make(map[int]bool, len(rs.byRepo[repoID]))
+	for _, r := range rs.byRepo[repoID] {
+		ids[r.ID] = true
+	}
+	return ids
+}
+
 func (rs *ReleaseStore) Delete(id int) bool {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
@@ -711,6 +721,7 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Releases.Delete(id)
+	s.store.Reactions.DeleteParent("release", id)
 	s.recordAuditEvent("release.destroy", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": id})
 	w.WriteHeader(http.StatusNoContent)
 }

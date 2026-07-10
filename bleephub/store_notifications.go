@@ -446,6 +446,66 @@ func (st *Store) SetThreadSubscription(userID int, threadID string, sub *ThreadS
 	st.persistNotificationsState(userID, state)
 }
 
+func (st *Store) moveNotificationRepoKeyLocked(oldFull, newFull string) {
+	for userID, state := range st.NotificationsState {
+		if state == nil || state.RepoLastReadAt == nil {
+			continue
+		}
+		if at, ok := state.RepoLastReadAt[oldFull]; ok {
+			state.RepoLastReadAt[newFull] = at
+			delete(state.RepoLastReadAt, oldFull)
+			st.persistNotificationsState(userID, state)
+		}
+	}
+}
+
+func (st *Store) deleteNotificationRepoKeyLocked(fullName string) {
+	for userID, state := range st.NotificationsState {
+		if state == nil || state.RepoLastReadAt == nil {
+			continue
+		}
+		if _, ok := state.RepoLastReadAt[fullName]; ok {
+			delete(state.RepoLastReadAt, fullName)
+			st.persistNotificationsState(userID, state)
+		}
+	}
+}
+
+func (st *Store) deleteNotificationThreadStateLocked(threadIDs []string) {
+	if len(threadIDs) == 0 {
+		return
+	}
+	for userID, state := range st.NotificationsState {
+		if state == nil {
+			continue
+		}
+		changed := false
+		for _, threadID := range threadIDs {
+			if state.ReadThreadIDs != nil {
+				if _, ok := state.ReadThreadIDs[threadID]; ok {
+					delete(state.ReadThreadIDs, threadID)
+					changed = true
+				}
+			}
+			if state.DismissedThreadIDs != nil {
+				if _, ok := state.DismissedThreadIDs[threadID]; ok {
+					delete(state.DismissedThreadIDs, threadID)
+					changed = true
+				}
+			}
+			if state.Subscriptions != nil {
+				if _, ok := state.Subscriptions[threadID]; ok {
+					delete(state.Subscriptions, threadID)
+					changed = true
+				}
+			}
+		}
+		if changed {
+			st.persistNotificationsState(userID, state)
+		}
+	}
+}
+
 // notificationsStateViewLocked returns the user's notification state for
 // reading. Callers hold st.mu (read or write). Unlike notificationsStateFor
 // it never mutates the store: a user with no recorded state gets a fresh

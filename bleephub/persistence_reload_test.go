@@ -1,7 +1,9 @@
 package bleephub
 
 import (
+	"slices"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -262,6 +264,348 @@ func TestPersistenceReload_GistsCommentsStarsAndForks(t *testing.T) {
 	}
 }
 
+func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
+	var oldRepoID, oldIssueID, oldPRID, projectID int
+	const orgLogin = "delete-cascade-org"
+
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		org := st.CreateOrg(admin, orgLogin, "Delete Cascade", "")
+		repo := st.CreateOrgRepo(org, admin, "deleted-issue-children", "", false)
+		oldRepoID = repo.ID
+		parent := st.CreateIssue(repo.ID, admin.ID, "parent", "", nil, nil, 0)
+		child := st.CreateIssue(repo.ID, admin.ID, "child", "", nil, nil, 0)
+		blocker := st.CreateIssue(repo.ID, admin.ID, "blocker", "", nil, nil, 0)
+		oldIssueID = parent.ID
+		now := time.Now().UTC()
+		issueComment := st.CreateComment(parent.ID, admin.ID, "stale issue comment")
+		if issueComment == nil {
+			t.Fatal("CreateComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("issue", parent.ID, admin.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction issue: %v", err)
+		}
+		if _, _, err := st.Reactions.AddReaction("issue_comment", issueComment.ID, admin.ID, "heart"); err != nil {
+			t.Fatalf("AddReaction issue comment: %v", err)
+		}
+		st.SetIssueFieldValues(parent.ID, map[int]interface{}{1: "High"})
+		st.MarkNotificationsRead(admin.ID, now, repo.FullName)
+		issueThreadID := notificationThreadID("Issue", parent.ID)
+		st.MarkThreadRead(admin.ID, issueThreadID, now)
+		st.MarkThreadDone(admin.ID, issueThreadID)
+		st.SetThreadSubscription(admin.ID, issueThreadID, &ThreadSubscription{Subscribed: true, Reason: "manual", CreatedAt: now})
+		if err := st.AddSubIssue(parent.ID, child.ID, false); err != nil {
+			t.Fatalf("AddSubIssue: %v", err)
+		}
+		if !st.AddIssueBlockedBy(parent.ID, blocker.ID) {
+			t.Fatal("AddIssueBlockedBy returned false")
+		}
+		project := st.ProjectsV2.CreateProject(org.ID, "Organization", "Repository cleanup", admin.ID)
+		projectID = project.ID
+		st.ProjectsV2.AddItem(project.ID, "Issue", parent.ID, admin.ID)
+		st.RecordRepoActivity(repo.ID, "refs/heads/main", "0000000", "abcdef0", admin.ID, "push")
+		st.RecordRepoClone(repo.ID, admin.Login)
+		if !st.SetRepoSubscription(admin.ID, repo.ID, true) {
+			t.Fatal("SetRepoSubscription returned false")
+		}
+		st.CreateAttestation(repo.ID, []byte(`{"bundle":true}`), []string{"sha256:deadbeef"}, "https://slsa.dev/provenance/v1", admin.Login)
+
+		st.mu.Lock()
+		inst := &Installation{
+			ID:                  st.NextInstallationID,
+			AppID:               1,
+			AppSlug:             "cascade-app",
+			TargetType:          "Organization",
+			TargetID:            org.ID,
+			TargetLogin:         org.Login,
+			RepositorySelection: "selected",
+			SelectedRepoIDs:     []int{repo.ID},
+			CreatedAt:           now,
+			UpdatedAt:           now,
+		}
+		st.NextInstallationID++
+		st.Installations[inst.ID] = inst
+		token := &InstallationToken{
+			Token:          "cascade-installation-token",
+			ExpiresAt:      now.Add(time.Hour),
+			RepositoryIDs:  []int{repo.ID},
+			InstallationID: inst.ID,
+			AppID:          inst.AppID,
+		}
+		st.InstallationTokens[token.Token] = token
+		orgActions := st.getOrgActionsPermissionsLocked(org.Login)
+		orgActions.SelectedRepositoryIDs = []int{repo.ID}
+		orgActions.SelfHostedRunnersSelectedRepoIDs = []int{repo.ID}
+		st.RunnerGroups[99] = &RunnerGroup{ID: 99, Name: "cascade", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now}
+		st.OrgSecrets[org.Login] = map[string]*OrgSecret{
+			"ORG_SECRET": {Secret: Secret{Name: "ORG_SECRET", Value: "secret", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		st.OrgVariables[org.Login] = map[string]*ActionsVariable{
+			"ORG_VAR": {Name: "ORG_VAR", Value: "value", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.AgentsOrgSecrets[org.Login] = map[string]*OrgSecret{
+			"AGENT_SECRET": {Secret: Secret{Name: "AGENT_SECRET", Value: "secret", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		st.AgentsOrgVariables[org.Login] = map[string]*ActionsVariable{
+			"AGENT_VAR": {Name: "AGENT_VAR", Value: "value", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.DependabotRepositoryAccess[org.Login] = []int{repo.ID}
+		st.DependabotOrgSecrets[org.Login] = map[string]*DependabotOrgSecret{
+			"DEPENDABOT_SECRET": {DependabotSecret: DependabotSecret{Name: "DEPENDABOT_SECRET", Value: "secret", KeyID: "key", CreatedAt: now, UpdatedAt: now}, Visibility: "selected", SelectedRepoIDs: []int{repo.ID}},
+		}
+		codespaceScope := codespaceSecretScopeKey("org", org.Login)
+		st.CodespaceSecrets[codespaceScope] = map[string]*CodespaceSecret{
+			"CODESPACE_SECRET": {Name: "CODESPACE_SECRET", Key: "CODESPACE_SECRET", Visibility: "selected", SelectedRepoIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.CopilotCodingAgentPerms[org.Login] = &CopilotCodingAgentPermissions{OrgLogin: org.Login, EnabledRepositories: "selected", SelectedRepositoryIDs: []int{repo.ID}}
+		st.OrgPrivateRegistries[org.Login] = map[string]*PrivateRegistryConfiguration{
+			"registry": {Name: "registry", Visibility: "selected", SelectedRepositoryIDs: []int{repo.ID}, CreatedAt: now, UpdatedAt: now},
+		}
+		st.OrgImmutableReleases[org.Login] = &OrgImmutableReleasesSettings{EnforcedRepositories: "selected", SelectedRepositoryIDs: []int{repo.ID}}
+		st.CodeSecurityRepoAttachments[org.Login] = map[int]int{repo.ID: 321}
+		st.EnterpriseCodeSecurityRepoConfigs[repo.ID] = 654
+		if st.persist != nil {
+			st.persist.MustPut("installations", strconv.Itoa(inst.ID), inst)
+			st.persist.MustPut("installation_tokens", token.Token, token)
+			st.persist.MustPut("org_actions_permissions", org.Login, orgActions)
+			st.persist.MustPut("runner_groups", "99", st.RunnerGroups[99])
+			st.persist.MustPut("org_secrets", org.Login, st.OrgSecrets[org.Login])
+			st.persist.MustPut("org_variables", org.Login, st.OrgVariables[org.Login])
+			st.persist.MustPut("agents_org_secrets", org.Login, st.AgentsOrgSecrets[org.Login])
+			st.persist.MustPut("agents_org_variables", org.Login, st.AgentsOrgVariables[org.Login])
+			st.persist.MustPut("dependabot_repo_access", org.Login, st.DependabotRepositoryAccess[org.Login])
+			st.persist.MustPut("dependabot_org_secrets", org.Login, st.DependabotOrgSecrets[org.Login])
+			st.persist.MustPut("codespace_secrets", codespaceScope, st.CodespaceSecrets[codespaceScope])
+			st.persist.MustPut("copilot_coding_agent_permissions", org.Login, st.CopilotCodingAgentPerms[org.Login])
+			st.persist.MustPut("org_private_registries", org.Login, st.OrgPrivateRegistries[org.Login])
+			st.persist.MustPut("org_immutable_releases", org.Login, st.OrgImmutableReleases[org.Login])
+			st.persist.MustPut("code_security_repo_attachments", org.Login, st.CodeSecurityRepoAttachments[org.Login])
+			st.persist.MustPut("enterprise_code_security_attachments", strconv.Itoa(repo.ID), &EnterpriseCodeSecurityAttachment{RepoID: repo.ID, ConfigID: 654})
+		}
+		pr := &PullRequest{
+			ID:          st.NextPR,
+			NodeID:      "PR_kgDOdelete",
+			Number:      repo.NextIssueNumber,
+			RepoID:      repo.ID,
+			Title:       "pull request",
+			State:       "OPEN",
+			HeadRefName: "feature",
+			HeadRepoID:  repo.ID,
+			BaseRefName: repo.DefaultBranch,
+			AuthorID:    admin.ID,
+			Mergeable:   "UNKNOWN",
+			CreatedAt:   now,
+			UpdatedAt:   now,
+			AssigneeIDs: []int{},
+			LabelIDs:    []int{},
+		}
+		st.NextPR++
+		repo.NextIssueNumber++
+		st.PullRequests[pr.ID] = pr
+		st.indexPullLocked(pr)
+		if st.persist != nil {
+			st.persist.MustPut("pull_requests", strconv.Itoa(pr.ID), pr)
+		}
+		st.mu.Unlock()
+		oldPRID = pr.ID
+		prThreadID := notificationThreadID("PullRequest", pr.ID)
+		st.MarkThreadRead(admin.ID, prThreadID, now)
+		st.MarkThreadDone(admin.ID, prThreadID)
+		st.SetThreadSubscription(admin.ID, prThreadID, &ThreadSubscription{Subscribed: true, Reason: "manual", CreatedAt: now})
+		st.ProjectsV2.AddItem(projectID, "PullRequest", pr.ID, admin.ID)
+		if _, _, err := st.Reactions.AddReaction("pull_request", pr.ID, admin.ID, "rocket"); err != nil {
+			t.Fatalf("AddReaction pull request: %v", err)
+		}
+		prComment := st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment")
+		if prComment == nil {
+			t.Fatal("CreateCommentFor pull request returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("pull_request_comment", prComment.ID, admin.ID, "eyes"); err != nil {
+			t.Fatalf("AddReaction pull request comment: %v", err)
+		}
+		if st.CreatePRReview(pr.ID, admin.ID, "APPROVED", "approved") == nil {
+			t.Fatal("CreatePRReview returned nil")
+		}
+		reviewComment := st.PRReviewComments.CreateRootComment(pr.ID, admin.ID, "README.md", "review comment", "abc123", "RIGHT", 1, 0)
+		if reviewComment == nil {
+			t.Fatal("CreateRootComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("pull_request_comment", reviewComment.ID, admin.ID, "hooray"); err != nil {
+			t.Fatalf("AddReaction pull request review comment: %v", err)
+		}
+		if !st.DeleteRepo(org.Login, repo.Name) {
+			t.Fatal("DeleteRepo returned false")
+		}
+	})
+
+	if len(st2.Comments) != 0 {
+		t.Fatalf("comments survived deleted repo reload: %#v", st2.Comments)
+	}
+	if len(st2.IssueEvents) != 0 {
+		t.Fatalf("issue events survived deleted repo reload: %#v", st2.IssueEvents)
+	}
+	if got := st2.ListSubIssues(oldIssueID); len(got) != 0 {
+		t.Fatalf("sub-issues survived deleted repo reload: %v", got)
+	}
+	if got := st2.ListIssueBlockedBy(oldIssueID); len(got) != 0 {
+		t.Fatalf("issue dependencies survived deleted repo reload: %v", got)
+	}
+	if values := st2.IssueFieldValues[oldIssueID]; len(values) != 0 {
+		t.Fatalf("issue field values survived deleted repo reload: %#v", values)
+	}
+	assertNotificationStateAbsent(t, st2, "admin", orgLogin+"/deleted-issue-children", notificationThreadID("Issue", oldIssueID), notificationThreadID("PullRequest", oldPRID))
+	if got := st2.ProjectsV2.ListItemsForIssue(oldIssueID); len(got) != 0 {
+		t.Fatalf("Projects v2 issue items survived deleted repo reload: %#v", got)
+	}
+	if got := st2.ProjectsV2.ListItemsForPR(oldPRID); len(got) != 0 {
+		t.Fatalf("Projects v2 pull request items survived deleted repo reload: %#v", got)
+	}
+	if got := st2.ProjectsV2.ListItemsForProject(projectID); len(got) != 0 {
+		t.Fatalf("Projects v2 project retained deleted repo items after reload: %#v", got)
+	}
+	if len(st2.PRReviews) != 0 || len(st2.PRReviewsByPR) != 0 {
+		t.Fatalf("pull request reviews survived deleted repo reload: reviews=%#v byPR=%#v", st2.PRReviews, st2.PRReviewsByPR)
+	}
+	if got := st2.PRReviewComments.ListForPR(oldPRID); len(got) != 0 {
+		t.Fatalf("pull request review comments survived deleted repo reload: %#v", got)
+	}
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("reactions survived deleted issue and pull request parents after reload: %d", got)
+	}
+	if len(st2.Attestations) != 0 {
+		t.Fatalf("attestations survived deleted repo reload: %#v", st2.Attestations)
+	}
+	if len(st2.RepoActivities) != 0 {
+		t.Fatalf("repository activity survived deleted repo reload: %#v", st2.RepoActivities)
+	}
+	if len(st2.RepoCloneTraffic) != 0 {
+		t.Fatalf("repository clone traffic survived deleted repo reload: %#v", st2.RepoCloneTraffic)
+	}
+	if len(st2.RepoSubscriptions) != 0 {
+		t.Fatalf("repository subscriptions survived deleted repo reload: %#v", st2.RepoSubscriptions)
+	}
+	assertRepoIDAbsentFromCascadeLists(t, st2, orgLogin, oldRepoID)
+
+	admin := st2.UsersByLogin["admin"]
+	org := st2.GetOrg(orgLogin)
+	if org == nil {
+		t.Fatalf("organization %s did not reload", orgLogin)
+	}
+	recreated := st2.CreateOrgRepo(org, admin, "deleted-issue-children", "", false)
+	if recreated.ID != oldRepoID {
+		t.Fatalf("fixture did not reuse repository ID after reload: got %d want %d", recreated.ID, oldRepoID)
+	}
+	fresh := st2.CreateIssue(recreated.ID, admin.ID, "fresh", "", nil, nil, 0)
+	if fresh.ID != oldIssueID {
+		t.Fatalf("fixture did not reuse issue ID after reload: got %d want %d", fresh.ID, oldIssueID)
+	}
+	if got := st2.CountCommentsFor("issue", fresh.ID); got != 0 {
+		t.Fatalf("fresh issue inherited stale comment count = %d", got)
+	}
+	if thread := st2.GetNotificationThread(admin, "http://example.test", notificationThreadID("Issue", fresh.ID)); thread == nil {
+		t.Fatal("fresh issue did not create a notification thread")
+	} else if !thread.Unread {
+		t.Fatalf("fresh issue inherited stale read notification state: %#v", thread)
+	}
+	if got := st2.ProjectsV2.ListItemsForIssue(fresh.ID); len(got) != 0 {
+		t.Fatalf("fresh issue inherited stale Projects v2 items: %#v", got)
+	}
+}
+
+func assertNotificationStateAbsent(t *testing.T, st *Store, login, repoKey string, threadIDs ...string) {
+	t.Helper()
+	user := st.UsersByLogin[login]
+	if user == nil {
+		t.Fatalf("user %s did not reload", login)
+	}
+	state := st.NotificationsState[user.ID]
+	if state == nil {
+		return
+	}
+	if _, ok := state.RepoLastReadAt[repoKey]; ok {
+		t.Fatalf("notification repo read state survived for %s: %#v", repoKey, state.RepoLastReadAt)
+	}
+	for _, threadID := range threadIDs {
+		if _, ok := state.ReadThreadIDs[threadID]; ok {
+			t.Fatalf("notification read state survived for %s: %#v", threadID, state.ReadThreadIDs)
+		}
+		if _, ok := state.DismissedThreadIDs[threadID]; ok {
+			t.Fatalf("notification done state survived for %s: %#v", threadID, state.DismissedThreadIDs)
+		}
+		if _, ok := state.Subscriptions[threadID]; ok {
+			t.Fatalf("notification subscription survived for %s: %#v", threadID, state.Subscriptions)
+		}
+	}
+}
+
+func reactionStoreCount(st *Store) int {
+	st.Reactions.mu.RLock()
+	defer st.Reactions.mu.RUnlock()
+	return len(st.Reactions.byID)
+}
+
+func assertRepoIDAbsentFromCascadeLists(t *testing.T, st *Store, orgLogin string, repoID int) {
+	t.Helper()
+	assertNoRepoID := func(name string, ids []int) {
+		t.Helper()
+		for _, id := range ids {
+			if id == repoID {
+				t.Fatalf("%s still referenced deleted repository ID %d: %v", name, repoID, ids)
+			}
+		}
+	}
+	for _, inst := range st.Installations {
+		assertNoRepoID("installation selected repositories", inst.SelectedRepoIDs)
+	}
+	for _, token := range st.InstallationTokens {
+		assertNoRepoID("installation token repositories", token.RepositoryIDs)
+	}
+	if p := st.OrgActionsPermissions[orgLogin]; p != nil {
+		assertNoRepoID("organization Actions selected repositories", p.SelectedRepositoryIDs)
+		assertNoRepoID("organization self-hosted runner repositories", p.SelfHostedRunnersSelectedRepoIDs)
+	}
+	for _, group := range st.RunnerGroups {
+		assertNoRepoID("runner group selected repositories", group.SelectedRepoIDs)
+	}
+	for _, sec := range st.OrgSecrets[orgLogin] {
+		assertNoRepoID("organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, v := range st.OrgVariables[orgLogin] {
+		assertNoRepoID("organization variable selected repositories", v.SelectedRepoIDs)
+	}
+	for _, sec := range st.AgentsOrgSecrets[orgLogin] {
+		assertNoRepoID("agent organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, v := range st.AgentsOrgVariables[orgLogin] {
+		assertNoRepoID("agent organization variable selected repositories", v.SelectedRepoIDs)
+	}
+	assertNoRepoID("Dependabot repository access", st.DependabotRepositoryAccess[orgLogin])
+	for _, sec := range st.DependabotOrgSecrets[orgLogin] {
+		assertNoRepoID("Dependabot organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	for _, sec := range st.CodespaceSecrets[codespaceSecretScopeKey("org", orgLogin)] {
+		assertNoRepoID("Codespaces organization secret selected repositories", sec.SelectedRepoIDs)
+	}
+	if p := st.CopilotCodingAgentPerms[orgLogin]; p != nil {
+		assertNoRepoID("Copilot coding agent selected repositories", p.SelectedRepositoryIDs)
+	}
+	for _, reg := range st.OrgPrivateRegistries[orgLogin] {
+		assertNoRepoID("private registry selected repositories", reg.SelectedRepositoryIDs)
+	}
+	if settings := st.OrgImmutableReleases[orgLogin]; settings != nil {
+		assertNoRepoID("immutable releases selected repositories", settings.SelectedRepositoryIDs)
+	}
+	if attachments := st.CodeSecurityRepoAttachments[orgLogin]; attachments != nil {
+		if _, ok := attachments[repoID]; ok {
+			t.Fatalf("code security attachments still referenced deleted repository ID %d: %v", repoID, attachments)
+		}
+	}
+	if cfg, ok := st.EnterpriseCodeSecurityRepoConfigs[repoID]; ok {
+		t.Fatalf("enterprise code security attachment survived for deleted repository ID %d: %d", repoID, cfg)
+	}
+}
+
 // G1: app credentials + webhook config survive a restart — JWT auth (PEM),
 // OAuth client-secret auth, and app webhook delivery config all depend on them.
 func TestPersistenceReload_AppCredentialsAndWebhookConfig(t *testing.T) {
@@ -473,6 +817,33 @@ func TestPersistenceReload_Reactions(t *testing.T) {
 	}
 	if sum := st2.Reactions.SummarizeReactions("issue", issueID); sum["total_count"] != 2 {
 		t.Errorf("reaction summary total_count = %v after reload, want 2", sum["total_count"])
+	}
+}
+
+func TestPersistenceReload_ReactionParentDeletion(t *testing.T) {
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "reaction-delete", "", false)
+		issue := st.CreateIssue(repo.ID, user.ID, "cleanup", "", nil, nil, 0)
+		comment := st.CreateComment(issue.ID, user.ID, "cleanup comment")
+		if comment == nil {
+			t.Fatal("CreateComment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("issue", issue.ID, user.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction issue: %v", err)
+		}
+		if _, _, err := st.Reactions.AddReaction("issue_comment", comment.ID, user.ID, "heart"); err != nil {
+			t.Fatalf("AddReaction issue comment: %v", err)
+		}
+		st.Reactions.DeleteParent("issue", issue.ID)
+		if !st.DeleteComment(comment.ID) {
+			t.Fatal("DeleteComment returned false")
+		}
+	})
+
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("deleted reaction parents survived reload: %d", got)
 	}
 }
 
@@ -896,16 +1267,43 @@ func TestPersistenceReload_PagesBuildIDSequence(t *testing.T) {
 func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	const repoName = "doomed"
 	const repoKey = "admin/" + repoName
+	const controllerKey = "admin/variant-controller"
 	var oldRepoID int
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, repoName, "", false)
+		controller := st.CreateRepo(user, "variant-controller", "", false)
 		oldRepoID = repo.ID
+		now := time.Now().UTC()
+
+		org := st.CreateOrg(user, "delete-cascade-org", "Delete Cascade Org", "")
+		team := st.CreateTeam(org.Login, "Reviewers", TeamOptions{Permission: TeamPermissionPull})
+		if team == nil {
+			t.Fatal("CreateTeam returned nil")
+		}
+		team.RepoNames = append(team.RepoNames, repoKey)
+		team.RepoPermissions = map[string]TeamPermission{repoKey: TeamPermissionPush}
+		p.MustPut("teams", strconv.Itoa(team.ID), team)
+		st.CreateArtifactStorageRecord(&ArtifactStorageRecord{OrgID: org.ID, Name: "build", Digest: "sha256:" + strings.Repeat("a", 64), Status: "active", GitHubRepository: repoKey})
+		st.UpsertArtifactDeploymentRecord(&ArtifactDeploymentRecord{OrgID: org.ID, Name: "deploy", Digest: "sha256:" + strings.Repeat("b", 64), Status: "deployed", LogicalEnvironment: "prod", PhysicalEnvironment: "us", Cluster: "cluster", DeploymentName: "web", GitHubRepository: repoKey})
+		importPercent := 100
+		st.PutRepoImport(&RepoImport{RepoID: repo.ID, VCS: "git", VCSURL: "https://example.invalid/repo.git", Status: "complete", ImportPercent: &importPercent, CreatedAt: now})
+		st.AddDependencySnapshot(&DependencySnapshot{
+			RepoID:   repo.ID,
+			Version:  1,
+			Ref:      "refs/heads/main",
+			Sha:      strings.Repeat("1", 40),
+			Job:      SnapshotJob{ID: "job", Correlator: "job"},
+			Detector: SnapshotDetector{Name: "detector", Version: "1", URL: "https://example.invalid/detector"},
+			Scanned:  now.Format(time.RFC3339),
+			Result:   "SUCCESS",
+		})
+		st.AddSBOMExport(repo.ID)
+		st.SetEnterpriseDependabotRepoAccess([]int{repo.ID})
 
 		hook := st.CreateHook(repoKey, "http://sink.localhost/h", "sec", "json", "0", []string{"push"}, true)
 		st.AddDelivery(&WebhookDelivery{HookID: hook.ID, Event: "push", DeliveredAt: time.Now().UTC()})
-		now := time.Now().UTC()
 		st.RepoSecrets[repoKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", repoKey, st.RepoSecrets[repoKey])
 		st.RepoVariables[repoKey] = map[string]*ActionsVariable{"VAR": {Name: "VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
@@ -918,7 +1316,9 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		p.MustPut("agents_repo_secrets", repoKey, st.AgentsRepoSecrets[repoKey])
 		st.AgentsRepoVariables[repoKey] = map[string]*ActionsVariable{"AGENT_VAR": {Name: "AGENT_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("agents_repo_variables", repoKey, st.AgentsRepoVariables[repoKey])
+		st.CreateAgentTask(repo, user, "fix stale repository state", "claude-sonnet-4.6", false, "", "")
 		st.UpsertCodeQLDatabase(repoKey, "go", "db.zip", "application/zip", "reload-sha", []byte("db"), user.ID)
+		st.CreateCodeQLVariantAnalysis(controller.FullName, user.ID, "go", "pack", []string{repoKey})
 		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
 			t.Fatal("CreatePackage did not create")
 		}
@@ -927,10 +1327,37 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		p.MustPut("branch_protection", bpKey(repo.ID, "main"), st.Misc.branchProtection[bpKey(repo.ID, "main")])
 		st.Misc.pagesBuilds[repoKey] = []*PagesBuild{{ID: 1, Status: "built"}}
 		p.MustPut("pages_builds", repoKey, st.Misc.pagesBuilds[repoKey])
+		dep := st.Deployments.CreateDeployment(repo.ID, user.ID, "main", "abc123", "deploy", "production", "", nil, true, false)
+		st.Deployments.AddStatus(dep.ID, user.ID, "success", "", "", "", "", "production", false)
+		env := st.Deployments.UpsertEnvironment(repo.ID, "production")
+		st.Deployments.SetEnvironmentBranchPolicyConfig(repo.ID, "production", &DeploymentBranchPolicy{CustomBranchPolicies: true})
+		st.CreateEnvBranchPolicy(env.ID, "main", "branch")
+		st.CreateEnvProtectionRule(env.ID, 1)
+		st.CreatePagesDeployment(repo.ID, "github-pages", "pages-build", "succeed")
+		label := st.CreateLabel(repo.ID, "stale-label", "stale", "ededed")
+		if label == nil {
+			t.Fatal("CreateLabel returned nil")
+		}
+		if st.CreateMilestone(repo.ID, user.ID, "stale milestone", "", "open", nil) == nil {
+			t.Fatal("CreateMilestone returned nil")
+		}
 		st.CreateIssue(repo.ID, user.ID, "stale", "", nil, nil, 0)
 		seedStorePullRequestBranches(t, st, repo, "f")
 		st.CreatePullRequest(repo.ID, user.ID, "stale pr", "", "f", "main", false, nil, nil, 0)
-		st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
+		release := st.Releases.Create(repo.ID, user.ID, "v0.0.1", "main", "", "", false, false)
+		if release == nil {
+			t.Fatal("Create release returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("release", release.ID, user.ID, "+1"); err != nil {
+			t.Fatalf("AddReaction release: %v", err)
+		}
+		commitComment := st.CommitComments.Create(repo.ID, "abc123", user.ID, "stale commit comment", "README.md", nil, nil)
+		if commitComment == nil {
+			t.Fatal("Create commit comment returned nil")
+		}
+		if _, _, err := st.Reactions.AddReaction("commit_comment", commitComment.ID, user.ID, "eyes"); err != nil {
+			t.Fatalf("AddReaction commit comment: %v", err)
+		}
 
 		if !st.DeleteRepo("admin", repoName) {
 			t.Fatal("DeleteRepo failed")
@@ -959,6 +1386,73 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	if len(st2.Misc.pagesBuilds[repoKey]) != 0 {
 		t.Error("pages builds survived repo deletion")
 	}
+	if len(st2.Deployments.ListDeployments(oldRepoID)) != 0 {
+		t.Error("deployments survived repo deletion")
+	}
+	if len(st2.Deployments.statuses) != 0 {
+		t.Error("deployment statuses survived repo deletion")
+	}
+	if len(st2.Deployments.ListEnvironments(oldRepoID)) != 0 {
+		t.Error("environments survived repo deletion")
+	}
+	if len(st2.EnvBranchPolicies) != 0 {
+		t.Error("environment branch policies survived repo deletion")
+	}
+	if len(st2.EnvProtectionRules) != 0 {
+		t.Error("environment protection rules survived repo deletion")
+	}
+	if len(st2.PagesDeployments[oldRepoID]) != 0 {
+		t.Error("Pages deployments survived repo deletion")
+	}
+	for _, task := range st2.AgentTasks {
+		if task.RepoID == oldRepoID {
+			t.Fatalf("agent task survived repo deletion: %#v", task)
+		}
+	}
+	if va := st2.GetCodeQLVariantAnalysis(controllerKey, 1); va == nil {
+		t.Fatal("surviving CodeQL variant analysis controller was deleted")
+	} else {
+		for _, task := range va.ScannedRepositories {
+			if task.RepoID == oldRepoID || task.FullName == repoKey {
+				t.Fatalf("CodeQL variant analysis target survived repo deletion: %#v", va.ScannedRepositories)
+			}
+		}
+		if slices.Contains(va.NoCodeQLDBRepos, oldRepoID) {
+			t.Fatalf("CodeQL variant analysis missing-database target survived repo deletion: %#v", va.NoCodeQLDBRepos)
+		}
+	}
+	if st2.GetRepoImport(oldRepoID) != nil {
+		t.Error("repository import survived repo deletion")
+	}
+	if len(st2.ListDependencySnapshots(oldRepoID)) != 0 {
+		t.Error("dependency snapshots survived repo deletion")
+	}
+	for _, exp := range st2.SBOMExports {
+		if exp.RepoID == oldRepoID {
+			t.Error("SBOM export survived repo deletion")
+		}
+	}
+	if slices.Contains(st2.EnterpriseSettings.DependabotAccessibleRepoIDs, oldRepoID) {
+		t.Error("enterprise Dependabot repository access survived repo deletion")
+	}
+	for _, team := range st2.Teams {
+		if slices.Contains(team.RepoNames, repoKey) {
+			t.Fatal("team repository grant survived repo deletion")
+		}
+		if _, ok := team.RepoPermissions[repoKey]; ok {
+			t.Fatal("team repository permission override survived repo deletion")
+		}
+	}
+	for _, rec := range st2.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatal("artifact storage metadata survived repo deletion")
+		}
+	}
+	for _, rec := range st2.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatal("artifact deployment metadata survived repo deletion")
+		}
+	}
 	for _, i := range st2.Issues {
 		if i.RepoID == oldRepoID {
 			t.Error("issue survived repo deletion")
@@ -969,8 +1463,17 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 			t.Error("pull request survived repo deletion")
 		}
 	}
+	if len(st2.ListLabels(oldRepoID)) != 0 {
+		t.Error("labels survived repo deletion")
+	}
+	if len(st2.ListMilestones(oldRepoID, "all")) != 0 {
+		t.Error("milestones survived repo deletion")
+	}
 	if len(st2.Releases.List(oldRepoID)) != 0 {
 		t.Error("releases survived repo deletion")
+	}
+	if got := reactionStoreCount(st2); got != 0 {
+		t.Fatalf("release or commit comment reactions survived repo deletion: %d", got)
 	}
 
 	// A recreated same-name repo starts clean.
@@ -987,6 +1490,29 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 }
 
+func TestPersistenceReload_DeleteDeploymentPurgesStatuses(t *testing.T) {
+	var depID int
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		repo := st.CreateRepo(user, "deployment-delete", "", false)
+		dep := st.Deployments.CreateDeployment(repo.ID, user.ID, "main", "abc123", "deploy", "production", "", nil, true, false)
+		depID = dep.ID
+		st.Deployments.AddStatus(dep.ID, user.ID, "queued", "", "", "", "", "production", false)
+		st.Deployments.AddStatus(dep.ID, user.ID, "success", "", "", "", "", "production", false)
+		if !st.Deployments.DeleteDeployment(dep.ID) {
+			t.Fatal("DeleteDeployment failed")
+		}
+	})
+
+	if got := st2.Deployments.GetDeployment(depID); got != nil {
+		t.Fatalf("deployment survived deletion after reload: %+v", got)
+	}
+	if len(st2.Deployments.statuses) != 0 {
+		t.Fatalf("deployment statuses survived deletion after reload: %+v", st2.Deployments.statuses)
+	}
+}
+
 func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 	const oldKey = "admin/rename-source"
 	const newKey = "admin/rename-target"
@@ -999,6 +1525,16 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		if repo == nil {
 			t.Fatal("CreateRepo returned nil")
 		}
+		org := st.CreateOrg(user, "rename-cascade-org", "Rename Cascade Org", "")
+		team := st.CreateTeam(org.Login, "Reviewers", TeamOptions{Permission: TeamPermissionPull})
+		if team == nil {
+			t.Fatal("CreateTeam returned nil")
+		}
+		team.RepoNames = append(team.RepoNames, oldKey)
+		team.RepoPermissions = map[string]TeamPermission{oldKey: TeamPermissionAdmin}
+		p.MustPut("teams", strconv.Itoa(team.ID), team)
+		st.CreateArtifactStorageRecord(&ArtifactStorageRecord{OrgID: org.ID, Name: "build", Digest: "sha256:" + strings.Repeat("c", 64), Status: "active", GitHubRepository: oldKey})
+		st.UpsertArtifactDeploymentRecord(&ArtifactDeploymentRecord{OrgID: org.ID, Name: "deploy", Digest: "sha256:" + strings.Repeat("d", 64), Status: "deployed", LogicalEnvironment: "prod", PhysicalEnvironment: "us", Cluster: "cluster", DeploymentName: "web", GitHubRepository: oldKey})
 
 		st.RepoSecrets[oldKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", oldKey, st.RepoSecrets[oldKey])
@@ -1016,6 +1552,7 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		st.CommitStatuses.Create(oldKey, "0123456789abcdef", user.ID, "success", "", "ok", "ci")
 		st.CommitComments.Create(repo.ID, "0123456789abcdef", user.ID, "body", "", nil, nil)
 		st.RegisterWorkflowFile(oldKey, ".github/workflows/ci.yml", "ci", "name: ci\non: push\njobs: {}", "submitted")
+		st.MarkNotificationsRead(user.ID, now, oldKey)
 
 		st.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{RepoKey: oldKey, State: "configured", QuerySuite: "default", Languages: []string{"go"}})
 		alert := st.CreateCodeScanningAlert(oldKey, "rule", "error", "desc", "CodeQL", "open", []CodeScanningAlertInstance{{Path: "main.go", StartLine: 1}})
@@ -1122,6 +1659,44 @@ func assertRepoKeyMoved(t *testing.T, st *Store, repoKey string) {
 	if len(st.ListPackages(repoKey)) != 1 {
 		t.Fatalf("repository-owned package did not move to %s", repoKey)
 	}
+	foundTeamGrant := false
+	for _, team := range st.Teams {
+		if slices.Contains(team.RepoNames, repoKey) && team.RepoPermissions[repoKey] == TeamPermissionAdmin {
+			foundTeamGrant = true
+			break
+		}
+	}
+	if !foundTeamGrant {
+		t.Fatalf("team repository grant did not move to %s", repoKey)
+	}
+	foundArtifactStorage := false
+	for _, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			foundArtifactStorage = true
+			break
+		}
+	}
+	if !foundArtifactStorage {
+		t.Fatalf("artifact storage metadata did not move to %s", repoKey)
+	}
+	foundArtifactDeployment := false
+	for _, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			foundArtifactDeployment = true
+			break
+		}
+	}
+	if !foundArtifactDeployment {
+		t.Fatalf("artifact deployment metadata did not move to %s", repoKey)
+	}
+	for _, state := range st.NotificationsState {
+		if at, ok := state.RepoLastReadAt[repoKey]; ok && at.IsZero() {
+			t.Fatalf("notification repo read marker moved to %s with zero timestamp", repoKey)
+		} else if ok {
+			return
+		}
+	}
+	t.Fatalf("notification repo read marker did not move to %s", repoKey)
 }
 
 func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
@@ -1146,6 +1721,29 @@ func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
 	}
 	if len(st.CodeQLDatabasesByRepo[repoKey]) != 0 || len(st.ListPackages(repoKey)) != 0 {
 		t.Fatalf("CodeQL/package residue survived for %s", repoKey)
+	}
+	for _, team := range st.Teams {
+		if slices.Contains(team.RepoNames, repoKey) {
+			t.Fatalf("team repository grant residue survived for %s", repoKey)
+		}
+		if _, ok := team.RepoPermissions[repoKey]; ok {
+			t.Fatalf("team repository permission residue survived for %s", repoKey)
+		}
+	}
+	for _, rec := range st.ArtifactStorageRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatalf("artifact storage metadata residue survived for %s", repoKey)
+		}
+	}
+	for _, rec := range st.ArtifactDeploymentRecords {
+		if rec.GitHubRepository == repoKey {
+			t.Fatalf("artifact deployment metadata residue survived for %s", repoKey)
+		}
+	}
+	for _, state := range st.NotificationsState {
+		if _, ok := state.RepoLastReadAt[repoKey]; ok {
+			t.Fatalf("notification repo read marker residue survived for %s", repoKey)
+		}
 	}
 }
 

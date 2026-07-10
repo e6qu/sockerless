@@ -560,6 +560,7 @@ func (s *ProjectV2Store) DeleteProject(id int) bool {
 	for iid, it := range s.items {
 		if it.ProjectID == id {
 			delete(s.items, iid)
+			s.unindexItemLocked(it)
 			if s.persist != nil {
 				s.persist.MustDelete("project_v2_items", strconv.Itoa(iid))
 			}
@@ -578,6 +579,26 @@ func (s *ProjectV2Store) DeleteProject(id int) bool {
 		s.persist.MustDelete("projects_v2", strconv.Itoa(id))
 	}
 	return true
+}
+
+// DeleteContentItems removes every ProjectV2 item whose content points at
+// one of the supplied issue or pull request database IDs.
+func (s *ProjectV2Store) DeleteContentItems(contentType string, contentIDs map[int]bool) {
+	if len(contentIDs) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, it := range s.items {
+		if it.ContentType != contentType || !contentIDs[it.ContentID] {
+			continue
+		}
+		delete(s.items, id)
+		s.unindexItemLocked(it)
+		if s.persist != nil {
+			s.persist.MustDelete("project_v2_items", strconv.Itoa(id))
+		}
+	}
 }
 
 // ListItemsForProject returns every item on a project.
@@ -722,20 +743,29 @@ func (s *ProjectV2Store) DeleteItem(id int) bool {
 		return false
 	}
 	delete(s.items, id)
-	if it.ContentID != 0 {
-		owner := s.itemsByOwner[it.ContentID]
-		filtered := make([]*ProjectV2Item, 0, len(owner))
-		for _, x := range owner {
-			if x.ID != id {
-				filtered = append(filtered, x)
-			}
-		}
-		s.itemsByOwner[it.ContentID] = filtered
-	}
+	s.unindexItemLocked(it)
 	if s.persist != nil {
 		s.persist.MustDelete("project_v2_items", strconv.Itoa(id))
 	}
 	return true
+}
+
+func (s *ProjectV2Store) unindexItemLocked(it *ProjectV2Item) {
+	if it == nil || it.ContentID == 0 {
+		return
+	}
+	owner := s.itemsByOwner[it.ContentID]
+	kept := owner[:0]
+	for _, x := range owner {
+		if x.ID != it.ID {
+			kept = append(kept, x)
+		}
+	}
+	if len(kept) == 0 {
+		delete(s.itemsByOwner, it.ContentID)
+		return
+	}
+	s.itemsByOwner[it.ContentID] = kept
 }
 
 // UpdateField patches a field's name/options.

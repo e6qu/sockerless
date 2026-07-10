@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2456 filed - 2412 fixed - 3 open - 16 false positives.**
+**2467 filed - 2423 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -14,10 +14,21 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
 
-## Fixed On Active Branch
+## Recently Fixed
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2467~~ | P1 | Bleephub repository deletion | deleted repository labels, milestones, and reactions survived parent deletion | Repository deletion now removes repository-owned labels and milestones, plus reactions attached to deleted issue, pull request, comment, release, pull request review-comment, and commit-comment parents, from memory and SQLite. |
+| ~~2466~~ | P1 | Bleephub notifications | deleted issue/pull request and renamed repository notification state survived under old keys | Repository deletion now removes notification read/done/subscription state for deleted issue and pull request thread IDs, and repository rename/transfer moves repo-scoped notification read markers to the new full name. |
+| ~~2465~~ | P1 | Bleephub Projects v2 | deleted issue and pull request IDs remained in project item indexes | Repository deletion now removes Projects v2 items for deleted issues and pull requests, and project deletion clears its in-memory content indexes. |
+| ~~2464~~ | P1 | Bleephub repository deletion | deleted repository IDs and issue IDs remained in durable task, field-value, and CodeQL target state | Repository deletion now purges Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows for the deleted repository or its issues. |
+| ~~2463~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in import and dependency-graph state | Repository deletion now purges source import records, dependency snapshots, SBOM exports, and enterprise Dependabot repository-access IDs for the deleted repository. |
+| ~~2462~~ | P1 | Bleephub artifact metadata | repository rename/delete left stale artifact metadata repository references | Repository rename and transfer now move organization artifact storage/deployment metadata `github_repository` references, and repository deletion purges metadata rows for the deleted repository. |
+| ~~2461~~ | P1 | Bleephub team repository access | repository rename/delete left stale team repository grants | Repository rename and transfer now move team repository access lists and permission overrides, and repository deletion removes team grants for the deleted repository. |
+| ~~2460~~ | P1 | Bleephub deployments | deleted deployments left status rows behind | Deployment deletion now purges the deployment's status rows from memory and SQLite with the deployment record. |
+| ~~2459~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in deployment and Pages deployment state | Repository deletion now purges deployments, deployment statuses, environments, environment policies, protection rules, and Pages deployment records for the deleted repository. |
+| ~~2458~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in durable repository-owned state and selected-repository allowlists | Repository deletion now purges persisted artifact attestations, repository activity, clone traffic, watch subscriptions, selected-repository allowlists, GitHub App selected repositories, installation token repository scopes, and code-security attachments for the deleted repository. |
+| ~~2457~~ | P1 | Bleephub repository deletion | deleted repositories left issue and pull request child state behind | Repository deletion now purges persisted issue comments, issue events, sub-issue links, issue dependency links, pull request reviews, and pull request review comments for the deleted repository. |
 | ~~2456~~ | P3 | Bleephub persistence docs | hand-maintained bucket inventory drifted from code | The persistence loader comment now points to the actual `loadBucket` registrations instead of duplicating a stale bucket list. |
 | ~~2455~~ | P1 | Bleephub gists | gist state lived only in memory | Gists, comments, stars, forks, histories, and counters now persist and reload from SQLite-backed service state. |
 | ~~2454~~ | P2 | Bleephub fine-grained personal access tokens | token generation bypassed the shared full-read entropy helper pattern | Fine-grained personal access token generation now uses an injectable full-read secure-random helper and has direct entropy-failure coverage. |

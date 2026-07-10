@@ -2,6 +2,24 @@ package bleephub
 
 import "testing"
 
+func TestProjectV2Store_DeleteProjectUnindexesContentItems(t *testing.T) {
+	store := newProjectV2Store(nil)
+	project := store.CreateProject(1, "User", "Cleanup", 1)
+	item := store.AddItem(project.ID, "Issue", 42, 1)
+	if item == nil {
+		t.Fatal("AddItem returned nil")
+	}
+	if got := store.ListItemsForIssue(42); len(got) != 1 {
+		t.Fatalf("precondition ListItemsForIssue = %#v, want one item", got)
+	}
+	if !store.DeleteProject(project.ID) {
+		t.Fatal("DeleteProject returned false")
+	}
+	if got := store.ListItemsForIssue(42); len(got) != 0 {
+		t.Fatalf("DeleteProject left stale content index entries: %#v", got)
+	}
+}
+
 func TestProjectsV2GraphQL_FieldValueKinds(t *testing.T) {
 	owner, repoName := sweepRepo(t, "gql-project-v2-fields")
 	issue := decodeJSONWithStatus(t, ghPost(t, "/api/v3/repos/"+owner+"/"+repoName+"/issues", defaultToken, map[string]interface{}{
