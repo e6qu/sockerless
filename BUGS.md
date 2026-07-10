@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2468 filed - 2424 fixed - 3 open - 16 false positives.**
+**2469 filed - 2425 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2469~~ | P2 | AWS simulator CI | AWS SDK simulator shard exhausted hosted-runner disk | The `sim (aws sdk)` CI job now frees regenerable Go/Docker/apt caches before the large AWS SDK simulator suite, runs the prebuilt SDK test binary directly, and reuses the prebuilt simulator binary instead of rebuilding it during execution. |
 | ~~2468~~ | P1 | Bleephub repository deletion | repository delete dropped Codespace records without cleaning real runtime state | Repository deletion now removes backing Codespace containers and workspace directories before deleting repository state, and repository delete paths fail loudly without deleting the repository when required Codespace cleanup fails. |
 | ~~2467~~ | P1 | Bleephub repository deletion | deleted repository labels, milestones, and reactions survived parent deletion | Repository deletion now removes repository-owned labels and milestones, plus reactions attached to deleted issue, pull request, comment, release, pull request review-comment, and commit-comment parents, from memory and SQLite. |
 | ~~2466~~ | P1 | Bleephub notifications | deleted issue/pull request and renamed repository notification state survived under old keys | Repository deletion now removes notification read/done/subscription state for deleted issue and pull request thread IDs, and repository rename/transfer moves repo-scoped notification read markers to the new full name. |

@@ -392,6 +392,15 @@ jobs:
         timeout-minutes: 6
         env:
           GOWORK: "off"
+      - name: Free AWS SDK runner disk before execution
+        run: |
+          df -h
+          go clean -cache -testcache -modcache
+          rm -rf "$HOME/.cache/go-build" "$HOME/go/pkg/mod" "$RUNNER_TEMP/go-build"
+          docker image prune -af
+          sudo apt-get clean
+          df -h
+        timeout-minutes: 3
       # Pre-pull the DynamoDB Local differential oracle so the timed test run
       # below doesn't spend its budget on the image fetch (the differential test
       # checks the local image store before pulling). DynamoDB Local is the
@@ -401,11 +410,12 @@ jobs:
         timeout-minutes: 4
       - name: Run AWS SDK tests
         run: |
-          cd simulators/aws
+          cd simulators/aws/sdk-tests
           sudo env "PATH=$PATH" "HOME=$HOME" GOWORK=off \
+            SOCKERLESS_AWS_SIMULATOR_BINARY="$GITHUB_WORKSPACE/simulators/aws/simulator-aws" \
             SOCKERLESS_SPEC_VALIDATE="$RUNNER_TEMP/aws-spec-violations.jsonl" \
             SOCKERLESS_SPEC_DIR="$GITHUB_WORKSPACE/specs/cloud-api/aws" \
-            make sdk-test SDK_TEST_TIMEOUT=600s
+            /tmp/aws-sdk-tests.test -test.v -test.count=1 -test.timeout=600s
         # The suite grows as services reach full op-coverage; give the step
         # headroom over the inner go-test deadline (SDK_TEST_TIMEOUT) so a hung
         # test fails with a named Go stack rather than an opaque step kill.

@@ -10,6 +10,8 @@ This branch continued from merged #784, which closed the broad Bleephub reposito
 
 Closed BUG-2468 by making repository deletion clean Codespace runtime state before deleting repository records. Repository deletion now removes backing Codespace containers and workspace directories through the same fail-loud path as direct Codespace deletion, and REST/GraphQL callers surface cleanup failures instead of deleting only the SQLite row.
 
+Closed BUG-2469 by hardening the `sim (aws sdk)` CI job against GitHub-hosted runner disk exhaustion. The job now frees regenerable Go/Docker/apt caches before the large AWS SDK simulator shard, runs the prebuilt SDK test binary directly, and passes the prebuilt simulator binary into the SDK test harness instead of rebuilding the simulator during execution.
+
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 
 Closed BUG-2399 by rebalancing the AWS Command Line Interface simulator appdata/appdata2 shards while preserving required check names.
