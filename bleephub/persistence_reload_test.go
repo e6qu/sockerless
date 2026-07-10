@@ -278,10 +278,16 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		child := st.CreateIssue(repo.ID, admin.ID, "child", "", nil, nil, 0)
 		blocker := st.CreateIssue(repo.ID, admin.ID, "blocker", "", nil, nil, 0)
 		oldIssueID = parent.ID
+		now := time.Now().UTC()
 		if st.CreateComment(parent.ID, admin.ID, "stale issue comment") == nil {
 			t.Fatal("CreateComment returned nil")
 		}
 		st.SetIssueFieldValues(parent.ID, map[int]interface{}{1: "High"})
+		st.MarkNotificationsRead(admin.ID, now, repo.FullName)
+		issueThreadID := notificationThreadID("Issue", parent.ID)
+		st.MarkThreadRead(admin.ID, issueThreadID, now)
+		st.MarkThreadDone(admin.ID, issueThreadID)
+		st.SetThreadSubscription(admin.ID, issueThreadID, &ThreadSubscription{Subscribed: true, Reason: "manual", CreatedAt: now})
 		if err := st.AddSubIssue(parent.ID, child.ID, false); err != nil {
 			t.Fatalf("AddSubIssue: %v", err)
 		}
@@ -298,7 +304,6 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		}
 		st.CreateAttestation(repo.ID, []byte(`{"bundle":true}`), []string{"sha256:deadbeef"}, "https://slsa.dev/provenance/v1", admin.Login)
 
-		now := time.Now().UTC()
 		st.mu.Lock()
 		inst := &Installation{
 			ID:                  st.NextInstallationID,
@@ -397,6 +402,10 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		}
 		st.mu.Unlock()
 		oldPRID = pr.ID
+		prThreadID := notificationThreadID("PullRequest", pr.ID)
+		st.MarkThreadRead(admin.ID, prThreadID, now)
+		st.MarkThreadDone(admin.ID, prThreadID)
+		st.SetThreadSubscription(admin.ID, prThreadID, &ThreadSubscription{Subscribed: true, Reason: "manual", CreatedAt: now})
 		st.ProjectsV2.AddItem(projectID, "PullRequest", pr.ID, admin.ID)
 		if st.CreateCommentFor("pull_request", pr.ID, admin.ID, "stale pull request comment") == nil {
 			t.Fatal("CreateCommentFor pull request returned nil")
@@ -427,6 +436,7 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	if values := st2.IssueFieldValues[oldIssueID]; len(values) != 0 {
 		t.Fatalf("issue field values survived deleted repo reload: %#v", values)
 	}
+	assertNotificationStateAbsent(t, st2, "admin", orgLogin+"/deleted-issue-children", notificationThreadID("Issue", oldIssueID), notificationThreadID("PullRequest", oldPRID))
 	if got := st2.ProjectsV2.ListItemsForIssue(oldIssueID); len(got) != 0 {
 		t.Fatalf("Projects v2 issue items survived deleted repo reload: %#v", got)
 	}
@@ -472,8 +482,39 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	if got := st2.CountCommentsFor("issue", fresh.ID); got != 0 {
 		t.Fatalf("fresh issue inherited stale comment count = %d", got)
 	}
+	if thread := st2.GetNotificationThread(admin, "http://example.test", notificationThreadID("Issue", fresh.ID)); thread == nil {
+		t.Fatal("fresh issue did not create a notification thread")
+	} else if !thread.Unread {
+		t.Fatalf("fresh issue inherited stale read notification state: %#v", thread)
+	}
 	if got := st2.ProjectsV2.ListItemsForIssue(fresh.ID); len(got) != 0 {
 		t.Fatalf("fresh issue inherited stale Projects v2 items: %#v", got)
+	}
+}
+
+func assertNotificationStateAbsent(t *testing.T, st *Store, login, repoKey string, threadIDs ...string) {
+	t.Helper()
+	user := st.UsersByLogin[login]
+	if user == nil {
+		t.Fatalf("user %s did not reload", login)
+	}
+	state := st.NotificationsState[user.ID]
+	if state == nil {
+		return
+	}
+	if _, ok := state.RepoLastReadAt[repoKey]; ok {
+		t.Fatalf("notification repo read state survived for %s: %#v", repoKey, state.RepoLastReadAt)
+	}
+	for _, threadID := range threadIDs {
+		if _, ok := state.ReadThreadIDs[threadID]; ok {
+			t.Fatalf("notification read state survived for %s: %#v", threadID, state.ReadThreadIDs)
+		}
+		if _, ok := state.DismissedThreadIDs[threadID]; ok {
+			t.Fatalf("notification done state survived for %s: %#v", threadID, state.DismissedThreadIDs)
+		}
+		if _, ok := state.Subscriptions[threadID]; ok {
+			t.Fatalf("notification subscription survived for %s: %#v", threadID, state.Subscriptions)
+		}
 	}
 }
 
@@ -1428,6 +1469,7 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		st.CommitStatuses.Create(oldKey, "0123456789abcdef", user.ID, "success", "", "ok", "ci")
 		st.CommitComments.Create(repo.ID, "0123456789abcdef", user.ID, "body", "", nil, nil)
 		st.RegisterWorkflowFile(oldKey, ".github/workflows/ci.yml", "ci", "name: ci\non: push\njobs: {}", "submitted")
+		st.MarkNotificationsRead(user.ID, now, oldKey)
 
 		st.SetCodeScanningDefaultSetup(&CodeScanningDefaultSetup{RepoKey: oldKey, State: "configured", QuerySuite: "default", Languages: []string{"go"}})
 		alert := st.CreateCodeScanningAlert(oldKey, "rule", "error", "desc", "CodeQL", "open", []CodeScanningAlertInstance{{Path: "main.go", StartLine: 1}})
@@ -1564,6 +1606,14 @@ func assertRepoKeyMoved(t *testing.T, st *Store, repoKey string) {
 	if !foundArtifactDeployment {
 		t.Fatalf("artifact deployment metadata did not move to %s", repoKey)
 	}
+	for _, state := range st.NotificationsState {
+		if at, ok := state.RepoLastReadAt[repoKey]; ok && at.IsZero() {
+			t.Fatalf("notification repo read marker moved to %s with zero timestamp", repoKey)
+		} else if ok {
+			return
+		}
+	}
+	t.Fatalf("notification repo read marker did not move to %s", repoKey)
 }
 
 func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
@@ -1605,6 +1655,11 @@ func assertNoRepoKeyResidue(t *testing.T, st *Store, repoKey string) {
 	for _, rec := range st.ArtifactDeploymentRecords {
 		if rec.GitHubRepository == repoKey {
 			t.Fatalf("artifact deployment metadata residue survived for %s", repoKey)
+		}
+	}
+	for _, state := range st.NotificationsState {
+		if _, ok := state.RepoLastReadAt[repoKey]; ok {
+			t.Fatalf("notification repo read marker residue survived for %s", repoKey)
 		}
 	}
 }

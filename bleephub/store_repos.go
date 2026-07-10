@@ -392,6 +392,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 	delete(st.SecretScanningPushPlaceholders, fullName)
 	delete(st.SecretScanningPushBypasses, fullName)
 	st.deleteRepoFullNameReferencesLocked(fullName)
+	st.deleteNotificationRepoKeyLocked(fullName)
 	st.CommitStatuses.deleteRepoKey(fullName)
 	st.CommitComments.deleteRepo(repo.ID)
 	for id, alert := range st.SecretScanningAlerts {
@@ -1058,6 +1059,14 @@ func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prID
 	}
 	st.ProjectsV2.DeleteContentItems("Issue", issueIDs)
 	st.ProjectsV2.DeleteContentItems("PullRequest", prIDs)
+	threadIDs := make([]string, 0, len(issueIDs)+len(prIDs))
+	for issueID := range issueIDs {
+		threadIDs = append(threadIDs, notificationThreadID("Issue", issueID))
+	}
+	for prID := range prIDs {
+		threadIDs = append(threadIDs, notificationThreadID("PullRequest", prID))
+	}
+	st.deleteNotificationThreadStateLocked(threadIDs)
 	for id, c := range st.Comments {
 		if (c.ParentType == "issue" && issueIDs[c.IssueID]) || (c.ParentType == "pull_request" && prIDs[c.IssueID]) {
 			delete(st.Comments, id)
@@ -1981,6 +1990,7 @@ func (st *Store) TransferRepo(owner, name, newOwner string) bool {
 // moveRepoKeyLocked renames all in-memory maps keyed by repo full name from
 // oldFull to newFull. Caller must hold st.mu.
 func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
+	st.moveNotificationRepoKeyLocked(oldFull, newFull)
 	if v := st.RepoSecrets[oldFull]; v != nil {
 		st.RepoSecrets[newFull] = v
 		delete(st.RepoSecrets, oldFull)

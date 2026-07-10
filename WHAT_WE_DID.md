@@ -118,6 +118,8 @@ Closed BUG-2464 by adding Copilot coding agent tasks, issue field values, and Co
 
 Closed BUG-2465 by adding Projects v2 content items to the repository deletion cascade and by making project deletion clear its in-memory content index. Deleted repository issues and pull requests no longer left project items behind after reload or ID reuse.
 
+Closed BUG-2466 by adding notification state to repository deletion and rename cascades. Deleted issue and pull request threads no longer left read, done, or subscription state behind for later ID reuse, and repository rename/transfer moved repo-scoped notification read markers to the new full name.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -137,6 +139,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenc
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestProjectV2' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata|TestNotifications_' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
