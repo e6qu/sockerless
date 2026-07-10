@@ -1158,6 +1158,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, repoName, "", false)
 		oldRepoID = repo.ID
+		now := time.Now().UTC()
 
 		org := st.CreateOrg(user, "delete-cascade-org", "Delete Cascade Org", "")
 		team := st.CreateTeam(org.Login, "Reviewers", TeamOptions{Permission: TeamPermissionPull})
@@ -1169,10 +1170,23 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		p.MustPut("teams", strconv.Itoa(team.ID), team)
 		st.CreateArtifactStorageRecord(&ArtifactStorageRecord{OrgID: org.ID, Name: "build", Digest: "sha256:" + strings.Repeat("a", 64), Status: "active", GitHubRepository: repoKey})
 		st.UpsertArtifactDeploymentRecord(&ArtifactDeploymentRecord{OrgID: org.ID, Name: "deploy", Digest: "sha256:" + strings.Repeat("b", 64), Status: "deployed", LogicalEnvironment: "prod", PhysicalEnvironment: "us", Cluster: "cluster", DeploymentName: "web", GitHubRepository: repoKey})
+		importPercent := 100
+		st.PutRepoImport(&RepoImport{RepoID: repo.ID, VCS: "git", VCSURL: "https://example.invalid/repo.git", Status: "complete", ImportPercent: &importPercent, CreatedAt: now})
+		st.AddDependencySnapshot(&DependencySnapshot{
+			RepoID:   repo.ID,
+			Version:  1,
+			Ref:      "refs/heads/main",
+			Sha:      strings.Repeat("1", 40),
+			Job:      SnapshotJob{ID: "job", Correlator: "job"},
+			Detector: SnapshotDetector{Name: "detector", Version: "1", URL: "https://example.invalid/detector"},
+			Scanned:  now.Format(time.RFC3339),
+			Result:   "SUCCESS",
+		})
+		st.AddSBOMExport(repo.ID)
+		st.SetEnterpriseDependabotRepoAccess([]int{repo.ID})
 
 		hook := st.CreateHook(repoKey, "http://sink.localhost/h", "sec", "json", "0", []string{"push"}, true)
 		st.AddDelivery(&WebhookDelivery{HookID: hook.ID, Event: "push", DeliveredAt: time.Now().UTC()})
-		now := time.Now().UTC()
 		st.RepoSecrets[repoKey] = map[string]*Secret{"TOKEN": {Name: "TOKEN", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("repo_secrets", repoKey, st.RepoSecrets[repoKey])
 		st.RepoVariables[repoKey] = map[string]*ActionsVariable{"VAR": {Name: "VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
@@ -1250,6 +1264,20 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 	if len(st2.PagesDeployments[oldRepoID]) != 0 {
 		t.Error("Pages deployments survived repo deletion")
+	}
+	if st2.GetRepoImport(oldRepoID) != nil {
+		t.Error("repository import survived repo deletion")
+	}
+	if len(st2.ListDependencySnapshots(oldRepoID)) != 0 {
+		t.Error("dependency snapshots survived repo deletion")
+	}
+	for _, exp := range st2.SBOMExports {
+		if exp.RepoID == oldRepoID {
+			t.Error("SBOM export survived repo deletion")
+		}
+	}
+	if slices.Contains(st2.EnterpriseSettings.DependabotAccessibleRepoIDs, oldRepoID) {
+		t.Error("enterprise Dependabot repository access survived repo deletion")
 	}
 	for _, team := range st2.Teams {
 		if slices.Contains(team.RepoNames, repoKey) {

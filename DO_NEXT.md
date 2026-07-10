@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 through BUG-2462.
+`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 through BUG-2463.
 
 This branch started from the merged #783 baseline and fixed the next persistence class issue found while continuing the Bleephub sweep.
 
@@ -15,6 +15,8 @@ The same deletion cascade now purges repository-ID keyed state and selected-repo
 Repository deletion also purges deployment state that was keyed by the deleted repository ID. Deployments, deployment statuses, environments, environment branch policies, environment protection rules, and GitHub Pages deployment records no longer survive a SQLite reload after repository deletion. Deleting one deployment now purges that deployment's status rows from memory and SQLite.
 
 Repository rename and transfer now move team repository grants and organization artifact metadata `github_repository` references with the rest of the repo-full-name state. Repository deletion removes team grants and artifact storage/deployment metadata rows for the deleted repository, so neither stale access grants nor stale artifact metadata survive reload.
+
+Repository deletion now also purges source import records, dependency snapshots, generated SBOM exports, and enterprise Dependabot repository-access IDs keyed by the deleted repository ID.
 
 ## Continue Here
 
@@ -96,6 +98,7 @@ Repository rename and transfer now move team repository grants and organization 
 - `make bleephub-gh-docker-test` passed with 117 checks and 0 failures against the Docker-compatible Podman runtime after the repository deletion cascade fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteDeploymentPurgesStatuses|TestPersistenceReload_DeploymentsStatusesEnvironments|TestDeployments_Lifecycle' -count=1` passed with sandbox escalation after deployment, environment, environment-policy, and Pages deployment records joined the deletion cascade.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata' -count=1` passed with sandbox escalation after team grants and artifact metadata joined repository rename/delete/transfer cascades.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren' -count=1` passed with sandbox escalation after source import, dependency graph, SBOM export, and enterprise Dependabot access rows joined repository deletion cascades.
 
 ## Standing Gaps
 

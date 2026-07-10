@@ -733,9 +733,27 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 }
 
 func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
+	delete(st.RepoImports, repoID)
+	delete(st.DependencySnapshots, repoID)
 	delete(st.PagesDeployments, repoID)
 	if st.persist != nil {
+		st.persist.MustDelete("repo_imports", strconv.Itoa(repoID))
+		st.persist.MustDelete("dependency_snapshots", strconv.Itoa(repoID))
 		st.persist.MustDelete("pages_deployments", strconv.Itoa(repoID))
+	}
+	for id, exp := range st.SBOMExports {
+		if exp.RepoID == repoID {
+			delete(st.SBOMExports, id)
+			if st.persist != nil {
+				st.persist.MustDelete("sbom_exports", id)
+			}
+		}
+	}
+	if st.EnterpriseSettings != nil {
+		if kept, changed := removeRepoIDFromList(st.EnterpriseSettings.DependabotAccessibleRepoIDs, repoID); changed {
+			st.EnterpriseSettings.DependabotAccessibleRepoIDs = kept
+			st.persistEnterpriseSettings()
+		}
 	}
 	for id, a := range st.Attestations {
 		if a.RepoID == repoID {
