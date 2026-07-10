@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -434,7 +435,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if _, _, err := st.Reactions.AddReaction("pull_request_comment", reviewComment.ID, admin.ID, "hooray"); err != nil {
 			t.Fatalf("AddReaction pull request review comment: %v", err)
 		}
-		if !st.DeleteRepo(org.Login, repo.Name) {
+		if deleted, err := st.DeleteRepo(org.Login, repo.Name); err != nil {
+			t.Fatalf("DeleteRepo: %v", err)
+		} else if !deleted {
 			t.Fatal("DeleteRepo returned false")
 		}
 	})
@@ -1269,6 +1272,7 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	const repoKey = "admin/" + repoName
 	const controllerKey = "admin/variant-controller"
 	var oldRepoID int
+	var codespaceWorkspace string
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
@@ -1322,6 +1326,26 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
 			t.Fatal("CreatePackage did not create")
 		}
+		codespaceWorkspace = t.TempDir()
+		if err := os.WriteFile(codespaceWorkspace+"/workspace.txt", []byte("workspace"), 0o644); err != nil {
+			t.Fatalf("seed codespace workspace: %v", err)
+		}
+		codespace := &Codespace{
+			ID:             st.NextCodespaceID,
+			Name:           "delete-cascade-codespace",
+			OwnerLogin:     user.Login,
+			RepoKey:        repoKey,
+			GitRef:         repo.DefaultBranch,
+			State:          "Shutdown",
+			WorkspaceMount: codespaceWorkspace,
+			CreatedAt:      now,
+			UpdatedAt:      now,
+			LastUsedAt:     now,
+		}
+		st.NextCodespaceID++
+		st.Codespaces[codespace.ID] = codespace
+		st.CodespacesByName[codespace.Name] = codespace
+		p.MustPut("codespaces", strconv.Itoa(codespace.ID), codespace)
 		st.SetCheckSuitePreferences(repoKey, []*CheckSuitePref{{AppID: 1, Setting: true}})
 		st.Misc.branchProtection[bpKey(repo.ID, "main")] = &BranchProtection{}
 		p.MustPut("branch_protection", bpKey(repo.ID, "main"), st.Misc.branchProtection[bpKey(repo.ID, "main")])
@@ -1359,7 +1383,9 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 			t.Fatalf("AddReaction commit comment: %v", err)
 		}
 
-		if !st.DeleteRepo("admin", repoName) {
+		if deleted, err := st.DeleteRepo("admin", repoName); err != nil {
+			t.Fatalf("DeleteRepo: %v", err)
+		} else if !deleted {
 			t.Fatal("DeleteRepo failed")
 		}
 	})
@@ -1403,6 +1429,12 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 	if len(st2.PagesDeployments[oldRepoID]) != 0 {
 		t.Error("Pages deployments survived repo deletion")
+	}
+	if got := st2.ListCodespacesByRepo(repoKey); len(got) != 0 {
+		t.Fatalf("codespaces survived repo deletion: %#v", got)
+	}
+	if _, err := os.Stat(codespaceWorkspace); !os.IsNotExist(err) {
+		t.Fatalf("codespace workspace survived repo deletion: %v", err)
 	}
 	for _, task := range st2.AgentTasks {
 		if task.RepoID == oldRepoID {

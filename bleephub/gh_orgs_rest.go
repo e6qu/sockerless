@@ -372,7 +372,10 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 
 	if bool(req.AutoInit) || req.GitignoreTemplate != "" || req.LicenseTemplate != "" {
 		if err := s.initRepoFiles(r.Context(), repo, defaultBranch, req.Description, req.GitignoreTemplate, req.LicenseTemplate, bool(req.AutoInit)); err != nil {
-			s.store.DeleteRepo(org.Login, req.Name)
+			if _, deleteErr := s.store.DeleteRepo(org.Login, req.Name); deleteErr != nil {
+				writeGHError(w, http.StatusInternalServerError, "repository rollback failed: "+deleteErr.Error())
+				return
+			}
 			writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
 			return
 		}

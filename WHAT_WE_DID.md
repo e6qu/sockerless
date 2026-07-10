@@ -4,11 +4,11 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
-## 2026-07-10 - Bleephub Repository Deletion Cascade (`feat/bleephub-repository-deletion-cascade`)
+## 2026-07-10 - Bleephub Repository Codespace Cleanup (`feat/bleephub-repository-codespace-cleanup`)
 
-This branch continued from the merged #783 Bleephub Actions runtime fidelity baseline. #783 moved Bleephub from compatibility-shaped behavior toward a real GitHub Enterprise Server-compatible service across repository metadata, Actions runtime state, authentication, GraphQL, UI, official-client harnesses, checked entropy, and persistence. This branch closed the next persistence-class gaps by making repository deletion purge issue/pull request child state, repository-ID keyed rows, selected-repository references, deployment state, environment state, environment policies, GitHub Pages deployment records, team grants, artifact metadata references, source import records, dependency snapshots, SBOM exports, and enterprise Dependabot repository-access IDs.
+This branch continued from merged #784, which closed the broad Bleephub repository-deletion durable-state cascade for issue/pull request child state, repository-ID keyed rows, selected-repository references, deployment state, environment state, GitHub Pages deployment records, team grants, artifact metadata, source import records, dependency snapshots, SBOM exports, enterprise Dependabot repository-access IDs, labels, milestones, and reaction parent buckets.
 
-Closed BUG-2457 through BUG-2467 by making repository deletion and parent deletion paths clean all durable state owned by deleted repository resources. Labels, milestones, notification thread state, Projects v2 item indexes, reactions, issue/pull request comments, pull request reviews, pull request review comments, release reaction parents, commit-comment reaction parents, deployment statuses, and repository-owned metadata no longer survived SQLite reloads or attached to later ID/name reuse.
+Closed BUG-2468 by making repository deletion clean Codespace runtime state before deleting repository records. Repository deletion now removes backing Codespace containers and workspace directories through the same fail-loud path as direct Codespace deletion, and REST/GraphQL callers surface cleanup failures instead of deleting only the SQLite row.
 
 Closed BUG-2391 through BUG-2398 by wiring repository REST/GraphQL metadata to persisted repository, git, Pages, and viewer-access state. Licensed repositories exposed `Repository.licenseInfo`; discussion/issues/wiki settings and merge-method settings flowed through REST and GraphQL; Pages capability, pushed timestamps, archival timestamps, template provenance, and repository permissions stopped using constants or fabricated defaults.
 

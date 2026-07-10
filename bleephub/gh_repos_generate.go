@@ -92,7 +92,10 @@ func (s *Server) handleGenerateRepoFromTemplate(w http.ResponseWriter, r *http.R
 	newStor := s.store.GetGitStorage(ownerLogin, repo.Name)
 	sig := repoSignature(coalesceStr(user.Name, user.Login), coalesceStr(user.Email, user.Login+"@bleephub.local"))
 	if err := generateFromTemplateStorage(templateStor, newStor, template.DefaultBranch, bool(req.IncludeAllBranches), sig); err != nil {
-		s.store.DeleteRepo(ownerLogin, repo.Name)
+		if _, deleteErr := s.store.DeleteRepo(ownerLogin, repo.Name); deleteErr != nil {
+			writeGHError(w, http.StatusInternalServerError, "repository rollback failed: "+deleteErr.Error())
+			return
+		}
 		writeGHError(w, http.StatusUnprocessableEntity, "Could not generate repository from template: "+err.Error())
 		return
 	}

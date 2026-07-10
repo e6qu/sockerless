@@ -4,23 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-repository-deletion-cascade` continued the Bleephub GitHub-fidelity work after #783. It fixed BUG-2457 through BUG-2467.
+`feat/bleephub-repository-codespace-cleanup` continued the Bleephub GitHub-fidelity work after merged #784. It fixed BUG-2468.
 
-This branch started from the merged #783 baseline and fixed the next persistence class issue found while continuing the Bleephub sweep.
+#784 made repository rename, transfer, deletion, and deployment deletion keep durable repository-owned state coherent across reload and later ID/name reuse. This branch picked up the next repository-deletion class: real Codespace runtime state attached to a deleted repository.
 
-Repository deletion now purges the persisted child state that belongs to the deleted repository's issues and pull requests. Issue comments, issue events, notification read/done/subscription thread state, sub-issue links, issue dependency links, Projects v2 items, pull request reviews, and pull request review comments are deleted with the repository instead of surviving a SQLite reload and attaching to later ID reuse.
-
-The same deletion cascade now purges repository-ID keyed state and selected-repository references. Artifact attestations, repository activity, clone traffic, watch subscriptions, GitHub App selected repositories, installation token repository scopes, organization Actions settings, runner groups, Actions secrets/variables, agent secrets/variables, Dependabot access and org secrets, Codespaces org secrets, Copilot coding-agent permissions, private registries, immutable-release enforcement, and code-security attachments no longer retain the deleted repository ID.
-
-Repository deletion also purges deployment state that was keyed by the deleted repository ID. Deployments, deployment statuses, environments, environment branch policies, environment protection rules, and GitHub Pages deployment records no longer survive a SQLite reload after repository deletion. Deleting one deployment now purges that deployment's status rows from memory and SQLite.
-
-Repository rename and transfer now move team repository grants, notification repo read markers, and organization artifact metadata `github_repository` references with the rest of the repo-full-name state. Repository deletion removes team grants and artifact storage/deployment metadata rows for the deleted repository, so neither stale access grants nor stale artifact metadata survive reload.
-
-Repository deletion now also purges source import records, dependency snapshots, generated SBOM exports, enterprise Dependabot repository-access IDs, Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows keyed by the deleted repository or its issue IDs.
-
-Project deletion now also clears the Projects v2 in-memory content index, so deleted project items cannot remain visible through issue or pull request lookups in the same process.
-
-Repository deletion now also purges repository labels, repository milestones, and reactions attached to deleted issue, pull request, issue-comment, pull request comment, pull request review-comment, release, and commit-comment parents. Individual parent deletion paths for issue comments, pull request review comments, commit comments, and releases also remove their reaction rows instead of leaving orphaned reaction buckets behind.
+Repository deletion now also uses the same fail-loud Codespace runtime cleanup as direct Codespace deletion. Bleephub removes backing Codespace containers and workspace directories before deleting repository state, and public REST/GraphQL delete paths return an error without deleting the repository when required Codespace cleanup fails.
 
 ## Continue Here
 
@@ -110,6 +98,7 @@ Repository deletion now also purges repository labels, repository milestones, an
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren|TestPersistenceReload_RenameRepoMovesRepoScopedMetadata|TestPersistenceReload_TransferRepoMovesRepoScopedMetadata|TestNotifications_' -count=1` passed with sandbox escalation after notification thread and repo read state joined repository delete/rename cascades.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the BUG-2466 notification-state cascade fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_(DeleteRepo(PurgesIssueAndPullChildren|LeavesNoResidue)|ReactionParentDeletion|Reactions)' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after labels, milestones, and reaction parent buckets joined the deletion cascade.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistenceReload_DeleteRepoLeavesNoResidue|TestDeleteRepo|TestUnitDeleteRepo|TestCodespaces' -count=1` and `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after repository deletion began cleaning Codespace runtime/workspace state before deleting repository records.
 
 ## Standing Gaps
 
