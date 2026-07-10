@@ -650,7 +650,10 @@ func (s *Server) handleDeleteOrgInternal(w http.ResponseWriter, r *http.Request)
 	s.store.mu.RUnlock()
 
 	for _, name := range repoNames {
-		s.store.DeleteRepo(org.Login, name)
+		if _, err := s.store.DeleteRepo(org.Login, name); err != nil {
+			writeGHError(w, http.StatusInternalServerError, "repository delete failed: "+err.Error())
+			return
+		}
 	}
 	s.store.DeleteOrg(org.Login)
 

@@ -3,6 +3,7 @@ package bleephub
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"os"
@@ -57,7 +58,7 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // NewServer creates a bleephub server with all routes registered.
 //
 // Honors the persistence-related env vars:
-//   - BLEEPHUB_DATA_DIR     — directory for SQLite DB + artifact store.
+//   - BLEEPHUB_DATA_DIR     — directory for SQLite DB state.
 //   - BLEEPHUB_PERSIST      — when "true", enables SQLite-backed state.
 //
 // Operator-requested persistence that fails to open will log.Fatalf.
@@ -77,6 +78,12 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // BLEEPHUB_S3_BUCKET): reloading repo metadata against in-memory git
 // storage would resurrect every repo empty, so that combination is a
 // startup error rather than a silent degraded mode.
+//
+// Persistence also requires BLEEPHUB_OBJECT_S3_BUCKET for Actions
+// artifact, cache, and runner-log bytes. SQLite persists only Bleephub
+// metadata; byte content must be backed by object storage so a restarted
+// service does not advertise durable CI/CD records whose bytes lived only
+// in memory or local development files.
 //
 // Workflow run history is persisted; in-flight runs are marked terminal
 // cancelled on reload because the runner dispatch state is process-local.
@@ -118,13 +125,8 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	// on open failure.
 	persist := MustNewPersistence()
 	if persist != nil {
-		// Metadata persistence with in-memory git storage is a silent
-		// degraded mode: every repo would reload with an empty git side.
-		// Refuse to start rather than serve hollow repos.
-		if GitDataDir() == "" && !IsS3GitStorage() {
-			logger.Fatal().Msg("persistence is enabled (BLEEPHUB_PERSIST=true) but git storage is in-memory: " +
-				"repo metadata would survive a restart while every git repo reloads empty. " +
-				"Configure durable git storage (BLEEPHUB_GIT_DIR=<dir> or BLEEPHUB_S3_BUCKET=<bucket>) or disable persistence.")
+		if err := validatePersistentServerStorage(byteStore != nil); err != nil {
+			logger.Fatal().Err(err).Msg("invalid Bleephub persistent storage configuration")
 		}
 		if err := s.store.SetPersistence(persist); err != nil {
 			logger.Fatal().Err(err).Msg("failed to load persisted state")
@@ -145,6 +147,19 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 	s.initGraphQLSchema()
 	s.registerRoutes()
 	return s
+}
+
+func validatePersistentServerStorage(actionsByteStoreReady bool) error {
+	if GitDataDir() == "" && !IsS3GitStorage() {
+		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but git storage is in-memory: " +
+			"repo metadata would survive a restart while every git repo reloads empty. " +
+			"Configure durable git storage (BLEEPHUB_GIT_DIR=<dir> or BLEEPHUB_S3_BUCKET=<bucket>) or disable persistence")
+	}
+	if !actionsByteStoreReady {
+		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but Actions byte storage is not object-backed: " +
+			"artifact, dependency-cache, and runner-log bytes require BLEEPHUB_OBJECT_S3_BUCKET")
+	}
+	return nil
 }
 
 func (s *Server) registerRoutes() {

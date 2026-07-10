@@ -346,14 +346,23 @@ func (st *Store) RenameRepo(owner, name, newName string) bool {
 	return true
 }
 
-func (st *Store) DeleteRepo(owner, name string) bool {
+func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	fullName := owner + "/" + name
 	repo, ok := st.ReposByName[fullName]
 	if !ok {
-		return false
+		return false, nil
+	}
+
+	for _, cs := range st.Codespaces {
+		if cs.RepoKey != fullName {
+			continue
+		}
+		if err := st.deleteCodespaceRuntimeLocked(cs); err != nil {
+			return true, fmt.Errorf("delete repo %s codespace %s: %w", fullName, cs.Name, err)
+		}
 	}
 
 	delete(st.Repos, repo.ID)
@@ -750,7 +759,7 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 			}
 		}
 	}
-	return true
+	return true, nil
 }
 
 func (st *Store) deleteRepoIDReferencesLocked(repoID int) {

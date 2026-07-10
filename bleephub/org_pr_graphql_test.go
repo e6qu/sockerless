@@ -25,7 +25,9 @@ func TestPRGraphQL_OrgOwnedHeadRepositoryOwner(t *testing.T) {
 	}
 	seedPullRequestBranches(t, testServer, repo, "feature")
 	defer func() {
-		testServer.store.DeleteRepo(orgLogin, "sweep-org-repo")
+		if _, err := testServer.store.DeleteRepo(orgLogin, "sweep-org-repo"); err != nil {
+			t.Fatalf("DeleteRepo: %v", err)
+		}
 	}()
 
 	prNum, _ := sweepPR(t, orgLogin, "sweep-org-repo", "org pr")

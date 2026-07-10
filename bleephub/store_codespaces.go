@@ -247,16 +247,8 @@ func (st *Store) DeleteCodespace(id int) (bool, error) {
 	if cs == nil {
 		return false, nil
 	}
-	if cs.ContainerID != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		err := dockerRemoveContainer(ctx, cs.ContainerID)
-		cancel()
-		if err != nil {
-			return true, fmt.Errorf("docker remove: %w", err)
-		}
-	}
-	if cs.WorkspaceMount != "" && strings.HasPrefix(cs.WorkspaceMount, os.TempDir()) {
-		_ = os.RemoveAll(cs.WorkspaceMount)
+	if err := st.deleteCodespaceRuntimeLocked(cs); err != nil {
+		return true, err
 	}
 	delete(st.Codespaces, id)
 	delete(st.CodespacesByName, cs.Name)
@@ -264,6 +256,35 @@ func (st *Store) DeleteCodespace(id int) (bool, error) {
 		st.persist.MustDelete("codespaces", strconv.Itoa(id))
 	}
 	return true, nil
+}
+
+func (st *Store) deleteCodespaceRuntimeLocked(cs *Codespace) error {
+	if cs.ContainerID != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		err := dockerRemoveContainer(ctx, cs.ContainerID)
+		cancel()
+		if err != nil {
+			return fmt.Errorf("docker remove: %w", err)
+		}
+	}
+	if cs.WorkspaceMount != "" && !pathIsUnderDir(cs.WorkspaceMount, os.TempDir()) {
+		return fmt.Errorf("refusing to remove workspace outside temp dir: %s", cs.WorkspaceMount)
+	}
+	if cs.WorkspaceMount != "" {
+		if err := os.RemoveAll(cs.WorkspaceMount); err != nil {
+			return fmt.Errorf("remove workspace: %w", err)
+		}
+	}
+	return nil
+}
+
+func pathIsUnderDir(path, dir string) bool {
+	cleanPath := filepath.Clean(path)
+	cleanDir := filepath.Clean(dir)
+	if cleanPath == cleanDir {
+		return true
+	}
+	return strings.HasPrefix(cleanPath, cleanDir+string(os.PathSeparator))
 }
 
 // UpdateCodespace updates mutable fields of a codespace.

@@ -618,7 +618,10 @@ func (s *Server) handleCreateRepo(w http.ResponseWriter, r *http.Request) {
 
 	if bool(req.AutoInit) || req.GitignoreTemplate != "" || req.LicenseTemplate != "" {
 		if err := s.initRepoFiles(r.Context(), repo, defaultBranch, req.Description, req.GitignoreTemplate, req.LicenseTemplate, bool(req.AutoInit)); err != nil {
-			s.store.DeleteRepo(user.Login, req.Name)
+			if _, deleteErr := s.store.DeleteRepo(user.Login, req.Name); deleteErr != nil {
+				writeGHError(w, http.StatusInternalServerError, "repository rollback failed: "+deleteErr.Error())
+				return
+			}
 			writeGHError(w, http.StatusUnprocessableEntity, "Repository creation failed.")
 			return
 		}
@@ -798,7 +801,10 @@ func (s *Server) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.DeleteRepo(owner, name)
+	if _, err := s.store.DeleteRepo(owner, name); err != nil {
+		writeGHError(w, http.StatusInternalServerError, "repository delete failed: "+err.Error())
+		return
+	}
 	s.recordAuditEvent("repo.destroy", user.Login, "", map[string]interface{}{"repo": owner + "/" + name})
 	w.WriteHeader(http.StatusNoContent)
 }

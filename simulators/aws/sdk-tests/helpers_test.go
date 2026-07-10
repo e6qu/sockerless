@@ -37,14 +37,26 @@ func sdkConfig() aws.Config {
 }
 
 func TestMain(m *testing.M) {
-	binaryPath, _ = filepath.Abs("../simulator-aws")
-
-	simDir, _ := filepath.Abs("..")
-	build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")
-	build.Dir = simDir
-	build.Env = append(os.Environ(), "CGO_ENABLED=0")
-	if out, err := build.CombinedOutput(); err != nil {
-		log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+	if configuredBinary := os.Getenv("SOCKERLESS_AWS_SIMULATOR_BINARY"); configuredBinary != "" {
+		var err error
+		binaryPath, err = filepath.Abs(configuredBinary)
+		if err != nil {
+			log.Fatalf("Failed to resolve SOCKERLESS_AWS_SIMULATOR_BINARY: %v", err)
+		}
+		if info, err := os.Stat(binaryPath); err != nil {
+			log.Fatalf("SOCKERLESS_AWS_SIMULATOR_BINARY is not readable: %v", err)
+		} else if info.IsDir() || info.Mode()&0111 == 0 {
+			log.Fatalf("SOCKERLESS_AWS_SIMULATOR_BINARY is not an executable file: %s", binaryPath)
+		}
+	} else {
+		binaryPath, _ = filepath.Abs("../simulator-aws")
+		simDir, _ := filepath.Abs("..")
+		build := exec.Command("go", "build", "-tags", "noui", "-o", binaryPath, ".")
+		build.Dir = simDir
+		build.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
+		if out, err := build.CombinedOutput(); err != nil {
+			log.Fatalf("Failed to build simulator: %v\n%s", err, out)
+		}
 	}
 
 	workloadPlatform := nativeDockerPlatform()

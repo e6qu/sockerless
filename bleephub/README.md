@@ -254,8 +254,10 @@ The S3 filesystem test suite drives this path through a real `simulator-aws` S3 
 
 Actions byte storage is selected separately from git storage:
 
-- default — in-memory bytes, or local files under `BLEEPHUB_DATA_DIR` for local development;
+- default — in-memory bytes while metadata persistence is disabled;
 - `BLEEPHUB_OBJECT_S3_BUCKET` (+ optional `BLEEPHUB_OBJECT_S3_ENDPOINT`, `BLEEPHUB_OBJECT_S3_PREFIX`) — Actions artifacts, dependency caches, and runner-uploaded log files in S3-compatible object storage. If `BLEEPHUB_OBJECT_S3_BUCKET` is set and the bucket cannot be reached with `HeadBucket`, startup fails loudly.
+
+Database persistence **requires** `BLEEPHUB_OBJECT_S3_BUCKET`: SQLite stores Bleephub metadata, while GitHub Actions artifact, dependency-cache, and runner-log bytes must live in object storage. Persisted startup fails loudly when this bucket is absent instead of storing byte content in memory or local files.
 
 The object-byte tests also drive a real `simulator-aws` S3 endpoint: artifact upload, cache upload, runner log upload, and public job-log download assert the expected S3 objects are written and read back, so these paths do not rely on fake S3 or memory-only assertions.
 
@@ -330,9 +332,10 @@ Flags:
 Env vars:
 - `BLEEPHUB_ADMIN_TOKEN=<token>` — **required.** The seeded admin token. There is no default (a default would be a guessable credential, and the historical `ghp_...` value tripped secret scanners); the binary fails loudly at startup if unset. Set a non-personal-access-token-shaped value.
 - `BLEEPHUB_PERSIST=true` — enable SQLite persistence (off by default; see [Persistence](#persistence)).
-- `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite database (`bleephub.db`) and artifact store (default `.`).
+- `BLEEPHUB_DATA_DIR=<dir>` — directory for the SQLite database (`bleephub.db`) and local non-persistent development metadata (default `.`).
 - `BLEEPHUB_GIT_DIR=<dir>` — store git repos on the local filesystem (default: in-memory).
 - `BLEEPHUB_S3_BUCKET` / `BLEEPHUB_S3_ENDPOINT` / `BLEEPHUB_S3_PREFIX` — store git repos in S3-compatible object storage (bucket set ⇒ S3 wins over `BLEEPHUB_GIT_DIR`).
+- `BLEEPHUB_OBJECT_S3_BUCKET` / `BLEEPHUB_OBJECT_S3_ENDPOINT` / `BLEEPHUB_OBJECT_S3_PREFIX` — store GitHub Actions artifacts, dependency caches, and runner logs in S3-compatible object storage; required when `BLEEPHUB_PERSIST=true`.
 - `BPH_TLS_CERT` + `BPH_TLS_KEY` — serve over TLS.
 - `BLEEPHUB_MAX_WORKFLOWS=N` — concurrency cap (default 10).
 - `OTEL_EXPORTER_OTLP_ENDPOINT` — when set, emits traces + metrics + logs via OTLP (off by default; preserves the components-decoupled invariant).

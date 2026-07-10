@@ -550,7 +550,10 @@ func TestGitDeleteCleanup(t *testing.T) {
 		t.Fatalf("expected git dir to exist: %v", err)
 	}
 
-	deleted := testServer.store.DeleteRepo("admin", "git-cleanup")
+	deleted, err := testServer.store.DeleteRepo("admin", "git-cleanup")
+	if err != nil {
+		t.Fatalf("DeleteRepo: %v", err)
+	}
 	if !deleted {
 		t.Fatal("expected repo to be deleted")
 	}

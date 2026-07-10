@@ -45,7 +45,9 @@ Options:
 
 Environment overrides:
   BLEEPHUB_API_PORT, BLEEPHUB_UI_PORT, BLEEPHUB_DATA_DIR,
-  BLEEPHUB_GIT_DIR, BLEEPHUB_ADMIN_TOKEN
+  BLEEPHUB_GIT_DIR, BLEEPHUB_ADMIN_TOKEN,
+  BLEEPHUB_OBJECT_S3_BUCKET, BLEEPHUB_OBJECT_S3_ENDPOINT,
+  BLEEPHUB_OBJECT_S3_PREFIX
 
 Examples:
   $0 start
@@ -66,6 +68,12 @@ check_deps() {
   command -v make >/dev/null 2>&1 || die 'make is required'
   command -v bun >/dev/null 2>&1 || die 'bun is required'
   command -v curl >/dev/null 2>&1 || die 'curl is required'
+}
+
+require_object_storage() {
+  if [ -z "${BLEEPHUB_OBJECT_S3_BUCKET:-}" ]; then
+    die "BLEEPHUB_OBJECT_S3_BUCKET is required because local-dev starts persisted Bleephub; point it at an S3-compatible bucket such as MinIO for Actions artifacts, dependency caches, and runner logs"
+  fi
 }
 
 ensure_dirs() {
@@ -136,6 +144,7 @@ wait_for_health() {
 
 start() {
   check_deps
+  require_object_storage
   ensure_dirs
 
   if [ "$TLS" -eq 1 ]; then
@@ -221,6 +230,10 @@ start() {
   printf 'Admin token: %s\n' "$ADMIN_TOKEN"
   printf 'Data dir:    %s\n' "$DATA_DIR"
   printf 'Git dir:     %s\n' "$GIT_DIR"
+  printf 'Object store bucket: %s\n' "$BLEEPHUB_OBJECT_S3_BUCKET"
+  if [ -n "${BLEEPHUB_OBJECT_S3_ENDPOINT:-}" ]; then
+    printf 'Object store endpoint: %s\n' "$BLEEPHUB_OBJECT_S3_ENDPOINT"
+  fi
   printf 'Server log:  %s\n' "$SERVER_LOG"
   if [ "$DEV" -eq 1 ]; then
     printf 'UI log:      %s\n' "$UI_LOG"

@@ -902,7 +902,9 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 						return nil, fmt.Errorf("could not resolve to a Repository with the global id of '%s'", repoID)
 					}
 
-					s.store.DeleteRepo(found.Owner.Login, found.Name)
+					if _, err := s.store.DeleteRepo(found.Owner.Login, found.Name); err != nil {
+						return nil, err
+					}
 
 					return map[string]interface{}{
 						"clientMutationId": nil,
