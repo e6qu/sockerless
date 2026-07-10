@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strconv"
@@ -106,14 +107,17 @@ func (st *Store) persistOrgPATGrantsLocked(orgLogin string) {
 // CreateOrgPATGrantRequest mints a real fine-grained token for the user and
 // files the pending grant request that references it.
 func (st *Store) CreateOrgPATGrantRequest(orgLogin string, ownerUserID int, tokenName string, reason *string, repositorySelection string, repositoryIDs []int, perms OrgPATPermissions, expiresAt *time.Time) (*OrgPATGrantRequest, error) {
+	return st.createOrgPATGrantRequestWithRandom(orgLogin, ownerUserID, tokenName, reason, repositorySelection, repositoryIDs, perms, expiresAt, rand.Reader)
+}
+
+func (st *Store) createOrgPATGrantRequestWithRandom(orgLogin string, ownerUserID int, tokenName string, reason *string, repositorySelection string, repositoryIDs []int, perms OrgPATPermissions, expiresAt *time.Time, random io.Reader) (*OrgPATGrantRequest, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
-	buf := make([]byte, 20)
-	if _, err := rand.Read(buf); err != nil {
+	value, err := newFineGrainedPATTokenFromReader(random)
+	if err != nil {
 		return nil, fmt.Errorf("generate fine-grained token: %w", err)
 	}
-	value := "github_pat_" + hex.EncodeToString(buf)
 	tok := &Token{Value: value, UserID: ownerUserID, Scopes: "", CreatedAt: time.Now().UTC()}
 	st.Tokens[value] = tok
 	if st.persist != nil {
@@ -142,6 +146,14 @@ func (st *Store) CreateOrgPATGrantRequest(orgLogin string, ownerUserID int, toke
 	st.OrgPATGrantRequests[orgLogin][req.ID] = req
 	st.persistOrgPATGrantRequestsLocked(orgLogin)
 	return req, nil
+}
+
+func newFineGrainedPATTokenFromReader(random io.Reader) (string, error) {
+	buf := make([]byte, 20)
+	if _, err := io.ReadFull(random, buf); err != nil {
+		return "", fmt.Errorf("fine-grained personal access token: %w", err)
+	}
+	return "github_pat_" + hex.EncodeToString(buf), nil
 }
 
 // ReviewOrgPATGrantRequest resolves a pending request: approve converts it

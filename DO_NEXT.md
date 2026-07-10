@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2453.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2454.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -17,6 +17,8 @@ GitHub Actions workflow runs and archived attempts now persist in SQLite. On rel
 Public GitHub App, OAuth, gist, security advisory, Classroom, OpenID Connect, hosted-compute, GitHub Actions runner-token, and Actions cache token/identifier generation now returned fail-loud GitHub API errors when secure randomness failed. Those paths no longer crashed the Bleephub process or left partially-created records behind a failed token/identifier generation.
 
 OAuth App token refresh and scoped-token endpoints now used the same error-returning user-to-server token path. Token reset minted the replacement before revoking the original token, so entropy or persistence failure returned a fail-loud GitHub API error without destroying the existing credential.
+
+Fine-grained personal access token generation now used the same full-read entropy pattern as the other public credential paths. The token helper was injectable for failure coverage, and entropy failure returned a normal error without creating a partial token or grant-request record.
 
 The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
 
@@ -95,6 +97,7 @@ The Bleephub UI test setup now installed localStorage without touching Node's wa
 - `bun run test src/__tests__/EnterprisePage.test.tsx src/__tests__/api.test.ts src/__tests__/OverviewPage.test.tsx` passed in `ui/packages/bleephub` after the enterprise UI began using the runtime enterprise slug and the localStorage warning was fixed.
 - `bun run typecheck` passed in `ui/packages/bleephub` after the enterprise API helpers became runtime-coordinate driven.
 - `make bleephub-gh-docker-test` passed with 117 passing checks and 0 failures after Docker compatibility returned and the runtime enterprise-coordinate fix landed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestCryptoRandomReadsAreChecked|TestEntropyHelpersReturnErrors|TestOrgPATGrantRequests' -count=1` passed after fine-grained personal access token generation moved onto a full-read entropy helper.
 
 ## Standing Gaps
 

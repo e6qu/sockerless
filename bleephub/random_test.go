@@ -56,4 +56,7 @@ func TestEntropyHelpersReturnErrors(t *testing.T) {
 	if _, err := newCacheDownloadTokenFromReader(strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "cache download token") {
 		t.Fatalf("newCacheDownloadTokenFromReader error = %v", err)
 	}
+	if _, err := newFineGrainedPATTokenFromReader(strings.NewReader("")); err == nil || !strings.Contains(err.Error(), "fine-grained personal access token") {
+		t.Fatalf("newFineGrainedPATTokenFromReader error = %v", err)
+	}
 }

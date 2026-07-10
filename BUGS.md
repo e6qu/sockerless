@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2453 filed - 2409 fixed - 3 open - 16 false positives.**
+**2454 filed - 2410 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2454~~ | P2 | Bleephub fine-grained personal access tokens | token generation bypassed the shared full-read entropy helper pattern | Fine-grained personal access token generation now uses an injectable full-read secure-random helper and has direct entropy-failure coverage. |
 | ~~2453~~ | P3 | Bleephub user interface test environment | test setup triggered Node's experimental localStorage warning | The Bleephub UI test setup now installs its jsdom localStorage implementation without first touching Node's warning-producing localStorage getter. |
 | ~~2452~~ | P2 | Bleephub enterprise user interface coordinates | user interface hardcoded the default enterprise slug | `/health` now reports the configured enterprise slug, and the Bleephub enterprise UI uses that runtime coordinate for enterprise REST routes instead of hardcoding `/api/v3/enterprises/bleephub/...`. |
 | ~~2451~~ | P2 | Bleephub GitHub command-line interface parity harness | official-client harness used operator-only organization provisioning | The Docker-backed `gh` command-line interface parity harness now provisions organizations through GitHub Enterprise Server's public admin organization API, and Go coverage rejects `/internal/orgs` in that harness. |
