@@ -451,6 +451,13 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 				},
 			}
 		})
+		st.UpdateCheckSuite(cr.SuiteID, func(s *CheckSuite) {
+			s.WorkflowRunID = 42
+			s.WorkflowRunBackendID = "workflow-backend-42"
+			s.WorkflowName = "ci"
+			s.WorkflowFileID = 99
+			s.WorkflowFilePath = ".github/workflows/ci.yml"
+		})
 	})
 
 	runs := st2.ListCheckRunsForCommit(repoKey, sha, "", "", 0)
@@ -463,6 +470,11 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 	suites := st2.ListCheckSuitesForCommit(repoKey, sha, 0)
 	if len(suites) != 1 || suites[0].ID != suiteID {
 		t.Fatalf("check suites for commit after reload = %d, want exactly suite %d (RepoKey lost?)", len(suites), suiteID)
+	}
+	if suites[0].WorkflowRunID != 42 || suites[0].WorkflowRunBackendID != "workflow-backend-42" ||
+		suites[0].WorkflowName != "ci" || suites[0].WorkflowFileID != 99 ||
+		suites[0].WorkflowFilePath != ".github/workflows/ci.yml" {
+		t.Fatalf("check suite workflow metadata did not round-trip: %+v", suites[0])
 	}
 }
 

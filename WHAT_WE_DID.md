@@ -78,7 +78,11 @@ Closed BUG-2444 by adding the missing AWS Budgets CloudTrail event-source mappin
 
 Closed BUG-2445 by exposing GraphQL `Release.immutable` from the same persisted immutable-release state used by the REST endpoints. Repository release connections, release-by-tag lookup, and latest-release lookup now derive the field from repository-level toggles plus organization all/selected enforcement instead of hiding the field to make official clients fall back.
 
-BUG-2446 stayed open because GraphQL status-check rollup connections still hid richer count fields and returned `CheckRun.checkSuite.workflowRun` as null; that needs a check-suite/workflow-run link in the store rather than another compatibility-shaped omission.
+Closed BUG-2446 by making GraphQL pull request status-rollup connections expose the official GitHub command-line interface count-by-state fields from the same commit-status and check-run stores that back the node list. Actions-created check suites now persist their workflow-run identifiers, workflow name, and workflow file metadata, so `CheckRun.checkSuite.workflowRun.workflow.name` resolves from real Actions state instead of returning null.
+
+Closed BUG-2448 by updating the GraphQL sweep test header to name GitHub command-line interface version 2.96 as the source for the replayed GraphQL shapes used by the current status-rollup coverage.
+
+BUG-2447 stayed open because GitHub Actions workflow runs themselves still lived only in process memory while related check suites, check runs, logs, artifacts, and workflow files persisted. Bleephub still needed durable SQLite-backed run history before the CI/CD provider surface could survive service restarts.
 
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
@@ -86,9 +90,11 @@ Validation in this branch included focused Bleephub Go tests for repository meta
 
 ```bash
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestReleases_AssetLifecycle|TestGenerateCodespaceNameRequiresRandomBytes|TestCodespacesUserMachines_RealCatalogValues' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPRGraphQL_ViewDefaultFields|TestPersistenceReload_CheckRunsAndSuites' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
-It passed with sandbox escalation for loopback listeners.
+They passed with sandbox escalation for loopback listeners.
 
 The full Bleephub Go pre-commit test command passed after Docker compatibility returned:
 

@@ -150,9 +150,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 	// and the merge path's lastCommit pseudo-field as commits(last:1){nodes
 	// {commit{oid}}}. CheckRun nodes are backed by the real checks store and
 	// StatusContext nodes are backed by the real REST commit-status store.
-	// StatusCheckRollupContextConnection deliberately does NOT declare
-	// checkRunCount/...CountsByState: gh introspects for them and falls back
-	// to the plain contexts query when absent.
 	statusContextType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "StatusContext",
 		Fields: graphql.Fields{
@@ -182,8 +179,6 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 				},
 			},
 			"detailsUrl": &graphql.Field{Type: graphql.String},
-			// Check suites aren't linked to workflow runs in bleephub's
-			// checks store, so workflowRun resolves to null.
 			"checkSuite": &graphql.Field{
 				Type: graphql.NewObject(graphql.ObjectConfig{
 					Name: "CheckSuiteRef",
@@ -203,13 +198,21 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 								},
 							}),
 							Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-								return nil, nil
+								suite, ok := p.Source.(map[string]interface{})
+								if !ok {
+									return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+								}
+								return suite["workflowRun"], nil
 							},
 						},
 					},
 				}),
 				Resolve: func(p graphql.ResolveParams) (interface{}, error) {
-					return map[string]interface{}{}, nil
+					cr, ok := p.Source.(map[string]interface{})
+					if !ok {
+						return nil, fmt.Errorf("resolve source: unexpected type %T", p.Source)
+					}
+					return cr["checkSuite"], nil
 				},
 			},
 		},
@@ -228,11 +231,25 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 		},
 	})
 
+	statusCheckStateCountType := func(name string) *graphql.Object {
+		return graphql.NewObject(graphql.ObjectConfig{
+			Name: name,
+			Fields: graphql.Fields{
+				"state": &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
+				"count": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			},
+		})
+	}
+
 	statusCheckRollupContextConnectionType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "StatusCheckRollupContextConnection",
 		Fields: graphql.Fields{
-			"nodes":      &graphql.Field{Type: graphql.NewList(statusCheckRollupContextUnion)},
-			"totalCount": &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"nodes":                      &graphql.Field{Type: graphql.NewList(statusCheckRollupContextUnion)},
+			"totalCount":                 &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"checkRunCount":              &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"checkRunCountsByState":      &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(statusCheckStateCountType("CheckRunStateCount"))))},
+			"statusContextCount":         &graphql.Field{Type: graphql.NewNonNull(graphql.Int)},
+			"statusContextCountsByState": &graphql.Field{Type: graphql.NewNonNull(graphql.NewList(graphql.NewNonNull(statusCheckStateCountType("StatusContextStateCount"))))},
 			"pageInfo": &graphql.Field{Type: graphql.NewNonNull(graphql.NewObject(graphql.ObjectConfig{
 				Name: "StatusCheckRollupContextPageInfo",
 				Fields: graphql.Fields{
@@ -2678,10 +2695,13 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 	allCompleted := true
 	anyFailed := false
 	nodes := make([]interface{}, 0, len(statuses)+len(runs))
+	statusContextCounts := map[string]int{}
 	for _, status := range statuses {
 		if status.State == "pending" {
 			allCompleted = false
 		}
+		statusState := strings.ToUpper(status.State)
+		statusContextCounts[statusState]++
 		switch status.State {
 		case "failure", "error":
 			anyFailed = true
@@ -2689,12 +2709,13 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 		nodes = append(nodes, map[string]interface{}{
 			"__typename":  "StatusContext",
 			"context":     status.Context,
-			"state":       strings.ToUpper(status.State),
+			"state":       statusState,
 			"targetUrl":   nilStr(status.TargetURL),
 			"createdAt":   status.CreatedAt.Format(time.RFC3339),
 			"description": nilStr(status.Description),
 		})
 	}
+	checkRunCounts := map[string]int{}
 	for _, cr := range runs {
 		var conclusion interface{}
 		if cr.Conclusion != "" {
@@ -2707,9 +2728,14 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 		if cr.Status != "completed" {
 			allCompleted = false
 		}
+		checkRunCounts[checkRunCountState(cr)]++
 		switch cr.Conclusion {
 		case "failure", "timed_out", "cancelled", "startup_failure":
 			anyFailed = true
+		}
+		var suiteSource interface{}
+		if suite := st.CheckSuites[cr.SuiteID]; suite != nil {
+			suiteSource = checkSuiteGraphQLSourceLocked(st, suite)
 		}
 		nodes = append(nodes, map[string]interface{}{
 			"__typename":  "CheckRun",
@@ -2719,6 +2745,7 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 			"startedAt":   cr.StartedAt.Format(time.RFC3339),
 			"completedAt": completedAt,
 			"detailsUrl":  nilStr(cr.DetailsURL),
+			"checkSuite":  suiteSource,
 		})
 	}
 
@@ -2733,10 +2760,88 @@ func statusCheckRollupSourceLocked(st *Store, repoKey, sha string) interface{} {
 	return map[string]interface{}{
 		"state": state,
 		"contexts": map[string]interface{}{
-			"nodes":      nodes,
-			"totalCount": len(nodes),
-			"pageInfo":   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
+			"nodes":                      nodes,
+			"totalCount":                 len(nodes),
+			"checkRunCount":              len(runs),
+			"checkRunCountsByState":      stateCountNodes(checkRunStatesForCounts(), checkRunCounts),
+			"statusContextCount":         len(statuses),
+			"statusContextCountsByState": stateCountNodes(statusContextStatesForCounts(), statusContextCounts),
+			"pageInfo":                   map[string]interface{}{"hasNextPage": false, "endCursor": nil},
 		},
+	}
+}
+
+func checkRunCountState(cr *CheckRun) string {
+	if cr == nil {
+		return "PENDING"
+	}
+	if cr.Status == "completed" && cr.Conclusion != "" {
+		return strings.ToUpper(cr.Conclusion)
+	}
+	if cr.Status != "" {
+		return strings.ToUpper(cr.Status)
+	}
+	return "PENDING"
+}
+
+func checkRunStatesForCounts() []string {
+	return []string{
+		"ACTION_REQUIRED",
+		"CANCELLED",
+		"COMPLETED",
+		"FAILURE",
+		"IN_PROGRESS",
+		"NEUTRAL",
+		"PENDING",
+		"QUEUED",
+		"SKIPPED",
+		"STALE",
+		"STARTUP_FAILURE",
+		"SUCCESS",
+		"TIMED_OUT",
+		"WAITING",
+	}
+}
+
+func statusContextStatesForCounts() []string {
+	return []string{"EXPECTED", "ERROR", "FAILURE", "PENDING", "SUCCESS"}
+}
+
+func stateCountNodes(states []string, counts map[string]int) []interface{} {
+	out := make([]interface{}, 0, len(states))
+	for _, state := range states {
+		out = append(out, map[string]interface{}{
+			"state": state,
+			"count": counts[state],
+		})
+	}
+	return out
+}
+
+func checkSuiteGraphQLSourceLocked(st *Store, suite *CheckSuite) map[string]interface{} {
+	if suite == nil {
+		return nil
+	}
+	workflowRun := checkSuiteWorkflowRunSourceLocked(st, suite)
+	return map[string]interface{}{"workflowRun": workflowRun}
+}
+
+func checkSuiteWorkflowRunSourceLocked(st *Store, suite *CheckSuite) map[string]interface{} {
+	if suite == nil || suite.WorkflowRunID == 0 {
+		return nil
+	}
+	workflowName := suite.WorkflowName
+	for _, wf := range st.Workflows {
+		if wf.RunID == suite.WorkflowRunID && wf.RepoFullName == suite.RepoKey {
+			workflowName = wf.Name
+			break
+		}
+	}
+	if workflowName == "" {
+		return nil
+	}
+	return map[string]interface{}{
+		"workflow": map[string]interface{}{"name": workflowName},
 	}
 }
 

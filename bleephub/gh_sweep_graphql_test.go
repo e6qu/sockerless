@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-// Tests in this file replay the EXACT GraphQL shapes gh CLI (v2.92) sends —
+// Tests in this file replay the EXACT GraphQL shapes gh CLI (v2.96) sends —
 // copied from the gh source (api/query_builder.go, api/queries_repo.go,
 // pkg/cmd/pr/shared/{lister,finder}.go, pkg/cmd/pr/status/http.go,
 // pkg/cmd/issue/list/http.go, pkg/cmd/release/list/http.go,
@@ -542,20 +542,44 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	}
 	revResp.Body.Close()
 
-	// Record a completed check run against the PR's head sha — the same
-	// derivation the REST surface reports — so statusCheckRollup is real.
+	// Record a completed GitHub Actions workflow job against the PR's head sha
+	// so the checks store and GraphQL statusCheckRollup are fed by the same
+	// Actions event path as real runs.
 	headSHA := pullRequestHeadSHA(testServer.store.GetPullRequest(prID), testServer.store)
 	if headSHA == "" {
 		t.Fatal("PR head sha did not resolve")
 	}
 	repoKey := owner + "/" + name
-	cr := testServer.store.CreateCheckRun(repoKey, headSHA, "build", 0, 0)
 	now := time.Now().UTC()
-	testServer.store.UpdateCheckRun(cr.ID, func(c *CheckRun) {
-		c.Status = "completed"
-		c.Conclusion = "success"
-		c.CompletedAt = &now
-	})
+	runID := testServer.store.ReserveRunID()
+	wf := &Workflow{
+		ID:           "gql-rollup-" + repoKey,
+		Name:         "ci",
+		RunID:        runID,
+		RunNumber:    runID,
+		Status:       WorkflowStatusCompleted,
+		Result:       ResultSuccess,
+		CreatedAt:    now,
+		EventName:    "pull_request",
+		Ref:          "refs/heads/main",
+		Sha:          headSHA,
+		RepoFullName: repoKey,
+		Jobs: map[string]*WorkflowJob{
+			"build": {
+				Key:         "build",
+				JobID:       "gql-rollup-job-" + repoKey,
+				DisplayName: "build",
+				Status:      JobStatusCompleted,
+				Result:      ResultSuccess,
+				StartedAt:   now,
+				CompletedAt: now,
+			},
+		},
+	}
+	testServer.store.mu.Lock()
+	testServer.store.Workflows[wf.ID] = wf
+	testServer.store.mu.Unlock()
+	testServer.onActionsRunRequested(wf)
 	statusResp := ghPost(t, "/api/v3/repos/"+owner+"/"+name+"/statuses/"+headSHA, defaultToken,
 		map[string]interface{}{
 			"state":       "failure",
@@ -586,7 +610,7 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 		comments(first: 100) {nodes {id,author{login,...on User{id,name}},authorAssociation,body,createdAt,includesCreatedEdit,isMinimized,minimizedReason,reactionGroups{content,users{totalCount}},url,viewerDidAuthor},pageInfo{hasNextPage,endCursor},totalCount},
 		reactionGroups{content,users{totalCount}},
 		createdAt,
-		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {state, contexts(first:100) {nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
+		statusCheckRollup: commits(last: 1) {nodes {commit {statusCheckRollup {state, contexts(first:100) {checkRunCount,checkRunCountsByState{state,count},statusContextCount,statusContextCountsByState{state,count},nodes {__typename ...on StatusContext {context,state,targetUrl,createdAt,description}, ...on CheckRun {name,checkSuite{workflowRun{workflow{name}}},status,conclusion,startedAt,completedAt,detailsUrl}},pageInfo{hasNextPage,endCursor}}}}}}
 	}
 	query PullRequestByNumber($owner: String!, $repo: String!, $pr_number: Int!) {
 		repository(owner: $owner, name: $repo) {
@@ -653,6 +677,16 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 	if len(ctxNodes) != 2 {
 		t.Fatalf("contexts.nodes = %v, want StatusContext + CheckRun", rollup["contexts"])
 	}
+	contexts := rollup["contexts"].(map[string]interface{})
+	if contexts["checkRunCount"] != float64(1) || contexts["statusContextCount"] != float64(1) {
+		t.Fatalf("rollup counts = checkRun %v statusContext %v, want 1/1", contexts["checkRunCount"], contexts["statusContextCount"])
+	}
+	if got := countForState(contexts["checkRunCountsByState"], "SUCCESS"); got != 1 {
+		t.Fatalf("checkRunCountsByState SUCCESS = %d, want 1: %v", got, contexts["checkRunCountsByState"])
+	}
+	if got := countForState(contexts["statusContextCountsByState"], "FAILURE"); got != 1 {
+		t.Fatalf("statusContextCountsByState FAILURE = %d, want 1: %v", got, contexts["statusContextCountsByState"])
+	}
 	statusNode := ctxNodes[0].(map[string]interface{})
 	if statusNode["__typename"] != "StatusContext" || statusNode["context"] != "ci/unit" ||
 		statusNode["state"] != "FAILURE" || statusNode["targetUrl"] != "https://ci.example.test/unit" ||
@@ -664,6 +698,28 @@ func TestPRGraphQL_ViewDefaultFields(t *testing.T) {
 		checkNode["status"] != "COMPLETED" || checkNode["conclusion"] != "SUCCESS" {
 		t.Errorf("check run node = %v, want CheckRun build COMPLETED SUCCESS", checkNode)
 	}
+	checkSuite, _ := checkNode["checkSuite"].(map[string]interface{})
+	workflowRun, _ := checkSuite["workflowRun"].(map[string]interface{})
+	workflow, _ := workflowRun["workflow"].(map[string]interface{})
+	if workflow == nil || workflow["name"] != "ci" {
+		t.Fatalf("checkSuite.workflowRun.workflow = %v, want ci", workflow)
+	}
+}
+
+func countForState(raw interface{}, state string) int {
+	nodes, _ := raw.([]interface{})
+	for _, node := range nodes {
+		m, _ := node.(map[string]interface{})
+		if m["state"] == state {
+			switch count := m["count"].(type) {
+			case float64:
+				return int(count)
+			case int:
+				return count
+			}
+		}
+	}
+	return 0
 }
 
 // --- Finding 4: gh pr merge's finder fields + the merge mutation shape ---
