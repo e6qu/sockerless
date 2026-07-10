@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2442 filed - 2398 fixed - 3 open - 16 false positives.**
+**2444 filed - 2400 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2444~~ | P2 | AWS simulator CloudTrail | missing service event source mapping | AWS Budgets management API calls now map to CloudTrail's `budgets.amazonaws.com` event source, so simulator management events record a faithful service source instead of emitting fail-loud warnings. |
+| ~~2443~~ | P1 | AWS simulator Amazon Simple Queue Service | long polling ignored wait time | Amazon SQS `ReceiveMessage` now honors `WaitTimeSeconds` and rejects values outside the real 0-20 second range, preventing empty-queue tight polling and CI log floods. |
 | ~~2442~~ | P2 | Bleephub end-to-end UI coverage | stale internal metrics expectations | Playwright end-to-end coverage now expects the public GitHub Actions metrics labels and injects Operations-console failures through `/api/v3/user/repos`, matching the public REST aggregate path. |
 | ~~2440~~ | P3 | Bleephub user interface build | unsplit production JavaScript bundle | The Bleephub production build now lazy-loads route pages and splits vendor dependency groups, eliminating the large JavaScript chunk warning without raising Vite's warning threshold. |
 | ~~2439~~ | P3 | Bleephub user interface utilities | stale runtime helper after public Actions metrics move | The dead `formatUptime` helper was removed after process uptime left the user-facing Bleephub pages. |

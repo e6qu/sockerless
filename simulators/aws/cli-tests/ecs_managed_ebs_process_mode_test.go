@@ -22,7 +22,7 @@ func startProcessModeSim(t *testing.T) string {
 	_ = ln.Close()
 
 	cmd := exec.Command(binaryPath)
-	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port), "SIM_RUNTIME=process")
+	cmd.Env = append(os.Environ(), fmt.Sprintf("SIM_LISTEN_ADDR=:%d", port), "SIM_RUNTIME=process", "SIM_LOG_LEVEL=warn")
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {

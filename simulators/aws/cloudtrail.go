@@ -1118,6 +1118,7 @@ var awsEventSourceByTargetPrefix = []struct{ prefix, source string }{
 	{"AmazonEC2ContainerRegistry", "ecr.amazonaws.com"},
 	{"AmazonSQS", "sqs.amazonaws.com"},
 	{"AmazonSSM", "ssm.amazonaws.com"},
+	{"AWSBudgetServiceGateway", "budgets.amazonaws.com"},
 	{"AWSOrganizationsV", "organizations.amazonaws.com"},
 	{"AnyScaleFrontendService", "application-autoscaling.amazonaws.com"},
 	{"AWSEvents", "events.amazonaws.com"},

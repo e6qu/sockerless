@@ -798,6 +798,7 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		QueueUrl              string   `json:"QueueUrl"`
 		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
 		VisibilityTimeout     *int     `json:"VisibilityTimeout"`
+		WaitTimeSeconds       *int     `json:"WaitTimeSeconds"`
 		MessageAttributeNames []string `json:"MessageAttributeNames"`
 	}
 	if err := sim.ReadJSON(r, &req); err != nil {
@@ -823,7 +824,65 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 	if req.VisibilityTimeout != nil {
 		visTimeout = *req.VisibilityTimeout
 	}
+	waitSeconds := 0
+	if v, ok := q.Attributes["ReceiveMessageWaitTimeSeconds"]; ok {
+		n, err := strconv.Atoi(v)
+		if err != nil {
+			sqsErrorJSON(w, "InvalidParameterValue", "ReceiveMessageWaitTimeSeconds must be an integer.", http.StatusBadRequest)
+			return
+		}
+		waitSeconds = n
+	}
+	if req.WaitTimeSeconds != nil {
+		waitSeconds = *req.WaitTimeSeconds
+	}
+	if waitSeconds < 0 || waitSeconds > 20 {
+		sqsErrorJSON(w, "InvalidParameterValue",
+			fmt.Sprintf("Value %d for parameter WaitTimeSeconds is invalid. Reason: must be between 0 and 20.", waitSeconds),
+			http.StatusBadRequest)
+		return
+	}
 
+	picked := sqsReceiveAvailableMessages(name, maxN, visTimeout)
+	deadline := time.Now().Add(time.Duration(waitSeconds) * time.Second)
+	for len(picked) == 0 && time.Now().Before(deadline) {
+		timer := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-r.Context().Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+		picked = sqsReceiveAvailableMessages(name, maxN, visTimeout)
+	}
+
+	out := make([]map[string]any, 0, len(picked))
+	for _, m := range picked {
+		msg := map[string]any{
+			"MessageId":     m.MessageId,
+			"ReceiptHandle": m.ReceiptHandle,
+			"MD5OfBody":     m.MD5OfBody,
+			"Body":          m.Body,
+			"Attributes": map[string]string{
+				"ApproximateReceiveCount":          strconv.Itoa(m.ApproximateReceiveCount),
+				"SentTimestamp":                    strconv.FormatInt(m.SentTimestamp, 10),
+				"ApproximateFirstReceiveTimestamp": strconv.FormatInt(m.FirstReceivedAt, 10),
+			},
+		}
+		if subset := sqsSelectMessageAttributeSubset(m.MessageAttributes, req.MessageAttributeNames); subset != nil {
+			msg["MessageAttributes"] = sqsRenderMessageAttributes(subset)
+			// The MD5 must cover exactly the returned subset: aws-sdk-go-v2's
+			// ValidateMessageChecksums recomputes MD5OfMessageAttributes over the
+			// received attributes and rejects the message on mismatch, so a
+			// partial selection cannot reuse the stored full-set digest.
+			msg["MD5OfMessageAttributes"] = sqsMessageAttributeMD5(subset)
+		}
+		out = append(out, msg)
+	}
+	sim.WriteJSON(w, http.StatusOK, map[string]any{"Messages": out})
+}
+
+func sqsReceiveAvailableMessages(name string, maxN int, visTimeout int) []SQSMessage {
 	now := time.Now().Unix()
 	var picked []SQSMessage
 	var redrived []SQSMessage
@@ -862,31 +921,7 @@ func handleSQSReceiveMessage(w http.ResponseWriter, r *http.Request) {
 		cwEvalLogger.Debug().Str("queueName", name).Int("totalMessages", originalCount).Int("visibleMessages", visibleCount).Int("picked", len(picked)).Int("redrived", len(redrived)).Int("visibilityTimeout", visTimeout).Msg("SQS ReceiveMessage scanned queue")
 	})
 	sqsEnqueueRedrives(dlqARN, redrived)
-
-	out := make([]map[string]any, 0, len(picked))
-	for _, m := range picked {
-		msg := map[string]any{
-			"MessageId":     m.MessageId,
-			"ReceiptHandle": m.ReceiptHandle,
-			"MD5OfBody":     m.MD5OfBody,
-			"Body":          m.Body,
-			"Attributes": map[string]string{
-				"ApproximateReceiveCount":          strconv.Itoa(m.ApproximateReceiveCount),
-				"SentTimestamp":                    strconv.FormatInt(m.SentTimestamp, 10),
-				"ApproximateFirstReceiveTimestamp": strconv.FormatInt(m.FirstReceivedAt, 10),
-			},
-		}
-		if subset := sqsSelectMessageAttributeSubset(m.MessageAttributes, req.MessageAttributeNames); subset != nil {
-			msg["MessageAttributes"] = sqsRenderMessageAttributes(subset)
-			// The MD5 must cover exactly the returned subset: aws-sdk-go-v2's
-			// ValidateMessageChecksums recomputes MD5OfMessageAttributes over the
-			// received attributes and rejects the message on mismatch, so a
-			// partial selection cannot reuse the stored full-set digest.
-			msg["MD5OfMessageAttributes"] = sqsMessageAttributeMD5(subset)
-		}
-		out = append(out, msg)
-	}
-	sim.WriteJSON(w, http.StatusOK, map[string]any{"Messages": out})
+	return picked
 }
 
 func handleSQSDeleteMessage(w http.ResponseWriter, r *http.Request) {

@@ -211,6 +211,47 @@ func TestSQS_ReceiveMessageRejectsInvalidMaxNumberOfMessages(t *testing.T) {
 	assert.Contains(t, apiErr.ErrorMessage(), "must be between 1 and 10")
 }
 
+func TestSQS_ReceiveMessageHonorsLongPollingWaitTime(t *testing.T) {
+	client := sqsClient()
+	out, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("long-poll-q")})
+	require.NoError(t, err)
+	queueURL := aws.ToString(out.QueueUrl)
+	t.Cleanup(func() {
+		_, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(queueURL)})
+	})
+
+	start := time.Now()
+	recv, err := client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:        aws.String(queueURL),
+		WaitTimeSeconds: 1,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, recv.Messages)
+	elapsed := time.Since(start)
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
+	assert.Less(t, elapsed, 3*time.Second)
+}
+
+func TestSQS_ReceiveMessageRejectsInvalidWaitTimeSeconds(t *testing.T) {
+	client := sqsClient()
+	out, err := client.CreateQueue(ctx, &sqs.CreateQueueInput{QueueName: aws.String("wait-invalid-q")})
+	require.NoError(t, err)
+	queueURL := aws.ToString(out.QueueUrl)
+	t.Cleanup(func() {
+		_, _ = client.DeleteQueue(ctx, &sqs.DeleteQueueInput{QueueUrl: aws.String(queueURL)})
+	})
+
+	_, err = client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:        aws.String(queueURL),
+		WaitTimeSeconds: 21,
+	})
+	require.Error(t, err)
+	var apiErr smithy.APIError
+	require.True(t, errors.As(err, &apiErr), "expected AWS API error, got %T: %v", err, err)
+	assert.Equal(t, "InvalidParameterValue", apiErr.ErrorCode())
+	assert.Contains(t, apiErr.ErrorMessage(), "must be between 0 and 20")
+}
+
 // TestSQS_VisibilityTimeoutExpiry asserts a message returns to
 // visible state after the per-receive timeout elapses.
 func TestSQS_VisibilityTimeoutExpiry(t *testing.T) {
