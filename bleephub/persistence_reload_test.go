@@ -281,6 +281,7 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if st.CreateComment(parent.ID, admin.ID, "stale issue comment") == nil {
 			t.Fatal("CreateComment returned nil")
 		}
+		st.SetIssueFieldValues(parent.ID, map[int]interface{}{1: "High"})
 		if err := st.AddSubIssue(parent.ID, child.ID, false); err != nil {
 			t.Fatalf("AddSubIssue: %v", err)
 		}
@@ -418,6 +419,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	}
 	if got := st2.ListIssueBlockedBy(oldIssueID); len(got) != 0 {
 		t.Fatalf("issue dependencies survived deleted repo reload: %v", got)
+	}
+	if values := st2.IssueFieldValues[oldIssueID]; len(values) != 0 {
+		t.Fatalf("issue field values survived deleted repo reload: %#v", values)
 	}
 	if len(st2.PRReviews) != 0 || len(st2.PRReviewsByPR) != 0 {
 		t.Fatalf("pull request reviews survived deleted repo reload: reviews=%#v byPR=%#v", st2.PRReviews, st2.PRReviewsByPR)
@@ -1152,11 +1156,13 @@ func TestPersistenceReload_PagesBuildIDSequence(t *testing.T) {
 func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	const repoName = "doomed"
 	const repoKey = "admin/" + repoName
+	const controllerKey = "admin/variant-controller"
 	var oldRepoID int
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, repoName, "", false)
+		controller := st.CreateRepo(user, "variant-controller", "", false)
 		oldRepoID = repo.ID
 		now := time.Now().UTC()
 
@@ -1199,7 +1205,9 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		p.MustPut("agents_repo_secrets", repoKey, st.AgentsRepoSecrets[repoKey])
 		st.AgentsRepoVariables[repoKey] = map[string]*ActionsVariable{"AGENT_VAR": {Name: "AGENT_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("agents_repo_variables", repoKey, st.AgentsRepoVariables[repoKey])
+		st.CreateAgentTask(repo, user, "fix stale repository state", "claude-sonnet-4.6", false, "", "")
 		st.UpsertCodeQLDatabase(repoKey, "go", "db.zip", "application/zip", "reload-sha", []byte("db"), user.ID)
+		st.CreateCodeQLVariantAnalysis(controller.FullName, user.ID, "go", "pack", []string{repoKey})
 		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
 			t.Fatal("CreatePackage did not create")
 		}
@@ -1264,6 +1272,23 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	}
 	if len(st2.PagesDeployments[oldRepoID]) != 0 {
 		t.Error("Pages deployments survived repo deletion")
+	}
+	for _, task := range st2.AgentTasks {
+		if task.RepoID == oldRepoID {
+			t.Fatalf("agent task survived repo deletion: %#v", task)
+		}
+	}
+	if va := st2.GetCodeQLVariantAnalysis(controllerKey, 1); va == nil {
+		t.Fatal("surviving CodeQL variant analysis controller was deleted")
+	} else {
+		for _, task := range va.ScannedRepositories {
+			if task.RepoID == oldRepoID || task.FullName == repoKey {
+				t.Fatalf("CodeQL variant analysis target survived repo deletion: %#v", va.ScannedRepositories)
+			}
+		}
+		if slices.Contains(va.NoCodeQLDBRepos, oldRepoID) {
+			t.Fatalf("CodeQL variant analysis missing-database target survived repo deletion: %#v", va.NoCodeQLDBRepos)
+		}
 	}
 	if st2.GetRepoImport(oldRepoID) != nil {
 		t.Error("repository import survived repo deletion")

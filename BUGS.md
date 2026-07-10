@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2463 filed - 2419 fixed - 3 open - 16 false positives.**
+**2464 filed - 2420 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2464~~ | P1 | Bleephub repository deletion | deleted repository IDs and issue IDs remained in durable task, field-value, and CodeQL target state | Repository deletion now purges Copilot coding agent tasks, issue field values, and CodeQL variant-analysis target rows for the deleted repository or its issues. |
 | ~~2463~~ | P1 | Bleephub repository deletion | deleted repository IDs remained in import and dependency-graph state | Repository deletion now purges source import records, dependency snapshots, SBOM exports, and enterprise Dependabot repository-access IDs for the deleted repository. |
 | ~~2462~~ | P1 | Bleephub artifact metadata | repository rename/delete left stale artifact metadata repository references | Repository rename and transfer now move organization artifact storage/deployment metadata `github_repository` references, and repository deletion purges metadata rows for the deleted repository. |
 | ~~2461~~ | P1 | Bleephub team repository access | repository rename/delete left stale team repository grants | Repository rename and transfer now move team repository access lists and permission overrides, and repository deletion removes team grants for the deleted repository. |

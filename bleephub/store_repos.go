@@ -749,6 +749,14 @@ func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
 			}
 		}
 	}
+	for id, task := range st.AgentTasks {
+		if task.RepoID == repoID {
+			delete(st.AgentTasks, id)
+			if st.persist != nil {
+				st.persist.MustDelete("agent_tasks", id)
+			}
+		}
+	}
 	if st.EnterpriseSettings != nil {
 		if kept, changed := removeRepoIDFromList(st.EnterpriseSettings.DependabotAccessibleRepoIDs, repoID); changed {
 			st.EnterpriseSettings.DependabotAccessibleRepoIDs = kept
@@ -931,6 +939,36 @@ func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
 			}
 		}
 	}
+	for id, va := range st.CodeQLVariantAnalyses {
+		if va.ControllerRepoKey != "" {
+			if repo := st.ReposByName[va.ControllerRepoKey]; repo != nil && repo.ID == repoID {
+				delete(st.CodeQLVariantAnalyses, id)
+				if st.persist != nil {
+					st.persist.MustDelete("codeql_variant_analyses", strconv.Itoa(id))
+				}
+				continue
+			}
+		}
+		changed := false
+		scanned := va.ScannedRepositories[:0]
+		for _, task := range va.ScannedRepositories {
+			if task.RepoID == repoID {
+				changed = true
+				continue
+			}
+			scanned = append(scanned, task)
+		}
+		if changed {
+			va.ScannedRepositories = scanned
+		}
+		if kept, ok := removeRepoIDFromList(va.NoCodeQLDBRepos, repoID); ok {
+			va.NoCodeQLDBRepos = kept
+			changed = true
+		}
+		if changed && st.persist != nil {
+			st.persist.MustPut("codeql_variant_analyses", strconv.Itoa(id), va)
+		}
+	}
 }
 
 func (st *Store) deleteRepoFullNameReferencesLocked(fullName string) {
@@ -1011,6 +1049,12 @@ func removeRepoIDFromActionsVariables(vars map[string]*ActionsVariable, repoID i
 func (st *Store) deleteRepoIssueAndPullChildrenLocked(repoID int, issueIDs, prIDs map[int]bool) {
 	if len(issueIDs) == 0 && len(prIDs) == 0 {
 		return
+	}
+	for issueID := range issueIDs {
+		delete(st.IssueFieldValues, issueID)
+		if st.persist != nil {
+			st.persist.MustDelete("issue_field_values", strconv.Itoa(issueID))
+		}
 	}
 	for id, c := range st.Comments {
 		if (c.ParentType == "issue" && issueIDs[c.IssueID]) || (c.ParentType == "pull_request" && prIDs[c.IssueID]) {
