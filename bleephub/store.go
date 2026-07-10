@@ -887,27 +887,8 @@ func (st *Store) SetPersistence(p *Persistence) error {
 
 // loadFromPersistence repopulates the in-memory maps from disk.
 //
-// Loads buckets:
-//
-//	users, tokens, apps, oauth_apps, installations, installation_tokens,
-//	user_to_server_tokens, refresh_tokens, repos, orgs, teams, memberships,
-//	labels, milestones, issues, comments, pull_requests, pr_reviews,
-//	hooks, org_hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
-//	check_suites, check_runs, check_suite_prefs, workflow_files,
-//	workflows, workflow_attempts,
-//	releases, release_assets, deployments, deployment_statuses, environments,
-//	pr_review_comments, reactions, projects_v2, project_v2_items,
-//	project_v2_fields, misc, user_keys, gpg_keys, pages_sites,
-//	pages_builds, branch_protection, audit_log, marketplace_plans,
-//	notifications_state, repo_rulesets, projects_classic, project_columns,
-//	project_cards, secret_scanning_alerts, code_scanning_alerts,
-//	code_scanning_analyses, code_scanning_default_setups, sarif_uploads,
-//	dependabot_alerts,
-//	dependabot_secrets, dependabot_org_secrets, dependabot_user_secrets,
-//	dependabot_repository_access, security_advisories, security_advisory_reports,
-//	user_migrations, org_migrations, discussions, discussion_categories,
-//	discussion_comments, packages, package_versions, package_files,
-//	codespaces, codespace_secrets.
+// The loadBucket registrations below are the authoritative durable-state
+// inventory.
 //
 // Other state (sessions, agents, ephemeral codes) deliberately stays
 // in-memory only.

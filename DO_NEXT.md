@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2455.
+`feat/bleephub-actions-runtime-fidelity` continued the Bleephub GitHub-fidelity work after #782. It fixed BUG-2391 through BUG-2456.
 
 The branch converted a broad set of Bleephub surfaces from shape-only or internal shortcuts to real GitHub Enterprise Server-compatible behavior: repository metadata/permissions, pull request status rollups, commit status payloads, release asset uploads, GitHub Pages deployments, Codespaces lifecycle failures, OAuth device approval and UI flows, OAuth client validation, browser session authentication, credential entropy, code-quality setup state, Actions repository/ref/SHA context, Actions artifact/run/job scoping, notification identity/URLs, runner inventory routing, user/organization/team/audit-log UI management, and repository webhook/run-control fixtures.
 
@@ -21,6 +21,8 @@ OAuth App token refresh and scoped-token endpoints now used the same error-retur
 Fine-grained personal access token generation now used the same full-read entropy pattern as the other public credential paths. The token helper was injectable for failure coverage, and entropy failure returned a normal error without creating a partial token or grant-request record.
 
 Bleephub gists now persisted across SQLite-backed service reloads. Gists, gist comments, star state, fork links, revision history, comment counters, and sequence counters reload as real service state instead of existing only in memory.
+
+The Bleephub persistence loader comment now avoids a hand-maintained bucket inventory and points to the actual `loadBucket` registrations as the authoritative list.
 
 The Docker-backed `gh` command-line interface parity harness now provisioned organizations through GitHub Enterprise Server's public admin organization API instead of `/internal/orgs`, and Go coverage rejects that operator-only route in the official-client harness.
 

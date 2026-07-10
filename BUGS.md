@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2455 filed - 2411 fixed - 3 open - 16 false positives.**
+**2456 filed - 2412 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2456~~ | P3 | Bleephub persistence docs | hand-maintained bucket inventory drifted from code | The persistence loader comment now points to the actual `loadBucket` registrations instead of duplicating a stale bucket list. |
 | ~~2455~~ | P1 | Bleephub gists | gist state lived only in memory | Gists, comments, stars, forks, histories, and counters now persist and reload from SQLite-backed service state. |
 | ~~2454~~ | P2 | Bleephub fine-grained personal access tokens | token generation bypassed the shared full-read entropy helper pattern | Fine-grained personal access token generation now uses an injectable full-read secure-random helper and has direct entropy-failure coverage. |
 | ~~2453~~ | P3 | Bleephub user interface test environment | test setup triggered Node's experimental localStorage warning | The Bleephub UI test setup now installs its jsdom localStorage implementation without first touching Node's warning-producing localStorage getter. |
