@@ -844,10 +844,13 @@ func TestRepoGraphQL_ReleasesConnection(t *testing.T) {
 		}
 	}
 
-	// Verbatim shurcooL rendering of gh release list's query (the
-	// pre-immutable-releases variant gh falls back to after introspecting
-	// Release — bleephub deliberately omits `immutable`).
-	query := `query RepositoryReleaseList($direction:OrderDirection!$endCursor:String$name:String!$owner:String!$perPage:Int!){repository(owner: $owner, name: $name){releases(first: $perPage, orderBy: {field: CREATED_AT, direction: $direction}, after: $endCursor){nodes{name,tagName,isDraft,isLatest,isPrerelease,createdAt,publishedAt},pageInfo{hasNextPage,endCursor}}}}`
+	resp := ghPut(t, "/api/v3/repos/"+owner+"/"+name+"/immutable-releases", defaultToken, nil)
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("enable immutable releases: %d", resp.StatusCode)
+	}
+
+	query := `query RepositoryReleaseList($direction:OrderDirection!$endCursor:String$name:String!$owner:String!$perPage:Int!){repository(owner: $owner, name: $name){releases(first: $perPage, orderBy: {field: CREATED_AT, direction: $direction}, after: $endCursor){nodes{name,tagName,isDraft,immutable,isLatest,isPrerelease,createdAt,publishedAt},pageInfo{hasNextPage,endCursor}}}}`
 	d := gqlData(t, query, map[string]interface{}{
 		"owner":     owner,
 		"name":      name,
@@ -874,18 +877,24 @@ func TestRepoGraphQL_ReleasesConnection(t *testing.T) {
 	if v, _ := byTag["v1.1.0-rc1"]["isPrerelease"].(bool); !v {
 		t.Errorf("v1.1.0-rc1 isPrerelease = %v, want true", byTag["v1.1.0-rc1"]["isPrerelease"])
 	}
+	if v, _ := byTag["v1.0.0"]["immutable"].(bool); !v {
+		t.Errorf("v1.0.0 immutable = %v, want true from repo immutable-release state", byTag["v1.0.0"]["immutable"])
+	}
 	if byTag["v2.0.0"]["publishedAt"] != nil {
 		t.Errorf("draft publishedAt = %v, want null", byTag["v2.0.0"]["publishedAt"])
 	}
 
-	// Release must NOT declare `immutable` — gh introspects for it and only
-	// then sends the immutable-aware query, which bleephub cannot honour.
 	intro := gqlData(t, `query Release_fields{Release: __type(name: "Release"){fields{name}}}`, nil)
 	fields, _ := intro["Release"].(map[string]interface{})["fields"].([]interface{})
+	foundImmutable := false
 	for _, f := range fields {
 		if f.(map[string]interface{})["name"] == "immutable" {
-			t.Fatalf("Release declares `immutable` — gh would send the immutable-releases query")
+			foundImmutable = true
+			break
 		}
+	}
+	if !foundImmutable {
+		t.Fatalf("Release must declare immutable so official clients can use the immutable-aware query")
 	}
 }
 

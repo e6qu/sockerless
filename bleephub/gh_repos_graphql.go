@@ -506,9 +506,8 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 	// typed OrderDirection — the enum above must keep that exact name.
 	// `gh release view/download/delete` additionally resolve draft releases
 	// via release(tagName:){databaseId,isDraft}. Both are backed by the real
-	// release store. Release deliberately does NOT declare `immutable`: gh
-	// introspects Release's fields and cleanly falls back to the
-	// pre-immutable-releases query when the field is absent.
+	// release store. The immutable field is derived from the repository and
+	// organization immutable-release settings that the REST surface persists.
 	releaseType := graphql.NewObject(graphql.ObjectConfig{
 		Name: "Release",
 		Fields: graphql.Fields{
@@ -526,6 +525,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			"name":         &graphql.Field{Type: graphql.String},
 			"tagName":      &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
 			"isDraft":      &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
+			"immutable":    &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 			"isLatest":     &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 			"isPrerelease": &graphql.Field{Type: graphql.NewNonNull(graphql.Boolean)},
 			"createdAt":    &graphql.Field{Type: graphql.NewNonNull(graphql.String)},
@@ -611,6 +611,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if latest := s.store.Releases.Latest(repoID); latest != nil {
 				latestID = latest.ID
 			}
+			immutable := s.repoImmutableReleasesEnabled(repoID)
 
 			first := 30
 			if f, ok := p.Args["first"].(int); ok && f > 0 {
@@ -619,7 +620,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			after, _ := p.Args["after"].(string)
 
 			return paginateGQL(releases, first, after, func(rel *Release) map[string]interface{} {
-				return releaseToGQL(rel, latestID, repoFullName)
+				return releaseToGQL(rel, latestID, repoFullName, immutable)
 			}), nil
 		},
 	})
@@ -649,7 +650,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if latest := s.store.Releases.Latest(repoID); latest != nil {
 				latestID = latest.ID
 			}
-			return releaseToGQL(rel, latestID, repoFullName), nil
+			return releaseToGQL(rel, latestID, repoFullName, s.repoImmutableReleasesEnabled(repoID)), nil
 		},
 	})
 
@@ -667,7 +668,7 @@ func (s *Server) addRepoFieldsToSchema(userType, queryType *graphql.Object) (*gr
 			if latest == nil {
 				return nil, nil
 			}
-			return releaseToGQL(latest, latest.ID, repoFullName), nil
+			return releaseToGQL(latest, latest.ID, repoFullName, s.repoImmutableReleasesEnabled(repoID)), nil
 		},
 	})
 
@@ -1063,7 +1064,7 @@ func repoOwnerREST(repo *Repo, st *Store, baseURL string) map[string]interface{}
 // releaseToGQL renders a stored Release as the GraphQL source map for the
 // Release type. latestID is the id of the repo's latest published release
 // (0 when none) so isLatest reflects the same derivation REST uses.
-func releaseToGQL(rel *Release, latestID int, repoFullName string) map[string]interface{} {
+func releaseToGQL(rel *Release, latestID int, repoFullName string, immutable bool) map[string]interface{} {
 	var publishedAt interface{}
 	if rel.PublishedAt != nil {
 		publishedAt = rel.PublishedAt.Format(time.RFC3339)
@@ -1078,6 +1079,7 @@ func releaseToGQL(rel *Release, latestID int, repoFullName string) map[string]in
 		"name":         name,
 		"tagName":      rel.TagName,
 		"isDraft":      rel.Draft,
+		"immutable":    immutable,
 		"isLatest":     latestID != 0 && rel.ID == latestID,
 		"isPrerelease": rel.Prerelease,
 		"createdAt":    rel.CreatedAt.Format(time.RFC3339),
@@ -1085,6 +1087,15 @@ func releaseToGQL(rel *Release, latestID int, repoFullName string) map[string]in
 		"url":          "/" + repoFullName + "/releases/tag/" + rel.TagName,
 		"description":  nilStr(rel.Body),
 	}
+}
+
+func (s *Server) repoImmutableReleasesEnabled(repoID int) bool {
+	repo := s.store.GetRepoByID(repoID)
+	if repo == nil {
+		return false
+	}
+	enabled, _ := s.store.RepoImmutableReleasesState(repo)
+	return enabled
 }
 
 // repoHasNoCommits reports whether the repo's git storage lacks a resolvable

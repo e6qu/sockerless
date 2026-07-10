@@ -76,6 +76,10 @@ Closed BUG-2443 by making the AWS simulator's Amazon Simple Queue Service `Recei
 
 Closed BUG-2444 by adding the missing AWS Budgets CloudTrail event-source mapping. AWS Budgets management calls now record the real `budgets.amazonaws.com` event source instead of emitting fail-loud "no eventSource mapping" warnings, and the mapping unit coverage pins the service prefix.
 
+Closed BUG-2445 by exposing GraphQL `Release.immutable` from the same persisted immutable-release state used by the REST endpoints. Repository release connections, release-by-tag lookup, and latest-release lookup now derive the field from repository-level toggles plus organization all/selected enforcement instead of hiding the field to make official clients fall back.
+
+BUG-2446 stayed open because GraphQL status-check rollup connections still hid richer count fields and returned `CheckRun.checkSuite.workflowRun` as null; that needs a check-suite/workflow-run link in the store rather than another compatibility-shaped omission.
+
 BUG-2441 stayed open because the current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. The gate passed and dependency freshness showed no newer `knip` version.
 
 Validation in this branch included focused Bleephub Go tests for repository metadata, pull request status rollups, commit statuses, release asset upload, Codespaces name/catalog behavior, OAuth device flow, code-quality setup, Actions secrets/variables, workflow dispatch/internal submission, repository webhook test delivery, and run-control fixtures. The latest combined focused command was:
@@ -140,6 +144,18 @@ The focused AWS simulator software development kit rerun for AWS Budgets, proces
 
 ```bash
 GOWORK=off CGO_ENABLED=0 go test -v -count=1 -timeout 180s -run 'TestBudgetsCRUDSDK|TestECS_ManagedEBSRunTaskProcessMode|TestCloudWatch_AlarmSNSActionToSQS_ProcessMode|TestSQS_ReceiveMessageHonorsLongPollingWaitTime' .
+```
+
+The GraphQL release immutable-state validation passed:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestRepoGraphQL_ReleasesConnection|TestImmutableReleases_OrgSettingsAndRepoEnforcement|TestImmutableReleases_SelectedRepositories' -count=1
+```
+
+The full Bleephub Go package test also passed after the GraphQL release schema change:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 ```
 
 The workflow-dispatch `ref` input validation passed:

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2444 filed - 2400 fixed - 3 open - 16 false positives.**
+**2446 filed - 2401 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,6 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| 2446 | P2 | Bleephub GraphQL pull request status rollups | compatibility-shaped omitted fields and null workflow links | GraphQL status-check rollup connections still hid richer count fields and returned `CheckRun.checkSuite.workflowRun` as null because check suites were not linked to workflow runs. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
@@ -18,6 +19,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2445~~ | P2 | Bleephub GraphQL releases | intentionally hidden immutable field | GraphQL `Release.immutable` now derives from the same persisted repository and organization immutable-release settings as REST, so official clients no longer have to fall back around a hidden field. |
 | ~~2444~~ | P2 | AWS simulator CloudTrail | missing service event source mapping | AWS Budgets management API calls now map to CloudTrail's `budgets.amazonaws.com` event source, so simulator management events record a faithful service source instead of emitting fail-loud warnings. |
 | ~~2443~~ | P1 | AWS simulator Amazon Simple Queue Service | long polling ignored wait time | Amazon SQS `ReceiveMessage` now honors `WaitTimeSeconds` and rejects values outside the real 0-20 second range, preventing empty-queue tight polling and CI log floods. |
 | ~~2442~~ | P2 | Bleephub end-to-end UI coverage | stale internal metrics expectations | Playwright end-to-end coverage now expects the public GitHub Actions metrics labels and injects Operations-console failures through `/api/v3/user/repos`, matching the public REST aggregate path. |
