@@ -889,6 +889,7 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	labels, milestones, issues, comments, pull_requests, pr_reviews,
 //	hooks, org_hooks, hook_deliveries, app_hook_deliveries, repo_secrets,
 //	check_suites, check_runs, check_suite_prefs, workflow_files,
+//	workflows, workflow_attempts,
 //	releases, release_assets, deployments, deployment_statuses, environments,
 //	pr_review_comments, reactions, projects_v2, project_v2_items,
 //	project_v2_fields, misc, user_keys, gpg_keys, pages_sites,
@@ -903,8 +904,8 @@ func (st *Store) SetPersistence(p *Persistence) error {
 //	discussion_comments, packages, package_versions, package_files,
 //	codespaces, codespace_secrets.
 //
-// Other state (workflows, sessions, agents, ephemeral codes) deliberately
-// stays in-memory only — operator restart implies abandoning in-flight runs.
+// Other state (sessions, agents, ephemeral codes) deliberately stays
+// in-memory only.
 func (st *Store) loadFromPersistence() error {
 	if st.persist == nil {
 		return nil
@@ -1426,6 +1427,42 @@ func (st *Store) loadFromPersistence() error {
 			st.CheckRuns[cr.ID] = &cr
 			if cr.ID >= st.NextCheckRunID {
 				st.NextCheckRunID = cr.ID + 1
+			}
+			return nil
+		}},
+		{"workflows", func(_ string, raw []byte) error {
+			var wf Workflow
+			if err := loadJSON(raw, &wf); err != nil {
+				return err
+			}
+			normalizeReloadedWorkflow(&wf)
+			st.Workflows[wf.ID] = &wf
+			if wf.RunID >= st.NextRunID {
+				st.NextRunID = wf.RunID + 1
+			}
+			if st.persist != nil {
+				st.persist.MustPut("workflows", wf.ID, &wf)
+			}
+			return nil
+		}},
+		{"workflow_attempts", func(key string, raw []byte) error {
+			runID, err := strconv.Atoi(key)
+			if err != nil {
+				return fmt.Errorf("workflow_attempts key %q: %w", key, err)
+			}
+			var attempts []*Workflow
+			if err := loadJSON(raw, &attempts); err != nil {
+				return err
+			}
+			for _, wf := range attempts {
+				normalizeReloadedWorkflow(wf)
+				if wf.RunID >= st.NextRunID {
+					st.NextRunID = wf.RunID + 1
+				}
+			}
+			st.WorkflowAttempts[runID] = attempts
+			if st.persist != nil {
+				st.persist.MustPut("workflow_attempts", key, attempts)
 			}
 			return nil
 		}},

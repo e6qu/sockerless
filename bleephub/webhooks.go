@@ -554,6 +554,7 @@ func (s *Server) createStartupFailureRun(fileName string, content []byte, meta *
 	wf.WorkflowFileID, wf.WorkflowFilePath = s.resolveWorkflowFileForRun(wf)
 	s.store.mu.Lock()
 	s.store.Workflows[wf.ID] = wf
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 	s.queueActionsEvent(evRunCompleted, wf, nil)
 }

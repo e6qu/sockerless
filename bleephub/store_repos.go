@@ -438,6 +438,27 @@ func (st *Store) DeleteRepo(owner, name string) bool {
 			}
 		}
 	}
+	for id, wf := range st.Workflows {
+		if wf.RepoFullName == fullName {
+			delete(st.Workflows, id)
+			st.deleteWorkflowRecord(id)
+			delete(st.WorkflowAttempts, wf.RunID)
+			st.persistWorkflowAttemptsRecord(wf.RunID)
+		}
+	}
+	for runID, attempts := range st.WorkflowAttempts {
+		kept := attempts[:0]
+		for _, wf := range attempts {
+			if wf.RepoFullName != fullName {
+				kept = append(kept, wf)
+			}
+		}
+		if len(kept) == len(attempts) {
+			continue
+		}
+		st.WorkflowAttempts[runID] = kept
+		st.persistWorkflowAttemptsRecord(runID)
+	}
 	for id, alert := range st.CodeScanningAlerts {
 		if alert.RepoKey == fullName {
 			delete(st.CodeScanningAlerts, id)
@@ -1563,6 +1584,24 @@ func (st *Store) moveRepoKeyLocked(oldFull, newFull string) {
 			if st.persist != nil {
 				st.persist.MustPut("check_runs", strconv.FormatInt(run.ID, 10), run)
 			}
+		}
+	}
+	for _, wf := range st.Workflows {
+		if wf.RepoFullName == oldFull {
+			wf.RepoFullName = newFull
+			st.persistWorkflowRecord(wf)
+		}
+	}
+	for runID, attempts := range st.WorkflowAttempts {
+		changed := false
+		for _, wf := range attempts {
+			if wf.RepoFullName == oldFull {
+				wf.RepoFullName = newFull
+				changed = true
+			}
+		}
+		if changed {
+			st.persistWorkflowAttemptsRecord(runID)
 		}
 	}
 	st.CommitStatuses.moveRepoKey(oldFull, newFull)

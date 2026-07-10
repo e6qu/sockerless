@@ -937,6 +937,8 @@ func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, file 
 	s.store.mu.Lock()
 	s.store.WorkflowAttempts[old.RunID] = append(s.store.WorkflowAttempts[old.RunID], old)
 	delete(s.store.Workflows, old.ID)
+	s.store.persistWorkflowAttemptsRecord(old.RunID)
+	s.store.deleteWorkflowRecord(old.ID)
 	s.store.mu.Unlock()
 	if old.cancelTimeout != nil {
 		old.cancelTimeout()
@@ -966,6 +968,8 @@ func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, file 
 			s.store.WorkflowAttempts[old.RunID] = attempts[:n-1]
 		}
 		s.store.Workflows[old.ID] = old
+		s.store.persistWorkflowAttemptsRecord(old.RunID)
+		s.store.persistWorkflowRecord(old)
 		s.store.mu.Unlock()
 		return err
 	}
@@ -1079,6 +1083,9 @@ func (s *Server) handleDeleteWorkflowRun(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	delete(s.store.Workflows, foundKey)
+	s.store.deleteWorkflowRecord(foundKey)
+	delete(s.store.WorkflowAttempts, runID)
+	s.store.persistWorkflowAttemptsRecord(runID)
 	s.store.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -168,6 +168,52 @@ type WorkflowEventMeta struct {
 	Payload map[string]interface{}
 }
 
+func (st *Store) persistWorkflowRecord(wf *Workflow) {
+	if st.persist != nil && wf != nil {
+		st.persist.MustPut("workflows", wf.ID, wf)
+	}
+}
+
+func (st *Store) deleteWorkflowRecord(id string) {
+	if st.persist != nil && id != "" {
+		st.persist.MustDelete("workflows", id)
+	}
+}
+
+func (st *Store) persistWorkflowAttemptsRecord(runID int) {
+	if st.persist == nil || runID == 0 {
+		return
+	}
+	attempts := st.WorkflowAttempts[runID]
+	if len(attempts) == 0 {
+		st.persist.MustDelete("workflow_attempts", strconv.Itoa(runID))
+		return
+	}
+	st.persist.MustPut("workflow_attempts", strconv.Itoa(runID), attempts)
+}
+
+func normalizeReloadedWorkflow(wf *Workflow) {
+	if wf == nil || wf.Status == WorkflowStatusCompleted {
+		return
+	}
+	now := time.Now().UTC()
+	wf.Status = WorkflowStatusCompleted
+	wf.Result = ResultCancelled
+	wf.CancelRequested = true
+	for _, job := range wf.Jobs {
+		switch job.Status {
+		case JobStatusCompleted, JobStatusSkipped:
+			continue
+		default:
+			job.Status = JobStatusCompleted
+			job.Result = ResultCancelled
+			if job.CompletedAt.IsZero() {
+				job.CompletedAt = now
+			}
+		}
+	}
+}
+
 // submitWorkflow creates a Workflow from a WorkflowDef and begins dispatching jobs.
 
 // PendingDeployment is one reviewer-protected environment a run waits on.
@@ -345,6 +391,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 		workflow.Status = WorkflowStatusActionRequired
 		s.store.mu.Lock()
 		s.store.Workflows[workflow.ID] = workflow
+		s.store.persistWorkflowRecord(workflow)
 		s.store.mu.Unlock()
 		s.queueActionsEvent(evRunRequested, workflow, nil)
 		return workflow, nil
@@ -375,6 +422,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 				workflow.Status = WorkflowStatusPendingConcurrency
 				s.store.mu.Lock()
 				s.store.Workflows[workflow.ID] = workflow
+				s.store.persistWorkflowRecord(workflow)
 				s.store.mu.Unlock()
 				s.queueActionsEvent(evRunRequested, workflow, nil)
 				return workflow, nil
@@ -388,6 +436,7 @@ func (s *Server) submitWorkflow(ctx context.Context, serverURL string, wf *Workf
 	}
 	s.store.mu.Lock()
 	s.store.Workflows[workflow.ID] = workflow
+	s.store.persistWorkflowRecord(workflow)
 	s.store.mu.Unlock()
 	s.queueActionsEvent(evRunRequested, workflow, nil)
 
@@ -596,6 +645,9 @@ func (s *Server) dispatchReadyJobs(ctx context.Context, wf *Workflow, serverURL 
 			s.queueActionsEvent(evJobQueued, wf, wfJob)
 			changed = true
 		}
+		if changed {
+			s.store.persistWorkflowRecord(wf)
+		}
 		s.store.mu.Unlock()
 
 		// Dispatch collected jobs outside the lock (dispatchWorkflowJob acquires its own locks)
@@ -748,6 +800,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 			}
 		}
 	}
+	s.store.persistWorkflowRecord(foundWf)
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -802,6 +855,7 @@ func (s *Server) onJobCompleted(ctx context.Context, jobID, result string) {
 		}
 	}
 	concurrencyGroup := foundWf.ConcurrencyGroup
+	s.store.persistWorkflowRecord(foundWf)
 	s.store.mu.Unlock()
 
 	if allDone {
@@ -959,6 +1013,7 @@ func (s *Server) applyDeploymentReview(ctx context.Context, wf *Workflow, envIDs
 		serverURL = wf.Env["__serverURL"]
 		defaultImage = wf.Env["__defaultImage"]
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if state == "approved" && serverURL != "" {
@@ -998,6 +1053,7 @@ func (s *Server) finalizeWorkflowIfDone(wf *Workflow) {
 		allDone = false
 	}
 	concurrencyGroup := wf.ConcurrencyGroup
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if allDone {
@@ -1122,6 +1178,7 @@ func (s *Server) startPendingConcurrencyWorkflow(group string) {
 
 	pendingWf.Status = WorkflowStatusRunning
 	pendingWf.ConcurrencyAcquiredAt = time.Now().UTC()
+	s.store.persistWorkflowRecord(pendingWf)
 	s.store.mu.Unlock()
 
 	if s.metrics != nil {
@@ -1247,6 +1304,9 @@ func (s *Server) checkJobTimeouts(wf *Workflow) {
 
 	// Re-dispatch to handle dependents (outside lock since dispatchReadyJobs acquires locks)
 	if timedOut {
+		s.store.mu.Lock()
+		s.store.persistWorkflowRecord(wf)
+		s.store.mu.Unlock()
 		if wf.Env != nil {
 			if serverURL, ok := wf.Env["__serverURL"]; ok {
 				s.dispatchReadyJobs(context.Background(), wf, serverURL, wf.Env["__defaultImage"])

@@ -478,6 +478,101 @@ func TestPersistenceReload_CheckRunsAndSuites(t *testing.T) {
 	}
 }
 
+func TestPersistenceReload_WorkflowRunsAndAttempts(t *testing.T) {
+	const repoKey = "admin/actions-persist"
+	now := time.Now().UTC()
+	var completedRunID, runningRunID int
+	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		user := st.UsersByLogin["admin"]
+		if st.CreateRepo(user, "actions-persist", "", false) == nil {
+			t.Fatal("CreateRepo returned nil")
+		}
+		completedRunID = st.ReserveRunID()
+		completed := &Workflow{
+			ID:           "completed-run",
+			Name:         "ci",
+			RunID:        completedRunID,
+			RunNumber:    completedRunID,
+			Status:       WorkflowStatusCompleted,
+			Result:       ResultSuccess,
+			CreatedAt:    now,
+			EventName:    "push",
+			Ref:          "refs/heads/main",
+			Sha:          "1111111111111111111111111111111111111111",
+			RepoFullName: repoKey,
+			Jobs: map[string]*WorkflowJob{
+				"build": {
+					Key:         "build",
+					JobID:       "job-completed",
+					DisplayName: "build",
+					Status:      JobStatusCompleted,
+					Result:      ResultSuccess,
+					StartedAt:   now,
+					CompletedAt: now,
+				},
+			},
+			WorkflowFileID:   1001,
+			WorkflowFilePath: ".github/workflows/ci.yml",
+		}
+		attempt := *completed
+		attempt.ID = "completed-run-attempt-1"
+		attempt.Attempt = 1
+		attempt.Result = ResultFailure
+		runningRunID = st.ReserveRunID()
+		running := &Workflow{
+			ID:           "running-run",
+			Name:         "deploy",
+			RunID:        runningRunID,
+			RunNumber:    runningRunID,
+			Status:       WorkflowStatusRunning,
+			CreatedAt:    now,
+			EventName:    "workflow_dispatch",
+			Ref:          "refs/heads/main",
+			Sha:          "2222222222222222222222222222222222222222",
+			RepoFullName: repoKey,
+			Jobs: map[string]*WorkflowJob{
+				"deploy": {
+					Key:         "deploy",
+					JobID:       "job-running",
+					DisplayName: "deploy",
+					Status:      JobStatusRunning,
+					StartedAt:   now,
+				},
+			},
+		}
+		st.Workflows[completed.ID] = completed
+		st.Workflows[running.ID] = running
+		st.WorkflowAttempts[completedRunID] = []*Workflow{&attempt}
+		st.persistWorkflowRecord(completed)
+		st.persistWorkflowRecord(running)
+		st.persistWorkflowAttemptsRecord(completedRunID)
+	})
+
+	completed := st2.Workflows["completed-run"]
+	if completed == nil || completed.RunID != completedRunID || completed.RepoFullName != repoKey ||
+		completed.Status != WorkflowStatusCompleted || completed.Result != ResultSuccess ||
+		completed.WorkflowFilePath != ".github/workflows/ci.yml" {
+		t.Fatalf("completed workflow after reload = %+v", completed)
+	}
+	if got := completed.Jobs["build"]; got == nil || got.Status != JobStatusCompleted || got.Result != ResultSuccess {
+		t.Fatalf("completed job after reload = %+v", got)
+	}
+	attempts := st2.WorkflowAttempts[completedRunID]
+	if len(attempts) != 1 || attempts[0].ID != "completed-run-attempt-1" || attempts[0].Result != ResultFailure {
+		t.Fatalf("workflow attempts after reload = %+v", attempts)
+	}
+	running := st2.Workflows["running-run"]
+	if running == nil || running.RunID != runningRunID || running.Status != WorkflowStatusCompleted ||
+		running.Result != ResultCancelled || !running.CancelRequested {
+		t.Fatalf("running workflow after reload = %+v, want completed/cancelled abandoned run", running)
+	}
+	if got := running.Jobs["deploy"]; got == nil || got.Status != JobStatusCompleted || got.Result != ResultCancelled ||
+		got.CompletedAt.IsZero() {
+		t.Fatalf("running job after reload = %+v, want completed/cancelled", got)
+	}
+}
+
 // G9: installation selected-repo lists and token repo scoping survive reload,
 // including the state left by add/remove mutations.
 func TestPersistenceReload_InstallationSelectedRepos(t *testing.T) {

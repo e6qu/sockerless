@@ -66,6 +66,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 	}
 	if activeWf != nil && !wf.CancelInProgress {
 		wf.Status = WorkflowStatusPendingConcurrency
+		s.store.persistWorkflowRecord(wf)
 		s.store.mu.Unlock()
 		writeJSON(w, http.StatusCreated, map[string]any{})
 		return
@@ -80,6 +81,7 @@ func (s *Server) handleApproveWorkflowRun(w http.ResponseWriter, r *http.Request
 		serverURL = wf.Env["__serverURL"]
 		defaultImage = wf.Env["__defaultImage"]
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	if activeWf != nil && wf.CancelInProgress {
@@ -150,6 +152,7 @@ func (s *Server) forceCancelWorkflow(wf *Workflow) {
 		}
 		s.store.PendingMessages = kept
 	}
+	s.store.persistWorkflowRecord(wf)
 	s.store.mu.Unlock()
 
 	for _, jobID := range runningJobIDs {
@@ -323,6 +326,7 @@ func (s *Server) handleReviewCustomDeploymentProtectionRule(w http.ResponseWrite
 			EnvNames:  []string{body.EnvironmentName},
 			CreatedAt: time.Now().UTC(),
 		})
+		s.store.persistWorkflowRecord(wf)
 		s.store.mu.Unlock()
 		w.WriteHeader(http.StatusNoContent)
 		return
