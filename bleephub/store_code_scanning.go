@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -849,8 +850,8 @@ func (st *Store) CreateCodeScanningAutofix(a *CodeScanningAlert) (*CodeScanningA
 // --- CodeQL databases ---
 
 // CodeQLDatabase is a CodeQL database uploaded for one repository +
-// language pair. Content holds the real database archive bytes; the REST
-// entity's size/url derive from it.
+// language pair. StoragePath points at the durable archive bytes; Content is
+// only used by non-persistent in-memory stores.
 type CodeQLDatabase struct {
 	ID          int       `json:"id"`
 	RepoKey     string    `json:"repo_key"`
@@ -858,7 +859,9 @@ type CodeQLDatabase struct {
 	Language    string    `json:"language"`
 	UploaderID  int       `json:"uploader_id"`
 	ContentType string    `json:"content_type"`
-	Content     []byte    `json:"content"`
+	Size        int64     `json:"size"`
+	StoragePath string    `json:"storage_path,omitempty"`
+	Content     []byte    `json:"-"`
 	CommitOID   string    `json:"commit_oid"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
@@ -867,21 +870,37 @@ type CodeQLDatabase struct {
 // UpsertCodeQLDatabase creates or replaces the CodeQL database for a
 // repo + language, mirroring how a new analysis upload supersedes the
 // previous database on real GitHub.
-func (st *Store) UpsertCodeQLDatabase(repoKey, language, name, contentType, commitOID string, content []byte, uploaderID int) *CodeQLDatabase {
+func (st *Store) UpsertCodeQLDatabase(repoKey, language, name, contentType, commitOID string, content []byte, uploaderID int) (*CodeQLDatabase, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+
+	if st.persist != nil && st.ObjectByteStore == nil {
+		return nil, fmt.Errorf("CodeQL database byte storage requires BLEEPHUB_OBJECT_S3_BUCKET when persistence is enabled")
+	}
 
 	now := time.Now().UTC()
 	if st.CodeQLDatabasesByRepo[repoKey] == nil {
 		st.CodeQLDatabasesByRepo[repoKey] = make(map[string]*CodeQLDatabase)
 	}
 	db := st.CodeQLDatabasesByRepo[repoKey][language]
+	id := st.NextCodeQLDatabaseID
+	createdAt := now
+	if db != nil {
+		id = db.ID
+		createdAt = db.CreatedAt
+	}
+	storagePath := codeQLDatabaseDataKey(id)
+	if st.ObjectByteStore != nil {
+		if err := st.ObjectByteStore.Put(context.Background(), storagePath, content); err != nil {
+			return nil, fmt.Errorf("write CodeQL database bytes: %w", err)
+		}
+	}
 	if db == nil {
 		db = &CodeQLDatabase{
-			ID:        st.NextCodeQLDatabaseID,
+			ID:        id,
 			RepoKey:   repoKey,
 			Language:  language,
-			CreatedAt: now,
+			CreatedAt: createdAt,
 		}
 		st.NextCodeQLDatabaseID++
 		st.CodeQLDatabases[db.ID] = db
@@ -889,14 +908,20 @@ func (st *Store) UpsertCodeQLDatabase(repoKey, language, name, contentType, comm
 	}
 	db.Name = name
 	db.ContentType = contentType
-	db.Content = content
+	db.Size = int64(len(content))
+	db.StoragePath = storagePath
+	if st.ObjectByteStore != nil {
+		db.Content = nil
+	} else {
+		db.Content = append([]byte(nil), content...)
+	}
 	db.CommitOID = commitOID
 	db.UploaderID = uploaderID
 	db.UpdatedAt = now
 	if st.persist != nil {
 		st.persist.MustPut("codeql_databases", strconv.Itoa(db.ID), db)
 	}
-	return db
+	return db, nil
 }
 
 // GetCodeQLDatabase returns the CodeQL database for a repo + language.
@@ -924,21 +949,57 @@ func (st *Store) ListCodeQLDatabases(repoKey string) []*CodeQLDatabase {
 	return out
 }
 
+// ReadCodeQLDatabaseContent reads the archive bytes for a CodeQL database.
+func (st *Store) ReadCodeQLDatabaseContent(ctx context.Context, db *CodeQLDatabase) ([]byte, error) {
+	if db == nil {
+		return nil, fmt.Errorf("CodeQL database is nil")
+	}
+	if st.ObjectByteStore != nil {
+		return st.ObjectByteStore.Get(ctx, db.StoragePath)
+	}
+	if db.StoragePath != "" && db.Content == nil && db.Size > 0 {
+		return nil, fmt.Errorf("CodeQL database bytes require configured object storage")
+	}
+	return append([]byte(nil), db.Content...), nil
+}
+
 // DeleteCodeQLDatabase removes the CodeQL database for a repo + language.
-func (st *Store) DeleteCodeQLDatabase(repoKey, language string) bool {
+func (st *Store) DeleteCodeQLDatabase(repoKey, language string) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
 	db := st.CodeQLDatabasesByRepo[repoKey][language]
 	if db == nil {
-		return false
+		return false, nil
+	}
+	if err := st.deleteCodeQLDatabaseDataLocked(db); err != nil {
+		return true, err
 	}
 	delete(st.CodeQLDatabasesByRepo[repoKey], language)
 	delete(st.CodeQLDatabases, db.ID)
 	if st.persist != nil {
 		st.persist.MustDelete("codeql_databases", strconv.Itoa(db.ID))
 	}
-	return true
+	return true, nil
+}
+
+func (st *Store) deleteCodeQLDatabaseDataLocked(db *CodeQLDatabase) error {
+	if db == nil || db.StoragePath == "" || st.ObjectByteStore == nil {
+		return nil
+	}
+	if err := st.ObjectByteStore.Delete(context.Background(), db.StoragePath); err != nil {
+		return fmt.Errorf("delete CodeQL database bytes %s: %w", db.StoragePath, err)
+	}
+	return nil
+}
+
+func (st *Store) deleteCodeQLDatabaseDataForRepoLocked(repoKey string) error {
+	for _, db := range st.CodeQLDatabasesByRepo[repoKey] {
+		if err := st.deleteCodeQLDatabaseDataLocked(db); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // --- CodeQL variant analyses ---

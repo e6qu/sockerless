@@ -125,3 +125,7 @@ func packageRegistryBlobDataKey(digest string) string {
 	}
 	return path.Join("packages/registry/blobs", algo, hexPart)
 }
+
+func codeQLDatabaseDataKey(id int) string {
+	return fmt.Sprintf("code-scanning/codeql/databases/%d/data", id)
+}

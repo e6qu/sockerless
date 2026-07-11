@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"fmt"
 	"testing"
@@ -349,6 +350,8 @@ func TestAgentsCodeScanPersistenceReload(t *testing.T) {
 	if err := st1.SetPersistence(p1); err != nil {
 		t.Fatalf("SetPersistence: %v", err)
 	}
+	objectFS, objectStore := newObjectByteStoreForTest(t)
+	st1.ObjectByteStore = objectStore
 	st1.SeedDefaultUser()
 	user := st1.UsersByLogin["admin"]
 	repo := st1.CreateRepo(user, "agents-reload", "", false)
@@ -372,7 +375,13 @@ func TestAgentsCodeScanPersistenceReload(t *testing.T) {
 		t.Fatal("autofix not created")
 	}
 
-	db := st1.UpsertCodeQLDatabase(repo.FullName, "go", "database.zip", "application/zip", "reload-sha", []byte("db-bytes"), user.ID)
+	db, err := st1.UpsertCodeQLDatabase(repo.FullName, "go", "database.zip", "application/zip", "reload-sha", []byte("db-bytes"), user.ID)
+	if err != nil {
+		t.Fatalf("UpsertCodeQLDatabase: %v", err)
+	}
+	if got := string(readS3TestFile(t, objectFS, db.StoragePath)); got != "db-bytes" {
+		t.Fatalf("CodeQL database object bytes = %q, want db-bytes", got)
+	}
 	va := st1.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, "go",
 		base64.StdEncoding.EncodeToString([]byte("pack")), []string{repo.FullName})
 
@@ -386,6 +395,7 @@ func TestAgentsCodeScanPersistenceReload(t *testing.T) {
 		t.Fatalf("re-open: %v", err)
 	}
 	st2 := NewStore()
+	st2.ObjectByteStore = objectStore
 	if err := st2.SetPersistence(p2); err != nil {
 		t.Fatalf("re-load SetPersistence: %v", err)
 	}
@@ -405,8 +415,15 @@ func TestAgentsCodeScanPersistenceReload(t *testing.T) {
 		t.Fatalf("autofix after reload = %+v, want success", fix)
 	}
 	gotDB := st2.GetCodeQLDatabase(repo.FullName, "go")
-	if gotDB == nil || !bytes.Equal(gotDB.Content, []byte("db-bytes")) || gotDB.CommitOID != "reload-sha" {
+	if gotDB == nil || gotDB.CommitOID != "reload-sha" {
 		t.Fatalf("CodeQL database after reload = %+v", gotDB)
+	}
+	gotBytes, err := st2.ReadCodeQLDatabaseContent(context.Background(), gotDB)
+	if err != nil {
+		t.Fatalf("ReadCodeQLDatabaseContent: %v", err)
+	}
+	if !bytes.Equal(gotBytes, []byte("db-bytes")) {
+		t.Fatalf("CodeQL database bytes after reload = %q, want db-bytes", gotBytes)
 	}
 	if st2.NextCodeQLDatabaseID != db.ID+1 {
 		t.Fatalf("NextCodeQLDatabaseID = %d, want %d", st2.NextCodeQLDatabaseID, db.ID+1)

@@ -1273,7 +1273,12 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 	const controllerKey = "admin/variant-controller"
 	var oldRepoID int
 	var codespaceWorkspace string
+	var objectFS *s3FS
+	var codeQLDBPath string
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		var objectStore actionsByteStore
+		objectFS, objectStore = newObjectByteStoreForTest(t)
+		st.ObjectByteStore = objectStore
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, repoName, "", false)
@@ -1321,7 +1326,14 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		st.AgentsRepoVariables[repoKey] = map[string]*ActionsVariable{"AGENT_VAR": {Name: "AGENT_VAR", Value: "v", CreatedAt: now, UpdatedAt: now}}
 		p.MustPut("agents_repo_variables", repoKey, st.AgentsRepoVariables[repoKey])
 		st.CreateAgentTask(repo, user, "fix stale repository state", "claude-sonnet-4.6", false, "", "")
-		st.UpsertCodeQLDatabase(repoKey, "go", "db.zip", "application/zip", "reload-sha", []byte("db"), user.ID)
+		db, err := st.UpsertCodeQLDatabase(repoKey, "go", "db.zip", "application/zip", "reload-sha", []byte("db"), user.ID)
+		if err != nil {
+			t.Fatalf("UpsertCodeQLDatabase: %v", err)
+		}
+		codeQLDBPath = db.StoragePath
+		if got := string(readS3TestFile(t, objectFS, db.StoragePath)); got != "db" {
+			t.Fatalf("CodeQL database object bytes = %q, want db", got)
+		}
 		st.CreateCodeQLVariantAnalysis(controller.FullName, user.ID, "go", "pack", []string{repoKey})
 		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
 			t.Fatal("CreatePackage did not create")
@@ -1387,6 +1399,9 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 			t.Fatalf("DeleteRepo: %v", err)
 		} else if !deleted {
 			t.Fatal("DeleteRepo failed")
+		}
+		if _, err := objectFS.Open(codeQLDBPath); err == nil {
+			t.Fatalf("CodeQL database object %s survived repository deletion", codeQLDBPath)
 		}
 	})
 
@@ -1551,6 +1566,8 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 	now := time.Now().UTC()
 
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		_, objectStore := newObjectByteStoreForTest(t)
+		st.ObjectByteStore = objectStore
 		st.SeedDefaultUser()
 		user := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(user, "rename-source", "", false)
@@ -1605,7 +1622,9 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		st.SecretScanningPushBypasses[oldKey] = []*SecretScanningPushProtectionBypass{bypass}
 		p.MustPut("secret_scanning_push_bypasses", oldKey, st.SecretScanningPushBypasses[oldKey])
 
-		st.UpsertCodeQLDatabase(oldKey, "go", "db.zip", "application/zip", "0123456789abcdef", []byte("db"), user.ID)
+		if _, err := st.UpsertCodeQLDatabase(oldKey, "go", "db.zip", "application/zip", "0123456789abcdef", []byte("db"), user.ID); err != nil {
+			t.Fatalf("UpsertCodeQLDatabase: %v", err)
+		}
 		st.CreateCodeQLVariantAnalysis(oldKey, user.ID, "go", "pack", []string{oldKey})
 		st.CreateRuleset(repo, &Ruleset{Name: "protect"})
 		st.CreateProjectClassic(repo, user.ID, "board", "", "open")

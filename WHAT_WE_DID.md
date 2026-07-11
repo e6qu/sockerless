@@ -16,6 +16,8 @@ Closed BUG-2473 by making repository deletion fail loudly on required git-storag
 
 Closed BUG-2486 by making repository deletion purge repository-owned GitHub Packages file bytes before deleting repository metadata. Object-backed and local package file bytes now go through the required cleanup path, so package byte cleanup failures surface as repository-delete errors instead of leaving durable package objects behind after package metadata is gone.
 
+Closed BUG-2487 by moving GitHub CodeQL database archive bytes out of SQLite metadata and into the configured object byte store. CodeQL database rows now persist metadata, size, and object keys; public archive downloads read the object store; database deletion removes the object before deleting metadata; and repository deletion purges repository-owned CodeQL database archive objects before deleting repository metadata.
+
 Closed BUG-2474 by upgrading stale AWS software development kit service modules found by the pre-push dependency freshness gate. The Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests now use the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions required by the gate.
 
 Closed BUG-2475 by moving the Bleephub go-github software development kit harness's organization provisioning onto GitHub Enterprise Server's public admin organization API. The SDK tests no longer create organizations through `/internal/orgs`, and source coverage rejects that operator-only route in the official-client harness.
@@ -49,6 +51,10 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAnd
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'Test(DeleteRepoS3GitCleanupFailurePreservesRepo|GitDeleteCleanup|UnitDeleteRepo)$' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(DeleteRepoPurgesRepositoryPackageObjectBytes|PackageAndRegistryBytesUseObjectStore|PersistenceReload_DeleteRepoLeavesNoResidue)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(Packages_|ContainerRegistry|PackageAndRegistryBytesUseObjectStore|DeleteRepoPurgesRepositoryPackageObjectBytes|PersistenceReload_DeleteRepoLeavesNoResidue|DeleteRepo)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLDatabases_(RoundTrip|BytesUseObjectStore)|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata))' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQL|CodeScanning|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|PersistenceReload_DeleteRepoLeavesNoResidue|DeleteRepo)' -count=1
+bash -n scripts/bleephub-local-dev.sh
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 bash scripts/check-latest-deps.sh
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestGitHub(CommandLineInterface|SoftwareDevelopmentKit)HarnessUsesAdminOrganizationAPI|TestAdminCreateOrg' -count=1

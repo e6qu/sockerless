@@ -340,6 +340,57 @@ func TestCodeQLDatabases_RoundTrip(t *testing.T) {
 	mustStatus(t, ghDelete(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", defaultToken), 404, "delete deleted database")
 }
 
+func TestCodeQLDatabases_BytesUseObjectStore(t *testing.T) {
+	repo := seedTestRepo(t, "codeql-dbs-object", false)
+	objectFS, objectStore := newObjectByteStoreForTest(t)
+	oldStore := testServer.store.ObjectByteStore
+	testServer.store.ObjectByteStore = objectStore
+	t.Cleanup(func() {
+		testServer.store.ObjectByteStore = oldStore
+	})
+
+	dbBytes := []byte("object-backed-codeql-database")
+	created := seedCodeQLDatabase(t, repo.FullName, "go", "1927de39fefa25a9d0e64e3f540ff824a72f538c", dbBytes)
+	dbID := int(created["id"].(float64))
+	if got := string(readS3TestFile(t, objectFS, codeQLDatabaseDataKey(dbID))); got != string(dbBytes) {
+		t.Fatalf("CodeQL database object bytes = %q, want %q", got, dbBytes)
+	}
+	db := testServer.store.GetCodeQLDatabase(repo.FullName, "go")
+	if db == nil {
+		t.Fatal("CodeQL database missing after seed")
+	}
+	if len(db.Content) != 0 {
+		t.Fatalf("CodeQL database metadata retained %d raw bytes; bytes must live in object storage", len(db.Content))
+	}
+
+	req, err := http.NewRequest("GET", testBaseURL+"/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "token "+defaultToken)
+	req.Header.Set("Accept", "application/zip")
+	dlResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(dlResp.Body)
+	dlResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dlResp.StatusCode != http.StatusOK {
+		t.Fatalf("download object-backed database: %d body=%s", dlResp.StatusCode, raw)
+	}
+	if !bytes.Equal(raw, dbBytes) {
+		t.Fatalf("downloaded object-backed bytes = %q, want %q", raw, dbBytes)
+	}
+
+	mustStatus(t, ghDelete(t, "/api/v3/repos/"+repo.FullName+"/code-scanning/codeql/databases/go", defaultToken), http.StatusNoContent, "delete object-backed database")
+	if _, err := objectFS.Open(codeQLDatabaseDataKey(dbID)); err == nil {
+		t.Fatalf("CodeQL database object %s survived database deletion", codeQLDatabaseDataKey(dbID))
+	}
+}
+
 // --- CodeQL variant analyses ---
 
 func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {

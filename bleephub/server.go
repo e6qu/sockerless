@@ -81,10 +81,11 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 //
 // Persistence also requires BLEEPHUB_OBJECT_S3_BUCKET for service byte
 // content: GitHub Actions artifacts, dependency caches, runner logs, release
-// assets, GitHub Packages files, and GitHub Container Registry blobs. SQLite
-// persists only Bleephub metadata; byte content must be backed by object
-// storage so a restarted service does not advertise durable records whose
-// bytes lived only in memory or local development files.
+// assets, GitHub Packages files, GitHub Container Registry blobs, and GitHub
+// CodeQL database archives. SQLite persists only Bleephub metadata; byte
+// content must be backed by object storage so a restarted service does not
+// advertise durable records whose bytes lived only in memory or local
+// development files.
 //
 // Workflow run history is persisted; in-flight runs are marked terminal
 // cancelled on reload because the runner dispatch state is process-local.

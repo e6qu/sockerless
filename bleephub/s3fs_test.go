@@ -68,6 +68,13 @@ func newS3FSForTest(t *testing.T) *s3FS {
 	return fs
 }
 
+func newObjectByteStoreForTest(t *testing.T) (*s3FS, actionsByteStore) {
+	t.Helper()
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	return objectFS, &s3ActionsByteStore{fs: objectFS}
+}
+
 func startS3SimulatorForTest(t *testing.T) string {
 	t.Helper()
 	bin := buildS3SimulatorForTest(t)
