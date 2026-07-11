@@ -50,7 +50,7 @@ func newSharedServerUser(t *testing.T, login string) (*User, string) {
 }
 
 func TestOrgInvitationLifecycle(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "invite-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "invite-org")
 	_, inviteeToken := newSharedServerUser(t, "invitee")
 
 	// Admin PUTs a membership for a non-member → pending invitation.
@@ -140,7 +140,7 @@ func TestOrgInvitationLifecycle(t *testing.T) {
 }
 
 func TestOrgPublicMembers(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "pub-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "pub-org")
 	_, memberToken := newSharedServerUser(t, "pubmember")
 
 	ghPut(t, "/api/v3/orgs/pub-org/memberships/pubmember", defaultToken,
@@ -192,7 +192,7 @@ func TestOrgPublicMembers(t *testing.T) {
 }
 
 func TestOrganizationsGlobalList(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "global-list-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "global-list-org")
 
 	// Walk the since cursor the way a real client enumerates
 	// /organizations: the shared test server accumulates organizations
@@ -240,7 +240,7 @@ func jsonNumber(f float64) string {
 }
 
 func TestOrgProfileFieldsPatch(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "profile-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "profile-org")
 
 	patch := ghPatch(t, "/api/v3/orgs/profile-org", defaultToken, map[string]interface{}{
 		"company":                         "ACME Holdings",
@@ -282,7 +282,7 @@ func TestOrgProfileFieldsPatch(t *testing.T) {
 	}
 
 	// An untouched org serves GitHub's defaults.
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "default-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "default-org")
 	fresh := ghGet(t, "/api/v3/orgs/default-org", defaultToken)
 	fGot := decodeJSON(t, fresh)
 	if fGot["default_repository_permission"] != "read" {
@@ -294,7 +294,7 @@ func TestOrgProfileFieldsPatch(t *testing.T) {
 }
 
 func TestTeamHierarchyAndRoles(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "team-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "team-org")
 	ghPost(t, "/api/v3/orgs/team-org/repos", defaultToken, map[string]interface{}{"name": "team-repo"}).Body.Close()
 
 	// Parent team, seeding a maintainer + a repo from the create body.
@@ -458,7 +458,7 @@ func TestTeamHierarchyAndRoles(t *testing.T) {
 }
 
 func TestOrgWebhooks(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "hook-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "hook-org")
 	ghPost(t, "/api/v3/orgs/hook-org/repos", defaultToken, map[string]interface{}{"name": "hooked-repo"}).Body.Close()
 
 	// Capture deliveries.
@@ -592,7 +592,7 @@ func jsonHookPath(org string, id int) string {
 // TestGraphQLUserOrganizations mirrors the exact query `gh org list` sends:
 // a root user(login:) lookup with the organizations connection.
 func TestGraphQLUserOrganizations(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "gql-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "gql-org")
 
 	query := `query OrganizationList($user: String!, $limit: Int!) {
 		user(login: $user) {

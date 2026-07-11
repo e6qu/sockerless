@@ -969,17 +969,19 @@ func TestECS_TaskNoCommandStaysRunning(t *testing.T) {
 		},
 	})
 
-	// Wait a bit and verify still RUNNING
-	time.Sleep(1500 * time.Millisecond)
+	var task ecstypes.Task
+	require.Eventually(t, func() bool {
+		descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
+			Cluster: aws.String(cluster),
+			Tasks:   []string{taskArn},
+		})
+		if err != nil || len(descOut.Tasks) != 1 {
+			return false
+		}
+		task = descOut.Tasks[0]
+		return task.LastStatus != nil && *task.LastStatus == "RUNNING"
+	}, 30*time.Second, 250*time.Millisecond, "task with no command should reach RUNNING")
 
-	descOut, err := client.DescribeTasks(ctx, &ecs.DescribeTasksInput{
-		Cluster: aws.String(cluster),
-		Tasks:   []string{taskArn},
-	})
-	require.NoError(t, err)
-	require.Len(t, descOut.Tasks, 1)
-
-	task := descOut.Tasks[0]
 	assert.Equal(t, "RUNNING", *task.LastStatus, "task with no command should stay RUNNING")
 	for _, c := range task.Containers {
 		assert.Nil(t, c.ExitCode, "ExitCode should be nil while RUNNING")

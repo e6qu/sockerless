@@ -335,9 +335,8 @@ func (s *Server) handleCreateBlob(w http.ResponseWriter, r *http.Request) {
 	}
 	base := s.baseURL(r)
 	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"sha":     hash.String(),
-		"url":     base + "/api/v3/repos/" + repo.FullName + "/git/blobs/" + hash.String(),
-		"node_id": encodeNodeID("Blob", repo.ID, hash.String()),
+		"sha": hash.String(),
+		"url": base + "/api/v3/repos/" + repo.FullName + "/git/blobs/" + hash.String(),
 	})
 }
 
@@ -650,7 +649,18 @@ func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "Reference already exists")
 		return
 	}
+	if ph, err := s.secretScanningPushProtectionPlaceholderForRef(repo, stor, fullRef, target); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ph != nil {
+		writeSecretScanningPushProtectionBlocked(w, ph)
+		return
+	}
 	if err := stor.SetReference(plumbing.NewHashReference(fullRef, target)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.scanRefForSecretScanning(repo, stor, fullRef, target, s.baseURL(r)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -705,12 +715,33 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if ph, err := s.secretScanningPushProtectionPlaceholderForRef(repo, stor, fullRef, newTarget); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ph != nil {
+		writeSecretScanningPushProtectionBlocked(w, ph)
+		return
+	}
 	if err := stor.SetReference(plumbing.NewHashReference(fullRef, newTarget)); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := s.scanRefForSecretScanning(repo, stor, fullRef, newTarget, s.baseURL(r)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	ref, _ := stor.Reference(fullRef)
 	writeJSON(w, http.StatusOK, refToJSON(s.baseURL(r), repo.FullName, ref))
+}
+
+func (s *Server) scanRefForSecretScanning(repo *Repo, stor gitStorage.Storer, ref plumbing.ReferenceName, target plumbing.Hash, baseURL string) error {
+	if !strings.HasPrefix(string(ref), "refs/heads/") {
+		return nil
+	}
+	if _, err := object.GetCommit(stor, target); err != nil {
+		return nil
+	}
+	return s.scanCommitForSecretScanning(repo, stor, target, baseURL)
 }
 
 type gitPerson struct {

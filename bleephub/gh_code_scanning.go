@@ -54,9 +54,6 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("GET /api/v3/orgs/{org}/code-scanning/alerts",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListOrgCodeScanningAlerts))
 
-	// Internal seeding endpoint: real GitHub creates alerts by uploading SARIF.
-	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/alerts", s.handleSeedCodeScanningAlert)
-
 	// Internal seeding endpoint for CodeQL database bytes: real GitHub
 	// receives databases from CodeQL analysis uploads.
 	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleSeedCodeQLDatabase)
@@ -471,38 +468,6 @@ func (s *Server) handleUpdateCodeScanningDefaultSetup(w http.ResponseWriter, r *
 	writeJSON(w, http.StatusOK, map[string]interface{}{})
 }
 
-func (s *Server) handleSeedCodeScanningAlert(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-
-	var req struct {
-		RuleID          string                      `json:"rule_id"`
-		RuleSeverity    string                      `json:"rule_severity"`
-		RuleDescription string                      `json:"rule_description"`
-		ToolName        string                      `json:"tool_name"`
-		State           string                      `json:"state"`
-		Instances       []CodeScanningAlertInstance `json:"instances"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.RuleID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "rule_id is required"})
-		return
-	}
-
-	a := s.store.CreateCodeScanningAlert(repo.FullName, req.RuleID, req.RuleSeverity, req.RuleDescription, req.ToolName, req.State, req.Instances)
-	writeJSON(w, http.StatusCreated, codeScanningAlertToJSON(a, s.baseURL(r), repo))
-}
-
 func (s *Server) lookupCodeScanningAlert(w http.ResponseWriter, r *http.Request, repo *Repo) *CodeScanningAlert {
 	number, err := strconv.Atoi(r.PathValue("alert_number"))
 	if err != nil {
@@ -838,7 +803,7 @@ func (s *Server) codeQLDatabaseJSON(db *CodeQLDatabase, baseURL string, repo *Re
 		"language":     db.Language,
 		"uploader":     uploaderJSON,
 		"content_type": db.ContentType,
-		"size":         len(db.Content),
+		"size":         db.Size,
 		"created_at":   db.CreatedAt.UTC().Format(time.RFC3339),
 		"updated_at":   db.UpdatedAt.UTC().Format(time.RFC3339),
 		"url":          fmt.Sprintf("%s/api/v3/repos/%s/code-scanning/codeql/databases/%s", baseURL, repo.FullName, db.Language),
@@ -907,7 +872,12 @@ func (s *Server) handleDeleteCodeQLDatabase(w http.ResponseWriter, r *http.Reque
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if !s.store.DeleteCodeQLDatabase(repo.FullName, r.PathValue("language")) {
+	deleted, err := s.store.DeleteCodeQLDatabase(repo.FullName, r.PathValue("language"))
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !deleted {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
@@ -949,7 +919,11 @@ func (s *Server) handleSeedCodeQLDatabase(w http.ResponseWriter, r *http.Request
 		name = "database.zip"
 	}
 
-	db := s.store.UpsertCodeQLDatabase(repo.FullName, req.Language, name, "application/zip", req.CommitOID, content, user.ID)
+	db, err := s.store.UpsertCodeQLDatabase(repo.FullName, req.Language, name, "application/zip", req.CommitOID, content, user.ID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, s.codeQLDatabaseJSON(db, s.baseURL(r), repo))
 }
 
@@ -964,9 +938,14 @@ func (s *Server) handleDownloadCodeQLDatabase(w http.ResponseWriter, r *http.Req
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
 		return
 	}
+	data, err := s.store.ReadCodeQLDatabaseContent(r.Context(), db)
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"message": err.Error()})
+		return
+	}
 	w.Header().Set("Content-Type", db.ContentType)
 	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(db.Content)
+	_, _ = w.Write(data)
 }
 
 // --- CodeQL variant analyses ---

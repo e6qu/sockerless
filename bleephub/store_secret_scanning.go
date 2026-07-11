@@ -56,6 +56,10 @@ func (st *Store) CreateSecretScanningAlert(repoKey, secretType string, locations
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	return st.createSecretScanningAlertLocked(repoKey, secretType, locations)
+}
+
+func (st *Store) createSecretScanningAlertLocked(repoKey, secretType string, locations []SecretScanningLocation) *SecretScanningAlert {
 	if st.SecretScanningAlertsByRepo[repoKey] == nil {
 		st.SecretScanningAlertsByRepo[repoKey] = make(map[int]*SecretScanningAlert)
 	}
@@ -85,6 +89,40 @@ func (st *Store) CreateSecretScanningAlert(repoKey, secretType string, locations
 	st.SecretScanningAlertsByRepo[repoKey][number] = a
 	st.persistSecretScanningAlert(a)
 	return a
+}
+
+// CreateSecretScanningAlertIfNew records a content-derived alert unless the
+// same repository already has the same secret type at the same blob location.
+func (st *Store) CreateSecretScanningAlertIfNew(repoKey, secretType string, locations []SecretScanningLocation) *SecretScanningAlert {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	for _, existing := range st.SecretScanningAlertsByRepo[repoKey] {
+		if existing.SecretType != secretType || len(existing.Locations) != len(locations) {
+			continue
+		}
+		same := true
+		for i := range existing.Locations {
+			if !sameSecretScanningLocation(existing.Locations[i], locations[i]) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return existing
+		}
+	}
+	return st.createSecretScanningAlertLocked(repoKey, secretType, locations)
+}
+
+func sameSecretScanningLocation(a, b SecretScanningLocation) bool {
+	return a.Type == b.Type &&
+		a.Details.Path == b.Details.Path &&
+		a.Details.StartLine == b.Details.StartLine &&
+		a.Details.EndLine == b.Details.EndLine &&
+		a.Details.StartColumn == b.Details.StartColumn &&
+		a.Details.EndColumn == b.Details.EndColumn &&
+		a.Details.BlobSHA == b.Details.BlobSHA
 }
 
 func secretTypeDisplayName(secretType string) string {
@@ -434,6 +472,23 @@ func (st *Store) UpdateSecretScanningPatternConfig(orgLogin string, expectedVers
 	return cfg.Version, true
 }
 
+// SecretScanningPushProtectionEnabled reports whether an organization has
+// explicitly enabled push protection for a provider pattern on this repository.
+func (st *Store) SecretScanningPushProtectionEnabled(repo *Repo, patternID string) bool {
+	st.mu.RLock()
+	defer st.mu.RUnlock()
+
+	if repo == nil || repo.OwnerType != "Organization" {
+		return false
+	}
+	org := st.Orgs[repo.OwnerID]
+	if org == nil {
+		return false
+	}
+	cfg := st.SecretScanningPatternConfigs[org.Login]
+	return cfg != nil && cfg.ProviderSettings[patternID] == "enabled"
+}
+
 // SecretScanningPushProtectionPlaceholder is one blocked-push placeholder:
 // the identity a pusher presents when requesting a push protection bypass.
 type SecretScanningPushProtectionPlaceholder struct {
@@ -505,6 +560,40 @@ func (st *Store) CreateSecretScanningPushProtectionBypass(repoKey, placeholderID
 		st.persist.MustPut("secret_scanning_push_bypasses", repoKey, st.SecretScanningPushBypasses[repoKey])
 	}
 	return bypass
+}
+
+// HasActiveSecretScanningPushProtectionBypass reports whether a previously
+// granted bypass still permits a protected write for this token type.
+func (st *Store) HasActiveSecretScanningPushProtectionBypass(repoKey, tokenType string, now time.Time) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	bypasses := st.SecretScanningPushBypasses[repoKey]
+	if len(bypasses) == 0 {
+		return false
+	}
+	active := bypasses[:0]
+	found := false
+	for _, bypass := range bypasses {
+		if bypass == nil || !bypass.ExpireAt.After(now) {
+			continue
+		}
+		active = append(active, bypass)
+		if bypass.TokenType == tokenType {
+			found = true
+		}
+	}
+	if len(active) != len(bypasses) {
+		if len(active) == 0 {
+			delete(st.SecretScanningPushBypasses, repoKey)
+		} else {
+			st.SecretScanningPushBypasses[repoKey] = active
+		}
+		if st.persist != nil {
+			st.persist.MustPut("secret_scanning_push_bypasses", repoKey, st.SecretScanningPushBypasses[repoKey])
+		}
+	}
+	return found
 }
 
 // SecretScanningScanHistory derives the repository's scan history from the

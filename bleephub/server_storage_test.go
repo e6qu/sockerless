@@ -17,7 +17,11 @@ func TestPersistentServerStorageRequiresDurableGitAndObjectBytes(t *testing.T) {
 	t.Setenv("BLEEPHUB_GIT_DIR", t.TempDir())
 	if err := validatePersistentServerStorage(false); err == nil {
 		t.Fatal("expected missing object byte storage to fail")
-	} else if !strings.Contains(err.Error(), "Actions byte storage is not object-backed") {
+	} else if !strings.Contains(err.Error(), "service byte storage is not object-backed") ||
+		!strings.Contains(err.Error(), "release assets") ||
+		!strings.Contains(err.Error(), "container-registry blobs") ||
+		!strings.Contains(err.Error(), "CodeQL database archives") ||
+		!strings.Contains(err.Error(), "artifact attestation bundles") {
 		t.Fatalf("object byte storage error = %v", err)
 	}
 

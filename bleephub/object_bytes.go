@@ -109,3 +109,27 @@ func cacheDataKey(id int64) string {
 func logDataKey(id int) string {
 	return fmt.Sprintf("actions/logs/%d/data", id)
 }
+
+func releaseAssetDataKey(id int) string {
+	return fmt.Sprintf("releases/assets/%d/data", id)
+}
+
+func packageFileDataKey(fileID int) string {
+	return fmt.Sprintf("packages/files/%d/data", fileID)
+}
+
+func packageRegistryBlobDataKey(digest string) string {
+	algo, hexPart, ok := strings.Cut(digest, ":")
+	if !ok {
+		return path.Join("packages/registry/blobs", digest)
+	}
+	return path.Join("packages/registry/blobs", algo, hexPart)
+}
+
+func codeQLDatabaseDataKey(id int) string {
+	return fmt.Sprintf("code-scanning/codeql/databases/%d/data", id)
+}
+
+func attestationBundleDataKey(id int) string {
+	return fmt.Sprintf("attestations/%d/bundle.json", id)
+}

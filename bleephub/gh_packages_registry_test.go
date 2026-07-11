@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,104 @@ func TestContainerRegistryPublishCreatesPackageVersion(t *testing.T) {
 	getBlob.Body.Close()
 	if !bytes.Equal(gotLayer, layerBytes) {
 		t.Fatalf("registry blob bytes = %q, want %q", string(gotLayer), string(layerBytes))
+	}
+}
+
+func TestPackageAndRegistryBytesUseObjectStore(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	admin := s.store.UsersByLogin["admin"]
+	pkg, _ := s.store.CreatePackage("User", admin.Login, "container", "object-package", "public")
+	version, err := s.store.CreatePackageVersion("User", admin.Login, "container", pkg.Name, "1.0.0", "", nil, []PackageFileInput{{
+		Name:          "manifest.json",
+		ContentType:   "application/vnd.oci.image.manifest.v1+json",
+		ContentBase64: "cGFja2FnZSBvYmplY3QgYnl0ZXM=",
+	}})
+	if err != nil {
+		t.Fatalf("create package version: %v", err)
+	}
+	files := s.store.ListPackageFiles(version.ID)
+	if len(files) != 1 {
+		t.Fatalf("package files len = %d, want 1", len(files))
+	}
+	got := readS3TestFile(t, objectFS, packageFileDataKey(files[0].ID))
+	if string(got) != "package object bytes" {
+		t.Fatalf("package object bytes = %q", string(got))
+	}
+	data, contentType, ok := s.packageVersionFileData(version.ID, "manifest.json")
+	if !ok || string(data) != "package object bytes" || contentType != "application/vnd.oci.image.manifest.v1+json" {
+		t.Fatalf("package file data ok=%v contentType=%q data=%q", ok, contentType, string(data))
+	}
+	s.registerGHPackagesRoutes()
+	req := httptest.NewRequest("GET", "/api/v3/users/admin/packages/container/object-package/versions/"+itoa(version.ID)+"/files/"+itoa(files[0].ID), nil)
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	rec := httptest.NewRecorder()
+	s.ghHeadersMiddleware(s.mux).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("download package object file status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	downloaded := rec.Body.Bytes()
+	if string(downloaded) != "package object bytes" {
+		t.Fatalf("downloaded package object bytes = %q", string(downloaded))
+	}
+
+	digest := digestSHA256([]byte("registry object bytes"))
+	if err := s.writeRegistryBlob(digest, []byte("registry object bytes")); err != nil {
+		t.Fatalf("write registry blob: %v", err)
+	}
+	registryGot := readS3TestFile(t, objectFS, packageRegistryBlobDataKey(digest))
+	if string(registryGot) != "registry object bytes" {
+		t.Fatalf("registry object bytes = %q", string(registryGot))
+	}
+	readBack, err := s.readRegistryBlob(digest)
+	if err != nil {
+		t.Fatalf("read registry blob: %v", err)
+	}
+	if string(readBack) != "registry object bytes" {
+		t.Fatalf("registry read back = %q", string(readBack))
+	}
+}
+
+func TestDeleteRepoPurgesRepositoryPackageObjectBytes(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "repo-package-objects", "", false)
+	pkg, _ := s.store.CreatePackage("Repository", repo.FullName, "container", "image", "private")
+	version, err := s.store.CreatePackageVersion("Repository", repo.FullName, "container", pkg.Name, "1.0.0", "", nil, []PackageFileInput{{
+		Name:          "manifest.json",
+		ContentType:   "application/vnd.oci.image.manifest.v1+json",
+		ContentBase64: "cmVwbyBwYWNrYWdlIGJ5dGVz",
+	}})
+	if err != nil {
+		t.Fatalf("create package version: %v", err)
+	}
+	files := s.store.ListPackageFiles(version.ID)
+	if len(files) != 1 {
+		t.Fatalf("package files len = %d, want 1", len(files))
+	}
+	if got := string(readS3TestFile(t, objectFS, files[0].StoragePath)); got != "repo package bytes" {
+		t.Fatalf("package object bytes = %q", got)
+	}
+
+	deleted, err := s.store.DeleteRepo("admin", repo.Name)
+	if err != nil {
+		t.Fatalf("delete repo: %v", err)
+	}
+	if !deleted {
+		t.Fatal("delete repo returned false")
+	}
+	if s.store.GetPackage(repo.FullName, "container", "image") != nil {
+		t.Fatal("repository-owned package metadata survived repository deletion")
+	}
+	f, err := objectFS.Open(files[0].StoragePath)
+	if err == nil {
+		_ = f.Close()
+		t.Fatalf("repository package object %s survived repository deletion", files[0].StoragePath)
 	}
 }
 

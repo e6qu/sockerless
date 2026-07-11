@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -20,7 +21,8 @@ import (
 type Attestation struct {
 	ID             int             `json:"id"`
 	RepoID         int             `json:"repo_id"`
-	Bundle         json.RawMessage `json:"bundle"`
+	Bundle         json.RawMessage `json:"-"`
+	StoragePath    string          `json:"storage_path,omitempty"`
 	SubjectDigests []string        `json:"subject_digests"` // "algorithm:hex", lowercased
 	PredicateType  string          `json:"predicate_type"`
 	Initiator      string          `json:"initiator"` // login of the uploading user
@@ -90,24 +92,37 @@ func attestationPredicateMatches(filter, predicateType string) bool {
 }
 
 // CreateAttestation stores an uploaded bundle for a repository.
-func (st *Store) CreateAttestation(repoID int, bundle json.RawMessage, subjects []string, predicateType, initiator string) *Attestation {
+func (st *Store) CreateAttestation(repoID int, bundle json.RawMessage, subjects []string, predicateType, initiator string) (*Attestation, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
+	id := st.NextAttestationID
+	storagePath := attestationBundleDataKey(id)
+	if st.persist != nil && st.ObjectByteStore == nil {
+		return nil, fmt.Errorf("persistent artifact attestation storage requires object byte store")
+	}
+	if st.ObjectByteStore != nil {
+		if err := st.ObjectByteStore.Put(context.Background(), storagePath, bundle); err != nil {
+			return nil, fmt.Errorf("write artifact attestation bundle %s: %w", storagePath, err)
+		}
+	}
 	a := &Attestation{
-		ID:             st.NextAttestationID,
+		ID:             id,
 		RepoID:         repoID,
-		Bundle:         bundle,
+		StoragePath:    storagePath,
 		SubjectDigests: subjects,
 		PredicateType:  predicateType,
 		Initiator:      initiator,
 		CreatedAt:      time.Now().UTC(),
+	}
+	if st.ObjectByteStore == nil {
+		a.Bundle = append(json.RawMessage(nil), bundle...)
 	}
 	st.NextAttestationID++
 	st.Attestations[a.ID] = a
 	if st.persist != nil {
 		st.persist.MustPut("attestations", strconv.Itoa(a.ID), a)
 	}
-	return a
+	return a, nil
 }
 
 // GetAttestation returns an attestation by ID, or nil.
@@ -151,18 +166,66 @@ func (st *Store) ListAttestations(repoIDs map[int]bool, subjectDigest, predicate
 	return out
 }
 
+// ReadAttestationBundle reads the Sigstore bundle bytes for an attestation.
+func (st *Store) ReadAttestationBundle(ctx context.Context, a *Attestation) (json.RawMessage, error) {
+	if a == nil {
+		return nil, fmt.Errorf("attestation is nil")
+	}
+	if a.StoragePath != "" && st.ObjectByteStore != nil {
+		data, err := st.ObjectByteStore.Get(ctx, a.StoragePath)
+		if err != nil {
+			return nil, fmt.Errorf("read artifact attestation bundle %s: %w", a.StoragePath, err)
+		}
+		return json.RawMessage(data), nil
+	}
+	if a.StoragePath != "" && a.Bundle == nil {
+		return nil, fmt.Errorf("artifact attestation bundle %s requires object byte store", a.StoragePath)
+	}
+	return append(json.RawMessage(nil), a.Bundle...), nil
+}
+
 // DeleteAttestation removes an attestation by ID. Returns true if it existed.
-func (st *Store) DeleteAttestation(id int) bool {
+func (st *Store) DeleteAttestation(id int) (bool, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	if _, ok := st.Attestations[id]; !ok {
-		return false
+	a, ok := st.Attestations[id]
+	if !ok {
+		return false, nil
+	}
+	if err := st.deleteAttestationBundleLocked(a); err != nil {
+		return true, err
 	}
 	delete(st.Attestations, id)
 	if st.persist != nil {
 		st.persist.MustDelete("attestations", strconv.Itoa(id))
 	}
-	return true
+	return true, nil
+}
+
+func (st *Store) deleteAttestationBundleLocked(a *Attestation) error {
+	if a == nil || a.StoragePath == "" || st.ObjectByteStore == nil {
+		return nil
+	}
+	if err := st.ObjectByteStore.Delete(context.Background(), a.StoragePath); err != nil {
+		return fmt.Errorf("delete artifact attestation bundle %s: %w", a.StoragePath, err)
+	}
+	return nil
+}
+
+func (st *Store) deleteAttestationsForRepoLocked(repoID int) error {
+	for id, a := range st.Attestations {
+		if a.RepoID != repoID {
+			continue
+		}
+		if err := st.deleteAttestationBundleLocked(a); err != nil {
+			return err
+		}
+		delete(st.Attestations, id)
+		if st.persist != nil {
+			st.persist.MustDelete("attestations", strconv.Itoa(id))
+		}
+	}
+	return nil
 }
 
 // RepoIDsOwnedBy returns the IDs of every repository whose owner

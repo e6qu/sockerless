@@ -8,10 +8,7 @@ import (
 
 // TestListOrgRepos verifies GET /api/v3/orgs/{org}/repos returns org-owned repos.
 func TestListOrgRepos(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "list-org",
-		"name":  "List Org",
-	})
+	createOrgViaAdminAPI(t, "list-org", "List Org")
 
 	ghPost(t, "/api/v3/orgs/list-org/repos", defaultToken, map[string]interface{}{
 		"name": "alpha",
@@ -327,10 +324,7 @@ func TestCreateRepoWithLicenseTemplate(t *testing.T) {
 
 // TestRepoOrganizationField verifies org-owned repos include organization object.
 func TestRepoOrganizationField(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "field-org",
-		"name":  "Field Org",
-	})
+	createOrgViaAdminAPI(t, "field-org", "Field Org")
 	ghPost(t, "/api/v3/orgs/field-org/repos", defaultToken, map[string]interface{}{
 		"name": "field-repo",
 	})

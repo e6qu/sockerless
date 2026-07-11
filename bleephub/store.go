@@ -314,6 +314,7 @@ type Store struct {
 	PackageVersionsByPackage     map[int]map[int]*PackageVersion // packageID → versionID → version
 	PackageFilesByVersion        map[int]map[int]*PackageFile    // versionID → fileID → file
 	PackageDataDir               string                          // directory for package file bytes
+	ObjectByteStore              actionsByteStore                // object storage for durable service bytes
 	NextGistID                   int
 	NextGistCommentID            int
 	NextAgent                    int

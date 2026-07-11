@@ -7,18 +7,14 @@ import (
 	github "github.com/google/go-github/v88/github"
 )
 
-// TestOrganizations provisions an org via the /internal/orgs sim-control
-// endpoint (go-github has no org-create method against GHES), then reads it
-// back through the typed Organizations.Get, and creates+lists a team.
+// TestOrganizations provisions an org via GitHub Enterprise Server's public
+// site-admin organization API, then reads it back through the typed
+// Organizations.Get method, and creates+lists a team.
 func TestOrganizations(t *testing.T) {
 	org := uniqueName("org")
 
-	if code := internalPost(t, "/internal/orgs", map[string]interface{}{
-		"login":       org,
-		"name":        "Test Org",
-		"description": "an org for sdk-tests",
-	}, nil); code != http.StatusCreated {
-		t.Fatalf("internal create org status = %d, want 201", code)
+	if code := createOrganizationViaAdminAPI(t, org, "Test Org", nil); code != http.StatusCreated {
+		t.Fatalf("admin organization create status = %d, want 201", code)
 	}
 
 	got, _, err := client.Organizations.Get(ctx(), org)

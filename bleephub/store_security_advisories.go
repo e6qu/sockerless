@@ -12,28 +12,36 @@ import (
 
 // SecurityAdvisory is a repository-scoped security advisory.
 type SecurityAdvisory struct {
-	ID                     int        `json:"id"`
-	NodeID                 string     `json:"node_id"`
-	GHSAID                 string     `json:"ghsa_id"`
-	RepoID                 int        `json:"repo_id"`
-	AuthorID               int        `json:"author_id"`
-	Title                  string     `json:"title,omitempty"`
-	Summary                string     `json:"summary"`
-	Description            string     `json:"description"`
-	Severity               string     `json:"severity"`
-	CVSSScore              float64    `json:"cvss_score"`
-	CVSSVector             string     `json:"cvss_vector"`
-	CWEs                   []string   `json:"cwes"`
-	State                  string     `json:"state"`
-	CreatedAt              time.Time  `json:"created_at"`
-	UpdatedAt              time.Time  `json:"updated_at"`
-	PublishedAt            *time.Time `json:"published_at,omitempty"`
-	CVEID                  string     `json:"cve_id"`
-	HTMLURL                string     `json:"html_url"`
-	URL                    string     `json:"url"`
-	SubmissionAccepted     bool       `json:"submission_accepted"`
-	PrivateForkID          int        `json:"private_fork_id"`
-	VulnerableVersionRange string     `json:"vulnerable_version_range"`
+	ID                     int                             `json:"id"`
+	NodeID                 string                          `json:"node_id"`
+	GHSAID                 string                          `json:"ghsa_id"`
+	RepoID                 int                             `json:"repo_id"`
+	AuthorID               int                             `json:"author_id"`
+	Title                  string                          `json:"title,omitempty"`
+	Summary                string                          `json:"summary"`
+	Description            string                          `json:"description"`
+	Severity               string                          `json:"severity"`
+	CVSSScore              float64                         `json:"cvss_score"`
+	CVSSVector             string                          `json:"cvss_vector"`
+	CWEs                   []string                        `json:"cwes"`
+	State                  string                          `json:"state"`
+	CreatedAt              time.Time                       `json:"created_at"`
+	UpdatedAt              time.Time                       `json:"updated_at"`
+	PublishedAt            *time.Time                      `json:"published_at,omitempty"`
+	CVEID                  string                          `json:"cve_id"`
+	HTMLURL                string                          `json:"html_url"`
+	URL                    string                          `json:"url"`
+	SubmissionAccepted     bool                            `json:"submission_accepted"`
+	PrivateForkID          int                             `json:"private_fork_id"`
+	VulnerableVersionRange string                          `json:"vulnerable_version_range"`
+	Vulnerabilities        []SecurityAdvisoryVulnerability `json:"vulnerabilities,omitempty"`
+}
+
+type SecurityAdvisoryVulnerability struct {
+	PackageName            string `json:"package_name"`
+	PackageEcosystem       string `json:"package_ecosystem"`
+	VulnerableVersionRange string `json:"vulnerable_version_range"`
+	FirstPatchedVersion    string `json:"first_patched_version,omitempty"`
 }
 
 // SecurityAdvisoryReport records a vulnerability report that spawned an advisory.
@@ -61,6 +69,15 @@ type CreateAdvisoryReq struct {
 	CWEs                   []string `json:"cwe_ids"`
 	State                  string   `json:"state"`
 	VulnerableVersionRange string   `json:"vulnerable_version_range"`
+	Vulnerabilities        []struct {
+		Package struct {
+			Ecosystem string `json:"ecosystem"`
+			Name      string `json:"name"`
+		} `json:"package"`
+		VulnerableVersionRange string `json:"vulnerable_version_range"`
+		FirstPatchedVersion    string `json:"first_patched_version"`
+		PatchedVersions        string `json:"patched_versions"`
+	} `json:"vulnerabilities"`
 }
 
 func validAdvisorySeverity(s string) bool {
@@ -151,6 +168,24 @@ func (st *Store) CreateSecurityAdvisoryE(repoID, authorID int, req CreateAdvisor
 		CreatedAt:              now,
 		UpdatedAt:              now,
 		VulnerableVersionRange: req.VulnerableVersionRange,
+	}
+	if state == "published" {
+		adv.PublishedAt = &now
+	}
+	for _, v := range req.Vulnerabilities {
+		if v.Package.Name == "" || v.Package.Ecosystem == "" || v.VulnerableVersionRange == "" {
+			continue
+		}
+		patched := v.FirstPatchedVersion
+		if patched == "" {
+			patched = v.PatchedVersions
+		}
+		adv.Vulnerabilities = append(adv.Vulnerabilities, SecurityAdvisoryVulnerability{
+			PackageName:            v.Package.Name,
+			PackageEcosystem:       v.Package.Ecosystem,
+			VulnerableVersionRange: v.VulnerableVersionRange,
+			FirstPatchedVersion:    patched,
+		})
 	}
 	if adv.CWEs == nil {
 		adv.CWEs = []string{}

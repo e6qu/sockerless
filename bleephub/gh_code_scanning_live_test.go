@@ -15,46 +15,11 @@ func TestLiveCodeScanning_FullFlow(t *testing.T) {
 	admin := testServer.store.UsersByLogin["admin"]
 	testServer.store.CreateRepo(admin, "live-code-scanning", "", false)
 
-	// Seed an alert via the internal endpoint
-	seedBody, _ := json.Marshal(map[string]any{
-		"rule_id":          "live-rule",
-		"rule_severity":    "error",
-		"rule_description": "live rule description",
-		"tool_name":        "CodeQL",
-		"instances": []map[string]any{
-			{
-				"ref":          "refs/heads/main",
-				"analysis_key": ".github/workflows/codeql.yml:analyze",
-				"category":     ".github/workflows/codeql.yml:analyze/language:go",
-				"state":        "open",
-				"commit_sha":   "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
-				"path":         "main.go",
-				"start_line":   10,
-				"end_line":     10,
-				"start_column": 5,
-				"end_column":   15,
-				"message":      "live issue",
-			},
-		},
-	})
-	resp, err := authedPost("/internal/repos/admin/live-code-scanning/code-scanning/alerts", "application/json", bytes.NewReader(seedBody))
-	if err != nil {
-		t.Fatalf("seed alert: %v", err)
-	}
-	if resp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		t.Fatalf("seed alert: %d %s", resp.StatusCode, b)
-	}
-	var alert map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&alert); err != nil {
-		t.Fatalf("decode seeded alert: %v", err)
-	}
-	resp.Body.Close()
+	alert := seedCodeScanningAlert(t, "admin", "live-code-scanning", "live-rule", "error", "CodeQL")
 	alertNumber := int(alert["number"].(float64))
 
 	// List alerts
-	resp = authedGet(t, "/api/v3/repos/admin/live-code-scanning/code-scanning/alerts")
+	resp := authedGet(t, "/api/v3/repos/admin/live-code-scanning/code-scanning/alerts")
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -86,7 +51,7 @@ func TestLiveCodeScanning_FullFlow(t *testing.T) {
 	req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/repos/admin/live-code-scanning/code-scanning/alerts/"+itoa(alertNumber), bytes.NewReader(patchBody))
 	req.Header.Set("Authorization", "Bearer "+defaultToken)
 	req.Header.Set("Content-Type", "application/json")
-	resp, err = http.DefaultClient.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatalf("patch alert: %v", err)
 	}

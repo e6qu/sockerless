@@ -14,9 +14,6 @@ func (s *Server) registerGHSecretScanningRoutes() {
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}", s.handleUpdateSecretScanningAlert)
 	s.route("GET /api/v3/repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}/locations", s.handleListSecretScanningAlertLocations)
 
-	// Internal seeding endpoint: real GitHub creates alerts by scanning pushed code.
-	s.route("POST /internal/repos/{owner}/{repo}/secret-scanning/alerts", s.handleSeedSecretScanningAlert)
-
 	// Organization-level alerts and pattern configurations
 	s.route("GET /api/v3/orgs/{org}/secret-scanning/alerts",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningOrgAlerts))
@@ -28,10 +25,6 @@ func (s *Server) registerGHSecretScanningRoutes() {
 	// Push protection bypasses + scan history
 	s.route("POST /api/v3/repos/{owner}/{repo}/secret-scanning/push-protection-bypasses", s.handleCreateSecretScanningPushProtectionBypass)
 	s.route("GET /api/v3/repos/{owner}/{repo}/secret-scanning/scan-history", s.handleGetSecretScanningScanHistory)
-
-	// Internal seeding endpoint: real GitHub mints a bypass placeholder when
-	// push protection blocks a push on the git plane.
-	s.route("POST /internal/repos/{owner}/{repo}/secret-scanning/push-protection-placeholders", s.handleSeedSecretScanningPushProtectionPlaceholder)
 }
 
 func (s *Server) handleListSecretScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -188,34 +181,6 @@ func (s *Server) handleListSecretScanningAlertLocations(w http.ResponseWriter, r
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) handleSeedSecretScanningAlert(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-
-	var req struct {
-		SecretType string                   `json:"secret_type"`
-		Locations  []SecretScanningLocation `json:"locations"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.SecretType == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "secret_type is required"})
-		return
-	}
-
-	a := s.store.CreateSecretScanningAlert(repo.FullName, req.SecretType, req.Locations)
-	writeJSON(w, http.StatusCreated, secretScanningAlertToJSON(a, s.baseURL(r), repo))
-}
-
 func (s *Server) handleListSecretScanningOrgAlerts(w http.ResponseWriter, r *http.Request) {
 	org, ok := s.resolveOrgForSecretScanning(w, r)
 	if !ok {
@@ -351,6 +316,23 @@ func (s *Server) handleCreateSecretScanningPushProtectionBypass(w http.ResponseW
 	})
 }
 
+func writeSecretScanningPushProtectionBlocked(w http.ResponseWriter, ph *SecretScanningPushProtectionPlaceholder) {
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]interface{}{
+		"message":        "Push cannot contain secrets.",
+		"placeholder_id": ph.ID,
+		"token_type":     ph.TokenType,
+		"errors": []map[string]interface{}{
+			{
+				"resource":       "SecretScanningPushProtectionBypass",
+				"field":          "placeholder_id",
+				"code":           "custom",
+				"placeholder_id": ph.ID,
+				"token_type":     ph.TokenType,
+			},
+		},
+	})
+}
+
 func secretScanningScanRecordsJSON(records []*SecretScanningScanRecord) []map[string]interface{} {
 	out := make([]map[string]interface{}, 0, len(records))
 	for _, rec := range records {
@@ -381,35 +363,6 @@ func (s *Server) handleGetSecretScanningScanHistory(w http.ResponseWriter, r *ht
 		"backfill_scans":                 secretScanningScanRecordsJSON(backfill),
 		"custom_pattern_backfill_scans":  []map[string]interface{}{},
 		"generic_secrets_backfill_scans": []map[string]interface{}{},
-	})
-}
-
-func (s *Server) handleSeedSecretScanningPushProtectionPlaceholder(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-	var req struct {
-		TokenType string `json:"token_type"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.TokenType == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "token_type is required"})
-		return
-	}
-	ph := s.store.CreateSecretScanningPushProtectionPlaceholder(repo.FullName, req.TokenType)
-	writeJSON(w, http.StatusCreated, map[string]interface{}{
-		"placeholder_id": ph.ID,
-		"token_type":     ph.TokenType,
-		"created_at":     ph.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
 

@@ -27,7 +27,7 @@ func activateOrgMember(t *testing.T, orgLogin, login, memberToken string) {
 }
 
 func TestOrgInvitationsLifecycle(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-inv-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-inv-org")
 
 	teamResp := ghPost(t, "/api/v3/orgs/people-inv-org/teams", defaultToken, map[string]interface{}{"name": "inv team"})
 	if teamResp.StatusCode != http.StatusCreated {
@@ -132,7 +132,7 @@ func TestOrgInvitationsLifecycle(t *testing.T) {
 }
 
 func TestOrgInvitationsCancelAndEmail(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-inv2-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-inv2-org")
 
 	emailUser, _ := newSharedServerUser(t, "people-emailuser")
 	testServer.store.mu.Lock()
@@ -188,7 +188,7 @@ func TestOrgInvitationsCancelAndEmail(t *testing.T) {
 }
 
 func TestOrgFailedInvitations(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-fail-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-fail-org")
 	stale, _ := newSharedServerUser(t, "people-staleinvitee")
 
 	created := ghPost(t, "/api/v3/orgs/people-fail-org/invitations", defaultToken,
@@ -220,7 +220,7 @@ func TestOrgFailedInvitations(t *testing.T) {
 }
 
 func TestOutsideCollaborators(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-oc-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-oc-org")
 	expectStatus(t, ghPost(t, "/api/v3/orgs/people-oc-org/repos", defaultToken,
 		map[string]interface{}{"name": "oc-repo"}), http.StatusCreated, "create org repo")
 
@@ -301,7 +301,7 @@ func TestOutsideCollaborators(t *testing.T) {
 }
 
 func TestOrgBlocks(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-blk-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-blk-org")
 	target, targetToken := newSharedServerUser(t, "people-blk-user")
 	_ = target
 
@@ -346,7 +346,7 @@ func TestOrgBlocks(t *testing.T) {
 }
 
 func TestOrgInteractionLimits(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-il-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-il-org")
 
 	unset := ghGet(t, "/api/v3/orgs/people-il-org/interaction-limits", defaultToken)
 	if unset.StatusCode != http.StatusOK {
@@ -393,7 +393,7 @@ func TestOrgInteractionLimits(t *testing.T) {
 }
 
 func TestOrganizationRoles(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-roles-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-roles-org")
 
 	listing := decodeJSON(t, ghGet(t, "/api/v3/orgs/people-roles-org/organization-roles", defaultToken))
 	if listing["total_count"] != float64(6) {
@@ -484,7 +484,7 @@ func TestOrganizationRoles(t *testing.T) {
 }
 
 func TestSecurityManagers(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-sm-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-sm-org")
 	teamResp := ghPost(t, "/api/v3/orgs/people-sm-org/teams", defaultToken, map[string]interface{}{"name": "sm team"})
 	teamResp.Body.Close()
 
@@ -512,7 +512,7 @@ func TestSecurityManagers(t *testing.T) {
 }
 
 func TestOrgMemberCopilotSeat(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-cop-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-cop-org")
 	_, memberToken := newSharedServerUser(t, "people-cop-member")
 	activateOrgMember(t, "people-cop-org", "people-cop-member", memberToken)
 
@@ -537,7 +537,7 @@ func TestOrgMemberCopilotSeat(t *testing.T) {
 }
 
 func TestOrgSecurityProductEnablement(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "people-sec-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "people-sec-org")
 	for _, name := range []string{"sec-repo-a", "sec-repo-b"} {
 		expectStatus(t, ghPost(t, "/api/v3/orgs/people-sec-org/repos", defaultToken,
 			map[string]interface{}{"name": name}), http.StatusCreated, "create "+name)

@@ -10,7 +10,12 @@ import (
 
 func headShaForTest(t *testing.T, repo string) string {
 	t.Helper()
-	resp := ghGet(t, "/api/v3/repos/admin/"+repo+"/commits", defaultToken)
+	return headShaForRepoPath(t, "admin/"+repo)
+}
+
+func headShaForRepoPath(t *testing.T, repoFullName string) string {
+	t.Helper()
+	resp := ghGet(t, "/api/v3/repos/"+repoFullName+"/commits", defaultToken)
 	commits := decodeJSONWithStatus2xxArray(t, resp, 200)
 	if len(commits) == 0 {
 		t.Fatal("repo has no commits")
@@ -20,11 +25,16 @@ func headShaForTest(t *testing.T, repo string) string {
 
 func submitSnapshotForTest(t *testing.T, repo, ref, sha, correlator string, purls ...string) map[string]interface{} {
 	t.Helper()
+	return submitSnapshotForRepoPath(t, "admin/"+repo, "go.mod", ref, sha, correlator, purls...)
+}
+
+func submitSnapshotForRepoPath(t *testing.T, repoFullName, manifestPath, ref, sha, correlator string, purls ...string) map[string]interface{} {
+	t.Helper()
 	resolved := map[string]interface{}{}
 	for _, purl := range purls {
 		resolved[purl] = map[string]interface{}{"package_url": purl, "scope": "runtime"}
 	}
-	resp := ghPost(t, "/api/v3/repos/admin/"+repo+"/dependency-graph/snapshots", defaultToken, map[string]interface{}{
+	resp := ghPost(t, "/api/v3/repos/"+repoFullName+"/dependency-graph/snapshots", defaultToken, map[string]interface{}{
 		"version": 0,
 		"ref":     ref,
 		"sha":     sha,
@@ -34,9 +44,9 @@ func submitSnapshotForTest(t *testing.T, repo, ref, sha, correlator string, purl
 		},
 		"scanned": time.Now().UTC().Format(time.RFC3339),
 		"manifests": map[string]interface{}{
-			"go.mod": map[string]interface{}{
-				"name":     "go.mod",
-				"file":     map[string]interface{}{"source_location": "go.mod"},
+			manifestPath: map[string]interface{}{
+				"name":     manifestPath,
+				"file":     map[string]interface{}{"source_location": manifestPath},
 				"resolved": resolved,
 			},
 		},

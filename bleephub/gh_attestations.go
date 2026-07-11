@@ -63,7 +63,11 @@ func (s *Server) handleRepoCreateAttestation(w http.ResponseWriter, r *http.Requ
 		writeGHValidationError(w, "Attestation", "bundle", "invalid")
 		return
 	}
-	a := s.store.CreateAttestation(repo.ID, req.Bundle, subjects, predicateType, user.Login)
+	a, err := s.store.CreateAttestation(repo.ID, req.Bundle, subjects, predicateType, user.Login)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, map[string]interface{}{"id": a.ID})
 }
 
@@ -146,8 +150,13 @@ func (s *Server) writeAttestationList(w http.ResponseWriter, r *http.Request, at
 	setCursorLinkHeader(w, r, pi)
 	out := make([]map[string]interface{}, 0, len(page))
 	for _, a := range page {
+		bundle, err := s.store.ReadAttestationBundle(r.Context(), a)
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		out = append(out, map[string]interface{}{
-			"bundle":        a.Bundle,
+			"bundle":        bundle,
 			"repository_id": a.RepoID,
 		})
 	}
@@ -201,8 +210,13 @@ func (s *Server) serveOwnerListAttestationsBulk(w http.ResponseWriter, r *http.R
 		entries := make([]map[string]interface{}, 0)
 		for _, a := range page {
 			if a.hasSubjectDigest(digest) {
+				bundle, err := s.store.ReadAttestationBundle(r.Context(), a)
+				if err != nil {
+					writeGHError(w, http.StatusInternalServerError, err.Error())
+					return
+				}
 				entries = append(entries, map[string]interface{}{
-					"bundle":        a.Bundle,
+					"bundle":        bundle,
 					"repository_id": a.RepoID,
 				})
 			}
@@ -271,7 +285,12 @@ func (s *Server) serveOwnerDeleteAttestationsBulk(w http.ResponseWriter, r *http
 	}
 	deleted := false
 	for _, id := range doomed {
-		if s.store.DeleteAttestation(id) {
+		ok, err := s.store.DeleteAttestation(id)
+		if err != nil {
+			writeGHError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if ok {
 			deleted = true
 		}
 	}
@@ -293,7 +312,10 @@ func (s *Server) serveOwnerDeleteAttestationByID(w http.ResponseWriter, r *http.
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.store.DeleteAttestation(id)
+	if _, err := s.store.DeleteAttestation(id); err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -305,7 +327,10 @@ func (s *Server) serveOwnerDeleteAttestationsByDigest(w http.ResponseWriter, r *
 		return
 	}
 	for _, a := range matched {
-		s.store.DeleteAttestation(a.ID)
+		if _, err := s.store.DeleteAttestation(a.ID); err != nil {
+			writeGHError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

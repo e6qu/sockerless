@@ -314,8 +314,16 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 
 	if isInitial {
 		files := map[string]string{path: string(decoded)}
+		if ph := s.createSecretScanningPushProtectionPlaceholder(repo, secretScanningContentMatches(string(decoded))); ph != nil {
+			writeSecretScanningPushProtectionBlocked(w, ph)
+			return
+		}
 		commitHash, err = initRepoWithFiles(stor, branch, req.Message, files, sig)
 	} else {
+		if ph := s.createSecretScanningPushProtectionPlaceholder(repo, secretScanningContentMatches(string(decoded))); ph != nil {
+			writeSecretScanningPushProtectionBlocked(w, ph)
+			return
+		}
 		commitHash, err = createFileCommit(stor, branch, path, string(decoded), req.Message, sig)
 	}
 	if err != nil {
@@ -349,6 +357,10 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 	})
 
 	base := s.baseURL(r)
+	if err := s.scanCommitForSecretScanning(repo, stor, commitHash, base); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	contentOut := contentFileJSON(base, repo, branch, path, entry.Hash.String(), blob.Size)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{

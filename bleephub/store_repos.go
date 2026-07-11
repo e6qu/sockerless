@@ -365,6 +365,20 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 		}
 	}
 
+	if err := deleteRepoGitStorage(fullName); err != nil {
+		return true, fmt.Errorf("delete repo %s git storage: %w", fullName, err)
+	}
+
+	if err := st.deletePackageFilesForOwnerLocked(fullName); err != nil {
+		return true, fmt.Errorf("delete repo %s package files: %w", fullName, err)
+	}
+	if err := st.deleteCodeQLDatabaseDataForRepoLocked(fullName); err != nil {
+		return true, fmt.Errorf("delete repo %s CodeQL database files: %w", fullName, err)
+	}
+	if err := st.deleteAttestationsForRepoLocked(repo.ID); err != nil {
+		return true, fmt.Errorf("delete repo %s artifact attestations: %w", fullName, err)
+	}
+
 	delete(st.Repos, repo.ID)
 	delete(st.ReposByName, fullName)
 	delete(st.GitStorages, fullName)
@@ -697,7 +711,9 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	}
 	delete(st.PullsByRepo, repo.ID)
 	releaseIDs := st.Releases.IDsForRepo(repo.ID)
-	st.Releases.DeleteAllForRepo(repo.ID)
+	if err := st.Releases.DeleteAllForRepo(repo.ID); err != nil {
+		return true, fmt.Errorf("delete repo %s release assets: %w", fullName, err)
+	}
 	st.Reactions.DeleteParents("release", releaseIDs)
 
 	// Discussion surfaces — comments first because they reference discussions.
@@ -744,22 +760,30 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	}
 	st.Misc.mu.Unlock()
 
-	gitDir := GitDataDir()
-	if gitDir != "" {
+	return true, nil
+}
+
+func deleteRepoGitStorage(fullName string) error {
+	if gitDir := GitDataDir(); gitDir != "" {
 		repoDir := filepath.Join(gitDir, filepath.FromSlash(fullName))
-		_ = os.RemoveAll(repoDir)
-	}
-	if IsS3GitStorage() {
-		s3fs, err := getS3FS(context.Background())
-		if err != nil {
-			log.Printf("bleephub: delete repo %s: resolve S3 git storage: %v (object prefix left orphaned)", fullName, err)
-		} else if s3fs != nil {
-			if err := s3fs.deleteRepoPrefix(fullName); err != nil {
-				log.Printf("bleephub: delete repo %s: purge S3 object prefix: %v (objects left orphaned)", fullName, err)
-			}
+		if err := os.RemoveAll(repoDir); err != nil {
+			return fmt.Errorf("remove filesystem git directory %s: %w", repoDir, err)
 		}
 	}
-	return true, nil
+	if !IsS3GitStorage() {
+		return nil
+	}
+	s3fs, err := getS3FS(context.Background())
+	if err != nil {
+		return fmt.Errorf("resolve S3 git storage: %w", err)
+	}
+	if s3fs == nil {
+		return nil
+	}
+	if err := s3fs.deleteRepoPrefix(fullName); err != nil {
+		return fmt.Errorf("purge S3 object prefix: %w", err)
+	}
+	return nil
 }
 
 func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
@@ -791,14 +815,6 @@ func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
 		if kept, changed := removeRepoIDFromList(st.EnterpriseSettings.DependabotAccessibleRepoIDs, repoID); changed {
 			st.EnterpriseSettings.DependabotAccessibleRepoIDs = kept
 			st.persistEnterpriseSettings()
-		}
-	}
-	for id, a := range st.Attestations {
-		if a.RepoID == repoID {
-			delete(st.Attestations, id)
-			if st.persist != nil {
-				st.persist.MustDelete("attestations", strconv.Itoa(id))
-			}
 		}
 	}
 	for id, a := range st.RepoActivities {

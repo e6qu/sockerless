@@ -9,7 +9,7 @@ import (
 // and returns the team's numeric ID for the legacy endpoints.
 func createLegacyTestTeam(t *testing.T, orgLogin, teamName string) int {
 	t.Helper()
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": orgLogin}).Body.Close()
+	createOrgViaAdminAPI(t, orgLogin)
 	resp := ghPost(t, "/api/v3/orgs/"+orgLogin+"/teams", defaultToken, map[string]interface{}{"name": teamName})
 	if resp.StatusCode != http.StatusCreated {
 		resp.Body.Close()

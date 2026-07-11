@@ -399,7 +399,7 @@ func TestCodespaces_404Cases(t *testing.T) {
 // list → stop (200 with the codespace body) → delete (202).
 func TestCodespaces_OrgMemberAdministration(t *testing.T) {
 	admin := testServer.store.UsersByLogin["admin"]
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": "cs-admin-org"}).Body.Close()
+	createOrgViaAdminAPI(t, "cs-admin-org")
 	org := testServer.store.GetOrg("cs-admin-org")
 	repo := testServer.store.CreateOrgRepo(org, admin, "cs-admin-repo", "org codespace repo", false)
 	if repo == nil {

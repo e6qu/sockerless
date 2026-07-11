@@ -563,6 +563,38 @@ func TestGitDeleteCleanup(t *testing.T) {
 	}
 }
 
+func TestDeleteRepoS3GitCleanupFailurePreservesRepo(t *testing.T) {
+	resetS3FSCacheForTest(t)
+	t.Setenv("BLEEPHUB_GIT_DIR", "")
+	t.Setenv("BLEEPHUB_S3_BUCKET", "")
+
+	st := NewStore()
+	st.SeedDefaultUser()
+	admin := st.UsersByLogin["admin"]
+	repo := st.CreateRepo(admin, "s3-cleanup-fail", "", false)
+	if repo == nil {
+		t.Fatal("expected repo to be created before S3 git storage is enabled")
+	}
+
+	resetS3FSCacheForTest(t)
+	t.Setenv("BLEEPHUB_S3_BUCKET", "bucket")
+	t.Setenv("BLEEPHUB_S3_ENDPOINT", "http://127.0.0.1:1")
+
+	deleted, err := st.DeleteRepo(admin.Login, repo.Name)
+	if err == nil {
+		t.Fatal("DeleteRepo returned nil error, want S3 git cleanup failure")
+	}
+	if !deleted {
+		t.Fatal("DeleteRepo returned false for an existing repo")
+	}
+	if st.ReposByName[repo.FullName] == nil {
+		t.Fatal("repo metadata was deleted even though required S3 git cleanup failed")
+	}
+	if st.GitStorages[repo.FullName] == nil {
+		t.Fatal("git storage index was deleted even though required S3 git cleanup failed")
+	}
+}
+
 func TestGitFetchNoAuthPublicRepo(t *testing.T) {
 	ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
 		"name":    "public-clone",
@@ -809,15 +841,7 @@ func TestCreateRepoDefaultBranch(t *testing.T) {
 
 // TestCreateOrgRepoExtended verifies org repo creation supports the new fields.
 func TestCreateOrgRepoExtended(t *testing.T) {
-	orgResp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "create-org",
-		"name":  "Create Org",
-	})
-	if orgResp.StatusCode != 201 {
-		orgResp.Body.Close()
-		t.Fatalf("expected 201 for org create, got %d", orgResp.StatusCode)
-	}
-	orgResp.Body.Close()
+	createOrgViaAdminAPI(t, "create-org", "Create Org")
 
 	resp := ghPost(t, "/api/v3/orgs/create-org/repos", defaultToken, map[string]interface{}{
 		"name":           "org-repo",

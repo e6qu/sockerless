@@ -169,6 +169,7 @@ func (s *Server) handleCreateSecurityAdvisory(w http.ResponseWriter, r *http.Req
 		writeGHError(w, http.StatusUnprocessableEntity, "Validation Failed")
 		return
 	}
+	s.deriveDependabotAlertsForPublishedAdvisory(adv)
 	writeJSON(w, http.StatusCreated, securityAdvisoryToJSON(adv, repo, s.baseURL(r), s.store))
 }
 
@@ -235,6 +236,7 @@ func (s *Server) handleUpdateSecurityAdvisory(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	publishedBefore := adv.PublishedAt != nil && adv.State == "published"
 	if !s.store.UpdateSecurityAdvisory(adv.ID, func(a *SecurityAdvisory) {
 		if req.Summary != "" {
 			a.Summary = req.Summary
@@ -264,6 +266,9 @@ func (s *Server) handleUpdateSecurityAdvisory(w http.ResponseWriter, r *http.Req
 	}) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
+	}
+	if !publishedBefore && adv.PublishedAt != nil && adv.State == "published" {
+		s.deriveDependabotAlertsForPublishedAdvisory(adv)
 	}
 	writeJSON(w, http.StatusOK, securityAdvisoryToJSON(adv, repo, s.baseURL(r), s.store))
 }
@@ -431,7 +436,22 @@ func securityAdvisoryToJSON(a *SecurityAdvisory, repo *Repo, baseURL string, st 
 	}
 
 	vulnerabilities := []map[string]interface{}{}
-	if a.VulnerableVersionRange != "" {
+	for _, v := range a.Vulnerabilities {
+		firstPatched := interface{}(nil)
+		if v.FirstPatchedVersion != "" {
+			firstPatched = v.FirstPatchedVersion
+		}
+		vulnerabilities = append(vulnerabilities, map[string]interface{}{
+			"package": map[string]interface{}{
+				"ecosystem": v.PackageEcosystem,
+				"name":      v.PackageName,
+			},
+			"vulnerable_version_range": v.VulnerableVersionRange,
+			"patched_versions":         firstPatched,
+			"vulnerable_functions":     []string{},
+		})
+	}
+	if len(vulnerabilities) == 0 && a.VulnerableVersionRange != "" {
 		vulnerabilities = append(vulnerabilities, map[string]interface{}{
 			"package": map[string]interface{}{
 				"ecosystem": nil,

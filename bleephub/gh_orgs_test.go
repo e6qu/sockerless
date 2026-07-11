@@ -59,6 +59,71 @@ func TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI(t *testing.T)
 	}
 }
 
+func TestGitHubSoftwareDevelopmentKitHarnessUsesAdminOrganizationAPI(t *testing.T) {
+	var b strings.Builder
+	for _, path := range []string{
+		"sdk-tests/main_test.go",
+		"sdk-tests/orgs_users_test.go",
+		"sdk-tests/apps_orgs_flow_test.go",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(body)
+	}
+	source := b.String()
+	if strings.Contains(source, `"/internal/orgs"`) {
+		t.Fatal("go-github software development kit tests must not provision organizations through /internal/orgs")
+	}
+	if !strings.Contains(source, `"/api/v3/admin/organizations"`) {
+		t.Fatal("go-github software development kit tests must provision organizations through the GitHub Enterprise Server admin organization API")
+	}
+}
+
+func createOrgViaAdminAPI(t *testing.T, login string, profileName ...string) map[string]interface{} {
+	t.Helper()
+	body := map[string]interface{}{
+		"login": login,
+		"admin": "admin",
+	}
+	if len(profileName) > 0 && profileName[0] != "" {
+		body["profile_name"] = profileName[0]
+	}
+	resp := ghPost(t, "/api/v3/admin/organizations", defaultToken, body)
+	if resp.StatusCode != http.StatusCreated {
+		resp.Body.Close()
+		t.Fatalf("POST /api/v3/admin/organizations for %s = %d, want 201", login, resp.StatusCode)
+	}
+	return decodeJSON(t, resp)
+}
+
+func TestPublicFeatureTestsProvisionOrganizationsThroughAdminAPI(t *testing.T) {
+	allowedDirectCalls := map[string]int{
+		"gh_orgs_test.go":     2,
+		"handle_mgmt_test.go": 2,
+	}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		body, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		needle := `ghPost(t, "` + `/internal/orgs"`
+		directCalls := strings.Count(string(body), needle)
+		if directCalls > allowedDirectCalls[name] {
+			t.Fatalf("%s provisions organizations through /internal/orgs; use createOrgViaAdminAPI for public GitHub feature setup", name)
+		}
+	}
+}
+
 // TestCreateOrg verifies the operator organization provisioning route.
 func TestCreateOrg(t *testing.T) {
 	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
@@ -154,10 +219,7 @@ func TestAdminCreateOrgDefaultsProfileName(t *testing.T) {
 
 // TestGetOrg verifies GET /api/v3/orgs/{org} → 200.
 func TestGetOrg(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-get",
-		"name":  "Get Org",
-	})
+	createOrgViaAdminAPI(t, "testorg-get", "Get Org")
 
 	resp := ghGet(t, "/api/v3/orgs/testorg-get", "")
 	if resp.StatusCode != 200 {
@@ -185,9 +247,7 @@ func TestGetOrgNotFound(t *testing.T) {
 
 // TestUpdateOrg verifies PATCH → description changed.
 func TestUpdateOrg(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-update",
-	})
+	createOrgViaAdminAPI(t, "testorg-update")
 
 	resp := ghPatch(t, "/api/v3/orgs/testorg-update", defaultToken, map[string]interface{}{
 		"description": "Updated org description",
@@ -205,9 +265,7 @@ func TestUpdateOrg(t *testing.T) {
 
 // TestDeleteOrg verifies DELETE → 204, subsequent GET → 404.
 func TestDeleteOrg(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-delete",
-	})
+	createOrgViaAdminAPI(t, "testorg-delete")
 
 	resp := ghDelete(t, "/api/v3/orgs/testorg-delete", defaultToken)
 	defer resp.Body.Close()
@@ -224,9 +282,7 @@ func TestDeleteOrg(t *testing.T) {
 
 // TestListUserOrgs verifies GET /api/v3/user/orgs → array with created org.
 func TestListAuthUserOrgs(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-list",
-	})
+	createOrgViaAdminAPI(t, "testorg-list")
 
 	// Walk the pages the way a real client does: the shared test server
 	// accumulates admin-owned organizations from every test, so the
@@ -256,9 +312,7 @@ func TestListAuthUserOrgs(t *testing.T) {
 
 // TestCreateTeam verifies POST /api/v3/orgs/{org}/teams → 201.
 func TestCreateTeam(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-team",
-	})
+	createOrgViaAdminAPI(t, "testorg-team")
 
 	resp := ghPost(t, "/api/v3/orgs/testorg-team/teams", defaultToken, map[string]interface{}{
 		"name":        "Developers",
@@ -284,9 +338,7 @@ func TestCreateTeam(t *testing.T) {
 
 // TestListTeams verifies GET /api/v3/orgs/{org}/teams → array.
 func TestListTeams(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-listteams",
-	})
+	createOrgViaAdminAPI(t, "testorg-listteams")
 	ghPost(t, "/api/v3/orgs/testorg-listteams/teams", defaultToken, map[string]interface{}{
 		"name": "Alpha",
 	})
@@ -305,9 +357,7 @@ func TestListTeams(t *testing.T) {
 
 // TestGetTeam verifies GET /api/v3/orgs/{org}/teams/{slug} → 200.
 func TestGetTeam(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-getteam",
-	})
+	createOrgViaAdminAPI(t, "testorg-getteam")
 	ghPost(t, "/api/v3/orgs/testorg-getteam/teams", defaultToken, map[string]interface{}{
 		"name": "Backend Team",
 	})
@@ -329,9 +379,7 @@ func TestGetTeam(t *testing.T) {
 
 // TestDeleteTeam verifies DELETE → 204.
 func TestDeleteTeam(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-delteam",
-	})
+	createOrgViaAdminAPI(t, "testorg-delteam")
 	ghPost(t, "/api/v3/orgs/testorg-delteam/teams", defaultToken, map[string]interface{}{
 		"name": "Temp Team",
 	})
@@ -351,9 +399,7 @@ func TestDeleteTeam(t *testing.T) {
 
 // TestOrgMembership verifies PUT/GET membership → role correct.
 func TestOrgMembership(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-membership",
-	})
+	createOrgViaAdminAPI(t, "testorg-membership")
 
 	// Get the auto-created admin membership
 	resp := ghGet(t, "/api/v3/orgs/testorg-membership/memberships/admin", defaultToken)
@@ -373,9 +419,7 @@ func TestOrgMembership(t *testing.T) {
 
 // TestRemoveMembership verifies DELETE → 204.
 func TestRemoveMembership(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-rmmember",
-	})
+	createOrgViaAdminAPI(t, "testorg-rmmember")
 
 	// Set membership (admin is already a member, but set again as member role)
 	ghPut(t, "/api/v3/orgs/testorg-rmmember/memberships/admin", defaultToken, map[string]interface{}{
@@ -391,9 +435,7 @@ func TestRemoveMembership(t *testing.T) {
 
 // TestTeamRepoPermission verifies team repo access.
 func TestTeamRepoPermission(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-teamrepo",
-	})
+	createOrgViaAdminAPI(t, "testorg-teamrepo")
 	ghPost(t, "/api/v3/orgs/testorg-teamrepo/teams", defaultToken, map[string]interface{}{
 		"name":       "Devs",
 		"permission": "push",
@@ -425,9 +467,7 @@ func TestTeamRepoPermission(t *testing.T) {
 // require for team → role mapping.
 func TestListUserTeams(t *testing.T) {
 	// Create org and team under admin.
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-userteams",
-	})
+	createOrgViaAdminAPI(t, "testorg-userteams")
 	ghPost(t, "/api/v3/orgs/testorg-userteams/teams", defaultToken, map[string]interface{}{
 		"name":    "platform-admins",
 		"privacy": "closed",
@@ -467,10 +507,7 @@ func TestListUserTeams(t *testing.T) {
 
 // TestGraphQLViewerOrgs verifies viewer { organizations } query.
 func TestGraphQLViewerOrgs(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-gql",
-		"name":  "GQL Org",
-	})
+	createOrgViaAdminAPI(t, "testorg-gql", "GQL Org")
 
 	resp := ghPost(t, "/api/graphql", defaultToken, map[string]string{
 		"query": `{viewer{organizations(first:100){nodes{login,name},totalCount}}}`,
@@ -512,10 +549,7 @@ func TestGraphQLViewerOrgs(t *testing.T) {
 
 // TestGraphQLOrganization verifies the organization query.
 func TestGraphQLOrganization(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-gqlquery",
-		"name":  "Query Org",
-	})
+	createOrgViaAdminAPI(t, "testorg-gqlquery", "Query Org")
 
 	resp := ghPost(t, "/api/graphql", defaultToken, map[string]string{
 		"query": `{organization(login:"testorg-gqlquery"){login,name,description}}`,
@@ -558,9 +592,7 @@ func TestGraphQLOrgNotFound(t *testing.T) {
 
 // TestCreateOrgRepo verifies POST /api/v3/orgs/{org}/repos → 201.
 func TestCreateOrgRepo(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "testorg-repo",
-	})
+	createOrgViaAdminAPI(t, "testorg-repo")
 
 	resp := ghPost(t, "/api/v3/orgs/testorg-repo/repos", defaultToken, map[string]interface{}{
 		"name":        "org-repo",

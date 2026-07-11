@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -76,6 +77,7 @@ type ReleaseStore struct {
 	assetByID    map[int]*ReleaseAsset
 	assetData    map[int][]byte
 	assetDataDir string
+	byteStore    actionsByteStore
 	nextID       int
 	nextAsset    int
 	persist      *Persistence
@@ -194,13 +196,16 @@ func (rs *ReleaseStore) Update(id int, fn func(*Release)) bool {
 // DeleteAllForRepo purges every release for a repository, in memory and on
 // disk. Used by the delete-repo cascade so a recreated same-name repo can't
 // inherit the old repo's releases after a restart.
-func (rs *ReleaseStore) DeleteAllForRepo(repoID int) {
+func (rs *ReleaseStore) DeleteAllForRepo(repoID int) error {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	for _, r := range rs.byRepo[repoID] {
-		rs.deleteReleaseLocked(r)
+		if err := rs.deleteReleaseLocked(r); err != nil {
+			return err
+		}
 	}
 	delete(rs.byRepo, repoID)
+	return nil
 }
 
 func (rs *ReleaseStore) IDsForRepo(repoID int) map[int]bool {
@@ -213,14 +218,16 @@ func (rs *ReleaseStore) IDsForRepo(repoID int) map[int]bool {
 	return ids
 }
 
-func (rs *ReleaseStore) Delete(id int) bool {
+func (rs *ReleaseStore) Delete(id int) (bool, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	r := rs.byID[id]
 	if r == nil {
-		return false
+		return false, nil
 	}
-	rs.deleteReleaseLocked(r)
+	if err := rs.deleteReleaseLocked(r); err != nil {
+		return true, err
+	}
 	src := rs.byRepo[r.RepoID]
 	for i, x := range src {
 		if x.ID == id {
@@ -228,7 +235,7 @@ func (rs *ReleaseStore) Delete(id int) bool {
 			break
 		}
 	}
-	return true
+	return true, nil
 }
 
 // --- Asset methods ---
@@ -241,6 +248,9 @@ func (rs *ReleaseStore) assetFilePath(id int) string {
 }
 
 func (rs *ReleaseStore) saveAssetDataLocked(id int, data []byte) error {
+	if rs.byteStore != nil {
+		return rs.byteStore.Put(context.Background(), releaseAssetDataKey(id), data)
+	}
 	if rs.assetDataDir != "" {
 		if err := os.MkdirAll(rs.assetDataDir, 0o755); err != nil {
 			return err
@@ -252,6 +262,13 @@ func (rs *ReleaseStore) saveAssetDataLocked(id int, data []byte) error {
 }
 
 func (rs *ReleaseStore) loadAssetDataLocked(id int) ([]byte, bool) {
+	if rs.byteStore != nil {
+		data, err := rs.byteStore.Get(context.Background(), releaseAssetDataKey(id))
+		if err != nil {
+			return nil, false
+		}
+		return data, true
+	}
 	if rs.assetDataDir != "" {
 		path := rs.assetFilePath(id)
 		data, err := os.ReadFile(path)
@@ -264,17 +281,25 @@ func (rs *ReleaseStore) loadAssetDataLocked(id int) ([]byte, bool) {
 	return data, ok
 }
 
-func (rs *ReleaseStore) removeAssetDataLocked(id int) {
+func (rs *ReleaseStore) removeAssetDataLocked(id int) error {
+	if rs.byteStore != nil {
+		return rs.byteStore.Delete(context.Background(), releaseAssetDataKey(id))
+	}
 	if rs.assetDataDir != "" {
-		_ = os.Remove(rs.assetFilePath(id))
-		return
+		if err := os.Remove(rs.assetFilePath(id)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		return nil
 	}
 	delete(rs.assetData, id)
+	return nil
 }
 
-func (rs *ReleaseStore) deleteAssetLocked(a *ReleaseAsset) {
+func (rs *ReleaseStore) deleteAssetLocked(a *ReleaseAsset) error {
+	if err := rs.removeAssetDataLocked(a.ID); err != nil {
+		return err
+	}
 	delete(rs.assetByID, a.ID)
-	rs.removeAssetDataLocked(a.ID)
 	if rel := rs.byID[a.ReleaseID]; rel != nil {
 		src := rel.Assets
 		for i, x := range src {
@@ -287,16 +312,20 @@ func (rs *ReleaseStore) deleteAssetLocked(a *ReleaseAsset) {
 	if rs.persist != nil {
 		rs.persist.MustDelete("release_assets", strconv.Itoa(a.ID))
 	}
+	return nil
 }
 
-func (rs *ReleaseStore) deleteReleaseLocked(r *Release) {
+func (rs *ReleaseStore) deleteReleaseLocked(r *Release) error {
 	for _, a := range r.Assets {
-		rs.deleteAssetLocked(a)
+		if err := rs.deleteAssetLocked(a); err != nil {
+			return err
+		}
 	}
 	delete(rs.byID, r.ID)
 	if rs.persist != nil {
 		rs.persist.MustDelete("releases", strconv.Itoa(r.ID))
 	}
+	return nil
 }
 
 func (rs *ReleaseStore) CreateReleaseAsset(releaseID, uploaderID int, name, label, contentType string, data []byte) (*ReleaseAsset, error) {
@@ -328,7 +357,7 @@ func (rs *ReleaseStore) CreateReleaseAsset(releaseID, uploaderID int, name, labe
 	rs.byID[releaseID].Assets = append(rs.byID[releaseID].Assets, asset)
 	if err := rs.saveAssetDataLocked(id, data); err != nil {
 		// Rollback maps and disk on write failure.
-		rs.deleteAssetLocked(asset)
+		_ = rs.deleteAssetLocked(asset)
 		return nil, err
 	}
 	if rs.persist != nil {
@@ -367,15 +396,17 @@ func (rs *ReleaseStore) UpdateReleaseAsset(id int, name, label string) *ReleaseA
 	return a
 }
 
-func (rs *ReleaseStore) DeleteReleaseAsset(id int) bool {
+func (rs *ReleaseStore) DeleteReleaseAsset(id int) (bool, error) {
 	rs.mu.Lock()
 	defer rs.mu.Unlock()
 	a := rs.assetByID[id]
 	if a == nil {
-		return false
+		return false, nil
 	}
-	rs.deleteAssetLocked(a)
-	return true
+	if err := rs.deleteAssetLocked(a); err != nil {
+		return true, err
+	}
+	return true, nil
 }
 
 func (rs *ReleaseStore) ListReleaseAssets(releaseID int) []*ReleaseAsset {
@@ -720,7 +751,15 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.store.Releases.Delete(id)
+	deleted, err := s.store.Releases.Delete(id)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "Failed to delete release")
+		return
+	}
+	if !deleted {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	s.store.Reactions.DeleteParent("release", id)
 	s.recordAuditEvent("release.destroy", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": id})
 	w.WriteHeader(http.StatusNoContent)
@@ -898,7 +937,15 @@ func (s *Server) handleDeleteReleaseAsset(w http.ResponseWriter, r *http.Request
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	s.store.Releases.DeleteReleaseAsset(assetID)
+	deleted, err := s.store.Releases.DeleteReleaseAsset(assetID)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, "Failed to delete release asset")
+		return
+	}
+	if !deleted {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

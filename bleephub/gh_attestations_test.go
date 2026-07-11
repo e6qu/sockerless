@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -146,6 +147,63 @@ func TestRepoAttestations_CreateAndListRoundTrip(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("unknown repo upload = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestRepoAttestations_BundlesUseObjectStore(t *testing.T) {
+	_, byteStore := newObjectByteStoreForTest(t)
+	previous := testServer.store.ObjectByteStore
+	testServer.store.ObjectByteStore = byteStore
+	t.Cleanup(func() { testServer.store.ObjectByteStore = previous })
+
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "attest-object-repo", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+	digest := testSubjectDigest("attest-object-repo-artifact")
+	bundle := makeSigstoreBundle(t, digest, "https://slsa.dev/provenance/v1")
+	id := uploadAttestation(t, "admin/attest-object-repo", defaultToken, bundle)
+	key := attestationBundleDataKey(id)
+
+	stored := testServer.store.GetAttestation(id)
+	if stored == nil {
+		t.Fatal("attestation metadata missing")
+	}
+	if stored.StoragePath != key {
+		t.Fatalf("StoragePath = %q, want %q", stored.StoragePath, key)
+	}
+	if len(stored.Bundle) != 0 {
+		t.Fatalf("metadata retained in-memory bundle bytes: %s", string(stored.Bundle))
+	}
+	if _, err := byteStore.Get(context.Background(), key); err != nil {
+		t.Fatalf("object-backed attestation bundle missing: %v", err)
+	}
+
+	resp := ghGet(t, "/api/v3/repos/admin/attest-object-repo/attestations/"+digest, defaultToken)
+	if resp.StatusCode != 200 {
+		resp.Body.Close()
+		t.Fatalf("list = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON(t, resp)
+	attestations, _ := body["attestations"].([]interface{})
+	if len(attestations) != 1 {
+		t.Fatalf("attestations = %v, want 1 entry", body["attestations"])
+	}
+	gotBundle := attestations[0].(map[string]interface{})["bundle"].(map[string]interface{})
+	gotEnvelope := gotBundle["dsseEnvelope"].(map[string]interface{})
+	wantEnvelope := bundle["dsseEnvelope"].(map[string]interface{})
+	if gotEnvelope["payload"] != wantEnvelope["payload"] {
+		t.Fatal("object-backed dsseEnvelope.payload did not round-trip")
+	}
+
+	resp = ghDelete(t, "/api/v3/users/admin/attestations/"+strconv.Itoa(id), defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		t.Fatalf("delete = %d, want 204", resp.StatusCode)
+	}
+	if _, err := byteStore.Get(context.Background(), key); err == nil {
+		t.Fatalf("attestation object %s survived public delete", key)
 	}
 }
 
