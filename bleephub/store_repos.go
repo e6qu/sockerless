@@ -375,6 +375,9 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	if err := st.deleteCodeQLDatabaseDataForRepoLocked(fullName); err != nil {
 		return true, fmt.Errorf("delete repo %s CodeQL database files: %w", fullName, err)
 	}
+	if err := st.deleteAttestationsForRepoLocked(repo.ID); err != nil {
+		return true, fmt.Errorf("delete repo %s artifact attestations: %w", fullName, err)
+	}
 
 	delete(st.Repos, repo.ID)
 	delete(st.ReposByName, fullName)
@@ -812,14 +815,6 @@ func (st *Store) deleteRepoIDReferencesLocked(repoID int) {
 		if kept, changed := removeRepoIDFromList(st.EnterpriseSettings.DependabotAccessibleRepoIDs, repoID); changed {
 			st.EnterpriseSettings.DependabotAccessibleRepoIDs = kept
 			st.persistEnterpriseSettings()
-		}
-	}
-	for id, a := range st.Attestations {
-		if a.RepoID == repoID {
-			delete(st.Attestations, id)
-			if st.persist != nil {
-				st.persist.MustDelete("attestations", strconv.Itoa(id))
-			}
 		}
 	}
 	for id, a := range st.RepoActivities {

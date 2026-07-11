@@ -290,11 +290,16 @@ func TestArtifactMetadataAndAttestationPersistenceReload(t *testing.T) {
 	var attID, storageID, deployID, viewID, viewNumber, projID int
 	digest := testSubjectDigest("reload-artifact")
 	st2 := reloadedStore(t, func(p *Persistence, st *Store) {
+		_, byteStore := newObjectByteStoreForTest(t)
+		st.ObjectByteStore = byteStore
 		st.SeedDefaultUser()
 		admin := st.UsersByLogin["admin"]
 		repo := st.CreateRepo(admin, "reload-repo", "", false)
 		bundle := []byte(`{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{},"dsseEnvelope":{"payload":"x"}}`)
-		att := st.CreateAttestation(repo.ID, bundle, []string{digest}, "https://slsa.dev/provenance/v1", admin.Login)
+		att, err := st.CreateAttestation(repo.ID, bundle, []string{digest}, "https://slsa.dev/provenance/v1", admin.Login)
+		if err != nil {
+			t.Fatalf("CreateAttestation: %v", err)
+		}
 		attID = att.ID
 		storage := st.CreateArtifactStorageRecord(&ArtifactStorageRecord{
 			OrgID: 42, Name: "libfoo", Digest: digest, RegistryURL: "https://reg/", Status: "active",

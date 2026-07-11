@@ -129,3 +129,7 @@ func packageRegistryBlobDataKey(digest string) string {
 func codeQLDatabaseDataKey(id int) string {
 	return fmt.Sprintf("code-scanning/codeql/databases/%d/data", id)
 }
+
+func attestationBundleDataKey(id int) string {
+	return fmt.Sprintf("attestations/%d/bundle.json", id)
+}

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, BUG-2482, BUG-2483, BUG-2484, BUG-2485, BUG-2486, and BUG-2487.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, BUG-2482, BUG-2483, BUG-2484, BUG-2485, BUG-2486, BUG-2487, and BUG-2488.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -17,6 +17,8 @@ Repository deletion now treats git storage cleanup as a required pre-delete step
 Repository deletion also purges repository-owned GitHub Packages file bytes before deleting repository metadata. Object-backed and local package file bytes are removed through the same fail-loud delete path, so a repository delete no longer leaves durable package bytes orphaned after package metadata is gone.
 
 GitHub CodeQL database archive bytes now use the same durable object-byte contract. The SQLite row stores metadata, size, and the object key; public CodeQL database archive downloads read the object store; CodeQL database deletion removes the object before deleting metadata; and repository deletion purges repository-owned CodeQL database archive objects before deleting repository metadata.
+
+Artifact attestation Sigstore bundle bytes now use the same durable object-byte contract. The SQLite row stores repository linkage, subject digests, predicate type, initiator, timestamps, and the object key; public repository, organization, and user attestation list responses read bundle JSON from object storage; public attestation deletion removes the object before deleting metadata; and repository deletion purges repository-owned attestation bundle objects before deleting repository metadata.
 
 The pre-push dependency freshness gate also found stale AWS software development kit service modules in the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests. Those modules were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions, and the freshness gate passed again.
 
@@ -55,6 +57,9 @@ The AWS simulator software development kit Amazon Elastic Container Service task
 - `bash -n scripts/bleephub-local-dev.sh` passed after the local development object-store requirement text named GitHub CodeQL database archives.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after GitHub CodeQL database archive bytes moved to object storage.
 - `pre-commit run --all-files` passed after GitHub CodeQL database archive bytes moved to object storage.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RepoAttestations_|OrgAttestations_|UserAttestations_|Attestations_CursorPagination|ArtifactMetadataAndAttestationPersistenceReload|PersistenceReload_DeleteRepoPurgesIssueAndPullChildren|PersistentServerStorageRequiresDurableGitAndObjectBytes)' -count=1` passed with sandbox escalation after artifact attestation bundle bytes moved to object storage.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after artifact attestation bundle bytes moved to object storage.
+- `bash -n scripts/bleephub-local-dev.sh` and `git diff --check` passed after artifact attestation bundle bytes moved to object storage.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestArtifact(CreateUploadFinalize|FinalizeScopesByWorkflowRunBackendID|ListReturnsFinalized|Download)|TestGetSignedArtifactURL' -count=1` passed with sandbox escalation for loopback listeners.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestActionsRunAndJobEndpointsScopeIDsToPathRepository|TestActionsRuns_(Get|Delete|Cancel)|TestActionsRunJobs_List|TestActionsJobs_(Get|Logs)|TestActionsArtifacts_ListRunArtifacts' -count=1` passed with sandbox escalation for loopback listeners.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestNotifications_(ListAndRead|ThreadIDsSeparateIssuesAndPullRequests|ThreadSubscription|RepoScoped|SinceAndBefore|ParticipatingFilter)|TestNotificationThreadMarkDone' -count=1` passed with sandbox escalation for loopback listeners.

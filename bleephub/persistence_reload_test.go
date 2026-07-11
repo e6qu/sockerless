@@ -270,6 +270,8 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 	const orgLogin = "delete-cascade-org"
 
 	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		_, byteStore := newObjectByteStoreForTest(t)
+		st.ObjectByteStore = byteStore
 		st.SeedDefaultUser()
 		admin := st.UsersByLogin["admin"]
 		org := st.CreateOrg(admin, orgLogin, "Delete Cascade", "")
@@ -310,7 +312,9 @@ func TestPersistenceReload_DeleteRepoPurgesIssueAndPullChildren(t *testing.T) {
 		if !st.SetRepoSubscription(admin.ID, repo.ID, true) {
 			t.Fatal("SetRepoSubscription returned false")
 		}
-		st.CreateAttestation(repo.ID, []byte(`{"bundle":true}`), []string{"sha256:deadbeef"}, "https://slsa.dev/provenance/v1", admin.Login)
+		if _, err := st.CreateAttestation(repo.ID, []byte(`{"bundle":true}`), []string{"sha256:deadbeef"}, "https://slsa.dev/provenance/v1", admin.Login); err != nil {
+			t.Fatalf("CreateAttestation: %v", err)
+		}
 
 		st.mu.Lock()
 		inst := &Installation{
