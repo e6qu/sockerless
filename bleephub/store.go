@@ -1057,29 +1057,56 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
+	// Load organizations before repositories so persisted repository ownership
+	// is validated against the real owner table.
+	if err := st.loadBucket("orgs", func(raw []byte) error {
+		var o Org
+		if err := loadJSON(raw, &o); err != nil {
+			return err
+		}
+		st.Orgs[o.ID] = &o
+		st.OrgsByLogin[o.Login] = &o
+		if o.ID >= st.NextOrg {
+			st.NextOrg = o.ID + 1
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := st.loadBucket("repos", func(raw []byte) error {
 		var r Repo
 		if err := loadJSON(raw, &r); err != nil {
 			return err
 		}
-		// Owner (a *User) is relinked from the persisted OwnerID; users load
-		// before repos. For org-owned repos the FullName segment is the org
-		// login, so OwnerID (the creator's user ID) is the reliable key.
-		// Legacy rows without owner_id fall back to the FullName user segment.
-		// A repo without a resolvable owner is unusable (RBAC denies the
-		// owner, refs handlers dereference Owner), so fail loud.
-		var owner *User
-		if r.OwnerID != 0 {
-			owner = st.Users[r.OwnerID]
-		} else {
-			ownerLogin, _, _ := strings.Cut(r.FullName, "/")
-			owner = st.UsersByLogin[ownerLogin]
+		ownerLogin, _, ok := strings.Cut(r.FullName, "/")
+		if !ok || ownerLogin == "" || r.Name == "" {
+			return fmt.Errorf("repo %q: invalid full_name/name", r.FullName)
 		}
-		if owner == nil {
-			return fmt.Errorf("repo %s: owner (id=%d) not found in loaded users", r.FullName, r.OwnerID)
+		if r.OwnerID == 0 {
+			return fmt.Errorf("repo %s: missing owner_id", r.FullName)
 		}
-		r.Owner = owner
-		r.OwnerID = owner.ID
+		switch r.OwnerType {
+		case "User":
+			owner := st.Users[r.OwnerID]
+			if owner == nil {
+				return fmt.Errorf("repo %s: user owner id=%d not found in loaded users", r.FullName, r.OwnerID)
+			}
+			if !strings.EqualFold(ownerLogin, owner.Login) {
+				return fmt.Errorf("repo %s: user owner id=%d login %q does not match full_name owner %q", r.FullName, r.OwnerID, owner.Login, ownerLogin)
+			}
+			r.Owner = owner
+		case "Organization":
+			org := st.Orgs[r.OwnerID]
+			if org == nil {
+				return fmt.Errorf("repo %s: organization owner id=%d not found in loaded organizations", r.FullName, r.OwnerID)
+			}
+			if !strings.EqualFold(ownerLogin, org.Login) {
+				return fmt.Errorf("repo %s: organization owner id=%d login %q does not match full_name owner %q", r.FullName, r.OwnerID, org.Login, ownerLogin)
+			}
+			r.Owner = nil
+		default:
+			return fmt.Errorf("repo %s: invalid owner_type %q", r.FullName, r.OwnerType)
+		}
 		// Per-repo number counters are recomputed from loaded issues/PRs/
 		// milestones below (their loaders bump these past every seen number).
 		r.NextIssueNumber = 1
@@ -1100,21 +1127,7 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
-	// Load orgs, teams, memberships.
-	if err := st.loadBucket("orgs", func(raw []byte) error {
-		var o Org
-		if err := loadJSON(raw, &o); err != nil {
-			return err
-		}
-		st.Orgs[o.ID] = &o
-		st.OrgsByLogin[o.Login] = &o
-		if o.ID >= st.NextOrg {
-			st.NextOrg = o.ID + 1
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
+	// Load teams and memberships.
 	if err := st.loadBucket("teams", func(raw []byte) error {
 		var t Team
 		if err := loadJSON(raw, &t); err != nil {

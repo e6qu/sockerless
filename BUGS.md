@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2490 filed - 2446 fixed - 3 open - 16 false positives.**
+**2492 filed - 2448 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2492~~ | P1 | Bleephub internal runner submission | missing execution image silently defaulted | Bleephub internal job and workflow submission routes now require either explicit `image` or `hostMode`, and route fixtures pass an explicit execution image when they intend container execution instead of relying on a hidden `alpine:latest` fallback. |
+| ~~2491~~ | P1 | Bleephub repository persistence | missing repository owner fields reloaded through compatibility fallbacks | Persisted repositories now fail loudly when `owner_type` or `owner_id` is missing or inconsistent, organization rows load before repository rows so organization-owned repositories validate against real organization state, and public repository listing/event paths no longer treat empty owner types as user repositories. |
 | ~~2490~~ | P1 | Bleephub GitHub Actions runner logs | object-store failures mutated process state first | Bleephub runner-log upload and deletion now complete required object-store writes/deletes before changing in-memory log, console, or timeline state, so fail-loud object-store errors preserve the previously visible process state instead of diverging from durable storage. |
 | ~~2489~~ | P1 | Bleephub CodeQL variant-analysis storage | durable query-pack bytes lived in SQLite metadata | Bleephub CodeQL variant-analysis query-pack tarballs now live in the configured object byte store while SQLite keeps controller, actor, language, target, status, size, and object-key metadata, and public query-pack downloads plus controller-repository deletion read or purge those objects fail-loud instead of retaining base64 tarballs in persisted rows. |
 | ~~2488~~ | P1 | Bleephub artifact attestations storage | durable Sigstore bundle bytes lived in SQLite metadata | Bleephub artifact attestation Sigstore bundles now live in the configured object byte store while SQLite keeps repository linkage, subject digests, predicate type, initiator, timestamps, and object keys, and public listing, public deletion, and repository deletion read or purge those objects fail-loud instead of retaining raw bundle bytes in persisted rows. |

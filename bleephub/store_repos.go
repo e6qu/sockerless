@@ -27,7 +27,7 @@ type Repo struct {
 	Language                             string       `json:"language"`
 	Owner                                *User        `json:"-"`
 	OwnerID                              int          `json:"owner_id"`   // serialized so Owner can be relinked on reload
-	OwnerType                            string       `json:"owner_type"` // "User" or "Organization"; empty means User for backwards compatibility
+	OwnerType                            string       `json:"owner_type"` // "User" or "Organization"
 	Private                              bool         `json:"private"`
 	Fork                                 bool         `json:"fork"`
 	Archived                             bool         `json:"archived"`
@@ -1326,7 +1326,7 @@ func (st *Store) ListReposForUser(user *User, opts RepoListOptions) []*Repo {
 		if !strings.HasPrefix(k, prefix) {
 			continue
 		}
-		if r.OwnerType != "User" && r.OwnerType != "" {
+		if r.OwnerType != "User" {
 			continue
 		}
 		if r.Private {
@@ -1361,7 +1361,7 @@ func (st *Store) ListReposForAuthUser(user *User, opts RepoListOptions) []*Repo 
 			if !strings.HasPrefix(k, prefix) {
 				continue
 			}
-			if r.OwnerType != "User" && r.OwnerType != "" {
+			if r.OwnerType != "User" {
 				continue
 			}
 			if seen[r.ID] {

@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-codeql-variant-query-pack-objects` continued the Bleephub GitHub-fidelity work after merged #786. It fixed BUG-2489 and BUG-2490.
+`feat/bleephub-public-state-fidelity` continued the Bleephub GitHub-fidelity work after merged #787. It fixed BUG-2491 and BUG-2492.
 
-#786 moved more durable Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage. This branch extended that same durable byte contract to CodeQL variant-analysis query-pack tarballs. Variant-analysis rows now keep metadata and object keys in SQLite, uploaded query packs live in the configured object byte store, public query-pack downloads read that object store, persisted startup and local development docs name query packs as required object-backed service bytes, and controller-repository deletion purges query-pack objects before deleting repository metadata. The branch also made GitHub Actions runner-log upload and run-log deletion complete required object-store writes/deletes before changing in-memory log, console, or timeline state, so fail-loud object-store errors preserve the previous live state.
+#787 moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live state. This branch tightened the next fidelity gaps found after that merge. Persisted repository reload now requires valid `owner_type` and `owner_id`, loads organizations before repositories, validates organization-owned repositories against real organization state, and no longer treats empty owner types as user repositories in public listing/event paths. Internal job and workflow submission routes now require either explicit `image` or `hostMode`, and tests pass explicit images when they intend container execution instead of relying on a hidden `alpine:latest` fallback.
 
 ## Continue Here
 
@@ -18,6 +18,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PersistenceReload_(OwnerAndCountersAndState|OrganizationRepositoryOwnerIsValidated|RepositoryMissingOwner(Type|ID)FailsLoud)|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1` passed with sandbox escalation after persisted repository ownership became strict and internal runner submission stopped defaulting missing images.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ConcurrencyGroups_(RepoAndRunEndpoints|CompletedRunReleasesLease)|SubmitWorkflow(RepoRefResolution|RejectsUnresolvedRepoRef)|Workflows_Dispatch|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1` passed with sandbox escalation after tests stopped relying on the removed internal submission image fallback.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after BUG-2491 and BUG-2492 were fixed.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(LogfilesUpload_(WritesObjectStore|ObjectStoreFailurePreservesState|AppendsBlocks|CapsAtFourMiBWithMarker)|JobLogs_ReadsUploadedLogFilesFromObjectStore|RunLogsDelete_ObjectStoreFailurePreservesState|ActionsRuns_DeleteLogs)' -count=1` passed with sandbox escalation after runner-log upload/deletion state changes moved behind required object-store operations.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the runner-log object-store consistency fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLVariantAnalyses_|PersistentServerStorageRequiresDurableGitAndObjectBytes|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata))' -count=1` passed with sandbox escalation after CodeQL variant-analysis query-pack tarballs moved to object storage.

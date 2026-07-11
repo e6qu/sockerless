@@ -1,6 +1,7 @@
 package bleephub
 
 import (
+	"encoding/json"
 	"os"
 	"slices"
 	"strconv"
@@ -124,6 +125,105 @@ func TestPersistenceReload_OwnerAndCountersAndState(t *testing.T) {
 	if _, ok := st2.Misc.branchProtection[bpKey(got.ID, "main")]; !ok {
 		t.Error("branch protection did not persist (BUG-1612)")
 	}
+}
+
+func TestPersistenceReload_OrganizationRepositoryOwnerIsValidated(t *testing.T) {
+	st2 := reloadedStore(t, func(_ *Persistence, st *Store) {
+		st.SeedDefaultUser()
+		admin := st.UsersByLogin["admin"]
+		org := st.CreateOrg(admin, "persist-owner-org", "Persist Owner", "")
+		if org == nil {
+			t.Fatal("CreateOrg returned nil")
+		}
+		if st.CreateOrgRepo(org, admin, "persist-owner-repo", "", false) == nil {
+			t.Fatal("CreateOrgRepo returned nil")
+		}
+	})
+
+	repo := st2.GetRepo("persist-owner-org", "persist-owner-repo")
+	if repo == nil {
+		t.Fatal("organization repository did not persist")
+	}
+	if repo.OwnerType != "Organization" {
+		t.Fatalf("OwnerType = %q, want Organization", repo.OwnerType)
+	}
+	org := st2.Orgs[repo.OwnerID]
+	if org == nil || org.Login != "persist-owner-org" {
+		t.Fatalf("organization owner id=%d resolved to %#v", repo.OwnerID, org)
+	}
+	if repos := st2.ListReposForOrg("persist-owner-org", RepoListOptions{}); len(repos) != 1 || repos[0].FullName != repo.FullName {
+		t.Fatalf("ListReposForOrg returned %#v", repos)
+	}
+}
+
+func TestPersistenceReload_RepositoryMissingOwnerTypeFailsLoud(t *testing.T) {
+	err := reloadWithMutatedPersistedRepo(t, func(raw map[string]interface{}) {
+		delete(raw, "owner_type")
+	})
+	if err == nil || !strings.Contains(err.Error(), `invalid owner_type ""`) {
+		t.Fatalf("reload error = %v, want invalid owner_type", err)
+	}
+}
+
+func TestPersistenceReload_RepositoryMissingOwnerIDFailsLoud(t *testing.T) {
+	err := reloadWithMutatedPersistedRepo(t, func(raw map[string]interface{}) {
+		delete(raw, "owner_id")
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing owner_id") {
+		t.Fatalf("reload error = %v, want missing owner_id", err)
+	}
+}
+
+func reloadWithMutatedPersistedRepo(t *testing.T, mutate func(map[string]interface{})) error {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("BLEEPHUB_PERSIST", "true")
+	t.Setenv("BLEEPHUB_DATA_DIR", dir)
+
+	p1, err := NewPersistence()
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	st1 := NewStore()
+	if err := st1.SetPersistence(p1); err != nil {
+		t.Fatalf("SetPersistence: %v", err)
+	}
+	st1.SeedDefaultUser()
+	admin := st1.UsersByLogin["admin"]
+	repo := st1.CreateRepo(admin, "strict-owner-repo", "", false)
+	if repo == nil {
+		t.Fatal("CreateRepo returned nil")
+	}
+	rawRepos, err := p1.List("repos")
+	if err != nil {
+		t.Fatalf("list repos: %v", err)
+	}
+	raw, ok := rawRepos[strconv.Itoa(repo.ID)]
+	if !ok {
+		t.Fatalf("persisted repo %d not found", repo.ID)
+	}
+	var row map[string]interface{}
+	if err := json.Unmarshal(raw, &row); err != nil {
+		t.Fatalf("unmarshal persisted repo: %v", err)
+	}
+	mutate(row)
+	mutated, err := json.Marshal(row)
+	if err != nil {
+		t.Fatalf("marshal mutated repo: %v", err)
+	}
+	if _, err := p1.db.Exec(p1.dialect.putSQL, "repos", strconv.Itoa(repo.ID), mutated); err != nil {
+		t.Fatalf("write mutated repo: %v", err)
+	}
+	if err := p1.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	p2, err := NewPersistence()
+	if err != nil {
+		t.Fatalf("re-open: %v", err)
+	}
+	defer p2.Close()
+	return NewStore().SetPersistence(p2)
 }
 
 // reloadedStore runs build against a fresh persisted store, closes the

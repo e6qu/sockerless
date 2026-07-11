@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -31,6 +33,45 @@ func TestWorkflowSingleJobSubmit(t *testing.T) {
 	job := workflow.Jobs["build"]
 	if job.Status != "queued" {
 		t.Errorf("job status = %q, want queued", job.Status)
+	}
+}
+
+func TestInternalSubmitJobRequiresExplicitImageOrHostMode(t *testing.T) {
+	s := newTestServer()
+	s.registerJobRoutes()
+
+	req := httptest.NewRequest(http.MethodPost, "/internal/exec/submit", bytes.NewBufferString(`{"steps":[{"run":"echo hello"}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	if len(s.store.Jobs) != 0 {
+		t.Fatalf("queued %d jobs for invalid submission", len(s.store.Jobs))
+	}
+}
+
+func TestInternalSubmitWorkflowRequiresExplicitImageOrHostMode(t *testing.T) {
+	s := newTestServer()
+	s.registerJobRoutes()
+
+	body := `{"workflow":"name: explicit\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - run: echo hello\n"}`
+	req := httptest.NewRequest(http.MethodPost, "/internal/exec/workflow", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
+	}
+	s.store.mu.RLock()
+	defer s.store.mu.RUnlock()
+	if len(s.store.Workflows) != 0 {
+		t.Fatalf("queued %d workflows for invalid submission", len(s.store.Workflows))
 	}
 }
 
@@ -487,6 +528,7 @@ func TestSubmitWorkflowRepoRefResolution(t *testing.T) {
 		"workflow": yaml,
 		"repo":     repo.FullName,
 		"ref":      "refs/heads/main",
+		"image":    "alpine:latest",
 	})
 	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -515,6 +557,7 @@ func TestSubmitWorkflowRejectsUnresolvedRepoRef(t *testing.T) {
 		"workflow": yaml,
 		"repo":     repo.FullName,
 		"ref":      "refs/heads/missing",
+		"image":    "alpine:latest",
 	})
 	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
 	if err != nil {
