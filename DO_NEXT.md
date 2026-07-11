@@ -4,43 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, BUG-2482, BUG-2483, BUG-2484, BUG-2485, BUG-2486, BUG-2487, and BUG-2488.
+`feat/bleephub-codeql-variant-query-pack-objects` continued the Bleephub GitHub-fidelity work after merged #786. It fixed BUG-2489.
 
-#785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
-
-This branch extended the same object-backed durable byte contract to release assets and GitHub Packages. Release asset uploads, package version files, and GitHub Container Registry blobs now write through the configured S3-compatible object store when it is present; SQLite stores metadata and object keys. Persisted startup and local development documentation require `BLEEPHUB_OBJECT_S3_BUCKET` for the full durable service-byte set: GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, and container-registry blobs.
-
-The public GitHub Packages file download route now reads package file bytes from object storage when package files were stored there. Object-backed package files therefore work through the same REST download URL that listed package metadata advertises, instead of failing because the downloader looked only for a local filesystem path.
-
-Repository deletion now treats git storage cleanup as a required pre-delete step. Filesystem and S3-backed git storage are purged before repository metadata is deleted, and S3 cleanup failures return an error while preserving the repository record and git storage index instead of logging and orphaning git objects.
-
-Repository deletion also purges repository-owned GitHub Packages file bytes before deleting repository metadata. Object-backed and local package file bytes are removed through the same fail-loud delete path, so a repository delete no longer leaves durable package bytes orphaned after package metadata is gone.
-
-GitHub CodeQL database archive bytes now use the same durable object-byte contract. The SQLite row stores metadata, size, and the object key; public CodeQL database archive downloads read the object store; CodeQL database deletion removes the object before deleting metadata; and repository deletion purges repository-owned CodeQL database archive objects before deleting repository metadata.
-
-Artifact attestation Sigstore bundle bytes now use the same durable object-byte contract. The SQLite row stores repository linkage, subject digests, predicate type, initiator, timestamps, and the object key; public repository, organization, and user attestation list responses read bundle JSON from object storage; public attestation deletion removes the object before deleting metadata; and repository deletion purges repository-owned attestation bundle objects before deleting repository metadata.
-
-The pre-push dependency freshness gate also found stale AWS software development kit service modules in the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests. Those modules were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions, and the freshness gate passed again.
-
-The Bleephub go-github software development kit harness now provisions organizations through GitHub Enterprise Server's public admin organization API instead of the operator-only `/internal/orgs` convenience route. The official-client coverage therefore follows the same public organization provisioning contract as the Docker-backed GitHub command-line interface harness, and source coverage rejects `/internal/orgs` in the go-github harness.
-
-Bleephub's public GitHub REST tests now use the same GitHub Enterprise Server public admin organization API for organization setup. The shared test helper creates prerequisite organizations through `/api/v3/admin/organizations`, and source coverage rejects new direct `/internal/orgs` setup calls outside the explicit operator-management tests.
-
-Bleephub's public code scanning tests now create alert state by uploading SARIF through GitHub's public `/api/v3/repos/{owner}/{repo}/code-scanning/sarifs` route. SARIF rule severity and description metadata now flow into persisted alert state, so severity filters, campaign links, organization alert lists, and Copilot Autofix coverage exercise the public ingestion path instead of an operator-only alert seed route.
-
-The obsolete internal code scanning alert seed route was removed after SARIF upload became the public alert ingestion path. Route coverage no longer includes `/internal/repos/{owner}/{repo}/code-scanning/alerts`, and source guards check both tests and server registration so future code scanning alert setup stays on the public SARIF upload contract.
-
-The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` declarations after clearing stale incremental build state before running Bleephub `tsc`. A cleaned generated `ui-core/dist` directory no longer leaves the hook dependent on a manual rebuild or stale TypeScript build cache.
-
-Bleephub secret scanning alerts now come from repository content instead of public tests seeding alert rows through an operator-only route. The contents API scans new commits for supported provider patterns, Git Database branch reference creation/update scans commit targets, alert locations contain real commit/blob/path coordinates, and public secret scanning tests use committed secret patterns. The same test run found and fixed the incidental Git Database response-shape drift where `POST /git/blobs` returned an undocumented top-level `node_id`.
-
-The obsolete internal secret scanning alert seed route was removed after committed repository content and Git Database branch reference writes became the public alert ingestion path. Route coverage no longer includes `/internal/repos/{owner}/{repo}/secret-scanning/alerts`, and source guards check both tests and server registration so future secret scanning alert setup stays on public repository writes.
-
-Bleephub secret scanning push protection now creates bypass placeholders through protected public write paths instead of through an operator seed route. Public contents writes and Git Database branch reference writes detect protected provider patterns before mutating git state, return a `422` push-protection response with a placeholder, honor active public bypasses for the matched token type, and remove `/internal/repos/{owner}/{repo}/secret-scanning/push-protection-placeholders` from the registered route set.
-
-Bleephub Dependabot alerts now come from public dependency graph snapshots plus published security advisories instead of an operator-only alert seed route. Repository security advisories persist GitHub vulnerability package coordinates, dependency snapshot success on the default branch derives matching Dependabot alerts from the global advisory database, advisory publication derives alerts from already submitted dependency snapshots, and the old `/internal/repos/{owner}/{repo}/dependabot/alerts` seed endpoint was removed.
-
-The AWS simulator software development kit Amazon Elastic Container Service task startup test now polls the real `DescribeTasks` state until a long-running task reaches `RUNNING`. The test no longer assumes Amazon Elastic Container Service startup completed within a fixed sleep, so CI remains sensitive to real task state without failing on legitimate startup timing.
+#786 moved more durable Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage. This branch extended that same durable byte contract to CodeQL variant-analysis query-pack tarballs. Variant-analysis rows now keep metadata and object keys in SQLite, uploaded query packs live in the configured object byte store, public query-pack downloads read that object store, persisted startup and local development docs name query packs as required object-backed service bytes, and controller-repository deletion purges query-pack objects before deleting repository metadata.
 
 ## Continue Here
 
@@ -52,6 +18,10 @@ The AWS simulator software development kit Amazon Elastic Container Service task
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLVariantAnalyses_|PersistentServerStorageRequiresDurableGitAndObjectBytes|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata))' -count=1` passed with sandbox escalation after CodeQL variant-analysis query-pack tarballs moved to object storage.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after CodeQL variant-analysis query-pack tarballs moved to object storage.
+- `bash -n scripts/bleephub-local-dev.sh` and `git diff --check` passed after the local development object-store requirement text named CodeQL variant-analysis query packs.
+- `pre-commit run --all-files` passed after CodeQL variant-analysis query-pack tarballs moved to object storage.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLDatabases_(RoundTrip|BytesUseObjectStore)|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata))' -count=1` passed with sandbox escalation after GitHub CodeQL database archive bytes moved to object storage.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQL|CodeScanning|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|PersistenceReload_DeleteRepoLeavesNoResidue|DeleteRepo)' -count=1` passed with sandbox escalation after GitHub CodeQL database archive bytes moved to object storage.
 - `bash -n scripts/bleephub-local-dev.sh` passed after the local development object-store requirement text named GitHub CodeQL database archives.

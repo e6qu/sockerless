@@ -1338,7 +1338,13 @@ func TestPersistenceReload_DeleteRepoLeavesNoResidue(t *testing.T) {
 		if got := string(readS3TestFile(t, objectFS, db.StoragePath)); got != "db" {
 			t.Fatalf("CodeQL database object bytes = %q, want db", got)
 		}
-		st.CreateCodeQLVariantAnalysis(controller.FullName, user.ID, "go", "pack", []string{repoKey})
+		va, err := st.CreateCodeQLVariantAnalysis(controller.FullName, user.ID, "go", []byte("pack"), []string{repoKey})
+		if err != nil {
+			t.Fatalf("CreateCodeQLVariantAnalysis: %v", err)
+		}
+		if got := string(readS3TestFile(t, objectFS, va.StoragePath)); got != "pack" {
+			t.Fatalf("CodeQL variant-analysis query-pack object bytes = %q, want pack", got)
+		}
 		if _, created := st.CreatePackage("Repository", repoKey, "container", "image", "private"); !created {
 			t.Fatal("CreatePackage did not create")
 		}
@@ -1629,7 +1635,9 @@ func TestPersistenceReload_RenameRepoMovesRepoScopedMetadata(t *testing.T) {
 		if _, err := st.UpsertCodeQLDatabase(oldKey, "go", "db.zip", "application/zip", "0123456789abcdef", []byte("db"), user.ID); err != nil {
 			t.Fatalf("UpsertCodeQLDatabase: %v", err)
 		}
-		st.CreateCodeQLVariantAnalysis(oldKey, user.ID, "go", "pack", []string{oldKey})
+		if _, err := st.CreateCodeQLVariantAnalysis(oldKey, user.ID, "go", []byte("pack"), []string{oldKey}); err != nil {
+			t.Fatalf("CreateCodeQLVariantAnalysis: %v", err)
+		}
 		st.CreateRuleset(repo, &Ruleset{Name: "protect"})
 		st.CreateProjectClassic(repo, user.ID, "board", "", "open")
 		st.Codespaces[1] = &Codespace{ID: 1, Name: "cs", OwnerLogin: user.Login, RepoKey: oldKey, State: "Available", CreatedAt: now, UpdatedAt: now}

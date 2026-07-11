@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2488 filed - 2444 fixed - 3 open - 16 false positives.**
+**2489 filed - 2445 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2489~~ | P1 | Bleephub CodeQL variant-analysis storage | durable query-pack bytes lived in SQLite metadata | Bleephub CodeQL variant-analysis query-pack tarballs now live in the configured object byte store while SQLite keeps controller, actor, language, target, status, size, and object-key metadata, and public query-pack downloads plus controller-repository deletion read or purge those objects fail-loud instead of retaining base64 tarballs in persisted rows. |
 | ~~2488~~ | P1 | Bleephub artifact attestations storage | durable Sigstore bundle bytes lived in SQLite metadata | Bleephub artifact attestation Sigstore bundles now live in the configured object byte store while SQLite keeps repository linkage, subject digests, predicate type, initiator, timestamps, and object keys, and public listing, public deletion, and repository deletion read or purge those objects fail-loud instead of retaining raw bundle bytes in persisted rows. |
 | ~~2487~~ | P1 | Bleephub CodeQL database storage | durable archive bytes lived in SQLite metadata | Bleephub CodeQL database archive bytes now live in the configured object byte store while SQLite keeps metadata and object keys, and public download, database deletion, and repository deletion read or purge those objects fail-loud instead of retaining raw service bytes in persisted rows. |
 | ~~2486~~ | P1 | Bleephub package storage | repository deletion left package bytes behind | Repository deletion now removes repository-owned GitHub Packages file bytes from object storage or local package storage before deleting repository metadata, so package byte cleanup failures surface as repository-delete errors instead of leaving durable orphaned objects. |

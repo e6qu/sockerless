@@ -507,6 +507,75 @@ func TestCodeQLVariantAnalyses_CreateAndReadBack(t *testing.T) {
 	mustStatus(t, ghGet(t, basePath+"/99999", defaultToken), 404, "unknown variant analysis")
 }
 
+func TestCodeQLVariantAnalyses_QueryPacksUseObjectStore(t *testing.T) {
+	controller := seedTestRepo(t, "codeql-va-object-controller", false)
+	withDB := seedTestRepo(t, "codeql-va-object-db", false)
+	seedCodeQLDatabase(t, withDB.FullName, "go", "23a401530b4b24149f5a03c44f1e622b773e5af7", []byte("db"))
+
+	objectFS, objectStore := newObjectByteStoreForTest(t)
+	oldStore := testServer.store.ObjectByteStore
+	testServer.store.ObjectByteStore = objectStore
+	t.Cleanup(func() {
+		testServer.store.ObjectByteStore = oldStore
+	})
+
+	queryPackBytes := testCodeQLQueryPack(t)
+	resp := ghPost(t, "/api/v3/repos/"+controller.FullName+"/code-scanning/codeql/variant-analyses", defaultToken, map[string]interface{}{
+		"language":     "go",
+		"query_pack":   base64.StdEncoding.EncodeToString(queryPackBytes),
+		"repositories": []string{withDB.FullName},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create object-backed variant analysis: %d body=%s", resp.StatusCode, b)
+	}
+	created := decodeJSON(t, resp)
+	vaID := int(created["id"].(float64))
+	key := codeQLVariantAnalysisQueryPackDataKey(vaID)
+	if got := readS3TestFile(t, objectFS, key); !bytes.Equal(got, queryPackBytes) {
+		t.Fatalf("CodeQL variant-analysis query-pack object bytes = %q, want %q", got, queryPackBytes)
+	}
+
+	va := testServer.store.GetCodeQLVariantAnalysis(controller.FullName, vaID)
+	if va == nil {
+		t.Fatal("variant analysis missing after create")
+	}
+	if va.QueryPack != "" {
+		t.Fatalf("metadata retained base64 query-pack bytes: %q", va.QueryPack)
+	}
+	if va.StoragePath != key {
+		t.Fatalf("storage path = %q, want %q", va.StoragePath, key)
+	}
+
+	packURL, _ := created["query_pack_url"].(string)
+	req, err := http.NewRequest("GET", packURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+defaultToken)
+	packResp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := io.ReadAll(packResp.Body)
+	packResp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if packResp.StatusCode != http.StatusOK {
+		t.Fatalf("download object-backed query pack: %d body=%s", packResp.StatusCode, raw)
+	}
+	if !bytes.Equal(raw, queryPackBytes) {
+		t.Fatalf("downloaded object-backed query pack = %q, want %q", raw, queryPackBytes)
+	}
+
+	mustStatus(t, ghDelete(t, "/api/v3/repos/"+controller.FullName, defaultToken), http.StatusNoContent, "delete controller repository")
+	if _, err := objectFS.Open(key); err == nil {
+		t.Fatalf("CodeQL variant-analysis query-pack object %s survived controller repository deletion", key)
+	}
+}
+
 func testCodeQLQueryPack(t *testing.T) []byte {
 	t.Helper()
 	var buf bytes.Buffer

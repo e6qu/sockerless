@@ -21,6 +21,7 @@ func TestPersistentServerStorageRequiresDurableGitAndObjectBytes(t *testing.T) {
 		!strings.Contains(err.Error(), "release assets") ||
 		!strings.Contains(err.Error(), "container-registry blobs") ||
 		!strings.Contains(err.Error(), "CodeQL database archives") ||
+		!strings.Contains(err.Error(), "CodeQL variant-analysis query packs") ||
 		!strings.Contains(err.Error(), "artifact attestation bundles") {
 		t.Fatalf("object byte storage error = %v", err)
 	}

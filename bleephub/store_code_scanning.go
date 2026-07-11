@@ -1015,18 +1015,21 @@ type CodeQLVariantAnalysisRepoTask struct {
 }
 
 // CodeQLVariantAnalysis is a multi-repository variant analysis run for a
-// CodeQL query pack, controlled by one repository. Real GitHub executes
-// the query via a GitHub Actions workflow run; bleephub resolves the
-// target repositories against its store synchronously (a repository is
-// queryable only when it has a CodeQL database for the requested
-// language) and completes the analysis immediately.
+// CodeQL query pack, controlled by one repository. StoragePath points at the
+// durable query-pack tarball; QueryPack is only used by non-persistent
+// in-memory stores. Real GitHub executes the query via a GitHub Actions
+// workflow run; bleephub resolves the target repositories against its store
+// synchronously (a repository is queryable only when it has a CodeQL database
+// for the requested language) and completes the analysis immediately.
 type CodeQLVariantAnalysis struct {
 	ID                  int                             `json:"id"`
 	ControllerRepoKey   string                          `json:"controller_repo_key"`
 	ActorID             int                             `json:"actor_id"`
 	QueryLanguage       string                          `json:"query_language"`
-	QueryPack           string                          `json:"query_pack"` // base64 tarball as uploaded
-	Status              string                          `json:"status"`     // in_progress | succeeded | failed | cancelled
+	QueryPack           string                          `json:"-"`
+	QueryPackSize       int64                           `json:"query_pack_size"`
+	StoragePath         string                          `json:"storage_path,omitempty"`
+	Status              string                          `json:"status"` // in_progress | succeeded | failed | cancelled
 	FailureReason       string                          `json:"failure_reason"`
 	ScannedRepositories []CodeQLVariantAnalysisRepoTask `json:"scanned_repositories"`
 	NotFoundRepos       []string                        `json:"not_found_repos"`    // full names
@@ -1041,19 +1044,34 @@ type CodeQLVariantAnalysis struct {
 // to NotFoundRepos; repositories without a CodeQL database for the
 // requested language go to NoCodeQLDBRepos; the rest are scanned. When
 // no repository is scannable the analysis fails with no_repos_queried.
-func (st *Store) CreateCodeQLVariantAnalysis(controllerRepoKey string, actorID int, language, queryPack string, repoFullNames []string) *CodeQLVariantAnalysis {
+func (st *Store) CreateCodeQLVariantAnalysis(controllerRepoKey string, actorID int, language string, queryPack []byte, repoFullNames []string) (*CodeQLVariantAnalysis, error) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	if st.persist != nil && st.ObjectByteStore == nil {
+		return nil, fmt.Errorf("CodeQL variant-analysis query-pack byte storage requires BLEEPHUB_OBJECT_S3_BUCKET when persistence is enabled")
+	}
+
 	now := time.Now().UTC()
+	id := st.NextCodeQLVariantAnalysisID
+	storagePath := codeQLVariantAnalysisQueryPackDataKey(id)
+	if st.ObjectByteStore != nil {
+		if err := st.ObjectByteStore.Put(context.Background(), storagePath, queryPack); err != nil {
+			return nil, fmt.Errorf("write CodeQL variant-analysis query-pack bytes: %w", err)
+		}
+	}
 	va := &CodeQLVariantAnalysis{
-		ID:                st.NextCodeQLVariantAnalysisID,
+		ID:                id,
 		ControllerRepoKey: controllerRepoKey,
 		ActorID:           actorID,
 		QueryLanguage:     language,
-		QueryPack:         queryPack,
+		QueryPackSize:     int64(len(queryPack)),
+		StoragePath:       storagePath,
 		CreatedAt:         now,
 		UpdatedAt:         now,
+	}
+	if st.ObjectByteStore == nil {
+		va.QueryPack = base64.StdEncoding.EncodeToString(queryPack)
 	}
 	st.NextCodeQLVariantAnalysisID++
 
@@ -1089,7 +1107,7 @@ func (st *Store) CreateCodeQLVariantAnalysis(controllerRepoKey string, actorID i
 	if st.persist != nil {
 		st.persist.MustPut("codeql_variant_analyses", strconv.Itoa(va.ID), va)
 	}
-	return va
+	return va, nil
 }
 
 // ListRepoFullNamesByOwner returns the sorted full names of every
@@ -1119,4 +1137,45 @@ func (st *Store) GetCodeQLVariantAnalysis(controllerRepoKey string, id int) *Cod
 		return nil
 	}
 	return va
+}
+
+// ReadCodeQLVariantAnalysisQueryPack reads the uploaded query-pack tarball for
+// a CodeQL variant analysis.
+func (st *Store) ReadCodeQLVariantAnalysisQueryPack(ctx context.Context, va *CodeQLVariantAnalysis) ([]byte, error) {
+	if va == nil {
+		return nil, fmt.Errorf("CodeQL variant analysis is nil")
+	}
+	if st.ObjectByteStore != nil {
+		return st.ObjectByteStore.Get(ctx, va.StoragePath)
+	}
+	if va.StoragePath != "" && va.QueryPack == "" && va.QueryPackSize > 0 {
+		return nil, fmt.Errorf("CodeQL variant-analysis query-pack bytes require configured object storage")
+	}
+	pack, err := base64.StdEncoding.DecodeString(va.QueryPack)
+	if err != nil {
+		return nil, fmt.Errorf("stored query pack is corrupt: %w", err)
+	}
+	return pack, nil
+}
+
+func (st *Store) deleteCodeQLVariantAnalysisQueryPackLocked(va *CodeQLVariantAnalysis) error {
+	if va == nil || va.StoragePath == "" || st.ObjectByteStore == nil {
+		return nil
+	}
+	if err := st.ObjectByteStore.Delete(context.Background(), va.StoragePath); err != nil {
+		return fmt.Errorf("delete CodeQL variant-analysis query-pack bytes %s: %w", va.StoragePath, err)
+	}
+	return nil
+}
+
+func (st *Store) deleteCodeQLVariantAnalysisQueryPacksForControllerRepoLocked(repoKey string) error {
+	for _, va := range st.CodeQLVariantAnalyses {
+		if va.ControllerRepoKey != repoKey {
+			continue
+		}
+		if err := st.deleteCodeQLVariantAnalysisQueryPackLocked(va); err != nil {
+			return err
+		}
+	}
+	return nil
 }

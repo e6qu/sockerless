@@ -72,7 +72,7 @@ check_deps() {
 
 require_object_storage() {
   if [ -z "${BLEEPHUB_OBJECT_S3_BUCKET:-}" ]; then
-    die "BLEEPHUB_OBJECT_S3_BUCKET is required because local-dev starts persisted Bleephub; point it at an S3-compatible bucket such as MinIO for Actions artifacts, dependency caches, runner logs, release assets, package files, container-registry blobs, CodeQL database archives, and artifact attestation bundles"
+    die "BLEEPHUB_OBJECT_S3_BUCKET is required because local-dev starts persisted Bleephub; point it at an S3-compatible bucket such as MinIO for Actions artifacts, dependency caches, runner logs, release assets, package files, container-registry blobs, CodeQL database archives, CodeQL variant-analysis query packs, and artifact attestation bundles"
   fi
 }
 

@@ -1071,7 +1071,8 @@ func (s *Server) handleCreateCodeQLVariantAnalysis(w http.ResponseWriter, r *htt
 		writeGHValidationError(w, "VariantAnalysis", "query_pack", "missing_field")
 		return
 	}
-	if _, err := base64.StdEncoding.DecodeString(req.QueryPack); err != nil {
+	queryPack, err := base64.StdEncoding.DecodeString(req.QueryPack)
+	if err != nil {
 		writeGHValidationError(w, "VariantAnalysis", "query_pack", "invalid")
 		return
 	}
@@ -1102,7 +1103,11 @@ func (s *Server) handleCreateCodeQLVariantAnalysis(w http.ResponseWriter, r *htt
 	// model; a named list resolves to no repositories, so an analysis driven
 	// only by lists fails with no_repos_queried below.
 
-	va := s.store.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, req.Language, req.QueryPack, targets)
+	va, err := s.store.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, req.Language, queryPack, targets)
+	if err != nil {
+		writeGHError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusCreated, s.variantAnalysisJSON(va, s.baseURL(r), repo))
 }
 
@@ -1193,9 +1198,9 @@ func (s *Server) handleDownloadCodeQLVariantAnalysisQueryPack(w http.ResponseWri
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
 		return
 	}
-	pack, err := base64.StdEncoding.DecodeString(va.QueryPack)
+	pack, err := s.store.ReadCodeQLVariantAnalysisQueryPack(r.Context(), va)
 	if err != nil {
-		writeGHError(w, http.StatusInternalServerError, "stored query pack is corrupt")
+		writeGHError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
