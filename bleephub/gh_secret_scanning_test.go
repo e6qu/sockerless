@@ -66,6 +66,58 @@ func TestSecretScanningAlertTestsUseCommittedContent(t *testing.T) {
 	if !strings.Contains(source, `"/contents/"+path`) {
 		t.Fatal("secret scanning public alert tests must exercise the public contents API ingestion path")
 	}
+	placeholderNeedle := `authedPost("` + `/internal/repos/` + `"+owner+"/"+repo+"/secret-scanning/push-protection-placeholders"`
+	if strings.Contains(source, placeholderNeedle) {
+		t.Fatal("secret scanning push-protection tests must create placeholders from protected public writes, not the internal operator route")
+	}
+}
+
+func createSecretScanningOrgRepoViaPublicAPI(t *testing.T, org, repo string) {
+	t.Helper()
+	createOrgViaAdminAPI(t, org)
+	resp := ghPost(t, "/api/v3/orgs/"+org+"/repos", defaultToken, map[string]any{
+		"name":    repo,
+		"private": true,
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create org repo: %d body=%s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+}
+
+func enableSecretScanningPushProtectionPattern(t *testing.T, org, patternID string) {
+	t.Helper()
+	resp := ghPatch(t, "/api/v3/orgs/"+org+"/secret-scanning/pattern-configurations", defaultToken, map[string]any{
+		"provider_pattern_settings": []map[string]any{
+			{"token_type": patternID, "push_protection_setting": "enabled"},
+		},
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("enable push protection: %d body=%s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+}
+
+func secretScanningBlockedPlaceholder(t *testing.T, resp *http.Response) string {
+	t.Helper()
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("protected write: %d body=%s, want 422", resp.StatusCode, b)
+	}
+	body := decodeJSON(t, resp)
+	placeholderID, _ := body["placeholder_id"].(string)
+	if placeholderID == "" {
+		t.Fatalf("protected write did not return placeholder_id: %v", body)
+	}
+	if body["token_type"] != "aws_access_key_id" {
+		t.Fatalf("protected write token_type = %v, want aws_access_key_id", body["token_type"])
+	}
+	return placeholderID
 }
 
 func TestSecretScanning_ListAndFilter(t *testing.T) {
@@ -501,13 +553,13 @@ func TestSecretScanning_PatternConfigurationsUpdate(t *testing.T) {
 }
 
 func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
-	admin := testServer.store.UsersByLogin["admin"]
-	if testServer.store.CreateRepo(admin, "ss-bypass-repo", "", false) == nil {
-		t.Fatal("create repo failed")
-	}
+	org := "ss-bypass-org"
+	repo := "ss-bypass-repo"
+	createSecretScanningOrgRepoViaPublicAPI(t, org, repo)
+	enableSecretScanningPushProtectionPattern(t, org, "aws")
 
 	// Unknown placeholder → 404.
-	resp := ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+	resp := ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
 		"reason":         "false_positive",
 		"placeholder_id": "no-such-placeholder",
 	})
@@ -516,24 +568,14 @@ func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
 		t.Fatalf("unknown placeholder: %d, want 404", resp.StatusCode)
 	}
 
-	// A blocked push mints a placeholder; bypassing it succeeds once.
-	seedResp, err := authedPost("/internal/repos/admin/ss-bypass-repo/secret-scanning/push-protection-placeholders", "application/json",
-		bytes.NewReader(mustJSON(map[string]any{"token_type": "aws_access_key_id"})))
-	if err != nil {
-		t.Fatalf("seed placeholder: %v", err)
-	}
-	if seedResp.StatusCode != http.StatusCreated {
-		b, _ := io.ReadAll(seedResp.Body)
-		seedResp.Body.Close()
-		t.Fatalf("seed placeholder: %d body=%s", seedResp.StatusCode, b)
-	}
-	seeded := decodeJSON(t, seedResp)
-	placeholderID, _ := seeded["placeholder_id"].(string)
-	if placeholderID == "" {
-		t.Fatal("seed returned no placeholder_id")
-	}
+	// A protected public contents write mints a placeholder before it commits.
+	resp = ghPut(t, "/api/v3/repos/"+org+"/"+repo+"/contents/config/secret.txt", defaultToken, map[string]any{
+		"message": "add protected credential",
+		"content": base64.StdEncoding.EncodeToString([]byte("token=" + secretScanningSeedValue("aws_access_key_id") + "\n")),
+	})
+	placeholderID := secretScanningBlockedPlaceholder(t, resp)
 
-	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
 		"reason":         "used_in_tests",
 		"placeholder_id": placeholderID,
 	})
@@ -549,8 +591,24 @@ func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
 		t.Fatalf("bypass missing expire_at: %v", bypass)
 	}
 
-	// The placeholder is consumed by the bypass.
-	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+	resp = ghPut(t, "/api/v3/repos/"+org+"/"+repo+"/contents/config/secret.txt", defaultToken, map[string]any{
+		"message": "add bypassed credential",
+		"content": base64.StdEncoding.EncodeToString([]byte("token=" + secretScanningSeedValue("aws_access_key_id") + "\n")),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("bypassed contents write: %d body=%s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	alerts := decodeJSONArray(t, ghGet(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/alerts?secret_type=aws_access_key_id", defaultToken))
+	if len(alerts) != 1 {
+		t.Fatalf("bypassed contents write did not create alert: %v", alerts)
+	}
+
+	// The placeholder is consumed by the bypass endpoint.
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
 		"reason":         "used_in_tests",
 		"placeholder_id": placeholderID,
 	})
@@ -560,7 +618,7 @@ func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
 	}
 
 	// Invalid reason.
-	resp = ghPost(t, "/api/v3/repos/admin/ss-bypass-repo/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
 		"reason":         "because",
 		"placeholder_id": placeholderID,
 	})
@@ -568,6 +626,73 @@ func TestSecretScanning_PushProtectionBypasses(t *testing.T) {
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		t.Fatalf("invalid reason: %d, want 422", resp.StatusCode)
 	}
+}
+
+func TestSecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation(t *testing.T) {
+	org := "ss-bypass-git-org"
+	repo := "ss-bypass-git-repo"
+	createSecretScanningOrgRepoViaPublicAPI(t, org, repo)
+	enableSecretScanningPushProtectionPattern(t, org, "aws")
+
+	resp := ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/git/blobs", defaultToken, map[string]any{
+		"content": "token=" + secretScanningSeedValue("aws_access_key_id") + "\n",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create blob: %d", resp.StatusCode)
+	}
+	blob := decodeJSON(t, resp)
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/git/trees", defaultToken, map[string]any{
+		"tree": []map[string]any{
+			{"path": "credentials.txt", "mode": "100644", "type": "blob", "sha": blob["sha"]},
+		},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create tree: %d", resp.StatusCode)
+	}
+	tree := decodeJSON(t, resp)
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/git/commits", defaultToken, map[string]any{
+		"message": "add credentials",
+		"tree":    tree["sha"],
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create commit: %d", resp.StatusCode)
+	}
+	commit := decodeJSON(t, resp)
+
+	refPath := "/api/v3/repos/" + org + "/" + repo + "/git/refs"
+	resp = ghPost(t, refPath, defaultToken, map[string]any{
+		"ref": "refs/heads/main",
+		"sha": commit["sha"],
+	})
+	placeholderID := secretScanningBlockedPlaceholder(t, resp)
+
+	resp = ghGet(t, "/api/v3/repos/"+org+"/"+repo+"/git/ref/heads/main", defaultToken)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("protected ref create mutated branch: %d, want 404", resp.StatusCode)
+	}
+
+	resp = ghPost(t, "/api/v3/repos/"+org+"/"+repo+"/secret-scanning/push-protection-bypasses", defaultToken, map[string]any{
+		"reason":         "used_in_tests",
+		"placeholder_id": placeholderID,
+	})
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("create bypass: %d body=%s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	resp = ghPost(t, refPath, defaultToken, map[string]any{
+		"ref": "refs/heads/main",
+		"sha": commit["sha"],
+	})
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("bypassed ref create: %d body=%s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
 }
 
 func TestSecretScanning_ScanHistory(t *testing.T) {

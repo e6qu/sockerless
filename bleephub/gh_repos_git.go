@@ -649,6 +649,13 @@ func (s *Server) handleCreateRef(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusUnprocessableEntity, "Reference already exists")
 		return
 	}
+	if ph, err := s.secretScanningPushProtectionPlaceholderForRef(repo, stor, fullRef, target); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ph != nil {
+		writeSecretScanningPushProtectionBlocked(w, ph)
+		return
+	}
 	if err := stor.SetReference(plumbing.NewHashReference(fullRef, target)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -707,6 +714,13 @@ func (s *Server) handleUpdateRef(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+	}
+	if ph, err := s.secretScanningPushProtectionPlaceholderForRef(repo, stor, fullRef, newTarget); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else if ph != nil {
+		writeSecretScanningPushProtectionBlocked(w, ph)
+		return
 	}
 	if err := stor.SetReference(plumbing.NewHashReference(fullRef, newTarget)); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

@@ -32,6 +32,8 @@ Closed BUG-2481 by making Bleephub Dependabot alerts derive from public dependen
 
 Closed BUG-2482 by making the AWS simulator software development kit Amazon Elastic Container Service long-running task test poll real task state through `DescribeTasks`. `TestECS_TaskNoCommandStaysRunning` no longer assumes task startup completed after a fixed sleep, while still asserting that the no-command task reaches and remains `RUNNING` without container exit codes.
 
+Closed BUG-2483 by making Bleephub secret scanning push protection mint bypass placeholders from protected public writes. Public contents writes and Git Database branch reference creation/update now detect enabled provider patterns before mutating git state, return a `422` push-protection response with a placeholder, honor active public bypasses for the matched token type, and no longer expose the internal operator placeholder seed route.
+
 Validation in this branch included:
 
 ```bash
@@ -54,6 +56,9 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestDependabot|TestLiveDependabot|TestEnterpriseDependabot|TestDependencyGraph|TestGlobalSecurityAdvisories|TestSecurityAdvisories' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 (cd simulators/aws/sdk-tests && GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off CGO_ENABLED=0 go test -v -count=1 -timeout 180s -run TestECS_TaskNoCommandStaysRunning .)
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestSecretScanning|TestGitData|TestUpdateRef|TestCreateRef|TestCreateBlob|TestListRefs|TestGetRef' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestRegisteredAPIv3RoutesExistInGitHubSpec|TestFuzzRoutePatternsMatchRegisteredRoutes|TestSecretScanning|TestGitData|TestUpdateRef|TestCreateRef|TestCreateBlob|TestListRefs|TestGetRef' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 pre-commit run --all-files
 ```
 
