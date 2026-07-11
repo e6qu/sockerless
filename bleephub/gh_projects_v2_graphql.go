@@ -44,7 +44,7 @@ func (s *Server) addProjectV2MutationsToSchema(mutationType *graphql.Object) {
 			ownerNodeID, _ := input["ownerId"].(string)
 			title, _ := input["title"].(string)
 
-			ownerID, ownerType, ok := resolveProjectOwner(s.store, ownerNodeID, user)
+			ownerID, ownerType, ok := resolveProjectOwner(s.store, ownerNodeID)
 			if !ok {
 				return nil, fmt.Errorf("could not resolve to an owner with the global id of '%s'", ownerNodeID)
 			}
@@ -398,10 +398,8 @@ func projectV2GraphQLFieldValueInput(field *ProjectV2Field, value map[string]int
 }
 
 // resolveProjectOwner maps a GraphQL node ID to (ownerID, ownerType).
-// Supports User + Organization nodes. Falls back to the authenticated
-// user when the node ID can't be resolved (gh CLI passes the org's id
-// by default).
-func resolveProjectOwner(st *Store, nodeID string, fallback *User) (int, string, bool) {
+// Supports User + Organization nodes.
+func resolveProjectOwner(st *Store, nodeID string) (int, string, bool) {
 	if nodeID != "" {
 		st.mu.RLock()
 		for _, u := range st.Users {
@@ -417,9 +415,6 @@ func resolveProjectOwner(st *Store, nodeID string, fallback *User) (int, string,
 			}
 		}
 		st.mu.RUnlock()
-	}
-	if fallback != nil {
-		return fallback.ID, "User", true
 	}
 	return 0, "", false
 }

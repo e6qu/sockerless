@@ -1,6 +1,10 @@
 package bleephub
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestProjectV2Store_DeleteProjectUnindexesContentItems(t *testing.T) {
 	store := newProjectV2Store(nil)
@@ -18,6 +22,77 @@ func TestProjectV2Store_DeleteProjectUnindexesContentItems(t *testing.T) {
 	if got := store.ListItemsForIssue(42); len(got) != 0 {
 		t.Fatalf("DeleteProject left stale content index entries: %#v", got)
 	}
+}
+
+func TestProjectsV2GraphQL_CreateProjectRequiresResolvedOwner(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	if admin == nil {
+		t.Fatal("admin user not seeded")
+	}
+	before := len(testServer.store.ProjectsV2.ListProjectsForOwner(admin.ID, "User"))
+	resp := gqlDo(t, `mutation($owner:ID!){
+		createProjectV2(input:{ownerId:$owner,title:"Unknown owner"}){
+			projectV2 { id title }
+		}
+	}`, map[string]interface{}{"owner": "PVTI_unknown_owner"})
+	errs, _ := resp["errors"].([]interface{})
+	if len(errs) == 0 {
+		t.Fatalf("unknown owner unexpectedly succeeded: %v", resp)
+	}
+	if !strings.Contains(fmt.Sprint(errs[0]), "could not resolve to an owner with the global id of 'PVTI_unknown_owner'") {
+		t.Fatalf("unexpected unknown-owner error: %v", errs[0])
+	}
+	if after := len(testServer.store.ProjectsV2.ListProjectsForOwner(admin.ID, "User")); after != before {
+		t.Fatalf("unknown owner mutation created user-owned project: before=%d after=%d", before, after)
+	}
+}
+
+func TestProjectsV2GraphQL_CreateProjectUsesResolvedUserAndOrganizationOwners(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	if admin == nil {
+		t.Fatal("admin user not seeded")
+	}
+	orgJSON := createOrgViaAdminAPI(t, "pv2-gql-owner-org")
+	orgNodeID, _ := orgJSON["node_id"].(string)
+	org := testServer.store.OrgsByLogin["pv2-gql-owner-org"]
+	if org == nil || orgNodeID == "" {
+		t.Fatalf("created organization missing node ID: org=%v json=%v", org, orgJSON)
+	}
+
+	userResp := gqlData(t, `mutation($owner:ID!){
+		createProjectV2(input:{ownerId:$owner,title:"User owned"}){
+			projectV2 { id title }
+		}
+	}`, map[string]interface{}{"owner": admin.NodeID})
+	userProject := userResp["createProjectV2"].(map[string]interface{})["projectV2"].(map[string]interface{})
+	if userProject["title"] != "User owned" {
+		t.Fatalf("user project response = %v", userProject)
+	}
+	if !projectV2OwnerHasTitle(testServer.store, admin.ID, "User", "User owned") {
+		t.Fatalf("user-owned project was not stored under admin")
+	}
+
+	orgResp := gqlData(t, `mutation($owner:ID!){
+		createProjectV2(input:{ownerId:$owner,title:"Organization owned"}){
+			projectV2 { id title }
+		}
+	}`, map[string]interface{}{"owner": orgNodeID})
+	orgProject := orgResp["createProjectV2"].(map[string]interface{})["projectV2"].(map[string]interface{})
+	if orgProject["title"] != "Organization owned" {
+		t.Fatalf("organization project response = %v", orgProject)
+	}
+	if !projectV2OwnerHasTitle(testServer.store, org.ID, "Organization", "Organization owned") {
+		t.Fatalf("organization-owned project was not stored under %s", org.Login)
+	}
+}
+
+func projectV2OwnerHasTitle(st *Store, ownerID int, ownerType, title string) bool {
+	for _, project := range st.ProjectsV2.ListProjectsForOwner(ownerID, ownerType) {
+		if project.Title == title {
+			return true
+		}
+	}
+	return false
 }
 
 func TestProjectsV2GraphQL_FieldValueKinds(t *testing.T) {
