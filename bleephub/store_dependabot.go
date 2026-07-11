@@ -54,12 +54,22 @@ type DependabotOrgSecret struct {
 	SelectedRepoIDs []int  `json:"selected_repository_ids,omitempty"`
 }
 
-// CreateDependabotAlert seeds a Dependabot alert for a repo. The real API has
-// no create endpoint; this is the internal bleephub seeding path.
-func (st *Store) CreateDependabotAlert(repoKey, pkgName, ecosystem, manifest, vulnID, cveID, severity, state, summary, description, vulnRange, patched string) *DependabotAlert {
+func (st *Store) CreateDependabotAlertIfNew(repoKey, pkgName, ecosystem, manifest, vulnID, cveID, severity, summary, description, vulnRange, patched string) *DependabotAlert {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	for _, alert := range st.DependabotAlertsByRepo[repoKey] {
+		if strings.EqualFold(alert.PackageName, pkgName) &&
+			strings.EqualFold(alert.PackageEcosystem, ecosystem) &&
+			alert.ManifestPath == manifest &&
+			alert.VulnerabilityID == vulnID {
+			return alert
+		}
+	}
+	return st.createDependabotAlertLocked(repoKey, pkgName, ecosystem, manifest, vulnID, cveID, severity, "open", summary, description, vulnRange, patched)
+}
+
+func (st *Store) createDependabotAlertLocked(repoKey, pkgName, ecosystem, manifest, vulnID, cveID, severity, state, summary, description, vulnRange, patched string) *DependabotAlert {
 	if st.DependabotAlertsByRepo[repoKey] == nil {
 		st.DependabotAlertsByRepo[repoKey] = make(map[int]*DependabotAlert)
 	}

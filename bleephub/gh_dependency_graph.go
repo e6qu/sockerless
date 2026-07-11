@@ -152,6 +152,9 @@ func (s *Server) handleCreateDependencySnapshot(w http.ResponseWriter, r *http.R
 	created := func(result, message string) {
 		snap.Result = result
 		stored := s.store.AddDependencySnapshot(&snap)
+		if result == "SUCCESS" {
+			s.deriveDependabotAlertsForRepository(repo)
+		}
 		writeJSON(w, http.StatusCreated, map[string]interface{}{
 			"id":         stored.ID,
 			"created_at": stored.CreatedAt.Format(time.RFC3339),

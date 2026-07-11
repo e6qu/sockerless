@@ -10,36 +10,20 @@ import (
 )
 
 func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
-	admin := testServer.store.UsersByLogin["admin"]
-	_ = testServer.store.CreateRepo(admin, "live-dependabot-repo", "", false)
-
-	seed, _ := json.Marshal(map[string]any{
-		"package_name":             "lodash",
+	repo := createRepoWriteRepo(t, false)
+	created := seedDependabotAlert(t, "admin", repo, map[string]any{
+		"package_name":             "live-dependabot-lodash",
 		"package_ecosystem":        "npm",
 		"manifest_path":            "package-lock.json",
-		"vulnerability_id":         "GHSA-LIVE-1234",
-		"cve_id":                   "CVE-2026-LIVE",
 		"severity":                 "high",
-		"state":                    "open",
 		"summary":                  "Live test advisory",
 		"description":              "A live test vulnerability.",
 		"vulnerable_version_range": "< 4.17.21",
 		"first_patched_version":    "4.17.21",
 	})
-	resp, _ := authedPost("/internal/repos/admin/live-dependabot-repo/dependabot/alerts", "application/json", bytes.NewReader(seed))
-	if resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		t.Fatalf("seed alert: %d body=%s", resp.StatusCode, body)
-	}
-	var created map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("decode seeded alert: %v", err)
-	}
-	resp.Body.Close()
 	number := int(created["number"].(float64))
 
-	resp = authedGet(t, "/api/v3/repos/admin/live-dependabot-repo/dependabot/alerts")
+	resp := authedGet(t, "/api/v3/repos/admin/"+repo+"/dependabot/alerts")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -47,7 +31,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp = authedGet(t, "/api/v3/repos/admin/live-dependabot-repo/dependabot/alerts/"+itoa(number))
+	resp = authedGet(t, "/api/v3/repos/admin/"+repo+"/dependabot/alerts/"+itoa(number))
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -56,7 +40,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 	resp.Body.Close()
 
 	patch, _ := json.Marshal(map[string]any{"state": "dismissed", "dismissed_reason": "fix_started"})
-	req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/repos/admin/live-dependabot-repo/dependabot/alerts/"+itoa(number), bytes.NewReader(patch))
+	req, _ := http.NewRequest("PATCH", testBaseURL+"/api/v3/repos/admin/"+repo+"/dependabot/alerts/"+itoa(number), bytes.NewReader(patch))
 	req.Header.Set("Authorization", "Bearer "+defaultToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
@@ -71,7 +55,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 	resp.Body.Close()
 
 	// Repo secret public-key + create
-	resp = authedGet(t, "/api/v3/repos/admin/live-dependabot-repo/dependabot/secrets/public-key")
+	resp = authedGet(t, "/api/v3/repos/admin/"+repo+"/dependabot/secrets/public-key")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -88,7 +72,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 		"encrypted_value": base64.StdEncoding.EncodeToString([]byte("live-encrypted")),
 		"key_id":          keyID,
 	})
-	req, _ = http.NewRequest("PUT", testBaseURL+"/api/v3/repos/admin/live-dependabot-repo/dependabot/secrets/LIVE_SECRET", bytes.NewReader(put))
+	req, _ = http.NewRequest("PUT", testBaseURL+"/api/v3/repos/admin/"+repo+"/dependabot/secrets/LIVE_SECRET", bytes.NewReader(put))
 	req.Header.Set("Authorization", "Bearer "+defaultToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err = http.DefaultClient.Do(req)
@@ -102,7 +86,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	resp = authedGet(t, "/api/v3/repos/admin/live-dependabot-repo/dependabot/secrets")
+	resp = authedGet(t, "/api/v3/repos/admin/"+repo+"/dependabot/secrets")
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -111,6 +95,7 @@ func TestLiveDependabot_AlertsAndSecrets(t *testing.T) {
 	resp.Body.Close()
 
 	// Org secret
+	admin := testServer.store.UsersByLogin["admin"]
 	org := testServer.store.CreateOrg(admin, "live-dependabot-org", "Live Dependabot Org", "")
 	if org == nil {
 		t.Fatal("create org failed")

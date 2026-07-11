@@ -18,10 +18,6 @@ func (s *Server) registerGHDependabotRoutes() {
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/dependabot/alerts/{alert_number}",
 		s.requirePerm(scopeSecurityEvents, permWrite, s.handleUpdateDependabotAlert))
 
-	// Internal alert seeding endpoint (real GitHub creates alerts from the
-	// advisory database + dependency graph).
-	s.route("POST /internal/repos/{owner}/{repo}/dependabot/alerts", s.handleSeedDependabotAlert)
-
 	// Repository-scoped secrets
 	s.route("GET /api/v3/repos/{owner}/{repo}/dependabot/secrets",
 		s.requirePerm(scopeDependabotSecrets, permRead, s.handleListDependabotRepoSecrets))
@@ -139,45 +135,6 @@ func (s *Server) handleUpdateDependabotAlert(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, dependabotAlertToJSON(a, s.baseURL(r), repo))
-}
-
-func (s *Server) handleSeedDependabotAlert(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-
-	var req struct {
-		PackageName            string `json:"package_name"`
-		PackageEcosystem       string `json:"package_ecosystem"`
-		ManifestPath           string `json:"manifest_path"`
-		VulnerabilityID        string `json:"vulnerability_id"`
-		CVEID                  string `json:"cve_id"`
-		Severity               string `json:"severity"`
-		State                  string `json:"state"`
-		Summary                string `json:"summary"`
-		Description            string `json:"description"`
-		VulnerableVersionRange string `json:"vulnerable_version_range"`
-		FirstPatchedVersion    string `json:"first_patched_version"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.PackageName == "" || req.VulnerabilityID == "" || req.Severity == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "package_name, vulnerability_id, and severity are required"})
-		return
-	}
-
-	a := s.store.CreateDependabotAlert(repo.FullName, req.PackageName, req.PackageEcosystem, req.ManifestPath,
-		req.VulnerabilityID, req.CVEID, req.Severity, req.State, req.Summary, req.Description,
-		req.VulnerableVersionRange, req.FirstPatchedVersion)
-	writeJSON(w, http.StatusCreated, dependabotAlertToJSON(a, s.baseURL(r), repo))
 }
 
 func (s *Server) lookupDependabotAlert(w http.ResponseWriter, r *http.Request, repo *Repo) *DependabotAlert {

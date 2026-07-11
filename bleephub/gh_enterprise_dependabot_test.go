@@ -119,22 +119,14 @@ func TestEnterpriseDependabotAlerts(t *testing.T) {
 	}
 	resp.Body.Close()
 
-	// Seed an alert through the internal seeding path (real GitHub creates
-	// alerts from the advisory database + dependency graph).
-	resp = ghPost(t, "/internal/repos/ent-dep-alerts-org/alerts-repo/dependabot/alerts", defaultToken, map[string]interface{}{
+	seedDependabotAlert(t, "ent-dep-alerts-org", "alerts-repo", map[string]any{
 		"package_name":             "left-pad",
 		"package_ecosystem":        "npm",
 		"manifest_path":            "package-lock.json",
-		"vulnerability_id":         "GHSA-ent-dep-0001",
 		"severity":                 "high",
 		"summary":                  "left-pad severity test",
 		"vulnerable_version_range": "< 1.3.0",
 	})
-	if resp.StatusCode != http.StatusCreated {
-		resp.Body.Close()
-		t.Fatalf("seed alert: got %d, want 201", resp.StatusCode)
-	}
-	resp.Body.Close()
 
 	// The enterprise alert list carries the alert with its repository.
 	resp = ghGet(t, enterpriseAPI+"/dependabot/alerts", defaultToken)

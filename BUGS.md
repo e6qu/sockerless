@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2480 filed - 2436 fixed - 3 open - 16 false positives.**
+**2481 filed - 2437 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2481~~ | P1 | Bleephub Dependabot alerts | public alert coverage used operator-seeded state | Bleephub Dependabot alerts now derive from public dependency graph snapshots and published security advisories, package vulnerability coordinates persist on advisories, and the internal operator alert seed endpoint was removed. |
 | ~~2480~~ | P2 | Bleephub Git Database REST API | response shape drift | `POST /api/v3/repos/{owner}/{repo}/git/blobs` no longer returned the undocumented top-level `node_id`, so blob-create responses matched the OpenAPI response-shape ratchet. |
 | ~~2479~~ | P1 | Bleephub secret scanning | public alert coverage used operator-seeded state | Bleephub secret scanning now derives alerts from committed repository content on contents commits and branch ref updates, public alert tests use committed secret patterns instead of the internal operator seed route, and alert locations contain real commit/blob/path coordinates. |
 | ~~2478~~ | P2 | Bleephub user interface pre-commit coverage | typecheck bypassed workspace dependency build | The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` declarations after clearing stale incremental build state before running Bleephub `tsc`, so cleaned generated declarations do not require manual repair. |
