@@ -41,6 +41,38 @@ func TestRegistrationTokenRandom(t *testing.T) {
 	}
 }
 
+func TestAgentRSAPublicKeyRequiresProtocolStandardBase64(t *testing.T) {
+	pub, err := agentRSAPublicKey(&AgentPublicKey{
+		Modulus:  base64.StdEncoding.EncodeToString([]byte{0x01, 0x02, 0x03}),
+		Exponent: base64.StdEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
+	})
+	if err != nil {
+		t.Fatalf("standard-base64 public key rejected: %v", err)
+	}
+	if pub.E != 65537 {
+		t.Fatalf("exponent = %d, want 65537", pub.E)
+	}
+
+	for name, pk := range map[string]*AgentPublicKey{
+		"url-safe modulus": {
+			Modulus:  base64.URLEncoding.EncodeToString([]byte{0xff, 0xff}),
+			Exponent: base64.StdEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
+		},
+		"raw standard modulus": {
+			Modulus:  base64.RawStdEncoding.EncodeToString([]byte{0xff, 0xff}),
+			Exponent: base64.StdEncoding.EncodeToString([]byte{0x01, 0x00, 0x01}),
+		},
+		"raw url-safe exponent": {
+			Modulus:  base64.StdEncoding.EncodeToString([]byte{0x01, 0x02, 0x03}),
+			Exponent: base64.RawURLEncoding.EncodeToString([]byte{0xff, 0xff}),
+		},
+	} {
+		if _, err := agentRSAPublicKey(pk); err == nil {
+			t.Fatalf("%s was accepted; runner public keys must use protocol-standard base64", name)
+		}
+	}
+}
+
 // TestRemoveToken verifies the repo removal token endpoint returns the
 // {token, expires_at} shape with 201 for an authenticated caller.
 func TestRemoveToken(t *testing.T) {

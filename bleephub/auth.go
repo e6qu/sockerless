@@ -240,14 +240,13 @@ func (s *Server) verifyAgentClientAssertion(token string) (*Agent, error) {
 
 // agentRSAPublicKey reconstructs an *rsa.PublicKey from the modulus+exponent
 // pair the runner sent during agent registration. The runner encodes both as
-// standard base64 (per the Azure DevOps agent protocol); fall back to base64url
-// if the standard alphabet rejects.
+// standard base64, per the Azure DevOps agent protocol.
 func agentRSAPublicKey(pk *AgentPublicKey) (*rsa.PublicKey, error) {
-	modBytes, err := decodeStdOrURL(pk.Modulus)
+	modBytes, err := base64.StdEncoding.DecodeString(pk.Modulus)
 	if err != nil {
 		return nil, fmt.Errorf("decode modulus: %w", err)
 	}
-	expBytes, err := decodeStdOrURL(pk.Exponent)
+	expBytes, err := base64.StdEncoding.DecodeString(pk.Exponent)
 	if err != nil {
 		return nil, fmt.Errorf("decode exponent: %w", err)
 	}
@@ -262,19 +261,6 @@ func agentRSAPublicKey(pk *AgentPublicKey) (*rsa.PublicKey, error) {
 		return nil, fmt.Errorf("invalid public exponent (zero)")
 	}
 	return &rsa.PublicKey{N: new(big.Int).SetBytes(modBytes), E: e}, nil
-}
-
-func decodeStdOrURL(s string) ([]byte, error) {
-	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	if b, err := base64.URLEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	return base64.RawURLEncoding.DecodeString(s)
 }
 
 // makeJWT creates a minimal unsigned JWT (alg:none) the runner can parse.
