@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, and BUG-2481.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, and BUG-2482.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -27,6 +27,8 @@ The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` dec
 Bleephub secret scanning alerts now come from repository content instead of public tests seeding alert rows through an operator-only route. The contents API scans new commits for supported provider patterns, Git Database branch reference creation/update scans commit targets, alert locations contain real commit/blob/path coordinates, and public secret scanning tests use committed secret patterns. The same test run found and fixed the incidental Git Database response-shape drift where `POST /git/blobs` returned an undocumented top-level `node_id`.
 
 Bleephub Dependabot alerts now come from public dependency graph snapshots plus published security advisories instead of an operator-only alert seed route. Repository security advisories persist GitHub vulnerability package coordinates, dependency snapshot success on the default branch derives matching Dependabot alerts from the global advisory database, advisory publication derives alerts from already submitted dependency snapshots, and the old `/internal/repos/{owner}/{repo}/dependabot/alerts` seed endpoint was removed.
+
+The AWS simulator software development kit Amazon Elastic Container Service task startup test now polls the real `DescribeTasks` state until a long-running task reaches `RUNNING`. The test no longer assumes Amazon Elastic Container Service startup completed within a fixed sleep, so CI remains sensitive to real task state without failing on legitimate startup timing.
 
 ## Continue Here
 
@@ -140,6 +142,7 @@ Bleephub Dependabot alerts now come from public dependency graph snapshots plus 
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the secret scanning ingestion and Git Database response-shape fixes.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestDependabot|TestLiveDependabot|TestEnterpriseDependabot|TestDependencyGraph|TestGlobalSecurityAdvisories|TestSecurityAdvisories' -count=1` passed with sandbox escalation after Dependabot alerts moved to public dependency graph and security advisory ingestion.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the Dependabot alert ingestion change.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off CGO_ENABLED=0 go test -v -count=1 -timeout 180s -run TestECS_TaskNoCommandStaysRunning .` passed in `simulators/aws/sdk-tests` after Amazon Elastic Container Service task startup coverage began polling task state.
 
 ## Standing Gaps
 
