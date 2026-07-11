@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-codeql-variant-query-pack-objects` continued the Bleephub GitHub-fidelity work after merged #786. It fixed BUG-2489.
+`feat/bleephub-codeql-variant-query-pack-objects` continued the Bleephub GitHub-fidelity work after merged #786. It fixed BUG-2489 and BUG-2490.
 
-#786 moved more durable Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage. This branch extended that same durable byte contract to CodeQL variant-analysis query-pack tarballs. Variant-analysis rows now keep metadata and object keys in SQLite, uploaded query packs live in the configured object byte store, public query-pack downloads read that object store, persisted startup and local development docs name query packs as required object-backed service bytes, and controller-repository deletion purges query-pack objects before deleting repository metadata.
+#786 moved more durable Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage. This branch extended that same durable byte contract to CodeQL variant-analysis query-pack tarballs. Variant-analysis rows now keep metadata and object keys in SQLite, uploaded query packs live in the configured object byte store, public query-pack downloads read that object store, persisted startup and local development docs name query packs as required object-backed service bytes, and controller-repository deletion purges query-pack objects before deleting repository metadata. The branch also made GitHub Actions runner-log upload and run-log deletion complete required object-store writes/deletes before changing in-memory log, console, or timeline state, so fail-loud object-store errors preserve the previous live state.
 
 ## Continue Here
 
@@ -18,6 +18,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(LogfilesUpload_(WritesObjectStore|ObjectStoreFailurePreservesState|AppendsBlocks|CapsAtFourMiBWithMarker)|JobLogs_ReadsUploadedLogFilesFromObjectStore|RunLogsDelete_ObjectStoreFailurePreservesState|ActionsRuns_DeleteLogs)' -count=1` passed with sandbox escalation after runner-log upload/deletion state changes moved behind required object-store operations.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the runner-log object-store consistency fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLVariantAnalyses_|PersistentServerStorageRequiresDurableGitAndObjectBytes|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata))' -count=1` passed with sandbox escalation after CodeQL variant-analysis query-pack tarballs moved to object storage.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after CodeQL variant-analysis query-pack tarballs moved to object storage.
 - `bash -n scripts/bleephub-local-dev.sh` and `git diff --check` passed after the local development object-store requirement text named CodeQL variant-analysis query packs.

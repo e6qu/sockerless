@@ -1221,6 +1221,25 @@ func (s *Server) handleDeleteRunLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var logIDs []int
+	s.store.mu.RLock()
+	for _, j := range wf.Jobs {
+		if job := s.store.Jobs[j.JobID]; job != nil && job.PlanID != "" {
+			if recs, ok := s.store.TimelineRecords[job.PlanID]; ok {
+				for _, rec := range recs {
+					if rec.Log != nil {
+						logIDs = append(logIDs, rec.Log.ID)
+					}
+				}
+			}
+		}
+	}
+	s.store.mu.RUnlock()
+	for _, logID := range logIDs {
+		if err := s.artifactStore.deleteLogData(r.Context(), logID); err != nil {
+			writeGHError(w, http.StatusInternalServerError, "log byte-store delete: "+err.Error())
+			return
+		}
+	}
 	s.store.mu.Lock()
 	for _, j := range wf.Jobs {
 		delete(s.store.LogLines, j.JobID)
@@ -1229,7 +1248,6 @@ func (s *Server) handleDeleteRunLogs(w http.ResponseWriter, r *http.Request) {
 				for _, rec := range recs {
 					if rec.Log != nil {
 						delete(s.store.LogFiles, rec.Log.ID)
-						logIDs = append(logIDs, rec.Log.ID)
 					}
 				}
 				delete(s.store.TimelineRecords, job.PlanID)
@@ -1237,12 +1255,6 @@ func (s *Server) handleDeleteRunLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.store.mu.Unlock()
-	for _, logID := range logIDs {
-		if err := s.artifactStore.deleteLogData(r.Context(), logID); err != nil {
-			writeGHError(w, http.StatusInternalServerError, "log byte-store delete: "+err.Error())
-			return
-		}
-	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

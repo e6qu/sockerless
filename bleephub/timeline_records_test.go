@@ -432,6 +432,35 @@ func TestLogfilesUpload_WritesObjectStore(t *testing.T) {
 	}
 }
 
+func TestLogfilesUpload_ObjectStoreFailurePreservesState(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: "missing-bucket", prefix: "objects"}
+	s := newTimelineTestServer()
+	s.artifactStore = NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+	planID := uuid.New().String()
+	logID := createLogFile(t, s, planID)
+
+	s.store.mu.Lock()
+	s.store.LogFiles[logID] = []byte("kept\n")
+	s.store.mu.Unlock()
+
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/_apis/v1/Logfiles/%s/build/%s/%d", uuid.New().String(), planID, logID),
+		bytes.NewReader([]byte("not durable\n")))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	s.store.mu.RLock()
+	got := string(s.store.LogFiles[logID])
+	s.store.mu.RUnlock()
+	if got != "kept\n" {
+		t.Fatalf("log state = %q, want previous bytes after object-store failure", got)
+	}
+}
+
 func TestJobLogs_ReadsUploadedLogFilesFromObjectStore(t *testing.T) {
 	fs := newS3FSForTest(t)
 	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
@@ -457,6 +486,40 @@ func TestJobLogs_ReadsUploadedLogFilesFromObjectStore(t *testing.T) {
 	}
 	if got := w.Body.String(); got != "object-store job log\n" {
 		t.Fatalf("job log body = %q, want object-store bytes", got)
+	}
+}
+
+func TestRunLogsDelete_ObjectStoreFailurePreservesState(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: "missing-bucket", prefix: "objects"}
+	s := newTimelineTestServer()
+	s.registerGHActionsPermissionsRoutes()
+	s.artifactStore = NewArtifactStoreWithByteStore("", &s3ActionsByteStore{fs: objectFS})
+	wf, wfJob := seedRun(t, s, "octo/repo", "completed", "success")
+	planID, timelineID := linkJobToPlan(t, s, wfJob)
+
+	logID := createLogFile(t, s, planID)
+	s.store.mu.Lock()
+	s.store.LogFiles[logID] = []byte("still visible\n")
+	s.store.LogLines[wfJob.JobID] = []string{"console line"}
+	s.store.mu.Unlock()
+	patchTimelineRecords(t, s, planID, timelineID, true, []map[string]any{
+		{"id": uuid.New().String(), "type": "Task", "name": "object step", "order": 1,
+			"state": "completed", "result": "succeeded", "log": map[string]any{"id": logID}},
+	})
+
+	w := runAuthedRequest(s, "DELETE", fmt.Sprintf("/api/v3/repos/octo/repo/actions/runs/%d/logs", wf.RunID))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	s.store.mu.RLock()
+	_, hasLog := s.store.LogFiles[logID]
+	_, hasTimeline := s.store.TimelineRecords[planID]
+	lines := append([]string(nil), s.store.LogLines[wfJob.JobID]...)
+	s.store.mu.RUnlock()
+	if !hasLog || !hasTimeline || len(lines) != 1 || lines[0] != "console line" {
+		t.Fatalf("delete failure changed state: hasLog=%v hasTimeline=%v lines=%v", hasLog, hasTimeline, lines)
 	}
 }
 
