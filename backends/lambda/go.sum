@@ -22,8 +22,8 @@ github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0 h1:5W/KOwsnZrdi7RD97
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0/go.mod h1:h1Iw2nkdpmAUJaa89RvX3cg/HGLgdSkCWpMNgKvBSHA=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0 h1:1owpvMLjLDdCy+NKM+JC8oFIHkLvZKwDZJONUHqXLaY=
 github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0/go.mod h1:1ZCte/owHgsdIv9R0IbrVTtv/orZ/KcZoo0l9/QhTKg=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.315.0 h1:d7gXFRwpyFY6i5womw/2NoPbMIwugnUJqGSM8GiFRxY=
-github.com/aws/aws-sdk-go-v2/service/ec2 v1.315.0/go.mod h1:eoF0SIRbTgKWnTcTPYckiURPba/7ilfEkvwL4V1iHK4=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.0 h1:LlxNun/oe5B2XMff8Mkh/3bJeHl1K7Fod+rMYtjagw4=
+github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.0/go.mod h1:eoF0SIRbTgKWnTcTPYckiURPba/7ilfEkvwL4V1iHK4=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0 h1:H1dHU54MQVblAmsvlIfMdJmXyDKFSKnHrCmaWqwQ0Vs=
 github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0/go.mod h1:UzfjIuiQOpusteIHBCLIikQpxh8ctmdQCvSWWzbcYYI=
 github.com/aws/aws-sdk-go-v2/service/efs v1.43.0 h1:xjRmCnQn7Yo+hgMzrEShD2d6T7IA/+Lo+iot5DIDa9M=
@@ -36,8 +36,8 @@ github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30 h1:/Z5jmNrK
 github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.30/go.mod h1:lEzEZnOosE7zi8Z6royW1cFJTD9fpab4Ul1SBrllewk=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31 h1:uao4A3QZ5UmB326V6KF+qRpv9Tjz7IlnlnTbbANntlU=
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.31/go.mod h1:I/1+z0VwL1GhQyLgkoHDlygpUZ+iTAwOQ/NsftiUL2I=
-github.com/aws/aws-sdk-go-v2/service/lambda v1.96.0 h1:LQFghb8Azoe9vAmambrUCUoM/wfi437AMd70wQjCa20=
-github.com/aws/aws-sdk-go-v2/service/lambda v1.96.0/go.mod h1:gKWVtxlMTgoLU9m6FDw7z6FAEFh8u8CoaPJx0zWk5J8=
+github.com/aws/aws-sdk-go-v2/service/lambda v1.97.0 h1:k/rVQdLBLbfoNfp1pdTO4+RGGt0DhZM/KZ7lgviPA6I=
+github.com/aws/aws-sdk-go-v2/service/lambda v1.97.0/go.mod h1:gKWVtxlMTgoLU9m6FDw7z6FAEFh8u8CoaPJx0zWk5J8=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0 h1:XptwLL+UHXgafYMIHTy59IRovLbhz3znkxY2uS/pbXU=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0/go.mod h1:zdmCoFO/dSI7GlrwsPqFJI+WlFnSU4Tc8TJnlXrM1Do=
 github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.0 h1:dQIStKXDBPAi3dG5h8XJnnMn4uEwB4MA1+1LqT4Bttw=

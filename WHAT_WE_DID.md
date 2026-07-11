@@ -14,6 +14,8 @@ Closed BUG-2472 by making public GitHub Packages file downloads read object-back
 
 Closed BUG-2473 by making repository deletion fail loudly on required git-storage cleanup failures. Bleephub now purges filesystem or S3-backed git storage before deleting repository metadata; if S3 git-prefix cleanup cannot be resolved or completed, the delete returns an error and preserves the repository record and git storage index instead of logging and orphaning git objects.
 
+Closed BUG-2474 by upgrading stale AWS software development kit service modules found by the pre-push dependency freshness gate. The Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests now use the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions required by the gate.
+
 Validation in this branch included:
 
 ```bash
@@ -22,6 +24,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistent
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestPackages_' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'Test(DeleteRepoS3GitCleanupFailurePreservesRepo|GitDeleteCleanup|UnitDeleteRepo)$' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
+bash scripts/check-latest-deps.sh
 pre-commit run --all-files
 ```
 

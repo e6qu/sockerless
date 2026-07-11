@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, and BUG-2473.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, and BUG-2474.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -13,6 +13,8 @@ This branch extended the same object-backed durable byte contract to release ass
 The public GitHub Packages file download route now reads package file bytes from object storage when package files were stored there. Object-backed package files therefore work through the same REST download URL that listed package metadata advertises, instead of failing because the downloader looked only for a local filesystem path.
 
 Repository deletion now treats git storage cleanup as a required pre-delete step. Filesystem and S3-backed git storage are purged before repository metadata is deleted, and S3 cleanup failures return an error while preserving the repository record and git storage index instead of logging and orphaning git objects.
+
+The pre-push dependency freshness gate also found stale AWS software development kit service modules in the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests. Those modules were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions, and the freshness gate passed again.
 
 ## Continue Here
 
@@ -113,6 +115,7 @@ Repository deletion now treats git storage cleanup as a required pre-delete step
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestPackages_' -count=1` passed with sandbox escalation after public package file downloads began reading object-backed package files.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the public package file download fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'Test(DeleteRepoS3GitCleanupFailurePreservesRepo|GitDeleteCleanup|UnitDeleteRepo)$' -count=1` passed with sandbox escalation after repository deletion began failing loudly on required S3 git-storage cleanup errors.
+- `bash scripts/check-latest-deps.sh` passed after the AWS software development kit module freshness fix required by pre-push.
 
 ## Standing Gaps
 

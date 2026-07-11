@@ -8,10 +8,10 @@ require (
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.28
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/codebuild v1.71.0
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.315.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.316.0
 	github.com/aws/aws-sdk-go-v2/service/ecr v1.59.0
 	github.com/aws/aws-sdk-go-v2/service/efs v1.43.0
-	github.com/aws/aws-sdk-go-v2/service/lambda v1.96.0
+	github.com/aws/aws-sdk-go-v2/service/lambda v1.97.0
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.105.0
 	github.com/aws/aws-sdk-go-v2/service/servicediscovery v1.41.0
 	github.com/docker/docker v28.5.2+incompatible
