@@ -205,10 +205,7 @@ func TestOpenAPIUser(t *testing.T) {
 }
 
 func TestOpenAPIOrg(t *testing.T) {
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": fmt.Sprintf("oa-org-%d", time.Now().UnixNano()),
-		"name":  "OpenAPI Org",
-	}).Body.Close()
+	createOrgViaAdminAPI(t, fmt.Sprintf("oa-org-%d", time.Now().UnixNano()), "OpenAPI Org")
 
 	orgs := func() string {
 		resp := ghGet(t, "/api/v3/user/orgs", defaultToken)

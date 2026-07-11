@@ -552,9 +552,7 @@ func TestInstallationTokenWrongApp(t *testing.T) {
 func TestGetRepoInstallationHTTP(t *testing.T) {
 	// The endpoint resolves a REAL repo — provision an org-owned repo and
 	// install the app on the org.
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "repo-inst-owner",
-	}).Body.Close()
+	createOrgViaAdminAPI(t, "repo-inst-owner")
 	ghPost(t, "/api/v3/orgs/repo-inst-owner/repos", defaultToken, map[string]interface{}{
 		"name": "somerepo",
 	}).Body.Close()

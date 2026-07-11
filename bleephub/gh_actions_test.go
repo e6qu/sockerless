@@ -1017,17 +1017,7 @@ jobs:
 func createTestOrg(t *testing.T) string {
 	t.Helper()
 	login := "test-org-actions-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login":       login,
-		"name":        "Test Org Actions",
-		"description": "actions permissions test org",
-	})
-	if resp.StatusCode != 201 {
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		t.Fatalf("create org: %d %s", resp.StatusCode, body)
-	}
-	resp.Body.Close()
+	createOrgViaAdminAPI(t, login, "Test Org Actions")
 	return login
 }
 

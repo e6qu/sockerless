@@ -263,7 +263,7 @@ func TestAppManifestFlowEndToEnd(t *testing.T) {
 // it returns appID, slug, pem, and instID.
 func installAppOnOrg(t *testing.T, orgLogin, repoName string, perms map[string]string) (int, string, string, int) {
 	t.Helper()
-	ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{"login": orgLogin}).Body.Close()
+	createOrgViaAdminAPI(t, orgLogin)
 	ghPost(t, "/api/v3/orgs/"+orgLogin+"/repos", defaultToken, map[string]interface{}{"name": repoName}).Body.Close()
 
 	appData := createGitHubAppViaManifest(t, orgLogin+"-app", perms, nil)

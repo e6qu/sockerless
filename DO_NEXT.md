@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, and BUG-2475.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, and BUG-2476.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -17,6 +17,8 @@ Repository deletion now treats git storage cleanup as a required pre-delete step
 The pre-push dependency freshness gate also found stale AWS software development kit service modules in the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests. Those modules were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions, and the freshness gate passed again.
 
 The Bleephub go-github software development kit harness now provisions organizations through GitHub Enterprise Server's public admin organization API instead of the operator-only `/internal/orgs` convenience route. The official-client coverage therefore follows the same public organization provisioning contract as the Docker-backed GitHub command-line interface harness, and source coverage rejects `/internal/orgs` in the go-github harness.
+
+Bleephub's public GitHub REST tests now use the same GitHub Enterprise Server public admin organization API for organization setup. The shared test helper creates prerequisite organizations through `/api/v3/admin/organizations`, and source coverage rejects new direct `/internal/orgs` setup calls outside the explicit operator-management tests.
 
 ## Continue Here
 
@@ -121,6 +123,7 @@ The Bleephub go-github software development kit harness now provisions organizat
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestGitHub(CommandLineInterface|SoftwareDevelopmentKit)HarnessUsesAdminOrganizationAPI|TestAdminCreateOrg' -count=1` passed with sandbox escalation after the go-github software development kit harness moved organization setup to GitHub Enterprise Server's public admin organization API.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'Test(Organizations|AppsInstallationTokenFlow|OrgProfileTeamsAndMembershipSurfaces|OrgWebhooksSDK)$' -count=1` passed in `bleephub/sdk-tests` with sandbox escalation after the same change.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -count=1` passed in `bleephub/sdk-tests`.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPublicFeatureTestsProvisionOrganizationsThroughAdminAPI|Test(GetOrg|UpdateOrg|DeleteOrg|ListAuthUserOrgs|CreateTeam|ListTeams|GetTeam|DeleteTeam|OrgMembership|RemoveMembership|TeamRepoPermission|ListUserTeams|GraphQLViewerOrgs|GraphQLOrganization|CreateOrgRepo|CreateOrgRepoExtended|ListOrgRepos|RepoOrganizationField|OpenAPIOrg|GetRepoInstallationHTTP|InviteFlow|PublicizeAndConcealMembership|OrgProfileTeamsAndMembershipSurfaces|OrgWebhooks|Codespaces|AppsInstallationTokenFlow|CreateRepositoryInOrganization|Actions.*Org)' -count=1` passed with sandbox escalation after Bleephub public REST tests moved organization setup to GitHub Enterprise Server's public admin organization API.
 
 ## Standing Gaps
 

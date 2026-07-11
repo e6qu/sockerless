@@ -841,15 +841,7 @@ func TestCreateRepoDefaultBranch(t *testing.T) {
 
 // TestCreateOrgRepoExtended verifies org repo creation supports the new fields.
 func TestCreateOrgRepoExtended(t *testing.T) {
-	orgResp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{
-		"login": "create-org",
-		"name":  "Create Org",
-	})
-	if orgResp.StatusCode != 201 {
-		orgResp.Body.Close()
-		t.Fatalf("expected 201 for org create, got %d", orgResp.StatusCode)
-	}
-	orgResp.Body.Close()
+	createOrgViaAdminAPI(t, "create-org", "Create Org")
 
 	resp := ghPost(t, "/api/v3/orgs/create-org/repos", defaultToken, map[string]interface{}{
 		"name":           "org-repo",
