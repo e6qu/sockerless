@@ -59,6 +59,28 @@ func TestGitHubCommandLineInterfaceHarnessUsesAdminOrganizationAPI(t *testing.T)
 	}
 }
 
+func TestGitHubSoftwareDevelopmentKitHarnessUsesAdminOrganizationAPI(t *testing.T) {
+	var b strings.Builder
+	for _, path := range []string{
+		"sdk-tests/main_test.go",
+		"sdk-tests/orgs_users_test.go",
+		"sdk-tests/apps_orgs_flow_test.go",
+	} {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(body)
+	}
+	source := b.String()
+	if strings.Contains(source, `"/internal/orgs"`) {
+		t.Fatal("go-github software development kit tests must not provision organizations through /internal/orgs")
+	}
+	if !strings.Contains(source, `"/api/v3/admin/organizations"`) {
+		t.Fatal("go-github software development kit tests must provision organizations through the GitHub Enterprise Server admin organization API")
+	}
+}
+
 // TestCreateOrg verifies the operator organization provisioning route.
 func TestCreateOrg(t *testing.T) {
 	resp := ghPost(t, "/internal/orgs", defaultToken, map[string]interface{}{

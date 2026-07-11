@@ -141,37 +141,37 @@ func run(m *testing.M) (int, error) {
 	return m.Run(), nil
 }
 
-// internalPost issues an authenticated POST to a Bleephub /internal/* endpoint
-// and decodes the JavaScript Object Notation response into out when out is
-// non-nil. It is used only for operator-only fixture setup of resources
-// go-github cannot create.
-func internalPost(t *testing.T, path string, body, out interface{}) int {
+// createOrganizationViaAdminAPI provisions an organization through GitHub
+// Enterprise Server's public site-admin API, the same route real official
+// clients can use on GitHub Enterprise Server.
+func createOrganizationViaAdminAPI(t *testing.T, login, profileName string, out interface{}) int {
 	t.Helper()
-	var rdr io.Reader
-	if body != nil {
-		b, err := json.Marshal(body)
-		if err != nil {
-			t.Fatalf("marshal internal body: %v", err)
-		}
-		rdr = bytes.NewReader(b)
+	body := map[string]interface{}{
+		"login": login,
+		"admin": "admin",
 	}
-	req, err := http.NewRequest(http.MethodPost, baseURL+path, rdr)
+	if profileName != "" {
+		body["profile_name"] = profileName
+	}
+	b, err := json.Marshal(body)
 	if err != nil {
-		t.Fatalf("new internal request: %v", err)
+		t.Fatalf("marshal admin organization body: %v", err)
+	}
+	req, err := http.NewRequest(http.MethodPost, baseURL+"/api/v3/admin/organizations", bytes.NewReader(b))
+	if err != nil {
+		t.Fatalf("new admin organization request: %v", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+adminToken)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
+	req.Header.Set("Content-Type", "application/json")
 	resp, err := rawHTTP.Do(req)
 	if err != nil {
-		t.Fatalf("internal POST %s: %v", path, err)
+		t.Fatalf("admin organization POST: %v", err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	if out != nil && len(raw) > 0 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			t.Fatalf("decode internal response %s (%s): %v", path, raw, err)
+			t.Fatalf("decode admin organization response (%s): %v", raw, err)
 		}
 	}
 	return resp.StatusCode

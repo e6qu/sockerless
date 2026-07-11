@@ -62,8 +62,8 @@ func ghClient(t *testing.T, credential string) *github.Client {
 // on permission escalation.
 func TestAppsInstallationTokenFlow(t *testing.T) {
 	org := uniqueName("appflow")
-	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {
-		t.Fatalf("internal create org status = %d", code)
+	if code := createOrganizationViaAdminAPI(t, org, "", nil); code != http.StatusCreated {
+		t.Fatalf("admin organization create status = %d, want 201", code)
 	}
 	repo, _, err := client.Repositories.Create(ctx(), org, &github.Repository{Name: github.Ptr("flow-repo")})
 	if err != nil {
@@ -149,8 +149,8 @@ func TestAppsInstallationTokenFlow(t *testing.T) {
 // role, and team repositories through the typed software development kit.
 func TestOrgProfileTeamsAndMembershipSurfaces(t *testing.T) {
 	org := uniqueName("orgsurf")
-	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {
-		t.Fatalf("internal create org status = %d", code)
+	if code := createOrganizationViaAdminAPI(t, org, "", nil); code != http.StatusCreated {
+		t.Fatalf("admin organization create status = %d, want 201", code)
 	}
 
 	// Profile fields round-trip through Organizations.Edit.
@@ -275,8 +275,8 @@ func TestOrgProfileTeamsAndMembershipSurfaces(t *testing.T) {
 // delete through the typed software development kit.
 func TestOrgWebhooksSDK(t *testing.T) {
 	org := uniqueName("orghook")
-	if code := internalPost(t, "/internal/orgs", map[string]interface{}{"login": org}, nil); code != http.StatusCreated {
-		t.Fatalf("internal create org status = %d", code)
+	if code := createOrganizationViaAdminAPI(t, org, "", nil); code != http.StatusCreated {
+		t.Fatalf("admin organization create status = %d, want 201", code)
 	}
 
 	hook, _, err := client.Organizations.CreateHook(ctx(), org, &github.Hook{

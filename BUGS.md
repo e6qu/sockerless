@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2474 filed - 2430 fixed - 3 open - 16 false positives.**
+**2475 filed - 2431 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2475~~ | P2 | Bleephub GitHub software development kit coverage | official-client tests used an operator-only organization route | The Bleephub go-github software development kit tests now provision organizations through GitHub Enterprise Server's public admin organization API, and source coverage rejects `/internal/orgs` in that official-client harness. |
 | ~~2474~~ | P2 | dependency freshness | pre-push dependency drift | The AWS software development kit modules used by the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions required by the pre-push freshness gate. |
 | ~~2473~~ | P1 | Bleephub repository git storage | repository delete ignored S3 git-prefix cleanup failures | Repository deletion now purges filesystem or S3-backed git storage before deleting repository metadata and returns a fail-loud error when required git storage cleanup fails, preserving repository state instead of logging and orphaning git objects. |
 | ~~2472~~ | P1 | Bleephub package storage | object-backed package files were not downloadable through REST | GitHub Packages file downloads now read from the configured object store when package file bytes were stored there, so public package file URLs work for object-backed service bytes instead of looking only for local filesystem paths. |

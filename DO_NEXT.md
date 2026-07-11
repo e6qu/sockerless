@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, and BUG-2474.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, and BUG-2475.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -15,6 +15,8 @@ The public GitHub Packages file download route now reads package file bytes from
 Repository deletion now treats git storage cleanup as a required pre-delete step. Filesystem and S3-backed git storage are purged before repository metadata is deleted, and S3 cleanup failures return an error while preserving the repository record and git storage index instead of logging and orphaning git objects.
 
 The pre-push dependency freshness gate also found stale AWS software development kit service modules in the Amazon Elastic Container Service backend, AWS Lambda backend, and AWS simulator software development kit tests. Those modules were upgraded to the latest published CloudWatch, Amazon Elastic Compute Cloud, and AWS Lambda service module versions, and the freshness gate passed again.
+
+The Bleephub go-github software development kit harness now provisions organizations through GitHub Enterprise Server's public admin organization API instead of the operator-only `/internal/orgs` convenience route. The official-client coverage therefore follows the same public organization provisioning contract as the Docker-backed GitHub command-line interface harness, and source coverage rejects `/internal/orgs` in the go-github harness.
 
 ## Continue Here
 
@@ -116,6 +118,9 @@ The pre-push dependency freshness gate also found stale AWS software development
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1` passed with sandbox escalation after the public package file download fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'Test(DeleteRepoS3GitCleanupFailurePreservesRepo|GitDeleteCleanup|UnitDeleteRepo)$' -count=1` passed with sandbox escalation after repository deletion began failing loudly on required S3 git-storage cleanup errors.
 - `bash scripts/check-latest-deps.sh` passed after the AWS software development kit module freshness fix required by pre-push.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestGitHub(CommandLineInterface|SoftwareDevelopmentKit)HarnessUsesAdminOrganizationAPI|TestAdminCreateOrg' -count=1` passed with sandbox escalation after the go-github software development kit harness moved organization setup to GitHub Enterprise Server's public admin organization API.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'Test(Organizations|AppsInstallationTokenFlow|OrgProfileTeamsAndMembershipSurfaces|OrgWebhooksSDK)$' -count=1` passed in `bleephub/sdk-tests` with sandbox escalation after the same change.
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -count=1` passed in `bleephub/sdk-tests`.
 
 ## Standing Gaps
 
