@@ -12,12 +12,16 @@ Closed BUG-2491 by making persisted repository ownership strict. Repository relo
 
 Closed BUG-2492 by removing the internal runner-submission image fallback. `/internal/exec/submit` and `/internal/exec/workflow` now require either an explicit `image` or `hostMode`, and tests that intend container execution pass `alpine:latest` explicitly instead of relying on hidden server-side defaulting.
 
+Closed BUG-2493 by moving container-package coverage onto the real GitHub Container Registry-compatible data plane. Container package fixtures now publish blobs and manifests through the OCI/Docker Registry HTTP API v2 routes, package REST tests observe the resulting manifest/layer files, source coverage rejects new internal container-package seed calls, and `/internal/packages` rejects `container` package creation instead of leaving a parallel operator-only publish path.
+
 Validation in this branch included:
 
 ```bash
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PersistenceReload_(OwnerAndCountersAndState|OrganizationRepositoryOwnerIsValidated|RepositoryMissingOwner(Type|ID)FailsLoud)|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ConcurrencyGroups_(RepoAndRunEndpoints|CompletedRunReleasesLease)|SubmitWorkflow(RepoRefResolution|RejectsUnresolvedRepoRef)|Workflows_Dispatch|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPackages|TestContainerRegistry|TestLivePackages' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+pre-commit run --all-files
 ```
 
 ## 2026-07-11 - Bleephub CodeQL Variant-Analysis Query Pack Objects (`feat/bleephub-codeql-variant-query-pack-objects`)

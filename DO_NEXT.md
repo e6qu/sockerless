@@ -4,9 +4,11 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-public-state-fidelity` continued the Bleephub GitHub-fidelity work after merged #787. It fixed BUG-2491 and BUG-2492.
+`feat/bleephub-public-state-fidelity` continued the Bleephub GitHub-fidelity work after merged #787. It fixed BUG-2491, BUG-2492, and BUG-2493.
 
 #787 moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live state. This branch tightened the next fidelity gaps found after that merge. Persisted repository reload now requires valid `owner_type` and `owner_id`, loads organizations before repositories, validates organization-owned repositories against real organization state, and no longer treats empty owner types as user repositories in public listing/event paths. Internal job and workflow submission routes now require either explicit `image` or `hostMode`, and tests pass explicit images when they intend container execution instead of relying on a hidden `alpine:latest` fallback.
+
+Container package coverage now publishes package versions through the GitHub Container Registry-compatible OCI/Docker Registry HTTP API v2 data plane instead of `/internal/packages`, source coverage rejects new internal container-package seed calls, and the internal package upload route rejects `container` packages so that container packages have one real publish path.
 
 ## Continue Here
 
@@ -18,6 +20,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPackages|TestContainerRegistry|TestLivePackages' -count=1` passed with sandbox escalation after container package fixtures moved to the GitHub Container Registry-compatible data plane and `/internal/packages` rejected `container` creation.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the GitHub Container Registry-compatible package-coverage fix.
+- `pre-commit run --all-files` passed with sandbox escalation after the GitHub Container Registry-compatible package-coverage fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PersistenceReload_(OwnerAndCountersAndState|OrganizationRepositoryOwnerIsValidated|RepositoryMissingOwner(Type|ID)FailsLoud)|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1` passed with sandbox escalation after persisted repository ownership became strict and internal runner submission stopped defaulting missing images.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ConcurrencyGroups_(RepoAndRunEndpoints|CompletedRunReleasesLease)|SubmitWorkflow(RepoRefResolution|RejectsUnresolvedRepoRef)|Workflows_Dispatch|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1` passed with sandbox escalation after tests stopped relying on the removed internal submission image fallback.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after BUG-2491 and BUG-2492 were fixed.

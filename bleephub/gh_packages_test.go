@@ -6,12 +6,17 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
+	"strings"
 	"testing"
 )
 
 func seedPackageVersion(t *testing.T, ownerType, owner, pkgType, pkgName, version string) (int, int) {
 	t.Helper()
+	if pkgType == "container" {
+		t.Fatalf("container packages must be published through the GitHub Container Registry-compatible /v2/ data plane, not /internal/packages")
+	}
 	body, _ := json.Marshal(map[string]any{
 		"version":     version,
 		"description": "test version",
@@ -48,9 +53,58 @@ func seedPackageVersion(t *testing.T, ownerType, owner, pkgType, pkgName, versio
 	return pkgID, int(v["id"].(float64))
 }
 
+func publishContainerPackageVersion(t *testing.T, owner, pkgName, version string) (int, int) {
+	t.Helper()
+	name := owner + "/" + pkgName
+	layerBytes := []byte("package layer " + owner + "/" + pkgName + ":" + version)
+	layerDigest := uploadRegistryBlob(t, name, layerBytes)
+	manifest := mustRegistryJSON(map[string]interface{}{
+		"schemaVersion": 2,
+		"mediaType":     "application/vnd.oci.image.manifest.v1+json",
+		"layers": []map[string]interface{}{
+			{
+				"mediaType": "application/vnd.oci.image.layer.v1.tar",
+				"digest":    layerDigest,
+				"size":      len(layerBytes),
+			},
+		},
+	})
+	resp := registryRequest(t, http.MethodPut, "/v2/"+name+"/manifests/"+version, bytes.NewReader(manifest))
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("publish container package %s:%s: %d %s", name, version, resp.StatusCode, body)
+	}
+	created := decodeJSON(t, resp)
+	pkgID := 0
+	if pkg := testServer.store.GetPackage(owner, "container", pkgName); pkg != nil {
+		pkgID = pkg.ID
+	}
+	versionID := int(created["id"].(float64))
+	return pkgID, versionID
+}
+
+func TestPackageFixturesDoNotSeedContainerPackagesThroughInternalRoute(t *testing.T) {
+	for _, path := range []string{"gh_packages_test.go", "gh_packages_live_test.go", "gh_packages_user_surface_test.go"} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, needle := range []string{
+			strings.Join([]string{`seedPackageVersion`, `(t, "user", admin.Login, "container"`}, ""),
+			strings.Join([]string{`seedPackageVersion`, `(t, "org", org.Login, "container"`}, ""),
+			strings.Join([]string{`seed`, `("user", admin.Login, "container"`}, ""),
+		} {
+			if strings.Contains(string(source), needle) {
+				t.Fatalf("%s still seeds a container package through internal package setup; publish it through /v2/", path)
+			}
+		}
+	}
+}
+
 func TestPackages_UserCRUD(t *testing.T) {
 	admin := testServer.store.UsersByLogin["admin"]
-	pkgID, versionID := seedPackageVersion(t, "user", admin.Login, "container", "user-pkg", "1.0.0")
+	pkgID, versionID := publishContainerPackageVersion(t, admin.Login, "user-pkg", "1.0.0")
 
 	// List user packages (package_type is a required query parameter)
 	resp := ghGet(t, "/api/v3/users/"+admin.Login+"/packages?package_type=container", defaultToken)
@@ -133,12 +187,23 @@ func TestPackages_UserCRUD(t *testing.T) {
 		t.Fatalf("decode files: %v", err)
 	}
 	resp.Body.Close()
-	if len(files) != 1 {
-		t.Fatalf("expected 1 file, got %d", len(files))
+	if len(files) < 2 {
+		t.Fatalf("expected registry manifest and layer files, got %d", len(files))
 	}
 	fileID := int(files[0]["id"].(float64))
-	if files[0]["name"] != "package.tgz" {
-		t.Fatalf("expected package.tgz, got %v", files[0]["name"])
+	hasManifest := false
+	hasLayer := false
+	for _, file := range files {
+		name, _ := file["name"].(string)
+		switch {
+		case name == "manifest.json":
+			hasManifest = true
+		case strings.HasPrefix(name, "blobs/sha256/"):
+			hasLayer = true
+		}
+	}
+	if !hasManifest || !hasLayer {
+		t.Fatalf("expected registry manifest and layer files, got %v", files)
 	}
 
 	// Download file
@@ -150,8 +215,8 @@ func TestPackages_UserCRUD(t *testing.T) {
 	}
 	data, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
-	if string(data) != "hello package" {
-		t.Fatalf("expected file body hello package, got %q", string(data))
+	if len(data) == 0 {
+		t.Fatal("expected package file bytes, got empty body")
 	}
 
 	// Delete version
@@ -395,11 +460,21 @@ func TestPackages_InternalUploadValidation(t *testing.T) {
 	admin := testServer.store.UsersByLogin["admin"]
 
 	// Missing version
-	resp, _ := authedPost("/internal/packages/user/"+admin.Login+"/container/bad-pkg/versions", "application/json", bytes.NewReader([]byte(`{}`)))
+	resp, _ := authedPost("/internal/packages/user/"+admin.Login+"/npm/bad-pkg/versions", "application/json", bytes.NewReader([]byte(`{}`)))
 	if resp.StatusCode != http.StatusUnprocessableEntity {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 		t.Fatalf("expected 422 missing version, got %d %s", resp.StatusCode, b)
+	}
+	resp.Body.Close()
+
+	// Container packages publish through the GitHub Container Registry-compatible
+	// registry data plane, not the internal metadata upload route.
+	resp, _ = authedPost("/internal/packages/user/"+admin.Login+"/container/bad-pkg/versions", "application/json", bytes.NewReader([]byte(`{"version":"1.0.0"}`)))
+	if resp.StatusCode != http.StatusUnprocessableEntity {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("expected 422 container package internal upload, got %d %s", resp.StatusCode, b)
 	}
 	resp.Body.Close()
 
@@ -413,7 +488,7 @@ func TestPackages_InternalUploadValidation(t *testing.T) {
 	resp.Body.Close()
 
 	// Missing owner
-	resp, _ = authedPost("/internal/packages/user/no-such-user/container/bad-pkg/versions", "application/json", bytes.NewReader([]byte(`{"version":"1.0.0"}`)))
+	resp, _ = authedPost("/internal/packages/user/no-such-user/npm/bad-pkg/versions", "application/json", bytes.NewReader([]byte(`{"version":"1.0.0"}`)))
 	if resp.StatusCode != http.StatusNotFound {
 		b, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
@@ -520,7 +595,7 @@ func TestPackages_OrgDockerConflicts(t *testing.T) {
 
 	// A container package with the same name makes the docker package a
 	// migration conflict.
-	seedPackageVersion(t, "org", org.Login, "container", "shared-image", "1.0.0")
+	publishContainerPackageVersion(t, org.Login, "shared-image", "1.0.0")
 	resp = ghGet(t, "/api/v3/orgs/docker-conflicts-org/docker/conflicts", defaultToken)
 	if resp.StatusCode != http.StatusOK {
 		resp.Body.Close()

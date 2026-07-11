@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2492 filed - 2448 fixed - 3 open - 16 false positives.**
+**2493 filed - 2449 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2493~~ | P2 | Bleephub GitHub Packages coverage | container package tests used operator-only seed uploads despite a real registry data plane | Bleephub container-package REST coverage now publishes package versions through the GitHub Container Registry-compatible OCI/Docker Registry HTTP API v2 data plane, source coverage rejects new internal container-package seed calls, and `/internal/packages` rejects `container` package creation so container packages have one real publish path. |
 | ~~2492~~ | P1 | Bleephub internal runner submission | missing execution image silently defaulted | Bleephub internal job and workflow submission routes now require either explicit `image` or `hostMode`, and route fixtures pass an explicit execution image when they intend container execution instead of relying on a hidden `alpine:latest` fallback. |
 | ~~2491~~ | P1 | Bleephub repository persistence | missing repository owner fields reloaded through compatibility fallbacks | Persisted repositories now fail loudly when `owner_type` or `owner_id` is missing or inconsistent, organization rows load before repository rows so organization-owned repositories validate against real organization state, and public repository listing/event paths no longer treat empty owner types as user repositories. |
 | ~~2490~~ | P1 | Bleephub GitHub Actions runner logs | object-store failures mutated process state first | Bleephub runner-log upload and deletion now complete required object-store writes/deletes before changing in-memory log, console, or timeline state, so fail-loud object-store errors preserve the previously visible process state instead of diverging from durable storage. |

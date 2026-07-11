@@ -50,7 +50,7 @@ func TestLivePackages_UserOrgRepo(t *testing.T) {
 		return int(v["id"].(float64))
 	}
 
-	userVersionID := seed("user", admin.Login, "container", "live-user-pkg", "1.0.0")
+	_, userVersionID := publishContainerPackageVersion(t, admin.Login, "live-user-pkg", "1.0.0")
 	orgVersionID := seed("org", org.Login, "npm", "live-org-pkg", "1.0.0")
 	repoVersionID := seed("repository", repo.FullName, "docker", "live-repo-pkg", "1.0.0")
 

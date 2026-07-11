@@ -90,6 +90,10 @@ func (s *Server) handleInternalCreatePackageVersion(w http.ResponseWriter, r *ht
 		writeGHValidationError(w, "Package", "package_type", "invalid")
 		return
 	}
+	if pkgType == "container" {
+		writeGHValidationError(w, "Package", "package_type", "use_registry_data_plane")
+		return
+	}
 
 	var body packageVersionCreateBody
 	if !decodeJSONBody(w, r, &body) {

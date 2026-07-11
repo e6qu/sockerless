@@ -166,7 +166,7 @@ func TestPackagesDockerConflicts_ComputedFromStore(t *testing.T) {
 	// A Docker-registry package whose name collides with a Container
 	// registry package cannot migrate — that is the conflict set.
 	seedPackageVersion(t, "user", admin.Login, "docker", "conflicted-image", "1.0.0")
-	seedPackageVersion(t, "user", admin.Login, "container", "conflicted-image", "1.0.0")
+	publishContainerPackageVersion(t, admin.Login, "conflicted-image", "1.0.0")
 	seedPackageVersion(t, "user", admin.Login, "docker", "unconflicted-image", "1.0.0")
 
 	for _, path := range []string{"/api/v3/user/docker/conflicts", "/api/v3/users/admin/docker/conflicts"} {
