@@ -369,6 +369,10 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 		return true, fmt.Errorf("delete repo %s git storage: %w", fullName, err)
 	}
 
+	if err := st.deletePackageFilesForOwnerLocked(fullName); err != nil {
+		return true, fmt.Errorf("delete repo %s package files: %w", fullName, err)
+	}
+
 	delete(st.Repos, repo.ID)
 	delete(st.ReposByName, fullName)
 	delete(st.GitStorages, fullName)

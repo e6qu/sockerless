@@ -141,6 +141,47 @@ func TestPackageAndRegistryBytesUseObjectStore(t *testing.T) {
 	}
 }
 
+func TestDeleteRepoPurgesRepositoryPackageObjectBytes(t *testing.T) {
+	fs := newS3FSForTest(t)
+	objectFS := &s3FS{client: fs.client, bucket: fs.bucket, prefix: "objects"}
+	s := newTestServer()
+	s.store.ObjectByteStore = &s3ActionsByteStore{fs: objectFS}
+	admin := s.store.UsersByLogin["admin"]
+	repo := s.store.CreateRepo(admin, "repo-package-objects", "", false)
+	pkg, _ := s.store.CreatePackage("Repository", repo.FullName, "container", "image", "private")
+	version, err := s.store.CreatePackageVersion("Repository", repo.FullName, "container", pkg.Name, "1.0.0", "", nil, []PackageFileInput{{
+		Name:          "manifest.json",
+		ContentType:   "application/vnd.oci.image.manifest.v1+json",
+		ContentBase64: "cmVwbyBwYWNrYWdlIGJ5dGVz",
+	}})
+	if err != nil {
+		t.Fatalf("create package version: %v", err)
+	}
+	files := s.store.ListPackageFiles(version.ID)
+	if len(files) != 1 {
+		t.Fatalf("package files len = %d, want 1", len(files))
+	}
+	if got := string(readS3TestFile(t, objectFS, files[0].StoragePath)); got != "repo package bytes" {
+		t.Fatalf("package object bytes = %q", got)
+	}
+
+	deleted, err := s.store.DeleteRepo("admin", repo.Name)
+	if err != nil {
+		t.Fatalf("delete repo: %v", err)
+	}
+	if !deleted {
+		t.Fatal("delete repo returned false")
+	}
+	if s.store.GetPackage(repo.FullName, "container", "image") != nil {
+		t.Fatal("repository-owned package metadata survived repository deletion")
+	}
+	f, err := objectFS.Open(files[0].StoragePath)
+	if err == nil {
+		_ = f.Close()
+		t.Fatalf("repository package object %s survived repository deletion", files[0].StoragePath)
+	}
+}
+
 func TestContainerRegistryRejectsDuplicateVersionName(t *testing.T) {
 	name := "admin/registry-duplicate"
 	layerDigest := uploadRegistryBlob(t, name, []byte("layer"))

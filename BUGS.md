@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2485 filed - 2441 fixed - 3 open - 16 false positives.**
+**2486 filed - 2442 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2486~~ | P1 | Bleephub package storage | repository deletion left package bytes behind | Repository deletion now removes repository-owned GitHub Packages file bytes from object storage or local package storage before deleting repository metadata, so package byte cleanup failures surface as repository-delete errors instead of leaving durable orphaned objects. |
 | ~~2485~~ | P1 | Bleephub secret scanning | obsolete internal alert seed endpoint survived committed-content ingestion | Bleephub no longer registered the internal secret scanning alert seed endpoint; alert state for public coverage flows through committed repository content and Git Database branch reference writes, and source guards reject reintroducing `/internal/repos/{owner}/{repo}/secret-scanning/alerts`. |
 | ~~2484~~ | P1 | Bleephub code scanning | obsolete internal alert seed endpoint survived public SARIF ingestion | Bleephub no longer registered the internal code scanning alert seed endpoint; alert state for public coverage flows through GitHub's public SARIF upload route, and route/source guards reject reintroducing `/internal/repos/{owner}/{repo}/code-scanning/alerts`. |
 | ~~2483~~ | P1 | Bleephub secret scanning push protection | public bypass coverage used operator-seeded placeholders | Bleephub secret scanning push protection now mints bypass placeholders from protected public contents writes and Git Database branch reference writes before mutating git state, honors active public bypasses for the matched token type, and no longer exposes the internal operator placeholder seed route. |

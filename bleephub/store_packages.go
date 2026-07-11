@@ -351,6 +351,32 @@ func (st *Store) CreatePackageVersion(ownerType, ownerKey, pkgType, pkgName, ver
 	return v, nil
 }
 
+func (st *Store) deletePackageFilesForOwnerLocked(ownerKey string) error {
+	for _, pkg := range st.PackagesByOwnerKey[ownerKey] {
+		for versionID := range st.PackageVersionsByPackage[pkg.ID] {
+			for _, file := range st.PackageFilesByVersion[versionID] {
+				if err := st.deletePackageFileDataLocked(file); err != nil {
+					return fmt.Errorf("delete package file %d (%s): %w", file.ID, file.Name, err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func (st *Store) deletePackageFileDataLocked(file *PackageFile) error {
+	if file == nil || file.StoragePath == "" {
+		return nil
+	}
+	if st.ObjectByteStore != nil {
+		return st.ObjectByteStore.Delete(context.Background(), file.StoragePath)
+	}
+	if err := os.Remove(file.StoragePath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // PackageFileInput is the wire payload for an uploaded package file.
 type PackageFileInput struct {
 	Name          string `json:"name"`
