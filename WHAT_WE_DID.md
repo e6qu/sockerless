@@ -22,6 +22,8 @@ Closed BUG-2496 by removing alternate base64 decoders from the GitHub Actions ru
 
 Closed BUG-2497 by making GitHub Actions workflow parsing reject missing or invalid runner labels for normal jobs. Normal jobs now require `runs-on` to be a non-empty string or non-empty string list, reusable-workflow call jobs remain valid without runner labels, and job-list responses no longer invent `ubuntu-latest` when a directly seeded job lacks a definition.
 
+Closed BUG-2498 by making public repository commit listing distinguish empty or broken git state from a successful empty history. `GET /api/v3/repos/{owner}/{repo}/commits` now returns GitHub's `409` empty-repository response when the default branch has no ref, returns a fail-loud service error when git storage cannot be opened or walked, and no longer reports `200 []` for a repository whose git history is unavailable.
+
 Validation in this branch included:
 
 ```bash
@@ -32,6 +34,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RerunKeepsRunIDAndBumpsAttempt|RerunFailedJobsCarriesSuccesses|RerunWorkflowJob_NewAttemptCarriesOtherJobs|Workflows_Dispatch|Workflows_DispatchUsesHostModeWhenWorkflowHasNoContainer)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(AgentRSAPublicKeyRequiresProtocolStandardBase64|OAuthToken|OAuthTokenRejectsMissingAssertion|OAuthTokenRejectsUnknownClient|RegistrationTokenRandom|GenerateJITConfig|RemoveToken)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ActionsPendingDeploymentReviewFlow|WorkflowParseRequiresValidRunsOnForNormalJobs|WorkflowParseReusableWorkflowJobDoesNotRequireRunsOn|WorkflowParse(ContainerAsString|ContainerAsObject|Env|JobOutputs|StrategyFailFast))' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 pre-commit run --all-files
 ```

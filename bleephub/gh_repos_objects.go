@@ -2,6 +2,7 @@ package bleephub
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,7 +34,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 
 	stor := s.store.GetGitStorage(owner, repoName)
 	if stor == nil {
-		writeJSON(w, http.StatusOK, []interface{}{})
+		writeGHError(w, http.StatusInternalServerError, "Git storage unavailable")
 		return
 	}
 
@@ -41,7 +42,11 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	branchRef := plumbing.NewBranchReferenceName(repo.DefaultBranch)
 	ref, err := stor.Reference(branchRef)
 	if err != nil {
-		writeJSON(w, http.StatusOK, []interface{}{})
+		if errors.Is(err, plumbing.ErrReferenceNotFound) {
+			writeGHError(w, http.StatusConflict, "Git Repository is empty.")
+			return
+		}
+		writeGHError(w, http.StatusInternalServerError, "Git storage unavailable")
 		return
 	}
 
@@ -51,7 +56,8 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < 30; i++ {
 		commit, err := object.GetCommit(stor, hash)
 		if err != nil {
-			break
+			writeGHError(w, http.StatusInternalServerError, "Git object unavailable")
+			return
 		}
 
 		commits = append(commits, commitToJSON(commit, repo, s.baseURL(r)))
