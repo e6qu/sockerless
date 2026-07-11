@@ -54,15 +54,24 @@ func secretScanningSeedValue(secretType string) string {
 }
 
 func TestSecretScanningAlertTestsUseCommittedContent(t *testing.T) {
+	sources := map[string]string{
+		"gh_secret_scanning_test.go": `authedPost("` + `/internal/repos/` + `"+owner+"/"+repo+"/secret-scanning/alerts"`,
+		"gh_secret_scanning.go":      `POST /internal/repos/{owner}/{repo}/secret-scanning/alerts`,
+	}
+	for path, needle := range sources {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(body), needle) {
+			t.Fatalf("%s must not create or register secret scanning alerts through the internal operator route", path)
+		}
+	}
 	body, err := os.ReadFile("gh_secret_scanning_test.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(body)
-	needle := `authedPost("` + `/internal/repos/` + `"+owner+"/"+repo+"/secret-scanning/alerts"`
-	if strings.Contains(source, needle) {
-		t.Fatal("secret scanning public alert tests must create alerts from committed repository content, not the internal operator alert route")
-	}
 	if !strings.Contains(source, `"/contents/"+path`) {
 		t.Fatal("secret scanning public alert tests must exercise the public contents API ingestion path")
 	}

@@ -14,9 +14,6 @@ func (s *Server) registerGHSecretScanningRoutes() {
 	s.route("PATCH /api/v3/repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}", s.handleUpdateSecretScanningAlert)
 	s.route("GET /api/v3/repos/{owner}/{repo}/secret-scanning/alerts/{alert_number}/locations", s.handleListSecretScanningAlertLocations)
 
-	// Internal seeding endpoint: real GitHub creates alerts by scanning pushed code.
-	s.route("POST /internal/repos/{owner}/{repo}/secret-scanning/alerts", s.handleSeedSecretScanningAlert)
-
 	// Organization-level alerts and pattern configurations
 	s.route("GET /api/v3/orgs/{org}/secret-scanning/alerts",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListSecretScanningOrgAlerts))
@@ -182,34 +179,6 @@ func (s *Server) handleListSecretScanningAlertLocations(w http.ResponseWriter, r
 		out[i] = secretScanningLocationToJSON(loc)
 	}
 	writeJSON(w, http.StatusOK, out)
-}
-
-func (s *Server) handleSeedSecretScanningAlert(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-
-	var req struct {
-		SecretType string                   `json:"secret_type"`
-		Locations  []SecretScanningLocation `json:"locations"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.SecretType == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "secret_type is required"})
-		return
-	}
-
-	a := s.store.CreateSecretScanningAlert(repo.FullName, req.SecretType, req.Locations)
-	writeJSON(w, http.StatusCreated, secretScanningAlertToJSON(a, s.baseURL(r), repo))
 }
 
 func (s *Server) handleListSecretScanningOrgAlerts(w http.ResponseWriter, r *http.Request) {

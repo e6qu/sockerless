@@ -1113,7 +1113,6 @@ var fuzzRoutePatterns = []string{
 	"POST /internal/orgs/{org}/network-settings",
 	"POST /internal/orgs/{org}/personal-access-token-requests",
 	"POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases",
-	"POST /internal/repos/{owner}/{repo}/secret-scanning/alerts",
 	"POST /login",
 	"POST /login/device/code",
 	"POST /login/oauth/access_token",

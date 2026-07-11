@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, BUG-2482, BUG-2483, and BUG-2484.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, BUG-2480, BUG-2481, BUG-2482, BUG-2483, BUG-2484, and BUG-2485.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -27,6 +27,8 @@ The obsolete internal code scanning alert seed route was removed after SARIF upl
 The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` declarations after clearing stale incremental build state before running Bleephub `tsc`. A cleaned generated `ui-core/dist` directory no longer leaves the hook dependent on a manual rebuild or stale TypeScript build cache.
 
 Bleephub secret scanning alerts now come from repository content instead of public tests seeding alert rows through an operator-only route. The contents API scans new commits for supported provider patterns, Git Database branch reference creation/update scans commit targets, alert locations contain real commit/blob/path coordinates, and public secret scanning tests use committed secret patterns. The same test run found and fixed the incidental Git Database response-shape drift where `POST /git/blobs` returned an undocumented top-level `node_id`.
+
+The obsolete internal secret scanning alert seed route was removed after committed repository content and Git Database branch reference writes became the public alert ingestion path. Route coverage no longer includes `/internal/repos/{owner}/{repo}/secret-scanning/alerts`, and source guards check both tests and server registration so future secret scanning alert setup stays on public repository writes.
 
 Bleephub secret scanning push protection now creates bypass placeholders through protected public write paths instead of through an operator seed route. Public contents writes and Git Database branch reference writes detect protected provider patterns before mutating git state, return a `422` push-protection response with a placeholder, honor active public bypasses for the matched token type, and remove `/internal/repos/{owner}/{repo}/secret-scanning/push-protection-placeholders` from the registered route set.
 
@@ -141,6 +143,8 @@ The AWS simulator software development kit Amazon Elastic Container Service task
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeScanning(AlertTestsUsePublicSARIFUpload|_ListAndFilter|_GetAndInstances|_PatchDismiss|_InvalidDismissedReason|_SARIFUploadCreatesAlerts|OrgAlerts|Autofix|AutofixEligibility)|LiveCodeScanning_FullFlow|OrgCampaigns)' -count=1` passed with sandbox escalation after public code scanning alert tests moved to SARIF upload.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the SARIF rule metadata change.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeScanningAlertTestsUsePublicSARIFUpload|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|CodeScanning|LiveCodeScanning|OrgCampaigns)' -count=1` passed with sandbox escalation after the obsolete internal code scanning alert seed route was removed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(SecretScanningAlertTestsUseCommittedContent|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|SecretScanning|LiveSecretScanning|GitData|UpdateRef|CreateRef|CreateBlob|ListRefs|GetRef)' -count=1` passed with sandbox escalation after the obsolete internal secret scanning alert seed route was removed.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the obsolete internal secret scanning alert seed route was removed.
 - `pre-commit run ui-typecheck-bleephub --all-files` passed with sandbox escalation after deleting `ui/packages/core/dist`, `ui/packages/core/tsconfig.build.tsbuildinfo`, and `ui/packages/core/tsconfig.tsbuildinfo`, proving the hook rebuilt required declarations itself.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestSecretScanning|TestLiveSecretScanning_CRUD' -count=1` passed with sandbox escalation after secret scanning alerts moved to committed-content ingestion.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestGitData|TestUpdateRef|TestSecretScanning_GitDatabaseRefCreatesAlert|TestGetBlob|TestCreateBlob|TestListRefs|TestGetRef' -count=1` passed with sandbox escalation after Git Database branch ref updates began feeding secret scanning and blob-create response shape was corrected.

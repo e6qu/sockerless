@@ -36,6 +36,8 @@ Closed BUG-2483 by making Bleephub secret scanning push protection mint bypass p
 
 Closed BUG-2484 by removing the obsolete internal code scanning alert seed endpoint. Code scanning alert tests and downstream campaign/autofix coverage already created alert state through GitHub's public SARIF upload route, so `/internal/repos/{owner}/{repo}/code-scanning/alerts` no longer existed in the route table, and source guards rejected reintroducing that operator shortcut in either tests or server registration.
 
+Closed BUG-2485 by removing the obsolete internal secret scanning alert seed endpoint. Secret scanning alert tests already created alert state from committed repository content and Git Database branch reference writes, so `/internal/repos/{owner}/{repo}/secret-scanning/alerts` no longer existed in the route table, and source guards rejected reintroducing that operator shortcut in either tests or server registration.
+
 Validation in this branch included:
 
 ```bash
@@ -62,6 +64,8 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestRegisteredAPIv3RoutesExistInGitHubSpec|TestFuzzRoutePatternsMatchRegisteredRoutes|TestSecretScanning|TestGitData|TestUpdateRef|TestCreateRef|TestCreateBlob|TestListRefs|TestGetRef' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeScanningAlertTestsUsePublicSARIFUpload|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|CodeScanning|LiveCodeScanning|OrgCampaigns)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(SecretScanningAlertTestsUseCommittedContent|RegisteredAPIv3RoutesExistInGitHubSpec|FuzzRoutePatternsMatchRegisteredRoutes|SecretScanning|LiveSecretScanning|GitData|UpdateRef|CreateRef|CreateBlob|ListRefs|GetRef)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 pre-commit run --all-files
 ```
 
