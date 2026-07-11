@@ -20,6 +20,8 @@ Closed BUG-2495 by removing the hidden execution-image default from public GitHu
 
 Closed BUG-2496 by removing alternate base64 decoders from the GitHub Actions runner OAuth public-key path. Runner registration now accepts only the Azure DevOps/GitHub Actions runner protocol's standard base64 RSA modulus and exponent fields, and URL-safe or raw base64 variants fail loudly instead of creating a second public-key wire format.
 
+Closed BUG-2497 by making GitHub Actions workflow parsing reject missing or invalid runner labels for normal jobs. Normal jobs now require `runs-on` to be a non-empty string or non-empty string list, reusable-workflow call jobs remain valid without runner labels, and job-list responses no longer invent `ubuntu-latest` when a directly seeded job lacks a definition.
+
 Validation in this branch included:
 
 ```bash
@@ -29,6 +31,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestProjectsV2GraphQL_(CreateProjectRequiresResolvedOwner|CreateProjectUsesResolvedUserAndOrganizationOwners|FieldValueKinds|ProjectLevelConnections)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RerunKeepsRunIDAndBumpsAttempt|RerunFailedJobsCarriesSuccesses|RerunWorkflowJob_NewAttemptCarriesOtherJobs|Workflows_Dispatch|Workflows_DispatchUsesHostModeWhenWorkflowHasNoContainer)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(AgentRSAPublicKeyRequiresProtocolStandardBase64|OAuthToken|OAuthTokenRejectsMissingAssertion|OAuthTokenRejectsUnknownClient|RegistrationTokenRandom|GenerateJITConfig|RemoveToken)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ActionsPendingDeploymentReviewFlow|WorkflowParseRequiresValidRunsOnForNormalJobs|WorkflowParseReusableWorkflowJobDoesNotRequireRunsOn|WorkflowParse(ContainerAsString|ContainerAsObject|Env|JobOutputs|StrategyFailFast))' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 pre-commit run --all-files
 ```

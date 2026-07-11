@@ -306,7 +306,38 @@ func normalizeJob(rj *rawJobDef) (*JobDef, error) {
 		jd.Strategy = sd
 	}
 
+	if jd.Uses == "" {
+		if err := validateRunsOn(jd.RunsOn); err != nil {
+			return nil, err
+		}
+	}
+
 	return jd, nil
+}
+
+func validateRunsOn(v interface{}) error {
+	switch runsOn := v.(type) {
+	case nil:
+		return fmt.Errorf("runs-on is required")
+	case string:
+		if strings.TrimSpace(runsOn) == "" {
+			return fmt.Errorf("runs-on is required")
+		}
+		return nil
+	case []interface{}:
+		if len(runsOn) == 0 {
+			return fmt.Errorf("runs-on must include at least one label")
+		}
+		for _, item := range runsOn {
+			label, ok := item.(string)
+			if !ok || strings.TrimSpace(label) == "" {
+				return fmt.Errorf("runs-on labels must be non-empty strings")
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("runs-on must be a string or list of strings, got %T", v)
+	}
 }
 
 // normalizeStrategy parses a rawStrategyDef into a StrategyDef.

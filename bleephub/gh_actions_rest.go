@@ -449,11 +449,13 @@ func labelsForJob(wfJob *WorkflowJob) []string {
 	// scalar ("ubuntu-latest") or a sequence (["self-hosted", "linux"]).
 	// Normalize both into the GitHub-shape `labels` array.
 	if wfJob.Def == nil || wfJob.Def.RunsOn == nil {
-		return []string{"ubuntu-latest"}
+		return []string{}
 	}
 	switch v := wfJob.Def.RunsOn.(type) {
 	case string:
-		return []string{v}
+		if v != "" {
+			return []string{v}
+		}
 	case []string:
 		if len(v) > 0 {
 			return v
@@ -469,7 +471,7 @@ func labelsForJob(wfJob *WorkflowJob) []string {
 			return out
 		}
 	}
-	return []string{"ubuntu-latest"}
+	return []string{}
 }
 
 // runnerJSON converts a registered Agent to GitHub's `Runner` shape

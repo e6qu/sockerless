@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2496 filed - 2452 fixed - 3 open - 16 false positives.**
+**2497 filed - 2453 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2497~~ | P1 | Bleephub GitHub Actions workflow parsing | missing or invalid `runs-on` fell back to `ubuntu-latest` | Bleephub GitHub Actions workflow parsing now rejects normal jobs without valid `runs-on` labels, keeps reusable-workflow call jobs valid without runner labels, and job-list responses no longer advertise a fabricated `ubuntu-latest` label when no job definition exists. |
 | ~~2496~~ | P1 | Bleephub GitHub Actions runner authentication | runner RSA public keys accepted a non-protocol encoding fallback | Bleephub GitHub Actions runner OAuth now requires the Azure DevOps/GitHub Actions runner protocol's standard base64 RSA modulus/exponent fields and rejects URL-safe or raw base64 variants instead of accepting a second public-key wire format. |
 | ~~2495~~ | P1 | Bleephub GitHub Actions workflow triggers | public event and rerun paths injected a hidden container image | Public GitHub Actions event-triggered, full-run rerun, failed-job rerun, and single-job rerun paths now preserve host-mode runner messages for workflows without `container:` declarations instead of injecting a hidden `alpine:latest` container image. |
 | ~~2494~~ | P1 | Bleephub Projects v2 GraphQL | unresolved owner IDs silently fell back to the authenticated user | GraphQL `createProjectV2` now requires `ownerId` to resolve to a real user or organization GitHub node ID, returns a fail-loud GraphQL error for unknown owner IDs, and preserves project state on failed owner resolution. |

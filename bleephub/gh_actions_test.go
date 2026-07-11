@@ -906,6 +906,7 @@ name: deploy
 on: push
 jobs:
   release:
+    runs-on: ubuntu-latest
     environment: production
     steps:
       - run: echo deploy
