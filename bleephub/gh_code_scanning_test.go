@@ -88,13 +88,18 @@ func seedCodeScanningAlert(t *testing.T, owner, repo, ruleID, severity, toolName
 }
 
 func TestCodeScanningAlertTestsUsePublicSARIFUpload(t *testing.T) {
-	source, err := os.ReadFile("gh_code_scanning_test.go")
-	if err != nil {
-		t.Fatalf("read code scanning tests: %v", err)
+	needles := map[string]string{
+		"gh_code_scanning_test.go": `authedPost("` + `/internal/repos/"+owner+"/"+repo+"/code-scanning/alerts"`,
+		"gh_code_scanning.go":      `POST /internal/repos/{owner}/{repo}/code-scanning/alerts`,
 	}
-	needle := `authedPost("` + `/internal/repos/"+owner+"/"+repo+"/code-scanning/alerts"`
-	if strings.Contains(string(source), needle) {
-		t.Fatal("code scanning alert tests must create alerts through the public SARIF upload route")
+	for path, needle := range needles {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		if strings.Contains(string(source), needle) {
+			t.Fatalf("%s must not create or register code scanning alerts through the internal operator route", path)
+		}
 	}
 }
 

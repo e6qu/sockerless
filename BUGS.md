@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2483 filed - 2439 fixed - 3 open - 16 false positives.**
+**2484 filed - 2440 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2484~~ | P1 | Bleephub code scanning | obsolete internal alert seed endpoint survived public SARIF ingestion | Bleephub no longer registered the internal code scanning alert seed endpoint; alert state for public coverage flows through GitHub's public SARIF upload route, and route/source guards reject reintroducing `/internal/repos/{owner}/{repo}/code-scanning/alerts`. |
 | ~~2483~~ | P1 | Bleephub secret scanning push protection | public bypass coverage used operator-seeded placeholders | Bleephub secret scanning push protection now mints bypass placeholders from protected public contents writes and Git Database branch reference writes before mutating git state, honors active public bypasses for the matched token type, and no longer exposes the internal operator placeholder seed route. |
 | ~~2482~~ | P2 | AWS simulator software development kit tests | fixed sleep assumed Amazon Elastic Container Service task startup timing | `TestECS_TaskNoCommandStaysRunning` now polls `DescribeTasks` until the long-running task reaches `RUNNING`, so CI no longer fails when real task startup legitimately takes longer than a fixed 1.5-second sleep. |
 | ~~2481~~ | P1 | Bleephub Dependabot alerts | public alert coverage used operator-seeded state | Bleephub Dependabot alerts now derive from public dependency graph snapshots and published security advisories, package vulnerability coordinates persist on advisories, and the internal operator alert seed endpoint was removed. |

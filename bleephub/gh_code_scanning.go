@@ -54,9 +54,6 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("GET /api/v3/orgs/{org}/code-scanning/alerts",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListOrgCodeScanningAlerts))
 
-	// Internal seeding endpoint: real GitHub creates alerts by uploading SARIF.
-	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/alerts", s.handleSeedCodeScanningAlert)
-
 	// Internal seeding endpoint for CodeQL database bytes: real GitHub
 	// receives databases from CodeQL analysis uploads.
 	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleSeedCodeQLDatabase)
@@ -469,38 +466,6 @@ func (s *Server) handleUpdateCodeScanningDefaultSetup(w http.ResponseWriter, r *
 	}
 	s.store.SetCodeScanningDefaultSetup(setup)
 	writeJSON(w, http.StatusOK, map[string]interface{}{})
-}
-
-func (s *Server) handleSeedCodeScanningAlert(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
-	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
-		return
-	}
-	repo := s.lookupRepoFromPath(r)
-	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
-		return
-	}
-
-	var req struct {
-		RuleID          string                      `json:"rule_id"`
-		RuleSeverity    string                      `json:"rule_severity"`
-		RuleDescription string                      `json:"rule_description"`
-		ToolName        string                      `json:"tool_name"`
-		State           string                      `json:"state"`
-		Instances       []CodeScanningAlertInstance `json:"instances"`
-	}
-	if !decodeJSONBody(w, r, &req) {
-		return
-	}
-	if req.RuleID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "rule_id is required"})
-		return
-	}
-
-	a := s.store.CreateCodeScanningAlert(repo.FullName, req.RuleID, req.RuleSeverity, req.RuleDescription, req.ToolName, req.State, req.Instances)
-	writeJSON(w, http.StatusCreated, codeScanningAlertToJSON(a, s.baseURL(r), repo))
 }
 
 func (s *Server) lookupCodeScanningAlert(w http.ResponseWriter, r *http.Request, repo *Repo) *CodeScanningAlert {
