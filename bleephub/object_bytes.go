@@ -130,6 +130,10 @@ func codeQLDatabaseDataKey(id int) string {
 	return fmt.Sprintf("code-scanning/codeql/databases/%d/data", id)
 }
 
+func codeQLVariantAnalysisQueryPackDataKey(id int) string {
+	return fmt.Sprintf("code-scanning/codeql/variant-analyses/%d/query-pack.tar.gz", id)
+}
+
 func attestationBundleDataKey(id int) string {
 	return fmt.Sprintf("attestations/%d/bundle.json", id)
 }

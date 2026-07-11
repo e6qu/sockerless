@@ -375,6 +375,9 @@ func (st *Store) DeleteRepo(owner, name string) (bool, error) {
 	if err := st.deleteCodeQLDatabaseDataForRepoLocked(fullName); err != nil {
 		return true, fmt.Errorf("delete repo %s CodeQL database files: %w", fullName, err)
 	}
+	if err := st.deleteCodeQLVariantAnalysisQueryPacksForControllerRepoLocked(fullName); err != nil {
+		return true, fmt.Errorf("delete repo %s CodeQL variant-analysis query packs: %w", fullName, err)
+	}
 	if err := st.deleteAttestationsForRepoLocked(repo.ID); err != nil {
 		return true, fmt.Errorf("delete repo %s artifact attestations: %w", fullName, err)
 	}

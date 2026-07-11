@@ -4,6 +4,25 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-11 - Bleephub CodeQL Variant-Analysis Query Pack Objects (`feat/bleephub-codeql-variant-query-pack-objects`)
+
+This branch continued from merged #786, which moved more Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage.
+
+Closed BUG-2489 by moving CodeQL variant-analysis query-pack tarballs out of SQLite metadata and into the configured object byte store. Variant-analysis rows now persist controller, actor, language, target, status, query-pack size, and object-key metadata; public query-pack downloads read the object store; persistent stores fail loudly without `BLEEPHUB_OBJECT_S3_BUCKET`; and controller-repository deletion purges query-pack objects before deleting repository metadata.
+
+Closed BUG-2490 by making GitHub Actions runner-log upload and run-log deletion complete required object-store writes/deletes before mutating in-memory log, console, or timeline state. Fail-loud object-store errors now preserve the previously visible process state instead of leaving live state diverged from durable object storage.
+
+Validation in this branch included:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(LogfilesUpload_(WritesObjectStore|ObjectStoreFailurePreservesState|AppendsBlocks|CapsAtFourMiBWithMarker)|JobLogs_ReadsUploadedLogFilesFromObjectStore|RunLogsDelete_ObjectStoreFailurePreservesState|ActionsRuns_DeleteLogs)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeQLVariantAnalyses_|PersistentServerStorageRequiresDurableGitAndObjectBytes|AgentsCodeScanPersistenceReload|PersistenceReload_(DeleteRepoLeavesNoResidue|RenameRepoMovesRepoScopedMetadata|TransferRepoMovesRepoScopedMetadata))' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+bash -n scripts/bleephub-local-dev.sh
+git diff --check
+pre-commit run --all-files
+```
+
 ## 2026-07-10 - Bleephub Object-Backed Service Bytes (`feat/bleephub-object-backed-service-bytes`)
 
 This branch continued from merged #785, which cleaned Codespace runtime/workspace state during repository deletion, hardened the AWS SDK simulator CI shard, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.

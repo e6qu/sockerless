@@ -3,7 +3,6 @@ package bleephub
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"fmt"
 	"testing"
 	"time"
@@ -382,8 +381,13 @@ func TestAgentsCodeScanPersistenceReload(t *testing.T) {
 	if got := string(readS3TestFile(t, objectFS, db.StoragePath)); got != "db-bytes" {
 		t.Fatalf("CodeQL database object bytes = %q, want db-bytes", got)
 	}
-	va := st1.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, "go",
-		base64.StdEncoding.EncodeToString([]byte("pack")), []string{repo.FullName})
+	va, err := st1.CreateCodeQLVariantAnalysis(repo.FullName, user.ID, "go", []byte("pack"), []string{repo.FullName})
+	if err != nil {
+		t.Fatalf("CreateCodeQLVariantAnalysis: %v", err)
+	}
+	if got := string(readS3TestFile(t, objectFS, va.StoragePath)); got != "pack" {
+		t.Fatalf("CodeQL variant-analysis query-pack object bytes = %q, want pack", got)
+	}
 
 	if err := p1.Close(); err != nil {
 		t.Fatalf("close: %v", err)

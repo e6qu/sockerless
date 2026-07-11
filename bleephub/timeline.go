@@ -206,25 +206,28 @@ func (s *Server) handleUploadLog(w http.ResponseWriter, r *http.Request) {
 	// stored size at logFileCap, keeping the head and marking the cut.
 	s.store.mu.Lock()
 	existing := s.store.LogFiles[logID]
+	next := append([]byte(nil), existing...)
 	switch {
 	case bytes.HasSuffix(existing, logTruncationMarker):
 		// Already capped; later blocks are dropped past the marker.
 	case len(existing)+len(body) <= logFileCap:
-		s.store.LogFiles[logID] = append(existing, body...)
+		next = append(next, body...)
 	default:
 		if keep := logFileCap - len(existing); keep > 0 {
-			existing = append(existing, body[:keep]...)
+			next = append(next, body[:keep]...)
 		}
-		s.store.LogFiles[logID] = append(existing, logTruncationMarker...)
+		next = append(next, logTruncationMarker...)
 	}
-	storedData := append([]byte(nil), s.store.LogFiles[logID]...)
-	stored := len(s.store.LogFiles[logID])
-	s.store.mu.Unlock()
+	storedData := append([]byte(nil), next...)
+	stored := len(next)
 
 	if err := s.artifactStore.writeLogData(r.Context(), logID, storedData); err != nil {
+		s.store.mu.Unlock()
 		http.Error(w, "log byte-store write: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.store.LogFiles[logID] = next
+	s.store.mu.Unlock()
 
 	s.logger.Debug().Int("logId", logID).Int("uploadBytes", len(body)).Int("storedBytes", stored).Msg("log upload")
 

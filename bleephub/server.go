@@ -82,10 +82,10 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 // Persistence also requires BLEEPHUB_OBJECT_S3_BUCKET for service byte
 // content: GitHub Actions artifacts, dependency caches, runner logs, release
 // assets, GitHub Packages files, GitHub Container Registry blobs, GitHub
-// CodeQL database archives, and artifact attestation bundles. SQLite persists
-// only Bleephub metadata; byte content must be backed by object storage so a
-// restarted service does not advertise durable records whose bytes lived only
-// in memory or local development files.
+// CodeQL database archives, CodeQL variant-analysis query packs, and artifact
+// attestation bundles. SQLite persists only Bleephub metadata; byte content
+// must be backed by object storage so a restarted service does not advertise
+// durable records whose bytes lived only in memory or local development files.
 //
 // Workflow run history is persisted; in-flight runs are marked terminal
 // cancelled on reload because the runner dispatch state is process-local.
@@ -161,7 +161,7 @@ func validatePersistentServerStorage(serviceByteStoreReady bool) error {
 	}
 	if !serviceByteStoreReady {
 		return errors.New("persistence is enabled (BLEEPHUB_PERSIST=true) but service byte storage is not object-backed: " +
-			"GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, container-registry blobs, CodeQL database archives, and artifact attestation bundles require BLEEPHUB_OBJECT_S3_BUCKET")
+			"GitHub Actions artifacts, dependency caches, runner logs, release assets, package files, container-registry blobs, CodeQL database archives, CodeQL variant-analysis query packs, and artifact attestation bundles require BLEEPHUB_OBJECT_S3_BUCKET")
 	}
 	return nil
 }
