@@ -349,6 +349,10 @@ func (s *Server) handlePutContents(w http.ResponseWriter, r *http.Request) {
 	})
 
 	base := s.baseURL(r)
+	if err := s.scanCommitForSecretScanning(repo, stor, commitHash, base); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	contentOut := contentFileJSON(base, repo, branch, path, entry.Hash.String(), blob.Size)
 
 	writeJSON(w, http.StatusCreated, map[string]interface{}{

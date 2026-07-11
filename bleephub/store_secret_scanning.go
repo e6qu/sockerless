@@ -56,6 +56,10 @@ func (st *Store) CreateSecretScanningAlert(repoKey, secretType string, locations
 	st.mu.Lock()
 	defer st.mu.Unlock()
 
+	return st.createSecretScanningAlertLocked(repoKey, secretType, locations)
+}
+
+func (st *Store) createSecretScanningAlertLocked(repoKey, secretType string, locations []SecretScanningLocation) *SecretScanningAlert {
 	if st.SecretScanningAlertsByRepo[repoKey] == nil {
 		st.SecretScanningAlertsByRepo[repoKey] = make(map[int]*SecretScanningAlert)
 	}
@@ -85,6 +89,40 @@ func (st *Store) CreateSecretScanningAlert(repoKey, secretType string, locations
 	st.SecretScanningAlertsByRepo[repoKey][number] = a
 	st.persistSecretScanningAlert(a)
 	return a
+}
+
+// CreateSecretScanningAlertIfNew records a content-derived alert unless the
+// same repository already has the same secret type at the same blob location.
+func (st *Store) CreateSecretScanningAlertIfNew(repoKey, secretType string, locations []SecretScanningLocation) *SecretScanningAlert {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+
+	for _, existing := range st.SecretScanningAlertsByRepo[repoKey] {
+		if existing.SecretType != secretType || len(existing.Locations) != len(locations) {
+			continue
+		}
+		same := true
+		for i := range existing.Locations {
+			if !sameSecretScanningLocation(existing.Locations[i], locations[i]) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return existing
+		}
+	}
+	return st.createSecretScanningAlertLocked(repoKey, secretType, locations)
+}
+
+func sameSecretScanningLocation(a, b SecretScanningLocation) bool {
+	return a.Type == b.Type &&
+		a.Details.Path == b.Details.Path &&
+		a.Details.StartLine == b.Details.StartLine &&
+		a.Details.EndLine == b.Details.EndLine &&
+		a.Details.StartColumn == b.Details.StartColumn &&
+		a.Details.EndColumn == b.Details.EndColumn &&
+		a.Details.BlobSHA == b.Details.BlobSHA
 }
 
 func secretTypeDisplayName(secretType string) string {

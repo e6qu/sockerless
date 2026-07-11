@@ -2,48 +2,70 @@ package bleephub
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 )
 
+var secretScanningSeedCounter uint64
+
 func seedSecretAlert(t *testing.T, owner, repo, secretType string) map[string]any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{
-		"secret_type": secretType,
-		"locations": []map[string]any{
-			{
-				"type": "commit",
-				"details": map[string]any{
-					"path":         "config/secrets.txt",
-					"start_line":   1,
-					"end_line":     1,
-					"start_column": 0,
-					"end_column":   40,
-					"blob_sha":     "af5626b4a114abcb82d63db7c8082c3c4756e51b",
-					"blob_url":     "https://example.com/blob",
-					"commit_sha":   "af5626b4a114abcb82d63db7c8082c3c4756e51b",
-					"commit_url":   "https://example.com/commit",
-					"html_url":     "https://example.com/html",
-				},
-			},
-		},
+	n := atomic.AddUint64(&secretScanningSeedCounter, 1)
+	path := fmt.Sprintf("config/secrets-%d.txt", n)
+	content := fmt.Sprintf("detected=%s\n", secretScanningSeedValue(secretType))
+	resp := ghPut(t, "/api/v3/repos/"+owner+"/"+repo+"/contents/"+path, defaultToken, map[string]any{
+		"message": "add detected secret",
+		"content": base64.StdEncoding.EncodeToString([]byte(content)),
 	})
-	resp, err := authedPost("/internal/repos/"+owner+"/"+repo+"/secret-scanning/alerts", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("seed alert: %v", err)
-	}
-	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("seed alert: %d body=%s", resp.StatusCode, b)
+		resp.Body.Close()
+		t.Fatalf("put detected secret: %d body=%s", resp.StatusCode, b)
 	}
-	var created map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("decode seeded alert: %v", err)
+	resp.Body.Close()
+
+	list := decodeJSONArray(t, ghGet(t, "/api/v3/repos/"+owner+"/"+repo+"/secret-scanning/alerts?secret_type="+secretType, defaultToken))
+	if len(list) == 0 {
+		t.Fatalf("secret scanning did not create %s alert for %s/%s", secretType, owner, repo)
 	}
-	return created
+	return list[0]
+}
+
+func secretScanningSeedValue(secretType string) string {
+	switch secretType {
+	case "github_personal_access_token":
+		return "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
+	case "aws_access_key_id":
+		return "AKIA0123456789ABCDEF"
+	case "google_api_key":
+		return "AIza0123456789abcdefghijklmnopqrstuvwxy"
+	case "slack_incoming_webhook_url":
+		return "https://hooks.slack.com/" + "services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXXXXXX"
+	default:
+		return "ghp_abcdefghijklmnopqrstuvwxyzABCDEFGHIJ"
+	}
+}
+
+func TestSecretScanningAlertTestsUseCommittedContent(t *testing.T) {
+	body, err := os.ReadFile("gh_secret_scanning_test.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(body)
+	needle := `authedPost("` + `/internal/repos/` + `"+owner+"/"+repo+"/secret-scanning/alerts"`
+	if strings.Contains(source, needle) {
+		t.Fatal("secret scanning public alert tests must create alerts from committed repository content, not the internal operator alert route")
+	}
+	if !strings.Contains(source, `"/contents/"+path`) {
+		t.Fatal("secret scanning public alert tests must exercise the public contents API ingestion path")
+	}
 }
 
 func TestSecretScanning_ListAndFilter(t *testing.T) {
@@ -128,6 +150,62 @@ func TestSecretScanning_GetAndLocations(t *testing.T) {
 	resp.Body.Close()
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location, got %d", len(locs))
+	}
+	details, _ := locs[0]["details"].(map[string]any)
+	if details["commit_sha"] == "" || details["blob_sha"] == "" {
+		t.Fatalf("location did not use real git object identifiers: %v", details)
+	}
+	if blobURL, _ := details["blob_url"].(string); !strings.Contains(blobURL, "/api/v3/repos/admin/ss-get/git/blobs/") {
+		t.Fatalf("location blob_url = %q, want public git blob API URL", blobURL)
+	}
+}
+
+func TestSecretScanning_GitDatabaseRefCreatesAlert(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "ss-git-database", "", false)
+	if repo == nil {
+		t.Fatal("create repo failed")
+	}
+
+	resp := ghPost(t, "/api/v3/repos/admin/ss-git-database/git/blobs", defaultToken, map[string]any{
+		"content": "token=" + secretScanningSeedValue("aws_access_key_id") + "\n",
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create blob: %d", resp.StatusCode)
+	}
+	blob := decodeJSON(t, resp)
+	resp = ghPost(t, "/api/v3/repos/admin/ss-git-database/git/trees", defaultToken, map[string]any{
+		"tree": []map[string]any{
+			{"path": "credentials.txt", "mode": "100644", "type": "blob", "sha": blob["sha"]},
+		},
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create tree: %d", resp.StatusCode)
+	}
+	tree := decodeJSON(t, resp)
+	resp = ghPost(t, "/api/v3/repos/admin/ss-git-database/git/commits", defaultToken, map[string]any{
+		"message": "add credentials",
+		"tree":    tree["sha"],
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create commit: %d", resp.StatusCode)
+	}
+	commit := decodeJSON(t, resp)
+	resp = ghPost(t, "/api/v3/repos/admin/ss-git-database/git/refs", defaultToken, map[string]any{
+		"ref": "refs/heads/main",
+		"sha": commit["sha"],
+	})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create branch ref: %d", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	alerts := decodeJSONArray(t, ghGet(t, "/api/v3/repos/admin/ss-git-database/secret-scanning/alerts?secret_type=aws_access_key_id", defaultToken))
+	if len(alerts) != 1 {
+		t.Fatalf("expected one Git Database-ingested alert, got %d: %v", len(alerts), alerts)
+	}
+	if alerts[0]["secret_type"] != "aws_access_key_id" {
+		t.Fatalf("secret_type = %v, want aws_access_key_id", alerts[0]["secret_type"])
 	}
 }
 

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, and BUG-2478.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, BUG-2478, BUG-2479, and BUG-2480.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -23,6 +23,8 @@ Bleephub's public GitHub REST tests now use the same GitHub Enterprise Server pu
 Bleephub's public code scanning tests now create alert state by uploading SARIF through GitHub's public `/api/v3/repos/{owner}/{repo}/code-scanning/sarifs` route. SARIF rule severity and description metadata now flow into persisted alert state, so severity filters, campaign links, organization alert lists, and Copilot Autofix coverage exercise the public ingestion path instead of an operator-only alert seed route.
 
 The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` declarations after clearing stale incremental build state before running Bleephub `tsc`. A cleaned generated `ui-core/dist` directory no longer leaves the hook dependent on a manual rebuild or stale TypeScript build cache.
+
+Bleephub secret scanning alerts now come from repository content instead of public tests seeding alert rows through an operator-only route. The contents API scans new commits for supported provider patterns, Git Database branch reference creation/update scans commit targets, alert locations contain real commit/blob/path coordinates, and public secret scanning tests use committed secret patterns. The same test run found and fixed the incidental Git Database response-shape drift where `POST /git/blobs` returned an undocumented top-level `node_id`.
 
 ## Continue Here
 
@@ -131,6 +133,9 @@ The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` dec
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeScanning(AlertTestsUsePublicSARIFUpload|_ListAndFilter|_GetAndInstances|_PatchDismiss|_InvalidDismissedReason|_SARIFUploadCreatesAlerts|OrgAlerts|Autofix|AutofixEligibility)|LiveCodeScanning_FullFlow|OrgCampaigns)' -count=1` passed with sandbox escalation after public code scanning alert tests moved to SARIF upload.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the SARIF rule metadata change.
 - `pre-commit run ui-typecheck-bleephub --all-files` passed with sandbox escalation after deleting `ui/packages/core/dist`, `ui/packages/core/tsconfig.build.tsbuildinfo`, and `ui/packages/core/tsconfig.tsbuildinfo`, proving the hook rebuilt required declarations itself.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestSecretScanning|TestLiveSecretScanning_CRUD' -count=1` passed with sandbox escalation after secret scanning alerts moved to committed-content ingestion.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestGitData|TestUpdateRef|TestSecretScanning_GitDatabaseRefCreatesAlert|TestGetBlob|TestCreateBlob|TestListRefs|TestGetRef' -count=1` passed with sandbox escalation after Git Database branch ref updates began feeding secret scanning and blob-create response shape was corrected.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the secret scanning ingestion and Git Database response-shape fixes.
 
 ## Standing Gaps
 
