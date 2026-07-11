@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2472 filed - 2428 fixed - 3 open - 16 false positives.**
+**2473 filed - 2429 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2473~~ | P1 | Bleephub repository git storage | repository delete ignored S3 git-prefix cleanup failures | Repository deletion now purges filesystem or S3-backed git storage before deleting repository metadata and returns a fail-loud error when required git storage cleanup fails, preserving repository state instead of logging and orphaning git objects. |
 | ~~2472~~ | P1 | Bleephub package storage | object-backed package files were not downloadable through REST | GitHub Packages file downloads now read from the configured object store when package file bytes were stored there, so public package file URLs work for object-backed service bytes instead of looking only for local filesystem paths. |
 | ~~2471~~ | P1 | Bleephub release and package storage | persisted service accepted local durable byte files | Bleephub release asset bytes, GitHub Packages file bytes, and GitHub Container Registry blob bytes now use the configured S3-compatible object store when it is present, persisted startup documents and requires object-backed service byte storage, and release asset object-delete failures surface as API/repository-delete errors. |
 | ~~2470~~ | P1 | Bleephub GitHub Actions storage | persisted service accepted local Actions byte storage | Bleephub persisted mode now requires initialized S3-compatible object storage for Actions artifact, dependency-cache, and runner-log bytes, and local development startup fails loudly until `BLEEPHUB_OBJECT_S3_BUCKET` is configured. |

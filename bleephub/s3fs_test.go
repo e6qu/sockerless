@@ -26,6 +26,22 @@ var (
 	s3SimulatorBuildErr  error
 )
 
+func resetS3FSCacheForTest(t *testing.T) {
+	t.Helper()
+	s3FSMu.Lock()
+	s3FSCache = nil
+	s3FSErr = nil
+	s3FSInited = false
+	s3FSMu.Unlock()
+	t.Cleanup(func() {
+		s3FSMu.Lock()
+		s3FSCache = nil
+		s3FSErr = nil
+		s3FSInited = false
+		s3FSMu.Unlock()
+	})
+}
+
 func newS3FSForTest(t *testing.T) *s3FS {
 	t.Helper()
 	endpoint := startS3SimulatorForTest(t)

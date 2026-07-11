@@ -12,12 +12,15 @@ Closed BUG-2471 by extending the object-backed byte-storage contract to release 
 
 Closed BUG-2472 by making public GitHub Packages file downloads read object-backed package file bytes. The metadata/listing path and the byte-serving path now use the same object storage source, so advertised package file REST URLs work for object-backed service bytes instead of looking only for local filesystem paths.
 
+Closed BUG-2473 by making repository deletion fail loudly on required git-storage cleanup failures. Bleephub now purges filesystem or S3-backed git storage before deleting repository metadata; if S3 git-prefix cleanup cannot be resolved or completed, the delete returns an error and preserves the repository record and git storage index instead of logging and orphaning git objects.
+
 Validation in this branch included:
 
 ```bash
 bash -n scripts/bleephub-local-dev.sh
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPersistentServerStorageRequiresDurableGitAndObjectBytes|TestReleases_AssetBytesUseObjectStore|TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestReleases_AssetLifecycle|TestDeleteRepo' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'TestPackageAndRegistryBytesUseObjectStore|TestContainerRegistryPublishCreatesPackageVersion|TestPackages_' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -run 'Test(DeleteRepoS3GitCleanupFailurePreservesRepo|GitDeleteCleanup|UnitDeleteRepo)$' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test ./bleephub -count=1
 pre-commit run --all-files
 ```
