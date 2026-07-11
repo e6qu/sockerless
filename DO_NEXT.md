@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, and BUG-2476.
+`feat/bleephub-object-backed-service-bytes` continued the Bleephub GitHub-fidelity work after merged #785. It fixed BUG-2471, BUG-2472, BUG-2473, BUG-2474, BUG-2475, BUG-2476, BUG-2477, and BUG-2478.
 
 #785 made repository deletion clean Codespace runtime/workspace state, hardened the AWS SDK simulator CI shard against hosted-runner disk exhaustion, and made persisted Bleephub require object-backed GitHub Actions artifacts, dependency caches, and runner logs.
 
@@ -19,6 +19,10 @@ The pre-push dependency freshness gate also found stale AWS software development
 The Bleephub go-github software development kit harness now provisions organizations through GitHub Enterprise Server's public admin organization API instead of the operator-only `/internal/orgs` convenience route. The official-client coverage therefore follows the same public organization provisioning contract as the Docker-backed GitHub command-line interface harness, and source coverage rejects `/internal/orgs` in the go-github harness.
 
 Bleephub's public GitHub REST tests now use the same GitHub Enterprise Server public admin organization API for organization setup. The shared test helper creates prerequisite organizations through `/api/v3/admin/organizations`, and source coverage rejects new direct `/internal/orgs` setup calls outside the explicit operator-management tests.
+
+Bleephub's public code scanning tests now create alert state by uploading SARIF through GitHub's public `/api/v3/repos/{owner}/{repo}/code-scanning/sarifs` route. SARIF rule severity and description metadata now flow into persisted alert state, so severity filters, campaign links, organization alert lists, and Copilot Autofix coverage exercise the public ingestion path instead of an operator-only alert seed route.
+
+The Bleephub UI typecheck pre-commit hook now rebuilds `@sockerless/ui-core` declarations after clearing stale incremental build state before running Bleephub `tsc`. A cleaned generated `ui-core/dist` directory no longer leaves the hook dependent on a manual rebuild or stale TypeScript build cache.
 
 ## Continue Here
 
@@ -124,6 +128,9 @@ Bleephub's public GitHub REST tests now use the same GitHub Enterprise Server pu
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -run 'Test(Organizations|AppsInstallationTokenFlow|OrgProfileTeamsAndMembershipSurfaces|OrgWebhooksSDK)$' -count=1` passed in `bleephub/sdk-tests` with sandbox escalation after the same change.
 - `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off go test -count=1` passed in `bleephub/sdk-tests`.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPublicFeatureTestsProvisionOrganizationsThroughAdminAPI|Test(GetOrg|UpdateOrg|DeleteOrg|ListAuthUserOrgs|CreateTeam|ListTeams|GetTeam|DeleteTeam|OrgMembership|RemoveMembership|TeamRepoPermission|ListUserTeams|GraphQLViewerOrgs|GraphQLOrganization|CreateOrgRepo|CreateOrgRepoExtended|ListOrgRepos|RepoOrganizationField|OpenAPIOrg|GetRepoInstallationHTTP|InviteFlow|PublicizeAndConcealMembership|OrgProfileTeamsAndMembershipSurfaces|OrgWebhooks|Codespaces|AppsInstallationTokenFlow|CreateRepositoryInOrganization|Actions.*Org)' -count=1` passed with sandbox escalation after Bleephub public REST tests moved organization setup to GitHub Enterprise Server's public admin organization API.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(CodeScanning(AlertTestsUsePublicSARIFUpload|_ListAndFilter|_GetAndInstances|_PatchDismiss|_InvalidDismissedReason|_SARIFUploadCreatesAlerts|OrgAlerts|Autofix|AutofixEligibility)|LiveCodeScanning_FullFlow|OrgCampaigns)' -count=1` passed with sandbox escalation after public code scanning alert tests moved to SARIF upload.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the SARIF rule metadata change.
+- `pre-commit run ui-typecheck-bleephub --all-files` passed with sandbox escalation after deleting `ui/packages/core/dist`, `ui/packages/core/tsconfig.build.tsbuildinfo`, and `ui/packages/core/tsconfig.tsbuildinfo`, proving the hook rebuilt required declarations itself.
 
 ## Standing Gaps
 

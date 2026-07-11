@@ -155,7 +155,7 @@ repos:
 
       - id: ui-typecheck-bleephub
         name: UI typecheck (bleephub tsc --noEmit)
-        entry: bash -c 'cd ui/packages/bleephub && npx tsc --noEmit'
+        entry: bash -c 'cd ui/packages/core && rm -f tsconfig.build.tsbuildinfo && npx tsc -p tsconfig.build.json --emitDeclarationOnly && cd ../bleephub && npx tsc --noEmit'
         language: system
         pass_filenames: false
         files: ^ui/packages/bleephub/(src/|tsconfig)

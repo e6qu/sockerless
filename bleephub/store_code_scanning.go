@@ -30,7 +30,7 @@ type CodeScanningAlertInstance struct {
 }
 
 // CodeScanningAlert is a repo-scoped code-scanning alert produced by SARIF
-// uploads or the internal seed endpoint.
+// uploads or the operator seeding endpoint.
 type CodeScanningAlert struct {
 	ID               int                         `json:"id"`
 	NodeID           string                      `json:"node_id"`
@@ -81,8 +81,8 @@ type SARIFUpload struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// CreateCodeScanningAlert seeds a code-scanning alert directly. This is the
-// internal/admin path used by tests when constructing SARIF is unnecessary.
+// CreateCodeScanningAlert seeds a code-scanning alert directly through the
+// operator surface.
 func (st *Store) CreateCodeScanningAlert(repoKey, ruleID, severity, description, toolName, state string, instances []CodeScanningAlertInstance) *CodeScanningAlert {
 	st.mu.Lock()
 	defer st.mu.Unlock()
@@ -377,7 +377,7 @@ func (st *Store) CreateSARIFUpload(repoKey string, payload map[string]interface{
 		if len(results) > 0 {
 			analysisKey := fmt.Sprintf("%s:%s", toolName, ref)
 			category := fmt.Sprintf("%s/%s", toolName, ref)
-			analysis := st.createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName, results)
+			analysis := st.createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName, run, results)
 			analysis.SARIFUploadID = uploadID
 			st.persistCodeScanningAnalysis(analysis)
 		}
@@ -400,7 +400,7 @@ func extractSARIFToolName(run map[string]interface{}, fallback string) string {
 	return fallback
 }
 
-func (st *Store) createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName string, results []interface{}) *CodeScanningAnalysis {
+func (st *Store) createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysisKey, category, toolName string, run map[string]interface{}, results []interface{}) *CodeScanningAnalysis {
 	if st.CodeScanningAlertsByRepo[repoKey] == nil {
 		st.CodeScanningAlertsByRepo[repoKey] = make(map[int]*CodeScanningAlert)
 	}
@@ -446,12 +446,16 @@ func (st *Store) createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysis
 		if ruleID == "" {
 			ruleID, _ = result["rule_id"].(string)
 		}
+		ruleSeverity, ruleDescription := sarifRuleMetadata(run, ruleID)
 		message := ""
 		if msg, ok := result["message"].(map[string]interface{}); ok {
 			message, _ = msg["text"].(string)
 		}
 		if message == "" {
 			message, _ = result["message"].(string)
+		}
+		if ruleDescription == "" {
+			ruleDescription = message
 		}
 
 		var instances []CodeScanningAlertInstance
@@ -482,7 +486,8 @@ func (st *Store) createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysis
 			Number:          number,
 			RepoKey:         repoKey,
 			RuleID:          ruleID,
-			RuleDescription: message,
+			RuleSeverity:    ruleSeverity,
+			RuleDescription: ruleDescription,
 			ToolName:        toolName,
 			State:           "open",
 			Instances:       instances,
@@ -503,6 +508,40 @@ func (st *Store) createAnalysisAndAlertsLocked(repoKey, ref, commitSHA, analysis
 	}
 
 	return analysis
+}
+
+func sarifRuleMetadata(run map[string]interface{}, ruleID string) (severity, description string) {
+	tool, _ := run["tool"].(map[string]interface{})
+	driver, _ := tool["driver"].(map[string]interface{})
+	rules, _ := driver["rules"].([]interface{})
+	for _, raw := range rules {
+		rule, _ := raw.(map[string]interface{})
+		id, _ := rule["id"].(string)
+		if id != ruleID {
+			continue
+		}
+		if full, ok := rule["fullDescription"].(map[string]interface{}); ok {
+			description, _ = full["text"].(string)
+		}
+		if description == "" {
+			if short, ok := rule["shortDescription"].(map[string]interface{}); ok {
+				description, _ = short["text"].(string)
+			}
+		}
+		if props, ok := rule["properties"].(map[string]interface{}); ok {
+			severity, _ = props["problem.severity"].(string)
+			if severity == "" {
+				severity, _ = props["severity"].(string)
+			}
+		}
+		if severity == "" {
+			if cfg, ok := rule["defaultConfiguration"].(map[string]interface{}); ok {
+				severity, _ = cfg["level"].(string)
+			}
+		}
+		return severity, description
+	}
+	return "", ""
 }
 
 func codeScanningInstanceFromLocation(loc interface{}, ref, analysisKey, category, commitSHA string) *CodeScanningAlertInstance {

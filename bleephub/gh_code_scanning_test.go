@@ -6,48 +6,96 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
 
 func seedCodeScanningAlert(t *testing.T, owner, repo, ruleID, severity, toolName string) map[string]any {
 	t.Helper()
-	body, _ := json.Marshal(map[string]any{
-		"rule_id":          ruleID,
-		"rule_severity":    severity,
-		"rule_description": "test description for " + ruleID,
-		"tool_name":        toolName,
-		"instances": []map[string]any{
+	sarif := map[string]any{
+		"version": "2.1.0",
+		"runs": []map[string]any{
 			{
-				"ref":          "refs/heads/main",
-				"analysis_key": ".github/workflows/codeql.yml:analyze",
-				"category":     ".github/workflows/codeql.yml:analyze/language:javascript",
-				"state":        "open",
-				"commit_sha":   "af5626b4a114abcb82d63db7c8082c3c4756e51b",
-				"path":         "src/index.js",
-				"start_line":   10,
-				"end_line":     10,
-				"start_column": 5,
-				"end_column":   15,
-				"message":      "problem here",
+				"tool": map[string]any{
+					"driver": map[string]any{
+						"name": toolName,
+						"rules": []map[string]any{
+							{
+								"id": ruleID,
+								"fullDescription": map[string]any{
+									"text": "test description for " + ruleID,
+								},
+								"defaultConfiguration": map[string]any{
+									"level": severity,
+								},
+								"properties": map[string]any{
+									"problem.severity": severity,
+								},
+							},
+						},
+					},
+				},
+				"results": []map[string]any{
+					{
+						"ruleId":  ruleID,
+						"message": map[string]any{"text": "problem here"},
+						"locations": []map[string]any{
+							{
+								"physicalLocation": map[string]any{
+									"artifactLocation": map[string]any{"uri": "src/index.js"},
+									"region":           map[string]any{"startLine": 10, "endLine": 10, "startColumn": 5, "endColumn": 15},
+								},
+							},
+						},
+					},
+				},
 			},
 		},
+	}
+	sarifBytes, _ := json.Marshal(sarif)
+	body, _ := json.Marshal(map[string]any{
+		"commit_sha": "af5626b4a114abcb82d63db7c8082c3c4756e51b",
+		"ref":        "refs/heads/main",
+		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
 	})
-	resp, err := authedPost("/internal/repos/"+owner+"/"+repo+"/code-scanning/alerts", "application/json", bytes.NewReader(body))
+	resp, err := authedPost("/api/v3/repos/"+owner+"/"+repo+"/code-scanning/sarifs", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("seed alert: %v", err)
+		t.Fatalf("upload SARIF: %v", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
+	if resp.StatusCode != http.StatusAccepted {
 		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("seed alert: %d body=%s", resp.StatusCode, b)
+		t.Fatalf("upload SARIF: %d body=%s", resp.StatusCode, b)
 	}
-	var created map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
-		t.Fatalf("decode seeded alert: %v", err)
+	alertsResp := authedGet(t, "/api/v3/repos/"+owner+"/"+repo+"/code-scanning/alerts?rule="+ruleID)
+	if alertsResp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(alertsResp.Body)
+		alertsResp.Body.Close()
+		t.Fatalf("list uploaded alert: %d body=%s", alertsResp.StatusCode, b)
 	}
-	return created
+	var alerts []map[string]any
+	if err := json.NewDecoder(alertsResp.Body).Decode(&alerts); err != nil {
+		t.Fatalf("decode uploaded alerts: %v", err)
+	}
+	alertsResp.Body.Close()
+	if len(alerts) != 1 {
+		t.Fatalf("uploaded SARIF produced %d alerts for %s, want 1", len(alerts), ruleID)
+	}
+	return alerts[0]
+}
+
+func TestCodeScanningAlertTestsUsePublicSARIFUpload(t *testing.T) {
+	source, err := os.ReadFile("gh_code_scanning_test.go")
+	if err != nil {
+		t.Fatalf("read code scanning tests: %v", err)
+	}
+	needle := `authedPost("` + `/internal/repos/"+owner+"/"+repo+"/code-scanning/alerts"`
+	if strings.Contains(string(source), needle) {
+		t.Fatal("code scanning alert tests must create alerts through the public SARIF upload route")
+	}
 }
 
 func TestCodeScanning_ListAndFilter(t *testing.T) {
