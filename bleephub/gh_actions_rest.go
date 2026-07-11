@@ -889,7 +889,7 @@ func (s *Server) handleRerunWorkflowRun(w http.ResponseWriter, r *http.Request) 
 	}
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
-	def.Env["__defaultImage"] = "alpine:latest"
+	def.Env["__defaultImage"] = ""
 	if err := s.rerunWorkflowAsNewAttempt(r, wf, match, def, serverURL, nil); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "rerun submit: "+err.Error())
 		return
@@ -960,7 +960,7 @@ func (s *Server) rerunWorkflowAsNewAttempt(r *http.Request, old *Workflow, file 
 		meta.WorkflowFileID = file.ID
 		meta.WorkflowFilePath = file.Path
 	}
-	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "alpine:latest", &meta); err != nil {
+	if _, err := s.submitWorkflow(r.Context(), serverURL, def, "", &meta); err != nil {
 		// Put the old attempt back so the run doesn't vanish.
 		s.store.mu.Lock()
 		attempts := s.store.WorkflowAttempts[old.RunID]

@@ -268,6 +268,7 @@ func TestRerunWorkflowJob_NewAttemptCarriesOtherJobs(t *testing.T) {
 	// job carries a fresh id; compute it from the store (the JSON float64
 	// round-trip cannot represent the 63-bit id exactly).
 	newWf := testServer.findWorkflowByRunID(runID)
+	assertWorkflowJobsUseHostMode(t, newWf, "b")
 	testServer.store.mu.RLock()
 	newTargetID := stableJobID(newWf.Jobs["b"].JobID)
 	testServer.store.mu.RUnlock()

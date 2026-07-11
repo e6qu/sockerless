@@ -248,7 +248,7 @@ func (s *Server) handleRerunFailedJobs(w http.ResponseWriter, r *http.Request) {
 	}
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
-	def.Env["__defaultImage"] = "alpine:latest"
+	def.Env["__defaultImage"] = ""
 
 	carryOver := map[string]*WorkflowJob{}
 	s.store.mu.RLock()

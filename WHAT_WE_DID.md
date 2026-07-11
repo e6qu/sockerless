@@ -16,6 +16,8 @@ Closed BUG-2493 by moving container-package coverage onto the real GitHub Contai
 
 Closed BUG-2494 by making Projects v2 GraphQL project creation resolve owners strictly. `createProjectV2` now requires the supplied `ownerId` to match a real user or organization GitHub node ID, returns a GraphQL error for unknown owner IDs, and does not mutate project state when owner resolution fails.
 
+Closed BUG-2495 by removing the hidden execution-image default from public GitHub Actions workflow trigger and rerun paths. Push/event-triggered workflows, full-run reruns, failed-job reruns, and single-job reruns now preserve host-mode runner messages when the workflow YAML has no `container:` declaration, matching GitHub's runner contract instead of injecting `alpine:latest`.
+
 Validation in this branch included:
 
 ```bash
@@ -23,6 +25,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ConcurrencyGroups_(RepoAndRunEndpoints|CompletedRunReleasesLease)|SubmitWorkflow(RepoRefResolution|RejectsUnresolvedRepoRef)|Workflows_Dispatch|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPackages|TestContainerRegistry|TestLivePackages' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestProjectsV2GraphQL_(CreateProjectRequiresResolvedOwner|CreateProjectUsesResolvedUserAndOrganizationOwners|FieldValueKinds|ProjectLevelConnections)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RerunKeepsRunIDAndBumpsAttempt|RerunFailedJobsCarriesSuccesses|RerunWorkflowJob_NewAttemptCarriesOtherJobs|Workflows_Dispatch|Workflows_DispatchUsesHostModeWhenWorkflowHasNoContainer)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 pre-commit run --all-files
 ```

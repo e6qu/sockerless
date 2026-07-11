@@ -4,9 +4,9 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-public-state-fidelity` continued the Bleephub GitHub-fidelity work after merged #787. It fixed BUG-2491, BUG-2492, BUG-2493, and BUG-2494.
+`feat/bleephub-public-state-fidelity` continued the Bleephub GitHub-fidelity work after merged #787. It fixed BUG-2491, BUG-2492, BUG-2493, BUG-2494, and BUG-2495.
 
-#787 moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live state. This branch tightened the next fidelity gaps found after that merge. Persisted repository reload now requires valid `owner_type` and `owner_id`, loads organizations before repositories, validates organization-owned repositories against real organization state, and no longer treats empty owner types as user repositories in public listing/event paths. Internal job and workflow submission routes now require either explicit `image` or `hostMode`, and tests pass explicit images when they intend container execution instead of relying on a hidden `alpine:latest` fallback.
+#787 moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live state. This branch tightened the next fidelity gaps found after that merge. Persisted repository reload now requires valid `owner_type` and `owner_id`, loads organizations before repositories, validates organization-owned repositories against real organization state, and no longer treats empty owner types as user repositories in public listing/event paths. Internal job and workflow submission routes now require either explicit `image` or `hostMode`, and tests pass explicit images when they intend container execution instead of relying on a hidden `alpine:latest` fallback. Public GitHub Actions event-triggered, full-run rerun, failed-job rerun, and single-job rerun paths now preserve host-mode runner messages for workflows without `container:` declarations instead of injecting a hidden container image.
 
 Container package coverage now publishes package versions through the GitHub Container Registry-compatible OCI/Docker Registry HTTP API v2 data plane instead of `/internal/packages`, source coverage rejects new internal container-package seed calls, and the internal package upload route rejects `container` packages so that container packages have one real publish path.
 
@@ -22,6 +22,8 @@ Projects v2 GraphQL project creation now resolves `ownerId` strictly against rea
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RerunKeepsRunIDAndBumpsAttempt|RerunFailedJobsCarriesSuccesses|RerunWorkflowJob_NewAttemptCarriesOtherJobs|Workflows_Dispatch|Workflows_DispatchUsesHostModeWhenWorkflowHasNoContainer)' -count=1` passed with sandbox escalation after public GitHub Actions event-triggered and rerun paths preserved host-mode runner messages for workflows without `container:` declarations.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the public GitHub Actions host-mode trigger/rerun fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestProjectsV2GraphQL_(CreateProjectRequiresResolvedOwner|CreateProjectUsesResolvedUserAndOrganizationOwners|FieldValueKinds|ProjectLevelConnections)' -count=1` passed with sandbox escalation after GraphQL `createProjectV2` stopped falling back to the authenticated user for unresolved owner IDs.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed with sandbox escalation after the Projects v2 GraphQL owner-resolution fix.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPackages|TestContainerRegistry|TestLivePackages' -count=1` passed with sandbox escalation after container package fixtures moved to the GitHub Container Registry-compatible data plane and `/internal/packages` rejected `container` creation.
