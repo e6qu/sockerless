@@ -858,8 +858,25 @@ export const updateBranchProtection = (
 export const deleteBranchProtection = (owner: string, repo: string, branch: string) =>
   ghDeleteJSON<void>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`, {});
 
-export const fetchRepoCommits = (owner: string, repo: string) =>
-  ghFetch<GithubCommit[]>(`/api/v3/repos/${owner}/${repo}/commits`);
+export async function fetchRepoCommits(owner: string, repo: string): Promise<GithubCommit[]> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/commits`, { headers: authHeaders() });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    if (res.status === 409) {
+      try {
+        const body = JSON.parse(text) as { message?: string };
+        if (body.message === "Git Repository is empty.") {
+          return [];
+        }
+      } catch {
+        // Non-JSON conflicts are real failures and fall through below.
+      }
+    }
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<GithubCommit[]>;
+}
 
 export async function createIssue(
   owner: string,

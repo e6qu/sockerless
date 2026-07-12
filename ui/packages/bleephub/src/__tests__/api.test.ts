@@ -5,6 +5,7 @@ import {
   fetchSecrets,
   fetchEnvironments,
   fetchRepoIssuesPage,
+  fetchRepoCommits,
   fetchPRDetail,
   createIssue,
   parseLinkNext,
@@ -161,6 +162,20 @@ describe("api wire-shape normalization", () => {
     await expect(fetchEnterpriseSlug()).rejects.toThrow(
       "/health response did not include enterprise_slug",
     );
+  });
+});
+
+describe("repository API helpers", () => {
+  it("fetchRepoCommits returns an empty list for GitHub empty-repository conflicts", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ message: "Git Repository is empty." }, 409));
+
+    await expect(fetchRepoCommits("admin", "empty")).resolves.toEqual([]);
+  });
+
+  it("fetchRepoCommits still fails on non-empty-repository conflicts", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ message: "branch protection blocked" }, 409));
+
+    await expect(fetchRepoCommits("admin", "blocked")).rejects.toMatchObject({ status: 409 });
   });
 });
 

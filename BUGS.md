@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2498 filed - 2454 fixed - 3 open - 16 false positives.**
+**2499 filed - 2455 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2499~~ | P1 | Bleephub user interface repository pages | empty-repository commit conflicts surfaced as browser console errors | Bleephub user interface repository pages now normalize GitHub's empty-repository commit-listing conflict to an empty commit history for display while preserving fail-loud behavior for other repository commit-listing errors. |
 | ~~2498~~ | P1 | Bleephub Git provider REST API | empty or missing git state looked like a successful empty commit list | `GET /api/v3/repos/{owner}/{repo}/commits` now returns GitHub's empty-repository conflict when the default branch has no ref, returns a fail-loud storage error when git storage cannot be opened or walked, and no longer hides empty or broken git state as `200 []`. |
 | ~~2497~~ | P1 | Bleephub GitHub Actions workflow parsing | missing or invalid `runs-on` fell back to `ubuntu-latest` | Bleephub GitHub Actions workflow parsing now rejects normal jobs without valid `runs-on` labels, keeps reusable-workflow call jobs valid without runner labels, and job-list responses no longer advertise a fabricated `ubuntu-latest` label when no job definition exists. |
 | ~~2496~~ | P1 | Bleephub GitHub Actions runner authentication | runner RSA public keys accepted a non-protocol encoding fallback | Bleephub GitHub Actions runner OAuth now requires the Azure DevOps/GitHub Actions runner protocol's standard base64 RSA modulus/exponent fields and rejects URL-safe or raw base64 variants instead of accepting a second public-key wire format. |
