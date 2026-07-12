@@ -26,6 +26,8 @@ Closed BUG-2498 by making public repository commit listing distinguish empty or 
 
 Closed BUG-2499 by making Bleephub repository UI pages consume the new public commit-listing semantics faithfully. The UI now treats only GitHub's exact empty-repository `409` response as an empty commit history for display, while every other commit-listing conflict or storage failure still surfaces as an error.
 
+Closed BUG-2500 / GitHub issue #789 by making organization repository creation honor GitHub App installation-token permissions. `POST /api/v3/orgs/{org}/repos` now authorizes installation tokens by target organization and `administration: write`, while installation tokens without that grant still receive `Resource not accessible by integration` and human tokens still require organization membership.
+
 Validation in this branch included:
 
 ```bash
@@ -37,6 +39,7 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(AgentRSAPublicKeyRequiresProtocolStandardBase64|OAuthToken|OAuthTokenRejectsMissingAssertion|OAuthTokenRejectsUnknownClient|RegistrationTokenRandom|GenerateJITConfig|RemoveToken)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ActionsPendingDeploymentReviewFlow|WorkflowParseRequiresValidRunsOnForNormalJobs|WorkflowParseReusableWorkflowJobDoesNotRequireRunsOn|WorkflowParse(ContainerAsString|ContainerAsObject|Env|JobOutputs|StrategyFailFast))' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(InstallationTokenCreatesOrganizationRepositoryWithAdministrationPermission|InstallationTokenCreateOrganizationRepositoryRequiresAdministrationWrite|InstallationTokenDownscoping|CreateOrgRepo)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 bun run --cwd ui/packages/bleephub test src/__tests__/api.test.ts
 bun run --cwd ui/packages/bleephub test

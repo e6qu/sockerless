@@ -3,6 +3,7 @@ package bleephub
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -267,10 +268,22 @@ func (s *Server) handleCreateOrgRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	m := s.store.GetMembership(orgLogin, user.ID)
-	if m == nil {
-		writeGHError(w, http.StatusForbidden, "Must be a member of the organization.")
-		return
+	if instTok := ghInstallationTokenFromContext(r.Context()); instTok != nil {
+		inst := ghInstallationFromContext(r.Context())
+		if inst == nil ||
+			inst.TargetType != "Organization" ||
+			inst.TargetID != org.ID ||
+			!strings.EqualFold(inst.TargetLogin, org.Login) ||
+			!hasPerm(instTok.Permissions, scopeAdministration, permWrite) {
+			writeGHError(w, http.StatusForbidden, "Resource not accessible by integration")
+			return
+		}
+	} else {
+		m := s.store.GetMembership(orgLogin, user.ID)
+		if m == nil {
+			writeGHError(w, http.StatusForbidden, "Must be a member of the organization.")
+			return
+		}
 	}
 
 	var req struct {
