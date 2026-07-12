@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2511 filed - 2467 fixed - 3 open - 16 false positives.**
+**2516 filed - 2472 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,11 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2516~~ | P0 | Bleephub pull-request and dispatch eventing | asynchronous workflow discovery read mutable git storage | Pull-request REST/GraphQL and repository-dispatch handlers now discover and trigger GitHub Actions workflows synchronously, so later git writes cannot race mutable go-git readers or select workflows from inconsistent state. |
+| ~~2515~~ | P1 | Bleephub release-provider eventing | release mutations emitted one hardcoded webhook and no workflow events | Release create/update/delete operations now derive `created`, `edited`, `published`, `unpublished`, `prereleased`, `released`, and `deleted` actions from real transitions, emit complete release webhook payloads, and trigger matching GitHub Actions workflows with draft semantics. |
+| ~~2514~~ | P0 | Bleephub release-provider git fidelity | releases stored tag names without real git refs | Release creation and tag-name changes now resolve `target_commitish` through real git, create a lightweight tag when absent, use existing tags when present, and reject duplicate releases or unresolved targets without release/tag mutation. |
+| ~~2513~~ | P0 | Bleephub release-provider repository isolation | update checked repository ownership only inside a mutation callback | Release updates now verify the release belongs to the path repository before validating or mutating any field and return `404` without cross-repository state disclosure or mutation. |
+| ~~2512~~ | P1 | Bleephub release-provider user interface | object-backed release API had only a read-only transient UI list | Routed repository release pages now list, create, edit, publish, and delete releases and upload, authenticated-download, and delete real object-backed assets exclusively through GitHub's public Releases APIs. |
 | ~~2511~~ | P2 | Bleephub dependency hygiene | stale Markdown parser module | Bleephub now uses current `github.com/yuin/goldmark` 1.8.3, so the required dependency-freshness gate passes. |
 | ~~2510~~ | P0 | Bleephub committed-ref eventing | event fan-out dereferenced optional nested repository owner data | Committed-reference fan-out and Pages source reads now resolve git storage by canonical repository ID and metadata coordinates from `full_name`, so valid repository records never depend on an optional expanded owner object. |
 | ~~2509~~ | P1 | Bleephub GitHub Actions workflow-run responses | actor objects used abbreviated user shapes | Workflow-run `actor` and `triggering_actor` objects now use the complete GitHub simple-user representation, including required identity and hypermedia fields. |

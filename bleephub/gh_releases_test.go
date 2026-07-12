@@ -7,10 +7,22 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // Releases API parity — release CRUD + asset upload/download + tag-based
 // lookup against /repos/{}/releases, matching the GitHub-compatible shape.
+
+func initializeReleaseTestRepo(t *testing.T, s *Server, repo *Repo, user *User) {
+	t.Helper()
+	stor, _ := s.store.GitStorageForRepoID(repo.ID)
+	if _, err := initRepoWithFiles(stor, repo.DefaultBranch, "Initial commit", map[string]string{
+		"README.md": "# " + repo.Name,
+	}, repoSignature(user.Login, "bleephub@local")); err != nil {
+		t.Fatalf("initialize release repository: %v", err)
+	}
+}
 
 func TestReleases_FullLifecycle(t *testing.T) {
 	s := newTestServer()
@@ -20,7 +32,7 @@ func TestReleases_FullLifecycle(t *testing.T) {
 
 	user := s.store.UsersByLogin["admin"]
 	repo := s.store.CreateRepo(user, "rel-repo", "", false)
-	_ = repo
+	initializeReleaseTestRepo(t, s, repo, user)
 
 	do := func(method, path string, body []byte) *httptest.ResponseRecorder {
 		var req *http.Request
@@ -112,6 +124,79 @@ func TestReleases_FullLifecycle(t *testing.T) {
 	w = do("GET", "/api/v3/repos/admin/rel-repo/releases/"+itoa(relID), nil)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("get after delete: %d", w.Code)
+	}
+}
+
+func TestReleases_CreateUsesRealGitTagAndRejectsUnresolvedTarget(t *testing.T) {
+	repoPath := "/api/v3/repos/admin/release-git-source"
+	resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": "release-git-source", "auto_init": true,
+	})
+	resp.Body.Close()
+	repo := testServer.store.GetRepo("admin", "release-git-source")
+	if repo == nil {
+		t.Fatal("repository not created")
+	}
+	stor, _ := testServer.store.GitStorageForRepoID(repo.ID)
+	mainRef, err := stor.Reference(plumbing.NewBranchReferenceName("main"))
+	if err != nil {
+		t.Fatalf("resolve main: %v", err)
+	}
+
+	create := ghPost(t, repoPath+"/releases", defaultToken, map[string]interface{}{
+		"tag_name": "v1.0.0", "target_commitish": "main", "name": "Real source release",
+	})
+	if create.StatusCode != http.StatusCreated {
+		create.Body.Close()
+		t.Fatalf("create status = %d", create.StatusCode)
+	}
+	create.Body.Close()
+	tagRef, err := stor.Reference(plumbing.NewTagReferenceName("v1.0.0"))
+	if err != nil {
+		t.Fatalf("release did not create git tag: %v", err)
+	}
+	if tagRef.Hash() != mainRef.Hash() {
+		t.Fatalf("tag hash = %s, want main %s", tagRef.Hash(), mainRef.Hash())
+	}
+
+	bad := ghPost(t, repoPath+"/releases", defaultToken, map[string]interface{}{
+		"tag_name": "v2.0.0", "target_commitish": "missing-branch",
+	})
+	if bad.StatusCode != http.StatusUnprocessableEntity {
+		bad.Body.Close()
+		t.Fatalf("unresolved target status = %d", bad.StatusCode)
+	}
+	bad.Body.Close()
+	if _, err := stor.Reference(plumbing.NewTagReferenceName("v2.0.0")); err == nil {
+		t.Fatal("unresolved release target created a tag")
+	}
+}
+
+func TestReleases_UpdateIsRepositoryScoped(t *testing.T) {
+	for _, name := range []string{"release-scope-a", "release-scope-b"} {
+		resp := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+			"name": name, "auto_init": true,
+		})
+		resp.Body.Close()
+	}
+	created := ghPost(t, "/api/v3/repos/admin/release-scope-a/releases", defaultToken, map[string]interface{}{
+		"tag_name": "v1.0.0", "name": "Repository A",
+	})
+	if created.StatusCode != http.StatusCreated {
+		created.Body.Close()
+		t.Fatalf("create status = %d", created.StatusCode)
+	}
+	release := decodeJSON(t, created)
+	id := int(release["id"].(float64))
+
+	patch, _ := json.Marshal(map[string]interface{}{"name": "Cross-repository mutation"})
+	wrongRepo := doAuthReq(testServer, http.MethodPatch, "/api/v3/repos/admin/release-scope-b/releases/"+itoa(id), patch)
+	if wrongRepo.Code != http.StatusNotFound {
+		t.Fatalf("cross-repository update status = %d body=%s", wrongRepo.Code, wrongRepo.Body.String())
+	}
+	stored := testServer.store.Releases.Get(id)
+	if stored.Name != "Repository A" {
+		t.Fatalf("cross-repository update mutated release: %q", stored.Name)
 	}
 }
 
@@ -207,7 +292,8 @@ func TestReleases_AssetLifecycle(t *testing.T) {
 	s.registerGHReleasesRoutes()
 
 	user := s.store.UsersByLogin["admin"]
-	_ = s.store.CreateRepo(user, "asset-repo", "", false)
+	repo := s.store.CreateRepo(user, "asset-repo", "", false)
+	initializeReleaseTestRepo(t, s, repo, user)
 
 	// Create a release to attach assets to.
 	createBody, _ := json.Marshal(map[string]any{
@@ -322,7 +408,8 @@ func TestReleases_AssetBytesUseObjectStore(t *testing.T) {
 	s.registerGHReleasesRoutes()
 
 	user := s.store.UsersByLogin["admin"]
-	_ = s.store.CreateRepo(user, "object-release-repo", "", false)
+	repo := s.store.CreateRepo(user, "object-release-repo", "", false)
+	initializeReleaseTestRepo(t, s, repo, user)
 	createBody, _ := json.Marshal(map[string]any{
 		"tag_name": "v1.0.0",
 		"name":     "Release 1.0",
@@ -369,7 +456,8 @@ func TestReleases_ReleaseReactionsLifecycle(t *testing.T) {
 	s.registerGHReactionsRoutes()
 
 	user := s.store.UsersByLogin["admin"]
-	_ = s.store.CreateRepo(user, "relrxn-repo", "", false)
+	repo := s.store.CreateRepo(user, "relrxn-repo", "", false)
+	initializeReleaseTestRepo(t, s, repo, user)
 
 	createBody, _ := json.Marshal(map[string]any{"tag_name": "v1.0.0", "name": "R"})
 	w := doAuthReq(s, "POST", "/api/v3/repos/admin/relrxn-repo/releases", createBody)

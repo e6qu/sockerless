@@ -479,6 +479,54 @@ test.describe("Metrics page", () => {
   });
 });
 
+// ─── Release provider ───────────────────────────────────────────────────────
+
+test.describe("Release provider", () => {
+  test("creates, edits, uploads, downloads, and deletes through routed UI pages", async ({ page }) => {
+    await page.goto("/ui/");
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+    const repo = "release-ui-playwright";
+    await apiPost(page, "/api/v3/user/repos", { name: repo, auto_init: true });
+
+    await page.goto(`/ui/repos/${owner}/${repo}/releases`);
+    await page.getByRole("link", { name: "New release" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases/new$`));
+    await page.getByLabel("Tag").fill("v1.0.0");
+    await page.getByLabel("Release title").fill("First real release");
+    await page.getByLabel("Release notes").fill("Published through the GitHub-compatible UI.");
+    await page.getByRole("button", { name: "Create release" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases/\\d+$`));
+    await expect(page.getByRole("heading", { level: 1, name: "First real release" })).toBeVisible();
+
+    await page.getByLabel("Asset file").setInputFiles({
+      name: "artifact.txt",
+      mimeType: "text/plain",
+      buffer: Buffer.from("real release asset bytes", "utf8"),
+    });
+    await page.getByLabel("Asset label").fill("Linux artifact");
+    await page.getByRole("button", { name: "Upload asset" }).click();
+    await expect(page.getByText("Linux artifact")).toBeVisible();
+    await expect(page.getByText(/23 bytes/)).toBeVisible();
+
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download artifact.txt" }).click();
+    expect((await download).suggestedFilename()).toBe("artifact.txt");
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Release title").fill("Updated real release");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Updated real release" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Delete artifact.txt" }).click();
+    await expect(page.getByText("Linux artifact")).not.toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases$`));
+    await expect(page.getByText("No releases published")).toBeVisible();
+  });
+});
+
 // ─── Dark theme capture ──────────────────────────────────────────────────────
 
 test.describe("Dark theme", () => {

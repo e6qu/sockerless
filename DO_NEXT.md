@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 through BUG-2511. Legacy Pages builds used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain, and persisted real publication state. Smart HTTP, Contents API, and Git Database branch writes shared one race-safe event path for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic matching legacy Pages builds. Workflow-run actors used complete GitHub simple-user shapes, committed-reference processing used canonical repository identity, and Bleephub used current `github.com/yuin/goldmark` 1.8.3.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2516. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, and pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage.
 
 ## Continue Here
 
@@ -15,6 +15,10 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 208 seconds after the release-provider and eventing class fixes.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1` passed after all remaining asynchronous workflow-discovery readers were synchronized.
+- `bun run --cwd ui/packages/bleephub typecheck`, `bun run --cwd ui/packages/bleephub test`, and the production Vite build passed with 43 files / 322 tests and a lazy-loaded routed Releases page chunk.
+- Focused local Playwright release-provider execution reached the real Bleephub server but did not start the browser because the Playwright Chromium headless-shell executable was absent; CI remained the required real-browser authority and no skip or fallback was added.
 - `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.3.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 198 seconds after committed-reference fan-out, complete workflow-run actor shapes, and canonical repository identity handling were implemented.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(PagesBuildsCRUD|Dependabot_OrgAlerts|EnterpriseDependabotAlerts|SecretScanning_OrgAlerts|SecretScanning_PushProtectionBypasses|SecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation)$' -count=1` passed after all fan-out consumers ran race-safely against real git storage.

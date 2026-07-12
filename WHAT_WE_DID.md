@@ -4,6 +4,27 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-12 - Bleephub Release Provider Completeness (`feat/bleephub-ui-api-completeness-audit`)
+
+This branch continued from merged #791 and audited Bleephub's UI routes against its implemented public GitHub API and real state. It identified the release provider as a complete class gap rather than a single missing screen.
+
+Closed BUG-2512 by replacing the transient read-only release list with routed repository release workflows. `/ui/repos/{owner}/{repo}/releases`, `/releases/new`, and `/releases/{id}` now support deep links and browser history; create, edit, draft/pre-release state, delete, object-backed asset upload, authenticated asset download, and asset deletion all use the public GitHub Releases API. The Code view links into the routed manager instead of trapping release state in a local tab.
+
+Closed BUG-2513 and BUG-2514 by making release identity repository-scoped and git-backed. Updates verify ownership before validation or mutation. Creation and tag-name changes resolve an existing real tag or resolve `target_commitish` and create a real lightweight tag, while duplicate releases and unresolved targets return validation errors without changing release or git state.
+
+Closed BUG-2515 by deriving release webhook and GitHub Actions activity from real lifecycle transitions. Complete release payloads now carry `created`, `edited`, `published`, `unpublished`, `prereleased`, `released`, or `deleted`, with GitHub's draft workflow semantics. Closed incidental BUG-2516 by removing every remaining asynchronous workflow-discovery call from pull-request REST/GraphQL and repository-dispatch handlers, eliminating mutable go-git read/write races across the eventing class.
+
+Validation in this branch included:
+
+```bash
+bun run --cwd ui/packages/bleephub typecheck
+bun run --cwd ui/packages/bleephub test
+bun run --cwd ui/packages/bleephub build
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+```
+
 ## 2026-07-12 - Bleephub GitHub Pages Branch Publication (`feat/bleephub-pages-branch-builds`)
 
 This branch continued from merged #790, which made GitHub Actions artifact deployments publish real GitHub Pages sites from object storage.

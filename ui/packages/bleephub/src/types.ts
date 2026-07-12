@@ -585,7 +585,9 @@ export interface WorkflowDispatchInput {
 
 export interface GithubRelease {
   id: number;
+  node_id: string;
   tag_name: string;
+  target_commitish: string;
   name: string;
   body: string;
   draft: boolean;
@@ -594,6 +596,25 @@ export interface GithubRelease {
   /** null until the release is published (drafts). */
   published_at: string | null;
   html_url: string;
+  url: string;
+  assets_url: string;
+  upload_url: string;
+  assets: GithubReleaseAsset[];
+}
+
+export interface GithubReleaseAsset {
+  id: number;
+  node_id: string;
+  name: string;
+  label: string;
+  state: "uploaded";
+  content_type: string;
+  size: number;
+  download_count: number;
+  created_at: string;
+  updated_at: string;
+  url: string;
+  browser_download_url: string;
 }
 
 export type GithubMigrationState = "pending" | "exporting" | "exported" | "failed";

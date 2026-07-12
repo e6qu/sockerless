@@ -12,6 +12,7 @@ const RunnersPage = lazy(() => import("./pages/RunnersPage.js").then(({ RunnersP
 const ReposPage = lazy(() => import("./pages/ReposPage.js").then(({ ReposPage }) => ({ default: ReposPage })));
 const OrgReposPage = lazy(() => import("./pages/OrgReposPage.js").then(({ OrgReposPage }) => ({ default: OrgReposPage })));
 const RepoDetailPage = lazy(() => import("./pages/RepoDetailPage.js").then(({ RepoDetailPage }) => ({ default: RepoDetailPage })));
+const ReleasesPage = lazy(() => import("./pages/ReleasesPage.js").then(({ ReleasesPage }) => ({ default: ReleasesPage })));
 const IssuesPage = lazy(() => import("./pages/IssuesPage.js").then(({ IssuesPage }) => ({ default: IssuesPage })));
 const PullsPage = lazy(() => import("./pages/PullsPage.js").then(({ PullsPage }) => ({ default: PullsPage })));
 const DiscussionsPage = lazy(() => import("./pages/DiscussionsPage.js").then(({ DiscussionsPage }) => ({ default: DiscussionsPage })));
@@ -87,6 +88,9 @@ export function App() {
               <Route path="/ui/orgs/:org/governance" element={<OrgGovernancePage />} />
               <Route path="/ui/orgs/:org/copilot" element={<CopilotPage />} />
               <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases" element={<ReleasesPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases/new" element={<ReleasesPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases/:releaseId" element={<ReleasesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/labels" element={<IssuesPage view="labels" />} />

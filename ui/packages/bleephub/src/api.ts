@@ -23,6 +23,7 @@ import type {
   GithubSecret,
   GithubEnvironment,
   GithubRelease,
+  GithubReleaseAsset,
   GithubMigration,
   GithubMigrationStartPayload,
   GithubWorkflow,
@@ -934,6 +935,84 @@ export const fetchEnvironments = (owner: string, repo: string) =>
 
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);
+
+export const fetchRelease = (owner: string, repo: string, releaseId: number) =>
+  ghFetch<GithubRelease>(`/api/v3/repos/${owner}/${repo}/releases/${releaseId}`);
+
+export interface ReleasePayload {
+  tag_name: string;
+  target_commitish?: string;
+  name?: string;
+  body?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+}
+
+export const createRelease = (owner: string, repo: string, payload: ReleasePayload) =>
+  ghPostJSON<GithubRelease>(`/api/v3/repos/${owner}/${repo}/releases`, payload);
+
+export async function updateRelease(
+  owner: string,
+  repo: string,
+  releaseId: number,
+  payload: Partial<ReleasePayload>,
+): Promise<GithubRelease> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/releases/${releaseId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<GithubRelease>;
+}
+
+export async function deleteRelease(owner: string, repo: string, releaseId: number): Promise<void> {
+  await ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/releases/${releaseId}`);
+}
+
+export async function uploadReleaseAsset(
+  owner: string,
+  repo: string,
+  releaseId: number,
+  file: File,
+  label = "",
+): Promise<GithubReleaseAsset> {
+  const params = new URLSearchParams({ name: file.name });
+  if (label) params.set("label", label);
+  const res = await fetch(
+    `/api/uploads/repos/${owner}/${repo}/releases/${releaseId}/assets?${params}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": file.type || "application/octet-stream", ...authHeaders() },
+      body: file,
+    },
+  );
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<GithubReleaseAsset>;
+}
+
+export async function downloadReleaseAsset(owner: string, repo: string, assetId: number): Promise<Blob> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/releases/assets/${assetId}`, {
+    headers: { Accept: "application/octet-stream", ...authHeaders() },
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  return res.blob();
+}
+
+export async function deleteReleaseAsset(owner: string, repo: string, assetId: number): Promise<void> {
+  await ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/releases/assets/${assetId}`);
+}
 
 // ─── GitHub Actions Representational State Transfer ─────────────────────
 

@@ -209,7 +209,7 @@ export function RepoDetailPage() {
         (releasesError ? (
           <InlineError title="Failed to load releases" detail={String(releasesErr)} />
         ) : (
-          <ReleasesList releases={releases} />
+          <ReleasesList owner={owner} repo={repo} releases={releases} />
         ))}
       {tab === "webhooks" &&
         (webhooksError ? (
@@ -926,11 +926,20 @@ function EnvironmentsList({ environments }: { environments: GithubEnvironment[] 
   );
 }
 
-function ReleasesList({ releases }: { releases: GithubRelease[] }) {
-  if (releases.length === 0) return <Blankslate icon={<TagIcon size={26} />} title="No releases" />;
+function ReleasesList({ owner, repo, releases }: { owner: string; repo: string; releases: GithubRelease[] }) {
+  if (releases.length === 0) return (
+    <Blankslate icon={<TagIcon size={26} />} title="No releases">
+      <Link to={`/ui/repos/${owner}/${repo}/releases/new`}>Create the first release</Link>
+    </Blankslate>
+  );
   return (
-    <Box>
-      {releases.map((r, i) => (
+    <div className="flex flex-col gap-3">
+      <div className="flex justify-end">
+        <Link to={`/ui/repos/${owner}/${repo}/releases`} style={{ color: "var(--color-accent)", fontSize: "0.82rem" }}>
+          Manage releases and assets
+        </Link>
+      </div>
+      <Box>{releases.map((r, i) => (
         <div
           key={r.id}
           className="flex items-center gap-3"
@@ -951,7 +960,7 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
           >
             <TagIcon size={12} /> {r.tag_name}
           </span>
-          <div className="min-w-0 flex-1">
+          <Link className="min-w-0 flex-1" to={`/ui/repos/${owner}/${repo}/releases/${r.id}`} style={{ color: "inherit", textDecoration: "none" }}>
             <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "var(--color-fg)" }}>
               {r.name || r.tag_name}
             </div>
@@ -960,10 +969,10 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
                 ? "draft"
                 : `published ${new Date(r.published_at).toLocaleDateString()}`}
             </div>
-          </div>
+          </Link>
         </div>
-      ))}
-    </Box>
+      ))}</Box>
+    </div>
   );
 }
 

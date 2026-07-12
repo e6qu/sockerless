@@ -378,6 +378,66 @@ func TestWebhookPushEvent(t *testing.T) {
 	}
 }
 
+func TestWebhookReleaseLifecycleActions(t *testing.T) {
+	var mu sync.Mutex
+	var actions []string
+	url, cleanup := startWebhookReceiver(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		payload := webhookEventJSON(t, r.Header.Get("Content-Type"), body)
+		if r.Header.Get("X-GitHub-Event") == "release" {
+			mu.Lock()
+			actions = append(actions, payload["action"].(string))
+			mu.Unlock()
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer cleanup()
+
+	const repo = "wh-release-lifecycle"
+	createdRepo := ghPost(t, "/api/v3/user/repos", defaultToken, map[string]interface{}{
+		"name": repo, "auto_init": true,
+	})
+	createdRepo.Body.Close()
+	hook := ghPost(t, "/api/v3/repos/admin/"+repo+"/hooks", defaultToken, map[string]interface{}{
+		"config": map[string]interface{}{"url": url},
+		"events": []string{"release"},
+		"active": true,
+	})
+	hook.Body.Close()
+
+	releaseResp := ghPost(t, "/api/v3/repos/admin/"+repo+"/releases", defaultToken, map[string]interface{}{
+		"tag_name": "v1.0.0", "draft": true,
+	})
+	if releaseResp.StatusCode != http.StatusCreated {
+		releaseResp.Body.Close()
+		t.Fatalf("create draft release status = %d", releaseResp.StatusCode)
+	}
+	release := decodeJSON(t, releaseResp)
+	releaseID := int(release["id"].(float64))
+	published := ghPatch(t, "/api/v3/repos/admin/"+repo+"/releases/"+itoa(releaseID), defaultToken, map[string]interface{}{
+		"draft": false,
+	})
+	published.Body.Close()
+	deleted := ghDelete(t, "/api/v3/repos/admin/"+repo+"/releases/"+itoa(releaseID), defaultToken)
+	deleted.Body.Close()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		mu.Lock()
+		count := len(actions)
+		mu.Unlock()
+		if count == 3 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if fmt.Sprint(actions) != "[created published deleted]" {
+		t.Fatalf("release webhook actions = %v", actions)
+	}
+}
+
 func TestWebhookPREvent(t *testing.T) {
 	var received atomic.Int32
 	var mu sync.Mutex
