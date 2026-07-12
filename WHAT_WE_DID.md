@@ -4,6 +4,53 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-11 - Bleephub Public State Fidelity (`feat/bleephub-public-state-fidelity`)
+
+This branch continued from merged #787, which moved CodeQL variant-analysis query-pack tarballs to object storage and made runner-log object-store failures preserve live process state.
+
+Closed BUG-2491 by making persisted repository ownership strict. Repository reload now requires valid `owner_type` and `owner_id`, loads organizations before repositories so organization-owned repositories validate against real organization state, and fails loudly when persisted owner data is missing or inconsistent. Public repository listing and event paths no longer treat empty owner types as user repositories.
+
+Closed BUG-2492 by removing the internal runner-submission image fallback. `/internal/exec/submit` and `/internal/exec/workflow` now require either an explicit `image` or `hostMode`, and tests that intend container execution pass `alpine:latest` explicitly instead of relying on hidden server-side defaulting.
+
+Closed BUG-2493 by moving container-package coverage onto the real GitHub Container Registry-compatible data plane. Container package fixtures now publish blobs and manifests through the OCI/Docker Registry HTTP API v2 routes, package REST tests observe the resulting manifest/layer files, source coverage rejects new internal container-package seed calls, and `/internal/packages` rejects `container` package creation instead of leaving a parallel operator-only publish path.
+
+Closed BUG-2494 by making Projects v2 GraphQL project creation resolve owners strictly. `createProjectV2` now requires the supplied `ownerId` to match a real user or organization GitHub node ID, returns a GraphQL error for unknown owner IDs, and does not mutate project state when owner resolution fails.
+
+Closed BUG-2495 by removing the hidden execution-image default from public GitHub Actions workflow trigger and rerun paths. Push/event-triggered workflows, full-run reruns, failed-job reruns, and single-job reruns now preserve host-mode runner messages when the workflow YAML has no `container:` declaration, matching GitHub's runner contract instead of injecting `alpine:latest`.
+
+Closed BUG-2496 by removing alternate base64 decoders from the GitHub Actions runner OAuth public-key path. Runner registration now accepts only the Azure DevOps/GitHub Actions runner protocol's standard base64 RSA modulus and exponent fields, and URL-safe or raw base64 variants fail loudly instead of creating a second public-key wire format.
+
+Closed BUG-2497 by making GitHub Actions workflow parsing reject missing or invalid runner labels for normal jobs. Normal jobs now require `runs-on` to be a non-empty string or non-empty string list, reusable-workflow call jobs remain valid without runner labels, and job-list responses no longer invent `ubuntu-latest` when a directly seeded job lacks a definition.
+
+Closed BUG-2498 by making public repository commit listing distinguish empty or broken git state from a successful empty history. `GET /api/v3/repos/{owner}/{repo}/commits` now returns GitHub's `409` empty-repository response when the default branch has no ref, returns a fail-loud service error when git storage cannot be opened or walked, and no longer reports `200 []` for a repository whose git history is unavailable.
+
+Closed BUG-2499 by making Bleephub repository UI pages consume the new public commit-listing semantics faithfully. The UI now treats only GitHub's exact empty-repository `409` response as an empty commit history for display, while every other commit-listing conflict or storage failure still surfaces as an error.
+
+Closed BUG-2500 / GitHub issue #789 by making organization repository creation honor GitHub App installation-token permissions. `POST /api/v3/orgs/{org}/repos` now authorizes installation tokens by target organization and `administration: write`, while installation tokens without that grant still receive `Resource not accessible by integration` and human tokens still require organization membership.
+
+Closed BUG-2501 by separating Bleephub repository-page empty-history rendering from the public GitHub REST commit-listing contract. `GET /api/v3/repos/{owner}/{repo}/commits` still returns GitHub's `409` empty-repository response, while the authenticated `/ui-data/repos/{owner}/{repo}/commits` route maps only that exact empty git state to `200 []` for the browser UI. Storage and object failures still return service errors, and repository pages no longer emit strict browser-console resource errors for handled empty repositories.
+
+Validation in this branch included:
+
+```bash
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(PersistenceReload_(OwnerAndCountersAndState|OrganizationRepositoryOwnerIsValidated|RepositoryMissingOwner(Type|ID)FailsLoud)|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ConcurrencyGroups_(RepoAndRunEndpoints|CompletedRunReleasesLease)|SubmitWorkflow(RepoRefResolution|RejectsUnresolvedRepoRef)|Workflows_Dispatch|InternalSubmit(Job|Workflow)RequiresExplicitImageOrHostMode)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestPackages|TestContainerRegistry|TestLivePackages' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'TestProjectsV2GraphQL_(CreateProjectRequiresResolvedOwner|CreateProjectUsesResolvedUserAndOrganizationOwners|FieldValueKinds|ProjectLevelConnections)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(RerunKeepsRunIDAndBumpsAttempt|RerunFailedJobsCarriesSuccesses|RerunWorkflowJob_NewAttemptCarriesOtherJobs|Workflows_Dispatch|Workflows_DispatchUsesHostModeWhenWorkflowHasNoContainer)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(AgentRSAPublicKeyRequiresProtocolStandardBase64|OAuthToken|OAuthTokenRejectsMissingAssertion|OAuthTokenRejectsUnknownClient|RegistrationTokenRandom|GenerateJITConfig|RemoveToken)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ActionsPendingDeploymentReviewFlow|WorkflowParseRequiresValidRunsOnForNormalJobs|WorkflowParseReusableWorkflowJobDoesNotRequireRunsOn|WorkflowParse(ContainerAsString|ContainerAsObject|Env|JobOutputs|StrategyFailFast))' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|UIListCommitsEmptyRepositoryReturnsEmptyHistory|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(InstallationTokenCreatesOrganizationRepositoryWithAdministrationPermission|InstallationTokenCreateOrganizationRepositoryRequiresAdministrationWrite|InstallationTokenDownscoping|CreateOrgRepo)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+bun run --cwd ui/packages/bleephub test src/__tests__/api.test.ts
+bun run --cwd ui/packages/bleephub test
+bun run --cwd ui/packages/bleephub typecheck
+cd ui && bunx turbo run build --filter="*bleephub*"
+pre-commit run --all-files
+```
+
 ## 2026-07-11 - Bleephub CodeQL Variant-Analysis Query Pack Objects (`feat/bleephub-codeql-variant-query-pack-objects`)
 
 This branch continued from merged #786, which moved more Bleephub service bytes to object storage and hardened public GitHub-compatible ingestion, deletion, and official-client coverage.

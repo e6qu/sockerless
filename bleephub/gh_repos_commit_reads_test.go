@@ -106,6 +106,36 @@ func TestGetSingleCommit(t *testing.T) {
 	}
 }
 
+func TestListCommitsEmptyRepositoryFailsLoud(t *testing.T) {
+	createReadsRepo(t, "reads-empty-commits", nil)
+
+	resp := ghGet(t, "/api/v3/repos/admin/reads-empty-commits/commits", defaultToken)
+	if resp.StatusCode != http.StatusConflict {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("list commits on empty repository: %d body=%s", resp.StatusCode, body)
+	}
+	out := decodeJSON(t, resp)
+	if out["message"] != "Git Repository is empty." {
+		t.Fatalf("empty repository message = %v", out["message"])
+	}
+}
+
+func TestUIListCommitsEmptyRepositoryReturnsEmptyHistory(t *testing.T) {
+	createReadsRepo(t, "reads-ui-empty-commits", nil)
+
+	resp := ghGet(t, "/ui-data/repos/admin/reads-ui-empty-commits/commits", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("UI list commits on empty repository: %d body=%s", resp.StatusCode, body)
+	}
+	out := decodeJSONArray(t, resp)
+	if len(out) != 0 {
+		t.Fatalf("UI empty repository commits = %v, want []", out)
+	}
+}
+
 func TestCommitBranchesWhereHead(t *testing.T) {
 	createReadsRepo(t, "reads-headbranch", map[string]interface{}{"auto_init": true})
 	sha := putReadsFile(t, "reads-headbranch", "a.txt", "a\n", "add a", "")

@@ -158,6 +158,37 @@ func seedRerunRepo(t *testing.T, repoKey, yaml string) *Workflow {
 	return wf
 }
 
+func assertWorkflowJobsUseHostMode(t *testing.T, wf *Workflow, keys ...string) {
+	t.Helper()
+	if len(keys) == 0 {
+		for key := range wf.Jobs {
+			keys = append(keys, key)
+		}
+	}
+	for _, key := range keys {
+		job := wf.Jobs[key]
+		if job == nil {
+			t.Fatalf("workflow job %q not found", key)
+		}
+		testServer.store.mu.RLock()
+		queued := testServer.store.Jobs[job.JobID]
+		testServer.store.mu.RUnlock()
+		if queued == nil {
+			t.Fatalf("workflow job %q has no stored runner job %q", key, job.JobID)
+		}
+		if queued.Message == "" {
+			t.Fatalf("workflow job %q has no runner message", key)
+		}
+		var msg map[string]interface{}
+		if err := json.Unmarshal([]byte(queued.Message), &msg); err != nil {
+			t.Fatalf("workflow job %q message JSON: %v", key, err)
+		}
+		if msg["jobContainer"] != nil {
+			t.Fatalf("workflow job %q jobContainer = %#v, want nil for a workflow without container", key, msg["jobContainer"])
+		}
+	}
+}
+
 const twoJobYAML = `name: ci
 on: [push]
 jobs:
@@ -175,6 +206,7 @@ func TestRerunKeepsRunIDAndBumpsAttempt(t *testing.T) {
 	repoKey := "rerunowner/rerun-repo"
 	wf := seedRerunRepo(t, repoKey, twoJobYAML)
 	origRunID := wf.RunID
+	assertWorkflowJobsUseHostMode(t, wf)
 
 	// Finish both jobs (one failure) so the run completes.
 	testServer.onJobCompleted(context.Background(), wf.Jobs["good"].JobID, "Succeeded")
@@ -200,6 +232,19 @@ func TestRerunKeepsRunIDAndBumpsAttempt(t *testing.T) {
 	if int(run["id"].(float64)) != origRunID {
 		t.Errorf("rerun id = %v, want %d (same run id)", run["id"], origRunID)
 	}
+	testServer.store.mu.RLock()
+	var attempt2 *Workflow
+	for _, w := range testServer.store.Workflows {
+		if w.RepoFullName == repoKey && w.RunID == origRunID {
+			attempt2 = w
+			break
+		}
+	}
+	testServer.store.mu.RUnlock()
+	if attempt2 == nil {
+		t.Fatal("rerun attempt 2 not found")
+	}
+	assertWorkflowJobsUseHostMode(t, attempt2)
 
 	// The first attempt is retrievable.
 	resp3, err := http.Get(fmt.Sprintf("http://%s/api/v3/repos/%s/actions/runs/%d/attempts/1", testServer.addr, repoKey, origRunID))
@@ -235,6 +280,7 @@ func TestRerunFailedJobsCarriesSuccesses(t *testing.T) {
 	repoKey := "rerunfail/rf-repo"
 	wf := seedRerunRepo(t, repoKey, twoJobYAML)
 	runID := wf.RunID
+	assertWorkflowJobsUseHostMode(t, wf)
 
 	testServer.store.mu.Lock()
 	wf.Jobs["good"].Outputs["artifact"] = "kept"
@@ -277,6 +323,7 @@ func TestRerunFailedJobsCarriesSuccesses(t *testing.T) {
 	if badStatus != JobStatusQueued {
 		t.Errorf("bad job should re-dispatch (queued), got %q", badStatus)
 	}
+	assertWorkflowJobsUseHostMode(t, attempt2, "bad")
 }
 
 func TestWorkflowEnableDisable(t *testing.T) {

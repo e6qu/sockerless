@@ -3,6 +3,7 @@ package bleephub
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -387,6 +388,94 @@ func TestInstallationTokenDownscoping(t *testing.T) {
 	allowed.Body.Close()
 	if allowed.StatusCode != http.StatusCreated {
 		t.Fatalf("full-grant token issue write: got %d, want 201", allowed.StatusCode)
+	}
+}
+
+func TestInstallationTokenCreatesOrganizationRepositoryWithAdministrationPermission(t *testing.T) {
+	orgLogin := "app-create-repo-org"
+	createOrgViaAdminAPI(t, orgLogin)
+
+	appData := createGitHubAppViaManifest(t, "Organization Repo Creator App", map[string]string{
+		"administration": "write",
+		"metadata":       "read",
+	}, nil)
+	appID := int(appData["id"].(float64))
+	pemKey := appData["pem"].(string)
+	appSlug := appData["slug"].(string)
+	instData := installGitHubAppViaBrowser(t, appSlug, orgLogin, "all")
+	instID := int(instData["id"].(float64))
+	jwt, err := signAppJWT(pemKey, appID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := ghPost(t, fmt.Sprintf("/api/v3/app/installations/%d/access_tokens", instID), jwt, nil)
+	if tokenResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(tokenResp.Body)
+		tokenResp.Body.Close()
+		t.Fatalf("create installation token: got %d body=%s", tokenResp.StatusCode, body)
+	}
+	tokenBody := decodeJSON(t, tokenResp)
+	token, _ := tokenBody["token"].(string)
+	if token == "" {
+		t.Fatalf("installation token response missing token: %v", tokenBody)
+	}
+
+	createResp := ghPost(t, "/api/v3/orgs/"+orgLogin+"/repos", token, map[string]interface{}{
+		"name":        "created-by-installation",
+		"description": "created through a GitHub App installation token",
+	})
+	if createResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(createResp.Body)
+		createResp.Body.Close()
+		t.Fatalf("create org repo with installation token: got %d body=%s", createResp.StatusCode, body)
+	}
+	repoBody := decodeJSON(t, createResp)
+	if repoBody["full_name"] != orgLogin+"/created-by-installation" {
+		t.Fatalf("created repository full_name = %v", repoBody["full_name"])
+	}
+}
+
+func TestInstallationTokenCreateOrganizationRepositoryRequiresAdministrationWrite(t *testing.T) {
+	orgLogin := "app-create-repo-denied-org"
+	createOrgViaAdminAPI(t, orgLogin)
+
+	appData := createGitHubAppViaManifest(t, "Organization Repo Metadata App", map[string]string{
+		"metadata": "read",
+	}, nil)
+	appID := int(appData["id"].(float64))
+	pemKey := appData["pem"].(string)
+	appSlug := appData["slug"].(string)
+	instData := installGitHubAppViaBrowser(t, appSlug, orgLogin, "all")
+	instID := int(instData["id"].(float64))
+	jwt, err := signAppJWT(pemKey, appID, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tokenResp := ghPost(t, fmt.Sprintf("/api/v3/app/installations/%d/access_tokens", instID), jwt, nil)
+	if tokenResp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(tokenResp.Body)
+		tokenResp.Body.Close()
+		t.Fatalf("create installation token: got %d body=%s", tokenResp.StatusCode, body)
+	}
+	tokenBody := decodeJSON(t, tokenResp)
+	token, _ := tokenBody["token"].(string)
+	if token == "" {
+		t.Fatalf("installation token response missing token: %v", tokenBody)
+	}
+
+	createResp := ghPost(t, "/api/v3/orgs/"+orgLogin+"/repos", token, map[string]interface{}{
+		"name": "created-without-administration",
+	})
+	if createResp.StatusCode != http.StatusForbidden {
+		body, _ := io.ReadAll(createResp.Body)
+		createResp.Body.Close()
+		t.Fatalf("create org repo without administration: got %d body=%s", createResp.StatusCode, body)
+	}
+	body := decodeJSON(t, createResp)
+	if body["message"] != "Resource not accessible by integration" {
+		t.Fatalf("forbidden message = %v", body["message"])
 	}
 }
 

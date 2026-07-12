@@ -147,6 +147,7 @@ func TestWorkflows_AutoRegisterOnSubmit(t *testing.T) {
 	body, _ := json.Marshal(map[string]any{
 		"workflow": sampleWorkflowYAML,
 		"repo":     "octo/repo",
+		"image":    "alpine:latest",
 	})
 	req := httptest.NewRequest("POST", "/internal/exec/workflow", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

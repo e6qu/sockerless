@@ -44,7 +44,7 @@ function installFetchRoutes() {
           { name: "feature", commit: { sha: "b".repeat(40) } },
         ]),
       );
-    if (url.startsWith("/api/v3/repos/admin/social-repo/commits"))
+    if (url.startsWith("/ui-data/repos/admin/social-repo/commits"))
       return Promise.resolve(jsonResponse([]));
     if (url.startsWith("/api/v3/repos/admin/social-repo/languages"))
       return Promise.resolve(jsonResponse({ Go: 3000, Shell: 1000 }));

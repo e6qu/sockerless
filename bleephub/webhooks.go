@@ -327,12 +327,12 @@ func (s *Server) submitTriggeredWorkflow(fileName string, content []byte, meta *
 	if expandedDef.Env == nil {
 		expandedDef.Env = make(map[string]string)
 	}
-	expandedDef.Env["__defaultImage"] = "alpine:latest"
+	expandedDef.Env["__defaultImage"] = ""
 
 	serverURL := fmt.Sprintf("http://%s", s.addr)
 	expandedDef.Env["__serverURL"] = serverURL
 
-	return s.submitWorkflow(context.Background(), serverURL, expandedDef, "alpine:latest", meta)
+	return s.submitWorkflow(context.Background(), serverURL, expandedDef, "", meta)
 }
 
 // buildTriggerEvent assembles the filterable description of an event

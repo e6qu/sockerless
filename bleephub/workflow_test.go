@@ -148,6 +148,7 @@ func TestWorkflowParseContainerAsString(t *testing.T) {
 	yaml := `
 jobs:
   test:
+    runs-on: ubuntu-latest
     container: node:18
     steps:
       - run: node --version
@@ -166,6 +167,7 @@ func TestWorkflowParseContainerAsObject(t *testing.T) {
 	yaml := `
 jobs:
   test:
+    runs-on: ubuntu-latest
     container:
       image: node:18
       env:
@@ -201,6 +203,7 @@ func TestWorkflowParseEnv(t *testing.T) {
 	yaml := `
 jobs:
   test:
+    runs-on: ubuntu-latest
     env:
       FOO: bar
     steps:
@@ -225,6 +228,7 @@ func TestWorkflowParseJobOutputs(t *testing.T) {
 	yaml := `
 jobs:
   build:
+    runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
     steps:
@@ -238,6 +242,86 @@ jobs:
 	job := wf.Jobs["build"]
 	if job.Outputs["version"] != "${{ steps.ver.outputs.version }}" {
 		t.Errorf("outputs = %v", job.Outputs)
+	}
+}
+
+func TestWorkflowParseRequiresValidRunsOnForNormalJobs(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "missing",
+			yaml: `
+jobs:
+  test:
+    steps:
+      - run: echo hi
+`,
+			want: `job "test": runs-on is required`,
+		},
+		{
+			name: "empty string",
+			yaml: `
+jobs:
+  test:
+    runs-on: ""
+    steps:
+      - run: echo hi
+`,
+			want: `job "test": runs-on is required`,
+		},
+		{
+			name: "empty list",
+			yaml: `
+jobs:
+  test:
+    runs-on: []
+    steps:
+      - run: echo hi
+`,
+			want: `job "test": runs-on must include at least one label`,
+		},
+		{
+			name: "non string list item",
+			yaml: `
+jobs:
+  test:
+    runs-on: [ubuntu-latest, 42]
+    steps:
+      - run: echo hi
+`,
+			want: `job "test": runs-on labels must be non-empty strings`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseWorkflow([]byte(tc.yaml))
+			if err == nil {
+				t.Fatal("expected error")
+			}
+			if err.Error() != tc.want {
+				t.Fatalf("error = %q, want %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+func TestWorkflowParseReusableWorkflowJobDoesNotRequireRunsOn(t *testing.T) {
+	yaml := `
+jobs:
+  call:
+    uses: ./.github/workflows/reusable.yml
+    with:
+      target: prod
+`
+	wf, err := ParseWorkflow([]byte(yaml))
+	if err != nil {
+		t.Fatalf("parse reusable workflow job: %v", err)
+	}
+	if wf.Jobs["call"].Uses != "./.github/workflows/reusable.yml" {
+		t.Fatalf("uses = %q", wf.Jobs["call"].Uses)
 	}
 }
 
@@ -384,6 +468,7 @@ func TestWorkflowParseStrategyFailFast(t *testing.T) {
 	yaml := `
 jobs:
   test:
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       max-parallel: 2

@@ -54,7 +54,8 @@ func (s *Server) handleSubmitJob(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Image == "" && !req.HostMode {
-		req.Image = "alpine:latest"
+		http.Error(w, "image or hostMode required", http.StatusBadRequest)
+		return
 	}
 
 	serverURL := s.baseURL(r)
@@ -167,7 +168,8 @@ func (s *Server) handleSubmitWorkflow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Image == "" && !req.HostMode {
-		req.Image = "alpine:latest"
+		http.Error(w, "image or hostMode required", http.StatusBadRequest)
+		return
 	}
 
 	serverURL := s.baseURL(r)

@@ -35,7 +35,7 @@ func submitConcurrencyWorkflow(t *testing.T, name, group, repo string) string {
 			t.Fatalf("seed workflow git state: %v", err)
 		}
 	}
-	body, _ := json.Marshal(map[string]string{"workflow": yaml, "repo": repo})
+	body, _ := json.Marshal(map[string]string{"workflow": yaml, "repo": repo, "image": "alpine:latest"})
 	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -194,6 +194,7 @@ func TestConcurrencyGroups_CompletedRunReleasesLease(t *testing.T) {
 	body, _ := json.Marshal(map[string]string{
 		"workflow": "name: cg-none\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo hi\n",
 		"repo":     repo,
+		"image":    "alpine:latest",
 	})
 	resp, err := authedPost("/internal/exec/workflow", "application/json", bytes.NewReader(body))
 	if err != nil {

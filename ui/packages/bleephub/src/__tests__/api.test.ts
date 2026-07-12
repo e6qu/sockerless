@@ -5,6 +5,7 @@ import {
   fetchSecrets,
   fetchEnvironments,
   fetchRepoIssuesPage,
+  fetchRepoCommits,
   fetchPRDetail,
   createIssue,
   parseLinkNext,
@@ -161,6 +162,21 @@ describe("api wire-shape normalization", () => {
     await expect(fetchEnterpriseSlug()).rejects.toThrow(
       "/health response did not include enterprise_slug",
     );
+  });
+});
+
+describe("repository API helpers", () => {
+  it("fetchRepoCommits reads the user-interface commit adapter", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([]));
+
+    await expect(fetchRepoCommits("admin", "empty")).resolves.toEqual([]);
+    expect(mockFetch.mock.calls[0][0]).toBe("/ui-data/repos/admin/empty/commits");
+  });
+
+  it("fetchRepoCommits still fails on adapter errors", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ message: "Git object unavailable" }, 500));
+
+    await expect(fetchRepoCommits("admin", "blocked")).rejects.toMatchObject({ status: 500 });
   });
 });
 

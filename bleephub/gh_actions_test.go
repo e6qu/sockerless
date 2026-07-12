@@ -906,6 +906,7 @@ name: deploy
 on: push
 jobs:
   release:
+    runs-on: ubuntu-latest
     environment: production
     steps:
       - run: echo deploy
@@ -925,6 +926,7 @@ jobs:
 	resp = ghPost(t, "/internal/exec/workflow", defaultToken, map[string]interface{}{
 		"repo":     repo,
 		"workflow": workflowYAML,
+		"image":    "alpine:latest",
 	})
 	if resp.StatusCode != 200 && resp.StatusCode != 201 && resp.StatusCode != 202 {
 		body, _ := io.ReadAll(resp.Body)

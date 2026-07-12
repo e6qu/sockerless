@@ -215,7 +215,7 @@ func (s *Server) handleRerunWorkflowJob(w http.ResponseWriter, r *http.Request) 
 	}
 	serverURL := s.baseURL(r)
 	def.Env["__serverURL"] = serverURL
-	def.Env["__defaultImage"] = "alpine:latest"
+	def.Env["__defaultImage"] = ""
 
 	// Carry over every job except the target and its transitive
 	// dependents (they must re-run because their inputs change).

@@ -320,7 +320,7 @@ func (s *Server) handleListUserReceivedEvents(w http.ResponseWriter, r *http.Req
 	s.store.mu.RLock()
 	repos := map[int]*Repo{}
 	for _, repo := range s.store.Repos {
-		if (repo.OwnerType == "User" || repo.OwnerType == "") && repo.OwnerID == user.ID && !repo.Private {
+		if repo.OwnerType == "User" && repo.OwnerID == user.ID && !repo.Private {
 			repos[repo.ID] = repo
 		}
 	}
