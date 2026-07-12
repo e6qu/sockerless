@@ -4,17 +4,41 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-pages-branch-builds` continued after merged #790 and fixed BUG-2506 through BUG-2511. Legacy Pages builds used their configured git source, directly published `.nojekyll` trees or ran the pinned `github-pages` 232/Jekyll 3.10.0 toolchain, and persisted real publication state. Smart HTTP, Contents API, and Git Database branch writes shared one race-safe event path for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic matching legacy Pages builds. Workflow-run actors used complete GitHub simple-user shapes, committed-reference processing used canonical repository identity, and Bleephub used current `github.com/yuin/goldmark` 1.8.3.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2560. In addition to the release-provider, repository UI, retained GitHub Classroom, fine-grained personal access tokens, and CodeQL production, the branch shipped a durable GitHub Marketplace for GitHub App and OAuth App publishers and buyers, with scoped official REST clients, signed listing webhooks, atomic subscriptions/installations, billing transitions, and saturated light/dark browser workflows. BUG-2523 remained open only for hosted-compute network onboarding.
 
 ## Continue Here
 
-1. Keep scanning for Bleephub behavior that is still internal-only, shape-only, fake, fallback-based, or not backed by real git/object/store state.
-2. Prefer high-value public GitHub surfaces: repository provider behavior, releases/assets, GitHub Actions and runner protocol, Pages, OAuth/GitHub Apps/Auth, packages/container registry, pull requests/reviews/checks/statuses, notifications, repository settings/security/advisories, and the UI paths that consume them.
-3. For every found defect, add a `BUGS.md` row first, fix the class of issue where practical, add focused tests, and update continuity in past tense.
-4. Use local Docker-backed Bleephub/Codespaces tests again while Docker compatibility remains available; do not restore the temporary non-Docker-only hook path.
+1. Close BUG-2523 by replacing `/internal/orgs/.../network-settings` with the real GitHub/Azure hosted-compute private-network onboarding workflow. GitHub Classroom, fine-grained personal access tokens, CodeQL database production, and GitHub Marketplace were completed.
+2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
+3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
+4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.
+5. For every found defect, add a `BUGS.md` row first, fix the class, add focused/official-client tests, and update continuity in past tense.
 
 ## Recent Validation
 
+- The complete `pre-commit run --all-files` gate passed with writable temporary Go/npm/pre-commit caches after the Marketplace implementation, including full repository lint, core/API/Bleephub Go suites, admin/Bleephub UI suites, typecheck, policy checks, dead-code scans, and copy-paste scans.
+- Cleanup removed 22 GiB of disposable Go build cache, temporary hook/package caches, 21 stale Amazon Elastic Container Service simulator task containers, and unused container images without touching active services or volumes; local free space increased from 31 GiB to 54 GiB.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 216 seconds after the Marketplace publisher, buyer, webhook, billing, identity, and atomic persistence workflows were implemented.
+- The complete official `go-github` suite passed with typed Marketplace plan/account/user purchase reads, and the Dockerized official `gh` command-line interface harness passed 136/136 with OAuth App Basic publisher authentication and public browser purchase production.
+- The user-interface suite passed 48 files / 334 tests; TypeScript, production build, and `knip` passed with only tracked BUG-2441; and the complete real-Chromium suite passed 31/31, including GitHub App Manifest creation, Marketplace listing/plan publication, purchase/installation, setup handoff, and inspected saturated light/dark surfaces without browser console errors.
+
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 204 seconds after official CodeQL production, durable replacement, authorization, confidentiality, and zero-finding analysis semantics were implemented.
+- The complete official `go-github` software development kit suite passed in 5 seconds, including raw GitHub CodeQL Action upload plus official database list/get/delete decoding; the Dockerized official GitHub command-line interface harness passed 130/130 cases with the same finalized database-bundle protocol.
+- `bun run typecheck`, `npx tsc --noEmit -p tsconfig.e2e.json`, `npx knip`, `bun run test`, and the production build passed in `ui/packages/bleephub` with 46 files / 330 tests; the known current-`knip` Node deprecation remained tracked as BUG-2441.
+- The complete real-Chromium Playwright suite passed 30/30, including the corrected fine-grained personal access token gradient and a producer-to-rendered-analysis Code Security workflow in saturated light and dark themes. Visual inspection confirmed distinct legible surfaces, GitHub-style organization, and blue/cyan/purple/pink treatments in both themes.
+
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 231.6 seconds after the viewer-state adapter and parity/UI audit changes.
+- `bun run typecheck`, `npx knip`, `bun run test`, and `bun run build` passed in `ui/packages/bleephub`; the suite covered 43 files / 324 tests and the existing current-`knip` Node deprecation stayed tracked as BUG-2441.
+- The complete `e2e/bleephub.spec.ts` Chromium suite passed with 24 tests, including computed saturated light/dark token assertions, full-width repository chrome, and independent dark-theme repository setup without browser console errors.
+- Visual inspection of real browser captures confirmed the blue/cyan/purple/pink header treatment, GitHub-style neutral content hierarchy, and legible repository chrome/actions in both themes.
+
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed in `bleephub/sdk-tests`, including release creation against a real Git Database API-created `main` branch.
+- `bun run typecheck` and `bun run test src/__tests__/api.test.ts` passed in `ui/packages/bleephub` after the release asset end-to-end assertion began deriving its expected size from the uploaded byte buffer.
+- `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.4.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 208 seconds after the release-provider and eventing class fixes.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1` passed after all remaining asynchronous workflow-discovery readers were synchronized.
+- `bun run --cwd ui/packages/bleephub typecheck`, `bun run --cwd ui/packages/bleephub test`, and the production Vite build passed with 43 files / 322 tests and a lazy-loaded routed Releases page chunk.
+- Focused local Playwright release-provider execution reached the real Bleephub server but did not start the browser because the Playwright Chromium headless-shell executable was absent; CI remained the required real-browser authority and no skip or fallback was added.
 - `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.3.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 198 seconds after committed-reference fan-out, complete workflow-run actor shapes, and canonical repository identity handling were implemented.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(PagesBuildsCRUD|Dependabot_OrgAlerts|EnterpriseDependabotAlerts|SecretScanning_OrgAlerts|SecretScanning_PushProtectionBypasses|SecretScanning_PushProtectionBlocksGitDatabaseRefBeforeMutation)$' -count=1` passed after all fan-out consumers ran race-safely against real git storage.

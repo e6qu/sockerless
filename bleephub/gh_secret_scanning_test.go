@@ -81,6 +81,31 @@ func TestSecretScanningAlertTestsUseCommittedContent(t *testing.T) {
 	}
 }
 
+func TestSecretScanningDetectsGeneratedFineGrainedPersonalAccessToken(t *testing.T) {
+	admin := testServer.store.UsersByLogin["admin"]
+	repo := testServer.store.CreateRepo(admin, "ss-fine-grained-pat", "", true)
+	token, err := testServer.store.CreateUserFineGrainedPAT(admin.ID, createPersonalAccessTokenWebRequest{
+		Name: "secret scanning live token", ResourceOwner: admin.Login, RepositorySelection: "none",
+	})
+	if err != nil {
+		t.Fatalf("create fine-grained personal access token: %v", err)
+	}
+	resp := ghPut(t, "/api/v3/repos/admin/"+repo.Name+"/contents/credential.txt", defaultToken, map[string]any{
+		"message": "commit fine-grained credential",
+		"content": base64.StdEncoding.EncodeToString([]byte("token=" + token.Value + "\n")),
+	})
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("commit fine-grained credential: %d body=%s", resp.StatusCode, body)
+	}
+	resp.Body.Close()
+	alerts := decodeJSONArray(t, ghGet(t, "/api/v3/repos/admin/"+repo.Name+"/secret-scanning/alerts?secret_type=github_personal_access_token", defaultToken))
+	if len(alerts) != 1 {
+		t.Fatalf("generated fine-grained credential alerts = %v, want one", alerts)
+	}
+}
+
 func createSecretScanningOrgRepoViaPublicAPI(t *testing.T, org, repo string) {
 	t.Helper()
 	createOrgViaAdminAPI(t, org)

@@ -92,13 +92,10 @@ describe("api wire-shape normalization", () => {
 
   it("createApp uses the GitHub App Manifest flow", async () => {
     setToken("admintoken");
+    const manifestRedirect = new Response("", { status: 200 });
+    Object.defineProperty(manifestRedirect, "url", { value: "http://localhost/ui/apps?code=manifest-code" });
     mockFetch
-      .mockResolvedValueOnce(
-        new Response("", {
-          status: 302,
-          headers: { Location: "/ui/apps?code=manifest-code" },
-        }),
-      )
+      .mockResolvedValueOnce(manifestRedirect)
       .mockResolvedValueOnce(
         jsonResponse({
           client_id: "Iv1.created",
@@ -118,7 +115,7 @@ describe("api wire-shape normalization", () => {
     expect(mockFetch.mock.calls[0][0]).toBe("/settings/apps/new");
     const firstOptions = mockFetch.mock.calls[0][1] as RequestInit;
     expect(firstOptions.method).toBe("POST");
-    expect(firstOptions.redirect).toBe("manual");
+    expect(firstOptions.redirect).toBeUndefined();
     expect(firstOptions.headers).toMatchObject({
       Authorization: "Bearer admintoken",
       "Content-Type": "application/x-www-form-urlencoded",

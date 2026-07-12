@@ -15,7 +15,8 @@ export function LoginPage() {
     const valid = await verifyToken(token);
     if (valid) {
       setToken(token);
-      window.location.href = "/ui/";
+      const requested = new URLSearchParams(window.location.search).get("return_to");
+      window.location.href = requested?.startsWith("/ui/") ? requested : "/ui/";
     } else {
       setError("Token rejected. Bleephub could not authenticate it through the GitHub REST user endpoint.");
       setVerifying(false);

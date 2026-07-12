@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router";
 import { ErrorBoundary, ToastProvider } from "@sockerless/ui-core/components";
 import { isLoggedIn } from "./api.js";
 import { BleephubShell } from "./components/Shell.js";
@@ -12,6 +12,7 @@ const RunnersPage = lazy(() => import("./pages/RunnersPage.js").then(({ RunnersP
 const ReposPage = lazy(() => import("./pages/ReposPage.js").then(({ ReposPage }) => ({ default: ReposPage })));
 const OrgReposPage = lazy(() => import("./pages/OrgReposPage.js").then(({ OrgReposPage }) => ({ default: OrgReposPage })));
 const RepoDetailPage = lazy(() => import("./pages/RepoDetailPage.js").then(({ RepoDetailPage }) => ({ default: RepoDetailPage })));
+const ReleasesPage = lazy(() => import("./pages/ReleasesPage.js").then(({ ReleasesPage }) => ({ default: ReleasesPage })));
 const IssuesPage = lazy(() => import("./pages/IssuesPage.js").then(({ IssuesPage }) => ({ default: IssuesPage })));
 const PullsPage = lazy(() => import("./pages/PullsPage.js").then(({ PullsPage }) => ({ default: PullsPage })));
 const DiscussionsPage = lazy(() => import("./pages/DiscussionsPage.js").then(({ DiscussionsPage }) => ({ default: DiscussionsPage })));
@@ -53,6 +54,15 @@ const ProfilePage = lazy(() => import("./pages/ProfilePage.js").then(({ ProfileP
 const OrgOverviewPage = lazy(() => import("./pages/OrgOverviewPage.js").then(({ OrgOverviewPage }) => ({ default: OrgOverviewPage })));
 const OrgPeoplePage = lazy(() => import("./pages/OrgPeoplePage.js").then(({ OrgPeoplePage }) => ({ default: OrgPeoplePage })));
 const OrgTeamsPage = lazy(() => import("./pages/OrgTeamsPage.js").then(({ OrgTeamsPage }) => ({ default: OrgTeamsPage })));
+const ClassroomPage = lazy(() => import("./pages/ClassroomPage.js").then(({ ClassroomPage }) => ({ default: ClassroomPage })));
+const MarketplacePage = lazy(() => import("./pages/MarketplacePage.js").then(({ MarketplacePage }) => ({ default: MarketplacePage })));
+const MarketplacePublisherPage = lazy(() => import("./pages/MarketplacePublisherPage.js").then(({ MarketplacePublisherPage }) => ({ default: MarketplacePublisherPage })));
+
+function LoginRedirect() {
+  const location = useLocation();
+  const returnTo = location.pathname + location.search + location.hash;
+  return <Navigate to={`/ui/login?return_to=${encodeURIComponent(returnTo)}`} replace />;
+}
 
 export function App() {
   if (!isLoggedIn()) {
@@ -62,7 +72,7 @@ export function App() {
           <Suspense fallback={null}>
             <Routes>
               <Route path="/ui/login" element={<LoginPage />} />
-              <Route path="/ui/*" element={<Navigate to="/ui/login" replace />} />
+              <Route path="/ui/*" element={<LoginRedirect />} />
             </Routes>
           </Suspense>
         </BrowserRouter>
@@ -87,6 +97,9 @@ export function App() {
               <Route path="/ui/orgs/:org/governance" element={<OrgGovernancePage />} />
               <Route path="/ui/orgs/:org/copilot" element={<CopilotPage />} />
               <Route path="/ui/repos/:owner/:repo" element={<RepoDetailPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases" element={<ReleasesPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases/new" element={<ReleasesPage />} />
+              <Route path="/ui/repos/:owner/:repo/releases/:releaseId" element={<ReleasesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/issues/:number" element={<IssuesPage />} />
               <Route path="/ui/repos/:owner/:repo/labels" element={<IssuesPage view="labels" />} />
@@ -107,6 +120,7 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/projects-classic" element={<ProjectsClassicPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
+              <Route path="/ui/apps/:publisher/marketplace" element={<MarketplacePublisherPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
@@ -117,6 +131,11 @@ export function App() {
               <Route path="/ui/migrations" element={<MigrationsPage />} />
               <Route path="/ui/codespaces" element={<CodespacesPage />} />
               <Route path="/ui/repos/:owner/:repo/codespaces" element={<CodespacesPage />} />
+              <Route path="/ui/classrooms" element={<ClassroomPage />} />
+              <Route path="/ui/classrooms/:classroomId" element={<ClassroomPage />} />
+              <Route path="/ui/classrooms/accept/:inviteCode" element={<ClassroomPage />} />
+              <Route path="/ui/marketplace" element={<MarketplacePage />} />
+              <Route path="/ui/marketplace/:slug" element={<MarketplacePage />} />
               <Route path="/ui/admin" element={<OverviewPage />} />
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />

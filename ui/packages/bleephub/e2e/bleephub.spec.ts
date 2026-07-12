@@ -134,6 +134,8 @@ test.describe("Global navigation", () => {
     await openDrawer(page);
     const drawer = page.getByRole("navigation", { name: "Global" });
     await expect(drawer.getByRole("link", { name: "Repositories" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Classroom" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Marketplace" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Runners" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "GitHub Apps" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "OAuth Apps" })).toBeVisible();
@@ -185,14 +187,91 @@ test.describe("Global navigation", () => {
 // ─── Dark / light mode toggle ────────────────────────────────────────────────
 
 test.describe("Theme toggle", () => {
-  test("theme toggle lives in the user menu", async ({ page }) => {
+  test("saturated GitHub chrome resolves in both light and dark themes", async ({ page }) => {
     await page.goto("/ui/");
     await page.waitForLoadState("networkidle");
+    const light = await page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      const header = document.querySelector(".app-header");
+      return {
+        accent: css.getPropertyValue("--color-accent").trim(),
+        blue: css.getPropertyValue("--color-brand-blue").trim(),
+        purple: css.getPropertyValue("--color-brand-purple").trim(),
+        headerBackground: header ? getComputedStyle(header).backgroundImage : "",
+      };
+    });
+    expect(light).toMatchObject({ accent: "#0969da", blue: "#006eff", purple: "#8250df" });
+    expect(light.headerBackground).toContain("gradient");
+
     // The theme toggle is an item in the avatar dropdown menu.
     await page.getByRole("button", { name: "Open user menu" }).click();
     const toggle = page.getByRole("menuitem", { name: /(light|dark) theme/i });
     await expect(toggle).toBeVisible();
     await shot(page, "11-theme-toggle");
+    await toggle.click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.evaluate(() => {
+      const css = getComputedStyle(document.documentElement);
+      return {
+        accent: css.getPropertyValue("--color-accent").trim(),
+        cyan: css.getPropertyValue("--color-brand-cyan").trim(),
+        pink: css.getPropertyValue("--color-brand-pink").trim(),
+      };
+    });
+    expect(dark).toEqual({ accent: "#58a6ff", cyan: "#39d0e8", pink: "#ff7bda" });
+    await shot(page, "11b-theme-toggle-dark");
+  });
+});
+
+test.describe("Fine-grained personal access token settings", () => {
+  test("creates a one-time credential in polished light and dark settings", async ({ page }) => {
+    await page.goto("/ui/account");
+    await page.getByRole("button", { name: "Personal access tokens" }).click();
+    const heading = page.getByRole("heading", { name: "Fine-grained personal access tokens" });
+    await expect(heading).toBeVisible();
+    const hero = heading.locator("..");
+    expect(await hero.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain("gradient");
+    await page.getByLabel("Token name").fill(`Playwright token ${Date.now().toString(36)}`);
+    await page.getByRole("button", { name: "Generate token" }).click();
+    await expect(page.getByText("Your new token")).toBeVisible();
+    await expect(page.getByText(/^github_pat_/)).toBeVisible();
+    await expect(page.getByText("active", { exact: true })).toBeVisible();
+    await shot(page, "11e-fine-grained-token-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    expect(await hero.evaluate((node) => getComputedStyle(node).backgroundImage)).toContain("gradient");
+    await expect(page.getByText("Your new token")).toBeVisible();
+    await shot(page, "11f-fine-grained-token-dark");
+  });
+});
+
+test.describe("GitHub Classroom transition product", () => {
+  test("creates and renders a classroom with saturated light and dark organization", async ({ page }) => {
+    await page.goto("/ui/");
+    const suffix = Date.now().toString(36);
+    const org = `classroom-e2e-${suffix}`;
+    await apiPost(page, "/api/v3/admin/organizations", { login: org, admin: "admin", profile_name: "Classroom E2E" });
+    const classroom = await apiPost(page, "/classroom-data/classrooms", { name: "Software Construction", organization: org }) as { id: number };
+
+    await page.goto(`/ui/classrooms/${classroom.id}`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { name: "Software Construction" })).toBeVisible();
+    await expect(page.getByText(`Owned by ${org}`)).toBeVisible();
+    await expect(page.getByRole("button", { name: "New assignment" })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Roster/ })).toBeVisible();
+    const lightSurface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim());
+    expect(lightSurface).toBeTruthy();
+    await shot(page, "11c-classroom-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const darkSurface = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim());
+    expect(darkSurface).not.toBe(lightSurface);
+    await expect(page.getByRole("heading", { name: "Software Construction" })).toBeVisible();
+    await shot(page, "11d-classroom-dark");
   });
 });
 
@@ -228,6 +307,13 @@ test.describe("Repos page", () => {
     await expect(page.url()).toContain("/ui/repos/");
     await expect(page.url()).toContain("test-repo-playwright");
     await shot(page, "14-repo-detail");
+
+    await page.getByLabel("Repository actions").getByRole("button", { name: /Fork/ }).click();
+    const forkDialog = page.getByRole("dialog", { name: "Create a new fork" });
+    await expect(forkDialog).toBeVisible();
+    await expect(forkDialog.getByText(/choose a different owner/i)).toBeVisible();
+    await shot(page, "14b-repo-fork-owner");
+    await forkDialog.getByRole("button", { name: "Cancel" }).click();
   });
 
   test("creates a repo through the UI dialog", async ({ page }) => {
@@ -479,12 +565,186 @@ test.describe("Metrics page", () => {
   });
 });
 
+// ─── Release provider ───────────────────────────────────────────────────────
+
+test.describe("Release provider", () => {
+  test("creates, edits, uploads, downloads, and deletes through routed UI pages", async ({ page }) => {
+    await page.goto("/ui/");
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+    const repo = "release-ui-playwright";
+    await apiPost(page, "/api/v3/user/repos", { name: repo, auto_init: true });
+
+    await page.goto(`/ui/repos/${owner}/${repo}/releases`);
+    await page.getByRole("link", { name: "New release" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases/new$`));
+    await page.getByLabel("Tag").fill("v1.0.0");
+    await page.getByLabel("Release title").fill("First real release");
+    await page.getByLabel("Release notes").fill("Published through the GitHub-compatible UI.");
+    await page.getByRole("button", { name: "Create release" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases/\\d+$`));
+    await expect(page.getByRole("heading", { level: 1, name: "First real release" })).toBeVisible();
+
+    const assetBytes = Buffer.from("real release asset bytes", "utf8");
+    await page.getByLabel("Asset file").setInputFiles({
+      name: "artifact.txt",
+      mimeType: "text/plain",
+      buffer: assetBytes,
+    });
+    await page.getByLabel("Asset label").fill("Linux artifact");
+    await page.getByRole("button", { name: "Upload asset" }).click();
+    await expect(page.getByText("Linux artifact")).toBeVisible();
+    await expect(page.getByText(`${assetBytes.length} bytes`)).toBeVisible();
+
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Download artifact.txt" }).click();
+    expect((await download).suggestedFilename()).toBe("artifact.txt");
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabel("Release title").fill("Updated real release");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Updated real release" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Delete artifact.txt" }).click();
+    await expect(page.getByText("Linux artifact")).not.toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.getByRole("button", { name: "Delete" }).click();
+    await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases$`));
+    await expect(page.getByText("No releases published")).toBeVisible();
+  });
+});
+
+// ─── Code security ──────────────────────────────────────────────────────────
+
+test.describe("Code security", () => {
+  test("uses the real default-branch commit and renders saturated light/dark CodeQL organization", async ({ page }) => {
+    await page.goto("/ui/");
+    const user = await apiGet(page, "/api/v3/user");
+    const owner = (user as { login: string }).login;
+    const repo = `code-security-${Date.now()}`;
+    await apiPost(page, "/api/v3/user/repos", { name: repo, auto_init: true });
+    const branch = await apiGet(page, `/api/v3/repos/${owner}/${repo}/branches/main`) as { commit: { sha: string } };
+
+    await page.goto(`/ui/repos/${owner}/${repo}/security/code-scanning`);
+    await page.waitForLoadState("networkidle");
+    await expect(page.getByRole("heading", { level: 1, name: "Code scanning" })).toBeVisible();
+    await expect(page.getByText(branch.commit.sha.slice(0, 7), { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Databases" })).toBeVisible();
+    await expect(page.getByText("No CodeQL databases yet")).toBeVisible();
+
+    const sarif = Buffer.from(JSON.stringify({
+      version: "2.1.0",
+      runs: [{ tool: { driver: { name: "CodeQL" } }, results: [] }],
+    }), "utf8");
+    await page.getByLabel("SARIF file").setInputFiles({ name: "results.sarif", mimeType: "application/sarif+json", buffer: sarif });
+    const uploadResponsePromise = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith(`/repos/${owner}/${repo}/code-scanning/sarifs`));
+    await page.getByRole("button", { name: "Upload SARIF" }).click();
+    const uploadResponse = await uploadResponsePromise;
+    expect(uploadResponse.status()).toBe(202);
+    const payload = uploadResponse.request().postDataJSON() as { commit_sha: string; ref: string };
+    expect(payload).toEqual(expect.objectContaining({ commit_sha: branch.commit.sha, ref: "refs/heads/main" }));
+    expect(payload.commit_sha).not.toMatch(/^0+$/);
+    await expect(page.locator(".security-summary").getByText("1 analyses", { exact: true })).toBeVisible();
+
+    const light = await page.locator(".security-hero").evaluate((element) => {
+      const hero = getComputedStyle(element);
+      const icon = getComputedStyle(document.querySelector(".security-hero-icon")!);
+      return { surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(), hero: hero.backgroundImage, icon: icon.backgroundImage };
+    });
+    expect(light.hero).not.toBe("none");
+    expect(light.icon).toContain("linear-gradient");
+    await shot(page, "31-code-security-light");
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.locator(".security-hero").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      hero: getComputedStyle(element).backgroundImage,
+    }));
+    expect(dark.surface).not.toBe(light.surface);
+    expect(dark.hero).not.toBe("none");
+    await expect(page.getByRole("heading", { name: "Databases" })).toBeVisible();
+    await shot(page, "32-code-security-dark");
+  });
+});
+
+// ─── GitHub Marketplace ────────────────────────────────────────────────────
+
+test.describe("GitHub Marketplace", () => {
+  test("publishes, purchases, installs, and renders saturated light/dark workflows", async ({ page }) => {
+    await page.goto("/ui/apps");
+    await page.getByRole("button", { name: "New GitHub app" }).click();
+    await page.getByLabel("Name").fill("Marketplace Polish App");
+    await page.getByLabel("Description").fill("A real Marketplace producer");
+    await page.getByRole("button", { name: "Create app" }).click();
+    await expect(page.getByRole("heading", { name: "Save these now" })).toBeVisible();
+    await page.getByRole("button", { name: "I copied them" }).click();
+    const publisherLink = page.getByRole("link", { name: "marketplace-polish-app" });
+    await expect(publisherLink).toBeVisible();
+    await publisherLink.click();
+    await expect(page.getByRole("heading", { name: "Create Marketplace listing" })).toBeVisible();
+
+    await page.getByLabel("Listing name").fill("Marketplace Polish App");
+    await page.getByLabel("Short description").fill("Colorful automation with GitHub-native installation and billing");
+    await page.getByLabel("Full description").fill("A polished GitHub Marketplace integration that keeps setup, plans, billing changes, and webhook delivery together.");
+    await page.getByLabel("Setup URL").fill("https://example.test/marketplace/setup");
+    await page.getByLabel("Payload URL").fill(`${BASE}/health`);
+    await page.getByLabel("Secret").fill("playwright-marketplace-secret");
+    await page.getByRole("button", { name: "Create draft listing" }).click();
+    await expect(page.getByRole("heading", { name: "Manage Marketplace listing" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Add plan" }).click();
+    await page.getByLabel("Name", { exact: true }).last().fill("Team Candy");
+    await page.getByLabel("Description", { exact: true }).last().fill("Private repositories and priority support");
+    await page.getByLabel("Pricing model").selectOption("FLAT_RATE");
+    await page.getByLabel("Monthly (cents)").fill("1400");
+    await page.getByLabel("Yearly (cents)").fill("14000");
+    await page.getByLabel(/Offer a 14-day free trial/).check();
+    await page.getByRole("button", { name: "Publish plan" }).click();
+    await expect(page.getByText("Team Candy", { exact: true })).toBeVisible();
+    await page.getByLabel("Publish listing").check();
+    await page.getByRole("button", { name: "Save listing" }).click();
+    await expect(page.getByText("Published", { exact: true })).toBeVisible();
+
+    await page.goto("/ui/marketplace");
+    await expect(page.getByRole("heading", { name: "Build more. Ship brighter." })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Marketplace Polish App/ })).toBeVisible();
+    const light = await page.locator(".marketplace-hero").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      background: getComputedStyle(element).backgroundImage,
+    }));
+    expect(light.background).toContain("linear-gradient");
+    await shot(page, "33-marketplace-light");
+
+    await page.getByRole("link", { name: /Marketplace Polish App/ }).click();
+    await expect(page.getByRole("heading", { name: "Marketplace Polish App" })).toBeVisible();
+    await page.getByLabel(/14-day free trial/).check();
+    const purchaseResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/ui-data/marketplace/listings/marketplace-polish-app/purchase"));
+    await page.getByRole("button", { name: "Complete order and begin installation" }).click();
+    expect((await purchaseResponse).status()).toBe(201);
+    await expect(page.getByRole("link", { name: /Continue to Marketplace Polish App setup/ })).toBeVisible();
+    const installations = await apiGet(page, "/api/v3/user/installations") as { installations: Array<{ app_slug: string }> };
+    expect(installations.installations.some((installation) => installation.app_slug === "marketplace-polish-app")).toBe(true);
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.locator(".marketplace-detail-header").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      background: getComputedStyle(element).backgroundImage,
+    }));
+    expect(dark.surface).not.toBe(light.surface);
+    expect(dark.background).toContain("linear-gradient");
+    await shot(page, "34-marketplace-dark");
+  });
+});
+
 // ─── Dark theme capture ──────────────────────────────────────────────────────
 
 test.describe("Dark theme", () => {
   // Seed the persisted theme to "dark" before any script runs so the app
-  // boots in dark mode, then capture the key surfaces. Runs after the repo
-  // /issue tests above, so their data is still in the in-memory store.
+  // boots in dark mode, then capture the key surfaces.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.setItem("sockerless:theme", "dark");
@@ -503,8 +763,17 @@ test.describe("Dark theme", () => {
 
     const user = await apiGet(page, "/api/v3/user");
     const owner = (user as { login: string }).login;
-    await page.goto(`/ui/repos/${owner}/issues-direct/issues`);
+    await apiPost(page, "/api/v3/user/repos", {
+      name: "dark-theme-repo",
+      description: "Dark theme repository chrome",
+      private: false,
+      auto_init: true,
+    });
+    await page.goto(`/ui/repos/${owner}/dark-theme-repo`);
     await page.waitForLoadState("networkidle");
+    await expect(page.getByLabel("Repository actions")).toBeVisible();
+    await expect(page.getByRole("button", { name: /Watch/ })).toBeVisible();
+    await expect(page.getByRole("button", { name: /Star/ })).toBeVisible();
     await shot(page, "28-dark-issues");
   });
 });

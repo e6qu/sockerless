@@ -33,8 +33,10 @@ type Server struct {
 	actionsEvents          actionsEventLoop  // checks/webhook fan-out for run+job transitions
 	registryUploadsMu      sync.Mutex
 	registryUploads        map[string]*containerRegistryUpload
-	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
-	externalURL            string   // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
+	classroomMu            sync.Mutex // serializes multi-resource Classroom browser transactions
+	marketplaceMu          sync.Mutex // serializes Marketplace billing transitions and webhook emission
+	routePatterns          []string   // every pattern registered via route(), for fidelity enumeration
+	externalURL            string     // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
 	pagesJekyllExecutable  string
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
@@ -53,7 +55,7 @@ func (s *Server) route(pattern string, handler http.HandlerFunc) {
 	s.routePatterns = append(s.routePatterns, pattern)
 	// /api/v3 routes are instrumented so served requests feed the API
 	// insights stats (gh_api_insights.go); other patterns pass through.
-	s.mux.HandleFunc(pattern, s.instrumentAPIRoute(pattern, handler))
+	s.mux.HandleFunc(pattern, s.instrumentAPIRoute(pattern, s.enforceFineGrainedPATResource(pattern, handler)))
 }
 
 // NewServer creates a bleephub server with all routes registered.
@@ -269,9 +271,8 @@ func (s *Server) registerRoutes() {
 	s.registerGHPRCommentsRoutes()
 
 	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
-	// Pages, branch protection, org members, marketplace.
+	// Pages, branch protection, organization members, and Marketplace.
 	s.registerGHMiscEndpoints()
-	s.seedDefaultMarketplacePlans()
 
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
@@ -361,6 +362,8 @@ func (s *Server) registerRoutes() {
 	s.registerGHCodesOfConductRoutes()
 	s.registerGHGlobalAdvisoriesRoutes()
 	s.registerGHClassroomRoutes()
+	s.registerGHClassroomWebRoutes()
+	s.registerGHMarketplaceRoutes()
 	s.registerGHEventsFeedsRoutes()
 	s.registerGHUserIssuesRoutes()
 	// Repository read surfaces (gh_repos_reads.go)

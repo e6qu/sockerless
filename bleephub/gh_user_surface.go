@@ -655,41 +655,18 @@ func (st *Store) GetUserInteractionLimit(userID int) (string, time.Time) {
 
 // ─── GitHub Marketplace purchases ────────────────────────────────────────
 
-// SetMarketplacePurchase records a purchase for an account. The purchase
-// must reference a seeded marketplace plan.
-func (st *Store) SetMarketplacePurchase(p *MarketplacePurchase) bool {
-	st.Misc.mu.Lock()
-	defer st.Misc.mu.Unlock()
-	plan := st.Misc.marketplacePlans[p.PlanID]
-	if plan == nil {
-		return false
-	}
-	if p.PlanName == "" {
-		p.PlanName = plan.Name
-	}
-	st.Misc.marketplacePurchases[p.AccountID] = p
-	if st.Misc.persist != nil {
-		st.Misc.persist.MustPut("marketplace_purchases", strconv.Itoa(p.AccountID), p)
-	}
-	return true
-}
-
 func (s *Server) handleListUserMarketplacePurchases(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	if user == nil {
 		writeGHError(w, http.StatusUnauthorized, "Bad credentials")
 		return
 	}
-	s.store.Misc.mu.RLock()
-	purchase := s.store.Misc.marketplacePurchases[user.ID]
-	var plan *MarketplacePlan
-	if purchase != nil {
-		plan = s.store.Misc.marketplacePlans[purchase.PlanID]
+	for _, listing := range s.store.ListMarketplaceListings(false) {
+		s.reconcileMarketplacePurchases(listing.Slug)
 	}
-	s.store.Misc.mu.RUnlock()
-
 	out := []map[string]interface{}{}
-	if purchase != nil {
+	for _, purchase := range s.store.ListMarketplacePurchasesForAccount("User", user.ID) {
+		plan := s.store.GetMarketplacePlanForListing(purchase.ListingSlug, purchase.PlanID)
 		if plan == nil {
 			writeGHError(w, http.StatusInternalServerError, "Marketplace plan not found for purchase")
 			return
@@ -749,7 +726,7 @@ func marketplacePlanJSON(p *MarketplacePlan, baseURL string) map[string]interfac
 		"has_free_trial":         p.HasFreeTrial,
 		"unit_name":              nil,
 		"state":                  p.State,
-		"bullets":                p.Bullets,
+		"bullets":                append([]string{}, p.Bullets...),
 	}
 }
 

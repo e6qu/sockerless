@@ -159,6 +159,9 @@ func (s *Server) doDeliverAttempt(hook *Webhook, event, action, guid string, pay
 	// App-bound hooks (HookID < 0) target the GitHub App ("integration");
 	// org hooks target the organization's id; repository hooks the repo's.
 	switch {
+	case hook.MarketplaceSlug != "":
+		// GitHub Marketplace webhooks are listing-scoped and do not advertise a
+		// repository, organization, or GitHub App installation target.
 	case hook.ID < 0:
 		reqHeaders["X-GitHub-Hook-Installation-Target-Type"] = "integration"
 		reqHeaders["X-GitHub-Hook-Installation-Target-ID"] = strconv.Itoa(-hook.ID)

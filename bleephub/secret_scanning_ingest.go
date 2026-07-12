@@ -19,7 +19,7 @@ type secretScanningPattern struct {
 }
 
 var secretScanningContentPatterns = []secretScanningPattern{
-	{patternID: "ghp", secretType: "github_personal_access_token", re: regexp.MustCompile(`ghp_[A-Za-z0-9_]{36}`)},
+	{patternID: "ghp", secretType: "github_personal_access_token", re: regexp.MustCompile(`(?:ghp_[A-Za-z0-9_]{36,40}|github_pat_[A-Za-z0-9_]{40,128})`)},
 	{patternID: "aws", secretType: "aws_access_key_id", re: regexp.MustCompile(`AKIA[0-9A-Z]{16}`)},
 	{patternID: "google", secretType: "google_api_key", re: regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`)},
 	{patternID: "slack", secretType: "slack_incoming_webhook_url", re: regexp.MustCompile(`https://hooks\.slack\.com/services/[A-Za-z0-9_/-]+`)},

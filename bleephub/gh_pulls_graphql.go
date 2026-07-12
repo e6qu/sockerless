@@ -1746,7 +1746,7 @@ func (s *Server) addPullRequestFieldsToSchema(userType, issueType, repoType, mut
 			updated := s.store.GetPullRequest(pr.ID)
 			mergedPayload := buildPullRequestPayload(s.store, repo, updated, user, "closed")
 			s.emitWebhookEvent(repo.FullName, "pull_request", "closed", mergedPayload)
-			go s.triggerWorkflowsForEvent(repo.FullName, "pull_request", "closed", "refs/heads/"+updated.HeadRefName, mergedPayload)
+			s.triggerWorkflowsForEvent(repo.FullName, "pull_request", "closed", "refs/heads/"+updated.HeadRefName, mergedPayload)
 
 			var clientMutationID interface{}
 			if v, ok := input["clientMutationId"].(string); ok && v != "" {

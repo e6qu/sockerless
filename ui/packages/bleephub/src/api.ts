@@ -23,8 +23,11 @@ import type {
   GithubSecret,
   GithubEnvironment,
   GithubRelease,
+  GithubReleaseAsset,
   GithubMigration,
   GithubMigrationStartPayload,
+  GithubRepoSubscription,
+  GithubRepoViewerState,
   GithubWorkflow,
   GithubWorkflowRun,
   GithubJob,
@@ -63,6 +66,7 @@ import type {
   GithubCodeScanningDismissedReason,
   GithubCodeScanningSARIFStatus,
   GithubCodeScanningSARIFUpload,
+  GithubCodeQLDatabase,
   GithubDependabotAlert,
   GithubDependabotAlertState,
   GithubDependabotDismissedReason,
@@ -134,6 +138,11 @@ import type {
   GithubOrgTeam,
   GithubFeedIssue,
   GithubPRFile,
+  GithubMarketplaceAccount,
+  GithubMarketplaceListing,
+  GithubMarketplaceListingSettings,
+  GithubMarketplacePlan,
+  GithubMarketplaceSubscription,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -477,17 +486,15 @@ export async function createApp(payload: {
       ...authHeaders(),
     },
     body: form,
-    redirect: "manual",
   });
-  if (createRes.status !== 302 && createRes.status !== 303) {
+	// Follow the real App Manifest redirect. Browser Fetch deliberately hides
+	// manual redirect status and Location, but exposes the final same-origin
+	// response URL; GitHub returns the one-time conversion code there.
+  if (!createRes.ok) {
     const text = await createRes.text();
     throw new Error(`createApp manifest ${createRes.status}: ${text || createRes.statusText}`);
   }
-  const location = createRes.headers.get("Location");
-  if (!location) {
-    throw new Error("createApp manifest: missing redirect Location header");
-  }
-  const code = new URL(location, origin).searchParams.get("code");
+  const code = new URL(createRes.url, origin).searchParams.get("code");
   if (!code) {
     throw new Error("createApp manifest: missing conversion code");
   }
@@ -802,6 +809,149 @@ async function ghPostJSON<T>(path: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+export interface ClassroomOrganization {
+  id: number;
+  login: string;
+  name: string;
+  avatar_url: string;
+}
+
+export interface ClassroomRosterEntry {
+  id: number;
+  login: string;
+  avatar_url: string;
+  roster_identifier: string;
+}
+
+export interface ClassroomAutogradingTest {
+  name: string;
+  command: string;
+  points: number;
+}
+
+export interface ClassroomAssignment {
+  id: number;
+  title: string;
+  type: "individual" | "group";
+  slug: string;
+  invite_link: string;
+  invitations_enabled: boolean;
+  public_repo: boolean;
+  accepted: number;
+  submitted: number;
+  passing: number;
+  deadline: string | null;
+  autograding_tests?: ClassroomAutogradingTest[];
+  starter_code_repository?: { full_name: string };
+  roster_identifier_required?: boolean;
+}
+
+export interface Classroom {
+  id: number;
+  name: string;
+  archived: boolean;
+  url: string;
+  organization: ClassroomOrganization;
+  roster: ClassroomRosterEntry[];
+  assignments: ClassroomAssignment[];
+}
+
+export interface ClassroomDashboard {
+  classrooms: Classroom[];
+  organizations: ClassroomOrganization[];
+}
+
+export const fetchClassroomDashboard = () => ghFetch<ClassroomDashboard>("/classroom-data");
+export const createClassroom = (body: { name: string; organization: string }) =>
+  ghPostJSON<Classroom>("/classroom-data/classrooms", body);
+export const updateClassroom = (id: number, body: { name?: string; archived?: boolean }) =>
+  ghPatchJSON<Classroom>(`/classroom-data/classrooms/${id}`, body);
+export const replaceClassroomRoster = (
+  id: number,
+  students: Array<{ login: string; roster_identifier: string }>,
+) => ghPutJSON<Classroom>(`/classroom-data/classrooms/${id}/roster`, { students });
+export const createClassroomAssignment = (
+  classroomID: number,
+  body: {
+    title: string;
+    type: "individual" | "group";
+    starter_code_repository: string;
+    public_repo: boolean;
+    students_are_repo_admins: boolean;
+    feedback_pull_requests_enabled: boolean;
+    deadline?: string;
+    max_teams?: number;
+    max_members?: number;
+    autograding_tests: ClassroomAutogradingTest[];
+  },
+) => ghPostJSON<ClassroomAssignment>(`/classroom-data/classrooms/${classroomID}/assignments`, body);
+export const fetchClassroomInvitation = (code: string) =>
+  ghFetch<ClassroomAssignment>(`/classroom-data/invitations/${encodeURIComponent(code)}`);
+export const acceptClassroomInvitation = (code: string, groupName?: string, rosterIdentifier?: string) =>
+  ghPostJSON<{ id: number; repository: { full_name: string; html_url: string } }>(
+    `/classroom-data/invitations/${encodeURIComponent(code)}/accept`,
+    { ...(groupName ? { group_name: groupName } : {}), ...(rosterIdentifier ? { roster_identifier: rosterIdentifier } : {}) },
+  );
+export async function exportClassroomTransition(): Promise<Blob> {
+  const response = await fetch("/classroom-data/export", { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  return response.blob();
+}
+export const importClassroomTransition = (bundle: unknown) =>
+  ghPostJSON<{ classrooms: Classroom[] }>("/classroom-data/import", bundle);
+
+export interface FineGrainedPATPermissions {
+  organization?: Record<string, string>;
+  repository?: Record<string, string>;
+  other?: Record<string, string>;
+}
+
+export interface FineGrainedPAT {
+  id: number;
+  name: string;
+  resource_owner: string;
+  repository_selection: "all" | "subset" | "none";
+  repository_ids: number[];
+  permissions: FineGrainedPATPermissions;
+  created_at: string;
+  expires_at: string | null;
+  status: "active" | "pending" | "revoked" | "expired";
+}
+
+export interface FineGrainedPATRequest {
+  id: number;
+  organization: string;
+  owner: { login: string };
+  token_name: string;
+  reason: string | null;
+  repository_selection: "all" | "subset" | "none";
+  permissions: FineGrainedPATPermissions;
+  token_expires_at: string | null;
+}
+
+export interface FineGrainedPATDashboard {
+  tokens: FineGrainedPAT[];
+  resource_owners: Array<{ login: string; type: "User" | "Organization" }>;
+  repositories: Record<string, Array<{ id: number; name: string; private: boolean }>>;
+  pending_requests: FineGrainedPATRequest[];
+}
+
+export const fetchFineGrainedPATDashboard = () =>
+  ghFetch<FineGrainedPATDashboard>("/settings/personal-access-tokens");
+export const createFineGrainedPAT = (body: {
+  name: string;
+  resource_owner: string;
+  repository_selection: "all" | "subset" | "none";
+  repository_ids: number[];
+  permissions: FineGrainedPATPermissions;
+  expires_at?: string;
+  reason?: string;
+}) => ghPostJSON<FineGrainedPAT & { token: string }>("/settings/personal-access-tokens", body);
+export const deleteFineGrainedPAT = (id: number) =>
+  ghSend("DELETE", `/settings/personal-access-tokens/${id}`);
+export const reviewFineGrainedPATRequest = (org: string, id: number, action: "approve" | "deny") =>
+  ghSend("POST", `/settings/organizations/${encodeURIComponent(org)}/personal-access-token-requests/${id}`, { action });
+
 /** First page by (owner, repo, state); follow-up pages by the Link rel="next" URL. */
 export const fetchRepoIssuesPage = (
   owner: string,
@@ -837,6 +987,9 @@ export const fetchPRDetail = (owner: string, repo: string, number: number) =>
 
 export const fetchRepoBranches = (owner: string, repo: string) =>
   ghFetch<GithubBranch[]>(`/api/v3/repos/${owner}/${repo}/branches`);
+
+export const fetchRepoBranch = (owner: string, repo: string, branch: string) =>
+  ghFetch<GithubBranch>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}`);
 
 export const fetchBranchProtection = (owner: string, repo: string, branch: string) =>
   ghFetch<GithubBranchProtection>(`/api/v3/repos/${owner}/${repo}/branches/${encodeURIComponent(branch)}/protection`);
@@ -934,6 +1087,84 @@ export const fetchEnvironments = (owner: string, repo: string) =>
 
 export const fetchReleases = (owner: string, repo: string) =>
   ghFetch<GithubRelease[]>(`/api/v3/repos/${owner}/${repo}/releases`);
+
+export const fetchRelease = (owner: string, repo: string, releaseId: number) =>
+  ghFetch<GithubRelease>(`/api/v3/repos/${owner}/${repo}/releases/${releaseId}`);
+
+export interface ReleasePayload {
+  tag_name: string;
+  target_commitish?: string;
+  name?: string;
+  body?: string;
+  draft?: boolean;
+  prerelease?: boolean;
+}
+
+export const createRelease = (owner: string, repo: string, payload: ReleasePayload) =>
+  ghPostJSON<GithubRelease>(`/api/v3/repos/${owner}/${repo}/releases`, payload);
+
+export async function updateRelease(
+  owner: string,
+  repo: string,
+  releaseId: number,
+  payload: Partial<ReleasePayload>,
+): Promise<GithubRelease> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/releases/${releaseId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<GithubRelease>;
+}
+
+export async function deleteRelease(owner: string, repo: string, releaseId: number): Promise<void> {
+  await ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/releases/${releaseId}`);
+}
+
+export async function uploadReleaseAsset(
+  owner: string,
+  repo: string,
+  releaseId: number,
+  file: File,
+  label = "",
+): Promise<GithubReleaseAsset> {
+  const params = new URLSearchParams({ name: file.name });
+  if (label) params.set("label", label);
+  const res = await fetch(
+    `/api/uploads/repos/${owner}/${repo}/releases/${releaseId}/assets?${params}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": file.type || "application/octet-stream", ...authHeaders() },
+      body: file,
+    },
+  );
+  if (!res.ok) {
+    handleUnauthorized(res);
+    const text = await res.text();
+    throw new ApiError(res.status, `${res.status} ${res.statusText}: ${text || res.statusText}`);
+  }
+  return res.json() as Promise<GithubReleaseAsset>;
+}
+
+export async function downloadReleaseAsset(owner: string, repo: string, assetId: number): Promise<Blob> {
+  const res = await fetch(`/api/v3/repos/${owner}/${repo}/releases/assets/${assetId}`, {
+    headers: { Accept: "application/octet-stream", ...authHeaders() },
+  });
+  if (!res.ok) {
+    handleUnauthorized(res);
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  return res.blob();
+}
+
+export async function deleteReleaseAsset(owner: string, repo: string, assetId: number): Promise<void> {
+  await ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/releases/assets/${assetId}`);
+}
 
 // ─── GitHub Actions Representational State Transfer ─────────────────────
 
@@ -1525,9 +1756,6 @@ export const fetchCodeScanningAlerts = (
   return ghFetch<GithubCodeScanningAlert[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts${qs ? `?${qs}` : ""}`);
 };
 
-export const fetchCodeScanningAlert = (owner: string, repo: string, number: number) =>
-  ghFetch<GithubCodeScanningAlert>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}`);
-
 export const fetchCodeScanningAlertInstances = (owner: string, repo: string, number: number) =>
   ghFetch<GithubCodeScanningAlertInstance[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/alerts/${number}/instances`);
 
@@ -1553,6 +1781,24 @@ export const uploadSARIF = (
 
 export const fetchSARIFStatus = (owner: string, repo: string, id: string) =>
   ghFetch<GithubCodeScanningSARIFStatus>(`/api/v3/repos/${owner}/${repo}/code-scanning/sarifs/${id}`);
+
+export const fetchCodeQLDatabases = (owner: string, repo: string) =>
+  ghFetch<GithubCodeQLDatabase[]>(`/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases`);
+
+export const deleteCodeQLDatabase = (owner: string, repo: string, language: string) =>
+  ghSend("DELETE", `/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases/${encodeURIComponent(language)}`);
+
+export async function downloadCodeQLDatabase(owner: string, repo: string, language: string): Promise<Blob> {
+  const response = await fetch(
+    `/api/v3/repos/${owner}/${repo}/code-scanning/codeql/databases/${encodeURIComponent(language)}`,
+    { headers: { Accept: "application/zip", ...authHeaders() } },
+  );
+  if (!response.ok) {
+    handleUnauthorized(response);
+    throw new ApiError(response.status, `${response.status} ${response.statusText}`);
+  }
+  return response.blob();
+}
 
 async function ghPatchJSON<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -3078,6 +3324,24 @@ export const fetchRepoTags = (owner: string, repo: string) =>
 export const fetchRepoSocialCounts = (owner: string, repo: string) =>
   ghFetch<GithubRepoSocialCounts>(`/api/v3/repos/${owner}/${repo}`);
 
+export const fetchRepoViewerState = (owner: string, repo: string) =>
+  ghFetch<GithubRepoViewerState>(`/ui-data/repos/${owner}/${repo}/viewer`);
+
+export const starRepo = (owner: string, repo: string) =>
+  ghSend("PUT", `/api/v3/user/starred/${owner}/${repo}`);
+
+export const unstarRepo = (owner: string, repo: string) =>
+  ghSend("DELETE", `/api/v3/user/starred/${owner}/${repo}`);
+
+export const setRepoSubscription = (owner: string, repo: string, subscribed: boolean) =>
+  ghPutJSON<GithubRepoSubscription>(`/api/v3/repos/${owner}/${repo}/subscription`, {
+    subscribed,
+    ignored: false,
+  });
+
+export const forkRepo = (owner: string, repo: string, organization?: string) =>
+  ghPostJSON<BleephubRepo>(`/api/v3/repos/${owner}/${repo}/forks`, organization ? { organization } : {});
+
 export const fetchUserSSHKeys = () => ghFetch<GithubSSHKey[]>("/api/v3/user/keys");
 
 export const createUserSSHKey = (title: string, key: string) =>
@@ -3167,6 +3431,83 @@ export const fetchDashboardIssues = () =>
   ghFetch<GithubFeedIssue[]>(
     "/api/v3/issues?filter=all&state=all&sort=updated&per_page=15",
   );
+
+// ─── GitHub Marketplace browser workflow ──────────────────────────────
+
+export const fetchMarketplaceListings = () =>
+  ghFetch<GithubMarketplaceListing[]>("/ui-data/marketplace/listings");
+
+export const fetchMarketplaceListing = (slug: string) =>
+  ghFetch<GithubMarketplaceListing>(`/ui-data/marketplace/listings/${encodeURIComponent(slug)}`);
+
+export const fetchMarketplaceAccounts = () =>
+  ghFetch<GithubMarketplaceAccount[]>("/ui-data/marketplace/accounts");
+
+export const fetchMarketplaceSubscriptions = () =>
+  ghFetch<GithubMarketplaceSubscription[]>("/ui-data/marketplace/subscriptions");
+
+export interface MarketplacePurchasePayload {
+  account: string;
+  plan_id: number;
+  billing_cycle: "monthly" | "yearly";
+  unit_count: number;
+  free_trial: boolean;
+}
+
+export const purchaseMarketplacePlan = (slug: string, payload: MarketplacePurchasePayload) =>
+  ghPostJSON<GithubMarketplaceSubscription>(
+    `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/purchase`,
+    payload,
+  );
+
+export const changeMarketplacePlan = (
+  slug: string,
+  payload: Omit<MarketplacePurchasePayload, "free_trial">,
+) => ghPatchJSON<GithubMarketplaceSubscription>(
+  `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/subscription`,
+  payload,
+);
+
+export const cancelMarketplacePlan = (slug: string, account: string) =>
+  ghDeleteJSON<GithubMarketplaceSubscription | undefined>(
+    `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/subscription?account=${encodeURIComponent(account)}`,
+    undefined,
+  );
+
+export interface MarketplaceListingSettingsPayload {
+  name: string;
+  description: string;
+  full_description: string;
+  setup_url: string;
+  installation_url: string;
+  webhook_url: string;
+  webhook_secret: string;
+  webhook_content_type: "json" | "form";
+  webhook_active: boolean;
+  published: boolean;
+}
+
+export const fetchMarketplaceListingSettings = (publisher: string) =>
+  ghFetch<{ listing: GithubMarketplaceListingSettings | null }>(`/ui-data/settings/apps/${encodeURIComponent(publisher)}/marketplace`)
+    .then(({ listing }) => listing);
+
+export const saveMarketplaceListingSettings = (publisher: string, payload: MarketplaceListingSettingsPayload) =>
+  ghPutJSON<GithubMarketplaceListingSettings>(`/settings/apps/${encodeURIComponent(publisher)}/marketplace`, payload);
+
+export const createMarketplacePlanSettings = (
+  publisher: string,
+  payload: {
+    name: string;
+    description: string;
+    monthly_price_in_cents: number;
+    yearly_price_in_cents: number;
+    price_model: "FREE" | "FLAT_RATE" | "PER_UNIT";
+    has_free_trial: boolean;
+    unit_name: string;
+    state: "draft" | "published";
+    bullets: string[];
+  },
+) => ghPostJSON<GithubMarketplacePlan>(`/settings/apps/${encodeURIComponent(publisher)}/marketplace/plans`, payload);
 // ─── WP-C: Issues & Pull Requests GitHub-faithful layout ────────────────
 
 /**

@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { DataTable, InlineError, Spinner } from "@sockerless/ui-core/components";
 import { createColumnHelper } from "@tanstack/react-table";
 import { useState } from "react";
+import { Link } from "react-router";
 import {
   createApp,
   createOAuthApp,
@@ -89,7 +90,7 @@ function AppsTab() {
     }),
     appsCol.accessor("slug", {
       header: "Slug",
-      cell: (info) => <span style={{ color: "var(--color-accent)" }}>{info.getValue()}</span>,
+      cell: (info) => <Link to={`/ui/apps/${info.getValue()}/marketplace`} style={{ color: "var(--color-accent)", fontWeight: 600 }}>{info.getValue()}</Link>,
     }),
     appsCol.accessor("name", {
       header: "Name",

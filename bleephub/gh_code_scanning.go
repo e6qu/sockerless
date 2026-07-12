@@ -1,9 +1,13 @@
 package bleephub
 
 import (
+	"archive/zip"
+	"bytes"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,6 +15,7 @@ import (
 
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"gopkg.in/yaml.v3"
 )
 
 func (s *Server) registerGHCodeScanningRoutes() {
@@ -26,8 +31,10 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("DELETE /api/v3/repos/{owner}/{repo}/code-scanning/analyses/{analysis_id}", s.handleDeleteCodeScanningAnalysis)
 
 	// SARIF upload
-	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/sarifs", s.handleCreateSARIFUpload)
-	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/sarifs/{sarif_id}", s.handleGetSARIFUpload)
+	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/sarifs",
+		s.requirePerm(scopeSecurityEvents, permWrite, s.handleCreateSARIFUpload))
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/sarifs/{sarif_id}",
+		s.requirePerm(scopeSecurityEvents, permRead, s.handleGetSARIFUpload))
 
 	// Default setup
 	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/default-setup", s.handleGetCodeScanningDefaultSetup)
@@ -39,9 +46,14 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("POST /api/v3/repos/{owner}/{repo}/code-scanning/alerts/{alert_number}/autofix/commits", s.handleCommitCodeScanningAutofix)
 
 	// CodeQL databases
-	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleListCodeQLDatabases)
-	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleGetCodeQLDatabase)
-	s.route("DELETE /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}", s.handleDeleteCodeQLDatabase)
+	s.route("POST /repos/{owner}/{repo}/code-scanning/codeql/databases/{language}",
+		s.requirePerm(scopeSecurityEvents, permWrite, s.handleUploadCodeQLDatabase))
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases",
+		s.requirePerm(scopeContents, permRead, s.handleListCodeQLDatabases))
+	s.route("GET /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}",
+		s.requirePerm(scopeContents, permRead, s.handleGetCodeQLDatabase))
+	s.route("DELETE /api/v3/repos/{owner}/{repo}/code-scanning/codeql/databases/{language}",
+		s.requirePerm(scopeContents, permWrite, s.handleDeleteCodeQLDatabase))
 	s.route("GET /code-scanning/repos/{owner}/{repo}/codeql/databases/{language}/download", s.handleDownloadCodeQLDatabase)
 
 	// CodeQL variant analyses
@@ -54,9 +66,6 @@ func (s *Server) registerGHCodeScanningRoutes() {
 	s.route("GET /api/v3/orgs/{org}/code-scanning/alerts",
 		s.requireOrgAdmin(scopeSecurityEvents, permRead, s.handleListOrgCodeScanningAlerts))
 
-	// Internal seeding endpoint for CodeQL database bytes: real GitHub
-	// receives databases from CodeQL analysis uploads.
-	s.route("POST /internal/repos/{owner}/{repo}/code-scanning/codeql/databases", s.handleSeedCodeQLDatabase)
 }
 
 func (s *Server) handleListCodeScanningAlerts(w http.ResponseWriter, r *http.Request) {
@@ -256,13 +265,23 @@ func (s *Server) handleCreateSARIFUpload(w http.ResponseWriter, r *http.Request)
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if !canAdminRepo(s.store, user, repo) {
-		writeGHError(w, http.StatusNotFound, "Not Found")
+	if !s.codeScanningRequestCanWriteRepo(r, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
 		return
 	}
 
 	var req map[string]interface{}
 	if !decodeJSONBody(w, r, &req) {
+		return
+	}
+	commitSHA, _ := req["commit_sha"].(string)
+	ref, _ := req["ref"].(string)
+	if err := validateCodeScanningRef(ref); err != nil {
+		writeGHValidationError(w, "SARIFUpload", "ref", "invalid")
+		return
+	}
+	if err := s.validateCodeScanningCommit(repo, commitSHA); err != nil {
+		writeGHValidationError(w, "SARIFUpload", "commit_sha", "invalid")
 		return
 	}
 
@@ -278,13 +297,72 @@ func (s *Server) handleCreateSARIFUpload(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// codeScanningRequestCanWriteRepo accepts both user credentials with push
+// access and a repository-selected GitHub App installation token. GitHub
+// Actions' built-in token is installation-shaped rather than a human
+// collaborator, so reducing authorization to canPushRepo would reject the
+// official CodeQL producer even when its permission gate passed.
+func (s *Server) codeScanningRequestCanWriteRepo(r *http.Request, repo *Repo) bool {
+	if canPushRepo(s.store, ghUserFromContext(r.Context()), repo) {
+		return true
+	}
+	return installationRequestCanAccessRepo(r, repo)
+}
+
+func installationRequestCanAccessRepo(r *http.Request, repo *Repo) bool {
+	inst := ghInstallationFromContext(r.Context())
+	token := ghInstallationTokenFromContext(r.Context())
+	if inst == nil || token == nil || repo == nil {
+		return false
+	}
+	return len(filterReposBySelection([]*Repo{repo}, inst, token)) == 1
+}
+
+func (s *Server) codeScanningRequestCanReadRepo(r *http.Request, repo *Repo) bool {
+	return canReadRepo(s.store, ghUserFromContext(r.Context()), repo) || installationRequestCanAccessRepo(r, repo)
+}
+
+func (s *Server) validateCodeScanningCoordinate(repo *Repo, commitSHA, ref string) error {
+	if err := validateCodeScanningRef(ref); err != nil {
+		return err
+	}
+	return s.validateCodeScanningCommit(repo, commitSHA)
+}
+
+func validateCodeScanningRef(ref string) error {
+	if !strings.HasPrefix(ref, "refs/heads/") && !strings.HasPrefix(ref, "refs/tags/") && !strings.HasPrefix(ref, "refs/pull/") {
+		return fmt.Errorf("ref must be a fully-qualified Git reference")
+	}
+	if err := plumbing.ReferenceName(ref).Validate(); err != nil {
+		return fmt.Errorf("ref is invalid: %w", err)
+	}
+	return nil
+}
+
+func (s *Server) validateCodeScanningCommit(repo *Repo, commitSHA string) error {
+	if repo == nil || len(commitSHA) != 40 {
+		return fmt.Errorf("commit_sha must be a full commit object ID")
+	}
+	if _, err := hex.DecodeString(commitSHA); err != nil {
+		return fmt.Errorf("commit_sha must be hexadecimal: %w", err)
+	}
+	stor := s.gitStorageForRepo(repo)
+	if stor == nil {
+		return fmt.Errorf("repository git storage is unavailable")
+	}
+	if _, err := object.GetCommit(stor, plumbing.NewHash(commitSHA)); err != nil {
+		return fmt.Errorf("commit_sha does not identify a repository commit: %w", err)
+	}
+	return nil
+}
+
 func (s *Server) handleGetSARIFUpload(w http.ResponseWriter, r *http.Request) {
 	user := ghUserFromContext(r.Context())
 	if user == nil {
 		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
 		return
 	}
-	repo := s.lookupReadableRepoFromPath(w, r)
+	repo := s.lookupCodeScanningReadableRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -796,6 +874,10 @@ func (s *Server) codeQLDatabaseJSON(db *CodeQLDatabase, baseURL string, repo *Re
 	var uploaderJSON map[string]interface{}
 	if uploader != nil {
 		uploaderJSON = userToJSON(uploader)
+	} else if db.UploaderID < 0 {
+		if app := s.store.GetApp(-db.UploaderID); app != nil {
+			uploaderJSON = userToJSON(&User{ID: -app.ID, Login: app.Slug + "[bot]", Type: "Bot"})
+		}
 	}
 	return map[string]interface{}{
 		"id":           db.ID,
@@ -812,12 +894,7 @@ func (s *Server) codeQLDatabaseJSON(db *CodeQLDatabase, baseURL string, repo *Re
 }
 
 func (s *Server) handleListCodeQLDatabases(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
-		return
-	}
-	repo := s.lookupReadableRepoFromPath(w, r)
+	repo := s.lookupCodeScanningReadableRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -832,12 +909,7 @@ func (s *Server) handleListCodeQLDatabases(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handleGetCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
-		return
-	}
-	repo := s.lookupReadableRepoFromPath(w, r)
+	repo := s.lookupCodeScanningReadableRepo(w, r)
 	if repo == nil {
 		return
 	}
@@ -858,18 +930,13 @@ func (s *Server) handleGetCodeQLDatabase(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleDeleteCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
-	user := ghUserFromContext(r.Context())
-	if user == nil {
-		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
-		return
-	}
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	if !canAdminRepo(s.store, user, repo) {
-		writeGHError(w, http.StatusNotFound, "Not Found")
+	if !s.codeScanningRequestCanWriteRepo(r, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
 		return
 	}
 	deleted, err := s.store.DeleteCodeQLDatabase(repo.FullName, r.PathValue("language"))
@@ -884,53 +951,146 @@ func (s *Server) handleDeleteCodeQLDatabase(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) handleSeedCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
-	user := s.internalTokenUser(r)
+func (s *Server) lookupCodeScanningReadableRepo(w http.ResponseWriter, r *http.Request) *Repo {
+	repo := s.lookupRepoFromPath(r)
+	if repo == nil {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	if !s.codeScanningRequestCanReadRepo(r, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return nil
+	}
+	return repo
+}
+
+func (s *Server) handleUploadCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
+	user := ghUserFromContext(r.Context())
 	if user == nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]string{"message": "Requires authentication"})
+		writeGHError(w, http.StatusUnauthorized, "Requires authentication")
 		return
 	}
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
-		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-
-	var req struct {
-		Language  string `json:"language"`
-		Name      string `json:"name"`
-		Content   string `json:"content"` // base64 database archive bytes
-		CommitOID string `json:"commit_oid"`
-	}
-	if !decodeJSONBody(w, r, &req) {
+	if !s.codeScanningRequestCanWriteRepo(r, repo) {
+		writeGHError(w, http.StatusForbidden, "Must have push access to Repository.")
 		return
 	}
-	if req.Language == "" || req.Content == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "language and content are required"})
+	language := strings.ToLower(strings.TrimSpace(r.PathValue("language")))
+	if !codeQLLanguages[language] {
+		writeGHValidationError(w, "CodeQLDatabase", "language", "invalid")
 		return
 	}
-	content, err := base64.StdEncoding.DecodeString(req.Content)
-	if err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"message": "content must be valid base64"})
-		return
-	}
-	name := req.Name
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
 	if name == "" {
-		name = "database.zip"
+		writeGHValidationError(w, "CodeQLDatabase", "name", "missing_field")
+		return
+	}
+	commitOID := strings.TrimSpace(r.URL.Query().Get("commit_oid"))
+	if err := s.validateCodeScanningCoordinate(repo, commitOID, "refs/heads/"+repo.DefaultBranch); err != nil {
+		writeGHValidationError(w, "CodeQLDatabase", "commit_oid", "invalid")
+		return
+	}
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/zip" {
+		writeGHError(w, http.StatusUnsupportedMediaType, "Content-Type must be application/zip")
+		return
+	}
+	content, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeGHError(w, http.StatusBadRequest, "Unable to read CodeQL database bundle")
+		return
+	}
+	if err := validateCodeQLDatabaseBundle(content, language); err != nil {
+		writeGHValidationError(w, "CodeQLDatabase", "data", "invalid")
+		return
 	}
 
-	db, err := s.store.UpsertCodeQLDatabase(repo.FullName, req.Language, name, "application/zip", req.CommitOID, content, user.ID)
+	_, err = s.store.UpsertCodeQLDatabase(repo.FullName, language, name, "application/zip", commitOID, content, user.ID)
 	if err != nil {
 		writeGHError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, s.codeQLDatabaseJSON(db, s.baseURL(r), repo))
+	w.WriteHeader(http.StatusCreated)
+}
+
+// validateCodeQLDatabaseBundle checks the relocatable ZIP shape emitted by
+// `codeql database bundle`: one database root contains codeql-database.yml
+// (or the legacy .dbinfo manifest) and a non-empty db-{language} dataset.
+// Paths and entry types are validated without extracting attacker-controlled
+// content onto the filesystem.
+func validateCodeQLDatabaseBundle(content []byte, language string) error {
+	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
+	if err != nil {
+		return fmt.Errorf("open CodeQL database ZIP: %w", err)
+	}
+	manifestRoots := make(map[string]bool)
+	datasetRoots := make(map[string]bool)
+	for _, file := range zr.File {
+		name := cleanPagesArchivePath(file.Name)
+		if name == "" {
+			return fmt.Errorf("unsafe CodeQL database ZIP path %q", file.Name)
+		}
+		if !file.Mode().IsRegular() && !file.FileInfo().IsDir() {
+			return fmt.Errorf("CodeQL database ZIP entry %q is not a regular file or directory", file.Name)
+		}
+		parts := strings.Split(name, "/")
+		base := parts[len(parts)-1]
+		if file.Mode().IsRegular() && file.UncompressedSize64 > 0 && (base == "codeql-database.yml" || base == ".dbinfo") {
+			if base == "codeql-database.yml" {
+				if file.UncompressedSize64 > 1<<20 {
+					return fmt.Errorf("CodeQL database manifest exceeds 1 MiB")
+				}
+				reader, err := file.Open()
+				if err != nil {
+					return fmt.Errorf("open CodeQL database manifest: %w", err)
+				}
+				manifest, readErr := io.ReadAll(io.LimitReader(reader, 1<<20))
+				closeErr := reader.Close()
+				if readErr != nil {
+					return fmt.Errorf("read CodeQL database manifest: %w", readErr)
+				}
+				if closeErr != nil {
+					return fmt.Errorf("close CodeQL database manifest: %w", closeErr)
+				}
+				var metadata map[string]interface{}
+				if err := yaml.Unmarshal(manifest, &metadata); err != nil {
+					return fmt.Errorf("parse CodeQL database manifest: %w", err)
+				}
+				if _, inProgress := metadata["inProgress"]; inProgress {
+					return fmt.Errorf("CodeQL database is not finalized")
+				}
+				if primary, _ := metadata["primaryLanguage"].(string); primary != "" && primary != language {
+					return fmt.Errorf("CodeQL database manifest language %q does not match upload language %q", primary, language)
+				}
+			}
+			manifestRoots[strings.Join(parts[:len(parts)-1], "/")] = true
+		}
+		for i, part := range parts {
+			if part == "db-"+language && file.Mode().IsRegular() && i < len(parts)-1 && file.UncompressedSize64 > 0 {
+				datasetRoots[strings.Join(parts[:i], "/")] = true
+			}
+		}
+	}
+	for root := range manifestRoots {
+		if datasetRoots[root] {
+			return nil
+		}
+	}
+	return fmt.Errorf("CodeQL database ZIP has no matching manifest and db-%s dataset", language)
 }
 
 func (s *Server) handleDownloadCodeQLDatabase(w http.ResponseWriter, r *http.Request) {
 	repo := s.lookupRepoFromPath(r)
 	if repo == nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+		return
+	}
+	if !s.codeScanningRequestCanReadRepo(r, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
 	db := s.store.GetCodeQLDatabase(repo.FullName, r.PathValue("language"))
@@ -944,6 +1104,12 @@ func (s *Server) handleDownloadCodeQLDatabase(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", db.ContentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(db.Size, 10))
+	filename := db.Name
+	if !strings.HasSuffix(strings.ToLower(filename), ".zip") {
+		filename += ".zip"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(data)
 }
@@ -1188,6 +1354,10 @@ func (s *Server) handleDownloadCodeQLVariantAnalysisQueryPack(w http.ResponseWri
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
 		return
 	}
+	if !s.codeScanningRequestCanReadRepo(r, repo) {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	id, err := strconv.Atoi(r.PathValue("codeql_variant_analysis_id"))
 	if err != nil {
 		writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
@@ -1204,6 +1374,8 @@ func (s *Server) handleDownloadCodeQLVariantAnalysisQueryPack(w http.ResponseWri
 		return
 	}
 	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("Content-Length", strconv.Itoa(len(pack)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename=%q`, fmt.Sprintf("codeql-variant-analysis-%d-query-pack.tar.gz", va.ID)))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(pack)
 }

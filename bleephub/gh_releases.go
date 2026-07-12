@@ -614,12 +614,20 @@ func (s *Server) handleCreateRelease(w http.ResponseWriter, r *http.Request) {
 		writeGHValidationError(w, "Release", "tag_name", "missing_field")
 		return
 	}
+	if s.store.Releases.GetByTag(repo.ID, req.TagName) != nil {
+		writeGHValidationError(w, "Release", "tag_name", "already_exists")
+		return
+	}
 	target := req.TargetCommitish
 	if target == "" {
 		target = repo.DefaultBranch
 	}
+	if err := s.ensureReleaseTag(repo, req.TagName, target); err != nil {
+		writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	release := s.store.Releases.Create(repo.ID, user.ID, req.TagName, target, req.Name, req.Body, bool(req.Draft), bool(req.Prerelease))
-	s.emitWebhookEvent(repo.FullName, "release", "published", buildReleaseEventPayload(repo, release, user, "published"))
+	s.emitReleaseEvent(repo, release, user, "created", s.baseURL(r))
 	s.recordAuditEvent("release.create", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": release.ID, "tag": release.TagName})
 	writeJSON(w, http.StatusCreated, releaseToJSON(release, s.store, s.baseURL(r), repo))
 }
@@ -693,6 +701,11 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	release := s.store.Releases.Get(id)
+	if release == nil || release.RepoID != repo.ID {
+		writeGHError(w, http.StatusNotFound, "Not Found")
+		return
+	}
 	var req struct {
 		TagName         *string   `json:"tag_name"`
 		TargetCommitish *string   `json:"target_commitish"`
@@ -704,10 +717,32 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSONBody(w, r, &req) {
 		return
 	}
-	ok := s.store.Releases.Update(id, func(rel *Release) {
-		if rel.RepoID != repo.ID {
+	wasDraft := release.Draft
+	wasPrerelease := release.Prerelease
+	if req.TagName != nil && *req.TagName != release.TagName {
+		if *req.TagName == "" {
+			writeGHValidationError(w, "Release", "tag_name", "missing_field")
 			return
 		}
+		if s.store.Releases.GetByTag(repo.ID, *req.TagName) != nil {
+			writeGHValidationError(w, "Release", "tag_name", "already_exists")
+			return
+		}
+		target := release.TargetCommitish
+		if req.TargetCommitish != nil {
+			target = *req.TargetCommitish
+		}
+		if err := s.ensureReleaseTag(repo, *req.TagName, target); err != nil {
+			writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	} else if req.TargetCommitish != nil {
+		if _, err := s.resolveReleaseTarget(repo, *req.TargetCommitish); err != nil {
+			writeGHError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+	}
+	ok := s.store.Releases.Update(id, func(rel *Release) {
 		if req.TagName != nil {
 			rel.TagName = *req.TagName
 		}
@@ -731,7 +766,45 @@ func (s *Server) handleUpdateRelease(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
-	writeJSON(w, http.StatusOK, releaseToJSON(s.store.Releases.Get(id), s.store, s.baseURL(r), repo))
+	updated := s.store.Releases.Get(id)
+	action := releaseUpdateAction(wasDraft, wasPrerelease, updated.Draft, updated.Prerelease)
+	s.emitReleaseEvent(repo, updated, ghUserFromContext(r.Context()), action, s.baseURL(r))
+	writeJSON(w, http.StatusOK, releaseToJSON(updated, s.store, s.baseURL(r), repo))
+}
+
+func (s *Server) resolveReleaseTarget(repo *Repo, target string) (plumbing.Hash, error) {
+	stor, _ := s.store.GitStorageForRepoID(repo.ID)
+	if stor == nil {
+		return plumbing.ZeroHash, fmt.Errorf("release source git storage is unavailable")
+	}
+	hash, err := resolveGitRef(stor, target)
+	if err != nil {
+		return plumbing.ZeroHash, fmt.Errorf("target_commitish %q does not resolve to a commit", target)
+	}
+	return hash, nil
+}
+
+func (s *Server) ensureReleaseTag(repo *Repo, tagName, target string) error {
+	stor, _ := s.store.GitStorageForRepoID(repo.ID)
+	if stor == nil {
+		return fmt.Errorf("release source git storage is unavailable")
+	}
+	tagRef := plumbing.NewTagReferenceName(tagName)
+	if existing, err := stor.Reference(tagRef); err == nil {
+		_, err = refHash(existing, stor)
+		if err != nil {
+			return fmt.Errorf("release tag %q does not resolve to a commit", tagName)
+		}
+		return nil
+	}
+	targetHash, err := s.resolveReleaseTarget(repo, target)
+	if err != nil {
+		return err
+	}
+	if err := stor.SetReference(plumbing.NewHashReference(tagRef, targetHash)); err != nil {
+		return fmt.Errorf("create release tag %q: %w", tagName, err)
+	}
+	return nil
 }
 
 func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
@@ -751,6 +824,7 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		writeGHError(w, http.StatusNotFound, "Not Found")
 		return
 	}
+	payload := s.buildReleaseEventPayload(repo, rel, user, "deleted", s.baseURL(r))
 	deleted, err := s.store.Releases.Delete(id)
 	if err != nil {
 		writeGHError(w, http.StatusInternalServerError, "Failed to delete release")
@@ -761,8 +835,36 @@ func (s *Server) handleDeleteRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.store.Reactions.DeleteParent("release", id)
+	s.emitWebhookEvent(repo.FullName, "release", "deleted", payload)
+	if !rel.Draft {
+		s.triggerWorkflowsForEvent(repo.FullName, "release", "deleted", plumbing.NewTagReferenceName(rel.TagName).String(), payload)
+	}
 	s.recordAuditEvent("release.destroy", user.Login, "", map[string]interface{}{"repo": repo.FullName, "release_id": id})
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func releaseUpdateAction(wasDraft, wasPrerelease, draft, prerelease bool) string {
+	switch {
+	case !wasDraft && draft:
+		return "unpublished"
+	case wasDraft && !draft:
+		return "published"
+	case !draft && !wasPrerelease && prerelease:
+		return "prereleased"
+	case !draft && wasPrerelease && !prerelease:
+		return "released"
+	default:
+		return "edited"
+	}
+}
+
+func (s *Server) emitReleaseEvent(repo *Repo, release *Release, sender *User, action, baseURL string) {
+	payload := s.buildReleaseEventPayload(repo, release, sender, action, baseURL)
+	s.emitWebhookEvent(repo.FullName, "release", action, payload)
+	if release.Draft && (action == "created" || action == "edited" || action == "deleted") {
+		return
+	}
+	s.triggerWorkflowsForEvent(repo.FullName, "release", action, plumbing.NewTagReferenceName(release.TagName).String(), payload)
 }
 
 func readUploadAssetBody(r *http.Request) (name, label, contentType string, data []byte, ok bool, err error) {
@@ -1134,18 +1236,10 @@ func releaseToJSON(rel *Release, st *Store, baseURL string, repo *Repo) map[stri
 }
 
 // buildReleaseEventPayload — `release` webhook event payload.
-func buildReleaseEventPayload(repo *Repo, rel *Release, sender *User, action string) map[string]interface{} {
+func (s *Server) buildReleaseEventPayload(repo *Repo, rel *Release, sender *User, action, baseURL string) map[string]interface{} {
 	return attachInstallationBlock(map[string]interface{}{
-		"action": action,
-		"release": map[string]interface{}{
-			"id":         rel.ID,
-			"tag_name":   rel.TagName,
-			"name":       rel.Name,
-			"body":       rel.Body,
-			"draft":      rel.Draft,
-			"prerelease": rel.Prerelease,
-			"created_at": rel.CreatedAt.UTC().Format(time.RFC3339),
-		},
+		"action":     action,
+		"release":    releaseToJSON(rel, s.store, baseURL, repo),
 		"repository": repoPayload(repo),
 		"sender":     senderPayload(sender),
 	}, nil)

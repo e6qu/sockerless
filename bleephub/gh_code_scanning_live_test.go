@@ -88,8 +88,9 @@ func TestLiveCodeScanning_FullFlow(t *testing.T) {
 		},
 	}
 	sarifBytes, _ := json.Marshal(sarif)
+	commitSHA := putRepoFile(t, "admin/live-code-scanning", "live.go", "package live\n", "add live source")
 	sarifBody, _ := json.Marshal(map[string]any{
-		"commit_sha": "cafebabecafebabecafebabecafebabecafebabe",
+		"commit_sha": commitSHA,
 		"ref":        "refs/heads/main",
 		"sarif":      base64.StdEncoding.EncodeToString(sarifBytes),
 	})

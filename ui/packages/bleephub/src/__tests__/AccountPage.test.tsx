@@ -131,6 +131,35 @@ describe("AccountPage", () => {
     });
   });
 
+  it("creates a repository-scoped fine-grained token and shows its credential once", async () => {
+    const dashboard = {
+      tokens: [],
+      resource_owners: [{ login: "admin", type: "User" }],
+      repositories: { admin: [{ id: 7, name: "release", private: true }] },
+      pending_requests: [],
+    };
+    installFetchRoutes({
+      "GET /settings/personal-access-tokens": () => jsonResponse(dashboard),
+      "POST /settings/personal-access-tokens": () => jsonResponse({
+        id: 11, name: "Release automation", resource_owner: "admin",
+        repository_selection: "all", repository_ids: [], permissions: { repository: { contents: "read" } },
+        created_at: "2026-07-12T00:00:00Z", expires_at: null, status: "active",
+        token: "github_pat_once_only",
+      }, 201),
+    });
+    renderPage();
+    await waitFor(() => screen.getByText("laptop"));
+    fireEvent.click(screen.getByRole("button", { name: "Personal access tokens" }));
+    expect(await screen.findByText("Fine-grained personal access tokens")).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText("Token name"), { target: { value: "Release automation" } });
+    fireEvent.click(screen.getByRole("button", { name: "Generate token" }));
+    expect(await screen.findByText("github_pat_once_only")).toBeInTheDocument();
+    const post = mockFetch.mock.calls.find((call) => call[1]?.method === "POST" && String(call[0]) === "/settings/personal-access-tokens");
+    expect(post).toBeDefined();
+    expect(post![1].body).toContain('"resource_owner":"admin"');
+    expect(post![1].body).toContain('"contents":"read"');
+  });
+
   it("deletes an SSH key via DELETE /user/keys/{id}", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     installFetchRoutes({

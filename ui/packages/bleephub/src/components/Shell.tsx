@@ -1,5 +1,6 @@
-import { type ReactNode } from "react";
-import { NavLink, Link, useLocation } from "react-router";
+import { type ReactNode, useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { NavLink, Link, useLocation, useNavigate } from "react-router";
 import { useTheme } from "@sockerless/ui-core/hooks";
 import {
   RepoIcon,
@@ -25,9 +26,22 @@ import {
   WebhookIcon,
   SearchIcon,
   KeyIcon,
+  StarIcon,
+  EyeIcon,
+  RepoForkedIcon,
 } from "./octicons.js";
 import { Counter } from "./ui.js";
 import { AppHeader } from "./AppHeader.js";
+import {
+  fetchRepoSocialCounts,
+  fetchRepoViewerState,
+  fetchAuthenticatedUserOrgs,
+  fetchCurrentUser,
+  forkRepo,
+  setRepoSubscription,
+  starRepo,
+  unstarRepo,
+} from "../api.js";
 
 /**
  * App chrome: the GitHub-faithful global header ({@link AppHeader}) above the
@@ -89,24 +103,143 @@ export function RepoHeader({
 }) {
   const base = `/ui/repos/${owner}/${repo}`;
   const location = useLocation();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const onSecurity = active === "security" || location.pathname.startsWith(`${base}/security/`);
+  const [forkOpen, setForkOpen] = useState(false);
+  const [forkOwner, setForkOwner] = useState("");
+  const socialKey = ["repo-social-counts", owner, repo] as const;
+  const viewerKey = ["repo-viewer", owner, repo] as const;
+  const social = useQuery({ queryKey: socialKey, queryFn: () => fetchRepoSocialCounts(owner, repo) });
+  const viewer = useQuery({ queryKey: viewerKey, queryFn: () => fetchRepoViewerState(owner, repo) });
+  const currentUser = useQuery({ queryKey: ["current-user"], queryFn: fetchCurrentUser, staleTime: 60_000 });
+  const organizations = useQuery({
+    queryKey: ["viewer-organizations"],
+    queryFn: fetchAuthenticatedUserOrgs,
+    staleTime: 60_000,
+    enabled: forkOpen,
+  });
+  useEffect(() => {
+    if (!forkOwner && currentUser.data?.login) setForkOwner(currentUser.data.login);
+  }, [currentUser.data?.login, forkOwner]);
+  useEffect(() => {
+    if (!forkOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setForkOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [forkOpen]);
+
+  const refreshSocial = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: socialKey }),
+      queryClient.invalidateQueries({ queryKey: viewerKey }),
+    ]);
+  };
+  const starMutation = useMutation({
+    mutationFn: () => viewer.data?.starred ? unstarRepo(owner, repo) : starRepo(owner, repo),
+    onSuccess: refreshSocial,
+  });
+  const watchMutation = useMutation({
+    mutationFn: () => setRepoSubscription(owner, repo, !viewer.data?.subscribed),
+    onSuccess: refreshSocial,
+  });
+  const forkMutation = useMutation({
+    mutationFn: () => forkRepo(owner, repo, forkOwner && forkOwner !== currentUser.data?.login ? forkOwner : undefined),
+    onSuccess: (created) => {
+      setForkOpen(false);
+      navigate(`/ui/repos/${created.full_name}`);
+    },
+  });
+  const actionError = starMutation.error ?? watchMutation.error ?? forkMutation.error;
+
   return (
-    <div className="mb-5">
-      <div className="mb-3 flex items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
-        <RepoIcon size={18} style={{ color: "var(--color-fg-muted)" }} />
-        <Link to="/ui/repos" style={{ color: "var(--color-accent)", textDecoration: "none" }}>
-          {owner}
-        </Link>
-        <span style={{ color: "var(--color-fg-muted)" }}>/</span>
-        <Link to={base} style={{ color: "var(--color-accent)", fontWeight: 600, textDecoration: "none" }}>
-          {repo}
-        </Link>
-      </div>
-      <nav
-        aria-label="Repository"
-        className="flex flex-wrap items-center gap-1"
-        style={{ borderBottom: "1px solid var(--color-border)" }}
-      >
+    <div className="repo-context mb-6">
+      <div className="repo-context-inner">
+        <div className="repo-title-row">
+          <div className="flex min-w-0 items-center gap-1.5" style={{ fontSize: "1.15rem" }}>
+            <RepoIcon size={18} style={{ color: "var(--color-fg-muted)" }} />
+            <Link to={`/ui/${owner}`} style={{ color: "var(--color-accent)", textDecoration: "none" }}>
+              {owner}
+            </Link>
+            <span style={{ color: "var(--color-fg-muted)" }}>/</span>
+            <Link to={base} style={{ color: "var(--color-accent)", fontWeight: 600, textDecoration: "none" }}>
+              {repo}
+            </Link>
+          </div>
+          <div className="repo-actions" aria-label="Repository actions">
+            <RepoAction
+              icon={<EyeIcon size={15} />}
+              label={viewer.data?.subscribed ? "Unwatch" : "Watch"}
+              count={social.data?.subscribers_count}
+              busy={watchMutation.isPending}
+              onClick={() => watchMutation.mutate()}
+              tone="watch"
+            />
+            <RepoAction
+              icon={<RepoForkedIcon size={15} />}
+              label="Fork"
+              count={social.data?.forks_count}
+              busy={forkMutation.isPending}
+              onClick={() => setForkOpen(true)}
+              tone="fork"
+            />
+            <RepoAction
+              icon={<StarIcon size={15} />}
+              label={viewer.data?.starred ? "Unstar" : "Star"}
+              count={social.data?.stargazers_count}
+              busy={starMutation.isPending}
+              onClick={() => starMutation.mutate()}
+              active={viewer.data?.starred}
+              tone="star"
+            />
+          </div>
+        </div>
+        {actionError && (
+          <div role="alert" className="repo-action-error">
+            Repository action failed: {String(actionError)}
+          </div>
+        )}
+        {forkOpen && (
+          <div className="repo-fork-backdrop" role="presentation" onMouseDown={() => setForkOpen(false)}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="fork-repository-title"
+              className="repo-fork-dialog"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <h2 id="fork-repository-title">Create a new fork</h2>
+              <p>
+                Choose an owner for the real fork of <strong>{owner}/{repo}</strong>.
+              </p>
+              <label htmlFor="fork-owner">Owner</label>
+              <select id="fork-owner" value={forkOwner} onChange={(event) => setForkOwner(event.target.value)}>
+                {currentUser.data && <option value={currentUser.data.login}>{currentUser.data.login}</option>}
+                {(organizations.data ?? []).map((organization) => (
+                  <option key={organization.id} value={organization.login}>{organization.login}</option>
+                ))}
+              </select>
+              {forkOwner === owner && (
+                <div className="repo-fork-warning">Choose a different owner; a fork cannot share the source owner.</div>
+              )}
+              {forkMutation.error && <div className="repo-fork-warning">{String(forkMutation.error)}</div>}
+              <div className="repo-fork-actions">
+                <button type="button" onClick={() => setForkOpen(false)}>Cancel</button>
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={!forkOwner || forkOwner === owner || forkMutation.isPending}
+                  onClick={() => forkMutation.mutate()}
+                >
+                  {forkMutation.isPending ? "Creating fork…" : "Create fork"}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        <nav aria-label="Repository" className="repo-tabs flex items-center gap-1">
         <RepoTabLink to={base} icon={<RepoIcon size={15} />} label="Code" active={active === "code"} />
         <RepoTabLink
           to={`${base}/issues`}
@@ -158,7 +291,7 @@ export function RepoHeader({
           label="Settings"
           active={active === "settings"}
         />
-      </nav>
+        </nav>
       {onSecurity && (
         <nav
           aria-label="Security"
@@ -186,8 +319,41 @@ export function RepoHeader({
             active={location.pathname === `${base}/security/advisories`}
           />
         </nav>
-      )}
+        )}
+      </div>
     </div>
+  );
+}
+
+function RepoAction({
+  icon,
+  label,
+  count,
+  busy,
+  active = false,
+  tone,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  count?: number;
+  busy: boolean;
+  active?: boolean;
+  tone: "watch" | "fork" | "star";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`repo-action-button tone-${tone}${active ? " is-active" : ""}`}
+      disabled={busy}
+      aria-busy={busy}
+      onClick={onClick}
+    >
+      {icon}
+      <span>{busy ? "Working…" : label}</span>
+      {count != null && <Counter>{count}</Counter>}
+    </button>
   );
 }
 

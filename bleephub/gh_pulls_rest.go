@@ -91,7 +91,7 @@ func (s *Server) handleCreatePullRequest(w http.ResponseWriter, r *http.Request)
 	repoKey := owner + "/" + name
 	openedPayload := buildPullRequestPayload(s.store, repo, pr, user, "opened")
 	s.emitWebhookEvent(repoKey, "pull_request", "opened", openedPayload)
-	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "opened", "refs/heads/"+pr.HeadRefName, openedPayload)
+	s.triggerWorkflowsForEvent(repoKey, "pull_request", "opened", "refs/heads/"+pr.HeadRefName, openedPayload)
 
 	s.recordAuditEvent("pull_request.create", user.Login, "", map[string]interface{}{"repo": repoKey, "pr_id": pr.ID})
 	writeJSON(w, http.StatusCreated, pullRequestToJSON(pr, s.store, s.baseURL(r), repo.FullName))
@@ -305,7 +305,7 @@ func (s *Server) handleUpdatePullRequest(w http.ResponseWriter, r *http.Request)
 		repoKey := owner + "/" + repoName
 		payload := buildPullRequestPayload(s.store, repo, updated, user, action)
 		s.emitWebhookEvent(repoKey, "pull_request", action, payload)
-		go s.triggerWorkflowsForEvent(repoKey, "pull_request", action, "refs/heads/"+updated.HeadRefName, payload)
+		s.triggerWorkflowsForEvent(repoKey, "pull_request", action, "refs/heads/"+updated.HeadRefName, payload)
 	}
 
 	writeJSON(w, http.StatusOK, pullRequestToJSON(updated, s.store, s.baseURL(r), repo.FullName))
@@ -403,7 +403,7 @@ func (s *Server) handleMergePullRequest(w http.ResponseWriter, r *http.Request) 
 	repoKey := owner + "/" + repoName
 	mergedPayload := buildPullRequestPayload(s.store, repo, merged, user, "closed")
 	s.emitWebhookEvent(repoKey, "pull_request", "closed", mergedPayload)
-	go s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
+	s.triggerWorkflowsForEvent(repoKey, "pull_request", "closed", "refs/heads/"+merged.HeadRefName, mergedPayload)
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"sha":     mergeSha,

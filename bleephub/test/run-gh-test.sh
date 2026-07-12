@@ -166,6 +166,46 @@ PERMS_ADMIN=$(echo "$REPO" | jq -r '.permissions.admin')
 assert_eq "repo permissions.admin" "true" "$PERMS_ADMIN"
 
 # ============================================================
+# Test: GitHub Classroom browser writes + official gh API reads
+# ============================================================
+log "Test: GitHub Classroom"
+api --method POST "$BASE/api/v3/admin/organizations" -f login=gh-classroom -f admin=admin >/dev/null
+api --method POST "$BASE/api/v3/orgs/gh-classroom/repos" -f name=starter -F auto_init=true >/dev/null
+CLASSROOM=$(api --method POST "$BASE/classroom-data/classrooms" -f name="GH CLI Classroom" -f organization=gh-classroom)
+CLASSROOM_ID=$(echo "$CLASSROOM" | jq -r '.id')
+ASSIGNMENT=$(api --method POST "$BASE/classroom-data/classrooms/$CLASSROOM_ID/assignments" \
+    --input <(printf '%s' '{"title":"Command line assignment","type":"individual","starter_code_repository":"gh-classroom/starter","invitations_enabled":true,"autograding_tests":[{"name":"README","command":"test -f README.md","points":10}]}'))
+ASSIGNMENT_ID=$(echo "$ASSIGNMENT" | jq -r '.id')
+CLASSROOMS=$(api "$BASE/api/v3/classrooms")
+assert_eq "gh api lists browser-created Classroom" "GH CLI Classroom" "$(echo "$CLASSROOMS" | jq -r --argjson id "$CLASSROOM_ID" '.[] | select(.id == $id) | .name')"
+ASSIGNMENT_GET=$(api "$BASE/api/v3/assignments/$ASSIGNMENT_ID")
+assert_eq "gh api reads Classroom starter repository" "gh-classroom/starter" "$(echo "$ASSIGNMENT_GET" | jq -r '.starter_code_repository.full_name')"
+
+# ============================================================
+# Test: Fine-grained personal access token browser producer
+# ============================================================
+log "Test: fine-grained personal access tokens"
+api --method POST "$BASE/api/v3/admin/organizations" -f login=gh-pat -f admin=admin >/dev/null
+PAT_CREATED=$(api --method POST "$BASE/settings/personal-access-tokens" \
+    --input <(printf '%s' '{"name":"Command line token","resource_owner":"gh-pat","repository_selection":"none","permissions":{"organization":{"members":"read"}},"reason":"gh CLI parity"}'))
+PAT_SECRET=$(echo "$PAT_CREATED" | jq -r '.token')
+assert_contains "gh api creates a fine-grained credential" "$PAT_SECRET" "github_pat_"
+PAT_SETTINGS=$(api "$BASE/settings/personal-access-tokens")
+assert_eq "gh api lists browser-created fine-grained token" "Command line token" "$(echo "$PAT_SETTINGS" | jq -r '.tokens[] | select(.name == "Command line token") | .name')"
+if echo "$PAT_SETTINGS" | grep -qF "$PAT_SECRET"; then
+    fail "fine-grained token settings list exposed the one-time credential"
+else
+    pass "fine-grained token credential is shown only once"
+fi
+PAT_VIEWER=$(gh api -H "Authorization: token $PAT_SECRET" "$BASE/api/v3/user")
+assert_eq "fine-grained token authenticates through gh api" "admin" "$(echo "$PAT_VIEWER" | jq -r '.login')"
+if api "$BASE/api/v3/orgs/gh-pat/personal-access-token-requests" >/dev/null 2>&1; then
+    fail "classic personal access token called GitHub App-only organization token administration"
+else
+    pass "organization token administration rejects classic personal access tokens"
+fi
+
+# ============================================================
 # Test: List repos via real `gh repo list`
 # ============================================================
 log "Test: gh repo list"
@@ -528,6 +568,27 @@ ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
     "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
 assert_eq "/applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
 
+# Marketplace listing production and buyer flow. OAuth Apps authenticate the
+# publisher REST API with Basic client credentials; GitHub Apps use a JSON Web
+# Token, which the official go-github suite exercises separately.
+MARKETPLACE_SLUG="oauth-parity-marketplace"
+MARKETPLACE_DRAFT=$(jq -nc --arg slug "$MARKETPLACE_SLUG" '{slug:$slug,name:"OAuth Parity Marketplace",description:"gh CLI Marketplace parity",full_description:"Real publisher and buyer workflow",installation_url:"https://example.test/install",webhook_url:"https://localhost/health",webhook_secret:"cli-marketplace",webhook_content_type:"json",webhook_active:true,published:false}')
+MARKETPLACE_STATUS=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "$MARKETPLACE_DRAFT" "$BASE/settings/oauth-apps/$OA_CID/marketplace" -w "%{http_code}" -o /tmp/marketplace-listing.json)
+assert_eq "create Marketplace draft listing" "201" "$MARKETPLACE_STATUS"
+MARKETPLACE_PLAN=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d '{"name":"CLI Team","description":"Official gh API plan","price_model":"FLAT_RATE","monthly_price_in_cents":1800,"yearly_price_in_cents":18000,"state":"published"}' "$BASE/settings/oauth-apps/$OA_CID/marketplace/plans")
+MARKETPLACE_PLAN_ID=$(echo "$MARKETPLACE_PLAN" | jq -r '.id')
+assert_not_empty "create Marketplace pricing plan" "$MARKETPLACE_PLAN_ID"
+MARKETPLACE_PUBLISHED=$(echo "$MARKETPLACE_DRAFT" | jq '.published=true')
+MARKETPLACE_STATUS=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "$MARKETPLACE_PUBLISHED" "$BASE/settings/oauth-apps/$OA_CID/marketplace" -w "%{http_code}" -o /dev/null)
+assert_eq "publish Marketplace listing" "200" "$MARKETPLACE_STATUS"
+MARKETPLACE_PURCHASE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "{\"plan_id\":$MARKETPLACE_PLAN_ID,\"billing_cycle\":\"monthly\"}" "$BASE/ui-data/marketplace/listings/$MARKETPLACE_SLUG/purchase")
+MARKETPLACE_INSTALLED=$(echo "$MARKETPLACE_PURCHASE" | jq -r '.marketplace_purchase.is_installed')
+assert_eq "OAuth App Marketplace purchase uses installation URL without GitHub App installation" "false" "$MARKETPLACE_INSTALLED"
+MARKETPLACE_PLAN_NAME=$(curl -sSk -u "$OA_CID:$OA_CSEC" "$BASE/api/v3/marketplace_listing/plans" | jq -r '.[0].name')
+assert_eq "gh api-compatible Marketplace publisher plan list" "CLI Team" "$MARKETPLACE_PLAN_NAME"
+MARKETPLACE_ACCOUNT=$(curl -sSk -u "$OA_CID:$OA_CSEC" "$BASE/api/v3/marketplace_listing/accounts/1" | jq -r '.login')
+assert_eq "gh api-compatible Marketplace publisher account lookup" "admin" "$MARKETPLACE_ACCOUNT"
+
 log "Apps parity probes complete"
 
 # ============================================================
@@ -784,6 +845,39 @@ else
 fi
 REL_COUNT=$(gh release list -R "$NV_REPO" --json tagName --jq 'length' 2>/dev/null || echo "-1")
 assert_eq "release gone after delete" "0" "$REL_COUNT"
+
+# --- CodeQL Action database upload protocol + gh API lifecycle ---
+# The producer sends a finalized relocatable ZIP to the uploads host without
+# an /api/v3 prefix; gh then consumes GitHub's public database REST resources.
+CODEQL_COMMIT=$(api "$BASE/api/v3/repos/$NV_REPO/commits/main" --jq .sha 2>/dev/null || echo "")
+assert_not_empty "CodeQL database source commit" "$CODEQL_COMMIT"
+rm -rf /tmp/codeql-go-database /tmp/codeql-go-database.zip
+mkdir -p /tmp/codeql-go-database/db-go/default/cache/pages
+cat > /tmp/codeql-go-database/codeql-database.yml <<'YAML'
+primaryLanguage: go
+YAML
+echo "real gh harness CodeQL dataset" > /tmp/codeql-go-database/db-go/default/cache/pages/0
+(cd /tmp && zip -qr codeql-go-database.zip codeql-go-database)
+if gh api --method POST \
+    -H "Authorization: token $TOKEN" \
+    -H "Content-Type: application/zip" \
+    --input /tmp/codeql-go-database.zip \
+    "$BASE/repos/$NV_REPO/code-scanning/codeql/databases/go?name=go-database&commit_oid=$CODEQL_COMMIT" >/dev/null 2>&1; then
+    pass "CodeQL Action database upload protocol"
+else
+    fail "CodeQL Action database upload protocol"
+fi
+CODEQL_DATABASES=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases")
+assert_eq "gh api lists CodeQL database" "go-database" "$(echo "$CODEQL_DATABASES" | jq -r '.[0].name')"
+CODEQL_DATABASE=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases/go")
+assert_eq "gh api gets CodeQL database language" "go" "$(echo "$CODEQL_DATABASE" | jq -r '.language')"
+if api --method DELETE "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases/go" >/dev/null 2>&1; then
+    pass "gh api deletes CodeQL database"
+else
+    fail "gh api deletes CodeQL database"
+fi
+CODEQL_DATABASE_COUNT=$(api "$BASE/api/v3/repos/$NV_REPO/code-scanning/codeql/databases" --jq 'length' 2>/dev/null || echo "-1")
+assert_eq "CodeQL database absent after delete" "0" "$CODEQL_DATABASE_COUNT"
 
 # --- issue verbs: create with label, list --label, close, reopen ---
 gh label create bug --color d73a4a -R "$NV_REPO" >/dev/null 2>&1 || true

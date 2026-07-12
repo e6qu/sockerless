@@ -18,6 +18,7 @@ const ctxApp contextKey = "gh-app"
 const ctxInstallation contextKey = "gh-installation"
 const ctxInstallationToken contextKey = "gh-installation-token"
 const ctxUserToServerToken contextKey = "gh-uts-token"
+const ctxPersonalAccessToken contextKey = "gh-personal-access-token"
 const ctxSuspendedInstallation contextKey = "gh-suspended-installation"
 const ctxSuspendedUser contextKey = "gh-suspended-user"
 
@@ -67,14 +68,22 @@ func ghUserToServerTokenFromContext(ctx context.Context) *UserToServerToken {
 	return t
 }
 
+func ghPersonalAccessTokenFromContext(ctx context.Context) *Token {
+	t, _ := ctx.Value(ctxPersonalAccessToken).(*Token)
+	return t
+}
+
 // ghHeadersMiddleware injects GitHub-compatible response headers on /api/ routes
 // and sets the authenticated user in request context.
 func (s *Server) ghHeadersMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 
-		// Only activate for /api/ paths — runner protocol (/_apis/) is unaffected
-		if !strings.HasPrefix(path, "/api/") {
+		// Activate for the REST API plus the uploads-host and authenticated
+		// CodeQL storage paths. The official CodeQL Action posts database
+		// bundles to /repos/... on uploads.github.com rather than /api/v3/.
+		// Runner protocol (/_apis/) remains unaffected.
+		if !strings.HasPrefix(path, "/api/") && !strings.HasPrefix(path, "/repos/") && !strings.HasPrefix(path, "/code-scanning/") {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -188,14 +197,20 @@ func (s *Server) authenticateRequest(r *http.Request) context.Context {
 				}
 			case strings.HasPrefix(tokenStr, tokenPrefixRefresh):
 			default:
-				_, user = s.store.LookupToken(tokenStr)
+				if token, resolved := s.store.LookupToken(tokenStr); token != nil {
+					user = resolved
+					ctx = context.WithValue(ctx, ctxPersonalAccessToken, token)
+				}
 			}
 		} else if scheme == "basic" {
 			decoded, err := base64.StdEncoding.DecodeString(cred)
 			if err == nil {
 				parts := strings.SplitN(string(decoded), ":", 2)
 				if len(parts) == 2 && parts[1] != "" {
-					_, user = s.store.LookupToken(parts[1])
+					if token, resolved := s.store.LookupToken(parts[1]); token != nil {
+						user = resolved
+						ctx = context.WithValue(ctx, ctxPersonalAccessToken, token)
+					}
 				}
 			}
 		}

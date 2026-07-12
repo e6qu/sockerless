@@ -4,6 +4,77 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+## 2026-07-12 - GitHub Marketplace Publisher and Buyer Product (`feat/bleephub-ui-api-completeness-audit`)
+
+Closed BUG-2548 through BUG-2560 and removed GitHub Marketplace from BUG-2523. GitHub App and OAuth App owners created durable draft/published listings, dedicated signed webhooks, delivery history, and free, flat-rate, or per-unit monthly/annual plans through authenticated settings. Publisher REST plan and account reads required the owning GitHub App's JSON Web Token or OAuth App's Basic client credentials, kept unrelated publishers isolated, preserved GitHub's production and `stubbed` shapes, returned empty collections rather than null, and excluded confidential webhook configuration from public buyer listings.
+
+Authenticated buyers browsed a GitHub-organized Marketplace, searched saturated app cards, compared plans, selected a personal or administered organization account, started trials, completed a GitHub App installation or OAuth App installation-URL handoff, and managed upgrades, downgrades, and cancellations. Upgrades began immediately; paid downgrades and cancellations waited for the billing boundary; free/trial cancellations began immediately; and purchased, changed, cancelled, and ping events used the listing-owned webhook. Subscription identity included listing, account type, and account ID, preserving multiple app purchases and colliding User/Organization numeric identifiers.
+
+Marketplace listings, plans, webhook configuration/deliveries, subscriptions, pending changes, and installations survived SQLite reload. New subscription plus GitHub App installation creation committed in one SQLite transaction before either webhook began, and real closed-storage coverage proved that failure left no memory or installation residue. Plan/listing edits and deletion enforced active-purchase and published-plan invariants. The obsolete `/internal/marketplace/purchases` route and synthetic global free plan were removed.
+
+The routed buyer directory/detail and GitHub App publisher editor retained GitHub's hierarchy while using a candy-saturated purple, blue, cyan, pink, green, and gold palette in both themes. Real Chromium also exposed and fixed the GitHub App dialog's opaque manual-redirect mistake: App Manifest creation now followed the real same-origin redirect and converted the code from its final URL. Expected absent publisher listings used a nullable `200` browser adapter instead of console-error `404` probes.
+
+The complete Bleephub Go suite passed in 216 seconds; the user-interface suite passed 48 files / 334 tests; TypeScript, production build, and the unused-export gate passed with the tracked current-`knip` deprecation only; the complete real-Chromium suite passed 31/31; the complete official `go-github` suite passed; and the Dockerized official `gh` command-line interface harness passed 136/136. The complete all-files pre-commit gate also passed. Visual inspection confirmed distinct, legible light and dark Marketplace surfaces and the saturated discovery treatment. Cleanup removed 22 GiB of disposable Go build cache, temporary hook/package caches, 21 stale Amazon Elastic Container Service simulator task containers, and unused images without touching active services or volumes, increasing local free space from 31 GiB to 54 GiB.
+
+## 2026-07-12 - GitHub CodeQL Producer and Code Security (`feat/bleephub-ui-api-completeness-audit`)
+
+Closed BUG-2535 through BUG-2540 and removed CodeQL database production from BUG-2523. Bleephub accepted the official GitHub CodeQL Action uploads-host request with a raw ZIP body, language, name, and real commit object ID; validated safe finalized CodeQL database or legacy database bundles with a language dataset; persisted archives in the object byte store; and removed the arbitrary internal base64 seed route. Public list, get, download, and delete behavior used GitHub's `contents` read/write permissions, honored repository-selected GitHub App installation tokens, protected private database and variant-analysis bytes, and returned GitHub-compatible download metadata.
+
+Database replacement used immutable content-addressed object keys and preserved the prior metadata and bytes across object-store, SQLite, or cleanup failure. SARIF ingestion required a fully qualified ref and real repository commit, accepted GitHub Actions installation credentials with `security_events` permissions, preserved UTF-8 payloads, and created durable analyses even for valid zero-finding runs. The official producer and browser therefore shared truthful git coordinates instead of fabricated branches or all-zero object IDs.
+
+The repository Security page was reorganized around GitHub-style Code scanning navigation, finding filters and detail, CodeQL database management, analyses, and SARIF upload. Its light and dark themes retained GitHub surface hierarchy while using saturated blue, cyan, purple, pink, and gold treatments. The account token hero also moved onto valid shared background, status, and elevation tokens, closing BUG-2541 and the prior CI gradient failure.
+
+Closed BUG-2542 through BUG-2547 while making the browser and hygiene proof strict: the Code Security scenario used unambiguous real-commit locators, selected dark mode through the user menu, waited for the accepted producer response and rendered analysis, the user-interface API module no longer exported an unused single-alert helper, and SARIF ingestion preserved every run in multi-language or multi-configuration documents. The complete real-Chromium suite passed 30/30, the user-interface suite passed 46 files / 330 tests, TypeScript and `knip` passed, the complete Bleephub Go suite passed in 204 seconds, the official `go-github` suite passed, and the Dockerized official `gh` command-line interface harness passed 130/130.
+
+## 2026-07-12 - Fine-Grained Personal Access Tokens (`feat/bleephub-ui-api-completeness-audit`)
+
+Closed BUG-2531 and BUG-2532 and removed fine-grained personal access tokens from BUG-2523. Authenticated account settings created durable `github_pat_` credentials for a user or active organization membership, constrained them to one resource owner, all/selected/no repositories, explicit repository and organization permissions, and an optional expiration, and displayed the secret exactly once. The polished GitHub-organized account page listed active, pending, revoked, and expired credentials, exposed organization-owner approval decisions, deleted owned credentials, and retained saturated, legible light/dark presentation.
+
+Runtime authentication distinguished classic and fine-grained credentials. Pending, expired, revoked, cross-owner, unselected-repository, and ungranted-permission access was denied; repository inventories omitted inaccessible private resources while retaining GitHub's public-resource behavior; deletion removed authentication and associated request/grant state; API insights retained the fine-grained token identity; and SQLite reload preserved the complete credential contract. Organization request and grant REST administration became GitHub App-only with the official `organization_personal_access_token_requests` and `organization_personal_access_tokens` permission names for targeted installation and user access tokens.
+
+Closed BUG-2534 by extending the repository secret-scanning and push-protection detector to generated `github_pat_` credentials and Bleephub's generated classic credential length. Committing a live fine-grained token now creates the same GitHub personal access token alert class instead of bypassing detection.
+
+Official `go-github` coverage created the credential through the browser producer, minted a real GitHub App installation token, listed and approved the request, and listed the resulting grant. The Dockerized official `gh` command-line interface harness created and authenticated a one-time credential and passed as part of the branch's 130/130 cases. Account component tests, the passing real-Chromium scenario, the complete Bleephub Go suite, 46 user-interface test files / 330 tests, typecheck, and the production build covered the implementation.
+
+Closed incidental BUG-2533 after the required browser check exposed stale routed release-edit state. Saving an edit now reconciled the detail query, exited editor state, and kept uploaded assets available for download and deletion; focused component coverage preserved that transition.
+
+## 2026-07-12 - Retained GitHub Classroom Product (`feat/bleephub-ui-api-completeness-audit`)
+
+Closed BUG-2527 through BUG-2530 and removed GitHub Classroom from BUG-2523. The six official read-only GitHub Classroom REST endpoints became organization-admin scoped and were exercised through current `go-github` types and the official `gh` command-line interface. The obsolete Classroom operator seed routes were removed.
+
+Bleephub retained the browser product with saturated GitHub-adapted light/dark organization. Organization administrators created, renamed, archived, and deleted classrooms; managed linked or identifier-only rosters; created individual and group assignments with deadlines, repository visibility, student permissions, team limits, feedback pull requests, and command-based autograding; and exported or imported lossless transition bundles after repository migration. Invite URLs routed into the product and authentication preserved the requested destination.
+
+Acceptance copied the real starter git tree into an organization-owned repository, granted each student access, serialized concurrent decisions, enforced group capacity without partial roster claims, created the configured Feedback branch and pull request, installed a real GitHub Actions workflow, and recorded the baseline commit. Classroom counters and grade exports derived subsequent commits, deadline submission state, completed job results, and available/awarded points from real repository and Actions state instead of management input. Classroom metadata, rosters, autograding configuration, acceptances, and transition identity survived SQLite reload.
+
+The completeness audit also closed BUG-2520 through BUG-2522 and BUG-2524 through BUG-2526. Bleephub's shared light/dark visual system retained GitHub/Primer surface and semantic hierarchy while adding saturated blue, cyan, purple, pink, gold, and green brand/state treatments. Repository context chrome became full-width and organized around GitHub's primary tabs, content shortcuts, administrative overflow, real Watch/Star toggles, and an owner-selecting Fork workflow backed by the public REST API. An authenticated `/ui-data` viewer-state read prevented expected public existence-check `404` responses from becoming browser resource errors while mutations stayed public. Browser and repository-social tests became independently provisioned and route-aware.
+
+The parity specification was reconciled against the implementation. It removed already-fixed GitHub App selection, installation webhook, and App-hook gaps; documented the REST/state/event/UI proof boundary; and identified the remaining GraphQL-schema, REST-semantic, page-level UI, and external-ingress work. It identified GitHub Marketplace and hosted-compute network settings as the two remaining operator-ingress domains; the Marketplace section above recorded the completed public replacement, leaving hosted-compute onboarding open.
+
+The release-provider compatibility pass also closed BUG-2518 and BUG-2519 after CI exercised the new workflows. The official GitHub software development kit release lifecycle established a real initial commit and `refs/heads/main` through GitHub's Git Database API before creating a release. The routed browser release scenario reused the exact uploaded asset buffer when asserting its displayed size, so it continued through authenticated download and deletion without a divergent hardcoded byte count.
+
+## 2026-07-12 - Bleephub Release Provider Completeness (`feat/bleephub-ui-api-completeness-audit`)
+
+This branch continued from merged #791 and audited Bleephub's UI routes against its implemented public GitHub API and real state. It identified the release provider as a complete class gap rather than a single missing screen.
+
+Closed BUG-2512 by replacing the transient read-only release list with routed repository release workflows. `/ui/repos/{owner}/{repo}/releases`, `/releases/new`, and `/releases/{id}` now support deep links and browser history; create, edit, draft/pre-release state, delete, object-backed asset upload, authenticated asset download, and asset deletion all use the public GitHub Releases API. The Code view links into the routed manager instead of trapping release state in a local tab.
+
+Closed BUG-2513 and BUG-2514 by making release identity repository-scoped and git-backed. Updates verify ownership before validation or mutation. Creation and tag-name changes resolve an existing real tag or resolve `target_commitish` and create a real lightweight tag, while duplicate releases and unresolved targets return validation errors without changing release or git state.
+
+Closed BUG-2515 by deriving release webhook and GitHub Actions activity from real lifecycle transitions. Complete release payloads now carry `created`, `edited`, `published`, `unpublished`, `prereleased`, `released`, or `deleted`, with GitHub's draft workflow semantics. Closed incidental BUG-2516 by removing every remaining asynchronous workflow-discovery call from pull-request REST/GraphQL and repository-dispatch handlers, eliminating mutable go-git read/write races across the eventing class.
+
+Closed incidental BUG-2517 by upgrading Bleephub's Markdown parser from `github.com/yuin/goldmark` 1.8.3 to current 1.8.4 after the required pre-push dependency-freshness gate detected the drift.
+
+Validation in this branch included:
+
+```bash
+bun run --cwd ui/packages/bleephub typecheck
+bun run --cwd ui/packages/bleephub test
+bun run --cwd ui/packages/bleephub build
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
+```
+
 ## 2026-07-12 - Bleephub GitHub Pages Branch Publication (`feat/bleephub-pages-branch-builds`)
 
 This branch continued from merged #790, which made GitHub Actions artifact deployments publish real GitHub Pages sites from object storage.

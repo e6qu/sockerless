@@ -34,9 +34,24 @@ function renderPage(kind: RepoSocialKind) {
   );
 }
 
+function routeSocial(target: string, targetResponse: Response) {
+  mockFetch.mockImplementation((url: RequestInfo | URL) => {
+    const path = String(url);
+    if (path === "/ui-data/repos/admin/social-repo/viewer") {
+      return Promise.resolve(jsonResponse({ starred: false, subscribed: false }));
+    }
+    if (path === "/api/v3/repos/admin/social-repo") {
+      return Promise.resolve(jsonResponse({ stargazers_count: 0, subscribers_count: 0, forks_count: 0 }));
+    }
+    if (path.startsWith(target)) return Promise.resolve(targetResponse.clone());
+    return Promise.resolve(jsonResponse([]));
+  });
+}
+
 describe("RepoSocialPage", () => {
   it("lists stargazers from GET /stargazers", async () => {
-    mockFetch.mockResolvedValue(
+    routeSocial(
+      "/api/v3/repos/admin/social-repo/stargazers",
       jsonResponse([
         { id: 1, login: "star-a", avatar_url: "", type: "User", site_admin: false },
         { id: 2, login: "star-b", avatar_url: "", type: "User", site_admin: false },
@@ -55,7 +70,7 @@ describe("RepoSocialPage", () => {
   });
 
   it("shows an honest empty state for watchers", async () => {
-    mockFetch.mockResolvedValue(jsonResponse([]));
+    routeSocial("/api/v3/repos/admin/social-repo/subscribers", jsonResponse([]));
     renderPage("watchers");
     await waitFor(() => {
       expect(screen.getByText("No watchers yet")).toBeInTheDocument();
@@ -68,7 +83,8 @@ describe("RepoSocialPage", () => {
   });
 
   it("lists forks linking to the forked repositories", async () => {
-    mockFetch.mockResolvedValue(
+    routeSocial(
+      "/api/v3/repos/admin/social-repo/forks",
       jsonResponse([
         {
           id: 5,
@@ -88,7 +104,10 @@ describe("RepoSocialPage", () => {
   });
 
   it("surfaces list failures", async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ message: "boom" }, 500));
+    routeSocial(
+      "/api/v3/repos/admin/social-repo/stargazers",
+      jsonResponse({ message: "boom" }, 500),
+    );
     renderPage("stargazers");
     await waitFor(() => {
       expect(screen.getByText("Failed to load stargazers")).toBeInTheDocument();

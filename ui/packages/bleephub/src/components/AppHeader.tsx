@@ -82,7 +82,7 @@ function HeaderMenu({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1"
+        className="app-header-control inline-flex items-center gap-1"
         style={{
           background: "transparent",
           color: "var(--color-fg-muted)",
@@ -177,7 +177,9 @@ const GITHUB_NAV: DrawerItem[] = [
   { label: "Repositories", to: "/ui/repos", icon: <RepoIcon size={16} /> },
   { label: "Gists", to: "/ui/gists", icon: <GistIcon size={16} /> },
   { label: "Packages", to: "/ui/packages", icon: <PackageIcon size={16} /> },
+  { label: "Marketplace", to: "/ui/marketplace", icon: <PackageIcon size={16} /> },
   { label: "Codespaces", to: "/ui/codespaces", icon: <CodespaceIcon size={16} /> },
+  { label: "Classroom", to: "/ui/classrooms", icon: <PeopleIcon size={16} /> },
   { label: "Migrations", to: "/ui/migrations", icon: <MigrationIcon size={16} /> },
   { label: "Notifications", to: "/ui/notifications", icon: <NotificationBellIcon size={16} /> },
   { label: "Explore", to: "/ui/search", icon: <SearchIcon size={16} /> },
@@ -352,9 +354,9 @@ export function AppHeader() {
   return (
     <>
       <GlobalNavDrawer open={drawer} onClose={() => setDrawer(false)} />
-      <header style={{ background: "var(--color-bg-subtle)", borderBottom: "1px solid var(--color-border)" }}>
+      <header className="app-header">
         <div className="mx-auto flex max-w-[1280px] items-center gap-3 px-4 py-2.5">
-          <button type="button" aria-label="Open global navigation" onClick={() => setDrawer(true)} style={iconButtonStyle()}>
+          <button type="button" aria-label="Open global navigation" onClick={() => setDrawer(true)} className="app-header-control" style={iconButtonStyle()}>
             <ThreeBarsIcon size={16} />
           </button>
 
@@ -367,7 +369,7 @@ export function AppHeader() {
 
           <form onSubmit={submitSearch} className="flex flex-1 items-center" style={{ maxWidth: 480 }}>
             <div
-              className="flex w-full items-center gap-2"
+              className="app-header-search flex w-full items-center gap-2"
               style={{
                 border: "1px solid var(--color-border)",
                 borderRadius: "var(--radius-md)",
@@ -406,14 +408,14 @@ export function AppHeader() {
               )}
             </HeaderMenu>
 
-            <Link to="/ui/search?type=issues&q=is%3Aissue" aria-label="Issues" title="Issues" style={iconButtonStyle()}>
+            <Link to="/ui/search?type=issues&q=is%3Aissue" aria-label="Issues" title="Issues" className="app-header-control" style={iconButtonStyle()}>
               <IssueOpenedIcon size={16} />
             </Link>
-            <Link to="/ui/search?type=issues&q=is%3Apr" aria-label="Pull requests" title="Pull requests" style={iconButtonStyle()}>
+            <Link to="/ui/search?type=issues&q=is%3Apr" aria-label="Pull requests" title="Pull requests" className="app-header-control" style={iconButtonStyle()}>
               <PullRequestIcon size={16} />
             </Link>
 
-            <Link to="/ui/notifications" aria-label={unread ? `Notifications (${unread} unread)` : "Notifications"} title="Notifications" style={iconButtonStyle()}>
+            <Link to="/ui/notifications" aria-label={unread ? `Notifications (${unread} unread)` : "Notifications"} title="Notifications" className="app-header-control" style={iconButtonStyle()}>
               <NotificationBellIcon size={16} />
               {unread > 0 && (
                 <span

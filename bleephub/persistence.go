@@ -50,6 +50,65 @@ type Persistence struct {
 	mu      sync.Mutex
 }
 
+type persistencePut struct {
+	bucket string
+	key    string
+	value  interface{}
+}
+
+// PutBatch commits related records in one SQLite transaction. Callers update
+// their in-memory indexes only after this returns successfully.
+func (p *Persistence) PutBatch(entries ...persistencePut) error {
+	if p == nil {
+		return nil
+	}
+	type encodedPut struct {
+		bucket string
+		key    string
+		raw    []byte
+	}
+	encoded := make([]encodedPut, 0, len(entries))
+	for _, entry := range entries {
+		raw, err := json.Marshal(entry.value)
+		if err != nil {
+			return fmt.Errorf("marshal %s/%s: %w", entry.bucket, entry.key, err)
+		}
+		encoded = append(encoded, encodedPut{bucket: entry.bucket, key: entry.key, raw: raw})
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, entry := range encoded {
+		if _, err := tx.Exec(p.dialect.putSQL, entry.bucket, entry.key, entry.raw); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (p *Persistence) DeleteBatch(entries ...persistencePut) error {
+	if p == nil {
+		return nil
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	tx, err := p.db.Begin()
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if _, err := tx.Exec(p.dialect.deleteSQL, entry.bucket, entry.key); err != nil {
+			_ = tx.Rollback()
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
 func openSQLite(dataDir string) (*sql.DB, error) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", dataDir, err)

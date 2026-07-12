@@ -214,7 +214,7 @@ func TestUserInteractionLimits_RoundTrip(t *testing.T) {
 // ─── GitHub Marketplace purchases ────────────────────────────────────────
 
 func TestUserMarketplacePurchases_ListWithRealPlan(t *testing.T) {
-	u, tok := userSurfaceUser(t, "marketuser")
+	_, tok := userSurfaceUser(t, "marketuser")
 
 	// No purchases yet.
 	list := decodeJSONArray(t, ghGet(t, "/api/v3/user/marketplace_purchases", tok))
@@ -222,20 +222,10 @@ func TestUserMarketplacePurchases_ListWithRealPlan(t *testing.T) {
 		t.Fatalf("purchases before seeding = %v", list)
 	}
 
-	// Record a purchase of the seeded default marketplace plan.
-	units := 3
-	next := time.Now().UTC().AddDate(0, 1, 0)
-	now := time.Now().UTC()
-	if !testServer.store.SetMarketplacePurchase(&MarketplacePurchase{
-		AccountID:       u.ID,
-		BillingCycle:    "monthly",
-		PlanID:          1,
-		UnitCount:       &units,
-		NextBillingDate: &next,
-		UpdatedAt:       &now,
-	}) {
-		t.Fatal("SetMarketplacePurchase failed (default plan missing?)")
-	}
+	listing := publishMarketplaceGitHubApp(t, "User Purchases App", testBaseURL+"/health")
+	requireMarketplaceStatus(t, marketplaceRequest(t, http.MethodPost,
+		"/ui-data/marketplace/listings/"+listing.slug+"/purchase", "token "+tok,
+		map[string]interface{}{"plan_id": listing.freePlanID, "billing_cycle": "monthly"}), http.StatusCreated)
 
 	for _, path := range []string{"/api/v3/user/marketplace_purchases", "/api/v3/user/marketplace_purchases/stubbed"} {
 		list = decodeJSONArray(t, ghGet(t, path, tok))
@@ -243,7 +233,7 @@ func TestUserMarketplacePurchases_ListWithRealPlan(t *testing.T) {
 			t.Fatalf("%s: purchases = %v", path, list)
 		}
 		p := list[0]
-		if p["billing_cycle"] != "monthly" || p["on_free_trial"] != false || p["unit_count"] != 3.0 {
+		if p["billing_cycle"] != "monthly" || p["on_free_trial"] != false || p["unit_count"] != 0.0 {
 			t.Fatalf("%s: purchase = %v", path, p)
 		}
 		account, _ := p["account"].(map[string]interface{})
@@ -251,14 +241,9 @@ func TestUserMarketplacePurchases_ListWithRealPlan(t *testing.T) {
 			t.Fatalf("%s: account = %v", path, account)
 		}
 		plan, _ := p["plan"].(map[string]interface{})
-		if plan["name"] != "Free" || plan["price_model"] != "FREE" || plan["accounts_url"] == nil || plan["number"] == nil {
+		if plan["name"] != "Community" || plan["price_model"] != "FREE" || plan["accounts_url"] == nil || plan["number"] == nil {
 			t.Fatalf("%s: plan = %v", path, plan)
 		}
-	}
-
-	// An unknown plan reference is rejected by the store.
-	if testServer.store.SetMarketplacePurchase(&MarketplacePurchase{AccountID: u.ID, PlanID: 424242}) {
-		t.Fatal("SetMarketplacePurchase accepted a purchase for a plan that does not exist")
 	}
 }
 

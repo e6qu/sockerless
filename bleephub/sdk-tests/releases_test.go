@@ -12,6 +12,7 @@ import (
 func TestReleasesLifecycle(t *testing.T) {
 	name := uniqueName("releases")
 	createRepo(t, name)
+	createSDKDefaultBranch(t, name)
 
 	rel, _, err := client.Repositories.CreateRelease(ctx(), "admin", name, &github.RepositoryRelease{
 		TagName: github.Ptr("v1.0.0"),

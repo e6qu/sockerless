@@ -52,6 +52,7 @@ import {
   CopyIcon,
   CheckIcon,
   ChevronDownIcon,
+  GearIcon,
 } from "../components/octicons.js";
 
 type SubTab = "code" | "commits" | "branches" | "tags" | "releases" | "webhooks" | "secrets" | "environments";
@@ -66,6 +67,9 @@ const SUB_TABS: { key: SubTab; label: string }[] = [
   { key: "secrets", label: "Secrets" },
   { key: "environments", label: "Environments" },
 ];
+
+const CONTENT_TABS = SUB_TABS.slice(0, 5);
+const ADMIN_TABS = SUB_TABS.slice(5);
 
 export function RepoDetailPage() {
   const { owner = "", repo = "" } = useParams<{ owner: string; repo: string }>();
@@ -136,31 +140,53 @@ export function RepoDetailPage() {
     <div>
       <RepoHeader owner={owner} repo={repo} active="code" {...counts} />
 
-      {/* Secondary (repo-admin) tab strip */}
-      <div
-        className="mb-4 flex flex-wrap gap-1"
-        style={{ borderBottom: "1px solid var(--color-border)" }}
-      >
-        {SUB_TABS.map((t) => (
+      {/* GitHub keeps content destinations close to the Code view and puts
+          administrative resources behind Settings/overflow navigation. */}
+      <nav className="repo-utility-bar mb-4" aria-label="Repository content">
+        <div className="flex min-w-0 flex-wrap gap-1">
+        {CONTENT_TABS.map((t) => (
           <button
             key={t.key}
             type="button"
             onClick={() => setTab(t.key)}
+            className="repo-utility-tab"
+            aria-current={tab === t.key ? "page" : undefined}
             style={{
-              padding: "0.4rem 0.7rem",
-              marginBottom: "-1px",
-              fontSize: "0.84rem",
               fontWeight: tab === t.key ? 600 : 500,
               color: tab === t.key ? "var(--color-fg)" : "var(--color-fg-muted)",
-              background: "transparent",
-              border: "none",
-              borderBottom: `2px solid ${tab === t.key ? "var(--color-accent)" : "transparent"}`,
+              background: tab === t.key ? "var(--color-accent-soft)" : "transparent",
+              borderColor: tab === t.key ? "color-mix(in srgb, var(--color-accent) 30%, var(--color-border))" : "transparent",
             }}
           >
             {t.label}
           </button>
         ))}
-      </div>
+        </div>
+        <details className="repo-more-menu">
+          <summary className="repo-more-trigger">
+            <GearIcon size={14} />
+            {ADMIN_TABS.find((item) => item.key === tab)?.label ?? "More"}
+            <ChevronDownIcon size={13} />
+          </summary>
+          <div className="repo-more-popover">
+            <div className="repo-more-heading">Repository administration</div>
+            {ADMIN_TABS.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                onClick={(event) => {
+                  setTab(item.key);
+                  event.currentTarget.closest("details")?.removeAttribute("open");
+                }}
+                aria-current={tab === item.key ? "page" : undefined}
+              >
+                {item.label}
+              </button>
+            ))}
+            <Link to={`/ui/repos/${owner}/${repo}/settings`}>All repository settings</Link>
+          </div>
+        </details>
+      </nav>
 
       {/* GitHub's two-column Code page: file browser + README on the left,
           the About sidebar (description, topics, releases, packages,
@@ -209,7 +235,7 @@ export function RepoDetailPage() {
         (releasesError ? (
           <InlineError title="Failed to load releases" detail={String(releasesErr)} />
         ) : (
-          <ReleasesList releases={releases} />
+          <ReleasesList owner={owner} repo={repo} releases={releases} />
         ))}
       {tab === "webhooks" &&
         (webhooksError ? (
@@ -926,11 +952,20 @@ function EnvironmentsList({ environments }: { environments: GithubEnvironment[] 
   );
 }
 
-function ReleasesList({ releases }: { releases: GithubRelease[] }) {
-  if (releases.length === 0) return <Blankslate icon={<TagIcon size={26} />} title="No releases" />;
+function ReleasesList({ owner, repo, releases }: { owner: string; repo: string; releases: GithubRelease[] }) {
+  if (releases.length === 0) return (
+    <Blankslate icon={<TagIcon size={26} />} title="No releases">
+      <Link to={`/ui/repos/${owner}/${repo}/releases/new`}>Create the first release</Link>
+    </Blankslate>
+  );
   return (
-    <Box>
-      {releases.map((r, i) => (
+    <div className="flex flex-col gap-3">
+      <div className="flex justify-end">
+        <Link to={`/ui/repos/${owner}/${repo}/releases`} style={{ color: "var(--color-accent)", fontSize: "0.82rem" }}>
+          Manage releases and assets
+        </Link>
+      </div>
+      <Box>{releases.map((r, i) => (
         <div
           key={r.id}
           className="flex items-center gap-3"
@@ -951,7 +986,7 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
           >
             <TagIcon size={12} /> {r.tag_name}
           </span>
-          <div className="min-w-0 flex-1">
+          <Link className="min-w-0 flex-1" to={`/ui/repos/${owner}/${repo}/releases/${r.id}`} style={{ color: "inherit", textDecoration: "none" }}>
             <div style={{ fontSize: "0.88rem", fontWeight: 500, color: "var(--color-fg)" }}>
               {r.name || r.tag_name}
             </div>
@@ -960,10 +995,10 @@ function ReleasesList({ releases }: { releases: GithubRelease[] }) {
                 ? "draft"
                 : `published ${new Date(r.published_at).toLocaleDateString()}`}
             </div>
-          </div>
+          </Link>
         </div>
-      ))}
-    </Box>
+      ))}</Box>
+    </div>
   );
 }
 

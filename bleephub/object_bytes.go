@@ -3,6 +3,7 @@ package bleephub
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"os"
@@ -126,8 +127,9 @@ func packageRegistryBlobDataKey(digest string) string {
 	return path.Join("packages/registry/blobs", algo, hexPart)
 }
 
-func codeQLDatabaseDataKey(id int) string {
-	return fmt.Sprintf("code-scanning/codeql/databases/%d/data", id)
+func codeQLDatabaseDataKey(id int, content []byte) string {
+	digest := sha256.Sum256(content)
+	return fmt.Sprintf("code-scanning/codeql/databases/%d/%x.zip", id, digest)
 }
 
 func codeQLVariantAnalysisQueryPackDataKey(id int) string {
