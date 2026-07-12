@@ -28,6 +28,8 @@ Closed BUG-2499 by making Bleephub repository UI pages consume the new public co
 
 Closed BUG-2500 / GitHub issue #789 by making organization repository creation honor GitHub App installation-token permissions. `POST /api/v3/orgs/{org}/repos` now authorizes installation tokens by target organization and `administration: write`, while installation tokens without that grant still receive `Resource not accessible by integration` and human tokens still require organization membership.
 
+Closed BUG-2501 by separating Bleephub repository-page empty-history rendering from the public GitHub REST commit-listing contract. `GET /api/v3/repos/{owner}/{repo}/commits` still returns GitHub's `409` empty-repository response, while the authenticated `/ui-data/repos/{owner}/{repo}/commits` route maps only that exact empty git state to `200 []` for the browser UI. Storage and object failures still return service errors, and repository pages no longer emit strict browser-console resource errors for handled empty repositories.
+
 Validation in this branch included:
 
 ```bash
@@ -39,11 +41,13 @@ GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Tes
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(AgentRSAPublicKeyRequiresProtocolStandardBase64|OAuthToken|OAuthTokenRejectsMissingAssertion|OAuthTokenRejectsUnknownClient|RegistrationTokenRandom|GenerateJITConfig|RemoveToken)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ActionsPendingDeploymentReviewFlow|WorkflowParseRequiresValidRunsOnForNormalJobs|WorkflowParseReusableWorkflowJobDoesNotRequireRunsOn|WorkflowParse(ContainerAsString|ContainerAsObject|Env|JobOutputs|StrategyFailFast))' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
+GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(ListCommitsEmptyRepositoryFailsLoud|UIListCommitsEmptyRepositoryReturnsEmptyHistory|GetSingleCommit|CommitBranchesWhereHead|CommitPulls|CommitArchiveDownload)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -run 'Test(InstallationTokenCreatesOrganizationRepositoryWithAdministrationPermission|InstallationTokenCreateOrganizationRepositoryRequiresAdministrationWrite|InstallationTokenDownscoping|CreateOrgRepo)' -count=1
 GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1
 bun run --cwd ui/packages/bleephub test src/__tests__/api.test.ts
 bun run --cwd ui/packages/bleephub test
 bun run --cwd ui/packages/bleephub typecheck
+cd ui && bunx turbo run build --filter="*bleephub*"
 pre-commit run --all-files
 ```
 

@@ -371,6 +371,7 @@ func (s *Server) registerRoutes() {
 	s.route("GET /internal/storage", s.handleInternalStorage)
 
 	// UI dashboard
+	s.registerUIAPIRoutes()
 	s.registerUI()
 	s.route("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/ui/", http.StatusTemporaryRedirect)

@@ -121,6 +121,21 @@ func TestListCommitsEmptyRepositoryFailsLoud(t *testing.T) {
 	}
 }
 
+func TestUIListCommitsEmptyRepositoryReturnsEmptyHistory(t *testing.T) {
+	createReadsRepo(t, "reads-ui-empty-commits", nil)
+
+	resp := ghGet(t, "/ui-data/repos/admin/reads-ui-empty-commits/commits", defaultToken)
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("UI list commits on empty repository: %d body=%s", resp.StatusCode, body)
+	}
+	out := decodeJSONArray(t, resp)
+	if len(out) != 0 {
+		t.Fatalf("UI empty repository commits = %v, want []", out)
+	}
+}
+
 func TestCommitBranchesWhereHead(t *testing.T) {
 	createReadsRepo(t, "reads-headbranch", map[string]interface{}{"auto_init": true})
 	sha := putReadsFile(t, "reads-headbranch", "a.txt", "a\n", "add a", "")

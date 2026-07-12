@@ -14,6 +14,12 @@ import (
 	gitStorage "github.com/go-git/go-git/v5/storage"
 )
 
+var (
+	errRepoGitStorageUnavailable = errors.New("repository git storage unavailable")
+	errRepoGitRepositoryEmpty    = errors.New("repository git repository empty")
+	errRepoGitObjectUnavailable  = errors.New("repository git object unavailable")
+)
+
 func (s *Server) registerGHRepoObjectRoutes() {
 	s.route("GET /api/v3/repos/{owner}/{repo}/commits", s.handleListCommits)
 	s.route("GET /api/v3/repos/{owner}/{repo}/readme", s.handleGetReadme)
@@ -32,10 +38,25 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	commits, err := s.listRepoCommits(repo, owner, repoName, s.baseURL(r))
+	if err != nil {
+		switch {
+		case errors.Is(err, errRepoGitRepositoryEmpty):
+			writeGHError(w, http.StatusConflict, "Git Repository is empty.")
+		case errors.Is(err, errRepoGitObjectUnavailable):
+			writeGHError(w, http.StatusInternalServerError, "Git object unavailable")
+		default:
+			writeGHError(w, http.StatusInternalServerError, "Git storage unavailable")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, paginateAndLink(w, r, commits))
+}
+
+func (s *Server) listRepoCommits(repo *Repo, owner, repoName, baseURL string) ([]map[string]interface{}, error) {
 	stor := s.store.GetGitStorage(owner, repoName)
 	if stor == nil {
-		writeGHError(w, http.StatusInternalServerError, "Git storage unavailable")
-		return
+		return nil, errRepoGitStorageUnavailable
 	}
 
 	// Resolve default branch
@@ -43,11 +64,9 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	ref, err := stor.Reference(branchRef)
 	if err != nil {
 		if errors.Is(err, plumbing.ErrReferenceNotFound) {
-			writeGHError(w, http.StatusConflict, "Git Repository is empty.")
-			return
+			return nil, errRepoGitRepositoryEmpty
 		}
-		writeGHError(w, http.StatusInternalServerError, "Git storage unavailable")
-		return
+		return nil, errRepoGitStorageUnavailable
 	}
 
 	// Walk commits
@@ -56,11 +75,10 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	for i := 0; i < 30; i++ {
 		commit, err := object.GetCommit(stor, hash)
 		if err != nil {
-			writeGHError(w, http.StatusInternalServerError, "Git object unavailable")
-			return
+			return nil, errRepoGitObjectUnavailable
 		}
 
-		commits = append(commits, commitToJSON(commit, repo, s.baseURL(r)))
+		commits = append(commits, commitToJSON(commit, repo, baseURL))
 
 		if commit.NumParents() == 0 {
 			break
@@ -71,7 +89,7 @@ func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
 	if commits == nil {
 		commits = []map[string]interface{}{}
 	}
-	writeJSON(w, http.StatusOK, paginateAndLink(w, r, commits))
+	return commits, nil
 }
 
 func (s *Server) handleGetTree(w http.ResponseWriter, r *http.Request) {

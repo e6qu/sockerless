@@ -166,16 +166,17 @@ describe("api wire-shape normalization", () => {
 });
 
 describe("repository API helpers", () => {
-  it("fetchRepoCommits returns an empty list for GitHub empty-repository conflicts", async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ message: "Git Repository is empty." }, 409));
+  it("fetchRepoCommits reads the user-interface commit adapter", async () => {
+    mockFetch.mockResolvedValue(jsonResponse([]));
 
     await expect(fetchRepoCommits("admin", "empty")).resolves.toEqual([]);
+    expect(mockFetch.mock.calls[0][0]).toBe("/ui-data/repos/admin/empty/commits");
   });
 
-  it("fetchRepoCommits still fails on non-empty-repository conflicts", async () => {
-    mockFetch.mockResolvedValue(jsonResponse({ message: "branch protection blocked" }, 409));
+  it("fetchRepoCommits still fails on adapter errors", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ message: "Git object unavailable" }, 500));
 
-    await expect(fetchRepoCommits("admin", "blocked")).rejects.toMatchObject({ status: 409 });
+    await expect(fetchRepoCommits("admin", "blocked")).rejects.toMatchObject({ status: 500 });
   });
 });
 
