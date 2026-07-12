@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2505 filed - 2461 fixed - 3 open - 16 false positives.**
+**2511 filed - 2467 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,12 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2511~~ | P2 | Bleephub dependency hygiene | stale Markdown parser module | Bleephub now uses current `github.com/yuin/goldmark` 1.8.3, so the required dependency-freshness gate passes. |
+| ~~2510~~ | P0 | Bleephub committed-ref eventing | event fan-out dereferenced optional nested repository owner data | Committed-reference fan-out and Pages source reads now resolve git storage by canonical repository ID and metadata coordinates from `full_name`, so valid repository records never depend on an optional expanded owner object. |
+| ~~2509~~ | P1 | Bleephub GitHub Actions workflow-run responses | actor objects used abbreviated user shapes | Workflow-run `actor` and `triggering_actor` objects now use the complete GitHub simple-user representation, including required identity and hypermedia fields. |
+| ~~2508~~ | P1 | Bleephub committed-ref eventing | branch-source Pages builds required manual requests and write surfaces diverged | Git smart-HTTP pushes, Contents API commits, and Git Database branch-reference creates, updates, and deletes now share one race-safe post-ref-update fan-out for activity, push webhooks, GitHub Actions workflows, pull-request synchronization, and automatic legacy Pages source builds. |
+| ~~2507~~ | P1 | Bleephub GitHub Pages legacy builds | branch sources had no Jekyll execution runtime | Legacy branch-source Pages builds now run the pinned `github-pages` 232 gem and Jekyll 3.10.0 in safe production mode, publish only real generated output, preserve real build errors without deployments, and ship the complete runtime in the release image. |
+| ~~2506~~ | P0 | Bleephub GitHub Pages branch publication | requested builds stayed queued forever | Manual legacy Pages builds now resolve the configured source branch and `/` or `/docs` tree, publish `.nojekyll` static content through the shared object-store transaction, serve the resulting site, persist terminal build/site state and real commit identity, and report source, link, size, storage, and configuration failures explicitly. |
 | ~~2505~~ | P1 | Bleephub GitHub Pages authorization | Pages routes used repository administration permission | GitHub Pages routes now enforce the distinct `pages: read/write` fine-grained repository permission, preserve unauthenticated reads only for public Pages resources, and no longer treat `administration` as a Pages grant. |
 | ~~2504~~ | P0 | Bleephub GitHub Pages deployment identity | any non-empty OpenID Connect token was trusted | GitHub Pages deployments now verify Bleephub's RS256 OpenID Connect signature, issuer, audience, validity window, repository identity, environment, build SHA, and configured source ref before reading artifacts or changing Pages state. |
 | ~~2503~~ | P1 | Bleephub GitHub Pages publication | successful deployments discarded site content | GitHub Pages deployments now validate official Actions ZIP-with-`artifact.tar`, direct ZIP, TAR, and gzip-compressed TAR artifacts; reject links, traversal, empty archives, and oversized content; publish immutable archives to object storage; serve index, clean URL, asset, HEAD, and custom 404 requests; protect private sites; replace prior objects; and delete published bytes fail-loud with Pages or repository deletion. |

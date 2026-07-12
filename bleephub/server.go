@@ -35,6 +35,7 @@ type Server struct {
 	registryUploads        map[string]*containerRegistryUpload
 	routePatterns          []string // every pattern registered via route(), for fidelity enumeration
 	externalURL            string   // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
+	pagesJekyllExecutable  string
 	// responseObserver, when set before ListenAndServe, sees every
 	// request/response pair in the handler chain. The test harness
 	// assigns it (same package) to validate /api/v3 response shapes
@@ -118,6 +119,7 @@ func NewServer(addr string, logger zerolog.Logger) *Server {
 		maxConcurrentWorkflows: maxWF,
 		registryUploads:        map[string]*containerRegistryUpload{},
 		externalURL:            strings.TrimRight(os.Getenv("BLEEPHUB_EXTERNAL_URL"), "/"),
+		pagesJekyllExecutable:  coalesceStr(os.Getenv("BLEEPHUB_PAGES_JEKYLL_EXECUTABLE"), "bleephub-pages-jekyll"),
 	}
 	s.store.ObjectByteStore = byteStore
 	s.store.Releases.byteStore = byteStore

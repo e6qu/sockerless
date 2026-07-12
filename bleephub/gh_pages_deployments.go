@@ -202,32 +202,14 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 		writeGHError(w, http.StatusBadGateway, err.Error())
 		return
 	}
-	artifactHash := sha256.Sum256(artifactBytes)
-	artifactSHA := fmt.Sprintf("sha256:%x", artifactHash)
-	artifactKey := pagesArtifactDataKey(repo.ID, artifactHash)
 	if err := validatePagesArtifact(artifactBytes); err != nil {
 		writeGHError(w, http.StatusUnprocessableEntity, "Invalid Pages artifact: "+err.Error())
 		return
 	}
-	if s.store.ObjectByteStore == nil {
-		writeGHError(w, http.StatusInternalServerError, "Pages deployment requires configured object storage")
+	d, err := s.publishPagesArtifact(r.Context(), repo.ID, environment, req.PagesBuildVersion, artifactBytes)
+	if err != nil {
+		writeGHError(w, http.StatusBadGateway, err.Error())
 		return
-	}
-	if err := s.store.ObjectByteStore.Put(r.Context(), artifactKey, artifactBytes); err != nil {
-		writeGHError(w, http.StatusBadGateway, "Publish Pages artifact: "+err.Error())
-		return
-	}
-	previousDeployment := s.store.latestPublishedPagesDeployment(repo.ID)
-	if previousDeployment != nil && previousDeployment.ArtifactKey != "" && previousDeployment.ArtifactKey != artifactKey {
-		if err := s.store.ObjectByteStore.Delete(r.Context(), previousDeployment.ArtifactKey); err != nil {
-			rollbackErr := s.store.ObjectByteStore.Delete(r.Context(), artifactKey)
-			if rollbackErr != nil {
-				writeGHError(w, http.StatusBadGateway, fmt.Sprintf("Replace Pages artifact: delete previous object: %v; roll back new object: %v", err, rollbackErr))
-				return
-			}
-			writeGHError(w, http.StatusBadGateway, "Replace Pages artifact: delete previous object: "+err.Error())
-			return
-		}
 	}
 
 	// The publish happens here, synchronously: the site's content becomes
@@ -239,8 +221,6 @@ func (s *Server) handlePagesDeploymentCreate(w http.ResponseWriter, r *http.Requ
 		s.store.Misc.persist.MustPut("pages_sites", strconv.Itoa(repo.ID), site)
 	}
 	s.store.Misc.mu.Unlock()
-
-	d := s.store.CreatePagesDeployment(repo.ID, environment, req.PagesBuildVersion, "succeed", int64(len(artifactBytes)), artifactSHA, artifactKey)
 
 	user := ghUserFromContext(r.Context())
 	if user != nil {

@@ -261,9 +261,7 @@ func repoPayload(repo *Repo) map[string]interface{} {
 }
 
 // orgWebhookPayload is the `organization` block on event payloads for
-// org-owned repos. Like repoPayload/senderPayload, it carries the
-// non-URL members — webhook delivery has no request context to derive
-// absolute URLs from.
+// org-owned repos.
 func orgWebhookPayload(org *Org) map[string]interface{} {
 	return map[string]interface{}{
 		"login":       org.Login,
@@ -281,25 +279,15 @@ func senderPayload(user *User) map[string]interface{} {
 		// deterministic "ghost" actor GitHub uses for absent accounts.
 		return ghostSenderPayload()
 	}
-	t := user.Type
-	if t == "" {
-		t = "User"
+	copy := *user
+	if copy.Type == "" {
+		copy.Type = "User"
 	}
-	return map[string]interface{}{
-		"login":      user.Login,
-		"id":         user.ID,
-		"type":       t,
-		"avatar_url": user.AvatarURL,
-	}
+	return userToJSON(&copy)
 }
 
 // ghostSenderPayload returns GitHub's "ghost" deleted-user actor, used as the
 // sender for events that have no originating user account.
 func ghostSenderPayload() map[string]interface{} {
-	return map[string]interface{}{
-		"login":      "ghost",
-		"id":         10137,
-		"type":       "User",
-		"avatar_url": "",
-	}
+	return userToJSON(&User{Login: "ghost", ID: 10137, NodeID: "MDQ6VXNlcjEwMTM3", Type: "User"})
 }

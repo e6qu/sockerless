@@ -4,6 +4,14 @@ COPY bleephub/ ./bleephub/
 WORKDIR /src/bleephub
 RUN CGO_ENABLED=0 go build -tags noui -ldflags="-s -w" -o /bleephub ./cmd
 
-FROM alpine:3.20
+FROM ruby:3.3-alpine
+RUN apk add --no-cache build-base git && \
+    mkdir -p /opt/bleephub-pages && \
+    printf '%s\n' 'source "https://rubygems.org"' 'gem "github-pages", "= 232"' > /opt/bleephub-pages/Gemfile && \
+    BUNDLE_GEMFILE=/opt/bleephub-pages/Gemfile bundle install && \
+    apk del build-base && \
+    rm -rf /root/.bundle/cache /usr/local/bundle/cache
 COPY --from=builder /bleephub /usr/local/bin/bleephub
+COPY bleephub/pages-jekyll /usr/local/bin/bleephub-pages-jekyll
+RUN chmod 0755 /usr/local/bin/bleephub-pages-jekyll
 ENTRYPOINT ["bleephub"]
