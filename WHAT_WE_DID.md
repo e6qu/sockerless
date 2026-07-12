@@ -14,6 +14,8 @@ Closed BUG-2513 and BUG-2514 by making release identity repository-scoped and gi
 
 Closed BUG-2515 by deriving release webhook and GitHub Actions activity from real lifecycle transitions. Complete release payloads now carry `created`, `edited`, `published`, `unpublished`, `prereleased`, `released`, or `deleted`, with GitHub's draft workflow semantics. Closed incidental BUG-2516 by removing every remaining asynchronous workflow-discovery call from pull-request REST/GraphQL and repository-dispatch handlers, eliminating mutable go-git read/write races across the eventing class.
 
+Closed incidental BUG-2517 by upgrading Bleephub's Markdown parser from `github.com/yuin/goldmark` 1.8.3 to current 1.8.4 after the required pre-push dependency-freshness gate detected the drift.
+
 Validation in this branch included:
 
 ```bash

@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2516. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, and pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2517. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage, and Bleephub used current `github.com/yuin/goldmark` 1.8.4.
 
 ## Continue Here
 
@@ -15,6 +15,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.4.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 208 seconds after the release-provider and eventing class fixes.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1` passed after all remaining asynchronous workflow-discovery readers were synchronized.
 - `bun run --cwd ui/packages/bleephub typecheck`, `bun run --cwd ui/packages/bleephub test`, and the production Vite build passed with 43 files / 322 tests and a lazy-loaded routed Releases page chunk.
