@@ -499,15 +499,16 @@ test.describe("Release provider", () => {
     await expect(page).toHaveURL(new RegExp(`/ui/repos/${owner}/${repo}/releases/\\d+$`));
     await expect(page.getByRole("heading", { level: 1, name: "First real release" })).toBeVisible();
 
+    const assetBytes = Buffer.from("real release asset bytes", "utf8");
     await page.getByLabel("Asset file").setInputFiles({
       name: "artifact.txt",
       mimeType: "text/plain",
-      buffer: Buffer.from("real release asset bytes", "utf8"),
+      buffer: assetBytes,
     });
     await page.getByLabel("Asset label").fill("Linux artifact");
     await page.getByRole("button", { name: "Upload asset" }).click();
     await expect(page.getByText("Linux artifact")).toBeVisible();
-    await expect(page.getByText(/23 bytes/)).toBeVisible();
+    await expect(page.getByText(`${assetBytes.length} bytes`)).toBeVisible();
 
     const download = page.waitForEvent("download");
     await page.getByRole("button", { name: "Download artifact.txt" }).click();

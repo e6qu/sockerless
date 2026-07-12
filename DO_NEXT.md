@@ -4,7 +4,7 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2517. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage, and Bleephub used current `github.com/yuin/goldmark` 1.8.4.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2519. Routed repository release pages managed release metadata and object-backed assets through public GitHub APIs. Release creation and tag changes used real git refs, cross-repository updates failed before mutation, lifecycle transitions emitted complete webhooks and GitHub Actions events, pull-request plus repository-dispatch workflow discovery no longer raced mutable git storage, official-client release coverage created real Git history, browser asset assertions followed the uploaded bytes, and Bleephub used current `github.com/yuin/goldmark` 1.8.4.
 
 ## Continue Here
 
@@ -15,6 +15,8 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Recent Validation
 
+- `GOCACHE=/private/tmp/sockerless-go-cache GOWORK=off CGO_ENABLED=0 go test -v -timeout 8m ./...` passed in `bleephub/sdk-tests`, including release creation against a real Git Database API-created `main` branch.
+- `bun run typecheck` and `bun run test src/__tests__/api.test.ts` passed in `ui/packages/bleephub` after the release asset end-to-end assertion began deriving its expected size from the uploaded byte buffer.
 - `bash scripts/check-latest-deps.sh` passed after Bleephub upgraded to `github.com/yuin/goldmark` 1.8.4.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 208 seconds after the release-provider and eventing class fixes.
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -race -tags noui ./bleephub -run 'Test(Releases_|WebhookReleaseLifecycleActions)' -count=1` passed after all remaining asynchronous workflow-discovery readers were synchronized.

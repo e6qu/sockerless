@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2517 filed - 2473 fixed - 3 open - 16 false positives.**
+**2519 filed - 2475 fixed - 3 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -18,6 +18,8 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2519~~ | P1 | Bleephub release-provider browser coverage | asset-size assertion diverged from uploaded bytes | The release-provider end-to-end test now derives the displayed size assertion from the exact uploaded byte buffer, so upload, download, and deletion exercise one truthful asset payload. |
+| ~~2518~~ | P1 | Bleephub GitHub software development kit coverage | release test omitted real git history | The official GitHub software development kit release lifecycle test now creates a real initial commit and `refs/heads/main` through GitHub's Git Database API before creating the release. |
 | ~~2517~~ | P2 | Bleephub dependency hygiene | stale Markdown parser module | Bleephub now uses current `github.com/yuin/goldmark` 1.8.4, so the required dependency-freshness gate passes. |
 | ~~2516~~ | P0 | Bleephub pull-request and dispatch eventing | asynchronous workflow discovery read mutable git storage | Pull-request REST/GraphQL and repository-dispatch handlers now discover and trigger GitHub Actions workflows synchronously, so later git writes cannot race mutable go-git readers or select workflows from inconsistent state. |
 | ~~2515~~ | P1 | Bleephub release-provider eventing | release mutations emitted one hardcoded webhook and no workflow events | Release create/update/delete operations now derive `created`, `edited`, `published`, `unpublished`, `prereleased`, `released`, and `deleted` actions from real transitions, emit complete release webhook payloads, and trigger matching GitHub Actions workflows with draft semantics. |

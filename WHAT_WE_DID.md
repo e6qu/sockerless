@@ -4,6 +4,8 @@ Roadmap [PLAN.md](PLAN.md) - status [STATUS.md](STATUS.md) - resume [DO_NEXT.md]
 
 Detailed historical narrative lives in PR descriptions and `git log`. This file keeps the recent chain plus a compact foundation summary.
 
+The release-provider compatibility pass also closed BUG-2518 and BUG-2519 after CI exercised the new workflows. The official GitHub software development kit release lifecycle established a real initial commit and `refs/heads/main` through GitHub's Git Database API before creating a release. The routed browser release scenario reused the exact uploaded asset buffer when asserting its displayed size, so it continued through authenticated download and deletion without a divergent hardcoded byte count.
+
 ## 2026-07-12 - Bleephub Release Provider Completeness (`feat/bleephub-ui-api-completeness-audit`)
 
 This branch continued from merged #791 and audited Bleephub's UI routes against its implemented public GitHub API and real state. It identified the release provider as a complete class gap rather than a single missing screen.

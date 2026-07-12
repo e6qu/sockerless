@@ -39,15 +39,21 @@ func createSDKCommit(t *testing.T, repoName, message, path, content string, pare
 	return commit
 }
 
-func createPullRequestBranches(t *testing.T, repoName string) (base, head *github.Commit) {
+func createSDKDefaultBranch(t *testing.T, repoName string) *github.Commit {
 	t.Helper()
-	base = createSDKCommit(t, repoName, "initial commit", "README.md", "# "+repoName+"\n", nil)
+	commit := createSDKCommit(t, repoName, "initial commit", "README.md", "# "+repoName+"\n", nil)
 	if _, _, err := client.Git.CreateRef(ctx(), "admin", repoName, github.CreateRef{
 		Ref: "refs/heads/main",
-		SHA: base.GetSHA(),
+		SHA: commit.GetSHA(),
 	}); err != nil {
 		t.Fatalf("Git.CreateRef(main): %v", err)
 	}
+	return commit
+}
+
+func createPullRequestBranches(t *testing.T, repoName string) (base, head *github.Commit) {
+	t.Helper()
+	base = createSDKDefaultBranch(t, repoName)
 
 	head = createSDKCommit(t, repoName, "feature commit", "feature.txt", "feature\n", []*github.Commit{base})
 	if _, _, err := client.Git.CreateRef(ctx(), "admin", repoName, github.CreateRef{
