@@ -32,6 +32,9 @@ type Webhook struct {
 	// backfills it on reload. Exactly one of RepoKey/OrgLogin is set
 	// (both empty = app-level pseudo-hook).
 	OrgLogin string `json:"-"`
+	// MarketplaceSlug marks the listing-owned Marketplace webhook. It is an
+	// ephemeral delivery coordinate; listing persistence owns the configuration.
+	MarketplaceSlug string `json:"-"`
 	// LastResponse mirrors GitHub's hook.last_response: the outcome of the most
 	// recent delivery. Nil until a delivery has occurred (rendered "unused").
 	LastResponse *HookLastResponse `json:"last_response,omitempty"`

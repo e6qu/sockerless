@@ -55,6 +55,8 @@ const OrgOverviewPage = lazy(() => import("./pages/OrgOverviewPage.js").then(({ 
 const OrgPeoplePage = lazy(() => import("./pages/OrgPeoplePage.js").then(({ OrgPeoplePage }) => ({ default: OrgPeoplePage })));
 const OrgTeamsPage = lazy(() => import("./pages/OrgTeamsPage.js").then(({ OrgTeamsPage }) => ({ default: OrgTeamsPage })));
 const ClassroomPage = lazy(() => import("./pages/ClassroomPage.js").then(({ ClassroomPage }) => ({ default: ClassroomPage })));
+const MarketplacePage = lazy(() => import("./pages/MarketplacePage.js").then(({ MarketplacePage }) => ({ default: MarketplacePage })));
+const MarketplacePublisherPage = lazy(() => import("./pages/MarketplacePublisherPage.js").then(({ MarketplacePublisherPage }) => ({ default: MarketplacePublisherPage })));
 
 function LoginRedirect() {
   const location = useLocation();
@@ -118,6 +120,7 @@ export function App() {
               <Route path="/ui/repos/:owner/:repo/projects-classic" element={<ProjectsClassicPage />} />
               <Route path="/ui/repos/:owner/:repo/settings/secrets" element={<RepoSecretsPage />} />
               <Route path="/ui/apps" element={<AppsPage />} />
+              <Route path="/ui/apps/:publisher/marketplace" element={<MarketplacePublisherPage />} />
               <Route path="/ui/oauth" element={<OAuthPage />} />
               <Route path="/ui/metrics" element={<MetricsPage />} />
               <Route path="/ui/gists" element={<GistsPage />} />
@@ -131,6 +134,8 @@ export function App() {
               <Route path="/ui/classrooms" element={<ClassroomPage />} />
               <Route path="/ui/classrooms/:classroomId" element={<ClassroomPage />} />
               <Route path="/ui/classrooms/accept/:inviteCode" element={<ClassroomPage />} />
+              <Route path="/ui/marketplace" element={<MarketplacePage />} />
+              <Route path="/ui/marketplace/:slug" element={<MarketplacePage />} />
               <Route path="/ui/admin" element={<OverviewPage />} />
               <Route path="/ui/admin/users" element={<UsersPage />} />
               <Route path="/ui/admin/orgs" element={<OrgsPage />} />

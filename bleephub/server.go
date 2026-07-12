@@ -34,6 +34,7 @@ type Server struct {
 	registryUploadsMu      sync.Mutex
 	registryUploads        map[string]*containerRegistryUpload
 	classroomMu            sync.Mutex // serializes multi-resource Classroom browser transactions
+	marketplaceMu          sync.Mutex // serializes Marketplace billing transitions and webhook emission
 	routePatterns          []string   // every pattern registered via route(), for fidelity enumeration
 	externalURL            string     // BLEEPHUB_EXTERNAL_URL; when set, overrides request-Host URL derivation (job messages, action URLs) — the GHES "external URL" knob
 	pagesJekyllExecutable  string
@@ -270,9 +271,8 @@ func (s *Server) registerRoutes() {
 	s.registerGHPRCommentsRoutes()
 
 	// Long-tail surfaces (gh_misc_endpoints.go) — Users keys/follow, OIDC,
-	// Pages, branch protection, org members, marketplace.
+	// Pages, branch protection, organization members, and Marketplace.
 	s.registerGHMiscEndpoints()
-	s.seedDefaultMarketplacePlans()
 
 	// GitHub API: REST, GraphQL, OAuth (gh_*.go)
 	s.registerGHRestRoutes()
@@ -363,6 +363,7 @@ func (s *Server) registerRoutes() {
 	s.registerGHGlobalAdvisoriesRoutes()
 	s.registerGHClassroomRoutes()
 	s.registerGHClassroomWebRoutes()
+	s.registerGHMarketplaceRoutes()
 	s.registerGHEventsFeedsRoutes()
 	s.registerGHUserIssuesRoutes()
 	// Repository read surfaces (gh_repos_reads.go)

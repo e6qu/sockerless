@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, cleanup, screen, waitFor, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
 import { AppsPage } from "../pages/AppsPage.js";
 
 const mockFetch = vi.fn();
@@ -24,7 +25,7 @@ function renderPage() {
   });
   return render(
     <QueryClientProvider client={queryClient}>
-      <AppsPage />
+      <MemoryRouter><AppsPage /></MemoryRouter>
     </QueryClientProvider>,
   );
 }

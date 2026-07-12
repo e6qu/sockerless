@@ -56,13 +56,18 @@ Assignment acceptance generated an organization-owned repository from the real s
 
 ## What is truly left
 
-### 1. External producer/browser workflows still enter through operator routes
+### GitHub Marketplace product and application programming interface
+
+GitHub Marketplace no longer depended on operator ingress. GitHub App and OAuth App owners created and published listings and pricing plans through authenticated settings; the routed browser directory supported personal and administered-organization purchases, free trials, setup/installation handoff, upgrades, downgrades, and cancellations. Dedicated listing webhooks emitted signed ping and `marketplace_purchase` deliveries, and official publisher REST reads were isolated by GitHub App JSON Web Token or Basic client credentials. Listings, plans, independent per-app subscriptions, pending billing transitions, installations, and delivery history persisted across restart, with atomic subscription/installation creation.
+
+Official `go-github`, Dockerized `gh api`, backend HTTP, SQLite failure/restart, component, and real Chromium light/dark coverage proved the producer-to-buyer workflow. The obsolete `/internal/marketplace/purchases` route no longer existed.
+
+### 1. Hosted-compute onboarding still enters through an operator route
 
 These are real stored implementations after ingestion, but their creation/onboarding path is not yet GitHub-user- or producer-shaped:
 
 | Domain | Current ingress | Required completion path |
 |---|---|---|
-| GitHub Marketplace purchases | `/internal/marketplace/purchases` | Marketplace purchase/change/cancel workflow that drives account billing state and events |
 | Hosted-compute network settings | `/internal/orgs/.../network-settings` | GitHub/Azure private-network onboarding workflow that provisions the settings resource before public configuration APIs reference it |
 
 CodeQL databases no longer belonged in this table. The official CodeQL Action's uploads-host raw ZIP request produced the durable database, validated the database bundle and real commit, and replaced the prior language database atomically. Fine-grained personal access tokens likewise entered through authenticated account settings with one-time credential disclosure and organization approval.

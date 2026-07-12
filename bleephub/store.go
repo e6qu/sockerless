@@ -1860,6 +1860,33 @@ func (st *Store) loadFromPersistence() error {
 				return err
 			}
 			st.Misc.marketplacePlans[p.ID] = &p
+			if p.ID >= st.Misc.nextMarketplacePlanID {
+				st.Misc.nextMarketplacePlanID = p.ID + 1
+			}
+			return nil
+		}},
+		{"marketplace_listings", func(_ string, raw []byte) error {
+			var listing MarketplaceListing
+			if err := loadJSON(raw, &listing); err != nil {
+				return err
+			}
+			st.Misc.marketplaceListings[strings.ToLower(listing.Slug)] = &listing
+			if listing.WebhookID >= st.NextHookID {
+				st.NextHookID = listing.WebhookID + 1
+			}
+			return nil
+		}},
+		{"marketplace_deliveries", func(key string, raw []byte) error {
+			var deliveries []*WebhookDelivery
+			if err := loadJSON(raw, &deliveries); err != nil {
+				return err
+			}
+			st.Misc.marketplaceDeliveries[strings.ToLower(key)] = deliveries
+			for _, delivery := range deliveries {
+				if delivery.ID >= st.Misc.nextMarketplaceDeliveryID {
+					st.Misc.nextMarketplaceDeliveryID = delivery.ID + 1
+				}
+			}
 			return nil
 		}},
 		{"notifications_state", func(key string, raw []byte) error {
@@ -2739,13 +2766,17 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
-	// user-surface: GitHub Marketplace purchases (account ID → purchase).
+	// User-surface: GitHub Marketplace subscriptions are independent for
+	// every listing and purchasing account.
 	if err := st.loadBucket("marketplace_purchases", func(raw []byte) error {
 		var p MarketplacePurchase
 		if err := loadJSON(raw, &p); err != nil {
 			return err
 		}
-		st.Misc.marketplacePurchases[p.AccountID] = &p
+		if p.ListingSlug == "" || p.AccountType == "" {
+			return fmt.Errorf("marketplace purchase is missing listing or account identity")
+		}
+		st.Misc.marketplacePurchases[marketplacePurchaseKey(p.ListingSlug, p.AccountType, p.AccountID)] = &p
 		return nil
 	}); err != nil {
 		return err
@@ -2996,18 +3027,6 @@ func (st *Store) loadFromPersistence() error {
 	}); err != nil {
 		return err
 	}
-	// GitHub Marketplace purchases
-	if err := st.loadBucket("marketplace_purchases", func(raw []byte) error {
-		var p MarketplacePurchase
-		if err := loadJSON(raw, &p); err != nil {
-			return err
-		}
-		st.Misc.marketplacePurchases[p.AccountID] = &p
-		return nil
-	}); err != nil {
-		return err
-	}
-
 	// repo-reads
 	if err := st.loadBucket("repo_activity", func(raw []byte) error {
 		var a RepoActivity

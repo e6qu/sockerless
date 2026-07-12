@@ -138,6 +138,11 @@ import type {
   GithubOrgTeam,
   GithubFeedIssue,
   GithubPRFile,
+  GithubMarketplaceAccount,
+  GithubMarketplaceListing,
+  GithubMarketplaceListingSettings,
+  GithubMarketplacePlan,
+  GithubMarketplaceSubscription,
 } from "./types.js";
 
 const TOKEN_KEY = "bleephub_token";
@@ -481,17 +486,15 @@ export async function createApp(payload: {
       ...authHeaders(),
     },
     body: form,
-    redirect: "manual",
   });
-  if (createRes.status !== 302 && createRes.status !== 303) {
+	// Follow the real App Manifest redirect. Browser Fetch deliberately hides
+	// manual redirect status and Location, but exposes the final same-origin
+	// response URL; GitHub returns the one-time conversion code there.
+  if (!createRes.ok) {
     const text = await createRes.text();
     throw new Error(`createApp manifest ${createRes.status}: ${text || createRes.statusText}`);
   }
-  const location = createRes.headers.get("Location");
-  if (!location) {
-    throw new Error("createApp manifest: missing redirect Location header");
-  }
-  const code = new URL(location, origin).searchParams.get("code");
+  const code = new URL(createRes.url, origin).searchParams.get("code");
   if (!code) {
     throw new Error("createApp manifest: missing conversion code");
   }
@@ -3428,6 +3431,83 @@ export const fetchDashboardIssues = () =>
   ghFetch<GithubFeedIssue[]>(
     "/api/v3/issues?filter=all&state=all&sort=updated&per_page=15",
   );
+
+// ─── GitHub Marketplace browser workflow ──────────────────────────────
+
+export const fetchMarketplaceListings = () =>
+  ghFetch<GithubMarketplaceListing[]>("/ui-data/marketplace/listings");
+
+export const fetchMarketplaceListing = (slug: string) =>
+  ghFetch<GithubMarketplaceListing>(`/ui-data/marketplace/listings/${encodeURIComponent(slug)}`);
+
+export const fetchMarketplaceAccounts = () =>
+  ghFetch<GithubMarketplaceAccount[]>("/ui-data/marketplace/accounts");
+
+export const fetchMarketplaceSubscriptions = () =>
+  ghFetch<GithubMarketplaceSubscription[]>("/ui-data/marketplace/subscriptions");
+
+export interface MarketplacePurchasePayload {
+  account: string;
+  plan_id: number;
+  billing_cycle: "monthly" | "yearly";
+  unit_count: number;
+  free_trial: boolean;
+}
+
+export const purchaseMarketplacePlan = (slug: string, payload: MarketplacePurchasePayload) =>
+  ghPostJSON<GithubMarketplaceSubscription>(
+    `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/purchase`,
+    payload,
+  );
+
+export const changeMarketplacePlan = (
+  slug: string,
+  payload: Omit<MarketplacePurchasePayload, "free_trial">,
+) => ghPatchJSON<GithubMarketplaceSubscription>(
+  `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/subscription`,
+  payload,
+);
+
+export const cancelMarketplacePlan = (slug: string, account: string) =>
+  ghDeleteJSON<GithubMarketplaceSubscription | undefined>(
+    `/ui-data/marketplace/listings/${encodeURIComponent(slug)}/subscription?account=${encodeURIComponent(account)}`,
+    undefined,
+  );
+
+export interface MarketplaceListingSettingsPayload {
+  name: string;
+  description: string;
+  full_description: string;
+  setup_url: string;
+  installation_url: string;
+  webhook_url: string;
+  webhook_secret: string;
+  webhook_content_type: "json" | "form";
+  webhook_active: boolean;
+  published: boolean;
+}
+
+export const fetchMarketplaceListingSettings = (publisher: string) =>
+  ghFetch<{ listing: GithubMarketplaceListingSettings | null }>(`/ui-data/settings/apps/${encodeURIComponent(publisher)}/marketplace`)
+    .then(({ listing }) => listing);
+
+export const saveMarketplaceListingSettings = (publisher: string, payload: MarketplaceListingSettingsPayload) =>
+  ghPutJSON<GithubMarketplaceListingSettings>(`/settings/apps/${encodeURIComponent(publisher)}/marketplace`, payload);
+
+export const createMarketplacePlanSettings = (
+  publisher: string,
+  payload: {
+    name: string;
+    description: string;
+    monthly_price_in_cents: number;
+    yearly_price_in_cents: number;
+    price_model: "FREE" | "FLAT_RATE" | "PER_UNIT";
+    has_free_trial: boolean;
+    unit_name: string;
+    state: "draft" | "published";
+    bullets: string[];
+  },
+) => ghPostJSON<GithubMarketplacePlan>(`/settings/apps/${encodeURIComponent(publisher)}/marketplace/plans`, payload);
 // ─── WP-C: Issues & Pull Requests GitHub-faithful layout ────────────────
 
 /**

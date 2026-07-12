@@ -4,17 +4,23 @@ Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - bugs [BUGS.md](BUGS
 
 ## Current Branch
 
-`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2547. In addition to the release-provider, repository UI, retained GitHub Classroom, and fine-grained personal access token work, the branch shipped the official GitHub CodeQL Action database producer, finalized-bundle validation, real commit/ref ingestion, GitHub App permissions, atomic object-backed replacement, complete multi-run and zero-finding SARIF analyses, official-client coverage, and saturated light/dark Code Security organization. BUG-2523 remained open for two operator-ingress domains.
+`feat/bleephub-ui-api-completeness-audit` continued after merged #791 and fixed BUG-2512 through BUG-2522 plus BUG-2524 through BUG-2560. In addition to the release-provider, repository UI, retained GitHub Classroom, fine-grained personal access tokens, and CodeQL production, the branch shipped a durable GitHub Marketplace for GitHub App and OAuth App publishers and buyers, with scoped official REST clients, signed listing webhooks, atomic subscriptions/installations, billing transitions, and saturated light/dark browser workflows. BUG-2523 remained open only for hosted-compute network onboarding.
 
 ## Continue Here
 
-1. Close BUG-2523 one real producer/browser workflow at a time: hosted-compute network onboarding and the GitHub Marketplace purchase lifecycle. GitHub Classroom, fine-grained personal access tokens, and CodeQL database production were completed.
+1. Close BUG-2523 by replacing `/internal/orgs/.../network-settings` with the real GitHub/Azure hosted-compute private-network onboarding workflow. GitHub Classroom, fine-grained personal access tokens, CodeQL database production, and GitHub Marketplace were completed.
 2. Add a vendored GitHub GraphQL schema/introspection ratchet; current resolver coverage remained consumer-driven rather than complete-schema proof.
 3. Continue page-level light/dark UI comparison with repository Settings/Security, issue and pull-request timelines/reviews/diffs, Actions job logs, organization administration, and account/App/token management.
 4. Continue REST semantic matrices for permissions, conditional requests, redirects, pagination, version headers, rate limits, webhooks, durable cascades, and storage-failure atomicity.
 5. For every found defect, add a `BUGS.md` row first, fix the class, add focused/official-client tests, and update continuity in past tense.
 
 ## Recent Validation
+
+- The complete `pre-commit run --all-files` gate passed with writable temporary Go/npm/pre-commit caches after the Marketplace implementation, including full repository lint, core/API/Bleephub Go suites, admin/Bleephub UI suites, typecheck, policy checks, dead-code scans, and copy-paste scans.
+- Cleanup removed 22 GiB of disposable Go build cache, temporary hook/package caches, 21 stale Amazon Elastic Container Service simulator task containers, and unused container images without touching active services or volumes; local free space increased from 31 GiB to 54 GiB.
+- `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 216 seconds after the Marketplace publisher, buyer, webhook, billing, identity, and atomic persistence workflows were implemented.
+- The complete official `go-github` suite passed with typed Marketplace plan/account/user purchase reads, and the Dockerized official `gh` command-line interface harness passed 136/136 with OAuth App Basic publisher authentication and public browser purchase production.
+- The user-interface suite passed 48 files / 334 tests; TypeScript, production build, and `knip` passed with only tracked BUG-2441; and the complete real-Chromium suite passed 31/31, including GitHub App Manifest creation, Marketplace listing/plan publication, purchase/installation, setup handoff, and inspected saturated light/dark surfaces without browser console errors.
 
 - `GOCACHE=/private/tmp/sockerless-go-cache go test -tags noui ./bleephub -count=1` passed in 204 seconds after official CodeQL production, durable replacement, authorization, confidentiality, and zero-finding analysis semantics were implemented.
 - The complete official `go-github` software development kit suite passed in 5 seconds, including raw GitHub CodeQL Action upload plus official database list/get/delete decoding; the Dockerized official GitHub command-line interface harness passed 130/130 cases with the same finalized database-bundle protocol.

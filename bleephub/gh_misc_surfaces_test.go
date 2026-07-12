@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/go-git/go-git/v5/plumbing"
 )
@@ -642,62 +642,22 @@ func TestAuditLogFromRepoCreate(t *testing.T) {
 	}
 }
 
-func TestMarketplacePlansFromStore(t *testing.T) {
+func TestMarketplacePlansRequirePublisherAuthentication(t *testing.T) {
 	s := newTestServer()
 	s.registerGHMiscEndpoints()
-	s.seedDefaultMarketplacePlans()
 
 	w := doMiscReq(s, "GET", "/api/v3/marketplace_listing/plans", "")
-	if w.Code != 200 {
-		t.Fatalf("plans status = %d", w.Code)
-	}
-	var plans []interface{}
-	json.Unmarshal(w.Body.Bytes(), &plans)
-	if len(plans) == 0 {
-		t.Fatal("no plans returned")
-	}
-	plan := plans[0].(map[string]interface{})
-	if plan["name"] != "Free" {
-		t.Fatalf("plan name = %v, want Free", plan["name"])
-	}
-	if plan["price_model"] != "FREE" {
-		t.Fatalf("price_model = %v, want FREE", plan["price_model"])
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("plans status = %d, want 401", w.Code)
 	}
 }
 
-func TestMarketplaceAccount(t *testing.T) {
+func TestMarketplaceAccountRequiresPublisherAuthentication(t *testing.T) {
 	s := newTestServer()
-	s.store.SeedDefaultUser()
 	s.registerGHMiscEndpoints()
-	s.seedDefaultMarketplacePlans()
 
-	// An account with no purchase is 404 — no fabricated purchase.
 	w := doMiscReq(s, "GET", "/api/v3/marketplace_listing/accounts/42", "")
-	if w.Code != 404 {
-		t.Fatalf("purchase-less account status = %d, want 404", w.Code)
-	}
-
-	// Give the default admin user (ID 1) a real purchase of the Free plan.
-	s.store.Misc.mu.Lock()
-	purchaseUpdated := time.Now().UTC()
-	s.store.Misc.marketplacePurchases[1] = &MarketplacePurchase{
-		AccountID: 1, BillingCycle: "monthly", PlanID: 1, PlanName: "Free",
-		UpdatedAt: &purchaseUpdated,
-	}
-	s.store.Misc.mu.Unlock()
-
-	w = doMiscReq(s, "GET", "/api/v3/marketplace_listing/accounts/1", "")
-	if w.Code != 200 {
-		t.Fatalf("account status = %d", w.Code)
-	}
-	var acct map[string]interface{}
-	json.Unmarshal(w.Body.Bytes(), &acct)
-	if acct["id"] != float64(1) || acct["login"] != "admin" || acct["type"] != "User" {
-		t.Fatalf("account = %v", acct)
-	}
-	purchase := acct["marketplace_purchase"].(map[string]interface{})
-	plan := purchase["plan"].(map[string]interface{})
-	if plan["name"] != "Free" {
-		t.Fatalf("plan name = %v, want Free", plan["name"])
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("account status = %d, want 401", w.Code)
 	}
 }

@@ -2,7 +2,7 @@
 
 Status [STATUS.md](STATUS.md) - roadmap [PLAN.md](PLAN.md) - resume [DO_NEXT.md](DO_NEXT.md).
 
-**2547 filed - 2502 fixed - 4 open - 16 false positives.**
+**2560 filed - 2515 fixed - 4 open - 16 false positives.**
 
 Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake/fallback lands here before any fix attempt. Detailed closed-bug history lives in PR descriptions and `git log`.
 
@@ -10,7 +10,7 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
-| 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only operator seed routes | Marketplace purchases and hosted-compute network settings still entered Bleephub only through `/internal/*` routes instead of GitHub-compatible browser or producer workflows. |
+| 2523 | P1 | Bleephub GitHub service completeness | externally-created product state had only an operator seed route | Hosted-compute network settings still entered Bleephub through `/internal/orgs/.../network-settings` instead of GitHub/Azure-compatible private-network onboarding; GitHub Classroom, fine-grained personal access tokens, CodeQL databases, and GitHub Marketplace were completed. |
 | 2441 | P3 | Bleephub user interface dependency hygiene | current `knip` emits Node deprecation warnings | The current Bleephub UI unused-export toolchain still emitted Node's `DEP0205 module.register()` deprecation warning after `knip` was upgraded from 6.15.0 to the current 6.23.0 release. |
 | 1345 | P2 | AzureAD Terraform provider | upstream blocker | The `hashicorp/terraform-provider-azuread` provider still lacks a supported Microsoft Graph API endpoint override, so AzureAD/Entra Terraform resources cannot be tested against the Azure simulator until upstream adds it. |
 | 1075 | P2 | live-cloud validation | unvalidated real cloud | Lambda is the only backend with a green live-cloud cell. Google Cloud Run, Azure Container Apps, Azure Functions, Lambda service-mesh, and Azure identity-backed cells need authenticated real-cloud validation before they can be marked green. |
@@ -19,6 +19,19 @@ Every CI failure, live-cloud failure, simulator fidelity gap, or discovered fake
 
 | ID | Sev | Area | Pattern | One-liner |
 |----|-----|------|---------|-----------|
+| ~~2560~~ | P0 | Bleephub GitHub Marketplace listing confidentiality | publisher webhook configuration reused as buyer listing metadata | Public Marketplace browse and detail responses now exclude listing webhook configuration, while the authenticated publisher settings adapter returns it only to the owning App administrator. |
+| ~~2559~~ | P0 | Bleephub GitHub Marketplace publisher authentication | GitHub App client secret accepted as a publisher credential | Marketplace publisher REST now requires a GitHub App JSON Web Token or OAuth App Basic credentials and rejects GitHub App Basic authentication. |
+| ~~2558~~ | P0 | Bleephub GitHub Marketplace account identity | numeric identifier lookup ignored account type | Marketplace rendering now resolves the persisted User or Organization account type before its numeric ID, preserving organization identity even when the two namespaces share an integer. |
+| ~~2557~~ | P1 | Bleephub GitHub Marketplace plan response | empty collections collapsed to null | Marketplace plan cloning and response rendering preserve an explicitly empty bullets collection as `[]` across creation, persistence, official clients, and browser reads. |
+| ~~2556~~ | P1 | Bleephub Marketplace publisher user interface | expected draft absence used an error response | A publisher browser adapter now returns `200` with a nullable listing for an App that has not drafted one, so ordinary empty state emits no failed-resource console error. |
+| ~~2555~~ | P0 | Bleephub GitHub App browser creation | browser fetch attempted to inspect an opaque manual redirect | GitHub App creation now follows the real same-origin App Manifest redirect and reads its one-time code from the final browser response URL before conversion. |
+| ~~2554~~ | P1 | Bleephub GitHub Marketplace REST response | browser-only listing identity leaked onto a public GitHub schema | Public user Marketplace purchases now match GitHub's schema, while the browser subscription adapter carries listing identity separately. |
+| ~~2553~~ | P0 | Bleephub GitHub Marketplace purchase durability | installation creation preceded durable subscription persistence | Marketplace purchase and any new GitHub App installation now commit in one SQLite transaction before either installation or Marketplace webhooks begin, leaving memory unchanged on durable-storage failure. |
+| ~~2552~~ | P0 | Bleephub GitHub Marketplace plans | one hardcoded global free plan stood in for publisher listings | App owners now create durable listings and free, flat-rate, or per-unit pricing plans through authenticated settings, and the synthetic global plan no longer exists. |
+| ~~2551~~ | P0 | Bleephub GitHub Marketplace response durability | optional persisted timestamps were dereferenced unconditionally | Marketplace account rendering now preserves null optional billing timestamps without dereferencing them. |
+| ~~2550~~ | P0 | Bleephub GitHub Marketplace subscription identity | purchases were keyed only by account | Marketplace subscriptions are now keyed by listing, account type, and account ID, so one user or organization can purchase multiple independent apps. |
+| ~~2549~~ | P0 | Bleephub GitHub Marketplace API authorization | listing APIs exposed every publisher's billing state anonymously | Marketplace plan and account REST reads are now scoped to the authenticated owning GitHub App or OAuth App publisher. |
+| ~~2548~~ | P0 | Bleephub GitHub Marketplace buyer workflow | subscription state entered only through an internal seed route | Authenticated Marketplace discovery, purchase, installation/setup, trial, change, cancellation, and listing-webhook workflows replaced the removed operator purchase route. |
 | ~~2547~~ | P0 | Bleephub code scanning ingestion | SARIF processing stopped after the first run | SARIF ingestion now created a distinct analysis and the corresponding alerts for every run in a valid document, preserving multi-language and multi-configuration scan results including clean runs. |
 | ~~2546~~ | P2 | Bleephub user interface API surface | an unused single-alert helper survived the Code Security reorganization | The Bleephub user-interface API module no longer exported the unused single-alert helper, so its public surface matched the routed Code Security consumers and the unused-export gate passed. |
 | ~~2545~~ | P0 | Bleephub code scanning ingestion | valid zero-result SARIF runs disappeared | Valid zero-result SARIF runs now created durable code-scanning analyses with zero alerts, so clean scans remained visible through REST and the browser Security workflow. |

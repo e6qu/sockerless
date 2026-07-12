@@ -2051,6 +2051,81 @@ export interface GithubFeedIssue {
   repository: { full_name: string; name: string; owner: { login: string } };
 }
 
+// ─── GitHub Marketplace browser workflow ──────────────────────────────
+
+export interface GithubMarketplacePlan {
+  url: string;
+  accounts_url: string;
+  id: number;
+  number: number;
+  name: string;
+  description: string;
+  monthly_price_in_cents: number;
+  yearly_price_in_cents: number;
+  price_model: "FREE" | "FLAT_RATE" | "PER_UNIT";
+  has_free_trial: boolean;
+  unit_name: string | null;
+  state: "draft" | "published";
+  bullets: string[];
+}
+
+export interface GithubMarketplaceListing {
+  slug: string;
+  name: string;
+  description: string;
+  full_description: string;
+  setup_url: string | null;
+  installation_url: string | null;
+  github_app_id: number | null;
+  oauth_app_client_id: string | null;
+  published: boolean;
+  created_at: string;
+  updated_at: string;
+  plans: GithubMarketplacePlan[];
+}
+
+export interface GithubMarketplaceListingSettings extends GithubMarketplaceListing {
+  webhook_url: string | null;
+  webhook_content_type: "json" | "form";
+  webhook_active: boolean;
+  webhook_id: number | null;
+}
+
+export interface GithubMarketplaceAccount {
+  id: number;
+  login: string;
+  type: "User" | "Organization";
+  avatar_url: string;
+}
+
+export interface GithubMarketplacePendingChange {
+  effective_date: string;
+  billing_cycle: string | null;
+  unit_count: number | null;
+  cancellation: boolean;
+  plan?: GithubMarketplacePlan;
+}
+
+export interface GithubMarketplaceSubscription {
+  id: number;
+  login: string;
+  type: "User" | "Organization";
+  marketplace_pending_change: GithubMarketplacePendingChange | null;
+  marketplace_purchase: {
+    billing_cycle: "monthly" | "yearly";
+    next_billing_date: string | null;
+    is_installed: boolean;
+    unit_count: number | null;
+    on_free_trial: boolean;
+    free_trial_ends_on: string | null;
+    updated_at: string | null;
+    plan: GithubMarketplacePlan;
+  };
+  listing: GithubMarketplaceListing;
+  account_login: string;
+  setup_url: string | null;
+}
+
 // ─── WP-C: Issues & Pull Requests GitHub-faithful layout ────────────────
 
 /** A changed file in a pull request — GET /pulls/{n}/files (items). */

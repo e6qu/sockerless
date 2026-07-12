@@ -177,6 +177,7 @@ const GITHUB_NAV: DrawerItem[] = [
   { label: "Repositories", to: "/ui/repos", icon: <RepoIcon size={16} /> },
   { label: "Gists", to: "/ui/gists", icon: <GistIcon size={16} /> },
   { label: "Packages", to: "/ui/packages", icon: <PackageIcon size={16} /> },
+  { label: "Marketplace", to: "/ui/marketplace", icon: <PackageIcon size={16} /> },
   { label: "Codespaces", to: "/ui/codespaces", icon: <CodespaceIcon size={16} /> },
   { label: "Classroom", to: "/ui/classrooms", icon: <PeopleIcon size={16} /> },
   { label: "Migrations", to: "/ui/migrations", icon: <MigrationIcon size={16} /> },

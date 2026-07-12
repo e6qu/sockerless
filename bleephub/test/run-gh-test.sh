@@ -568,6 +568,27 @@ ACTOK_401=$(curl -sSk -X POST -u "$OA_CID:wrong-secret" \
     "$BASE/api/v3/applications/$OA_CID/token" -w "%{http_code}" -o /dev/null)
 assert_eq "/applications/{client_id}/token wrong secret → 401" "401" "$ACTOK_401"
 
+# Marketplace listing production and buyer flow. OAuth Apps authenticate the
+# publisher REST API with Basic client credentials; GitHub Apps use a JSON Web
+# Token, which the official go-github suite exercises separately.
+MARKETPLACE_SLUG="oauth-parity-marketplace"
+MARKETPLACE_DRAFT=$(jq -nc --arg slug "$MARKETPLACE_SLUG" '{slug:$slug,name:"OAuth Parity Marketplace",description:"gh CLI Marketplace parity",full_description:"Real publisher and buyer workflow",installation_url:"https://example.test/install",webhook_url:"https://localhost/health",webhook_secret:"cli-marketplace",webhook_content_type:"json",webhook_active:true,published:false}')
+MARKETPLACE_STATUS=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "$MARKETPLACE_DRAFT" "$BASE/settings/oauth-apps/$OA_CID/marketplace" -w "%{http_code}" -o /tmp/marketplace-listing.json)
+assert_eq "create Marketplace draft listing" "201" "$MARKETPLACE_STATUS"
+MARKETPLACE_PLAN=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d '{"name":"CLI Team","description":"Official gh API plan","price_model":"FLAT_RATE","monthly_price_in_cents":1800,"yearly_price_in_cents":18000,"state":"published"}' "$BASE/settings/oauth-apps/$OA_CID/marketplace/plans")
+MARKETPLACE_PLAN_ID=$(echo "$MARKETPLACE_PLAN" | jq -r '.id')
+assert_not_empty "create Marketplace pricing plan" "$MARKETPLACE_PLAN_ID"
+MARKETPLACE_PUBLISHED=$(echo "$MARKETPLACE_DRAFT" | jq '.published=true')
+MARKETPLACE_STATUS=$(curl -sSk -X PUT -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "$MARKETPLACE_PUBLISHED" "$BASE/settings/oauth-apps/$OA_CID/marketplace" -w "%{http_code}" -o /dev/null)
+assert_eq "publish Marketplace listing" "200" "$MARKETPLACE_STATUS"
+MARKETPLACE_PURCHASE=$(curl -sSk -X POST -H "Authorization: token $TOKEN" -H "Content-Type: application/json" -d "{\"plan_id\":$MARKETPLACE_PLAN_ID,\"billing_cycle\":\"monthly\"}" "$BASE/ui-data/marketplace/listings/$MARKETPLACE_SLUG/purchase")
+MARKETPLACE_INSTALLED=$(echo "$MARKETPLACE_PURCHASE" | jq -r '.marketplace_purchase.is_installed')
+assert_eq "OAuth App Marketplace purchase uses installation URL without GitHub App installation" "false" "$MARKETPLACE_INSTALLED"
+MARKETPLACE_PLAN_NAME=$(curl -sSk -u "$OA_CID:$OA_CSEC" "$BASE/api/v3/marketplace_listing/plans" | jq -r '.[0].name')
+assert_eq "gh api-compatible Marketplace publisher plan list" "CLI Team" "$MARKETPLACE_PLAN_NAME"
+MARKETPLACE_ACCOUNT=$(curl -sSk -u "$OA_CID:$OA_CSEC" "$BASE/api/v3/marketplace_listing/accounts/1" | jq -r '.login')
+assert_eq "gh api-compatible Marketplace publisher account lookup" "admin" "$MARKETPLACE_ACCOUNT"
+
 log "Apps parity probes complete"
 
 # ============================================================

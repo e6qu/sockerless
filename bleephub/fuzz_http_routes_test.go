@@ -1120,7 +1120,6 @@ var fuzzRoutePatterns = []string{
 	"POST /internal/exec/submit",
 	"POST /internal/exec/workflow",
 	"POST /internal/exec/workflows/{workflowId}/cancel",
-	"POST /internal/marketplace/purchases",
 	"POST /internal/orgs",
 	"POST /internal/orgs/{org}/network-settings",
 	"POST /repos/{owner}/{repo}/code-scanning/codeql/databases/{language}",

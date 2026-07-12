@@ -135,6 +135,7 @@ test.describe("Global navigation", () => {
     const drawer = page.getByRole("navigation", { name: "Global" });
     await expect(drawer.getByRole("link", { name: "Repositories" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Classroom" })).toBeVisible();
+    await expect(drawer.getByRole("link", { name: "Marketplace" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "Runners" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "GitHub Apps" })).toBeVisible();
     await expect(drawer.getByRole("link", { name: "OAuth Apps" })).toBeVisible();
@@ -665,6 +666,77 @@ test.describe("Code security", () => {
     expect(dark.hero).not.toBe("none");
     await expect(page.getByRole("heading", { name: "Databases" })).toBeVisible();
     await shot(page, "32-code-security-dark");
+  });
+});
+
+// ─── GitHub Marketplace ────────────────────────────────────────────────────
+
+test.describe("GitHub Marketplace", () => {
+  test("publishes, purchases, installs, and renders saturated light/dark workflows", async ({ page }) => {
+    await page.goto("/ui/apps");
+    await page.getByRole("button", { name: "New GitHub app" }).click();
+    await page.getByLabel("Name").fill("Marketplace Polish App");
+    await page.getByLabel("Description").fill("A real Marketplace producer");
+    await page.getByRole("button", { name: "Create app" }).click();
+    await expect(page.getByRole("heading", { name: "Save these now" })).toBeVisible();
+    await page.getByRole("button", { name: "I copied them" }).click();
+    const publisherLink = page.getByRole("link", { name: "marketplace-polish-app" });
+    await expect(publisherLink).toBeVisible();
+    await publisherLink.click();
+    await expect(page.getByRole("heading", { name: "Create Marketplace listing" })).toBeVisible();
+
+    await page.getByLabel("Listing name").fill("Marketplace Polish App");
+    await page.getByLabel("Short description").fill("Colorful automation with GitHub-native installation and billing");
+    await page.getByLabel("Full description").fill("A polished GitHub Marketplace integration that keeps setup, plans, billing changes, and webhook delivery together.");
+    await page.getByLabel("Setup URL").fill("https://example.test/marketplace/setup");
+    await page.getByLabel("Payload URL").fill(`${BASE}/health`);
+    await page.getByLabel("Secret").fill("playwright-marketplace-secret");
+    await page.getByRole("button", { name: "Create draft listing" }).click();
+    await expect(page.getByRole("heading", { name: "Manage Marketplace listing" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Add plan" }).click();
+    await page.getByLabel("Name", { exact: true }).last().fill("Team Candy");
+    await page.getByLabel("Description", { exact: true }).last().fill("Private repositories and priority support");
+    await page.getByLabel("Pricing model").selectOption("FLAT_RATE");
+    await page.getByLabel("Monthly (cents)").fill("1400");
+    await page.getByLabel("Yearly (cents)").fill("14000");
+    await page.getByLabel(/Offer a 14-day free trial/).check();
+    await page.getByRole("button", { name: "Publish plan" }).click();
+    await expect(page.getByText("Team Candy", { exact: true })).toBeVisible();
+    await page.getByLabel("Publish listing").check();
+    await page.getByRole("button", { name: "Save listing" }).click();
+    await expect(page.getByText("Published", { exact: true })).toBeVisible();
+
+    await page.goto("/ui/marketplace");
+    await expect(page.getByRole("heading", { name: "Build more. Ship brighter." })).toBeVisible();
+    await expect(page.getByRole("link", { name: /Marketplace Polish App/ })).toBeVisible();
+    const light = await page.locator(".marketplace-hero").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      background: getComputedStyle(element).backgroundImage,
+    }));
+    expect(light.background).toContain("linear-gradient");
+    await shot(page, "33-marketplace-light");
+
+    await page.getByRole("link", { name: /Marketplace Polish App/ }).click();
+    await expect(page.getByRole("heading", { name: "Marketplace Polish App" })).toBeVisible();
+    await page.getByLabel(/14-day free trial/).check();
+    const purchaseResponse = page.waitForResponse((response) => response.request().method() === "POST" && response.url().endsWith("/ui-data/marketplace/listings/marketplace-polish-app/purchase"));
+    await page.getByRole("button", { name: "Complete order and begin installation" }).click();
+    expect((await purchaseResponse).status()).toBe(201);
+    await expect(page.getByRole("link", { name: /Continue to Marketplace Polish App setup/ })).toBeVisible();
+    const installations = await apiGet(page, "/api/v3/user/installations") as { installations: Array<{ app_slug: string }> };
+    expect(installations.installations.some((installation) => installation.app_slug === "marketplace-polish-app")).toBe(true);
+
+    await page.getByRole("button", { name: "Open user menu" }).click();
+    await page.getByRole("menuitem", { name: /dark theme/i }).click();
+    await expect(page.locator("html")).toHaveClass(/dark/);
+    const dark = await page.locator(".marketplace-detail-header").evaluate((element) => ({
+      surface: getComputedStyle(document.documentElement).getPropertyValue("--color-surface").trim(),
+      background: getComputedStyle(element).backgroundImage,
+    }));
+    expect(dark.surface).not.toBe(light.surface);
+    expect(dark.background).toContain("linear-gradient");
+    await shot(page, "34-marketplace-dark");
   });
 });
 
